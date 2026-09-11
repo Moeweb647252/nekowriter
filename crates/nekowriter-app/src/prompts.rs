@@ -275,3 +275,200 @@ pub fn parse_prompt_key(value: &str) -> Result<PromptKey, ApiError> {
     PromptKey::from_stable_key(value.trim())
         .ok_or_else(|| ApiError::UnknownPromptKey(value.trim().to_owned()))
 }
+
+#[cfg(test)]
+mod tests {
+    use nekowriter_core::NewProject;
+    use nekowriter_store::NewPromptOverride;
+    use tempfile::TempDir;
+    use uuid::Uuid;
+
+    use super::*;
+
+    /// 三级优先级的唯一权威实现，必须由自动化测试锁住。
+    async fn prompt_store() -> (TempDir, Store, ProjectId, VersionId) {
+        let data_dir = TempDir::new().unwrap();
+        let store = Store::open(data_dir.path()).await.unwrap();
+        let bundle = store
+            .create_project(
+                Uuid::new_v4(),
+                NewProject::new("提示词优先级", "雨夜的来客", None::<&str>).unwrap(),
+            )
+            .await
+            .unwrap();
+        (data_dir, store, bundle.project.id, bundle.version.id)
+    }
+
+    async fn save_override(
+        store: &Store,
+        key: PromptKey,
+        scope: PromptOverrideScope,
+        project_id: Option<ProjectId>,
+        system: &str,
+        user: &str,
+    ) {
+        store
+            .save_prompt_override(
+                Uuid::new_v4(),
+                0,
+                NewPromptOverride {
+                    prompt_key: key.as_str().to_owned(),
+                    scope,
+                    project_id,
+                    system: system.to_owned(),
+                    user: user.to_owned(),
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn resolve_prompt_prefers_project_then_system_then_builtin() {
+        let (_data_dir, store, project_id, _version_id) = prompt_store().await;
+        let key = PromptKey::PreparationGenerate;
+        let builtin = builtin_prompt(key);
+
+        // 没有覆盖时使用代码内建内容。
+        let resolved = resolve_prompt(&store, Some(project_id), key).await.unwrap();
+        assert_eq!(resolved.source, PromptSource::Builtin);
+        assert_eq!(resolved.system, builtin.system);
+        assert_eq!(resolved.user, builtin.user);
+
+        // 系统覆盖生效。
+        save_override(
+            &store,
+            key,
+            PromptOverrideScope::System,
+            None,
+            "系统 system",
+            "系统 user",
+        )
+        .await;
+        let resolved = resolve_prompt(&store, Some(project_id), key).await.unwrap();
+        assert_eq!(resolved.source, PromptSource::System);
+        assert_eq!(resolved.system, "系统 system");
+
+        // 项目覆盖优先于系统覆盖。
+        save_override(
+            &store,
+            key,
+            PromptOverrideScope::Project,
+            Some(project_id),
+            "项目 system",
+            "项目 user",
+        )
+        .await;
+        let resolved = resolve_prompt(&store, Some(project_id), key).await.unwrap();
+        assert_eq!(resolved.source, PromptSource::Project);
+        assert_eq!(resolved.system, "项目 system");
+        assert_eq!(resolved.user, "项目 user");
+
+        // 系统作用域看不到项目覆盖。
+        let system_scope = resolve_prompt(&store, None, key).await.unwrap();
+        assert_eq!(system_scope.source, PromptSource::System);
+        assert_eq!(system_scope.system, "系统 system");
+    }
+
+    #[tokio::test]
+    async fn resolve_prompt_falls_back_after_reset() {
+        let (_data_dir, store, project_id, version_id) = prompt_store().await;
+        let key = PromptKey::PreparationGenerate;
+        save_override(
+            &store,
+            key,
+            PromptOverrideScope::System,
+            None,
+            "系统 system",
+            "系统 user",
+        )
+        .await;
+        save_override(
+            &store,
+            key,
+            PromptOverrideScope::Project,
+            Some(project_id),
+            "项目 system",
+            "项目 user",
+        )
+        .await;
+
+        let resolved = resolve_prompt_for_version(&store, version_id, key)
+            .await
+            .unwrap();
+        assert_eq!(resolved.source, PromptSource::Project);
+
+        // 重置项目覆盖后回落到系统覆盖；再重置则回到内建。
+        store
+            .reset_prompt_override(
+                Uuid::new_v4(),
+                1,
+                PromptOverrideScope::Project,
+                Some(project_id),
+                key.as_str(),
+            )
+            .await
+            .unwrap();
+        let resolved = resolve_prompt_for_version(&store, version_id, key)
+            .await
+            .unwrap();
+        assert_eq!(resolved.source, PromptSource::System);
+        assert_eq!(resolved.system, "系统 system");
+
+        store
+            .reset_prompt_override(
+                Uuid::new_v4(),
+                1,
+                PromptOverrideScope::System,
+                None,
+                key.as_str(),
+            )
+            .await
+            .unwrap();
+        let resolved = resolve_prompt_for_version(&store, version_id, key)
+            .await
+            .unwrap();
+        assert_eq!(resolved.source, PromptSource::Builtin);
+        assert_eq!(resolved.system, builtin_prompt(key).system);
+    }
+
+    #[tokio::test]
+    async fn prompt_catalog_reports_the_effective_source_per_key() {
+        let (_data_dir, store, project_id, _version_id) = prompt_store().await;
+        save_override(
+            &store,
+            PromptKey::PreparationGenerate,
+            PromptOverrideScope::Project,
+            Some(project_id),
+            "项目 system",
+            "项目 user",
+        )
+        .await;
+
+        let catalog = prompt_catalog(&store, Some(project_id)).await.unwrap();
+        let entry = catalog
+            .iter()
+            .find(|entry| entry.key == PromptKey::PreparationGenerate.as_str())
+            .expect("目录应包含准备阶段提示词");
+        assert_eq!(entry.effective_source, PromptSource::Project);
+        assert!(entry.project_override.is_some());
+        assert!(entry.system_override.is_none());
+        // 其余键没有覆盖，必须报告内建来源。
+        assert!(
+            catalog
+                .iter()
+                .filter(|entry| entry.key != PromptKey::PreparationGenerate.as_str())
+                .all(|entry| entry.effective_source == PromptSource::Builtin)
+        );
+    }
+
+    #[test]
+    fn parse_prompt_key_trims_and_rejects_unknown_keys() {
+        assert_eq!(
+            parse_prompt_key(" preparation.generate ").unwrap(),
+            PromptKey::PreparationGenerate
+        );
+        let error = parse_prompt_key("not.a.prompt").unwrap_err();
+        assert!(matches!(error, ApiError::UnknownPromptKey(_)));
+    }
+}

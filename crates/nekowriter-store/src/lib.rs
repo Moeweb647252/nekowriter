@@ -9,9 +9,9 @@ use std::{
 };
 
 use nekowriter_core::{
-    ApprovalMode, DocumentId, NewNovelVersion, NewProject, NovelVersion, PreparationArtifactKind,
-    Project, ProjectBundle, ProjectId, ProjectListItem, VersionId, VersionSnapshot,
-    WorkflowSnapshot, utc_now_millis,
+    ApprovalMode, ChapterId, DocumentId, NewNovelVersion, NewProject, NovelVersion,
+    PreparationArtifactKind, Project, ProjectBundle, ProjectId, ProjectListItem, ReviewId, RunId,
+    VersionId, VersionSnapshot, WorkflowSnapshot, utc_now_millis,
 };
 use sea_orm::prelude::TextUuid;
 use sea_orm::{
@@ -62,9 +62,7 @@ pub use preparation::{
     StopWritingRunResult,
 };
 pub use prompts::{NewPromptOverride, PromptOverride, PromptOverrideReset, PromptOverrideScope};
-pub use settings::{
-    ModelCapabilityProfile, NewSystemModelSettings, SYSTEM_WRITING_MODEL_KEY, SystemModelSettings,
-};
+pub use settings::{NewSystemModelSettings, SYSTEM_WRITING_MODEL_KEY, SystemModelSettings};
 
 use entity::{command_receipt, document, novel_version, project, workflow_instance};
 
@@ -240,6 +238,58 @@ impl Store {
             .await?
             .map(|model| model.project_id.into())
             .ok_or(StoreError::VersionNotFound)
+    }
+
+    /// 返回某个运行所属的项目。
+    ///
+    /// 命令前置检查需要按项目解析有效模型，而运行行直接记录 `project_id`。
+    ///
+    /// # Errors
+    ///
+    /// 运行不存在时返回 [`StoreError::RunNotFound`]。
+    pub async fn project_id_for_run(&self, run_id: RunId) -> Result<ProjectId, StoreError> {
+        entity::run::Entity::find_by_id(db_id(run_id))
+            .one(&self.database)
+            .await?
+            .map(|model| model.project_id.into())
+            .ok_or(StoreError::RunNotFound)
+    }
+
+    /// 返回某章所属的项目：先由章节解析稿本，再由稿本解析项目。
+    ///
+    /// # Errors
+    ///
+    /// 章节不存在或已删除时返回 [`StoreError::ChapterNotFound`]，稿本不存在时返回
+    /// [`StoreError::VersionNotFound`]。
+    pub async fn project_id_for_chapter(
+        &self,
+        chapter_id: ChapterId,
+    ) -> Result<ProjectId, StoreError> {
+        let version_id = entity::chapter::Entity::find_by_id(db_id(chapter_id))
+            .filter(entity::chapter::Entity::COLUMN.deleted_at.is_null())
+            .one(&self.database)
+            .await?
+            .map(|model| model.version_id.into())
+            .ok_or(StoreError::ChapterNotFound)?;
+        self.project_id_for_version(version_id).await
+    }
+
+    /// 返回某次审核所属的项目。
+    ///
+    /// # Errors
+    ///
+    /// 审核不存在时返回 [`StoreError::ReviewNotFound`]，稿本不存在时返回
+    /// [`StoreError::VersionNotFound`]。
+    pub async fn project_id_for_review(
+        &self,
+        review_id: ReviewId,
+    ) -> Result<ProjectId, StoreError> {
+        let version_id = entity::review::Entity::find_by_id(db_id(review_id))
+            .one(&self.database)
+            .await?
+            .map(|model| model.version_id.into())
+            .ok_or(StoreError::ReviewNotFound)?;
+        self.project_id_for_version(version_id).await
     }
 
     pub async fn list_projects(&self) -> Result<Vec<ProjectListItem>, StoreError> {
@@ -963,10 +1013,10 @@ mod tests {
     use lancedb::query::{ExecutableQuery, QueryBase};
     use nekowriter_core::{
         AppendChapterContent, ChapterPlanDraft, ExecutionStatus, HumanReviewDecision,
-        MAX_CONSECUTIVE_PROTOCOL_ERRORS, NewChapterGuidance, NewChapterOutline,
-        NewCopiedNovelVersion, NewExtraChapter, NewNovelBrief, NewNovelVersion, NewProject,
-        PreparationArtifactInput, PreparationArtifactKind, ReplaceChapterContent, ReviewStatus,
-        RunWaitReason, WorkflowStage,
+        MAX_CONSECUTIVE_PROTOCOL_ERRORS, ModelCapabilityProfile, NewChapterGuidance,
+        NewChapterOutline, NewCopiedNovelVersion, NewExtraChapter, NewNovelBrief, NewNovelVersion,
+        NewProject, PreparationArtifactInput, PreparationArtifactKind, ReplaceChapterContent,
+        ReviewStatus, RunWaitReason, WorkflowStage,
     };
     use sea_orm::{EntityTrait, ModelTrait};
     use serde_json::json;

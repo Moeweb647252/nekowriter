@@ -498,11 +498,8 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::{
-        AgentToolDefinition, ContextMessageRole,
-        provider::{ModelCapabilities, ModelRequestMessage},
-    };
-    use nekowriter_core::ThinkingLevel;
+    use crate::{AgentToolDefinition, ContextMessageRole, provider::ModelRequestMessage};
+    use nekowriter_core::{ModelCapabilityProfile, ThinkingLevel};
 
     #[derive(Clone)]
     struct StubProvider {
@@ -510,8 +507,8 @@ mod tests {
     }
 
     impl ModelProvider for StubProvider {
-        fn capabilities(&self) -> ModelCapabilities {
-            ModelCapabilities {
+        fn capabilities(&self) -> ModelCapabilityProfile {
+            ModelCapabilityProfile {
                 streaming: true,
                 tools: true,
                 structured_output: true,

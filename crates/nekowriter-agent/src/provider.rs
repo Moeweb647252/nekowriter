@@ -12,7 +12,7 @@ use std::{
 };
 
 use futures_util::{StreamExt, future::BoxFuture};
-use nekowriter_core::{ThinkingLevel, decimal_i64};
+use nekowriter_core::{ModelCapabilityProfile, ThinkingLevel, decimal_i64};
 use reqwest::{Client, header};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -26,26 +26,6 @@ use super::{ContextMessage, ContextMessageRole};
 pub const MAX_TOOL_ARGUMENT_BYTES: usize = 256 * 1024;
 /// 单次模型流在解码前可接收的总字节数。
 pub const MAX_MODEL_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
-
-/// 已由具体模型资料确认的能力组合。
-///
-/// 兼容端点并不等于自动支持所有 `OpenAI` 字段。设置层应仅保存经过连接测试的
-/// 组合；真正发请求前，适配器仍会根据当前请求再次校验。
-#[allow(clippy::struct_excessive_bools)] // 独立能力开关是持久设置与 UI 最清晰的表示。
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ModelCapabilities {
-    pub streaming: bool,
-    pub tools: bool,
-    pub structured_output: bool,
-    pub stream_usage: bool,
-    /// 是否接受显式思考参数（`reasoning_effort`）。
-    ///
-    /// 缺省为 `false`：较早保存的能力资料没有这个字段，此时按“未经验证”处理，
-    /// 而不是把未知能力当作可用。
-    #[serde(default)]
-    pub thinking: bool,
-}
 
 /// 模型网络调用的三个独立超时。
 ///
@@ -77,7 +57,7 @@ pub struct ChatCompletionsConfig {
     api_base_url: Url,
     model: String,
     api_key: Option<String>,
-    capabilities: ModelCapabilities,
+    capabilities: ModelCapabilityProfile,
     timeouts: ModelTimeouts,
 }
 
@@ -107,7 +87,7 @@ impl ChatCompletionsConfig {
         api_base_url: impl AsRef<str>,
         model: impl Into<String>,
         api_key: Option<String>,
-        capabilities: ModelCapabilities,
+        capabilities: ModelCapabilityProfile,
         timeouts: ModelTimeouts,
     ) -> Result<Self, ProviderError> {
         let api_base_url = normalize_api_base_url(api_base_url.as_ref())?;
@@ -142,7 +122,7 @@ impl ChatCompletionsConfig {
     }
 
     #[must_use]
-    pub const fn capabilities(&self) -> ModelCapabilities {
+    pub const fn capabilities(&self) -> ModelCapabilityProfile {
         self.capabilities
     }
 }
@@ -297,7 +277,7 @@ pub struct ModelCompletion {
 /// 直接绕过 App 服务写入正文。返回的 [`ModelCompletion`] 才能进入工具或结构化
 /// 阶段提交的服务端校验。
 pub trait ModelProvider: Send + Sync {
-    fn capabilities(&self) -> ModelCapabilities;
+    fn capabilities(&self) -> ModelCapabilityProfile;
 
     fn execute<'a>(
         &'a self,
@@ -528,7 +508,7 @@ impl ChatCompletionsAdapter {
 }
 
 impl ModelProvider for ChatCompletionsAdapter {
-    fn capabilities(&self) -> ModelCapabilities {
+    fn capabilities(&self) -> ModelCapabilityProfile {
         self.config.capabilities
     }
 
@@ -1392,8 +1372,8 @@ mod tests {
 
     use super::*;
 
-    fn capabilities() -> ModelCapabilities {
-        ModelCapabilities {
+    fn capabilities() -> ModelCapabilityProfile {
+        ModelCapabilityProfile {
             streaming: true,
             tools: true,
             structured_output: true,
@@ -1593,7 +1573,7 @@ mod tests {
             .unwrap_err();
         assert!(matches!(error, ProviderError::MissingToolResult { .. }));
 
-        let no_tools = ModelCapabilities {
+        let no_tools = ModelCapabilityProfile {
             tools: false,
             ..capabilities()
         };
@@ -1624,6 +1604,33 @@ mod tests {
                 capability: "tools"
             })
         ));
+    }
+
+    #[test]
+    fn thinking_level_controls_reasoning_effort_in_the_payload() {
+        let request = ModelRequest {
+            messages: text_request().messages,
+            tools: Vec::new(),
+            response_format: None,
+            thinking_level: ThinkingLevel::Low,
+        };
+        let payload = adapter("http://127.0.0.1:11434/v1")
+            .request_payload(&request)
+            .unwrap();
+        assert_eq!(payload["reasoning_effort"], json!("low"));
+
+        // `Off` 时不发送该字段：能力声明可以宽松，但请求不能凭空多带参数。
+        let off = ModelRequest {
+            thinking_level: ThinkingLevel::Off,
+            ..request
+        };
+        assert!(
+            adapter("http://127.0.0.1:11434/v1")
+                .request_payload(&off)
+                .unwrap()
+                .get("reasoning_effort")
+                .is_none()
+        );
     }
 
     async fn spawn_sse_server(chunks: Vec<Vec<u8>>) -> (String, oneshot::Receiver<String>) {

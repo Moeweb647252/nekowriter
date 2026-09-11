@@ -108,9 +108,15 @@ export interface ModelCapabilityProfile {
 
 export type ThinkingLevel = "off" | "low" | "medium" | "high"
 
+export interface ProjectModelReference {
+  modelId: string
+  /** 能力资料必须与被引用的模型同源，不能用系统模型的能力代替。 */
+  capabilities: ModelCapabilityProfile
+}
+
 export interface ProjectSettings {
   /** 覆盖系统默认模型；`null` 表示沿用系统设置。 */
-  modelId: string | null
+  model: ProjectModelReference | null
   thinkingLevel: ThinkingLevel
   auxiliaryToolBudget: DecimalString
   revision: DecimalString
@@ -144,6 +150,8 @@ export interface TestModelResponse {
   contentReceived: boolean
   toolCallCount: number
   usage: ModelUsage | null
+  /** 本次探针是否真的带上了 `reasoning_effort`。 */
+  thinkingProbed: boolean
 }
 
 export interface CurrentNovelBrief {
@@ -513,11 +521,14 @@ export function saveSystemModelSettings(
   })
 }
 
-export function testModelConnection() {
+export function testModelConnection(input: {
+  modelId: string
+  capabilities: ModelCapabilityProfile
+}) {
   return request<TestModelResponse>("/api/settings/test-model", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({}),
+    body: JSON.stringify(input),
   })
 }
 
@@ -529,7 +540,7 @@ export function saveProjectSettings(
   projectId: string,
   input: {
     expectedRevision: DecimalString
-    modelId: string | null
+    model: ProjectModelReference | null
     thinkingLevel: ThinkingLevel
     auxiliaryToolBudget: DecimalString
   },

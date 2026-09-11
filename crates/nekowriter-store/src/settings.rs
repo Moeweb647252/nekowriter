@@ -3,7 +3,7 @@
 //! SQLite 只保存模型服务地址、能力资料和 OS 凭据的不透明引用。API key 本身只由
 //! App 在真正调用模型前从凭据库读出，绝不写入本模块的实体、回执或事件。
 
-use nekowriter_core::{decimal_i64, utc_now_millis};
+use nekowriter_core::{ModelCapabilityProfile, decimal_i64, utc_now_millis};
 use sea_orm::{ActiveModelTrait, EntityTrait, IntoActiveModel, Set, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -20,22 +20,6 @@ const SAVE_SYSTEM_MODEL_SETTINGS_METHOD: &str = "PUT";
 const SYSTEM_MODEL_SETTINGS_TARGET: &str = "/api/settings";
 /// 系统写作模型配置的稳定主键。
 pub const SYSTEM_WRITING_MODEL_KEY: &str = "writing_model";
-
-/// 已经由用户实际连接测试确认、可供调度器使用的模型能力组合。
-#[allow(clippy::struct_excessive_bools)]
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ModelCapabilityProfile {
-    pub streaming: bool,
-    pub tools: bool,
-    pub structured_output: bool,
-    pub stream_usage: bool,
-    /// 是否通过实际连接测试确认模型接受显式思考参数。
-    ///
-    /// 缺省为 `false`：较早保存的能力资料没有该字段时按“未经验证”处理。
-    #[serde(default)]
-    pub thinking: bool,
-}
 
 /// 已持久化的系统写作模型设置。
 ///

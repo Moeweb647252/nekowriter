@@ -1308,6 +1308,43 @@ const fn default_auxiliary_tool_budget() -> i64 {
     DEFAULT_AUXILIARY_TOOL_BUDGET
 }
 
+/// 模型能力资料：描述一个具体模型能做什么。
+///
+/// 这份资料属于「模型」而不是「某一级设置」：系统写作模型与项目模型引用都携带
+/// 它，因此调度器、Provider 与命令前置检查必须从**有效模型**取用，不能把系统模型
+/// 的资料套用到项目引用的模型上。
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelCapabilityProfile {
+    pub streaming: bool,
+    pub tools: bool,
+    pub structured_output: bool,
+    pub stream_usage: bool,
+    /// 是否对该模型验证过显式思考参数（`reasoning_effort`）。
+    ///
+    /// 缺省为 `false`：较早保存的能力资料没有该字段时按“未经验证”处理，而不是把
+    /// 未知能力当作可用。
+    ///
+    /// 服务端只保存这个声明，不重验历史：验证由连接测试完成（`POST
+    /// /api/settings/test-model` 携带 `thinking: true` 时会真的发出 `reasoning_effort`，
+    /// 被拒时返回明确错误），界面也只在验证通过后才允许打开该开关。
+    #[serde(default)]
+    pub thinking: bool,
+}
+
+/// 项目对写作模型的引用：既指定模型 ID，也声明该模型的能力资料。
+///
+/// 能力资料必须与模型 ID 一起声明：只有模型 ID 而没有资料，会让校验与实际请求
+/// 发往两个不同的模型。项目覆盖只改变「在已配置服务上使用哪个模型」，不改变服务
+/// 地址与凭据。
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectModelReference {
+    pub model_id: String,
+    pub capabilities: ModelCapabilityProfile,
+}
+
 /// 项目级创作设置。
 ///
 /// 字段级缺省是真实语义：数据库中较早写入的 `{}` 或缺失字段表示“未显式设置”，
@@ -1317,7 +1354,7 @@ const fn default_auxiliary_tool_budget() -> i64 {
 pub struct ProjectSettings {
     /// 覆盖系统默认模型；`None` 表示沿用系统设置。
     #[serde(default)]
-    pub model_id: Option<String>,
+    pub model: Option<ProjectModelReference>,
     #[serde(default)]
     pub thinking_level: ThinkingLevel,
     #[serde(default = "default_auxiliary_tool_budget", with = "decimal_i64")]
@@ -1330,7 +1367,7 @@ pub struct ProjectSettings {
 impl Default for ProjectSettings {
     fn default() -> Self {
         Self {
-            model_id: None,
+            model: None,
             thinking_level: ThinkingLevel::Off,
             auxiliary_tool_budget: DEFAULT_AUXILIARY_TOOL_BUDGET,
             revision: 0,
@@ -1342,8 +1379,7 @@ impl Default for ProjectSettings {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NewProjectSettings {
-    #[serde(default)]
-    pub model_id: Option<String>,
+    pub model: Option<ProjectModelReference>,
     pub thinking_level: ThinkingLevel,
     #[serde(with = "decimal_i64")]
     pub auxiliary_tool_budget: i64,

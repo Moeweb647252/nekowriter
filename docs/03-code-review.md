@@ -8,7 +8,7 @@
 
 | 验证项 | 结果 |
 | --- | --- |
-| `cargo test --workspace` | ✅ 84 个测试全部通过（agent 22 / app 20 / core 15 / store 27） |
+| `cargo test --workspace` | ✅ 107 个测试全部通过（agent 23 / app 31 / core 15 / store 38） |
 | `cargo clippy --workspace --all-targets` | 上次完整审查编译通过；约 255 条 pedantic 警告待消化，本次未重新统计 |
 | `pnpm lint` | ⚠️ 未通过：8 个既有 React effect / Fast Refresh 错误与 1 个 Hooks 依赖警告；本次没有新增 lint 诊断 |
 | `tsc --noEmit` + `vite build` | ✅ 前端类型检查与构建成功（bundle 345.40 KB / gzip 104.35 KB） |
@@ -122,11 +122,11 @@
 ### 8.1 实现
 
 - **领域类型**（`nekowriter-core`）：新增 `ThinkingLevel`（`Off`/`Low`/`Medium`/`High`）与 `ProjectSettings` / `NewProjectSettings`。字段级缺省是真实语义：早先写入的 `{}` 或缺失字段解析为同一默认值（预算 10、思考 `Off`、模型 `None`），而不是损坏记录。
-- **持久化**（`store/project_settings.rs`）：内容存入 `projects.settings_json`，`projects.settings_revision` 独立于项目实体修订 —— 保存设置不会让正在进行的稿本切换命令意外过期。读取、保存、校验（模型 ID 长度、预算 0–10000、空白模型 ID 等价于沿用默认）、命令回执重放、`IDEMPOTENCY_CONFLICT` 与 `settings.changed` 事件均沿用既有模式。
+- **持久化**（`store/project_settings.rs`）：内容存入 `projects.settings_json`，`projects.settings_revision` 独立于项目实体修订 —— 保存设置不会让正在进行的稿本切换命令意外过期。读取、保存、校验（模型 ID 长度、模型能力资料、预算 0–10000、空白模型 ID 等价于沿用默认）、命令回执重放、`IDEMPOTENCY_CONFLICT` 与 `settings.changed` 事件均沿用既有模式。
 - **API**：`GET /api/projects/{project_id}/settings`、`PUT /api/projects/{project_id}/settings`。写入与系统设置共用 `settings_write_lock`，并使用 `ensure_trusted_write_request`；越界返回 422 `INVALID_PROJECT_SETTINGS`，过期修订返回 409 `REVISION_CONFLICT`。
-- **调度器重建**：每次取得模型许可后重新读取项目设置，解析「项目覆盖 → 系统默认」的有效模型 ID，并把系统设置修订、项目设置修订、`modelOverrideId`、`thinkingLevel`、`auxiliaryToolBudget`、`effectiveModelId`、`effectiveThinkingLevel` 写进 `settings_snapshot`。思考等级经 `ModelRequest.thinking_level` 映射为 `reasoning_effort`；项目指定了思考等级而系统能力未声明 `thinking` 时，在发请求前返回 `ThinkingUnsupported`，不静默忽略。
-- **能力资料**：`ModelCapabilityProfile` 新增 `thinking`（缺省 `false`，表示未经验证），系统模型设置面板新增「支持思考」开关。
-- **界面**：新增 `ProjectSettingsPanel`，编辑模型引用、思考等级与预算；草稿以「项目 id + 修订」为身份，切换项目即失效，保存回写服务端修订，修订冲突以提示呈现；当思考等级非 `Off` 而系统模型未声明思考支持时，面板直接给出阻断提示。
+- **调度器重建**：每次取得模型许可后重新读取项目设置，解析「项目覆盖 → 系统默认」的有效模型与其能力资料，并把系统设置修订、项目设置修订、`modelOverrideId`、`thinkingLevel`、`auxiliaryToolBudget`、`effectiveModelId`、有效模型来源、能力资料与 `effectiveThinkingLevel` 写进 `settings_snapshot`。思考等级经 `ModelRequest.thinking_level` 映射为 `reasoning_effort`；有效模型不满足当前用途所需能力时，在发请求前返回带模型定位的错误，不静默忽略。
+- **能力资料**：`ModelCapabilityProfile` 新增 `thinking`（缺省 `false`，表示未经验证），项目模型引用与能力资料一起保存。系统模型与项目模型共用连接测试；声明支持思考时会真实探测 `reasoning_effort`，并由调度器和 HTTP 命令前置检查共用同一份有效模型解析与能力判定。
+- **界面**：新增 `ProjectSettingsPanel`，编辑模型引用（含该模型能力资料）、思考等级与预算；草稿以「项目 id + 修订」为身份，切换项目即失效，保存回写服务端修订，修订冲突以提示呈现；思考等级会按当前有效模型的能力资料给出阻断提示。
 
 ### 8.2 已知边界
 
@@ -136,7 +136,7 @@
 
 | 验证项 | 结果 |
 | --- | --- |
-| `cargo test --workspace` | ✅ 92 个测试全部通过（agent 22 / app 20 / core 15 / store 35，含 4 个新增项目设置测试） |
+| `cargo test --workspace` | ✅ 107 个测试全部通过（agent 23 / app 31 / core 15 / store 38，含模型能力归属、有效模型调度与思考参数探测测试） |
 | `cargo fmt --all -- --check` | ✅ 通过 |
 | `cargo clippy --workspace --all-targets` | ✅ 新增/修改文件的告警已收敛（`prompts.rs` 另修 3 处）；仅剩与既有代码同类的「函数过长」等结构性告警 |
 | `tsc -b && vite build` | ✅ 成功 |

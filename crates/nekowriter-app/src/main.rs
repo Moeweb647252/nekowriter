@@ -9,6 +9,7 @@ use std::{
 };
 
 mod credentials;
+mod model_settings;
 mod prompts;
 mod scheduler;
 
@@ -29,23 +30,29 @@ use futures_util::stream;
 use nekowriter_agent::{
     ContextMessageRole, PromptTemplateError, capabilities,
     provider::{
-        ChatCompletionsAdapter, ChatCompletionsConfig, ModelCapabilities, ModelRequest,
-        ModelRequestMessage, ModelTimeouts, ProviderError,
+        ChatCompletionsAdapter, ChatCompletionsConfig, ModelRequest, ModelRequestMessage,
+        ModelTimeouts, ProviderError,
     },
     validate_builtin_prompt_pair,
 };
 use nekowriter_core::{
     AppendChapterContent, ApprovalMode, ChapterBodyEditError, ChapterId, ChapterPlanDraft,
-    ExecutionStatus, FeedbackCitation, HumanReviewDecision, NewChapterGuidance, NewChapterOutline,
-    NewCopiedNovelVersion, NewExtraChapter, NewNovelBrief, NewNovelVersion, NewProject,
-    NewProjectSettings, PreparationArtifactInput, PreparationArtifactKind, PreparationSnapshot,
-    ProjectBundle, ProjectId, ProjectListItem, ProjectSettings, ReplaceChapterContent, ReviewId,
-    ThinkingLevel, UserQuestionAnswers, ValidationError, VersionId, VersionSnapshot,
-    WorkflowSnapshot, WorkflowStage, decimal_i64,
+    ExecutionStatus, FeedbackCitation, HumanReviewDecision, ModelCapabilityProfile,
+    NewChapterGuidance, NewChapterOutline, NewCopiedNovelVersion, NewExtraChapter, NewNovelBrief,
+    NewNovelVersion, NewProject, NewProjectSettings, PreparationArtifactInput,
+    PreparationArtifactKind, PreparationSnapshot, ProjectBundle, ProjectId, ProjectListItem,
+    ProjectModelReference, ProjectSettings, ReplaceChapterContent, ReviewId, ThinkingLevel,
+    UserQuestionAnswers, ValidationError, VersionId, VersionSnapshot, WorkflowSnapshot,
+    WorkflowStage, decimal_i64,
 };
 use nekowriter_store::{
     EventStreamBounds, NewPromptOverride, PersistedEvent, PromptOverride, PromptOverrideReset,
     PromptOverrideScope, Store, StoreError,
+};
+
+use crate::model_settings::{
+    ModelUse, capability_problem_message, pre_dispatch_capability_problem, resolve_effective_model,
+    thinking_probe_level,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -359,7 +366,7 @@ struct SaveSystemModelSettingsRequest {
     expected_revision: i64,
     api_base_url: String,
     model_id: String,
-    capabilities: nekowriter_store::ModelCapabilityProfile,
+    capabilities: nekowriter_core::ModelCapabilityProfile,
     #[serde(with = "decimal_i64")]
     max_context_tokens: i64,
     #[serde(with = "decimal_i64")]
@@ -379,7 +386,7 @@ struct SystemSettingsResponse {
 struct PublicSystemModelSettings {
     api_base_url: String,
     model_id: String,
-    capabilities: nekowriter_store::ModelCapabilityProfile,
+    capabilities: nekowriter_core::ModelCapabilityProfile,
     max_context_tokens: String,
     reserved_output_tokens: String,
     revision: String,
@@ -388,8 +395,16 @@ struct PublicSystemModelSettings {
     updated_at_ms: String,
 }
 
+/// 连接测试的请求体：明确要测试哪个模型、以及它声明了哪些能力。
+///
+/// 模型 ID 与能力资料一同给出，因为「是否接受 `reasoning_effort`」是模型的属性，
+/// 而不是当前系统默认设置的属性。
 #[derive(Debug, Deserialize)]
-struct TestModelRequest {}
+#[serde(rename_all = "camelCase")]
+struct TestModelRequest {
+    model_id: String,
+    capabilities: ModelCapabilityProfile,
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -398,6 +413,9 @@ struct TestModelResponse {
     content_received: bool,
     tool_call_count: usize,
     usage: Option<nekowriter_agent::provider::ModelUsage>,
+    /// 本次探针是否真的带上了 `reasoning_effort`。只有它为真时，
+    /// 「该模型支持思考」才是被验证过的声明。
+    thinking_probed: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1083,12 +1101,20 @@ fn system_settings_response(
     }
 }
 
+/// 实际验证一个模型是否可用，并在声明支持思考时真的带上 `reasoning_effort`。
+///
+/// 服务地址与凭据始终取自系统设置：连接测试测的是「同一服务上的某个模型」，
+/// 不允许绕过已配置的服务。
 async fn test_model_connection(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(_request): Json<TestModelRequest>,
+    Json(request): Json<TestModelRequest>,
 ) -> Result<Json<TestModelResponse>, ApiError> {
     ensure_trusted_write_request(&headers, &state)?;
+    let model_id = request.model_id.trim().to_owned();
+    if model_id.is_empty() {
+        return Err(StoreError::InvalidSystemModelSettings("模型 ID 不能为空".to_owned()).into());
+    }
     let settings_guard = state.settings_write_lock.lock().await;
     let settings = state
         .store
@@ -1099,22 +1125,17 @@ async fn test_model_connection(
         Some(credential_ref) => Some(credentials::read_api_key(credential_ref).await?),
         None => None,
     };
+    let thinking_probed = request.capabilities.thinking;
     let config = ChatCompletionsConfig::new(
         &settings.api_base_url,
-        settings.model_id,
+        model_id.clone(),
         api_key,
-        ModelCapabilities {
-            streaming: settings.capabilities.streaming,
-            tools: settings.capabilities.tools,
-            structured_output: settings.capabilities.structured_output,
-            stream_usage: settings.capabilities.stream_usage,
-            thinking: settings.capabilities.thinking,
-        },
+        request.capabilities,
         ModelTimeouts::default(),
     )?;
     let provider = ChatCompletionsAdapter::new(config)?;
     drop(settings_guard);
-    let request = ModelRequest {
+    let request_payload = ModelRequest {
         messages: vec![
             ModelRequestMessage::Text {
                 role: ContextMessageRole::System,
@@ -1127,7 +1148,9 @@ async fn test_model_connection(
         ],
         tools: Vec::new(),
         response_format: None,
-        thinking_level: ThinkingLevel::Off,
+        // 声明支持思考时用一个代表性等级真的发一次，使这个声明可被验证；
+        // 否则探针保持 Off，不做超出声明的断言。
+        thinking_level: thinking_probe_level(thinking_probed),
     };
 
     // 系统设置测试与写作 Agent 共用同一个全局许可，避免用户在测试连接时绕开
@@ -1138,7 +1161,16 @@ async fn test_model_connection(
         .acquire_owned()
         .await
         .expect("AppState 持有模型调度 Semaphore，许可不会永久关闭");
-    let completion = provider.execute_with(&request, |_| {}).await?;
+    let completion = match provider.execute_with(&request_payload, |_| {}).await {
+        Ok(completion) => completion,
+        Err(ProviderError::HttpStatus { status, .. }) if thinking_probed && status == 400 => {
+            return Err(StoreError::InvalidSystemModelSettings(format!(
+                "模型 {model_id} 拒绝了 reasoning_effort（400）；该模型可能不支持思考参数"
+            ))
+            .into());
+        }
+        Err(error) => return Err(error.into()),
+    };
     Ok(Json(TestModelResponse {
         provider_request_id: completion.provider_request_id,
         content_received: completion
@@ -1147,6 +1179,7 @@ async fn test_model_connection(
             .is_some_and(|content| !content.trim().is_empty()),
         tool_call_count: completion.tool_calls.len(),
         usage: completion.usage,
+        thinking_probed,
     }))
 }
 
@@ -1278,7 +1311,8 @@ async fn start_chapter_outline(
     Json(request): Json<StartChapterOutlineRequest>,
 ) -> Result<Json<nekowriter_core::WorkflowSnapshot>, ApiError> {
     ensure_trusted_write_request(&headers, &state)?;
-    ensure_writing_model_ready(&state).await?;
+    let project_id = state.store.project_id_for_chapter(chapter_id).await?;
+    ensure_writing_model_ready(&state, project_id).await?;
     let workflow = state
         .store
         .start_chapter_outline(
@@ -1446,7 +1480,8 @@ async fn continue_writing_run(
     Json(request): Json<RunWorkflowControlRequest>,
 ) -> Result<Json<WorkflowSnapshot>, ApiError> {
     ensure_trusted_write_request(&headers, &state)?;
-    ensure_writing_model_ready(&state).await?;
+    let project_id = state.store.project_id_for_run(run_id).await?;
+    ensure_writing_model_ready(&state, project_id).await?;
     let workflow = state
         .store
         .continue_writing_run(run_id, request.command_id, request.expected_state_revision)
@@ -1690,7 +1725,8 @@ async fn start_preparation(
     Json(request): Json<StartPreparationRequest>,
 ) -> Result<Json<PreparationSnapshot>, ApiError> {
     ensure_trusted_write_request(&headers, &state)?;
-    ensure_writing_model_ready(&state).await?;
+    let project_id = state.store.project_id_for_version(version_id).await?;
+    ensure_writing_model_ready(&state, project_id).await?;
     let snapshot = state
         .store
         .start_preparation(
@@ -1711,46 +1747,52 @@ async fn start_preparation(
     Ok(Json(snapshot))
 }
 
-async fn ensure_writing_model_ready(state: &AppState) -> Result<(), ApiError> {
-    let settings = state
-        .store
-        .get_system_model_settings()
-        .await?
-        .ok_or_else(|| StoreError::InvalidSystemModelSettings("请先保存写作模型设置".to_owned()))?;
-    if !settings.capabilities.structured_output {
-        return Err(StoreError::InvalidSystemModelSettings(
-            "当前写作阶段需要支持结构化提交的写作模型".to_owned(),
-        )
-        .into());
-    }
-    if !settings.capabilities.tools {
-        return Err(StoreError::InvalidSystemModelSettings(
-            "当前写作阶段需要支持 ask_user 的工具调用模型".to_owned(),
-        )
-        .into());
-    }
-    if let Some(credential_ref) = settings.credential_ref {
-        // 仅验证凭据库中的引用仍可读取；真实请求在取得全局许可后重新读取，绝不把
-        // 密钥封存进请求快照或跨异步边界传递。
-        let _ = credentials::read_api_key(credential_ref).await?;
-    }
-    Ok(())
+async fn ensure_writing_model_ready(
+    state: &AppState,
+    project_id: ProjectId,
+) -> Result<(), ApiError> {
+    ensure_model_ready(state, project_id, ModelUse::Writing).await
 }
 
 /// 审核 Agent 不调用工具，但和写作阶段一样必须能稳定返回结构化结论。
-async fn ensure_review_model_ready(state: &AppState) -> Result<(), ApiError> {
-    let settings = state
+async fn ensure_review_model_ready(
+    state: &AppState,
+    project_id: ProjectId,
+) -> Result<(), ApiError> {
+    ensure_model_ready(state, project_id, ModelUse::Review).await
+}
+
+/// 命令前置检查：按项目的**有效模型**判断能力，而不是系统模型。
+///
+/// 项目可以引用另一个模型，那个模型（而非系统写作模型）才是请求真正发往的对象；
+/// 用系统模型的资料放行会让项目引用在真正 dispatch 时才以指向系统模型的文案失败。
+/// 这里与调度器共用 [`pre_dispatch_capability_problem`]，不维护第二套规则。
+async fn ensure_model_ready(
+    state: &AppState,
+    project_id: ProjectId,
+    use_case: ModelUse,
+) -> Result<(), ApiError> {
+    let system = state
         .store
         .get_system_model_settings()
         .await?
         .ok_or_else(|| StoreError::InvalidSystemModelSettings("请先保存写作模型设置".to_owned()))?;
-    if !settings.capabilities.structured_output {
-        return Err(StoreError::InvalidSystemModelSettings(
-            "审核 Agent 需要支持结构化提交的模型".to_owned(),
-        )
-        .into());
+    let project = state.store.get_project_settings(project_id).await?;
+    let effective = resolve_effective_model(&system, &project);
+    if let Some(problem) =
+        pre_dispatch_capability_problem(*effective.capabilities, use_case, project.thinking_level)
+    {
+        return Err(
+            StoreError::InvalidSystemModelSettings(capability_problem_message(
+                problem,
+                &effective.describe(),
+            ))
+            .into(),
+        );
     }
-    if let Some(credential_ref) = settings.credential_ref {
+    if let Some(credential_ref) = system.credential_ref {
+        // 仅验证凭据库中的引用仍可读取；真实请求在取得全局许可后重新读取，绝不把
+        // 密钥封存进请求快照或跨异步边界传递。
         let _ = credentials::read_api_key(credential_ref).await?;
     }
     Ok(())
@@ -1819,7 +1861,8 @@ async fn delegate_review(
     Json(request): Json<DelegateReviewRequest>,
 ) -> Result<(StatusCode, Json<nekowriter_store::ReviewDelegationResult>), ApiError> {
     ensure_trusted_write_request(&headers, &state)?;
-    ensure_review_model_ready(&state).await?;
+    let project_id = state.store.project_id_for_review(review_id).await?;
+    ensure_review_model_ready(&state, project_id).await?;
     let delegation = state
         .store
         .delegate_review(
@@ -2010,8 +2053,9 @@ struct SaveProjectSettingsRequest {
     command_id: Uuid,
     #[serde(with = "decimal_i64")]
     expected_revision: i64,
-    #[serde(default)]
-    model_id: Option<String>,
+    /// 模型引用必须显式给出（`null` 表示清除覆盖）。缺少该字段会被拒绝，
+    /// 而不是当成「未覆盖」静默清空项目设置。
+    model: Option<ProjectModelReference>,
     thinking_level: ThinkingLevel,
     #[serde(with = "decimal_i64")]
     auxiliary_tool_budget: i64,
@@ -2206,7 +2250,7 @@ async fn save_project_settings(
                 request.command_id,
                 request.expected_revision,
                 NewProjectSettings {
-                    model_id: request.model_id,
+                    model: request.model,
                     thinking_level: request.thinking_level,
                     auxiliary_tool_budget: request.auxiliary_tool_budget,
                 },

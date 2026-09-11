@@ -15,9 +15,9 @@ use nekowriter_agent::{
     ContextFoldStage, ContextMessageRole, CurrentContextInput, PromptKey, RenderedBuiltinPrompt,
     UnfoldedStageMessage,
     provider::{
-        ChatCompletionsAdapter, ChatCompletionsConfig, ModelCapabilities, ModelCompletion,
-        ModelFailureCode, ModelRequest, ModelRequestMessage, ModelTimeouts, ModelToolCall,
-        ProviderError, StructuredOutput,
+        ChatCompletionsAdapter, ChatCompletionsConfig, ModelCompletion, ModelFailureCode,
+        ModelRequest, ModelRequestMessage, ModelTimeouts, ModelToolCall, ProviderError,
+        StructuredOutput,
     },
     runner::{
         AgentRoundOutcome, PhaseSubmission, PhaseSubmissionKind, ToolHost, ToolHostError,
@@ -26,8 +26,12 @@ use nekowriter_agent::{
 };
 use nekowriter_core::{
     ChapterId, ChapterKind, ChapterPlan, ChapterSummary, ExecutionStatus, FeedbackStatus,
-    PreparationArtifactKind, ReviewId, RunId, ThinkingLevel, VersionId, WorkflowSnapshot,
-    WorkflowStage,
+    PreparationArtifactKind, ReviewId, RunId, VersionId, WorkflowSnapshot, WorkflowStage,
+};
+
+use crate::model_settings::{
+    CapabilityProblem, ModelUse, capability_problem_message, pre_dispatch_capability_problem,
+    resolve_effective_model,
 };
 use nekowriter_store::{
     AgentMessageRole, AgentQuestionToolCall, AppliedAgentQuestionToolCall,
@@ -79,10 +83,10 @@ pub enum SchedulerError {
     Provider(#[from] ProviderError),
     #[error("当前稿本没有可用的系统写作模型设置")]
     MissingWritingModel,
-    #[error("当前写作模型不支持此阶段所需的结构化提交")]
-    StructuredOutputRequired,
-    #[error("项目设置的思考等级需要模型支持思考参数，但当前模型未标记支持思考")]
-    ThinkingUnsupported,
+    #[error("{0}")]
+    StructuredOutputRequired(String),
+    #[error("{0}")]
+    ThinkingUnsupported(String),
     #[error("准备阶段缺少小说目标")]
     MissingNovelBrief,
     #[error("模型上下文构建失败：{0}")]
@@ -547,26 +551,33 @@ impl WorkflowScheduler {
             .get_system_model_settings()
             .await?
             .ok_or(SchedulerError::MissingWritingModel)?;
-        if !settings.capabilities.structured_output {
-            return Err(SchedulerError::StructuredOutputRequired);
-        }
-        if !settings.capabilities.tools && !matches!(task.stage, ScheduledStage::Review { .. }) {
-            return Err(SchedulerError::Context(
-                "当前写作模型不支持 ask_user 所需的工具调用".to_owned(),
-            ));
-        }
         // 项目设置也在每次取得许可后重新解析：有效模型引用优先取项目覆盖，思考
         // 等级取项目设置。这样保存设置后的下一次请求自然按新值构建，而已 dispatch
         // 的请求快照不会被原地改写。
         let project_id = self.store.project_id_for_version(version_id).await?;
         let project_settings = self.store.get_project_settings(project_id).await?;
-        let effective_model_id = project_settings
-            .model_id
-            .clone()
-            .unwrap_or_else(|| settings.model_id.clone());
-        if project_settings.thinking_level != ThinkingLevel::Off && !settings.capabilities.thinking
-        {
-            return Err(SchedulerError::ThinkingUnsupported);
+        let effective = resolve_effective_model(&settings, &project_settings);
+        let use_case = if matches!(task.stage, ScheduledStage::Review { .. }) {
+            ModelUse::Review
+        } else {
+            ModelUse::Writing
+        };
+        // 能力资料必须与有效模型同源：项目可以引用另一个模型，那个模型的能力不能
+        // 用系统模型的资料代替。不满足时在 dispatch（封存请求与占用网络许可）之前
+        // 就失败，并且错误消息必须指明是哪个模型。
+        if let Some(problem) = pre_dispatch_capability_problem(
+            *effective.capabilities,
+            use_case,
+            project_settings.thinking_level,
+        ) {
+            let message = capability_problem_message(problem, &effective.describe());
+            return Err(match problem {
+                CapabilityProblem::StructuredOutput => {
+                    SchedulerError::StructuredOutputRequired(message)
+                }
+                CapabilityProblem::Tools => SchedulerError::Context(message),
+                CapabilityProblem::Thinking => SchedulerError::ThinkingUnsupported(message),
+            });
         }
         let api_key = match settings.credential_ref.clone() {
             Some(credential_ref) => Some(credentials::read_api_key(credential_ref).await?),
@@ -926,15 +937,9 @@ impl WorkflowScheduler {
         };
         let provider = ChatCompletionsAdapter::new(ChatCompletionsConfig::new(
             &settings.api_base_url,
-            effective_model_id.clone(),
+            effective.model_id.to_owned(),
             api_key,
-            ModelCapabilities {
-                streaming: settings.capabilities.streaming,
-                tools: settings.capabilities.tools,
-                structured_output: settings.capabilities.structured_output,
-                stream_usage: settings.capabilities.stream_usage,
-                thinking: settings.capabilities.thinking,
-            },
+            *effective.capabilities,
             ModelTimeouts::default(),
         )?)?;
         let mut context_snapshot = json!({
@@ -970,11 +975,18 @@ impl WorkflowScheduler {
                         "project": {
                             "id": project_id.to_string(),
                             "revision": project_settings.revision.to_string(),
-                            "modelOverrideId": project_settings.model_id,
+                            "modelOverrideId": project_settings
+                                .model
+                                .as_ref()
+                                .map(|model| model.model_id.clone()),
                             "thinkingLevel": project_settings.thinking_level.as_str(),
-                            "auxiliaryToolBudget": project_settings.auxiliary_tool_budget.to_string(),
+                            "auxiliaryToolBudget": project_settings
+                                .auxiliary_tool_budget
+                                .to_string(),
                         },
-                        "effectiveModelId": effective_model_id,
+                        "effectiveModelId": effective.model_id,
+                        "effectiveModelSource": effective.source.as_str(),
+                        "effectiveCapabilities": effective.capabilities,
                         "effectiveThinkingLevel": project_settings.thinking_level.as_str(),
                     }),
                     prompt_snapshot: serde_json::to_value(&prompt)?,
@@ -2217,13 +2229,14 @@ mod tests {
 
     use nekowriter_core::{
         ChapterKind, ChapterPlan, ChapterPlanDraft, ChapterStatus, ChapterSummary, ExecutionStatus,
-        FeedbackStatus, HumanReviewDecision, NewChapterGuidance, NewNovelBrief, NewProject,
-        PreparationArtifactInput, PreparationArtifactKind, UserQuestionAnswer, UserQuestionAnswers,
-        WorkflowStage,
+        FeedbackStatus, HumanReviewDecision, ModelCapabilityProfile, NewChapterGuidance,
+        NewNovelBrief, NewProject, NewProjectSettings, PreparationArtifactInput,
+        PreparationArtifactKind, ProjectModelReference, ThinkingLevel, UserQuestionAnswer,
+        UserQuestionAnswers, WorkflowStage,
     };
     use nekowriter_store::{
-        AgentMessageRole, AgentQuestionToolCall, ChapterBodyAgentToolCall, ModelCapabilityProfile,
-        ModelRequestStatus, NewModelRequest, NewSystemModelSettings,
+        AgentMessageRole, AgentQuestionToolCall, ChapterBodyAgentToolCall, ModelRequestStatus,
+        NewModelRequest, NewSystemModelSettings,
     };
     use serde_json::{Value, json};
     use tempfile::TempDir;
@@ -2380,6 +2393,260 @@ mod tests {
             .unwrap();
         assert!(request.starts_with("POST /v1/chat/completions HTTP/1.1"));
         assert!(request.contains("\"response_format\":{\"type\":\"json_object\"}"));
+    }
+
+    /// 建立一个已经进入准备阶段的 Run，并按给定能力保存系统模型与项目模型引用。
+    async fn capability_fixture(
+        base_url: String,
+        system_capabilities: ModelCapabilityProfile,
+        project_model: Option<ProjectModelReference>,
+        project_thinking_level: ThinkingLevel,
+    ) -> (TempDir, Store, VersionId, RunId) {
+        let data_dir = TempDir::new().unwrap();
+        let store = Store::open(data_dir.path()).await.unwrap();
+        store
+            .save_system_model_settings(
+                Uuid::new_v4(),
+                0,
+                NewSystemModelSettings {
+                    api_base_url: base_url,
+                    credential_ref: None,
+                    credential_fingerprint: None,
+                    model_id: "system-model".to_owned(),
+                    capabilities: system_capabilities,
+                    max_context_tokens: 32_768,
+                    reserved_output_tokens: 4_096,
+                },
+            )
+            .await
+            .unwrap();
+        let created = store
+            .create_project(
+                Uuid::new_v4(),
+                NewProject::new("能力归属", "项目引用的模型必须自带能力资料", None::<&str>)
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        store
+            .save_project_settings(
+                created.project.id,
+                Uuid::new_v4(),
+                0,
+                NewProjectSettings {
+                    model: project_model,
+                    thinking_level: project_thinking_level,
+                    auxiliary_tool_budget: 10,
+                },
+            )
+            .await
+            .unwrap();
+        store
+            .save_novel_brief(
+                created.version.id,
+                Uuid::new_v4(),
+                NewNovelBrief::new("写一个有关旧车站重逢的短篇小说").unwrap(),
+            )
+            .await
+            .unwrap();
+        let before_start = store
+            .get_version_snapshot(created.version.id)
+            .await
+            .unwrap()
+            .workflow;
+        let started = store
+            .start_preparation(
+                created.version.id,
+                Uuid::new_v4(),
+                before_start.state_revision,
+            )
+            .await
+            .unwrap();
+        (
+            data_dir,
+            store,
+            created.version.id,
+            started.workflow.active_run_id.unwrap(),
+        )
+    }
+
+    fn capability_profile(
+        tools: bool,
+        structured_output: bool,
+        thinking: bool,
+    ) -> ModelCapabilityProfile {
+        ModelCapabilityProfile {
+            streaming: true,
+            tools,
+            structured_output,
+            stream_usage: true,
+            thinking,
+        }
+    }
+
+    fn project_model(
+        model_id: &str,
+        capabilities: ModelCapabilityProfile,
+    ) -> ProjectModelReference {
+        ProjectModelReference {
+            model_id: model_id.to_owned(),
+            capabilities,
+        }
+    }
+
+    /// 项目引用的模型自己声明支持思考时，即使系统模型未声明，请求也必须照常发出。
+    #[tokio::test]
+    async fn project_model_override_uses_its_own_capabilities() {
+        let (base_url, request_receiver) = preparation_sse_server().await;
+        let (_data_dir, store, version_id, run_id) = capability_fixture(
+            base_url,
+            capability_profile(true, true, false),
+            Some(project_model(
+                "project-model",
+                capability_profile(true, true, true),
+            )),
+            ThinkingLevel::High,
+        )
+        .await;
+        let scheduler = WorkflowScheduler::new(
+            store.clone(),
+            Arc::new(Semaphore::new(1)),
+            Arc::new(Mutex::new(())),
+        );
+        let mut events = store.subscribe_events();
+        scheduler
+            .enqueue_preparation(version_id, run_id)
+            .await
+            .unwrap();
+
+        timeout(Duration::from_secs(5), async {
+            loop {
+                let _ = events.recv().await;
+                let snapshot = store.get_preparation_snapshot(version_id).await.unwrap();
+                if snapshot.workflow.execution == ExecutionStatus::WaitingReview {
+                    return snapshot;
+                }
+            }
+        })
+        .await
+        .expect("项目引用声明支持思考时，准备阶段应正常到达等待审核");
+
+        let requests = store.list_model_requests(run_id).await.unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].settings_snapshot["effectiveModelId"],
+            json!("project-model")
+        );
+        assert_eq!(
+            requests[0].settings_snapshot["effectiveModelSource"],
+            json!("project")
+        );
+        assert_eq!(
+            requests[0].settings_snapshot["effectiveCapabilities"]["thinking"],
+            json!(true)
+        );
+        let request = timeout(Duration::from_secs(2), request_receiver)
+            .await
+            .expect("适配器应向假服务发送请求")
+            .unwrap();
+        assert!(request.contains("\"model\":\"project-model\""));
+    }
+
+    /// 项目引用的模型未声明支持思考时，必须在 dispatch 之前被拒绝。
+    #[tokio::test]
+    async fn project_model_override_without_thinking_fails_before_dispatch() {
+        let (base_url, request_receiver) = preparation_sse_server().await;
+        let (_data_dir, store, version_id, run_id) = capability_fixture(
+            base_url,
+            capability_profile(true, true, true),
+            Some(project_model(
+                "project-model",
+                capability_profile(true, true, false),
+            )),
+            ThinkingLevel::High,
+        )
+        .await;
+        let scheduler = WorkflowScheduler::new(
+            store.clone(),
+            Arc::new(Semaphore::new(1)),
+            Arc::new(Mutex::new(())),
+        );
+        let error = dispatch_once(&scheduler, version_id, run_id)
+            .await
+            .unwrap_err();
+        let SchedulerError::ThinkingUnsupported(message) = &error else {
+            panic!("应因思考能力不足而拒绝，实际为 {error:?}");
+        };
+        assert!(
+            message.contains("project-model"),
+            "消息应指明是哪个模型：{message}"
+        );
+        assert!(store.list_model_requests(run_id).await.unwrap().is_empty());
+        assert!(
+            timeout(Duration::from_millis(200), request_receiver)
+                .await
+                .is_err(),
+            "被拒绝的请求不得发出任何网络调用"
+        );
+    }
+
+    /// 项目引用的模型未声明支持工具时，写作阶段必须在 dispatch 之前被拒绝。
+    #[tokio::test]
+    async fn project_model_override_without_tools_fails_before_dispatch() {
+        let (base_url, request_receiver) = preparation_sse_server().await;
+        let (_data_dir, store, version_id, run_id) = capability_fixture(
+            base_url,
+            capability_profile(true, true, true),
+            Some(project_model(
+                "project-model",
+                capability_profile(false, true, true),
+            )),
+            ThinkingLevel::Off,
+        )
+        .await;
+        let scheduler = WorkflowScheduler::new(
+            store.clone(),
+            Arc::new(Semaphore::new(1)),
+            Arc::new(Mutex::new(())),
+        );
+        let error = dispatch_once(&scheduler, version_id, run_id)
+            .await
+            .unwrap_err();
+        let SchedulerError::Context(message) = &error else {
+            panic!("应因缺少工具调用而拒绝，实际为 {error:?}");
+        };
+        assert!(
+            message.contains("project-model"),
+            "消息应指明是哪个模型：{message}"
+        );
+        assert!(store.list_model_requests(run_id).await.unwrap().is_empty());
+        assert!(
+            timeout(Duration::from_millis(200), request_receiver)
+                .await
+                .is_err(),
+            "被拒绝的请求不得发出任何网络调用"
+        );
+    }
+
+    /// 直接驱动一次模型请求启动，用于断言 dispatch 之前的拒绝行为。
+    async fn dispatch_once(
+        scheduler: &WorkflowScheduler,
+        version_id: VersionId,
+        run_id: RunId,
+    ) -> Result<(), SchedulerError> {
+        let (sender, _receiver) = mpsc::channel(1);
+        let permit = Arc::new(Semaphore::new(1)).acquire_owned().await.unwrap();
+        scheduler
+            .begin_model_request(
+                version_id,
+                ScheduledRun {
+                    run_id,
+                    stage: ScheduledStage::Preparation,
+                },
+                permit,
+                sender,
+            )
+            .await
     }
 
     #[tokio::test]

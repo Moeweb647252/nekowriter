@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
-import { CircleAlert, CircleCheck, RefreshCw, Save, SlidersHorizontal } from "lucide-react"
+import {
+  CircleAlert,
+  CircleCheck,
+  RefreshCw,
+  Save,
+  SlidersHorizontal,
+} from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -21,12 +27,15 @@ import {
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
+import { ModelCapabilitiesEditor } from "@/components/ModelCapabilitiesEditor"
 import {
   ApiError,
   createCommandId,
   getProjectSettings,
   getSystemSettings,
   saveProjectSettings,
+  testModelConnection,
+  type ModelCapabilityProfile,
   type ProjectSettings,
   type ThinkingLevel,
 } from "@/lib/api"
@@ -39,7 +48,9 @@ interface ProjectSettingsPanelProps {
 
 interface Draft {
   projectId: string
+  /** 空字符串表示沿用系统写作模型。 */
   modelId: string
+  capabilities: ModelCapabilityProfile
   thinkingLevel: ThinkingLevel
   auxiliaryToolBudget: string
   revision: string
@@ -49,6 +60,15 @@ type Notice =
   | { tone: "success"; message: string }
   | { tone: "error"; message: string }
   | null
+
+/** 系统设置尚未加载时的兜底能力，与系统面板的默认值保持同一份。 */
+const fallbackCapabilities: ModelCapabilityProfile = {
+  streaming: true,
+  tools: true,
+  structuredOutput: true,
+  streamUsage: true,
+  thinking: false,
+}
 
 const thinkingLevels: Array<{ value: ThinkingLevel; label: string }> = [
   { value: "off", label: "关闭（不发送思考参数）" },
@@ -63,7 +83,8 @@ const selectClass =
 function draftFor(projectId: string, settings: ProjectSettings): Draft {
   return {
     projectId,
-    modelId: settings.modelId ?? "",
+    modelId: settings.model?.modelId ?? "",
+    capabilities: settings.model?.capabilities ?? fallbackCapabilities,
     thinkingLevel: settings.thinkingLevel,
     auxiliaryToolBudget: settings.auxiliaryToolBudget,
     revision: settings.revision,
@@ -79,6 +100,10 @@ function messageFor(error: unknown, fallback: string) {
 /**
  * 项目级创作设置：模型引用、思考等级与辅助工具预算。
  *
+ * 模型引用是一个整体：模型 ID 与它自己的能力资料一起保存。切换模型 ID 会重置能力
+ * 声明（系统模型的声明只作为起点），因为另一张模型的能力不能沿用；「支持思考」还
+ * 必须对这个具体模型真的验证过一次，否则面板不会允许声明。
+ *
  * 草稿以「项目 id + 修订」为身份保存：切换项目时旧草稿自然失效，保存成功后回写
  * 服务端返回的修订，因此并发修订冲突会直接以提示呈现，而不是静默覆盖。
  */
@@ -87,9 +112,19 @@ export function ProjectSettingsPanel({
   refreshToken = 0,
 }: ProjectSettingsPanelProps) {
   const [draft, setDraft] = useState<Draft | null>(null)
-  const [thinkingSupported, setThinkingSupported] = useState<boolean | null>(
-    null
-  )
+  const [systemCapabilities, setSystemCapabilities] =
+    useState<ModelCapabilityProfile | null>(null)
+  /**
+   * 已通过连接测试确认过思考能力的项目模型：记录模型 ID 与被验证的能力资料。
+   *
+   * 用「模型 ID + 当时的能力资料」而不是布尔值，是为了让换模型 ID 自动使验证失效、
+   * 换回同一个模型 ID 又能沿用，同时不至于在重启后把已持久化的声明锁死。
+   */
+  const [verified, setVerified] = useState<{
+    modelId: string
+    capabilities: ModelCapabilityProfile
+  } | null>(null)
+  const [verifying, setVerifying] = useState(false)
   const [saving, setSaving] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
   const [refreshTick, setRefreshTick] = useState(0)
@@ -115,7 +150,16 @@ export function ProjectSettingsPanel({
     Promise.all([getProjectSettings(projectId), getSystemSettings()])
       .then(([settings, system]) => {
         if (!isCurrent) return
-        setThinkingSupported(system.writingModel?.capabilities.thinking ?? null)
+        setSystemCapabilities(system.writingModel?.capabilities ?? null)
+        // 已持久化的思考声明视为已验证，否则重启后开关会被锁死。
+        setVerified(
+          settings.model?.capabilities.thinking
+            ? {
+                modelId: settings.model.modelId,
+                capabilities: settings.model.capabilities,
+              }
+            : null
+        )
         if (projectChanged || !editRef.current) {
           setDraft(draftFor(projectId, settings))
           setIsDirty(false)
@@ -140,6 +184,46 @@ export function ProjectSettingsPanel({
     }
   }, [projectId, refreshToken, refreshTick])
 
+  /**
+   * 更换模型 ID 时重新确定能力声明。
+   *
+   * 从「无覆盖」切到某个模型时，以系统模型的声明为起点（同一服务上的模型通常相近），
+   * 用户仍可逐项修改；切回已验证的那个模型时恢复验证时的能力资料；其余情况一律
+   * 清除思考声明，因为它属于上一张模型。
+   */
+  function capabilitiesForModelChange(
+    nextModelId: string
+  ): ModelCapabilityProfile {
+    if (verified && verified.modelId === nextModelId)
+      return verified.capabilities
+    const base = systemCapabilities ?? fallbackCapabilities
+    return { ...base, thinking: false }
+  }
+
+  async function handleVerifyThinking() {
+    if (!draft) return
+    setVerifying(true)
+    setNotice(null)
+    const modelId = draft.modelId.trim()
+    const capabilities = { ...draft.capabilities, thinking: true }
+    try {
+      await testModelConnection({ modelId, capabilities })
+      setVerified({ modelId, capabilities })
+      setNotice({
+        tone: "success",
+        message: `模型 ${modelId} 接受了 reasoning_effort，现在可以声明支持思考并保存。`,
+      })
+    } catch (error) {
+      setVerified(null)
+      setNotice({
+        tone: "error",
+        message: messageFor(error, "思考能力验证失败"),
+      })
+    } finally {
+      setVerifying(false)
+    }
+  }
+
   async function handleSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!draft) return
@@ -154,7 +238,13 @@ export function ProjectSettingsPanel({
         draft.projectId,
         {
           expectedRevision: draft.revision,
-          modelId: trimmedModelId === "" ? null : trimmedModelId,
+          model:
+            trimmedModelId === ""
+              ? null
+              : {
+                  modelId: trimmedModelId,
+                  capabilities: draft.capabilities,
+                },
           thinkingLevel: draft.thinkingLevel,
           auxiliaryToolBudget: draft.auxiliaryToolBudget,
         },
@@ -174,10 +264,20 @@ export function ProjectSettingsPanel({
   }
 
   const activeDraft = draft && draft.projectId === projectId ? draft : null
+  const hasModelOverride =
+    activeDraft !== null && activeDraft.modelId.trim() !== ""
+  const thinkingVerified =
+    activeDraft !== null &&
+    verified !== null &&
+    verified.modelId === activeDraft.modelId.trim()
+  // 没有项目模型覆盖时，思考等级校验的是系统写作模型的能力。
+  const effectiveThinking = hasModelOverride
+    ? activeDraft.capabilities.thinking
+    : (systemCapabilities?.thinking ?? false)
   const thinkingBlocked =
     activeDraft !== null &&
     activeDraft.thinkingLevel !== "off" &&
-    thinkingSupported === false
+    !effectiveThinking
 
   return (
     <Card className="border border-border/80 bg-background/85 backdrop-blur">
@@ -237,19 +337,44 @@ export function ProjectSettingsPanel({
                   value={activeDraft.modelId}
                   onChange={(event) => {
                     const modelId = event.target.value
-                    updateDraft((current) => ({ ...current, modelId }))
+                    updateDraft((current) => ({
+                      ...current,
+                      modelId,
+                      capabilities: capabilitiesForModelChange(modelId.trim()),
+                    }))
                   }}
                   placeholder="留空则沿用系统写作模型"
                   autoComplete="off"
                   disabled={saving}
                 />
                 <FieldDescription>
-                  只有需要为该项目单独指定服务上的模型时才填写。
+                  只有需要为该项目单独指定服务上的模型时才填写。模型引用只换模型，
+                  服务地址与凭据仍来自系统设置。
                 </FieldDescription>
               </Field>
 
+              {hasModelOverride && (
+                <ModelCapabilitiesEditor
+                  idPrefix="project-model"
+                  value={activeDraft.capabilities}
+                  onChange={(capabilities) =>
+                    updateDraft((current) => ({ ...current, capabilities }))
+                  }
+                  disabled={saving}
+                  thinking={{
+                    verified: thinkingVerified,
+                    verifying,
+                    canVerify: !saving && !verifying,
+                    onVerify: () => void handleVerifyThinking(),
+                    blockedReason: null,
+                  }}
+                />
+              )}
+
               <Field>
-                <FieldLabel htmlFor="project-thinking-level">思考等级</FieldLabel>
+                <FieldLabel htmlFor="project-thinking-level">
+                  思考等级
+                </FieldLabel>
                 <select
                   id="project-thinking-level"
                   className={selectClass}
@@ -300,9 +425,11 @@ export function ProjectSettingsPanel({
               {thinkingBlocked && (
                 <Alert variant="destructive">
                   <CircleAlert aria-hidden="true" />
-                  <AlertTitle>系统写作模型不支持思考</AlertTitle>
+                  <AlertTitle>当前模型不支持思考</AlertTitle>
                   <AlertDescription>
-                    请先在「写作模型」中打开「支持思考」，否则下一次写作请求会因思考等级而失败。
+                    {hasModelOverride
+                      ? "项目引用的模型未声明支持思考。请为它验证并打开「支持思考」，或把思考等级设为关闭。"
+                      : "系统写作模型不支持思考。请先在「写作模型」中验证并打开「支持思考」，否则下一次写作请求会因思考等级而失败。"}
                   </AlertDescription>
                 </Alert>
               )}
@@ -320,7 +447,7 @@ export function ProjectSettingsPanel({
                   type="button"
                   variant="ghost"
                   onClick={() => setRefreshTick((tick) => tick + 1)}
-                  disabled={saving}
+                  disabled={saving || verifying}
                 >
                   <RefreshCw data-icon="inline-start" aria-hidden="true" />
                   重新载入

@@ -29,16 +29,13 @@ import {
 } from "@/components/ui/card"
 import {
   Field,
-  FieldContent,
   FieldDescription,
   FieldGroup,
   FieldLabel,
-  FieldLegend,
-  FieldSet,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
-import { Switch } from "@/components/ui/switch"
+import { ModelCapabilitiesEditor } from "@/components/ModelCapabilitiesEditor"
 import {
   ApiError,
   createCommandId,
@@ -114,8 +111,17 @@ export function ModelSettingsPanel({ refreshToken = 0 }: ModelSettingsPanelProps
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
+  const [verifying, setVerifying] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
   const [notice, setNotice] = useState<Notice>(null)
+  /**
+   * 已通过一次真的携带 `reasoning_effort` 的连接测试确认过支持思考的模型 ID。
+   *
+   * 用模型 ID 而不是布尔值来记录：换一个模型 ID 后旧验证自动失效，切换回同一个
+   * 模型 ID 时又能沿用。加载到已持久化的声明时直接以它为初值，否则重启后开关
+   * 会被锁死。
+   */
+  const [verifiedModelId, setVerifiedModelId] = useState<string | null>(null)
   const editRef = useRef(false)
   const saveCommandIdRef = useRef<string | null>(null)
 
@@ -136,6 +142,11 @@ export function ModelSettingsPanel({ refreshToken = 0 }: ModelSettingsPanelProps
       if (force || !editRef.current) {
         setDraft(draftFromSettings(response.writingModel))
         setApiKey("")
+        setVerifiedModelId(
+          response.writingModel?.capabilities.thinking
+            ? response.writingModel.modelId
+            : null
+        )
         setIsDirty(false)
         editRef.current = false
       }
@@ -196,14 +207,22 @@ export function ModelSettingsPanel({ refreshToken = 0 }: ModelSettingsPanelProps
   async function handleTest() {
     setTesting(true)
     setNotice(null)
+    const modelId = draft.modelId.trim()
     try {
-      const result = await testModelConnection()
+      const result = await testModelConnection({
+        modelId,
+        capabilities: draft.capabilities,
+      })
       const received = result.contentReceived
         ? "已收到模型响应"
         : "请求完成，但服务没有返回文本"
+      if (result.thinkingProbed) setVerifiedModelId(modelId)
+      const probed = result.thinkingProbed
+        ? "；已按声明携带 reasoning_effort，思考支持因此通过验证"
+        : ""
       setNotice({
         tone: "success",
-        message: `${received}；${formatUsage(result)}。`,
+        message: `${received}；${formatUsage(result)}${probed}。`,
       })
     } catch (error) {
       setNotice({
@@ -215,7 +234,41 @@ export function ModelSettingsPanel({ refreshToken = 0 }: ModelSettingsPanelProps
     }
   }
 
+  /**
+   * 验证当前模型是否真的接受 `reasoning_effort`。
+   *
+   * 与普通连接测试的区别是它总是带上思考参数：只有这样才能把「支持思考」从用户
+   * 的猜测变成实测过的声明。
+   */
+  async function handleVerifyThinking() {
+    setVerifying(true)
+    setNotice(null)
+    const modelId = draft.modelId.trim()
+    try {
+      await testModelConnection({
+        modelId,
+        capabilities: { ...draft.capabilities, thinking: true },
+      })
+      setVerifiedModelId(modelId)
+      setNotice({
+        tone: "success",
+        message: `模型 ${modelId} 接受了 reasoning_effort，现在可以声明支持思考并保存。`,
+      })
+    } catch (error) {
+      setVerifiedModelId(null)
+      setNotice({
+        tone: "error",
+        message:
+          error instanceof Error ? error.message : "思考能力验证失败",
+      })
+    } finally {
+      setVerifying(false)
+    }
+  }
+
   const canTest = !!settings && !isDirty && !saving && !loading
+  const thinkingVerified =
+    verifiedModelId !== null && verifiedModelId === draft.modelId.trim()
 
   return (
     <Card className="border border-border/80 bg-background/85 backdrop-blur">
@@ -289,12 +342,18 @@ export function ModelSettingsPanel({ refreshToken = 0 }: ModelSettingsPanelProps
                 required
                 maxLength={256}
                 value={draft.modelId}
-                onChange={(event) =>
+                onChange={(event) => {
+                  const modelId = event.target.value
                   updateDraft((current) => ({
                     ...current,
-                    modelId: event.target.value,
+                    modelId,
+                    // 换模型 ID 后旧的思考验证不再适用，该声明必须一并清除。
+                    capabilities:
+                      modelId.trim() === verifiedModelId
+                        ? current.capabilities
+                        : { ...current.capabilities, thinking: false },
                   }))
-                }
+                }}
                 placeholder="例如：gpt-5"
                 autoComplete="off"
                 disabled={loading || saving}
@@ -373,98 +432,23 @@ export function ModelSettingsPanel({ refreshToken = 0 }: ModelSettingsPanelProps
               </Field>
             </div>
 
-            <FieldSet>
-              <FieldLegend>模型能力</FieldLegend>
-              <FieldDescription>
-                写作流程会在发出请求前验证这些能力，避免把不兼容的配置当作可用服务。
-              </FieldDescription>
-              <Field orientation="horizontal" data-disabled={loading || saving || undefined}>
-                <Switch id="writing-model-streaming" checked disabled />
-                <FieldContent>
-                  <FieldLabel htmlFor="writing-model-streaming">流式响应</FieldLabel>
-                  <FieldDescription>写作请求必须支持流式输出。</FieldDescription>
-                </FieldContent>
-              </Field>
-              <Field orientation="horizontal" data-disabled={loading || saving || undefined}>
-                <Switch
-                  id="writing-model-tools"
-                  checked={draft.capabilities.tools}
-                  onCheckedChange={(tools) =>
-                    updateDraft((current) => ({
-                      ...current,
-                      capabilities: { ...current.capabilities, tools },
-                    }))
-                  }
-                  disabled={loading || saving}
-                />
-                <FieldContent>
-                  <FieldLabel htmlFor="writing-model-tools">工具调用</FieldLabel>
-                  <FieldDescription>允许模型调用受控的写作工具。</FieldDescription>
-                </FieldContent>
-              </Field>
-              <Field orientation="horizontal" data-disabled={loading || saving || undefined}>
-                <Switch
-                  id="writing-model-structured-output"
-                  checked={draft.capabilities.structuredOutput}
-                  onCheckedChange={(structuredOutput) =>
-                    updateDraft((current) => ({
-                      ...current,
-                      capabilities: {
-                        ...current.capabilities,
-                        structuredOutput,
-                      },
-                    }))
-                  }
-                  disabled={loading || saving}
-                />
-                <FieldContent>
-                  <FieldLabel htmlFor="writing-model-structured-output">
-                    结构化提交
-                  </FieldLabel>
-                  <FieldDescription>允许模型提交可验证的阶段产物。</FieldDescription>
-                </FieldContent>
-              </Field>
-              <Field orientation="horizontal" data-disabled={loading || saving || undefined}>
-                <Switch
-                  id="writing-model-stream-usage"
-                  checked={draft.capabilities.streamUsage}
-                  onCheckedChange={(streamUsage) =>
-                    updateDraft((current) => ({
-                      ...current,
-                      capabilities: { ...current.capabilities, streamUsage },
-                    }))
-                  }
-                  disabled={loading || saving}
-                />
-                <FieldContent>
-                  <FieldLabel htmlFor="writing-model-stream-usage">
-                    流式用量
-                  </FieldLabel>
-                  <FieldDescription>服务可在流结束时返回 Token 用量。</FieldDescription>
-                </FieldContent>
-              </Field>
-              <Field orientation="horizontal" data-disabled={loading || saving || undefined}>
-                <Switch
-                  id="writing-model-thinking"
-                  checked={draft.capabilities.thinking}
-                  onCheckedChange={(thinking) =>
-                    updateDraft((current) => ({
-                      ...current,
-                      capabilities: { ...current.capabilities, thinking },
-                    }))
-                  }
-                  disabled={loading || saving}
-                />
-                <FieldContent>
-                  <FieldLabel htmlFor="writing-model-thinking">
-                    支持思考
-                  </FieldLabel>
-                  <FieldDescription>
-                    确认该服务接受 reasoning_effort。项目设置里的思考等级生效前会校验此能力。
-                  </FieldDescription>
-                </FieldContent>
-              </Field>
-            </FieldSet>
+            <ModelCapabilitiesEditor
+              idPrefix="writing-model"
+              value={draft.capabilities}
+              onChange={(capabilities) =>
+                updateDraft((current) => ({ ...current, capabilities }))
+              }
+              disabled={loading || saving}
+              thinking={{
+                verified: thinkingVerified,
+                verifying,
+                canVerify: canTest,
+                onVerify: () => void handleVerifyThinking(),
+                blockedReason: isDirty
+                  ? "请先保存设置，验证会针对已保存的模型 ID 发出请求。"
+                  : null,
+              }}
+            />
 
             <div className="flex flex-wrap gap-2">
               <Button type="submit" disabled={loading || saving}>
@@ -479,7 +463,7 @@ export function ModelSettingsPanel({ refreshToken = 0 }: ModelSettingsPanelProps
                 type="button"
                 variant="outline"
                 onClick={handleTest}
-                disabled={!canTest || testing}
+                disabled={!canTest || testing || verifying}
               >
                 {testing ? (
                   <Spinner data-icon="inline-start" aria-hidden="true" />
@@ -492,7 +476,7 @@ export function ModelSettingsPanel({ refreshToken = 0 }: ModelSettingsPanelProps
                 type="button"
                 variant="ghost"
                 onClick={() => void loadSettings(true)}
-                disabled={loading || saving || testing}
+                disabled={loading || saving || testing || verifying}
               >
                 <RefreshCw data-icon="inline-start" aria-hidden="true" />
                 重新载入
@@ -505,7 +489,7 @@ export function ModelSettingsPanel({ refreshToken = 0 }: ModelSettingsPanelProps
       <CardFooter className="border-t text-xs leading-5 text-muted-foreground">
         {isDirty
           ? "有未保存的设置。保存后才能测试该配置。"
-          : "连接测试会实际请求所配置的模型，并显示服务报告的用量。"}
+          : "连接测试会实际请求所配置的模型并显示用量；「验证思考支持」会额外带上 reasoning_effort，只有验证通过才能声明支持思考。"}
       </CardFooter>
     </Card>
   )

@@ -9,7 +9,7 @@
 
 use nekowriter_core::{
     MAX_AUXILIARY_TOOL_BUDGET, MAX_PROJECT_MODEL_ID_LEN, NewProjectSettings, ProjectId,
-    ProjectSettings, utc_now_millis,
+    ProjectModelReference, ProjectSettings, utc_now_millis,
 };
 use sea_orm::{ActiveModelTrait, EntityTrait, IntoActiveModel, QueryFilter, Set, TransactionTrait};
 use serde::Serialize;
@@ -28,7 +28,7 @@ const SAVE_PROJECT_SETTINGS_METHOD: &str = "PUT";
 #[serde(rename_all = "camelCase")]
 struct SaveProjectSettingsPayload<'a> {
     expected_revision: i64,
-    model_id: Option<&'a str>,
+    model: Option<&'a ProjectModelReference>,
     thinking_level: nekowriter_core::ThinkingLevel,
     auxiliary_tool_budget: i64,
 }
@@ -71,7 +71,7 @@ impl Store {
         let target = format!("/api/projects/{project_id}/settings");
         let payload_hash = payload_hash(&SaveProjectSettingsPayload {
             expected_revision,
-            model_id: input.model_id.as_deref(),
+            model: input.model.as_ref(),
             thinking_level: input.thinking_level,
             auxiliary_tool_budget: input.auxiliary_tool_budget,
         })?;
@@ -108,7 +108,7 @@ impl Store {
                         .checked_add(1)
                         .ok_or_else(|| invalid_project_settings("项目设置修订已达到 i64 上限"))?;
                     let settings = ProjectSettings {
-                        model_id: input_for_transaction.model_id.clone(),
+                        model: input_for_transaction.model.clone(),
                         thinking_level: input_for_transaction.thinking_level,
                         auxiliary_tool_budget: input_for_transaction.auxiliary_tool_budget,
                         revision,
@@ -161,9 +161,9 @@ impl Store {
 fn normalize_new_project_settings(
     mut input: NewProjectSettings,
 ) -> Result<NewProjectSettings, StoreError> {
-    input.model_id = match input.model_id {
-        Some(model_id) => {
-            let model_id = model_id.trim().to_owned();
+    input.model = match input.model {
+        Some(model) => {
+            let model_id = model.model_id.trim().to_owned();
             if model_id.is_empty() {
                 // 空字符串与 `null` 在界面上是同一个选择：沿用系统默认模型。
                 None
@@ -171,8 +171,17 @@ fn normalize_new_project_settings(
                 return Err(invalid_project_settings(format!(
                     "项目模型 ID 必须为 1–{MAX_PROJECT_MODEL_ID_LEN} 个字符"
                 )));
+            } else if !model.capabilities.streaming || !model.capabilities.structured_output {
+                // 流式响应与结构化提交是每个模型请求的硬要求；在保存时就拒绝，
+                // 而不是等到 dispatch 才以指向系统模型的文案失败。
+                return Err(invalid_project_settings(
+                    "项目模型必须支持流式响应与结构化提交".to_owned(),
+                ));
             } else {
-                Some(model_id)
+                Some(ProjectModelReference {
+                    model_id,
+                    capabilities: model.capabilities,
+                })
             }
         }
         None => None,
@@ -194,7 +203,7 @@ fn project_settings_from_model(model: &project::Model) -> Result<ProjectSettings
         ..parsed
     };
     normalize_new_project_settings(NewProjectSettings {
-        model_id: settings.model_id.clone(),
+        model: settings.model.clone(),
         thinking_level: settings.thinking_level,
         auxiliary_tool_budget: settings.auxiliary_tool_budget,
     })?;
@@ -225,7 +234,7 @@ async fn insert_project_settings_event(
             "scope": "project",
             "project_id": project_id.to_string(),
             "revision": settings.revision.to_string(),
-            "model_id": settings.model_id.clone(),
+            "model": settings.model.clone(),
             "thinking_level": settings.thinking_level.as_str(),
             "auxiliary_tool_budget": settings.auxiliary_tool_budget.to_string(),
         }))?),
@@ -239,10 +248,29 @@ async fn insert_project_settings_event(
 
 #[cfg(test)]
 mod tests {
-    use nekowriter_core::{NewProject, ThinkingLevel};
+    use nekowriter_core::{
+        ModelCapabilityProfile, NewProject, ProjectModelReference, ThinkingLevel,
+    };
     use tempfile::TempDir;
 
     use super::*;
+
+    fn capabilities() -> ModelCapabilityProfile {
+        ModelCapabilityProfile {
+            streaming: true,
+            tools: true,
+            structured_output: true,
+            stream_usage: true,
+            thinking: false,
+        }
+    }
+
+    fn reference(model_id: &str) -> ProjectModelReference {
+        ProjectModelReference {
+            model_id: model_id.to_owned(),
+            capabilities: capabilities(),
+        }
+    }
 
     async fn store_with_project() -> (TempDir, Store, ProjectId) {
         let data_dir = TempDir::new().unwrap();
@@ -265,7 +293,7 @@ mod tests {
         assert_eq!(settings, ProjectSettings::default());
         assert_eq!(settings.auxiliary_tool_budget, 10);
         assert_eq!(settings.thinking_level, ThinkingLevel::Off);
-        assert_eq!(settings.model_id, None);
+        assert_eq!(settings.model, None);
         assert_eq!(settings.revision, 0);
     }
 
@@ -279,14 +307,17 @@ mod tests {
                 Uuid::new_v4(),
                 0,
                 NewProjectSettings {
-                    model_id: Some(" project-model ".to_owned()),
+                    model: Some(reference(" project-model ")),
                     thinking_level: ThinkingLevel::High,
                     auxiliary_tool_budget: 25,
                 },
             )
             .await
             .unwrap();
-        assert_eq!(saved.model_id.as_deref(), Some("project-model"));
+        assert_eq!(
+            saved.model.as_ref().map(|model| model.model_id.as_str()),
+            Some("project-model")
+        );
         assert_eq!(saved.thinking_level, ThinkingLevel::High);
         assert_eq!(saved.auxiliary_tool_budget, 25);
         assert_eq!(saved.revision, 1);
@@ -308,7 +339,7 @@ mod tests {
                 Uuid::new_v4(),
                 0,
                 NewProjectSettings {
-                    model_id: None,
+                    model: None,
                     thinking_level: ThinkingLevel::Off,
                     auxiliary_tool_budget: 0,
                 },
@@ -329,7 +360,7 @@ mod tests {
         let (_data_dir, store, project_id) = store_with_project().await;
         let command_id = Uuid::new_v4();
         let input = NewProjectSettings {
-            model_id: None,
+            model: None,
             thinking_level: ThinkingLevel::Medium,
             auxiliary_tool_budget: 5,
         };
@@ -349,7 +380,7 @@ mod tests {
                 Uuid::new_v4(),
                 1,
                 NewProjectSettings {
-                    model_id: None,
+                    model: None,
                     thinking_level: ThinkingLevel::Off,
                     auxiliary_tool_budget: -1,
                 },
@@ -364,7 +395,7 @@ mod tests {
                 Uuid::new_v4(),
                 1,
                 NewProjectSettings {
-                    model_id: None,
+                    model: None,
                     thinking_level: ThinkingLevel::Off,
                     auxiliary_tool_budget: MAX_AUXILIARY_TOOL_BUDGET + 1,
                 },
@@ -380,14 +411,164 @@ mod tests {
                 Uuid::new_v4(),
                 1,
                 NewProjectSettings {
-                    model_id: Some("   ".to_owned()),
+                    model: Some(reference("   ")),
                     thinking_level: ThinkingLevel::Off,
                     auxiliary_tool_budget: 5,
                 },
             )
             .await
             .unwrap();
-        assert_eq!(blank_model.model_id, None);
+        assert_eq!(blank_model.model, None);
+    }
+
+    #[tokio::test]
+    async fn project_model_reference_keeps_capabilities_and_rejects_unusable_ones() {
+        let (_data_dir, store, project_id) = store_with_project().await;
+        let saved = store
+            .save_project_settings(
+                project_id,
+                Uuid::new_v4(),
+                0,
+                NewProjectSettings {
+                    model: Some(ProjectModelReference {
+                        model_id: "project-model".to_owned(),
+                        capabilities: ModelCapabilityProfile {
+                            streaming: true,
+                            tools: false,
+                            structured_output: true,
+                            stream_usage: true,
+                            thinking: true,
+                        },
+                    }),
+                    thinking_level: ThinkingLevel::High,
+                    auxiliary_tool_budget: 10,
+                },
+            )
+            .await
+            .unwrap();
+        let model = saved.model.clone().expect("项目模型引用应被保存");
+        assert_eq!(model.model_id, "project-model");
+        assert!(model.capabilities.thinking);
+        assert!(!model.capabilities.tools);
+        // 读取路径必须带回同一份能力资料，否则解析出的有效模型会丢失声明。
+        assert_eq!(store.get_project_settings(project_id).await.unwrap(), saved);
+
+        // 不能流式或不能结构化提交的模型在保存时就被拒绝，而不是等到 dispatch。
+        for broken in [
+            ModelCapabilityProfile {
+                streaming: false,
+                ..capabilities()
+            },
+            ModelCapabilityProfile {
+                structured_output: false,
+                ..capabilities()
+            },
+        ] {
+            let error = store
+                .save_project_settings(
+                    project_id,
+                    Uuid::new_v4(),
+                    1,
+                    NewProjectSettings {
+                        model: Some(ProjectModelReference {
+                            model_id: "project-model".to_owned(),
+                            capabilities: broken,
+                        }),
+                        thinking_level: ThinkingLevel::Off,
+                        auxiliary_tool_budget: 10,
+                    },
+                )
+                .await
+                .unwrap_err();
+            assert!(matches!(error, StoreError::InvalidProjectSettings(_)));
+        }
+
+        // 超长模型 ID 被拒绝。
+        let overlong = store
+            .save_project_settings(
+                project_id,
+                Uuid::new_v4(),
+                1,
+                NewProjectSettings {
+                    model: Some(reference(&"m".repeat(MAX_PROJECT_MODEL_ID_LEN + 1))),
+                    thinking_level: ThinkingLevel::Off,
+                    auxiliary_tool_budget: 10,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(overlong, StoreError::InvalidProjectSettings(_)));
+
+        // `model: null` 清除覆盖，回到系统默认。
+        let cleared = store
+            .save_project_settings(
+                project_id,
+                Uuid::new_v4(),
+                1,
+                NewProjectSettings {
+                    model: None,
+                    thinking_level: ThinkingLevel::Off,
+                    auxiliary_tool_budget: 10,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(cleared.model, None);
+    }
+
+    #[tokio::test]
+    async fn project_settings_ignore_a_legacy_model_id_field() {
+        let (_data_dir, store, project_id) = store_with_project().await;
+        let model = project::Entity::find_by_id(db_id(project_id))
+            .one(&store.database)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut active = model.into_active_model();
+        // 旧格式只有模型 ID、没有能力资料；按项目约定不做回填，直接当作未覆盖。
+        active.settings_json = Set(json!({
+            "modelId": "legacy-model",
+            "thinkingLevel": "off",
+            "auxiliaryToolBudget": "10",
+        })
+        .to_string());
+        active.update(&store.database).await.unwrap();
+        assert_eq!(
+            store.get_project_settings(project_id).await.unwrap().model,
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn project_settings_command_identity_covers_capabilities() {
+        let (_data_dir, store, project_id) = store_with_project().await;
+        let command_id = Uuid::new_v4();
+        let input = |capabilities| NewProjectSettings {
+            model: Some(ProjectModelReference {
+                model_id: "project-model".to_owned(),
+                capabilities,
+            }),
+            thinking_level: ThinkingLevel::Off,
+            auxiliary_tool_budget: 10,
+        };
+        store
+            .save_project_settings(project_id, command_id, 0, input(capabilities()))
+            .await
+            .unwrap();
+        // 同一个命令 ID 携带不同的能力资料必须判为冲突，而不是当成重放。
+        let conflict = store
+            .save_project_settings(
+                project_id,
+                command_id,
+                0,
+                input(ModelCapabilityProfile {
+                    thinking: true,
+                    ..capabilities()
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(conflict, StoreError::IdempotencyConflict));
     }
 
     #[tokio::test]
