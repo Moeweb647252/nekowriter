@@ -1,0 +1,202 @@
+import { useEffect, useState, type FormEvent } from "react"
+import { BookOpenText, LoaderCircle, Play, Save } from "lucide-react"
+
+import { Button } from "@/components/ui/button"
+import {
+  getChapterGuidance,
+  getChapters,
+  getPreparation,
+  saveChapterGuidance,
+  startChapterOutline,
+  type ChapterSummary,
+  type PreparationSnapshot,
+} from "@/lib/api"
+
+type ChapterReadyPanelProps = {
+  versionId: string
+  preparation: PreparationSnapshot
+  onChanged: (snapshot: PreparationSnapshot) => void
+  onError: (message: string) => void
+}
+
+function chapterDisplayLabel(
+  chapter: ChapterSummary,
+  chapters: ChapterSummary[]
+) {
+  if (chapter.kind === "main") return `第${chapter.orderIndex}章`
+
+  const extraIndex = chapters
+    .filter((item) => item.kind === "extra")
+    .findIndex((item) => item.id === chapter.id)
+  return `番外 ${extraIndex + 1}`
+}
+
+export function ChapterReadyPanel({
+  versionId,
+  preparation,
+  onChanged,
+  onError,
+}: ChapterReadyPanelProps) {
+  const [chapter, setChapter] = useState<ChapterSummary | null>(null)
+  const [chapters, setChapters] = useState<ChapterSummary[]>([])
+  const [guidance, setGuidance] = useState("")
+  const [loading, setLoading] = useState(true)
+  const [pending, setPending] = useState<"save" | "start" | null>(null)
+
+  const chapterId = preparation.workflow.activeChapterId
+  const chapterIsReady = preparation.workflow.stage === "writing_chapter_ready"
+
+  useEffect(() => {
+    let isCurrent = true
+    if (!chapterId) {
+      setChapter(null)
+      setChapters([])
+      setLoading(false)
+      return () => {
+        isCurrent = false
+      }
+    }
+
+    setLoading(true)
+    Promise.all([getChapters(versionId), getChapterGuidance(chapterId)])
+      .then(([chapters, nextGuidance]) => {
+        if (!isCurrent) return
+        const selectedChapter =
+          chapters.find((item) => item.id === chapterId) ?? null
+        setChapters(chapters)
+        setChapter(selectedChapter)
+        setGuidance(nextGuidance.content ?? "")
+      })
+      .catch((error: unknown) => {
+        if (!isCurrent) return
+        onError(error instanceof Error ? error.message : "无法读取当前章节")
+      })
+      .finally(() => {
+        if (isCurrent) setLoading(false)
+      })
+
+    return () => {
+      isCurrent = false
+    }
+  }, [chapterId, onError, preparation.workflow.stateRevision, versionId])
+
+  async function refreshPreparation() {
+    onChanged(await getPreparation(versionId))
+  }
+
+  async function handleSave(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!chapterId) return
+    setPending("save")
+    try {
+      const saved = await saveChapterGuidance(
+        chapterId,
+        preparation.workflow.stateRevision,
+        guidance
+      )
+      setGuidance(saved.content ?? "")
+      await refreshPreparation()
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "章节指导未保存")
+    } finally {
+      setPending(null)
+    }
+  }
+
+  async function handleStart() {
+    if (!chapterId) return
+    setPending("start")
+    try {
+      await startChapterOutline(chapterId, preparation.workflow.stateRevision)
+      await refreshPreparation()
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "细纲任务未能启动")
+    } finally {
+      setPending(null)
+    }
+  }
+
+  return (
+    <section className="mt-6 rounded-2xl border border-border bg-background/75 p-5 shadow-sm">
+      <div className="flex items-start gap-3">
+        <BookOpenText
+          className="mt-0.5 size-5 text-primary"
+          aria-hidden="true"
+        />
+        <div>
+          <p className="text-xs font-semibold tracking-[0.14em] text-muted-foreground uppercase">
+            章节指导
+          </p>
+          <h2 className="mt-1 text-xl font-semibold">
+            {loading
+              ? "正在读取章节…"
+              : chapter
+                ? `${chapterDisplayLabel(chapter, chapters)} · ${chapter.title}`
+                : "当前章节不可用"}
+          </h2>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+            指导可以留空；保存后会成为本章细纲 Run
+            的固定输入快照，不能在运行中被悄悄替换。
+          </p>
+        </div>
+      </div>
+
+      {chapter && (
+        <p className="mt-4 rounded-xl border border-primary/15 bg-primary/5 px-4 py-3 text-sm leading-6 text-muted-foreground">
+          <span className="font-medium text-foreground">
+            {chapter.kind === "extra" ? "新增番外：" : "计划章节："}
+          </span>{" "}
+          {chapter.title}
+          。细纲任务启动后会进入本地队列，并在取得模型许可时封存最新设置与已审核的阶段上下文。
+        </p>
+      )}
+
+      {chapterIsReady ? (
+        <form className="mt-4" onSubmit={handleSave}>
+          <label className="block text-sm font-medium">
+            本章指导
+            <textarea
+              value={guidance}
+              onChange={(event) => setGuidance(event.target.value)}
+              maxLength={20_000}
+              placeholder="可写本章想突出的情节、节奏、人物情绪、必须避免的内容；留空也可以开始。"
+              disabled={!chapterId || pending !== null}
+              className="mt-1.5 min-h-32 w-full resize-y rounded-xl border border-input bg-background px-3 py-2 text-sm leading-6 transition outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-3 focus:ring-ring/20 disabled:cursor-not-allowed disabled:opacity-60"
+            />
+          </label>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button type="submit" disabled={!chapterId || pending !== null}>
+              {pending === "save" ? (
+                <LoaderCircle className="animate-spin" aria-hidden="true" />
+              ) : (
+                <Save aria-hidden="true" />
+              )}
+              保存指导
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!chapterId || pending !== null}
+              onClick={() => void handleStart()}
+            >
+              {pending === "start" ? (
+                <LoaderCircle className="animate-spin" aria-hidden="true" />
+              ) : (
+                <Play aria-hidden="true" />
+              )}
+              开始细纲
+            </Button>
+          </div>
+        </form>
+      ) : (
+        <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/7 px-4 py-3 text-sm leading-6 text-muted-foreground">
+          <LoaderCircle
+            className="mr-2 inline size-4 animate-spin text-amber-700"
+            aria-hidden="true"
+          />
+          细纲任务已进入本地队列。模型在取得全局许可后会开始请求；若请求失败，界面会保留这份指导并开放手动细纲提交。
+        </div>
+      )}
+    </section>
+  )
+}

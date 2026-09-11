@@ -1,0 +1,49 @@
+[workspace]
+members = [
+    "crates/nekowriter-core",
+    "crates/nekowriter-agent",
+    "crates/nekowriter-store",
+    "crates/nekowriter-app",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT"
+authors = ["NekoWriter contributors"]
+
+[workspace.dependencies]
+arrow-array = "58.0.0"
+arrow-schema = "58.0.0"
+axum = "0.8.9"
+clap = { version = "4.5.54", features = ["derive"] }
+directories = "6.0.0"
+fs4 = "1.1.0"
+futures-util = "0.3.31"
+keyring = { version = "4.2.0", default-features = false, features = ["v1"] }
+# 0.38.0 的默认特性组合存在 job.rs 引用 `Error::Http` 而未编译该枚举变体的
+# 上游编译问题；启用 remote 仅修复该 crate 的编译特性闭包，应用仍只使用本地路径。
+lancedb = { version = "0.38.0", features = ["remote"] }
+sea-orm = { version = "2.0.2", default-features = false, features = ["macros", "entity-registry", "runtime-tokio-rustls", "sqlx-sqlite", "with-json", "with-uuid"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+sha2 = "0.10.9"
+tempfile = "3.23.0"
+thiserror = "2.0.17"
+tokio = { version = "1.53.1", features = ["io-util", "macros", "rt-multi-thread", "signal", "net", "sync", "time"] }
+tower-http = { version = "0.6.8", features = ["fs", "trace"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+url = "2.5.7"
+uuid = { version = "1.18.1", features = ["serde", "v4"] }
+reqwest = { version = "0.12.28", default-features = false, features = ["json", "stream", "rustls-tls"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"

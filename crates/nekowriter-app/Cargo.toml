@@ -1,0 +1,37 @@
+[package]
+name = "nekowriter-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "nekowriter"
+path = "src/main.rs"
+
+[dependencies]
+nekowriter-agent = { path = "../nekowriter-agent" }
+nekowriter-core = { path = "../nekowriter-core" }
+nekowriter-store = { path = "../nekowriter-store" }
+axum.workspace = true
+clap.workspace = true
+directories.workspace = true
+fs4.workspace = true
+futures-util.workspace = true
+keyring.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
