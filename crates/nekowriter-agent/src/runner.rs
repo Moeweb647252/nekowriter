@@ -502,6 +502,7 @@ mod tests {
         AgentToolDefinition, ContextMessageRole,
         provider::{ModelCapabilities, ModelRequestMessage},
     };
+    use nekowriter_core::ThinkingLevel;
 
     #[derive(Clone)]
     struct StubProvider {
@@ -515,6 +516,7 @@ mod tests {
                 tools: true,
                 structured_output: true,
                 stream_usage: true,
+                thinking: false,
             }
         }
 
@@ -535,6 +537,7 @@ mod tests {
             }],
             tools,
             response_format: None,
+            thinking_level: ThinkingLevel::Off,
         }
     }
 

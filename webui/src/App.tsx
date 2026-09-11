@@ -17,18 +17,24 @@ import {
 } from "lucide-react"
 
 import { PreparationPanel } from "@/components/PreparationPanel"
+import { ChapterDirectory } from "@/components/ChapterDirectory"
+import { ChapterReader } from "@/components/ChapterReader"
 import { ChapterReadyPanel } from "@/components/ChapterReadyPanel"
 import { ChapterOutlinePanel } from "@/components/ChapterOutlinePanel"
 import { ChapterBodyPanel } from "@/components/ChapterBodyPanel"
 import { ModelSettingsPanel } from "@/components/ModelSettingsPanel"
+import { ProjectSettingsPanel } from "@/components/ProjectSettingsPanel"
+import { PromptSettingsPanel } from "@/components/PromptSettingsPanel"
 import { VersionPanel } from "@/components/VersionPanel"
 import { Button } from "@/components/ui/button"
 import {
   createProject,
+  getChapters,
   getPreparation,
   getHealth,
   getVersionSnapshot,
   listProjects,
+  type ChapterSummary,
   type HealthResponse,
   type PreparationSnapshot,
   type PersistedEvent,
@@ -101,6 +107,11 @@ export function App() {
     "idle" | "connecting" | "connected" | "reconnecting"
   >("idle")
   const [settingsRefreshToken, setSettingsRefreshToken] = useState(0)
+  const [chapters, setChapters] = useState<ChapterSummary[]>([])
+  const [browsed, setBrowsed] = useState<{
+    versionId: string
+    chapterId: string
+  } | null>(null)
   const seenPersistentEventSequences = useRef(new Set<string>())
   const [projectName, setProjectName] = useState("")
   const [novelTitle, setNovelTitle] = useState("")
@@ -174,6 +185,36 @@ export function App() {
     [projects, selectedProjectId]
   )
   const selectedVersionId = selectedProject?.selectedVersion.id ?? null
+
+  // 目录需要与工作流一起前进：章节状态、编号和新增番外都会改变这个列表。
+  const chaptersRevision = preparation?.workflow.stateRevision ?? null
+  useEffect(() => {
+    let isCurrent = true
+    const request: Promise<ChapterSummary[]> = selectedVersionId
+      ? getChapters(selectedVersionId)
+      : Promise.resolve([])
+    request
+      .then((items) => {
+        if (isCurrent) setChapters(items)
+      })
+      .catch(() => {
+        if (isCurrent) setChapters([])
+      })
+    return () => {
+      isCurrent = false
+    }
+  }, [selectedVersionId, chaptersRevision])
+
+  // 浏览目标以稿本为键，切换稿本时自然失效，不需要额外的重置副作用。
+  const browsedChapterId =
+    browsed && browsed.versionId === selectedVersionId
+      ? browsed.chapterId
+      : null
+
+  const browsedChapter = useMemo(
+    () => chapters.find((chapter) => chapter.id === browsedChapterId) ?? null,
+    [chapters, browsedChapterId]
+  )
 
   const applyPreparationSnapshot = useCallback((next: PreparationSnapshot) => {
     setPreparation((current) =>
@@ -528,6 +569,16 @@ export function App() {
                     Agent 的纯文本折叠结果。
                   </p>
                 </div>
+                {browsedChapter && (
+                  <ChapterReader
+                    chapter={browsedChapter}
+                    activeChapterId={
+                      preparation?.workflow.activeChapterId ?? null
+                    }
+                    onBackToActive={() => setBrowsed(null)}
+                    onError={setError}
+                  />
+                )}
                 <VersionPanel
                   project={selectedProject.project}
                   selectedVersion={selectedProject.selectedVersion}
@@ -576,6 +627,18 @@ export function App() {
           </div>
 
           <aside className="space-y-6">
+            {selectedProject && chapters.length > 0 && (
+              <ChapterDirectory
+                chapters={chapters}
+                activeChapterId={preparation?.workflow.activeChapterId ?? null}
+                browsedChapterId={browsedChapterId}
+                onSelect={(chapterId) =>
+                  setBrowsed(
+                    selectedVersionId ? { versionId: selectedVersionId, chapterId } : null
+                  )
+                }
+              />
+            )}
             <div className="rounded-2xl border border-border bg-background/85 p-5 shadow-sm backdrop-blur">
               <div className="flex items-center gap-2">
                 <span className="flex size-8 items-center justify-center rounded-xl bg-primary text-primary-foreground">
@@ -635,6 +698,14 @@ export function App() {
               </form>
             </div>
             <ModelSettingsPanel refreshToken={settingsRefreshToken} />
+            <ProjectSettingsPanel
+              projectId={selectedProject?.project.id ?? null}
+              refreshToken={settingsRefreshToken}
+            />
+            <PromptSettingsPanel
+              projectId={selectedProject?.project.id ?? null}
+              refreshToken={settingsRefreshToken}
+            />
           </aside>
         </section>
       </div>

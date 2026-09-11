@@ -17,7 +17,7 @@ use crate::{
     SCHEMA_VERSION, StoreError,
     entity::{
         application_metadata, chapter, document, document_revision, event, feedback, model_request,
-        novel_version, project, question, review, run, tool_call,
+        novel_version, project, prompt_override, question, review, run, tool_call,
     },
     transaction_error,
 };
@@ -179,6 +179,27 @@ async fn create_sqlite_indexes<C: ConnectionTrait>(connection: &C) -> Result<(),
             .table(document_revision::Entity)
             .col(document_revision::Column::DocumentId)
             .col((document_revision::Column::RevisionNo, IndexOrder::Desc))
+            .to_owned(),
+        Index::create()
+            .name("uq_prompt_overrides_system_key")
+            .table(prompt_override::Entity)
+            .col(prompt_override::Column::Scope)
+            .col(prompt_override::Column::PromptKey)
+            .unique()
+            .and_where(
+                Expr::col((prompt_override::Entity, prompt_override::Column::ProjectId)).is_null(),
+            )
+            .to_owned(),
+        Index::create()
+            .name("uq_prompt_overrides_project_key")
+            .table(prompt_override::Entity)
+            .col(prompt_override::Column::ProjectId)
+            .col(prompt_override::Column::PromptKey)
+            .unique()
+            .and_where(
+                Expr::col((prompt_override::Entity, prompt_override::Column::ProjectId))
+                    .is_not_null(),
+            )
             .to_owned(),
         Index::create()
             .name("idx_runs_active_version")

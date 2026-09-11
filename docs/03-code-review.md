@@ -22,7 +22,7 @@
 | M0 本地骨架 | ~95% | ~95% | 无变化。仍差启动时打开浏览器、`logs/` 日志落地 |
 | M1 最小写作闭环 | ~60% | **~90%** | **上次最大的硬阻塞（F1）已解决**：`WorkflowScheduler` 已在 `main.rs` 完整接线，每稿本命令循环 + 全局并发 1 + 额度管理 + 设置/凭据端点均已实现。仅差真实外部模型烟测验收 |
 | M2 交互正确性 | ~10% | **~65%** | 提案门控、暂停/恢复、意见批次、幂等回执、SSE 游标、中断恢复和额度续授已接通；四类审核均可委托为无工具子 Run，支持取消、重启恢复和重复回调保护。引用 UI、前端 SSE 重连验证与完整竞态矩阵仍待完成 |
-| M3 完整创作流程 | ~30% | **~60%** | 多章计划、自动正文、稿本新建/复制/选择、完本和番外路径已接通。仍缺自由跨章导航、动态项目设置与提示词覆盖 |
+| M3 完整创作流程 | ~30% | **~85%** | 多章计划、自动正文、稿本新建/复制/选择、完本和番外路径已接通；自由跨章导航、提示词覆盖与动态项目设置均已落地。仍缺真实模型下的多章到完本/番外验收 |
 | M4 知识与管理 | ~5% | ~5% | 无变化。仅 LanceDB 连接存在；知识 CRUD、Embedding、检索、模板、Dashboard 未动 |
 | M5 本地交付 | ~10% | ~10% | 无变化。长文虚拟化、回收站、导出、退出流程、发行包未做 |
 
@@ -41,7 +41,7 @@
 | F7 | 25 张表仅建 13 张 | 维持。符合分期；未核对新表数量 |
 | F8 | 数据目录双重 NekoWriter | 未复核 |
 | F9 | nightly 工具链未固定日期 | 未复核（`rust-toolchain.toml` 仍存在） |
-| F10 | 项目不是 Git 仓库 | ⚠️ **仍未解决**。`git status` 报告全部文件未跟踪、无任何提交 |
+| F10 | 项目不是 Git 仓库 | ✅ **已解决**。已以 `feat: 初始化 NekoWriter MVP` 建立首个提交（140 个文件），`.DS_Store` 等系统文件未纳入 |
 | F11–F13 | 正文整文档替换性能等 | 未复核 |
 
 ## 4. 各里程碑剩余工作明细
@@ -75,6 +75,71 @@
 4. **初始化 Git 仓库并提交**——当前所有工作（含 84 个测试）无版本控制保护，风险随代码量增长而放大。
 5. **M4 起步**——在 M1–M3 稳定后按方案推进知识/检索。
 
-## 6. 与上次审查报告的差异说明
+## 6. 2026-09-11 增量更新：提示词覆盖与跨章浏览
 
-本报告替换了上一版 `docs/03-code-review.md`（该文件在会话之间已被删除）。上一版的 13 项发现中：F1/F2/F4/F5 已解决，F3/F6/F10 仍然成立，其余未复核。代码量显著增长（如 `store/preparation.rs` 约 1,100 → 9,000+ 行，新增 `app/scheduler.rs`）；本次补齐审核委托后，测试从 54 增至 84。
+本次增量在 M3 上落地了两块能力，并修复了两个会阻断整个工作区构建的既有缺陷。
+
+### 6.1 修复的构建阻断缺陷（本次之前无法编译）
+
+| 编号 | 缺陷 | 影响 | 修复 |
+| --- | --- | --- | --- |
+| F14（高） | `nekowriter-core` 在库代码里使用 `serde_json::Number`，但 `serde_json` 只声明在 `[dev-dependencies]` | 任何把 core 当依赖构建的目标（`cargo build`、`cargo check -p nekowriter-store`、发行包）都无法编译 | 把 `serde_json` 提升为 `nekowriter-core` 的常规依赖 |
+| F15（高） | `store/preparation.rs` 调用 `review_confidence_from_model` 四次，但该函数不存在 | `nekowriter-store` 无法编译 | 新增该辅助函数：把 `Option<f64>` 还原为 `Option<serde_json::Number>`，NaN/无穷值按损坏记录拒绝 |
+
+### 6.2 新增实现
+
+- **内建提示词覆盖**（`prompt_overrides` 表、`SCHEMA_VERSION` 20 → 21）：系统级与项目级各保存一对 system/user，空字符串是合法的实际空内容，重置即删除行；乐观并发修订、命令回执与 `settings.changed` 事件与覆盖同事务提交。
+- **三级解析与请求快照**：调度器在每次请求构建时按「项目覆盖 → 系统覆盖 → 代码内建」解析（`app/src/prompts.rs` 是唯一实现），并把 `prompt.key` / `prompt.source` 写进 `context_snapshot`。
+- **目录、变量说明与预览**：`GET /api/prompts/system`、`/api/projects/{id}/prompts`、`PUT|DELETE /api/prompts/system/{key}`、`PUT|DELETE /api/projects/{id}/prompts/{key}`、`POST /api/prompts/preview`；变量元数据新增类型与来源，预览用示例值渲染。
+- **跨章浏览与导航**：`ChapterDirectory` 列出全部章节与状态，`ChapterReader` 只读地展示任意章节的指导/细纲/已提交正文，选中后滚动到视口并给出「回到写作章」；浏览不发出任何写作命令，浏览目标以稿本为键，切换稿本即失效。
+
+### 6.3 本次实测
+
+| 验证项 | 结果 |
+| --- | --- |
+| `cargo test --workspace` | ✅ 88 个测试全部通过（agent 22 / app 20 / core 15 / store 31，含新增的 4 个提示词覆盖测试） |
+| `cargo fmt --all -- --check` | ✅ 通过（顺带修正了此次之前已存在的格式漂移） |
+| `cargo clippy --workspace --all-targets` | ⚠️ 无新增诊断；新增的 3 个文件零警告，既有 pedantic 警告仍在 |
+| `pnpm lint` | ⚠️ 与基线一致：9 条既有诊断，本次新增文件零诊断 |
+| `tsc -b && vite build` | ✅ 成功 |
+| HTTP 冒烟（真实进程 + curl） | ✅ 目录 10 条、覆盖保存 200/修订 1、过期修订 409、未知变量 422、项目覆盖生效、预览渲染示例值、重置 removed=true、回退到 `builtin`、`/chapters` 返回 `[]` |
+
+### 6.4 更新后的剩余工作
+
+- **M3 尾巴**：用真实模型验证多章计划 → 完本 → 番外的完整路径（见第 8 节）。
+- **M2 尾巴**：引用 UI；前端 EventSource 重连验证；§15 竞态矩阵。
+- **M4 / M5**：与上一版结论一致，尚未开始。
+- **测试缺口**：跨章浏览尚无自动化用例（需要可驱动 `api` 的假模型或 Playwright），长篇虚拟化属于 M5。
+
+## 7. 与上次审查报告的差异说明
+
+本报告替换了上一版 `docs/03-code-review.md`（该文件在会话之间已被删除）。上一版的 13 项发现中：F1/F2/F4/F5/F10 已解决，F3/F6 仍然成立，其余未复核。代码量显著增长（如 `store/preparation.rs` 约 1,100 → 9,000+ 行，新增 `app/scheduler.rs`）；补齐审核委托后测试从 54 增至 84，两次增量（提示词覆盖与跨章浏览、项目级设置）后增至 92。构建阻断项记为 F14/F15，详见第 6 节。
+
+## 8. 2026-09-11 增量更新：项目级设置
+
+本次增量把 M3 的最后一块「动态项目设置」接通：模型引用、思考等级与辅助工具预算。
+
+### 8.1 实现
+
+- **领域类型**（`nekowriter-core`）：新增 `ThinkingLevel`（`Off`/`Low`/`Medium`/`High`）与 `ProjectSettings` / `NewProjectSettings`。字段级缺省是真实语义：早先写入的 `{}` 或缺失字段解析为同一默认值（预算 10、思考 `Off`、模型 `None`），而不是损坏记录。
+- **持久化**（`store/project_settings.rs`）：内容存入 `projects.settings_json`，`projects.settings_revision` 独立于项目实体修订 —— 保存设置不会让正在进行的稿本切换命令意外过期。读取、保存、校验（模型 ID 长度、预算 0–10000、空白模型 ID 等价于沿用默认）、命令回执重放、`IDEMPOTENCY_CONFLICT` 与 `settings.changed` 事件均沿用既有模式。
+- **API**：`GET /api/projects/{project_id}/settings`、`PUT /api/projects/{project_id}/settings`。写入与系统设置共用 `settings_write_lock`，并使用 `ensure_trusted_write_request`；越界返回 422 `INVALID_PROJECT_SETTINGS`，过期修订返回 409 `REVISION_CONFLICT`。
+- **调度器重建**：每次取得模型许可后重新读取项目设置，解析「项目覆盖 → 系统默认」的有效模型 ID，并把系统设置修订、项目设置修订、`modelOverrideId`、`thinkingLevel`、`auxiliaryToolBudget`、`effectiveModelId`、`effectiveThinkingLevel` 写进 `settings_snapshot`。思考等级经 `ModelRequest.thinking_level` 映射为 `reasoning_effort`；项目指定了思考等级而系统能力未声明 `thinking` 时，在发请求前返回 `ThinkingUnsupported`，不静默忽略。
+- **能力资料**：`ModelCapabilityProfile` 新增 `thinking`（缺省 `false`，表示未经验证），系统模型设置面板新增「支持思考」开关。
+- **界面**：新增 `ProjectSettingsPanel`，编辑模型引用、思考等级与预算；草稿以「项目 id + 修订」为身份，切换项目即失效，保存回写服务端修订，修订冲突以提示呈现；当思考等级非 `Off` 而系统模型未声明思考支持时，面板直接给出阻断提示。
+
+### 8.2 已知边界
+
+辅助工具预算目前只做到「持久化 + 暴露 + 写入请求快照」，**尚未实际扣减**：仓库里还没有任何辅助工具（知识检索属于 M4），因此没有可记账的主体。这不影响 M3 的退出标准，但预算的实际语义要等 M4 的检索工具接入后才完整。
+
+### 8.3 本次实测
+
+| 验证项 | 结果 |
+| --- | --- |
+| `cargo test --workspace` | ✅ 92 个测试全部通过（agent 22 / app 20 / core 15 / store 35，含 4 个新增项目设置测试） |
+| `cargo fmt --all -- --check` | ✅ 通过 |
+| `cargo clippy --workspace --all-targets` | ✅ 新增/修改文件的告警已收敛（`prompts.rs` 另修 3 处）；仅剩与既有代码同类的「函数过长」等结构性告警 |
+| `tsc -b && vite build` | ✅ 成功 |
+| HTTP 冒烟（真实进程 + curl） | ✅ 默认值 `{modelId:null,thinkingLevel:"off",auxiliaryToolBudget:"10",revision:"0"}`；保存返回修订 1；同命令重放 200 且不重复计修订；过期修订 409；预算 10001 返回 422；同命令异载荷返回 `IDEMPOTENCY_CONFLICT`；非可信 Origin 403；未知项目 404 |
+
+未做真实浏览器渲染验证：当前环境无法让后台进程跨工具调用存活（`BACKGROUND` 不可用，`nohup … &` 的命令组在调用结束时被回收），因此无法注册并查看实时预览。面板的正确性由 `tsc`/`vite build` 通过、API 冒烟与源码通读共同保证；真实渲染仍建议在本机 `pnpm dev` 下人工确认一次。

@@ -12,7 +12,7 @@ use std::{
 };
 
 use futures_util::{StreamExt, future::BoxFuture};
-use nekowriter_core::decimal_i64;
+use nekowriter_core::{ThinkingLevel, decimal_i64};
 use reqwest::{Client, header};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -39,6 +39,12 @@ pub struct ModelCapabilities {
     pub tools: bool,
     pub structured_output: bool,
     pub stream_usage: bool,
+    /// 是否接受显式思考参数（`reasoning_effort`）。
+    ///
+    /// 缺省为 `false`：较早保存的能力资料没有这个字段，此时按“未经验证”处理，
+    /// 而不是把未知能力当作可用。
+    #[serde(default)]
+    pub thinking: bool,
 }
 
 /// 模型网络调用的三个独立超时。
@@ -193,6 +199,10 @@ pub struct ModelRequest {
     pub messages: Vec<ModelRequestMessage>,
     pub tools: Vec<super::AgentToolDefinition>,
     pub response_format: Option<StructuredOutput>,
+    /// 本次请求要求模型使用的思考等级。由项目设置解析而来，因此每次请求都会
+    /// 按当时的项目设置重新构建。
+    #[serde(default)]
+    pub thinking_level: ThinkingLevel,
 }
 
 impl ModelRequest {
@@ -205,6 +215,7 @@ impl ModelRequest {
             messages: messages.into_iter().map(Into::into).collect(),
             tools,
             response_format: None,
+            thinking_level: ThinkingLevel::Off,
         }
     }
 }
@@ -475,6 +486,11 @@ impl ChatCompletionsAdapter {
                 capability: "structured_output",
             });
         }
+        if request.thinking_level != ThinkingLevel::Off && !self.config.capabilities.thinking {
+            return Err(ProviderError::CapabilityMismatch {
+                capability: "thinking",
+            });
+        }
 
         let mut payload = json!({
             "model": self.config.model,
@@ -499,6 +515,12 @@ impl ChatCompletionsAdapter {
             object.insert(
                 "response_format".to_owned(),
                 serialize_response_format(response_format)?,
+            );
+        }
+        if request.thinking_level != ThinkingLevel::Off {
+            object.insert(
+                "reasoning_effort".to_owned(),
+                Value::String(request.thinking_level.as_str().to_owned()),
             );
         }
         Ok(payload)
@@ -1376,6 +1398,7 @@ mod tests {
             tools: true,
             structured_output: true,
             stream_usage: true,
+            thinking: true,
         }
     }
 
@@ -1514,6 +1537,7 @@ mod tests {
                 }),
             }],
             response_format: None,
+            thinking_level: ThinkingLevel::Off,
         };
         let completion = adapter(&base_url).complete(&model_request).await.unwrap();
 
@@ -1562,6 +1586,7 @@ mod tests {
             }],
             tools: Vec::new(),
             response_format: None,
+            thinking_level: ThinkingLevel::Off,
         };
         let error = adapter("http://127.0.0.1:11434/v1")
             .request_payload(&request)
@@ -1591,6 +1616,7 @@ mod tests {
                 parameters: json!({ "type": "object" }),
             }],
             response_format: None,
+            thinking_level: ThinkingLevel::Off,
         };
         assert!(matches!(
             adapter.request_payload(&request),

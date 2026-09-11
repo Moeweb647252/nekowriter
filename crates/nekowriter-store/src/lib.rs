@@ -24,9 +24,9 @@ use thiserror::Error;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-/// 20 adds copied context folds to persisted workflow snapshots. 旧格式不能安全反序列化
-/// 为当前合同，因此按项目约定拒绝打开而不尝试迁移。
-pub const SCHEMA_VERSION: u32 = 20;
+/// 21 新增内建提示词的系统级与项目级覆盖。旧格式不能安全反序列化为当前合同，
+/// 因此按项目约定拒绝打开而不尝试迁移。
+pub const SCHEMA_VERSION: u32 = 21;
 const CREATE_PROJECT_METHOD: &str = "POST";
 const CREATE_PROJECT_TARGET: &str = "/api/projects";
 const CREATE_VERSION_METHOD: &str = "POST";
@@ -42,6 +42,8 @@ pub(crate) mod entity;
 mod event_log;
 mod model_requests;
 mod preparation;
+mod project_settings;
+mod prompts;
 mod schema;
 mod settings;
 mod version_copy;
@@ -59,6 +61,7 @@ pub use preparation::{
     MaterializedChapterBodyFeedback, QuestionAnswerResult, ReviewDelegationResult,
     StopWritingRunResult,
 };
+pub use prompts::{NewPromptOverride, PromptOverride, PromptOverrideReset, PromptOverrideScope};
 pub use settings::{
     ModelCapabilityProfile, NewSystemModelSettings, SYSTEM_WRITING_MODEL_KEY, SystemModelSettings,
 };
@@ -157,6 +160,14 @@ pub enum StoreError {
     Workflow(#[from] nekowriter_core::WorkflowTransitionError),
     #[error("command_id 已用于不同请求")]
     IdempotencyConflict,
+    #[error("提示词覆盖无效：{0}")]
+    InvalidPromptOverride(String),
+    #[error("提示词覆盖修订冲突：请求基于 {expected}，当前为 {actual}")]
+    PromptOverrideRevisionConflict { expected: i64, actual: i64 },
+    #[error("项目设置无效：{0}")]
+    InvalidProjectSettings(String),
+    #[error("项目设置修订冲突：请求基于 {expected}，当前为 {actual}")]
+    ProjectSettingsRevisionConflict { expected: i64, actual: i64 },
     #[error("持久化数据损坏：{0}")]
     CorruptRecord(String),
     #[error("序列化失败：{0}")]
@@ -209,6 +220,26 @@ impl Store {
     #[must_use]
     pub fn lance(&self) -> &lancedb::Connection {
         &self.lance
+    }
+
+    /// 返回某个稿本所属的项目。
+    ///
+    /// 项目级提示词覆盖以项目为作用域；调度器在构建请求时必须能由稿本解析出它
+    /// 所属的项目，才能应用项目覆盖。
+    ///
+    /// # Errors
+    ///
+    /// 稿本不存在或已删除时返回 [`StoreError::VersionNotFound`]。
+    pub async fn project_id_for_version(
+        &self,
+        version_id: VersionId,
+    ) -> Result<ProjectId, StoreError> {
+        novel_version::Entity::find_by_id(db_id(version_id))
+            .filter(novel_version::Entity::COLUMN.deleted_at.is_null())
+            .one(&self.database)
+            .await?
+            .map(|model| model.project_id.into())
+            .ok_or(StoreError::VersionNotFound)
     }
 
     pub async fn list_projects(&self) -> Result<Vec<ProjectListItem>, StoreError> {
@@ -534,7 +565,11 @@ impl Store {
                         });
                     }
                     let version_model = novel_version::Entity::find_by_id(db_id(version_id))
-                        .filter(novel_version::Entity::COLUMN.project_id.eq(db_id(project_id)))
+                        .filter(
+                            novel_version::Entity::COLUMN
+                                .project_id
+                                .eq(db_id(project_id)),
+                        )
                         .filter(novel_version::Entity::COLUMN.deleted_at.is_null())
                         .one(transaction)
                         .await?
@@ -928,9 +963,10 @@ mod tests {
     use lancedb::query::{ExecutableQuery, QueryBase};
     use nekowriter_core::{
         AppendChapterContent, ChapterPlanDraft, ExecutionStatus, HumanReviewDecision,
-        MAX_CONSECUTIVE_PROTOCOL_ERRORS, NewChapterGuidance, NewChapterOutline, NewCopiedNovelVersion,
-        NewExtraChapter, NewNovelBrief, NewNovelVersion, NewProject, PreparationArtifactInput,
-        PreparationArtifactKind, ReplaceChapterContent, ReviewStatus, RunWaitReason, WorkflowStage,
+        MAX_CONSECUTIVE_PROTOCOL_ERRORS, NewChapterGuidance, NewChapterOutline,
+        NewCopiedNovelVersion, NewExtraChapter, NewNovelBrief, NewNovelVersion, NewProject,
+        PreparationArtifactInput, PreparationArtifactKind, ReplaceChapterContent, ReviewStatus,
+        RunWaitReason, WorkflowStage,
     };
     use sea_orm::{EntityTrait, ModelTrait};
     use serde_json::json;
@@ -1099,6 +1135,7 @@ mod tests {
                 tools: true,
                 structured_output: true,
                 stream_usage: true,
+                thinking: true,
             },
             max_context_tokens: 32_768,
             reserved_output_tokens: 4_096,
@@ -2940,8 +2977,14 @@ mod tests {
         assert_eq!(copied.workflow.active_run_id, None);
         let copied_chapters = store.list_chapters(copied.version.id).await.unwrap();
         assert_eq!(copied_chapters.len(), 2);
-        assert_eq!(copied_chapters[0].status, nekowriter_core::ChapterStatus::Approved);
-        assert_eq!(copied_chapters[1].status, nekowriter_core::ChapterStatus::Planned);
+        assert_eq!(
+            copied_chapters[0].status,
+            nekowriter_core::ChapterStatus::Approved
+        );
+        assert_eq!(
+            copied_chapters[1].status,
+            nekowriter_core::ChapterStatus::Planned
+        );
         assert_eq!(
             copied.workflow.active_chapter_id,
             Some(copied_chapters[1].id)
@@ -3110,7 +3153,10 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(extra_ready.workflow.stage, WorkflowStage::WritingChapterReady);
+        assert_eq!(
+            extra_ready.workflow.stage,
+            WorkflowStage::WritingChapterReady
+        );
         let replayed_extra = store
             .add_extra_chapter(
                 version_id,
@@ -3131,11 +3177,7 @@ mod tests {
         assert_eq!(extra.order_index, 3);
         assert_eq!(extra.plan_item_id, None);
         assert_eq!(
-            store
-                .get_chapter_guidance(extra.id)
-                .await
-                .unwrap()
-                .content,
+            store.get_chapter_guidance(extra.id).await.unwrap().content,
             None
         );
 
@@ -3144,8 +3186,7 @@ mod tests {
                 extra.id,
                 Uuid::new_v4(),
                 extra_ready.workflow.state_revision,
-                NewChapterGuidance::new("让林舟在雨停后回到旧码头，确认来信人的身份。")
-                    .unwrap(),
+                NewChapterGuidance::new("让林舟在雨停后回到旧码头，确认来信人的身份。").unwrap(),
             )
             .await
             .unwrap();
@@ -3184,8 +3225,7 @@ mod tests {
                 extra.id,
                 Uuid::new_v4(),
                 extra_drafting.workflow.state_revision,
-                AppendChapterContent::new("雨停时，林舟在旧码头读完了最后一封信。")
-                    .unwrap(),
+                AppendChapterContent::new("雨停时，林舟在旧码头读完了最后一封信。").unwrap(),
             )
             .await
             .unwrap();
@@ -3339,8 +3379,7 @@ mod tests {
                     .unwrap(),
                 ],
                 Some(vec![
-                    ChapterPlanDraft::new("雨夜来客", "林舟在码头收到匿名报纸。")
-                        .unwrap(),
+                    ChapterPlanDraft::new("雨夜来客", "林舟在码头收到匿名报纸。").unwrap(),
                 ]),
             )
             .await
@@ -3521,8 +3560,7 @@ mod tests {
             .save_novel_brief(
                 version_id,
                 Uuid::new_v4(),
-                NewNovelBrief::new("写一部围绕雨夜车站和失踪信件展开的悬疑小说。")
-                    .unwrap(),
+                NewNovelBrief::new("写一部围绕雨夜车站和失踪信件展开的悬疑小说。").unwrap(),
             )
             .await
             .unwrap();
@@ -3558,8 +3596,7 @@ mod tests {
                     .unwrap(),
                 ],
                 Some(vec![
-                    ChapterPlanDraft::new("末班车", "沈宁在雨夜车站收到一封旧信。")
-                        .unwrap(),
+                    ChapterPlanDraft::new("末班车", "沈宁在雨夜车站收到一封旧信。").unwrap(),
                 ]),
             )
             .await
@@ -3589,18 +3626,13 @@ mod tests {
                 chapter_id,
                 Uuid::new_v4(),
                 snapshot.workflow.state_revision,
-                NewChapterGuidance::new("让沈宁先辨认旧信上的车站印章。")
-                    .unwrap(),
+                NewChapterGuidance::new("让沈宁先辨认旧信上的车站印章。").unwrap(),
             )
             .await
             .unwrap();
         let ready = store.get_preparation_snapshot(version_id).await.unwrap();
         let outline_started = store
-            .start_chapter_outline(
-                chapter_id,
-                Uuid::new_v4(),
-                ready.workflow.state_revision,
-            )
+            .start_chapter_outline(chapter_id, Uuid::new_v4(), ready.workflow.state_revision)
             .await
             .unwrap();
         let outline_content = "1. 沈宁辨认旧信上的车站印章。\n2. 她在候车室发现姐姐留下的胶卷。\n3. 末班车鸣笛，迫使她决定是否追上寄信人。";
@@ -3709,7 +3741,10 @@ mod tests {
         let pending = store.get_chapter_body(chapter_id).await.unwrap();
         assert_eq!(pending.workflow.stage, WorkflowStage::WritingDrafting);
         assert_eq!(pending.workflow.execution, ExecutionStatus::WaitingReview);
-        assert_eq!(pending.workflow.active_run_id, approve_required.active_run_id);
+        assert_eq!(
+            pending.workflow.active_run_id,
+            approve_required.active_run_id
+        );
         let proposal = pending.pending_proposal.as_ref().unwrap();
         let edit_review = pending.pending_proposal_review.as_ref().unwrap();
         assert_eq!(edit_review.status, ReviewStatus::Open);

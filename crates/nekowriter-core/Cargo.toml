@@ -8,11 +8,10 @@ authors.workspace = true
 
 [dependencies]
 serde.workspace = true
+# 审核快照以 serde_json::Number 保存置信度，因此这是库依赖而非仅测试依赖。
+serde_json.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
-
-[dev-dependencies]
-serde_json.workspace = true
 
 [lints]
 workspace = true

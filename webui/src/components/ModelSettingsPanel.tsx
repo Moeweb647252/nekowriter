@@ -77,6 +77,8 @@ const defaultDraft: SettingsDraft = {
     tools: true,
     structuredOutput: true,
     streamUsage: true,
+    // 思考支持需要实际验证后才能声明，缺省为未验证。
+    thinking: false,
   },
 }
 
@@ -439,6 +441,27 @@ export function ModelSettingsPanel({ refreshToken = 0 }: ModelSettingsPanelProps
                     流式用量
                   </FieldLabel>
                   <FieldDescription>服务可在流结束时返回 Token 用量。</FieldDescription>
+                </FieldContent>
+              </Field>
+              <Field orientation="horizontal" data-disabled={loading || saving || undefined}>
+                <Switch
+                  id="writing-model-thinking"
+                  checked={draft.capabilities.thinking}
+                  onCheckedChange={(thinking) =>
+                    updateDraft((current) => ({
+                      ...current,
+                      capabilities: { ...current.capabilities, thinking },
+                    }))
+                  }
+                  disabled={loading || saving}
+                />
+                <FieldContent>
+                  <FieldLabel htmlFor="writing-model-thinking">
+                    支持思考
+                  </FieldLabel>
+                  <FieldDescription>
+                    确认该服务接受 reasoning_effort。项目设置里的思考等级生效前会校验此能力。
+                  </FieldDescription>
                 </FieldContent>
               </Field>
             </FieldSet>

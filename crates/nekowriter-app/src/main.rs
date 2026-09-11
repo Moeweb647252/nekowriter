@@ -9,6 +9,7 @@ use std::{
 };
 
 mod credentials;
+mod prompts;
 mod scheduler;
 
 use axum::{
@@ -26,22 +27,26 @@ use directories::ProjectDirs;
 use fs4::{FileExt, TryLockError};
 use futures_util::stream;
 use nekowriter_agent::{
-    ContextMessageRole, capabilities,
+    ContextMessageRole, PromptTemplateError, capabilities,
     provider::{
         ChatCompletionsAdapter, ChatCompletionsConfig, ModelCapabilities, ModelRequest,
         ModelRequestMessage, ModelTimeouts, ProviderError,
     },
+    validate_builtin_prompt_pair,
 };
 use nekowriter_core::{
     AppendChapterContent, ApprovalMode, ChapterBodyEditError, ChapterId, ChapterPlanDraft,
     ExecutionStatus, FeedbackCitation, HumanReviewDecision, NewChapterGuidance, NewChapterOutline,
     NewCopiedNovelVersion, NewExtraChapter, NewNovelBrief, NewNovelVersion, NewProject,
-    PreparationArtifactInput,
-    PreparationArtifactKind, PreparationSnapshot, ProjectBundle, ProjectId, ProjectListItem,
-    ReplaceChapterContent, ReviewId, UserQuestionAnswers, ValidationError, VersionId,
-    VersionSnapshot, WorkflowSnapshot, WorkflowStage, decimal_i64,
+    NewProjectSettings, PreparationArtifactInput, PreparationArtifactKind, PreparationSnapshot,
+    ProjectBundle, ProjectId, ProjectListItem, ProjectSettings, ReplaceChapterContent, ReviewId,
+    ThinkingLevel, UserQuestionAnswers, ValidationError, VersionId, VersionSnapshot,
+    WorkflowSnapshot, WorkflowStage, decimal_i64,
 };
-use nekowriter_store::{EventStreamBounds, PersistedEvent, Store, StoreError};
+use nekowriter_store::{
+    EventStreamBounds, NewPromptOverride, PersistedEvent, PromptOverride, PromptOverrideReset,
+    PromptOverrideScope, Store, StoreError,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -431,11 +436,19 @@ enum ApiError {
     UntrustedHost,
     UntrustedOrigin,
     NotFound,
+    PromptTemplate(PromptTemplateError),
+    UnknownPromptKey(String),
 }
 
 impl From<ValidationError> for ApiError {
     fn from(value: ValidationError) -> Self {
         Self::Validation(value)
+    }
+}
+
+impl From<PromptTemplateError> for ApiError {
+    fn from(value: PromptTemplateError) -> Self {
+        Self::PromptTemplate(value)
     }
 }
 
@@ -566,6 +579,48 @@ impl IntoResponse for ApiError {
                 "INVALID_CITATION",
                 "引用无法对应当前可验证文本".to_owned(),
                 json!({ "reason": message }),
+            ),
+            Self::Store(StoreError::InvalidPromptOverride(message)) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "INVALID_PROMPT_OVERRIDE",
+                message.clone(),
+                json!({ "reason": message }),
+            ),
+            Self::Store(StoreError::PromptOverrideRevisionConflict { expected, actual }) => (
+                StatusCode::CONFLICT,
+                "REVISION_CONFLICT",
+                "提示词覆盖已经变化，请刷新后重试".to_owned(),
+                json!({
+                    "expected_revision": expected.to_string(),
+                    "actual_revision": actual.to_string(),
+                }),
+            ),
+            Self::Store(StoreError::InvalidProjectSettings(message)) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "INVALID_PROJECT_SETTINGS",
+                message.clone(),
+                json!({ "reason": message }),
+            ),
+            Self::Store(StoreError::ProjectSettingsRevisionConflict { expected, actual }) => (
+                StatusCode::CONFLICT,
+                "REVISION_CONFLICT",
+                "项目设置已经变化，请刷新后重试".to_owned(),
+                json!({
+                    "expected_revision": expected.to_string(),
+                    "actual_revision": actual.to_string(),
+                }),
+            ),
+            Self::PromptTemplate(error) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "INVALID_PROMPT_TEMPLATE",
+                error.to_string(),
+                json!({ "reason": error.to_string() }),
+            ),
+            Self::UnknownPromptKey(prompt_key) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "UNKNOWN_PROMPT_KEY",
+                "请求的内建提示词键不在当前目录中".to_owned(),
+                json!({ "prompt_key": prompt_key }),
             ),
             Self::Store(StoreError::QuestionAlreadyAnswered) => (
                 StatusCode::CONFLICT,
@@ -769,6 +824,10 @@ fn router(state: AppState, web_dir: PathBuf) -> Router {
         .route("/projects", get(list_projects).post(create_project))
         .route("/projects/{project_id}", get(get_project))
         .route(
+            "/projects/{project_id}/settings",
+            get(get_project_settings).put(save_project_settings),
+        )
+        .route(
             "/projects/{project_id}/versions",
             get(list_versions).post(create_version),
         )
@@ -851,6 +910,17 @@ fn router(state: AppState, web_dir: PathBuf) -> Router {
         .route("/events", get(stream_events))
         .route("/versions/{version_id}/preparation", get(get_preparation))
         .route("/versions/{version_id}/brief", put(save_novel_brief))
+        .route("/prompts/system", get(get_system_prompts))
+        .route(
+            "/prompts/system/{prompt_key}",
+            put(save_system_prompt_override).delete(reset_system_prompt_override),
+        )
+        .route("/prompts/preview", axum::routing::post(preview_prompt))
+        .route("/projects/{project_id}/prompts", get(get_project_prompts))
+        .route(
+            "/projects/{project_id}/prompts/{prompt_key}",
+            put(save_project_prompt_override).delete(reset_project_prompt_override),
+        )
         .route(
             "/versions/{version_id}/preparation/start",
             axum::routing::post(start_preparation),
@@ -1038,6 +1108,7 @@ async fn test_model_connection(
             tools: settings.capabilities.tools,
             structured_output: settings.capabilities.structured_output,
             stream_usage: settings.capabilities.stream_usage,
+            thinking: settings.capabilities.thinking,
         },
         ModelTimeouts::default(),
     )?;
@@ -1056,7 +1127,9 @@ async fn test_model_connection(
         ],
         tools: Vec::new(),
         response_format: None,
+        thinking_level: ThinkingLevel::Off,
     };
+
     // 系统设置测试与写作 Agent 共用同一个全局许可，避免用户在测试连接时绕开
     // “全局最多一个模型网络请求”的约束。
     let _permit = state
@@ -1929,6 +2002,217 @@ async fn copy_version(
         .copy_version(version_id, request.command_id, input)
         .await?;
     Ok((StatusCode::CREATED, Json(bundle)))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveProjectSettingsRequest {
+    command_id: Uuid,
+    #[serde(with = "decimal_i64")]
+    expected_revision: i64,
+    #[serde(default)]
+    model_id: Option<String>,
+    thinking_level: ThinkingLevel,
+    #[serde(with = "decimal_i64")]
+    auxiliary_tool_budget: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SavePromptOverrideRequest {
+    command_id: Uuid,
+    #[serde(with = "decimal_i64")]
+    expected_revision: i64,
+    system: String,
+    user: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ResetPromptOverrideRequest {
+    command_id: Uuid,
+    #[serde(with = "decimal_i64")]
+    expected_revision: i64,
+}
+
+async fn get_system_prompts(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<prompts::PromptCatalogEntry>>, ApiError> {
+    Ok(Json(prompts::prompt_catalog(&state.store, None).await?))
+}
+
+async fn get_project_prompts(
+    State(state): State<AppState>,
+    AxumPath(project_id): AxumPath<ProjectId>,
+) -> Result<Json<Vec<prompts::PromptCatalogEntry>>, ApiError> {
+    Ok(Json(
+        prompts::prompt_catalog(&state.store, Some(project_id)).await?,
+    ))
+}
+
+/// 保存覆盖前先按受限模板语言校验，拒绝未知变量与缺失的必需占位符。
+async fn save_prompt_override_command(
+    state: &AppState,
+    headers: &HeaderMap,
+    scope: PromptOverrideScope,
+    project_id: Option<ProjectId>,
+    prompt_key: &str,
+    request: SavePromptOverrideRequest,
+) -> Result<Json<PromptOverride>, ApiError> {
+    ensure_trusted_write_request(headers, state)?;
+    let key = prompts::parse_prompt_key(prompt_key)?;
+    validate_builtin_prompt_pair(key, &request.system, &request.user)?;
+    Ok(Json(
+        state
+            .store
+            .save_prompt_override(
+                request.command_id,
+                request.expected_revision,
+                NewPromptOverride {
+                    prompt_key: key.as_str().to_owned(),
+                    scope,
+                    project_id,
+                    system: request.system,
+                    user: request.user,
+                },
+            )
+            .await?,
+    ))
+}
+
+async fn reset_prompt_override_command(
+    state: &AppState,
+    headers: &HeaderMap,
+    scope: PromptOverrideScope,
+    project_id: Option<ProjectId>,
+    prompt_key: &str,
+    request: ResetPromptOverrideRequest,
+) -> Result<Json<PromptOverrideReset>, ApiError> {
+    ensure_trusted_write_request(headers, state)?;
+    let key = prompts::parse_prompt_key(prompt_key)?;
+    Ok(Json(
+        state
+            .store
+            .reset_prompt_override(
+                request.command_id,
+                request.expected_revision,
+                scope,
+                project_id,
+                key.as_str(),
+            )
+            .await?,
+    ))
+}
+
+async fn save_system_prompt_override(
+    State(state): State<AppState>,
+    AxumPath(prompt_key): AxumPath<String>,
+    headers: HeaderMap,
+    Json(request): Json<SavePromptOverrideRequest>,
+) -> Result<Json<PromptOverride>, ApiError> {
+    save_prompt_override_command(
+        &state,
+        &headers,
+        PromptOverrideScope::System,
+        None,
+        &prompt_key,
+        request,
+    )
+    .await
+}
+
+async fn reset_system_prompt_override(
+    State(state): State<AppState>,
+    AxumPath(prompt_key): AxumPath<String>,
+    headers: HeaderMap,
+    Json(request): Json<ResetPromptOverrideRequest>,
+) -> Result<Json<PromptOverrideReset>, ApiError> {
+    reset_prompt_override_command(
+        &state,
+        &headers,
+        PromptOverrideScope::System,
+        None,
+        &prompt_key,
+        request,
+    )
+    .await
+}
+
+async fn save_project_prompt_override(
+    State(state): State<AppState>,
+    AxumPath((project_id, prompt_key)): AxumPath<(ProjectId, String)>,
+    headers: HeaderMap,
+    Json(request): Json<SavePromptOverrideRequest>,
+) -> Result<Json<PromptOverride>, ApiError> {
+    save_prompt_override_command(
+        &state,
+        &headers,
+        PromptOverrideScope::Project,
+        Some(project_id),
+        &prompt_key,
+        request,
+    )
+    .await
+}
+
+async fn reset_project_prompt_override(
+    State(state): State<AppState>,
+    AxumPath((project_id, prompt_key)): AxumPath<(ProjectId, String)>,
+    headers: HeaderMap,
+    Json(request): Json<ResetPromptOverrideRequest>,
+) -> Result<Json<PromptOverrideReset>, ApiError> {
+    reset_prompt_override_command(
+        &state,
+        &headers,
+        PromptOverrideScope::Project,
+        Some(project_id),
+        &prompt_key,
+        request,
+    )
+    .await
+}
+
+async fn preview_prompt(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<prompts::PreviewPromptRequest>,
+) -> Result<Json<prompts::PreviewPromptResponse>, ApiError> {
+    ensure_trusted_write_request(&headers, &state)?;
+    Ok(Json(prompts::preview_prompt(&state.store, request).await?))
+}
+
+async fn get_project_settings(
+    State(state): State<AppState>,
+    AxumPath(project_id): AxumPath<ProjectId>,
+) -> Result<Json<ProjectSettings>, ApiError> {
+    Ok(Json(state.store.get_project_settings(project_id).await?))
+}
+
+/// 项目设置写入与系统设置共用同一把短锁：调度器在读取有效设置到封存请求快照之间
+/// 持有它，保存命令不会夹在中间，已 dispatch 的快照也不会被原地改写。
+async fn save_project_settings(
+    State(state): State<AppState>,
+    AxumPath(project_id): AxumPath<ProjectId>,
+    headers: HeaderMap,
+    Json(request): Json<SaveProjectSettingsRequest>,
+) -> Result<Json<ProjectSettings>, ApiError> {
+    ensure_trusted_write_request(&headers, &state)?;
+    let _guard = state.settings_write_lock.lock().await;
+    Ok(Json(
+        state
+            .store
+            .save_project_settings(
+                project_id,
+                request.command_id,
+                request.expected_revision,
+                NewProjectSettings {
+                    model_id: request.model_id,
+                    thinking_level: request.thinking_level,
+                    auxiliary_tool_budget: request.auxiliary_tool_budget,
+                },
+            )
+            .await?,
+    ))
 }
 
 async fn api_not_found() -> ApiError {

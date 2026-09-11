@@ -30,6 +30,11 @@ pub struct ModelCapabilityProfile {
     pub tools: bool,
     pub structured_output: bool,
     pub stream_usage: bool,
+    /// 是否通过实际连接测试确认模型接受显式思考参数。
+    ///
+    /// 缺省为 `false`：较早保存的能力资料没有该字段时按“未经验证”处理。
+    #[serde(default)]
+    pub thinking: bool,
 }
 
 /// 已持久化的系统写作模型设置。
@@ -419,6 +424,7 @@ mod tests {
                 tools: true,
                 structured_output: true,
                 stream_usage: true,
+                thinking: true,
             },
             max_context_tokens: 32_768,
             reserved_output_tokens: 4_096,

@@ -18,6 +18,7 @@ pub mod feedback;
 pub mod model_request;
 pub mod novel_version;
 pub mod project;
+pub mod prompt_override;
 pub mod question;
 pub mod review;
 pub mod revision_dependency;

@@ -5,7 +5,7 @@
 
 use std::collections::HashSet;
 
-use nekowriter_core::{ContextFold, RevisionId, RunId};
+use nekowriter_core::{ContextFold, RevisionId, RunId, ThinkingLevel};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -19,9 +19,9 @@ pub mod provider;
 pub mod runner;
 
 pub use prompt::{
-    PromptTemplateError, PromptVariableDefinition, RenderedBuiltinPrompt, builtin_prompt_variables,
-    render_builtin_prompt, render_builtin_prompt_content, render_prompt_content,
-    validate_builtin_prompt_pair,
+    PromptTemplateError, PromptVariableDefinition, RenderedBuiltinPrompt, builtin_prompt_examples,
+    builtin_prompt_variables, render_builtin_prompt, render_builtin_prompt_content,
+    render_prompt_content, validate_builtin_prompt_pair,
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -52,6 +52,14 @@ impl PromptKey {
         Self::ReviewChapterEdit,
         Self::ReviewChapterFinal,
     ];
+
+    /// 解析 HTTP 合同中使用的稳定键（例如 `chapter.write`）。
+    ///
+    /// 覆盖记录和界面都以稳定键为身份，不依赖 Rust 枚举名的 serde 形式。
+    #[must_use]
+    pub fn from_stable_key(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|key| key.as_str() == value)
+    }
 
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -276,13 +284,19 @@ impl BuiltAgentContext {
     /// 以当前已验证的消息顺序构造可交给模型适配器的请求。
     ///
     /// 该方法不重新渲染、截断或排序上下文；调用方仍必须在 dispatch 前封存它的
-    /// 设置、提示词和来源元数据。
+    /// 设置、提示词和来源元数据。思考等级由调用方从项目设置解析后传入，不在这里
+    /// 读取全局状态。
     #[must_use]
-    pub fn model_request(&self, response_format: Option<StructuredOutput>) -> ModelRequest {
+    pub fn model_request(
+        &self,
+        response_format: Option<StructuredOutput>,
+        thinking_level: ThinkingLevel,
+    ) -> ModelRequest {
         ModelRequest {
             messages: self.messages.clone(),
             tools: self.tools.clone(),
             response_format,
+            thinking_level,
         }
     }
 }

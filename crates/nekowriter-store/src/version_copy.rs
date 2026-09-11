@@ -6,11 +6,10 @@
 use std::collections::{BTreeMap, HashMap};
 
 use nekowriter_core::{
-    ApprovedPreparationArtifact, ChapterPlan, ChapterPlanItem, ContextFold,
-    CopiedContextFold, CopiedContextFoldStage, ExecutionStatus, NewCopiedNovelVersion,
-    PreparationArtifactKind, ReviewStatus, RevisionId, VersionId, WorkflowSnapshot,
-    WorkflowStage, non_whitespace_char_count, render_preparation_artifact_plaintext,
-    validate_document_content,
+    ApprovedPreparationArtifact, ChapterPlan, ChapterPlanItem, ContextFold, CopiedContextFold,
+    CopiedContextFoldStage, ExecutionStatus, NewCopiedNovelVersion, PreparationArtifactKind,
+    ReviewStatus, RevisionId, VersionId, WorkflowSnapshot, WorkflowStage,
+    non_whitespace_char_count, render_preparation_artifact_plaintext, validate_document_content,
 };
 use sea_orm::{
     ActiveModelTrait, DatabaseTransaction, EntityTrait, IntoActiveModel, QueryFilter, QueryOrder,
@@ -22,14 +21,15 @@ use uuid::Uuid;
 
 use crate::{
     CHAPTER_BODY_ROLE, CHAPTER_GUIDANCE_ROLE, CHAPTER_OUTLINE_ROLE, NOVEL_BRIEF_ROLE, Store,
-    StoreError, db_id, insert_document_slots, insert_novel_version, insert_receipt,
-    insert_workflow, parse_optional_id, payload_hash, project_from_model, replay_or_conflict,
+    StoreError, db_id,
     entity::{
-        chapter, document, document_revision, novel_version, project, review,
-        revision_dependency, run, tool_call,
+        chapter, document, document_revision, novel_version, project, review, revision_dependency,
+        run, tool_call,
     },
+    insert_document_slots, insert_novel_version, insert_receipt, insert_workflow,
+    parse_optional_id, payload_hash,
     preparation::{insert_chapter_document_slots, preparation_snapshot, workflow_for_version},
-    transaction_error,
+    project_from_model, replay_or_conflict, transaction_error,
 };
 
 const COPY_VERSION_METHOD: &str = "POST";
@@ -86,19 +86,22 @@ impl Store {
             .database
             .transaction::<_, _, StoreError>(move |transaction| {
                 Box::pin(async move {
-                    let source_version = novel_version::Entity::find_by_id(db_id(source_version_id))
-                        .filter(novel_version::Entity::COLUMN.deleted_at.is_null())
-                        .one(transaction)
-                        .await?
-                        .ok_or(StoreError::VersionNotFound)?;
+                    let source_version =
+                        novel_version::Entity::find_by_id(db_id(source_version_id))
+                            .filter(novel_version::Entity::COLUMN.deleted_at.is_null())
+                            .one(transaction)
+                            .await?
+                            .ok_or(StoreError::VersionNotFound)?;
                     let project_id: Uuid = source_version.project_id.into();
                     let project_model = project::Entity::find_by_id(source_version.project_id)
                         .filter(project::Entity::COLUMN.deleted_at.is_null())
                         .one(transaction)
                         .await?
                         .ok_or(StoreError::ProjectNotFound)?;
-                    let source_workflow = workflow_for_version(transaction, source_version_id).await?;
-                    let source_snapshot = preparation_snapshot(transaction, source_version_id).await?;
+                    let source_workflow =
+                        workflow_for_version(transaction, source_version_id).await?;
+                    let source_snapshot =
+                        preparation_snapshot(transaction, source_version_id).await?;
                     ensure_source_is_copyable(
                         transaction,
                         source_version_id,
@@ -109,7 +112,11 @@ impl Store {
 
                     let (target_plan, plan_item_id_map) = copied_chapter_plan(&source_snapshot)?;
                     let source_chapters = chapter::Entity::find()
-                        .filter(chapter::Entity::COLUMN.version_id.eq(db_id(source_version_id)))
+                        .filter(
+                            chapter::Entity::COLUMN
+                                .version_id
+                                .eq(db_id(source_version_id)),
+                        )
                         .filter(chapter::Entity::COLUMN.deleted_at.is_null())
                         .order_by_asc(chapter::Entity::COLUMN.order_index)
                         .order_by_asc(chapter::Entity::COLUMN.id)
@@ -141,9 +148,7 @@ impl Store {
                                     "chapter.plan_item_id",
                                 )?
                                 .ok_or_else(|| {
-                                    StoreError::CorruptRecord(
-                                        "正文章节缺少计划项标识".to_owned(),
-                                    )
+                                    StoreError::CorruptRecord("正文章节缺少计划项标识".to_owned())
                                 })?;
                                 if source_main_by_plan_item
                                     .insert(plan_item_id, source_chapter)
@@ -174,9 +179,7 @@ impl Store {
                                 (*target_id == item.plan_item_id).then_some(*source_id)
                             })
                             .ok_or_else(|| {
-                                StoreError::CorruptRecord(
-                                    "复制章节计划缺少源计划项映射".to_owned(),
-                                )
+                                StoreError::CorruptRecord("复制章节计划缺少源计划项映射".to_owned())
                             })?;
                         let source_chapter = source_main_by_plan_item
                             .get(&source_item_id)
@@ -194,8 +197,7 @@ impl Store {
                             }
                             "planned" | "in_progress" => {
                                 seen_unfinished_main = true;
-                                first_unfinished_main_chapter_id
-                                    .get_or_insert(target_chapter_id);
+                                first_unfinished_main_chapter_id.get_or_insert(target_chapter_id);
                                 "planned"
                             }
                             "approved" => {
@@ -285,18 +287,12 @@ impl Store {
                         }
                     }
 
-                    let source_brief_document = active_version_document(
-                        transaction,
-                        source_version_id,
-                        NOVEL_BRIEF_ROLE,
-                    )
-                    .await?;
-                    let target_brief_document = active_version_document(
-                        transaction,
-                        target_version_id,
-                        NOVEL_BRIEF_ROLE,
-                    )
-                    .await?;
+                    let source_brief_document =
+                        active_version_document(transaction, source_version_id, NOVEL_BRIEF_ROLE)
+                            .await?;
+                    let target_brief_document =
+                        active_version_document(transaction, target_version_id, NOVEL_BRIEF_ROLE)
+                            .await?;
                     let copied_brief = copy_document_head(
                         transaction,
                         &source_brief_document,
@@ -306,7 +302,8 @@ impl Store {
                         "小说目标",
                     )
                     .await?;
-                    if source_snapshot.novel_brief.revision_id != Some(copied_brief.source_revision_id)
+                    if source_snapshot.novel_brief.revision_id
+                        != Some(copied_brief.source_revision_id)
                     {
                         return Err(StoreError::CorruptRecord(
                             "小说目标当前修订与复制来源不一致".to_owned(),
@@ -325,19 +322,22 @@ impl Store {
                                     kind.stable_key()
                                 ))
                             })?;
-                        let source_document = document::Entity::find_by_id(db_id(
-                            source_artifact.document_id,
-                        ))
-                        .filter(document::Entity::COLUMN.version_id.eq(db_id(source_version_id)))
-                        .filter(document::Entity::COLUMN.role.eq(kind.stable_key()))
-                        .one(transaction)
-                        .await?
-                        .ok_or_else(|| {
-                            StoreError::CorruptRecord(format!(
-                                "复制时缺少 {} 源文档",
-                                kind.stable_key()
-                            ))
-                        })?;
+                        let source_document =
+                            document::Entity::find_by_id(db_id(source_artifact.document_id))
+                                .filter(
+                                    document::Entity::COLUMN
+                                        .version_id
+                                        .eq(db_id(source_version_id)),
+                                )
+                                .filter(document::Entity::COLUMN.role.eq(kind.stable_key()))
+                                .one(transaction)
+                                .await?
+                                .ok_or_else(|| {
+                                    StoreError::CorruptRecord(format!(
+                                        "复制时缺少 {} 源文档",
+                                        kind.stable_key()
+                                    ))
+                                })?;
                         let target_document = active_version_document(
                             transaction,
                             target_version_id,
@@ -369,10 +369,7 @@ impl Store {
                             .as_ref()
                             .map(|review| review.id)
                             .ok_or_else(|| {
-                                StoreError::CorruptRecord(format!(
-                                    "{} 缺少通过审核",
-                                    kind.label()
-                                ))
+                                StoreError::CorruptRecord(format!("{} 缺少通过审核", kind.label()))
                             })?;
                         copied_artifacts.insert(
                             kind,
@@ -478,13 +475,15 @@ impl Store {
                             body.source_revision_id,
                         )
                         .await?;
-                        let mut target_chapter = chapter::Entity::find_by_id(db_id(*target_chapter_id))
-                            .one(transaction)
-                            .await?
-                            .ok_or(StoreError::ChapterNotFound)?
-                            .into_active_model();
+                        let mut target_chapter =
+                            chapter::Entity::find_by_id(db_id(*target_chapter_id))
+                                .one(transaction)
+                                .await?
+                                .ok_or(StoreError::ChapterNotFound)?
+                                .into_active_model();
                         target_chapter.status = Set("approved".to_owned());
-                        target_chapter.approved_revision_id = Set(Some(body.target_revision_id.to_string()));
+                        target_chapter.approved_revision_id =
+                            Set(Some(body.target_revision_id.to_string()));
                         target_chapter.revision = Set(1);
                         target_chapter.updated_at = Set(now);
                         target_chapter.update(transaction).await?;
@@ -533,16 +532,13 @@ impl Store {
                                 .get(&kind)
                                 .map(|artifact| artifact.copied_revision.target_revision_id)
                                 .ok_or_else(|| {
-                                    StoreError::CorruptRecord(
-                                        "复制时缺少准备产物修订".to_owned(),
-                                    )
+                                    StoreError::CorruptRecord("复制时缺少准备产物修订".to_owned())
                                 })
                         })
                         .collect::<Result<Vec<_>, StoreError>>()?;
                     for copied in &copied_chapters {
-                        let mut outline_dependencies = Vec::with_capacity(
-                            preparation_revision_ids.len() + 1,
-                        );
+                        let mut outline_dependencies =
+                            Vec::with_capacity(preparation_revision_ids.len() + 1);
                         outline_dependencies.push(copied.guidance.target_revision_id);
                         outline_dependencies.extend(preparation_revision_ids.iter().copied());
                         for dependency_revision_id in &outline_dependencies {
@@ -588,7 +584,8 @@ impl Store {
                         .await?;
                     }
 
-                    let mut copied_context_folds = Vec::with_capacity(1 + copied_chapters.len() * 2);
+                    let mut copied_context_folds =
+                        Vec::with_capacity(1 + copied_chapters.len() * 2);
                     let approved_artifacts = PreparationArtifactKind::ALL
                         .into_iter()
                         .map(|kind| {
@@ -604,8 +601,9 @@ impl Store {
                             })
                         })
                         .collect::<Result<Vec<_>, StoreError>>()?;
-                    let preparation_plain_text = render_preparation_artifact_plaintext(&approved_artifacts)
-                        .map_err(|error| StoreError::CorruptRecord(error.to_string()))?;
+                    let preparation_plain_text =
+                        render_preparation_artifact_plaintext(&approved_artifacts)
+                            .map_err(|error| StoreError::CorruptRecord(error.to_string()))?;
                     copied_context_folds.push(CopiedContextFold {
                         id: Uuid::new_v4(),
                         stage: CopiedContextFoldStage::Preparation,
@@ -668,7 +666,10 @@ impl Store {
                                 .or(last_approved_main_chapter_id);
                             (WorkflowStage::Completed, active_chapter_id)
                         }
-                        None => (WorkflowStage::WritingChapterDone, last_approved_main_chapter_id),
+                        None => (
+                            WorkflowStage::WritingChapterDone,
+                            last_approved_main_chapter_id,
+                        ),
                     };
                     let active_chapter_id = active_chapter_id.ok_or_else(|| {
                         StoreError::CorruptRecord("复制稿本缺少可继续的正文章节".to_owned())
@@ -688,9 +689,10 @@ impl Store {
                     };
                     insert_workflow(transaction, &target_workflow).await?;
 
-                    let next_project_revision = project_model.revision.checked_add(1).ok_or_else(|| {
-                        StoreError::CorruptRecord("项目修订已达到最大值".to_owned())
-                    })?;
+                    let next_project_revision =
+                        project_model.revision.checked_add(1).ok_or_else(|| {
+                            StoreError::CorruptRecord("项目修订已达到最大值".to_owned())
+                        })?;
                     let mut active_project = project_model.into_active_model();
                     active_project.selected_version_id = Set(db_id(target_version_id));
                     active_project.revision = Set(next_project_revision);
@@ -768,7 +770,11 @@ async fn ensure_source_is_copyable(
         ));
     }
     if review::Entity::find()
-        .filter(review::Entity::COLUMN.version_id.eq(db_id(source_version_id)))
+        .filter(
+            review::Entity::COLUMN
+                .version_id
+                .eq(db_id(source_version_id)),
+        )
         .filter(review::Entity::COLUMN.status.is_in(["open", "delegated"]))
         .one(transaction)
         .await?
@@ -788,7 +794,11 @@ async fn ensure_source_is_copyable(
     if !source_run_ids.is_empty()
         && tool_call::Entity::find()
             .filter(tool_call::Entity::COLUMN.run_id.is_in(source_run_ids))
-            .filter(tool_call::Entity::COLUMN.status.is_in(["awaiting_review", "held"]))
+            .filter(
+                tool_call::Entity::COLUMN
+                    .status
+                    .is_in(["awaiting_review", "held"]),
+            )
             .one(transaction)
             .await?
             .is_some()
@@ -808,9 +818,7 @@ fn copied_chapter_plan(
         .iter()
         .find(|artifact| artifact.kind == PreparationArtifactKind::Outline)
         .and_then(|artifact| artifact.chapter_plan.as_ref())
-        .ok_or_else(|| {
-            StoreError::CorruptRecord("源稿本审核通过的粗纲缺少章节计划".to_owned())
-        })?;
+        .ok_or_else(|| StoreError::CorruptRecord("源稿本审核通过的粗纲缺少章节计划".to_owned()))?;
     source_plan
         .validate()
         .map_err(|error| StoreError::CorruptRecord(error.to_string()))?;
@@ -853,7 +861,11 @@ async fn active_chapter_document(
     role: &str,
 ) -> Result<document::Model, StoreError> {
     document::Entity::find()
-        .filter(document::Entity::COLUMN.chapter_id.eq(chapter_id.to_string()))
+        .filter(
+            document::Entity::COLUMN
+                .chapter_id
+                .eq(chapter_id.to_string()),
+        )
         .filter(document::Entity::COLUMN.role.eq(role))
         .filter(document::Entity::COLUMN.deleted_at.is_null())
         .one(transaction)
@@ -895,7 +907,7 @@ async fn copy_document_head(
         revision_no: Set(1),
         content: Set(source_revision.content.clone()),
         structured_payload: Set(
-            structured_payload_override.or(source_revision.structured_payload.clone()),
+            structured_payload_override.or(source_revision.structured_payload.clone())
         ),
         word_count: Set(non_whitespace_char_count(&source_revision.content) as i64),
         created_by: Set("copied".to_owned()),
@@ -926,19 +938,23 @@ async fn approved_review_for_revision(
     review::Entity::find()
         .filter(review::Entity::COLUMN.version_id.eq(db_id(version_id)))
         .filter(review::Entity::COLUMN.review_type.eq(review_type))
-        .filter(review::Entity::COLUMN.target_revision_id.eq(revision_id.to_string()))
+        .filter(
+            review::Entity::COLUMN
+                .target_revision_id
+                .eq(revision_id.to_string()),
+        )
         .filter(review::Entity::COLUMN.status.eq("approved"))
         .filter(review::Entity::COLUMN.passed.eq(true))
         .order_by_desc(review::Entity::COLUMN.updated_at)
         .order_by_desc(review::Entity::COLUMN.id)
         .one(transaction)
         .await?
-        .ok_or_else(|| {
-            StoreError::CorruptRecord(format!("{review_type} 缺少通过审核依据"))
-        })
+        .ok_or_else(|| StoreError::CorruptRecord(format!("{review_type} 缺少通过审核依据")))
 }
 
-fn preparation_dependency_kinds(kind: PreparationArtifactKind) -> &'static [PreparationArtifactKind] {
+fn preparation_dependency_kinds(
+    kind: PreparationArtifactKind,
+) -> &'static [PreparationArtifactKind] {
     match kind {
         PreparationArtifactKind::Research => &[],
         PreparationArtifactKind::Background => &[PreparationArtifactKind::Research],
@@ -964,9 +980,7 @@ fn preparation_dependency_ids(
             copied_artifacts
                 .get(dependency_kind)
                 .map(|artifact| artifact.copied_revision.target_revision_id)
-                .ok_or_else(|| {
-                    StoreError::CorruptRecord("复制时缺少准备产物依赖修订".to_owned())
-                })
+                .ok_or_else(|| StoreError::CorruptRecord("复制时缺少准备产物依赖修订".to_owned()))
         })
         .collect()
 }

@@ -7,30 +7,30 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use nekowriter_core::{
     AppendChapterContent, ApprovalMode, ChapterBodyEditError, ChapterBodySnapshot,
-    ChapterEditReview, ChapterFinalReview, ChapterFinalReviewCompletion, ChapterId, ChapterOutlineReview,
-    ChapterOutlineReviewCompletion, ChapterOutlineSnapshot, ChapterPlan, ChapterPlanDraft,
-    ContextFold, CurrentChapterBody, CurrentChapterGuidance, CurrentChapterOutline,
-    CopiedContextFoldStage, CurrentNovelBrief, CurrentPreparationArtifact, ExecutionStatus, FeedbackCitation,
-    FeedbackStatus, HeldChapterBodySubmission, HeldChapterBodyTool, HumanReviewDecision,
-    NewChapterGuidance, NewChapterOutline, NewExtraChapter, NewNovelBrief,
-    PendingChapterBodyFeedback, PendingChapterBodyProposal, PendingUserQuestion,
-    PreparationArtifactInput, PreparationArtifactKind, PreparationReview,
-    PreparationReviewCompletion, PreparationSnapshot, QuestionId, ReplaceChapterContent, ReviewId,
-    ReviewStatus, RevisionId, RunId, UserQuestionAnswers, UserQuestionSchema, WorkflowSnapshot,
-    WorkflowStage, begin_chapter_outline, begin_preparation,
-    cancel_chapter_body_pause_for_feedback, confirm_novel_completion, continue_after_agent_tool,
-    continue_after_user_answer, continue_chapter_body_after_proposal,
-    continue_chapter_body_after_protocol_correction, continue_chapter_body_after_tool,
-    continue_writing_run, enter_extra_chapter, enter_next_chapter, finish_chapter_final_review,
-    finish_chapter_outline_review, finish_extra_chapter_final_review, finish_preparation_review,
-    hold_chapter_body_proposal, hold_chapter_body_submission_for_pause,
-    hold_chapter_body_tool_for_pause, interrupt_writing_run, non_whitespace_char_count,
-    record_chapter_body_edit, record_chapter_body_feedback, record_chapter_guidance,
-    record_preparation_review_decision, render_preparation_artifact_plaintext,
-    replace_unique_chapter_content, schedule_chapter_body_run,
-    stop_writing_run as stop_writing_workflow_run, submit_chapter_for_review,
-    submit_chapter_outline_for_review, submit_preparation_for_review, wait_for_user_answer,
-    MAX_REVIEW_ISSUES_LEN,
+    ChapterEditReview, ChapterFinalReview, ChapterFinalReviewCompletion, ChapterId,
+    ChapterOutlineReview, ChapterOutlineReviewCompletion, ChapterOutlineSnapshot, ChapterPlan,
+    ChapterPlanDraft, ContextFold, CopiedContextFoldStage, CurrentChapterBody,
+    CurrentChapterGuidance, CurrentChapterOutline, CurrentNovelBrief, CurrentPreparationArtifact,
+    ExecutionStatus, FeedbackCitation, FeedbackStatus, HeldChapterBodySubmission,
+    HeldChapterBodyTool, HumanReviewDecision, MAX_REVIEW_ISSUES_LEN, NewChapterGuidance,
+    NewChapterOutline, NewExtraChapter, NewNovelBrief, PendingChapterBodyFeedback,
+    PendingChapterBodyProposal, PendingUserQuestion, PreparationArtifactInput,
+    PreparationArtifactKind, PreparationReview, PreparationReviewCompletion, PreparationSnapshot,
+    QuestionId, ReplaceChapterContent, ReviewId, ReviewStatus, RevisionId, RunId,
+    UserQuestionAnswers, UserQuestionSchema, WorkflowSnapshot, WorkflowStage,
+    begin_chapter_outline, begin_preparation, cancel_chapter_body_pause_for_feedback,
+    confirm_novel_completion, continue_after_agent_tool, continue_after_user_answer,
+    continue_chapter_body_after_proposal, continue_chapter_body_after_protocol_correction,
+    continue_chapter_body_after_tool, continue_writing_run, enter_extra_chapter,
+    enter_next_chapter, finish_chapter_final_review, finish_chapter_outline_review,
+    finish_extra_chapter_final_review, finish_preparation_review, hold_chapter_body_proposal,
+    hold_chapter_body_submission_for_pause, hold_chapter_body_tool_for_pause,
+    interrupt_writing_run, non_whitespace_char_count, record_chapter_body_edit,
+    record_chapter_body_feedback, record_chapter_guidance, record_preparation_review_decision,
+    render_preparation_artifact_plaintext, replace_unique_chapter_content,
+    schedule_chapter_body_run, stop_writing_run as stop_writing_workflow_run,
+    submit_chapter_for_review, submit_chapter_outline_for_review, submit_preparation_for_review,
+    wait_for_user_answer,
 };
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseTransaction, EntityTrait,
@@ -511,7 +511,10 @@ fn held_chapter_body_tool_payload_from_model(
     let payload: HeldChapterBodyToolPayload = serde_json::from_str(held_json)?;
     let tool_call_id: Uuid = model.id.clone().into();
     let held = &payload.held;
-    let expected_candidate_hash = held.candidate_content.as_deref().map(candidate_content_hash);
+    let expected_candidate_hash = held
+        .candidate_content
+        .as_deref()
+        .map(candidate_content_hash);
     if held.tool_call_id != tool_call_id
         || held.provider_call_id != model.provider_call_id
         || held.tool_name != model.name
@@ -673,10 +676,8 @@ async fn validate_document_feedback_citation(
             "引用必须属于当前稿本".to_owned(),
         ));
     }
-    let actual_chapter_id = parse_optional_id(
-        document_model.chapter_id,
-        "citation.document.chapter_id",
-    )?;
+    let actual_chapter_id =
+        parse_optional_id(document_model.chapter_id, "citation.document.chapter_id")?;
     if actual_chapter_id != cited_chapter_id {
         return Err(StoreError::InvalidCitation(
             "引用中的 chapter_id 与文档所属章节不匹配".to_owned(),
@@ -707,9 +708,9 @@ async fn held_candidate_for_feedback_citation(
     let candidate_content = held.candidate_content.ok_or_else(|| {
         StoreError::InvalidCitation("该暂停工具调用没有可引用的正文候选".to_owned())
     })?;
-    let candidate_hash = held.candidate_hash.ok_or_else(|| {
-        StoreError::CorruptRecord("暂停正文候选缺少 content hash".to_owned())
-    })?;
+    let candidate_hash = held
+        .candidate_hash
+        .ok_or_else(|| StoreError::CorruptRecord("暂停正文候选缺少 content hash".to_owned()))?;
     Ok((candidate_content, candidate_hash))
 }
 
@@ -723,9 +724,7 @@ async fn proposal_candidate_for_feedback_citation(
         .filter(tool_call::Entity::COLUMN.status.eq("awaiting_review"))
         .one(transaction)
         .await?
-        .ok_or_else(|| {
-            StoreError::InvalidCitation("候选引用必须来自当前待审编辑".to_owned())
-        })?;
+        .ok_or_else(|| StoreError::InvalidCitation("候选引用必须来自当前待审编辑".to_owned()))?;
     let proposal = pending_chapter_body_proposal_from_tool_call(&model)?;
     Ok((proposal.candidate_content, proposal.candidate_hash))
 }
@@ -739,12 +738,10 @@ fn validate_text_citation_range(
             "引用范围必须是非负的左闭右开区间".to_owned(),
         ));
     }
-    let start = usize::try_from(range.start_char).map_err(|_| {
-        StoreError::InvalidCitation("引用起点超出当前平台可表示范围".to_owned())
-    })?;
-    let end = usize::try_from(range.end_char).map_err(|_| {
-        StoreError::InvalidCitation("引用终点超出当前平台可表示范围".to_owned())
-    })?;
+    let start = usize::try_from(range.start_char)
+        .map_err(|_| StoreError::InvalidCitation("引用起点超出当前平台可表示范围".to_owned()))?;
+    let end = usize::try_from(range.end_char)
+        .map_err(|_| StoreError::InvalidCitation("引用终点超出当前平台可表示范围".to_owned()))?;
     let scalar_count = content.chars().count();
     if start >= end || end > scalar_count {
         return Err(StoreError::InvalidCitation(
@@ -7417,12 +7414,9 @@ impl Store {
             .database
             .transaction::<_, _, StoreError>(move |transaction| {
                 Box::pin(async move {
-                    let target = delegatable_review_target(
-                        transaction,
-                        review_id,
-                        expected_state_revision,
-                    )
-                    .await?;
+                    let target =
+                        delegatable_review_target(transaction, review_id, expected_state_revision)
+                            .await?;
                     let now = utc_now_millis();
                     let run_id = Uuid::new_v4();
                     insert_delegated_review_run(
@@ -7565,7 +7559,11 @@ impl Store {
                     }
                     let now = utc_now_millis();
                     let outstanding = model_request::Entity::find()
-                        .filter(model_request::Entity::COLUMN.run_id.eq(db_id(delegated.run_id)))
+                        .filter(
+                            model_request::Entity::COLUMN
+                                .run_id
+                                .eq(db_id(delegated.run_id)),
+                        )
                         .filter(
                             model_request::Entity::COLUMN
                                 .status
@@ -7611,7 +7609,11 @@ impl Store {
                     active_run.update(transaction).await?;
                     let review_model = review::Entity::find_by_id(db_id(review_id))
                         .filter(review::Entity::COLUMN.status.eq("delegated"))
-                        .filter(review::Entity::COLUMN.attempt_id.eq(delegated.run_id.to_string()))
+                        .filter(
+                            review::Entity::COLUMN
+                                .attempt_id
+                                .eq(delegated.run_id.to_string()),
+                        )
                         .one(transaction)
                         .await?
                         .ok_or(StoreError::ReviewAlreadyResolved)?;
@@ -7699,7 +7701,9 @@ impl Store {
     ) -> Result<DelegatedReviewTask, StoreError> {
         self.database
             .transaction::<_, _, StoreError>(|transaction| {
-                Box::pin(async move { build_delegated_review_task(transaction, review_id, run_id).await })
+                Box::pin(async move {
+                    build_delegated_review_task(transaction, review_id, run_id).await
+                })
             })
             .await
             .map_err(transaction_error)
@@ -7742,13 +7746,9 @@ impl Store {
             .database
             .transaction::<_, _, StoreError>(move |transaction| {
                 Box::pin(async move {
-                    if let Some(snapshot) = replayed_delegated_review_result(
-                        transaction,
-                        review_id,
-                        run_id,
-                        request_id,
-                    )
-                    .await?
+                    if let Some(snapshot) =
+                        replayed_delegated_review_result(transaction, review_id, run_id, request_id)
+                            .await?
                     {
                         return Ok(snapshot);
                     }
@@ -8164,7 +8164,8 @@ impl Store {
                     for review_model in candidates {
                         let review_id: ReviewId = review_model.id.clone().into();
                         let attempt = delegated_review_attempt(transaction, review_id).await?;
-                        let workflow = workflow_for_version(transaction, attempt.version_id).await?;
+                        let workflow =
+                            workflow_for_version(transaction, attempt.version_id).await?;
                         if workflow.execution != ExecutionStatus::WaitingReview
                             || !review_stage_matches(&workflow, attempt.kind)
                         {
@@ -8189,14 +8190,10 @@ impl Store {
                             .await?;
                         for request in outstanding_requests {
                             let (status, message) = match request.status.as_str() {
-                                "prepared" => (
-                                    "cancelled",
-                                    "服务重启前审核请求尚未发送，已作废",
-                                ),
-                                "dispatched" => (
-                                    "unknown",
-                                    "服务重启时审核请求是否被模型服务接受未知",
-                                ),
+                                "prepared" => ("cancelled", "服务重启前审核请求尚未发送，已作废"),
+                                "dispatched" => {
+                                    ("unknown", "服务重启时审核请求是否被模型服务接受未知")
+                                }
                                 _ => {
                                     return Err(StoreError::CorruptRecord(
                                         "恢复查询返回了非在途审核模型请求".to_owned(),
@@ -8336,65 +8333,64 @@ async fn delegatable_review_target(
         expected_stage,
         chapter_id,
         review_parent_run_id,
-    ) =
-        match review_model.review_type.as_str() {
-            "preparation" => {
-                let target = preparation_review_target(transaction, review_id).await?;
-                (
-                    target.version_id,
-                    Some(target.target_revision_id),
-                    serde_json::from_str::<Vec<String>>(&review_model.dependencies_json)?
-                        .into_iter()
-                        .map(|id| parse_id(&id, "preparation.dependencies_json"))
-                        .collect::<Result<BTreeSet<_>, _>>()?,
-                    DelegatedReviewKind::Preparation(target.kind),
-                    WorkflowStage::PreparingReviewing,
-                    None,
-                    None,
-                )
-            }
-            "chapter_outline" => {
-                let target = chapter_outline_review_target(transaction, review_id).await?;
-                (
-                    target.version_id,
-                    Some(target.target_revision_id),
-                    target.dependency_revision_ids,
-                    DelegatedReviewKind::ChapterOutline,
-                    WorkflowStage::WritingOutlineReviewing,
-                    Some(target.chapter_id),
-                    None,
-                )
-            }
-            "chapter_final" => {
-                let target = chapter_final_review_target(transaction, review_id).await?;
-                (
-                    target.version_id,
-                    Some(target.target_revision_id),
-                    target.dependency_revision_ids,
-                    DelegatedReviewKind::ChapterFinal,
-                    WorkflowStage::WritingChapterReviewing,
-                    Some(target.chapter_id),
-                    None,
-                )
-            }
-            "chapter_edit" => {
-                let target = chapter_edit_review_target(transaction, review_id).await?;
-                (
-                    target.version_id,
-                    target.base_revision_id,
-                    target.dependency_revision_ids,
-                    DelegatedReviewKind::ChapterEdit,
-                    WorkflowStage::WritingDrafting,
-                    Some(target.chapter_id),
-                    Some(target.parent_run_id),
-                )
-            }
-            review_type => {
-                return Err(StoreError::CorruptRecord(format!(
-                    "未知审核类型：{review_type}"
-                )));
-            }
-        };
+    ) = match review_model.review_type.as_str() {
+        "preparation" => {
+            let target = preparation_review_target(transaction, review_id).await?;
+            (
+                target.version_id,
+                Some(target.target_revision_id),
+                serde_json::from_str::<Vec<String>>(&review_model.dependencies_json)?
+                    .into_iter()
+                    .map(|id| parse_id(&id, "preparation.dependencies_json"))
+                    .collect::<Result<BTreeSet<_>, _>>()?,
+                DelegatedReviewKind::Preparation(target.kind),
+                WorkflowStage::PreparingReviewing,
+                None,
+                None,
+            )
+        }
+        "chapter_outline" => {
+            let target = chapter_outline_review_target(transaction, review_id).await?;
+            (
+                target.version_id,
+                Some(target.target_revision_id),
+                target.dependency_revision_ids,
+                DelegatedReviewKind::ChapterOutline,
+                WorkflowStage::WritingOutlineReviewing,
+                Some(target.chapter_id),
+                None,
+            )
+        }
+        "chapter_final" => {
+            let target = chapter_final_review_target(transaction, review_id).await?;
+            (
+                target.version_id,
+                Some(target.target_revision_id),
+                target.dependency_revision_ids,
+                DelegatedReviewKind::ChapterFinal,
+                WorkflowStage::WritingChapterReviewing,
+                Some(target.chapter_id),
+                None,
+            )
+        }
+        "chapter_edit" => {
+            let target = chapter_edit_review_target(transaction, review_id).await?;
+            (
+                target.version_id,
+                target.base_revision_id,
+                target.dependency_revision_ids,
+                DelegatedReviewKind::ChapterEdit,
+                WorkflowStage::WritingDrafting,
+                Some(target.chapter_id),
+                Some(target.parent_run_id),
+            )
+        }
+        review_type => {
+            return Err(StoreError::CorruptRecord(format!(
+                "未知审核类型：{review_type}"
+            )));
+        }
+    };
     let workflow = workflow_for_version(transaction, version_id).await?;
     ensure_expected_state_revision(&workflow, expected_state_revision)?;
     if workflow.stage != expected_stage || workflow.execution != ExecutionStatus::WaitingReview {
@@ -8415,9 +8411,9 @@ async fn delegatable_review_target(
         &dependency_revision_ids,
     )
     .await?;
-    let parent_run_id = workflow.active_run_id.ok_or_else(|| {
-        StoreError::CorruptRecord("等待审核的工作流缺少活跃写作 Run".to_owned())
-    })?;
+    let parent_run_id = workflow
+        .active_run_id
+        .ok_or_else(|| StoreError::CorruptRecord("等待审核的工作流缺少活跃写作 Run".to_owned()))?;
     let parent_run = run::Entity::find_by_id(db_id(parent_run_id))
         .one(transaction)
         .await?
@@ -8431,7 +8427,9 @@ async fn delegatable_review_target(
             "当前审核没有可委托的等待中写作 Run".to_owned(),
         ));
     }
-    if review_parent_run_id.is_some_and(|review_parent_run_id| review_parent_run_id != parent_run_id) {
+    if review_parent_run_id
+        .is_some_and(|review_parent_run_id| review_parent_run_id != parent_run_id)
+    {
         return Err(StoreError::CorruptRecord(
             "正文编辑审核的候选不属于当前等待中的正文 Run".to_owned(),
         ));
@@ -8464,7 +8462,9 @@ async fn delegated_review_attempt(
         .ok_or_else(|| StoreError::CorruptRecord("委托审核缺少子 Run 标识".to_owned()))?;
     let kind = match review_model.review_type.as_str() {
         "preparation" => DelegatedReviewKind::Preparation(
-            preparation_review_target(transaction, review_id).await?.kind,
+            preparation_review_target(transaction, review_id)
+                .await?
+                .kind,
         ),
         "chapter_outline" => DelegatedReviewKind::ChapterOutline,
         "chapter_edit" => DelegatedReviewKind::ChapterEdit,
@@ -8526,15 +8526,11 @@ async fn replayed_delegated_review_result(
 
 fn review_stage_matches(workflow: &WorkflowSnapshot, kind: DelegatedReviewKind) -> bool {
     match kind {
-        DelegatedReviewKind::Preparation(_) => {
-            workflow.stage == WorkflowStage::PreparingReviewing
-        }
+        DelegatedReviewKind::Preparation(_) => workflow.stage == WorkflowStage::PreparingReviewing,
         DelegatedReviewKind::ChapterOutline => {
             workflow.stage == WorkflowStage::WritingOutlineReviewing
         }
-        DelegatedReviewKind::ChapterEdit => {
-            workflow.stage == WorkflowStage::WritingDrafting
-        }
+        DelegatedReviewKind::ChapterEdit => workflow.stage == WorkflowStage::WritingDrafting,
         DelegatedReviewKind::ChapterFinal => {
             workflow.stage == WorkflowStage::WritingChapterReviewing
         }
@@ -8592,9 +8588,8 @@ async fn validate_review_target_is_current(
         }
         DelegatedReviewKind::ChapterFinal => {
             let target = chapter_final_review_target(transaction, review_id).await?;
-            let target_revision_id = target_revision_id.ok_or_else(|| {
-                StoreError::CorruptRecord("整章委托审核缺少目标修订".to_owned())
-            })?;
+            let target_revision_id = target_revision_id
+                .ok_or_else(|| StoreError::CorruptRecord("整章委托审核缺少目标修订".to_owned()))?;
             if target.current_revision_id != target_revision_id {
                 return Err(StoreError::InvalidChapterState(
                     "审核目标已不是当前正文修订，不能委托".to_owned(),
@@ -8681,7 +8676,9 @@ async fn build_delegated_review_task(
         ));
     }
     let workflow = workflow_for_version(transaction, attempt.version_id).await?;
-    if workflow.execution != ExecutionStatus::WaitingReview || !review_stage_matches(&workflow, attempt.kind) {
+    if workflow.execution != ExecutionStatus::WaitingReview
+        || !review_stage_matches(&workflow, attempt.kind)
+    {
         return Err(StoreError::InvalidModelRequestState(
             "当前工作流不再接受该审核 Agent 请求".to_owned(),
         ));
@@ -8716,18 +8713,21 @@ async fn build_delegated_review_task(
     )
     .await?;
     let target_content = match attempt.kind {
-        DelegatedReviewKind::ChapterEdit => chapter_edit_review_target(transaction, review_id)
+        DelegatedReviewKind::ChapterEdit => {
+            chapter_edit_review_target(transaction, review_id)
+                .await?
+                .proposal
+                .candidate_content
+        }
+        _ => {
+            revision_content(
+                transaction,
+                target_revision_id
+                    .ok_or_else(|| StoreError::CorruptRecord("委托审核缺少目标修订".to_owned()))?,
+                "审核目标修订",
+            )
             .await?
-            .proposal
-            .candidate_content,
-        _ => revision_content(
-            transaction,
-            target_revision_id.ok_or_else(|| {
-                StoreError::CorruptRecord("委托审核缺少目标修订".to_owned())
-            })?,
-            "审核目标修订",
-        )
-        .await?,
+        }
     };
     let mut task = DelegatedReviewTask {
         review_id,
@@ -8744,47 +8744,45 @@ async fn build_delegated_review_task(
     };
     match task.kind {
         DelegatedReviewKind::Preparation(kind) => {
-            if matches!(kind, PreparationArtifactKind::Background | PreparationArtifactKind::Research) {
+            if matches!(
+                kind,
+                PreparationArtifactKind::Background | PreparationArtifactKind::Research
+            ) {
                 task.novel_brief = current_novel_brief(transaction, task.version_id)
                     .await?
                     .content
                     .ok_or(StoreError::NovelBriefRequired)?;
             } else {
-                task.approved_context = approved_preparation_context(
-                    transaction,
-                    task.version_id,
-                    kind,
-                )
-                .await?;
+                task.approved_context =
+                    approved_preparation_context(transaction, task.version_id, kind).await?;
             }
         }
         DelegatedReviewKind::ChapterOutline => {
             let target = chapter_outline_review_target(transaction, review_id).await?;
-            task.chapter_context = delegated_chapter_context(
-                transaction,
-                task.version_id,
-                target.chapter_id,
-            )
-            .await?;
+            task.chapter_context =
+                delegated_chapter_context(transaction, task.version_id, target.chapter_id).await?;
         }
         DelegatedReviewKind::ChapterEdit => {
             let target = chapter_edit_review_target(transaction, review_id).await?;
             task.base_content = match target.base_revision_id {
-                Some(revision_id) => revision_content(transaction, revision_id, "正文编辑基础修订").await?,
+                Some(revision_id) => {
+                    revision_content(transaction, revision_id, "正文编辑基础修订").await?
+                }
                 None => String::new(),
             };
         }
         DelegatedReviewKind::ChapterFinal => {
             let target = chapter_final_review_target(transaction, review_id).await?;
             let outline = current_chapter_outline(transaction, target.chapter_id).await?;
-            if outline.review.as_ref().map(|review| &review.status) != Some(&ReviewStatus::Approved) {
+            if outline.review.as_ref().map(|review| &review.status) != Some(&ReviewStatus::Approved)
+            {
                 return Err(StoreError::InvalidChapterState(
                     "整章审核前缺少已通过的章节细纲".to_owned(),
                 ));
             }
-            task.chapter_outline = outline.content.ok_or_else(|| {
-                StoreError::CorruptRecord("已通过章节细纲缺少内容".to_owned())
-            })?;
+            task.chapter_outline = outline
+                .content
+                .ok_or_else(|| StoreError::CorruptRecord("已通过章节细纲缺少内容".to_owned()))?;
         }
     }
     Ok(task)
@@ -8850,11 +8848,10 @@ async fn delegated_chapter_context(
         .unwrap_or_default();
     let plan_or_extra = match chapter_model.kind.as_str() {
         "main" => {
-            let plan_item_id = parse_optional_id(
-                chapter_model.plan_item_id,
-                "chapter.plan_item_id",
-            )?
-            .ok_or_else(|| StoreError::CorruptRecord("正文章节缺少计划项标识".to_owned()))?;
+            let plan_item_id =
+                parse_optional_id(chapter_model.plan_item_id, "chapter.plan_item_id")?.ok_or_else(
+                    || StoreError::CorruptRecord("正文章节缺少计划项标识".to_owned()),
+                )?;
             let plan = current_preparation_artifacts(transaction, version_id)
                 .await?
                 .into_iter()
@@ -9190,9 +9187,9 @@ async fn chapter_body_snapshot<C: ConnectionTrait>(
     }
     let pending_proposal = pending_chapter_body_proposal(connection, &workflow, chapter_id).await?;
     let pending_proposal_review = match pending_proposal.as_ref() {
-        Some(proposal) => Some(
-            pending_chapter_edit_review(connection, version_id, proposal.tool_call_id).await?,
-        ),
+        Some(proposal) => {
+            Some(pending_chapter_edit_review(connection, version_id, proposal.tool_call_id).await?)
+        }
         None => None,
     };
     let last_proposal_review = if pending_proposal.is_none() {
@@ -9319,9 +9316,7 @@ async fn pending_chapter_edit_review<C: ConnectionTrait>(
         .order_by_desc(review::Entity::COLUMN.id)
         .one(connection)
         .await?
-        .ok_or_else(|| {
-            StoreError::CorruptRecord("待审正文编辑缺少统一审核记录".to_owned())
-        })?;
+        .ok_or_else(|| StoreError::CorruptRecord("待审正文编辑缺少统一审核记录".to_owned()))?;
     let review = chapter_edit_review_from_model(&review_model)?;
     if !matches!(review.status, ReviewStatus::Open | ReviewStatus::Delegated) {
         return Err(StoreError::CorruptRecord(
@@ -9357,7 +9352,11 @@ async fn latest_chapter_edit_review<C: ConnectionTrait>(
                 .target_tool_call_id
                 .is_in(target_tool_call_ids),
         )
-        .filter(review::Entity::COLUMN.status.is_in(["approved", "rejected"]))
+        .filter(
+            review::Entity::COLUMN
+                .status
+                .is_in(["approved", "rejected"]),
+        )
         .order_by_desc(review::Entity::COLUMN.updated_at)
         .order_by_desc(review::Entity::COLUMN.id)
         .one(connection)
@@ -9694,12 +9693,11 @@ async fn apply_chapter_edit_review_decision(
             "正文编辑审核的基础修订与候选不一致".to_owned(),
         ));
     }
-    let review_dependency_revision_ids = serde_json::from_str::<Vec<String>>(
-        &review_model.dependencies_json,
-    )?
-    .into_iter()
-    .map(|id| parse_id(&id, "chapter_edit.dependencies_json"))
-    .collect::<Result<BTreeSet<_>, _>>()?;
+    let review_dependency_revision_ids =
+        serde_json::from_str::<Vec<String>>(&review_model.dependencies_json)?
+            .into_iter()
+            .map(|id| parse_id(&id, "chapter_edit.dependencies_json"))
+            .collect::<Result<BTreeSet<_>, _>>()?;
     let dependency_revision_ids = chapter_body_revision_dependency_ids(
         transaction,
         version_id,
@@ -9825,34 +9823,22 @@ async fn apply_chapter_edit_review_decision(
     )
     .await?;
     let next_workflow = continue_chapter_body_after_proposal(&workflow, chapter_id, run_id)?;
-    update_chapter_body_run_status(
-        transaction,
-        run_id,
-        chapter_id,
-        "queued",
-        None,
-        None,
-        now,
-    )
-    .await?;
+    update_chapter_body_run_status(transaction, run_id, chapter_id, "queued", None, None, now)
+        .await?;
     persist_workflow(transaction, &next_workflow).await?;
     let mut active_review = review_model.into_active_model();
-    active_review.status = Set(
-        if decision.passed {
-            "approved"
-        } else {
-            "rejected"
-        }
-        .to_owned(),
-    );
+    active_review.status = Set(if decision.passed {
+        "approved"
+    } else {
+        "rejected"
+    }
+    .to_owned());
     active_review.decision_source = Set(Some(source.to_owned()));
     active_review.passed = Set(Some(decision.passed));
     active_review.confidence = Set(confidence);
-    active_review.issues_json = Set(
-        (!decision.issues.is_empty())
-            .then(|| serde_json::to_string(&decision.issues))
-            .transpose()?,
-    );
+    active_review.issues_json = Set((!decision.issues.is_empty())
+        .then(|| serde_json::to_string(&decision.issues))
+        .transpose()?);
     active_review.user_input_json = Set(Some(serde_json::to_string(&user_input)?));
     active_review.updated_at = Set(now);
     active_review.update(transaction).await?;
@@ -10793,19 +10779,14 @@ async fn chapter_edit_review_target(
             "正文编辑审核的基础修订与候选不一致".to_owned(),
         ));
     }
-    let dependency_revision_ids = serde_json::from_str::<Vec<String>>(
-        &review_model.dependencies_json,
-    )?
-    .into_iter()
-    .map(|id| parse_id(&id, "chapter_edit.dependencies_json"))
-    .collect::<Result<BTreeSet<_>, _>>()?;
-    let expected_dependencies = chapter_body_revision_dependency_ids(
-        transaction,
-        version_id,
-        chapter_id,
-        base_revision_id,
-    )
-    .await?;
+    let dependency_revision_ids =
+        serde_json::from_str::<Vec<String>>(&review_model.dependencies_json)?
+            .into_iter()
+            .map(|id| parse_id(&id, "chapter_edit.dependencies_json"))
+            .collect::<Result<BTreeSet<_>, _>>()?;
+    let expected_dependencies =
+        chapter_body_revision_dependency_ids(transaction, version_id, chapter_id, base_revision_id)
+            .await?;
     if dependency_revision_ids != expected_dependencies {
         return Err(StoreError::InvalidChapterState(
             "正文编辑审核依赖已变化，不能委托".to_owned(),
@@ -10918,7 +10899,11 @@ async fn persist_delegated_review_decision(
 ) -> Result<(), StoreError> {
     let review_model = review::Entity::find_by_id(db_id(review_id))
         .filter(review::Entity::COLUMN.status.eq("delegated"))
-        .filter(review::Entity::COLUMN.attempt_id.eq(review_run_id.to_string()))
+        .filter(
+            review::Entity::COLUMN
+                .attempt_id
+                .eq(review_run_id.to_string()),
+        )
         .one(transaction)
         .await?
         .ok_or(StoreError::ReviewAlreadyResolved)?;
@@ -10939,7 +10924,9 @@ async fn persist_delegated_review_decision(
     active_review.decision_source = Set(Some("agent".to_owned()));
     active_review.passed = Set(Some(decision.passed));
     active_review.confidence = Set(Some(decision.confidence));
-    active_review.issues_json = Set((!issues.is_empty()).then(|| serde_json::to_string(&issues)).transpose()?);
+    active_review.issues_json = Set((!issues.is_empty())
+        .then(|| serde_json::to_string(&issues))
+        .transpose()?);
     active_review.user_input_json = Set(Some(serde_json::to_string(&json!({
         "source": "agent",
         "notes": notes,
@@ -10975,9 +10962,11 @@ async fn apply_delegated_preparation_review(
             "审核目标已不是当前修订，不能应用委托结果".to_owned(),
         ));
     }
-    persist_delegated_review_decision(transaction, review_id, review_run_id, delegated, now).await?;
+    persist_delegated_review_decision(transaction, review_id, review_run_id, delegated, now)
+        .await?;
     let decision = delegated_review_decision_for_workflow(delegated);
-    let current_artifacts = current_preparation_artifacts(transaction, review_target.version_id).await?;
+    let current_artifacts =
+        current_preparation_artifacts(transaction, review_target.version_id).await?;
     let has_open_reviews = current_artifacts.iter().any(|artifact| {
         matches!(
             artifact.review.as_ref().map(|review| &review.status),
@@ -10987,9 +10976,9 @@ async fn apply_delegated_preparation_review(
     let (next_workflow, run_status) = if has_open_reviews {
         (record_preparation_review_decision(&workflow)?, None)
     } else if current_preparation_is_approved(transaction, &current_artifacts).await? {
-        let active_run_id = workflow.active_run_id.ok_or_else(|| {
-            StoreError::CorruptRecord("准备审核缺少对应的活跃 Run".to_owned())
-        })?;
+        let active_run_id = workflow
+            .active_run_id
+            .ok_or_else(|| StoreError::CorruptRecord("准备审核缺少对应的活跃 Run".to_owned()))?;
         let context_fold =
             build_preparation_context_fold(transaction, active_run_id, &current_artifacts).await?;
         let first_chapter_id = materialize_chapter_plan(
@@ -11013,16 +11002,14 @@ async fn apply_delegated_preparation_review(
             now,
         )
         .await?;
-        let mut next_workflow = finish_preparation_review(
-            &workflow,
-            PreparationReviewCompletion::AllApproved,
-        )?;
+        let mut next_workflow =
+            finish_preparation_review(&workflow, PreparationReviewCompletion::AllApproved)?;
         next_workflow.active_chapter_id = Some(first_chapter_id);
         (next_workflow, Some((active_run_id, "succeeded")))
     } else {
-        let active_run_id = workflow.active_run_id.ok_or_else(|| {
-            StoreError::CorruptRecord("准备审核缺少对应的活跃 Run".to_owned())
-        })?;
+        let active_run_id = workflow
+            .active_run_id
+            .ok_or_else(|| StoreError::CorruptRecord("准备审核缺少对应的活跃 Run".to_owned()))?;
         update_preparation_run_status(transaction, active_run_id, "queued", None, None, now)
             .await?;
         (
@@ -11103,7 +11090,8 @@ async fn apply_delegated_chapter_outline_review(
         review_target.chapter_id,
     )
     .await?;
-    let actual_dependencies = revision_dependency_ids(transaction, review_target.target_revision_id).await?;
+    let actual_dependencies =
+        revision_dependency_ids(transaction, review_target.target_revision_id).await?;
     if review_target.dependency_revision_ids != expected_dependencies
         || actual_dependencies != expected_dependencies
     {
@@ -11111,11 +11099,12 @@ async fn apply_delegated_chapter_outline_review(
             "细纲审核依赖已变化，不能应用委托结果".to_owned(),
         ));
     }
-    let parent_run_id = workflow.active_run_id.ok_or_else(|| {
-        StoreError::CorruptRecord("细纲审核缺少对应的活跃 Run".to_owned())
-    })?;
+    let parent_run_id = workflow
+        .active_run_id
+        .ok_or_else(|| StoreError::CorruptRecord("细纲审核缺少对应的活跃 Run".to_owned()))?;
     chapter_outline_run(transaction, parent_run_id, review_target.chapter_id).await?;
-    persist_delegated_review_decision(transaction, review_id, review_run_id, delegated, now).await?;
+    persist_delegated_review_decision(transaction, review_id, review_run_id, delegated, now)
+        .await?;
     let decision = delegated_review_decision_for_workflow(delegated);
     let (next_workflow, body_run_id) = if decision.passed {
         let outline = current_chapter_outline(transaction, review_target.chapter_id).await?;
@@ -11124,9 +11113,9 @@ async fn apply_delegated_chapter_outline_review(
                 "当前章节细纲在委托审核决定期间发生变化".to_owned(),
             ));
         }
-        let content = outline.content.ok_or_else(|| {
-            StoreError::CorruptRecord("当前章节细纲缺少正文".to_owned())
-        })?;
+        let content = outline
+            .content
+            .ok_or_else(|| StoreError::CorruptRecord("当前章节细纲缺少正文".to_owned()))?;
         let context_fold = build_chapter_outline_context_fold(
             transaction,
             parent_run_id,
@@ -11167,11 +11156,7 @@ async fn apply_delegated_chapter_outline_review(
         )
         .await?;
         (
-            schedule_chapter_body_run(
-                &completed_outline,
-                review_target.chapter_id,
-                body_run_id,
-            )?,
+            schedule_chapter_body_run(&completed_outline, review_target.chapter_id, body_run_id)?,
             Some(body_run_id),
         )
     } else {
@@ -11285,9 +11270,9 @@ async fn apply_delegated_chapter_final_review(
         ));
     }
     let body = current_chapter_body(transaction, review_target.chapter_id).await?;
-    let body_content = body.content.ok_or_else(|| {
-        StoreError::CorruptRecord("当前章节正文缺少内容".to_owned())
-    })?;
+    let body_content = body
+        .content
+        .ok_or_else(|| StoreError::CorruptRecord("当前章节正文缺少内容".to_owned()))?;
     nekowriter_core::validate_document_content(
         "章节正文",
         &body_content,
@@ -11300,7 +11285,8 @@ async fn apply_delegated_chapter_final_review(
         review_target.chapter_id,
     )
     .await?;
-    let actual_dependencies = revision_dependency_ids(transaction, review_target.target_revision_id).await?;
+    let actual_dependencies =
+        revision_dependency_ids(transaction, review_target.target_revision_id).await?;
     if review_target.dependency_revision_ids != actual_dependencies
         || !actual_dependencies.contains(&outline_revision_id)
     {
@@ -11308,11 +11294,12 @@ async fn apply_delegated_chapter_final_review(
             "整章审核依赖已变化，不能应用委托结果".to_owned(),
         ));
     }
-    let parent_run_id = workflow.active_run_id.ok_or_else(|| {
-        StoreError::CorruptRecord("整章审核缺少对应的活跃 Run".to_owned())
-    })?;
+    let parent_run_id = workflow
+        .active_run_id
+        .ok_or_else(|| StoreError::CorruptRecord("整章审核缺少对应的活跃 Run".to_owned()))?;
     chapter_body_run(transaction, parent_run_id, review_target.chapter_id).await?;
-    persist_delegated_review_decision(transaction, review_id, review_run_id, delegated, now).await?;
+    persist_delegated_review_decision(transaction, review_id, review_run_id, delegated, now)
+        .await?;
     let decision = delegated_review_decision_for_workflow(delegated);
     let next_workflow = if decision.passed {
         let context_fold = build_chapter_body_context_fold(
@@ -11346,7 +11333,8 @@ async fn apply_delegated_chapter_final_review(
         let chapter_next_revision = chapter_model.revision + 1;
         let mut active_chapter = chapter_model.into_active_model();
         active_chapter.status = Set("approved".to_owned());
-        active_chapter.approved_revision_id = Set(Some(review_target.target_revision_id.to_string()));
+        active_chapter.approved_revision_id =
+            Set(Some(review_target.target_revision_id.to_string()));
         active_chapter.revision = Set(chapter_next_revision);
         active_chapter.updated_at = Set(now);
         active_chapter.update(transaction).await?;
@@ -12226,6 +12214,23 @@ async fn completed_run_context_folds<C: ConnectionTrait>(
     Ok(folds)
 }
 
+/// 把审核行中的置信度还原成对外快照的数值。
+///
+/// SQLite 保存 `Option<f64>`，而快照合同使用 `serde_json::Number` 以便原样携带
+/// 供应商返回的数值；不可表示的 NaN/无穷值属于损坏记录而不是可展示的置信度。
+fn review_confidence_from_model(
+    model: &review::Model,
+) -> Result<Option<serde_json::Number>, StoreError> {
+    model
+        .confidence
+        .map(|confidence| {
+            serde_json::Number::from_f64(confidence).ok_or_else(|| {
+                StoreError::CorruptRecord("审核置信度不是可表示的有限数值".to_owned())
+            })
+        })
+        .transpose()
+}
+
 fn preparation_review_from_model(
     model: &review::Model,
     kind: PreparationArtifactKind,
@@ -12321,10 +12326,9 @@ fn chapter_edit_review_from_model(model: &review::Model) -> Result<ChapterEditRe
     Ok(ChapterEditReview {
         id: model.id.into(),
         target_tool_call_id: parse_id(
-            model
-                .target_tool_call_id
-                .as_deref()
-                .ok_or_else(|| StoreError::CorruptRecord("正文编辑审核缺少目标工具调用".to_owned()))?,
+            model.target_tool_call_id.as_deref().ok_or_else(|| {
+                StoreError::CorruptRecord("正文编辑审核缺少目标工具调用".to_owned())
+            })?,
             "target_tool_call_id",
         )?,
         status: review_status_from_db(model.status.clone())?,

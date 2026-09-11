@@ -102,6 +102,18 @@ export interface ModelCapabilityProfile {
   tools: boolean
   structuredOutput: boolean
   streamUsage: boolean
+  /** 是否已确认模型接受显式思考参数（`reasoning_effort`）。 */
+  thinking: boolean
+}
+
+export type ThinkingLevel = "off" | "low" | "medium" | "high"
+
+export interface ProjectSettings {
+  /** 覆盖系统默认模型；`null` 表示沿用系统设置。 */
+  modelId: string | null
+  thinkingLevel: ThinkingLevel
+  auxiliaryToolBudget: DecimalString
+  revision: DecimalString
 }
 
 export interface PublicSystemModelSettings {
@@ -442,7 +454,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 const retryableCommandIds = new Map<string, string>()
 
 function commandRequest<T>(
-  method: "POST" | "PUT",
+  method: "POST" | "PUT" | "DELETE",
   path: string,
   payload: Record<string, unknown>,
   commandId?: string
@@ -507,6 +519,28 @@ export function testModelConnection() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),
   })
+}
+
+export function getProjectSettings(projectId: string) {
+  return request<ProjectSettings>(`/api/projects/${projectId}/settings`)
+}
+
+export function saveProjectSettings(
+  projectId: string,
+  input: {
+    expectedRevision: DecimalString
+    modelId: string | null
+    thinkingLevel: ThinkingLevel
+    auxiliaryToolBudget: DecimalString
+  },
+  commandId: string = createCommandId()
+) {
+  return commandRequest<ProjectSettings>(
+    "PUT",
+    `/api/projects/${projectId}/settings`,
+    input,
+    commandId
+  )
 }
 
 export function listProjects() {
@@ -942,4 +976,140 @@ export function cancelReviewDelegation(
     { expectedStateRevision },
     commandId
   )
+}
+
+export type PromptSource = "builtin" | "system" | "project"
+
+export interface PromptVariableDefinition {
+  name: string
+  description: string
+  valueType: string
+  required: boolean
+  example: string
+  source: string
+}
+
+export interface PromptOverrideContent {
+  system: string
+  user: string
+  revision: DecimalString
+  updatedAtMs: DecimalString
+}
+
+export interface PromptCatalogEntry {
+  key: string
+  variables: PromptVariableDefinition[]
+  builtinSystem: string
+  builtinUser: string
+  systemOverride: PromptOverrideContent | null
+  projectOverride: PromptOverrideContent | null
+  effectiveSource: PromptSource
+  effectiveSystem: string
+  effectiveUser: string
+}
+
+export interface PromptOverride {
+  promptKey: string
+  scope: "system" | "project"
+  projectId: string | null
+  system: string
+  user: string
+  revision: DecimalString
+  createdAtMs: DecimalString
+  updatedAtMs: DecimalString
+}
+
+export interface PromptOverrideReset {
+  promptKey: string
+  scope: "system" | "project"
+  projectId: string | null
+  removed: boolean
+}
+
+export interface PreviewPromptResponse {
+  promptKey: string
+  source: PromptSource
+  system: string
+  user: string
+}
+
+export function getSystemPrompts() {
+  return request<PromptCatalogEntry[]>("/api/prompts/system")
+}
+
+export function getProjectPrompts(projectId: string) {
+  return request<PromptCatalogEntry[]>(`/api/projects/${projectId}/prompts`)
+}
+
+export function saveSystemPromptOverride(
+  promptKey: string,
+  expectedRevision: DecimalString,
+  system: string,
+  user: string,
+  commandId?: string
+) {
+  return commandRequest<PromptOverride>(
+    "PUT",
+    `/api/prompts/system/${encodeURIComponent(promptKey)}`,
+    { expectedRevision, system, user },
+    commandId
+  )
+}
+
+export function resetSystemPromptOverride(
+  promptKey: string,
+  expectedRevision: DecimalString,
+  commandId?: string
+) {
+  return commandRequest<PromptOverrideReset>(
+    "DELETE",
+    `/api/prompts/system/${encodeURIComponent(promptKey)}`,
+    { expectedRevision },
+    commandId
+  )
+}
+
+export function saveProjectPromptOverride(
+  projectId: string,
+  promptKey: string,
+  expectedRevision: DecimalString,
+  system: string,
+  user: string,
+  commandId?: string
+) {
+  return commandRequest<PromptOverride>(
+    "PUT",
+    `/api/projects/${projectId}/prompts/${encodeURIComponent(promptKey)}`,
+    { expectedRevision, system, user },
+    commandId
+  )
+}
+
+export function resetProjectPromptOverride(
+  projectId: string,
+  promptKey: string,
+  expectedRevision: DecimalString,
+  commandId?: string
+) {
+  return commandRequest<PromptOverrideReset>(
+    "DELETE",
+    `/api/projects/${projectId}/prompts/${encodeURIComponent(promptKey)}`,
+    { expectedRevision },
+    commandId
+  )
+}
+
+export interface PreviewPromptDraft {
+  promptKey: string
+  projectId?: string
+  system?: string
+  user?: string
+}
+
+export function previewPrompt(draft: PreviewPromptDraft) {
+  return request<PreviewPromptResponse>("/api/prompts/preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(draft),
+  })
 }

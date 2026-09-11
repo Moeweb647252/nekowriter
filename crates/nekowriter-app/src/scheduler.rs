@@ -12,13 +12,13 @@ use std::{
 use futures_util::future::BoxFuture;
 use nekowriter_agent::{
     AgentToolDefinition, CompletedStageContext, ContextBudget, ContextBuildRequest, ContextBuilder,
-    ContextFoldStage, ContextMessageRole, CurrentContextInput, PromptKey, UnfoldedStageMessage,
+    ContextFoldStage, ContextMessageRole, CurrentContextInput, PromptKey, RenderedBuiltinPrompt,
+    UnfoldedStageMessage,
     provider::{
         ChatCompletionsAdapter, ChatCompletionsConfig, ModelCapabilities, ModelCompletion,
         ModelFailureCode, ModelRequest, ModelRequestMessage, ModelTimeouts, ModelToolCall,
         ProviderError, StructuredOutput,
     },
-    render_builtin_prompt,
     runner::{
         AgentRoundOutcome, PhaseSubmission, PhaseSubmissionKind, ToolHost, ToolHostError,
         ToolResult, classify_model_completion,
@@ -26,7 +26,8 @@ use nekowriter_agent::{
 };
 use nekowriter_core::{
     ChapterId, ChapterKind, ChapterPlan, ChapterSummary, ExecutionStatus, FeedbackStatus,
-    PreparationArtifactKind, ReviewId, RunId, VersionId, WorkflowSnapshot, WorkflowStage,
+    PreparationArtifactKind, ReviewId, RunId, ThinkingLevel, VersionId, WorkflowSnapshot,
+    WorkflowStage,
 };
 use nekowriter_store::{
     AgentMessageRole, AgentQuestionToolCall, AppliedAgentQuestionToolCall,
@@ -43,6 +44,25 @@ use tokio::{
 };
 use tracing::{debug, info, warn};
 use uuid::Uuid;
+
+use crate::prompts::{PromptSource, resolve_prompt_for_version};
+
+/// 按「项目覆盖 → 系统覆盖 → 代码内建」渲染本次请求实际使用的提示词。
+///
+/// 返回内容与来源：来源会写进请求快照，便于事后解释某次请求到底用了哪一份提示词。
+async fn render_effective_prompt(
+    store: &Store,
+    version_id: VersionId,
+    key: PromptKey,
+    variables: &BTreeMap<String, String>,
+) -> Result<(RenderedBuiltinPrompt, PromptSource), SchedulerError> {
+    let effective = resolve_prompt_for_version(store, version_id, key).await?;
+    let source = effective.source;
+    let rendered = effective
+        .render(key, variables)
+        .map_err(|error| SchedulerError::Context(error.to_string()))?;
+    Ok((rendered, source))
+}
 
 use crate::credentials;
 
@@ -61,6 +81,8 @@ pub enum SchedulerError {
     MissingWritingModel,
     #[error("当前写作模型不支持此阶段所需的结构化提交")]
     StructuredOutputRequired,
+    #[error("项目设置的思考等级需要模型支持思考参数，但当前模型未标记支持思考")]
+    ThinkingUnsupported,
     #[error("准备阶段缺少小说目标")]
     MissingNovelBrief,
     #[error("模型上下文构建失败：{0}")]
@@ -447,11 +469,13 @@ impl WorkflowScheduler {
                             _ if matches!(
                                 &error,
                                 SchedulerError::Store(StoreError::RequestAllowanceExhausted { .. })
-                            ) => self
-                                .store
-                                .stop_queued_model_run(task.run_id, failure)
-                                .await
-                                .map(|_| ()),
+                            ) =>
+                            {
+                                self.store
+                                    .stop_queued_model_run(task.run_id, failure)
+                                    .await
+                                    .map(|_| ())
+                            }
                             _ => self
                                 .store
                                 .fail_queued_model_run(task.run_id, failure)
@@ -526,12 +550,23 @@ impl WorkflowScheduler {
         if !settings.capabilities.structured_output {
             return Err(SchedulerError::StructuredOutputRequired);
         }
-        if !settings.capabilities.tools
-            && !matches!(task.stage, ScheduledStage::Review { .. })
-        {
+        if !settings.capabilities.tools && !matches!(task.stage, ScheduledStage::Review { .. }) {
             return Err(SchedulerError::Context(
                 "当前写作模型不支持 ask_user 所需的工具调用".to_owned(),
             ));
+        }
+        // 项目设置也在每次取得许可后重新解析：有效模型引用优先取项目覆盖，思考
+        // 等级取项目设置。这样保存设置后的下一次请求自然按新值构建，而已 dispatch
+        // 的请求快照不会被原地改写。
+        let project_id = self.store.project_id_for_version(version_id).await?;
+        let project_settings = self.store.get_project_settings(project_id).await?;
+        let effective_model_id = project_settings
+            .model_id
+            .clone()
+            .unwrap_or_else(|| settings.model_id.clone());
+        if project_settings.thinking_level != ThinkingLevel::Off && !settings.capabilities.thinking
+        {
+            return Err(SchedulerError::ThinkingUnsupported);
         }
         let api_key = match settings.credential_ref.clone() {
             Some(credential_ref) => Some(credentials::read_api_key(credential_ref).await?),
@@ -541,323 +576,349 @@ impl WorkflowScheduler {
             .map_err(|_| SchedulerError::ContextLimitOutOfRange)?;
         let reserved_output_tokens = usize::try_from(settings.reserved_output_tokens)
             .map_err(|_| SchedulerError::ContextLimitOutOfRange)?;
-        let (prompt, context, persist_initial_messages, feedback_binding, tool_result_binding) =
-            match task.stage {
-                ScheduledStage::Preparation => {
-                    let snapshot = self.store.get_preparation_snapshot(version_id).await?;
-                    if snapshot.workflow.active_run_id != Some(task.run_id) {
-                        return Err(SchedulerError::Context(
-                            "当前活跃 Run 已改变，拒绝发送过期准备请求".to_owned(),
-                        ));
-                    }
-                    let novel_brief = snapshot
-                        .novel_brief
-                        .content
-                        .ok_or(SchedulerError::MissingNovelBrief)?;
-                    let mut variables = BTreeMap::new();
-                    variables.insert("novel_brief".to_owned(), novel_brief);
-                    let prompt = render_builtin_prompt(PromptKey::PreparationGenerate, &variables)
-                        .map_err(|error| SchedulerError::Context(error.to_string()))?;
-                    let persisted_messages = self.store.list_agent_messages(task.run_id).await?;
-                    let persist_initial_messages = persisted_messages.is_empty();
-                    let tool_result_binding = self
-                        .store
-                        .list_unsealed_agent_tool_result_provider_ids(task.run_id)
-                        .await?;
-                    let context = build_context_with_history(
-                        prompt.system.clone(),
-                        ask_user_tools(),
-                        Vec::new(),
-                        vec![CurrentContextInput {
-                            role: ContextMessageRole::User,
-                            content: prompt.user.clone(),
-                            source_revision_id: None,
-                        }],
-                        writing_agent_history_messages(task.run_id, persisted_messages, &[])?,
-                        max_context_tokens,
-                        reserved_output_tokens,
-                    )?;
-                    (
-                        prompt,
-                        context,
-                        persist_initial_messages,
-                        None,
-                        Some(tool_result_binding),
-                    )
+        let (
+            prompt,
+            prompt_source,
+            context,
+            persist_initial_messages,
+            feedback_binding,
+            tool_result_binding,
+        ) = match task.stage {
+            ScheduledStage::Preparation => {
+                let snapshot = self.store.get_preparation_snapshot(version_id).await?;
+                if snapshot.workflow.active_run_id != Some(task.run_id) {
+                    return Err(SchedulerError::Context(
+                        "当前活跃 Run 已改变，拒绝发送过期准备请求".to_owned(),
+                    ));
                 }
-                ScheduledStage::ChapterOutline { chapter_id } => {
-                    let snapshot = self.store.get_chapter_outline(chapter_id).await?;
-                    if snapshot.workflow.version_id != version_id
-                        || snapshot.workflow.active_run_id != Some(task.run_id)
-                        || snapshot.workflow.active_chapter_id != Some(chapter_id)
-                        || snapshot.workflow.stage != WorkflowStage::WritingOutlineGenerating
-                        || snapshot.workflow.execution != ExecutionStatus::Queued
-                    {
-                        return Err(SchedulerError::Context(
-                            "当前章节细纲任务已改变，拒绝发送过期模型请求".to_owned(),
-                        ));
-                    }
+                let novel_brief = snapshot
+                    .novel_brief
+                    .content
+                    .ok_or(SchedulerError::MissingNovelBrief)?;
+                let mut variables = BTreeMap::new();
+                variables.insert("novel_brief".to_owned(), novel_brief);
+                let (prompt, prompt_source) = render_effective_prompt(
+                    &self.store,
+                    version_id,
+                    PromptKey::PreparationGenerate,
+                    &variables,
+                )
+                .await?;
+                let persisted_messages = self.store.list_agent_messages(task.run_id).await?;
+                let persist_initial_messages = persisted_messages.is_empty();
+                let tool_result_binding = self
+                    .store
+                    .list_unsealed_agent_tool_result_provider_ids(task.run_id)
+                    .await?;
+                let context = build_context_with_history(
+                    prompt.system.clone(),
+                    ask_user_tools(),
+                    Vec::new(),
+                    vec![CurrentContextInput {
+                        role: ContextMessageRole::User,
+                        content: prompt.user.clone(),
+                        source_revision_id: None,
+                    }],
+                    writing_agent_history_messages(task.run_id, persisted_messages, &[])?,
+                    max_context_tokens,
+                    reserved_output_tokens,
+                )?;
+                (
+                    prompt,
+                    prompt_source,
+                    context,
+                    persist_initial_messages,
+                    None,
+                    Some(tool_result_binding),
+                )
+            }
+            ScheduledStage::ChapterOutline { chapter_id } => {
+                let snapshot = self.store.get_chapter_outline(chapter_id).await?;
+                if snapshot.workflow.version_id != version_id
+                    || snapshot.workflow.active_run_id != Some(task.run_id)
+                    || snapshot.workflow.active_chapter_id != Some(chapter_id)
+                    || snapshot.workflow.stage != WorkflowStage::WritingOutlineGenerating
+                    || snapshot.workflow.execution != ExecutionStatus::Queued
+                {
+                    return Err(SchedulerError::Context(
+                        "当前章节细纲任务已改变，拒绝发送过期模型请求".to_owned(),
+                    ));
+                }
 
-                    let chapter = self
-                        .store
-                        .list_chapters(version_id)
-                        .await?
-                        .into_iter()
-                        .find(|chapter| chapter.id == chapter_id)
-                        .ok_or_else(|| {
-                            SchedulerError::Context("当前章节不属于目标稿本".to_owned())
-                        })?;
-                    let chapter_plan = match chapter.kind {
-                        ChapterKind::Main => {
-                            let preparation =
-                                self.store.get_preparation_snapshot(version_id).await?;
-                            let approved_chapter_plan = preparation
-                                .artifacts
-                                .iter()
-                                .find(|artifact| artifact.kind == PreparationArtifactKind::Outline)
-                                .and_then(|artifact| artifact.chapter_plan.as_ref())
-                                .ok_or_else(|| {
-                                    SchedulerError::Context(
-                                        "审核通过的小说粗纲缺少章节计划".to_owned(),
-                                    )
-                                })?;
-                            chapter_outline_plan_context(&chapter, Some(approved_chapter_plan))?
-                        }
-                        ChapterKind::Extra => chapter_outline_plan_context(&chapter, None)?,
-                    };
-                    let mut variables = BTreeMap::new();
-                    variables.insert("chapter_plan".to_owned(), chapter_plan);
-                    variables.insert(
-                        "chapter_guidance".to_owned(),
-                        snapshot.guidance.content.unwrap_or_default(),
-                    );
-                    let prompt = render_builtin_prompt(PromptKey::ChapterOutline, &variables)
-                        .map_err(|error| SchedulerError::Context(error.to_string()))?;
-                    let completed_stages = completed_stage_contexts(
-                        self.store
-                            .list_completed_run_context_folds(version_id)
-                            .await?,
-                    );
-                    if !completed_stages
-                        .iter()
-                        .any(|stage| stage.stage == ContextFoldStage::Preparation)
-                    {
-                        return Err(SchedulerError::Context(
-                            "开始章节细纲前缺少准备阶段纯文本折叠".to_owned(),
-                        ));
+                let chapter = self
+                    .store
+                    .list_chapters(version_id)
+                    .await?
+                    .into_iter()
+                    .find(|chapter| chapter.id == chapter_id)
+                    .ok_or_else(|| SchedulerError::Context("当前章节不属于目标稿本".to_owned()))?;
+                let chapter_plan = match chapter.kind {
+                    ChapterKind::Main => {
+                        let preparation = self.store.get_preparation_snapshot(version_id).await?;
+                        let approved_chapter_plan = preparation
+                            .artifacts
+                            .iter()
+                            .find(|artifact| artifact.kind == PreparationArtifactKind::Outline)
+                            .and_then(|artifact| artifact.chapter_plan.as_ref())
+                            .ok_or_else(|| {
+                                SchedulerError::Context("审核通过的小说粗纲缺少章节计划".to_owned())
+                            })?;
+                        chapter_outline_plan_context(&chapter, Some(approved_chapter_plan))?
                     }
-                    let persisted_messages = self.store.list_agent_messages(task.run_id).await?;
-                    let persist_initial_messages = persisted_messages.is_empty();
-                    let tool_result_binding = self
-                        .store
-                        .list_unsealed_agent_tool_result_provider_ids(task.run_id)
-                        .await?;
-                    let context = build_context_with_history(
-                        prompt.system.clone(),
-                        ask_user_tools(),
-                        completed_stages,
-                        vec![CurrentContextInput {
-                            role: ContextMessageRole::User,
-                            content: prompt.user.clone(),
-                            source_revision_id: None,
-                        }],
-                        writing_agent_history_messages(task.run_id, persisted_messages, &[])?,
-                        max_context_tokens,
-                        reserved_output_tokens,
-                    )?;
-                    (
-                        prompt,
-                        context,
-                        persist_initial_messages,
-                        None,
-                        Some(tool_result_binding),
-                    )
+                    ChapterKind::Extra => chapter_outline_plan_context(&chapter, None)?,
+                };
+                let mut variables = BTreeMap::new();
+                variables.insert("chapter_plan".to_owned(), chapter_plan);
+                variables.insert(
+                    "chapter_guidance".to_owned(),
+                    snapshot.guidance.content.unwrap_or_default(),
+                );
+                let (prompt, prompt_source) = render_effective_prompt(
+                    &self.store,
+                    version_id,
+                    PromptKey::ChapterOutline,
+                    &variables,
+                )
+                .await?;
+                let completed_stages = completed_stage_contexts(
+                    self.store
+                        .list_completed_run_context_folds(version_id)
+                        .await?,
+                );
+                if !completed_stages
+                    .iter()
+                    .any(|stage| stage.stage == ContextFoldStage::Preparation)
+                {
+                    return Err(SchedulerError::Context(
+                        "开始章节细纲前缺少准备阶段纯文本折叠".to_owned(),
+                    ));
                 }
-                ScheduledStage::ChapterBody { chapter_id } => {
-                    let snapshot = self.store.get_chapter_body(chapter_id).await?;
-                    if snapshot.workflow.version_id != version_id
-                        || snapshot.workflow.active_run_id != Some(task.run_id)
-                        || snapshot.workflow.active_chapter_id != Some(chapter_id)
-                        || snapshot.workflow.stage != WorkflowStage::WritingDrafting
-                        || snapshot.workflow.execution != ExecutionStatus::Queued
-                    {
-                        return Err(SchedulerError::Context(
-                            "当前章节正文任务已改变，拒绝发送过期模型请求".to_owned(),
-                        ));
-                    }
-                    let outline_snapshot = self.store.get_chapter_outline(chapter_id).await?;
-                    let outline = outline_snapshot.outline.content.ok_or_else(|| {
-                        SchedulerError::Context("正文开始前缺少已审核章节细纲".to_owned())
-                    })?;
-                    let outline_fold = snapshot.outline_context_fold.ok_or_else(|| {
-                        SchedulerError::Context("正文开始前缺少章节细纲纯文本折叠".to_owned())
-                    })?;
-                    if outline_fold.plain_text != outline {
-                        return Err(SchedulerError::Context(
-                            "当前章节细纲折叠与正文输入不一致".to_owned(),
-                        ));
-                    }
-                    let chapter = self
-                        .store
-                        .list_chapters(version_id)
-                        .await?
-                        .into_iter()
-                        .find(|chapter| chapter.id == chapter_id)
-                        .ok_or_else(|| {
-                            SchedulerError::Context("当前章节不属于目标稿本".to_owned())
-                        })?;
-                    let completed_stages = completed_stage_contexts(
-                        self.store
-                            .list_completed_run_context_folds(version_id)
-                            .await?,
-                    );
-                    if !completed_stages
-                        .iter()
-                        .any(|stage| stage.stage == ContextFoldStage::Preparation)
-                        || !completed_stages.iter().any(|stage| {
-                            stage.stage == ContextFoldStage::ChapterOutline
-                                && stage.chapter_order == Some(chapter.order_index)
-                        })
-                    {
-                        return Err(SchedulerError::Context(
-                            "正文开始前缺少已完成阶段的必要纯文本折叠".to_owned(),
-                        ));
-                    }
-                    let persisted_messages = self.store.list_agent_messages(task.run_id).await?;
-                    let persist_initial_messages = persisted_messages.is_empty();
-                    let materialized_feedback = self
-                        .store
-                        .list_materialized_chapter_body_feedback(task.run_id)
-                        .await?;
-                    let feedback_binding = materialized_feedback
-                        .iter()
-                        .filter(|feedback| feedback.status == FeedbackStatus::Bound)
-                        .map(|feedback| feedback.id)
-                        .collect::<Vec<_>>();
-                    let tool_result_binding = self
-                        .store
-                        .list_unsealed_agent_tool_result_provider_ids(task.run_id)
-                        .await?;
-                    let current_messages = writing_agent_history_messages(
-                        task.run_id,
-                        persisted_messages,
-                        &materialized_feedback,
-                    )?;
-                    let mut variables = BTreeMap::new();
-                    variables.insert(
-                        "chapter_content".to_owned(),
-                        snapshot.body.content.unwrap_or_default(),
-                    );
-                    variables.insert(
-                        "chapter_guidance".to_owned(),
-                        outline_snapshot.guidance.content.unwrap_or_default(),
-                    );
-                    let prompt = render_builtin_prompt(PromptKey::ChapterWrite, &variables)
-                        .map_err(|error| SchedulerError::Context(error.to_string()))?;
-                    let context = build_context_with_history(
-                        prompt.system.clone(),
-                        chapter_body_tools(),
-                        completed_stages,
-                        vec![CurrentContextInput {
-                            role: ContextMessageRole::User,
-                            content: prompt.user.clone(),
-                            source_revision_id: None,
-                        }],
-                        current_messages,
-                        max_context_tokens,
-                        reserved_output_tokens,
-                    )?;
-                    (
-                        prompt,
-                        context,
-                        persist_initial_messages,
-                        Some(feedback_binding),
-                        Some(tool_result_binding),
-                    )
+                let persisted_messages = self.store.list_agent_messages(task.run_id).await?;
+                let persist_initial_messages = persisted_messages.is_empty();
+                let tool_result_binding = self
+                    .store
+                    .list_unsealed_agent_tool_result_provider_ids(task.run_id)
+                    .await?;
+                let context = build_context_with_history(
+                    prompt.system.clone(),
+                    ask_user_tools(),
+                    completed_stages,
+                    vec![CurrentContextInput {
+                        role: ContextMessageRole::User,
+                        content: prompt.user.clone(),
+                        source_revision_id: None,
+                    }],
+                    writing_agent_history_messages(task.run_id, persisted_messages, &[])?,
+                    max_context_tokens,
+                    reserved_output_tokens,
+                )?;
+                (
+                    prompt,
+                    prompt_source,
+                    context,
+                    persist_initial_messages,
+                    None,
+                    Some(tool_result_binding),
+                )
+            }
+            ScheduledStage::ChapterBody { chapter_id } => {
+                let snapshot = self.store.get_chapter_body(chapter_id).await?;
+                if snapshot.workflow.version_id != version_id
+                    || snapshot.workflow.active_run_id != Some(task.run_id)
+                    || snapshot.workflow.active_chapter_id != Some(chapter_id)
+                    || snapshot.workflow.stage != WorkflowStage::WritingDrafting
+                    || snapshot.workflow.execution != ExecutionStatus::Queued
+                {
+                    return Err(SchedulerError::Context(
+                        "当前章节正文任务已改变，拒绝发送过期模型请求".to_owned(),
+                    ));
                 }
-                ScheduledStage::Review { review_id } => {
-                    let review = self
-                        .store
-                        .delegated_review_task(review_id, task.run_id)
-                        .await?;
-                    if review.version_id != version_id {
-                        return Err(SchedulerError::Context(
-                            "审核 Agent 子 Run 不属于目标稿本".to_owned(),
-                        ));
-                    }
+                let outline_snapshot = self.store.get_chapter_outline(chapter_id).await?;
+                let outline = outline_snapshot.outline.content.ok_or_else(|| {
+                    SchedulerError::Context("正文开始前缺少已审核章节细纲".to_owned())
+                })?;
+                let outline_fold = snapshot.outline_context_fold.ok_or_else(|| {
+                    SchedulerError::Context("正文开始前缺少章节细纲纯文本折叠".to_owned())
+                })?;
+                if outline_fold.plain_text != outline {
+                    return Err(SchedulerError::Context(
+                        "当前章节细纲折叠与正文输入不一致".to_owned(),
+                    ));
+                }
+                let chapter = self
+                    .store
+                    .list_chapters(version_id)
+                    .await?
+                    .into_iter()
+                    .find(|chapter| chapter.id == chapter_id)
+                    .ok_or_else(|| SchedulerError::Context("当前章节不属于目标稿本".to_owned()))?;
+                let completed_stages = completed_stage_contexts(
+                    self.store
+                        .list_completed_run_context_folds(version_id)
+                        .await?,
+                );
+                if !completed_stages
+                    .iter()
+                    .any(|stage| stage.stage == ContextFoldStage::Preparation)
+                    || !completed_stages.iter().any(|stage| {
+                        stage.stage == ContextFoldStage::ChapterOutline
+                            && stage.chapter_order == Some(chapter.order_index)
+                    })
+                {
+                    return Err(SchedulerError::Context(
+                        "正文开始前缺少已完成阶段的必要纯文本折叠".to_owned(),
+                    ));
+                }
+                let persisted_messages = self.store.list_agent_messages(task.run_id).await?;
+                let persist_initial_messages = persisted_messages.is_empty();
+                let materialized_feedback = self
+                    .store
+                    .list_materialized_chapter_body_feedback(task.run_id)
+                    .await?;
+                let feedback_binding = materialized_feedback
+                    .iter()
+                    .filter(|feedback| feedback.status == FeedbackStatus::Bound)
+                    .map(|feedback| feedback.id)
+                    .collect::<Vec<_>>();
+                let tool_result_binding = self
+                    .store
+                    .list_unsealed_agent_tool_result_provider_ids(task.run_id)
+                    .await?;
+                let current_messages = writing_agent_history_messages(
+                    task.run_id,
+                    persisted_messages,
+                    &materialized_feedback,
+                )?;
+                let mut variables = BTreeMap::new();
+                variables.insert(
+                    "chapter_content".to_owned(),
+                    snapshot.body.content.unwrap_or_default(),
+                );
+                variables.insert(
+                    "chapter_guidance".to_owned(),
+                    outline_snapshot.guidance.content.unwrap_or_default(),
+                );
+                let (prompt, prompt_source) = render_effective_prompt(
+                    &self.store,
+                    version_id,
+                    PromptKey::ChapterWrite,
+                    &variables,
+                )
+                .await?;
+                let context = build_context_with_history(
+                    prompt.system.clone(),
+                    chapter_body_tools(),
+                    completed_stages,
+                    vec![CurrentContextInput {
+                        role: ContextMessageRole::User,
+                        content: prompt.user.clone(),
+                        source_revision_id: None,
+                    }],
+                    current_messages,
+                    max_context_tokens,
+                    reserved_output_tokens,
+                )?;
+                (
+                    prompt,
+                    prompt_source,
+                    context,
+                    persist_initial_messages,
+                    Some(feedback_binding),
+                    Some(tool_result_binding),
+                )
+            }
+            ScheduledStage::Review { review_id } => {
+                let review = self
+                    .store
+                    .delegated_review_task(review_id, task.run_id)
+                    .await?;
+                if review.version_id != version_id {
+                    return Err(SchedulerError::Context(
+                        "审核 Agent 子 Run 不属于目标稿本".to_owned(),
+                    ));
+                }
 
-                    let mut variables = BTreeMap::new();
-                    let prompt_key = match review.kind {
-                        DelegatedReviewKind::Preparation(
-                            PreparationArtifactKind::Background,
-                        ) => {
-                            variables.insert("novel_brief".to_owned(), review.novel_brief.clone());
-                            variables.insert("target_content".to_owned(), review.target_content.clone());
-                            PromptKey::ReviewPreparationBackground
-                        }
-                        DelegatedReviewKind::Preparation(
-                            PreparationArtifactKind::Research,
-                        ) => {
-                            variables.insert("novel_brief".to_owned(), review.novel_brief.clone());
-                            variables.insert("target_content".to_owned(), review.target_content.clone());
-                            PromptKey::ReviewPreparationResearch
-                        }
-                        DelegatedReviewKind::Preparation(
-                            PreparationArtifactKind::Characters,
-                        ) => {
-                            variables
-                                .insert("approved_context".to_owned(), review.approved_context.clone());
-                            variables.insert("target_content".to_owned(), review.target_content.clone());
-                            PromptKey::ReviewPreparationCharacters
-                        }
-                        DelegatedReviewKind::Preparation(PreparationArtifactKind::Outline) => {
-                            variables
-                                .insert("approved_context".to_owned(), review.approved_context.clone());
-                            variables.insert("target_content".to_owned(), review.target_content.clone());
-                            PromptKey::ReviewPreparationOutline
-                        }
-                        DelegatedReviewKind::ChapterOutline => {
-                            variables
-                                .insert("chapter_context".to_owned(), review.chapter_context.clone());
-                            variables.insert("target_content".to_owned(), review.target_content.clone());
-                            PromptKey::ReviewChapterOutline
-                        }
-                        DelegatedReviewKind::ChapterEdit => {
-                            variables.insert("base_content".to_owned(), review.base_content.clone());
-                            variables.insert("target_content".to_owned(), review.target_content.clone());
-                            PromptKey::ReviewChapterEdit
-                        }
-                        DelegatedReviewKind::ChapterFinal => {
-                            variables
-                                .insert("chapter_outline".to_owned(), review.chapter_outline.clone());
-                            variables.insert("target_content".to_owned(), review.target_content.clone());
-                            PromptKey::ReviewChapterFinal
-                        }
-                    };
-                    let prompt = render_builtin_prompt(prompt_key, &variables)
-                        .map_err(|error| SchedulerError::Context(error.to_string()))?;
-                    let user_content = if review.user_notes.trim().is_empty() {
-                        prompt.user.clone()
-                    } else {
-                        format!("{}\n\n用户审核关注点：{}", prompt.user, review.user_notes)
-                    };
-                    let context = build_context_with_history(
-                        prompt.system.clone(),
-                        Vec::new(),
-                        Vec::new(),
-                        vec![CurrentContextInput {
-                            role: ContextMessageRole::User,
-                            content: user_content,
-                            source_revision_id: None,
-                        }],
-                        Vec::new(),
-                        max_context_tokens,
-                        reserved_output_tokens,
-                    )?;
-                    (prompt, context, true, None, None)
-                }
-            };
-        let request = context.model_request(Some(StructuredOutput::JsonObject));
+                let mut variables = BTreeMap::new();
+                let prompt_key = match review.kind {
+                    DelegatedReviewKind::Preparation(PreparationArtifactKind::Background) => {
+                        variables.insert("novel_brief".to_owned(), review.novel_brief.clone());
+                        variables
+                            .insert("target_content".to_owned(), review.target_content.clone());
+                        PromptKey::ReviewPreparationBackground
+                    }
+                    DelegatedReviewKind::Preparation(PreparationArtifactKind::Research) => {
+                        variables.insert("novel_brief".to_owned(), review.novel_brief.clone());
+                        variables
+                            .insert("target_content".to_owned(), review.target_content.clone());
+                        PromptKey::ReviewPreparationResearch
+                    }
+                    DelegatedReviewKind::Preparation(PreparationArtifactKind::Characters) => {
+                        variables.insert(
+                            "approved_context".to_owned(),
+                            review.approved_context.clone(),
+                        );
+                        variables
+                            .insert("target_content".to_owned(), review.target_content.clone());
+                        PromptKey::ReviewPreparationCharacters
+                    }
+                    DelegatedReviewKind::Preparation(PreparationArtifactKind::Outline) => {
+                        variables.insert(
+                            "approved_context".to_owned(),
+                            review.approved_context.clone(),
+                        );
+                        variables
+                            .insert("target_content".to_owned(), review.target_content.clone());
+                        PromptKey::ReviewPreparationOutline
+                    }
+                    DelegatedReviewKind::ChapterOutline => {
+                        variables
+                            .insert("chapter_context".to_owned(), review.chapter_context.clone());
+                        variables
+                            .insert("target_content".to_owned(), review.target_content.clone());
+                        PromptKey::ReviewChapterOutline
+                    }
+                    DelegatedReviewKind::ChapterEdit => {
+                        variables.insert("base_content".to_owned(), review.base_content.clone());
+                        variables
+                            .insert("target_content".to_owned(), review.target_content.clone());
+                        PromptKey::ReviewChapterEdit
+                    }
+                    DelegatedReviewKind::ChapterFinal => {
+                        variables
+                            .insert("chapter_outline".to_owned(), review.chapter_outline.clone());
+                        variables
+                            .insert("target_content".to_owned(), review.target_content.clone());
+                        PromptKey::ReviewChapterFinal
+                    }
+                };
+                let (prompt, prompt_source) =
+                    render_effective_prompt(&self.store, version_id, prompt_key, &variables)
+                        .await?;
+                let user_content = if review.user_notes.trim().is_empty() {
+                    prompt.user.clone()
+                } else {
+                    format!("{}\n\n用户审核关注点：{}", prompt.user, review.user_notes)
+                };
+                let context = build_context_with_history(
+                    prompt.system.clone(),
+                    Vec::new(),
+                    Vec::new(),
+                    vec![CurrentContextInput {
+                        role: ContextMessageRole::User,
+                        content: user_content,
+                        source_revision_id: None,
+                    }],
+                    Vec::new(),
+                    max_context_tokens,
+                    reserved_output_tokens,
+                )?;
+                (prompt, prompt_source, context, true, None, None)
+            }
+        };
+        let request = context.model_request(
+            Some(StructuredOutput::JsonObject),
+            project_settings.thinking_level,
+        );
         let messages = if persist_initial_messages {
             agent_messages_for_new_stage_request(&request)?
         } else {
@@ -865,18 +926,23 @@ impl WorkflowScheduler {
         };
         let provider = ChatCompletionsAdapter::new(ChatCompletionsConfig::new(
             &settings.api_base_url,
-            settings.model_id.clone(),
+            effective_model_id.clone(),
             api_key,
             ModelCapabilities {
                 streaming: settings.capabilities.streaming,
                 tools: settings.capabilities.tools,
                 structured_output: settings.capabilities.structured_output,
                 stream_usage: settings.capabilities.stream_usage,
+                thinking: settings.capabilities.thinking,
             },
             ModelTimeouts::default(),
         )?)?;
         let mut context_snapshot = json!({
             "stage": task.kind(),
+            "prompt": {
+                "key": prompt.key.as_str(),
+                "source": prompt_source.as_str(),
+            },
             "build": context,
             "request": &request,
         });
@@ -901,6 +967,15 @@ impl WorkflowScheduler {
                         "capabilities": settings.capabilities,
                         "maxContextTokens": settings.max_context_tokens.to_string(),
                         "reservedOutputTokens": settings.reserved_output_tokens.to_string(),
+                        "project": {
+                            "id": project_id.to_string(),
+                            "revision": project_settings.revision.to_string(),
+                            "modelOverrideId": project_settings.model_id,
+                            "thinkingLevel": project_settings.thinking_level.as_str(),
+                            "auxiliaryToolBudget": project_settings.auxiliary_tool_budget.to_string(),
+                        },
+                        "effectiveModelId": effective_model_id,
+                        "effectiveThinkingLevel": project_settings.thinking_level.as_str(),
                     }),
                     prompt_snapshot: serde_json::to_value(&prompt)?,
                     context_snapshot,
@@ -2221,6 +2296,7 @@ mod tests {
                         tools: true,
                         structured_output: true,
                         stream_usage: true,
+                        thinking: true,
                     },
                     max_context_tokens: 32_768,
                     reserved_output_tokens: 4_096,
@@ -2325,6 +2401,7 @@ mod tests {
                         tools: false,
                         structured_output: true,
                         stream_usage: true,
+                        thinking: true,
                     },
                     max_context_tokens: 32_768,
                     reserved_output_tokens: 4_096,
@@ -2335,8 +2412,12 @@ mod tests {
         let created = store
             .create_project(
                 Uuid::new_v4(),
-                NewProject::new("审核调度器集成", "审核 Agent 不应获得正文工具", None::<&str>)
-                    .unwrap(),
+                NewProject::new(
+                    "审核调度器集成",
+                    "审核 Agent 不应获得正文工具",
+                    None::<&str>,
+                )
+                .unwrap(),
             )
             .await
             .unwrap();
@@ -2345,8 +2426,7 @@ mod tests {
             .save_novel_brief(
                 version_id,
                 Uuid::new_v4(),
-                NewNovelBrief::new("写一个围绕旧车站和匿名来信的悬疑故事。")
-                    .unwrap(),
+                NewNovelBrief::new("写一个围绕旧车站和匿名来信的悬疑故事。").unwrap(),
             )
             .await
             .unwrap();
@@ -2382,8 +2462,7 @@ mod tests {
                     .unwrap(),
                 ],
                 Some(vec![
-                    ChapterPlanDraft::new("末班车", "沈宁在末班车上收到匿名来信。")
-                        .unwrap(),
+                    ChapterPlanDraft::new("末班车", "沈宁在末班车上收到匿名来信。").unwrap(),
                 ]),
             )
             .await
@@ -2494,6 +2573,7 @@ mod tests {
                         tools: true,
                         structured_output: true,
                         stream_usage: true,
+                        thinking: true,
                     },
                     max_context_tokens: 32_768,
                     reserved_output_tokens: 4_096,
@@ -2502,11 +2582,8 @@ mod tests {
             .await
             .unwrap();
         let permit = Arc::new(Semaphore::new(1));
-        let scheduler = WorkflowScheduler::new(
-            store.clone(),
-            permit.clone(),
-            Arc::new(Mutex::new(())),
-        );
+        let scheduler =
+            WorkflowScheduler::new(store.clone(), permit.clone(), Arc::new(Mutex::new(())));
         scheduler
             .enqueue_queued_parent_after_review(&drafting.workflow)
             .await
@@ -2594,6 +2671,7 @@ mod tests {
             messages: Vec::new(),
             tools: ask_user_tools(),
             response_format: Some(StructuredOutput::JsonObject),
+            thinking_level: ThinkingLevel::Off,
         };
 
         assert!(
@@ -2671,6 +2749,7 @@ mod tests {
                         tools: true,
                         structured_output: true,
                         stream_usage: true,
+                        thinking: true,
                     },
                     max_context_tokens: 32_768,
                     reserved_output_tokens: 4_096,
@@ -2777,6 +2856,7 @@ mod tests {
                         tools: true,
                         structured_output: true,
                         stream_usage: true,
+                        thinking: true,
                     },
                     max_context_tokens: 32_768,
                     reserved_output_tokens: 4_096,
@@ -2895,6 +2975,7 @@ mod tests {
                         tools: true,
                         structured_output: true,
                         stream_usage: true,
+                        thinking: true,
                     },
                     max_context_tokens: 32_768,
                     reserved_output_tokens: 4_096,
@@ -3048,6 +3129,7 @@ mod tests {
                         tools: true,
                         structured_output: true,
                         stream_usage: true,
+                        thinking: true,
                     },
                     max_context_tokens: 32_768,
                     reserved_output_tokens: 4_096,

@@ -1272,6 +1272,83 @@ pub struct Project {
     pub updated_at_ms: i64,
 }
 
+/// 模型思考等级。`Off` 表示不向模型发送思考参数。
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThinkingLevel {
+    #[default]
+    Off,
+    Low,
+    Medium,
+    High,
+}
+
+impl ThinkingLevel {
+    pub const ALL: [Self; 4] = [Self::Off, Self::Low, Self::Medium, Self::High];
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+}
+
+/// 项目级辅助工具预算的默认值（细则 §7.1 的初始建议值）。
+pub const DEFAULT_AUXILIARY_TOOL_BUDGET: i64 = 10;
+/// 单个项目辅助工具预算的上限。
+pub const MAX_AUXILIARY_TOOL_BUDGET: i64 = 10_000;
+/// 项目覆盖模型 ID 的长度上限。
+pub const MAX_PROJECT_MODEL_ID_LEN: usize = 256;
+
+const fn default_auxiliary_tool_budget() -> i64 {
+    DEFAULT_AUXILIARY_TOOL_BUDGET
+}
+
+/// 项目级创作设置。
+///
+/// 字段级缺省是真实语义：数据库中较早写入的 `{}` 或缺失字段表示“未显式设置”，
+/// 应解析为同一默认值，而不是损坏记录。
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSettings {
+    /// 覆盖系统默认模型；`None` 表示沿用系统设置。
+    #[serde(default)]
+    pub model_id: Option<String>,
+    #[serde(default)]
+    pub thinking_level: ThinkingLevel,
+    #[serde(default = "default_auxiliary_tool_budget", with = "decimal_i64")]
+    pub auxiliary_tool_budget: i64,
+    /// 与项目行的 `settings_revision` 一致，仅用于让快照自描述。
+    #[serde(default, with = "decimal_i64")]
+    pub revision: i64,
+}
+
+impl Default for ProjectSettings {
+    fn default() -> Self {
+        Self {
+            model_id: None,
+            thinking_level: ThinkingLevel::Off,
+            auxiliary_tool_budget: DEFAULT_AUXILIARY_TOOL_BUDGET,
+            revision: 0,
+        }
+    }
+}
+
+/// 待保存的项目设置；并发修订由调用方另行传入。
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewProjectSettings {
+    #[serde(default)]
+    pub model_id: Option<String>,
+    pub thinking_level: ThinkingLevel,
+    #[serde(with = "decimal_i64")]
+    pub auxiliary_tool_budget: i64,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NovelVersion {
