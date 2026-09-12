@@ -12,7 +12,9 @@ use std::{
 };
 
 use futures_util::{StreamExt, future::BoxFuture};
-use nekowriter_core::{ModelCapabilityProfile, ThinkingLevel, decimal_i64};
+use nekowriter_core::{
+    ModelCapabilityProfile, PersistedModelUsage, ThinkingLevel, UsageUnknownReason, decimal_i64,
+};
 use reqwest::{Client, header};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -213,6 +215,9 @@ pub struct ModelUsage {
     pub total_tokens: i64,
     #[serde(with = "optional_decimal_i64")]
     pub cached_input_tokens: Option<i64>,
+    /// 供应商报告为输出子集的思考用量；未报告时为 `None`，不参与总量相加。
+    #[serde(default, with = "optional_decimal_i64")]
+    pub reasoning_tokens: Option<i64>,
 }
 
 /// 供应商流中被消费的一个可见事件。
@@ -268,7 +273,30 @@ pub struct ModelCompletion {
     pub content: Option<String>,
     pub tool_calls: Vec<ModelToolCall>,
     pub usage: Option<ModelUsage>,
+    /// 供应商报告的原始用量对象（未映射的字段名），随 `usage` 一起存在。
+    pub usage_raw: Option<serde_json::Value>,
     pub finish_reason: ModelFinishReason,
+}
+
+impl ModelCompletion {
+    /// 把一次完整响应的用量封存成持久口径。
+    ///
+    /// 供应商没有报告时写入「供应商未报告」而不是空对象，Dashboard 因此能区分
+    /// 「报告了零用量」与「我们不知道」，并保留原始字段供事后核对。
+    #[must_use]
+    pub fn persisted_usage(&self) -> PersistedModelUsage {
+        match &self.usage {
+            Some(usage) => PersistedModelUsage::from_provider_stream(
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.total_tokens,
+                usage.cached_input_tokens,
+                usage.reasoning_tokens,
+                self.usage_raw.clone(),
+            ),
+            None => PersistedModelUsage::unknown(UsageUnknownReason::ProviderSilent),
+        }
+    }
 }
 
 /// 可被应用服务替换的模型协议边界。
@@ -623,8 +651,8 @@ pub enum ProviderError {
     ConflictingToolCallName { index: usize },
     #[error("模型同时返回正文文本和工具调用")]
     TextAndToolCalls,
-    #[error("tool_calls 终止响应必须恰好包含一个工具调用，实际为 {count}")]
-    ParallelToolCalls { count: usize },
+    #[error("tool_calls 终止响应没有包含任何工具调用")]
+    ToolCallsWithoutCalls,
     #[error("stop 响应不能包含工具调用")]
     ToolCallsWithStop,
     #[error("工具调用 {index} 缺少 ID")]
@@ -675,7 +703,7 @@ impl fmt::Display for TimeoutPhase {
     }
 }
 
-fn normalize_api_base_url(raw: &str) -> Result<Url, ProviderError> {
+pub(crate) fn normalize_api_base_url(raw: &str) -> Result<Url, ProviderError> {
     let mut url = Url::parse(raw).map_err(|error| ProviderError::InvalidApiBaseUrl {
         reason: error.to_string(),
     })?;
@@ -1012,6 +1040,7 @@ struct StreamAccumulator {
     content: String,
     tool_calls: BTreeMap<usize, StreamToolCall>,
     usage: Option<ModelUsage>,
+    usage_raw: Option<serde_json::Value>,
     finish_reason: Option<ModelFinishReason>,
     saw_done: bool,
 }
@@ -1046,6 +1075,12 @@ impl StreamAccumulator {
             return Err(ProviderError::MultipleChoices);
         }
         if let Some(usage) = chunk.usage {
+            let raw_usage = usage.clone();
+            let usage = serde_json::from_value::<WireUsage>(usage).map_err(|error| {
+                ProviderError::InvalidSseJson {
+                    reason: format!("usage 字段无法映射：{error}"),
+                }
+            })?;
             let usage = ModelUsage::try_from(usage)?;
             match &self.usage {
                 Some(current) if current == &usage => {}
@@ -1056,6 +1091,7 @@ impl StreamAccumulator {
                 }
                 None => {
                     self.usage = Some(usage.clone());
+                    self.usage_raw = Some(raw_usage);
                     emit(ModelEvent::Usage { usage });
                 }
             }
@@ -1160,17 +1196,15 @@ impl StreamAccumulator {
                 Vec::new()
             }
             ModelFinishReason::ToolCalls => {
-                if self.tool_calls.len() != 1 {
-                    return Err(ProviderError::ParallelToolCalls {
-                        count: self.tool_calls.len(),
-                    });
+                if self.tool_calls.is_empty() {
+                    return Err(ProviderError::ToolCallsWithoutCalls);
                 }
-                let (index, call) = self
-                    .tool_calls
+                // 适配器只负责把一次响应里出现的每个工具调用完整还原；「一轮只允许一个」
+                // 的协议判定由阶段守卫（`AgentRunner`）统一负责，因此两者不会各判一次。
+                self.tool_calls
                     .into_iter()
-                    .next()
-                    .expect("length checked above");
-                vec![complete_stream_tool_call(index, call)?]
+                    .map(|(index, call)| complete_stream_tool_call(index, call))
+                    .collect::<Result<Vec<_>, _>>()?
             }
         };
         Ok(ModelCompletion {
@@ -1182,6 +1216,7 @@ impl StreamAccumulator {
             },
             tool_calls,
             usage: self.usage,
+            usage_raw: self.usage_raw,
             finish_reason,
         })
     }
@@ -1237,7 +1272,7 @@ struct WireStreamChunk {
     #[serde(default)]
     choices: Vec<WireChoice>,
     #[serde(default)]
-    usage: Option<WireUsage>,
+    usage: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -1285,12 +1320,20 @@ struct WireUsage {
     total_tokens: i64,
     #[serde(default)]
     prompt_tokens_details: Option<WirePromptTokensDetails>,
+    #[serde(default)]
+    completion_tokens_details: Option<WireCompletionTokensDetails>,
 }
 
 #[derive(Deserialize)]
 struct WirePromptTokensDetails {
     #[serde(default)]
     cached_tokens: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct WireCompletionTokensDetails {
+    #[serde(default)]
+    reasoning_tokens: Option<i64>,
 }
 
 impl TryFrom<WireUsage> for ModelUsage {
@@ -1316,6 +1359,16 @@ impl TryFrom<WireUsage> for ModelUsage {
                 field: "cached_tokens",
             });
         }
+        if value
+            .completion_tokens_details
+            .as_ref()
+            .and_then(|details| details.reasoning_tokens)
+            .is_some_and(|count| count < 0)
+        {
+            return Err(ProviderError::NegativeUsage {
+                field: "reasoning_tokens",
+            });
+        }
         Ok(Self {
             input_tokens: value.prompt_tokens,
             output_tokens: value.completion_tokens,
@@ -1323,6 +1376,9 @@ impl TryFrom<WireUsage> for ModelUsage {
             cached_input_tokens: value
                 .prompt_tokens_details
                 .and_then(|details| details.cached_tokens),
+            reasoning_tokens: value
+                .completion_tokens_details
+                .and_then(|details| details.reasoning_tokens),
         })
     }
 }
@@ -1448,7 +1504,7 @@ mod tests {
     async fn adapter_streams_text_usage_and_a_stable_request_shape() {
         let stream = concat!(
             "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"你好\"}}]}\n\n",
-            "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":3,\"total_tokens\":15,\"prompt_tokens_details\":{\"cached_tokens\":4}}}\n\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":3,\"total_tokens\":15,\"prompt_tokens_details\":{\"cached_tokens\":4},\"completion_tokens_details\":{\"reasoning_tokens\":2}}}\n\n",
             "data: [DONE]\n\n",
         );
         let split_at = stream.find("你好").unwrap() + 1;
@@ -1465,6 +1521,17 @@ mod tests {
             .unwrap();
 
         assert_eq!(completion.content.as_deref(), Some("你好"));
+        // 供应商的原始用量字段必须原样保留，供事后核对为什么某次用量是未知。
+        assert_eq!(
+            completion.usage_raw,
+            Some(serde_json::json!({
+                "prompt_tokens": 12,
+                "completion_tokens": 3,
+                "total_tokens": 15,
+                "prompt_tokens_details": { "cached_tokens": 4 },
+                "completion_tokens_details": { "reasoning_tokens": 2 }
+            }))
+        );
         assert_eq!(
             completion.provider_request_id.as_deref(),
             Some("provider-req-1")
@@ -1476,6 +1543,7 @@ mod tests {
                 output_tokens: 3,
                 total_tokens: 15,
                 cached_input_tokens: Some(4),
+                reasoning_tokens: Some(2),
             })
         );
         assert!(
@@ -1537,20 +1605,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn adapter_rejects_parallel_tool_calls_before_any_tool_host_can_run() {
+    async fn adapter_surfaces_every_tool_call_in_a_parallel_batch() {
         let stream = concat!(
             "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-1\",\"type\":\"function\",\"function\":{\"name\":\"append_content\",\"arguments\":\"{}\"}},{\"index\":1,\"id\":\"call-2\",\"type\":\"function\",\"function\":{\"name\":\"replace_content\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
             "data: [DONE]\n\n",
         );
         let (base_url, _request) = spawn_sse_server(vec![stream.as_bytes().to_vec()]).await;
-        let error = adapter(&base_url)
-            .complete(&text_request())
-            .await
-            .unwrap_err();
-        assert!(matches!(
-            error,
-            ProviderError::ParallelToolCalls { count: 2 }
-        ));
+        let completion = adapter(&base_url).complete(&text_request()).await.unwrap();
+        assert_eq!(completion.tool_calls.len(), 2);
+        assert_eq!(completion.tool_calls[0].id, "call-1");
+        assert_eq!(completion.tool_calls[1].id, "call-2");
     }
 
     #[test]

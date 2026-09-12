@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react"
 import { BookOpenText, LoaderCircle, Play, Save } from "lucide-react"
 
+import { TemplateInserter } from "@/components/TemplatePanel"
 import { Button } from "@/components/ui/button"
 import {
   getChapterGuidance,
@@ -17,6 +18,8 @@ type ChapterReadyPanelProps = {
   preparation: PreparationSnapshot
   onChanged: (snapshot: PreparationSnapshot) => void
   onError: (message: string) => void
+  /** 模板列表变化时递增，使插入器不会停留在旧选项上。 */
+  templatesRefreshToken?: number
 }
 
 function chapterDisplayLabel(
@@ -36,6 +39,7 @@ export function ChapterReadyPanel({
   preparation,
   onChanged,
   onError,
+  templatesRefreshToken,
 }: ChapterReadyPanelProps) {
   const [chapter, setChapter] = useState<ChapterSummary | null>(null)
   const [chapters, setChapters] = useState<ChapterSummary[]>([])
@@ -164,6 +168,17 @@ export function ChapterReadyPanel({
               className="mt-1.5 min-h-32 w-full resize-y rounded-xl border border-input bg-background px-3 py-2 text-sm leading-6 transition outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-3 focus:ring-ring/20 disabled:cursor-not-allowed disabled:opacity-60"
             />
           </label>
+          <div className="mt-2">
+            <TemplateInserter
+              label="插入模板到本章指导"
+              refreshToken={templatesRefreshToken}
+              onInsert={(text) =>
+                setGuidance((current) =>
+                  current.trim().length > 0 ? `${current}\n${text}` : text
+                )
+              }
+            />
+          </div>
           <div className="mt-3 flex flex-wrap gap-2">
             <Button type="submit" disabled={!chapterId || pending !== null}>
               {pending === "save" ? (

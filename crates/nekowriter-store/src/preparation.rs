@@ -11,26 +11,27 @@ use nekowriter_core::{
     ChapterOutlineReview, ChapterOutlineReviewCompletion, ChapterOutlineSnapshot, ChapterPlan,
     ChapterPlanDraft, ContextFold, CopiedContextFoldStage, CurrentChapterBody,
     CurrentChapterGuidance, CurrentChapterOutline, CurrentNovelBrief, CurrentPreparationArtifact,
-    ExecutionStatus, FeedbackCitation, FeedbackStatus, HeldChapterBodySubmission,
-    HeldChapterBodyTool, HumanReviewDecision, MAX_REVIEW_ISSUES_LEN, NewChapterGuidance,
-    NewChapterOutline, NewExtraChapter, NewNovelBrief, PendingChapterBodyFeedback,
-    PendingChapterBodyProposal, PendingUserQuestion, PreparationArtifactInput,
-    PreparationArtifactKind, PreparationReview, PreparationReviewCompletion, PreparationSnapshot,
-    QuestionId, ReplaceChapterContent, ReviewId, ReviewStatus, RevisionId, RunId,
-    UserQuestionAnswers, UserQuestionSchema, WorkflowSnapshot, WorkflowStage,
-    begin_chapter_outline, begin_preparation, cancel_chapter_body_pause_for_feedback,
-    confirm_novel_completion, continue_after_agent_tool, continue_after_user_answer,
-    continue_chapter_body_after_proposal, continue_chapter_body_after_protocol_correction,
-    continue_chapter_body_after_tool, continue_writing_run, enter_extra_chapter,
-    enter_next_chapter, finish_chapter_final_review, finish_chapter_outline_review,
-    finish_extra_chapter_final_review, finish_preparation_review, hold_chapter_body_proposal,
-    hold_chapter_body_submission_for_pause, hold_chapter_body_tool_for_pause,
-    interrupt_writing_run, non_whitespace_char_count, record_chapter_body_edit,
-    record_chapter_body_feedback, record_chapter_guidance, record_preparation_review_decision,
-    render_preparation_artifact_plaintext, replace_unique_chapter_content,
-    schedule_chapter_body_run, stop_writing_run as stop_writing_workflow_run,
-    submit_chapter_for_review, submit_chapter_outline_for_review, submit_preparation_for_review,
-    wait_for_user_answer,
+    DeliveredChapterBodyFeedback, DocumentId, DocumentRevisionView, ExecutionStatus,
+    FeedbackCitation, FeedbackDeliveryStatus, FeedbackStatus, HeldChapterBodySubmission,
+    HeldChapterBodyTool, HumanReviewDecision, MAX_CONSECUTIVE_PROTOCOL_ERRORS,
+    MAX_REVIEW_ISSUES_LEN, NewChapterGuidance, NewChapterOutline, NewExtraChapter, NewNovelBrief,
+    PendingChapterBodyFeedback, PendingChapterBodyProposal, PendingUserQuestion,
+    PreparationArtifactInput, PreparationArtifactKind, PreparationReview,
+    PreparationReviewCompletion, PreparationSnapshot, QuestionId, ReplaceChapterContent, ReviewId,
+    ReviewStatus, RevisionId, RunId, UserQuestionAnswers, UserQuestionSchema, WorkflowSnapshot,
+    WorkflowStage, begin_chapter_outline, begin_preparation,
+    cancel_chapter_body_pause_for_feedback, confirm_novel_completion, continue_after_agent_tool,
+    continue_after_user_answer, continue_chapter_body_after_proposal,
+    continue_chapter_body_after_protocol_correction, continue_chapter_body_after_tool,
+    continue_writing_run, enter_extra_chapter, enter_next_chapter, finish_chapter_final_review,
+    finish_chapter_outline_review, finish_extra_chapter_final_review, finish_preparation_review,
+    hold_chapter_body_proposal, hold_chapter_body_submission_for_pause,
+    hold_chapter_body_tool_for_pause, interrupt_writing_run, non_whitespace_char_count,
+    record_chapter_body_edit, record_chapter_body_feedback, record_chapter_guidance,
+    record_preparation_review_decision, render_preparation_artifact_plaintext,
+    replace_unique_chapter_content, schedule_chapter_body_run, stop_writing_after_protocol_error,
+    stop_writing_run as stop_writing_workflow_run, submit_chapter_for_review,
+    submit_chapter_outline_for_review, submit_preparation_for_review, wait_for_user_answer,
 };
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseTransaction, EntityTrait,
@@ -42,10 +43,12 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::agent_messages::append_agent_messages_for_run;
+use super::budget::ensure_quota_scope;
 use super::entity::{
     agent_message, chapter, document, document_revision, event, feedback, model_request,
     novel_version, question, review, revision_dependency, run, tool_call, workflow_instance,
 };
+use super::model_requests::model_request_status_from_db;
 use super::*;
 
 const SAVE_NOVEL_BRIEF_METHOD: &str = "PUT";
@@ -68,6 +71,7 @@ const CONTINUE_WRITING_RUN_METHOD: &str = "POST";
 const STOP_WRITING_RUN_METHOD: &str = "POST";
 const REQUEST_ALLOWANCE_STEP: i64 = 100;
 const CHAPTER_BODY_FEEDBACK_PROTOCOL_CORRECTION: &str = "本章仍有未投递的自由意见，不能直接提交终稿审核。请继续正文阶段，并使用 append_content 或 replace_content 形成下一条完整工具结果，让意见随该结果投递。";
+const CHAPTER_BODY_SUBMISSION_PROTOCOL_CORRECTION: &str = "当前直接提交无法应用。请继续正文阶段，并使用 append_content 或 replace_content 先形成一条有效正文修订；只有正文依赖当前已通过的章节细纲后才能提交终稿审核。";
 const SUBMIT_CHAPTER_FINAL_REVIEW_METHOD: &str = "POST";
 const DECIDE_CHAPTER_FINAL_REVIEW_METHOD: &str = "POST";
 const ADVANCE_TO_NEXT_CHAPTER_METHOD: &str = "POST";
@@ -97,6 +101,7 @@ struct SubmitPreparationArtifactsPayload<'a> {
 struct DecidePreparationReviewPayload<'a> {
     expected_state_revision: i64,
     decision: &'a HumanReviewDecision,
+    citations: &'a [FeedbackCitation],
 }
 
 #[derive(Serialize)]
@@ -185,6 +190,7 @@ struct AddExtraChapterPayload<'a> {
 struct DelegateReviewPayload<'a> {
     expected_state_revision: i64,
     notes: &'a str,
+    citations: &'a [FeedbackCitation],
 }
 
 #[derive(Serialize)]
@@ -216,6 +222,11 @@ pub struct AppliedChapterBodyToolCall {
     /// `true` 仅表示本次回调刚刚推进到下一轮；重复回调读取既有工具结果时为
     /// `false`，调度器不应再额外投递一次同 Run 请求。
     pub newly_resolved: bool,
+    /// 本次结果是否把 Run 推进到可以发送下一次模型请求的队列状态。
+    ///
+    /// 第三次连续的工具协议错误会停止 Run；它仍是已解析的新调用，但不能继续
+    /// 投递请求。
+    pub requeue: bool,
 }
 
 /// `ask_user` 工具调用的传输中立输入。
@@ -240,6 +251,8 @@ pub enum AppliedAgentQuestionToolCall {
         provider_call_id: String,
         result: Value,
         newly_resolved: bool,
+        /// 无效问题参数达到连续协议错误上限时为 `false`。
+        requeue: bool,
     },
 }
 
@@ -264,6 +277,41 @@ pub struct QuestionAnswerResult {
 pub struct StopWritingRunResult {
     pub workflow: WorkflowSnapshot,
     pub cancelled_request_ids: Vec<Uuid>,
+}
+
+/// 为什么要收束自动执行中的 Run。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InterruptionSource {
+    /// 上次进程以非正常方式结束，本次启动时收束。
+    StartupRecovery,
+    /// 本次退出服务，收尾在途请求。
+    ProcessShutdown,
+}
+
+impl InterruptionSource {
+    /// 持久事件里的 `reason`，也写在请求错误的 `kind` 上。
+    #[must_use]
+    pub const fn reason(self) -> &'static str {
+        match self {
+            Self::StartupRecovery => "startup_recovery",
+            Self::ProcessShutdown => "process_shutdown",
+        }
+    }
+
+    /// 用户可见原因文案的前缀。
+    const fn prefix(self) -> &'static str {
+        match self {
+            Self::StartupRecovery => "服务重启",
+            Self::ProcessShutdown => "退出服务",
+        }
+    }
+}
+
+/// 一次收束的结果：被中断的写作 Run 与审核委托数量。
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct InterruptionOutcome {
+    pub writing_runs: usize,
+    pub review_delegations: usize,
 }
 
 /// 一条已经绑定到正文工具结果的自由意见，供调度器把基础工具结果物化为实际模型
@@ -599,14 +647,14 @@ async fn validate_chapter_body_feedback_citations(
                 range,
                 chapter_id,
             } => {
-                validate_document_feedback_citation(
+                validate_document_citation(
                     transaction,
                     *document_id,
                     *revision_id,
                     range,
                     *chapter_id,
                     version_id,
-                    active_chapter_id,
+                    Some(active_chapter_id),
                 )
                 .await?;
             }
@@ -648,14 +696,21 @@ async fn validate_chapter_body_feedback_citations(
     Ok(())
 }
 
-async fn validate_document_feedback_citation(
+/// 校验一条正式文档引用是否逐字锚定在本稿本中的不可变修订上。
+///
+/// 正文意见、委托审核与人工审核决定共用同一套判定：修订存在、`document_id` 与
+/// `revision_id` 匹配、文档未被删除、属于当前稿本、`chapter_id` 与文档归属一致，
+/// 最后把引用范围映射回 UTF-8 边界逐字复核 quote。`required_chapter_id` 为 `Some`
+/// 时表示本次操作只允许引用该章节的文档；为 `None` 时允许本稿本任意文档（准备
+/// 阶段审核）。
+async fn validate_document_citation(
     transaction: &DatabaseTransaction,
     document_id: nekowriter_core::DocumentId,
     revision_id: RevisionId,
     range: &nekowriter_core::TextCitationRange,
     cited_chapter_id: Option<ChapterId>,
     version_id: VersionId,
-    active_chapter_id: ChapterId,
+    required_chapter_id: Option<ChapterId>,
 ) -> Result<(), StoreError> {
     let revision_model = document_revision::Entity::find_by_id(db_id(revision_id))
         .one(transaction)
@@ -683,12 +738,51 @@ async fn validate_document_feedback_citation(
             "引用中的 chapter_id 与文档所属章节不匹配".to_owned(),
         ));
     }
-    if actual_chapter_id.is_some_and(|chapter_id| chapter_id != active_chapter_id) {
+    if required_chapter_id.is_some_and(|required| actual_chapter_id != Some(required)) {
         return Err(StoreError::InvalidCitation(
-            "正文意见不能跨章节引用文本".to_owned(),
+            "引用必须指向本次操作所在章节的文档".to_owned(),
         ));
     }
     validate_text_citation_range(&revision_model.content, range)
+}
+
+/// 校验一批人工审核决定携带的引用。
+///
+/// 决定针对的是已经进入审核的产物或正文修订，因此只能引用已持久化的正式文档；
+/// 尚未落库的正文候选不属于审核目标，不能借决定绕过候选哈希校验。
+async fn validate_review_decision_citations(
+    transaction: &DatabaseTransaction,
+    citations: &[FeedbackCitation],
+    version_id: VersionId,
+    required_chapter_id: Option<ChapterId>,
+) -> Result<(), StoreError> {
+    for citation in citations {
+        match citation {
+            FeedbackCitation::Document {
+                document_id,
+                revision_id,
+                range,
+                chapter_id,
+            } => {
+                validate_document_citation(
+                    transaction,
+                    *document_id,
+                    *revision_id,
+                    range,
+                    *chapter_id,
+                    version_id,
+                    required_chapter_id,
+                )
+                .await?;
+            }
+            FeedbackCitation::Candidate { .. } => {
+                return Err(StoreError::InvalidCitation(
+                    "人工审核决定只能引用已持久化的修订".to_owned(),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn held_candidate_for_feedback_citation(
@@ -1056,6 +1150,347 @@ async fn bind_pending_feedback_to_existing_tool_for_pause<C: ConnectionTrait>(
             Ok(changed_ids)
         }
     }
+}
+
+/// 一次由调用方算好结果的自由工具调用。
+#[derive(Clone, Debug)]
+pub struct FreeAgentToolCall {
+    pub provider_call_id: String,
+    pub name: String,
+    pub arguments: Value,
+    /// 已算好的工具结果，会被原样回送给模型。
+    pub result: Value,
+    /// `true` 表示这是一个稳定错误结果，落库状态为 `error`。
+    pub failed: bool,
+    pub error_code: Option<String>,
+}
+
+/// 自由工具调用经事务落库后的结果。
+///
+/// `newly_resolved` 用来抑制供应商重放；`requeue` 则表达这次新调用是否仍可继续
+/// 同一 Run。两者必须区分，否则第三次连续工具错误仍会被调度器错误地再次投递。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AppliedFreeAgentToolCall {
+    pub result: Value,
+    pub newly_resolved: bool,
+    pub requeue: bool,
+}
+
+/// 一次顶层写作 Run 中、由调用方提供结果的自由工具调用的落库上下文。
+///
+/// 校验只存在这一处：只有 `dispatched` 请求、顶层 `preparation`/`chapter_outline`/
+/// `chapter_body` Run、工作流正在等待该阶段模型响应且 Run 为 `running` 时才允许落库。
+struct FreeAgentToolContext {
+    request: model_request::Model,
+    run_model: run::Model,
+    run_id: RunId,
+    version_id: VersionId,
+    run_kind: String,
+    workflow: WorkflowSnapshot,
+    sequence: i64,
+    tool_call_id: Uuid,
+    provider_call_id: String,
+    args_json: String,
+    assistant_message: NewAgentMessage,
+}
+
+async fn prepare_free_agent_tool_call(
+    transaction: &DatabaseTransaction,
+    request_id: Uuid,
+    provider_call_id: &str,
+    name: &str,
+    arguments: &Value,
+) -> Result<FreeAgentToolContext, StoreError> {
+    let request = model_request::Entity::find_by_id(db_id(request_id))
+        .one(transaction)
+        .await?
+        .ok_or(StoreError::ModelRequestNotFound)?;
+    if request.status != "dispatched" {
+        return Err(StoreError::InvalidModelRequestState(format!(
+            "只有 dispatched 请求可以执行 {name}，当前为 {}",
+            request.status
+        )));
+    }
+    let run_model = run::Entity::find_by_id(request.run_id.clone())
+        .one(transaction)
+        .await?
+        .ok_or(StoreError::RunNotFound)?;
+    if run_model.parent_run_id.is_some()
+        || !matches!(
+            run_model.kind.as_str(),
+            "preparation" | "chapter_outline" | "chapter_body"
+        )
+    {
+        return Err(StoreError::InvalidModelRequestState(
+            "该模型请求不属于顶层写作 Run".to_owned(),
+        ));
+    }
+    let run_id: RunId = run_model.id.clone().into();
+    let version_id = run_model.version_id.clone().into();
+    let run_kind = run_model.kind.clone();
+    let workflow = workflow_for_version(transaction, version_id).await?;
+    if workflow.active_run_id != Some(run_id)
+        || workflow.execution != ExecutionStatus::RequestInFlight
+        || !question_stage_matches_run_kind(&workflow.stage, &run_kind)
+    {
+        return Err(StoreError::InvalidModelRequestState(format!(
+            "当前工作流不接受 {name} 工具调用"
+        )));
+    }
+    if run_model.status != "running" {
+        return Err(StoreError::CorruptRecord(format!(
+            "{name} 在途请求的 Run 未处于 running 状态"
+        )));
+    }
+    let sequence = next_agent_tool_sequence(transaction, &run_model.id).await?;
+    let tool_call_id = Uuid::new_v4();
+    let assistant_message = NewAgentMessage {
+        role: AgentMessageRole::Assistant,
+        content: json!({
+            "kind": "assistant_tool_calls",
+            "content": Value::Null,
+            "toolCalls": [{
+                "id": provider_call_id,
+                "name": name,
+                "arguments": arguments,
+            }],
+        }),
+        request_id: Some(request_id),
+        tool_call_id: None,
+    };
+    Ok(FreeAgentToolContext {
+        request,
+        run_model,
+        run_id,
+        version_id,
+        run_kind,
+        workflow,
+        sequence,
+        tool_call_id,
+        provider_call_id: provider_call_id.to_owned(),
+        args_json: serde_json::to_string(arguments)?,
+        assistant_message,
+    })
+}
+
+/// 一次自由工具调用的可回送结果。
+struct FreeAgentToolResult<'a> {
+    name: &'a str,
+    result: &'a Value,
+    /// `resolved` 或 `error`。
+    status: &'a str,
+    /// 失败时的稳定错误码，正常结果时为 `None`。
+    error_code: Option<&'a str>,
+}
+
+/// 提交一次自由工具调用：写入 assistant/tool 审计与工具调用记录，更新本次模型请求
+/// 与 Run，推进工作流到下一轮并发出事件。
+///
+/// 返回值表示调度器是否可以继续投递同一 Run。工具返回稳定错误说明模型没有形成
+/// 可推进动作，必须与其他协议纠正共用三次工程上限。
+async fn commit_free_agent_tool_call(
+    transaction: &DatabaseTransaction,
+    context: FreeAgentToolContext,
+    request_id: Uuid,
+    provider_request_id: Option<String>,
+    usage: &Value,
+    outcome: FreeAgentToolResult<'_>,
+    now: i64,
+) -> Result<bool, StoreError> {
+    let FreeAgentToolContext {
+        request,
+        run_model,
+        run_id,
+        version_id,
+        run_kind,
+        workflow,
+        sequence,
+        tool_call_id,
+        provider_call_id,
+        args_json,
+        assistant_message,
+    } = context;
+    if run_model.consecutive_protocol_errors < 0 {
+        return Err(StoreError::CorruptRecord(
+            "Run consecutive_protocol_errors 不能为负数".to_owned(),
+        ));
+    }
+    let is_protocol_error = outcome.status == "error";
+    let next_error_count = if is_protocol_error {
+        run_model
+            .consecutive_protocol_errors
+            .checked_add(1)
+            .ok_or_else(|| {
+                StoreError::InvalidModelRequest(
+                    "Run consecutive_protocol_errors 已达到 i64 上限".to_owned(),
+                )
+            })?
+    } else {
+        0
+    };
+    let stop = is_protocol_error && next_error_count >= MAX_CONSECUTIVE_PROTOCOL_ERRORS;
+    let next_workflow = if stop {
+        stop_writing_after_protocol_error(&workflow, run_id)?
+    } else {
+        continue_after_agent_tool(&workflow, run_id)?
+    };
+    let run_status = if stop { "stopped" } else { "queued" };
+    let result_json = serde_json::to_string(outcome.result)?;
+    let mut messages = vec![assistant_message];
+    messages.push(NewAgentMessage {
+        role: AgentMessageRole::Tool,
+        content: json!({
+            "kind": "tool_result",
+            "content": result_json,
+        }),
+        request_id: Some(request_id),
+        tool_call_id: Some(provider_call_id.clone()),
+    });
+    append_agent_messages_for_run(transaction, &run_model, messages, now).await?;
+    tool_call::ActiveModel {
+        id: Set(db_id(tool_call_id)),
+        request_id: Set(request.id.clone()),
+        run_id: Set(run_model.id.clone()),
+        provider_call_id: Set(provider_call_id.clone()),
+        sequence: Set(sequence),
+        name: Set(outcome.name.to_owned()),
+        args_json: Set(args_json),
+        base_revision_id: Set(None),
+        proposal_json: Set(None),
+        held_json: Set(None),
+        status: Set(outcome.status.to_owned()),
+        result_json: Set(Some(result_json)),
+        included_request_id: Set(None),
+        created_at: Set(now),
+        resolved_at: Set(Some(now)),
+        ..Default::default()
+    }
+    .insert(transaction)
+    .await?;
+    let bound_feedback_ids = if run_kind == "chapter_body" {
+        bind_pending_feedback_to_tool(transaction, run_id, tool_call_id, sequence, now).await?
+    } else {
+        Vec::new()
+    };
+    let mut active_request = request.into_active_model();
+    active_request.status = Set("succeeded".to_owned());
+    active_request.provider_request_id = Set(provider_request_id);
+    active_request.usage_json = Set(Some(serde_json::to_string(usage)?));
+    active_request.error_json = Set(None);
+    active_request.updated_at = Set(now);
+    active_request.completed_at = Set(Some(now));
+    active_request.update(transaction).await?;
+    let request_count = run_model.request_count;
+    let mut active_run = run_model.into_active_model();
+    active_run.status = Set(run_status.to_owned());
+    active_run.consecutive_protocol_errors = Set(next_error_count);
+    active_run.ended_at = Set(if stop { Some(now) } else { None });
+    active_run.updated_at = Set(now);
+    active_run.update(transaction).await?;
+    persist_workflow(transaction, &next_workflow).await?;
+    let mut tool_event = json!({
+        "run_id": run_id,
+        "chapter_id": next_workflow.active_chapter_id,
+        "name": outcome.name,
+        "provider_call_id": provider_call_id,
+        "status": outcome.status,
+    });
+    if let Some(code) = outcome.error_code {
+        tool_event
+            .as_object_mut()
+            .expect("工具事件必须是 JSON object")
+            .insert("code".to_owned(), Value::String(code.to_owned()));
+    }
+    if is_protocol_error {
+        tool_event
+            .as_object_mut()
+            .expect("工具事件必须是 JSON object")
+            .insert(
+                "consecutive_protocol_errors".to_owned(),
+                Value::String(next_error_count.to_string()),
+            );
+    }
+    insert_event(
+        transaction,
+        version_id,
+        "tool.resolved",
+        tool_call_id,
+        next_workflow.state_revision,
+        tool_event,
+        now,
+    )
+    .await?;
+    for feedback_id in bound_feedback_ids {
+        insert_event(
+            transaction,
+            version_id,
+            "feedback.changed",
+            feedback_id,
+            next_workflow.state_revision,
+            json!({
+                "chapter_id": next_workflow.active_chapter_id,
+                "run_id": run_id,
+                "status": "bound",
+                "bound_tool_call_id": tool_call_id,
+            }),
+            now,
+        )
+        .await?;
+    }
+    let mut run_event = json!({
+        "kind": run_kind,
+        "status": run_status,
+        "request_id": request_id,
+        "request_count": request_count.to_string(),
+    });
+    if is_protocol_error {
+        let event = run_event
+            .as_object_mut()
+            .expect("Run 事件必须是 JSON object");
+        event.insert("reason".to_owned(), Value::String("tool_error".to_owned()));
+        event.insert(
+            "consecutive_protocol_errors".to_owned(),
+            Value::String(next_error_count.to_string()),
+        );
+        event.insert(
+            "wait_reason".to_owned(),
+            if stop {
+                Value::String("protocol_error_limit".to_owned())
+            } else {
+                Value::Null
+            },
+        );
+    }
+    insert_event(
+        transaction,
+        version_id,
+        "run.changed",
+        run_id,
+        next_workflow.state_revision,
+        run_event,
+        now,
+    )
+    .await?;
+    insert_event(
+        transaction,
+        version_id,
+        "workflow.changed",
+        version_id,
+        next_workflow.state_revision,
+        json!({
+            "stage": next_workflow.stage,
+            "execution": next_workflow.execution,
+            "run_id": run_id,
+            "chapter_id": next_workflow.active_chapter_id,
+            "request_id": request_id,
+            "pause_requested": next_workflow.pause_requested,
+            "protocol_correction": is_protocol_error,
+            "consecutive_protocol_errors": next_error_count.to_string(),
+        }),
+        now,
+    )
+    .await?;
+    Ok(!stop)
 }
 
 async fn next_agent_tool_sequence<C: ConnectionTrait>(
@@ -1444,9 +1879,10 @@ struct ResolvedHeldChapterBodySubmission {
 
 /// 恢复一个在“提交章节”边界命中的暂停。
 ///
-/// 如果仍有未投递意见，恢复不会假装阶段已完成：它把原始助手文本与协议纠正消息
-/// 写回消息账本，清除暂停并重新排队，等待新的合法正文工具结果。否则才创建终稿
-/// 审核。两条路径都会清除 Run 检查点中的挂起提交。
+/// 如果仍有未投递意见，或当前没有可审核的正文修订，恢复不会假装阶段已完成：它把
+/// 原始助手文本与协议纠正消息写回消息账本，清除暂停并重新排队，等待新的合法正文
+/// 工具结果。只有提交实际可应用时才创建终稿审核。两条路径都会清除 Run 检查点中的
+/// 挂起提交。
 async fn resolve_held_chapter_body_submission(
     transaction: &DatabaseTransaction,
     workflow: &WorkflowSnapshot,
@@ -1496,7 +1932,60 @@ async fn resolve_held_chapter_body_submission(
         .one(transaction)
         .await?
         .is_some();
-    let (next_workflow, run_status, review_id, protocol_correction) = if has_pending_feedback {
+    let mut submission_problem = None;
+    let mut applicable_submission = None;
+    if !has_pending_feedback {
+        let body = current_chapter_body(transaction, chapter_id).await?;
+        if let Some(body_revision_id) = body.revision_id {
+            let body_content = body
+                .content
+                .ok_or_else(|| StoreError::CorruptRecord("章节正文当前修订缺少内容".to_owned()))?;
+            if let Err(error) = nekowriter_core::validate_document_content(
+                "章节正文",
+                &body_content,
+                nekowriter_core::MAX_ARTIFACT_CONTENT_LEN,
+            ) {
+                submission_problem = Some(error.to_string());
+            }
+            if submission_problem.is_none() {
+                let outline_revision_id = match chapter_body_outline_dependency_revision_id(
+                    transaction,
+                    version_id,
+                    chapter_id,
+                )
+                .await
+                {
+                    Ok(revision_id) => Some(revision_id),
+                    Err(StoreError::InvalidChapterState(message)) => {
+                        submission_problem = Some(message);
+                        None
+                    }
+                    Err(error) => return Err(error),
+                };
+                if let Some(outline_revision_id) = outline_revision_id {
+                    let dependency_revision_ids =
+                        revision_dependency_ids(transaction, body_revision_id).await?;
+                    if dependency_revision_ids.contains(&outline_revision_id) {
+                        applicable_submission = Some((body_revision_id, dependency_revision_ids));
+                    } else {
+                        submission_problem = Some("当前正文未依赖已通过的章节细纲".to_owned());
+                    }
+                }
+            }
+        } else {
+            submission_problem = Some("章节正文不能为空".to_owned());
+        }
+    }
+    let correction = if has_pending_feedback {
+        Some(CHAPTER_BODY_FEEDBACK_PROTOCOL_CORRECTION.to_owned())
+    } else {
+        submission_problem.map(|reason| {
+            format!("{CHAPTER_BODY_SUBMISSION_PROTOCOL_CORRECTION}\n本次无法应用的原因：{reason}")
+        })
+    };
+    let (next_workflow, run_status, review_id, protocol_correction) = if let Some(correction) =
+        correction
+    {
         let next_workflow =
             nekowriter_core::resume_chapter_body_after_pause(workflow, chapter_id, run_id)?;
         append_agent_messages_for_run(
@@ -1517,7 +2006,7 @@ async fn resolve_held_chapter_body_submission(
                     role: AgentMessageRole::User,
                     content: json!({
                         "kind": "protocol_correction",
-                        "content": CHAPTER_BODY_FEEDBACK_PROTOCOL_CORRECTION,
+                        "content": correction,
                     }),
                     request_id: Some(held.held.request_id),
                     tool_call_id: None,
@@ -1528,29 +2017,8 @@ async fn resolve_held_chapter_body_submission(
         .await?;
         (next_workflow, "queued".to_owned(), None, true)
     } else {
-        let body = current_chapter_body(transaction, chapter_id).await?;
-        let body_revision_id = body
-            .revision_id
-            .ok_or_else(|| StoreError::InvalidChapterBodyEdit("章节正文不能为空".to_owned()))?;
-        let body_content = body
-            .content
-            .ok_or_else(|| StoreError::CorruptRecord("章节正文当前修订缺少内容".to_owned()))?;
-        nekowriter_core::validate_document_content(
-            "章节正文",
-            &body_content,
-            nekowriter_core::MAX_ARTIFACT_CONTENT_LEN,
-        )
-        .map_err(|error| StoreError::InvalidChapterBodyEdit(error.to_string()))?;
-        let outline_revision_id =
-            chapter_body_outline_dependency_revision_id(transaction, version_id, chapter_id)
-                .await?;
-        let dependency_revision_ids =
-            revision_dependency_ids(transaction, body_revision_id).await?;
-        if !dependency_revision_ids.contains(&outline_revision_id) {
-            return Err(StoreError::InvalidChapterState(
-                "当前正文未依赖已通过的章节细纲".to_owned(),
-            ));
-        }
+        let (body_revision_id, dependency_revision_ids) = applicable_submission
+            .ok_or_else(|| StoreError::CorruptRecord("暂停章节提交缺少可应用性判定".to_owned()))?;
         let next_workflow = nekowriter_core::resume_chapter_body_submission_after_pause(
             workflow, chapter_id, run_id,
         )?;
@@ -2070,11 +2538,13 @@ impl Store {
         command_id: Uuid,
         expected_state_revision: i64,
         decision: HumanReviewDecision,
+        citations: Vec<FeedbackCitation>,
     ) -> Result<PreparationSnapshot, StoreError> {
         let target = format!("/api/reviews/{review_id}/decision");
         let payload_hash = payload_hash(&DecidePreparationReviewPayload {
             expected_state_revision,
             decision: &decision,
+            citations: &citations,
         })?;
         if let Some(receipt) = self.find_receipt(command_id).await? {
             return replay_or_conflict(
@@ -2108,9 +2578,24 @@ impl Store {
                             "审核目标已不是当前修订，不能对旧修订作出决定".to_owned(),
                         ));
                     }
+                    // 准备阶段审核可以引用本稿本任意已持久化文档。
+                    validate_review_decision_citations(
+                        transaction,
+                        &citations,
+                        review_target.version_id,
+                        None,
+                    )
+                    .await?;
 
                     let now = utc_now_millis();
-                    persist_human_review_decision(transaction, review_id, &decision, now).await?;
+                    persist_human_review_decision(
+                        transaction,
+                        review_id,
+                        &decision,
+                        &citations,
+                        now,
+                    )
+                    .await?;
                     let current_artifacts =
                         current_preparation_artifacts(transaction, review_target.version_id)
                             .await?;
@@ -3831,6 +4316,7 @@ impl Store {
                                     provider_call_id,
                                     result,
                                     newly_resolved: false,
+                                    requeue: false,
                                 })
                             }
                             _ => Err(StoreError::CorruptRecord(
@@ -3838,59 +4324,26 @@ impl Store {
                             )),
                         };
                     }
-                    if request.status != "dispatched" {
-                        return Err(StoreError::InvalidModelRequestState(format!(
-                            "只有 dispatched 请求可以执行 ask_user，当前为 {}",
-                            request.status
-                        )));
-                    }
-                    let run_model = run::Entity::find_by_id(request.run_id.clone())
-                        .one(transaction)
-                        .await?
-                        .ok_or(StoreError::RunNotFound)?;
-                    if run_model.parent_run_id.is_some()
-                        || !matches!(
-                            run_model.kind.as_str(),
-                            "preparation" | "chapter_outline" | "chapter_body"
-                        )
-                    {
-                        return Err(StoreError::InvalidModelRequestState(
-                            "该模型请求不属于顶层写作 Run".to_owned(),
-                        ));
-                    }
-                    let run_id: RunId = run_model.id.clone().into();
-                    let version_id = run_model.version_id.clone().into();
-                    let run_kind = run_model.kind.clone();
-                    let workflow = workflow_for_version(transaction, version_id).await?;
-                    if workflow.active_run_id != Some(run_id)
-                        || workflow.execution != ExecutionStatus::RequestInFlight
-                        || !question_stage_matches_run_kind(&workflow.stage, &run_kind)
-                    {
-                        return Err(StoreError::InvalidModelRequestState(
-                            "当前工作流不接受 ask_user 工具调用".to_owned(),
-                        ));
-                    }
-                    if run_model.status != "running" {
-                        return Err(StoreError::CorruptRecord(
-                            "ask_user 在途请求的 Run 未处于 running 状态".to_owned(),
-                        ));
-                    }
-                    let sequence = next_agent_tool_sequence(transaction, &run_model.id).await?;
-                    let tool_call_id = Uuid::new_v4();
-                    let assistant_message = NewAgentMessage {
-                        role: AgentMessageRole::Assistant,
-                        content: json!({
-                            "kind": "assistant_tool_calls",
-                            "content": Value::Null,
-                            "toolCalls": [{
-                                "id": call.provider_call_id.clone(),
-                                "name": "ask_user",
-                                "arguments": call.arguments.clone(),
-                            }],
-                        }),
-                        request_id: Some(request_id),
-                        tool_call_id: None,
-                    };
+                    let FreeAgentToolContext {
+                        request,
+                        run_model,
+                        run_id,
+                        version_id,
+                        run_kind,
+                        workflow,
+                        sequence,
+                        tool_call_id,
+                        provider_call_id,
+                        args_json,
+                        assistant_message,
+                    } = prepare_free_agent_tool_call(
+                        transaction,
+                        request_id,
+                        &call.provider_call_id,
+                        "ask_user",
+                        &call.arguments,
+                    )
+                    .await?;
                     match parse_agent_question_schema(&call.arguments) {
                         Ok(schema) => {
                             let next_workflow = wait_for_user_answer(&workflow, run_id)?;
@@ -4016,130 +4469,30 @@ impl Store {
                                 "TOOL_ARGUMENTS_INVALID",
                                 message,
                             );
-                            let next_workflow = continue_after_agent_tool(&workflow, run_id)?;
-                            let mut messages = vec![assistant_message];
-                            messages.push(NewAgentMessage {
-                                role: AgentMessageRole::Tool,
-                                content: json!({
-                                    "kind": "tool_result",
-                                    "content": serde_json::to_string(&tool_result)?,
-                                }),
-                                request_id: Some(request_id),
-                                tool_call_id: Some(call.provider_call_id.clone()),
-                            });
-                            append_agent_messages_for_run(transaction, &run_model, messages, now)
-                                .await?;
-                            tool_call::ActiveModel {
-                                id: Set(db_id(tool_call_id)),
-                                request_id: Set(request.id.clone()),
-                                run_id: Set(run_model.id.clone()),
-                                provider_call_id: Set(call.provider_call_id.clone()),
-                                sequence: Set(sequence),
-                                name: Set("ask_user".to_owned()),
-                                args_json: Set(args_json),
-                                base_revision_id: Set(None),
-                                proposal_json: Set(None),
-                                held_json: Set(None),
-                                status: Set("error".to_owned()),
-                                result_json: Set(Some(serde_json::to_string(&tool_result)?)),
-                                included_request_id: Set(None),
-                                created_at: Set(now),
-                                resolved_at: Set(Some(now)),
-                                ..Default::default()
-                            }
-                            .insert(transaction)
-                            .await?;
-                            let bound_feedback_ids = if run_kind == "chapter_body" {
-                                bind_pending_feedback_to_tool(
-                                    transaction,
+                            let requeue = commit_free_agent_tool_call(
+                                transaction,
+                                FreeAgentToolContext {
+                                    request,
+                                    run_model,
                                     run_id,
-                                    tool_call_id,
-                                    sequence,
-                                    now,
-                                )
-                                .await?
-                            } else {
-                                Vec::new()
-                            };
-                            let mut active_request = request.into_active_model();
-                            active_request.status = Set("succeeded".to_owned());
-                            active_request.provider_request_id = Set(provider_request_id);
-                            active_request.usage_json = Set(Some(serde_json::to_string(&usage)?));
-                            active_request.error_json = Set(None);
-                            active_request.updated_at = Set(now);
-                            active_request.completed_at = Set(Some(now));
-                            active_request.update(transaction).await?;
-                            let request_count = run_model.request_count;
-                            let mut active_run = run_model.into_active_model();
-                            active_run.status = Set("queued".to_owned());
-                            active_run.consecutive_protocol_errors = Set(0);
-                            active_run.ended_at = Set(None);
-                            active_run.updated_at = Set(now);
-                            active_run.update(transaction).await?;
-                            persist_workflow(transaction, &next_workflow).await?;
-                            insert_event(
-                                transaction,
-                                version_id,
-                                "tool.resolved",
-                                tool_call_id,
-                                next_workflow.state_revision,
-                                json!({
-                                    "run_id": run_id,
-                                    "chapter_id": next_workflow.active_chapter_id,
-                                    "name": "ask_user",
-                                    "provider_call_id": call.provider_call_id,
-                                    "status": "error",
-                                    "code": "TOOL_ARGUMENTS_INVALID",
-                                }),
-                                now,
-                            )
-                            .await?;
-                            for feedback_id in bound_feedback_ids {
-                                insert_event(
-                                    transaction,
                                     version_id,
-                                    "feedback.changed",
-                                    feedback_id,
-                                    next_workflow.state_revision,
-                                    json!({
-                                        "chapter_id": next_workflow.active_chapter_id,
-                                        "run_id": run_id,
-                                        "status": "bound",
-                                        "bound_tool_call_id": tool_call_id,
-                                    }),
-                                    now,
-                                )
-                                .await?;
-                            }
-                            insert_event(
-                                transaction,
-                                version_id,
-                                "run.changed",
-                                run_id,
-                                next_workflow.state_revision,
-                                json!({
-                                    "kind": run_kind.clone(),
-                                    "status": "queued",
-                                    "request_id": request_id,
-                                    "request_count": request_count.to_string(),
-                                }),
-                                now,
-                            )
-                            .await?;
-                            insert_event(
-                                transaction,
-                                version_id,
-                                "workflow.changed",
-                                version_id,
-                                next_workflow.state_revision,
-                                json!({
-                                    "stage": next_workflow.stage,
-                                    "execution": next_workflow.execution,
-                                    "run_id": run_id,
-                                    "chapter_id": next_workflow.active_chapter_id,
-                                    "request_id": request_id,
-                                    "pause_requested": next_workflow.pause_requested,
-                                }),
+                                    run_kind,
+                                    workflow,
+                                    sequence,
+                                    tool_call_id,
+                                    provider_call_id,
+                                    args_json,
+                                    assistant_message,
+                                },
+                                request_id,
+                                provider_request_id,
+                                &usage,
+                                FreeAgentToolResult {
+                                    name: "ask_user",
+                                    result: &tool_result,
+                                    status: "error",
+                                    error_code: Some("TOOL_ARGUMENTS_INVALID"),
+                                },
                                 now,
                             )
                             .await?;
@@ -4147,6 +4500,7 @@ impl Store {
                                 provider_call_id: call.provider_call_id,
                                 result: tool_result,
                                 newly_resolved: true,
+                                requeue,
                             })
                         }
                         Err(error) => Err(error),
@@ -4173,6 +4527,163 @@ impl Store {
             }
             Err(error) => Err(error),
         }
+    }
+
+    /// 读取一次自由工具调用已经落库的结果。
+    ///
+    /// 供应商回调重放时调用方先用它跳过重复的检索与重复扣费。
+    ///
+    /// # Errors
+    ///
+    /// 工具结果不是 JSON object 或数据库读取失败时返回错误。
+    pub async fn free_agent_tool_result(
+        &self,
+        request_id: Uuid,
+        provider_call_id: &str,
+    ) -> Result<Option<Value>, StoreError> {
+        let request = model_request::Entity::find_by_id(db_id(request_id))
+            .one(&self.database)
+            .await?
+            .ok_or(StoreError::ModelRequestNotFound)?;
+        let Some(existing) = tool_call::Entity::find()
+            .filter(tool_call::Entity::COLUMN.request_id.eq(request.id))
+            .filter(
+                tool_call::Entity::COLUMN
+                    .provider_call_id
+                    .eq(provider_call_id.to_owned()),
+            )
+            .one(&self.database)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let Some(result_json) = existing.result_json else {
+            return Ok(None);
+        };
+        let result: Value = serde_json::from_str(&result_json)?;
+        if !result.is_object() {
+            return Err(StoreError::CorruptRecord(
+                "自由工具结果必须是 JSON object".to_owned(),
+            ));
+        }
+        Ok(Some(result))
+    }
+
+    /// 提交一次由调用方算好结果的自由工具调用（目前只有 `query_knowledge`）。
+    ///
+    /// 结果落库与工作流推进在一个事务里完成；同一 `provider_call_id` 的重放只返回
+    /// 已提交结果，不重复写入、不重复推进。
+    ///
+    /// # Errors
+    ///
+    /// 参数无效、请求或 Run 不存在、工作流不接受该工具、同一调用 ID 的名称或参数
+    /// 发生变化，或数据库操作失败时返回错误。
+    pub async fn execute_free_agent_tool_call(
+        &self,
+        request_id: Uuid,
+        provider_request_id: Option<String>,
+        usage: Value,
+        call: FreeAgentToolCall,
+    ) -> Result<AppliedFreeAgentToolCall, StoreError> {
+        if call.provider_call_id.trim().is_empty() {
+            return Err(StoreError::InvalidModelRequest(
+                "自由工具 provider_call_id 不能为空".to_owned(),
+            ));
+        }
+        if !usage.is_object() {
+            return Err(StoreError::InvalidModelRequest(
+                "自由工具调用的模型 usage 必须是 JSON object".to_owned(),
+            ));
+        }
+        if provider_request_id
+            .as_deref()
+            .is_some_and(|provider_request_id| provider_request_id.trim().is_empty())
+        {
+            return Err(StoreError::InvalidModelRequest(
+                "provider_request_id 不能是空字符串".to_owned(),
+            ));
+        }
+        let args_json = serde_json::to_string(&call.arguments)?;
+        let now = utc_now_millis();
+        let result = self
+            .database
+            .transaction::<_, _, StoreError>(|transaction| {
+                let call = call.clone();
+                let args_json = args_json.clone();
+                let provider_request_id = provider_request_id.clone();
+                let usage = usage.clone();
+                Box::pin(async move {
+                    if let Some(request) = model_request::Entity::find_by_id(db_id(request_id))
+                        .one(transaction)
+                        .await?
+                        && let Some(existing) = tool_call::Entity::find()
+                            .filter(tool_call::Entity::COLUMN.request_id.eq(request.id))
+                            .filter(
+                                tool_call::Entity::COLUMN
+                                    .provider_call_id
+                                    .eq(call.provider_call_id.clone()),
+                            )
+                            .one(transaction)
+                            .await?
+                    {
+                        if existing.name != call.name || existing.args_json != args_json {
+                            return Err(StoreError::InvalidModelRequestState(
+                                "同一 provider tool call ID 的名称或参数发生变化".to_owned(),
+                            ));
+                        }
+                        let result_json = existing.result_json.ok_or_else(|| {
+                            StoreError::CorruptRecord(
+                                "已完成自由工具调用缺少 result_json".to_owned(),
+                            )
+                        })?;
+                        return Ok((
+                            AppliedFreeAgentToolCall {
+                                result: serde_json::from_str(&result_json)?,
+                                newly_resolved: false,
+                                requeue: false,
+                            },
+                            false,
+                        ));
+                    }
+                    let context = prepare_free_agent_tool_call(
+                        transaction,
+                        request_id,
+                        &call.provider_call_id,
+                        &call.name,
+                        &call.arguments,
+                    )
+                    .await?;
+                    let requeue = commit_free_agent_tool_call(
+                        transaction,
+                        context,
+                        request_id,
+                        provider_request_id,
+                        &usage,
+                        FreeAgentToolResult {
+                            name: &call.name,
+                            result: &call.result,
+                            status: if call.failed { "error" } else { "resolved" },
+                            error_code: call.error_code.as_deref(),
+                        },
+                        now,
+                    )
+                    .await?;
+                    Ok((
+                        AppliedFreeAgentToolCall {
+                            result: call.result.clone(),
+                            newly_resolved: true,
+                            requeue,
+                        },
+                        true,
+                    ))
+                })
+            })
+            .await
+            .map_err(transaction_error)?;
+        if result.1 {
+            self.notify_event_listeners();
+        }
+        Ok(result.0)
     }
 
     /// 验证并提交一组 `ask_user` 答案，形成同一工具调用的可回送结果。
@@ -4443,6 +4954,52 @@ impl Store {
             .map_err(transaction_error)
     }
 
+    /// 读取一条不可变文档修订，用于引用回看与历史核对。
+    ///
+    /// 引用锚定在提交时的具体修订上，因此该修订即使已经不是文档当前修订，也必须
+    /// 仍可读取；这里只做只读查询，不修改任何文档状态。
+    ///
+    /// # Errors
+    ///
+    /// 修订不存在、与 `document_id` 不匹配、或所属文档已删除时返回
+    /// [`StoreError::DocumentRevisionNotFound`]。
+    pub async fn get_document_revision(
+        &self,
+        document_id: DocumentId,
+        revision_id: RevisionId,
+    ) -> Result<DocumentRevisionView, StoreError> {
+        let Some(revision) = document_revision::Entity::find_by_id(db_id(revision_id))
+            .one(&self.database)
+            .await?
+        else {
+            return Err(StoreError::DocumentRevisionNotFound);
+        };
+        if revision.document_id != db_id(document_id) {
+            return Err(StoreError::DocumentRevisionNotFound);
+        }
+        let document = document::Entity::find_by_id(db_id(document_id))
+            .filter(document::Entity::COLUMN.deleted_at.is_null())
+            .one(&self.database)
+            .await?
+            .ok_or(StoreError::DocumentRevisionNotFound)?;
+        let is_current = document
+            .current_revision_id
+            .as_deref()
+            .and_then(|value| Uuid::parse_str(value).ok())
+            == Some(revision_id);
+        Ok(DocumentRevisionView {
+            document_id,
+            revision_id,
+            revision_no: revision.revision_no,
+            role: document.role,
+            chapter_id: parse_optional_id(document.chapter_id, "document.chapter_id")?,
+            word_count: revision.word_count,
+            content: revision.content,
+            is_current,
+            created_at_ms: revision.created_at,
+        })
+    }
+
     /// 以自动接受模式追加当前章节正文。
     pub async fn append_chapter_body(
         &self,
@@ -4579,6 +5136,7 @@ impl Store {
                                 provider_call_id: call.provider_call_id,
                                 result,
                                 newly_resolved: false,
+                                requeue: false,
                             },
                             false,
                         ));
@@ -4794,6 +5352,7 @@ impl Store {
                                 provider_call_id: call.provider_call_id,
                                 result: held_body_tool_result(&held),
                                 newly_resolved: false,
+                                requeue: false,
                             },
                             true,
                         ));
@@ -4906,8 +5465,32 @@ impl Store {
                         .entry("feedback".to_owned())
                         .or_insert_with(|| Value::Array(Vec::new()));
                     let awaiting_review = proposal.is_some();
+                    if run_model.consecutive_protocol_errors < 0 {
+                        return Err(StoreError::CorruptRecord(
+                            "Run consecutive_protocol_errors 不能为负数".to_owned(),
+                        ));
+                    }
+                    // `awaiting_review` 是一个已形成的业务边界；其余非 applied 工具
+                    // 结果都没有推进正文，和非法 ask_user 一样必须受同一工程上限约束。
+                    let is_protocol_error = !awaiting_review && tool_result["status"] != "applied";
+                    let next_error_count = if is_protocol_error {
+                        run_model
+                            .consecutive_protocol_errors
+                            .checked_add(1)
+                            .ok_or_else(|| {
+                                StoreError::InvalidModelRequest(
+                                    "Run consecutive_protocol_errors 已达到 i64 上限".to_owned(),
+                                )
+                            })?
+                    } else {
+                        0
+                    };
+                    let stop = is_protocol_error
+                        && next_error_count >= MAX_CONSECUTIVE_PROTOCOL_ERRORS;
                     let next_workflow = if awaiting_review {
                         hold_chapter_body_proposal(&workflow, chapter_id, run_id)?
+                    } else if stop {
+                        stop_writing_after_protocol_error(&workflow, run_id)?
                     } else {
                         continue_chapter_body_after_tool(&workflow, chapter_id, run_id)?
                     };
@@ -5024,11 +5607,17 @@ impl Store {
                     active_request.completed_at = Set(Some(now));
                     active_request.update(transaction).await?;
                     let request_count = run_model.request_count;
-                    let run_status = if awaiting_review { "waiting" } else { "queued" };
+                    let run_status = if awaiting_review {
+                        "waiting"
+                    } else if stop {
+                        "stopped"
+                    } else {
+                        "queued"
+                    };
                     let mut active_run = run_model.into_active_model();
                     active_run.status = Set(run_status.to_owned());
-                    active_run.consecutive_protocol_errors = Set(0);
-                    active_run.ended_at = Set(None);
+                    active_run.consecutive_protocol_errors = Set(next_error_count);
+                    active_run.ended_at = Set(if stop { Some(now) } else { None });
                     active_run.updated_at = Set(now);
                     active_run.update(transaction).await?;
                     persist_workflow(transaction, &next_workflow).await?;
@@ -5050,6 +5639,22 @@ impl Store {
                         )
                         .await?;
                     }
+                    let mut tool_event = json!({
+                        "chapter_id": chapter_id,
+                        "name": call.name.clone(),
+                        "provider_call_id": call.provider_call_id.clone(),
+                        "status": tool_result["status"],
+                        "proposal_id": proposal.as_ref().map(|proposal| proposal.tool_call_id),
+                    });
+                    if is_protocol_error {
+                        tool_event
+                            .as_object_mut()
+                            .expect("工具事件必须是 JSON object")
+                            .insert(
+                                "consecutive_protocol_errors".to_owned(),
+                                Value::String(next_error_count.to_string()),
+                            );
+                    }
                     insert_event(
                         transaction,
                         version_id,
@@ -5060,13 +5665,7 @@ impl Store {
                         },
                         tool_call_id,
                         next_workflow.state_revision,
-                        json!({
-                            "chapter_id": chapter_id,
-                            "name": call.name.clone(),
-                            "provider_call_id": call.provider_call_id.clone(),
-                            "status": tool_result["status"],
-                            "proposal_id": proposal.as_ref().map(|proposal| proposal.tool_call_id),
-                        }),
+                        tool_event,
                         now,
                     )
                     .await?;
@@ -5087,19 +5686,38 @@ impl Store {
                         )
                         .await?;
                     }
+                    let mut run_event = json!({
+                        "chapter_id": chapter_id,
+                        "kind": "chapter_body",
+                        "status": run_status,
+                        "request_id": request_id,
+                        "request_count": request_count.to_string(),
+                    });
+                    if is_protocol_error {
+                        let event = run_event
+                            .as_object_mut()
+                            .expect("Run 事件必须是 JSON object");
+                        event.insert("reason".to_owned(), Value::String("tool_error".to_owned()));
+                        event.insert(
+                            "consecutive_protocol_errors".to_owned(),
+                            Value::String(next_error_count.to_string()),
+                        );
+                        event.insert(
+                            "wait_reason".to_owned(),
+                            if stop {
+                                Value::String("protocol_error_limit".to_owned())
+                            } else {
+                                Value::Null
+                            },
+                        );
+                    }
                     insert_event(
                         transaction,
                         version_id,
                         "run.changed",
                         run_id,
                         next_workflow.state_revision,
-                        json!({
-                            "chapter_id": chapter_id,
-                            "kind": "chapter_body",
-                            "status": run_status,
-                            "request_id": request_id,
-                            "request_count": request_count.to_string(),
-                        }),
+                        run_event,
                         now,
                     )
                     .await?;
@@ -5115,6 +5733,8 @@ impl Store {
                             "chapter_id": chapter_id,
                             "run_id": run_id,
                             "request_id": request_id,
+                            "protocol_correction": is_protocol_error,
+                            "consecutive_protocol_errors": next_error_count.to_string(),
                         }),
                         now,
                     )
@@ -5124,6 +5744,7 @@ impl Store {
                             provider_call_id: call.provider_call_id,
                             result: tool_result,
                             newly_resolved: !awaiting_review,
+                            requeue: !awaiting_review && !stop,
                         },
                         true,
                     ))
@@ -5709,9 +6330,24 @@ impl Store {
                         .await?
                         .is_some();
                     if has_pending_feedback {
-                        let next_workflow = continue_chapter_body_after_protocol_correction(
-                            &workflow, chapter_id, run_id,
-                        )?;
+                        // 无推进的纠正同样计入连续协议错误：模型反复提交而意见始终无从投递时，
+                        // 必须触发工程执行限制并保留未投递意见，而不是无限重排请求。
+                        let next_error_count = body_run
+                            .consecutive_protocol_errors
+                            .checked_add(1)
+                            .ok_or_else(|| {
+                                StoreError::InvalidModelRequest(
+                                    "Run consecutive_protocol_errors 已达到 i64 上限".to_owned(),
+                                )
+                            })?;
+                        let stop = next_error_count >= MAX_CONSECUTIVE_PROTOCOL_ERRORS;
+                        let next_workflow = if stop {
+                            stop_writing_after_protocol_error(&workflow, run_id)?
+                        } else {
+                            continue_chapter_body_after_protocol_correction(
+                                &workflow, chapter_id, run_id,
+                            )?
+                        };
                         append_agent_messages_for_run(
                             transaction,
                             &body_run,
@@ -5748,10 +6384,11 @@ impl Store {
                         active_request.completed_at = Set(Some(now));
                         active_request.update(transaction).await?;
                         let request_count = body_run.request_count;
+                        let run_status = if stop { "stopped" } else { "queued" };
                         let mut active_run = body_run.into_active_model();
-                        active_run.status = Set("queued".to_owned());
-                        active_run.consecutive_protocol_errors = Set(0);
-                        active_run.ended_at = Set(None);
+                        active_run.status = Set(run_status.to_owned());
+                        active_run.consecutive_protocol_errors = Set(next_error_count);
+                        active_run.ended_at = Set(if stop { Some(now) } else { None });
                         active_run.updated_at = Set(now);
                         active_run.update(transaction).await?;
                         persist_workflow(transaction, &next_workflow).await?;
@@ -5764,10 +6401,16 @@ impl Store {
                             json!({
                                 "chapter_id": chapter_id,
                                 "kind": "chapter_body",
-                                "status": "queued",
+                                "status": run_status,
                                 "request_id": request_id,
                                 "request_count": request_count.to_string(),
                                 "reason": "pending_feedback_requires_tool_result",
+                                "consecutive_protocol_errors": next_error_count.to_string(),
+                                "wait_reason": if stop {
+                                    Some("protocol_error_limit")
+                                } else {
+                                    None::<&str>
+                                },
                             }),
                             now,
                         )
@@ -6033,16 +6676,20 @@ impl Store {
                             .await?;
                         }
                         let next_workflow = record_chapter_body_edit(&workflow, chapter_id)?;
-                        update_chapter_body_run_status(
-                            transaction,
-                            run_id,
-                            chapter_id,
-                            "waiting",
-                            None,
-                            None,
-                            now,
-                        )
-                        .await?;
+                        // 执行轴未变时说明模型回合仍在进行（排队中或在途），Run 的状态
+                        // 必须跟着那个回合走，不能改成 waiting 而把回调路径废掉。
+                        if next_workflow.execution != workflow.execution {
+                            update_chapter_body_run_status(
+                                transaction,
+                                run_id,
+                                chapter_id,
+                                "waiting",
+                                None,
+                                None,
+                                now,
+                            )
+                            .await?;
+                        }
                         persist_workflow(transaction, &next_workflow).await?;
                         insert_event(
                             transaction,
@@ -6312,11 +6959,13 @@ impl Store {
         command_id: Uuid,
         expected_state_revision: i64,
         decision: HumanReviewDecision,
+        citations: Vec<FeedbackCitation>,
     ) -> Result<PreparationSnapshot, StoreError> {
         let target = format!("/api/reviews/{review_id}/decision");
         let payload_hash = payload_hash(&DecidePreparationReviewPayload {
             expected_state_revision,
             decision: &decision,
+            citations: &citations,
         })?;
         if let Some(receipt) = self.find_receipt(command_id).await? {
             return replay_or_conflict(
@@ -6385,8 +7034,23 @@ impl Store {
                         StoreError::CorruptRecord("整章审核缺少对应的活跃 Run".to_owned())
                     })?;
                     chapter_body_run(transaction, run_id, review_target.chapter_id).await?;
+                    // 整章终稿审核只能引用本章文档中的已持久化修订。
+                    validate_review_decision_citations(
+                        transaction,
+                        &citations,
+                        review_target.version_id,
+                        Some(review_target.chapter_id),
+                    )
+                    .await?;
                     let now = utc_now_millis();
-                    persist_human_review_decision(transaction, review_id, &decision, now).await?;
+                    persist_human_review_decision(
+                        transaction,
+                        review_id,
+                        &decision,
+                        &citations,
+                        now,
+                    )
+                    .await?;
                     let next_workflow = if decision.passed {
                         let context_fold = build_chapter_body_context_fold(
                             transaction,
@@ -7082,11 +7746,13 @@ impl Store {
         command_id: Uuid,
         expected_state_revision: i64,
         decision: HumanReviewDecision,
+        citations: Vec<FeedbackCitation>,
     ) -> Result<PreparationSnapshot, StoreError> {
         let target = format!("/api/reviews/{review_id}/decision");
         let payload_hash = payload_hash(&DecidePreparationReviewPayload {
             expected_state_revision,
             decision: &decision,
+            citations: &citations,
         })?;
         if let Some(receipt) = self.find_receipt(command_id).await? {
             return replay_or_conflict(
@@ -7147,8 +7813,23 @@ impl Store {
                         StoreError::CorruptRecord("细纲审核缺少对应的活跃 Run".to_owned())
                     })?;
                     chapter_outline_run(transaction, run_id, review_target.chapter_id).await?;
+                    // 细纲审核只能引用本章文档中的已持久化修订。
+                    validate_review_decision_citations(
+                        transaction,
+                        &citations,
+                        review_target.version_id,
+                        Some(review_target.chapter_id),
+                    )
+                    .await?;
                     let now = utc_now_millis();
-                    persist_human_review_decision(transaction, review_id, &decision, now).await?;
+                    persist_human_review_decision(
+                        transaction,
+                        review_id,
+                        &decision,
+                        &citations,
+                        now,
+                    )
+                    .await?;
                     let (next_workflow, body_run_id) = if decision.passed {
                         let outline =
                             current_chapter_outline(transaction, review_target.chapter_id).await?;
@@ -7335,11 +8016,13 @@ impl Store {
         command_id: Uuid,
         expected_state_revision: i64,
         decision: HumanReviewDecision,
+        citations: Vec<FeedbackCitation>,
     ) -> Result<PreparationSnapshot, StoreError> {
         let target = format!("/api/reviews/{review_id}/decision");
         let payload_hash = payload_hash(&DecidePreparationReviewPayload {
             expected_state_revision,
             decision: &decision,
+            citations: &citations,
         })?;
         if let Some(receipt) = self.find_receipt(command_id).await? {
             return replay_or_conflict(
@@ -7359,6 +8042,7 @@ impl Store {
                     command_id,
                     expected_state_revision,
                     decision,
+                    citations,
                 )
                 .await
             }
@@ -7368,6 +8052,7 @@ impl Store {
                     command_id,
                     expected_state_revision,
                     decision,
+                    citations,
                 )
                 .await
             }
@@ -7377,6 +8062,7 @@ impl Store {
                     command_id,
                     expected_state_revision,
                     decision,
+                    citations,
                 )
                 .await
             }
@@ -7397,12 +8083,14 @@ impl Store {
         command_id: Uuid,
         expected_state_revision: i64,
         notes: String,
+        citations: Vec<FeedbackCitation>,
     ) -> Result<ReviewDelegationResult, StoreError> {
         validate_delegation_notes(&notes)?;
         let target = format!("/api/reviews/{review_id}/delegate");
         let payload_hash = payload_hash(&DelegateReviewPayload {
             expected_state_revision,
             notes: &notes,
+            citations: &citations,
         })?;
         if let Some(receipt) = self.find_receipt(command_id).await? {
             return replay_or_conflict(receipt, DELEGATE_REVIEW_METHOD, &target, &payload_hash);
@@ -7417,6 +8105,16 @@ impl Store {
                     let target =
                         delegatable_review_target(transaction, review_id, expected_state_revision)
                             .await?;
+                    // 引用必须在委托时就能被逐字复核；之后目标修订变化时，审核回调会
+                    // 因 attempt 失效而不被应用，不靠引用在读取时再次回查。
+                    validate_delegation_citations(
+                        transaction,
+                        &citations,
+                        target.version_id,
+                        review_id,
+                        target.kind,
+                    )
+                    .await?;
                     let now = utc_now_millis();
                     let run_id = Uuid::new_v4();
                     insert_delegated_review_run(
@@ -7447,6 +8145,7 @@ impl Store {
                     active_review.user_input_json = Set(Some(serde_json::to_string(&json!({
                         "source": "user",
                         "notes": notes,
+                        "citations": citations,
                     }))?));
                     active_review.updated_at = Set(now);
                     active_review.update(transaction).await?;
@@ -8026,13 +8725,38 @@ impl Store {
         }
     }
 
-    /// 服务启动时将没有稳定交互边界的自动写作 Run 收束为 `interrupted`。
+    /// 将自动执行中的 Run 收束到「已中断」并返回收束数量。
+    ///
+    /// 启动恢复（进程上次以非正常方式结束）与退出服务（本次主动收尾在途请求）
+    /// 是同一种收束，只有事件原因与用户可见文案不同，因此共用同一个入口。
+    ///
+    /// # Errors
+    ///
+    /// 收束事务失败，或数据库里 Run 与工作流执行状态已经不一致，都会返回错误；
+    /// 此时不会部分写入：整个收束在一笔事务内完成。
+    pub async fn interrupt_active_runs(
+        &self,
+        source: InterruptionSource,
+    ) -> Result<InterruptionOutcome, StoreError> {
+        let writing_runs = self.interrupt_active_writing_runs(source).await?;
+        let review_delegations = self.interrupt_active_review_delegations(source).await?;
+        Ok(InterruptionOutcome {
+            writing_runs,
+            review_delegations,
+        })
+    }
+
+    /// 将没有稳定交互边界的自动写作 Run 收束为 `interrupted`。
     ///
     /// `waiting_answer`、`waiting_review` 与 `paused` 分别拥有持久 Question、Review
     /// 或暂停边界，因此保持原状以便 UI 直接恢复。只有 queued/running 的顶层写作
     /// Run 会被中断；尚未发送的 prepared request 作废，已 dispatch 的 request 记为
     /// unknown，避免把外部服务可能已经接收的调用伪装成未发生。
-    pub async fn recover_interrupted_writing_runs(&self) -> Result<usize, StoreError> {
+    pub async fn interrupt_active_writing_runs(
+        &self,
+        source: InterruptionSource,
+    ) -> Result<usize, StoreError> {
+        let reason = source.reason();
         let now = utc_now_millis();
         let result = self
             .database
@@ -8070,20 +8794,26 @@ impl Store {
                             .all(transaction)
                             .await?;
                         for request in outstanding_requests {
-                            let (status, reason) = match request.status.as_str() {
-                                "prepared" => ("cancelled", "服务重启前请求尚未发送，已作废"),
-                                "dispatched" => ("unknown", "服务重启时请求是否被模型服务接受未知"),
+                            let (status, message) = match request.status.as_str() {
+                                "prepared" => (
+                                    "cancelled",
+                                    format!("{}前请求尚未发送，已作废", source.prefix()),
+                                ),
+                                "dispatched" => (
+                                    "unknown",
+                                    format!("{}时请求是否被模型服务接受未知", source.prefix()),
+                                ),
                                 _ => {
                                     return Err(StoreError::CorruptRecord(
-                                        "恢复查询返回了非在途模型请求".to_owned(),
+                                        "中断收尾查询返回了非在途模型请求".to_owned(),
                                     ));
                                 }
                             };
                             let mut active_request = request.into_active_model();
                             active_request.status = Set(status.to_owned());
                             active_request.error_json = Set(Some(serde_json::to_string(&json!({
-                                "kind": "startup_recovery",
-                                "message": reason,
+                                "kind": reason,
+                                "message": message,
                             }))?));
                             active_request.updated_at = Set(now);
                             active_request.completed_at = Set(Some(now));
@@ -8107,7 +8837,7 @@ impl Store {
                                 "kind": run_kind,
                                 "status": "interrupted",
                                 "request_count": request_count.to_string(),
-                                "reason": "startup_recovery",
+                                "reason": reason,
                             }),
                             now,
                         )
@@ -8124,7 +8854,7 @@ impl Store {
                                 "run_id": run_id,
                                 "chapter_id": next_workflow.active_chapter_id,
                                 "pause_requested": next_workflow.pause_requested,
-                                "reason": "startup_recovery",
+                                "reason": reason,
                             }),
                             now,
                         )
@@ -8147,10 +8877,14 @@ impl Store {
         }
     }
 
-    /// 服务重启时，审核 Agent 没有可恢复的网络会话。将其子 Run 收束为失败，并把
-    /// Review 重新打开；父写作 Run 继续停在 `waiting_review`，用户可以重新委托
-    /// 或直接给出人工结论。
-    pub async fn recover_interrupted_review_delegations(&self) -> Result<usize, StoreError> {
+    /// 审核 Agent 没有可恢复的网络会话时，把它的子 Run 收束为失败并把 Review 重新
+    /// 打开；父写作 Run 继续停在 `waiting_review`，用户可以重新委托或直接给出人工
+    /// 结论。启动恢复与退出收尾共用这条路径，只有原因文案不同。
+    pub async fn interrupt_active_review_delegations(
+        &self,
+        source: InterruptionSource,
+    ) -> Result<usize, StoreError> {
+        let reason = source.reason();
         let now = utc_now_millis();
         let result = self
             .database
@@ -8170,7 +8904,7 @@ impl Store {
                             || !review_stage_matches(&workflow, attempt.kind)
                         {
                             return Err(StoreError::CorruptRecord(
-                                "服务启动恢复发现委托审核与父工作流状态不一致".to_owned(),
+                                "审核中断收尾发现委托审核与父工作流状态不一致".to_owned(),
                             ));
                         }
                         let child_run = run::Entity::find_by_id(db_id(attempt.run_id))
@@ -8180,7 +8914,7 @@ impl Store {
                             .ok_or(StoreError::RunNotFound)?;
                         if !matches!(child_run.status.as_str(), "queued" | "running") {
                             return Err(StoreError::CorruptRecord(
-                                "服务启动恢复发现委托审核子 Run 不在可恢复状态".to_owned(),
+                                "审核中断收尾发现委托审核子 Run 不在可收束状态".to_owned(),
                             ));
                         }
                         let outstanding_requests = model_request::Entity::find()
@@ -8190,20 +8924,24 @@ impl Store {
                             .await?;
                         for request in outstanding_requests {
                             let (status, message) = match request.status.as_str() {
-                                "prepared" => ("cancelled", "服务重启前审核请求尚未发送，已作废"),
-                                "dispatched" => {
-                                    ("unknown", "服务重启时审核请求是否被模型服务接受未知")
-                                }
+                                "prepared" => (
+                                    "cancelled",
+                                    format!("{}前审核请求尚未发送，已作废", source.prefix()),
+                                ),
+                                "dispatched" => (
+                                    "unknown",
+                                    format!("{}时审核请求是否被模型服务接受未知", source.prefix()),
+                                ),
                                 _ => {
                                     return Err(StoreError::CorruptRecord(
-                                        "恢复查询返回了非在途审核模型请求".to_owned(),
+                                        "审核中断收尾查询返回了非在途审核模型请求".to_owned(),
                                     ));
                                 }
                             };
                             let mut active_request = request.into_active_model();
                             active_request.status = Set(status.to_owned());
                             active_request.error_json = Set(Some(serde_json::to_string(&json!({
-                                "kind": "startup_recovery",
+                                "kind": reason,
                                 "message": message,
                             }))?));
                             active_request.updated_at = Set(now);
@@ -8232,7 +8970,7 @@ impl Store {
                             json!({
                                 "status": "open",
                                 "failed_attempt_id": attempt.run_id,
-                                "reason": "startup_recovery",
+                                "reason": reason,
                             }),
                             now,
                         )
@@ -8247,7 +8985,7 @@ impl Store {
                                 "kind": "review",
                                 "status": "failed",
                                 "review_id": review_id,
-                                "reason": "startup_recovery",
+                                "reason": reason,
                             }),
                             now,
                         )
@@ -8308,6 +9046,91 @@ fn validate_delegation_notes(notes: &str) -> Result<(), StoreError> {
         return Err(StoreError::InvalidChapterState(format!(
             "审核关注点不能超过 {MAX_REVIEW_ISSUES_LEN} 个字符"
         )));
+    }
+    Ok(())
+}
+
+/// 委托审核时固化用户附带的引用。
+///
+/// 引用在委托时就必须能逐字复核，之后目标修订变化会让整个 attempt 失效，所以审核
+/// 子 Run 读取时不再回查：准备产物可以引用本稿本内的任意文档，章节审核只能引用本
+/// 章文档；待审候选引用只对逐次编辑审核有意义。
+///
+/// # Errors
+///
+/// 引用不属于审核所在稿本、文档与修订不匹配、章节不一致或原文与 quote 不一致时
+/// 返回 [`StoreError::InvalidCitation`]。
+async fn validate_delegation_citations(
+    transaction: &DatabaseTransaction,
+    citations: &[FeedbackCitation],
+    version_id: VersionId,
+    review_id: ReviewId,
+    kind: DelegatedReviewKind,
+) -> Result<(), StoreError> {
+    if citations.is_empty() {
+        return Ok(());
+    }
+    let required_chapter_id = match kind {
+        DelegatedReviewKind::Preparation(_) => None,
+        DelegatedReviewKind::ChapterOutline => Some(
+            chapter_outline_review_target(transaction, review_id)
+                .await?
+                .chapter_id,
+        ),
+        DelegatedReviewKind::ChapterFinal => Some(
+            chapter_final_review_target(transaction, review_id)
+                .await?
+                .chapter_id,
+        ),
+        DelegatedReviewKind::ChapterEdit => Some(
+            chapter_edit_review_target(transaction, review_id)
+                .await?
+                .chapter_id,
+        ),
+    };
+    for citation in citations {
+        match citation {
+            FeedbackCitation::Document {
+                document_id,
+                revision_id,
+                range,
+                chapter_id,
+            } => {
+                validate_document_citation(
+                    transaction,
+                    *document_id,
+                    *revision_id,
+                    range,
+                    *chapter_id,
+                    version_id,
+                    required_chapter_id,
+                )
+                .await?;
+            }
+            FeedbackCitation::Candidate {
+                tool_call_id,
+                candidate_hash,
+                candidate_range,
+            } => {
+                if kind != DelegatedReviewKind::ChapterEdit {
+                    return Err(StoreError::InvalidCitation(
+                        "只有正文编辑审核可以引用待审候选".to_owned(),
+                    ));
+                }
+                let target = chapter_edit_review_target(transaction, review_id).await?;
+                if *tool_call_id != target.proposal.tool_call_id {
+                    return Err(StoreError::InvalidCitation(
+                        "候选引用必须指向本次待审编辑".to_owned(),
+                    ));
+                }
+                if candidate_hash != &target.proposal.candidate_hash {
+                    return Err(StoreError::InvalidCitation(
+                        "候选正文已变化，请重新选择要引用的文本".to_owned(),
+                    ));
+                }
+                validate_text_citation_range(&target.proposal.candidate_content, candidate_range)?;
+            }
+        }
     }
     Ok(())
 }
@@ -8695,6 +9518,12 @@ async fn build_delegated_review_task(
         .map(delegated_review_notes)
         .transpose()?
         .unwrap_or_default();
+    let citations = review_model
+        .user_input_json
+        .as_deref()
+        .map(delegated_review_citations)
+        .transpose()?
+        .unwrap_or_default();
     let target_revision_id = review_model
         .target_revision_id
         .as_deref()
@@ -8741,6 +9570,7 @@ async fn build_delegated_review_task(
         base_content: String::new(),
         chapter_outline: String::new(),
         user_notes,
+        citations,
     };
     match task.kind {
         DelegatedReviewKind::Preparation(kind) => {
@@ -8795,6 +9625,14 @@ fn delegated_review_notes(value: &str) -> Result<String, StoreError> {
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned())
+}
+
+fn delegated_review_citations(value: &str) -> Result<Vec<FeedbackCitation>, StoreError> {
+    let value: Value = serde_json::from_str(value)?;
+    match value.get("citations") {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(citations) => Ok(serde_json::from_value(citations.clone())?),
+    }
 }
 
 async fn revision_content<C: ConnectionTrait>(
@@ -8954,7 +9792,7 @@ async fn all_main_chapters_are_approved<C: ConnectionTrait>(
     Ok(!chapters.is_empty() && chapters.iter().all(|chapter| chapter.status == "approved"))
 }
 
-async fn open_review_exists<C: ConnectionTrait>(
+pub(crate) async fn open_review_exists<C: ConnectionTrait>(
     connection: &C,
     version_id: VersionId,
 ) -> Result<bool, StoreError> {
@@ -8966,7 +9804,7 @@ async fn open_review_exists<C: ConnectionTrait>(
         .is_some())
 }
 
-async fn active_top_level_run_exists<C: ConnectionTrait>(
+pub(crate) async fn active_top_level_run_exists<C: ConnectionTrait>(
     connection: &C,
     version_id: VersionId,
 ) -> Result<bool, StoreError> {
@@ -9206,6 +10044,8 @@ async fn chapter_body_snapshot<C: ConnectionTrait>(
         held_submission,
         pending_question: pending_user_question(connection, &workflow).await?,
         pending_feedback: pending_chapter_body_feedback(connection, &workflow, chapter_id).await?,
+        delivered_feedback: delivered_chapter_body_feedback(connection, &workflow, chapter_id)
+            .await?,
         workflow,
         body: current_chapter_body(connection, chapter_id).await?,
         outline_context_fold: latest_chapter_outline_fold(connection, version_id, chapter_id)
@@ -9491,6 +10331,97 @@ fn pending_chapter_body_feedback_from_model(
     })
 }
 
+/// 返回当前正文 Run 最近一个尚未得到成功响应的请求所携带的意见。
+///
+/// 已封存的反馈不能重新回到队列：请求快照是不可变的。这里仅透出最近请求的
+/// 网络结果，让界面区分“已随请求发送”与“请求失败，尚无模型回应”；一旦最近请求
+/// 成功，模型已经给出响应，便不再把历史意见留在当前 Dock 中。
+async fn delivered_chapter_body_feedback<C: ConnectionTrait>(
+    connection: &C,
+    workflow: &WorkflowSnapshot,
+    chapter_id: ChapterId,
+) -> Result<Vec<DeliveredChapterBodyFeedback>, StoreError> {
+    if workflow.active_chapter_id != Some(chapter_id)
+        || workflow.stage != WorkflowStage::WritingDrafting
+    {
+        return Ok(Vec::new());
+    }
+    let Some(run_id) = workflow.active_run_id else {
+        return Ok(Vec::new());
+    };
+    let Some(request) = model_request::Entity::find()
+        .filter(model_request::Entity::COLUMN.run_id.eq(db_id(run_id)))
+        .order_by_desc(model_request::Entity::COLUMN.attempt_no)
+        .one(connection)
+        .await?
+    else {
+        return Ok(Vec::new());
+    };
+    let delivery_status = match model_request_status_from_db(&request.status)? {
+        ModelRequestStatus::Dispatched => FeedbackDeliveryStatus::Sent,
+        ModelRequestStatus::Failed => FeedbackDeliveryStatus::Failed,
+        ModelRequestStatus::Unknown => FeedbackDeliveryStatus::Unknown,
+        ModelRequestStatus::Cancelled => FeedbackDeliveryStatus::Cancelled,
+        ModelRequestStatus::Prepared | ModelRequestStatus::Succeeded => return Ok(Vec::new()),
+    };
+    let request_id: Uuid = request.id.clone().into();
+    feedback::Entity::find()
+        .filter(feedback::Entity::COLUMN.run_id.eq(db_id(run_id)))
+        .filter(feedback::Entity::COLUMN.status.eq("included"))
+        .filter(
+            feedback::Entity::COLUMN
+                .included_request_id
+                .eq(request.id.to_string()),
+        )
+        .order_by_asc(feedback::Entity::COLUMN.sequence)
+        .all(connection)
+        .await?
+        .iter()
+        .map(|model| delivered_chapter_body_feedback_from_model(model, request_id, delivery_status))
+        .collect()
+}
+
+fn delivered_chapter_body_feedback_from_model(
+    model: &feedback::Model,
+    request_id: Uuid,
+    delivery_status: FeedbackDeliveryStatus,
+) -> Result<DeliveredChapterBodyFeedback, StoreError> {
+    if feedback_status_from_db(&model.status)? != FeedbackStatus::Included {
+        return Err(StoreError::CorruptRecord(
+            "正文已发送意见查询返回了非 included 记录".to_owned(),
+        ));
+    }
+    let included_request_id = parse_optional_id(
+        model.included_request_id.clone(),
+        "feedback.included_request_id",
+    )?
+    .ok_or_else(|| StoreError::CorruptRecord("已发送自由意见缺少请求 ID".to_owned()))?;
+    if included_request_id != request_id {
+        return Err(StoreError::CorruptRecord(
+            "已发送自由意见关联的请求与查询请求不一致".to_owned(),
+        ));
+    }
+    if parse_optional_id(
+        model.bound_tool_call_id.clone(),
+        "feedback.bound_tool_call_id",
+    )?
+    .is_none()
+    {
+        return Err(StoreError::CorruptRecord(
+            "已发送自由意见缺少工具锚点".to_owned(),
+        ));
+    }
+    Ok(DeliveredChapterBodyFeedback {
+        id: model.id.clone().into(),
+        sequence: model.sequence,
+        text: model.text.clone(),
+        citations: feedback_citations_from_json(&model.citations_json)?,
+        request_id,
+        delivery_status,
+        created_at_ms: model.created_at,
+    })
+}
+
 async fn latest_chapter_outline_fold<C: ConnectionTrait>(
     connection: &C,
     version_id: VersionId,
@@ -9581,6 +10512,8 @@ pub struct DelegatedReviewTask {
     pub base_content: String,
     pub chapter_outline: String,
     pub user_notes: String,
+    /// 委托时固化的引用；审核子 Run 只看到引文文本，不接触内部 ID。
+    pub citations: Vec<FeedbackCitation>,
 }
 
 /// 创建审核 Agent 子 Run 后返回给 HTTP 层的稳定结果。
@@ -9976,7 +10909,7 @@ async fn review_type_for_id<C: ConnectionTrait>(
         .ok_or(StoreError::ReviewNotFound)
 }
 
-fn ensure_expected_state_revision(
+pub(crate) fn ensure_expected_state_revision(
     workflow: &WorkflowSnapshot,
     expected_state_revision: i64,
 ) -> Result<(), StoreError> {
@@ -10825,6 +11758,7 @@ async fn persist_human_review_decision(
     transaction: &DatabaseTransaction,
     review_id: ReviewId,
     decision: &HumanReviewDecision,
+    citations: &[FeedbackCitation],
     now: i64,
 ) -> Result<(), StoreError> {
     let status = if decision.passed {
@@ -10845,7 +11779,10 @@ async fn persist_human_review_decision(
     active_review.decision_source = Set(Some("human".to_owned()));
     active_review.passed = Set(Some(decision.passed));
     active_review.issues_json = Set(issues_json);
-    active_review.user_input_json = Set(Some(serde_json::to_string(&json!({ "source": "user" }))?));
+    active_review.user_input_json = Set(Some(serde_json::to_string(&json!({
+        "source": "user",
+        "citations": citations,
+    }))?));
     active_review.updated_at = Set(now);
     active_review.update(transaction).await?;
     Ok(())
@@ -12452,6 +13389,12 @@ async fn insert_preparation_run(
     version_id: VersionId,
     now: i64,
 ) -> Result<(), StoreError> {
+    let quota_scope_id = ensure_quota_scope(
+        transaction,
+        db_id(version_id),
+        nekowriter_core::QUOTA_SCOPE_PREPARATION,
+    )
+    .await?;
     run::ActiveModel {
         id: Set(db_id(run_id)),
         project_id: Set(db_id(project_id)),
@@ -12465,7 +13408,7 @@ async fn insert_preparation_run(
         request_allowance_end: Set(REQUEST_ALLOWANCE_STEP),
         consecutive_protocol_errors: Set(0),
         checkpoint_json: Set("{}".to_owned()),
-        quota_scope_id: Set(None),
+        quota_scope_id: Set(Some(quota_scope_id)),
         started_at: Set(now),
         ended_at: Set(None),
         created_at: Set(now),
@@ -12485,6 +13428,12 @@ async fn insert_chapter_outline_run(
     chapter_id: ChapterId,
     now: i64,
 ) -> Result<(), StoreError> {
+    let quota_scope_id = ensure_quota_scope(
+        transaction,
+        db_id(version_id),
+        &nekowriter_core::chapter_outline_quota_scope_key(chapter_id),
+    )
+    .await?;
     run::ActiveModel {
         id: Set(db_id(run_id)),
         project_id: Set(db_id(project_id)),
@@ -12502,7 +13451,7 @@ async fn insert_chapter_outline_run(
             context_fold: None,
             held_chapter_body_submission: None,
         })?),
-        quota_scope_id: Set(None),
+        quota_scope_id: Set(Some(quota_scope_id)),
         started_at: Set(now),
         ended_at: Set(None),
         created_at: Set(now),
@@ -12578,8 +13527,50 @@ pub(crate) async fn insert_event(
     payload: serde_json::Value,
     occurred_at: i64,
 ) -> Result<(), StoreError> {
+    insert_event_row(
+        transaction,
+        Some(version_id),
+        event_type,
+        entity_id,
+        revision,
+        payload,
+        occurred_at,
+    )
+    .await
+}
+
+/// 写入一条不属于任何稿本的持久事件（如知识库索引状态变化）。
+pub(crate) async fn insert_app_event(
+    transaction: &DatabaseTransaction,
+    event_type: &str,
+    entity_id: Uuid,
+    revision: i64,
+    payload: serde_json::Value,
+    occurred_at: i64,
+) -> Result<(), StoreError> {
+    insert_event_row(
+        transaction,
+        None,
+        event_type,
+        entity_id,
+        revision,
+        payload,
+        occurred_at,
+    )
+    .await
+}
+
+async fn insert_event_row(
+    transaction: &DatabaseTransaction,
+    version_id: Option<VersionId>,
+    event_type: &str,
+    entity_id: Uuid,
+    revision: i64,
+    payload: serde_json::Value,
+    occurred_at: i64,
+) -> Result<(), StoreError> {
     event::ActiveModel {
-        version_id: Set(Some(version_id.to_string())),
+        version_id: Set(version_id.map(|id| id.to_string())),
         event_type: Set(event_type.to_owned()),
         entity_id: Set(db_id(entity_id)),
         revision: Set(revision.to_string()),

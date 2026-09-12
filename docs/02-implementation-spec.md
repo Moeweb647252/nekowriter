@@ -219,6 +219,8 @@ ReviewSubmission      { passed, confidence, issues }
 
 `ChapterSubmission` 的摘要不是正文，正文只来自已接受的编辑工具。阶段提交不能覆盖一个非空待审提案，也不能替代终稿审核。
 
+阶段角色的 system 消息必须写明本阶段的提交结构（字段名、取值约束与「只输出 JSON」的要求）；章节级提交还必须带上本次请求对应的 `chapter_id` 具体值，因为模型无法自行推断它。合同文本与解析器同源（`nekowriter_agent::runner::submission_contract`）：改了字段就必须同时改解析器与合同，否则模型只会拿到一份过期的要求。
+
 格式无效时保留原始完整响应和校验错误，向模型返回明确协议纠正信息，在本轮剩余请求额度及连续协议错误限制内继续；不从散文中猜测 JSON 或审核结论。未完成流的片段不能作为有效提交。
 
 ### 4.4 询问用户
@@ -272,7 +274,7 @@ ReviewSubmission      { passed, confidence, issues }
 
 同一 Run 的全部 queued/bound 意见组成唯一的未封存反馈批次，不新增批次表。批次先等待或绑定一个工具结果，随后持续接收新意见；只有携带该工具结果的请求封存时才关闭批次。工具结果 resolved 不代表批次已封存。未绑定工具结果时，协议纠正等其他请求的封存也不会清空这个批次。
 
-反馈状态为 `queued → bound → included`。`included` 表示已放入某次封存请求，不承诺模型理解或网络另一端已经接收。UI 先显示“等待投递/已加入请求”，请求进入 dispatched 后才显示“已随请求发送”；请求失败时补充“请求失败，尚无模型回应”。prepared 请求尚未发出即被停止时，保留该请求快照并标记 cancelled，继续时把同一工具消息与意见纳入新的请求快照，不创建第二条逻辑意见。
+反馈状态为 `queued → bound → included`。`included` 表示已放入某次封存请求，不承诺模型理解或网络另一端已经接收。UI 先显示“等待投递/已加入请求”，请求进入 dispatched 后才显示“已随请求发送”；请求失败时补充“请求失败，尚无模型回应”。prepared 请求尚未发出即被停止时，保留该请求快照并标记 cancelled，继续时把同一工具消息与意见纳入新的请求快照，不创建第二条逻辑意见。正文快照同时提供 `delivered_feedback`：只返回当前 Run 最新且未成功响应的请求所携带的 `included` 意见，并附带 `sent|failed|unknown|cancelled` 投递状态；Dock 因而把它们和 `queued` / `bound` 队列分开显示。最近请求成功后不在当前 Dock 保留历史意见，持久请求快照、工具消息和 feedback 行仍保留用于追溯。
 
 ### 5.2 AutoApprove 行为矩阵
 
@@ -305,7 +307,7 @@ ReviewSubmission      { passed, confidence, issues }
 
 若模型直接提交章节而 `pause_requested=true`，在结构化提交边界进入已暂停状态，保存候选提交；继续后重新检查完成守卫。这样不会无限显示“等待暂停”。这是工具调用缺席时的终态控制约定，不允许提前批准本章。
 
-若模型提交章节时仍有自由意见且不存在可追加的工具结果，不允许进入整章审核。保存意见，拒绝本次阶段提交，通过协议纠正消息要求继续该阶段并产生合法工具调用，意见仍按工具结果规则投递。若连续不产生可推进动作，触发工程执行限制并展示未投递意见，不静默丢弃或改写历史结果。
+若模型提交章节时仍有自由意见且不存在可追加的工具结果，不允许进入整章审核。保存意见，拒绝本次阶段提交，通过协议纠正消息要求继续该阶段并产生合法工具调用，意见仍按工具结果规则投递。若连续不产生可推进动作，触发工程执行限制并展示未投递意见，不静默丢弃或改写历史结果。这类纠正与无效模型响应共用同一个 `consecutive_protocol_errors` 计数：每拒绝一次不推进的提交加一，达到 3 次即把 Run 收束为 `stopped`（`wait_reason = protocol_error_limit`、`ended_at` 落库），事件带上 `reason = pending_feedback_requires_tool_result` 与最新计数；只有真正推进到稳定业务边界的响应才把该计数清零，暂停恢复时的那一次纠正不单独重置它。这条上限在真实进程与发行产物上都验证过：固定「永远直接提交」的桩最多发出 4 次请求即收束为 `stopped`，未投递意见保持 `queued`，界面显示停止原因与「显式继续」（见 docs/03 §28、§29）。
 
 请求失败、用户停止或进程中断时，意见保持原投递状态。继续任务时 `bound` 意见仍绑定原工具结果，`included` 意见从封存上下文重建，不再生成一份重复工具消息。
 
@@ -416,6 +418,8 @@ MVP 采用同一次查询内递增候选上限的补取流程：
 
 两种接口各有编译期注册表和 capability descriptor，MVP 的生产注册项数量严格为 0。能力查询返回空数组和原因；调用未注册引擎返回 `ENGINE_NOT_AVAILABLE`，不创建运行任务、不扣 quota。测试专用实现仅用于契约测试，不打包到生产注册表。
 
+积累命令的成功路径是一条普通写入命令：请求携带 `commandId`、目标 Space 与线索；先查该 `command_id` 的回执（命中且内容一致时返回原条目，**不再次调用引擎**；同 ID 不同内容返回 409 `IDEMPOTENCY_CONFLICT`），再校验线索非空与目标 Space 存在，再取本次进程的积累引擎。引擎返回候选条目后，应用服务在 Store 边界逐条验证（标题、关键词、正文与来源沿用条目创建的同一套规则），并在同一事务里插入全部条目、为每条建立索引任务、写入回执：任何一条候选无效或引擎执行失败都不留下半批条目，也不留下可重放的回执。引擎不可用返回 409 `ENGINE_NOT_AVAILABLE`（不创建运行任务、不扣 quota），引擎执行失败返回 502 `ENGINE_FAILED`。引擎注册表属于应用状态，`GET /api/capabilities` 与积累入口读同一份，因此「能力查询为空」与「入口返回不可用」不会互相矛盾。
+
 ## 8. 数据模型与持久化
 
 ### 8.1 类型与公共约定
@@ -455,6 +459,7 @@ ID 使用 UUID，时间以 UTC 毫秒保存、前端按本地时区展示；稳�
 | `knowledge_spaces` | id、title、revision、deleted_at |
 | `knowledge_entries` | id、space_id、title、keywords_json、content、revision、source_json、deleted_at |
 | `index_tasks` | id、entry_id、entry_revision、embedding_profile_id、operation、status、error、checkpoint_json；目标组合唯一 |
+| `system_model_operations` | id、kind、model_id、api_base_url、status、provider_request_id?、usage_json、error_json?、created_at、completed_at?；与稿本无关的系统请求（目前只有连接测试） |
 
 小说目标使用稿本级 `novel_brief`，开始准备前必须有非空目标；用户指导作为当前章文档角色 `chapter_guidance` 保存修订。复制的审核通过依据标记 `decision_source = copied` 并引用 source_review_id，不能伪造一次新的人工或 Agent 审核。
 
@@ -499,6 +504,14 @@ feedback 的 after_tool_sequence、preferred_tool_call_id、bound_tool_call_id �
 
 MVP 不提供永久清空正文回收站按钮。索引中软删除条目立即被回查过滤，后续清理任务负责物理移除向量。
 
+回收站是只读快照加两个动作：`GET /api/recycle-bin` 按删除时间倒序列出全部软删除对象（稿本、番外章、用户模板、知识条目、空 Space），每条都带上 `restorable` / `purgeable` 与各自被拒绝的原因，因此界面可以直接说明「现在为什么不能恢复/不能彻底删除」，而不是等用户点下去才失败。每次删除、恢复与彻底删除都在同一事务里写一条 `recycle.changed` 事件，工作台据此刷新回收站与目录，不靠手动刷新。
+
+删一个项目（`DELETE /api/projects/{id}`）只标记项目本身，不批量改写它下面任何孩子的 `deleted_at`；所有读取路径逐层检查祖先，因此项目在回收站里时它的稿本、章节与正文都不可见。恢复项目也只清项目自己的 `deleted_at`，于是它的稿本与章节原样可见，而删除项目之前单独删掉的稿本仍然留在回收站里（不会因为恢复项目而被误恢复）。项目下任一稿本仍有开放审核或顶层写作 Run 时，删除项目返回 `RESOURCE_BUSY`。
+
+恢复只把 `deleted_at` 清回 `NULL`：章节行、文档槽、修订链与在作品里的顺序都不动，所以恢复后的正文、`revision_id` 与 `order_index` 与删除前完全一致，不会为了「恢复」再写一条新修订。恢复不把工作流的写作光标搬回去：删除番外时 `withdraw_extra_chapter` 已经把工作流退回到仍然可见的最后一章，删除之后用户可能已经在别处继续写，所以恢复只恢复数据与位置，光标保持在删除后的位置。恢复需要它的祖先仍然可见：父对象（稿本）还在回收站里时返回 409 `RECYCLE_ANCESTOR_DELETED`，对象不存在或已被彻底删除时返回 404，不做半恢复。
+
+彻底删除只对用户模板、知识条目与空 Space 开放（`POST /api/recycle-bin/{kind}/{id}/purge`），删除后不可恢复；项目、稿本与番外章不提供物理删除，请求会被拒绝为 `RECYCLE_NOT_PURGEABLE`，理由是正文与它的事件、审核和修订引用共同构成审计链，本版本只把它们留在回收站里。删除项目用 `DELETE /api/projects/{id}`（携带 `expected_revision`，过期返回 `REVISION_CONFLICT`），恢复用 `POST /api/recycle-bin/project/{id}/restore`。番外章用 `DELETE /api/chapters/{id}` 软删除（正文计划章不支持单独删除，返回 `INVALID_CHAPTER_STATE`，有开放审核或活跃写作任务时返回 `RESOURCE_BUSY`），稿本用 `DELETE /api/versions/{id}` 软删除（当前选中的稿本要先切走，否则返回 `INVALID_VERSION_STATE`）。
+
 ## 9. 提示词、配置与上下文
 
 ### 9.1 内建目录
@@ -529,6 +542,8 @@ MVP 只支持 `{{variable_name}}` 文本替换，不支持表达式、循环、�
 内建变量由代码声明 name、中文说明、类型、required、示例和来源。保存时拒绝未知变量、缺失必需占位符和不完整括号；预览时拒绝缺少必需的运行变量。可选变量缺省行为逐项声明，不通过统一空字符串掩盖必需信息缺失。
 
 用户模板独立管理标题、正文和自定义变量说明，可插入章节指导或意见草稿；它不会自动获得 system 消息权限。系统提示词和项目覆盖均提供保存前预览，预览使用示例值，不包含真实密钥。
+
+上述语言、变量声明与渲染在 `nekowriter-core::template` 中实现一次，`agent::prompts` 的内建目录与用户模板共用它；因此“拒绝未知变量、缺失必需占位符与不完整括号”只有一份判定。内建变量声明另带 `source`（运行值来自哪里），用户模板变量声明不需要它，因为插入时由用户提供值。
 
 ### 9.3 设置作用域
 
@@ -595,7 +610,7 @@ ContextBuilder 以稿本工作流中的已完成阶段来源为准，将该 Run 
 
 | 路由 | 目的 |
 | --- | --- |
-| `GET /api/health`、`GET /api/capabilities` | 本地状态与可用模型/研究/积累能力 |
+| `GET /api/health`、`GET /api/capabilities` | 本地状态（含实际数据目录）与可用模型/研究/积累能力 |
 | `/api/projects`、`/api/projects/{id}` | 项目 CRUD |
 | `/api/projects/{id}/settings` | 项目设置读取/修改；模型引用包含模型 ID 与能力资料 |
 | `/api/projects/{id}/versions` | 稿本列表与创建；创建体指定 empty/copy 及来源 |
@@ -606,20 +621,23 @@ ContextBuilder 以稿本工作流中的已完成阶段来源为准，将该 Run 
 | `PUT /api/chapters/{id}/guidance` | 保存章节指导；只允许 chapter_ready |
 | `POST /api/runs/{id}/feedback` | 自由意见与引用 |
 | `POST /api/questions/{id}/answer` | 正式问题答案 |
-| `POST /api/reviews/{id}/decision` | 人工审核决定及意见 |
+| `POST /api/reviews/{id}/decision` | 人工审核决定、意见与引用 |
 | `POST /api/reviews/{id}/delegate`、`.../cancel-delegation` | 委托及取消委托 |
 | `GET /api/documents/{id}/revisions/{revision}` | 引用与历史修订读取 |
 | `GET /api/events?after={seq}` | 全应用 SSE，前端按实体分发 |
-| `/api/prompt-templates` | 用户模板 CRUD |
+| `/api/prompt-templates`、`/api/prompt-templates/{id}` | 用户模板 CRUD（创建/读取/替换/软删除，携带 `command_id` 与 `expected_revision`） |
 | `/api/prompts/system`、`/api/projects/{id}/prompts` | 内建提示词目录、来源与覆盖 |
-| `POST /api/prompts/preview` | 类型化模板校验与预览 |
+| `POST /api/prompts/preview` | 类型化模板校验与预览；`builtin` 变体预览内建提示词草稿，`template` 变体预览用户模板 |
 | `/api/knowledge/spaces`、`/api/knowledge/entries` | 知识 CRUD |
 | `POST /api/knowledge/search`、`.../reindex`、`.../accumulate` | 语义检索、显式重建、积累入口 |
 | `GET /api/dashboard` | 指定时区/时间范围/项目的统计 |
 | `/api/settings`、`POST /api/settings/test-model`、`.../test-embedding` | 系统设置与连接测试；test-model 请求体携带被测模型 ID 与能力资料 |
-| `GET /api/recycle-bin`、`POST /api/recycle-bin/{type}/{id}/restore` | 回收站与恢复 |
+| `GET /api/recycle-bin`、`POST /api/recycle-bin/{kind}/{id}/restore`、`POST /api/recycle-bin/{kind}/{id}/purge` | 回收站、恢复与彻底删除（只对模板/知识对象） |
+| `DELETE /api/chapters/{id}`、`DELETE /api/versions/{id}`、`DELETE /api/projects/{id}` | 番外章、稿本与项目的软删除（正文计划章与当前选中稿本会被拒绝，项目下有活跃任务会被拒绝） |
 | `GET /api/versions/{id}/export?format=md\|txt` | 导出已提交内容 |
-| `POST /api/system/shutdown` | 显式退出本地服务 |
+| `GET /api/versions/{id}/manuscript?offset=&limit=` | 长篇阅读窗口：按阅读顺序取这一窗口的已提交正文（默认 20 章、上限 50） |
+| `GET /api/versions/{id}/manuscript/search?q=` | 整稿查找；命中位置与引用同一单位（Unicode scalar，左闭右开） |
+| `POST /api/system/shutdown` | 显式退出本地服务：先把响应写回客户端，再停止接受连接、取消在途请求并收束在执行中的 Run；已请求退出时返回 `already_shutting_down` |
 
 ### 10.2 命令、幂等与冲突
 
@@ -654,7 +672,14 @@ data: {"seq":"1082","version_id":"v1","entity_id":"doc1","revision":"13","payloa
 
 持久事件类型至少包括：`workflow.changed`、`run.changed`、`tool.proposed`、`tool.resolved`、`question.created`、`review.changed`、`document.committed`、`feedback.changed`、`settings.changed`、`knowledge.index_changed`。事件通知变更，正文增量可携带 patch 与基础修订；冲突时重新读取该章。
 
-临时事件使用 `preview.delta`，携带 request/tool/offset，不携带可恢复的 SSE id。半截 JSON 参数只在独立生成预览层展示；不把字符流直接写入正式正文。预览丢失后丢弃该请求的临时缓冲，不影响已提交修订。
+临时事件使用 `preview.delta`，不携带可恢复的 SSE `id`。当前线格式为：
+
+```text
+event: preview.delta
+data: {"versionId":"v1","requestId":"r1","tool":null,"offset":"0","content":"正在生成"}
+```
+
+`tool = null` 表示普通文本；工具参数流使用 `{"index":0,"id":"call_1","name":"append_content"}`，并为每个工具槽位独立计数。`offset` 是 Unicode scalar 偏移，序列化为十进制字符串。半截 JSON 参数只在独立生成预览层展示；不把字符流直接写入正式正文。预览丢失后丢弃该请求的临时缓冲，不影响已提交修订。
 
 快照响应在同一个 SQLite 读事务中取得业务数据与事件水位。客户端随后从该水位订阅事件。服务端以 events 表为准持续读取 `seq > cursor`；内存广播只用作唤醒，广播溢出时继续按游标读数据库，避免“查历史到订阅实时之间”丢事件。
 
@@ -662,7 +687,7 @@ data: {"seq":"1082","version_id":"v1","entity_id":"doc1","revision":"13","payloa
 
 例如首次连接 `/api/events?after=100`，收到事件 105 后，原生 EventSource 自动重连会沿用初始 URL 并携带 `Last-Event-ID: 105`，服务端必须从 105 之后继续推送。该请求头优先级与浏览器重连行为一致。[HTML SSE 标准](https://html.spec.whatwg.org/multipage/server-sent-events.html#the-last-event-id-header)
 
-客户端仅对持久事件按 payload.seq 去重，检测实体修订冲突后刷新对应数据。`preview.delta` 不参与持久游标去重，按 request/tool/offset 处理；浏览器事件的 lastEventId 可能继承前一个持久事件的 ID，不能据此丢弃生成预览。
+客户端仅对持久事件按 payload.seq 去重，检测实体修订冲突后刷新对应数据。`preview.delta` 不参与持久游标去重，按 request/tool/offset 处理；浏览器事件的 lastEventId 可能继承前一个持久事件的 ID，不能据此丢弃生成预览。服务端用独立的 256 槽内存广播发送预览，落后订阅者直接丢弃片段；前端只接受连续或重复一致的 scalar 偏移，持久请求事件、断线和切换稿本都会清除对应临时缓冲。
 
 持久同步事件保留 7 天，业务修订、工具、审核和反馈不随之删除。选中的游标早于保留窗口或大于当前事件水位时，发送 `stream.reset_required` 并关闭流；客户端收到后关闭旧 EventSource、重新取快照，并用新 after 创建连接，防止旧请求头继续参与重连。此同步操作不重新启动 Agent。
 
@@ -680,11 +705,25 @@ API DTO 由 Rust 类型生成 OpenAPI，使用 `utoipa` 和 `openapi-typescript`
 
 引用数据：document_id、revision_id、`start_char`、`end_char`、quote、所属 chapter_id（若有）。位置单位统一为 Unicode scalar value 数，采用左闭右开区间；后端按原修订验证 quote 完全一致。
 
+引用可以附在逐次编辑决定、自由意见、委托审核与人工审核决定（`POST /api/reviews/{id}/decision`）四条路径上；四种写入共用同一套校验：修订存在、`document_id` 与 `revision_id` 匹配、文档未删除、属于当前稿本、`chapter_id` 与文档归属一致、引用范围逐字匹配。准备阶段审核可引用本稿本任意文档；章节细纲与整章终稿审核只能引用本次审核所在章节的文档。尚未落库的候选引用只属于逐次编辑审核，不能借人工决定绕过候选哈希校验。
+
 浏览器原生 selection offset 常为 UTF-16 code unit，提交前必须显式转换，Rust 不得把前端数字直接当 UTF-8 字节偏移。引用跨多个 DOM 文本节点时映射到同一底层原文；跨章节选择不提供引用操作并解释范围限制。
 
 正文提案中的新文本尚无文档修订，引用改用 `tool_call_id + candidate_hash + candidate_range`，服务端验证候选内容；接受后可解析到结果修订，拒绝后仍引用提案快照。不能给待审新增文字伪造正式 revision ID。
 
 Dock 草稿按目标键存到浏览器本地存储，提交成功才清除；提交失败保留原文本。已提交的意见以数据库为准。引用过期仍允许阅读原修订，但不得据旧位置自动修改现稿。
+
+### 10.6 长篇阅读、目录虚拟化与阅读位置
+
+阅读区是整部作品的**一个连续滚动区**，按章虚拟化（TanStack Virtual），只有视口附近的章节被挂载；正文按窗口向服务端索取（`GET /api/versions/{id}/manuscript`，默认 20 章、上限 50）。因此打开一部几百章的作品只需要读它真正要显示的那几章，挂载的章节数只与视口有关。目录与内容分离查询：`/chapters` 只给目录（`label`、`bodyWordCount`、状态，不含正文），`/manuscript` 给窗口正文。
+
+章节顺序、显示名与草稿判定只由 `nekowriter-core::manuscript` 定义：正文按计划顺序在前，番外按自身出现次序编号在后；目录、阅读窗口与导出因此不可能给出三种不同的答案。
+
+- **高度估计与测量**：未挂载章节的高度按目录带回的字数与当前字号估计，因此远距离定位与滚动条长度从第一次渲染起就接近真实；章节挂载后用真实高度替换估计值。加载占位**不参与测量**——把占位高度当成章节真实高度会让未加载区域的几何逐帧塌缩，定位随之错位。
+- **定位**：点击目录或查找命中时先按虚拟下标滚动（`scrollToIndex`），再在正文加载、高度被测得后继续校正，直到目标块的块顶与视口顶对齐。不使用 `scrollIntoView()`，因此未挂载的章节也能定位；末尾章节被滚动范围夹住、无法对齐到顶部时接受可达位置。
+- **阅读位置**：以「章 id + 块内像素偏移」保存在浏览器的 `nekowriter.reading-anchor.{versionId}`，滚动时按帧合并写入、离开阅读区时再写一次；重新打开阅读区（切换写作/阅读视图或重新加载页面）时先恢复位置。字号与窗口变化触发重新测量，并把当前章重新对齐到顶部——位置以章为单位稳定，不会因为高度变化跳到别的章。
+- **查找**：服务端读遍全部已提交正文（与导出同一份快照）逐字匹配，仅对 ASCII 字母不区分大小写（这种折叠不改变字符数，偏移永远落在原文正确位置），命中不重叠、最多 50 条。偏移单位是 Unicode scalar value、左闭右开，与引用完全相同，因此命中可以直接高亮，也可以被引用校验复核。浏览器自带的页内查找只能看到已挂载的章节，这是窗口化的必然代价；搜索整部作品请用阅读区的查找。
+- **内容完整性**：虚拟化只影响渲染，不影响内容——每一章都能滚动到、可以选中复制，正文逐字来自当前已提交修订，与导出、与 `/manuscript` 一致。
 
 ## 11. 中断、退出与本地交付
 
@@ -722,19 +761,99 @@ Dock 草稿按目标键存到浏览器本地存储，提交成功才清除；提
 
 服务绑定回环地址，默认固定端口 47821，可通过 `--port` 指定。端口占用时报错并说明，不静默连接到未知服务。Windows 启动器打开默认浏览器，后台进程生命周期与浏览器标签页独立。
 
+实现口径（`nekowriter-app::lifecycle`）：
+
+- **唯一触发点**：Ctrl+C、SIGTERM 与 `POST /api/system/shutdown` 三条路径都汇到同一个 `Shutdown` 信号（`tokio::sync::watch`，用 `send_replace` 而不是 `send`：后者在没有接收者时不更新值也不唤醒）。信号触发后必须把「已请求退出」写回同一个信号，否则已经打开的 SSE 连接看不到退出，优雅退出会一直等它断开。
+- **退出顺序**：服务器停止接受新连接（因此不再产生新的生成请求）→ 取消在途模型请求（abort 本地 HTTP 任务，最多等 5 秒；丢弃各稿本命令循环）→ 在同一批事务里把活跃 Run 收束为 `interrupted`、把 prepared / dispatched 请求标为 `cancelled` / `unknown` 并广播 `reason=process_shutdown` → `PRAGMA wal_checkpoint(TRUNCATE)` 把 WAL 回写主库文件 → 关闭 SQLite 连接池 → 返回退出码 0。已经发往外部服务的调用是否取消成功不作保证，这些不确定性由 `unknown` 与 `（用量未知）` 保留下来。
+- **收尾与启动恢复共用同一条路径**：`Store::interrupt_active_runs(InterruptionSource)` 同时服务启动恢复与退出收尾，两者只有事件原因（`startup_recovery` / `process_shutdown`）与用户可见文案不同，因此不可能出现「退出时的收束与重开时的收束规则不一致」。
+- **接口退出是幂等的**：`POST /api/system/shutdown` 先校验写请求 Host/Origin，再把 `{"status":"shutting_down"}` 写回客户端，然后才触发收尾（已请求退出时返回 `already_shutting_down`）；它接受空请求体，不带 `command_id`。
+- **SSE 随退出结束**：持久连接在退出信号触发后立即结束，浏览器随后发现服务已不可达，界面据此显示「本地服务已退出」与重新启动方法，而不是一直显示正在重连。
+- **日志**：启动时在数据目录创建 `logs/`，写入 `nekowriter.<YYYY-MM-DD>.log`，按天滚动、只保留最近 7 个文件；文件格式不带 ANSI 颜色，标准输出与文件同时写，退出前由写线程守卫刷盘。凭据与 API key 从不进入日志。
+- **启动打开浏览器**：绑定端口成功后用系统默认浏览器打开 `http://127.0.0.1:{port}/`；打开失败只记日志，不影响服务。`--no-browser` 关闭该行为（无界面环境与探针使用）。
+- **前端资源位置**：默认解析到可执行文件旁的 `webui/dist`，因此发行目录整体拷走后从任何工作目录启动都能打开界面；`--web-dir` 可覆盖（源码内开发用 `cargo run -p nekowriter-app -- --web-dir webui/dist`，或直接跑 Vite 开发服务器）。
+- **`GET /api/health`** 额外返回实际使用的 `dataDir`，工作台「本地服务」面板直接展示它，用户不必去猜数据与日志在哪里。
+- **发行目录（全平台同一形状）**：`cargo xtask package [--target <三元组>] [--debug] [--protoc <路径>]` 先构建前端（`pnpm --dir webui build`，保证包里的 `webui/dist` 是本次构建的结果而不是仓库里的旧产物），再用 `--target`（缺省为本机三元组，由 `rustc -vV` 读出）显式构建 `nekowriter-app`，最后组装 `target/package/<三元组>/nekowriter/`：`nekowriter`（Windows 上是 `nekowriter.exe`）、`webui/dist`、`README.txt` 与 `release-manifest.txt`。因为资源按「可执行文件旁的 `webui/dist`」解析，所有平台的发行目录形状完全一致；显式传 `--target` 也让多个平台的产物能共存。
+- **发行清单 `release-manifest.txt`**：目标三元组、构建配置（`release` / `debug`）、可执行文件的容器格式、生成时间与逐个文件的字节数 / SHA-256（含 `webui/dist` 的完整资源清单）。打包时会读可执行文件头部判定容器格式（PE / Mach-O / ELF 及其机器类型），并在与三元组不符时**直接失败**：拷错或改名一个别的平台的二进制不会被当成打包成功。清单与包内文件可用 `sha256sum -c` 之类的工具逐行核对。
+- **非 Windows 主机打 Windows 包**：`.cargo/config.toml` 把 `PROTOC` 钉在 Windows 工具目录上（`tools/protoc/bin/protoc.exe`，由 `tools/bootstrap-protoc.ps1` 下载校验）且 `force = true`；从其它平台构建时用 `--protoc <本机 protoc>` 覆盖（只是宿主构建工具，与目标平台无关）。Windows 目标需要在 PATH 里有该目标的链接器与 C 编译器：`x86_64-pc-windows-msvc` 用 `lld-link`（见 `.cargo/config.toml`），`x86_64-pc-windows-gnu` 用 `mingw-w64` 的 `x86_64-w64-mingw32-gcc`。
+
 ### 11.3 基础本地安全
 
 校验 Host 和写请求 Origin，写接口只接受 JSON 与自定义请求头；浏览器不能跨站直接触发本地写入。开发 CORS 仅允许明确的 Vite 地址。所有 GET 接口保持只读。
 
 渲染不启用 Markdown 原始 HTML，外链只允许 http/https 并安全打开，服务端文件导出名不包含路径穿越内容。知识和研究内容作为资料块输入模型，不当作能改变工具权限的系统指令。
 
-API key 存 OS 凭据库，SQLite 保存引用，日志和请求快照脱敏。移除服务配置前提示仍引用它的项目，不能留下不可见的悬空配置。日志滚动保存有限数量文件，不搭建外部监控平台。
+API key 存 OS 凭据库，SQLite 保存引用，日志和请求快照脱敏。移除服务配置前提示仍引用它的项目，不能留下不可见的悬空配置。日志滚动保存有限数量文件（当前为按天滚动、保留最近 7 个），不搭建外部监控平台。
 
 ### 11.4 导出
 
 Markdown/TXT 导出当前稿本已提交正文，按正文计划顺序和番外顺序排列，包含小说标题和章节标题；待审提案、流式预览、系统提示词、Token 记录及密钥不进入导出。未通过章节明确标为草稿，不伪装为定稿。
 
 导出在一致的读取快照中完成，不因生成期间翻页查询而混入多个时刻的章节版本。导出是用户获取文本的功能，不承担数据库格式兼容或迁移。
+
+原文没有钉死、由实现定的口径（以下即当前行为）：
+
+- **内容来源**：每章取它 `documents`（role = `chapter_body`）当前已提交修订的 `content`，没有另存副本、没有导出缓存。章节没有正文文档或没有当前修订时，正文为空字符串。
+- **草稿判定**：只有当本章 `approved_revision_id` 等于当前修订时才算定稿。已通过但之后又被编辑过的章节（当前修订 ≠ 通过的那一份）与尚未通过的章节一样标为 `（草稿）`，并在标签后紧跟，不依赖颜色或图标。
+- **顺序与标题**：正文按 `order_index` 在前，番外按自身 `order_index` 在后（同一顺序用章节 id 保证稳定）。正文标签为 `第{order_index}章 {title}`，番外为 `番外 {n} {title}`（`n` 是番外内的 1 起序号），与工作台目录的写法一致。
+- **版式**：Markdown 用 `# 小说标题` 与 `## 章节标签`；TXT 把同样两行写成裸文本，不带任何标记符号。两者都先给一行口径说明：`由 NekoWriter 导出 · YYYY-MM-DD HH:MM:SS UTC · 正文 X / Y 章已通过整章审核`。时间固定用 UTC，便于逐字核对导出结果。没有正文的章节给一行 `（本章尚无正文）`。
+- **文件名**：`{消毒后的小说标题}.{md|txt}`。标题会去掉路径分隔符、控制字符与 Windows 保留字符，折叠空白与连续点号并剪掉首尾点号；结果为空时回退 `nekowriter-export`，最长 80 个字符。响应头的 `content-disposition` 同时给出 ASCII 回退名与 RFC 5987 的 `filename*=UTF-8''…`，因此中文标题能原样落盘又不依赖非 ASCII 头字段。
+- **边界行为**：稿本不存在或已删除返回 404 `RESOURCE_NOT_FOUND`；`format` 缺失或不是 `md`/`txt` 返回 422 `INVALID_EXPORT_FORMAT`；稿本一个章节都没有时仍导出标题与口径行，并写明「本稿本还没有章节。」，而不是报错。
+- **不进入导出的内容**：待审提案、流式预览、系统提示词、Token 用量、凭据、审核意见、Run 与工具调用记录。导出只读正文修订链。
+
+### 11.5 发行构建与跨平台打包
+
+发行目录只有一种形状（可执行文件 + `webui/dist` + `README.txt` + `release-manifest.txt`），平台差异只在可执行文件本身。每个平台在自己的主机（或装有该目标链接器的主机）上执行同一条命令：
+
+```text
+# 本机（macOS / Linux）
+cargo xtask package --release --protoc "$(command -v protoc)"
+
+# Windows（PowerShell，先由 tools/bootstrap-protoc.ps1 准备 tools/protoc）
+cargo xtask package --release
+
+# 从别的平台交叉打包某个目标
+cargo xtask package --release --target x86_64-pc-windows-msvc --protoc /usr/bin/protoc
+```
+
+打包器在组装之前有两道硬检查，它们都是「别拿别的平台的二进制充数」的一部分：
+
+- 目标平台的标准库必须已安装。`--target` 不是本机三元组时，先看编译器 sysroot 下有没有该目标的 `lib/rustlib/<三元组>/lib`，缺了就**在任何构建之前**以 `rustup target add <三元组>` 结束。后端编译先于前端构建，所以注定失败的打包不会白写一次 `webui/dist`。
+- 可执行文件的头部必须与三元组一致，而且**容器格式与架构都要对**：读 PE / Mach-O / ELF 的容器与机器类型，`aarch64-unknown-linux-gnu` 配一个 x86-64 的 ELF 会被拒绝，因为容器同为 ELF、架构却不是目标要的那一个。目前只识别 `x86_64` 与 `aarch64`，其它架构在参数解析后即报错，不做猜测。
+
+本机的验收事实（2026-09-12）：发行包按本机三元组 `aarch64-apple-darwin` 从当前代码重建并逐项核对——清单里 13 个文件的字节数与 SHA-256 全部由独立脚本重算一致、可执行文件头是 Mach-O `0x0100000C`（262,506,224 字节）、`index.html` 引用的 JS/CSS 都在包内。两道硬检查都在**真实产物**上走过：把真实的 x86_64 Mach-O 可执行文件放到打包器要读的位置后，打包以「编译产物是 Mach-O 64 位（x86_64），与目标平台 aarch64-apple-darwin 不符；请确认 --target 与工具链」失败（退出码 1），并且因为这项校验发生在清理旧发行目录之前，上一次已验证的发行目录逐字节未动（清单生成时间与二进制 SHA-256 不变）、失败后 `target/package/` 下没有留下该目标的空壳；未安装标准库的目标（例如 `x86_64-apple-darwin`）在**任何构建之前**就以 `rustup target add <三元组>` 结束，`webui/dist/index.html` 的 mtime 未变。**其它平台仍没有产物**：本机 `rustup target list --installed` 只有 `aarch64-apple-darwin`，没有 Windows 目标的链接器 / C 编译器，也没有 x86_64 的 macOS 目标标准库；因此本轮只产出并验收本机三元组的发行包，其余平台按上面的命令或 CI 产出，形状相同但未经真实验收，这属于环境边界而非代码缺口。发行包在「无推进提交计入协议错误上限」的修复之后又按当前源码重建过一次，独立脚本重算的结论不变：清单 13 个文件、可执行文件 262,589,360 字节、头部 Mach-O `0x0100000C`；二进制 SHA-256 与上一份不同（源码已变），发行目录形状与校验规则未变。完整回路（建项目 → 准备四项 → 细纲 → 正文 → 终稿 → 阅读与查找 → 回收站 → 概览 → 本地服务面板与退出）与两条相关路径都在这一份产物上重跑，证据见 docs/03 §29。
+
+CI 方案（Windows runner 直接产出 x64 产物，不需要交叉工具链）：
+
+```yaml
+# .github/workflows/package.yml
+name: package
+on: workflow_dispatch
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - run: rustup toolchain install nightly --profile minimal
+      - run: pnpm --dir webui install --frozen-lockfile
+      - run: pwsh tools/bootstrap-protoc.ps1
+      - run: cargo xtask package --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nekowriter-x86_64-pc-windows-msvc
+          path: target/package/x86_64-pc-windows-msvc/nekowriter
+```
+
+各平台的实际状态：
+
+- **macOS（aarch64-apple-darwin）**：已用 `--release` 真实产出并验证（见 §15 与 docs/03），包括从仓库之外的路径启动、`webui/dist` 解析、数据与日志落盘、退出与重启；发行清单里的容器与架构写作 `Mach-O 64 位（aarch64）`，即三元组的写法（旧记录里的 `arm64` 是同一种架构的另一种拼法）。
+- **Windows x64**：配方与 CI 步骤都在这里，但**未在本机产出**：本机（macOS arm64）没有 Windows 目标的链接器 / C 编译器（`lld-link` 或 `mingw-w64`），也没有 `x86_64-pc-windows-msvc` 标准库，因此没有 PE 产物可验证；`cargo xtask package --target x86_64-pc-windows-msvc` 会在 `rustup target add` + 交叉链接器就位后才成立。这属于环境边界，不是代码缺口：`tools/bootstrap-protoc.ps1`、`.cargo/config.toml` 的 msvc 链接器与 `--target` 参数都已经就位。在本机执行 `cargo xtask package --target x86_64-pc-windows-gnu`（未 `rustup target add`）会立即以 `目标 x86_64-pc-windows-gnu 的标准库未安装：请先运行 rustup target add x86_64-pc-windows-gnu，或改用本机三元组` 结束，且不改写 `webui/dist`、不留下空壳发行目录。
+- **其它平台**：同一命令即可，但同样未经真实验收（Linux 目标与 x86_64 的 macOS 目标都只需要 `rustup target add <三元组>`，不改变发行目录形状）。
+
+不在发行包里的东西：源码、`node_modules`、Cargo 缓存、数据库的初始副本（数据目录在首次启动时创建）；`logs/` 与作品库都在数据目录里，根据命令行参数或系统默认位置决定，不写进发行目录。
 
 ## 12. Dashboard 口径
 
@@ -745,6 +864,18 @@ Markdown/TXT 导出当前稿本已提交正文，按正文计划顺序和番外�
 字段采用 input_tokens、output_tokens、cached_input_tokens、reasoning_tokens、usage_source、usage_status。cached input 是输入子集，reasoning 若是输出子集就不能再次加到总量；各供应商由适配器统一映射并保留原始用量字段。
 
 总量以已知 input + output 为主，未知请求数另行展示。Embedding 的输入用量独立列示，不能混入“对话 Token 总数”而无说明。MVP 不计算费用或维护价格表。
+
+实现口径（`nekowriter-core::usage`、`nekowriter-store::{dashboard,system_operations}`）：
+
+- 每条已封存请求的 `usage_json` 都是一份 `PersistedModelUsage`。`usage_source` 说明数字来自哪里（`chat_completions_stream`、`embeddings_http` 与 `none`），`usage_status` 说明是否真的拿到了报告（`reported` / `unknown` / `invalid`），供应商原始字段保存在 `raw` 内供事后核对；适配器（`ModelCompletion::persisted_usage`）是这两者的唯一写入点。
+- 没有报告的请求写缺失字段而不是 0，并带上类型化原因 `provider_silent` / `request_failed` / `request_cancelled` / `pending` / `invalid_report`。请求在区间内没有任何封存记录时由它的终态推出原因，因此「用量未知」永远能说明自己，而不是一个无法追问的数字；分类计数由 `unknownUsage` 给出，顺序稳定。
+- 连接测试这类不属于任何稿本的请求写入 `system_model_operations`（schema 25），带上与对话请求相同的用量口径与失败原因，在概览里单列为 `systemOperations`（含最近 5 条明细）：既不混进对话 Token，也不会凭空消失。
+- Embedding 的每一次向量 HTTP 请求同样写入 `system_model_operations`，操作类型为 `embedding_index`（索引任务，长条目拆成多批时每批一行）、`embedding_query`（语义检索的查询向量）或 `embedding_connection_test`（显式连接测试与保存设置前的验证调用）；`usage_source` 为 `embeddings_http`，供应商报告的 `prompt_tokens` 映射为 `input_tokens`，没有报告时记为 `unknown / provider_silent` 而不是 0。概览按这些操作类型聚合出 `tokens.embedding`（请求数、输入用量、未知计数与原因、按操作类型拆分），并从 `systemOperations` 中排除它们：同一批 token 不会既算系统操作又算 Embedding。嵌入请求没有输出侧，因此 Embedding 只统计输入，并且永远不进入对话 Token 总数。
+- 供应商的用量形状不参与请求成败：`usage` 按宽松解析，供应商可以把它写成对象、字符串形式的数字、裸数字、`null`、空数组或干脆不写；能读出计数就是 `reported`（`prompt_tokens` 优先、缺失时用 `total_tokens`），报告在但读不出计数就是 `unknown / invalid_report`，字段缺失或为 `null` 就是 `unknown / provider_silent`。用量只是一个统计字段，因此它永远不能把向量一起弄丢，也不能因为解析不出而拒绝一次本来可用的 Embedding 服务。
+- 保存 Embedding 配置前的真实验证调用排在准入检查之后：同一 `command_id` 已有可重放结果时直接返回上次结果（不写凭据、不再调用供应商），修订已过期或字段无效时直接报错，两种情况下都不花掉一次真实请求；只有确实会写入的保存才调用供应商，并把这次调用作为 `embedding_connection_test` 落库。
+- 三个镜头都要覆盖 Embedding：角色拆分（`byRole`）里 Embedding 与写作、审核并列，按日序列里它有自己的 `tokens.embedding.daily`（与 `tokens.daily` 同一套本地日口径和平行的一日一格）。它们是同一批向量用量的不同镜头，不是新的计数：`embedding` 角色的输入与请求数逐字等于 `tokens.embedding`，而对话总量与对话日序列仍然只来自 `model_requests`。
+- Embedding 用量不属于任何项目（知识 Space 是全局的），因此项目过滤下的概览仍返回同一份 `tokens.embedding`；它在独立字段里，不会混进该项目的对话用量，并且自带 `tokens.embedding.scope`（当前只有 `global`）把这份归属写进响应本身，而不是留给调用方猜“这个数字随筛选变化吗”。
+- 系统模型调用（模型连接测试与向量请求）的落库只有一条应用层写入路径：状态判定、用量口径与失败原因形状只写一次，对话与 Embedding 两种适配器只负责把自己类型的结果翻译成统一输入（`nekowriter-app::operations`）。
 
 ### 12.2 Running Jobs
 
@@ -762,6 +893,8 @@ Dashboard 的进行中任务包括排队、模型运行、等待用户、等待�
 
 统计范围使用用户选定时区转换成 UTC 左闭右开区间，日期分桶在查询层统一完成，不能前后端分别猜测“今天”。
 
+实现上这些指标全部是回算：`GET /api/dashboard` 每次读取已封存请求、`runs` 行、工作流当前执行轴与 `document_revisions` 修订链，没有任何持久化的累计计数器，因此统计不会与记录漂移，同一批数据重复查询结果一致。字数统计只取它真正用的六个列（`id` / `document_id` / `revision_no` / `word_count` / `created_by` / `created_at`），并且只取可见正文文档的修订——修订正文与结构化载荷不参与统计，把它们读回来会把整部作品的文本搬进进程内存（实测 6,000 条修订即可让常驻内存多出上百 MB），而已删除文档与非正文文档的修订读进来又会被丢掉。不同供应商的用量字段由适配器统一映射到 `input_tokens` / `output_tokens` / `cached_input_tokens` / `reasoning_tokens`；嵌入调用虽然已经落库，但按 §12.1 的前一条只进 `tokens.embedding`，不计入这份对话用量。
+
 ## 13. UI 验收规则
 
 布局、视觉和 Dock 状态见方案 §6，以下补充实现判定：
@@ -776,8 +909,10 @@ Dashboard 的进行中任务包括排队、模型运行、等待用户、等待�
 - 正式正文始终可选中复制；一条引用必须对应可验证的原文或提案快照。
 - 所有对话框管理焦点，Escape 只关闭非破坏性面板；Ctrl/Cmd+Enter 提交时避开中文 IME composition。
 - 待审差异使用新增/删除文本标签，不只依靠红绿；键盘可访问变量说明、目录、模式切换和委托按钮。
+- 已实现的快捷键集合限定为四条，且可由界面发现（头部按钮与 `?` 打开说明）：`Ctrl/Cmd+Enter` 提交当前表单或全场唯一可用的阶段主操作、`Ctrl/Cmd+K` 聚焦整稿查找框、`Esc` 关闭最上层可安全取消的层、`?` 开关快捷键说明。没有单键绑定，也没有给破坏性操作绑定快捷键；输入框内的复制/粘贴/撤销/全选保持浏览器原生行为。
 - 连续屏幕阅读播报只报状态变化与完整段落摘要，不逐 token 打断用户。
 - 模型失败、索引失败和零引擎能力显示实际原因，不能以无限 skeleton 隐藏不可完成状态。
+- 「本地服务」面板显示界面地址与实际数据目录，退出服务需二次确认并说明退出后保留什么；服务退出后界面区分「已退出」与「正在重连」，并给出重新启动方法与刷新提示。
 
 ## 14. 实施任务清单
 
@@ -801,11 +936,11 @@ Dashboard 的进行中任务包括排队、模型运行、等待用户、等待�
 ### M2 交互正确性
 
 - [x] 实现编辑提案、基础修订校验、逐次审核和差异 UI；候选正文只存于 `tool_calls.proposal_json`，接受/拒绝均以命令回执和同一 Run 的工具结果原子落库。
-- [x] 实现暂停控制、未封存意见批次的统一追加/投递、直接终态提交完成守卫和模式切换边界；等待正式问答时的自由意见不会替代答案。
+- [x] 实现暂停控制、未封存意见批次的统一追加/投递、直接终态提交完成守卫和模式切换边界；等待正式问答时的自由意见不会替代答案。模型在仍有未投递意见时反复直接提交不再是无限重排：每一次无推进的纠正都计入连续协议错误，第三次即按工程执行限制把 Run 收束为 `stopped`，未投递意见原样保留并可由「显式继续」重新开始一轮请求额度（真实进程实测：修复前同样的桩会一直重排到请求额度上限，修复后最多 4 次请求即停止，见 docs/03 §28）。
 - [x] 实现 `ask_user`、重复命令回执、原生 EventSource 游标重连、进程中断恢复与每次 100 次请求额度续授；完整但无效的模型响应按连续三次协议错误上限纠正或停止。
 - [x] 实现用户显式停止：同事务作废 prepared/dispatched attempt、记录失效请求 ID，并中止本地在途 HTTP 任务；迟到回调不能推进工作流，待答/待审/暂停边界在显式继续后恢复。
-- [ ] 实现引用与附件性反馈。
-- [ ] 通过 §15 中全部编辑、反馈、审核竞态用例。
+- [x] 实现引用与附件性反馈：工作台可把选中的正文/候选文字固定成引用，并随逐次编辑决定或自由意见一起提交；正式引用锚定不可变修订，候选引用锚定工具调用、候选哈希与候选区间，写入前仍由服务端逐字复核；浏览器 UTF-16 选区偏移在提交前换算为 Unicode scalar 偏移。逐次编辑的主操作按「有无文字或引用」动态显示接受或拒绝。引用随正文变化显示「来自旧修订」，并通过 `GET /api/documents/{id}/revisions/{revision}` 只读回看原修订。委托审核会在委托事务内校验并固化当时选中的引用，审核子 Run 只读到引文文本，不接触文档、修订或工具调用 ID；准备、细纲与整章终稿的人工审核决定同样可以携带引用，并与委托共用同一套逐字校验，引用与决定在同一事务内写入同一条 Review。
+- [ ] 通过 §15 中全部编辑、反馈、审核竞态用例。本轮在真实进程 + 桩模型上重跑了 A/E/R/F 组：17 行通过（A01–A03、E01–E05、E07、R01–R04、F01–F04、F06、F08–F10），两行记录为真实接口不可构造（E06、R05），一行因桩无法产出合法工具参数而未验到（F12）；其余各组仍未跑，逐行原因见 §15.3。
 
 ### M3 完整创作流程
 
@@ -815,14 +950,15 @@ Dashboard 的进行中任务包括排队、模型运行、等待用户、等待�
 
 ### M4 知识与管理
 
-- [ ] 实现 Space、知识 CRUD、Embedding 接入、索引任务与语义检索，补齐过期候选过滤后的持续补取及单次计费。
-- [ ] 实现研究/积累接口、能力注册表及零生产实现的明确返回行为。
-- [ ] 实现模板模块和可回算的 Dashboard 统计。
+- [x] 实现 Space、知识 CRUD、Embedding 接入、索引任务与语义检索，补齐过期候选过滤后的持续补取及单次计费。Space 与条目 CRUD、软删除、非空 Space 拒绝删除、Embedding 配置与连接测试、按 profile 隔离的 LanceDB 索引任务、按 Unicode 边界的目标 600 / 硬上限 1000 / 重叠 80 切分均已接通；检索先向量近邻再回查 SQLite 的存活与当前修订，剔除失效块后在同一查询内翻倍候选继续补取，全程复用一次查询向量。辅助工具预算账本同时落地：`quota_scopes`（version + stage_key 唯一）与 `quota_charges`（scope + tool_call_id 唯一）随 schema 23 建立，准备阶段与每章细纲的 Run 在创建时绑定作用域；有效上限每次执行前从项目最新设置读取，下调不清零已用数，同一工具调用重放不重复扣除。
+- [x] 实现研究/积累接口、能力注册表及零生产实现的明确返回行为。`nekowriter-agent/src/engine.rs` 定义联网研究与知识积累的接口合同（请求、结果、来源与限制说明、类型化失败）及编译期注册表 `RESEARCH_ENGINES` / `ACCUMULATION_ENGINES`，生产注册项严格为 0；`GET /api/capabilities` 返回空数组与原因；`POST /api/knowledge/accumulate` 先校验线索与目标 Space，再返回 409 `ENGINE_NOT_AVAILABLE`，不创建运行任务、不写条目、不扣预算。积累的成功写入路径按 §7.4 实现为一条普通写入命令（重放检查 → 引擎 → 逐条验证 → 同一事务插入条目、建立索引任务与写入回执），引擎注册表由应用状态持有、能力查询与积累入口读同一份；真实端口上的 HTTP 用例覆盖了正例、引擎失败（502，零写入、无回执）、重放（不再次调用引擎）与幂等冲突，生产进程的探针覆盖了 0 引擎时的行为。准备与细纲 Agent 在 Embedding 已配置、索引有可检索条目且仍有余额时才宣告 `query_knowledge`，工具描述带上剩余次数；执行顺序为重放检查 → 参数校验 → 可用性校验 → 扣一次预算 → 检索 → 落库推进，参数无效与预算耗尽都不扣费，进入真实检索后失败仍计 1 次。
+- [x] 实现模板模块和可回算的 Dashboard 统计。受限模板语言（一次性 `{{variable_name}}` 替换、`\{{...}}` 字面量转义、未知变量/不完整括号/缺失必需占位符拒绝）在 `nekowriter-core::template` 中只实现一次，`agent::prompts` 的内建覆盖与用户模板共用它；用户模板以 `prompt_templates` 表（schema 24）保存标题、正文与自定义变量声明，支持 `command_id` 幂等与 `expected_revision` 乐观并发、软删除，保存与修改都在 Store 边界重新校验；`POST /api/prompts/preview` 用同一条路由的 `builtin` / `template` 两个变体服务内建草稿与用户模板，未提供的变量回落到声明的示例值；工作台提供模板管理与章节指导/意见草稿的插入入口。`GET /api/dashboard` 不保存任何累计值：Token 由已封存请求的 `usage_json` 按写作/审核角色与本地日汇总（`cached_input_tokens`、`reasoning_tokens` 作为子集，未报告用量的请求单列 unknown），任务由 `runs` 与工作流当前执行轴分区（审核子 Run 展开、不进入主计数），字数由 `document_revisions` 修订链回算（复制稿本计 0），时区偏移换算成 UTC 左闭右开区间，日期分桶在查询层完成。每一条用量都带 `usage_source` / `usage_status` 与类型化未知原因，连接测试作为系统操作单独落库并在概览单列；Embedding 的向量请求（索引、检索、连接测试）同样落库并带上来源，概览按操作类型把输入用量单独列示、并从系统操作中排除，因此同一批 token 不会重复计数，也不会混进对话总量；三个镜头都覆盖 Embedding：`byRole` 里有独立的 `embedding` 角色，`tokens.embedding.daily` 与对话日序列平行，`tokens.embedding.scope` 明写它是全局数字；工作台概览订阅 `run.changed` / `document.committed` / `review.changed` / `feedback.changed` / `system.model_operation` 等持久事件自动重算，不需要用户手动刷新。
 
 ### M5 本地交付
 
-- [ ] 完成长篇章节虚拟化、滚动锚点、主题、键盘及中文输入体验。
-- [ ] 完成软删除/恢复、正文导出、退出流程及脱离源码的 Windows 发行包。
+- [x] 完成长篇章节虚拟化、滚动锚点、主题、键盘及中文输入体验。长篇阅读已接通：阅读区在连续滚动区里按章虚拟化（只有视口附近的章节被挂载，正文按窗口加载），目录也是以章节 id 作 key 的虚拟列表；定位先按虚拟下标滚动、再在正文加载与高度测得后校正到标题对齐顶部，不依赖未挂载 DOM 的 `scrollIntoView()`；阅读位置以「章 + 块内偏移」记在浏览器本地存储，切换视图与重新加载页面后回到原处，字号变化重新测量并把当前章对齐到顶部；整稿查找由服务端读遍全部已提交正文，返回与引用同一单位的偏移并支持高亮；渲染开销与总章数脱钩已由真实进程实测（401 章与 51 章作品的挂载块数与打开耗时基本相同）。
+  主题与键盘/中文输入体验已接通：单键 `d` 切换主题的全局监听被删除，主题改为工作台头部的三段选择器（浅色/深色/跟随系统，仍由 `ThemeProvider` 存在浏览器本地）。快捷键在 `webui/src/lib/shortcuts.tsx` 一处实现：`Ctrl/Cmd+Enter` 提交当前表单命中（光标在输入框里时提交该表单的 `type=submit` 主操作，不在输入框里时只触发全场唯一可用的阶段主操作）、`Ctrl/Cmd+K` 聚焦整稿查找框、`Esc` 关闭最上层可安全取消的层（查找结果、快捷键说明、退出确认）、`?` 开关快捷键说明；说明由头部「快捷键」按钮与 `?` 打开（见 §13）。组合输入只认「可编辑目标上的 compositionstart」，并同时用 `isComposing` 与 `keyCode === 229` 判定，因此一个没有配对的 compositionstart（输入法在页面获得焦点时可能发出）不会把整个键盘永久关掉；窗口失焦也会清除该状态。组合期间那次 Enter 属于「确认候选词」，在 document 捕获阶段拦下随后的 `submit`，且必须 `preventDefault` 与 `stopPropagation` 同时生效——表单由 React 接管，只 `preventDefault` 仍会执行 `onSubmit` 并发出请求。破坏性操作（审核通过/退回、停止执行、退出服务）不绑定任何快捷键。焦点在各处被显式管理：说明面板打开时焦点进入其关闭按钮、关闭后回到打开它的元素；退出确认出现时焦点落到「取消」而不是破坏性按钮；快捷键动作让触发它的按钮消失后，焦点回落到工作台主区域而不是 `<body>`。
+- [ ] 完成软删除/恢复、正文导出、退出流程及脱离源码的 Windows 发行包。正文导出已接通：`GET /api/versions/{id}/export?format=md|txt` 每次在同一个读取事务里从已提交修订链现读（无副本、无缓存），按正文计划顺序与番外顺序排列，只把「当前修订就是通过的那一份」算作定稿，其余标为 `（草稿）`，文件名经消毒并带 RFC 5987 下载头，工作台「稿本」面板提供 Markdown 与纯文本两个导出入口；真实进程探针从界面点击导出，产物与 `document_revisions` 逐字一致，并行覆盖了 422 非法格式、404 不存在与无章节的空稿本三个边界。退出流程与脱离源码的发行目录已接通：`nekowriter-app::lifecycle` 统一 Ctrl+C / SIGTERM / `POST /api/system/shutdown` 三条触发（详见 §11.2），启动时把日志落到数据目录的 `logs/` 并打开默认浏览器，`cargo xtask package` 组装「可执行文件 + `webui/dist` + `README.txt`」的发行目录；真实进程探针把发行目录拷到仓库之外的路径启动，界面与资源可用、数据与日志只落在指定数据目录，走真实 API 写出一章 72 字正文后从界面退出（0.2 秒内退出码 0、WAL 已回写、在途模型请求被取消、SSE 关闭）、重启后正文与项目仍在且在执行中的 Run 为 `interrupted`（请求 `error_json.kind = process_shutdown`、事件 `reason = process_shutdown`），带一条打开的 SSE 连接走 SIGTERM 同样在 0.1 秒内退出码 0。回收站恢复已接通：`nekowriter-store::recycle` 把列出、恢复与彻底删除实现为唯一一处，恢复只清回 `deleted_at`（章节行、文档槽与修订链不动），因此恢复后的正文、`revision_id` 与 `order_index` 与删除前一致；恢复不从工作流搬回写作光标，父对象仍在回收站里返回 409、对象已被彻底删除返回 404。彻底删除只对模板/知识对象开放，稿本与正文返回 `RECYCLE_NOT_PURGEABLE`。工作台新增「回收站」面板（类别、标题、删除时间、原属稿本与阻塞原因）并订阅 `recycle.changed` 自动刷新；「番外」面板与稿本列表提供带二次确认的删除入口。真实进程探针用真实正文跑完整回路：删除番外后在回收站看到它（18 字正文、删除时间、原属稿本），从界面点击恢复后正文与修订 id 与删除前逐字一致、排回原位置（`order_index` 不变），并从界面的番外列表再次删除。项目级回收站也已接通：`DELETE /api/projects/{id}` 只标记项目本身，所有读取路径逐层检查祖先，所以项目在回收站里时它的稿本、章节与正文都不可见；恢复项目只清项目自己的 `deleted_at`，它的稿本原样回来，而删除项目之前单独删掉的稿本仍留在回收站里（不会因为恢复项目而被误恢复）。项目下仍有开放审核或活跃写作任务时返回 `RESOURCE_BUSY`，过期修订返回 `REVISION_CONFLICT`；项目与正文一样构成审计链，不做物理删除。真实进程探针跑完整回路：建两个项目 → 在待删项目里再建一个稿本并单独删掉它 → 删项目（列表只剩一个、被删项目 404、回收站显示「2 份稿本 · 0 章」）→ 其下稿本恢复被拒为 409 `RECYCLE_ANCESTOR_DELETED`、项目物理删除被拒为 `RECYCLE_NOT_PURGEABLE` → 恢复项目（两个项目都在、单独删掉的稿本仍在回收站）并从真实界面再次删除与恢复。Windows x64 发行包本身仍待做。
 - [ ] 记录真实模型验收、性能数据、依赖版本和已知限制。
 
 ## 15. 测试与验收矩阵
@@ -832,6 +968,8 @@ Dashboard 的进行中任务包括排队、模型运行、等待用户、等待�
 Core 单元测试关注业务不变量与字符串边界；SQLite 临时文件集成测试关注跨表事务、去重和检查点；Agent 测试用可控假服务模拟流、工具与错误；Playwright 验证真实界面的关键写作路径。
 
 假模型只用于自动化测试。M1、M3 和最终交付必须完成真实模型烟测，记录模型 ID、服务地址类型、锁定版本、已验证能力和用量；没有可用凭据时应明确标记真实模型验收未完成，不能以假模型替代。
+
+截至 2026-09-12，本机**没有可用的真实模型凭据**：环境变量里没有任何模型服务的 key（只有编辑器自身的令牌），OS 凭据库里 `NekoWriter` 服务下唯一一条记录是本轮探针自己写入的桩凭据（account `writing-model-…`，指向回环桩地址），没有任何指向真实供应商的凭据。因此 M1 与 M3 的真实模型烟测**明确未完成**，本轮也没有用桩冒充：桩只用于验证退出流程、竞态与用量记账，相关记录里都写明了它是桩。
 
 常规检查为 Rust fmt/clippy/test，以及前端 TypeScript 项目构建、lint 和相关 UI 测试。现有前端 `build` 使用 `tsc -b && vite build`，实施时采用项目构建检查；根引用式 tsconfig 的单独 `tsc --noEmit` 不应成为唯一类型验证证据。
 
@@ -920,6 +1058,70 @@ Core 单元测试关注业务不变量与字符串边界；SQLite 临时文件�
 | P03 | 打开不支持的 schema | 保留原文件并报错，不迁移或重建 |
 | P04 | 百万字样本和断线重连 | 达到方案性能目标或明确记录未达指标 |
 
+### 15.3 矩阵重跑记录（2026-09-13）
+
+环境：当前源码的 `target/debug/nekowriter` 真实进程（端口 47895、数据目录 `/tmp/nw-mx/`）+ 本地桩模型（`/tmp/nw-branch-stub.py`，端口 47993，**不是真实模型**）；判定与证据落在 `/tmp/nw-mx/matrix-results.json`，证据取自 API 快照与 SQLite 行。
+
+| 行 | 结果 | 关键证据 |
+| --- | --- | --- |
+| A01 | 通过 | 只提交三项：`preparing_generating` 起三次协议纠正后 `stopped`/`protocol_error_limit`，无审核批次、无章节计划 |
+| A02 | 通过 | 四项齐全但资料未通过：`/chapters/next` 409 `INVALID_TRANSITION`，章节数 0 |
+| A03 | 通过 | 拒绝资料 → `preparing_revising`；提交新资料 → 背景/人物/粗纲三条审核变为 `stale`，资料为 `open` |
+| E01 | 通过 | 重复 `commandId` 的同载荷 append 只产生 1 条修订；换载荷 409 `IDEMPOTENCY_CONFLICT` |
+| E02 | 通过 | 无匹配 / 两处匹配 / 重叠匹配均 422（`EDIT_NO_MATCH`、`EDIT_AMBIGUOUS_MATCH`），原文不变 |
+| E03 | 通过 | CRLF 归一为 LF；整个 ZWJ 字素簇可替换；半簇 422 `EDIT_NO_MATCH` 且正文逐字不变 |
+| E04 | 通过 | `approve_required` 下模型编辑只形成待审提案，正式正文 0 修订 |
+| E05 | 通过 | 空意见接受提案、非空意见拒绝且正文不变、空白自由意见 422 `EMPTY_FEEDBACK` |
+| E06 | 真实接口不可构造 | 待审提案期间用户正文编辑被 409 拒绝，自动接受不会让该 Run 重新请求，`ProposalBaseRevisionConflict` 只有 store 内部路径可达 |
+| E07 | 通过 | 工具 JSON 中途断流：0 修订、请求 `failed`（provider_error） |
+| E08 | 通过（本轮修复） | 两个工具调用 → 助手消息保留两个调用、每个 ID 一条配对 `PARALLEL_TOOL_CALLS_NOT_ALLOWED` 工具结果 + 串行纠正；修复前同一场景是 run `failed`、零配对结果 |
+| R01–R04 | 通过 | 缺字段/字符串 bool/NaN/越界置信度只记协议错误不应用决定；`confidence=0.2` 通过并保留；`passed=false, issues=[]` 保留系统说明；取消委托后迟到结果不改人工决定 |
+| R05 | 真实接口不可构造 | 背景审核已被更早的行占用，同一稿本无法再造一个可变修订的委托 |
+| F01 | 通过 | 暂停先登记 `pauseRequested`，到边界才 `paused`，结构化提交进入 `heldSubmission` |
+| F02 | 通过 | 暂停后提交意见清除暂停，意见 `bound → included` 且确实出现在后续请求快照里 |
+| F03 | 通过 | 未挂起且最近结果未封存时提交意见：绑定该结果并取消暂停请求 |
+| F04 | 通过 | 最新结果已随请求发出后提交意见：历史快照逐字节不变，意见等待新结果后才投递 |
+| F06 | 通过 | 同一窗口三条意见一次投递，`included_request_id` 相同且三条齐全 |
+| F08 | 通过 | 有未投递意见时模型的直接提交不被当作已交付：该请求快照不含意见，意见随下一请求投递 |
+| F09 | 通过 | 暂停落在提交边界且提交可应用时，`resume` 200 并进入 `writing_chapter_reviewing`，正文不变 |
+| F10 | 通过 | 有待审提案时切到自动接受：既有提案仍待决定，后续编辑用新模式直接落库 |
+| F12 | 未验到 | 桩按合同生成的 `ask_user` 参数不符合问题模式（`TOOL_ARGUMENTS_INVALID`），Run 无法推进到「等待回答」 |
+| A04–A06、S01–S04 | 未验到 | A03 之后的准备流程被下面的第 2 条缺口阻断（Run `submission_commit` 失败），组脚本在此中止 |
+| F05、F07、F11、F13–F15 | 未验到 | 本轮驱动脚本未覆盖这些行 |
+| Q01–Q06、K01–K09、C01–C10、D01–D09、U01–U04、P01–P04 | 未验到 | 本轮未跑（仅有 §15.3 末尾的浏览器 SSE 片段覆盖 D02/D03/D07/D08 的一部分） |
+
+前端重连在真实浏览器（同一真实进程的预览页）里单独验证：
+
+- D02：快照水位 1960 之后开流，真实写入产生的事件 1961 `settings.changed`、1962 `document.committed` 全部到达，序号严格递增且无重复。
+- D07：以 `Last-Event-ID: 1962` 重连（不带 URL 游标）只收到 1963、1964，不重放 1962，也没有重启 Run。
+- D08：`?after=abc` 返回 400 `INVALID_EVENT_CURSOR`；`?after=<水位+100000>` 返回 200 `stream.reset_required`（`reason=cursor_ahead`，带 watermark）。
+- D03：同一连接内序号严格递增且不重复，重连不从已确认的游标重放。
+- D09：无法验证——细则 §675/§683 要求的临时事件 `preview.delta`（携带 request/tool/offset、不带 SSE id）在实现里不存在，`crates/` 与 `webui/src/` 都没有任何预览事件类型。
+
+本轮新修（有真实进程证据）：
+
+1. **并行工具调用不再是传输失败**。`nekowriter-agent::provider` 删除了 `ParallelToolCalls` 这个错误，改为把一次响应里的每个调用完整还原；「一轮只允许一个」只剩阶段守卫 `AgentRunner::classify_model_completion` 一处判定。`nekowriter-app::scheduler` 对 `ParallelToolCalls` 走协议纠正，并为整批每个调用 ID 写入配对的 `PARALLEL_TOOL_CALLS_NOT_ALLOWED` 工具结果和串行纠正；`ModelProtocolCorrection` 增加 `tool_result_code` 承载这个机器可读原因码。
+2. **协议纠正消息带上具体原因**。此前纠正只说「不符合当前阶段的结构化协议」，模型与用户都看不到缺的是哪一项；现在追加解析器给出的原因（例如「准备提交必须恰好包含背景、资料、人物和粗纲四项产物」）。
+3. **core 单测对齐「在途编辑不把执行轴改成空闲」**。该语义是上一轮为修「在途编辑把工作流留成没有继续入口的空闲态」引入的，单测未同步，导致 190 用例回归 1 例；现在同时断言「回合进行中编辑保持 Queued」与「无回合时编辑回到 Idle」。
+
+本轮发现但**尚未修**（都有真实进程证据，留给下一轮决定）：
+
+1. **反复提交参数非法的同一工具调用没有工程上限**：桩在细纲阶段始终返回参数不符 schema 的 `ask_user`，Run 连续发出 76 次请求、`consecutive_protocol_errors` 仍为 0，最后以 `failed` 收场。工具结果错误与协议纠正没有共用同一个上限，模型只要重复同一个非法调用就能把请求额度耗光。
+2. **准备修订轮的提交合同与 store 规则互相矛盾**：系统消息里的提交合同写「artifacts 必须恰好包含 background、research、characters、outline 四项」，而 store 在修订轮只接受「需要修订的项」（实测拒绝信息为「资料收集 当前不需要修订，不能覆盖已通过或待审修订」）。任何照合同提交的模型都会在修订轮失败并把工作流留在 `execution = failed`，这正是 A04–A06/S01–S04 未验到的原因。
+3. **暂停在无法应用的提交边界时 `resume` 返回 422**：`POST /api/runs/{id}/resume` 返回 `VALIDATION_ERROR`（「正文编辑参数无效或无法应用到当前内容」，内层为「章节正文不能为空」），Run 永久停在 `paused`，只能被显式停止，与 F09「可继续、无永久等待」的要求相冲突。本轮把 F09 改成「先落一段真实正文再提交」后通过，说明缺口只在提交本身不可应用时的处理。
+4. **`preview.delta` 未实现**（见上），因此 D09 无法验证。
+
+### 15.4 2026-09-13 后续收口
+
+§15.3 记录的四个缺口已经实现并加入自动化回归；它保留发现时的真实进程证据，以下是当前状态。
+
+1. `ask_user`、知识工具和正文工具返回错误时，都会推进同一个 `consecutive_protocol_errors`。第三次连续错误把 Run 和工作流收束为 `stopped` / `protocol_error_limit`；成功工具结果清零。store 与 scheduler 用例分别覆盖非法提问和非法 `append_content`。
+2. 准备修订的提交合同从当前 `required_artifacts` 生成，只要求本轮需要重修的项。runner 用例覆盖只修资料和只修粗纲，且拒绝混入不需重修的产物。
+3. 暂停期间的直接正文提交若没有可应用的正文，恢复时会保留模型原文、追加纠正消息、清除 held submission，并从 `paused` 回到可继续发送的 `queued`；不会再把 Run 永久留在暂停态。scheduler 用例覆盖该回路。
+4. D09 已实现：模型字符流经独立广播送入同一 SSE 连接，`preview.delta` 没有持久事件 id；前端按请求、工具槽位和 scalar 偏移拼接，并只展示未验证的临时内容。路由集成用例消费真实 SSE 字节流，断言事件名、载荷与缺失的 `id:` 行。
+
+截至本轮，`cargo test --workspace` 共 196 个用例通过（agent 33、app 47、core 38、store 74、xtask 4）。这覆盖上述回归，但不替代 §15 中尚未运行的完整竞态矩阵、真实浏览器路径和真实外部模型验收。
+
 ## 16. 原始需求覆盖索引
 
 | 原始需求 | 本文位置 | 主要验收 |
@@ -943,4 +1145,47 @@ Core 单元测试关注业务不变量与字符串边界；SQLite 临时文件�
 | 大部分软删除但非全部 | §8.4 | D06、P03 |
 | 本地运行补全：执行额度、继续与断线同步 | §2.3、§3.1、§10.3、§11 | Q03–Q06、D07–D09 |
 
-截至 2026-09-11，自动化 Rust 工作区测试共 107 个用例通过，格式检查和前端生产构建通过；完整 §15 竞态矩阵、真实浏览器路径以及真实外部模型验收仍未全部完成，因此相应里程碑不能仅凭自动化测试标为完成。
+截至 2026-09-13，自动化 Rust 工作区测试共 196 个用例通过（agent 33、app 47、core 38、store 74、xtask 4），格式检查通过；§15.2 的 A/E/R/F 组已在真实进程 + 桩模型上逐行重跑，其中 17 行通过、两行记为真实接口不可构造、一行因桩限制未验到，详情与逐行证据见 §15.3。§15.4 已补齐其后暴露的四个实现缺口。完整 §15 竞态矩阵（Q/K/C/D/U/P 各组）、真实浏览器路径以及真实外部模型验收仍未全部完成，因此相应里程碑不能仅凭自动化测试标为完成。
+
+字数统计的列投影由真实进程探针覆盖：同一批 6,010 条修订（含 200 条隐藏文档的修订）在新旧两个 release 二进制上各跑四个测量回合，7 天、项目过滤与 90 天三份概览 JSON 除 `generatedAtMs` 外逐字节相同，且正文体积不影响任何一个数字；改动前小正文 25ms / RSS 40MB，同一批行换成 4,000 字符后 105ms / RSS 192MB，改动后两种情况都是 RSS 39MB（耗时 29ms → 46ms，剩下的差别来自 SQLite 把正文与统计列存在同一页里）。发行打包的两道硬检查同样有证据：未装标准库的目标在任何构建之前失败且不改写 `webui/dist`、不留下空壳发行目录（真实命令实测），容器与架构的错配由单元测试正面盯住（含 `aarch64-unknown-linux-gnu` 配 x86-64 ELF 这一例）。
+
+已由自动化测试与真实进程冒烟共同覆盖的本轮能力：用户模板的创建/读取/替换/软删除与修订冲突、未声明变量和缺失必需占位符被拒、同一 `command_id` 重放返回原结果、模板预览的取值与示例值回落；Dashboard 在空库、真实活动后与项目筛选下的回算，以及同一批记录重复查询结果一致。用量口径与系统操作由 store 层正/负向用例（无记录时按终态给出原因、损坏记录标为无法解析、区间外排除、系统操作单列不混入对话 Token）与真实进程探针共同覆盖：连接测试落库后概览的 `systemOperations` 显示输入 21 / 输出 7 / 请求 1，随后一次真实失败的准备请求让打开的页面在无人点击刷新的情况下从「请求 0 / 用量未知 0 / 需要处理 0」变为「请求 1 / 用量未知 1（请求失败，没有收到可用用量）/ 需要处理 1」。导出由真实进程探针覆盖：用真实 API 走完准备与第一章（细纲 → 正文两次追加 → 整章终稿通过）后从工作台点击导出的两个按钮，产物与 `document_revisions` 的当前修订逐字一致，文件名分别由服务端给出 `雨幕.md` / `雨幕.txt`，未通过的第二章节标为 `（草稿）`，另行验证了 422 非法格式、404 不存在稿本与无章节空稿本三个边界。
+
+长篇阅读由真实进程探针覆盖：在一份 401 章（正文 400 章 + 番外 1 章、正文约 80 万字符）与一份 51 章的样本上，从界面打开阅读区分别挂载 6 块 / 3 块且阅读区 DOM 节点为 49 / 25，打开耗时 43ms / 39ms——总章数涨 8 倍，渲染开销基本不变；四处定位（目录跳到第 390 章、从写作视图跳到第 3 章、查找命中第 380 章并高亮「孤灯」、跳最后一章）都在正文未加载时发起，事后测得目标块顶与视口顶相差 1px（末章因滚动范围夹住而停在可达位置）；阅读位置以「章 + 块内偏移」（第 368 章、偏移 80px）保存在浏览器本地存储，重新加载页面后再打开阅读区仍在同一位置（±1px）；切换写作/阅读视图保持同一位置；字号 +1 再 -1 后仍停在第 368 章；已挂载章节的正文与 `/manuscript` 返回的当前修订逐字相同，选中复制得到同样长度的文本，两个未写正文的计划章节显示「（本章尚无正文）」。
+
+退出与本地交付由真实进程探针覆盖：把 `cargo xtask package --release` 产出的发行目录（`target/package/aarch64-apple-darwin/nekowriter/`，可执行文件为 Mach-O 64 位 arm64、262,571,600 字节）整体拷到仓库之外的 `/tmp/nw-relocate-release`，从那里以工作目录启动——另外用 `lsof` 确认运行中的进程**没有**任何打开的文件落在仓库路径下，即它不依赖源码树；同一次启动的发行清单显示目标三元组 `aarch64-apple-darwin` / 构建配置 `release` / 容器格式 `Mach-O 64 位（arm64）`。界面首页 200（498 字节）且引用到的 JS 资源 200（455KB），证明前端资源按可执行文件旁的 `webui/dist` 解析；数据目录里恰好出现 `nekowriter.sqlite3`（+ `-wal` / `-shm`）、`lancedb/`、`logs/`、进程锁文件，`logs/nekowriter.<日期>.log` 记录了启动地址与实际数据目录，仓库之外的那个目录只有发行目录、数据目录与应用日志。同一次运行里用真实 API 建出项目、保存目标、提交四项准备产物与细纲并逐项审核通过、两次追加正文（72 字）并整章终稿通过，第一章状态为 `approved`；随后把模型换成一个只接受连接、永不回应的桩，为第二章发起细纲请求（工作流进入 `request_in_flight`、桩收到 1 条连接），保持一条 SSE 连接并从界面点击「退出服务 → 确认退出」：`{"status":"shutting_down"}` 在 3ms 内返回，进程 0.2 秒内以退出码 0 结束，SSE 连接被服务端关闭，`nekowriter.sqlite3-wal` 消失（已 truncate 回主库），日志依次出现「收到界面退出请求，正在停止服务」「已取消在途模型请求 cancelled=1」「NekoWriter 已退出 writing_runs=1」。重新启动后项目、正文与第一章定稿原样还在，而那个在途 Run 已变为 `interrupted`：`runs` 里 `chapter_outline = interrupted`、该请求 `status = unknown` 且 `error_json` 为 `{"kind":"process_shutdown","message":"退出服务时请求是否被模型服务接受未知"}`、事件流里有 `run.changed` 与 `workflow.changed` 两条 `reason = process_shutdown`。同一条路径也验证了 SIGTERM：带一条打开的 SSE 连接时 0.1 秒内退出码 0、SSE 被关闭、日志出现「收到退出信号，正在停止服务」；不带 `--no-browser` 启动时日志出现「已在默认浏览器打开工作台」并且退出码为 0。
+
+### 16.1 尚未覆盖的边界
+
+- 退出后的界面状态（「本地服务已退出」横幅与面板状态）只有静态检查：预览桥在服务进程结束后即断开，因此没有在真实界面里截到退出之后的那一次渲染。已验证的是退出前的面板（地址、实际数据目录、二次确认文案）与退出动作本身。
+- 退出收尾已在 macOS 的 **release** 产物上验证（见 §15）；Windows x64 发行包仍未经真实验收：本机（macOS arm64）没有 Windows 目标的链接器 / C 编译器，也没有 `x86_64-pc-windows-msvc` 标准库，因此没有 PE 产物可验。配方、`--target` 参数与 CI 步骤见 §11.5，这属于环境边界而非代码缺口。
+- 发行目录已在 macOS 上真实产出并验证，但只验证了本机三元组（`aarch64-apple-darwin`）；x86_64 的 macOS 目标、Linux 与 Windows 目标都只需要 `rustup target add <三元组>` 加上该目标的链接器，形状与本次相同，但没有实跑过。
+- release 产物未做符号裁剪：262.6MB（`__TEXT` 191MB、其中代码段 148MB，不含 DWARF）；本机实测 `strip -x` 可降到 205MB、完整 `strip` 降到 202MB，但没有把裁剪写进打包流程（各平台工具不同，且不影响「脱离源码可用」的验收）。
+- 退出时取消的是本地 HTTP 任务；已经发往外部服务的请求是否被供应商执行不作保证，这一类不确定性以 `unknown` 状态与「用量未知」保留（见 §11.2）。
+- 长篇阅读的滚动几何：未挂载章节的高度是按字数估计的（实测估计值与真实高度相差约 12%），因此远距离定位的前几步基于估计值，靠正文加载与测量逐步收敛；滚动条长度在整部作品都被测量过之前是近似的。
+- 真实进程探针只在 401 章样本上做了定位与复制验证，没有逐章滚动完整部作品来核对每一章的内容。
+- 导出的番外顺序只有 store 层用例覆盖（正文与番外混排、番外按自身序号编号）；本轮真实进程探针只走到正文两章，没有造出番外，因此「已有番外时的实际导出」未经真实界面验证。
+- 字数统计的内存开销已与正文体积脱钩（只取统计列），但仍然要把可见文档的**全部**修订行扫一遍：净增量需要每个文档在区间之前的相邻修订，而 SQLite 把正文与其它列放在同一页里，所以表很大时仍有页读开销。实测 6,010 条修订 / 75MB 库：正文 10 字符时 7 天查询 29ms，同一批行换成 4,000 字符后 46ms（改动前是 25ms → 105ms，常驻内存从 40MB 飙到 192MB；现在两种情况都停在 39MB）。要走整条路（去掉行扫描本身）需要在库里额外维护一份不含正文的字数索引，属于尚未做的优化。
+- 概览的 Token 与系统操作仍然是「区间内读行到内存再汇总」，不是 SQL 聚合。在 20 万行铺在 80 天的极端数据上，7 天查询百毫秒级、90 天查询秒级；真实库通常只有几千行，落在个位数毫秒，因此没有加保留策略或预聚合。
+- 发行包的架构校验只识别 `x86_64` 与 `aarch64`（PE `0x8664` / `0xAA64`、Mach-O `0x01000007` / `0x0100000C`、ELF `0x3E` / `0xB7`）；32 位目标与其它架构会在参数解析阶段被明确拒绝，而不是被默默当成对的。
+- 导出在每次请求时现读并直接返回，不在服务端落任何文件；因此没有导出历史、断点续传或后台打包，这是有意的（详见 §11.4）。
+- 章节「通过整章审核后又编辑」在导出里会标为草稿，而不是设法找回通过的那一份文本；这是 §11.4 定下的判定，不是遗漏。
+
+- Embedding 用量已经落库并单独列示（§12.1），角色与按日两个镜头也已补齐；它的已知边界是归属：知识 Space 是全局的，索引与检索的向量请求不属于任何项目，因此项目过滤下的概览仍显示同一份 Embedding 数字，它只是待在独立字段里、不进该项目的对话总量，并在 `tokens.embedding.scope` 里明写自己是全局数字。
+- 概览的事件订阅挂在选中稿本上（游标来自该稿本的快照），因此没有任何项目时页面不会自行收到系统操作事件；此时连接测试的落库结果要等下一次事件或手动刷新才出现在页面上。
+- 插入器的自动更新只被「模板列表随 `prompt_template.changed` 实时变化」这一路径验证过：`TemplateInserter` 只在章节阶段挂载，本轮探针没有跑到该阶段，所以「新建模板后立刻插入」仍是按代码接线成立、未经真实界面验证。
+- Dashboard 的时区偏移由调用方给出，服务端不校验它与调用方本地时间是否一致；这是现有接口的明确边界，而非服务端猜测。
+- 恢复不把工作流的写作光标搬回被恢复的那一章（有意，见 §8.4）；因此删除一章又从回收站恢复后，界面高亮的是删除时退回到的那一章，用户需要点一下目录才能回到恢复的章节。
+- 删除没有「归档」或批量整理入口：项目、稿本与番外都要一个一个删，不能多选；项目删除不要求先切走，稿本删除则要求先切到别的稿本（§8.4 的原子性优先于便利）。
+- 概览与提示词模板目前以工作台侧边栏面板呈现（可读可写、可在真实进程中验证），方案 §6 的顶部主导航与「项目卡片 → 概览跳转」仍属于 M5 的界面收尾。
+- 阅读区里的「章节指导与细纲」展开是唯一的按需详情：展开只读取该章指导与细纲，不会加载别的章；本轮探针没有逐章展开验证它，只用到了正文路径。
+- 键盘与中文输入验证用的是真实浏览器里的真实事件序列（`compositionstart` / 带 `isComposing` 与 `keyCode 229` 的 `keydown` / `compositionend` / 合成的隐式 `submit`），而不是操作系统里实际的输入法候选窗：因此「真实拼写过程中不误触发」在本机由事件语义等价地证明，但 macOS 以外平台的输入法行为、以及候选窗自身的按键，未经真实验收。
+- `Ctrl/Cmd+Enter` 的「唯一阶段主操作」分支只在准备阶段注册了 `开始准备`、在恢复面板注册了 `显式继续`；这两个动作同时可用时会因为「不唯一」而都不触发（有意保守），其余阶段尚未逐一登记。
+- 主题选择器放在工作台头部而不是独立的设置页；本次只做了浅色/深色/跟随系统，§13 提到的「字体缩放」在阅读区实现，没有作为全局设置。
+- 阅读位置保存在浏览器本地存储，因此换浏览器或清空存储后回到第一章；这是有意的（位置是展示状态，不是作品数据）。
+- Dashboard 的进行中任务区只暴露分项计数与展开的审核子 Run，尚未提供「点击任务回到对应章节」的跳转。
+- 积累引擎的成功写入路径已按 §7.4 实现并有端到端验证，但生产注册项严格为 0（§7.4、方案 §3.3），因此运行中的应用不会产生任何积累写入：真实进程探针验证的是 `ENGINE_NOT_AVAILABLE` 与「不写条目、不建任务、不扣预算」，成功写入只在测试内注册表于真实端口上的真实 HTTP 里验证过；接入第一个真实引擎之前，界面上仍只显示「暂无可用引擎」。
+- 积累候选没有「先审后写」的中间状态：§7.4 定的是「未来引擎通过应用服务验证并插入条目、触发索引」，没有第二个审核阶段，因此引擎返回的候选要么整批写入、要么整批不写，不会以「待审候选」形式停在知识库里。
+- 阶段提交合同已经作为系统消息发出（§4.3），但真实模型下的端到端验收仍未完成——本机没有可用凭据。本轮只验证了合同文本进入真实请求体（章级阶段带着具体 `chapter_id`），以及一个按合同作答的本地打桩服务能让准备、细纲、正文、终稿四个阶段全部走完；这不等于真实模型验收。
+- 本机没有可用的本地模型运行时：`ollama` / `llama-cli` / `llama-server` / `lms` / `mlx_lm.generate` / `text-generation-launcher` / `vllm` / `koboldcpp` 均不在 PATH，无 Ollama 与 LM Studio 的应用或数据目录，没有任何 `.gguf` / `.safetensors` 权重，无 `transformers` / `torch` / docker，常见本地端口（11434 / 1234 / 8000 等）无人监听。因此「用真实权重做一次 M1/M3 验收」在本机不可行，属于环境边界；能用真实权重完成验收的环境应重跑 §15 的完整回路。
+- 作为替代，用一个「只懂合同」的朴素桩证明了合同文本本身足以推导出合法提交：它不预设阶段名与字段名，只把系统消息里取出的 JSON 骨架当模板（含中文说明或 `…` 的字符串替换为生成文本，纯 ASCII 的枚举与 UUID 原样保留），工具调用只挑「合同正文提到且本次请求声明」的工具并按该工具的 JSON Schema 造参数。真实进程下准备四项 → 细纲 → 正文工具调用 → 终稿全部走通，第 1 章 `approved`。反例：只把章节级骨架的 `chapter_id` 改成 `chapterId` 并重建，同一回路在细纲阶段连续三次协议错误、Run 以 `waitReason = protocol_error_limit` 停在 `writing_outline_generating`（准备阶段合同未改，照常通过）；改回后再次 `approved`。这证明的是合同充分且修复位置正确，仍然不是真实模型验收。

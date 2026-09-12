@@ -2,19 +2,26 @@
 //!
 //! 章节只会在准备阶段最终通过的事务中从粗纲计划物化。章节指导和细纲命令与
 //! 准备阶段最终审核共享同一组事务辅助函数，因此当前保留在 `preparation` 模块；
-//! 本模块只负责不改变状态的目录查询。
+//! 本模块只负责不改变状态的目录查询。目录与正文内容分开查询：这里不读任何正文，
+//! 因此打开一部几百章的作品只需要读它真正要显示的那几章。
 
-use nekowriter_core::{ChapterKind, ChapterStatus, ChapterSummary, VersionId};
-use sea_orm::{EntityTrait, QueryFilter, QueryOrder};
+use nekowriter_core::{
+    ChapterKind, ChapterNamer, ChapterStatus, ChapterSummary, VersionId, manuscript_sort_key,
+};
+use sea_orm::{EntityTrait, QueryFilter};
 
 use crate::{
     Store, StoreError, db_id,
     entity::{chapter, novel_version},
+    manuscript::body_slots_by_chapter,
     parse_optional_id,
 };
 
 impl Store {
-    /// 按作品部分与逻辑顺序读取稿本的有效章节目录。
+    /// 按阅读顺序读取稿本的有效章节目录。
+    ///
+    /// 顺序与显示名来自 `nekowriter_core::manuscript`，因此目录、阅读窗口和导出
+    /// 永远给出同一套答案。
     ///
     /// # Errors
     ///
@@ -32,21 +39,41 @@ impl Store {
             return Err(StoreError::VersionNotFound);
         }
 
-        chapter::Entity::find()
+        let mut chapters: Vec<(ChapterKind, chapter::Model)> = chapter::Entity::find()
             .filter(chapter::Entity::COLUMN.version_id.eq(db_id(version_id)))
             .filter(chapter::Entity::COLUMN.deleted_at.is_null())
-            .order_by_asc(chapter::Entity::COLUMN.kind)
-            .order_by_asc(chapter::Entity::COLUMN.order_index)
-            .order_by_asc(chapter::Entity::COLUMN.id)
             .all(&self.database)
             .await?
             .into_iter()
-            .map(chapter_summary_from_model)
+            .map(|model| Ok((chapter_kind_from_db(&model.kind)?, model)))
+            .collect::<Result<_, StoreError>>()?;
+        chapters.sort_by(|(left_kind, left), (right_kind, right)| {
+            manuscript_sort_key(*left_kind, left.order_index)
+                .cmp(&manuscript_sort_key(*right_kind, right.order_index))
+                .then(left.id.0.cmp(&right.id.0))
+        });
+
+        // 目录与阅读窗口共用同一份正文槽读取：字数用于阅读区估计每章高度。
+        let body_slots = body_slots_by_chapter(&self.database, version_id).await?;
+        let mut namer = ChapterNamer::default();
+        chapters
+            .into_iter()
+            .map(|(kind, model)| {
+                let label = namer.label(kind, model.order_index, &model.title);
+                let body_word_count = body_slots
+                    .get(&model.id.0.to_string())
+                    .map_or(0, |slot| slot.word_count);
+                chapter_summary_from_model(model, label, body_word_count)
+            })
             .collect()
     }
 }
 
-fn chapter_summary_from_model(model: chapter::Model) -> Result<ChapterSummary, StoreError> {
+fn chapter_summary_from_model(
+    model: chapter::Model,
+    label: String,
+    body_word_count: i64,
+) -> Result<ChapterSummary, StoreError> {
     Ok(ChapterSummary {
         id: model.id.into(),
         version_id: model.version_id.into(),
@@ -54,6 +81,8 @@ fn chapter_summary_from_model(model: chapter::Model) -> Result<ChapterSummary, S
         plan_item_id: parse_optional_id(model.plan_item_id, "chapter.plan_item_id")?,
         order_index: model.order_index,
         title: model.title,
+        label,
+        body_word_count,
         status: chapter_status_from_db(&model.status)?,
         approved_revision_id: parse_optional_id(
             model.approved_revision_id,

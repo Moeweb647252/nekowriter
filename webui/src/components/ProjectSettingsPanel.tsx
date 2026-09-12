@@ -44,6 +44,8 @@ interface ProjectSettingsPanelProps {
   /** 当前选中项目；为空时没有可编辑的项目设置。 */
   projectId: string | null
   refreshToken?: number
+  /** 连接测试会落库成系统操作；调用方据此让概览重新读取。 */
+  onModelOperation?: () => void
 }
 
 interface Draft {
@@ -110,6 +112,7 @@ function messageFor(error: unknown, fallback: string) {
 export function ProjectSettingsPanel({
   projectId,
   refreshToken = 0,
+  onModelOperation,
 }: ProjectSettingsPanelProps) {
   const [draft, setDraft] = useState<Draft | null>(null)
   const [systemCapabilities, setSystemCapabilities] =
@@ -221,6 +224,8 @@ export function ProjectSettingsPanel({
       })
     } finally {
       setVerifying(false)
+      // 无论成功或失败，这次请求都已经落库成系统操作。
+      onModelOperation?.()
     }
   }
 

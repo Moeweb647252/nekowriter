@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type FormEvent,
-} from "react"
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import {
   Cable,
   CheckCircle2,
@@ -49,6 +43,8 @@ import {
 
 interface ModelSettingsPanelProps {
   refreshToken?: number
+  /** 连接测试会落库成系统操作；调用方据此让概览重新读取。 */
+  onModelOperation?: () => void
 }
 
 interface SettingsDraft {
@@ -102,7 +98,10 @@ function formatUsage(result: TestModelResponse) {
   return `输入 ${inputTokens}，输出 ${outputTokens}，合计 ${totalTokens}${cache}`
 }
 
-export function ModelSettingsPanel({ refreshToken = 0 }: ModelSettingsPanelProps) {
+export function ModelSettingsPanel({
+  refreshToken = 0,
+  onModelOperation,
+}: ModelSettingsPanelProps) {
   const [settings, setSettings] = useState<PublicSystemModelSettings | null>(
     null
   )
@@ -231,6 +230,8 @@ export function ModelSettingsPanel({ refreshToken = 0 }: ModelSettingsPanelProps
       })
     } finally {
       setTesting(false)
+      // 无论成功或失败，这次请求都已经落库成系统操作。
+      onModelOperation?.()
     }
   }
 
@@ -258,11 +259,11 @@ export function ModelSettingsPanel({ refreshToken = 0 }: ModelSettingsPanelProps
       setVerifiedModelId(null)
       setNotice({
         tone: "error",
-        message:
-          error instanceof Error ? error.message : "思考能力验证失败",
+        message: error instanceof Error ? error.message : "思考能力验证失败",
       })
     } finally {
       setVerifying(false)
+      onModelOperation?.()
     }
   }
 
@@ -383,7 +384,7 @@ export function ModelSettingsPanel({ refreshToken = 0 }: ModelSettingsPanelProps
                 disabled={loading || saving}
               />
               <FieldDescription>
-                密钥只会交给本地服务，并存入 Windows 凭据管理器；数据库和请求快照不保存密钥。
+                密钥只会交给本地服务，并存入本机系统凭据库；数据库和请求快照不保存密钥。
               </FieldDescription>
             </Field>
 

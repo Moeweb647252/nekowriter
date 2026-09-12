@@ -168,8 +168,7 @@ export function PromptSettingsPanel({
       : entry && draftKey
         ? { key: draftKey, ...draftFor(entry, activeScope) }
         : null
-  const currentPreview =
-    preview && preview.key === draftKey ? preview : null
+  const currentPreview = preview && preview.key === draftKey ? preview : null
   const currentExpanded =
     expanded && expanded.key === draftKey ? expanded.name : null
   const hasOverride = entry
@@ -204,12 +203,18 @@ export function PromptSettingsPanel({
           createCommandId()
         )
       }
-      setNotice({ tone: "success", message: "覆盖已保存，后续请求会立即使用。" })
+      setNotice({
+        tone: "success",
+        message: "覆盖已保存，后续请求会立即使用。",
+      })
       setDraft(null)
       setPreview(null)
       refresh()
     } catch (error) {
-      setNotice({ tone: "error", message: messageFor(error, "保存提示词覆盖失败") })
+      setNotice({
+        tone: "error",
+        message: messageFor(error, "保存提示词覆盖失败"),
+      })
     } finally {
       setPending(null)
     }
@@ -243,7 +248,10 @@ export function PromptSettingsPanel({
       setPreview(null)
       refresh()
     } catch (error) {
-      setNotice({ tone: "error", message: messageFor(error, "重置提示词覆盖失败") })
+      setNotice({
+        tone: "error",
+        message: messageFor(error, "重置提示词覆盖失败"),
+      })
     } finally {
       setPending(null)
     }
@@ -255,11 +263,17 @@ export function PromptSettingsPanel({
     setNotice(null)
     try {
       const rendered = await previewPrompt({
+        kind: "builtin",
         promptKey: entry.key,
         projectId: requestedProject ?? undefined,
         system: currentDraft.system,
         user: currentDraft.user,
       })
+      if (rendered.kind !== "builtin") {
+        setPreview(null)
+        setNotice({ tone: "error", message: "预览返回了意外的模板形态" })
+        return
+      }
       setPreview({
         key: currentDraft.key,
         system: rendered.system,
@@ -450,7 +464,11 @@ export function PromptSettingsPanel({
                     onClick={() => void handleSave()}
                     disabled={pending !== null}
                   >
-                    {pending === "save" ? <Spinner /> : <Save aria-hidden="true" />}
+                    {pending === "save" ? (
+                      <Spinner />
+                    ) : (
+                      <Save aria-hidden="true" />
+                    )}
                     保存覆盖
                   </Button>
                   <Button

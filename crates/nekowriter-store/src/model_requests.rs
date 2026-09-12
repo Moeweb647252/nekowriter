@@ -129,6 +129,8 @@ pub enum ModelRequestResolution {
 ///
 /// `assistant_message` 始终保存原始完整响应；若其中含有工具调用，Store 会为每一条
 /// 调用生成配对的稳定错误结果，避免下一次请求出现不配对的 assistant tool call。
+/// `tool_result_code` 是写入这些配对结果的机器可读原因码（例如
+/// `PARALLEL_TOOL_CALLS_NOT_ALLOWED`）；普通协议错误使用 `PROTOCOL_ERROR`。
 #[derive(Clone, Debug)]
 pub struct ModelProtocolCorrection {
     pub provider_request_id: Option<String>,
@@ -136,6 +138,7 @@ pub struct ModelProtocolCorrection {
     pub assistant_message: NewAgentMessage,
     pub error: Value,
     pub correction: String,
+    pub tool_result_code: String,
 }
 
 /// 协议纠正事务的结果。
@@ -604,7 +607,7 @@ impl Store {
         usage: Value,
         raw_response: String,
         artifacts: Vec<PreparationArtifactInput>,
-        chapter_plan: Vec<ChapterPlanDraft>,
+        chapter_plan: Option<Vec<ChapterPlanDraft>>,
     ) -> Result<PreparationSnapshot, StoreError> {
         if raw_response.trim().is_empty() {
             return Err(StoreError::InvalidModelRequest(
@@ -691,7 +694,7 @@ impl Store {
                         version_id,
                         &workflow,
                         &artifacts,
-                        Some(&chapter_plan),
+                        chapter_plan.as_deref(),
                         "agent",
                         now,
                     )
@@ -1029,6 +1032,7 @@ impl Store {
             request_id,
             &correction.assistant_message,
             &correction.correction,
+            &correction.tool_result_code,
         )?);
         messages.push(NewAgentMessage {
             role: AgentMessageRole::User,
@@ -1556,6 +1560,11 @@ fn validate_model_protocol_correction(
             "protocol correction 不能为空".to_owned(),
         ));
     }
+    if correction.tool_result_code.trim().is_empty() {
+        return Err(StoreError::InvalidModelRequest(
+            "protocol correction 的 tool_result_code 不能为空".to_owned(),
+        ));
+    }
     if correction.assistant_message.role != AgentMessageRole::Assistant {
         return Err(StoreError::InvalidAgentMessage(
             "协议纠正必须保存 assistant 原始响应".to_owned(),
@@ -1577,6 +1586,7 @@ fn protocol_error_tool_result_messages(
     request_id: Uuid,
     assistant_message: &NewAgentMessage,
     correction: &str,
+    code: &str,
 ) -> Result<Vec<NewAgentMessage>, StoreError> {
     let kind = assistant_message
         .content
@@ -1605,7 +1615,7 @@ fn protocol_error_tool_result_messages(
         })?;
     let content = serde_json::to_string(&json!({
         "status": "error",
-        "code": "PROTOCOL_ERROR",
+        "code": code,
         "message": correction,
     }))?;
     let mut provider_call_ids = HashSet::with_capacity(calls.len());
@@ -1684,7 +1694,7 @@ fn model_request_status_name(status: ModelRequestStatus) -> &'static str {
     }
 }
 
-fn model_request_status_from_db(status: &str) -> Result<ModelRequestStatus, StoreError> {
+pub(crate) fn model_request_status_from_db(status: &str) -> Result<ModelRequestStatus, StoreError> {
     match status {
         STATUS_PREPARED => Ok(ModelRequestStatus::Prepared),
         STATUS_DISPATCHED => Ok(ModelRequestStatus::Dispatched),

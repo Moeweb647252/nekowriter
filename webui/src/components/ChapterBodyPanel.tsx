@@ -12,9 +12,13 @@ import {
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { CitationList } from "@/components/CitationList"
+import { CitableText } from "@/components/CitableText"
 import { ExtraChapterPanel } from "@/components/ExtraChapterPanel"
+import { TemplateInserter } from "@/components/TemplatePanel"
 import { UserQuestionPanel } from "@/components/UserQuestionPanel"
 import { WritingRecoveryPanel } from "@/components/WritingRecoveryPanel"
+import { type PickedTextRange } from "@/lib/citations"
 import {
   advanceToNextChapter,
   appendChapterBody,
@@ -34,6 +38,7 @@ import {
   submitChapterFinalReview,
   type ChapterBodySnapshot,
   type ChapterSummary,
+  type FeedbackCitation,
   type PreparationSnapshot,
 } from "@/lib/api"
 
@@ -42,6 +47,14 @@ type ChapterBodyPanelProps = {
   preparation: PreparationSnapshot
   onChanged: (snapshot: PreparationSnapshot) => void
   onError: (message: string) => void
+  /** 模板列表变化时递增，使插入器不会停留在旧选项上。 */
+  templatesRefreshToken?: number
+}
+
+/** 待提交引用按章节隔离，切换章节后不再复用旧目标上的引用。 */
+type CitationDraft = {
+  chapterId: string
+  items: FeedbackCitation[]
 }
 
 export function ChapterBodyPanel({
@@ -49,12 +62,29 @@ export function ChapterBodyPanel({
   preparation,
   onChanged,
   onError,
+  templatesRefreshToken,
 }: ChapterBodyPanelProps) {
   const [snapshot, setSnapshot] = useState<ChapterBodySnapshot | null>(null)
   const [content, setContent] = useState("")
   const [issues, setIssues] = useState("")
   const [proposalFeedback, setProposalFeedback] = useState("")
   const [freeFeedback, setFreeFeedback] = useState("")
+  const [proposalCitationDraft, setProposalCitations] = useState<CitationDraft>(
+    {
+      chapterId: "",
+      items: [],
+    }
+  )
+  const [feedbackCitationDraft, setFeedbackCitations] = useState<CitationDraft>(
+    {
+      chapterId: "",
+      items: [],
+    }
+  )
+  const [finalCitationDraft, setFinalCitations] = useState<CitationDraft>({
+    chapterId: "",
+    items: [],
+  })
   const [loading, setLoading] = useState(true)
   const [nextChapter, setNextChapter] = useState<ChapterSummary | null>(null)
   const [nextChapterLoading, setNextChapterLoading] = useState(false)
@@ -82,6 +112,18 @@ export function ChapterBodyPanel({
 
   const chapterId = preparation.workflow.activeChapterId
   const stage = preparation.workflow.stage
+  // 引用锚定在具体修订或候选上；切换章节后旧引用不再对应可见文本，因此按章节键
+  // 丢弃草稿，不用副作用在渲染后补一次清空。
+  const proposalCitations =
+    proposalCitationDraft.chapterId === chapterId
+      ? proposalCitationDraft.items
+      : []
+  const feedbackCitations =
+    feedbackCitationDraft.chapterId === chapterId
+      ? feedbackCitationDraft.items
+      : []
+  const finalCitations =
+    finalCitationDraft.chapterId === chapterId ? finalCitationDraft.items : []
 
   useEffect(() => {
     contentRef.current = content
@@ -198,6 +240,97 @@ export function ChapterBodyPanel({
     setIssues("")
   }
 
+  /**
+   * 把正文修订中的选中文本固定成正式文档引用。
+   *
+   * 引用锚定当前不可变修订；没有修订时明确报错，而不是退化成无法校验的偏移。
+   */
+  function documentCitation(range: PickedTextRange): FeedbackCitation | null {
+    const body = snapshot?.body
+    if (!chapterId || !body?.revisionId) {
+      onError("当前还没有可引用的正式正文修订。")
+      return null
+    }
+    return {
+      kind: "document",
+      documentId: body.documentId,
+      revisionId: body.revisionId,
+      chapterId,
+      startChar: String(range.startChar),
+      endChar: String(range.endChar),
+      quote: range.quote,
+    }
+  }
+
+  /**
+   * 把待审候选中的选中文本固定成候选引用。
+   *
+   * 候选还没有修订，只能锚定工具调用、候选哈希与候选区间，由服务端写入时重新校验。
+   */
+  function candidateCitation(range: PickedTextRange): FeedbackCitation | null {
+    const currentProposal = snapshot?.pendingProposal
+    if (!currentProposal) return null
+    return {
+      kind: "candidate",
+      toolCallId: currentProposal.toolCallId,
+      candidateHash: currentProposal.candidateHash,
+      candidateRange: {
+        startChar: String(range.startChar),
+        endChar: String(range.endChar),
+        quote: range.quote,
+      },
+    }
+  }
+
+  function citeProposalFromDocument(range: PickedTextRange) {
+    const citation = documentCitation(range)
+    if (!chapterId || !citation) return
+    setProposalCitations((current) => ({
+      chapterId,
+      items: [
+        ...(current.chapterId === chapterId ? current.items : []),
+        citation,
+      ],
+    }))
+  }
+
+  function citeProposalFromCandidate(range: PickedTextRange) {
+    const citation = candidateCitation(range)
+    if (!chapterId || !citation) return
+    setProposalCitations((current) => ({
+      chapterId,
+      items: [
+        ...(current.chapterId === chapterId ? current.items : []),
+        citation,
+      ],
+    }))
+  }
+
+  function citeFeedbackFromDocument(range: PickedTextRange) {
+    const citation = documentCitation(range)
+    if (!chapterId || !citation) return
+    setFeedbackCitations((current) => ({
+      chapterId,
+      items: [
+        ...(current.chapterId === chapterId ? current.items : []),
+        citation,
+      ],
+    }))
+  }
+
+  /** 把待审终稿中的选中文字固定为一条指向当前修订的引用。 */
+  function citeFinalReview(range: PickedTextRange) {
+    const citation = documentCitation(range)
+    if (!chapterId || !citation) return
+    setFinalCitations((current) => ({
+      chapterId,
+      items: [
+        ...(current.chapterId === chapterId ? current.items : []),
+        citation,
+      ],
+    }))
+  }
+
   async function handleSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!chapterId) return
@@ -269,9 +402,11 @@ export function ChapterBodyPanel({
           review.id,
           preparation.workflow.stateRevision,
           passed,
-          issues
+          issues,
+          finalCitations
         )
       )
+      setFinalCitations({ chapterId, items: [] })
       await refreshBody()
     } catch (error) {
       onError(error instanceof Error ? error.message : "终稿审核决定未保存")
@@ -282,15 +417,17 @@ export function ChapterBodyPanel({
 
   async function handleDelegate() {
     const review = snapshot?.body.review
-    if (!review) return
+    if (!chapterId || !review) return
     setPending("delegate")
     try {
       const result = await delegateReview(
         review.id,
         preparation.workflow.stateRevision,
-        issues
+        issues,
+        finalCitations
       )
       onChanged(result.snapshot)
+      setFinalCitations({ chapterId, items: [] })
       await refreshBody()
     } catch (error) {
       onError(error instanceof Error ? error.message : "审核委托未能启动")
@@ -348,8 +485,10 @@ export function ChapterBodyPanel({
     ) {
       return
     }
-    if (!accept && !proposalFeedback.trim()) {
-      onError("拒绝编辑时请说明需要调整的内容")
+    const hasAttachment =
+      proposalFeedback.trim().length > 0 || proposalCitations.length > 0
+    if (!accept && !hasAttachment) {
+      onError("拒绝编辑时请说明需要调整的内容或引用正文片段")
       return
     }
     setPending(accept ? "proposalAccept" : "proposalReject")
@@ -360,11 +499,12 @@ export function ChapterBodyPanel({
           proposal.toolCallId,
           snapshot.workflow.stateRevision,
           accept ? "" : proposalFeedback,
-          []
+          accept ? [] : proposalCitations
         ),
         false
       )
       setProposalFeedback("")
+      setProposalCitations({ chapterId, items: [] })
       onChanged(await getPreparation(versionId))
     } catch (error) {
       onError(error instanceof Error ? error.message : "正文编辑提案未能决定")
@@ -375,15 +515,17 @@ export function ChapterBodyPanel({
 
   async function handleProposalDelegate() {
     const review = snapshot?.pendingProposalReview
-    if (!review || review.status !== "open") return
+    if (!chapterId || !review || review.status !== "open") return
     setPending("delegate")
     try {
       const result = await delegateReview(
         review.id,
         preparation.workflow.stateRevision,
-        proposalFeedback
+        proposalFeedback,
+        proposalCitations
       )
       setProposalFeedback("")
+      setProposalCitations({ chapterId, items: [] })
       onChanged(result.snapshot)
       await refreshBody()
     } catch (error) {
@@ -413,7 +555,7 @@ export function ChapterBodyPanel({
 
   async function handleSubmitFreeFeedback() {
     const runId = snapshot?.workflow.activeRunId
-    if (!runId || !snapshot) return
+    if (!runId || !snapshot || !chapterId) return
     if (!freeFeedback.trim()) {
       onError("请先填写要交给正文 Agent 的意见")
       return
@@ -425,10 +567,11 @@ export function ChapterBodyPanel({
           runId,
           snapshot.workflow.stateRevision,
           freeFeedback,
-          []
+          feedbackCitations
         )
       )
       setFreeFeedback("")
+      setFeedbackCitations({ chapterId, items: [] })
       onChanged(await getPreparation(versionId))
     } catch (error) {
       onError(error instanceof Error ? error.message : "自由意见未能保存")
@@ -517,6 +660,10 @@ export function ChapterBodyPanel({
   const heldTool = snapshot?.heldTool ?? null
   const heldSubmission = snapshot?.heldSubmission ?? null
   const pendingFeedback = snapshot?.pendingFeedback ?? []
+  const deliveredFeedback = snapshot?.deliveredFeedback ?? []
+  const currentRevisionId = snapshot?.body.revisionId ?? null
+  const hasProposalAttachment =
+    proposalFeedback.trim().length > 0 || proposalCitations.length > 0
 
   return (
     <section className="mt-6 rounded-2xl border border-border bg-background/75 p-5 shadow-sm">
@@ -742,10 +889,74 @@ export function ChapterBodyPanel({
                         : "等待下一条工具结果"}
                     </span>
                     {feedback.text}
+                    {feedback.citations.length > 0 && (
+                      <CitationList
+                        citations={feedback.citations}
+                        currentRevisionId={currentRevisionId}
+                        onError={onError}
+                      />
+                    )}
                   </li>
                 ))}
               </ol>
             )}
+            {deliveredFeedback.length > 0 && (
+              <div className="mt-3 rounded-lg border border-sky-500/15 bg-background/60 p-3">
+                <p className="text-xs font-medium text-foreground">
+                  已封存的意见
+                </p>
+                <ol className="mt-2 space-y-2">
+                  {deliveredFeedback.map((feedback) => (
+                    <li
+                      key={feedback.id}
+                      className="rounded-lg border border-sky-500/15 bg-background/70 px-3 py-2 text-xs leading-5 text-muted-foreground"
+                    >
+                      <span className="mr-2 font-medium text-foreground">
+                        {feedback.deliveryStatus === "sent"
+                          ? "已随请求发送，等待模型回应"
+                          : feedback.deliveryStatus === "failed"
+                            ? "请求失败，尚无模型回应"
+                            : feedback.deliveryStatus === "unknown"
+                              ? "请求状态未知，尚无模型回应"
+                              : "请求已取消，尚无模型回应"}
+                      </span>
+                      {feedback.text}
+                      {feedback.citations.length > 0 && (
+                        <CitationList
+                          citations={feedback.citations}
+                          currentRevisionId={currentRevisionId}
+                          onError={onError}
+                        />
+                      )}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+            {snapshot.body.revisionId && snapshot.body.content && (
+              <details className="mt-3 rounded-lg border border-sky-500/15 bg-background/60 px-3 py-2">
+                <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
+                  引用当前正文（选中文字后点击“引用选中文字”）
+                </summary>
+                <CitableText
+                  text={snapshot.body.content}
+                  disabled={pending !== null}
+                  onCite={citeFeedbackFromDocument}
+                  className="mt-2 max-h-72 overflow-auto text-sm leading-7 whitespace-pre-wrap text-foreground"
+                />
+              </details>
+            )}
+            <div className="mt-3">
+              <TemplateInserter
+                label="插入模板到意见草稿"
+                refreshToken={templatesRefreshToken}
+                onInsert={(text) =>
+                  setFreeFeedback((current) =>
+                    current.trim().length > 0 ? `${current}\n${text}` : text
+                  )
+                }
+              />
+            </div>
             <label className="mt-3 block text-xs font-medium text-muted-foreground">
               新意见
               <textarea
@@ -757,6 +968,21 @@ export function ChapterBodyPanel({
                 className="mt-1.5 min-h-20 w-full resize-y rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-ring focus:ring-3 focus:ring-ring/20 disabled:cursor-not-allowed disabled:opacity-60"
               />
             </label>
+            <CitationList
+              citations={feedbackCitations}
+              currentRevisionId={currentRevisionId}
+              disabled={pending !== null}
+              onRemove={(index) =>
+                setFeedbackCitations((current) => ({
+                  chapterId,
+                  items: (current.chapterId === chapterId
+                    ? current.items
+                    : []
+                  ).filter((_, position) => position !== index),
+                }))
+              }
+              onError={onError}
+            />
             <div className="mt-3 flex justify-end">
               <Button
                 type="button"
@@ -800,23 +1026,63 @@ export function ChapterBodyPanel({
               <h4 className="text-xs font-semibold tracking-[0.12em] text-muted-foreground uppercase">
                 当前正式正文
               </h4>
-              <pre className="mt-2 max-h-80 overflow-auto text-sm leading-7 whitespace-pre-wrap text-foreground">
-                {snapshot?.body.content || "（尚无正式正文）"}
-              </pre>
+              {snapshot?.body.revisionId && snapshot.body.content ? (
+                <CitableText
+                  text={snapshot.body.content}
+                  disabled={pending !== null}
+                  onCite={citeProposalFromDocument}
+                  className="mt-2 max-h-80 overflow-auto text-sm leading-7 whitespace-pre-wrap text-foreground"
+                />
+              ) : (
+                <p className="mt-2 text-sm text-muted-foreground">
+                  （尚无正式正文）
+                </p>
+              )}
             </section>
             <section className="bg-amber-500/5 p-4">
               <h4 className="text-xs font-semibold tracking-[0.12em] text-amber-900 uppercase dark:text-amber-100">
                 候选正文
               </h4>
-              <pre className="mt-2 max-h-80 overflow-auto text-sm leading-7 whitespace-pre-wrap text-foreground">
-                {proposal.candidateContent || "（候选会清空正文）"}
-              </pre>
+              {proposal.candidateContent ? (
+                <CitableText
+                  text={proposal.candidateContent}
+                  disabled={pending !== null}
+                  onCite={citeProposalFromCandidate}
+                  className="mt-2 max-h-80 overflow-auto text-sm leading-7 whitespace-pre-wrap text-foreground"
+                />
+              ) : (
+                <p className="mt-2 text-sm text-muted-foreground">
+                  （候选会清空正文）
+                </p>
+              )}
             </section>
           </div>
           {proposalReview?.status === "open" && (
             <div className="border-t border-amber-500/20 p-4">
+              <CitationList
+                citations={proposalCitations}
+                currentRevisionId={currentRevisionId}
+                disabled={pending !== null}
+                onRemove={(index) =>
+                  setProposalCitations((current) => ({
+                    chapterId,
+                    items: (current.chapterId === chapterId
+                      ? current.items
+                      : []
+                    ).filter((_, position) => position !== index),
+                  }))
+                }
+                onError={onError}
+              />
+              {proposalCitations.length > 0 && (
+                <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                  {" "}
+                  引用会随“拒绝并反馈”或“委托审核”一并提交，审核 Agent
+                  只看到引文文本。
+                </p>
+              )}
               <label className="block text-xs font-medium text-muted-foreground">
-                反馈（留空即接受；填写内容即拒绝并反馈给
+                反馈（留空且没有引用即接受；有文字或引用即拒绝并反馈给
                 Agent；委托时作为关注点）
                 <textarea
                   value={proposalFeedback}
@@ -831,27 +1097,19 @@ export function ChapterBodyPanel({
                 <Button
                   type="button"
                   disabled={pending !== null}
-                  onClick={() => void handleProposalDecision(true)}
+                  onClick={() =>
+                    void handleProposalDecision(!hasProposalAttachment)
+                  }
                 >
-                  {pending === "proposalAccept" ? (
+                  {pending === "proposalAccept" ||
+                  pending === "proposalReject" ? (
                     <LoaderCircle className="animate-spin" aria-hidden="true" />
+                  ) : hasProposalAttachment ? (
+                    <RotateCcw aria-hidden="true" />
                   ) : (
                     <Check aria-hidden="true" />
                   )}
-                  接受编辑
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={pending !== null}
-                  onClick={() => void handleProposalDecision(false)}
-                >
-                  {pending === "proposalReject" ? (
-                    <LoaderCircle className="animate-spin" aria-hidden="true" />
-                  ) : (
-                    <RotateCcw aria-hidden="true" />
-                  )}
-                  拒绝并反馈
+                  {hasProposalAttachment ? "拒绝并反馈" : "接受编辑"}
                 </Button>
                 <Button
                   type="button"
@@ -987,11 +1245,35 @@ export function ChapterBodyPanel({
                 : "待审核"}
             </span>
           </div>
-          <pre className="max-h-[28rem] overflow-auto px-4 py-3 text-sm leading-7 whitespace-pre-wrap text-foreground">
-            {snapshot.body.content}
-          </pre>
+          {snapshot.body.review?.status === "open" ? (
+            <CitableText
+              text={snapshot.body.content}
+              disabled={pending !== null}
+              onCite={citeFinalReview}
+              className="max-h-[28rem] overflow-auto px-4 py-3 text-sm leading-7 whitespace-pre-wrap text-foreground"
+            />
+          ) : (
+            <pre className="max-h-[28rem] overflow-auto px-4 py-3 text-sm leading-7 whitespace-pre-wrap text-foreground">
+              {snapshot.body.content}
+            </pre>
+          )}
           {snapshot.body.review?.status === "open" && (
             <div className="border-t border-border p-4">
+              <CitationList
+                citations={finalCitations}
+                currentRevisionId={snapshot.body.revisionId}
+                disabled={pending !== null}
+                onRemove={(index) =>
+                  setFinalCitations((current) => ({
+                    chapterId,
+                    items: (current.chapterId === chapterId
+                      ? current.items
+                      : []
+                    ).filter((_, position) => position !== index),
+                  }))
+                }
+                onError={onError}
+              />
               <label className="block text-xs font-medium text-muted-foreground">
                 审核意见（退回修订时必填）
                 <textarea

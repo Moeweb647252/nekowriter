@@ -9,6 +9,22 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
+pub mod budget;
+pub mod dashboard;
+pub mod export;
+pub mod knowledge;
+pub mod manuscript;
+pub mod recycle;
+pub mod template;
+pub mod usage;
+pub use budget::*;
+pub use dashboard::*;
+pub use export::*;
+pub use knowledge::*;
+pub use manuscript::*;
+pub use template::*;
+pub use usage::*;
+
 /// 跨进程边界的 64 位整数统一使用十进制字符串，避免 JavaScript 的安全整数范围
 /// 悄悄截断数据库中的修订号、序列号或时间戳。
 pub mod decimal_i64 {
@@ -39,7 +55,7 @@ pub mod decimal_i64 {
 }
 
 /// [`decimal_i64`] 的可空字段版本。
-mod option_decimal_i64 {
+pub(crate) mod option_decimal_i64 {
     use serde::{Deserialize, Deserializer, Serializer, de::Error as _};
 
     /// # Errors
@@ -629,6 +645,27 @@ pub struct CurrentChapterBody {
     pub review: Option<ChapterFinalReview>,
 }
 
+/// 一条不可变文档修订的只读视图。
+///
+/// 引用永久锚定在具体修订上，因此该修订即使已经不是文档的当前修订，也必须仍能被
+/// 读取。`is_current` 只用于界面提示“来自旧修订”，不改变引用本身的指向。
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentRevisionView {
+    pub document_id: DocumentId,
+    pub revision_id: RevisionId,
+    #[serde(with = "decimal_i64")]
+    pub revision_no: i64,
+    pub role: String,
+    pub chapter_id: Option<ChapterId>,
+    #[serde(with = "decimal_i64")]
+    pub word_count: i64,
+    pub content: String,
+    pub is_current: bool,
+    #[serde(with = "decimal_i64")]
+    pub created_at_ms: i64,
+}
+
 /// 一段可由后端逐字复核的文本范围。
 ///
 /// 位置以 Unicode scalar value（Rust `char`）计数，而非 UTF-8 字节或浏览器常见
@@ -652,6 +689,7 @@ pub struct TextCitationRange {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FeedbackCitation {
+    #[serde(rename_all = "camelCase")]
     Document {
         document_id: DocumentId,
         revision_id: RevisionId,
@@ -659,6 +697,7 @@ pub enum FeedbackCitation {
         range: TextCitationRange,
         chapter_id: Option<ChapterId>,
     },
+    #[serde(rename_all = "camelCase")]
     Candidate {
         tool_call_id: Uuid,
         candidate_hash: String,
@@ -757,6 +796,35 @@ pub struct PendingChapterBodyFeedback {
     pub citations: Vec<FeedbackCitation>,
     pub status: FeedbackStatus,
     pub bound_tool_call_id: Option<Uuid>,
+    #[serde(with = "decimal_i64")]
+    pub created_at_ms: i64,
+}
+
+/// 已经封存到模型请求、但该请求尚未给出成功响应的自由意见投递状态。
+///
+/// 这不是反馈本身的状态机：`included` 已经说明意见进入了不可变请求快照。
+/// 此处只让工作台说明该快照目前正在发送、失败、未知或已取消，避免用户把队列
+/// 项消失误读为意见没有送达。
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FeedbackDeliveryStatus {
+    Sent,
+    Failed,
+    Unknown,
+    Cancelled,
+}
+
+/// 当前正文 Run 中最近一次未获成功响应的已封存自由意见。
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeliveredChapterBodyFeedback {
+    pub id: FeedbackId,
+    #[serde(with = "decimal_i64")]
+    pub sequence: i64,
+    pub text: String,
+    pub citations: Vec<FeedbackCitation>,
+    pub request_id: Uuid,
+    pub delivery_status: FeedbackDeliveryStatus,
     #[serde(with = "decimal_i64")]
     pub created_at_ms: i64,
 }
@@ -991,6 +1059,12 @@ pub struct ChapterSummary {
     #[serde(with = "decimal_i64")]
     pub order_index: i64,
     pub title: String,
+    /// 目录中的显示名，与阅读区和导出使用同一套命名。
+    pub label: String,
+    /// 当前已提交正文的字数；本章尚未写过正文时为 0。阅读区用它估计每章高度，
+    /// 因此跳到远端的章节不需要先把中间所有章节渲染一遍。
+    #[serde(with = "decimal_i64")]
+    pub body_word_count: i64,
     pub status: ChapterStatus,
     pub approved_revision_id: Option<RevisionId>,
     #[serde(with = "decimal_i64")]
@@ -1189,6 +1263,7 @@ pub struct ChapterBodySnapshot {
     pub held_submission: Option<HeldChapterBodySubmission>,
     pub pending_question: Option<PendingUserQuestion>,
     pub pending_feedback: Vec<PendingChapterBodyFeedback>,
+    pub delivered_feedback: Vec<DeliveredChapterBodyFeedback>,
     pub outline_context_fold: Option<ContextFold>,
     pub context_fold: Option<ContextFold>,
 }
@@ -2042,6 +2117,10 @@ pub fn schedule_chapter_body_run(
 /// M1 的正文编辑直接形成修订；M2 的待审提案门控会在调用此转换前决定是否允许
 /// 提交，但不会改变正文修订与工作流版本递增的语义。
 ///
+/// 用户在模型回合进行中（`Queued` 或 `RequestInFlight`）编辑正文时，执行轴保持
+/// 不变：那个回合仍要沿原有回调路径收束（模型编辑按最新正文复验，业务失败则
+/// 排下一轮）。否则工作流会停在既没有在途请求、也没有任何继续入口的空闲态。
+///
 /// # Errors
 ///
 /// 当前章节不匹配或不在正文阶段时返回 [`WorkflowTransitionError`]。
@@ -2055,12 +2134,16 @@ pub fn record_chapter_body_edit(
             action: "record_chapter_body_edit",
         });
     }
+    let execution = match workflow.execution {
+        ExecutionStatus::Queued | ExecutionStatus::RequestInFlight => workflow.execution.clone(),
+        _ => ExecutionStatus::Idle,
+    };
     transition_workflow(
         workflow,
         &[WorkflowStage::WritingDrafting],
         "record_chapter_body_edit",
         WorkflowStage::WritingDrafting,
-        ExecutionStatus::Idle,
+        execution,
     )
 }
 
@@ -2424,6 +2507,41 @@ pub fn finish_extra_chapter_final_review(
         ExecutionStatus::Idle,
     )?;
     next.active_run_id = None;
+    Ok(next)
+}
+
+/// 番外章被软删除后，把工作流从那一章上收回来。
+///
+/// 番外只能加在已完本的稿本上，因此移除一章之后既不该继续停留在「正在写这一章」，
+/// 也不该让活跃章节指向一条已经不可见的记录：统一退回已完本，把活跃章节交给调用方
+/// 给出的仍然可见的那一章（通常是删除前排在最后的一章）。正文计划章不走这条转换。
+///
+/// # Errors
+///
+/// 当前阶段不在番外可处的阶段内时返回 [`WorkflowTransitionError`]。
+pub fn withdraw_extra_chapter(
+    workflow: &WorkflowSnapshot,
+    chapter_id: ChapterId,
+    remaining_active: Option<ChapterId>,
+) -> Result<WorkflowSnapshot, WorkflowTransitionError> {
+    let mut next = transition_workflow(
+        workflow,
+        &[
+            WorkflowStage::Completed,
+            WorkflowStage::WritingChapterReady,
+            WorkflowStage::WritingOutlineGenerating,
+            WorkflowStage::WritingOutlineReviewing,
+            WorkflowStage::WritingDrafting,
+            WorkflowStage::WritingChapterReviewing,
+        ],
+        "withdraw_extra_chapter",
+        WorkflowStage::Completed,
+        ExecutionStatus::Idle,
+    )?;
+    if workflow.active_chapter_id == Some(chapter_id) {
+        next.active_run_id = None;
+        next.active_chapter_id = remaining_active;
+    }
     Ok(next)
 }
 
@@ -3292,7 +3410,16 @@ mod tests {
         assert!(
             continue_chapter_body_after_tool(&queued_after_tool, chapter_id, body_run_id).is_err()
         );
-        let edited = record_chapter_body_edit(&drafting, chapter_id).unwrap();
+        // 模型回合仍在进行（排队中或在途）时，用户编辑不把执行轴改成空闲，
+        // 否则那个回合的回调路径会被废掉，工作流停在没有任何继续入口的状态。
+        let edited_in_progress = record_chapter_body_edit(&drafting, chapter_id).unwrap();
+        assert_eq!(edited_in_progress.execution, ExecutionStatus::Queued);
+        assert_eq!(edited_in_progress.active_run_id, Some(body_run_id));
+        let mut edited = edited_in_progress.clone();
+        // 没有正在进行回合时，编辑照旧回到空闲。
+        edited.execution = ExecutionStatus::Idle;
+        edited.active_run_id = None;
+        let edited = record_chapter_body_edit(&edited, chapter_id).unwrap();
         assert_eq!(edited.execution, ExecutionStatus::Idle);
         let reviewing = submit_chapter_for_review(&edited, chapter_id).unwrap();
         assert_eq!(reviewing.stage, WorkflowStage::WritingChapterReviewing);
@@ -3434,6 +3561,66 @@ mod tests {
         assert_eq!(encoded["stateRevision"], i64::MAX.to_string());
         encoded["stateRevision"] = serde_json::json!(1);
         assert!(serde_json::from_value::<WorkflowSnapshot>(encoded).is_err());
+    }
+
+    #[test]
+    fn feedback_citations_round_trip_the_camel_case_wire_contract() {
+        let document: FeedbackCitation = serde_json::from_value(serde_json::json!({
+            "kind": "document",
+            "documentId": "00000000-0000-0000-0000-000000000001",
+            "revisionId": "00000000-0000-0000-0000-000000000002",
+            "chapterId": null,
+            "startChar": "0",
+            "endChar": "2",
+            "quote": "雨夜"
+        }))
+        .unwrap();
+        assert_eq!(
+            document,
+            FeedbackCitation::Document {
+                document_id: Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap(),
+                revision_id: Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap(),
+                range: TextCitationRange {
+                    start_char: 0,
+                    end_char: 2,
+                    quote: "雨夜".to_owned(),
+                },
+                chapter_id: None,
+            }
+        );
+
+        let candidate: FeedbackCitation = serde_json::from_value(serde_json::json!({
+            "kind": "candidate",
+            "toolCallId": "00000000-0000-0000-0000-000000000003",
+            "candidateHash": "a".repeat(64),
+            "candidateRange": { "startChar": "4", "endChar": "6", "quote": "胶卷" }
+        }))
+        .unwrap();
+        assert_eq!(
+            candidate,
+            FeedbackCitation::Candidate {
+                tool_call_id: Uuid::parse_str("00000000-0000-0000-0000-000000000003").unwrap(),
+                candidate_hash: "a".repeat(64),
+                candidate_range: TextCitationRange {
+                    start_char: 4,
+                    end_char: 6,
+                    quote: "胶卷".to_owned(),
+                },
+            }
+        );
+
+        assert_eq!(
+            serde_json::to_value(&document).unwrap(),
+            serde_json::json!({
+                "kind": "document",
+                "documentId": "00000000-0000-0000-0000-000000000001",
+                "revisionId": "00000000-0000-0000-0000-000000000002",
+                "chapterId": null,
+                "startChar": "0",
+                "endChar": "2",
+                "quote": "雨夜"
+            })
+        );
     }
 
     #[test]

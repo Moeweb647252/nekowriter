@@ -9,14 +9,21 @@ use std::{
 };
 
 mod credentials;
+mod dashboard;
+mod knowledge;
+mod lifecycle;
+mod manuscript;
 mod model_settings;
+mod operations;
 mod prompts;
+mod recycle;
 mod scheduler;
+mod templates;
 
 use axum::{
     Json, Router,
     extract::{Path as AxumPath, Query, State},
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{
         IntoResponse, Response,
         sse::{Event, KeepAlive, Sse},
@@ -28,27 +35,33 @@ use directories::ProjectDirs;
 use fs4::{FileExt, TryLockError};
 use futures_util::stream;
 use nekowriter_agent::{
-    ContextMessageRole, PromptTemplateError, capabilities,
+    ContextMessageRole, capabilities,
+    engine::AccumulationEngine,
     provider::{
-        ChatCompletionsAdapter, ChatCompletionsConfig, ModelRequest, ModelRequestMessage,
-        ModelTimeouts, ProviderError,
+        ChatCompletionsAdapter, ChatCompletionsConfig, ModelCompletion, ModelFailureCode,
+        ModelRequest, ModelRequestMessage, ModelTimeouts, ProviderError,
     },
     validate_builtin_prompt_pair,
 };
 use nekowriter_core::{
     AppendChapterContent, ApprovalMode, ChapterBodyEditError, ChapterId, ChapterPlanDraft,
-    ExecutionStatus, FeedbackCitation, HumanReviewDecision, ModelCapabilityProfile,
+    DashboardQueryError, DocumentId, ExecutionStatus, ExportFormat, ExportQueryError,
+    FeedbackCitation, HumanReviewDecision, ManuscriptQueryError, ModelCapabilityProfile,
     NewChapterGuidance, NewChapterOutline, NewCopiedNovelVersion, NewExtraChapter, NewNovelBrief,
     NewNovelVersion, NewProject, NewProjectSettings, PreparationArtifactInput,
     PreparationArtifactKind, PreparationSnapshot, ProjectBundle, ProjectId, ProjectListItem,
-    ProjectModelReference, ProjectSettings, ReplaceChapterContent, ReviewId, ThinkingLevel,
-    UserQuestionAnswers, ValidationError, VersionId, VersionSnapshot, WorkflowSnapshot,
-    WorkflowStage, decimal_i64,
+    ProjectModelReference, ProjectSettings, PromptTemplateValidationError, ReplaceChapterContent,
+    ReviewId, RevisionId, TemplateError, ThinkingLevel, UserQuestionAnswers, ValidationError,
+    VersionId, VersionSnapshot, WorkflowSnapshot, WorkflowStage, decimal_i64, utc_now_millis,
 };
 use nekowriter_store::{
-    EventStreamBounds, NewPromptOverride, PersistedEvent, PromptOverride, PromptOverrideReset,
-    PromptOverrideScope, Store, StoreError,
+    EventStreamBounds, InterruptionSource, NewPromptOverride, OPERATION_KIND_CONNECTION_TEST,
+    PersistedEvent, PromptOverride, PromptOverrideReset, PromptOverrideScope, Store, StoreError,
 };
+
+use crate::lifecycle::Shutdown;
+use crate::operations::SystemOperationResult;
+use nekowriter_core::recycle::RecycleQueryError;
 
 use crate::model_settings::{
     ModelUse, capability_problem_message, pre_dispatch_capability_problem, resolve_effective_model,
@@ -58,13 +71,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
-use tokio::{
-    signal,
-    sync::{Mutex, Semaphore, broadcast},
-};
+use tokio::sync::{Mutex, Semaphore, broadcast, watch};
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use tracing::{info, warn};
-use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 const DEFAULT_PORT: u16 = 47_821;
@@ -79,9 +88,12 @@ struct Cli {
     /// 仅监听回环地址的 HTTP 端口。
     #[arg(long, default_value_t = DEFAULT_PORT)]
     port: u16,
-    /// 已构建前端资源目录；开发时默认使用当前工作目录的 webui/dist。
+    /// 已构建前端资源目录；默认使用可执行文件旁的 webui/dist。
     #[arg(long)]
     web_dir: Option<PathBuf>,
+    /// 不自动打开默认浏览器；无界面环境与自动化探针使用。
+    #[arg(long)]
+    no_browser: bool,
 }
 
 #[derive(Clone)]
@@ -91,11 +103,18 @@ struct AppState {
     settings_write_lock: Arc<Mutex<()>>,
     model_request_permit: Arc<Semaphore>,
     scheduler: scheduler::WorkflowScheduler,
+    /// 仅供当前 SSE 连接消费的模型字符流；它不进入持久事件日志。
+    preview_deltas: broadcast::Sender<scheduler::PreviewDelta>,
+    shutdown: Shutdown,
+    /// 本次进程实际拥有的知识积累引擎；能力查询与积累入口读同一份。MVP 为空。
+    accumulation_engines: &'static [&'static dyn AccumulationEngine],
 }
 
 struct EventStreamState {
     store: Store,
     receiver: broadcast::Receiver<()>,
+    preview_receiver: broadcast::Receiver<scheduler::PreviewDelta>,
+    shutdown: watch::Receiver<bool>,
     cursor: i64,
     pending: VecDeque<PersistedEvent>,
     send_connection_comment: bool,
@@ -111,6 +130,10 @@ enum StartupError {
     Io(#[from] std::io::Error),
     #[error("数据目录已被另一个 NekoWriter 进程占用：{0}")]
     DataDirectoryLocked(PathBuf),
+    #[error("无法在数据目录创建日志文件：{0}")]
+    LogFile(#[from] tracing_appender::rolling::InitError),
+    #[error("无法定位当前可执行文件所在目录")]
+    NoExecutableDirectory,
 }
 
 struct ProcessLock {
@@ -213,6 +236,8 @@ struct DecidePreparationReviewRequest {
     expected_state_revision: i64,
     passed: bool,
     issues: Option<String>,
+    #[serde(default)]
+    citations: Vec<FeedbackCitation>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -223,6 +248,8 @@ struct DelegateReviewRequest {
     expected_state_revision: i64,
     #[serde(default)]
     notes: String,
+    #[serde(default)]
+    citations: Vec<FeedbackCitation>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -428,6 +455,8 @@ struct EventsQuery {
 struct HealthResponse {
     status: &'static str,
     schema_version: u32,
+    /// 当前进程实际使用的数据目录，界面用它告诉用户数据与日志在哪里。
+    data_dir: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -448,13 +477,19 @@ enum ApiError {
     Validation(ValidationError),
     Store(StoreError),
     Credential(credentials::CredentialStoreError),
+    Embedding(nekowriter_agent::embedding::EmbeddingError),
+    Engine(nekowriter_agent::engine::EngineError),
     Provider(ProviderError),
     Scheduler(scheduler::SchedulerError),
     InvalidEventCursor,
     UntrustedHost,
     UntrustedOrigin,
     NotFound,
-    PromptTemplate(PromptTemplateError),
+    PromptTemplate(PromptTemplateValidationError),
+    RecycleQuery(RecycleQueryError),
+    DashboardQuery(DashboardQueryError),
+    ExportQuery(ExportQueryError),
+    ManuscriptQuery(ManuscriptQueryError),
     UnknownPromptKey(String),
 }
 
@@ -464,9 +499,39 @@ impl From<ValidationError> for ApiError {
     }
 }
 
-impl From<PromptTemplateError> for ApiError {
-    fn from(value: PromptTemplateError) -> Self {
+impl From<TemplateError> for ApiError {
+    fn from(value: TemplateError) -> Self {
+        Self::PromptTemplate(value.into())
+    }
+}
+
+impl From<PromptTemplateValidationError> for ApiError {
+    fn from(value: PromptTemplateValidationError) -> Self {
         Self::PromptTemplate(value)
+    }
+}
+
+impl From<DashboardQueryError> for ApiError {
+    fn from(value: DashboardQueryError) -> Self {
+        Self::DashboardQuery(value)
+    }
+}
+
+impl From<ExportQueryError> for ApiError {
+    fn from(value: ExportQueryError) -> Self {
+        Self::ExportQuery(value)
+    }
+}
+
+impl From<ManuscriptQueryError> for ApiError {
+    fn from(value: ManuscriptQueryError) -> Self {
+        Self::ManuscriptQuery(value)
+    }
+}
+
+impl From<RecycleQueryError> for ApiError {
+    fn from(value: RecycleQueryError) -> Self {
+        Self::RecycleQuery(value)
     }
 }
 
@@ -482,6 +547,18 @@ impl From<credentials::CredentialStoreError> for ApiError {
     }
 }
 
+impl From<nekowriter_agent::embedding::EmbeddingError> for ApiError {
+    fn from(value: nekowriter_agent::embedding::EmbeddingError) -> Self {
+        Self::Embedding(value)
+    }
+}
+
+impl From<nekowriter_agent::engine::EngineError> for ApiError {
+    fn from(value: nekowriter_agent::engine::EngineError) -> Self {
+        Self::Engine(value)
+    }
+}
+
 impl From<ProviderError> for ApiError {
     fn from(value: ProviderError) -> Self {
         Self::Provider(value)
@@ -491,6 +568,30 @@ impl From<ProviderError> for ApiError {
 impl From<scheduler::SchedulerError> for ApiError {
     fn from(value: scheduler::SchedulerError) -> Self {
         Self::Scheduler(value)
+    }
+}
+
+impl std::fmt::Display for ApiError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Validation(error) => write!(formatter, "{error}"),
+            Self::Store(error) => write!(formatter, "{error}"),
+            Self::Credential(error) => write!(formatter, "{error}"),
+            Self::Embedding(error) => write!(formatter, "{error}"),
+            Self::Engine(error) => write!(formatter, "{error}"),
+            Self::Provider(error) => write!(formatter, "{error}"),
+            Self::Scheduler(error) => write!(formatter, "{error}"),
+            Self::PromptTemplate(error) => write!(formatter, "{error}"),
+            Self::DashboardQuery(error) => write!(formatter, "{error}"),
+            Self::ExportQuery(error) => write!(formatter, "{error}"),
+            Self::ManuscriptQuery(error) => write!(formatter, "{error}"),
+            Self::RecycleQuery(error) => write!(formatter, "{error}"),
+            Self::UnknownPromptKey(key) => write!(formatter, "未知提示词：{key}"),
+            Self::InvalidEventCursor => formatter.write_str("事件游标无效"),
+            Self::UntrustedHost => formatter.write_str("请求主机不是本地回环地址"),
+            Self::UntrustedOrigin => formatter.write_str("请求来源不被信任"),
+            Self::NotFound => formatter.write_str("请求的资源不存在"),
+        }
     }
 }
 
@@ -511,12 +612,27 @@ impl IntoResponse for ApiError {
                 | StoreError::ReviewNotFound
                 | StoreError::RunNotFound
                 | StoreError::ModelRequestNotFound
-                | StoreError::QuestionNotFound,
+                | StoreError::QuestionNotFound
+                | StoreError::PromptTemplateNotFound
+                | StoreError::DocumentRevisionNotFound
+                | StoreError::RecycleItemNotFound,
             ) => (
                 StatusCode::NOT_FOUND,
                 "RESOURCE_NOT_FOUND",
                 "请求的资源不存在或已删除".to_owned(),
                 json!({}),
+            ),
+            Self::Store(StoreError::RecycleAncestorDeleted(message)) => (
+                StatusCode::CONFLICT,
+                "RECYCLE_ANCESTOR_DELETED",
+                format!("{message}仍在回收站里，请先恢复它"),
+                json!({ "reason": message }),
+            ),
+            Self::Store(StoreError::RecycleNotPurgeable(message)) => (
+                StatusCode::CONFLICT,
+                "RECYCLE_NOT_PURGEABLE",
+                message.clone(),
+                json!({ "reason": message }),
             ),
             Self::Store(StoreError::IdempotencyConflict) => (
                 StatusCode::CONFLICT,
@@ -533,6 +649,7 @@ impl IntoResponse for ApiError {
             Self::Store(
                 StoreError::InvalidPreparationState(message)
                 | StoreError::InvalidChapterState(message)
+                | StoreError::InvalidVersionState(message)
                 | StoreError::InvalidModelRequestState(message)
                 | StoreError::InvalidAgentMessageState(message),
             ) => (
@@ -541,6 +658,15 @@ impl IntoResponse for ApiError {
                 message.clone(),
                 json!({ "reason": message }),
             ),
+            Self::Store(StoreError::VersionRevisionConflict { expected, actual }) => (
+                StatusCode::CONFLICT,
+                "REVISION_CONFLICT",
+                "稿本已经变化，请刷新后重试".to_owned(),
+                json!({
+                    "expected_revision": expected.to_string(),
+                    "actual_revision": actual.to_string(),
+                }),
+            ),
             Self::Store(StoreError::StateRevisionConflict { expected, actual }) => (
                 StatusCode::CONFLICT,
                 "REVISION_CONFLICT",
@@ -548,6 +674,15 @@ impl IntoResponse for ApiError {
                 json!({
                     "expected_state_revision": expected.to_string(),
                     "actual_state_revision": actual.to_string(),
+                }),
+            ),
+            Self::Store(StoreError::PromptTemplateRevisionConflict { expected, actual }) => (
+                StatusCode::CONFLICT,
+                "REVISION_CONFLICT",
+                "提示词模板已经变化，请刷新后重试".to_owned(),
+                json!({
+                    "expected_revision": expected.to_string(),
+                    "actual_revision": actual.to_string(),
                 }),
             ),
             Self::Store(StoreError::SystemSettingsRevisionConflict { expected, actual }) => (
@@ -598,6 +733,90 @@ impl IntoResponse for ApiError {
                 "引用无法对应当前可验证文本".to_owned(),
                 json!({ "reason": message }),
             ),
+            Self::Store(StoreError::EmbeddingNotConfigured) => (
+                StatusCode::CONFLICT,
+                "EMBEDDING_NOT_CONFIGURED",
+                "尚未配置 Embedding，语义检索不可用；知识仍可正常保存".to_owned(),
+                json!({}),
+            ),
+            Self::Engine(error) => (
+                match &error {
+                    nekowriter_agent::engine::EngineError::NotAvailable { .. } => {
+                        StatusCode::CONFLICT
+                    }
+                    nekowriter_agent::engine::EngineError::Failed { .. } => StatusCode::BAD_GATEWAY,
+                },
+                error.code(),
+                error.to_string(),
+                json!({}),
+            ),
+            Self::Store(StoreError::EmbeddingDimensionMismatch { expected, actual }) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "EMBEDDING_DIMENSION_MISMATCH",
+                "Embedding 服务返回的向量维度与配置不符".to_owned(),
+                json!({
+                    "expected": expected.to_string(),
+                    "actual": actual.to_string(),
+                }),
+            ),
+            Self::Store(
+                StoreError::KnowledgeSpaceNotFound | StoreError::KnowledgeEntryNotFound,
+            ) => (
+                StatusCode::NOT_FOUND,
+                "RESOURCE_NOT_FOUND",
+                "请求的知识资源不存在或已删除".to_owned(),
+                json!({}),
+            ),
+            Self::Store(StoreError::KnowledgeSpaceNotEmpty) => (
+                StatusCode::CONFLICT,
+                "KNOWLEDGE_SPACE_NOT_EMPTY",
+                "该 Space 仍有条目，不能删除；请先移动或删除条目".to_owned(),
+                json!({}),
+            ),
+            Self::Store(StoreError::KnowledgeSpaceRevisionConflict { expected, actual }) => (
+                StatusCode::CONFLICT,
+                "REVISION_CONFLICT",
+                "知识 Space 已经变化，请刷新后重试".to_owned(),
+                json!({
+                    "expected_revision": expected.to_string(),
+                    "actual_revision": actual.to_string(),
+                }),
+            ),
+            Self::Store(StoreError::KnowledgeEntryRevisionConflict { expected, actual }) => (
+                StatusCode::CONFLICT,
+                "REVISION_CONFLICT",
+                "知识条目已经变化，请刷新后重试".to_owned(),
+                json!({
+                    "expected_revision": expected.to_string(),
+                    "actual_revision": actual.to_string(),
+                }),
+            ),
+            Self::Store(StoreError::EmbeddingSettingsRevisionConflict { expected, actual }) => (
+                StatusCode::CONFLICT,
+                "REVISION_CONFLICT",
+                "Embedding 配置已经变化，请刷新后重试".to_owned(),
+                json!({
+                    "expected_revision": expected.to_string(),
+                    "actual_revision": actual.to_string(),
+                }),
+            ),
+            Self::Store(
+                StoreError::InvalidKnowledgeEntry(message)
+                | StoreError::InvalidEmbeddingSettings(message)
+                | StoreError::InvalidKnowledgeSearch(message)
+                | StoreError::InvalidDashboardQuery(message),
+            ) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "VALIDATION_ERROR",
+                message.clone(),
+                json!({ "reason": message }),
+            ),
+            Self::Store(StoreError::InvalidPromptTemplate(message)) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "INVALID_PROMPT_TEMPLATE",
+                message.clone(),
+                json!({ "reason": message }),
+            ),
             Self::Store(StoreError::InvalidPromptOverride(message)) => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "INVALID_PROMPT_OVERRIDE",
@@ -631,6 +850,36 @@ impl IntoResponse for ApiError {
             Self::PromptTemplate(error) => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "INVALID_PROMPT_TEMPLATE",
+                error.to_string(),
+                json!({ "reason": error.to_string() }),
+            ),
+            Self::DashboardQuery(error) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "INVALID_DASHBOARD_QUERY",
+                error.to_string(),
+                json!({ "reason": error.to_string() }),
+            ),
+            Self::ExportQuery(error) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "INVALID_EXPORT_FORMAT",
+                error.to_string(),
+                json!({ "reason": error.to_string() }),
+            ),
+            Self::RecycleQuery(error) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "INVALID_RECYCLE_QUERY",
+                error.to_string(),
+                json!({ "reason": error.to_string() }),
+            ),
+            Self::ManuscriptQuery(error) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                match error {
+                    ManuscriptQueryError::EmptyQuery | ManuscriptQueryError::QueryTooLong => {
+                        "INVALID_SEARCH_QUERY"
+                    }
+                    ManuscriptQueryError::InvalidOffset { .. }
+                    | ManuscriptQueryError::InvalidLimit { .. } => "INVALID_MANUSCRIPT_QUERY",
+                },
                 error.to_string(),
                 json!({ "reason": error.to_string() }),
             ),
@@ -679,7 +928,7 @@ impl IntoResponse for ApiError {
                 (
                     StatusCode::SERVICE_UNAVAILABLE,
                     "CREDENTIAL_STORE_UNAVAILABLE",
-                    "无法访问本机凭据库；请检查 Windows Credential Manager 后重试".to_owned(),
+                    "无法访问本机凭据库；请检查系统凭据库（Windows 凭据管理器 / macOS 钥匙串）后重试".to_owned(),
                     json!({}),
                 )
             }
@@ -689,6 +938,26 @@ impl IntoResponse for ApiError {
                     StatusCode::BAD_GATEWAY,
                     "MODEL_TEST_FAILED",
                     "模型服务未通过实际连接测试；请检查地址、模型、密钥和能力配置".to_owned(),
+                    json!({}),
+                )
+            }
+            Self::Embedding(
+                nekowriter_agent::embedding::EmbeddingError::InvalidApiBaseUrl { .. }
+                | nekowriter_agent::embedding::EmbeddingError::EndpointInsteadOfApiBase
+                | nekowriter_agent::embedding::EmbeddingError::EmptyModelId
+                | nekowriter_agent::embedding::EmbeddingError::EmptyDimension,
+            ) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "INVALID_EMBEDDING_SETTINGS",
+                "Embedding 配置无效；请检查地址、模型与输出维度".to_owned(),
+                json!({}),
+            ),
+            Self::Embedding(error) => {
+                warn!(request_id = %request_id, error = %error, "Embedding 服务调用失败");
+                (
+                    StatusCode::BAD_GATEWAY,
+                    "EMBEDDING_SERVICE_FAILED",
+                    "Embedding 服务调用失败；请检查地址、模型、维度与密钥".to_owned(),
                     json!({}),
                 )
             }
@@ -794,9 +1063,10 @@ impl IntoResponse for ApiError {
 
 #[tokio::main]
 async fn main() -> Result<(), StartupError> {
-    init_tracing();
     let cli = Cli::parse();
     let data_dir = resolve_data_dir(cli.data_dir.unwrap_or(default_data_dir()?))?;
+    // 日志在拿到数据目录后立即落地，之后的所有启动诊断都会同时进入 logs/。
+    let _log_guard = lifecycle::init_logging(&data_dir)?;
     let _lock = ProcessLock::acquire(&data_dir)?;
     let store = Store::open(&data_dir).await?;
     let web_dir = cli.web_dir.unwrap_or(default_web_dir()?);
@@ -804,32 +1074,72 @@ async fn main() -> Result<(), StartupError> {
         warn!(path = %web_dir.display(), "未找到前端构建产物；可使用 pnpm --dir webui build 后重启，或在开发模式下运行 Vite");
     }
 
+    let shutdown = Shutdown::new();
     let model_request_permit = Arc::new(Semaphore::new(1));
     let settings_write_lock = Arc::new(Mutex::new(()));
+    let (preview_deltas, _) = broadcast::channel(256);
     let state = AppState {
-        scheduler: scheduler::WorkflowScheduler::new(
+        scheduler: scheduler::WorkflowScheduler::with_preview_deltas(
             store.clone(),
             model_request_permit.clone(),
             settings_write_lock.clone(),
+            preview_deltas.clone(),
         ),
         store,
         allowed_write_origins: Arc::new(allowed_write_origins(cli.port)),
         settings_write_lock,
         model_request_permit,
+        preview_deltas,
+        shutdown: shutdown.clone(),
+        accumulation_engines: nekowriter_agent::engine::ACCUMULATION_ENGINES,
     };
-    let app = router(state, web_dir);
+    // 上次进程退出时仍在 running 的索引任务重新排队；向量本身可由正文重建。
+    let requeued = state.store.requeue_running_index_tasks().await?;
+    if requeued > 0 {
+        info!(requeued, "已重新排队未完成的知识索引任务");
+    }
+    let indexer_store = state.store.clone();
+    let indexer = tokio::spawn(async move {
+        knowledge::KnowledgeIndexer::new(indexer_store).run().await;
+    });
+    let app = router(state.clone(), web_dir);
     let address = SocketAddr::from(([127, 0, 0, 1], cli.port));
     let listener = tokio::net::TcpListener::bind(address).await?;
-    info!(address = %address, "NekoWriter 已启动");
+    info!(address = %address, data_dir = %data_dir.display(), "NekoWriter 已启动");
+    if !cli.no_browser {
+        lifecycle::open_browser(cli.port);
+    }
+
+    // 退出信号（Ctrl+C / SIGTERM / `POST /api/system/shutdown`）一到达，服务器就
+    // 停止接受新连接，因此退出流程不再产生新的生成请求。
+    let serve = {
+        let shutdown = shutdown.clone();
+        async move { shutdown.wait().await }
+    };
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(serve)
         .await?;
+
+    info!("正在取消在途请求并收尾状态");
+    state.scheduler.cancel_in_flight().await;
+    indexer.abort();
+    let outcome = state
+        .store
+        .interrupt_active_runs(InterruptionSource::ProcessShutdown)
+        .await?;
+    state.store.close().await?;
+    info!(
+        writing_runs = outcome.writing_runs,
+        review_delegations = outcome.review_delegations,
+        "NekoWriter 已退出"
+    );
     Ok(())
 }
 
 fn router(state: AppState, web_dir: PathBuf) -> Router {
     let api = Router::new()
         .route("/health", get(health))
+        .route("/system/shutdown", axum::routing::post(shutdown_service))
         .route("/capabilities", get(get_capabilities))
         .route(
             "/settings",
@@ -839,8 +1149,50 @@ fn router(state: AppState, web_dir: PathBuf) -> Router {
             "/settings/test-model",
             axum::routing::post(test_model_connection),
         )
+        .route(
+            "/settings/embedding",
+            get(knowledge::get_embedding_settings).put(knowledge::save_embedding_settings),
+        )
+        .route(
+            "/settings/test-embedding",
+            axum::routing::post(knowledge::test_embedding_connection),
+        )
+        .route(
+            "/knowledge/spaces",
+            get(knowledge::list_knowledge_spaces).post(knowledge::create_knowledge_space),
+        )
+        .route(
+            "/knowledge/spaces/{space_id}",
+            axum::routing::patch(knowledge::rename_knowledge_space)
+                .delete(knowledge::delete_knowledge_space),
+        )
+        .route(
+            "/knowledge/entries",
+            get(knowledge::list_knowledge_entries).post(knowledge::create_knowledge_entry),
+        )
+        .route(
+            "/knowledge/entries/{entry_id}",
+            get(knowledge::get_knowledge_entry)
+                .put(knowledge::update_knowledge_entry)
+                .delete(knowledge::delete_knowledge_entry),
+        )
+        .route(
+            "/knowledge/search",
+            axum::routing::post(knowledge::search_knowledge),
+        )
+        .route(
+            "/knowledge/reindex",
+            axum::routing::post(knowledge::reindex_knowledge),
+        )
+        .route(
+            "/knowledge/accumulate",
+            axum::routing::post(knowledge::accumulate_knowledge),
+        )
         .route("/projects", get(list_projects).post(create_project))
-        .route("/projects/{project_id}", get(get_project))
+        .route(
+            "/projects/{project_id}",
+            get(get_project).delete(recycle::delete_project),
+        )
         .route(
             "/projects/{project_id}/settings",
             get(get_project_settings).put(save_project_settings),
@@ -854,6 +1206,7 @@ fn router(state: AppState, web_dir: PathBuf) -> Router {
             axum::routing::post(select_version),
         )
         .route("/versions/{version_id}/snapshot", get(get_version_snapshot))
+        .route("/versions/{version_id}/export", get(export_version))
         .route(
             "/versions/{version_id}/copy",
             axum::routing::post(copy_version),
@@ -863,6 +1216,14 @@ fn router(state: AppState, web_dir: PathBuf) -> Router {
             axum::routing::post(set_approval_mode),
         )
         .route("/versions/{version_id}/chapters", get(list_chapters))
+        .route(
+            "/versions/{version_id}/manuscript",
+            get(manuscript::get_manuscript_window),
+        )
+        .route(
+            "/versions/{version_id}/manuscript/search",
+            get(manuscript::search_manuscript),
+        )
         .route(
             "/versions/{version_id}/chapters/next",
             axum::routing::post(advance_to_next_chapter),
@@ -888,6 +1249,10 @@ fn router(state: AppState, web_dir: PathBuf) -> Router {
             get(get_chapter_outline).post(submit_chapter_outline),
         )
         .route("/chapters/{chapter_id}/body", get(get_chapter_body))
+        .route(
+            "/documents/{document_id}/revisions/{revision_id}",
+            get(get_document_revision),
+        )
         .route(
             "/chapters/{chapter_id}/body/append",
             axum::routing::post(append_chapter_body),
@@ -934,6 +1299,34 @@ fn router(state: AppState, web_dir: PathBuf) -> Router {
             put(save_system_prompt_override).delete(reset_system_prompt_override),
         )
         .route("/prompts/preview", axum::routing::post(preview_prompt))
+        .route(
+            "/prompt-templates",
+            get(templates::list_prompt_templates).post(templates::create_prompt_template),
+        )
+        .route(
+            "/prompt-templates/{template_id}",
+            get(templates::get_prompt_template)
+                .patch(templates::update_prompt_template)
+                .delete(templates::delete_prompt_template),
+        )
+        .route("/dashboard", get(dashboard::get_dashboard))
+        .route("/recycle-bin", get(recycle::get_recycle_bin))
+        .route(
+            "/recycle-bin/{kind}/{id}/restore",
+            axum::routing::post(recycle::restore_recycle_item),
+        )
+        .route(
+            "/recycle-bin/{kind}/{id}/purge",
+            axum::routing::post(recycle::purge_recycle_item),
+        )
+        .route(
+            "/chapters/{chapter_id}",
+            axum::routing::delete(recycle::delete_extra_chapter),
+        )
+        .route(
+            "/versions/{version_id}",
+            axum::routing::delete(recycle::delete_version),
+        )
         .route("/projects/{project_id}/prompts", get(get_project_prompts))
         .route(
             "/projects/{project_id}/prompts/{prompt_key}",
@@ -968,15 +1361,43 @@ fn router(state: AppState, web_dir: PathBuf) -> Router {
         .layer(TraceLayer::new_for_http())
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ShutdownResponse {
+    status: &'static str,
+}
+
+/// 显式退出本地服务：与进程信号走同一条收尾路径。
+///
+/// 响应先写回客户端，服务随后停止接受连接并取消在途请求；界面据此显示连接已断开。
+async fn shutdown_service(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ShutdownResponse>, ApiError> {
+    ensure_trusted_write_request(&headers, &state)?;
+    if state.shutdown.is_requested() {
+        return Ok(Json(ShutdownResponse {
+            status: "already_shutting_down",
+        }));
+    }
+    state.shutdown.request_after_response();
+    Ok(Json(ShutdownResponse {
+        status: "shutting_down",
+    }))
+}
+
 async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok",
         schema_version: state.store.schema_version(),
+        data_dir: state.store.data_dir().display().to_string(),
     })
 }
 
-async fn get_capabilities() -> Json<nekowriter_agent::AgentCapabilities> {
-    Json(capabilities())
+async fn get_capabilities(
+    State(state): State<AppState>,
+) -> Json<nekowriter_agent::AgentCapabilities> {
+    Json(capabilities(state.accumulation_engines))
 }
 
 async fn get_system_settings(
@@ -1161,7 +1582,22 @@ async fn test_model_connection(
         .acquire_owned()
         .await
         .expect("AppState 持有模型调度 Semaphore，许可不会永久关闭");
-    let completion = match provider.execute_with(&request_payload, |_| {}).await {
+    let started_at_ms = utc_now_millis();
+    let outcome = provider.execute_with(&request_payload, |_| {}).await;
+    let completed_at_ms = utc_now_millis();
+    // 连接测试真的发出了一次模型请求，因此它和对话请求共用同一份用量口径：
+    // 成功时留下供应商报告的用量，失败时留下类型化原因，两者都必须落库，
+    // 否则这次请求的用量会在统计里凭空消失。
+    persist_connection_test(
+        &state,
+        &model_id,
+        &settings.api_base_url,
+        started_at_ms,
+        completed_at_ms,
+        &outcome,
+    )
+    .await?;
+    let completion = match outcome {
         Ok(completion) => completion,
         Err(ProviderError::HttpStatus { status, .. }) if thinking_probed && status == 400 => {
             return Err(StoreError::InvalidSystemModelSettings(format!(
@@ -1181,6 +1617,46 @@ async fn test_model_connection(
         usage: completion.usage,
         thinking_probed,
     }))
+}
+
+/// 把一次连接测试落库成系统模型操作。
+///
+/// 这类请求不属于任何稿本，因此不能写进以 Run 为主键的 `model_requests`；它们
+/// 单独成表并在 Dashboard 里单列，使「刚才那次测试花了多少、成功没有」有据可查。
+async fn persist_connection_test(
+    state: &AppState,
+    model_id: &str,
+    api_base_url: &str,
+    started_at_ms: i64,
+    completed_at_ms: i64,
+    outcome: &Result<ModelCompletion, ProviderError>,
+) -> Result<(), ApiError> {
+    let result = match outcome {
+        Ok(completion) => SystemOperationResult::Succeeded {
+            usage: completion.persisted_usage(),
+            provider_request_id: completion.provider_request_id.clone(),
+        },
+        Err(error) => SystemOperationResult::Failed {
+            // 连接与超时失败无法断定请求是否已经到达供应商，因此标为未知而非失败。
+            reached_provider_unknown: matches!(
+                error.failure_code(),
+                ModelFailureCode::Connection | ModelFailureCode::Timeout
+            ),
+            kind: "provider_error",
+            message: error.to_string(),
+        },
+    };
+    operations::record_system_operation(
+        &state.store,
+        OPERATION_KIND_CONNECTION_TEST,
+        model_id,
+        api_base_url,
+        started_at_ms,
+        completed_at_ms,
+        result,
+    )
+    .await?;
+    Ok(())
 }
 
 async fn list_projects(
@@ -1208,6 +1684,56 @@ async fn get_version_snapshot(
     AxumPath(version_id): AxumPath<VersionId>,
 ) -> Result<Json<VersionSnapshot>, ApiError> {
     Ok(Json(state.store.get_version_snapshot(version_id).await?))
+}
+
+/// 导出查询参数；格式是必填项，不接受默认值。
+#[derive(Debug, Deserialize)]
+struct ExportQuery {
+    format: Option<String>,
+}
+
+/// 把稿本已提交正文导出成一个可下载的文件。
+///
+/// 内容是现读的：每次请求都在同一个读取快照里重新组装，不存在可以过期的导出副本。
+async fn export_version(
+    State(state): State<AppState>,
+    AxumPath(version_id): AxumPath<VersionId>,
+    Query(query): Query<ExportQuery>,
+) -> Result<Response, ApiError> {
+    let format = ExportFormat::parse(query.format.as_deref().unwrap_or_default())?;
+    let export = state.store.build_version_export(version_id).await?;
+    let file_name = export.file_name(format);
+    let mut response = export.render(format).into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static(format.media_type()),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_str(&content_disposition(&file_name, format))
+            .expect("导出文件名已去除控制字符"),
+    );
+    Ok(response)
+}
+
+/// RFC 6266 下载头：ASCII 回退名加上 UTF-8 百分号编码的完整名。
+///
+/// 中文标题不能直接写进 `filename=`，因此两者都给出：旧客户端用 ASCII 回退名，
+/// 规范客户端用 `filename*` 得到原名。
+fn content_disposition(file_name: &str, format: ExportFormat) -> String {
+    let mut encoded = String::new();
+    for byte in file_name.as_bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(char::from(*byte));
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    format!(
+        "attachment; filename=\"nekowriter-export.{}\"; filename*=UTF-8''{encoded}",
+        format.extension()
+    )
 }
 
 async fn list_chapters(
@@ -1366,6 +1892,18 @@ async fn get_chapter_body(
     AxumPath(chapter_id): AxumPath<ChapterId>,
 ) -> Result<Json<nekowriter_core::ChapterBodySnapshot>, ApiError> {
     Ok(Json(state.store.get_chapter_body(chapter_id).await?))
+}
+
+async fn get_document_revision(
+    State(state): State<AppState>,
+    AxumPath((document_id, revision_id)): AxumPath<(DocumentId, RevisionId)>,
+) -> Result<Json<nekowriter_core::DocumentRevisionView>, ApiError> {
+    Ok(Json(
+        state
+            .store
+            .get_document_revision(document_id, revision_id)
+            .await?,
+    ))
 }
 
 async fn append_chapter_body(
@@ -1587,9 +2125,10 @@ async fn stream_events(
     Query(query): Query<EventsQuery>,
 ) -> Result<Response, ApiError> {
     let cursor = event_cursor(&headers, query.after.as_deref())?;
-    // 先订阅再检查游标边界。此后即使有提交发生，events 表查询和广播唤醒都不会
-    // 留下“查历史到订阅实时”之间的丢失窗口。
+    // 先订阅再检查游标边界。持久事件不会在“查历史到订阅实时”之间丢失；临时预览
+    // 本来就不可恢复，只从连接建立后开始消费。
     let receiver = state.store.subscribe_events();
+    let preview_receiver = state.preview_deltas.subscribe();
     let bounds = state.store.event_stream_bounds().await?;
     if stream_reset_required(cursor, bounds) {
         return Ok(Sse::new(stream::once(async move {
@@ -1600,6 +2139,8 @@ async fn stream_events(
 
     let stream_state = EventStreamState {
         receiver,
+        preview_receiver,
+        shutdown: state.shutdown.subscribe(),
         store: state.store,
         cursor,
         pending: VecDeque::new(),
@@ -1619,6 +2160,10 @@ async fn next_sse_event(
     mut state: EventStreamState,
 ) -> Option<(Result<Event, Infallible>, EventStreamState)> {
     loop {
+        // 退出服务时先结束持久连接，否则优雅退出会一直等 SSE 客户端断开。
+        if Shutdown::requested(&state.shutdown) {
+            return None;
+        }
         if state.send_connection_comment {
             state.send_connection_comment = false;
             return Some((Ok(Event::default().comment("connected")), state));
@@ -1635,10 +2180,22 @@ async fn next_sse_event(
             Ok(events) if !events.is_empty() => {
                 state.pending = events.into();
             }
-            Ok(_) => match state.receiver.recv().await {
-                Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) => {}
-                Err(broadcast::error::RecvError::Closed) => return None,
-            },
+            Ok(_) => {
+                let mut shutdown = state.shutdown.clone();
+                tokio::select! {
+                    result = state.receiver.recv() => match result {
+                        Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) => {}
+                        Err(broadcast::error::RecvError::Closed) => return None,
+                    },
+                    result = state.preview_receiver.recv() => match result {
+                        Ok(delta) => return Some((Ok(to_preview_delta_sse_event(delta)), state)),
+                        // 预览是明确可丢弃的临时层；落后时直接等待下一段或持久状态。
+                        Err(broadcast::error::RecvError::Lagged(_)) => {}
+                        Err(broadcast::error::RecvError::Closed) => return None,
+                    },
+                    _ = shutdown.changed() => return None,
+                }
+            }
             Err(error) => {
                 warn!(cursor = state.cursor, %error, "读取 SSE 持久事件失败，关闭当前连接");
                 return None;
@@ -1654,6 +2211,13 @@ fn to_sse_event(event: PersistedEvent) -> Event {
         .id(event.seq)
         .event(event.event_type)
         .data(data)
+}
+
+/// 临时预览故意不设置 SSE `id`。浏览器可能仍在 `lastEventId` 上保留上一条持久
+/// 事件的值，前端因此只按 `request/tool/offset` 处理这类事件。
+fn to_preview_delta_sse_event(delta: scheduler::PreviewDelta) -> Event {
+    let data = serde_json::to_string(&delta).expect("临时预览只包含可序列化的 UUID、标量与字符串");
+    Event::default().event("preview.delta").data(data)
 }
 
 fn event_cursor(headers: &HeaderMap, query_after: Option<&str>) -> Result<i64, ApiError> {
@@ -1848,6 +2412,7 @@ async fn decide_review(
             request.command_id,
             request.expected_state_revision,
             decision,
+            request.citations,
         )
         .await?;
     enqueue_queued_writing_run(&state, &snapshot.workflow).await?;
@@ -1870,6 +2435,7 @@ async fn delegate_review(
             request.command_id,
             request.expected_state_revision,
             request.notes,
+            request.citations,
         )
         .await?;
     if let Err(error) = state
@@ -2315,31 +2881,335 @@ fn resolve_data_dir(path: PathBuf) -> Result<PathBuf, StartupError> {
     Ok(path.canonicalize()?)
 }
 
+/// 前端构建产物默认放在可执行文件旁的 `webui/dist`：发行目录整体拷走后从任何
+/// 工作目录启动都能打开界面，不依赖源码树。
 fn default_web_dir() -> Result<PathBuf, StartupError> {
-    Ok(std::env::current_dir()?.join("webui").join("dist"))
-}
-
-fn init_tracing() {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "nekowriter=info,tower_http=info".into());
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .compact()
-        .init();
-}
-
-async fn shutdown_signal() {
-    if let Err(error) = signal::ctrl_c().await {
-        warn!(error = %error, "无法监听 Ctrl+C；服务将由进程终止");
-        std::future::pending::<()>().await;
-    }
-    info!("收到退出信号，正在停止服务");
+    let executable = std::env::current_exe()?;
+    let directory = executable
+        .parent()
+        .ok_or(StartupError::NoExecutableDirectory)?;
+    Ok(directory.join("webui").join("dist"))
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use futures_util::{StreamExt, future::BoxFuture};
+    use nekowriter_agent::engine::{
+        ACCUMULATION_ENGINES, AccumulatedEntry, AccumulationEngine, AccumulationOutcome,
+        AccumulationRequest, EngineDescriptor, EngineError,
+    };
+    use nekowriter_store::{KnowledgeSpaceInput, NewEmbeddingSettings};
+    use tempfile::TempDir;
+
     use super::*;
+
+    /// 契约测试用的积累引擎：返回两条候选，并记录被调用的次数。
+    struct StubAccumulationEngine;
+    /// 引擎调用失败时必须什么都不写。
+    struct FailingAccumulationEngine;
+
+    static STUB_ACCUMULATION_ENGINES: &[&dyn AccumulationEngine] = &[&StubAccumulationEngine];
+    static FAILING_ACCUMULATION_ENGINES: &[&dyn AccumulationEngine] = &[&FailingAccumulationEngine];
+    static STUB_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    impl AccumulationEngine for StubAccumulationEngine {
+        fn descriptor(&self) -> EngineDescriptor {
+            EngineDescriptor {
+                id: "stub-accumulation",
+                display_name: "探针积累引擎",
+            }
+        }
+
+        fn accumulate<'a>(
+            &'a self,
+            request: &'a AccumulationRequest,
+        ) -> BoxFuture<'a, Result<AccumulationOutcome, EngineError>> {
+            STUB_CALLS.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move {
+                Ok(AccumulationOutcome {
+                    entries: vec![
+                        AccumulatedEntry {
+                            title: "灯塔线索".to_owned(),
+                            keywords: vec!["线索".to_owned()],
+                            content: format!("{}：灯塔在雨夜里反复出现。", request.clues),
+                            source: Some("探针引擎".to_owned()),
+                        },
+                        AccumulatedEntry {
+                            title: "码头线索".to_owned(),
+                            keywords: Vec::new(),
+                            content: "码头在第三章被烧毁。".to_owned(),
+                            source: None,
+                        },
+                    ],
+                })
+            })
+        }
+    }
+
+    impl AccumulationEngine for FailingAccumulationEngine {
+        fn descriptor(&self) -> EngineDescriptor {
+            EngineDescriptor {
+                id: "failing-accumulation",
+                display_name: "总是失败的探针引擎",
+            }
+        }
+
+        fn accumulate<'a>(
+            &'a self,
+            _request: &'a AccumulationRequest,
+        ) -> BoxFuture<'a, Result<AccumulationOutcome, EngineError>> {
+            Box::pin(async move {
+                Err(EngineError::Failed {
+                    message: "探针引擎无法访问上游资料".to_owned(),
+                })
+            })
+        }
+    }
+
+    /// 一个测试应用：真实临时数据目录、指定注册表的应用状态。
+    async fn accumulation_app(
+        engines: &'static [&'static dyn AccumulationEngine],
+    ) -> (TempDir, AppState) {
+        let dir = TempDir::new().unwrap();
+        let store = Store::open(dir.path()).await.unwrap();
+        let settings_write_lock = Arc::new(Mutex::new(()));
+        let model_request_permit = Arc::new(Semaphore::new(1));
+        let (preview_deltas, _) = broadcast::channel(256);
+        let state = AppState {
+            scheduler: scheduler::WorkflowScheduler::with_preview_deltas(
+                store.clone(),
+                model_request_permit.clone(),
+                settings_write_lock.clone(),
+                preview_deltas.clone(),
+            ),
+            store,
+            allowed_write_origins: Arc::new(HashSet::from(["http://127.0.0.1:47822".to_owned()])),
+            settings_write_lock,
+            model_request_permit,
+            preview_deltas,
+            shutdown: Shutdown::new(),
+            accumulation_engines: engines,
+        };
+        (dir, state)
+    }
+
+    /// 在回环地址的真实端口上启动真实路由，返回基地址。
+    fn spawn_app(state: AppState) -> String {
+        let app = router(state, std::env::temp_dir());
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        format!("http://{address}")
+    }
+
+    async fn new_accumulation_space(state: &AppState) -> Uuid {
+        state
+            .store
+            .create_knowledge_space(
+                Uuid::new_v4(),
+                KnowledgeSpaceInput {
+                    title: "积累".to_owned(),
+                },
+            )
+            .await
+            .unwrap()
+            .id
+    }
+
+    /// 有注册表的引擎时，积累命令真的写入条目；重放不再次调用引擎。
+    #[tokio::test]
+    async fn accumulation_command_writes_candidates_and_replays_without_a_second_engine_call() {
+        let (_dir, state) = accumulation_app(STUB_ACCUMULATION_ENGINES).await;
+        let space_id = new_accumulation_space(&state).await;
+        state
+            .store
+            .save_embedding_settings(
+                Uuid::new_v4(),
+                0,
+                NewEmbeddingSettings {
+                    api_base_url: "https://embed.example/v1".to_owned(),
+                    model_id: "test-embed".to_owned(),
+                    dimension: 2,
+                    credential_ref: None,
+                    credential_fingerprint: None,
+                },
+            )
+            .await
+            .unwrap();
+        let base = spawn_app(state.clone());
+        let client = reqwest::Client::new();
+        let command_id = Uuid::new_v4();
+        let body = json!({
+            "commandId": command_id,
+            "spaceId": space_id,
+            "clues": "雨夜灯塔",
+        });
+
+        let response = client
+            .post(format!("{base}/api/knowledge/accumulate"))
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let created: Value = response.json().await.unwrap();
+        assert_eq!(created.as_array().unwrap().len(), 2);
+        assert_eq!(STUB_CALLS.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            state
+                .store
+                .list_knowledge_entries(Some(space_id), None)
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+        // 每条候选都在同一事务里建立了索引任务。
+        assert_eq!(
+            state
+                .store
+                .knowledge_index_coverage(&[space_id])
+                .await
+                .unwrap()
+                .pending_entries,
+            2
+        );
+
+        // 同一条命令重试：返回原结果，不再次调用引擎，也不重复写入。
+        let replay = client
+            .post(format!("{base}/api/knowledge/accumulate"))
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(replay.status(), StatusCode::OK);
+        let replayed: Value = replay.json().await.unwrap();
+        assert_eq!(replayed, created);
+        assert_eq!(STUB_CALLS.load(Ordering::SeqCst), 1, "重放不再次调用引擎");
+        assert_eq!(
+            state
+                .store
+                .list_knowledge_entries(Some(space_id), None)
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+
+        // 同一个 command_id 换一组线索是幂等冲突，不写入。
+        let conflict = client
+            .post(format!("{base}/api/knowledge/accumulate"))
+            .json(&json!({
+                "commandId": command_id,
+                "spaceId": space_id,
+                "clues": "另一次积累",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(conflict.status(), StatusCode::CONFLICT);
+        let conflict_body: Value = conflict.json().await.unwrap();
+        assert_eq!(conflict_body["error"]["code"], "IDEMPOTENCY_CONFLICT");
+    }
+
+    /// 引擎执行失败时不得写入任何条目，也不留下可重放的回执。
+    #[tokio::test]
+    async fn accumulation_engine_failure_writes_nothing() {
+        let (_dir, state) = accumulation_app(FAILING_ACCUMULATION_ENGINES).await;
+        let space_id = new_accumulation_space(&state).await;
+        let base = spawn_app(state.clone());
+        let client = reqwest::Client::new();
+        let command_id = Uuid::new_v4();
+
+        let response = client
+            .post(format!("{base}/api/knowledge/accumulate"))
+            .json(&json!({
+                "commandId": command_id,
+                "spaceId": space_id,
+                "clues": "雨夜灯塔",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["error"]["code"], "ENGINE_FAILED");
+        assert!(
+            state
+                .store
+                .list_knowledge_entries(Some(space_id), None)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            state
+                .store
+                .find_accumulation_result(command_id, space_id, "雨夜灯塔")
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    /// MVP 的生产注册表为空：能力查询与积累入口读同一份，都不产生写入。
+    #[tokio::test]
+    async fn accumulation_without_a_production_engine_reports_not_available_and_writes_nothing() {
+        let (_dir, state) = accumulation_app(ACCUMULATION_ENGINES).await;
+        let space_id = new_accumulation_space(&state).await;
+        let base = spawn_app(state.clone());
+        let client = reqwest::Client::new();
+
+        let capabilities: Value = client
+            .get(format!("{base}/api/capabilities"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(capabilities["knowledgeAccumulationEngines"], json!([]));
+        assert!(capabilities["knowledgeAccumulationUnavailableReason"].is_string());
+
+        let response = client
+            .post(format!("{base}/api/knowledge/accumulate"))
+            .json(&json!({
+                "commandId": Uuid::new_v4(),
+                "spaceId": space_id,
+                "clues": "雨夜灯塔",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["error"]["code"], "ENGINE_NOT_AVAILABLE");
+        assert!(
+            state
+                .store
+                .list_knowledge_entries(Some(space_id), None)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn default_web_dir_lives_next_to_the_executable() {
+        let web_dir = default_web_dir().unwrap();
+        assert!(web_dir.ends_with(Path::new("webui").join("dist")));
+        let executable = std::env::current_exe().unwrap();
+        assert_eq!(
+            web_dir.parent().unwrap().parent().unwrap(),
+            executable.parent().unwrap()
+        );
+    }
 
     #[test]
     fn loopback_host_validation_rejects_external_hosts() {
@@ -2382,6 +3252,63 @@ mod tests {
         assert!(!stream_reset_required(12, bounds));
         assert!(!stream_reset_required(21, bounds));
         assert!(stream_reset_required(22, bounds));
+    }
+
+    #[tokio::test]
+    async fn preview_delta_shares_sse_without_a_persistent_id() {
+        let (_dir, state) = accumulation_app(ACCUMULATION_ENGINES).await;
+        let version_id = Uuid::new_v4();
+        let request_id = Uuid::new_v4();
+        let base = spawn_app(state.clone());
+        let response = reqwest::Client::new()
+            .get(format!("{base}/api/events?after=0"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut stream = response.bytes_stream();
+        // 先消费连接注释，确保服务端已经订阅临时广播，再发出预览片段。
+        let first = tokio::time::timeout(Duration::from_secs(2), stream.next())
+            .await
+            .expect("SSE 应先发送连接注释")
+            .expect("SSE 不应在连接后立即关闭")
+            .expect("SSE 连接注释不应写入错误");
+        let _ = state.preview_deltas.send(scheduler::PreviewDelta {
+            version_id,
+            request_id,
+            tool: Some(scheduler::PreviewTool {
+                index: 0,
+                id: Some("preview-tool-1".to_owned()),
+                name: Some("append_content".to_owned()),
+            }),
+            offset: 0,
+            content: "{\"content\":\"半截".to_owned(),
+        });
+
+        let mut wire = String::from_utf8(first.to_vec()).unwrap();
+        for _ in 0..4 {
+            if wire.contains("event: preview.delta") {
+                break;
+            }
+            let next = tokio::time::timeout(Duration::from_secs(2), stream.next())
+                .await
+                .expect("预览片段应在同一 SSE 连接中到达")
+                .expect("SSE 不应在预览前关闭")
+                .expect("SSE 预览不应写入错误");
+            wire.push_str(&String::from_utf8(next.to_vec()).unwrap());
+        }
+        let preview_block = wire
+            .split("\n\n")
+            .find(|block| block.contains("event: preview.delta"))
+            .expect("应该收到 preview.delta");
+        assert!(preview_block.contains(&format!("\"requestId\":\"{request_id}\"")));
+        assert!(preview_block.contains("\"offset\":\"0\""));
+        assert!(preview_block.contains("\"append_content\""));
+        assert!(
+            !preview_block.lines().any(|line| line.starts_with("id:")),
+            "临时预览不能携带可恢复的 SSE id：{preview_block}"
+        );
+        assert!(state.store.events_after(0).await.unwrap().is_empty());
     }
 
     #[test]

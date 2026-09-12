@@ -9,8 +9,11 @@ import {
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { CitationList } from "@/components/CitationList"
+import { CitableText } from "@/components/CitableText"
 import { UserQuestionPanel } from "@/components/UserQuestionPanel"
 import { WritingRecoveryPanel } from "@/components/WritingRecoveryPanel"
+import { type PickedTextRange } from "@/lib/citations"
 import {
   cancelReviewDelegation,
   decideChapterOutlineReview,
@@ -19,6 +22,7 @@ import {
   getPreparation,
   submitChapterOutline,
   type ChapterOutlineSnapshot,
+  type FeedbackCitation,
   type PreparationSnapshot,
 } from "@/lib/api"
 
@@ -38,6 +42,7 @@ export function ChapterOutlinePanel({
   const [snapshot, setSnapshot] = useState<ChapterOutlineSnapshot | null>(null)
   const [content, setContent] = useState("")
   const [issues, setIssues] = useState("")
+  const [citations, setCitations] = useState<FeedbackCitation[]>([])
   const [loading, setLoading] = useState(true)
   const [remoteOutlineChanged, setRemoteOutlineChanged] = useState(false)
   const [pending, setPending] = useState<
@@ -45,6 +50,8 @@ export function ChapterOutlinePanel({
   >(null)
   const persistedContentRef = useRef("")
   const contentRef = useRef("")
+  /** 引用只在取得它的那次细纲修订上成立；修订一变就丢弃草稿引用。 */
+  const citationRevisionRef = useRef<string | null>(null)
 
   const chapterId = preparation.workflow.activeChapterId
   const stage = preparation.workflow.stage
@@ -65,6 +72,10 @@ export function ChapterOutlinePanel({
     const hasUnsavedChanges = contentRef.current !== persistedContentRef.current
     const changedRemotely = nextContent !== persistedContentRef.current
     persistedContentRef.current = nextContent
+    if (nextSnapshot.outline.revisionId !== citationRevisionRef.current) {
+      citationRevisionRef.current = nextSnapshot.outline.revisionId
+      setCitations([])
+    }
     setSnapshot(nextSnapshot)
     if (
       !preserveDraft ||
@@ -119,6 +130,28 @@ export function ChapterOutlinePanel({
     setIssues("")
   }
 
+  /** 把待审细纲中的选中文字固定为一条指向当前修订的引用。 */
+  function citeOutline(range: PickedTextRange) {
+    const outline = snapshot?.outline
+    const revisionId = outline?.revisionId
+    if (!outline || !revisionId) {
+      onError("当前细纲还没有可引用的修订。")
+      return
+    }
+    setCitations((current) => [
+      ...current,
+      {
+        kind: "document",
+        documentId: outline.documentId,
+        revisionId,
+        chapterId,
+        startChar: String(range.startChar),
+        endChar: String(range.endChar),
+        quote: range.quote,
+      },
+    ])
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!chapterId) return
@@ -152,9 +185,11 @@ export function ChapterOutlinePanel({
           review.id,
           preparation.workflow.stateRevision,
           passed,
-          issues
+          issues,
+          citations
         )
       )
+      setCitations([])
       await refreshOutline()
     } catch (error) {
       onError(error instanceof Error ? error.message : "细纲审核决定未保存")
@@ -171,9 +206,11 @@ export function ChapterOutlinePanel({
       const result = await delegateReview(
         review.id,
         preparation.workflow.stateRevision,
-        issues
+        issues,
+        citations
       )
       onChanged(result.snapshot)
+      setCitations([])
       await refreshOutline()
     } catch (error) {
       onError(error instanceof Error ? error.message : "审核委托未能启动")
@@ -317,11 +354,31 @@ export function ChapterOutlinePanel({
                 : "待审核"}
             </span>
           </div>
-          <pre className="max-h-96 overflow-auto px-4 py-3 text-sm leading-6 whitespace-pre-wrap text-foreground">
-            {snapshot.outline.content}
-          </pre>
+          {snapshot.outline.review?.status === "open" ? (
+            <CitableText
+              text={snapshot.outline.content}
+              disabled={pending !== null}
+              onCite={citeOutline}
+              className="max-h-96 overflow-auto px-4 py-3 text-sm leading-6 whitespace-pre-wrap text-foreground"
+            />
+          ) : (
+            <pre className="max-h-96 overflow-auto px-4 py-3 text-sm leading-6 whitespace-pre-wrap text-foreground">
+              {snapshot.outline.content}
+            </pre>
+          )}
           {snapshot.outline.review?.status === "open" && (
             <div className="border-t border-border p-4">
+              <CitationList
+                citations={citations}
+                currentRevisionId={snapshot.outline.revisionId}
+                disabled={pending !== null}
+                onRemove={(index) =>
+                  setCitations((current) =>
+                    current.filter((_, position) => position !== index)
+                  )
+                }
+                onError={onError}
+              />
               <label className="block text-xs font-medium text-muted-foreground">
                 审核意见（退回修订时必填）
                 <textarea

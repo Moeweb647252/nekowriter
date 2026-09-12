@@ -9,11 +9,14 @@
 use std::collections::BTreeMap;
 
 use nekowriter_agent::{
-    PromptKey, PromptTemplateError, PromptVariableDefinition, RenderedBuiltinPrompt,
-    builtin_prompt, builtin_prompt_examples, builtin_prompt_variables, render_prompt_content,
+    PromptKey, PromptVariableDefinition, RenderedBuiltinPrompt, builtin_prompt,
+    builtin_prompt_examples, builtin_prompt_variables, render_prompt_content,
     validate_builtin_prompt_pair,
 };
-use nekowriter_core::{ProjectId, VersionId};
+use nekowriter_core::{
+    ProjectId, TemplateError, TemplateVariable, VersionId, render_template_preview,
+    require_declared_placeholders, validate_template, validate_template_variables,
+};
 use nekowriter_store::{PromptOverride, PromptOverrideScope, Store, StoreError};
 use serde::{Deserialize, Serialize};
 
@@ -57,7 +60,7 @@ impl EffectivePrompt {
         &self,
         key: PromptKey,
         variables: &BTreeMap<String, String>,
-    ) -> Result<RenderedBuiltinPrompt, PromptTemplateError> {
+    ) -> Result<RenderedBuiltinPrompt, TemplateError> {
         render_prompt_content(key, &self.system, &self.user, variables)
     }
 }
@@ -217,26 +220,52 @@ fn override_content(overridden: &PromptOverride) -> PromptOverrideContent {
 }
 
 /// 保存前预览的请求体。
+///
+/// 两个变体共用同一条路由，因为它们都是「类型化模板校验与预览」：内建提示词用
+/// 声明的示例值渲染，用户模板用调用方提供的值、缺省回落到示例值。
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PreviewPromptRequest {
-    #[serde(default)]
-    pub project_id: Option<ProjectId>,
-    pub prompt_key: String,
-    #[serde(default)]
-    pub system: Option<String>,
-    #[serde(default)]
-    pub user: Option<String>,
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum PreviewPromptRequest {
+    Builtin {
+        #[serde(default)]
+        project_id: Option<ProjectId>,
+        prompt_key: String,
+        #[serde(default)]
+        system: Option<String>,
+        #[serde(default)]
+        user: Option<String>,
+    },
+    Template {
+        body: String,
+        #[serde(default)]
+        variables: Vec<TemplateVariable>,
+        #[serde(default)]
+        values: BTreeMap<String, String>,
+    },
 }
 
 /// 用示例值渲染后的提示词内容。
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PreviewPromptResponse {
-    pub prompt_key: &'static str,
-    pub source: PromptSource,
-    pub system: String,
-    pub user: String,
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum PreviewPromptResponse {
+    Builtin {
+        prompt_key: &'static str,
+        source: PromptSource,
+        system: String,
+        user: String,
+    },
+    Template {
+        rendered: String,
+        used_variables: Vec<String>,
+    },
 }
 
 /// 校验并渲染一份提示词草稿。
@@ -251,19 +280,43 @@ pub async fn preview_prompt(
     store: &Store,
     request: PreviewPromptRequest,
 ) -> Result<PreviewPromptResponse, ApiError> {
-    let key = parse_prompt_key(&request.prompt_key)?;
-    let effective = resolve_prompt(store, request.project_id, key).await?;
-    let system = request.system.unwrap_or(effective.system);
-    let user = request.user.unwrap_or(effective.user);
-    // 保存前的校验与渲染共用同一份示例值，因此预览失败即保存会被拒绝。
-    validate_builtin_prompt_pair(key, &system, &user)?;
-    let rendered = render_prompt_content(key, &system, &user, &builtin_prompt_examples(key))?;
-    Ok(PreviewPromptResponse {
-        prompt_key: key.as_str(),
-        source: effective.source,
-        system: rendered.system,
-        user: rendered.user,
-    })
+    match request {
+        PreviewPromptRequest::Builtin {
+            project_id,
+            prompt_key,
+            system,
+            user,
+        } => {
+            let key = parse_prompt_key(&prompt_key)?;
+            let effective = resolve_prompt(store, project_id, key).await?;
+            let system = system.unwrap_or(effective.system);
+            let user = user.unwrap_or(effective.user);
+            // 保存前的校验与渲染共用同一份示例值，因此预览失败即保存会被拒绝。
+            validate_builtin_prompt_pair(key, &system, &user)?;
+            let rendered =
+                render_prompt_content(key, &system, &user, &builtin_prompt_examples(key))?;
+            Ok(PreviewPromptResponse::Builtin {
+                prompt_key: key.as_str(),
+                source: effective.source,
+                system: rendered.system,
+                user: rendered.user,
+            })
+        }
+        PreviewPromptRequest::Template {
+            body,
+            variables,
+            values,
+        } => {
+            validate_template_variables(&variables)?;
+            let used = validate_template(&body, &variables)?;
+            require_declared_placeholders(&used, &variables)?;
+            let rendered = render_template_preview(&body, &variables, &values)?;
+            Ok(PreviewPromptResponse::Template {
+                rendered,
+                used_variables: used.into_iter().collect(),
+            })
+        }
+    }
 }
 
 /// 把 HTTP 路径或请求体中的稳定键解析为提示词键。
@@ -460,6 +513,64 @@ mod tests {
                 .filter(|entry| entry.key != PromptKey::PreparationGenerate.as_str())
                 .all(|entry| entry.effective_source == PromptSource::Builtin)
         );
+    }
+
+    /// 模板预览与内建预览共用同一条路由，但必须走同一份受限模板校验。
+    #[tokio::test]
+    async fn preview_route_renders_user_templates_and_rejects_bad_ones() {
+        let (_data_dir, store, _project_id, _version_id) = prompt_store().await;
+        let variables = vec![TemplateVariable {
+            name: "tone".to_owned(),
+            description: "语气".to_owned(),
+            value_type: "text".to_owned(),
+            required: true,
+            example: "克制".to_owned(),
+        }];
+        let rendered = preview_prompt(
+            &store,
+            PreviewPromptRequest::Template {
+                body: "保持{{tone}}。".to_owned(),
+                variables: variables.clone(),
+                values: BTreeMap::from([("tone".to_owned(), "冷静".to_owned())]),
+            },
+        )
+        .await
+        .unwrap();
+        match rendered {
+            PreviewPromptResponse::Template {
+                rendered,
+                used_variables,
+            } => {
+                assert_eq!(rendered, "保持冷静。");
+                assert_eq!(used_variables, vec!["tone".to_owned()]);
+            }
+            PreviewPromptResponse::Builtin { .. } => panic!("模板预览不能返回内建变体"),
+        }
+
+        // 未声明的变量、缺失必需占位符与不完整括号都必须被拒绝。
+        let error = preview_prompt(
+            &store,
+            PreviewPromptRequest::Template {
+                body: "{{unknown}}".to_owned(),
+                variables: variables.clone(),
+                values: BTreeMap::new(),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, ApiError::PromptTemplate(_)));
+
+        let error = preview_prompt(
+            &store,
+            PreviewPromptRequest::Template {
+                body: "缺少占位符".to_owned(),
+                variables,
+                values: BTreeMap::new(),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, ApiError::PromptTemplate(_)));
     }
 
     #[test]

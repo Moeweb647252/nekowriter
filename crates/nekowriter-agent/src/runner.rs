@@ -20,11 +20,21 @@ use crate::provider::{
 };
 
 /// 当前模型响应必须使用的阶段提交结构。
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+///
+/// 准备阶段携带 `required_artifacts`：这是本轮必须提交的产物项。首轮是四项全齐，
+/// 修订轮只是需要修订的那些项 —— Store 在修订轮只接受这些，因此合同与解析器都
+/// 按同一份清单生成，模型不会因为「照合同提交」而被拒绝。
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PhaseSubmissionKind {
-    Preparation,
-    ChapterOutline { chapter_id: ChapterId },
-    Chapter { chapter_id: ChapterId },
+    Preparation {
+        required_artifacts: Vec<PreparationArtifactKind>,
+    },
+    ChapterOutline {
+        chapter_id: ChapterId,
+    },
+    Chapter {
+        chapter_id: ChapterId,
+    },
     Review,
 }
 
@@ -41,7 +51,9 @@ pub enum PhaseSubmission {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreparationSubmission {
     pub artifacts: Vec<PreparationArtifactInput>,
-    pub chapter_plan: Vec<ChapterPlanDraft>,
+    /// 只有本轮需要修订粗纲时才带章节计划；其余轮次为 `None`，与 Store 的
+    /// 「未提交粗纲时不能修改章节计划」一致。
+    pub chapter_plan: Option<Vec<ChapterPlanDraft>>,
 }
 
 /// 一章细纲的类型化提交。
@@ -198,19 +210,21 @@ impl<P: ModelProvider> AgentRunner<P> {
 ///
 /// 响应不是当前阶段要求的完整 JSON，或其中字段未通过领域校验时返回错误。
 pub fn parse_phase_submission(
-    stage: PhaseSubmissionKind,
+    stage: &PhaseSubmissionKind,
     content: &str,
 ) -> Result<PhaseSubmission, PhaseSubmissionError> {
     if content.trim().is_empty() {
         return Err(PhaseSubmissionError::EmptyFinalResponse);
     }
     match stage {
-        PhaseSubmissionKind::Preparation => parse_preparation_submission(content),
+        PhaseSubmissionKind::Preparation { required_artifacts } => {
+            parse_preparation_submission(required_artifacts, content)
+        }
         PhaseSubmissionKind::ChapterOutline { chapter_id } => {
-            parse_outline_submission(chapter_id, content)
+            parse_outline_submission(*chapter_id, content)
         }
         PhaseSubmissionKind::Chapter { chapter_id } => {
-            parse_chapter_submission(chapter_id, content)
+            parse_chapter_submission(*chapter_id, content)
         }
         PhaseSubmissionKind::Review => parse_review_submission(content),
     }
@@ -230,7 +244,7 @@ pub fn classify_model_completion(
     request: &ModelRequest,
     completion: ModelCompletion,
 ) -> Result<AgentRoundOutcome, AgentRunnerError> {
-    validate_declared_tools(stage, request)?;
+    validate_declared_tools(&stage, request)?;
     if !completion.tool_calls.is_empty() {
         if completion.tool_calls.len() != 1 {
             return Err(AgentRunnerError::ParallelToolCalls {
@@ -252,7 +266,7 @@ pub fn classify_model_completion(
         if completion.finish_reason != ModelFinishReason::ToolCalls {
             return Err(AgentRunnerError::InvalidToolFinishReason);
         }
-        if !allowed_tools(stage).contains(&call.name.as_str()) {
+        if !allowed_tools(&stage).contains(&call.name.as_str()) {
             return Err(AgentRunnerError::DisallowedToolCall {
                 stage,
                 tool: call.name,
@@ -267,7 +281,7 @@ pub fn classify_model_completion(
         return Err(AgentRunnerError::InvalidToolFinishReason);
     }
     let content = completion.content.unwrap_or_default();
-    parse_phase_submission(stage, &content)
+    parse_phase_submission(&stage, &content)
         .map(AgentRoundOutcome::Submission)
         .map_err(|error| AgentRunnerError::InvalidPhaseSubmission {
             raw_response: content,
@@ -276,14 +290,14 @@ pub fn classify_model_completion(
 }
 
 fn validate_declared_tools(
-    stage: PhaseSubmissionKind,
+    stage: &PhaseSubmissionKind,
     request: &ModelRequest,
 ) -> Result<(), AgentRunnerError> {
     let allowed_tools = allowed_tools(stage);
     for tool in &request.tools {
         if !allowed_tools.contains(&tool.name.as_str()) {
             return Err(AgentRunnerError::DisallowedDeclaredTool {
-                stage,
+                stage: stage.clone(),
                 tool: tool.name.clone(),
             });
         }
@@ -291,9 +305,9 @@ fn validate_declared_tools(
     Ok(())
 }
 
-fn allowed_tools(stage: PhaseSubmissionKind) -> &'static [&'static str] {
+fn allowed_tools(stage: &PhaseSubmissionKind) -> &'static [&'static str] {
     match stage {
-        PhaseSubmissionKind::Preparation | PhaseSubmissionKind::ChapterOutline { .. } => {
+        PhaseSubmissionKind::Preparation { .. } | PhaseSubmissionKind::ChapterOutline { .. } => {
             &["ask_user", "query_knowledge", "research_web"]
         }
         PhaseSubmissionKind::Chapter { .. } => &["ask_user", "append_content", "replace_content"],
@@ -301,11 +315,73 @@ fn allowed_tools(stage: PhaseSubmissionKind) -> &'static [&'static str] {
     }
 }
 
+/// 当前阶段必须出现在系统消息里的提交结构说明。
+///
+/// docs/02 §4.1 要求阶段角色包含本阶段的「提交结构」，而章节级提交还带有一个模型无法
+/// 自行推断的 `chapter_id`。合同文本与下方的解析器同源放在这里，避免提示词和校验各自
+/// 漂移：改了字段就必须同时改 [`parse_phase_submission`]。
+#[must_use]
+pub fn submission_contract(stage: &PhaseSubmissionKind) -> String {
+    match stage {
+        PhaseSubmissionKind::Preparation { required_artifacts } => {
+            preparation_contract(required_artifacts)
+        }
+        PhaseSubmissionKind::ChapterOutline { chapter_id } => format!(
+            "阶段提交：完成后只输出一个 JSON 对象，不要使用 Markdown 代码围栏或附加解释。\n\
+{{\"chapter_id\":\"{chapter_id}\",\"content\":\"本细纲正文\",\"goals\":[\"细纲目标一\"]}}\n\
+chapter_id 必须逐字为 \"{chapter_id}\"；content 与每个 goal 都不能为空。"
+        ),
+        PhaseSubmissionKind::Chapter { chapter_id } => format!(
+            "正文只能通过 append_content / replace_content 工具修改，不要在没有工具调用时把正文写进普通文本。\n\
+本章结束时只输出一个 JSON 对象，不要使用 Markdown 代码围栏或附加解释：\n\
+{{\"chapter_id\":\"{chapter_id}\",\"summary\":\"一句话本章小结\"}}\n\
+chapter_id 必须逐字为 \"{chapter_id}\"；summary 不能为空。"
+        ),
+        PhaseSubmissionKind::Review => {
+            "阶段提交：完成后只输出一个 JSON 对象，不要使用 Markdown 代码围栏或附加解释。\n\
+{\"passed\":true,\"confidence\":0.0,\"issues\":[]}\n\
+passed 为布尔值；confidence 为 0 到 1 之间的数值；issues 为字符串数组，没有具体问题时留空数组。"
+                .to_owned()
+        }
+    }
+}
+
+/// 准备阶段的合同文本：骨架与必填规则都按本轮真正需要提交的产物项生成。
+fn preparation_contract(required_artifacts: &[PreparationArtifactKind]) -> String {
+    let skeleton = required_artifacts
+        .iter()
+        .map(|kind| format!("{{\"kind\":\"{}\",\"content\":\"…\"}}", kind.stable_key()))
+        .collect::<Vec<_>>()
+        .join(",");
+    let names = required_artifacts
+        .iter()
+        .map(|kind| kind.stable_key())
+        .collect::<Vec<_>>()
+        .join("、");
+    let outline_required = required_artifacts.contains(&PreparationArtifactKind::Outline);
+    let plan_skeleton = if outline_required {
+        ",\"chapter_plan\":[{\"title\":\"…\",\"goal\":\"…\"}]"
+    } else {
+        ""
+    };
+    let plan_rule = if outline_required {
+        "chapter_plan 至少一项。"
+    } else {
+        "本轮不要输出 chapter_plan：没有修订粗纲就不能改章节计划。"
+    };
+    format!(
+        "阶段提交：完成后只输出一个 JSON 对象，不要使用 Markdown 代码围栏或附加解释。\n\
+{{\"artifacts\":[{skeleton}]{plan_skeleton}}}\n\
+artifacts 必须恰好包含 {names} 各一次（本轮只需提交这些产物）；{plan_rule}"
+    )
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawPreparationSubmission {
     artifacts: Vec<RawPreparationArtifact>,
-    chapter_plan: Vec<RawChapterPlanDraft>,
+    #[serde(default)]
+    chapter_plan: Option<Vec<RawChapterPlanDraft>>,
 }
 
 #[derive(Deserialize)]
@@ -322,7 +398,10 @@ struct RawChapterPlanDraft {
     goal: String,
 }
 
-fn parse_preparation_submission(content: &str) -> Result<PhaseSubmission, PhaseSubmissionError> {
+fn parse_preparation_submission(
+    required_artifacts: &[PreparationArtifactKind],
+    content: &str,
+) -> Result<PhaseSubmission, PhaseSubmissionError> {
     let raw = decode_submission::<RawPreparationSubmission>(content)?;
     let mut seen_kinds = BTreeSet::new();
     let mut artifacts = Vec::with_capacity(raw.artifacts.len());
@@ -340,33 +419,52 @@ fn parse_preparation_submission(content: &str) -> Result<PhaseSubmission, PhaseS
             })?,
         );
     }
-    if seen_kinds.len() != PreparationArtifactKind::ALL.len()
-        || PreparationArtifactKind::ALL
+    let required = required_artifacts.iter().copied().collect::<BTreeSet<_>>();
+    if seen_kinds != required {
+        let names = required_artifacts
             .iter()
-            .any(|kind| !seen_kinds.contains(kind))
-    {
+            .map(|kind| kind.stable_key())
+            .collect::<Vec<_>>()
+            .join("、");
         return Err(PhaseSubmissionError::Invalid {
-            reason: "准备提交必须恰好包含背景、资料、人物和粗纲四项产物".to_owned(),
+            reason: format!("准备提交必须恰好包含 {names} 各一次"),
         });
     }
     artifacts.sort_by_key(|artifact| artifact.kind);
 
-    let chapter_plan = raw
-        .chapter_plan
-        .into_iter()
-        .map(|item| {
-            ChapterPlanDraft::new(item.title, item.goal).map_err(|error| {
-                PhaseSubmissionError::Invalid {
-                    reason: error.to_string(),
-                }
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    // `ChapterPlan` 是唯一负责章节数量及顺序不变量的领域构造器。丢弃此处生成的
-    // 临时 ID；真正提交时 Store 会在同一事务中创建可追溯的稳定计划项 ID。
-    ChapterPlan::from_drafts(&chapter_plan).map_err(|error| PhaseSubmissionError::Invalid {
-        reason: error.to_string(),
-    })?;
+    // 与 Store 的规则一致：粗纲提交必须带章节计划，没改粗纲就不能改章节计划。
+    let outline_required = required.contains(&PreparationArtifactKind::Outline);
+    let chapter_plan = match (outline_required, raw.chapter_plan) {
+        (true, Some(plan)) => {
+            let drafts = plan
+                .into_iter()
+                .map(|item| {
+                    ChapterPlanDraft::new(item.title, item.goal).map_err(|error| {
+                        PhaseSubmissionError::Invalid {
+                            reason: error.to_string(),
+                        }
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            // `ChapterPlan` 是唯一负责章节数量及顺序不变量的领域构造器。丢弃此处生成的
+            // 临时 ID；真正提交时 Store 会在同一事务中创建可追溯的稳定计划项 ID。
+            ChapterPlan::from_drafts(&drafts).map_err(|error| PhaseSubmissionError::Invalid {
+                reason: error.to_string(),
+            })?;
+            Some(drafts)
+        }
+        (false, None) => None,
+        (true, None) => {
+            return Err(PhaseSubmissionError::Invalid {
+                reason: "提交粗纲时必须同时给出至少一项章节计划".to_owned(),
+            });
+        }
+        (false, Some(_)) => {
+            return Err(PhaseSubmissionError::Invalid {
+                reason: "本轮不修改粗纲，不能提交 chapter_plan".to_owned(),
+            });
+        }
+    };
 
     Ok(PhaseSubmission::Preparation(PreparationSubmission {
         artifacts,
@@ -544,7 +642,14 @@ mod tests {
             content: Some(content.into()),
             tool_calls: Vec::new(),
             usage: None,
+            usage_raw: None,
             finish_reason: ModelFinishReason::Stop,
+        }
+    }
+
+    fn preparation_stage() -> PhaseSubmissionKind {
+        PhaseSubmissionKind::Preparation {
+            required_artifacts: PreparationArtifactKind::ALL.to_vec(),
         }
     }
 
@@ -559,7 +664,7 @@ mod tests {
             "chapter_plan": [{ "title": "第一章", "goal": "开场" }]
         })
         .to_string();
-        let error = parse_phase_submission(PhaseSubmissionKind::Preparation, &content).unwrap_err();
+        let error = parse_phase_submission(&preparation_stage(), &content).unwrap_err();
         assert!(matches!(error, PhaseSubmissionError::Invalid { .. }));
 
         let content = json!({
@@ -573,7 +678,7 @@ mod tests {
         })
         .to_string();
         let PhaseSubmission::Preparation(submission) =
-            parse_phase_submission(PhaseSubmissionKind::Preparation, &content).unwrap()
+            parse_phase_submission(&preparation_stage(), &content).unwrap()
         else {
             panic!("expected preparation submission");
         };
@@ -588,6 +693,80 @@ mod tests {
     }
 
     #[test]
+    fn preparation_revision_contract_only_requires_the_artifacts_being_revised() {
+        let research_stage = PhaseSubmissionKind::Preparation {
+            required_artifacts: vec![PreparationArtifactKind::Research],
+        };
+        let contract = submission_contract(&research_stage);
+        assert!(contract.contains("{\"kind\":\"research\""));
+        for unexpected in [
+            "{\"kind\":\"background\"",
+            "{\"kind\":\"characters\"",
+            "{\"kind\":\"outline\"",
+        ] {
+            assert!(
+                !contract.contains(unexpected),
+                "修订合同不应要求 {unexpected}"
+            );
+        }
+        assert!(contract.contains("本轮不要输出 chapter_plan"));
+
+        let research_only = json!({
+            "artifacts": [{ "kind": "research", "content": "补充资料" }]
+        })
+        .to_string();
+        let PhaseSubmission::Preparation(submission) =
+            parse_phase_submission(&research_stage, &research_only).unwrap()
+        else {
+            panic!("expected preparation submission");
+        };
+        assert_eq!(submission.artifacts.len(), 1);
+        assert_eq!(
+            submission.artifacts[0].kind,
+            PreparationArtifactKind::Research
+        );
+        assert!(submission.chapter_plan.is_none());
+
+        let extra_artifact = json!({
+            "artifacts": [
+                { "kind": "research", "content": "补充资料" },
+                { "kind": "background", "content": "不应覆盖的背景" }
+            ]
+        })
+        .to_string();
+        assert!(matches!(
+            parse_phase_submission(&research_stage, &extra_artifact),
+            Err(PhaseSubmissionError::Invalid { .. })
+        ));
+
+        let unexpected_plan = json!({
+            "artifacts": [{ "kind": "research", "content": "补充资料" }],
+            "chapter_plan": [{ "title": "第一章", "goal": "不应修改章节计划" }]
+        })
+        .to_string();
+        assert!(matches!(
+            parse_phase_submission(&research_stage, &unexpected_plan),
+            Err(PhaseSubmissionError::Invalid { .. })
+        ));
+
+        let outline_stage = PhaseSubmissionKind::Preparation {
+            required_artifacts: vec![PreparationArtifactKind::Outline],
+        };
+        let outline_contract = submission_contract(&outline_stage);
+        assert!(outline_contract.contains("{\"kind\":\"outline\""));
+        assert!(outline_contract.contains("chapter_plan 至少一项"));
+        let outline_submission = json!({
+            "artifacts": [{ "kind": "outline", "content": "修订后的粗纲" }],
+            "chapter_plan": [{ "title": "第一章", "goal": "从开场引入冲突" }]
+        })
+        .to_string();
+        assert!(matches!(
+            parse_phase_submission(&outline_stage, &outline_submission),
+            Ok(PhaseSubmission::Preparation(_))
+        ));
+    }
+
+    #[test]
     fn outline_and_chapter_submissions_are_bound_to_the_active_chapter() {
         let chapter_id = Uuid::new_v4();
         let mismatch = json!({
@@ -598,7 +777,7 @@ mod tests {
         .to_string();
         assert!(matches!(
             parse_phase_submission(
-                PhaseSubmissionKind::ChapterOutline { chapter_id },
+                &PhaseSubmissionKind::ChapterOutline { chapter_id },
                 &mismatch
             ),
             Err(PhaseSubmissionError::ChapterIdMismatch)
@@ -610,7 +789,7 @@ mod tests {
         })
         .to_string();
         assert!(matches!(
-            parse_phase_submission(PhaseSubmissionKind::Chapter { chapter_id }, &chapter),
+            parse_phase_submission(&PhaseSubmissionKind::Chapter { chapter_id }, &chapter),
             Ok(PhaseSubmission::Chapter(_))
         ));
     }
@@ -619,13 +798,13 @@ mod tests {
     fn review_submission_accepts_empty_issues_but_rejects_invalid_confidence() {
         let accepted = json!({ "passed": false, "confidence": 0.4, "issues": [] }).to_string();
         assert!(matches!(
-            parse_phase_submission(PhaseSubmissionKind::Review, &accepted),
+            parse_phase_submission(&PhaseSubmissionKind::Review, &accepted),
             Ok(PhaseSubmission::Review(ReviewSubmission { issues, .. })) if issues.is_empty()
         ));
 
         let invalid = json!({ "passed": true, "confidence": 1.2, "issues": [] }).to_string();
         assert!(matches!(
-            parse_phase_submission(PhaseSubmissionKind::Review, &invalid),
+            parse_phase_submission(&PhaseSubmissionKind::Review, &invalid),
             Err(PhaseSubmissionError::Invalid { .. })
         ));
     }
@@ -641,6 +820,7 @@ mod tests {
                 arguments: json!({ "content": "正文" }),
             }],
             usage: None,
+            usage_raw: None,
             finish_reason: ModelFinishReason::ToolCalls,
         };
         let runner = AgentRunner::new(StubProvider {
@@ -649,7 +829,7 @@ mod tests {
         let mut events = |_| {};
         let error = runner
             .run_round(
-                PhaseSubmissionKind::Preparation,
+                preparation_stage(),
                 &request(vec![AgentToolDefinition {
                     name: "append_content".to_owned(),
                     description: "错误工具".to_owned(),
@@ -676,6 +856,7 @@ mod tests {
                 arguments: json!({ "content": "正文" }),
             }],
             usage: None,
+            usage_raw: None,
             finish_reason: ModelFinishReason::ToolCalls,
         };
         let runner = AgentRunner::new(StubProvider {
@@ -757,6 +938,7 @@ mod tests {
                 },
             ],
             usage: None,
+            usage_raw: None,
             finish_reason: ModelFinishReason::ToolCalls,
         };
         let runner = AgentRunner::new(StubProvider {
@@ -792,8 +974,44 @@ mod tests {
     #[test]
     fn plain_prose_is_never_guessed_as_a_submission() {
         assert!(matches!(
-            parse_phase_submission(PhaseSubmissionKind::Review, "我认为本章通过。"),
+            parse_phase_submission(&PhaseSubmissionKind::Review, "我认为本章通过。"),
             Err(PhaseSubmissionError::InvalidJson { .. })
         ));
+    }
+
+    #[test]
+    fn submission_contract_states_every_field_the_parser_requires() {
+        let chapter_id = Uuid::new_v4();
+        let chord = chapter_id.to_string();
+
+        let preparation = submission_contract(&preparation_stage());
+        for key in [
+            "artifacts",
+            "chapter_plan",
+            "background",
+            "research",
+            "characters",
+            "outline",
+            "title",
+            "goal",
+        ] {
+            assert!(preparation.contains(key), "准备合同缺少 {key}");
+        }
+
+        let outline = submission_contract(&PhaseSubmissionKind::ChapterOutline { chapter_id });
+        for key in ["chapter_id", "content", "goals"] {
+            assert!(outline.contains(key), "细纲合同缺少 {key}");
+        }
+        // 模型无法推断的章节 ID 必须作为具体值出现，否则提交永远无法通过。
+        assert!(outline.contains(&chord));
+
+        let chapter = submission_contract(&PhaseSubmissionKind::Chapter { chapter_id });
+        assert!(chapter.contains("summary"));
+        assert!(chapter.contains(&chord));
+
+        let review = submission_contract(&PhaseSubmissionKind::Review);
+        for key in ["passed", "confidence", "issues"] {
+            assert!(review.contains(key), "审核合同缺少 {key}");
+        }
     }
 }

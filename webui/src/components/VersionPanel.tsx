@@ -1,5 +1,13 @@
 import { useEffect, useState, type FormEvent } from "react"
-import { CopyPlus, FilePlus2, GitBranch } from "lucide-react"
+import {
+  CircleAlert,
+  CopyPlus,
+  Download,
+  FilePlus2,
+  GitBranch,
+  LoaderCircle,
+  Trash2,
+} from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -19,8 +27,11 @@ import {
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import {
+  deleteVersion,
+  ApiError,
   copyVersion,
   createVersion,
+  downloadVersionExport,
   listVersions,
   selectVersion,
   type NovelVersion,
@@ -28,11 +39,27 @@ import {
   type ProjectBundle,
 } from "@/lib/api"
 
+/** 触发浏览器下载：用服务端给出的文件名保存刚拿到的文本。 */
+function saveTextFile(fileName: string, content: string) {
+  const url = URL.createObjectURL(
+    new Blob([content], { type: "text/plain;charset=utf-8" })
+  )
+  const anchor = document.createElement("a")
+  anchor.href = url
+  anchor.download = fileName
+  document.body.append(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(url)
+}
+
 type VersionPanelProps = {
   project: Project
   selectedVersion: NovelVersion
   onChanged: (bundle: ProjectBundle) => void
   onError: (message: string) => void
+  /** 稿本被软删除后调用：它是回收站里的对象，项目列表与目录都要重新读。 */
+  onDeleted?: () => void
 }
 
 export function VersionPanel({
@@ -40,14 +67,18 @@ export function VersionPanel({
   selectedVersion,
   onChanged,
   onError,
+  onDeleted,
 }: VersionPanelProps) {
   const [versions, setVersions] = useState<NovelVersion[]>([])
   const [emptyLabel, setEmptyLabel] = useState("")
   const [emptyTitle, setEmptyTitle] = useState("")
   const [copyLabel, setCopyLabel] = useState("")
   const [pending, setPending] = useState<
-    "select" | "empty" | "copy" | null
+    "select" | "empty" | "copy" | "export-md" | "export-txt" | null
   >(null)
+  const [exportNotice, setExportNotice] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState<string | null>(null)
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null)
 
   useEffect(() => {
     let isCurrent = true
@@ -68,9 +99,7 @@ export function VersionPanel({
     if (version.id === selectedVersion.id || pending) return
     setPending("select")
     try {
-      onChanged(
-        await selectVersion(project.id, version.id, project.revision),
-      )
+      onChanged(await selectVersion(project.id, version.id, project.revision))
     } catch (error) {
       onError(error instanceof Error ? error.message : "稿本切换失败")
     } finally {
@@ -86,7 +115,7 @@ export function VersionPanel({
         await createVersion(project.id, {
           label: emptyLabel,
           novelTitle: emptyTitle,
-        }),
+        })
       )
       setEmptyLabel("")
       setEmptyTitle("")
@@ -110,37 +139,102 @@ export function VersionPanel({
     }
   }
 
+  async function handleDelete(version: NovelVersion) {
+    if (confirmingDelete !== version.id) {
+      setConfirmingDelete(version.id)
+      return
+    }
+    setConfirmingDelete(null)
+    setDeleting(version.id)
+    try {
+      await deleteVersion(version.id, version.revision)
+      onDeleted?.()
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "稿本未能删除")
+    } finally {
+      setDeleting(null)
+    }
+  }
+
+  async function handleExport(format: "md" | "txt") {
+    setPending(`export-${format}`)
+    setExportNotice(null)
+    try {
+      const { fileName, content } = await downloadVersionExport(
+        selectedVersion.id,
+        format
+      )
+      saveTextFile(fileName, content)
+      setExportNotice(`已导出 ${fileName}`)
+    } catch (error) {
+      setExportNotice(
+        error instanceof ApiError || error instanceof Error
+          ? error.message
+          : "导出失败"
+      )
+    } finally {
+      setPending(null)
+    }
+  }
+
   return (
     <Card className="mt-6">
       <CardHeader>
         <CardTitle>稿本</CardTitle>
         <CardDescription>
           每个稿本拥有独立的工作流、章节和审核记录；切换只改变当前工作台，不会混写内容。
+          删除稿本只是软删除，可以从回收站恢复；当前选中的稿本要先切走才能删除。
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
         <div className="space-y-2" aria-label="稿本列表">
           {versions.map((version) => {
             const selected = version.id === selectedVersion.id
+            const busy = deleting === version.id
             return (
-              <Button
-                key={version.id}
-                type="button"
-                variant={selected ? "default" : "outline"}
-                className="h-auto w-full justify-start px-3 py-3 text-left"
-                disabled={pending !== null || selected}
-                onClick={() => void handleSelect(version)}
-              >
-                <GitBranch data-icon="inline-start" aria-hidden="true" />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-medium">{version.label}</span>
-                  <span className="mt-0.5 block truncate text-xs opacity-75">
-                    {version.novelTitle}
-                    {version.sourceVersionId ? " · 复制稿" : ""}
+              <div key={version.id} className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant={selected ? "default" : "outline"}
+                  className="h-auto min-w-0 flex-1 justify-start px-3 py-3 text-left"
+                  disabled={pending !== null || selected || busy}
+                  onClick={() => void handleSelect(version)}
+                >
+                  <GitBranch data-icon="inline-start" aria-hidden="true" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">
+                      {version.label}
+                    </span>
+                    <span className="mt-0.5 block truncate text-xs opacity-75">
+                      {version.novelTitle}
+                      {version.sourceVersionId ? " · 复制稿" : ""}
+                    </span>
                   </span>
-                </span>
-                {selected && <span className="text-xs opacity-75">当前</span>}
-              </Button>
+                  {selected && <span className="text-xs opacity-75">当前</span>}
+                </Button>
+                {!selected && versions.length > 1 ? (
+                  <Button
+                    type="button"
+                    variant={
+                      confirmingDelete === version.id ? "destructive" : "ghost"
+                    }
+                    size="sm"
+                    className="shrink-0"
+                    disabled={pending !== null || busy}
+                    onClick={() => void handleDelete(version)}
+                  >
+                    {busy ? (
+                      <LoaderCircle
+                        className="animate-spin"
+                        aria-hidden="true"
+                      />
+                    ) : (
+                      <Trash2 aria-hidden="true" />
+                    )}
+                    {confirmingDelete === version.id ? "确认删除" : "删除"}
+                  </Button>
+                ) : null}
+              </div>
             )
           })}
         </div>
@@ -199,7 +293,8 @@ export function VersionPanel({
                 placeholder="例如：第二稿"
               />
               <FieldDescription>
-                只复制当前已通过的小说目标、准备产物和章节。未通过草稿、Run、工具调用、意见、审核过程及 Token 用量不会复制。
+                只复制当前已通过的小说目标、准备产物和章节。未通过草稿、Run、工具调用、意见、审核过程及
+                Token 用量不会复制。
               </FieldDescription>
             </Field>
             <Button type="submit" variant="outline" disabled={pending !== null}>
@@ -212,6 +307,59 @@ export function VersionPanel({
             </Button>
           </FieldGroup>
         </form>
+        <div className="space-y-2">
+          <span className="text-sm font-medium">导出当前稿本</span>
+          <p className="text-xs text-muted-foreground">
+            导出「{selectedVersion.label}
+            」已提交的正文，按正文计划顺序与番外顺序排列，
+            含小说标题与章节标题；未通过整章审核的章节标为草稿。内容每次现读，
+            与本地数据库一致。
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={pending !== null}
+              onClick={() => void handleExport("md")}
+            >
+              {pending === "export-md" ? (
+                <Spinner data-icon="inline-start" />
+              ) : (
+                <Download data-icon="inline-start" aria-hidden="true" />
+              )}
+              导出 Markdown
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={pending !== null}
+              onClick={() => void handleExport("txt")}
+            >
+              {pending === "export-txt" ? (
+                <Spinner data-icon="inline-start" />
+              ) : (
+                <Download data-icon="inline-start" aria-hidden="true" />
+              )}
+              导出纯文本
+            </Button>
+          </div>
+          {exportNotice ? (
+            <p
+              role="status"
+              className="flex items-center gap-2 text-xs text-muted-foreground"
+            >
+              {exportNotice.startsWith("已导出") ? (
+                <Download className="size-3.5" aria-hidden="true" />
+              ) : (
+                <CircleAlert
+                  className="size-3.5 text-destructive"
+                  aria-hidden="true"
+                />
+              )}
+              {exportNotice}
+            </p>
+          ) : null}
+        </div>
       </CardContent>
       <CardFooter className="justify-end text-xs text-muted-foreground">
         复制后的稿本会从第一个未完成的正文章节继续；已完本的正文保持完本状态。

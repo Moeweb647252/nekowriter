@@ -9,4 +9,6 @@
 - Lean on the dependencies already in the project before writing your own implementation or adding packages. Do not assume a library lacks a capability without checking its documentation and types.
 - Make architectural decisions for the long term. Do not accept a stopgap that only works for now and is meant to be replaced later.
 - Instead of quick, crude, and temporary, make implementations simple, robust and fully considered.
+- Search with ripgrep (`rg`, or the editor's `code_search` / `glob` tools) instead of `grep`. Read a file in windows around a match rather than reading it whole.
+- Do not compile or test just to look at something. Batch the verification a change actually needs into one run at the end of the change; a type check, a test run and a build are one verification, not three.
 - The work of writing documents needs to be taken seriously. Make sure that the documents are standardized, clear, and accurate. The only one purpose of writing documents is to give the maintainer enough information.

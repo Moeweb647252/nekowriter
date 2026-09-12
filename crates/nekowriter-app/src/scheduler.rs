@@ -15,18 +15,19 @@ use nekowriter_agent::{
     ContextFoldStage, ContextMessageRole, CurrentContextInput, PromptKey, RenderedBuiltinPrompt,
     UnfoldedStageMessage,
     provider::{
-        ChatCompletionsAdapter, ChatCompletionsConfig, ModelCompletion, ModelFailureCode,
-        ModelRequest, ModelRequestMessage, ModelTimeouts, ModelToolCall, ProviderError,
-        StructuredOutput,
+        ChatCompletionsAdapter, ChatCompletionsConfig, ModelCompletion, ModelEvent,
+        ModelFailureCode, ModelRequest, ModelRequestMessage, ModelTimeouts, ModelToolCall,
+        ProviderError, StructuredOutput,
     },
     runner::{
-        AgentRoundOutcome, PhaseSubmission, PhaseSubmissionKind, ToolHost, ToolHostError,
-        ToolResult, classify_model_completion,
+        AgentRoundOutcome, AgentRunnerError, PhaseSubmission, PhaseSubmissionKind, ToolHost,
+        ToolHostError, ToolResult, classify_model_completion, submission_contract,
     },
 };
 use nekowriter_core::{
-    ChapterId, ChapterKind, ChapterPlan, ChapterSummary, ExecutionStatus, FeedbackStatus,
-    PreparationArtifactKind, ReviewId, RunId, VersionId, WorkflowSnapshot, WorkflowStage,
+    AuxiliaryToolCharge, ChapterId, ChapterKind, ChapterPlan, ChapterSummary, ExecutionStatus,
+    FeedbackCitation, FeedbackStatus, PreparationArtifactKind, QuotaBalance, ReviewId,
+    ReviewStatus, RunId, TOOL_QUERY_KNOWLEDGE, VersionId, WorkflowSnapshot, WorkflowStage,
 };
 
 use crate::model_settings::{
@@ -36,14 +37,15 @@ use crate::model_settings::{
 use nekowriter_store::{
     AgentMessageRole, AgentQuestionToolCall, AppliedAgentQuestionToolCall,
     AppliedChapterBodyToolCall, ChapterBodyAgentToolCall, CompletedRunContextFold,
-    CompletedRunContextStage, DelegatedReviewKind, MaterializedChapterBodyFeedback,
-    ModelProtocolCorrection, ModelRequestResolution, NewAgentMessage, NewModelRequest,
-    PersistedAgentMessage, Store, StoreError,
+    CompletedRunContextStage, DelegatedReviewKind, FreeAgentToolCall,
+    MaterializedChapterBodyFeedback, ModelProtocolCorrection, ModelRequestResolution,
+    NewAgentMessage, NewModelRequest, PersistedAgentMessage, Store, StoreError,
 };
+use serde::Serialize;
 use serde_json::{Value, json};
 use thiserror::Error;
 use tokio::{
-    sync::{Mutex, OwnedSemaphorePermit, Semaphore, mpsc, oneshot},
+    sync::{Mutex, OwnedSemaphorePermit, Semaphore, broadcast, mpsc, oneshot},
     task::JoinHandle,
 };
 use tracing::{debug, info, warn};
@@ -71,6 +73,10 @@ async fn render_effective_prompt(
 use crate::credentials;
 
 const LANE_CHANNEL_CAPACITY: usize = 32;
+const PREVIEW_DELTA_CHANNEL_CAPACITY: usize = 256;
+
+/// 退出时等待在途模型请求任务结束的上限。
+const CANCEL_SETTLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// 内存调度层的可恢复错误。所有有价值的工作流状态仍由 Store 的事务维护。
 #[derive(Debug, Error)]
@@ -109,6 +115,41 @@ pub struct WorkflowScheduler {
     settings_snapshot_lock: Arc<Mutex<()>>,
     lanes: Arc<Mutex<HashMap<VersionId, mpsc::Sender<LaneCommand>>>>,
     in_flight_requests: Arc<Mutex<HashMap<Uuid, InFlightModelRequest>>>,
+    preview_deltas: broadcast::Sender<PreviewDelta>,
+}
+
+/// 一个仅在当前进程内存中存在的模型流式片段。
+///
+/// 它永不写入 SQLite，也没有可恢复的事件序列号；客户端以 `request_id + tool +
+/// offset` 管理这层临时缓冲，任何丢失都不会影响已提交修订。
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewDelta {
+    pub version_id: VersionId,
+    pub request_id: Uuid,
+    pub tool: Option<PreviewTool>,
+    #[serde(with = "nekowriter_core::decimal_i64")]
+    pub offset: i64,
+    pub content: String,
+}
+
+/// 工具参数流的临时归属。`index` 在同一模型响应内稳定；供应商稍后才补齐 ID 或
+/// 名称时，后续 delta 会携带最新值。
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewTool {
+    pub index: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+#[derive(Default)]
+struct PreviewToolState {
+    offset: i64,
+    id: Option<String>,
+    name: Option<String>,
 }
 
 enum LaneCommand {
@@ -144,6 +185,7 @@ struct InFlightModelRequest {
 /// 采用哪一种提示词或结构化提交合同。
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct ScheduledRun {
+    version_id: VersionId,
     run_id: RunId,
     stage: ScheduledStage,
 }
@@ -232,13 +274,50 @@ impl WorkflowScheduler {
         model_request_permit: Arc<Semaphore>,
         settings_snapshot_lock: Arc<Mutex<()>>,
     ) -> Self {
+        let (preview_deltas, _) = broadcast::channel(PREVIEW_DELTA_CHANNEL_CAPACITY);
+        Self::with_preview_deltas(
+            store,
+            model_request_permit,
+            settings_snapshot_lock,
+            preview_deltas,
+        )
+    }
+
+    /// 创建与 API SSE 层共用同一临时预览广播的调度器。
+    #[must_use]
+    pub fn with_preview_deltas(
+        store: Store,
+        model_request_permit: Arc<Semaphore>,
+        settings_snapshot_lock: Arc<Mutex<()>>,
+        preview_deltas: broadcast::Sender<PreviewDelta>,
+    ) -> Self {
         Self {
             store,
             model_request_permit,
             settings_snapshot_lock,
             lanes: Arc::new(Mutex::new(HashMap::new())),
             in_flight_requests: Arc::new(Mutex::new(HashMap::new())),
+            preview_deltas,
         }
+    }
+
+    /// 当前 Run 的辅助工具能力与余额。
+    ///
+    /// `query_knowledge` 只有在 Embedding 已配置、索引确有可检索条目、且本项目还剩
+    /// 预算时才会被宣告；未宣告的调用仍会返回明确的工具错误，而不是静默降级。
+    async fn agent_auxiliary_capabilities(
+        &self,
+        run_id: RunId,
+    ) -> Result<(bool, QuotaBalance), SchedulerError> {
+        let balance = self.store.quota_balance(run_id).await?;
+        let available = balance.remaining > 0
+            && self
+                .store
+                .knowledge_index_coverage(&[])
+                .await?
+                .ready_entries
+                > 0;
+        Ok((available, balance))
     }
 
     /// 终止某 Run 的尚未发送或正在发送的本地调度工作。
@@ -273,6 +352,42 @@ impl WorkflowScheduler {
         }
     }
 
+    /// 退出服务时的本地收尾：取消所有在途模型请求并关闭各稿本的命令循环。
+    ///
+    /// 已发往外部服务的调用是否取消成功不作保证，因此这里不写任何持久状态；
+    /// 调用方随后用 [`nekowriter_store::InterruptionSource::ProcessShutdown`] 把在途
+    /// Run 与请求收束到可解释的终态。等待被取消的任务有时间上限，避免卡住的
+    /// 网络调用把进程退出拖成孤儿进程。
+    pub async fn cancel_in_flight(&self) {
+        let task_handles = {
+            let mut in_flight = self.in_flight_requests.lock().await;
+            in_flight
+                .drain()
+                .map(|(_, request)| request.task_handle)
+                .collect::<Vec<_>>()
+        };
+        let cancelled = task_handles.len();
+        for task_handle in &task_handles {
+            task_handle.abort();
+        }
+        let settled = async {
+            for task_handle in task_handles {
+                let _ = task_handle.await;
+            }
+        };
+        if tokio::time::timeout(CANCEL_SETTLE_TIMEOUT, settled)
+            .await
+            .is_err()
+        {
+            warn!("有模型请求任务未在退出超时内结束，继续收尾");
+        }
+        // 丢弃发送端即结束各稿本命令循环；循环持有的 Run 状态已在 Store 中收束。
+        self.lanes.lock().await.clear();
+        if cancelled > 0 {
+            info!(cancelled, "已取消在途模型请求");
+        }
+    }
+
     /// 将准备阶段执行入口投递给该稿本的串行循环。
     ///
     /// 相同 Run 的重复投递会在循环内合并，不会排队两个模型请求或重复消耗额度。
@@ -284,6 +399,7 @@ impl WorkflowScheduler {
         self.enqueue(
             version_id,
             ScheduledRun {
+                version_id,
                 run_id,
                 stage: ScheduledStage::Preparation,
             },
@@ -301,6 +417,7 @@ impl WorkflowScheduler {
         self.enqueue(
             version_id,
             ScheduledRun {
+                version_id,
                 run_id,
                 stage: ScheduledStage::ChapterOutline { chapter_id },
             },
@@ -318,6 +435,7 @@ impl WorkflowScheduler {
         self.enqueue(
             version_id,
             ScheduledRun {
+                version_id,
                 run_id,
                 stage: ScheduledStage::ChapterBody { chapter_id },
             },
@@ -335,6 +453,7 @@ impl WorkflowScheduler {
         self.enqueue(
             version_id,
             ScheduledRun {
+                version_id,
                 run_id,
                 stage: ScheduledStage::Review { review_id },
             },
@@ -602,6 +721,9 @@ impl WorkflowScheduler {
                         "当前活跃 Run 已改变，拒绝发送过期准备请求".to_owned(),
                     ));
                 }
+                // 本轮必须提交的产物项与系统消息里的合同同源，必须在把快照内容
+                // 移出之前算好。
+                let required_artifacts = required_preparation_artifacts(&snapshot)?;
                 let novel_brief = snapshot
                     .novel_brief
                     .content
@@ -621,9 +743,15 @@ impl WorkflowScheduler {
                     .store
                     .list_unsealed_agent_tool_result_provider_ids(task.run_id)
                     .await?;
+                let (knowledge_available, quota_balance) =
+                    self.agent_auxiliary_capabilities(task.run_id).await?;
+                let system_instructions = stage_system_instructions(
+                    &prompt,
+                    &PhaseSubmissionKind::Preparation { required_artifacts },
+                );
                 let context = build_context_with_history(
-                    prompt.system.clone(),
-                    ask_user_tools(),
+                    system_instructions,
+                    preparation_agent_tools(knowledge_available, quota_balance.remaining),
                     Vec::new(),
                     vec![CurrentContextInput {
                         role: ContextMessageRole::User,
@@ -710,9 +838,15 @@ impl WorkflowScheduler {
                     .store
                     .list_unsealed_agent_tool_result_provider_ids(task.run_id)
                     .await?;
+                let (knowledge_available, quota_balance) =
+                    self.agent_auxiliary_capabilities(task.run_id).await?;
+                let system_instructions = stage_system_instructions(
+                    &prompt,
+                    &PhaseSubmissionKind::ChapterOutline { chapter_id },
+                );
                 let context = build_context_with_history(
-                    prompt.system.clone(),
-                    ask_user_tools(),
+                    system_instructions,
+                    preparation_agent_tools(knowledge_available, quota_balance.remaining),
                     completed_stages,
                     vec![CurrentContextInput {
                         role: ContextMessageRole::User,
@@ -816,8 +950,12 @@ impl WorkflowScheduler {
                     &variables,
                 )
                 .await?;
+                let system_instructions = stage_system_instructions(
+                    &prompt,
+                    &PhaseSubmissionKind::Chapter { chapter_id },
+                );
                 let context = build_context_with_history(
-                    prompt.system.clone(),
+                    system_instructions,
                     chapter_body_tools(),
                     completed_stages,
                     vec![CurrentContextInput {
@@ -905,13 +1043,15 @@ impl WorkflowScheduler {
                 let (prompt, prompt_source) =
                     render_effective_prompt(&self.store, version_id, prompt_key, &variables)
                         .await?;
-                let user_content = if review.user_notes.trim().is_empty() {
-                    prompt.user.clone()
-                } else {
-                    format!("{}\n\n用户审核关注点：{}", prompt.user, review.user_notes)
-                };
+                let user_content = delegated_review_user_content(
+                    prompt.user.clone(),
+                    &review.user_notes,
+                    &review.citations,
+                );
+                let system_instructions =
+                    stage_system_instructions(&prompt, &PhaseSubmissionKind::Review);
                 let context = build_context_with_history(
-                    prompt.system.clone(),
+                    system_instructions,
                     Vec::new(),
                     Vec::new(),
                     vec![CurrentContextInput {
@@ -1001,13 +1141,70 @@ impl WorkflowScheduler {
         // 命令可能只作废数据库 request，却错过仍在等待/执行的 HTTP 任务。
         let (start_sender, start_receiver) = oneshot::channel();
         let in_flight_requests = self.in_flight_requests.clone();
+        let preview_deltas = self.preview_deltas.clone();
         let callback_sender = sender.clone();
         let task_handle = tokio::spawn(async move {
             if start_receiver.await.is_err() {
                 drop(permit);
                 return;
             }
-            let result = provider.execute_with(&request, |_| {}).await;
+            let mut text_offset = 0_i64;
+            let mut tool_states = HashMap::<usize, PreviewToolState>::new();
+            let result = provider
+                .execute_with(&request, |event| match event {
+                    ModelEvent::TextDelta { content } if !content.is_empty() => {
+                        let offset = text_offset;
+                        let length = i64::try_from(content.chars().count()).unwrap_or(i64::MAX);
+                        text_offset = text_offset.saturating_add(length);
+                        let _ = preview_deltas.send(PreviewDelta {
+                            version_id: task.version_id,
+                            request_id,
+                            tool: None,
+                            offset,
+                            content,
+                        });
+                    }
+                    ModelEvent::ToolCallDelta {
+                        index,
+                        id,
+                        name,
+                        arguments_delta,
+                    } => {
+                        let (offset, tool) = {
+                            let state = tool_states.entry(index).or_default();
+                            if id.is_some() {
+                                state.id = id;
+                            }
+                            if name.is_some() {
+                                state.name = name;
+                            }
+                            let offset = state.offset;
+                            let length =
+                                i64::try_from(arguments_delta.chars().count()).unwrap_or(i64::MAX);
+                            state.offset = state.offset.saturating_add(length);
+                            (
+                                offset,
+                                PreviewTool {
+                                    index,
+                                    id: state.id.clone(),
+                                    name: state.name.clone(),
+                                },
+                            )
+                        };
+                        let _ = preview_deltas.send(PreviewDelta {
+                            version_id: task.version_id,
+                            request_id,
+                            tool: Some(tool),
+                            offset,
+                            content: arguments_delta,
+                        });
+                    }
+                    ModelEvent::TextDelta { .. }
+                    | ModelEvent::Usage { .. }
+                    | ModelEvent::Completed { .. }
+                    | ModelEvent::Failed { .. } => {}
+                })
+                .await;
             if callback_sender
                 .send(LaneCommand::ModelCompleted {
                     task,
@@ -1042,12 +1239,24 @@ impl WorkflowScheduler {
     ) -> bool {
         match task.stage {
             ScheduledStage::Preparation => {
-                self.handle_preparation_completion(request_id, request, result)
-                    .await
+                self.handle_preparation_completion(
+                    task.version_id,
+                    task.run_id,
+                    request_id,
+                    request,
+                    result,
+                )
+                .await
             }
             ScheduledStage::ChapterOutline { chapter_id } => {
-                self.handle_chapter_outline_completion(chapter_id, request_id, request, result)
-                    .await
+                self.handle_chapter_outline_completion(
+                    chapter_id,
+                    task.run_id,
+                    request_id,
+                    request,
+                    result,
+                )
+                .await
             }
             ScheduledStage::ChapterBody { chapter_id } => {
                 self.handle_chapter_body_completion(chapter_id, request_id, request, result)
@@ -1062,6 +1271,8 @@ impl WorkflowScheduler {
 
     async fn handle_preparation_completion(
         &self,
+        version_id: VersionId,
+        run_id: RunId,
         request_id: Uuid,
         request: &ModelRequest,
         result: Result<ModelCompletion, ProviderError>,
@@ -1071,22 +1282,41 @@ impl WorkflowScheduler {
                 let provider_request_id = completion.provider_request_id.clone();
                 let assistant_message = assistant_message_from_completion(&completion, request_id);
                 let raw_response = completion.content.clone().unwrap_or_default();
-                let usage = match completion
-                    .usage
-                    .as_ref()
-                    .map(serde_json::to_value)
-                    .transpose()
+                let usage = completion_usage(&completion);
+                // 同一轮请求的构建与解析必须用同一份必需项清单。
+                let required_artifacts = match self.store.get_preparation_snapshot(version_id).await
                 {
-                    Ok(Some(usage)) => usage,
-                    Ok(None) => json!({ "status": "unknown" }),
-                    Err(error) => json!({
-                        "status": "invalid",
-                        "reason": error.to_string(),
-                    }),
+                    Ok(snapshot) => match required_preparation_artifacts(&snapshot) {
+                        Ok(required) => required,
+                        Err(error) => {
+                            self.persist_model_failure(
+                                request_id,
+                                provider_request_id,
+                                Some(assistant_message),
+                                "preparation_scope",
+                                error.to_string(),
+                                false,
+                            )
+                            .await;
+                            return false;
+                        }
+                    },
+                    Err(error) => {
+                        self.persist_model_failure(
+                            request_id,
+                            provider_request_id,
+                            Some(assistant_message),
+                            "preparation_scope",
+                            error.to_string(),
+                            false,
+                        )
+                        .await;
+                        return false;
+                    }
                 };
 
                 match classify_model_completion(
-                    PhaseSubmissionKind::Preparation,
+                    PhaseSubmissionKind::Preparation { required_artifacts },
                     request,
                     completion,
                 ) {
@@ -1131,6 +1361,16 @@ impl WorkflowScheduler {
                         )
                         .await
                     }
+                    Ok(AgentRoundOutcome::ToolCall(call)) if call.name == TOOL_QUERY_KNOWLEDGE => {
+                        self.execute_knowledge_tool_call(
+                            run_id,
+                            request_id,
+                            provider_request_id,
+                            usage,
+                            call,
+                        )
+                        .await
+                    }
                     Ok(outcome) => {
                         self.persist_model_failure(
                             request_id,
@@ -1149,7 +1389,7 @@ impl WorkflowScheduler {
                             provider_request_id,
                             usage,
                             assistant_message,
-                            error.to_string(),
+                            &error,
                         )
                         .await
                     }
@@ -1177,6 +1417,7 @@ impl WorkflowScheduler {
     async fn handle_chapter_outline_completion(
         &self,
         chapter_id: ChapterId,
+        run_id: RunId,
         request_id: Uuid,
         request: &ModelRequest,
         result: Result<ModelCompletion, ProviderError>,
@@ -1236,6 +1477,16 @@ impl WorkflowScheduler {
                         )
                         .await
                     }
+                    Ok(AgentRoundOutcome::ToolCall(call)) if call.name == TOOL_QUERY_KNOWLEDGE => {
+                        self.execute_knowledge_tool_call(
+                            run_id,
+                            request_id,
+                            provider_request_id,
+                            usage,
+                            call,
+                        )
+                        .await
+                    }
                     Ok(outcome) => {
                         self.persist_model_failure(
                             request_id,
@@ -1254,7 +1505,7 @@ impl WorkflowScheduler {
                             provider_request_id,
                             usage,
                             assistant_message,
-                            error.to_string(),
+                            &error,
                         )
                         .await
                     }
@@ -1275,6 +1526,176 @@ impl WorkflowScheduler {
                 )
                 .await;
                 false
+            }
+        }
+    }
+
+    /// 执行一次 `query_knowledge`（细则 §4.2/§7.1/§7.3）。
+    ///
+    /// 顺序固定：先看是否已经有过结果（重放不重复检索、不重复扣费），再算工具结果，
+    /// 最后把结果与工作流推进写进同一个事务。参数无效、没有可用检索、预算耗尽都不
+    /// 扣费；一旦真的发起检索，无结果或失败仍计已消耗的 1 次。
+    async fn execute_knowledge_tool_call(
+        &self,
+        run_id: RunId,
+        request_id: Uuid,
+        provider_request_id: Option<String>,
+        usage: Value,
+        call: ModelToolCall,
+    ) -> bool {
+        let provider_call_id = call.id.clone();
+        match self
+            .store
+            .free_agent_tool_result(request_id, &provider_call_id)
+            .await
+        {
+            // 同一次回调的重放：结果已在库里，不再投递新请求。
+            Ok(Some(_)) => return false,
+            Ok(None) => {}
+            Err(error) => {
+                self.persist_model_failure(
+                    request_id,
+                    provider_request_id,
+                    None,
+                    "knowledge_tool",
+                    error.to_string(),
+                    false,
+                )
+                .await;
+                return false;
+            }
+        }
+
+        let Some((failed, error_code, result)) = self
+            .resolve_knowledge_tool_result(
+                run_id,
+                request_id,
+                provider_request_id.as_deref(),
+                &provider_call_id,
+                &call.arguments,
+            )
+            .await
+        else {
+            return false;
+        };
+
+        match self
+            .store
+            .execute_free_agent_tool_call(
+                request_id,
+                provider_request_id,
+                usage,
+                FreeAgentToolCall {
+                    provider_call_id,
+                    name: TOOL_QUERY_KNOWLEDGE.to_owned(),
+                    arguments: call.arguments,
+                    result,
+                    failed,
+                    error_code: error_code.map(str::to_owned),
+                },
+            )
+            .await
+        {
+            Ok(execution) => execution.requeue,
+            Err(error) => {
+                self.persist_model_failure(
+                    request_id,
+                    None,
+                    None,
+                    "knowledge_tool",
+                    error.to_string(),
+                    false,
+                )
+                .await;
+                false
+            }
+        }
+    }
+
+    /// 算一次 `query_knowledge` 的工具结果；`None` 表示调用本身无法落库（失败已记录）。
+    async fn resolve_knowledge_tool_result(
+        &self,
+        run_id: RunId,
+        request_id: Uuid,
+        provider_request_id: Option<&str>,
+        provider_call_id: &str,
+        arguments: &Value,
+    ) -> Option<(bool, Option<&'static str>, Value)> {
+        let arguments = match crate::knowledge::parse_knowledge_query_arguments(arguments) {
+            Ok(arguments) => arguments,
+            Err(error) => {
+                return Some((
+                    true,
+                    Some("TOOL_ARGUMENTS_INVALID"),
+                    knowledge_tool_error_result(
+                        provider_call_id,
+                        "TOOL_ARGUMENTS_INVALID",
+                        &error.to_string(),
+                    ),
+                ));
+            }
+        };
+        // 执行前验证：没有可用的 Embedding 属于「工具不可用」，不扣费。
+        if let Err(error) = crate::knowledge::require_knowledge_query(&self.store).await {
+            return Some((
+                true,
+                Some("EMBEDDING_NOT_CONFIGURED"),
+                knowledge_tool_error_result(
+                    provider_call_id,
+                    "EMBEDDING_NOT_CONFIGURED",
+                    &error.to_string(),
+                ),
+            ));
+        }
+        match self
+            .store
+            .charge_auxiliary_tool(run_id, provider_call_id, TOOL_QUERY_KNOWLEDGE)
+            .await
+        {
+            Err(error) => {
+                self.persist_model_failure(
+                    request_id,
+                    provider_request_id.map(str::to_owned),
+                    None,
+                    "knowledge_tool",
+                    error.to_string(),
+                    false,
+                )
+                .await;
+                None
+            }
+            Ok(AuxiliaryToolCharge::Exhausted(balance)) => Some((
+                true,
+                Some("QUOTA_EXHAUSTED"),
+                knowledge_tool_error_result(
+                    provider_call_id,
+                    "QUOTA_EXHAUSTED",
+                    &format!(
+                        "本项目辅助工具预算已用完（已用 {} / 上限 {}）。你可以继续撰写、询问用户，或延后检索。",
+                        balance.used, balance.limit
+                    ),
+                ),
+            )),
+            Ok(AuxiliaryToolCharge::Charged(_) | AuxiliaryToolCharge::AlreadyCharged(_)) => {
+                match crate::knowledge::run_knowledge_query(&self.store, arguments).await {
+                    Ok(search) => Some((
+                        false,
+                        None,
+                        serde_json::to_value(&search).unwrap_or(Value::Null),
+                    )),
+                    Err(error) => {
+                        warn!(%request_id, tool_call_id = %provider_call_id, error = %error, "知识检索工具执行失败");
+                        Some((
+                            true,
+                            Some("KNOWLEDGE_SEARCH_FAILED"),
+                            knowledge_tool_error_result(
+                                provider_call_id,
+                                "KNOWLEDGE_SEARCH_FAILED",
+                                &error.to_string(),
+                            ),
+                        ))
+                    }
+                }
             }
         }
     }
@@ -1317,13 +1738,14 @@ impl WorkflowScheduler {
             }
             Ok(AppliedAgentQuestionToolCall::Resolved {
                 newly_resolved,
+                requeue,
                 result,
                 ..
             }) => {
                 if newly_resolved {
                     info!(%request_id, tool_call_id = %provider_call_id, status = %result["status"], "ask_user 参数无效，已作为工具结果回送");
                 }
-                newly_resolved
+                newly_resolved && requeue
             }
             Err(error) => {
                 self.persist_model_failure(
@@ -1400,7 +1822,7 @@ impl WorkflowScheduler {
                                     status = %execution.result["status"],
                                     "章节正文工具调用已处理"
                                 );
-                                execution.newly_resolved
+                                execution.requeue
                             }
                             Err(error) => {
                                 self.persist_model_failure(
@@ -1434,7 +1856,11 @@ impl WorkflowScheduler {
                                     info!(%request_id, %chapter_id, "章节提交因未投递意见返回正文工具循环");
                                     return true;
                                 }
-                                info!(%request_id, %chapter_id, "章节正文模型提交已进入整章审核");
+                                if snapshot.workflow.execution == ExecutionStatus::Stopped {
+                                    info!(%request_id, %chapter_id, "章节提交连续不推进，已达到工程执行限制并停止");
+                                } else {
+                                    info!(%request_id, %chapter_id, "章节正文模型提交已进入整章审核");
+                                }
                             }
                             Err(error) => {
                                 self.persist_model_failure(
@@ -1468,7 +1894,7 @@ impl WorkflowScheduler {
                             provider_request_id,
                             usage,
                             assistant_message,
-                            error.to_string(),
+                            &error,
                         )
                         .await
                     }
@@ -1653,9 +2079,24 @@ impl WorkflowScheduler {
         provider_request_id: Option<String>,
         usage: Value,
         assistant_message: NewAgentMessage,
-        message: String,
+        error: &AgentRunnerError,
     ) -> bool {
         const CORRECTION: &str = "上一轮响应不符合当前阶段的结构化协议，未应用任何阶段提交或工具副作用。请重新严格按当前阶段要求返回：要么恰好一个已声明的工具调用，要么完整合法的 JSON 阶段提交；工具调用不要同时附带正文文本。";
+        // 并行工具调用是可纠正的协议偏差：整批不执行，每个调用 ID 都要拿到配对的
+        // 错误结果，并明确要求模型改为串行调用。
+        const PARALLEL_CORRECTION: &str = "上一轮响应同时给出了多个工具调用，本批次全部未执行。请改为串行：每轮只调用一个已声明的工具，等结果返回后再进行下一次调用。";
+        let (correction, tool_result_code) = match error {
+            AgentRunnerError::ParallelToolCalls { .. } => (
+                PARALLEL_CORRECTION.to_owned(),
+                "PARALLEL_TOOL_CALLS_NOT_ALLOWED",
+            ),
+            // 纠正必须带上本次校验失败的具体原因，否则模型只能从通用提示里猜
+            // 缺了什么；解析器已经给出了可操作的原因（例如缺少哪一项产物）。
+            other => (
+                format!("{CORRECTION}\n本次未通过的原因：{other}"),
+                "PROTOCOL_ERROR",
+            ),
+        };
         match self
             .store
             .record_model_protocol_correction(
@@ -1664,8 +2105,9 @@ impl WorkflowScheduler {
                     provider_request_id,
                     usage,
                     assistant_message,
-                    error: json!({ "kind": "protocol_error", "message": message }),
-                    correction: CORRECTION.to_owned(),
+                    error: json!({ "kind": "protocol_error", "message": error.to_string() }),
+                    correction,
+                    tool_result_code: tool_result_code.to_owned(),
                 },
             )
             .await
@@ -1738,20 +2180,82 @@ impl WorkflowScheduler {
     }
 }
 
+/// 把一次已完成请求的用量封存成持久请求接受的 JSON 形状。
 fn completion_usage(completion: &ModelCompletion) -> Value {
-    match completion
-        .usage
-        .as_ref()
-        .map(serde_json::to_value)
-        .transpose()
-    {
-        Ok(Some(usage)) => usage,
-        Ok(None) => json!({ "status": "unknown" }),
-        Err(error) => json!({
-            "status": "invalid",
-            "reason": error.to_string(),
-        }),
+    serde_json::to_value(completion.persisted_usage()).expect("用量记录只包含可序列化标量")
+}
+
+/// 把已校验的委托关注点与引用拼成审核子 Run 的用户内容。
+///
+/// 引用只以引文文本进入提示词：审核 Agent 不需要也不应该拿到文档、修订或工具调用
+/// ID，引用在委托时已经逐字复核过。
+fn delegated_review_user_content(
+    user_prompt: String,
+    user_notes: &str,
+    citations: &[FeedbackCitation],
+) -> String {
+    let mut content = user_prompt;
+    if !user_notes.trim().is_empty() {
+        content.push_str("\n\n用户审核关注点：");
+        content.push_str(user_notes);
     }
+    if !citations.is_empty() {
+        content.push_str("\n\n用户引用的原文片段：");
+        for citation in citations {
+            let (label, quote) = match citation {
+                FeedbackCitation::Document { range, .. } => ("正文引用", range.quote.as_str()),
+                FeedbackCitation::Candidate {
+                    candidate_range, ..
+                } => ("待审候选引用", candidate_range.quote.as_str()),
+            };
+            content.push_str(&format!("\n- {label}：「{quote}」"));
+        }
+    }
+    content
+}
+
+/// 阶段角色 = 提示词 + 本阶段的提交结构。提交结构由协议层拥有（
+/// [`submission_contract`]），这里只负责把它接到系统消息上，避免提示词与校验各自
+/// 漂移；模型无法自行推断的章节级 `chapter_id` 也由此进入请求。
+fn stage_system_instructions(
+    prompt: &RenderedBuiltinPrompt,
+    stage: &PhaseSubmissionKind,
+) -> String {
+    format!("{}\n\n{}", prompt.system, submission_contract(stage))
+}
+
+/// 本轮准备阶段真正需要模型提交的产物项。
+///
+/// 首次生成要求四项齐全；修订轮只包含审核已拒绝或已失效的项 —— Store 在修订轮
+/// 拒绝提交其它项，所以合同与解析器必须用同一份清单，否则模型照合同提交反而会失败。
+fn required_preparation_artifacts(
+    snapshot: &nekowriter_core::PreparationSnapshot,
+) -> Result<Vec<PreparationArtifactKind>, SchedulerError> {
+    if snapshot.workflow.stage == WorkflowStage::PreparingGenerating {
+        return Ok(vec![
+            PreparationArtifactKind::Background,
+            PreparationArtifactKind::Research,
+            PreparationArtifactKind::Characters,
+            PreparationArtifactKind::Outline,
+        ]);
+    }
+    let required = snapshot
+        .artifacts
+        .iter()
+        .filter(|artifact| {
+            matches!(
+                artifact.review.as_ref().map(|review| &review.status),
+                Some(&ReviewStatus::Rejected | &ReviewStatus::Stale)
+            )
+        })
+        .map(|artifact| artifact.kind)
+        .collect::<Vec<_>>();
+    if required.is_empty() {
+        return Err(SchedulerError::Context(
+            "准备修订轮没有任何需要修订的产物，拒绍发送模型请求".to_owned(),
+        ));
+    }
+    Ok(required)
 }
 
 fn build_context_with_history(
@@ -1871,6 +2375,54 @@ fn agent_messages_for_new_stage_request(
 
 fn ask_user_tools() -> Vec<AgentToolDefinition> {
     vec![ask_user_tool()]
+}
+
+/// 一个稳定可读的工具错误结果；模型可以据此纠正参数或改变做法，而不会看到一次
+/// 静默消失的调用。
+fn knowledge_tool_error_result(provider_call_id: &str, code: &str, message: &str) -> Value {
+    json!({
+        "status": "error",
+        "tool_call_id": provider_call_id,
+        "code": code,
+        "message": message,
+    })
+}
+
+/// 准备 Agent 与细纲 Agent 的工具白名单：`ask_user` 始终可用，`query_knowledge`
+/// 只在 Embedding 已配置且检索确实可用时宣告，并在描述里带上当前余额。
+///
+/// 未宣告的工具被旧请求调用时不会被静默降级：调用方会返回明确的工具错误。
+fn preparation_agent_tools(
+    knowledge_available: bool,
+    remaining_quota: i64,
+) -> Vec<AgentToolDefinition> {
+    let mut tools = ask_user_tools();
+    if knowledge_available {
+        tools.push(query_knowledge_tool(remaining_quota));
+    }
+    tools
+}
+
+fn query_knowledge_tool(remaining_quota: i64) -> AgentToolDefinition {
+    AgentToolDefinition {
+        name: TOOL_QUERY_KNOWLEDGE.to_owned(),
+        description: format!(
+            "用语义检索在本稿作家自己的知识库里查找设定与资料。查询应为自然语言；可选 spaceIds 限定 Space，topK 默认为 5、最大为 10。每次真实检索消耗 1 次辅助工具预算，当前剩余 {remaining_quota} 次。返回结果包含标题、原文块、条目/修订/块 ID 与相关分值（分值不是事实置信度）。同一问题不要重复调用。"
+        ),
+        parameters: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["query"],
+            "properties": {
+                "query": { "type": "string", "minLength": 1 },
+                "spaceIds": {
+                    "type": "array",
+                    "items": { "type": "string", "minLength": 1 }
+                },
+                "topK": { "type": "integer", "minimum": 1, "maximum": 10 }
+            }
+        }),
+    }
 }
 
 fn ask_user_tool() -> AgentToolDefinition {
@@ -2229,14 +2781,14 @@ mod tests {
 
     use nekowriter_core::{
         ChapterKind, ChapterPlan, ChapterPlanDraft, ChapterStatus, ChapterSummary, ExecutionStatus,
-        FeedbackStatus, HumanReviewDecision, ModelCapabilityProfile, NewChapterGuidance,
-        NewNovelBrief, NewProject, NewProjectSettings, PreparationArtifactInput,
-        PreparationArtifactKind, ProjectModelReference, ThinkingLevel, UserQuestionAnswer,
-        UserQuestionAnswers, WorkflowStage,
+        FeedbackStatus, HumanReviewDecision, MAX_CONSECUTIVE_PROTOCOL_ERRORS,
+        ModelCapabilityProfile, NewChapterGuidance, NewNovelBrief, NewProject, NewProjectSettings,
+        PreparationArtifactInput, PreparationArtifactKind, ProjectModelReference, ThinkingLevel,
+        UserQuestionAnswer, UserQuestionAnswers, WorkflowStage,
     };
     use nekowriter_store::{
-        AgentMessageRole, AgentQuestionToolCall, ChapterBodyAgentToolCall, ModelRequestStatus,
-        NewModelRequest, NewSystemModelSettings,
+        AgentMessageRole, AgentQuestionToolCall, ChapterBodyAgentToolCall, ModelRequestResolution,
+        ModelRequestStatus, NewModelRequest, NewSystemModelSettings,
     };
     use serde_json::{Value, json};
     use tempfile::TempDir;
@@ -2259,6 +2811,8 @@ mod tests {
             plan_item_id: None,
             order_index: 3,
             title: "雨停之后".to_owned(),
+            label: "番外 1 雨停之后".to_owned(),
+            body_word_count: 0,
             status: ChapterStatus::Planned,
             approved_revision_id: None,
             revision: 0,
@@ -2279,6 +2833,8 @@ mod tests {
             plan_item_id: Some(plan.items[0].plan_item_id),
             order_index: 1,
             title: plan.items[0].title.clone(),
+            label: "第1章 雨夜的来客".to_owned(),
+            body_word_count: 0,
             status: ChapterStatus::Planned,
             approved_revision_id: None,
             revision: 0,
@@ -2288,6 +2844,44 @@ mod tests {
             "第1章：雨夜的来客\n让林舟收到匿名报纸。"
         );
         assert!(chapter_outline_plan_context(&main, None).is_err());
+    }
+
+    #[test]
+    fn delegated_review_user_content_appends_notes_and_quoted_citations() {
+        let citations = vec![
+            FeedbackCitation::Document {
+                document_id: Uuid::new_v4(),
+                revision_id: Uuid::new_v4(),
+                chapter_id: Some(Uuid::new_v4()),
+                range: nekowriter_core::TextCitationRange {
+                    start_char: 0,
+                    end_char: 2,
+                    quote: "雨夜".to_owned(),
+                },
+            },
+            FeedbackCitation::Candidate {
+                tool_call_id: Uuid::new_v4(),
+                candidate_hash: "a".repeat(64),
+                candidate_range: nekowriter_core::TextCitationRange {
+                    start_char: 0,
+                    end_char: 2,
+                    quote: "胶卷".to_owned(),
+                },
+            },
+        ];
+        let content =
+            delegated_review_user_content("审核模板".to_owned(), "关注人物动机", &citations);
+        assert!(content.starts_with("审核模板\n\n用户审核关注点：关注人物动机"));
+        assert!(content.contains("- 正文引用：「雨夜」"));
+        assert!(content.contains("- 待审候选引用：「胶卷」"));
+        // 引文只以文本进入提示词，不泄露内部 ID。
+        let FeedbackCitation::Document { document_id, .. } = &citations[0] else {
+            panic!("测试引用应为正式文档引用");
+        };
+        assert!(!content.contains(&document_id.to_string()));
+
+        let without_extras = delegated_review_user_content("审核模板".to_owned(), "  ", &[]);
+        assert_eq!(without_extras, "审核模板");
     }
 
     #[tokio::test]
@@ -2640,6 +3234,7 @@ mod tests {
             .begin_model_request(
                 version_id,
                 ScheduledRun {
+                    version_id,
                     run_id,
                     stage: ScheduledStage::Preparation,
                 },
@@ -2747,6 +3342,7 @@ mod tests {
                 Uuid::new_v4(),
                 submitted.workflow.state_revision,
                 "检查背景是否能支撑第一章。".to_owned(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -2822,6 +3418,7 @@ mod tests {
                 Uuid::new_v4(),
                 outline.workflow.state_revision,
                 HumanReviewDecision::new(true, "").unwrap(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -2877,6 +3474,262 @@ mod tests {
         })
         .await
         .expect("停止重新投递的正文请求应释放模型许可");
+    }
+
+    /// 创建一个已派出准备请求的稿本，返回数据目录与调度器。
+    async fn preparation_request_fixture() -> (TempDir, Uuid, Uuid, Uuid, Uuid, WorkflowScheduler) {
+        let data_dir = TempDir::new().unwrap();
+        let store = Store::open(data_dir.path()).await.unwrap();
+        let created = store
+            .create_project(
+                Uuid::new_v4(),
+                NewProject::new("知识检索工具", "预算与工具可用性", None::<&str>).unwrap(),
+            )
+            .await
+            .unwrap();
+        store
+            .save_novel_brief(
+                created.version.id,
+                Uuid::new_v4(),
+                NewNovelBrief::new("写一部关于灯塔与雾港的短篇小说").unwrap(),
+            )
+            .await
+            .unwrap();
+        store
+            .save_project_settings(
+                created.project.id,
+                Uuid::new_v4(),
+                0,
+                NewProjectSettings {
+                    model: None,
+                    thinking_level: ThinkingLevel::default(),
+                    auxiliary_tool_budget: 1,
+                },
+            )
+            .await
+            .unwrap();
+        let workflow = store
+            .get_version_snapshot(created.version.id)
+            .await
+            .unwrap()
+            .workflow;
+        let started = store
+            .start_preparation(created.version.id, Uuid::new_v4(), workflow.state_revision)
+            .await
+            .unwrap();
+        let run_id = started.workflow.active_run_id.unwrap();
+        let dispatched = store
+            .capture_and_dispatch_model_request(
+                NewModelRequest {
+                    run_id,
+                    settings_snapshot: json!({ "model": "knowledge-tool-test" }),
+                    prompt_snapshot: json!({ "contentHash": "knowledge-tool-test" }),
+                    context_snapshot: json!({ "messages": [] }),
+                },
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        let scheduler = WorkflowScheduler::new(
+            store.clone(),
+            Arc::new(Semaphore::new(1)),
+            Arc::new(Mutex::new(())),
+        );
+        (
+            data_dir,
+            created.project.id,
+            created.version.id,
+            run_id,
+            dispatched.id,
+            scheduler,
+        )
+    }
+
+    async fn configure_embedding(store: &Store) {
+        store
+            .save_embedding_settings(
+                Uuid::new_v4(),
+                0,
+                nekowriter_store::NewEmbeddingSettings {
+                    // 一个确定不可达的本地端口：验证「已进入真实调用、失败仍计费」。
+                    api_base_url: "http://127.0.0.1:1/v1".to_owned(),
+                    model_id: "stub-embed".to_owned(),
+                    dimension: 3,
+                    credential_ref: None,
+                    credential_fingerprint: None,
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    fn knowledge_tool_completion(provider_call_id: &str) -> ModelCompletion {
+        ModelCompletion {
+            provider_request_id: Some("provider-knowledge-tool".to_owned()),
+            content: None,
+            tool_calls: vec![ModelToolCall {
+                id: provider_call_id.to_owned(),
+                name: TOOL_QUERY_KNOWLEDGE.to_owned(),
+                arguments: json!({ "query": "灯塔的燃料", "topK": 3 }),
+            }],
+            usage: None,
+            usage_raw: None,
+            finish_reason: nekowriter_agent::provider::ModelFinishReason::ToolCalls,
+        }
+    }
+
+    #[test]
+    fn query_knowledge_is_only_declared_when_it_can_actually_run() {
+        let declared = preparation_agent_tools(true, 7);
+        let knowledge = declared
+            .iter()
+            .find(|tool| tool.name == TOOL_QUERY_KNOWLEDGE)
+            .expect("可用时必须宣告查询工具");
+        assert!(
+            knowledge.description.contains("当前剩余 7 次"),
+            "请求构建时必须说明余额：{}",
+            knowledge.description
+        );
+
+        let hidden = preparation_agent_tools(false, 7);
+        assert_eq!(hidden.len(), 1);
+        assert_eq!(hidden[0].name, "ask_user");
+    }
+
+    #[tokio::test]
+    async fn knowledge_tool_without_embedding_returns_an_error_and_does_not_charge() {
+        let (_data_dir, _project_id, version_id, run_id, request_id, scheduler) =
+            preparation_request_fixture().await;
+        let store = &scheduler.store;
+
+        let continues = scheduler
+            .handle_preparation_completion(
+                version_id,
+                run_id,
+                request_id,
+                &ModelRequest {
+                    messages: Vec::new(),
+                    tools: preparation_agent_tools(true, 1),
+                    response_format: None,
+                    thinking_level: ThinkingLevel::Off,
+                },
+                Ok(knowledge_tool_completion("call-no-embedding")),
+            )
+            .await;
+        assert!(continues, "工具结果落库后应当安排下一轮请求");
+        let result = store
+            .free_agent_tool_result(request_id, "call-no-embedding")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result["code"], "EMBEDDING_NOT_CONFIGURED");
+        assert_eq!(result["status"], "error");
+        assert_eq!(store.quota_balance(run_id).await.unwrap().used, 0);
+    }
+
+    #[tokio::test]
+    async fn knowledge_tool_stops_at_an_exhausted_budget_without_charging() {
+        let (_data_dir, project_id, version_id, run_id, request_id, scheduler) =
+            preparation_request_fixture().await;
+        let store = &scheduler.store;
+        configure_embedding(store).await;
+        let settings = store.get_project_settings(project_id).await.unwrap();
+        store
+            .save_project_settings(
+                project_id,
+                Uuid::new_v4(),
+                settings.revision,
+                NewProjectSettings {
+                    model: None,
+                    thinking_level: ThinkingLevel::default(),
+                    auxiliary_tool_budget: 0,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            scheduler
+                .handle_preparation_completion(
+                    version_id,
+                    run_id,
+                    request_id,
+                    &ModelRequest {
+                        messages: Vec::new(),
+                        tools: preparation_agent_tools(true, 1),
+                        response_format: None,
+                        thinking_level: ThinkingLevel::Off,
+                    },
+                    Ok(knowledge_tool_completion("call-no-budget")),
+                )
+                .await
+        );
+        let result = store
+            .free_agent_tool_result(request_id, "call-no-budget")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result["code"], "QUOTA_EXHAUSTED");
+        assert_eq!(store.quota_balance(run_id).await.unwrap().used, 0);
+    }
+
+    #[tokio::test]
+    async fn knowledge_tool_charges_once_even_when_the_search_fails_and_never_recharges() {
+        let (_data_dir, _project_id, version_id, run_id, request_id, scheduler) =
+            preparation_request_fixture().await;
+        let store = &scheduler.store;
+        configure_embedding(store).await;
+
+        assert!(
+            scheduler
+                .handle_preparation_completion(
+                    version_id,
+                    run_id,
+                    request_id,
+                    &ModelRequest {
+                        messages: Vec::new(),
+                        tools: preparation_agent_tools(true, 1),
+                        response_format: None,
+                        thinking_level: ThinkingLevel::Off,
+                    },
+                    Ok(knowledge_tool_completion("call-failing-search")),
+                )
+                .await
+        );
+        let result = store
+            .free_agent_tool_result(request_id, "call-failing-search")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result["code"], "KNOWLEDGE_SEARCH_FAILED");
+        // 进入真实检索后才失败：仍计 1 次，且不再多扣。
+        let balance = store.quota_balance(run_id).await.unwrap();
+        assert_eq!(balance.used, 1);
+        assert_eq!(balance.remaining, 0);
+
+        // 同一回调重放：已有结果，直接不再投递新请求，也不重复扣费。
+        let workflow = store
+            .get_preparation_snapshot(version_id)
+            .await
+            .unwrap()
+            .workflow;
+        assert_eq!(workflow.execution, ExecutionStatus::Queued);
+        let replayed = scheduler
+            .handle_preparation_completion(
+                version_id,
+                run_id,
+                request_id,
+                &ModelRequest {
+                    messages: Vec::new(),
+                    tools: preparation_agent_tools(true, 1),
+                    response_format: None,
+                    thinking_level: ThinkingLevel::Off,
+                },
+                Ok(knowledge_tool_completion("call-failing-search")),
+            )
+            .await;
+        assert!(!replayed, "重放已经落库的调用不应该再安排请求");
+        assert_eq!(store.quota_balance(run_id).await.unwrap().used, 1);
     }
 
     #[tokio::test]
@@ -2944,6 +3797,8 @@ mod tests {
         assert!(
             scheduler
                 .handle_preparation_completion(
+                    created.version.id,
+                    dispatched.run_id,
                     dispatched.id,
                     &request,
                     Ok(ModelCompletion {
@@ -2951,6 +3806,7 @@ mod tests {
                         content: Some("这不是合法的准备阶段 JSON".to_owned()),
                         tool_calls: Vec::new(),
                         usage: None,
+                        usage_raw: None,
                         finish_reason: nekowriter_agent::provider::ModelFinishReason::Stop,
                     }),
                 )
@@ -3196,6 +4052,9 @@ mod tests {
         assert!(request.starts_with("POST /v1/chat/completions HTTP/1.1"));
         assert!(request.contains("背景设定的已审核内容"));
         assert!(request.contains("第一章：车站重逢"));
+        // 阶段角色必须带着本章的提交结构发出，而 `chapter_id` 无法由模型自行推断。
+        assert!(request.contains("chapter_id"));
+        assert!(request.contains(&chapter_id.to_string()));
     }
 
     #[tokio::test]
@@ -3223,6 +4082,7 @@ mod tests {
                 Uuid::new_v4(),
                 outline.workflow.state_revision,
                 HumanReviewDecision::new(true, "").unwrap(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -3339,6 +4199,9 @@ mod tests {
             .unwrap();
         assert!(first_request.contains("\"append_content\""));
         assert!(first_request.contains("模型正文应遵循的已审核章节细纲"));
+        // 正文阶段也要拿到本章的提交结构，否则模型无法构造合法的章节提交。
+        assert!(first_request.contains("chapter_id"));
+        assert!(first_request.contains(&chapter_id.to_string()));
         assert!(second_request.contains("\"tool_call_id\":\"body-call-1\""));
         assert!(second_request.contains("车站的钟声穿过雨幕。"));
     }
@@ -3368,6 +4231,7 @@ mod tests {
                 Uuid::new_v4(),
                 outline.workflow.state_revision,
                 HumanReviewDecision::new(true, "").unwrap(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -3621,6 +4485,7 @@ mod tests {
                 Uuid::new_v4(),
                 outline.workflow.state_revision,
                 HumanReviewDecision::new(true, "").unwrap(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -3714,11 +4579,34 @@ mod tests {
         assert_eq!(dispatched.status, ModelRequestStatus::Dispatched);
         let after_seal = store.get_chapter_body(chapter_id).await.unwrap();
         assert!(after_seal.pending_feedback.is_empty());
+        assert_eq!(after_seal.delivered_feedback.len(), 1);
+        assert_eq!(after_seal.delivered_feedback[0].request_id, dispatched.id);
+        assert_eq!(
+            after_seal.delivered_feedback[0].delivery_status,
+            nekowriter_core::FeedbackDeliveryStatus::Sent
+        );
         let included = store
             .list_materialized_chapter_body_feedback(body_run_id)
             .await
             .unwrap();
         assert_eq!(included[0].status, FeedbackStatus::Included);
+
+        store
+            .resolve_model_request(
+                dispatched.id,
+                ModelRequestResolution::Failed {
+                    provider_request_id: None,
+                    error: json!({ "kind": "network" }),
+                },
+            )
+            .await
+            .unwrap();
+        let failed = store.get_chapter_body(chapter_id).await.unwrap();
+        assert_eq!(failed.delivered_feedback.len(), 1);
+        assert_eq!(
+            failed.delivered_feedback[0].delivery_status,
+            nekowriter_core::FeedbackDeliveryStatus::Failed
+        );
     }
 
     #[tokio::test]
@@ -3899,6 +4787,7 @@ mod tests {
                 Uuid::new_v4(),
                 outline.workflow.state_revision,
                 HumanReviewDecision::new(true, "").unwrap(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -4038,6 +4927,134 @@ mod tests {
             ModelRequestStatus::Succeeded
         );
         assert_eq!(corrected.workflow.version_id, version_id);
+
+        // 反复不推进的提交必须计入连续协议错误：第三次不再重排请求，而是触发工程
+        // 执行限制，未投递意见原样保留，等待用户显式继续。
+        let second =
+            commit_direct_chapter_submission(&store, body_run_id, chapter_id, "second").await;
+        assert_eq!(second.workflow.execution, ExecutionStatus::Queued);
+        assert_eq!(second.pending_feedback.len(), 1);
+
+        let third =
+            commit_direct_chapter_submission(&store, body_run_id, chapter_id, "third").await;
+        assert_eq!(third.workflow.stage, WorkflowStage::WritingDrafting);
+        assert_eq!(third.workflow.execution, ExecutionStatus::Stopped);
+        assert_eq!(
+            third.workflow.wait_reason,
+            Some(nekowriter_core::RunWaitReason::ProtocolErrorLimit)
+        );
+        assert!(third.body.review.is_none());
+        assert_eq!(third.pending_feedback.len(), 1);
+        assert_eq!(third.pending_feedback[0].status, FeedbackStatus::Queued);
+        let stopped = store
+            .events_after(0)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|event| event.event_type == "run.changed")
+            .next_back()
+            .unwrap();
+        assert_eq!(stopped.payload["status"], "stopped");
+        assert_eq!(stopped.payload["wait_reason"], "protocol_error_limit");
+        assert_eq!(stopped.payload["consecutive_protocol_errors"], "3");
+        assert_eq!(
+            stopped.payload["reason"],
+            "pending_feedback_requires_tool_result"
+        );
+    }
+
+    /// 为同一条正文 Run 新开一次在途请求，并让模型再次直接提交本章。
+    async fn commit_direct_chapter_submission(
+        store: &Store,
+        body_run_id: RunId,
+        chapter_id: ChapterId,
+        label: &str,
+    ) -> nekowriter_core::ChapterBodySnapshot {
+        let request = store
+            .capture_and_dispatch_model_request(
+                NewModelRequest {
+                    run_id: body_run_id,
+                    settings_snapshot: json!({ "model": format!("direct-submission-feedback-{label}") }),
+                    prompt_snapshot: json!({ "contentHash": format!("direct-submission-feedback-{label}") }),
+                    context_snapshot: json!({ "messages": [] }),
+                },
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        store
+            .commit_chapter_body_model_submission(
+                request.id,
+                chapter_id,
+                Some(format!("direct-submission-feedback-{label}-request")),
+                json!({ "promptTokens": 18, "completionTokens": 7, "totalTokens": 25 }),
+                "{\"chapter_id\":\"ignored-by-store\",\"summary\":\"模型反复直接提交本章。\"}"
+                    .to_owned(),
+                "模型反复直接提交本章。".to_owned(),
+            )
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn invalid_chapter_body_tools_stop_at_the_protocol_limit() {
+        let data_dir = TempDir::new().unwrap();
+        let store = Store::open(data_dir.path()).await.unwrap();
+        let (_version_id, chapter_id, body_run_id, mut request_id) =
+            in_flight_chapter_body_submission(&store, "invalid-body-tool").await;
+
+        for attempt in 1..=MAX_CONSECUTIVE_PROTOCOL_ERRORS {
+            let execution = store
+                .execute_chapter_body_agent_tool_call(
+                    request_id,
+                    chapter_id,
+                    Some(format!("invalid-body-tool-provider-{attempt}")),
+                    json!({ "totalTokens": "1" }),
+                    ChapterBodyAgentToolCall {
+                        provider_call_id: format!("invalid-body-tool-call-{attempt}"),
+                        name: "append_content".to_owned(),
+                        // 空正文会形成稳定的工具错误，但不应无限重新投递。
+                        arguments: json!({ "content": "" }),
+                    },
+                )
+                .await
+                .unwrap();
+            assert!(execution.newly_resolved);
+            assert_eq!(execution.result["status"], "error");
+            assert_eq!(execution.requeue, attempt < MAX_CONSECUTIVE_PROTOCOL_ERRORS);
+
+            let snapshot = store.get_chapter_body(chapter_id).await.unwrap();
+            assert_eq!(
+                snapshot.workflow.execution,
+                if attempt < MAX_CONSECUTIVE_PROTOCOL_ERRORS {
+                    ExecutionStatus::Queued
+                } else {
+                    ExecutionStatus::Stopped
+                }
+            );
+            if attempt < MAX_CONSECUTIVE_PROTOCOL_ERRORS {
+                request_id = store
+                    .capture_and_dispatch_model_request(
+                        NewModelRequest {
+                            run_id: body_run_id,
+                            settings_snapshot: json!({ "model": "invalid-body-tool" }),
+                            prompt_snapshot: json!({ "contentHash": format!("invalid-body-tool-{attempt}") }),
+                            context_snapshot: json!({ "messages": [] }),
+                        },
+                        Vec::new(),
+                    )
+                    .await
+                    .unwrap()
+                    .id;
+            }
+        }
+
+        let stopped = store.get_chapter_body(chapter_id).await.unwrap();
+        assert_eq!(stopped.workflow.execution, ExecutionStatus::Stopped);
+        assert_eq!(
+            stopped.workflow.wait_reason,
+            Some(nekowriter_core::RunWaitReason::ProtocolErrorLimit)
+        );
     }
 
     #[tokio::test]
@@ -4095,6 +5112,75 @@ mod tests {
             store.list_model_requests(body_run_id).await.unwrap()[1].status,
             ModelRequestStatus::Succeeded
         );
+    }
+
+    #[tokio::test]
+    async fn paused_direct_submission_without_body_resumes_to_a_retryable_queue() {
+        let data_dir = TempDir::new().unwrap();
+        let store = Store::open(data_dir.path()).await.unwrap();
+        let (_version_id, chapter_id, body_run_id, request_id) =
+            in_flight_empty_chapter_body_submission(&store, "empty-submission-pause").await;
+        let in_flight = store.get_chapter_body(chapter_id).await.unwrap();
+        let pause_requested = store
+            .request_chapter_body_pause(
+                body_run_id,
+                Uuid::new_v4(),
+                in_flight.workflow.state_revision,
+            )
+            .await
+            .unwrap();
+        assert!(pause_requested.workflow.pause_requested);
+
+        let paused = store
+            .commit_chapter_body_model_submission(
+                request_id,
+                chapter_id,
+                Some("empty-submission-pause-request".to_owned()),
+                json!({ "promptTokens": 18, "completionTokens": 7, "totalTokens": 25 }),
+                "{\"chapter_id\":\"ignored-by-store\",\"summary\":\"模型过早提交本章。\"}"
+                    .to_owned(),
+                "模型过早提交本章。".to_owned(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(paused.workflow.execution, ExecutionStatus::Paused);
+        assert!(paused.held_submission.is_some());
+        assert!(paused.body.content.is_none());
+
+        let resumed = store
+            .resume_chapter_body_pause(body_run_id, Uuid::new_v4(), paused.workflow.state_revision)
+            .await
+            .unwrap();
+        assert_eq!(resumed.workflow.stage, WorkflowStage::WritingDrafting);
+        assert_eq!(resumed.workflow.execution, ExecutionStatus::Queued);
+        assert!(!resumed.workflow.pause_requested);
+        assert!(resumed.held_submission.is_none());
+        assert!(resumed.body.review.is_none());
+        let messages = store.list_agent_messages(body_run_id).await.unwrap();
+        assert_eq!(
+            messages.last().unwrap().content["kind"],
+            "protocol_correction"
+        );
+        assert!(
+            messages.last().unwrap().content["content"]
+                .as_str()
+                .is_some_and(|content| content.contains("当前直接提交无法应用"))
+        );
+
+        // 恢复后的 Run 可以立即创建下一次请求，证明它没有永久停在 paused。
+        let next_request = store
+            .capture_and_dispatch_model_request(
+                NewModelRequest {
+                    run_id: body_run_id,
+                    settings_snapshot: json!({ "model": "empty-submission-pause" }),
+                    prompt_snapshot: json!({ "contentHash": "empty-submission-pause-retry" }),
+                    context_snapshot: json!({ "messages": [] }),
+                },
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(next_request.status, ModelRequestStatus::Dispatched);
     }
 
     async fn ready_chapter_for_outline(store: &Store) -> (VersionId, ChapterId) {
@@ -4162,6 +5248,7 @@ mod tests {
                     Uuid::new_v4(),
                     snapshot.workflow.state_revision,
                     HumanReviewDecision::new(true, "").unwrap(),
+                    Vec::new(),
                 )
                 .await
                 .unwrap();
@@ -4210,6 +5297,7 @@ mod tests {
                 Uuid::new_v4(),
                 outline.workflow.state_revision,
                 HumanReviewDecision::new(true, "").unwrap(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -4259,6 +5347,53 @@ mod tests {
             .await
             .unwrap();
         (version_id, chapter_id, body_run_id, second_request.id)
+    }
+
+    /// 构造已经进入正文阶段、但模型尚未写入任何正文的在途请求。
+    async fn in_flight_empty_chapter_body_submission(
+        store: &Store,
+        label: &str,
+    ) -> (VersionId, ChapterId, RunId, Uuid) {
+        let (version_id, chapter_id) = ready_chapter_for_outline(store).await;
+        let ready = store.get_preparation_snapshot(version_id).await.unwrap();
+        let outline_started = store
+            .start_chapter_outline(chapter_id, Uuid::new_v4(), ready.workflow.state_revision)
+            .await
+            .unwrap();
+        let outline = store
+            .submit_chapter_outline(
+                chapter_id,
+                Uuid::new_v4(),
+                outline_started.state_revision,
+                nekowriter_core::NewChapterOutline::new(format!("{label} 所需的已审核细纲"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let drafting = store
+            .decide_review(
+                outline.outline.review.as_ref().unwrap().id,
+                Uuid::new_v4(),
+                outline.workflow.state_revision,
+                HumanReviewDecision::new(true, "").unwrap(),
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        let body_run_id = drafting.workflow.active_run_id.unwrap();
+        let request = store
+            .capture_and_dispatch_model_request(
+                NewModelRequest {
+                    run_id: body_run_id,
+                    settings_snapshot: json!({ "model": label }),
+                    prompt_snapshot: json!({ "contentHash": format!("{label}-first") }),
+                    context_snapshot: json!({ "messages": [] }),
+                },
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        (version_id, chapter_id, body_run_id, request.id)
     }
 
     async fn preparation_sse_server() -> (String, oneshot::Receiver<String>) {

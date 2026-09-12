@@ -27,10 +27,14 @@ thiserror.workspace = true
 tokio.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
+tracing-appender.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
+webbrowser.workspace = true
 
 [dev-dependencies]
+# 积累写入路径的端到端验证要走真实端口上的真实 HTTP，而不是直接调用处理函数。
+reqwest.workspace = true
 tempfile.workspace = true
 
 [lints]

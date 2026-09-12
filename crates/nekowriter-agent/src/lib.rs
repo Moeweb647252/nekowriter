@@ -14,14 +14,16 @@ use crate::provider::{
     ModelRequest, ModelRequestMessage, StructuredOutput, validate_request_message_sequence,
 };
 
+pub mod embedding;
+pub mod engine;
 pub mod prompt;
 pub mod provider;
 pub mod runner;
 
 pub use prompt::{
-    PromptTemplateError, PromptVariableDefinition, RenderedBuiltinPrompt, builtin_prompt_examples,
-    builtin_prompt_variables, render_builtin_prompt, render_builtin_prompt_content,
-    render_prompt_content, validate_builtin_prompt_pair,
+    PromptVariableDefinition, RenderedBuiltinPrompt, builtin_prompt_examples,
+    builtin_prompt_variables, builtin_template_variables, render_builtin_prompt,
+    render_builtin_prompt_content, render_prompt_content, validate_builtin_prompt_pair,
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -583,17 +585,39 @@ fn estimated_message_tokens(message: &ModelRequestMessage) -> usize {
 #[serde(rename_all = "camelCase")]
 pub struct AgentCapabilities {
     pub model_adapters: Vec<String>,
-    pub research_engines: Vec<String>,
-    pub knowledge_accumulation_engines: Vec<String>,
+    /// 已注册的联网研究引擎；MVP 为空数组。
+    pub research_engines: Vec<engine::EngineDescriptor>,
+    /// 不能使用联网研究时的原因，有注册项时为 `None`。
+    pub research_unavailable_reason: Option<String>,
+    /// 已注册的知识积累引擎；MVP 为空数组。
+    pub knowledge_accumulation_engines: Vec<engine::EngineDescriptor>,
+    /// 不能使用知识积累时的原因，有注册项时为 `None`。
+    pub knowledge_accumulation_unavailable_reason: Option<String>,
     pub builtin_prompt_count: usize,
 }
 
+/// 描述当前进程实际拥有的能力。
+///
+/// 知识积累引擎由调用方给出：应用把它作为应用状态的一部分持有，能力查询与积累
+/// 入口因此读的是同一份注册表（细则 §7.4）。MVP 的生产注册表为空。
 #[must_use]
-pub fn capabilities() -> AgentCapabilities {
+pub fn capabilities(accumulation_engines: &[&dyn engine::AccumulationEngine]) -> AgentCapabilities {
     AgentCapabilities {
         model_adapters: vec!["chat_completions".to_owned()],
-        research_engines: Vec::new(),
-        knowledge_accumulation_engines: Vec::new(),
+        research_engines: engine::RESEARCH_ENGINES
+            .iter()
+            .map(|engine| engine.descriptor())
+            .collect(),
+        research_unavailable_reason: engine::RESEARCH_ENGINES
+            .is_empty()
+            .then(|| engine::RESEARCH_UNAVAILABLE_REASON.to_owned()),
+        knowledge_accumulation_engines: accumulation_engines
+            .iter()
+            .map(|engine| engine.descriptor())
+            .collect(),
+        knowledge_accumulation_unavailable_reason: accumulation_engines
+            .is_empty()
+            .then(|| engine::ACCUMULATION_UNAVAILABLE_REASON.to_owned()),
         builtin_prompt_count: PromptKey::ALL.len(),
     }
 }
@@ -625,7 +649,10 @@ mod tests {
 
     #[test]
     fn capabilities_advertise_the_built_in_chat_completions_protocol() {
-        assert_eq!(capabilities().model_adapters, vec!["chat_completions"]);
+        assert_eq!(
+            capabilities(engine::ACCUMULATION_ENGINES).model_adapters,
+            vec!["chat_completions"]
+        );
     }
 
     #[test]

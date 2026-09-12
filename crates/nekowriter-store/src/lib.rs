@@ -24,9 +24,9 @@ use thiserror::Error;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-/// 21 新增内建提示词的系统级与项目级覆盖。旧格式不能安全反序列化为当前合同，
-/// 因此按项目约定拒绝打开而不尝试迁移。
-pub const SCHEMA_VERSION: u32 = 21;
+/// 24 新增用户提示词模板。旧格式不能安全反序列化为当前合同，因此按项目约定
+/// 拒绝打开而不尝试迁移。
+pub const SCHEMA_VERSION: u32 = 25;
 const CREATE_PROJECT_METHOD: &str = "POST";
 const CREATE_PROJECT_TARGET: &str = "/api/projects";
 const CREATE_VERSION_METHOD: &str = "POST";
@@ -37,32 +37,53 @@ pub(crate) const CHAPTER_OUTLINE_ROLE: &str = "chapter_outline";
 pub(crate) const CHAPTER_BODY_ROLE: &str = "chapter_body";
 
 mod agent_messages;
+mod budget;
 mod chapters;
+mod dashboard;
 pub(crate) mod entity;
 mod event_log;
+mod export;
+mod knowledge;
+mod manuscript;
 mod model_requests;
 mod preparation;
 mod project_settings;
+mod prompt_templates;
 mod prompts;
+mod recycle;
 mod schema;
 mod settings;
+mod system_operations;
 mod version_copy;
 
 pub use agent_messages::{AgentMessageRole, NewAgentMessage, PersistedAgentMessage};
 pub use event_log::{EventStreamBounds, PersistedEvent};
+pub use knowledge::{
+    DEFAULT_SEARCH_TOP_K, INDEX_TASK_FAILED, INDEX_TASK_PENDING, INDEX_TASK_READY,
+    INDEX_TASK_RUNNING, KnowledgeIndexTask, KnowledgeSearchQuery, KnowledgeSpaceInput,
+    MAX_SEARCH_TOP_K, NewEmbeddingSettings, NewKnowledgeEntry, UpdateKnowledgeEntry,
+    chunk_knowledge_content,
+};
 pub use model_requests::{
     ModelProtocolCorrection, ModelProtocolCorrectionResult, ModelRequestResolution,
     ModelRequestStatus, NewModelRequest, PersistedModelRequest,
 };
+pub use nekowriter_core::recycle::{RecycleBin, RecycleItem, RecycleItemKind, RecycleParent};
 pub use preparation::{
     AgentQuestionToolCall, AppliedAgentQuestionToolCall, AppliedChapterBodyToolCall,
-    CancelReviewDelegationResult, ChapterBodyAgentToolCall, CompletedRunContextFold,
-    CompletedRunContextStage, DelegatedReviewKind, DelegatedReviewTask,
-    MaterializedChapterBodyFeedback, QuestionAnswerResult, ReviewDelegationResult,
-    StopWritingRunResult,
+    AppliedFreeAgentToolCall, CancelReviewDelegationResult, ChapterBodyAgentToolCall,
+    CompletedRunContextFold, CompletedRunContextStage, DelegatedReviewKind, DelegatedReviewTask,
+    FreeAgentToolCall, InterruptionOutcome, InterruptionSource, MaterializedChapterBodyFeedback,
+    QuestionAnswerResult, ReviewDelegationResult, StopWritingRunResult,
 };
 pub use prompts::{NewPromptOverride, PromptOverride, PromptOverrideReset, PromptOverrideScope};
 pub use settings::{NewSystemModelSettings, SYSTEM_WRITING_MODEL_KEY, SystemModelSettings};
+pub use system_operations::{
+    NewSystemModelOperation, OPERATION_KIND_CONNECTION_TEST,
+    OPERATION_KIND_EMBEDDING_CONNECTION_TEST, OPERATION_KIND_EMBEDDING_INDEX,
+    OPERATION_KIND_EMBEDDING_QUERY, OPERATION_STATUS_FAILED, OPERATION_STATUS_SUCCEEDED,
+    OPERATION_STATUS_UNKNOWN, is_embedding_operation,
+};
 
 use entity::{command_receipt, document, novel_version, project, workflow_instance};
 
@@ -92,6 +113,10 @@ pub enum StoreError {
     VersionNotFound,
     #[error("章节不存在或已删除")]
     ChapterNotFound,
+    #[error("稿本修订冲突：请求基于 {expected}，当前为 {actual}")]
+    VersionRevisionConflict { expected: i64, actual: i64 },
+    #[error("当前稿本不允许此操作：{0}")]
+    InvalidVersionState(String),
     #[error("Run 不存在")]
     RunNotFound,
     #[error("模型请求不存在")]
@@ -118,6 +143,8 @@ pub enum StoreError {
     EmptyFeedback,
     #[error("引用无效：{0}")]
     InvalidCitation(String),
+    #[error("文档修订不存在或所属文档已删除")]
+    DocumentRevisionNotFound,
     #[error("正文自由意见在构建请求期间发生变化，请重新封存上下文")]
     FeedbackSnapshotStale,
     #[error("正文编辑提案不存在或不属于当前章节 Run")]
@@ -170,6 +197,42 @@ pub enum StoreError {
     CorruptRecord(String),
     #[error("序列化失败：{0}")]
     Serialization(#[from] serde_json::Error),
+    #[error("知识 Space 不存在或已删除")]
+    KnowledgeSpaceNotFound,
+    #[error("知识条目不存在或已删除")]
+    KnowledgeEntryNotFound,
+    #[error("知识 Space 仍有条目，不能删除；请先移动或删除条目")]
+    KnowledgeSpaceNotEmpty,
+    #[error("知识 Space 修订冲突：请求基于 {expected}，当前为 {actual}")]
+    KnowledgeSpaceRevisionConflict { expected: i64, actual: i64 },
+    #[error("知识条目修订冲突：请求基于 {expected}，当前为 {actual}")]
+    KnowledgeEntryRevisionConflict { expected: i64, actual: i64 },
+    #[error("知识条目无效：{0}")]
+    InvalidKnowledgeEntry(String),
+    #[error("Embedding 配置无效：{0}")]
+    InvalidEmbeddingSettings(String),
+    #[error("Embedding 配置修订冲突：请求基于 {expected}，当前为 {actual}")]
+    EmbeddingSettingsRevisionConflict { expected: i64, actual: i64 },
+    #[error("尚未配置 Embedding，语义检索不可用")]
+    EmbeddingNotConfigured,
+    #[error("Embedding 维度不符：期望 {expected}，实际 {actual}")]
+    EmbeddingDimensionMismatch { expected: i64, actual: i64 },
+    #[error("知识检索输入无效：{0}")]
+    InvalidKnowledgeSearch(String),
+    #[error("提示词模板不存在或已删除")]
+    PromptTemplateNotFound,
+    #[error("提示词模板修订冲突：请求基于 {expected}，当前为 {actual}")]
+    PromptTemplateRevisionConflict { expected: i64, actual: i64 },
+    #[error("提示词模板无效：{0}")]
+    InvalidPromptTemplate(String),
+    #[error("Dashboard 查询无效：{0}")]
+    InvalidDashboardQuery(String),
+    #[error("对象不在回收站里：不存在，或已经被彻底删除")]
+    RecycleItemNotFound,
+    #[error("{0}仍在回收站里，请先恢复它")]
+    RecycleAncestorDeleted(String),
+    #[error("该对象不能彻底删除：{0}")]
+    RecycleNotPurgeable(String),
 }
 
 #[derive(Clone, Debug)]
@@ -199,10 +262,26 @@ impl Store {
             data_dir,
             event_notifier,
         };
-        store.recover_interrupted_writing_runs().await?;
-        store.recover_interrupted_review_delegations().await?;
+        store
+            .interrupt_active_runs(InterruptionSource::StartupRecovery)
+            .await?;
         event_log::discard_expired_events(&store).await?;
         Ok(store)
+    }
+
+    /// 退出前的数据收尾：先把 WAL 落回主库文件，再关闭连接池。
+    ///
+    /// 调用方必须已经取消所有本地执行任务，否则关闭之后仍会有写入尝试。
+    ///
+    /// # Errors
+    ///
+    /// WAL 回写或关闭连接池失败时返回数据库错误；此时进程仍应继续退出。
+    pub async fn close(&self) -> Result<(), StoreError> {
+        self.database
+            .execute_unprepared("PRAGMA wal_checkpoint(TRUNCATE)")
+            .await?;
+        self.database.close_by_ref().await?;
+        Ok(())
     }
 
     #[must_use]
@@ -999,6 +1078,37 @@ fn transaction_error(error: TransactionError<StoreError>) -> StoreError {
     }
 }
 
+/// 命令事务提交后的统一收尾：通知事件监听者，并在唯一键竞争时按回执重放。
+///
+/// 所有带 `command_id` 的写入共用它，因此幂等重放规则只有一处。
+async fn finish_write<T: DeserializeOwned + Serialize>(
+    store: &Store,
+    command_id: Uuid,
+    method: &str,
+    target: &str,
+    payload_hash: &str,
+    result: Result<T, StoreError>,
+) -> Result<T, StoreError> {
+    match result {
+        Ok(response) => {
+            store.notify_event_listeners();
+            Ok(response)
+        }
+        Err(StoreError::Database(error)) => {
+            store
+                .replay_after_receipt_conflict(
+                    command_id,
+                    method,
+                    target,
+                    payload_hash,
+                    StoreError::Database(error),
+                )
+                .await
+        }
+        Err(error) => Err(error),
+    }
+}
+
 const fn approval_mode_name(mode: &ApprovalMode) -> &'static str {
     match mode {
         ApprovalMode::AutoApprove => "auto_approve",
@@ -1015,8 +1125,8 @@ mod tests {
         AppendChapterContent, ChapterPlanDraft, ExecutionStatus, HumanReviewDecision,
         MAX_CONSECUTIVE_PROTOCOL_ERRORS, ModelCapabilityProfile, NewChapterGuidance,
         NewChapterOutline, NewCopiedNovelVersion, NewExtraChapter, NewNovelBrief, NewNovelVersion,
-        NewProject, PreparationArtifactInput, PreparationArtifactKind, ReplaceChapterContent,
-        ReviewStatus, RunWaitReason, WorkflowStage,
+        NewProject, NewPromptTemplate, PreparationArtifactInput, PreparationArtifactKind,
+        ReplaceChapterContent, ReviewStatus, RunWaitReason, WorkflowStage,
     };
     use sea_orm::{EntityTrait, ModelTrait};
     use serde_json::json;
@@ -1045,6 +1155,130 @@ mod tests {
             reopened.get_project(created.project.id).await.unwrap(),
             created
         );
+    }
+
+    #[tokio::test]
+    async fn deleting_a_project_hides_its_versions_and_restoring_it_brings_them_back() {
+        let data_dir = TempDir::new().unwrap();
+        let store = Store::open(data_dir.path()).await.unwrap();
+        store
+            .create_project(
+                Uuid::new_v4(),
+                NewProject::new("保留", "留下的作品", None::<&str>).unwrap(),
+            )
+            .await
+            .unwrap();
+        let doomed = store
+            .create_project(
+                Uuid::new_v4(),
+                NewProject::new("待删", "要删的作品", None::<&str>).unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(store.list_projects().await.unwrap().len(), 2);
+
+        // 项目下先单独删掉一个稿本，用来验证恢复项目不会把它一并复活。
+        let second = store
+            .create_version(
+                doomed.project.id,
+                Uuid::new_v4(),
+                NewNovelVersion::new("第二稿", "要删的作品").unwrap(),
+            )
+            .await
+            .unwrap();
+        let removed = doomed.version.id;
+        store
+            .delete_version(removed, Uuid::new_v4(), doomed.version.revision)
+            .await
+            .unwrap();
+
+        let command_id = Uuid::new_v4();
+        let current = store.get_project(doomed.project.id).await.unwrap();
+        let bin = store
+            .delete_project(doomed.project.id, command_id, current.project.revision)
+            .await
+            .unwrap();
+        // 同一条命令重放返回原结果，不会重复删除。
+        assert_eq!(
+            bin,
+            store
+                .delete_project(doomed.project.id, command_id, current.project.revision)
+                .await
+                .unwrap()
+        );
+        assert_eq!(store.list_projects().await.unwrap().len(), 1);
+        assert!(matches!(
+            store.get_project(doomed.project.id).await.unwrap_err(),
+            StoreError::ProjectNotFound
+        ));
+        assert!(matches!(
+            store
+                .get_version_snapshot(second.version.id)
+                .await
+                .unwrap_err(),
+            StoreError::VersionNotFound
+        ));
+
+        let project_item = bin
+            .items
+            .iter()
+            .find(|item| item.id == doomed.project.id)
+            .expect("项目应该出现在回收站里");
+        assert_eq!(project_item.kind, RecycleItemKind::Project);
+        assert!(project_item.restorable);
+        assert!(!project_item.purgeable);
+        assert_eq!(project_item.parent, None);
+        assert_eq!(project_item.detail.as_deref(), Some("2 份稿本 · 0 章"));
+
+        // 祖先不可见时，被删的稿本不能单独恢复。
+        let version_item = bin
+            .items
+            .iter()
+            .find(|item| item.id == removed)
+            .expect("被删的稿本应该还在回收站里");
+        assert!(!version_item.restorable);
+        assert!(version_item.restore_blocked_reason.is_some());
+        assert!(matches!(
+            store
+                .restore_recycle_item(RecycleItemKind::Version, removed, Uuid::new_v4())
+                .await
+                .unwrap_err(),
+            StoreError::RecycleAncestorDeleted(_)
+        ));
+
+        // 项目与正文一样构成审计链，不提供物理删除。
+        assert!(matches!(
+            store
+                .purge_recycle_item(RecycleItemKind::Project, doomed.project.id, Uuid::new_v4())
+                .await
+                .unwrap_err(),
+            StoreError::RecycleNotPurgeable(_)
+        ));
+
+        // 恢复项目：稿本原样回来，但此前单独删掉的稿本仍留在回收站里。
+        let restored = store
+            .restore_recycle_item(RecycleItemKind::Project, doomed.project.id, Uuid::new_v4())
+            .await
+            .unwrap();
+        assert_eq!(store.list_projects().await.unwrap().len(), 2);
+        assert!(restored.items.iter().any(|item| item.id == removed));
+        assert_eq!(
+            store
+                .get_version_snapshot(second.version.id)
+                .await
+                .unwrap()
+                .version,
+            second.version
+        );
+
+        // 恢复不存在的项目：明确报错，而不是假装成功。
+        assert!(matches!(
+            store
+                .restore_recycle_item(RecycleItemKind::Project, doomed.project.id, Uuid::new_v4())
+                .await
+                .unwrap_err(),
+            StoreError::RecycleItemNotFound
+        ));
     }
 
     #[tokio::test]
@@ -1527,6 +1761,254 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn free_agent_tool_call_requeues_and_replays_its_stored_result() {
+        let data_dir = TempDir::new().unwrap();
+        let store = Store::open(data_dir.path()).await.unwrap();
+        let created = store
+            .create_project(
+                Uuid::new_v4(),
+                NewProject::new("知识检索工具", "自由工具结果落库", None::<&str>).unwrap(),
+            )
+            .await
+            .unwrap();
+        store
+            .save_novel_brief(
+                created.version.id,
+                Uuid::new_v4(),
+                NewNovelBrief::new("写一部关于灯塔与雾港的短篇小说").unwrap(),
+            )
+            .await
+            .unwrap();
+        let workflow = store
+            .get_version_snapshot(created.version.id)
+            .await
+            .unwrap()
+            .workflow;
+        let started = store
+            .start_preparation(created.version.id, Uuid::new_v4(), workflow.state_revision)
+            .await
+            .unwrap();
+        let run_id = started.workflow.active_run_id.unwrap();
+        let request = store
+            .capture_and_dispatch_model_request(
+                NewModelRequest {
+                    run_id,
+                    settings_snapshot: json!({ "model": "test-model" }),
+                    prompt_snapshot: json!({ "contentHash": "prompt-hash" }),
+                    context_snapshot: json!({ "messages": [] }),
+                },
+                vec![NewAgentMessage {
+                    role: AgentMessageRole::User,
+                    content: json!({
+                        "kind": "text",
+                        "role": "user",
+                        "content": "请生成四项准备产物。"
+                    }),
+                    request_id: None,
+                    tool_call_id: None,
+                }],
+            )
+            .await
+            .unwrap();
+        let tool_result = json!({
+            "hits": [{
+                "chunkId": "chunk-1",
+                "entryId": "entry-1",
+                "entryRevision": "1",
+                "spaceId": "space-1",
+                "chunkIndex": "0",
+                "title": "雾港城",
+                "text": "灯塔用蓝鲸油点亮。",
+                "score": 0.5,
+            }],
+            "coverage": {
+                "readyEntries": "1",
+                "pendingEntries": "0",
+                "failedEntries": "0",
+                "notConfiguredEntries": "0",
+            },
+        });
+        let call = FreeAgentToolCall {
+            provider_call_id: "call-1".to_owned(),
+            name: nekowriter_core::TOOL_QUERY_KNOWLEDGE.to_owned(),
+            arguments: json!({ "query": "灯塔", "topK": 5 }),
+            result: tool_result.clone(),
+            failed: false,
+            error_code: None,
+        };
+
+        let committed = store
+            .execute_free_agent_tool_call(
+                request.id,
+                Some("provider-request-1".to_owned()),
+                json!({ "totalTokens": "5" }),
+                call.clone(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(committed.result, tool_result);
+        assert!(committed.newly_resolved);
+        assert!(committed.requeue);
+        assert_eq!(
+            store
+                .free_agent_tool_result(request.id, "call-1")
+                .await
+                .unwrap(),
+            Some(tool_result.clone())
+        );
+        // 一轮工具结果落库后：assistant 工具调用、tool 结果、Run 重新排队、工作流回到生成中。
+        assert_eq!(store.list_agent_messages(run_id).await.unwrap().len(), 3);
+        let queued = store
+            .get_preparation_snapshot(created.version.id)
+            .await
+            .unwrap();
+        assert_eq!(queued.workflow.execution, ExecutionStatus::Queued);
+
+        // 同一 provider_call_id 的重放只返回已提交结果，不再追加消息或工具调用记录。
+        let replayed = store
+            .execute_free_agent_tool_call(
+                request.id,
+                Some("provider-request-1".to_owned()),
+                json!({ "totalTokens": "5" }),
+                call.clone(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(replayed.result, tool_result);
+        assert!(!replayed.newly_resolved);
+        assert!(!replayed.requeue);
+        assert_eq!(store.list_agent_messages(run_id).await.unwrap().len(), 3);
+
+        // 同一调用 ID 换了参数属于协议错误，不能静默改写已落库的调用。
+        let conflict = store
+            .execute_free_agent_tool_call(
+                request.id,
+                Some("provider-request-1".to_owned()),
+                json!({ "totalTokens": "5" }),
+                FreeAgentToolCall {
+                    arguments: json!({ "query": "另一个问题", "topK": 5 }),
+                    ..call
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(conflict, StoreError::InvalidModelRequestState(_)));
+    }
+
+    #[tokio::test]
+    async fn invalid_agent_question_tool_calls_stop_at_the_protocol_limit() {
+        let data_dir = TempDir::new().unwrap();
+        let store = Store::open(data_dir.path()).await.unwrap();
+        let created = store
+            .create_project(
+                Uuid::new_v4(),
+                NewProject::new("问题工具上限", "无效问题不能无限消耗请求", None::<&str>).unwrap(),
+            )
+            .await
+            .unwrap();
+        store
+            .save_novel_brief(
+                created.version.id,
+                Uuid::new_v4(),
+                NewNovelBrief::new("写一个有明确结局的短篇小说").unwrap(),
+            )
+            .await
+            .unwrap();
+        let workflow = store
+            .get_version_snapshot(created.version.id)
+            .await
+            .unwrap()
+            .workflow;
+        let started = store
+            .start_preparation(created.version.id, Uuid::new_v4(), workflow.state_revision)
+            .await
+            .unwrap();
+        let run_id = started.workflow.active_run_id.unwrap();
+
+        for attempt in 1..=MAX_CONSECUTIVE_PROTOCOL_ERRORS {
+            let request = store
+                .capture_and_dispatch_model_request(
+                    NewModelRequest {
+                        run_id,
+                        settings_snapshot: json!({ "model": "invalid-question-test" }),
+                        prompt_snapshot: json!({ "contentHash": format!("invalid-question-{attempt}") }),
+                        context_snapshot: json!({ "messages": [] }),
+                    },
+                    Vec::new(),
+                )
+                .await
+                .unwrap();
+            let result = store
+                .execute_agent_question_tool_call(
+                    request.id,
+                    Some(format!("invalid-question-provider-{attempt}")),
+                    json!({ "totalTokens": "1" }),
+                    AgentQuestionToolCall {
+                        provider_call_id: format!("invalid-question-call-{attempt}"),
+                        // `questions` 为空是完整 JSON，但不符合 ask_user 的领域合同。
+                        arguments: json!({ "questions": [] }),
+                    },
+                )
+                .await
+                .unwrap();
+            let AppliedAgentQuestionToolCall::Resolved {
+                result,
+                newly_resolved,
+                requeue,
+                ..
+            } = result
+            else {
+                panic!("无效 ask_user 应生成可回送的工具错误");
+            };
+            assert!(newly_resolved);
+            assert_eq!(result["status"], "error");
+            assert_eq!(result["code"], "TOOL_ARGUMENTS_INVALID");
+            assert_eq!(requeue, attempt < MAX_CONSECUTIVE_PROTOCOL_ERRORS);
+
+            let snapshot = store
+                .get_preparation_snapshot(created.version.id)
+                .await
+                .unwrap();
+            assert_eq!(
+                snapshot.workflow.execution,
+                if attempt < MAX_CONSECUTIVE_PROTOCOL_ERRORS {
+                    ExecutionStatus::Queued
+                } else {
+                    ExecutionStatus::Stopped
+                }
+            );
+        }
+
+        let run = entity::run::Entity::find_by_id(db_id(run_id))
+            .one(&store.database)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(run.status, "stopped");
+        assert_eq!(
+            run.consecutive_protocol_errors,
+            MAX_CONSECUTIVE_PROTOCOL_ERRORS
+        );
+        let last_run_event = store
+            .events_after(0)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|event| event.event_type == "run.changed")
+            .next_back()
+            .unwrap();
+        assert_eq!(last_run_event.payload["reason"], "tool_error");
+        assert_eq!(
+            last_run_event.payload["wait_reason"],
+            "protocol_error_limit"
+        );
+        assert_eq!(
+            last_run_event.payload["consecutive_protocol_errors"],
+            MAX_CONSECUTIVE_PROTOCOL_ERRORS.to_string()
+        );
+    }
+
+    #[tokio::test]
     async fn preparation_model_submission_is_committed_with_its_response_and_reviews() {
         let data_dir = TempDir::new().unwrap();
         let store = Store::open(data_dir.path()).await.unwrap();
@@ -1592,7 +2074,7 @@ mod tests {
                 json!({ "inputTokens": "21", "outputTokens": "8", "totalTokens": "29" }),
                 "{\"artifacts\":[...],\"chapter_plan\":[...]}".to_owned(),
                 artifacts,
-                chapter_plan,
+                Some(chapter_plan),
             )
             .await
             .unwrap();
@@ -1630,12 +2112,192 @@ mod tests {
                 json!({ "inputTokens": "21", "outputTokens": "8", "totalTokens": "29" }),
                 "ignored-by-terminal-replay".to_owned(),
                 Vec::new(),
-                Vec::new(),
+                None,
             )
             .await
             .unwrap();
         assert_eq!(replayed.workflow, submitted.workflow);
         assert_eq!(store.list_agent_messages(run_id).await.unwrap().len(), 2);
+    }
+
+    /// 准备修订轮：模型一轮只提交「需要修订」的那些产物，而且只有粗纲也在待修订
+    /// 之列时才允许附带 `chapter_plan`。系统消息里的合同与解析器按同一份清单生成，
+    /// 所以「照合同提交」必须被 Store 接受，提交其它项必须被明确拒绝且不留痕迹。
+    #[tokio::test]
+    async fn preparation_revision_round_accepts_only_the_rejected_artifacts() {
+        let data_dir = TempDir::new().unwrap();
+        let store = Store::open(data_dir.path()).await.unwrap();
+        let created = store
+            .create_project(
+                Uuid::new_v4(),
+                NewProject::new("准备修订", "只有被拒绝的产物需要重写", None::<&str>).unwrap(),
+            )
+            .await
+            .unwrap();
+        let version_id = created.version.id;
+        store
+            .save_novel_brief(
+                version_id,
+                Uuid::new_v4(),
+                NewNovelBrief::new("写一部关于旧车站与重逢的短篇小说").unwrap(),
+            )
+            .await
+            .unwrap();
+        let workflow = store
+            .get_version_snapshot(version_id)
+            .await
+            .unwrap()
+            .workflow;
+        let started = store
+            .start_preparation(version_id, Uuid::new_v4(), workflow.state_revision)
+            .await
+            .unwrap();
+        let run_id = started.workflow.active_run_id.unwrap();
+        let first_request = store
+            .capture_and_dispatch_model_request(
+                NewModelRequest {
+                    run_id,
+                    settings_snapshot: json!({ "model": "test-model" }),
+                    prompt_snapshot: json!({ "contentHash": "prompt-hash" }),
+                    context_snapshot: json!({ "messages": [] }),
+                },
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        let artifacts = PreparationArtifactKind::ALL
+            .into_iter()
+            .map(|kind| {
+                PreparationArtifactInput::new(kind, format!("{} 的首版内容", kind.label())).unwrap()
+            })
+            .collect::<Vec<_>>();
+        let mut snapshot = store
+            .commit_preparation_model_submission(
+                first_request.id,
+                Some("provider-request-1".to_owned()),
+                json!({ "inputTokens": "21", "outputTokens": "8", "totalTokens": "29" }),
+                "{\"artifacts\":[...],\"chapter_plan\":[...]}".to_owned(),
+                artifacts,
+                Some(vec![
+                    ChapterPlanDraft::new("第一章：重逢", "旧车站的相遇").unwrap(),
+                ]),
+            )
+            .await
+            .unwrap();
+        assert_eq!(snapshot.workflow.stage, WorkflowStage::PreparingReviewing);
+
+        // 三项通过、资料被拒绝：工作流进入准备修订，同一个 Run 重新排队。
+        for kind in [
+            PreparationArtifactKind::Background,
+            PreparationArtifactKind::Characters,
+            PreparationArtifactKind::Outline,
+        ] {
+            let review_id = snapshot
+                .artifacts
+                .iter()
+                .find(|artifact| artifact.kind == kind)
+                .and_then(|artifact| artifact.review.as_ref())
+                .map(|review| review.id)
+                .unwrap();
+            snapshot = store
+                .decide_preparation_review(
+                    review_id,
+                    Uuid::new_v4(),
+                    snapshot.workflow.state_revision,
+                    HumanReviewDecision::new(true, "").unwrap(),
+                    Vec::new(),
+                )
+                .await
+                .unwrap();
+        }
+        let research_review_id = snapshot
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.kind == PreparationArtifactKind::Research)
+            .and_then(|artifact| artifact.review.as_ref())
+            .map(|review| review.id)
+            .unwrap();
+        snapshot = store
+            .decide_preparation_review(
+                research_review_id,
+                Uuid::new_v4(),
+                snapshot.workflow.state_revision,
+                HumanReviewDecision::new(false, "资料需要补充 1998 年港城晚报的原件出处。")
+                    .unwrap(),
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(snapshot.workflow.stage, WorkflowStage::PreparingRevising);
+        assert_eq!(snapshot.workflow.active_run_id, Some(run_id));
+
+        let revision_request = store
+            .capture_and_dispatch_model_request(
+                NewModelRequest {
+                    run_id,
+                    settings_snapshot: json!({ "model": "test-model" }),
+                    prompt_snapshot: json!({ "contentHash": "prompt-hash" }),
+                    context_snapshot: json!({ "messages": [] }),
+                },
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+
+        // 负向：修订轮不能覆盖不需要修订的产物，失败不留痕。
+        assert!(matches!(
+            store
+                .commit_preparation_model_submission(
+                    revision_request.id,
+                    Some("provider-request-2".to_owned()),
+                    json!({ "inputTokens": "21", "outputTokens": "8", "totalTokens": "29" }),
+                    "{\"artifacts\":[{\"kind\":\"background\",\"content\":\"越权重写\"}]}"
+                        .to_owned(),
+                    vec![
+                        PreparationArtifactInput::new(
+                            PreparationArtifactKind::Background,
+                            "越权重写的背景",
+                        )
+                        .unwrap()
+                    ],
+                    None,
+                )
+                .await,
+            Err(StoreError::InvalidPreparationArtifacts(_))
+        ));
+
+        // 正向：只提交被拒绝的资料项，不带 chapter_plan，照合同提交即可通过。
+        snapshot = store
+            .commit_preparation_model_submission(
+                revision_request.id,
+                Some("provider-request-2".to_owned()),
+                json!({ "inputTokens": "21", "outputTokens": "8", "totalTokens": "29" }),
+                "{\"artifacts\":[{\"kind\":\"research\",\"content\":\"补充后的资料\"}]}".to_owned(),
+                vec![
+                    PreparationArtifactInput::new(
+                        PreparationArtifactKind::Research,
+                        "资料：1998 年港城晚报原件第 3 版。",
+                    )
+                    .unwrap(),
+                ],
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(snapshot.workflow.stage, WorkflowStage::PreparingReviewing);
+        let research = snapshot
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.kind == PreparationArtifactKind::Research)
+            .unwrap();
+        assert_eq!(
+            research.content.as_deref(),
+            Some("资料：1998 年港城晚报原件第 3 版。")
+        );
+        assert_eq!(
+            research.review.as_ref().map(|review| review.status.clone()),
+            Some(ReviewStatus::Open)
+        );
     }
 
     #[tokio::test]
@@ -2157,6 +2819,7 @@ mod tests {
                             "message": "终态提交不是合法 JSON",
                         }),
                         correction: "请重新返回一个合法的阶段结果。".to_owned(),
+                        tool_result_code: "PROTOCOL_ERROR".to_owned(),
                     },
                 )
                 .await
@@ -2209,6 +2872,7 @@ mod tests {
                             "message": "终态提交不是合法 JSON",
                         }),
                         correction: "请重新返回一个合法的阶段结果。".to_owned(),
+                        tool_result_code: "PROTOCOL_ERROR".to_owned(),
                     },
                 )
                 .await
@@ -2701,6 +3365,7 @@ mod tests {
                     Uuid::new_v4(),
                     snapshot.workflow.state_revision,
                     HumanReviewDecision::new(true, "").unwrap(),
+                    Vec::new(),
                 )
                 .await
                 .unwrap();
@@ -2786,6 +3451,7 @@ mod tests {
                 first_outline.workflow.state_revision,
                 HumanReviewDecision::new(false, "请让报纸线索与林舟的个人风险更直接相关。")
                     .unwrap(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -2827,6 +3493,7 @@ mod tests {
                 approval_command_id,
                 revised_outline.workflow.state_revision,
                 HumanReviewDecision::new(true, "").unwrap(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -2838,6 +3505,7 @@ mod tests {
                 approval_command_id,
                 revised_outline.workflow.state_revision,
                 HumanReviewDecision::new(true, "").unwrap(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -2913,6 +3581,7 @@ mod tests {
                 Uuid::new_v4(),
                 first_final_review.workflow.state_revision,
                 HumanReviewDecision::new(false, "请补足林舟带走报纸的选择与后果。").unwrap(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -2943,6 +3612,7 @@ mod tests {
                 final_approval_command_id,
                 final_review.workflow.state_revision,
                 HumanReviewDecision::new(true, "").unwrap(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -3115,6 +3785,7 @@ mod tests {
                 Uuid::new_v4(),
                 second_outline.workflow.state_revision,
                 HumanReviewDecision::new(true, "").unwrap(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -3141,6 +3812,7 @@ mod tests {
                 Uuid::new_v4(),
                 second_final_review.workflow.state_revision,
                 HumanReviewDecision::new(true, "").unwrap(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -3267,6 +3939,7 @@ mod tests {
                 Uuid::new_v4(),
                 extra_outline.workflow.state_revision,
                 HumanReviewDecision::new(true, "").unwrap(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -3293,6 +3966,7 @@ mod tests {
                 Uuid::new_v4(),
                 extra_final_review.workflow.state_revision,
                 HumanReviewDecision::new(true, "").unwrap(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -3317,6 +3991,145 @@ mod tests {
                 .as_ref()
                 .map(|fold| fold.plain_text.as_str()),
             Some("雨停时，林舟在旧码头读完了最后一封信。")
+        );
+
+        // 回收站：番外软删除后正文、修订 id 与位置都不动，恢复时原样回来。
+        let body_before_delete = store.get_chapter_body(extra.id).await.unwrap().body;
+        let revision_before_delete = body_before_delete.revision_id.unwrap();
+        let deleted_snapshot = store
+            .delete_extra_chapter(
+                extra.id,
+                Uuid::new_v4(),
+                extra_completed.workflow.state_revision,
+            )
+            .await
+            .unwrap();
+        assert_eq!(deleted_snapshot.workflow.stage, WorkflowStage::Completed);
+        assert_eq!(
+            deleted_snapshot.workflow.active_chapter_id,
+            Some(chapters[1].id)
+        );
+        assert!(
+            store
+                .list_chapters(version_id)
+                .await
+                .unwrap()
+                .iter()
+                .all(|chapter| chapter.id != extra.id)
+        );
+        let bin = store.get_recycle_bin().await.unwrap();
+        let bin_chapter = bin
+            .items
+            .iter()
+            .find(|item| item.id == extra.id)
+            .expect("番外应该出现在回收站里");
+        assert_eq!(bin_chapter.kind, RecycleItemKind::Chapter);
+        assert!(bin_chapter.restorable);
+        assert!(!bin_chapter.purgeable);
+        assert!(
+            bin_chapter
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("字正文"))
+        );
+
+        // 正文不提供物理删除：还在回收站里时明确拒绝。
+        let purge_error = store
+            .purge_recycle_item(RecycleItemKind::Chapter, extra.id, Uuid::new_v4())
+            .await
+            .unwrap_err();
+        assert!(matches!(purge_error, StoreError::RecycleNotPurgeable(_)));
+        assert_eq!(
+            store.get_recycle_bin().await.unwrap().items.len(),
+            bin.items.len()
+        );
+
+        let restored_bin = store
+            .restore_recycle_item(RecycleItemKind::Chapter, extra.id, Uuid::new_v4())
+            .await
+            .unwrap();
+        assert!(restored_bin.items.iter().all(|item| item.id != extra.id));
+        let body_after_restore = store.get_chapter_body(extra.id).await.unwrap().body;
+        assert_eq!(body_after_restore.revision_id, Some(revision_before_delete));
+        assert_eq!(body_after_restore.content, body_before_delete.content);
+        let restored_chapter = store
+            .list_chapters(version_id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|chapter| chapter.id == extra.id)
+            .expect("恢复后番外应该回到目录");
+        assert_eq!(restored_chapter.order_index, extra.order_index);
+        assert_eq!(
+            restored_chapter.status,
+            nekowriter_core::ChapterStatus::Approved
+        );
+
+        // 重复恢复同一条记录：明确报错，而不是假装成功。
+        let restore_error = store
+            .restore_recycle_item(RecycleItemKind::Chapter, extra.id, Uuid::new_v4())
+            .await
+            .unwrap_err();
+        assert!(matches!(restore_error, StoreError::RecycleItemNotFound));
+
+        // 祖先仍在回收站里时，章节不能被单独恢复。
+        let before_ancestor = store.get_preparation_snapshot(version_id).await.unwrap();
+        store
+            .delete_extra_chapter(
+                extra.id,
+                Uuid::new_v4(),
+                before_ancestor.workflow.state_revision,
+            )
+            .await
+            .unwrap();
+        let bundle = store.get_version_snapshot(version_id).await.unwrap();
+        assert_ne!(bundle.project.selected_version_id, version_id);
+        let deleted_version_bin = store
+            .delete_version(version_id, Uuid::new_v4(), bundle.version.revision)
+            .await
+            .unwrap();
+        let bin_version = deleted_version_bin
+            .items
+            .iter()
+            .find(|item| item.id == version_id)
+            .expect("稿本应该出现在回收站里");
+        assert_eq!(bin_version.kind, RecycleItemKind::Version);
+        assert!(!bin_version.purgeable);
+        assert!(bin_version.restorable);
+        assert!(
+            bin_version
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("章已定稿")),
+            "回收站应该说明稿本里还剩多少章：{:?}",
+            bin_version.detail
+        );
+        let ancestor_error = store
+            .restore_recycle_item(RecycleItemKind::Chapter, extra.id, Uuid::new_v4())
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            ancestor_error,
+            StoreError::RecycleAncestorDeleted(_)
+        ));
+
+        // 先恢复稿本，再恢复番外，内容与修订仍然是删除前的那一份。
+        store
+            .restore_recycle_item(RecycleItemKind::Version, version_id, Uuid::new_v4())
+            .await
+            .unwrap();
+        store
+            .restore_recycle_item(RecycleItemKind::Chapter, extra.id, Uuid::new_v4())
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .get_chapter_body(extra.id)
+                .await
+                .unwrap()
+                .body
+                .revision_id,
+            Some(revision_before_delete)
         );
 
         let copied_before_guidance = store
@@ -3355,7 +4168,10 @@ mod tests {
         let persisted = reopened.get_preparation_snapshot(version_id).await.unwrap();
         assert_eq!(persisted.context_fold, snapshot.context_fold);
         assert_eq!(persisted.workflow.stage, WorkflowStage::Completed);
-        assert_eq!(persisted.workflow.active_chapter_id, Some(extra.id));
+        // 恢复只把数据与在作品里的位置放回去，不把写作光标搬回来：删除时工作流已经
+        // 从那一章收回到仍然可见的最后一章，之后用户可能已经在别处继续写，所以
+        // 光标保持删除后的位置。
+        assert_eq!(persisted.workflow.active_chapter_id, Some(chapters[1].id));
         assert_eq!(
             reopened
                 .get_chapter_outline(chapters[0].id)
@@ -3374,6 +4190,176 @@ mod tests {
                 .unwrap()
                 .context_fold
                 .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn review_decision_persists_validated_citations_and_rejects_bad_ones() {
+        let data_dir = TempDir::new().unwrap();
+        let store = Store::open(data_dir.path()).await.unwrap();
+        let project = store
+            .create_project(
+                Uuid::new_v4(),
+                NewProject::new("决策引用", "旧码头", None::<&str>).unwrap(),
+            )
+            .await
+            .unwrap();
+        let version_id = project.version.id;
+        store
+            .save_novel_brief(
+                version_id,
+                Uuid::new_v4(),
+                NewNovelBrief::new("写一部关于旧码头与匿名报纸的悬疑小说。").unwrap(),
+            )
+            .await
+            .unwrap();
+        let mut snapshot = store
+            .start_preparation(version_id, Uuid::new_v4(), 0)
+            .await
+            .unwrap();
+        let preparation_run_id = snapshot.workflow.active_run_id.unwrap();
+        store
+            .append_agent_messages(
+                preparation_run_id,
+                vec![NewAgentMessage {
+                    role: AgentMessageRole::Assistant,
+                    content: json!({
+                        "kind": "text",
+                        "role": "assistant",
+                        "content": "我会先形成四项准备产物。"
+                    }),
+                    request_id: None,
+                    tool_call_id: None,
+                }],
+            )
+            .await
+            .unwrap();
+        snapshot = store
+            .submit_preparation_artifacts(
+                version_id,
+                Uuid::new_v4(),
+                snapshot.workflow.state_revision,
+                vec![
+                    PreparationArtifactInput::new(
+                        PreparationArtifactKind::Outline,
+                        "# 粗纲\n\n第一章：旧码头的报纸",
+                    )
+                    .unwrap(),
+                    PreparationArtifactInput::new(
+                        PreparationArtifactKind::Characters,
+                        "林舟：追查旧报纸的记者。",
+                    )
+                    .unwrap(),
+                    PreparationArtifactInput::new(
+                        PreparationArtifactKind::Research,
+                        "资料：1998 年港城晚报。",
+                    )
+                    .unwrap(),
+                    PreparationArtifactInput::new(
+                        PreparationArtifactKind::Background,
+                        "海港城连续七日暴雨，旧码头即将拆除。",
+                    )
+                    .unwrap(),
+                ],
+                Some(vec![
+                    nekowriter_core::ChapterPlanDraft::new(
+                        "旧码头的报纸",
+                        "林舟在暴雨中收到匿名报纸并决定追查。",
+                    )
+                    .unwrap(),
+                ]),
+            )
+            .await
+            .unwrap();
+        assert_eq!(snapshot.workflow.stage, WorkflowStage::PreparingReviewing);
+
+        let background = snapshot
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.kind == PreparationArtifactKind::Background)
+            .unwrap();
+        let review_id = background.review.as_ref().unwrap().id;
+        let document_id = background.document_id;
+        let revision_id = background.revision_id.unwrap();
+        let content = background.content.clone().unwrap();
+        assert_eq!(content, "海港城连续七日暴雨，旧码头即将拆除。");
+
+        // 负向：quote 与修订原文不一致时必须拒绝，且审核保持未决。
+        assert!(matches!(
+            store
+                .decide_review(
+                    review_id,
+                    Uuid::new_v4(),
+                    snapshot.workflow.state_revision,
+                    HumanReviewDecision::new(true, "").unwrap(),
+                    vec![nekowriter_core::FeedbackCitation::Document {
+                        document_id,
+                        revision_id,
+                        range: nekowriter_core::TextCitationRange {
+                            start_char: 0,
+                            end_char: 2,
+                            quote: "暴雨".to_owned(),
+                        },
+                        chapter_id: None,
+                    }],
+                )
+                .await,
+            Err(StoreError::InvalidCitation(_))
+        ));
+        let after_rejection = store.get_preparation_snapshot(version_id).await.unwrap();
+        assert_eq!(
+            after_rejection
+                .artifacts
+                .iter()
+                .find(|artifact| artifact.kind == PreparationArtifactKind::Background)
+                .and_then(|artifact| artifact.review.as_ref())
+                .map(|review| review.status.clone()),
+            Some(ReviewStatus::Open)
+        );
+
+        // 正向：合法引用随人工决定落库，而不是只在前端存在。
+        snapshot = store
+            .decide_review(
+                review_id,
+                Uuid::new_v4(),
+                snapshot.workflow.state_revision,
+                HumanReviewDecision::new(true, "").unwrap(),
+                vec![nekowriter_core::FeedbackCitation::Document {
+                    document_id,
+                    revision_id,
+                    range: nekowriter_core::TextCitationRange {
+                        start_char: 7,
+                        end_char: 9,
+                        quote: "暴雨".to_owned(),
+                    },
+                    chapter_id: None,
+                }],
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            snapshot
+                .artifacts
+                .iter()
+                .find(|artifact| artifact.kind == PreparationArtifactKind::Background)
+                .and_then(|artifact| artifact.review.as_ref())
+                .map(|review| review.status.clone()),
+            Some(ReviewStatus::Approved)
+        );
+
+        let review_model = entity::review::Entity::find_by_id(db_id(review_id))
+            .one(&store.database)
+            .await
+            .unwrap()
+            .unwrap();
+        let user_input: serde_json::Value =
+            serde_json::from_str(review_model.user_input_json.as_deref().unwrap()).unwrap();
+        assert_eq!(user_input["source"], "user");
+        assert_eq!(user_input["citations"][0]["kind"], "document");
+        assert_eq!(user_input["citations"][0]["quote"], "暴雨");
+        assert_eq!(
+            user_input["citations"][0]["revisionId"],
+            revision_id.to_string()
         );
     }
 
@@ -3447,6 +4433,7 @@ mod tests {
                 Uuid::new_v4(),
                 snapshot.workflow.state_revision,
                 "检查设定是否足以支撑第一章。".to_owned(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -3522,6 +4509,7 @@ mod tests {
                 Uuid::new_v4(),
                 snapshot.workflow.state_revision,
                 String::new(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -3576,6 +4564,7 @@ mod tests {
                 Uuid::new_v4(),
                 cancellation.snapshot.workflow.state_revision,
                 "重启恢复不应保留悬挂的审核请求。".to_owned(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -3665,6 +4654,7 @@ mod tests {
                     Uuid::new_v4(),
                     snapshot.workflow.state_revision,
                     HumanReviewDecision::new(true, "").unwrap(),
+                    Vec::new(),
                 )
                 .await
                 .unwrap();
@@ -3702,6 +4692,7 @@ mod tests {
                 Uuid::new_v4(),
                 outline.workflow.state_revision,
                 "检查细纲是否保留悬念。".to_owned(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -3798,12 +4789,42 @@ mod tests {
         let proposal = pending.pending_proposal.as_ref().unwrap();
         let edit_review = pending.pending_proposal_review.as_ref().unwrap();
         assert_eq!(edit_review.status, ReviewStatus::Open);
+        // 委托时固化的引用必须逐字复核：错误的候选哈希不能进入子 Run。
+        assert!(matches!(
+            store
+                .delegate_review(
+                    edit_review.id,
+                    Uuid::new_v4(),
+                    pending.workflow.state_revision,
+                    String::new(),
+                    vec![nekowriter_core::FeedbackCitation::Candidate {
+                        tool_call_id: proposal.tool_call_id,
+                        candidate_hash: "0".repeat(64),
+                        candidate_range: nekowriter_core::TextCitationRange {
+                            start_char: 4,
+                            end_char: 6,
+                            quote: "胶卷".to_owned(),
+                        },
+                    }],
+                )
+                .await,
+            Err(StoreError::InvalidCitation(_))
+        ));
         let edit_delegation = store
             .delegate_review(
                 edit_review.id,
                 Uuid::new_v4(),
                 pending.workflow.state_revision,
                 "检查这次追加是否保留人物动机。".to_owned(),
+                vec![nekowriter_core::FeedbackCitation::Candidate {
+                    tool_call_id: proposal.tool_call_id,
+                    candidate_hash: proposal.candidate_hash.clone(),
+                    candidate_range: nekowriter_core::TextCitationRange {
+                        start_char: 4,
+                        end_char: 6,
+                        quote: "胶卷".to_owned(),
+                    },
+                }],
             )
             .await
             .unwrap();
@@ -3814,6 +4835,18 @@ mod tests {
         assert_eq!(edit_task.kind, DelegatedReviewKind::ChapterEdit);
         assert_eq!(edit_task.base_content, "");
         assert_eq!(edit_task.target_content, proposal.candidate_content);
+        assert_eq!(
+            edit_task.citations,
+            vec![nekowriter_core::FeedbackCitation::Candidate {
+                tool_call_id: proposal.tool_call_id,
+                candidate_hash: proposal.candidate_hash.clone(),
+                candidate_range: nekowriter_core::TextCitationRange {
+                    start_char: 4,
+                    end_char: 6,
+                    quote: "胶卷".to_owned(),
+                },
+            }]
+        );
         let edit_request = store
             .capture_and_dispatch_model_request(
                 NewModelRequest {
@@ -3846,6 +4879,21 @@ mod tests {
         assert_eq!(edited_body.body.content.as_deref(), Some(proposal_content));
         assert!(edited_body.pending_proposal.is_none());
         assert!(edited_body.pending_proposal_review.is_none());
+        let body_revision_id = edited_body.body.revision_id.unwrap();
+        let revision_view = store
+            .get_document_revision(edited_body.body.document_id, body_revision_id)
+            .await
+            .unwrap();
+        assert_eq!(revision_view.content, proposal_content);
+        assert_eq!(revision_view.role, CHAPTER_BODY_ROLE);
+        assert_eq!(revision_view.chapter_id, Some(chapter_id));
+        assert!(revision_view.is_current);
+        assert!(matches!(
+            store
+                .get_document_revision(edited_body.body.document_id, Uuid::new_v4())
+                .await,
+            Err(StoreError::DocumentRevisionNotFound)
+        ));
 
         let final_review = store
             .submit_chapter_final_review(
@@ -3862,6 +4910,7 @@ mod tests {
                 Uuid::new_v4(),
                 final_review.workflow.state_revision,
                 "检查结尾是否完成本章目标。".to_owned(),
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -3996,5 +5045,285 @@ mod tests {
                 .sum::<usize>(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn process_shutdown_interrupts_in_flight_runs_and_close_keeps_data() {
+        let data_dir = TempDir::new().unwrap();
+        let store = Store::open(data_dir.path()).await.unwrap();
+        let created = store
+            .create_project(
+                Uuid::new_v4(),
+                NewProject::new("退出收尾", "退出服务不丢已提交内容", None::<&str>).unwrap(),
+            )
+            .await
+            .unwrap();
+        store
+            .save_novel_brief(
+                created.version.id,
+                Uuid::new_v4(),
+                NewNovelBrief::new("写一个雨夜车站重逢的短篇小说").unwrap(),
+            )
+            .await
+            .unwrap();
+        let before_start = store
+            .get_version_snapshot(created.version.id)
+            .await
+            .unwrap()
+            .workflow;
+        let started = store
+            .start_preparation(
+                created.version.id,
+                Uuid::new_v4(),
+                before_start.state_revision,
+            )
+            .await
+            .unwrap();
+        let run_id = started.workflow.active_run_id.unwrap();
+        let dispatched = store
+            .capture_and_dispatch_model_request(
+                NewModelRequest {
+                    run_id,
+                    settings_snapshot: json!({ "model": "shutdown-test" }),
+                    prompt_snapshot: json!({ "contentHash": "shutdown-test" }),
+                    context_snapshot: json!({ "messages": [] }),
+                },
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(dispatched.status, ModelRequestStatus::Dispatched);
+
+        let outcome = store
+            .interrupt_active_runs(InterruptionSource::ProcessShutdown)
+            .await
+            .unwrap();
+        assert_eq!(outcome.writing_runs, 1);
+        assert_eq!(outcome.review_delegations, 0);
+
+        let workflow = store
+            .get_version_snapshot(created.version.id)
+            .await
+            .unwrap()
+            .workflow;
+        assert_eq!(workflow.execution, ExecutionStatus::Interrupted);
+        let requests = store.list_model_requests(run_id).await.unwrap();
+        assert_eq!(requests[0].status, ModelRequestStatus::Unknown);
+        let run_model = entity::run::Entity::find_by_id(db_id(run_id))
+            .one(&store.database)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(run_model.status, "interrupted");
+        assert!(run_model.ended_at.is_some());
+        let request_model = entity::model_request::Entity::find_by_id(db_id(dispatched.id))
+            .one(&store.database)
+            .await
+            .unwrap()
+            .unwrap();
+        let error_json = request_model.error_json.unwrap();
+        assert!(error_json.contains("process_shutdown"), "{error_json}");
+        assert!(!error_json.contains("startup_recovery"), "{error_json}");
+        // 两种中断来源在事件里可区分，界面才能解释这次中断来自哪个动作。
+        let events = store.events_after(0).await.unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.payload["reason"] == "process_shutdown")
+                .count(),
+            2
+        );
+        assert!(
+            events
+                .iter()
+                .all(|event| event.payload["reason"] != "startup_recovery")
+        );
+
+        // 已经没有自动执行的 Run，重复收尾不再计入。
+        let repeated = store
+            .interrupt_active_runs(InterruptionSource::ProcessShutdown)
+            .await
+            .unwrap();
+        assert_eq!(repeated, InterruptionOutcome::default());
+
+        store.close().await.unwrap();
+        // 关闭之后连接池真的不再接受查询。
+        assert!(store.list_projects().await.is_err());
+
+        // WAL 已落回主库文件：重新打开能读回全部记录，且不需要再次恢复。
+        let reopened = Store::open(data_dir.path()).await.unwrap();
+        assert_eq!(reopened.list_projects().await.unwrap().len(), 1);
+        assert_eq!(
+            reopened.list_model_requests(run_id).await.unwrap()[0].status,
+            ModelRequestStatus::Unknown
+        );
+    }
+
+    /// 回收站覆盖提示词模板与知识对象：彻底删除之后不可恢复，父对象未恢复时
+    /// 子对象拒绝恢复，而不是安静地半恢复。
+    #[tokio::test]
+    async fn recycle_bin_covers_templates_and_knowledge_objects() {
+        let data_dir = TempDir::new().unwrap();
+        let store = Store::open(data_dir.path()).await.unwrap();
+
+        let template = store
+            .create_prompt_template(
+                Uuid::new_v4(),
+                NewPromptTemplate {
+                    title: "雨景描写".to_owned(),
+                    body: "写一段雨夜街景。".to_owned(),
+                    variables: Vec::new(),
+                },
+            )
+            .await
+            .unwrap();
+        let space = store
+            .create_knowledge_space(
+                Uuid::new_v4(),
+                KnowledgeSpaceInput {
+                    title: "人物设定".to_owned(),
+                },
+            )
+            .await
+            .unwrap();
+        let entry = store
+            .create_knowledge_entry(
+                Uuid::new_v4(),
+                NewKnowledgeEntry {
+                    space_id: space.id,
+                    title: "林舟".to_owned(),
+                    keywords: vec!["主角".to_owned()],
+                    content: "林舟是港城报社的记者。".to_owned(),
+                    source: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        store
+            .delete_prompt_template(template.id, Uuid::new_v4(), template.revision)
+            .await
+            .unwrap();
+        store
+            .delete_knowledge_entry(entry.id, Uuid::new_v4(), entry.revision)
+            .await
+            .unwrap();
+        // 条目已软删除，所以 Space 现在可以删除：这正是「父对象在回收站里」的场景。
+        let space_revision = store.list_knowledge_spaces().await.unwrap()[0].revision;
+        store
+            .delete_knowledge_space(space.id, Uuid::new_v4(), space_revision)
+            .await
+            .unwrap();
+
+        let bin = store.get_recycle_bin().await.unwrap();
+        assert_eq!(bin.items.len(), 3);
+        let bin_entry = bin
+            .items
+            .iter()
+            .find(|item| item.id == entry.id)
+            .expect("知识条目应该在回收站里");
+        assert_eq!(bin_entry.kind, RecycleItemKind::KnowledgeEntry);
+        assert!(!bin_entry.restorable);
+        assert!(bin_entry.purgeable);
+        assert!(
+            bin_entry
+                .restore_blocked_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("Space"))
+        );
+        let bin_space = bin
+            .items
+            .iter()
+            .find(|item| item.id == space.id)
+            .expect("Space 应该在回收站里");
+        assert_eq!(bin_space.kind, RecycleItemKind::KnowledgeSpace);
+        assert!(bin_space.restorable);
+        let bin_template = bin
+            .items
+            .iter()
+            .find(|item| item.id == template.id)
+            .expect("模板应该在回收站里");
+        assert_eq!(bin_template.kind, RecycleItemKind::PromptTemplate);
+        assert!(bin_template.purgeable);
+
+        let ancestor_error = store
+            .restore_recycle_item(RecycleItemKind::KnowledgeEntry, entry.id, Uuid::new_v4())
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            ancestor_error,
+            StoreError::RecycleAncestorDeleted(_)
+        ));
+
+        // 先恢复 Space，条目才能恢复；恢复后内容与修订都对得上。
+        store
+            .restore_recycle_item(RecycleItemKind::KnowledgeSpace, space.id, Uuid::new_v4())
+            .await
+            .unwrap();
+        let restored = store
+            .restore_recycle_item(RecycleItemKind::KnowledgeEntry, entry.id, Uuid::new_v4())
+            .await
+            .unwrap();
+        assert!(restored.items.iter().all(|item| item.id != entry.id));
+        let restored_entry = store.get_knowledge_entry(entry.id).await.unwrap();
+        assert_eq!(restored_entry.content, "林舟是港城报社的记者。");
+        assert!(restored_entry.revision > entry.revision);
+
+        // 彻底删除模板：行真的没了，之后再想恢复必须报「不在回收站里」。
+        let purged = store
+            .purge_recycle_item(RecycleItemKind::PromptTemplate, template.id, Uuid::new_v4())
+            .await
+            .unwrap();
+        assert!(purged.items.iter().all(|item| item.id != template.id));
+        let restore_error = store
+            .restore_recycle_item(RecycleItemKind::PromptTemplate, template.id, Uuid::new_v4())
+            .await
+            .unwrap_err();
+        assert!(matches!(restore_error, StoreError::RecycleItemNotFound));
+
+        // 重复恢复同一条记录同样报错。
+        let repeated = store
+            .restore_recycle_item(RecycleItemKind::KnowledgeSpace, space.id, Uuid::new_v4())
+            .await
+            .unwrap_err();
+        assert!(matches!(repeated, StoreError::RecycleItemNotFound));
+
+        // 已经恢复的对象不在回收站里，再想彻底删除同样报错，而不是假装成功。
+        let not_in_bin = store
+            .purge_recycle_item(RecycleItemKind::KnowledgeSpace, space.id, Uuid::new_v4())
+            .await
+            .unwrap_err();
+        assert!(matches!(not_in_bin, StoreError::RecycleItemNotFound));
+        assert_eq!(store.list_knowledge_spaces().await.unwrap().len(), 1);
+        assert_eq!(
+            store
+                .list_knowledge_entries(Some(space.id), None)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+
+        // 条目先删、Space 后删，然后两者一起彻底删除：回收站真的空下来。
+        store
+            .delete_knowledge_entry(entry.id, Uuid::new_v4(), restored_entry.revision)
+            .await
+            .unwrap();
+        let space_revision = store.list_knowledge_spaces().await.unwrap()[0].revision;
+        store
+            .delete_knowledge_space(space.id, Uuid::new_v4(), space_revision)
+            .await
+            .unwrap();
+        store
+            .purge_recycle_item(RecycleItemKind::KnowledgeEntry, entry.id, Uuid::new_v4())
+            .await
+            .unwrap();
+        store
+            .purge_recycle_item(RecycleItemKind::KnowledgeSpace, space.id, Uuid::new_v4())
+            .await
+            .unwrap();
+        assert!(store.list_knowledge_spaces().await.unwrap().is_empty());
+        assert!(store.get_knowledge_entry(entry.id).await.is_err());
+        assert!(store.get_recycle_bin().await.unwrap().items.is_empty());
     }
 }

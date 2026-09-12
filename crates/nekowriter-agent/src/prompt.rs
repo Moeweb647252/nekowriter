@@ -1,13 +1,17 @@
-//! 内建提示词变量目录与受限模板渲染器。
+//! 内建提示词目录、变量声明与上下文编排。受限模板语言在
+//! `nekowriter_core::template` 中只实现一次，用户模板与内建覆盖共用它。
 //!
 //! 模板语言刻意只支持一次性的 `{{variable_name}}` 文本替换。它不执行表达式、
 //! 循环、包含或递归替换，因此用户内容即使包含 `{{...}}` 也不会被再次解释。
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
+use nekowriter_core::{
+    TemplateError, TemplateVariable, render_template, require_declared_placeholders,
+    validate_template,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use thiserror::Error;
 
 use super::{BuiltinPrompt, PromptKey, builtin_prompt};
 
@@ -37,23 +41,6 @@ pub struct RenderedBuiltinPrompt {
     pub user: String,
     pub system_content_hash: String,
     pub user_content_hash: String,
-}
-
-/// 受限提示词模板的稳定错误分类。
-#[derive(Clone, Debug, Error, Eq, PartialEq)]
-pub enum PromptTemplateError {
-    #[error("模板中存在不完整的占位符")]
-    UnclosedPlaceholder,
-    #[error("模板中存在没有起始标记的 }}")]
-    UnexpectedClosingDelimiter,
-    #[error("模板变量名 {name:?} 无效")]
-    InvalidVariableName { name: String },
-    #[error("模板变量 {name:?} 不属于该提示词")]
-    UnknownVariable { name: String },
-    #[error("必需模板变量 {name:?} 没有出现在提示词对中")]
-    MissingRequiredPlaceholder { name: String },
-    #[error("渲染时缺少必需变量 {name:?}")]
-    MissingRuntimeVariable { name: String },
 }
 
 const TEXT_VALUE_TYPE: &str = "text";
@@ -163,6 +150,21 @@ pub const fn builtin_prompt_variables(key: PromptKey) -> &'static [PromptVariabl
     }
 }
 
+/// 把一个内建提示词的静态变量目录转换成受限模板语言的声明形状。
+#[must_use]
+pub fn builtin_template_variables(key: PromptKey) -> Vec<TemplateVariable> {
+    builtin_prompt_variables(key)
+        .iter()
+        .map(|definition| TemplateVariable {
+            name: definition.name.to_owned(),
+            description: definition.description.to_owned(),
+            value_type: definition.value_type.to_owned(),
+            required: definition.required,
+            example: definition.example.to_owned(),
+        })
+        .collect()
+}
+
 /// 返回渲染某内建提示词所需的示例变量值。
 ///
 /// 保存前预览使用这些示例值，因此预览不需要真实稿本、密钥或正在运行的 Agent。
@@ -183,18 +185,11 @@ pub fn validate_builtin_prompt_pair(
     key: PromptKey,
     system: &str,
     user: &str,
-) -> Result<(), PromptTemplateError> {
-    let definitions = builtin_prompt_variables(key);
-    let mut placeholders = scan_placeholders(system, definitions)?;
-    placeholders.extend(scan_placeholders(user, definitions)?);
-    for definition in definitions {
-        if definition.required && !placeholders.contains(definition.name) {
-            return Err(PromptTemplateError::MissingRequiredPlaceholder {
-                name: definition.name.to_owned(),
-            });
-        }
-    }
-    Ok(())
+) -> Result<(), TemplateError> {
+    let variables = builtin_template_variables(key);
+    let mut placeholders = validate_template(system, &variables)?;
+    placeholders.extend(validate_template(user, &variables)?);
+    require_declared_placeholders(&placeholders, &variables)
 }
 
 /// 使用提供的运行时变量渲染一对内建提示词，并生成稳定内容 hash。
@@ -206,7 +201,7 @@ pub fn validate_builtin_prompt_pair(
 pub fn render_builtin_prompt(
     key: PromptKey,
     variables: &BTreeMap<String, String>,
-) -> Result<RenderedBuiltinPrompt, PromptTemplateError> {
+) -> Result<RenderedBuiltinPrompt, TemplateError> {
     let prompt = builtin_prompt(key);
     render_builtin_prompt_content(prompt, variables)
 }
@@ -219,7 +214,7 @@ pub fn render_builtin_prompt(
 pub fn render_builtin_prompt_content(
     prompt: BuiltinPrompt,
     variables: &BTreeMap<String, String>,
-) -> Result<RenderedBuiltinPrompt, PromptTemplateError> {
+) -> Result<RenderedBuiltinPrompt, TemplateError> {
     render_prompt_content(prompt.key, prompt.system, prompt.user, variables)
 }
 
@@ -233,17 +228,18 @@ pub fn render_prompt_content(
     system: &str,
     user: &str,
     variables: &BTreeMap<String, String>,
-) -> Result<RenderedBuiltinPrompt, PromptTemplateError> {
+) -> Result<RenderedBuiltinPrompt, TemplateError> {
     validate_builtin_prompt_pair(key, system, user)?;
-    for definition in builtin_prompt_variables(key) {
-        if definition.required && !variables.contains_key(definition.name) {
-            return Err(PromptTemplateError::MissingRuntimeVariable {
-                name: definition.name.to_owned(),
+    let definitions = builtin_template_variables(key);
+    for definition in &definitions {
+        if definition.required && !variables.contains_key(&definition.name) {
+            return Err(TemplateError::MissingRuntimeVariable {
+                name: definition.name.clone(),
             });
         }
     }
-    let system = render_template(system, variables, builtin_prompt_variables(key))?;
-    let user = render_template(user, variables, builtin_prompt_variables(key))?;
+    let system = render_template(system, &definitions, variables)?;
+    let user = render_template(user, &definitions, variables)?;
     Ok(RenderedBuiltinPrompt {
         key,
         system_content_hash: content_hash(&system),
@@ -251,130 +247,6 @@ pub fn render_prompt_content(
         system,
         user,
     })
-}
-
-/// 扫描并渲染一个受限模板。
-///
-/// `\\{{name}}` 产生字面量 `{{name}}`，不会被作为占位符解析。变量值只会被附加
-/// 一次，不会再扫描其中的花括号。
-fn render_template(
-    source: &str,
-    variables: &BTreeMap<String, String>,
-    definitions: &[PromptVariableDefinition],
-) -> Result<String, PromptTemplateError> {
-    let mut rendered = String::with_capacity(source.len());
-    let mut cursor = 0;
-    while cursor < source.len() {
-        let remaining = &source[cursor..];
-        if remaining.starts_with("\\{{") {
-            let name_start = cursor + 3;
-            let Some(relative_end) = source[name_start..].find("}}") else {
-                return Err(PromptTemplateError::UnclosedPlaceholder);
-            };
-            let end = name_start + relative_end + 2;
-            let name = &source[name_start..name_start + relative_end];
-            validate_variable_name(name)?;
-            rendered.push_str("{{");
-            rendered.push_str(name);
-            rendered.push_str("}}");
-            cursor = end;
-            continue;
-        }
-        if remaining.starts_with("{{") {
-            let name_start = cursor + 2;
-            let Some(relative_end) = source[name_start..].find("}}") else {
-                return Err(PromptTemplateError::UnclosedPlaceholder);
-            };
-            let name = &source[name_start..name_start + relative_end];
-            validate_variable_name(name)?;
-            if !definitions.iter().any(|definition| definition.name == name) {
-                return Err(PromptTemplateError::UnknownVariable {
-                    name: name.to_owned(),
-                });
-            }
-            let value =
-                variables
-                    .get(name)
-                    .ok_or_else(|| PromptTemplateError::MissingRuntimeVariable {
-                        name: name.to_owned(),
-                    })?;
-            rendered.push_str(value);
-            cursor = name_start + relative_end + 2;
-            continue;
-        }
-        if remaining.starts_with("}}") {
-            return Err(PromptTemplateError::UnexpectedClosingDelimiter);
-        }
-        let character = remaining
-            .chars()
-            .next()
-            .expect("cursor is always a UTF-8 boundary before source end");
-        rendered.push(character);
-        cursor += character.len_utf8();
-    }
-    Ok(rendered)
-}
-
-fn scan_placeholders(
-    source: &str,
-    definitions: &[PromptVariableDefinition],
-) -> Result<BTreeSet<String>, PromptTemplateError> {
-    let mut found = BTreeSet::new();
-    let mut cursor = 0;
-    while cursor < source.len() {
-        let remaining = &source[cursor..];
-        if remaining.starts_with("\\{{") {
-            let name_start = cursor + 3;
-            let Some(relative_end) = source[name_start..].find("}}") else {
-                return Err(PromptTemplateError::UnclosedPlaceholder);
-            };
-            validate_variable_name(&source[name_start..name_start + relative_end])?;
-            cursor = name_start + relative_end + 2;
-            continue;
-        }
-        if remaining.starts_with("{{") {
-            let name_start = cursor + 2;
-            let Some(relative_end) = source[name_start..].find("}}") else {
-                return Err(PromptTemplateError::UnclosedPlaceholder);
-            };
-            let name = &source[name_start..name_start + relative_end];
-            validate_variable_name(name)?;
-            if !definitions.iter().any(|definition| definition.name == name) {
-                return Err(PromptTemplateError::UnknownVariable {
-                    name: name.to_owned(),
-                });
-            }
-            found.insert(name.to_owned());
-            cursor = name_start + relative_end + 2;
-            continue;
-        }
-        if remaining.starts_with("}}") {
-            return Err(PromptTemplateError::UnexpectedClosingDelimiter);
-        }
-        cursor += remaining
-            .chars()
-            .next()
-            .expect("cursor is always a UTF-8 boundary before source end")
-            .len_utf8();
-    }
-    Ok(found)
-}
-
-fn validate_variable_name(name: &str) -> Result<(), PromptTemplateError> {
-    let mut characters = name.bytes();
-    let Some(first) = characters.next() else {
-        return Err(PromptTemplateError::InvalidVariableName {
-            name: name.to_owned(),
-        });
-    };
-    if !(first.is_ascii_alphabetic() || first == b'_')
-        || !characters.all(|character| character.is_ascii_alphanumeric() || character == b'_')
-    {
-        return Err(PromptTemplateError::InvalidVariableName {
-            name: name.to_owned(),
-        });
-    }
-    Ok(())
 }
 
 fn content_hash(content: &str) -> String {
@@ -401,30 +273,14 @@ mod tests {
     }
 
     #[test]
-    fn template_renderer_is_non_recursive_and_supports_literal_placeholders() {
-        let definitions = &[PromptVariableDefinition {
-            name: "value",
-            description: "测试值",
-            value_type: TEXT_VALUE_TYPE,
-            required: true,
-            example: "示例",
-            source: "测试来源",
-        }];
-        let values = BTreeMap::from([("value".to_owned(), "{{not_expanded}}".to_owned())]);
-        let rendered =
-            render_template("值：{{value}}；字面量：\\{{value}}", &values, definitions).unwrap();
-        assert_eq!(rendered, "值：{{not_expanded}}；字面量：{{value}}");
-    }
-
-    #[test]
-    fn template_validation_rejects_unknown_missing_and_malformed_placeholders() {
+    fn builtin_prompt_pair_reuses_the_shared_template_rules() {
         let error = validate_builtin_prompt_pair(
             PromptKey::PreparationGenerate,
             "系统 {{unknown}}",
             "用户 {{novel_brief}}",
         )
         .unwrap_err();
-        assert!(matches!(error, PromptTemplateError::UnknownVariable { .. }));
+        assert!(matches!(error, TemplateError::UnknownVariable { .. }));
 
         let error = validate_builtin_prompt_pair(
             PromptKey::ChapterOutline,
@@ -434,7 +290,7 @@ mod tests {
         .unwrap_err();
         assert_eq!(
             error,
-            PromptTemplateError::MissingRequiredPlaceholder {
+            TemplateError::MissingRequiredPlaceholder {
                 name: "chapter_guidance".to_owned()
             }
         );
@@ -445,13 +301,13 @@ mod tests {
             "用户 {{novel_brief}}",
         )
         .unwrap_err();
-        assert_eq!(error, PromptTemplateError::UnclosedPlaceholder);
+        assert_eq!(error, TemplateError::UnclosedPlaceholder);
 
         let error =
             render_builtin_prompt(PromptKey::PreparationGenerate, &BTreeMap::new()).unwrap_err();
         assert_eq!(
             error,
-            PromptTemplateError::MissingRuntimeVariable {
+            TemplateError::MissingRuntimeVariable {
                 name: "novel_brief".to_owned()
             }
         );

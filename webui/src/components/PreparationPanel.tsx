@@ -9,6 +9,8 @@ import {
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { CitationList } from "@/components/CitationList"
+import { CitableText } from "@/components/CitableText"
 import {
   Field,
   FieldDescription,
@@ -21,6 +23,8 @@ import {
 import { Input } from "@/components/ui/input"
 import { UserQuestionPanel } from "@/components/UserQuestionPanel"
 import { WritingRecoveryPanel } from "@/components/WritingRecoveryPanel"
+import { type PickedTextRange } from "@/lib/citations"
+import { usePrimaryAction } from "@/lib/shortcuts"
 import {
   cancelReviewDelegation,
   decidePreparationReview,
@@ -29,6 +33,8 @@ import {
   saveNovelBrief,
   startPreparation,
   submitPreparationArtifacts,
+  type CurrentPreparationArtifact,
+  type FeedbackCitation,
   type PreparationArtifactKind,
   type PreparationReview,
   type PreparationSnapshot,
@@ -205,19 +211,77 @@ export function PreparationPanel({
   onError,
 }: PreparationPanelProps) {
   const [pendingAction, setPendingAction] = useState<string | null>(null)
+  const [citationDrafts, setCitationDrafts] = useState<
+    Record<string, FeedbackCitation[]>
+  >({})
+
+  /**
+   * 「开始准备」是准备阶段唯一的主操作：光标不在输入框里时 Ctrl/Cmd+Enter 也能触发。
+   * 「保存目标」在表单内，走通用的表单提交路径，两者不会互相抢占同一次按键。
+   */
+  usePrimaryAction("preparation-start", {
+    label: "开始准备",
+    run: () => {
+      if (!preparation) return
+      void runAction("start", () =>
+        startPreparation(versionId, preparation.workflow.stateRevision)
+      )
+    },
+    enabled:
+      preparation !== null &&
+      preparation.workflow.stage === "initializing" &&
+      Boolean(preparation.novelBrief.content?.trim()) &&
+      pendingAction === null,
+  })
 
   async function runAction(
     action: string,
-    operation: () => Promise<PreparationSnapshot>
+    operation: () => Promise<PreparationSnapshot>,
+    onSuccess?: () => void
   ) {
     setPendingAction(action)
     try {
       onChanged(await operation())
+      onSuccess?.()
     } catch (error) {
       onError(error instanceof Error ? error.message : "准备阶段操作未完成")
     } finally {
       setPendingAction(null)
     }
+  }
+
+  /** 把产物中的选中文字固定为一条指向当前修订的引用。 */
+  function citeArtifact(
+    artifact: CurrentPreparationArtifact,
+    reviewId: string,
+    range: PickedTextRange
+  ) {
+    if (!artifact.revisionId) {
+      onError("当前产物还没有可引用的修订。")
+      return
+    }
+    const citation: FeedbackCitation = {
+      kind: "document",
+      documentId: artifact.documentId,
+      revisionId: artifact.revisionId,
+      chapterId: null,
+      startChar: String(range.startChar),
+      endChar: String(range.endChar),
+      quote: range.quote,
+    }
+    setCitationDrafts((current) => ({
+      ...current,
+      [reviewId]: [...(current[reviewId] ?? []), citation],
+    }))
+  }
+
+  function removeCitation(reviewId: string, index: number) {
+    setCitationDrafts((current) => ({
+      ...current,
+      [reviewId]: (current[reviewId] ?? []).filter(
+        (_, position) => position !== index
+      ),
+    }))
   }
 
   async function handleSaveBrief(event: FormEvent<HTMLFormElement>) {
@@ -266,13 +330,17 @@ export function PreparationPanel({
   ) {
     if (!preparation) return
     const issues = String(new FormData(form).get("issues") ?? "")
-    void runAction(`review-${review.id}`, () =>
-      decidePreparationReview(
-        review.id,
-        preparation.workflow.stateRevision,
-        passed,
-        issues
-      )
+    void runAction(
+      `review-${review.id}`,
+      () =>
+        decidePreparationReview(
+          review.id,
+          preparation.workflow.stateRevision,
+          passed,
+          issues,
+          citationDrafts[review.id] ?? []
+        ),
+      () => setCitationDrafts((current) => ({ ...current, [review.id]: [] }))
     )
   }
 
@@ -287,9 +355,11 @@ export function PreparationPanel({
       const result = await delegateReview(
         review.id,
         preparation.workflow.stateRevision,
-        notes
+        notes,
+        citationDrafts[review.id] ?? []
       )
       onChanged(result.snapshot)
+      setCitationDrafts((current) => ({ ...current, [review.id]: [] }))
     } catch (error) {
       onError(error instanceof Error ? error.message : "审核委托未能启动")
     } finally {
@@ -543,9 +613,18 @@ export function PreparationPanel({
                     {statusLabel(review.status)}
                   </span>
                 </div>
-                <pre className="max-h-64 overflow-auto px-4 py-3 text-sm leading-6 whitespace-pre-wrap text-foreground">
-                  {artifact.content}
-                </pre>
+                {review.status === "open" ? (
+                  <CitableText
+                    text={artifact.content ?? ""}
+                    disabled={pendingAction !== null}
+                    onCite={(range) => citeArtifact(artifact, review.id, range)}
+                    className="max-h-64 overflow-auto px-4 py-3 text-sm leading-6 whitespace-pre-wrap text-foreground"
+                  />
+                ) : (
+                  <pre className="max-h-64 overflow-auto px-4 py-3 text-sm leading-6 whitespace-pre-wrap text-foreground">
+                    {artifact.content}
+                  </pre>
+                )}
                 {kind === "outline" && artifact.chapterPlan && (
                   <div className="border-t border-border bg-muted/35 px-4 py-3">
                     <p className="text-xs font-semibold tracking-[0.12em] text-muted-foreground uppercase">
@@ -565,6 +644,13 @@ export function PreparationPanel({
                 )}
                 {review.status === "open" && (
                   <form className="border-t border-border p-4">
+                    <CitationList
+                      citations={citationDrafts[review.id] ?? []}
+                      currentRevisionId={artifact.revisionId}
+                      disabled={pendingAction !== null}
+                      onRemove={(index) => removeCitation(review.id, index)}
+                      onError={onError}
+                    />
                     <label className="block text-xs font-medium text-muted-foreground">
                       审核意见（退回修订时必填）
                       <textarea
@@ -603,6 +689,9 @@ export function PreparationPanel({
                         <RotateCcw aria-hidden="true" />
                         退回修订
                       </Button>
+                      <span className="self-center text-xs leading-5 text-muted-foreground">
+                        选中产物文字后点“引用选中文字”可把原句随意见一并提交。
+                      </span>
                       <Button
                         type="button"
                         variant="outline"

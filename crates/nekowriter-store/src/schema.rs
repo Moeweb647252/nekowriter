@@ -16,8 +16,10 @@ use url::Url;
 use crate::{
     SCHEMA_VERSION, StoreError,
     entity::{
-        application_metadata, chapter, document, document_revision, event, feedback, model_request,
-        novel_version, project, prompt_override, question, review, run, tool_call,
+        application_metadata, chapter, document, document_revision, embedding_setting, event,
+        feedback, knowledge_entry, knowledge_index_task, knowledge_space, model_request,
+        novel_version, project, prompt_override, prompt_template, question, quota_charge,
+        quota_scope, review, run, tool_call,
     },
     transaction_error,
 };
@@ -323,6 +325,68 @@ async fn create_sqlite_indexes<C: ConnectionTrait>(connection: &C) -> Result<(),
             .table(event::Entity)
             .col(event::Column::VersionId)
             .col(event::Column::Seq)
+            .to_owned(),
+        Index::create()
+            .name("uq_embedding_settings_key")
+            .table(embedding_setting::Entity)
+            .col(embedding_setting::Column::Key)
+            .unique()
+            .to_owned(),
+        Index::create()
+            .name("idx_knowledge_spaces_active")
+            .table(knowledge_space::Entity)
+            .col(knowledge_space::Column::DeletedAt)
+            .col(knowledge_space::Column::UpdatedAt)
+            .to_owned(),
+        Index::create()
+            .name("idx_knowledge_entries_active_space")
+            .table(knowledge_entry::Entity)
+            .col(knowledge_entry::Column::SpaceId)
+            .col(knowledge_entry::Column::UpdatedAt)
+            .and_where(
+                Expr::col((knowledge_entry::Entity, knowledge_entry::Column::DeletedAt)).is_null(),
+            )
+            .to_owned(),
+        Index::create()
+            .name("uq_knowledge_index_tasks_target")
+            .table(knowledge_index_task::Entity)
+            .col(knowledge_index_task::Column::EntryId)
+            .col(knowledge_index_task::Column::EntryRevision)
+            .col(knowledge_index_task::Column::EmbeddingProfileId)
+            .unique()
+            .to_owned(),
+        Index::create()
+            .name("uq_quota_scopes_version_stage")
+            .table(quota_scope::Entity)
+            .col(quota_scope::Column::VersionId)
+            .col(quota_scope::Column::StageKey)
+            .unique()
+            .to_owned(),
+        Index::create()
+            .name("uq_quota_charges_scope_tool_call")
+            .table(quota_charge::Entity)
+            .col(quota_charge::Column::ScopeId)
+            .col(quota_charge::Column::ToolCallId)
+            .unique()
+            .to_owned(),
+        Index::create()
+            .name("idx_prompt_templates_active")
+            .table(prompt_template::Entity)
+            .col(prompt_template::Column::DeletedAt)
+            .col(prompt_template::Column::UpdatedAt)
+            .to_owned(),
+        Index::create()
+            .name("idx_knowledge_index_tasks_pending")
+            .table(knowledge_index_task::Entity)
+            .col(knowledge_index_task::Column::Status)
+            .col(knowledge_index_task::Column::CreatedAt)
+            .and_where(
+                Expr::col((
+                    knowledge_index_task::Entity,
+                    knowledge_index_task::Column::Status,
+                ))
+                .eq("pending"),
+            )
             .to_owned(),
     ];
 
