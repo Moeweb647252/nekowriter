@@ -17,11 +17,11 @@ NekoWriter 应当是一款以小说正文为中心、允许人随时介入的本
 
 ## 2. 当前项目与版本基线
 
-当前工作区已有四 crate Rust workspace（`nekowriter-core`、`nekowriter-agent`、`nekowriter-store`、`nekowriter-app`）、SeaORM 2 / SQLite 存储、LanceDB 烟测、Axum 本地 API 与 React 工作台；`main` 已有三个实现提交，分别覆盖初始化 MVP、提示词/跨章浏览和项目设置。后续进度以代码、测试和本文档中的实测记录为准。
+当前工作区已有四 crate Rust workspace（`nekowriter-core`、`nekowriter-agent`、`nekowriter-store`、`nekowriter-app`）、SeaORM 2 / SQLite 存储、LanceDB 烟测、Axum 本地 API 与 React 工作台；现有提交已覆盖初始化 MVP、提示词/跨章浏览、项目设置及后续本地交付能力。后续进度以代码、测试和本文档中的实测记录为准。
 
 前端使用 React 19、TypeScript 6、Vite 8、Tailwind CSS 4、shadcn/Base UI、Lucide 和主题组件。沿用这些依赖及现有 CSS 变量；按实际界面需要添加 shadcn 组件，不整体替换 UI 基础。
 
-截至本次更新，M0 的核心骨架已完成，仍需补齐启动时打开浏览器和 `logs/` 落地。M1 的数据模型、状态转换、命令回执、SSE、Chat Completions 兼容适配器、Windows 凭据引用、模型设置与连接测试、准备阶段自动生成、章节细纲自动生成、正文 Agent 的 `append_content` / `replace_content` 循环、人工审核、整章审核和阶段纯文本折叠均已有实现；真实外部模型烟测仍待配置有效凭据后记录（本机已确认没有可用的真实模型凭据：环境变量里没有任何模型服务的 key，`NekoWriter` 的 OS 凭据库里唯一一条记录是探针自己写入的桩凭据，因此真实模型验收明确未完成，也没有用桩冒充）。模型请求按稿本串行、全局并发为 1；准备、细纲和正文的成功回调与产物/工具结果/审核/事件在 SQLite 事务中提交，后续请求按已完成阶段的纯文本 fold 及当前 Run 消息账本构建。
+截至本次更新，M0 已完成：启动绑定成功后会打开默认浏览器（`--no-browser` 可关闭），日志按天写入数据目录的 `logs/`。M1 的数据模型、状态转换、命令回执、SSE、Chat Completions 兼容适配器、Windows 凭据引用、模型设置与连接测试、准备阶段自动生成、章节细纲自动生成、正文 Agent 的 `append_content` / `replace_content` 循环、人工审核、整章审核和阶段纯文本折叠均已有实现；真实外部模型烟测仍待配置有效凭据后记录（本机已确认没有可用的真实模型凭据：环境变量里没有任何模型服务的 key，`NekoWriter` 的 OS 凭据库里唯一一条记录是探针自己写入的桩凭据，因此真实模型验收明确未完成，也没有用桩冒充）。模型请求按稿本串行、全局并发为 1；准备、细纲和正文的成功回调与产物/工具结果/审核/事件在 SQLite 事务中提交，后续请求按已完成阶段的纯文本 fold 及当前 Run 消息账本构建。
 
 M2 已完成的交互闭环包括：正文 `ApproveRequired` 提案及基础修订重验、暂停到工具/提交边界、自由意见批次的原子绑定与投递、直接终态提交的完成守卫、`ask_user` 问答、命令 ID 幂等重试、SSE 游标恢复、进程中断后的显式继续及每次 100 次请求额度续授。完整但不符合阶段协议的模型响应会保留原文和诊断，向同一 Run 追加纠正指令；连续三次才停止，显式继续后才可再次发送。本轮补齐了同一个计数的一处缺口：模型在仍有未投递意见时反复直接提交，原先会把连续协议错误清零而无限重排请求（真实进程实测到 13 次以上仍在继续、计数仍为 0），现在这类「无推进」的纠正计入同一个计数，第三次即把 Run 收束为 `stopped`（`wait_reason = protocol_error_limit`）并保留未投递意见，界面显示停止原因与「显式继续」（实测最多 4 次请求即停止）。用户显式停止会在同一事务中作废 prepared/dispatched attempt，并中止本地在途 HTTP 任务；迟到回调无法再推进工作流。待答问题、待审提案和暂停边界在继续后恢复原状态。界面据停止原因区分额度耗尽、协议错误与用户停止。
 
