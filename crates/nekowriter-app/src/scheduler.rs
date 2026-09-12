@@ -1066,10 +1066,18 @@ impl WorkflowScheduler {
                 (prompt, prompt_source, context, true, None, None)
             }
         };
-        let request = context.model_request(
-            Some(StructuredOutput::JsonObject),
-            project_settings.thinking_level,
-        );
+        // 正文阶段同时声明了正文工具和终态提交结构。部分 OpenAI 兼容服务会把
+        // `response_format=json_object` 当作“本轮只能返回 JSON”，从而在还没有
+        // 任何正文时直接提交空摘要，完全跳过 `append_content`。正文的提交合同
+        // 仍然由 runner 严格解析，因此这里只去掉传输层的 response_format，让模型
+        // 先调用工具，工具循环结束后再按合同返回终态 JSON；准备、细纲和审核仍
+        // 保留结构化输出声明。
+        let response_format = if matches!(task.stage, ScheduledStage::ChapterBody { .. }) {
+            None
+        } else {
+            Some(StructuredOutput::JsonObject)
+        };
+        let request = context.model_request(response_format, project_settings.thinking_level);
         let messages = if persist_initial_messages {
             agent_messages_for_new_stage_request(&request)?
         } else {

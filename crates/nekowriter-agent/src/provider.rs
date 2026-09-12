@@ -1184,10 +1184,6 @@ impl StreamAccumulator {
         let finish_reason = self
             .finish_reason
             .ok_or(ProviderError::MissingFinishReason)?;
-        if !self.content.is_empty() && !self.tool_calls.is_empty() {
-            return Err(ProviderError::TextAndToolCalls);
-        }
-
         let tool_calls = match finish_reason {
             ModelFinishReason::Stop => {
                 if !self.tool_calls.is_empty() {
@@ -1207,6 +1203,10 @@ impl StreamAccumulator {
                     .collect::<Result<Vec<_>, _>>()?
             }
         };
+        // Some reasoning-capable OpenAI-compatible endpoints stream a small amount of
+        // assistant text (and may place the reasoning trace there) before the actual
+        // function call.  A tool round is authoritative for the agent, so discard that
+        // auxiliary text instead of rejecting an otherwise valid call as mixed output.
         Ok(ModelCompletion {
             provider_request_id,
             content: if tool_calls.is_empty() {
@@ -1602,6 +1602,43 @@ mod tests {
         let body = request_body(&request.await.unwrap());
         assert_eq!(body["parallel_tool_calls"], false);
         assert_eq!(body["tools"][0]["function"]["name"], "append_content");
+    }
+
+    #[tokio::test]
+    async fn adapter_discards_auxiliary_text_before_a_tool_call() {
+        // Reasoning-capable providers may stream a separator or reasoning trace as
+        // `delta.content` before returning the function call. The tool arguments remain
+        // the authoritative output for this round.
+        let stream = concat!(
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\\n\\n\"}}]}\n\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-mixed\",\"type\":\"function\",\"function\":{\"name\":\"append_content\",\"arguments\":\"{\\\"content\\\":\\\"正文\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let (base_url, _request) = spawn_sse_server(vec![stream.as_bytes().to_vec()]).await;
+        let model_request = ModelRequest {
+            messages: text_request().messages,
+            tools: vec![super::super::AgentToolDefinition {
+                name: "append_content".to_owned(),
+                description: "追加正文".to_owned(),
+                parameters: json!({
+                    "type": "object",
+                    "required": ["content"],
+                    "properties": { "content": { "type": "string" } },
+                }),
+            }],
+            response_format: None,
+            thinking_level: ThinkingLevel::Low,
+        };
+
+        let completion = adapter(&base_url).complete(&model_request).await.unwrap();
+
+        assert_eq!(completion.content, None);
+        assert_eq!(completion.tool_calls.len(), 1);
+        assert_eq!(completion.tool_calls[0].name, "append_content");
+        assert_eq!(
+            completion.tool_calls[0].arguments,
+            json!({ "content": "正文" })
+        );
     }
 
     #[tokio::test]
