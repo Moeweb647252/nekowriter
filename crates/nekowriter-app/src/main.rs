@@ -915,9 +915,11 @@ impl IntoResponse for ApiError {
                 "准备输入不完整或不符合当前阶段要求".to_owned(),
                 json!({}),
             ),
-            Self::Store(StoreError::InvalidModelRequest(message))
-            | Self::Store(StoreError::InvalidAgentMessage(message))
-            | Self::Store(StoreError::InvalidSystemModelSettings(message)) => (
+            Self::Store(
+                StoreError::InvalidModelRequest(message)
+                | StoreError::InvalidAgentMessage(message)
+                | StoreError::InvalidSystemModelSettings(message),
+            ) => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "VALIDATION_ERROR",
                 message.clone(),
@@ -2873,7 +2875,7 @@ fn default_data_dir() -> Result<PathBuf, StartupError> {
         .ok_or(StartupError::NoLocalDataDirectory)
 }
 
-/// 在取得进程锁、SQLite 和 LanceDB 连接之前固定数据目录的物理位置。
+/// 在取得进程锁、SQLite 和 `LanceDB` 连接之前固定数据目录的物理位置。
 ///
 /// 这样相同的相对 `--data-dir` 不会因启动工作目录不同而指向不同的本地作品库。
 fn resolve_data_dir(path: PathBuf) -> Result<PathBuf, StartupError> {
@@ -3140,13 +3142,13 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
         let body: Value = response.json().await.unwrap();
         assert_eq!(body["error"]["code"], "ENGINE_FAILED");
-        assert!(
+        assert_eq!(
             state
                 .store
                 .list_knowledge_entries(Some(space_id), None)
                 .await
-                .unwrap()
-                .is_empty()
+                .unwrap(),
+            [] as [nekowriter_core::KnowledgeEntrySummary; 0]
         );
         assert!(
             state
@@ -3190,13 +3192,13 @@ mod tests {
         assert_eq!(response.status(), StatusCode::CONFLICT);
         let body: Value = response.json().await.unwrap();
         assert_eq!(body["error"]["code"], "ENGINE_NOT_AVAILABLE");
-        assert!(
+        assert_eq!(
             state
                 .store
                 .list_knowledge_entries(Some(space_id), None)
                 .await
-                .unwrap()
-                .is_empty()
+                .unwrap(),
+            [] as [nekowriter_core::KnowledgeEntrySummary; 0]
         );
     }
 
@@ -3295,7 +3297,7 @@ mod tests {
                 .expect("预览片段应在同一 SSE 连接中到达")
                 .expect("SSE 不应在预览前关闭")
                 .expect("SSE 预览不应写入错误");
-            wire.push_str(&String::from_utf8(next.to_vec()).unwrap());
+            wire.push_str(core::str::from_utf8(&next).unwrap());
         }
         let preview_block = wire
             .split("\n\n")

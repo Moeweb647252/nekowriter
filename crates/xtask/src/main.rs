@@ -447,6 +447,39 @@ fn run_command(program: &str, arguments: &[&str], cwd: &Path) -> Result<(), Stri
     }
 }
 
+/// 拷贝目录，返回其中每个文件相对于 `from` 的路径、字节数与 SHA-256。
+///
+/// 清单记录的是**拷贝到发行目录之后的那一份**（大小与摘要都从目标文件算），
+/// 所以清单描述的就是交付物本身。
+fn copy_directory(from: &Path, to: &Path) -> Result<Vec<FileEntry>, String> {
+    if !from.is_dir() {
+        return Err(format!("没有找到前端构建产物 {}", from.display()));
+    }
+    fs::create_dir_all(to).map_err(|error| format!("无法创建目录：{error}"))?;
+    let mut files = Vec::new();
+    for entry in fs::read_dir(from).map_err(|error| format!("无法读取目录：{error}"))? {
+        let entry = entry.map_err(|error| format!("无法读取目录项：{error}"))?;
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| "前端资源名不是有效 UTF-8".to_owned())?;
+        if entry.path().is_dir() {
+            for nested in copy_directory(&entry.path(), &to.join(&name))? {
+                files.push(FileEntry {
+                    name: format!("{name}/{}", nested.name),
+                    ..nested
+                });
+            }
+        } else {
+            fs::copy(entry.path(), to.join(&name))
+                .map_err(|error| format!("无法拷贝文件：{error}"))?;
+            files.push(file_entry(&to.join(&name), &name)?);
+        }
+    }
+    files.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(files)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -560,37 +593,4 @@ mod tests {
         assert!(preflight_target("aarch64-apple-darwin", "aarch64-apple-darwin", &root).is_ok());
         fs::remove_dir_all(&root).unwrap();
     }
-}
-
-/// 拷贝目录，返回其中每个文件相对于 `from` 的路径、字节数与 SHA-256。
-///
-/// 清单记录的是**拷贝到发行目录之后的那一份**（大小与摘要都从目标文件算），
-/// 所以清单描述的就是交付物本身。
-fn copy_directory(from: &Path, to: &Path) -> Result<Vec<FileEntry>, String> {
-    if !from.is_dir() {
-        return Err(format!("没有找到前端构建产物 {}", from.display()));
-    }
-    fs::create_dir_all(to).map_err(|error| format!("无法创建目录：{error}"))?;
-    let mut files = Vec::new();
-    for entry in fs::read_dir(from).map_err(|error| format!("无法读取目录：{error}"))? {
-        let entry = entry.map_err(|error| format!("无法读取目录项：{error}"))?;
-        let name = entry
-            .file_name()
-            .into_string()
-            .map_err(|_| "前端资源名不是有效 UTF-8".to_owned())?;
-        if entry.path().is_dir() {
-            for nested in copy_directory(&entry.path(), &to.join(&name))? {
-                files.push(FileEntry {
-                    name: format!("{name}/{}", nested.name),
-                    ..nested
-                });
-            }
-        } else {
-            fs::copy(entry.path(), to.join(&name))
-                .map_err(|error| format!("无法拷贝文件：{error}"))?;
-            files.push(file_entry(&to.join(&name), &name)?);
-        }
-    }
-    files.sort_by(|left, right| left.name.cmp(&right.name));
-    Ok(files)
 }

@@ -1495,7 +1495,10 @@ mod tests {
     #[test]
     fn sse_decoder_handles_crlf_and_utf8_across_transport_chunks() {
         let mut decoder = SseDecoder::default();
-        assert!(decoder.push(b"data: {\"content\":\"").unwrap().is_empty());
+        assert_eq!(
+            decoder.push(b"data: {\"content\":\"").unwrap(),
+            [] as [std::string::String; 0]
+        );
         let messages = decoder.push("你好\"}\r\n\r\n".as_bytes()).unwrap();
         assert_eq!(messages, vec![r#"{"content":"你好"}"#]);
     }

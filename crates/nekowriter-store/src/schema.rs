@@ -1,7 +1,7 @@
 //! SQLite 连接与首次 schema 初始化。
 //!
-//! 表、列、普通唯一键和外键由 SeaORM Entity 注册表生成。SQLite 特有的 partial
-//! index 无法由实体属性完整表达，因此在同一初始化事务中以 SeaQuery 的类型化
+//! 表、列、普通唯一键和外键由 `SeaORM` Entity 注册表生成。SQLite 特有的 partial
+//! index 无法由实体属性完整表达，因此在同一初始化事务中以 `SeaQuery` 的类型化
 //! builder 补充；这里不保存任何手写的表或索引 DDL。
 
 use std::path::Path;
@@ -49,16 +49,17 @@ fn sqlite_url(path: &Path) -> Result<String, StoreError> {
     );
     let file_url = Url::from_file_path(absolute_path)
         .map_err(|()| StoreError::CorruptRecord("无法构造 SQLite 文件 URL".to_owned()))?;
-    let mut encoded_path = file_url
+    let encoded_path = file_url
         .as_str()
         .strip_prefix("file://")
         .ok_or_else(|| StoreError::CorruptRecord("无法解析 SQLite 文件 URL".to_owned()))?
         .to_owned();
 
     #[cfg(windows)]
-    if let Some(path_without_file_url_root) = encoded_path.strip_prefix('/') {
-        encoded_path = path_without_file_url_root.to_owned();
-    }
+    let encoded_path = encoded_path
+        .strip_prefix('/')
+        .unwrap_or(&encoded_path)
+        .to_owned();
 
     Ok(format!("sqlite://{encoded_path}?mode=rwc"))
 }

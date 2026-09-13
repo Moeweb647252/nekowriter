@@ -263,8 +263,8 @@ mod tests {
             let values = builtin_prompt_examples(key);
             let rendered = render_builtin_prompt(key, &values).unwrap();
             assert_eq!(rendered.key, key);
-            assert!(!rendered.system_content_hash.is_empty());
-            assert!(!rendered.user_content_hash.is_empty());
+            assert_ne!(rendered.system_content_hash, "");
+            assert_ne!(rendered.user_content_hash, "");
             assert_eq!(
                 rendered,
                 render_builtin_prompt(key, &values).expect("rendering must be deterministic")

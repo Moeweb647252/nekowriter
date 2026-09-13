@@ -385,9 +385,10 @@ impl ContextBuilder {
         let mut folded_run_ids = HashSet::new();
         let mut folded_artifact_ids = HashSet::new();
         for completed in &completed_stages {
-            let chapter_order_is_valid = match completed.stage.requires_chapter_order() {
-                true => completed.chapter_order.is_some_and(|order| order > 0),
-                false => completed.chapter_order.is_none(),
+            let chapter_order_is_valid = if completed.stage.requires_chapter_order() {
+                completed.chapter_order.is_some_and(|order| order > 0)
+            } else {
+                completed.chapter_order.is_none()
             };
             if !chapter_order_is_valid {
                 return Err(ContextBuildError::InvalidChapterOrder {

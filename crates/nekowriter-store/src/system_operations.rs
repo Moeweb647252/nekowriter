@@ -623,7 +623,13 @@ mod tests {
         let range = DashboardRange::new(now, 0, 7).unwrap();
         let summary = store.dashboard_system_operations(&range).await.unwrap();
         assert_eq!(summary.request_count, 0);
-        assert!(summary.recent.is_empty());
-        assert!(summary.unknown_usage.is_empty());
+        assert_eq!(
+            summary.recent,
+            [] as [nekowriter_core::DashboardSystemOperation; 0]
+        );
+        assert_eq!(
+            summary.unknown_usage,
+            [] as [nekowriter_core::DashboardUnknownUsage; 0]
+        );
     }
 }

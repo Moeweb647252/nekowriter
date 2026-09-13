@@ -242,7 +242,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(empty.novel_title, "尚未开篇");
-        assert!(empty.chapters.is_empty());
+        assert_eq!(empty.chapters, [] as [nekowriter_core::ExportChapter; 0]);
         assert_eq!(empty.approved_chapters(), 0);
         let rendered = empty.render(ExportFormat::Text);
         assert!(rendered.contains("尚未开篇"));

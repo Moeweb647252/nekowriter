@@ -1810,9 +1810,11 @@ pub fn continue_writing_run(
     }
     let execution = if workflow.execution == ExecutionStatus::Stopped {
         match workflow.resume_execution.as_ref() {
-            Some(ExecutionStatus::WaitingAnswer)
-            | Some(ExecutionStatus::WaitingReview)
-            | Some(ExecutionStatus::Paused) => workflow.resume_execution.clone().unwrap(),
+            Some(
+                ExecutionStatus::WaitingAnswer
+                | ExecutionStatus::WaitingReview
+                | ExecutionStatus::Paused,
+            ) => workflow.resume_execution.clone().unwrap(),
             _ => ExecutionStatus::Queued,
         }
     } else {
@@ -2658,7 +2660,7 @@ fn transition_workflow(
         state_revision: workflow.state_revision + 1,
         active_run_id: workflow.active_run_id,
         active_chapter_id: workflow.active_chapter_id,
-        approval_mode: workflow.approval_mode.clone(),
+        approval_mode: workflow.approval_mode,
         pause_requested: workflow.pause_requested,
         wait_reason,
         resume_execution,

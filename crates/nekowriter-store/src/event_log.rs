@@ -29,7 +29,7 @@ pub struct EventStreamBounds {
 
 /// 一个可恢复的 SQLite 事件。
 ///
-/// event_type 用作 SSE 的 event 名称，因此不重复写入 data 信封。所有跨网络的
+/// `event_type` 用作 SSE 的 event 名称，因此不重复写入 data 信封。所有跨网络的
 /// 64 位整数都编码为十进制字符串。
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]

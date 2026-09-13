@@ -26,7 +26,10 @@ use super::preparation::{
     active_top_level_run_exists, ensure_expected_state_revision, insert_app_event, insert_event,
     open_review_exists, persist_workflow, preparation_snapshot, workflow_for_version,
 };
-use super::*;
+use super::{
+    ActiveModelTrait, ProjectId, Store, StoreError, TextUuid, db_id, finish_write, insert_receipt,
+    parse_id, payload_hash, replay_or_conflict, transaction_error,
+};
 
 const RESTORE_METHOD: &str = "POST";
 const PURGE_METHOD: &str = "POST";
@@ -1127,7 +1130,7 @@ where
     C: ConnectionTrait,
     I: IntoIterator<Item = &'a TextUuid>,
 {
-    let ids: Vec<TextUuid> = ids.into_iter().cloned().collect();
+    let ids: Vec<TextUuid> = ids.into_iter().copied().collect();
     if ids.is_empty() {
         return Ok(HashMap::new());
     }
@@ -1148,7 +1151,7 @@ where
     C: ConnectionTrait,
     I: IntoIterator<Item = &'a TextUuid>,
 {
-    let ids: Vec<TextUuid> = ids.into_iter().cloned().collect();
+    let ids: Vec<TextUuid> = ids.into_iter().copied().collect();
     if ids.is_empty() {
         return Ok(HashMap::new());
     }
@@ -1169,7 +1172,7 @@ where
     C: ConnectionTrait,
     I: IntoIterator<Item = &'a TextUuid>,
 {
-    let ids: Vec<TextUuid> = ids.into_iter().cloned().collect();
+    let ids: Vec<TextUuid> = ids.into_iter().copied().collect();
     if ids.is_empty() {
         return Ok(HashMap::new());
     }
@@ -1191,17 +1194,13 @@ async fn project_detail<C: ConnectionTrait>(
     project_id: &TextUuid,
 ) -> Result<Option<String>, StoreError> {
     let versions = novel_version::Entity::find()
-        .filter(
-            novel_version::Entity::COLUMN
-                .project_id
-                .eq(project_id.clone()),
-        )
+        .filter(novel_version::Entity::COLUMN.project_id.eq(*project_id))
         .all(connection)
         .await?;
     if versions.is_empty() {
         return Ok(Some("还没有稿本".to_owned()));
     }
-    let version_ids: Vec<TextUuid> = versions.iter().map(|model| model.id.clone()).collect();
+    let version_ids: Vec<TextUuid> = versions.iter().map(|model| model.id).collect();
     let chapter_count = chapter::Entity::find()
         .filter(chapter::Entity::COLUMN.version_id.is_in(version_ids))
         .filter(chapter::Entity::COLUMN.deleted_at.is_null())
@@ -1270,7 +1269,7 @@ async fn chapter_count_detail<C: ConnectionTrait>(
     version_id: &TextUuid,
 ) -> Result<Option<String>, StoreError> {
     let chapters = chapter::Entity::find()
-        .filter(chapter::Entity::COLUMN.version_id.eq(version_id.clone()))
+        .filter(chapter::Entity::COLUMN.version_id.eq(*version_id))
         .filter(chapter::Entity::COLUMN.deleted_at.is_null())
         .all(connection)
         .await?;
@@ -1316,13 +1315,11 @@ async fn chapter_word_count<C: ConnectionTrait>(
     )?))
     .one(connection)
     .await?;
-    Ok(revision
-        .map(|revision| {
-            revision
-                .content
-                .chars()
-                .filter(|character| !character.is_whitespace())
-                .count() as i64
-        })
-        .unwrap_or(0))
+    Ok(revision.map_or(0, |revision| {
+        revision
+            .content
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .count() as i64
+    }))
 }

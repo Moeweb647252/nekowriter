@@ -73,6 +73,7 @@ async fn render_effective_prompt(
 use crate::credentials;
 
 const LANE_CHANNEL_CAPACITY: usize = 32;
+#[cfg(test)]
 const PREVIEW_DELTA_CHANNEL_CAPACITY: usize = 256;
 
 /// 退出时等待在途模型请求任务结束的上限。
@@ -268,6 +269,8 @@ impl ToolHost for ChapterBodyToolHost {
 }
 
 impl WorkflowScheduler {
+    /// 仅供本模块的集成测试创建独立预览通道；生产实例必须与 SSE 层共享通道。
+    #[cfg(test)]
     #[must_use]
     pub fn new(
         store: Store,
@@ -647,7 +650,7 @@ impl WorkflowScheduler {
                     }
                 }
                 Err(_) => {
-                    warn!(run_id = %task.run_id, kind = task.kind(), "模型调度器已关闭，无法取得模型许可")
+                    warn!(run_id = %task.run_id, kind = task.kind(), "模型调度器已关闭，无法取得模型许可");
                 }
             }
         });
@@ -2731,11 +2734,7 @@ fn decode_body_tool_message(
     })
 }
 
-fn message_kind<'a>(
-    content: &'a Value,
-    run_id: RunId,
-    sequence: i64,
-) -> Result<&'a str, SchedulerError> {
+fn message_kind(content: &Value, run_id: RunId, sequence: i64) -> Result<&str, SchedulerError> {
     content.get("kind").and_then(Value::as_str).ok_or_else(|| {
         invalid_body_history_message(run_id, sequence, "消息缺少字符串 kind".to_owned())
     })
@@ -3183,7 +3182,10 @@ mod tests {
             message.contains("project-model"),
             "消息应指明是哪个模型：{message}"
         );
-        assert!(store.list_model_requests(run_id).await.unwrap().is_empty());
+        assert_eq!(
+            store.list_model_requests(run_id).await.unwrap(),
+            [] as [nekowriter_store::PersistedModelRequest; 0]
+        );
         assert!(
             timeout(Duration::from_millis(200), request_receiver)
                 .await
@@ -3221,7 +3223,10 @@ mod tests {
             message.contains("project-model"),
             "消息应指明是哪个模型：{message}"
         );
-        assert!(store.list_model_requests(run_id).await.unwrap().is_empty());
+        assert_eq!(
+            store.list_model_requests(run_id).await.unwrap(),
+            [] as [nekowriter_store::PersistedModelRequest; 0]
+        );
         assert!(
             timeout(Duration::from_millis(200), request_receiver)
                 .await
@@ -3374,8 +3379,7 @@ mod tests {
                     .iter()
                     .find(|artifact| artifact.kind == PreparationArtifactKind::Background)
                     .and_then(|artifact| artifact.review.as_ref())
-                    .map(|review| review.status == nekowriter_core::ReviewStatus::Approved)
-                    .unwrap_or(false)
+                    .is_some_and(|review| review.status == nekowriter_core::ReviewStatus::Approved)
                 {
                     return snapshot;
                 }
@@ -4546,13 +4550,45 @@ mod tests {
         assert_eq!(bound.workflow.execution, ExecutionStatus::Queued);
         assert_eq!(bound.pending_feedback.len(), 1);
         assert_eq!(bound.pending_feedback[0].status, FeedbackStatus::Bound);
+
+        // F13：工具结果已经绑定 A、但下一请求尚未封存时追加 B，两个意见必须仍然
+        // 作为同一批次进入同一个工具结果，不能把 B 推迟到下一次工具调用。
+        let full_batch = store
+            .submit_run_feedback(
+                body_run_id,
+                Uuid::new_v4(),
+                bound.workflow.state_revision,
+                "补充保留两人没有说出口的旧事。".to_owned(),
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(full_batch.pending_feedback.len(), 2);
+        assert!(
+            full_batch
+                .pending_feedback
+                .iter()
+                .all(|feedback| feedback.status == FeedbackStatus::Bound)
+        );
         let materialized = store
             .list_materialized_chapter_body_feedback(body_run_id)
             .await
             .unwrap();
-        assert_eq!(materialized.len(), 1);
-        assert_eq!(materialized[0].provider_tool_call_id, "feedback-tool-1");
-        assert_eq!(materialized[0].status, FeedbackStatus::Bound);
+        assert_eq!(materialized.len(), 2);
+        assert_eq!(
+            materialized
+                .iter()
+                .map(|feedback| feedback.text.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "请让人物先通过动作试探彼此，不要直接解释旧日误会。",
+                "补充保留两人没有说出口的旧事。",
+            ]
+        );
+        assert!(materialized.iter().all(|feedback| {
+            feedback.provider_tool_call_id == "feedback-tool-1"
+                && feedback.status == FeedbackStatus::Bound
+        }));
 
         let stale = store
             .capture_and_dispatch_model_request(
@@ -4574,7 +4610,9 @@ mod tests {
                     settings_snapshot: json!({ "model": "feedback-test" }),
                     prompt_snapshot: json!({ "contentHash": "feedback-test-sealed" }),
                     context_snapshot: json!({
-                        "feedbackBinding": { "ids": [materialized[0].id] },
+                        "feedbackBinding": {
+                            "ids": materialized.iter().map(|feedback| feedback.id).collect::<Vec<_>>(),
+                        },
                         "toolResultBinding": {
                             "providerCallIds": [materialized[0].provider_tool_call_id],
                         },
@@ -4586,18 +4624,24 @@ mod tests {
             .unwrap();
         assert_eq!(dispatched.status, ModelRequestStatus::Dispatched);
         let after_seal = store.get_chapter_body(chapter_id).await.unwrap();
-        assert!(after_seal.pending_feedback.is_empty());
-        assert_eq!(after_seal.delivered_feedback.len(), 1);
-        assert_eq!(after_seal.delivered_feedback[0].request_id, dispatched.id);
         assert_eq!(
-            after_seal.delivered_feedback[0].delivery_status,
-            nekowriter_core::FeedbackDeliveryStatus::Sent
+            after_seal.pending_feedback,
+            [] as [nekowriter_core::PendingChapterBodyFeedback; 0]
         );
+        assert_eq!(after_seal.delivered_feedback.len(), 2);
+        assert!(after_seal.delivered_feedback.iter().all(|feedback| {
+            feedback.request_id == dispatched.id
+                && feedback.delivery_status == nekowriter_core::FeedbackDeliveryStatus::Sent
+        }));
         let included = store
             .list_materialized_chapter_body_feedback(body_run_id)
             .await
             .unwrap();
-        assert_eq!(included[0].status, FeedbackStatus::Included);
+        assert!(
+            included
+                .iter()
+                .all(|feedback| feedback.status == FeedbackStatus::Included)
+        );
 
         store
             .resolve_model_request(
@@ -4610,11 +4654,10 @@ mod tests {
             .await
             .unwrap();
         let failed = store.get_chapter_body(chapter_id).await.unwrap();
-        assert_eq!(failed.delivered_feedback.len(), 1);
-        assert_eq!(
-            failed.delivered_feedback[0].delivery_status,
-            nekowriter_core::FeedbackDeliveryStatus::Failed
-        );
+        assert_eq!(failed.delivered_feedback.len(), 2);
+        assert!(failed.delivered_feedback.iter().all(|feedback| {
+            feedback.delivery_status == nekowriter_core::FeedbackDeliveryStatus::Failed
+        }));
     }
 
     #[tokio::test]
@@ -4668,7 +4711,8 @@ mod tests {
         );
         assert_eq!(waiting_snapshot.pending_question.as_ref(), Some(&question));
 
-        // F12：自由意见在等待正式答案时只进入独立批次，绝不替代问题回答。
+        // F12/F14：自由意见在等待正式答案时只进入独立批次，绝不替代问题回答；
+        // 连续追加的意见也必须等正式答案产生工具结果后作为一个批次交付。
         let with_feedback = store
             .submit_run_feedback(
                 body_run_id,
@@ -4686,6 +4730,37 @@ mod tests {
         assert_eq!(
             with_feedback.pending_feedback[0].status,
             FeedbackStatus::Queued
+        );
+        let with_second_feedback = store
+            .submit_run_feedback(
+                body_run_id,
+                Uuid::new_v4(),
+                with_feedback.workflow.state_revision,
+                "补充保留站钟在雨声里的回响。".to_owned(),
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        let full_feedback_batch = store
+            .submit_run_feedback(
+                body_run_id,
+                Uuid::new_v4(),
+                with_second_feedback.workflow.state_revision,
+                "补充让回答落在人物动作上。".to_owned(),
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            full_feedback_batch.workflow.execution,
+            ExecutionStatus::WaitingAnswer
+        );
+        assert_eq!(full_feedback_batch.pending_feedback.len(), 3);
+        assert!(
+            full_feedback_batch
+                .pending_feedback
+                .iter()
+                .all(|feedback| feedback.status == FeedbackStatus::Queued)
         );
 
         let answer_command_id = Uuid::new_v4();
@@ -4707,7 +4782,7 @@ mod tests {
             .answer_user_question(
                 question.id,
                 answer_command_id,
-                with_feedback.workflow.state_revision,
+                full_feedback_batch.workflow.state_revision,
                 answers.clone(),
             )
             .await
@@ -4720,7 +4795,7 @@ mod tests {
             .answer_user_question(
                 question.id,
                 answer_command_id,
-                with_feedback.workflow.state_revision,
+                full_feedback_batch.workflow.state_revision,
                 answers,
             )
             .await
@@ -4746,8 +4821,21 @@ mod tests {
             .list_materialized_chapter_body_feedback(body_run_id)
             .await
             .unwrap();
-        assert_eq!(feedback[0].status, FeedbackStatus::Bound);
-        assert_eq!(feedback[0].provider_tool_call_id, "ask-user-call-1");
+        assert_eq!(feedback.len(), 3);
+        assert_eq!(
+            feedback
+                .iter()
+                .map(|item| item.text.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "让人物的沉默比解释更有分量。",
+                "补充保留站钟在雨声里的回响。",
+                "补充让回答落在人物动作上。",
+            ]
+        );
+        assert!(feedback.iter().all(|item| {
+            item.status == FeedbackStatus::Bound && item.provider_tool_call_id == "ask-user-call-1"
+        }));
 
         let dispatched = store
             .capture_and_dispatch_model_request(
@@ -4756,7 +4844,9 @@ mod tests {
                     settings_snapshot: json!({ "model": "ask-user-test" }),
                     prompt_snapshot: json!({ "contentHash": "ask-user-answer" }),
                     context_snapshot: json!({
-                        "feedbackBinding": { "ids": [feedback[0].id] },
+                        "feedbackBinding": {
+                            "ids": feedback.iter().map(|item| item.id).collect::<Vec<_>>(),
+                        },
                         "toolResultBinding": { "providerCallIds": provider_call_ids },
                     }),
                 },
@@ -4767,7 +4857,11 @@ mod tests {
         assert_eq!(dispatched.status, ModelRequestStatus::Dispatched);
         let sealed = store.get_chapter_body(chapter_id).await.unwrap();
         assert!(sealed.pending_question.is_none());
-        assert!(sealed.pending_feedback.is_empty());
+        assert_eq!(
+            sealed.pending_feedback,
+            [] as [nekowriter_core::PendingChapterBodyFeedback; 0]
+        );
+        assert_eq!(sealed.delivered_feedback.len(), 3);
     }
 
     #[tokio::test]
@@ -4874,13 +4968,36 @@ mod tests {
         );
         assert_eq!(resumed.pending_feedback.len(), 1);
         assert_eq!(resumed.pending_feedback[0].status, FeedbackStatus::Bound);
+
+        // F15：暂停边界的第一条意见已把批次绑到最近工具结果后，紧接着追加的意见
+        // 仍继承这份绑定；不能拆成下一次工具调用的独立批次。
+        let full_batch = store
+            .submit_run_feedback(
+                body_run_id,
+                Uuid::new_v4(),
+                resumed.workflow.state_revision,
+                "补充让伞沿保持沉默的距离。".to_owned(),
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(full_batch.workflow.execution, ExecutionStatus::Queued);
+        assert_eq!(full_batch.pending_feedback.len(), 2);
+        assert!(
+            full_batch
+                .pending_feedback
+                .iter()
+                .all(|feedback| feedback.status == FeedbackStatus::Bound)
+        );
         let materialized = store
             .list_materialized_chapter_body_feedback(body_run_id)
             .await
             .unwrap();
-        assert_eq!(materialized.len(), 1);
-        assert_eq!(materialized[0].provider_tool_call_id, "pause-feedback-tool");
-        assert_eq!(materialized[0].status, FeedbackStatus::Bound);
+        assert_eq!(materialized.len(), 2);
+        assert!(materialized.iter().all(|feedback| {
+            feedback.provider_tool_call_id == "pause-feedback-tool"
+                && feedback.status == FeedbackStatus::Bound
+        }));
     }
 
     #[tokio::test]
@@ -4959,8 +5076,7 @@ mod tests {
             .await
             .unwrap()
             .into_iter()
-            .filter(|event| event.event_type == "run.changed")
-            .next_back()
+            .rfind(|event| event.event_type == "run.changed")
             .unwrap();
         assert_eq!(stopped.payload["status"], "stopped");
         assert_eq!(stopped.payload["wait_reason"], "protocol_error_limit");

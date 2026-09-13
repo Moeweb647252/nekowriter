@@ -2616,12 +2616,12 @@ mod tests {
             .unwrap_err();
         assert!(matches!(invalid, StoreError::InvalidKnowledgeEntry(_)));
         // 整批原子：一条候选无效就不留下任何条目，也没有回执。
-        assert!(
+        assert_eq!(
             store
                 .list_knowledge_entries(Some(space.id), None)
                 .await
-                .unwrap()
-                .is_empty()
+                .unwrap(),
+            [] as [nekowriter_core::KnowledgeEntrySummary; 0]
         );
 
         let command_id = Uuid::new_v4();

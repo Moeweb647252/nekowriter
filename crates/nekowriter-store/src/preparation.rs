@@ -49,7 +49,12 @@ use super::entity::{
     novel_version, question, review, revision_dependency, run, tool_call, workflow_instance,
 };
 use super::model_requests::model_request_status_from_db;
-use super::*;
+use super::{
+    AgentMessageRole, CHAPTER_BODY_ROLE, CHAPTER_GUIDANCE_ROLE, CHAPTER_OUTLINE_ROLE,
+    ModelRequestStatus, NOVEL_BRIEF_ROLE, NewAgentMessage, ProjectId, Store, StoreError, VersionId,
+    approval_mode_name, db_id, insert_receipt, parse_id, parse_optional_id, payload_hash,
+    replay_or_conflict, transaction_error, utc_now_millis, workflow_from_model,
+};
 
 const SAVE_NOVEL_BRIEF_METHOD: &str = "PUT";
 const START_PREPARATION_METHOD: &str = "POST";
@@ -203,7 +208,7 @@ enum ChapterBodyMutation {
     Replace(ReplaceChapterContent),
 }
 
-/// 一次已经通过 Agent 协议白名单校验、即将由正文 ToolHost 执行的调用。
+/// 一次已经通过 Agent 协议白名单校验、即将由正文 `ToolHost` 执行的调用。
 ///
 /// Store 不依赖 `nekowriter-agent` crate，因此采用这个传输中立的形状；调用 ID、
 /// 名称和 JSON 参数仍会原样作为审计记录持久化。
@@ -495,8 +500,8 @@ fn pending_user_question_from_model(
         .validate()
         .map_err(|error| StoreError::CorruptRecord(format!("持久问题模式无效：{error}")))?;
     Ok(PendingUserQuestion {
-        id: model.id.clone().into(),
-        tool_call_id: model.tool_call_id.clone().into(),
+        id: model.id.into(),
+        tool_call_id: model.tool_call_id.into(),
         schema,
         created_at_ms: model.created_at,
     })
@@ -557,7 +562,7 @@ fn held_chapter_body_tool_payload_from_model(
         .as_deref()
         .ok_or_else(|| StoreError::CorruptRecord("已暂停正文工具调用缺少 held_json".to_owned()))?;
     let payload: HeldChapterBodyToolPayload = serde_json::from_str(held_json)?;
-    let tool_call_id: Uuid = model.id.clone().into();
+    let tool_call_id: Uuid = model.id.into();
     let held = &payload.held;
     let expected_candidate_hash = held
         .candidate_content
@@ -598,7 +603,7 @@ fn pending_chapter_body_proposal_from_tool_call(
         StoreError::CorruptRecord("待审正文工具调用缺少 proposal_json".to_owned())
     })?;
     let proposal: PendingChapterBodyProposal = serde_json::from_str(proposal_json)?;
-    let tool_call_id: Uuid = model.id.clone().into();
+    let tool_call_id: Uuid = model.id.into();
     if proposal.tool_call_id != tool_call_id
         || proposal.provider_call_id != model.provider_call_id
         || proposal.tool_name != model.name
@@ -1007,10 +1012,14 @@ fn chapter_body_run_status_matches_execution(
     matches!(
         (run_status, execution),
         ("queued", ExecutionStatus::Queued)
-            | ("running", ExecutionStatus::RequestInFlight)
-            | ("running", ExecutionStatus::ToolBoundary)
-            | ("waiting", ExecutionStatus::WaitingAnswer)
-            | ("waiting", ExecutionStatus::WaitingReview)
+            | (
+                "running",
+                ExecutionStatus::RequestInFlight | ExecutionStatus::ToolBoundary
+            )
+            | (
+                "waiting",
+                ExecutionStatus::WaitingAnswer | ExecutionStatus::WaitingReview
+            )
             | ("paused", ExecutionStatus::Paused)
     )
 }
@@ -1064,7 +1073,7 @@ async fn bind_pending_feedback_to_tool<C: ConnectionTrait>(
             let bound_tool_call_id = tool_call_id_text;
             let mut changed_ids = Vec::with_capacity(models.len());
             for model in models {
-                let id: Uuid = model.id.clone().into();
+                let id: Uuid = model.id.into();
                 let mut active = model.into_active_model();
                 active.status = Set("bound".to_owned());
                 active.preferred_tool_call_id = Set(Some(bound_tool_call_id.clone()));
@@ -1087,7 +1096,7 @@ async fn latest_unsealed_chapter_body_tool_result<C: ConnectionTrait>(
     run_id: &sea_orm::prelude::TextUuid,
 ) -> Result<Option<(Uuid, i64)>, StoreError> {
     tool_call::Entity::find()
-        .filter(tool_call::Entity::COLUMN.run_id.eq(run_id.clone()))
+        .filter(tool_call::Entity::COLUMN.run_id.eq(*run_id))
         .filter(
             tool_call::Entity::COLUMN
                 .status
@@ -1138,7 +1147,7 @@ async fn bind_pending_feedback_to_existing_tool_for_pause<C: ConnectionTrait>(
         FeedbackStatus::Queued => {
             let mut changed_ids = Vec::with_capacity(models.len());
             for model in models {
-                let id: Uuid = model.id.clone().into();
+                let id: Uuid = model.id.into();
                 let mut active = model.into_active_model();
                 active.status = Set("bound".to_owned());
                 active.preferred_tool_call_id = Set(Some(tool_call_id_text.clone()));
@@ -1211,7 +1220,7 @@ async fn prepare_free_agent_tool_call(
             request.status
         )));
     }
-    let run_model = run::Entity::find_by_id(request.run_id.clone())
+    let run_model = run::Entity::find_by_id(request.run_id)
         .one(transaction)
         .await?
         .ok_or(StoreError::RunNotFound)?;
@@ -1225,8 +1234,8 @@ async fn prepare_free_agent_tool_call(
             "该模型请求不属于顶层写作 Run".to_owned(),
         ));
     }
-    let run_id: RunId = run_model.id.clone().into();
-    let version_id = run_model.version_id.clone().into();
+    let run_id: RunId = run_model.id.into();
+    let version_id = run_model.version_id.into();
     let run_kind = run_model.kind.clone();
     let workflow = workflow_for_version(transaction, version_id).await?;
     if workflow.active_run_id != Some(run_id)
@@ -1349,8 +1358,8 @@ async fn commit_free_agent_tool_call(
     append_agent_messages_for_run(transaction, &run_model, messages, now).await?;
     tool_call::ActiveModel {
         id: Set(db_id(tool_call_id)),
-        request_id: Set(request.id.clone()),
-        run_id: Set(run_model.id.clone()),
+        request_id: Set(request.id),
+        run_id: Set(run_model.id),
         provider_call_id: Set(provider_call_id.clone()),
         sequence: Set(sequence),
         name: Set(outcome.name.to_owned()),
@@ -1498,7 +1507,7 @@ async fn next_agent_tool_sequence<C: ConnectionTrait>(
     run_id: &sea_orm::prelude::TextUuid,
 ) -> Result<i64, StoreError> {
     tool_call::Entity::find()
-        .filter(tool_call::Entity::COLUMN.run_id.eq(run_id.clone()))
+        .filter(tool_call::Entity::COLUMN.run_id.eq(*run_id))
         .order_by_desc(tool_call::Entity::COLUMN.sequence)
         .one(connection)
         .await?
@@ -1538,8 +1547,8 @@ async fn resolve_held_chapter_body_tool(
     chapter_id: ChapterId,
     now: i64,
 ) -> Result<ResolvedHeldChapterBodyTool, StoreError> {
-    let run_id: RunId = body_run.id.clone().into();
-    let version_id: VersionId = body_run.version_id.clone().into();
+    let run_id: RunId = body_run.id.into();
+    let version_id: VersionId = body_run.version_id.into();
     let (chapter_model, body_document) =
         chapter_and_document(transaction, chapter_id, CHAPTER_BODY_ROLE, "章节正文").await?;
     if chapter_model.status != "in_progress" {
@@ -1554,7 +1563,7 @@ async fn resolve_held_chapter_body_tool(
         ));
     }
     let held_call = tool_call::Entity::find()
-        .filter(tool_call::Entity::COLUMN.run_id.eq(body_run.id.clone()))
+        .filter(tool_call::Entity::COLUMN.run_id.eq(body_run.id))
         .filter(tool_call::Entity::COLUMN.status.eq("held"))
         .one(transaction)
         .await?
@@ -1570,8 +1579,8 @@ async fn resolve_held_chapter_body_tool(
             actual: current_body.revision_id,
         });
     }
-    let tool_call_id: Uuid = held_call.id.clone().into();
-    let request_id: Uuid = held_call.request_id.clone().into();
+    let tool_call_id: Uuid = held_call.id.into();
+    let request_id: Uuid = held_call.request_id.into();
     let held_sequence = held_call.sequence;
     let (mut tool_result, committed_revision, proposal) = match (
         held.candidate_content.clone(),
@@ -1581,7 +1590,7 @@ async fn resolve_held_chapter_body_tool(
             if workflow.approval_mode == ApprovalMode::ApproveRequired =>
         {
             if tool_call::Entity::find()
-                .filter(tool_call::Entity::COLUMN.run_id.eq(body_run.id.clone()))
+                .filter(tool_call::Entity::COLUMN.run_id.eq(body_run.id))
                 .filter(tool_call::Entity::COLUMN.status.eq("awaiting_review"))
                 .one(transaction)
                 .await?
@@ -1676,9 +1685,9 @@ async fn resolve_held_chapter_body_tool(
     result_object
         .entry("base_revision_id".to_owned())
         .or_insert_with(|| {
-            held.base_revision_id
-                .map(|revision_id| Value::String(revision_id.to_string()))
-                .unwrap_or(Value::Null)
+            held.base_revision_id.map_or(Value::Null, |revision_id| {
+                Value::String(revision_id.to_string())
+            })
         });
     result_object
         .entry("feedback".to_owned())
@@ -1890,8 +1899,8 @@ async fn resolve_held_chapter_body_submission(
     chapter_id: ChapterId,
     now: i64,
 ) -> Result<ResolvedHeldChapterBodySubmission, StoreError> {
-    let run_id: RunId = body_run.id.clone().into();
-    let version_id: VersionId = body_run.version_id.clone().into();
+    let run_id: RunId = body_run.id.into();
+    let version_id: VersionId = body_run.version_id.into();
     let mut checkpoint: RunCheckpoint = serde_json::from_str(&body_run.checkpoint_json)?;
     if checkpoint.chapter_id != Some(chapter_id) {
         return Err(StoreError::CorruptRecord(
@@ -1927,7 +1936,7 @@ async fn resolve_held_chapter_body_submission(
         ));
     }
     let has_pending_feedback = feedback::Entity::find()
-        .filter(feedback::Entity::COLUMN.run_id.eq(body_run.id.clone()))
+        .filter(feedback::Entity::COLUMN.run_id.eq(body_run.id))
         .filter(feedback::Entity::COLUMN.status.is_in(["queued", "bound"]))
         .one(transaction)
         .await?
@@ -2163,7 +2172,7 @@ async fn held_chapter_body_pause_boundary<C: ConnectionTrait>(
         ));
     }
     let held_tools = tool_call::Entity::find()
-        .filter(tool_call::Entity::COLUMN.run_id.eq(body_run.id.clone()))
+        .filter(tool_call::Entity::COLUMN.run_id.eq(body_run.id))
         .filter(tool_call::Entity::COLUMN.status.eq("held"))
         .all(connection)
         .await?;
@@ -3406,7 +3415,7 @@ impl Store {
                             "只有顶层写作 Run 可以显式停止".to_owned(),
                         ));
                     }
-                    let version_id: VersionId = run_model.version_id.clone().into();
+                    let version_id: VersionId = run_model.version_id.into();
                     let workflow = workflow_for_version(transaction, version_id).await?;
                     ensure_expected_state_revision(&workflow, expected_state_revision)?;
                     let expected_run_status = writing_run_status_for_execution(&workflow.execution)
@@ -3424,7 +3433,7 @@ impl Store {
                     let next_workflow = stop_writing_workflow_run(&workflow, run_id)?;
 
                     let outstanding_requests = model_request::Entity::find()
-                        .filter(model_request::Column::RunId.eq(run_model.id.clone()))
+                        .filter(model_request::Column::RunId.eq(run_model.id))
                         .filter(
                             model_request::Column::Status.is_in(["prepared", "dispatched"]),
                         )
@@ -3438,7 +3447,7 @@ impl Store {
                     let mut cancelled_request_ids = Vec::with_capacity(outstanding_requests.len());
                     let mut cancelled_attempt_nos = Vec::with_capacity(outstanding_requests.len());
                     for request in outstanding_requests {
-                        let request_id: Uuid = request.id.clone().into();
+                        let request_id: Uuid = request.id.into();
                         let attempt_no = request.attempt_no;
                         let was_dispatched = request.status == "dispatched";
                         let mut active_request = request.into_active_model();
@@ -3614,7 +3623,7 @@ impl Store {
                             "只有顶层写作 Run 可以显式继续".to_owned(),
                         ));
                     }
-                    let version_id: VersionId = run_model.version_id.clone().into();
+                    let version_id: VersionId = run_model.version_id.into();
                     let workflow = workflow_for_version(transaction, version_id).await?;
                     ensure_expected_state_revision(&workflow, expected_state_revision)?;
                     let expected_run_status = match workflow.execution {
@@ -3837,35 +3846,32 @@ impl Store {
                     };
 
                     let existing_batch = feedback::Entity::find()
-                        .filter(feedback::Entity::COLUMN.run_id.eq(body_run.id.clone()))
+                        .filter(feedback::Entity::COLUMN.run_id.eq(body_run.id))
                         .filter(feedback::Entity::COLUMN.status.is_in(["queued", "bound"]))
                         .order_by_asc(feedback::Entity::COLUMN.sequence)
                         .all(transaction)
                         .await?;
                     let anchors = feedback_batch_anchors(&existing_batch)?;
                     let (after_tool_sequence, preferred_tool_call_id, bound_tool_call_id, status) =
-                        match anchors {
-                            Some(anchors) => (
+                        if let Some(anchors) = anchors {
+                            (
                                 anchors.after_tool_sequence,
                                 anchors.preferred_tool_call_id,
                                 anchors.bound_tool_call_id,
                                 anchors.status,
-                            ),
-                            None => {
-                                let after_tool_sequence = tool_call::Entity::find()
-                                    .filter(
-                                        tool_call::Entity::COLUMN.run_id.eq(body_run.id.clone()),
-                                    )
-                                    .filter(tool_call::Entity::COLUMN.result_json.is_not_null())
-                                    .order_by_desc(tool_call::Entity::COLUMN.sequence)
-                                    .one(transaction)
-                                    .await?
-                                    .map_or(0, |tool| tool.sequence);
-                                (after_tool_sequence, None, None, FeedbackStatus::Queued)
-                            }
+                            )
+                        } else {
+                            let after_tool_sequence = tool_call::Entity::find()
+                                .filter(tool_call::Entity::COLUMN.run_id.eq(body_run.id))
+                                .filter(tool_call::Entity::COLUMN.result_json.is_not_null())
+                                .order_by_desc(tool_call::Entity::COLUMN.sequence)
+                                .one(transaction)
+                                .await?
+                                .map_or(0, |tool| tool.sequence);
+                            (after_tool_sequence, None, None, FeedbackStatus::Queued)
                         };
                     let sequence = feedback::Entity::find()
-                        .filter(feedback::Entity::COLUMN.run_id.eq(body_run.id.clone()))
+                        .filter(feedback::Entity::COLUMN.run_id.eq(body_run.id))
                         .order_by_desc(feedback::Entity::COLUMN.sequence)
                         .one(transaction)
                         .await?
@@ -3879,8 +3885,8 @@ impl Store {
                     let feedback_id = Uuid::new_v4();
                     feedback::ActiveModel {
                         id: Set(db_id(feedback_id)),
-                        run_id: Set(body_run.id.clone()),
-                        version_id: Set(body_run.version_id.clone()),
+                        run_id: Set(body_run.id),
+                        version_id: Set(body_run.version_id),
                         sequence: Set(sequence),
                         text: Set(text.clone()),
                         citations_json: Set(serde_json::to_string(&citations)?),
@@ -4111,7 +4117,7 @@ impl Store {
                         ));
                     }
                     let tools = tool_call::Entity::find()
-                        .filter(tool_call::Entity::COLUMN.run_id.eq(run_model.id.clone()))
+                        .filter(tool_call::Entity::COLUMN.run_id.eq(run_model.id))
                         .all(transaction)
                         .await?
                         .into_iter()
@@ -4155,7 +4161,7 @@ impl Store {
                             let citations = feedback_citations_from_json(&model.citations_json)?;
                             Ok(MaterializedChapterBodyFeedback {
                                 provider_tool_call_id: tool.provider_call_id.clone(),
-                                id: model.id.clone().into(),
+                                id: model.id.into(),
                                 sequence: model.sequence,
                                 text: model.text.clone(),
                                 citations,
@@ -4264,7 +4270,7 @@ impl Store {
                         .await?
                         .ok_or(StoreError::ModelRequestNotFound)?;
                     if let Some(existing) = tool_call::Entity::find()
-                        .filter(tool_call::Entity::COLUMN.request_id.eq(request.id.clone()))
+                        .filter(tool_call::Entity::COLUMN.request_id.eq(request.id))
                         .filter(
                             tool_call::Entity::COLUMN
                                 .provider_call_id
@@ -4282,11 +4288,7 @@ impl Store {
                         return match existing.status.as_str() {
                             "awaiting_answer" => {
                                 let question_model = question::Entity::find()
-                                    .filter(
-                                        question::Entity::COLUMN
-                                            .tool_call_id
-                                            .eq(existing.id.clone()),
-                                    )
+                                    .filter(question::Entity::COLUMN.tool_call_id.eq(existing.id))
                                     .one(transaction)
                                     .await?
                                     .ok_or_else(|| {
@@ -4363,8 +4365,8 @@ impl Store {
                             .await?;
                             tool_call::ActiveModel {
                                 id: Set(db_id(tool_call_id)),
-                                request_id: Set(request.id.clone()),
-                                run_id: Set(run_model.id.clone()),
+                                request_id: Set(request.id),
+                                run_id: Set(run_model.id),
                                 provider_call_id: Set(call.provider_call_id.clone()),
                                 sequence: Set(sequence),
                                 name: Set("ask_user".to_owned()),
@@ -4714,14 +4716,13 @@ impl Store {
                         .one(transaction)
                         .await?
                         .ok_or(StoreError::QuestionNotFound)?;
-                    let tool_model =
-                        tool_call::Entity::find_by_id(question_model.tool_call_id.clone())
-                            .one(transaction)
-                            .await?
-                            .ok_or_else(|| {
-                                StoreError::CorruptRecord("问题引用的工具调用不存在".to_owned())
-                            })?;
-                    let run_model = run::Entity::find_by_id(tool_model.run_id.clone())
+                    let tool_model = tool_call::Entity::find_by_id(question_model.tool_call_id)
+                        .one(transaction)
+                        .await?
+                        .ok_or_else(|| {
+                            StoreError::CorruptRecord("问题引用的工具调用不存在".to_owned())
+                        })?;
+                    let run_model = run::Entity::find_by_id(tool_model.run_id)
                         .one(transaction)
                         .await?
                         .ok_or(StoreError::RunNotFound)?;
@@ -4733,8 +4734,8 @@ impl Store {
                     {
                         return Err(StoreError::QuestionNotFound);
                     }
-                    let run_id: RunId = run_model.id.clone().into();
-                    let version_id = run_model.version_id.clone().into();
+                    let run_id: RunId = run_model.id.into();
+                    let version_id = run_model.version_id.into();
                     let run_kind = run_model.kind.clone();
                     let workflow = workflow_for_version(transaction, version_id).await?;
                     ensure_expected_state_revision(&workflow, expected_state_revision)?;
@@ -4780,10 +4781,10 @@ impl Store {
                     active_question.status = Set("answered".to_owned());
                     active_question.updated_at = Set(now);
                     active_question.update(transaction).await?;
-                    let tool_call_id: Uuid = tool_model.id.clone().into();
+                    let tool_call_id: Uuid = tool_model.id.into();
                     let tool_sequence = tool_model.sequence;
                     let provider_call_id = tool_model.provider_call_id.clone();
-                    let tool_request_id: Uuid = tool_model.request_id.clone().into();
+                    let tool_request_id: Uuid = tool_model.request_id.into();
                     let mut active_tool = tool_model.into_active_model();
                     active_tool.status = Set("resolved".to_owned());
                     active_tool.result_json = Set(Some(serde_json::to_string(&tool_result)?));
@@ -5096,7 +5097,7 @@ impl Store {
                         .ok_or(StoreError::ModelRequestNotFound)?;
 
                     if let Some(existing) = tool_call::Entity::find()
-                        .filter(tool_call::Entity::COLUMN.request_id.eq(request.id.clone()))
+                        .filter(tool_call::Entity::COLUMN.request_id.eq(request.id))
                         .filter(
                             tool_call::Entity::COLUMN
                                 .provider_call_id
@@ -5148,7 +5149,7 @@ impl Store {
                             request.status
                         )));
                     }
-                    let run_model = run::Entity::find_by_id(request.run_id.clone())
+                    let run_model = run::Entity::find_by_id(request.run_id)
                         .one(transaction)
                         .await?
                         .ok_or(StoreError::RunNotFound)?;
@@ -5211,7 +5212,7 @@ impl Store {
                         next_agent_tool_sequence(transaction, &run_model.id).await?;
                     if workflow.pause_requested {
                         if tool_call::Entity::find()
-                            .filter(tool_call::Entity::COLUMN.run_id.eq(run_model.id.clone()))
+                            .filter(tool_call::Entity::COLUMN.run_id.eq(run_model.id))
                             .filter(tool_call::Entity::COLUMN.status.eq("held"))
                             .one(transaction)
                             .await?
@@ -5280,8 +5281,8 @@ impl Store {
                         .await?;
                         tool_call::ActiveModel {
                             id: Set(db_id(tool_call_id)),
-                            request_id: Set(request.id.clone()),
-                            run_id: Set(run_model.id.clone()),
+                            request_id: Set(request.id),
+                            run_id: Set(run_model.id),
                             provider_call_id: Set(call.provider_call_id.clone()),
                             sequence: Set(sequence),
                             name: Set(call.name.clone()),
@@ -5376,7 +5377,7 @@ impl Store {
                         }
                         Ok(next_content) if workflow.approval_mode == ApprovalMode::ApproveRequired => {
                             if tool_call::Entity::find()
-                                .filter(tool_call::Entity::COLUMN.run_id.eq(run_model.id.clone()))
+                                .filter(tool_call::Entity::COLUMN.run_id.eq(run_model.id))
                                 .filter(
                                     tool_call::Entity::COLUMN
                                         .status
@@ -5458,8 +5459,7 @@ impl Store {
                         .entry("base_revision_id".to_owned())
                         .or_insert_with(|| {
                             base_revision_id
-                                .map(|revision_id| Value::String(revision_id.to_string()))
-                                .unwrap_or(Value::Null)
+                                .map_or(Value::Null, |revision_id| Value::String(revision_id.to_string()))
                         });
                     result_object
                         .entry("feedback".to_owned())
@@ -5531,8 +5531,8 @@ impl Store {
 
                     tool_call::ActiveModel {
                         id: Set(db_id(tool_call_id)),
-                        request_id: Set(request.id.clone()),
-                        run_id: Set(run_model.id.clone()),
+                        request_id: Set(request.id),
+                        run_id: Set(run_model.id),
                         provider_call_id: Set(call.provider_call_id.clone()),
                         sequence: Set(sequence),
                         name: Set(call.name.clone()),
@@ -5840,7 +5840,7 @@ impl Store {
                         ));
                     }
                     let proposal_call = tool_call::Entity::find_by_id(db_id(tool_call_id))
-                        .filter(tool_call::Entity::COLUMN.run_id.eq(run_model.id.clone()))
+                        .filter(tool_call::Entity::COLUMN.run_id.eq(run_model.id))
                         .one(transaction)
                         .await?
                         .ok_or(StoreError::ProposalNotFound)?;
@@ -5945,7 +5945,7 @@ impl Store {
                             None,
                         )
                     };
-                    let request_id: Uuid = proposal_call.request_id.clone().into();
+                    let request_id: Uuid = proposal_call.request_id.into();
                     let proposal_sequence = proposal_call.sequence;
                     let mut active_call = proposal_call.into_active_model();
                     // 调用生命周期到这里都已完成；“rejected”是返回给模型的业务
@@ -5990,7 +5990,7 @@ impl Store {
                     )
                     .await?;
                     persist_workflow(transaction, &next_workflow).await?;
-                    let chapter_edit_review_id: ReviewId = chapter_edit_review.id.clone().into();
+                    let chapter_edit_review_id: ReviewId = chapter_edit_review.id.into();
                     let mut active_review = chapter_edit_review.into_active_model();
                     active_review.status = Set(
                         if accepted { "approved" } else { "rejected" }.to_owned(),
@@ -6189,7 +6189,7 @@ impl Store {
                         .one(transaction)
                         .await?
                         .ok_or(StoreError::ModelRequestNotFound)?;
-                    let run_model = run::Entity::find_by_id(request.run_id.clone())
+                    let run_model = run::Entity::find_by_id(request.run_id)
                         .one(transaction)
                         .await?
                         .ok_or(StoreError::RunNotFound)?;
@@ -6324,7 +6324,7 @@ impl Store {
                         return Ok((chapter_body_snapshot(transaction, chapter_id).await?, true));
                     }
                     let has_pending_feedback = feedback::Entity::find()
-                        .filter(feedback::Entity::COLUMN.run_id.eq(body_run.id.clone()))
+                        .filter(feedback::Entity::COLUMN.run_id.eq(body_run.id))
                         .filter(feedback::Entity::COLUMN.status.is_in(["queued", "bound"]))
                         .one(transaction)
                         .await?
@@ -8272,7 +8272,7 @@ impl Store {
                         .await?;
                     let mut cancelled_request_ids = Vec::with_capacity(outstanding.len());
                     for request in outstanding {
-                        let request_id: Uuid = request.id.clone().into();
+                        let request_id: Uuid = request.id.into();
                         let mut active_request = request.into_active_model();
                         active_request.status = Set("cancelled".to_owned());
                         active_request.error_json = Set(Some(serde_json::to_string(&json!({
@@ -8774,8 +8774,8 @@ impl Store {
                         .await?;
                     let mut recovered = 0_usize;
                     for run_model in candidates {
-                        let run_id: RunId = run_model.id.clone().into();
-                        let version_id: VersionId = run_model.version_id.clone().into();
+                        let run_id: RunId = run_model.id.into();
+                        let version_id: VersionId = run_model.version_id.into();
                         let workflow = workflow_for_version(transaction, version_id).await?;
                         if workflow.active_run_id != Some(run_id) {
                             return Err(StoreError::CorruptRecord(
@@ -8789,7 +8789,7 @@ impl Store {
                                 ))
                             })?;
                         let outstanding_requests = model_request::Entity::find()
-                            .filter(model_request::Column::RunId.eq(run_model.id.clone()))
+                            .filter(model_request::Column::RunId.eq(run_model.id))
                             .filter(model_request::Column::Status.is_in(["prepared", "dispatched"]))
                             .all(transaction)
                             .await?;
@@ -8896,7 +8896,7 @@ impl Store {
                         .await?;
                     let mut recovered = 0_usize;
                     for review_model in candidates {
-                        let review_id: ReviewId = review_model.id.clone().into();
+                        let review_id: ReviewId = review_model.id.into();
                         let attempt = delegated_review_attempt(transaction, review_id).await?;
                         let workflow =
                             workflow_for_version(transaction, attempt.version_id).await?;
@@ -8918,7 +8918,7 @@ impl Store {
                             ));
                         }
                         let outstanding_requests = model_request::Entity::find()
-                            .filter(model_request::Column::RunId.eq(child_run.id.clone()))
+                            .filter(model_request::Column::RunId.eq(child_run.id))
                             .filter(model_request::Column::Status.is_in(["prepared", "dispatched"]))
                             .all(transaction)
                             .await?;
@@ -9365,8 +9365,10 @@ fn parent_run_matches_review_kind(parent_run_kind: &str, kind: DelegatedReviewKi
         (parent_run_kind, kind),
         ("preparation", DelegatedReviewKind::Preparation(_))
             | ("chapter_outline", DelegatedReviewKind::ChapterOutline)
-            | ("chapter_body", DelegatedReviewKind::ChapterEdit)
-            | ("chapter_body", DelegatedReviewKind::ChapterFinal)
+            | (
+                "chapter_body",
+                DelegatedReviewKind::ChapterEdit | DelegatedReviewKind::ChapterFinal
+            )
     )
 }
 
@@ -9912,7 +9914,7 @@ async fn current_chapter_outline<C: ConnectionTrait>(
             .filter(
                 review::Entity::COLUMN
                     .version_id
-                    .eq(outline_document.version_id.clone()),
+                    .eq(outline_document.version_id),
             )
             .filter(review::Entity::COLUMN.review_type.eq("chapter_outline"))
             .filter(
@@ -9979,7 +9981,7 @@ async fn current_chapter_body<C: ConnectionTrait>(
             .filter(
                 review::Entity::COLUMN
                     .version_id
-                    .eq(body_document.version_id.clone()),
+                    .eq(body_document.version_id),
             )
             .filter(review::Entity::COLUMN.review_type.eq("chapter_final"))
             .filter(
@@ -10090,11 +10092,7 @@ async fn pending_user_question<C: ConnectionTrait>(
         ));
     }
     let question_model = question::Entity::find()
-        .filter(
-            question::Entity::COLUMN
-                .tool_call_id
-                .eq(awaiting_tool.id.clone()),
-        )
+        .filter(question::Entity::COLUMN.tool_call_id.eq(awaiting_tool.id))
         .one(connection)
         .await?
         .ok_or_else(|| {
@@ -10321,7 +10319,7 @@ fn pending_chapter_body_feedback_from_model(
         ));
     }
     Ok(PendingChapterBodyFeedback {
-        id: model.id.clone().into(),
+        id: model.id.into(),
         sequence: model.sequence,
         text: model.text.clone(),
         citations,
@@ -10364,7 +10362,7 @@ async fn delivered_chapter_body_feedback<C: ConnectionTrait>(
         ModelRequestStatus::Cancelled => FeedbackDeliveryStatus::Cancelled,
         ModelRequestStatus::Prepared | ModelRequestStatus::Succeeded => return Ok(Vec::new()),
     };
-    let request_id: Uuid = request.id.clone().into();
+    let request_id: Uuid = request.id.into();
     feedback::Entity::find()
         .filter(feedback::Entity::COLUMN.run_id.eq(db_id(run_id)))
         .filter(feedback::Entity::COLUMN.status.eq("included"))
@@ -10412,7 +10410,7 @@ fn delivered_chapter_body_feedback_from_model(
         ));
     }
     Ok(DeliveredChapterBodyFeedback {
-        id: model.id.clone().into(),
+        id: model.id.into(),
         sequence: model.sequence,
         text: model.text.clone(),
         citations: feedback_citations_from_json(&model.citations_json)?,
@@ -10577,8 +10575,8 @@ async fn apply_chapter_edit_review_decision(
     if proposal_call.status != "awaiting_review" {
         return Err(StoreError::ProposalAlreadyResolved);
     }
-    let run_id: RunId = proposal_call.run_id.clone().into();
-    let run_model = run::Entity::find_by_id(proposal_call.run_id.clone())
+    let run_id: RunId = proposal_call.run_id.into();
+    let run_model = run::Entity::find_by_id(proposal_call.run_id)
         .filter(run::Entity::COLUMN.kind.eq("chapter_body"))
         .one(transaction)
         .await?
@@ -10730,7 +10728,7 @@ async fn apply_chapter_edit_review_decision(
             None,
         )
     };
-    let request_id: Uuid = proposal_call.request_id.clone().into();
+    let request_id: Uuid = proposal_call.request_id.into();
     let proposal_sequence = proposal_call.sequence;
     let mut active_call = proposal_call.into_active_model();
     active_call.status = Set("resolved".to_owned());
@@ -11670,8 +11668,8 @@ async fn chapter_edit_review_target(
     if proposal_call.status != "awaiting_review" {
         return Err(StoreError::ProposalAlreadyResolved);
     }
-    let parent_run_id: RunId = proposal_call.run_id.clone().into();
-    let parent_run = run::Entity::find_by_id(proposal_call.run_id.clone())
+    let parent_run_id: RunId = proposal_call.run_id.into();
+    let parent_run = run::Entity::find_by_id(proposal_call.run_id)
         .filter(run::Entity::COLUMN.kind.eq("chapter_body"))
         .one(transaction)
         .await?
@@ -12464,7 +12462,7 @@ async fn chapter_body_outline_dependency_revision_id(
         .ok_or_else(|| {
             StoreError::InvalidChapterState("当前章节细纲尚未完成上下文折叠".to_owned())
         })?;
-    if context_fold.artifact_revision_ids.as_slice() != &[outline_revision_id] {
+    if context_fold.artifact_revision_ids.as_slice() != [outline_revision_id] {
         return Err(StoreError::CorruptRecord(
             "章节细纲折叠来源与当前修订不一致".to_owned(),
         ));
@@ -13193,7 +13191,7 @@ fn preparation_review_from_model(
         issues: model
             .issues_json
             .as_deref()
-            .map(|issues_json| serde_json::from_str(&issues_json))
+            .map(serde_json::from_str)
             .transpose()?,
     })
 }

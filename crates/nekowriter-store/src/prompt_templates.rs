@@ -404,7 +404,10 @@ mod tests {
             .delete_prompt_template(created.id, Uuid::new_v4(), 2)
             .await
             .unwrap();
-        assert!(store.list_prompt_templates().await.unwrap().is_empty());
+        assert_eq!(
+            store.list_prompt_templates().await.unwrap(),
+            [] as [nekowriter_core::PromptTemplate; 0]
+        );
         assert!(matches!(
             store.get_prompt_template(created.id).await.unwrap_err(),
             StoreError::PromptTemplateNotFound
@@ -443,6 +446,9 @@ mod tests {
         assert!(matches!(error, StoreError::InvalidPromptTemplate(_)));
 
         // 被拒绝的写入没有留下任何记录。
-        assert!(store.list_prompt_templates().await.unwrap().is_empty());
+        assert_eq!(
+            store.list_prompt_templates().await.unwrap(),
+            [] as [nekowriter_core::PromptTemplate; 0]
+        );
     }
 }

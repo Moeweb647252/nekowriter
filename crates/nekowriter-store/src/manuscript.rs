@@ -353,26 +353,25 @@ mod tests {
             .one(&store.database)
             .await
             .unwrap();
-        let document_id = match document {
-            Some(document) => document.id.0,
-            None => {
-                let document_id = Uuid::new_v4();
-                document::ActiveModel {
-                    id: Set(db_id(document_id)),
-                    version_id: Set(db_id(version_id)),
-                    chapter_id: Set(Some(chapter_id.to_string())),
-                    role: Set(CHAPTER_BODY_ROLE.to_owned()),
-                    current_revision_id: Set(None),
-                    revision: Set(0),
-                    created_at: Set(now),
-                    updated_at: Set(now),
-                    deleted_at: Set(None),
-                }
-                .insert(&store.database)
-                .await
-                .unwrap();
-                document_id
+        let document_id = if let Some(document) = document {
+            document.id.0
+        } else {
+            let document_id = Uuid::new_v4();
+            document::ActiveModel {
+                id: Set(db_id(document_id)),
+                version_id: Set(db_id(version_id)),
+                chapter_id: Set(Some(chapter_id.to_string())),
+                role: Set(CHAPTER_BODY_ROLE.to_owned()),
+                current_revision_id: Set(None),
+                revision: Set(0),
+                created_at: Set(now),
+                updated_at: Set(now),
+                deleted_at: Set(None),
             }
+            .insert(&store.database)
+            .await
+            .unwrap();
+            document_id
         };
         let revision_no = document_revision::Entity::find()
             .filter(
@@ -479,7 +478,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(beyond.offset, 6);
-        assert!(beyond.chapters.is_empty());
+        assert_eq!(
+            beyond.chapters,
+            [] as [nekowriter_core::ManuscriptChapter; 0]
+        );
         assert_eq!(beyond.total_chapters, 6);
 
         // 目录与阅读窗口对同一批章节给出同一套显示名与顺序。
@@ -553,20 +555,17 @@ mod tests {
             store.list_chapters(version_id).await.unwrap()[0].id
         );
 
-        assert!(
+        assert_eq!(
             store
                 .search_manuscript(version_id, "没有这句话")
                 .await
-                .unwrap()
-                .is_empty()
+                .unwrap(),
+            [] as [nekowriter_core::ManuscriptMatch; 0]
         );
         // 空查询不会命中任何东西：它没有可锚定的文本。
-        assert!(
-            store
-                .search_manuscript(version_id, "")
-                .await
-                .unwrap()
-                .is_empty()
+        assert_eq!(
+            store.search_manuscript(version_id, "").await.unwrap(),
+            [] as [nekowriter_core::ManuscriptMatch; 0]
         );
         assert!(matches!(
             store

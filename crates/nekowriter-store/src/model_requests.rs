@@ -369,7 +369,7 @@ impl Store {
                     .insert(transaction)
                     .await?;
                     for tool_model in tool_results {
-                        let tool_call_id: Uuid = tool_model.id.clone().into();
+                        let tool_call_id: Uuid = tool_model.id.into();
                         let mut active_tool = tool_model.into_active_model();
                         active_tool.status = Set("included".to_owned());
                         active_tool.included_request_id = Set(Some(request.id.to_string()));
@@ -391,7 +391,7 @@ impl Store {
                         .await?;
                     }
                     for feedback_model in bound_feedback {
-                        let feedback_id: Uuid = feedback_model.id.clone().into();
+                        let feedback_id: Uuid = feedback_model.id.into();
                         let mut active_feedback = feedback_model.into_active_model();
                         active_feedback.status = Set("included".to_owned());
                         active_feedback.included_request_id = Set(Some(request.id.to_string()));
@@ -1056,12 +1056,12 @@ impl Store {
                         .one(transaction)
                         .await?
                         .ok_or(StoreError::ModelRequestNotFound)?;
-                    let run_model = run::Entity::find_by_id(request.run_id.clone())
+                    let run_model = run::Entity::find_by_id(request.run_id)
                         .one(transaction)
                         .await?
                         .ok_or(StoreError::RunNotFound)?;
-                    let run_id: RunId = run_model.id.clone().into();
-                    let version_id: VersionId = run_model.version_id.clone().into();
+                    let run_id: RunId = run_model.id.into();
+                    let version_id: VersionId = run_model.version_id.into();
 
                     let current_status = model_request_status_from_db(&request.status)?;
                     if current_status.is_terminal() {
@@ -1835,7 +1835,7 @@ async fn feedback_models_for_capture<C: sea_orm::ConnectionTrait>(
     expected_ids: &[Uuid],
 ) -> Result<Vec<feedback::Model>, StoreError> {
     let models = feedback::Entity::find()
-        .filter(feedback::Column::RunId.eq(run_model.id.clone()))
+        .filter(feedback::Column::RunId.eq(run_model.id))
         .filter(feedback::Column::Status.eq("bound"))
         .order_by_asc(feedback::Column::Sequence)
         .all(connection)
@@ -1848,7 +1848,7 @@ async fn feedback_models_for_capture<C: sea_orm::ConnectionTrait>(
                     "bound 自由意见的工具或请求锚点无效".to_owned(),
                 ))
             } else {
-                Ok::<Uuid, StoreError>(model.id.clone().into())
+                Ok::<Uuid, StoreError>(model.id.into())
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -1865,7 +1865,7 @@ async fn tool_result_models_for_capture<C: sea_orm::ConnectionTrait>(
     expected_provider_call_ids: &[String],
 ) -> Result<Vec<tool_call::Model>, StoreError> {
     let models = tool_call::Entity::find()
-        .filter(tool_call::Column::RunId.eq(run_model.id.clone()))
+        .filter(tool_call::Column::RunId.eq(run_model.id))
         .filter(tool_call::Column::Status.is_in(["resolved", "error"]))
         .filter(tool_call::Column::ResultJson.is_not_null())
         .filter(tool_call::Column::IncludedRequestId.is_null())

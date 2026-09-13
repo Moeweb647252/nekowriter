@@ -1,4 +1,4 @@
-//! SQLite 主数据与 LanceDB 连接。
+//! SQLite 主数据与 `LanceDB` 连接。
 //!
 //! M0 有意只落地项目、稿本、工作流和命令回执的最小闭环。schema 具有明确
 //! 版本；遇到旧格式时拒绝打开，而不是暗中迁移或重建。
@@ -456,7 +456,7 @@ impl Store {
         if !self.project_exists(project_id).await? {
             return Err(StoreError::ProjectNotFound);
         }
-        Ok(novel_version::Entity::find()
+        novel_version::Entity::find()
             .filter(
                 novel_version::Entity::COLUMN
                     .project_id
@@ -469,7 +469,7 @@ impl Store {
             .await?
             .iter()
             .map(version_from_model)
-            .collect::<Result<Vec<_>, _>>()?)
+            .collect::<Result<Vec<_>, _>>()
     }
 
     pub async fn get_version_snapshot(
@@ -1757,7 +1757,10 @@ mod tests {
             .unwrap();
         assert_eq!(run.status, "failed");
         assert!(run.checkpoint_json.contains("scheduler_error"));
-        assert!(store.list_model_requests(run_id).await.unwrap().is_empty());
+        assert_eq!(
+            store.list_model_requests(run_id).await.unwrap(),
+            [] as [model_requests::PersistedModelRequest; 0]
+        );
     }
 
     #[tokio::test]
@@ -1994,8 +1997,7 @@ mod tests {
             .await
             .unwrap()
             .into_iter()
-            .filter(|event| event.event_type == "run.changed")
-            .next_back()
+            .rfind(|event| event.event_type == "run.changed")
             .unwrap();
         assert_eq!(last_run_event.payload["reason"], "tool_error");
         assert_eq!(
@@ -5322,8 +5324,14 @@ mod tests {
             .purge_recycle_item(RecycleItemKind::KnowledgeSpace, space.id, Uuid::new_v4())
             .await
             .unwrap();
-        assert!(store.list_knowledge_spaces().await.unwrap().is_empty());
+        assert_eq!(
+            store.list_knowledge_spaces().await.unwrap(),
+            [] as [nekowriter_core::KnowledgeSpace; 0]
+        );
         assert!(store.get_knowledge_entry(entry.id).await.is_err());
-        assert!(store.get_recycle_bin().await.unwrap().items.is_empty());
+        assert_eq!(
+            store.get_recycle_bin().await.unwrap().items,
+            [] as [nekowriter_core::recycle::RecycleItem; 0]
+        );
     }
 }

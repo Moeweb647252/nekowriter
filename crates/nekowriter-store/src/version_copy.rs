@@ -681,7 +681,7 @@ impl Store {
                         state_revision: 0,
                         active_run_id: None,
                         active_chapter_id: Some(active_chapter_id),
-                        approval_mode: source_workflow.approval_mode.clone(),
+                        approval_mode: source_workflow.approval_mode,
                         pause_requested: false,
                         wait_reason: None,
                         resume_execution: None,

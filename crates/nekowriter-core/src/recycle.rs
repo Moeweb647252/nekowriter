@@ -46,6 +46,7 @@ pub enum RecycleItemKind {
 
 impl RecycleItemKind {
     /// 路由参数与事件载荷里使用的稳定字符串。
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Project => "project",
@@ -59,6 +60,7 @@ impl RecycleItemKind {
 
     /// 解析路由参数；`None` 表示这是未知类别。调用方通常用
     /// [`parse_recycle_item_kind`] 拿到带错误类型的入口。
+    #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "project" => Some(Self::Project),
@@ -72,6 +74,7 @@ impl RecycleItemKind {
     }
 
     /// 界面上的中文类别名。
+    #[must_use]
     pub fn label(self) -> &'static str {
         match self {
             Self::Project => "项目",

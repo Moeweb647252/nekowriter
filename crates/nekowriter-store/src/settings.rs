@@ -110,7 +110,7 @@ impl Store {
     ///
     /// # Errors
     ///
-    /// 设置无效、同一 command_id 复用于不同请求，或读取回执失败时返回错误。
+    /// 设置无效、同一 `command_id` 复用于不同请求，或读取回执失败时返回错误。
     pub async fn replay_system_model_settings_if_known(
         &self,
         command_id: Uuid,
@@ -142,7 +142,7 @@ impl Store {
     ///
     /// # Errors
     ///
-    /// 设置格式无效、预期修订冲突、command_id 冲突或数据库操作失败时返回错误。
+    /// `设置格式无效、预期修订冲突、command_id` 冲突或数据库操作失败时返回错误。
     pub async fn save_system_model_settings(
         &self,
         command_id: Uuid,

@@ -583,13 +583,22 @@ mod tests {
         let dashboard = store.compute_dashboard(range.clone(), None).await.unwrap();
         assert_eq!(dashboard.range, range);
         assert_eq!(dashboard.tokens.request_count, 0);
-        assert!(dashboard.tokens.unknown_usage.is_empty());
+        assert_eq!(
+            dashboard.tokens.unknown_usage,
+            [] as [nekowriter_core::DashboardUnknownUsage; 0]
+        );
         assert_eq!(dashboard.tokens.system_operations.request_count, 0);
-        assert!(dashboard.tokens.system_operations.recent.is_empty());
+        assert_eq!(
+            dashboard.tokens.system_operations.recent,
+            [] as [nekowriter_core::DashboardSystemOperation; 0]
+        );
         assert_eq!(dashboard.tokens.by_role.len(), 0);
         assert_eq!(dashboard.tokens.daily.len(), 7);
         assert_eq!(dashboard.jobs.queued, 0);
-        assert!(dashboard.jobs.reviews.is_empty());
+        assert_eq!(
+            dashboard.jobs.reviews,
+            [] as [nekowriter_core::DashboardReviewJob; 0]
+        );
         assert_eq!(dashboard.words.current_total, 0);
         assert_eq!(dashboard.words.net_increment, 0);
         assert_eq!(dashboard.words.daily.len(), 7);

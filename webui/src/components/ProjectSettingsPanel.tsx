@@ -168,7 +168,9 @@ export function ProjectSettingsPanel({
           setIsDirty(false)
           editRef.current = false
         }
-        setNotice(null)
+        // 保存成功会同步产生 `settings.changed`。不要让这次后台重读立刻擦掉
+        // 用户刚收到的成功提示；切换项目时才清理属于上一项目的提示。
+        if (projectChanged) setNotice(null)
       })
       .catch((error: unknown) => {
         if (!isCurrent) return
