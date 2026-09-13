@@ -4,7 +4,7 @@
 - 审查范围：`crates/`（core / agent / store / app）、`webui/`、`docs/01-implementation-plan.md`、`docs/02-implementation-spec.md`
 - 审查方式：代码审查 + 实测验证；本报告保留各轮发现时的证据，当前状态以 §33 和方案 §2.1 为准。
 
-当前本地收口状态：`cargo test --workspace` 通过 197 个用例（agent 34、app 47、core 38、store 74、xtask 4），前端生产构建通过；M0–M4 和 macOS aarch64 的 M5 范围均已完成。M2 的可达竞态与浏览器复核、M3 的多章/复制稿本/番外真实路径均已在 §33 收口；全平台计划只剩非 macOS 发行产物。
+当前本地收口状态：`cargo test --workspace` 通过 198 个用例（agent 35、app 47、core 38、store 74、xtask 4），前端生产构建通过；M0–M4 和 macOS aarch64 的 M5 范围均已完成。M2 的可达竞态与浏览器复核、M3 的多章/复制稿本/番外真实路径以及内建提示词升级均已在 §33–§34 收口；全平台计划只剩非 macOS 发行产物。
 
 ## 1. 初始审查实测验证结果（2026-09-11）
 
@@ -1115,7 +1115,7 @@ M5 的最后一项原本写作“Windows x64 发行包”。先查了本机实�
 4. **D09 临时预览已接通。** 调度器把文本和工具参数流发送到独立内存广播，SSE 用 `preview.delta` 推送且故意没有 `id`，工作台按请求、工具槽位和 Unicode scalar 偏移展示暂存内容。持久请求事件、断线和切换稿本都会丢弃暂存内容。路由集成用例读取真实 SSE 响应并断言没有 `id:` 行。
 5. **意见投递状态已经可见。** 正文快照读取当前 Run 最近一个尚未成功响应的请求：其 `included` 意见以 `deliveredFeedback` 单列返回，并给出 `sent`、`failed`、`unknown` 或 `cancelled`。Dock 继续显示 `queued` / `bound` 队列，同时把这组意见展示为「已随请求发送，等待模型回应」或对应的失败/未知/取消原因。现有反馈投递用例同时断言发送中和失败两种状态。
 
-本轮 `cargo test --workspace` 通过 197 个用例（agent 34、app 47、core 38、store 74、xtask 4），前端 `pnpm --dir webui build` 通过。真实外部模型的一章最小创作闭环已在 macOS aarch64 上完成；非 macOS 发行产物、完整 §15 竞态矩阵、完整浏览器路径以及 M3 的多章/复制稿本/番外路径仍是验收边界。
+本轮 `cargo test --workspace` 通过 197 个用例（agent 34、app 47、core 38、store 74、xtask 4），前端 `pnpm --dir webui build` 通过。真实外部模型的一章最小创作闭环已在 macOS aarch64 上完成；非 macOS 发行产物、完整 §15 竞态矩阵、完整浏览器路径以及 M3 的多章/复制稿本/番外路径仍是验收边界。以上为 §31 当时的阶段性记录，当前结论见 §33–§34。
 
 ## 32. 2026-09-13 真实模型 reasoning_effort 全流程验收
 
@@ -1133,4 +1133,12 @@ M2 的 A/E/F/R 可达用例已完成回归覆盖。新增断言补齐了 F13（�
 
 M3 使用真实 InferX `deepseek-v4.1-flash` 端点和 `reasoning_effort=low` 完成两章主线、一个番外、完本确认与稿本复制；源稿本和副本均核对到三篇正文，Markdown/TXT 导出成功。该次写作共 15 个请求，记录输入 57,784、输出 13,428、推理 7,800 个 token，成功请求保留有效思考等级与非零推理用量。
 
-最终验证为 `cargo test --workspace` 197 通过（agent 34、app 47、core 38、store 74、xtask 4）以及 `pnpm --dir webui build` 通过。M0–M4 与 macOS aarch64 的 M5 范围已完成；全平台计划只剩非 macOS 发行产物的目标环境构建和验收，按用户范围不阻塞本次结论。
+最终验证为 `cargo test --workspace` 198 通过（agent 35、app 47、core 38、store 74、xtask 4）、`cargo fmt --all -- --check` 通过，前端 `pnpm --dir webui build` 通过。M0–M4 与 macOS aarch64 的 M5 范围已完成；全平台计划只剩非 macOS 发行产物的目标环境构建和验收，按用户范围不阻塞本次结论。
+
+## 34. 2026-09-13 内建提示词升级收口
+
+在完成现状调查并得到用户同意后，重写 `nekowriter-agent/prompts/` 下 10 个用途的 system/user 共 20 个内建提示词，并在 `crates/nekowriter-agent/src/prompt.rs` 增加阶段质量断言。实现保留现有变量、工具白名单、结构化提交 JSON、提示词覆盖优先级和请求快照协议，没有增加兼容层或新的状态轨道。
+
+新版提示词把准备、细纲、正文和各类审核按实际职责分开：准备阶段固化可随折叠产物传递的创作约定，细纲明确起始状态、知情边界、场景目标/阻力/选择/后果与收束，正文强调人物声音、具体场景、因果连续性和增量工具编辑，审核按可见依据区分阻断问题与建议，并要求可定位、可修复的意见。质量原则参考 [no-ai-slop 编辑规则](https://github.com/petergyang/no-ai-slop/blob/main/skills/no-ai-slop/SKILL.md) 与本地 [NovelOps writer 提示词](/Users/misaka/Downloads/novel-ops-v1.0.0/novel-system/static/prompts/writer.md)，没有复制固定字数、AI 比例或跨题材禁词表。
+
+验证结果：`cargo fmt --all -- --check` 通过，工作区 198 个 Rust 测试全部通过；macOS `aarch64-apple-darwin` 使用 InferX `deepseek-v4.1-flash`、`reasoning_effort=low` 完成准备四产物、两章主线、一个番外、审核、完本、稿本复制和 Markdown/TXT 导出。三章均为已通过正文，16 次写作请求记录输入 69,857、输出 15,209、推理 9,705 个 token；请求快照保留有效思考等级，生成产物包含可传递创作约定和章节因果信息。

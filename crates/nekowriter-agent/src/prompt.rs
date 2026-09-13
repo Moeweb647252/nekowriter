@@ -312,4 +312,72 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn builtin_prompts_keep_stage_specific_quality_invariants() {
+        let cases: &[(PromptKey, &[&str])] = &[
+            (
+                PromptKey::PreparationGenerate,
+                &["创作约定", "资料", "人物", "粗纲", "阶段提交"],
+            ),
+            (
+                PromptKey::ChapterOutline,
+                &["起始状态", "场景推进", "收束与承接", "阶段提交"],
+            ),
+            (
+                PromptKey::ChapterWrite,
+                &[
+                    "人物",
+                    "语言与节奏",
+                    "正文工具与完成条件",
+                    "append_content",
+                    "replace_content",
+                ],
+            ),
+            (
+                PromptKey::ReviewPreparationBackground,
+                &["阻断问题", "issues", "passed=false", "不调用工具"],
+            ),
+            (
+                PromptKey::ReviewPreparationResearch,
+                &["证据边界", "关键事实", "passed=false", "不调用工具"],
+            ),
+            (
+                PromptKey::ReviewPreparationCharacters,
+                &["行动依据", "表达差异", "passed=false", "不调用工具"],
+            ),
+            (
+                PromptKey::ReviewPreparationOutline,
+                &["因果", "章节计划", "passed=false", "不调用工具"],
+            ),
+            (
+                PromptKey::ReviewChapterOutline,
+                &["关键场景", "因果路径", "passed=false", "不调用工具"],
+            ),
+            (
+                PromptKey::ReviewChapterEdit,
+                &["基础正式正文", "候选全文", "章节尚无结尾", "passed=false"],
+            ),
+            (
+                PromptKey::ReviewChapterFinal,
+                &[
+                    "完成度与明确要求",
+                    "因果与连续性",
+                    "结尾与承诺",
+                    "passed=false",
+                ],
+            ),
+        ];
+
+        for (key, markers) in cases {
+            let prompt = builtin_prompt(*key);
+            for marker in *markers {
+                assert!(
+                    prompt.system.contains(marker),
+                    "{} system prompt lost required marker {marker:?}",
+                    key.as_str()
+                );
+            }
+        }
+    }
 }
