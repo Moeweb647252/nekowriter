@@ -64,7 +64,7 @@ use crate::operations::SystemOperationResult;
 use nekowriter_core::recycle::RecycleQueryError;
 
 use crate::model_settings::{
-    ModelUse, capability_problem_message, pre_dispatch_capability_problem, resolve_effective_model,
+    capability_problem_message, pre_dispatch_capability_problem, resolve_effective_model,
     thinking_probe_level,
 };
 use serde::{Deserialize, Serialize};
@@ -1570,7 +1570,6 @@ async fn test_model_connection(
             },
         ],
         tools: Vec::new(),
-        response_format: None,
         // 声明支持思考时用一个代表性等级真的发一次，使这个声明可被验证；
         // 否则探针保持 Off，不做超出声明的断言。
         thinking_level: thinking_probe_level(thinking_probed),
@@ -1840,7 +1839,7 @@ async fn start_chapter_outline(
 ) -> Result<Json<nekowriter_core::WorkflowSnapshot>, ApiError> {
     ensure_trusted_write_request(&headers, &state)?;
     let project_id = state.store.project_id_for_chapter(chapter_id).await?;
-    ensure_writing_model_ready(&state, project_id).await?;
+    ensure_model_ready(&state, project_id).await?;
     let workflow = state
         .store
         .start_chapter_outline(
@@ -2021,7 +2020,7 @@ async fn continue_writing_run(
 ) -> Result<Json<WorkflowSnapshot>, ApiError> {
     ensure_trusted_write_request(&headers, &state)?;
     let project_id = state.store.project_id_for_run(run_id).await?;
-    ensure_writing_model_ready(&state, project_id).await?;
+    ensure_model_ready(&state, project_id).await?;
     let workflow = state
         .store
         .continue_writing_run(run_id, request.command_id, request.expected_state_revision)
@@ -2292,7 +2291,7 @@ async fn start_preparation(
 ) -> Result<Json<PreparationSnapshot>, ApiError> {
     ensure_trusted_write_request(&headers, &state)?;
     let project_id = state.store.project_id_for_version(version_id).await?;
-    ensure_writing_model_ready(&state, project_id).await?;
+    ensure_model_ready(&state, project_id).await?;
     let snapshot = state
         .store
         .start_preparation(
@@ -2313,31 +2312,12 @@ async fn start_preparation(
     Ok(Json(snapshot))
 }
 
-async fn ensure_writing_model_ready(
-    state: &AppState,
-    project_id: ProjectId,
-) -> Result<(), ApiError> {
-    ensure_model_ready(state, project_id, ModelUse::Writing).await
-}
-
-/// 审核 Agent 不调用工具，但和写作阶段一样必须能稳定返回结构化结论。
-async fn ensure_review_model_ready(
-    state: &AppState,
-    project_id: ProjectId,
-) -> Result<(), ApiError> {
-    ensure_model_ready(state, project_id, ModelUse::Review).await
-}
-
 /// 命令前置检查：按项目的**有效模型**判断能力，而不是系统模型。
 ///
 /// 项目可以引用另一个模型，那个模型（而非系统写作模型）才是请求真正发往的对象；
 /// 用系统模型的资料放行会让项目引用在真正 dispatch 时才以指向系统模型的文案失败。
 /// 这里与调度器共用 [`pre_dispatch_capability_problem`]，不维护第二套规则。
-async fn ensure_model_ready(
-    state: &AppState,
-    project_id: ProjectId,
-    use_case: ModelUse,
-) -> Result<(), ApiError> {
+async fn ensure_model_ready(state: &AppState, project_id: ProjectId) -> Result<(), ApiError> {
     let system = state
         .store
         .get_system_model_settings()
@@ -2346,7 +2326,7 @@ async fn ensure_model_ready(
     let project = state.store.get_project_settings(project_id).await?;
     let effective = resolve_effective_model(&system, &project);
     if let Some(problem) =
-        pre_dispatch_capability_problem(*effective.capabilities, use_case, project.thinking_level)
+        pre_dispatch_capability_problem(*effective.capabilities, project.thinking_level)
     {
         return Err(
             StoreError::InvalidSystemModelSettings(capability_problem_message(
@@ -2429,7 +2409,7 @@ async fn delegate_review(
 ) -> Result<(StatusCode, Json<nekowriter_store::ReviewDelegationResult>), ApiError> {
     ensure_trusted_write_request(&headers, &state)?;
     let project_id = state.store.project_id_for_review(review_id).await?;
-    ensure_review_model_ready(&state, project_id).await?;
+    ensure_model_ready(&state, project_id).await?;
     let delegation = state
         .store
         .delegate_review(

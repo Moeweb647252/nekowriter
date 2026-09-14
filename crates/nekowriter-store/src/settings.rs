@@ -406,7 +406,6 @@ mod tests {
             capabilities: ModelCapabilityProfile {
                 streaming: true,
                 tools: true,
-                structured_output: true,
                 stream_usage: true,
                 thinking: true,
             },

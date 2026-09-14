@@ -24,8 +24,6 @@ use url::Url;
 
 use super::{ContextMessage, ContextMessageRole};
 
-/// 单个工具调用的完整参数最大字节数。
-pub const MAX_TOOL_ARGUMENT_BYTES: usize = 256 * 1024;
 /// 单次模型流在解码前可接收的总字节数。
 pub const MAX_MODEL_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 
@@ -158,6 +156,11 @@ impl From<ContextMessage> for ModelRequestMessage {
 }
 
 /// 一次已完整解析的 function tool call。
+///
+/// `arguments` 是供应商给出的参数：合法 JSON object 时就是它本身；模型给的参数
+/// 不能解码（被截断、不是合法 JSON、不是 object）时，这里保留模型给出的原文
+/// （JSON string）。参数不可解码不是传输失败——[`Self::decode_arguments`] 会给出
+/// 具体原因，调用方据此产生配对错误工具结果与纠正消息，让模型在剩余额度里重试。
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelToolCall {
@@ -166,21 +169,47 @@ pub struct ModelToolCall {
     pub arguments: Value,
 }
 
-/// 希望模型将最终 assistant 文本限制为的结构化格式。
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum StructuredOutput {
-    JsonObject,
-    JsonSchema { name: String, schema: Value },
+impl ModelToolCall {
+    /// 解码供应商给出的参数。
+    ///
+    /// 返回原因（而不是错误类型）是给模型看的：它会原样进入配对的错误工具结果与
+    /// 协议纠正，因此必须说清是缺了哪一项、还是参数本身不完整。
+    ///
+    /// # Errors
+    ///
+    /// 参数不是 JSON object，或保存的原文不是完整 JSON 时返回具体原因。
+    pub fn decode_arguments(&self) -> Result<Value, String> {
+        match &self.arguments {
+            Value::Object(_) => Ok(self.arguments.clone()),
+            Value::String(raw) => match serde_json::from_str::<Value>(raw) {
+                Ok(value) if value.is_object() => Ok(value),
+                Ok(_) => Err("参数必须是 JSON object".to_owned()),
+                Err(error) => Err(format!("参数不是合法 JSON：{error}")),
+            },
+            _ => Err("参数必须是 JSON object".to_owned()),
+        }
+    }
+
+    /// 供应商给出的参数原文，用于把这次调用原样交回模型（请求重放与账本）。
+    #[must_use]
+    pub fn arguments_text(&self) -> String {
+        match &self.arguments {
+            Value::String(raw) => raw.clone(),
+            value => value.to_string(),
+        }
+    }
 }
 
 /// 即将提交给模型适配器的已封存请求。
+///
+/// 终态提交走工具调用而不是 `response_format`：阶段结果就是一次提交工具调用，
+/// 与工具循环、工具结果和配对校验共用同一条协议，也避免了 `OpenAI` 兼容服务把
+/// `json_object` 当作「本轮只能返回 JSON」而让模型跳过工具。
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelRequest {
     pub messages: Vec<ModelRequestMessage>,
     pub tools: Vec<super::AgentToolDefinition>,
-    pub response_format: Option<StructuredOutput>,
     /// 本次请求要求模型使用的思考等级。由项目设置解析而来，因此每次请求都会
     /// 按当时的项目设置重新构建。
     #[serde(default)]
@@ -196,7 +225,6 @@ impl ModelRequest {
         Self {
             messages: messages.into_iter().map(Into::into).collect(),
             tools,
-            response_format: None,
             thinking_level: ThinkingLevel::Off,
         }
     }
@@ -489,11 +517,6 @@ impl ChatCompletionsAdapter {
                 capability: "tools",
             });
         }
-        if request.response_format.is_some() && !self.config.capabilities.structured_output {
-            return Err(ProviderError::CapabilityMismatch {
-                capability: "structured_output",
-            });
-        }
         if request.thinking_level != ThinkingLevel::Off && !self.config.capabilities.thinking {
             return Err(ProviderError::CapabilityMismatch {
                 capability: "thinking",
@@ -517,12 +540,6 @@ impl ChatCompletionsAdapter {
             object.insert(
                 "stream_options".to_owned(),
                 json!({ "include_usage": true }),
-            );
-        }
-        if let Some(response_format) = &request.response_format {
-            object.insert(
-                "response_format".to_owned(),
-                serialize_response_format(response_format)?,
             );
         }
         if request.thinking_level != ThinkingLevel::Off {
@@ -589,10 +606,8 @@ pub enum ProviderError {
     EmptyToolCallId,
     #[error("工具调用 {id} 的名称不能为空")]
     EmptyToolCallName { id: String },
-    #[error("工具调用 {id} 的参数必须是 JSON object")]
+    #[error("工具调用 {id} 的参数必须是 JSON object 或模型给出的参数原文")]
     InvalidToolCallArguments { id: String },
-    #[error("工具调用 {id} 的参数超过 {MAX_TOOL_ARGUMENT_BYTES} 字节上限")]
-    ToolCallArgumentsTooLarge { id: String },
     #[error("工具调用 ID {id} 在消息序列中重复")]
     DuplicateToolCallId { id: String },
     #[error("工具结果引用了不存在或已完成的工具调用 {id}")]
@@ -605,10 +620,6 @@ pub enum ProviderError {
     DuplicateToolName { name: String },
     #[error("工具 {name} 的参数 schema 必须是 JSON object")]
     InvalidToolSchema { name: String },
-    #[error("JSON Schema 输出名称不能为空")]
-    EmptyJsonSchemaName,
-    #[error("JSON Schema 输出 schema 必须是 JSON object")]
-    InvalidJsonSchema,
     #[error("模型服务连接失败：{reason}")]
     Connection { reason: String },
     #[error("模型服务请求失败：{reason}")]
@@ -661,10 +672,7 @@ pub enum ProviderError {
     MissingStreamToolCallName { index: usize },
     #[error("工具调用 {index} 缺少 function type")]
     MissingStreamToolCallType { index: usize },
-    #[error("工具调用 {index} 的参数超过 {MAX_TOOL_ARGUMENT_BYTES} 字节上限")]
-    ToolArgumentsTooLarge { index: usize },
-    #[error("工具调用 {index} 的参数不是有效 JSON：{reason}")]
-    InvalidStreamToolArguments { index: usize, reason: String },
+
     #[error("模型 usage 中的 {field} 不能为负数")]
     NegativeUsage { field: &'static str },
 }
@@ -790,7 +798,7 @@ fn serialize_request_messages(
                         "type": "function",
                         "function": {
                             "name": call.name,
-                            "arguments": call.arguments.to_string(),
+                            "arguments": call.arguments_text(),
                         },
                     }));
                 }
@@ -851,13 +859,10 @@ fn validate_complete_tool_call(call: &ModelToolCall) -> Result<(), ProviderError
             id: call.id.clone(),
         });
     }
-    if !call.arguments.is_object() {
+    // 参数允许是模型给出的原文：上一轮无法解码的调用必须能连同它的配对结果一起
+    // 重放，否则重放的配对校验会把可纠正的协议错误升级成传输失败。
+    if !matches!(call.arguments, Value::Object(_) | Value::String(_)) {
         return Err(ProviderError::InvalidToolCallArguments {
-            id: call.id.clone(),
-        });
-    }
-    if call.arguments.to_string().len() > MAX_TOOL_ARGUMENT_BYTES {
-        return Err(ProviderError::ToolCallArgumentsTooLarge {
             id: call.id.clone(),
         });
     }
@@ -894,28 +899,6 @@ fn serialize_tools(tools: &[super::AgentToolDefinition]) -> Result<Vec<Value>, P
         }));
     }
     Ok(serialized)
-}
-
-fn serialize_response_format(format: &StructuredOutput) -> Result<Value, ProviderError> {
-    match format {
-        StructuredOutput::JsonObject => Ok(json!({ "type": "json_object" })),
-        StructuredOutput::JsonSchema { name, schema } => {
-            if name.trim().is_empty() {
-                return Err(ProviderError::EmptyJsonSchemaName);
-            }
-            if !schema.is_object() {
-                return Err(ProviderError::InvalidJsonSchema);
-            }
-            Ok(json!({
-                "type": "json_schema",
-                "json_schema": {
-                    "name": name,
-                    "strict": true,
-                    "schema": schema,
-                },
-            }))
-        }
-    }
 }
 
 fn validate_sse_content_type(response: &reqwest::Response) -> Result<(), ProviderError> {
@@ -1235,21 +1218,12 @@ fn complete_stream_tool_call(
     if call.call_type.as_deref() != Some("function") {
         return Err(ProviderError::MissingStreamToolCallType { index });
     }
-    if call.arguments.len() > MAX_TOOL_ARGUMENT_BYTES {
-        return Err(ProviderError::ToolArgumentsTooLarge { index });
-    }
-    let arguments = serde_json::from_str::<Value>(&call.arguments).map_err(|error| {
-        ProviderError::InvalidStreamToolArguments {
-            index,
-            reason: error.to_string(),
-        }
-    })?;
-    if !arguments.is_object() {
-        return Err(ProviderError::InvalidStreamToolArguments {
-            index,
-            reason: "参数必须是 JSON object".to_owned(),
-        });
-    }
+    // 参数不能解码时保留模型给出的原文，交给阶段守卫变成可纠正的协议错误：整轮
+    // 请求不因为它失败，模型也拿得到自己那次调用被拒的配对结果。
+    let arguments = match serde_json::from_str::<Value>(&call.arguments) {
+        Ok(value) if value.is_object() => value,
+        _ => Value::String(call.arguments),
+    };
     Ok(ModelToolCall {
         id,
         name,
@@ -1432,7 +1406,6 @@ mod tests {
         ModelCapabilityProfile {
             streaming: true,
             tools: true,
-            structured_output: true,
             stream_usage: true,
             thinking: true,
         }
@@ -1587,7 +1560,6 @@ mod tests {
                     "properties": { "content": { "type": "string" } },
                 }),
             }],
-            response_format: None,
             thinking_level: ThinkingLevel::Off,
         };
         let completion = adapter(&base_url).complete(&model_request).await.unwrap();
@@ -1605,6 +1577,73 @@ mod tests {
         let body = request_body(&request.await.unwrap());
         assert_eq!(body["parallel_tool_calls"], false);
         assert_eq!(body["tools"][0]["function"]["name"], "append_content");
+    }
+
+    /// 真实端点把一整段参数放在一条 delta 里，并可能在字符串中途截断，仍然以
+    /// `finish_reason = tool_calls` 收尾。这不是传输失败：原文必须留给阶段守卫，
+    /// 由它变成配对的错误工具结果与纠正消息。
+    #[tokio::test]
+    async fn adapter_keeps_undecodable_tool_arguments_as_the_model_gave_them() {
+        let truncated = r#"{"artifacts":[{"kind":"background","content":"【创作约定】未写完的背"#;
+        let stream = format!(
+            "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+            json!({
+                "choices": [{
+                    "index": 0,
+                    "delta": { "tool_calls": [{
+                        "index": 0,
+                        "id": "call-truncated",
+                        "type": "function",
+                        "function": { "name": "submit_preparation", "arguments": truncated },
+                    }]},
+                    "finish_reason": Value::Null,
+                }],
+            }),
+            json!({
+                "choices": [{ "index": 0, "delta": {}, "finish_reason": "tool_calls" }],
+                "usage": { "prompt_tokens": 17, "completion_tokens": 11, "total_tokens": 28 },
+            }),
+        );
+        let (base_url, _request) = spawn_sse_server(vec![stream.into_bytes()]).await;
+        let model_request = ModelRequest {
+            messages: text_request().messages,
+            tools: vec![super::super::AgentToolDefinition {
+                name: "submit_preparation".to_owned(),
+                description: "提交准备产物".to_owned(),
+                parameters: json!({ "type": "object" }),
+            }],
+            thinking_level: ThinkingLevel::Off,
+        };
+        let completion = adapter(&base_url).complete(&model_request).await.unwrap();
+
+        assert_eq!(completion.finish_reason, ModelFinishReason::ToolCalls);
+        let call = &completion.tool_calls[0];
+        assert_eq!(call.name, "submit_preparation");
+        assert_eq!(call.arguments_text(), truncated);
+        assert!(
+            call.decode_arguments()
+                .unwrap_err()
+                .contains("不是合法 JSON")
+        );
+
+        // 这次调用必须能连同配对结果一起重放，否则重放会把可纠正的协议错误升级成
+        // MissingToolResult。
+        let messages = vec![
+            ModelRequestMessage::AssistantToolCalls {
+                content: None,
+                tool_calls: completion.tool_calls.clone(),
+            },
+            ModelRequestMessage::ToolResult {
+                tool_call_id: "call-truncated".to_owned(),
+                content: "{\"status\":\"error\"}".to_owned(),
+            },
+        ];
+        validate_request_message_sequence(&messages).unwrap();
+        let wire = serialize_request_messages(&messages).unwrap();
+        assert_eq!(
+            wire[0]["tool_calls"][0]["function"]["arguments"].as_str(),
+            Some(truncated)
+        );
     }
 
     #[tokio::test]
@@ -1629,7 +1668,6 @@ mod tests {
                     "properties": { "content": { "type": "string" } },
                 }),
             }],
-            response_format: None,
             thinking_level: ThinkingLevel::Low,
         };
 
@@ -1669,7 +1707,6 @@ mod tests {
                 }],
             }],
             tools: Vec::new(),
-            response_format: None,
             thinking_level: ThinkingLevel::Off,
         };
         let error = adapter("http://127.0.0.1:11434/v1")
@@ -1699,7 +1736,6 @@ mod tests {
                 description: "追加".to_owned(),
                 parameters: json!({ "type": "object" }),
             }],
-            response_format: None,
             thinking_level: ThinkingLevel::Off,
         };
         assert!(matches!(
@@ -1715,7 +1751,6 @@ mod tests {
         let request = ModelRequest {
             messages: text_request().messages,
             tools: Vec::new(),
-            response_format: None,
             thinking_level: ThinkingLevel::Low,
         };
         let payload = adapter("http://127.0.0.1:11434/v1")

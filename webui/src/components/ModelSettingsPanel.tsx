@@ -68,7 +68,6 @@ const defaultDraft: SettingsDraft = {
   capabilities: {
     streaming: true,
     tools: true,
-    structuredOutput: true,
     streamUsage: true,
     // 思考支持需要实际验证后才能声明，缺省为未验证。
     thinking: false,

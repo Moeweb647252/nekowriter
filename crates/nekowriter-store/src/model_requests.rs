@@ -7,15 +7,12 @@
 use std::collections::HashSet;
 
 use nekowriter_core::{
-    ChapterId, ChapterOutlineSnapshot, ChapterPlanDraft, ExecutionStatus,
-    MAX_CONSECUTIVE_PROTOCOL_ERRORS, ModelRequestCompletion, NewChapterOutline,
-    PreparationArtifactInput, PreparationSnapshot, RunId, VersionId, WorkflowSnapshot,
-    WorkflowStage, complete_model_request as complete_workflow_model_request,
-    continue_after_agent_tool, decimal_i64,
+    ChapterId, ChapterOutlineSnapshot, ChapterPlanDraft, ExecutionStatus, ModelRequestCompletion,
+    NewChapterOutline, PreparationArtifactInput, PreparationSnapshot, RunId, VersionId,
+    WorkflowStage, complete_model_request as complete_workflow_model_request, decimal_i64,
     dispatch_model_request as dispatch_workflow_model_request,
     fail_queued_model_run as fail_queued_workflow_run,
-    stop_queued_model_run as stop_queued_workflow_run, stop_writing_after_protocol_error,
-    utc_now_millis,
+    stop_queued_model_run as stop_queued_workflow_run, utc_now_millis,
 };
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, IntoActiveModel, QueryFilter, QueryOrder, Set,
@@ -27,7 +24,9 @@ use uuid::Uuid;
 
 use super::{
     AgentMessageRole, NewAgentMessage, Store, StoreError,
-    agent_messages::{append_agent_messages_for_run, validate_new_messages},
+    agent_messages::{
+        append_agent_messages_for_run, phase_submission_messages, validate_new_messages,
+    },
     db_id,
     entity::{feedback, model_request, run, tool_call},
     preparation::{
@@ -35,6 +34,7 @@ use super::{
         persist_preparation_submission, persist_workflow, preparation_snapshot,
         reset_run_protocol_errors, update_preparation_run_status, workflow_for_version,
     },
+    protocol_correction::ModelProtocolCorrection,
     transaction_error,
 };
 
@@ -123,34 +123,6 @@ pub enum ModelRequestResolution {
         provider_request_id: Option<String>,
         error: Value,
     },
-}
-
-/// 一次完整模型响应不符合本阶段协议时由调度器提交的持久化事实。
-///
-/// `assistant_message` 始终保存原始完整响应；若其中含有工具调用，Store 会为每一条
-/// 调用生成配对的稳定错误结果，避免下一次请求出现不配对的 assistant tool call。
-/// `tool_result_code` 是写入这些配对结果的机器可读原因码（例如
-/// `PARALLEL_TOOL_CALLS_NOT_ALLOWED`）；普通协议错误使用 `PROTOCOL_ERROR`。
-#[derive(Clone, Debug)]
-pub struct ModelProtocolCorrection {
-    pub provider_request_id: Option<String>,
-    pub usage: Value,
-    pub assistant_message: NewAgentMessage,
-    pub error: Value,
-    pub correction: String,
-    pub tool_result_code: String,
-}
-
-/// 协议纠正事务的结果。
-///
-/// 同一 request 的重复回调返回 `newly_applied = false`，绝不会再次追加纠正消息、
-/// 增加连续错误次数或重新入队。
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ModelProtocolCorrectionResult {
-    pub workflow: WorkflowSnapshot,
-    pub newly_applied: bool,
-    pub requeue: bool,
-    pub consecutive_protocol_errors: i64,
 }
 
 impl Store {
@@ -589,8 +561,8 @@ impl Store {
         }
     }
 
-    /// 将一次已验证的准备阶段模型响应、原始 assistant 消息、产物修订、审核和
-    /// 请求终态作为同一个 SQLite 事务提交。
+    /// 将一次已验证的准备阶段提交、提交工具调用消息、产物修订、审核和请求终态
+    /// 作为同一个 SQLite 事务提交。
     ///
     /// 该入口只接受当前顶层 preparation Run 的 `dispatched` attempt。它跳过短暂的
     /// `tool_boundary`：模型已经给出最终阶段提交时，工作流在同一提交中直接进入
@@ -598,22 +570,20 @@ impl Store {
     ///
     /// # Errors
     ///
-    /// 请求不属于当前准备 Run、响应重复但诊断不一致、产物不满足阶段守卫，或任一
-    /// 持久化动作失败时返回错误；失败事务不会留下 assistant 消息或部分产物。
+    /// 请求不属于当前准备 Run、提交不是一次工具调用、响应重复但诊断不一致、产物
+    /// 不满足阶段守卫，或任一持久化动作失败时返回错误；失败事务不会留下 assistant
+    /// 消息或部分产物。
     pub async fn commit_preparation_model_submission(
         &self,
         request_id: Uuid,
         provider_request_id: Option<String>,
         usage: Value,
-        raw_response: String,
+        assistant_message: NewAgentMessage,
         artifacts: Vec<PreparationArtifactInput>,
         chapter_plan: Option<Vec<ChapterPlanDraft>>,
     ) -> Result<PreparationSnapshot, StoreError> {
-        if raw_response.trim().is_empty() {
-            return Err(StoreError::InvalidModelRequest(
-                "准备阶段模型响应不能为空".to_owned(),
-            ));
-        }
+        let submission_messages = phase_submission_messages(request_id, assistant_message)?;
+        validate_new_messages(&submission_messages)?;
         let resolution = ModelRequestResolution::Succeeded {
             provider_request_id,
             usage,
@@ -676,16 +646,7 @@ impl Store {
                     append_agent_messages_for_run(
                         transaction,
                         &run_model,
-                        vec![NewAgentMessage {
-                            role: AgentMessageRole::Assistant,
-                            content: json!({
-                                "kind": "text",
-                                "role": "assistant",
-                                "content": raw_response,
-                            }),
-                            request_id: Some(request_id),
-                            tool_call_id: None,
-                        }],
+                        submission_messages.clone(),
                         now,
                     )
                     .await?;
@@ -759,7 +720,7 @@ impl Store {
         }
     }
 
-    /// 将一份已验证的章节细纲模型响应与细纲修订、审核和请求终态原子提交。
+    /// 将一份已验证的章节细纲提交与细纲修订、审核和请求终态原子提交。
     ///
     /// 细纲最终提交已到达时，工作流在同一事务内直接进入 `waiting_review`；不会向
     /// 其他读取者暴露“请求成功但细纲尚未成为正式审核对象”的中间状态。
@@ -769,14 +730,11 @@ impl Store {
         chapter_id: ChapterId,
         provider_request_id: Option<String>,
         usage: Value,
-        raw_response: String,
+        assistant_message: NewAgentMessage,
         input: NewChapterOutline,
     ) -> Result<ChapterOutlineSnapshot, StoreError> {
-        if raw_response.trim().is_empty() {
-            return Err(StoreError::InvalidModelRequest(
-                "章节细纲模型响应不能为空".to_owned(),
-            ));
-        }
+        let submission_messages = phase_submission_messages(request_id, assistant_message)?;
+        validate_new_messages(&submission_messages)?;
         let resolution = ModelRequestResolution::Succeeded {
             provider_request_id,
             usage,
@@ -837,16 +795,7 @@ impl Store {
                     append_agent_messages_for_run(
                         transaction,
                         &run_model,
-                        vec![NewAgentMessage {
-                            role: AgentMessageRole::Assistant,
-                            content: json!({
-                                "kind": "text",
-                                "role": "assistant",
-                                "content": raw_response,
-                            }),
-                            request_id: Some(request_id),
-                            tool_call_id: None,
-                        }],
+                        submission_messages.clone(),
                         now,
                     )
                     .await?;
@@ -1004,190 +953,6 @@ impl Store {
                     self.notify_event_listeners();
                 }
                 Ok(request)
-            }
-            Err(error) => Err(error),
-        }
-    }
-
-    /// 将一条完整但不合规的模型响应保存为可纠正的历史，并决定是否继续同一 Run。
-    ///
-    /// 提供商已经成功返回，因此请求本身标记为 `succeeded` 并保留 usage；`error_json`
-    /// 记录本地协议校验失败。若响应带有 tool calls，会先写入每个 call 的配对错误
-    /// result，再追加一条用户角色的纠正消息，保证下一轮请求仍满足模型消息协议。
-    /// 前两次连续错误重新排队；第 [`MAX_CONSECUTIVE_PROTOCOL_ERRORS`] 次停止，必须由
-    /// 用户通过原 Run 的显式 continue 重新授予额度。
-    ///
-    /// # Errors
-    ///
-    /// 请求或工作流不再处于当前 `request_in_flight`、输入 envelope 无效、或数据库
-    /// 写入失败时返回错误。重复的同一回调返回 `newly_applied = false`，不重复写入。
-    pub async fn record_model_protocol_correction(
-        &self,
-        request_id: Uuid,
-        correction: ModelProtocolCorrection,
-    ) -> Result<ModelProtocolCorrectionResult, StoreError> {
-        validate_model_protocol_correction(request_id, &correction)?;
-        let mut messages = vec![correction.assistant_message.clone()];
-        messages.extend(protocol_error_tool_result_messages(
-            request_id,
-            &correction.assistant_message,
-            &correction.correction,
-            &correction.tool_result_code,
-        )?);
-        messages.push(NewAgentMessage {
-            role: AgentMessageRole::User,
-            content: json!({
-                "kind": "protocol_correction",
-                "content": correction.correction,
-            }),
-            request_id: Some(request_id),
-            tool_call_id: None,
-        });
-        validate_new_messages(&messages)?;
-
-        let now = utc_now_millis();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(|transaction| {
-                let correction = correction.clone();
-                let messages = messages.clone();
-                Box::pin(async move {
-                    let request = model_request::Entity::find_by_id(db_id(request_id))
-                        .one(transaction)
-                        .await?
-                        .ok_or(StoreError::ModelRequestNotFound)?;
-                    let run_model = run::Entity::find_by_id(request.run_id)
-                        .one(transaction)
-                        .await?
-                        .ok_or(StoreError::RunNotFound)?;
-                    let run_id: RunId = run_model.id.into();
-                    let version_id: VersionId = run_model.version_id.into();
-
-                    let current_status = model_request_status_from_db(&request.status)?;
-                    if current_status.is_terminal() {
-                        if protocol_correction_matches(&request, &correction)? {
-                            return Ok((
-                                ModelProtocolCorrectionResult {
-                                    workflow: workflow_for_version(transaction, version_id).await?,
-                                    newly_applied: false,
-                                    requeue: false,
-                                    consecutive_protocol_errors: run_model
-                                        .consecutive_protocol_errors,
-                                },
-                                false,
-                            ));
-                        }
-                        return Err(StoreError::InvalidModelRequestState(
-                            "模型请求已有不同终态，拒绝覆盖协议纠正记录".to_owned(),
-                        ));
-                    }
-                    if current_status != ModelRequestStatus::Dispatched {
-                        return Err(StoreError::InvalidModelRequestState(format!(
-                            "只有 dispatched 请求可以写入协议纠正结果，当前为 {}",
-                            request.status
-                        )));
-                    }
-                    if run_model.parent_run_id.is_some() {
-                        return Err(StoreError::InvalidModelRequestState(
-                            "协议纠正只能用于顶层写作 Run".to_owned(),
-                        ));
-                    }
-                    if run_model.consecutive_protocol_errors < 0 {
-                        return Err(StoreError::CorruptRecord(
-                            "Run consecutive_protocol_errors 不能为负数".to_owned(),
-                        ));
-                    }
-                    let next_error_count = run_model
-                        .consecutive_protocol_errors
-                        .checked_add(1)
-                        .ok_or_else(|| {
-                            StoreError::InvalidModelRequest(
-                                "Run consecutive_protocol_errors 已达到 i64 上限".to_owned(),
-                            )
-                        })?;
-                    let stop = next_error_count >= MAX_CONSECUTIVE_PROTOCOL_ERRORS;
-                    let workflow = workflow_for_version(transaction, version_id).await?;
-                    let next_workflow = if stop {
-                        stop_writing_after_protocol_error(&workflow, run_id)?
-                    } else {
-                        continue_after_agent_tool(&workflow, run_id)?
-                    };
-
-                    append_agent_messages_for_run(transaction, &run_model, messages, now).await?;
-
-                    let mut active_request = request.into_active_model();
-                    active_request.status = Set(STATUS_SUCCEEDED.to_owned());
-                    active_request.provider_request_id = Set(correction.provider_request_id);
-                    active_request.usage_json = Set(Some(serde_json::to_string(&correction.usage)?));
-                    active_request.error_json = Set(Some(serde_json::to_string(&correction.error)?));
-                    active_request.updated_at = Set(now);
-                    active_request.completed_at = Set(Some(now));
-                    active_request.update(transaction).await?;
-
-                    let run_kind = run_model.kind.clone();
-                    let request_count = run_model.request_count;
-                    let mut active_run = run_model.into_active_model();
-                    active_run.status = Set((if stop { "stopped" } else { "queued" }).to_owned());
-                    active_run.consecutive_protocol_errors = Set(next_error_count);
-                    active_run.ended_at = Set(if stop { Some(now) } else { None });
-                    active_run.updated_at = Set(now);
-                    active_run.update(transaction).await?;
-                    persist_workflow(transaction, &next_workflow).await?;
-
-                    let run_status = if stop { "stopped" } else { "queued" };
-                    insert_event(
-                        transaction,
-                        version_id,
-                        "run.changed",
-                        run_id,
-                        next_workflow.state_revision,
-                        json!({
-                            "kind": run_kind,
-                            "status": run_status,
-                            "request_id": request_id,
-                            "request_count": request_count.to_string(),
-                            "consecutive_protocol_errors": next_error_count.to_string(),
-                            "wait_reason": if stop { Some("protocol_error_limit") } else { None::<&str> },
-                        }),
-                        now,
-                    )
-                    .await?;
-                    insert_event(
-                        transaction,
-                        version_id,
-                        "workflow.changed",
-                        version_id,
-                        next_workflow.state_revision,
-                        json!({
-                            "stage": next_workflow.stage,
-                            "execution": next_workflow.execution,
-                            "run_id": run_id,
-                            "request_id": request_id,
-                            "protocol_correction": true,
-                            "consecutive_protocol_errors": next_error_count.to_string(),
-                        }),
-                        now,
-                    )
-                    .await?;
-                    Ok((
-                        ModelProtocolCorrectionResult {
-                            workflow: next_workflow,
-                            newly_applied: true,
-                            requeue: !stop,
-                            consecutive_protocol_errors: next_error_count,
-                        },
-                        true,
-                    ))
-                })
-            })
-            .await
-            .map_err(transaction_error);
-        match result {
-            Ok((result, changed)) => {
-                if changed {
-                    self.notify_event_listeners();
-                }
-                Ok(result)
             }
             Err(error) => Err(error),
         }
@@ -1447,7 +1212,7 @@ impl Store {
 }
 
 impl ModelRequestStatus {
-    const fn is_terminal(self) -> bool {
+    pub(crate) const fn is_terminal(self) -> bool {
         matches!(
             self,
             Self::Succeeded | Self::Failed | Self::Cancelled | Self::Unknown
@@ -1540,7 +1305,36 @@ fn validate_resolution(resolution: &ModelRequestResolution) -> Result<(), StoreE
     Ok(())
 }
 
-fn validate_model_protocol_correction(
+/// 一次协议纠正要追加的全部消息：模型那次被拒的调用（或纯文本）、它的配对错误
+/// 工具结果、以及点名提交工具的纠正提示。
+///
+/// 写作 Run 与审核子 Run 共用这一处，因此两条路径写给模型看的形状与配对规则
+/// 不可能分叉。
+pub(crate) fn protocol_correction_messages(
+    request_id: Uuid,
+    correction: &ModelProtocolCorrection,
+) -> Result<Vec<NewAgentMessage>, StoreError> {
+    let mut messages = vec![correction.assistant_message.clone()];
+    messages.extend(protocol_error_tool_result_messages(
+        request_id,
+        &correction.assistant_message,
+        &correction.correction,
+        &correction.tool_result_code,
+    )?);
+    messages.push(NewAgentMessage {
+        role: AgentMessageRole::User,
+        content: json!({
+            "kind": "protocol_correction",
+            "content": correction.correction,
+        }),
+        request_id: Some(request_id),
+        tool_call_id: None,
+    });
+    validate_new_messages(&messages)?;
+    Ok(messages)
+}
+
+pub(crate) fn validate_model_protocol_correction(
     request_id: Uuid,
     correction: &ModelProtocolCorrection,
 ) -> Result<(), StoreError> {
@@ -1582,7 +1376,7 @@ fn validate_model_protocol_correction(
 ///
 /// 这不能复用正文工具调用表：调用还没有通过阶段白名单、单调用和参数校验，因而没有
 /// 可安全应用的业务 ToolCall。消息账本仍必须保持 Chat Completions 的一对一配对。
-fn protocol_error_tool_result_messages(
+pub(crate) fn protocol_error_tool_result_messages(
     request_id: Uuid,
     assistant_message: &NewAgentMessage,
     correction: &str,
@@ -1649,7 +1443,24 @@ fn protocol_error_tool_result_messages(
         .collect()
 }
 
-fn protocol_correction_matches(
+/// 连续协议错误计数加一；负数说明记录已经损坏，溢出说明达到 i64 上限。
+///
+/// 写作 Run 与审核子 Run 共用这一处计数规则：两条路径的「达到上限」必须是同一个
+/// 判定，否则同一个模型行为会在不同阶段得到不同的重试次数。
+pub(crate) fn next_protocol_error_count(current: i64) -> Result<i64, StoreError> {
+    if current < 0 {
+        return Err(StoreError::CorruptRecord(
+            "Run consecutive_protocol_errors 不能为负数".to_owned(),
+        ));
+    }
+    current.checked_add(1).ok_or_else(|| {
+        StoreError::InvalidModelRequest(
+            "Run consecutive_protocol_errors 已达到 i64 上限".to_owned(),
+        )
+    })
+}
+
+pub(crate) fn protocol_correction_matches(
     request: &model_request::Model,
     correction: &ModelProtocolCorrection,
 ) -> Result<bool, StoreError> {

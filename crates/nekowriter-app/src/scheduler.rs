@@ -17,11 +17,11 @@ use nekowriter_agent::{
     provider::{
         ChatCompletionsAdapter, ChatCompletionsConfig, ModelCompletion, ModelEvent,
         ModelFailureCode, ModelRequest, ModelRequestMessage, ModelTimeouts, ModelToolCall,
-        ProviderError, StructuredOutput,
+        ProviderError,
     },
     runner::{
         AgentRoundOutcome, AgentRunnerError, PhaseSubmission, PhaseSubmissionKind, ToolHost,
-        ToolHostError, ToolResult, classify_model_completion, submission_contract,
+        ToolHostError, ToolResult, classify_model_completion, submission_contract, submission_tool,
     },
 };
 use nekowriter_core::{
@@ -31,7 +31,7 @@ use nekowriter_core::{
 };
 
 use crate::model_settings::{
-    CapabilityProblem, ModelUse, capability_problem_message, pre_dispatch_capability_problem,
+    CapabilityProblem, capability_problem_message, pre_dispatch_capability_problem,
     resolve_effective_model,
 };
 use nekowriter_store::{
@@ -39,7 +39,8 @@ use nekowriter_store::{
     AppliedChapterBodyToolCall, ChapterBodyAgentToolCall, CompletedRunContextFold,
     CompletedRunContextStage, DelegatedReviewKind, FreeAgentToolCall,
     MaterializedChapterBodyFeedback, ModelProtocolCorrection, ModelRequestResolution,
-    NewAgentMessage, NewModelRequest, PersistedAgentMessage, Store, StoreError,
+    NewAgentMessage, NewModelRequest, PersistedAgentMessage, ProtocolCorrectionTarget, Store,
+    StoreError,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -90,8 +91,6 @@ pub enum SchedulerError {
     Provider(#[from] ProviderError),
     #[error("当前稿本没有可用的系统写作模型设置")]
     MissingWritingModel,
-    #[error("{0}")]
-    StructuredOutputRequired(String),
     #[error("{0}")]
     ThinkingUnsupported(String),
     #[error("准备阶段缺少小说目标")]
@@ -679,24 +678,15 @@ impl WorkflowScheduler {
         let project_id = self.store.project_id_for_version(version_id).await?;
         let project_settings = self.store.get_project_settings(project_id).await?;
         let effective = resolve_effective_model(&settings, &project_settings);
-        let use_case = if matches!(task.stage, ScheduledStage::Review { .. }) {
-            ModelUse::Review
-        } else {
-            ModelUse::Writing
-        };
         // 能力资料必须与有效模型同源：项目可以引用另一个模型，那个模型的能力不能
         // 用系统模型的资料代替。不满足时在 dispatch（封存请求与占用网络许可）之前
         // 就失败，并且错误消息必须指明是哪个模型。
         if let Some(problem) = pre_dispatch_capability_problem(
             *effective.capabilities,
-            use_case,
             project_settings.thinking_level,
         ) {
             let message = capability_problem_message(problem, &effective.describe());
             return Err(match problem {
-                CapabilityProblem::StructuredOutput => {
-                    SchedulerError::StructuredOutputRequired(message)
-                }
                 CapabilityProblem::Tools => SchedulerError::Context(message),
                 CapabilityProblem::Thinking => SchedulerError::ThinkingUnsupported(message),
             });
@@ -748,20 +738,22 @@ impl WorkflowScheduler {
                     .await?;
                 let (knowledge_available, quota_balance) =
                     self.agent_auxiliary_capabilities(task.run_id).await?;
-                let system_instructions = stage_system_instructions(
-                    &prompt,
-                    &PhaseSubmissionKind::Preparation { required_artifacts },
-                );
+                let stage = PhaseSubmissionKind::Preparation { required_artifacts };
+                let system_instructions = stage_system_instructions(&prompt, &stage);
                 let context = build_context_with_history(
                     system_instructions,
-                    preparation_agent_tools(knowledge_available, quota_balance.remaining),
+                    preparation_agent_tools(
+                        submission_tool(&stage),
+                        knowledge_available,
+                        quota_balance.remaining,
+                    ),
                     Vec::new(),
                     vec![CurrentContextInput {
                         role: ContextMessageRole::User,
                         content: prompt.user.clone(),
                         source_revision_id: None,
                     }],
-                    writing_agent_history_messages(task.run_id, persisted_messages, &[])?,
+                    stage_agent_history_messages(task.run_id, persisted_messages, &[])?,
                     max_context_tokens,
                     reserved_output_tokens,
                 )?;
@@ -843,20 +835,22 @@ impl WorkflowScheduler {
                     .await?;
                 let (knowledge_available, quota_balance) =
                     self.agent_auxiliary_capabilities(task.run_id).await?;
-                let system_instructions = stage_system_instructions(
-                    &prompt,
-                    &PhaseSubmissionKind::ChapterOutline { chapter_id },
-                );
+                let stage = PhaseSubmissionKind::ChapterOutline { chapter_id };
+                let system_instructions = stage_system_instructions(&prompt, &stage);
                 let context = build_context_with_history(
                     system_instructions,
-                    preparation_agent_tools(knowledge_available, quota_balance.remaining),
+                    preparation_agent_tools(
+                        submission_tool(&stage),
+                        knowledge_available,
+                        quota_balance.remaining,
+                    ),
                     completed_stages,
                     vec![CurrentContextInput {
                         role: ContextMessageRole::User,
                         content: prompt.user.clone(),
                         source_revision_id: None,
                     }],
-                    writing_agent_history_messages(task.run_id, persisted_messages, &[])?,
+                    stage_agent_history_messages(task.run_id, persisted_messages, &[])?,
                     max_context_tokens,
                     reserved_output_tokens,
                 )?;
@@ -932,7 +926,7 @@ impl WorkflowScheduler {
                     .store
                     .list_unsealed_agent_tool_result_provider_ids(task.run_id)
                     .await?;
-                let current_messages = writing_agent_history_messages(
+                let current_messages = stage_agent_history_messages(
                     task.run_id,
                     persisted_messages,
                     &materialized_feedback,
@@ -953,13 +947,11 @@ impl WorkflowScheduler {
                     &variables,
                 )
                 .await?;
-                let system_instructions = stage_system_instructions(
-                    &prompt,
-                    &PhaseSubmissionKind::Chapter { chapter_id },
-                );
+                let stage = PhaseSubmissionKind::Chapter { chapter_id };
+                let system_instructions = stage_system_instructions(&prompt, &stage);
                 let context = build_context_with_history(
                     system_instructions,
-                    chapter_body_tools(),
+                    chapter_body_tools(submission_tool(&stage)),
                     completed_stages,
                     vec![CurrentContextInput {
                         role: ContextMessageRole::User,
@@ -1053,34 +1045,38 @@ impl WorkflowScheduler {
                 );
                 let system_instructions =
                     stage_system_instructions(&prompt, &PhaseSubmissionKind::Review);
+                // 审核子 Run 不重放整个历史，但必须重放协议纠正的配对：被拒的那次
+                // 调用、它的错误工具结果与纠正提示。否则重排后的下一轮请求与第一次
+                // 完全相同，而模型会原样再错一次。
+                let persisted_messages = self.store.list_agent_messages(task.run_id).await?;
+                let persist_initial_messages = persisted_messages.is_empty();
                 let context = build_context_with_history(
                     system_instructions,
-                    Vec::new(),
+                    vec![submission_tool(&PhaseSubmissionKind::Review)],
                     Vec::new(),
                     vec![CurrentContextInput {
                         role: ContextMessageRole::User,
                         content: user_content,
                         source_revision_id: None,
                     }],
-                    Vec::new(),
+                    stage_agent_history_messages(task.run_id, persisted_messages, &[])?,
                     max_context_tokens,
                     reserved_output_tokens,
                 )?;
-                (prompt, prompt_source, context, true, None, None)
+                (
+                    prompt,
+                    prompt_source,
+                    context,
+                    persist_initial_messages,
+                    None,
+                    None,
+                )
             }
         };
-        // 正文阶段同时声明了正文工具和终态提交结构。部分 OpenAI 兼容服务会把
-        // `response_format=json_object` 当作“本轮只能返回 JSON”，从而在还没有
-        // 任何正文时直接提交空摘要，完全跳过 `append_content`。正文的提交合同
-        // 仍然由 runner 严格解析，因此这里只去掉传输层的 response_format，让模型
-        // 先调用工具，工具循环结束后再按合同返回终态 JSON；准备、细纲和审核仍
-        // 保留结构化输出声明。
-        let response_format = if matches!(task.stage, ScheduledStage::ChapterBody { .. }) {
-            None
-        } else {
-            Some(StructuredOutput::JsonObject)
-        };
-        let request = context.model_request(response_format, project_settings.thinking_level);
+        // 每个阶段的终态提交都是一次声明过的提交工具调用：不再需要
+        // `response_format`，因为「本轮必须给出 JSON」曾让 OpenAI 兼容服务直接跳过
+        // 工具。请求只声明工具，模型可以选择业务工具，也可以调用本阶段的提交工具。
+        let request = context.model_request(project_settings.thinking_level);
         let messages = if persist_initial_messages {
             agent_messages_for_new_stage_request(&request)?
         } else {
@@ -1292,7 +1288,6 @@ impl WorkflowScheduler {
             Ok(completion) => {
                 let provider_request_id = completion.provider_request_id.clone();
                 let assistant_message = assistant_message_from_completion(&completion, request_id);
-                let raw_response = completion.content.clone().unwrap_or_default();
                 let usage = completion_usage(&completion);
                 // 同一轮请求的构建与解析必须用同一份必需项清单。
                 let required_artifacts = match self.store.get_preparation_snapshot(version_id).await
@@ -1338,7 +1333,7 @@ impl WorkflowScheduler {
                                 request_id,
                                 provider_request_id.clone(),
                                 usage,
-                                raw_response,
+                                assistant_message.clone(),
                                 submission.artifacts,
                                 submission.chapter_plan,
                             )
@@ -1395,8 +1390,8 @@ impl WorkflowScheduler {
                         false
                     }
                     Err(error) => {
-                        self.record_model_protocol_correction(
-                            request_id,
+                        self.record_protocol_correction(
+                            ProtocolCorrectionTarget::WritingRun,
                             provider_request_id,
                             usage,
                             assistant_message,
@@ -1437,7 +1432,6 @@ impl WorkflowScheduler {
             Ok(completion) => {
                 let provider_request_id = completion.provider_request_id.clone();
                 let assistant_message = assistant_message_from_completion(&completion, request_id);
-                let raw_response = completion.content.clone().unwrap_or_default();
                 let usage = completion_usage(&completion);
 
                 match classify_model_completion(
@@ -1455,7 +1449,7 @@ impl WorkflowScheduler {
                                 chapter_id,
                                 provider_request_id.clone(),
                                 usage,
-                                raw_response,
+                                assistant_message.clone(),
                                 submission.content,
                             )
                             .await
@@ -1511,8 +1505,8 @@ impl WorkflowScheduler {
                         false
                     }
                     Err(error) => {
-                        self.record_model_protocol_correction(
-                            request_id,
+                        self.record_protocol_correction(
+                            ProtocolCorrectionTarget::WritingRun,
                             provider_request_id,
                             usage,
                             assistant_message,
@@ -1786,8 +1780,8 @@ impl WorkflowScheduler {
             Ok(completion) => {
                 let provider_request_id = completion.provider_request_id.clone();
                 let assistant_message = assistant_message_from_completion(&completion, request_id);
-                let raw_response = completion.content.clone().unwrap_or_default();
                 let usage = completion_usage(&completion);
+
                 match classify_model_completion(
                     PhaseSubmissionKind::Chapter { chapter_id },
                     request,
@@ -1857,7 +1851,7 @@ impl WorkflowScheduler {
                                 chapter_id,
                                 provider_request_id.clone(),
                                 usage,
-                                raw_response,
+                                assistant_message.clone(),
                                 submission.summary,
                             )
                             .await
@@ -1900,8 +1894,8 @@ impl WorkflowScheduler {
                         false
                     }
                     Err(error) => {
-                        self.record_model_protocol_correction(
-                            request_id,
+                        self.record_protocol_correction(
+                            ProtocolCorrectionTarget::WritingRun,
                             provider_request_id,
                             usage,
                             assistant_message,
@@ -1930,8 +1924,10 @@ impl WorkflowScheduler {
         }
     }
 
-    /// 审核子 Run 只接受一次无工具的结构化结论。无论模型或提交失败，父 Run 都
-    /// 保持在等待审核状态，并把同一 Review 重新打开供用户重试或人工决定。
+    /// 审核子 Run 只接受一次提交工具的结论。不合合同的提交与写作 lane 同一形状：
+    /// 配对错误工具结果 + 纠正 + 连续协议错误计数，模型在限额内重提；传输失败、
+    /// 提交写库失败，或连续错误达到上限时才按原有行为收束（子 Run 失败、同一
+    /// Review 重新打开供用户重试或人工决定）。父 Run 始终留在等待审核状态。
     async fn handle_review_completion(
         &self,
         review_id: ReviewId,
@@ -1944,7 +1940,6 @@ impl WorkflowScheduler {
             Ok(completion) => {
                 let provider_request_id = completion.provider_request_id.clone();
                 let assistant_message = assistant_message_from_completion(&completion, request_id);
-                let raw_response = completion.content.clone().unwrap_or_default();
                 let usage = completion_usage(&completion);
                 match classify_model_completion(PhaseSubmissionKind::Review, request, completion) {
                     Ok(AgentRoundOutcome::Submission(PhaseSubmission::Review(submission))) => {
@@ -1956,7 +1951,7 @@ impl WorkflowScheduler {
                                 request_id,
                                 provider_request_id.clone(),
                                 usage,
-                                raw_response,
+                                assistant_message.clone(),
                                 submission.passed,
                                 submission.confidence,
                                 submission.issues,
@@ -2005,18 +2000,19 @@ impl WorkflowScheduler {
                         )
                         .await;
                     }
+                    // 不符合合同的提交与写作 lane 同一形状：配对错误工具结果 +
+                    // 纠正提示 + 计数，模型在限额内可以重提；只有真正无法修正的
+                    // 传输失败才会让这次委托失败、Review 重新开放。
                     Err(error) => {
-                        self.persist_delegated_review_failure(
-                            review_id,
-                            run_id,
-                            request_id,
-                            provider_request_id,
-                            Some(assistant_message),
-                            "protocol_error",
-                            error.to_string(),
-                            false,
-                        )
-                        .await;
+                        return self
+                            .record_protocol_correction(
+                                ProtocolCorrectionTarget::DelegatedReview { review_id },
+                                provider_request_id,
+                                usage,
+                                assistant_message,
+                                &error,
+                            )
+                            .await;
                     }
                 }
             }
@@ -2082,36 +2078,24 @@ impl WorkflowScheduler {
     /// 保存模型已经完整返回、但不满足本阶段协议的响应，并在工程上限内要求模型纠正。
     ///
     /// 这与网络或提供商失败不同：完整原始响应、任意 tool-call 的配对错误结果以及
-    /// 纠正提示都会进入同一 Run 的消息账本，因此下一次请求可以在不破坏调用协议的
-    /// 前提下继续。Store 负责连续计数和第三次错误后的 stopped 转换。
-    async fn record_model_protocol_correction(
+    /// 纠正提示都会进入被拒回合所属 Run 的消息账本，因此下一次请求可以在不破坏调用
+    /// 协议的前提下继续。Store 负责连续计数与收束（写作 Run 停止等用户显式继续、
+    /// 审核子 Run 失败并重新开放 Review），返回值表示是否应当立刻重排同一 Run /
+    /// 同一次委托。
+    async fn record_protocol_correction(
         &self,
-        request_id: Uuid,
+        target: ProtocolCorrectionTarget,
         provider_request_id: Option<String>,
         usage: Value,
         assistant_message: NewAgentMessage,
         error: &AgentRunnerError,
     ) -> bool {
-        const CORRECTION: &str = "上一轮响应不符合当前阶段的结构化协议，未应用任何阶段提交或工具副作用。请重新严格按当前阶段要求返回：要么恰好一个已声明的工具调用，要么完整合法的 JSON 阶段提交；工具调用不要同时附带正文文本。";
-        // 并行工具调用是可纠正的协议偏差：整批不执行，每个调用 ID 都要拿到配对的
-        // 错误结果，并明确要求模型改为串行调用。
-        const PARALLEL_CORRECTION: &str = "上一轮响应同时给出了多个工具调用，本批次全部未执行。请改为串行：每轮只调用一个已声明的工具，等结果返回后再进行下一次调用。";
-        let (correction, tool_result_code) = match error {
-            AgentRunnerError::ParallelToolCalls { .. } => (
-                PARALLEL_CORRECTION.to_owned(),
-                "PARALLEL_TOOL_CALLS_NOT_ALLOWED",
-            ),
-            // 纠正必须带上本次校验失败的具体原因，否则模型只能从通用提示里猜
-            // 缺了什么；解析器已经给出了可操作的原因（例如缺少哪一项产物）。
-            other => (
-                format!("{CORRECTION}\n本次未通过的原因：{other}"),
-                "PROTOCOL_ERROR",
-            ),
-        };
+        let request_id = assistant_message.request_id;
+        let (correction, tool_result_code) = protocol_correction(error);
         match self
             .store
             .record_model_protocol_correction(
-                request_id,
+                target,
                 ModelProtocolCorrection {
                     provider_request_id,
                     usage,
@@ -2127,22 +2111,29 @@ impl WorkflowScheduler {
                 if result.newly_applied {
                     if result.requeue {
                         info!(
-                            %request_id,
+                            request_id = ?request_id,
+                            lane = ?target,
                             consecutive_protocol_errors = result.consecutive_protocol_errors,
                             "模型协议错误已保存，已要求同一 Run 纠正"
                         );
                     } else {
                         warn!(
-                            %request_id,
+                            request_id = ?request_id,
+                            lane = ?target,
                             consecutive_protocol_errors = result.consecutive_protocol_errors,
-                            "连续模型协议错误达到上限，Run 已停止等待用户显式继续"
+                            "连续模型协议错误达到上限，已按 lane 收束"
                         );
                     }
                 }
                 result.requeue
             }
             Err(error) => {
-                warn!(%request_id, error = %error, "未能写入模型协议纠正结果");
+                warn!(
+                    request_id = ?request_id,
+                    lane = ?target,
+                    error = %error,
+                    "未能写入模型协议纠正结果"
+                );
                 false
             }
         }
@@ -2339,6 +2330,56 @@ fn chapter_outline_plan_context(
     }
 }
 
+/// 模型这一轮响应不符合协议时的纠正提示与工具结果原因码。
+///
+/// 写作 lane 与审核 lane 共用这一处：同一个失败在两条路径上必须得到同一句话、
+/// 同一个原因码，否则模型看到的纠正会随阶段漂移。每一句都要点名该用哪个工具、
+/// 具体哪里不合格（缺哪一项产物、参数从哪一字符开始不完整、哪个字段形状不对）。
+fn protocol_correction(error: &AgentRunnerError) -> (String, &'static str) {
+    const CORRECTION: &str = "上一轮响应不符合当前阶段的协议，未应用任何阶段提交或工具副作用。请重新严格按当前阶段要求返回：恰好一次已声明的工具调用；阶段结果只能通过本阶段的提交工具提交，不要在工具调用之外附带普通文本。";
+    // 并行工具调用是可纠正的协议偏差：整批不执行，每个调用 ID 都要拿到配对的
+    // 错误结果，并明确要求模型改为串行调用。
+    const PARALLEL_CORRECTION: &str = "上一轮响应同时给出了多个工具调用，本批次全部未执行。请改为串行：每轮只调用一个已声明的工具，等结果返回后再进行下一次调用。";
+    match error {
+        AgentRunnerError::ParallelToolCalls { .. } => (
+            PARALLEL_CORRECTION.to_owned(),
+            "PARALLEL_TOOL_CALLS_NOT_ALLOWED",
+        ),
+        // 普通文本不是提交：说清该用哪个工具，模型才能在下一轮换个动作。
+        AgentRunnerError::MissingSubmissionToolCall { tool, .. } => (
+            format!(
+                "上一轮没有调用本阶段的提交工具 `{tool}`，普通文本不算提交。请恰好调用一次 `{tool}` 提交本阶段结果。"
+            ),
+            "PROTOCOL_ERROR",
+        ),
+        // 提交工具的参数校验失败（含被端点截断、无法解码的那一轮）：工具结果
+        // 与本段纠正都带上解析器给出的具体原因（缺少哪一项产物、参数从哪一
+        // 字符开始不完整、哪个字段形状不对），模型可以在同一次调用里补齐后重试。
+        AgentRunnerError::InvalidPhaseSubmission {
+            tool,
+            error: reason,
+            ..
+        } => (
+            format!(
+                "上一轮对 `{tool}` 的调用未通过本阶段校验：{reason}\n请补齐后重新调用 `{tool}`；已提交且合法的内容可以原样复用，不必重写。"
+            ),
+            "PHASE_SUBMISSION_INVALID",
+        ),
+        // 业务工具的调用参数不可解码：同样给一条说明原因的配对结果，让模型重写
+        // 一次合法的调用，而不是整轮以传输错误结束。
+        AgentRunnerError::UndecodableToolArguments { tool, reason } => (
+            format!(
+                "上一轮对 `{tool}` 的调用参数不可用：{reason}\n该调用未执行；请把参数写成完整的 JSON object 后重新调用 `{tool}`。"
+            ),
+            "TOOL_ARGUMENTS_INVALID",
+        ),
+        other => (
+            format!("{CORRECTION}\n本次未通过的原因：{other}"),
+            "PROTOCOL_ERROR",
+        ),
+    }
+}
+
 /// 只写入当前 Run 的原始输入。完成阶段的折叠块已经随 `context_snapshot` 封存，
 /// 不能伪装成当前 Run 的 assistant 历史，否则下一个阶段会把前序产物错误归属给
 /// 当前阶段的折叠水位。
@@ -2404,10 +2445,12 @@ fn knowledge_tool_error_result(provider_call_id: &str, code: &str, message: &str
 ///
 /// 未宣告的工具被旧请求调用时不会被静默降级：调用方会返回明确的工具错误。
 fn preparation_agent_tools(
+    submission: AgentToolDefinition,
     knowledge_available: bool,
     remaining_quota: i64,
 ) -> Vec<AgentToolDefinition> {
-    let mut tools = ask_user_tools();
+    let mut tools = vec![submission];
+    tools.extend(ask_user_tools());
     if knowledge_available {
         tools.push(query_knowledge_tool(remaining_quota));
     }
@@ -2479,8 +2522,9 @@ fn ask_user_tool() -> AgentToolDefinition {
     }
 }
 
-fn chapter_body_tools() -> Vec<AgentToolDefinition> {
+fn chapter_body_tools(submission: AgentToolDefinition) -> Vec<AgentToolDefinition> {
     vec![
+        submission,
         ask_user_tool(),
         AgentToolDefinition {
             name: "append_content".to_owned(),
@@ -2512,12 +2556,14 @@ fn chapter_body_tools() -> Vec<AgentToolDefinition> {
     ]
 }
 
-/// 将当前正文 Run 的不可变消息账本还原为下一轮请求所需的 tool-call 配对。
+/// 将当前 Run 的不可变消息账本还原为下一轮请求所需的 tool-call 配对。
 ///
-/// 初始 system/user 输入由每轮重新渲染的 prompt 提供，所以只回放 assistant/tool
-/// 历史；这样不会在每次工具后不断重复初始指令和正文快照。任何损坏的 envelope
-/// 都拒绝继续，而不是猜测出一个会破坏调用配对的模型消息。
-fn writing_agent_history_messages(
+/// 四条 lane 共用这一个还原器：三条写作 lane 回放工具调用与它被拒的配对结果，
+/// 审核 lane 回放同一种配对（它同样不重放初始输入）。初始 system/user 输入由每轮
+/// 重新渲染的 prompt 提供，所以只回放 assistant/tool 历史；这样不会在每次工具后
+/// 不断重复初始指令和正文快照。任何损坏的 envelope 都拒绝继续，而不是猜测出
+/// 一个会破坏调用配对的模型消息。
+fn stage_agent_history_messages(
     run_id: RunId,
     messages: Vec<PersistedAgentMessage>,
     materialized_feedback: &[MaterializedChapterBodyFeedback],
@@ -2542,10 +2588,10 @@ fn writing_agent_history_messages(
             let sequence = persisted.sequence;
             match persisted.role {
                 // 初始 system/user 输入由本轮 prompt 重新渲染；只有 Store 在协议守卫
-                // 失败后写入的明确纠正消息需要留在正文 Agent 历史中。
+                // 失败后写入的明确纠正消息需要留在该 Run 的历史中。
                 AgentMessageRole::System => None,
                 AgentMessageRole::User => {
-                    decode_body_protocol_correction_message(run_id, sequence, persisted.content)
+                    decode_stage_protocol_correction_message(run_id, sequence, persisted.content)
                         .transpose()
                         .map(|message| {
                             message.map(|message| UnfoldedStageMessage {
@@ -2556,7 +2602,7 @@ fn writing_agent_history_messages(
                         })
                 }
                 AgentMessageRole::Assistant => Some(
-                    decode_body_assistant_message(run_id, sequence, persisted.content).map(
+                    decode_stage_assistant_message(run_id, sequence, persisted.content).map(
                         |message| UnfoldedStageMessage {
                             source_run_id: run_id,
                             sequence,
@@ -2565,7 +2611,7 @@ fn writing_agent_history_messages(
                     ),
                 ),
                 AgentMessageRole::Tool => Some(
-                    decode_body_tool_message(
+                    decode_stage_tool_message(
                         run_id,
                         sequence,
                         persisted.tool_call_id.clone(),
@@ -2588,7 +2634,7 @@ fn writing_agent_history_messages(
         .collect()
 }
 
-fn decode_body_protocol_correction_message(
+fn decode_stage_protocol_correction_message(
     run_id: RunId,
     sequence: i64,
     content: Value,
@@ -2601,7 +2647,7 @@ fn decode_body_protocol_correction_message(
         .and_then(Value::as_str)
         .filter(|content| !content.trim().is_empty())
         .ok_or_else(|| {
-            invalid_body_history_message(
+            invalid_stage_history_message(
                 run_id,
                 sequence,
                 "protocol_correction 缺少非空字符串 content".to_owned(),
@@ -2613,7 +2659,7 @@ fn decode_body_protocol_correction_message(
     }))
 }
 
-fn decode_body_assistant_message(
+fn decode_stage_assistant_message(
     run_id: RunId,
     sequence: i64,
     content: Value,
@@ -2624,18 +2670,18 @@ fn decode_body_assistant_message(
             let assistant_content: Option<String> =
                 serde_json::from_value(content.get("content").cloned().unwrap_or(Value::Null))
                     .map_err(|error| {
-                        invalid_body_history_message(run_id, sequence, error.to_string())
+                        invalid_stage_history_message(run_id, sequence, error.to_string())
                     })?;
             let tool_calls: Vec<ModelToolCall> =
                 serde_json::from_value(content.get("toolCalls").cloned().ok_or_else(|| {
-                    invalid_body_history_message(
+                    invalid_stage_history_message(
                         run_id,
                         sequence,
                         "assistant_tool_calls 缺少 toolCalls".to_owned(),
                     )
                 })?)
                 .map_err(|error| {
-                    invalid_body_history_message(run_id, sequence, error.to_string())
+                    invalid_stage_history_message(run_id, sequence, error.to_string())
                 })?;
             Ok(ModelRequestMessage::AssistantToolCalls {
                 content: assistant_content,
@@ -2647,7 +2693,7 @@ fn decode_body_assistant_message(
                 .get("content")
                 .and_then(Value::as_str)
                 .ok_or_else(|| {
-                    invalid_body_history_message(
+                    invalid_stage_history_message(
                         run_id,
                         sequence,
                         "assistant text 消息缺少字符串 content".to_owned(),
@@ -2659,7 +2705,7 @@ fn decode_body_assistant_message(
                 content: text,
             })
         }
-        other => Err(invalid_body_history_message(
+        other => Err(invalid_stage_history_message(
             run_id,
             sequence,
             format!("assistant 消息 kind 不支持：{other}"),
@@ -2667,7 +2713,7 @@ fn decode_body_assistant_message(
     }
 }
 
-fn decode_body_tool_message(
+fn decode_stage_tool_message(
     run_id: RunId,
     sequence: i64,
     tool_call_id: Option<String>,
@@ -2675,20 +2721,20 @@ fn decode_body_tool_message(
     feedback: &[Value],
 ) -> Result<ModelRequestMessage, SchedulerError> {
     if message_kind(&content, run_id, sequence)? != "tool_result" {
-        return Err(invalid_body_history_message(
+        return Err(invalid_stage_history_message(
             run_id,
             sequence,
             "tool 消息 kind 必须为 tool_result".to_owned(),
         ));
     }
     let tool_call_id = tool_call_id.ok_or_else(|| {
-        invalid_body_history_message(run_id, sequence, "tool 消息缺少 tool_call_id".to_owned())
+        invalid_stage_history_message(run_id, sequence, "tool 消息缺少 tool_call_id".to_owned())
     })?;
     let content = content
         .get("content")
         .and_then(Value::as_str)
         .ok_or_else(|| {
-            invalid_body_history_message(
+            invalid_stage_history_message(
                 run_id,
                 sequence,
                 "tool_result 缺少字符串 content".to_owned(),
@@ -2696,14 +2742,14 @@ fn decode_body_tool_message(
         })?
         .to_owned();
     let mut result: Value = serde_json::from_str(&content).map_err(|error| {
-        invalid_body_history_message(
+        invalid_stage_history_message(
             run_id,
             sequence,
             format!("tool_result 不是有效 JSON：{error}"),
         )
     })?;
     let result_object = result.as_object_mut().ok_or_else(|| {
-        invalid_body_history_message(
+        invalid_stage_history_message(
             run_id,
             sequence,
             "tool_result 必须是 JSON object".to_owned(),
@@ -2714,7 +2760,7 @@ fn decode_body_tool_message(
         .or_insert_with(|| Value::Array(Vec::new()))
         .as_array_mut()
         .ok_or_else(|| {
-            invalid_body_history_message(
+            invalid_stage_history_message(
                 run_id,
                 sequence,
                 "tool_result.feedback 必须是 JSON array".to_owned(),
@@ -2722,7 +2768,7 @@ fn decode_body_tool_message(
         })?;
     result_feedback.extend(feedback.iter().cloned());
     let content = serde_json::to_string(&result).map_err(|error| {
-        invalid_body_history_message(
+        invalid_stage_history_message(
             run_id,
             sequence,
             format!("tool_result 无法重新序列化：{error}"),
@@ -2736,11 +2782,11 @@ fn decode_body_tool_message(
 
 fn message_kind(content: &Value, run_id: RunId, sequence: i64) -> Result<&str, SchedulerError> {
     content.get("kind").and_then(Value::as_str).ok_or_else(|| {
-        invalid_body_history_message(run_id, sequence, "消息缺少字符串 kind".to_owned())
+        invalid_stage_history_message(run_id, sequence, "消息缺少字符串 kind".to_owned())
     })
 }
 
-fn invalid_body_history_message(run_id: RunId, sequence: i64, reason: String) -> SchedulerError {
+fn invalid_stage_history_message(run_id: RunId, sequence: i64, reason: String) -> SchedulerError {
     SchedulerError::Context(format!(
         "正文 Run {run_id} 的消息 {sequence} 无法重放：{reason}"
     ))
@@ -2795,7 +2841,7 @@ mod tests {
     };
     use nekowriter_store::{
         AgentMessageRole, AgentQuestionToolCall, ChapterBodyAgentToolCall, ModelRequestResolution,
-        ModelRequestStatus, NewModelRequest, NewSystemModelSettings,
+        ModelRequestStatus, NewAgentMessage, NewModelRequest, NewSystemModelSettings,
     };
     use serde_json::{Value, json};
     use tempfile::TempDir;
@@ -2808,6 +2854,34 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
+
+    /// 准备阶段请求里宣告的提交工具：与调度器真正宣告的那一个同源。
+    fn preparation_submission_tool() -> nekowriter_agent::AgentToolDefinition {
+        submission_tool(&PhaseSubmissionKind::Preparation {
+            required_artifacts: PreparationArtifactKind::ALL.to_vec(),
+        })
+    }
+
+    /// 测试用的正文阶段提交工具调用消息：与账本里真实的 assistant 工具调用同形。
+    ///
+    /// 阶段提交是一次声明过的工具调用，账本只接受这种形态，测试也不再能用散文
+    /// JSON 直接提交。
+    fn body_submission_message(request_id: Uuid, summary: &str) -> NewAgentMessage {
+        NewAgentMessage {
+            role: AgentMessageRole::Assistant,
+            content: json!({
+                "kind": "assistant_tool_calls",
+                "content": null,
+                "toolCalls": [{
+                    "id": "call-submit-chapter",
+                    "name": nekowriter_agent::runner::SUBMIT_CHAPTER_TOOL,
+                    "arguments": { "summary": summary },
+                }],
+            }),
+            request_id: Some(request_id),
+            tool_call_id: None,
+        }
+    }
 
     #[test]
     fn extra_chapter_outline_context_does_not_require_a_main_plan_item() {
@@ -2908,7 +2982,6 @@ mod tests {
                     capabilities: ModelCapabilityProfile {
                         streaming: true,
                         tools: true,
-                        structured_output: true,
                         stream_usage: true,
                         thinking: true,
                     },
@@ -2986,14 +3059,306 @@ mod tests {
             store.list_model_requests(run_id).await.unwrap()[0].status,
             ModelRequestStatus::Succeeded
         );
-        assert_eq!(store.list_agent_messages(run_id).await.unwrap().len(), 3);
+        // 阶段提交是配对的两条记录：提交工具的调用，以及它被接受的结果。
+        assert_eq!(store.list_agent_messages(run_id).await.unwrap().len(), 4);
 
         let request = timeout(Duration::from_secs(2), request_receiver)
             .await
             .expect("适配器应向假服务发送请求")
             .unwrap();
         assert!(request.starts_with("POST /v1/chat/completions HTTP/1.1"));
-        assert!(request.contains("\"response_format\":{\"type\":\"json_object\"}"));
+        assert!(request.contains("\"name\":\"submit_preparation\""));
+        assert!(!request.contains("response_format"));
+    }
+
+    /// 走一遍准备阶段的一轮提交：假服务把 `arguments` 按原文回给应用，等这一轮
+    /// 真正落库后返回。断言留给调用方，通过与被拒两条路径共用这一套装置。
+    async fn preparation_round_with_raw_arguments(
+        raw_arguments: &str,
+    ) -> (TempDir, Store, VersionId, RunId) {
+        let (base_url, request_receiver) =
+            preparation_sse_server_with_raw_arguments("preparation-submission-1", raw_arguments)
+                .await;
+        let data_dir = TempDir::new().unwrap();
+        let store = Store::open(data_dir.path()).await.unwrap();
+        store
+            .save_system_model_settings(
+                Uuid::new_v4(),
+                0,
+                NewSystemModelSettings {
+                    api_base_url: base_url,
+                    credential_ref: None,
+                    credential_fingerprint: None,
+                    model_id: "test-writing-model".to_owned(),
+                    capabilities: ModelCapabilityProfile {
+                        streaming: true,
+                        tools: true,
+                        stream_usage: true,
+                        thinking: true,
+                    },
+                    max_context_tokens: 32_768,
+                    reserved_output_tokens: 4_096,
+                },
+            )
+            .await
+            .unwrap();
+        let created = store
+            .create_project(
+                Uuid::new_v4(),
+                NewProject::new("提交拒绝入账", "被拒的提交必须留下配对回执", None::<&str>)
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let version_id = created.version.id;
+        store
+            .save_novel_brief(
+                version_id,
+                Uuid::new_v4(),
+                NewNovelBrief::new("写一个雨夜车站的短篇小说").unwrap(),
+            )
+            .await
+            .unwrap();
+        let before_start = store
+            .get_version_snapshot(version_id)
+            .await
+            .unwrap()
+            .workflow;
+        let started = store
+            .start_preparation(version_id, Uuid::new_v4(), before_start.state_revision)
+            .await
+            .unwrap();
+        let run_id = started.workflow.active_run_id.unwrap();
+        let scheduler = WorkflowScheduler::new(
+            store.clone(),
+            Arc::new(Semaphore::new(1)),
+            Arc::new(Mutex::new(())),
+        );
+        let mut events = store.subscribe_events();
+        scheduler
+            .enqueue_preparation(version_id, run_id)
+            .await
+            .unwrap();
+
+        timeout(Duration::from_secs(5), async {
+            loop {
+                let _ = events.recv().await;
+                let messages = store.list_agent_messages(run_id).await.unwrap();
+                if messages
+                    .iter()
+                    .any(|message| message.role == AgentMessageRole::Tool)
+                {
+                    return;
+                }
+            }
+        })
+        .await
+        .expect("这一轮提交必须留下配对的工具结果");
+        let _ = timeout(Duration::from_secs(2), request_receiver).await;
+        (data_dir, store, version_id, run_id)
+    }
+
+    /// 提取这一轮账本里的提交调用、它保留的参数原文与配对结果正文。参数可以是已经
+    /// 解码的 object，也可以是模型给的原文本（此时按原样返回）。
+    fn submission_ledger(
+        messages: &[nekowriter_store::PersistedAgentMessage],
+    ) -> (String, String, String) {
+        let assistant = messages
+            .iter()
+            .find(|message| {
+                message.role == AgentMessageRole::Assistant
+                    && message.content["kind"] == "assistant_tool_calls"
+            })
+            .expect("提交工具调用必须留在账本里");
+        let call_id = assistant.content["toolCalls"][0]["id"]
+            .as_str()
+            .expect("工具调用必须有 id")
+            .to_owned();
+        let arguments = assistant.content["toolCalls"][0]["arguments"].clone();
+        let tool_message = messages
+            .iter()
+            .find(|message| message.role == AgentMessageRole::Tool)
+            .expect("被拒的提交必须拿到配对工具结果");
+        assert_eq!(tool_message.tool_call_id.as_deref(), Some(call_id.as_str()));
+        (
+            call_id,
+            arguments
+                .as_str()
+                .map_or_else(|| arguments.to_string(), str::to_owned),
+            tool_message.content["content"]
+                .as_str()
+                .expect("工具结果内容是 JSON 文本")
+                .to_owned(),
+        )
+    }
+
+    /// 缺 `chapter_plan` 的粗纲提交必须落到账本上：配对的错误工具结果点名缺的字段，
+    /// 模型在剩余额度里可以补齐后重试，而不是只拿到一句泛泛的协议错误。
+    #[tokio::test]
+    async fn submission_without_a_chapter_plan_records_a_paired_rejection() {
+        let submission = json!({
+            "artifacts": PreparationArtifactKind::ALL
+                .into_iter()
+                .map(|kind| json!({ "kind": kind, "content": format!("{} 的模型产物", kind.label()) }))
+                .collect::<Vec<_>>(),
+        });
+        let (_data_dir, store, version_id, run_id) =
+            preparation_round_with_raw_arguments(&submission.to_string()).await;
+
+        assert_eq!(
+            store
+                .get_preparation_snapshot(version_id)
+                .await
+                .unwrap()
+                .workflow
+                .execution,
+            ExecutionStatus::Queued
+        );
+        let persisted = store.list_model_requests(run_id).await.unwrap();
+        assert_eq!(persisted.len(), 1);
+        assert_eq!(persisted[0].status, ModelRequestStatus::Succeeded);
+        assert_eq!(
+            persisted[0]
+                .error
+                .as_ref()
+                .and_then(|error| error.get("kind"))
+                .and_then(Value::as_str),
+            Some("protocol_error")
+        );
+
+        let messages = store.list_agent_messages(run_id).await.unwrap();
+        let (call_id, _arguments, receipt) = submission_ledger(&messages);
+        assert_ne!(call_id, "");
+        assert!(receipt.contains("PHASE_SUBMISSION_INVALID"), "{receipt}");
+        assert!(receipt.contains("chapter_plan"), "{receipt}");
+        let correction = messages.last().unwrap();
+        assert_eq!(correction.role, AgentMessageRole::User);
+        assert_eq!(correction.content["kind"], "protocol_correction");
+
+        // 配对结果留在纠正历史里：重放这条调用不会触发 MissingToolResult。
+        let history = stage_agent_history_messages(run_id, messages, &[]).unwrap();
+        assert!(matches!(
+            history[0].message,
+            ModelRequestMessage::AssistantToolCalls { .. }
+        ));
+        assert!(matches!(
+            history[1].message,
+            ModelRequestMessage::ToolResult { .. }
+        ));
+        assert!(matches!(
+            history[2].message,
+            ModelRequestMessage::Text {
+                role: ContextMessageRole::User,
+                ..
+            }
+        ));
+        assert!(
+            store
+                .events_after(0)
+                .await
+                .unwrap()
+                .into_iter()
+                .any(|event| event.event_type == "run.changed"
+                    && event.payload["consecutive_protocol_errors"] == "1")
+        );
+    }
+
+    /// 真实端点把参数截断的那一轮：`finish_reason` 正常收尾，但 `arguments` 在字符串
+    /// 中途断掉。它必须按「被拒的提交」处理——配对错误工具结果 + 纠正消息 + 计入
+    /// 连续协议错误——而不是以 `provider_error` 结束整轮。
+    #[tokio::test]
+    async fn truncated_submission_arguments_are_rejected_instead_of_failing_the_run() {
+        let truncated = r#"{"artifacts":[{"kind":"background","content":"【创作约定】未写完的背"#;
+        let (_data_dir, store, version_id, run_id) =
+            preparation_round_with_raw_arguments(truncated).await;
+
+        assert_eq!(
+            store
+                .get_preparation_snapshot(version_id)
+                .await
+                .unwrap()
+                .workflow
+                .execution,
+            ExecutionStatus::Queued
+        );
+        let persisted = store.list_model_requests(run_id).await.unwrap();
+        assert_eq!(
+            persisted[0]
+                .error
+                .as_ref()
+                .and_then(|error| error.get("kind"))
+                .and_then(Value::as_str),
+            Some("protocol_error"),
+            "不可解码的提交是可纠正的协议错误，不是 provider_error"
+        );
+
+        let messages = store.list_agent_messages(run_id).await.unwrap();
+        let (_call_id, arguments, receipt) = submission_ledger(&messages);
+        assert_eq!(arguments, truncated);
+        assert!(receipt.contains("PHASE_SUBMISSION_INVALID"), "{receipt}");
+        assert!(receipt.contains("不是合法 JSON"), "{receipt}");
+        let correction = messages.last().unwrap();
+        assert_eq!(correction.role, AgentMessageRole::User);
+        assert_eq!(correction.content["kind"], "protocol_correction");
+        let history = stage_agent_history_messages(run_id, messages, &[]).unwrap();
+        assert!(matches!(
+            history[1].message,
+            ModelRequestMessage::ToolResult { .. }
+        ));
+        assert!(
+            store
+                .events_after(0)
+                .await
+                .unwrap()
+                .into_iter()
+                .any(|event| event.event_type == "run.changed"
+                    && event.payload["consecutive_protocol_errors"] == "1")
+        );
+    }
+
+    /// 假服务把给定的 `arguments` 原文整段回给应用；原文可以是不完整的 JSON。
+    async fn preparation_sse_server_with_raw_arguments(
+        call_id: &str,
+        raw_arguments: &str,
+    ) -> (String, oneshot::Receiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (sender, receiver) = oneshot::channel();
+        let payload = raw_submission_sse_payload(
+            call_id,
+            nekowriter_agent::runner::SUBMIT_PREPARATION_TOOL,
+            raw_arguments,
+        );
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (mut stream, request) = read_http_request(stream).await;
+            let _ = sender.send(request);
+            write_sse_response(&mut stream, &payload).await;
+        });
+        (format!("http://{address}/v1"), receiver)
+    }
+
+    /// 整段参数在一条 delta 里给出，与真实端点的分块方式一致。
+    fn raw_submission_sse_payload(call_id: &str, tool: &str, raw_arguments: &str) -> String {
+        let chunk = json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": call_id,
+                        "type": "function",
+                        "function": { "name": tool, "arguments": raw_arguments },
+                    }],
+                },
+                "finish_reason": Value::Null,
+            }],
+        });
+        let finished = json!({
+            "choices": [{ "index": 0, "delta": {}, "finish_reason": "tool_calls" }],
+            "usage": { "prompt_tokens": 17, "completion_tokens": 11, "total_tokens": 28 },
+        });
+        format!("data: {chunk}\n\ndata: {finished}\n\ndata: [DONE]\n\n")
     }
 
     /// 建立一个已经进入准备阶段的 Run，并按给定能力保存系统模型与项目模型引用。
@@ -3071,15 +3436,10 @@ mod tests {
         )
     }
 
-    fn capability_profile(
-        tools: bool,
-        structured_output: bool,
-        thinking: bool,
-    ) -> ModelCapabilityProfile {
+    fn capability_profile(tools: bool, thinking: bool) -> ModelCapabilityProfile {
         ModelCapabilityProfile {
             streaming: true,
             tools,
-            structured_output,
             stream_usage: true,
             thinking,
         }
@@ -3101,10 +3461,10 @@ mod tests {
         let (base_url, request_receiver) = preparation_sse_server().await;
         let (_data_dir, store, version_id, run_id) = capability_fixture(
             base_url,
-            capability_profile(true, true, false),
+            capability_profile(true, false),
             Some(project_model(
                 "project-model",
-                capability_profile(true, true, true),
+                capability_profile(true, true),
             )),
             ThinkingLevel::High,
         )
@@ -3159,10 +3519,10 @@ mod tests {
         let (base_url, request_receiver) = preparation_sse_server().await;
         let (_data_dir, store, version_id, run_id) = capability_fixture(
             base_url,
-            capability_profile(true, true, true),
+            capability_profile(true, true),
             Some(project_model(
                 "project-model",
-                capability_profile(true, true, false),
+                capability_profile(true, false),
             )),
             ThinkingLevel::High,
         )
@@ -3200,10 +3560,10 @@ mod tests {
         let (base_url, request_receiver) = preparation_sse_server().await;
         let (_data_dir, store, version_id, run_id) = capability_fixture(
             base_url,
-            capability_profile(true, true, true),
+            capability_profile(true, true),
             Some(project_model(
                 "project-model",
-                capability_profile(false, true, true),
+                capability_profile(false, true),
             )),
             ThinkingLevel::Off,
         )
@@ -3258,7 +3618,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delegated_review_lane_uses_a_tool_free_structured_review_request() {
+    async fn delegated_review_lane_declares_only_the_submission_tool() {
         let (base_url, request_receiver) = review_sse_server(true, 0.86, Vec::new()).await;
         let data_dir = TempDir::new().unwrap();
         let store = Store::open(data_dir.path()).await.unwrap();
@@ -3273,8 +3633,7 @@ mod tests {
                     model_id: "test-review-model".to_owned(),
                     capabilities: ModelCapabilityProfile {
                         streaming: true,
-                        tools: false,
-                        structured_output: true,
+                        tools: true,
                         stream_usage: true,
                         thinking: true,
                     },
@@ -3400,8 +3759,375 @@ mod tests {
         assert!(request.starts_with("POST /v1/chat/completions HTTP/1.1"));
         assert!(request.contains("旧车站将在雨季结束后拆除。"));
         assert!(request.contains("检查背景是否能支撑第一章。"));
-        assert!(request.contains("\"response_format\":{\"type\":\"json_object\"}"));
-        assert!(!request.contains("\"tools\":"));
+        assert!(request.contains("\"name\":\"submit_review\""));
+        assert!(!request.contains("append_content"));
+        assert!(!request.contains("response_format"));
+    }
+
+    /// 每一轮被拒的 `submit_review` 调用都必须拿到配对错误工具结果，回执里点名
+    /// `issues` 与正确形状；返回配对回执的条数，由调用方断言轮数。
+    fn count_paired_rejected_review_calls(
+        messages: &[nekowriter_store::PersistedAgentMessage],
+    ) -> usize {
+        let mut paired = 0;
+        for assistant in messages
+            .iter()
+            .filter(|message| message.content["kind"] == "assistant_tool_calls")
+        {
+            let call_id = assistant.content["toolCalls"][0]["id"].as_str().unwrap();
+            assert_eq!(assistant.content["toolCalls"][0]["name"], "submit_review");
+            let receipt = messages
+                .iter()
+                .find(|message| {
+                    message.role == AgentMessageRole::Tool
+                        && message.tool_call_id.as_deref() == Some(call_id)
+                })
+                .expect("被拒的审核提交必须拿到配对工具结果");
+            let receipt_text = receipt.content["content"].as_str().unwrap();
+            assert!(
+                receipt_text.contains("PHASE_SUBMISSION_INVALID"),
+                "{receipt_text}"
+            );
+            assert!(receipt_text.contains("issues"), "{receipt_text}");
+            assert!(
+                receipt_text.contains("不能是装着数组的 JSON 字符串"),
+                "{receipt_text}"
+            );
+            paired += 1;
+        }
+        paired
+    }
+
+    /// 一次委托里每一轮被拒都要在事件流里留下与写作 lane 同形状的纠正事件。
+    ///
+    /// `consecutive_protocol_errors` 只通过事件到达客户端（快照与 Dashboard 的 DTO
+    /// 都不含它），缺了这些事件，用户只会看到审核卡在 `delegated`、随后突然重新
+    /// 开放。`rejected_rounds` 是本次委托被拒的轮数；达到连续协议错误上限时最后一
+    /// 轮必须带上 `wait_reason = protocol_error_limit`。
+    fn assert_review_correction_events(
+        events: &[nekowriter_store::PersistedEvent],
+        review_id: ReviewId,
+        run_id: RunId,
+        rejected_rounds: usize,
+    ) {
+        let limit_reached = usize::try_from(MAX_CONSECUTIVE_PROTOCOL_ERRORS) == Ok(rejected_rounds);
+        let run_events: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                event.event_type == "run.changed" && event.payload["protocol_correction"] == true
+            })
+            .collect();
+        assert_eq!(run_events.len(), rejected_rounds, "{events:#?}");
+        for (index, event) in run_events.iter().enumerate() {
+            let round = index + 1;
+            assert_eq!(event.payload["kind"], "review");
+            assert_eq!(event.payload["status"], "running");
+            assert_eq!(event.payload["review_id"], review_id.to_string());
+            assert!(event.payload["request_id"].is_string());
+            assert_eq!(
+                event.payload["consecutive_protocol_errors"],
+                round.to_string()
+            );
+            assert_eq!(
+                event.payload["wait_reason"],
+                if limit_reached && round == rejected_rounds {
+                    Value::String("protocol_error_limit".to_owned())
+                } else {
+                    Value::Null
+                },
+                "只有达到上限的那一轮说明原因"
+            );
+        }
+        let review_events: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                event.event_type == "review.changed" && event.payload["protocol_correction"] == true
+            })
+            .collect();
+        assert_eq!(review_events.len(), rejected_rounds, "{events:#?}");
+        assert_eq!(review_events[0].payload["status"], "delegated");
+        assert_eq!(review_events[0].payload["attempt_id"], run_id.to_string());
+        assert_eq!(review_events[0].payload["consecutive_protocol_errors"], "1");
+    }
+
+    /// 真实端点上那一轮的形状：模型把 `issues` 写成「装着数组的 JSON 字符串」。
+    ///
+    /// 内容是 JSON 字符串，`issues` 必须是数组；这份参数在真实复跑里让审核委派以
+    /// `provider_error` 式的失败收场，账本里只留下未配对的 assistant 调用。它必须
+    /// 与写作 lane 同形状：配对的错误工具结果点名 `issues` 与正确形状、点名
+    /// `submit_review` 的纠正消息、计入连续协议错误并在限额内重提。
+    fn review_issues_as_a_json_string() -> Value {
+        json!({
+            "passed": true,
+            "confidence": 0.82,
+            "issues": "[\"【建议】第三章：后半页被发现的位置与广播室监控设定之间的承接稍显含糊。\"]",
+        })
+    }
+
+    /// 被拒的审核提交必须留下配对回执，并在连续协议错误限额内重提；达到限额才
+    /// 收束为「子 Run 失败、Review 重新开放」。
+    #[tokio::test]
+    async fn rejected_review_submissions_are_paired_and_retried_up_to_the_limit() {
+        let malformed = review_issues_as_a_json_string().to_string();
+        let (_data_dir, store, version_id, delegation, request_receiver) =
+            delegated_background_review(vec![
+                ("review-call-1", malformed.clone()),
+                ("review-call-2", malformed.clone()),
+                ("review-call-3", malformed),
+            ])
+            .await;
+        let review_id = delegation.review_id;
+        let scheduler = WorkflowScheduler::new(
+            store.clone(),
+            Arc::new(Semaphore::new(1)),
+            Arc::new(Mutex::new(())),
+        );
+        let mut events = store.subscribe_events();
+        scheduler
+            .enqueue_review(version_id, review_id, delegation.run_id)
+            .await
+            .unwrap();
+
+        let reopened = timeout(Duration::from_secs(10), async {
+            loop {
+                let _ = events.recv().await;
+                let snapshot = store.get_preparation_snapshot(version_id).await.unwrap();
+                if snapshot
+                    .artifacts
+                    .iter()
+                    .find(|artifact| artifact.kind == PreparationArtifactKind::Background)
+                    .and_then(|artifact| artifact.review.as_ref())
+                    .is_some_and(|review| review.status == nekowriter_core::ReviewStatus::Open)
+                {
+                    return snapshot;
+                }
+            }
+        })
+        .await
+        .expect("连续协议错误达到上限后 Review 应重新开放");
+        assert_eq!(reopened.workflow.execution, ExecutionStatus::WaitingReview);
+
+        // 三次提交都被拒：限额内重提了两次，第三次不再重排。
+        let requests = timeout(Duration::from_secs(2), request_receiver)
+            .await
+            .expect("被拒的审核提交必须重提")
+            .unwrap();
+        assert_eq!(requests.len(), 3);
+
+        let persisted = store.list_model_requests(delegation.run_id).await.unwrap();
+        assert_eq!(persisted.len(), 3);
+        for request in &persisted {
+            assert_eq!(request.status, ModelRequestStatus::Succeeded);
+            assert_eq!(
+                request
+                    .error
+                    .as_ref()
+                    .and_then(|error| error.get("kind"))
+                    .and_then(Value::as_str),
+                Some("protocol_error"),
+                "不可解码的提交是可纠正的协议错误，不是 provider_error"
+            );
+        }
+
+        // 每一条被拒的调用都拿到配对结果，且原因点名了字段与正确形状。
+        let messages = store.list_agent_messages(delegation.run_id).await.unwrap();
+        assert_eq!(count_paired_rejected_review_calls(&messages), 3);
+        let correction = messages.last().unwrap();
+        assert_eq!(correction.role, AgentMessageRole::User);
+        assert_eq!(correction.content["kind"], "protocol_correction");
+        assert!(
+            correction.content["content"]
+                .as_str()
+                .unwrap()
+                .contains("submit_review")
+        );
+
+        // 重提的那一轮真的带着自己的错误历史：被拒的调用、它的回执与纠正都在里面。
+        assert!(requests[1].contains("review-call-1"));
+        assert!(requests[1].contains("PHASE_SUBMISSION_INVALID"));
+        assert!(requests[1].contains("未通过本阶段校验"));
+        // 重提请求的序列是「重新渲染的 user 输入 + 被拒的调用/回执/纠正」：初始
+        // 输入每轮重新渲染、不会重复堆叠，纠正则恰好出现一次。
+        assert_eq!(requests[0].matches("\"role\":\"user\"").count(), 1);
+        assert_eq!(requests[1].matches("\"role\":\"user\"").count(), 2);
+        assert_eq!(requests[1].matches("\"role\":\"tool\"").count(), 1);
+
+        // 三轮被拒都留下与写作 lane 同形状的纠正事件，且上限之后的收束仍按原
+        // 行为广播：委派失败、Review 重新开放。
+        let events = store.events_after(0).await.unwrap();
+        assert_review_correction_events(&events, review_id, delegation.run_id, 3);
+        assert!(
+            events
+                .iter()
+                .any(|event| event.event_type == "review.changed"
+                    && event.payload["status"] == "open"
+                    && event.payload["failed_attempt_id"] == delegation.run_id.to_string())
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| event.event_type == "run.changed"
+                    && event.payload["status"] == "failed")
+        );
+    }
+
+    /// §35.1 真实端点出现过的那一类：`finish_reason` 正常收尾，但工具参数在字符串
+    /// 中途断掉（`arguments` 不是合法 JSON）。审核 lane 必须与写作 lane 同形状——
+    /// 配对错误工具结果 + 点名原因的纠正 + 连续协议错误计数——而不是让整次委托
+    /// 作废、等用户手动重新委托。
+    #[tokio::test]
+    async fn truncated_review_arguments_are_corrected_then_resubmitted() {
+        let truncated = r#"{"passed": true, "confidence": 0.82, "issues": ["【建议】第三章"#;
+        let corrected = json!({
+            "passed": true,
+            "confidence": 0.85,
+            "issues": [],
+        })
+        .to_string();
+        let (_data_dir, store, version_id, delegation, request_receiver) =
+            delegated_background_review(vec![
+                ("review-call-1", truncated.to_owned()),
+                ("review-call-2", corrected),
+            ])
+            .await;
+        let review_id = delegation.review_id;
+        let scheduler = WorkflowScheduler::new(
+            store.clone(),
+            Arc::new(Semaphore::new(1)),
+            Arc::new(Mutex::new(())),
+        );
+        let mut events = store.subscribe_events();
+        scheduler
+            .enqueue_review(version_id, review_id, delegation.run_id)
+            .await
+            .unwrap();
+
+        let completed = timeout(Duration::from_secs(10), async {
+            loop {
+                let _ = events.recv().await;
+                let snapshot = store.get_preparation_snapshot(version_id).await.unwrap();
+                if snapshot
+                    .artifacts
+                    .iter()
+                    .find(|artifact| artifact.kind == PreparationArtifactKind::Background)
+                    .and_then(|artifact| artifact.review.as_ref())
+                    .is_some_and(|review| review.status == nekowriter_core::ReviewStatus::Approved)
+                {
+                    return snapshot;
+                }
+            }
+        })
+        .await
+        .expect("截断的参数必须被纠正，随后一次合法重提要应用决定");
+        assert_eq!(completed.workflow.execution, ExecutionStatus::WaitingReview);
+
+        let persisted = store.list_model_requests(delegation.run_id).await.unwrap();
+        assert_eq!(persisted.len(), 2);
+        assert_eq!(persisted[0].status, ModelRequestStatus::Succeeded);
+        assert_eq!(
+            persisted[0]
+                .error
+                .as_ref()
+                .and_then(|error| error.get("kind"))
+                .and_then(Value::as_str),
+            Some("protocol_error"),
+            "不可解码的提交是可纠正的协议错误，不是 provider_error"
+        );
+
+        // 模型给出的原文逐字留在账本里，回执点名「不是合法 JSON」。
+        let messages = store.list_agent_messages(delegation.run_id).await.unwrap();
+        let (_call_id, arguments, receipt) = submission_ledger(&messages);
+        assert_eq!(arguments, truncated);
+        assert!(receipt.contains("PHASE_SUBMISSION_INVALID"), "{receipt}");
+        assert!(receipt.contains("不是合法 JSON"), "{receipt}");
+        let events = store.events_after(0).await.unwrap();
+        assert_review_correction_events(&events, review_id, delegation.run_id, 1);
+
+        let requests = timeout(Duration::from_secs(2), request_receiver)
+            .await
+            .expect("审核 Agent 应向假服务发送两轮请求")
+            .unwrap();
+        assert_eq!(requests.len(), 2);
+        // 第二轮必须看得到第一次被拒的原因，否则只是把同一份提示重发一次。
+        assert!(requests[1].contains("不是合法 JSON"));
+    }
+
+    /// 被拒之后重提：一次合法的 `submit_review` 必须真的落成审核决定，而不是
+    /// 让整次委托作废、等用户手动重新委托。
+    #[tokio::test]
+    async fn corrected_review_resubmission_commits_the_decision() {
+        let malformed = review_issues_as_a_json_string().to_string();
+        let corrected = json!({
+            "passed": true,
+            "confidence": 0.85,
+            "issues": ["【建议】补一处非决定性线索。"],
+        })
+        .to_string();
+        let (_data_dir, store, version_id, delegation, request_receiver) =
+            delegated_background_review(vec![
+                ("review-call-1", malformed),
+                ("review-call-2", corrected),
+            ])
+            .await;
+        let review_id = delegation.review_id;
+        let scheduler = WorkflowScheduler::new(
+            store.clone(),
+            Arc::new(Semaphore::new(1)),
+            Arc::new(Mutex::new(())),
+        );
+        let mut events = store.subscribe_events();
+        scheduler
+            .enqueue_review(version_id, review_id, delegation.run_id)
+            .await
+            .unwrap();
+
+        let completed = timeout(Duration::from_secs(10), async {
+            loop {
+                let _ = events.recv().await;
+                let snapshot = store.get_preparation_snapshot(version_id).await.unwrap();
+                if snapshot
+                    .artifacts
+                    .iter()
+                    .find(|artifact| artifact.kind == PreparationArtifactKind::Background)
+                    .and_then(|artifact| artifact.review.as_ref())
+                    .is_some_and(|review| review.status == nekowriter_core::ReviewStatus::Approved)
+                {
+                    return snapshot;
+                }
+            }
+        })
+        .await
+        .expect("合法重提必须应用审核决定");
+        assert_eq!(completed.workflow.execution, ExecutionStatus::WaitingReview);
+        let review = completed
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.kind == PreparationArtifactKind::Background)
+            .and_then(|artifact| artifact.review.as_ref())
+            .unwrap();
+        assert_eq!(review.passed, Some(true));
+        assert!(
+            review
+                .issues
+                .as_deref()
+                .unwrap_or_default()
+                .contains("补一处非决定性线索"),
+            "落库的应是重提那份结论"
+        );
+
+        let persisted = store.list_model_requests(delegation.run_id).await.unwrap();
+        assert_eq!(persisted.len(), 2);
+        assert_eq!(persisted[0].status, ModelRequestStatus::Succeeded);
+        assert_eq!(persisted[1].status, ModelRequestStatus::Succeeded);
+
+        let requests = timeout(Duration::from_secs(2), request_receiver)
+            .await
+            .expect("审核 Agent 应向假服务发送两轮请求")
+            .unwrap();
+        assert_eq!(requests.len(), 2);
+        // 第二轮必须看得到自己第一次被拒的原因，否则只是把同一份提示重发一次。
+        assert!(requests[1].contains("不能是装着数组的 JSON 字符串"));
+        assert!(requests[1].contains("\"name\":\"submit_review\""));
     }
 
     #[tokio::test]
@@ -3447,7 +4173,6 @@ mod tests {
                     capabilities: ModelCapabilityProfile {
                         streaming: true,
                         tools: true,
-                        structured_output: true,
                         stream_usage: true,
                         thinking: true,
                     },
@@ -3592,7 +4317,7 @@ mod tests {
 
     #[test]
     fn query_knowledge_is_only_declared_when_it_can_actually_run() {
-        let declared = preparation_agent_tools(true, 7);
+        let declared = preparation_agent_tools(preparation_submission_tool(), true, 7);
         let knowledge = declared
             .iter()
             .find(|tool| tool.name == TOOL_QUERY_KNOWLEDGE)
@@ -3603,9 +4328,10 @@ mod tests {
             knowledge.description
         );
 
-        let hidden = preparation_agent_tools(false, 7);
-        assert_eq!(hidden.len(), 1);
-        assert_eq!(hidden[0].name, "ask_user");
+        let hidden = preparation_agent_tools(preparation_submission_tool(), false, 7);
+        assert_eq!(hidden.len(), 2);
+        assert_eq!(hidden[0].name, "submit_preparation");
+        assert_eq!(hidden[1].name, "ask_user");
     }
 
     #[tokio::test]
@@ -3621,8 +4347,7 @@ mod tests {
                 request_id,
                 &ModelRequest {
                     messages: Vec::new(),
-                    tools: preparation_agent_tools(true, 1),
-                    response_format: None,
+                    tools: preparation_agent_tools(preparation_submission_tool(), true, 1),
                     thinking_level: ThinkingLevel::Off,
                 },
                 Ok(knowledge_tool_completion("call-no-embedding")),
@@ -3668,8 +4393,7 @@ mod tests {
                     request_id,
                     &ModelRequest {
                         messages: Vec::new(),
-                        tools: preparation_agent_tools(true, 1),
-                        response_format: None,
+                        tools: preparation_agent_tools(preparation_submission_tool(), true, 1),
                         thinking_level: ThinkingLevel::Off,
                     },
                     Ok(knowledge_tool_completion("call-no-budget")),
@@ -3700,8 +4424,7 @@ mod tests {
                     request_id,
                     &ModelRequest {
                         messages: Vec::new(),
-                        tools: preparation_agent_tools(true, 1),
-                        response_format: None,
+                        tools: preparation_agent_tools(preparation_submission_tool(), true, 1),
                         thinking_level: ThinkingLevel::Off,
                     },
                     Ok(knowledge_tool_completion("call-failing-search")),
@@ -3733,8 +4456,7 @@ mod tests {
                 request_id,
                 &ModelRequest {
                     messages: Vec::new(),
-                    tools: preparation_agent_tools(true, 1),
-                    response_format: None,
+                    tools: preparation_agent_tools(preparation_submission_tool(), true, 1),
                     thinking_level: ThinkingLevel::Off,
                 },
                 Ok(knowledge_tool_completion("call-failing-search")),
@@ -3802,7 +4524,6 @@ mod tests {
         let request = ModelRequest {
             messages: Vec::new(),
             tools: ask_user_tools(),
-            response_format: Some(StructuredOutput::JsonObject),
             thinking_level: ThinkingLevel::Off,
         };
 
@@ -3842,7 +4563,7 @@ mod tests {
             Some("protocol_error")
         );
 
-        let history = writing_agent_history_messages(
+        let history = stage_agent_history_messages(
             run_id,
             store.list_agent_messages(run_id).await.unwrap(),
             &[],
@@ -3861,7 +4582,7 @@ mod tests {
             ModelRequestMessage::Text {
                 role: ContextMessageRole::User,
                 content
-            } if content.contains("重新严格按当前阶段要求返回")
+            } if content.contains("没有调用本阶段的提交工具 `submit_preparation`")
         ));
     }
 
@@ -3882,7 +4603,6 @@ mod tests {
                     capabilities: ModelCapabilityProfile {
                         streaming: true,
                         tools: true,
-                        structured_output: true,
                         stream_usage: true,
                         thinking: true,
                     },
@@ -3989,7 +4709,6 @@ mod tests {
                     capabilities: ModelCapabilityProfile {
                         streaming: true,
                         tools: true,
-                        structured_output: true,
                         stream_usage: true,
                         thinking: true,
                     },
@@ -4048,8 +4767,9 @@ mod tests {
             ModelRequestStatus::Succeeded
         );
         // 当前 Run 只保留自己的 system/user/assistant 原始消息；准备阶段 fold 的
-        // 归属仍在准备 Run 中，并由请求快照中的 fold source 追溯。
-        assert_eq!(store.list_agent_messages(run_id).await.unwrap().len(), 3);
+        // 归属仍在准备 Run 中，并由请求快照中的 fold source 追溯。阶段提交本身是
+        // 提交工具调用与配对结果两条记录。
+        assert_eq!(store.list_agent_messages(run_id).await.unwrap().len(), 4);
         let model_requests = store.list_model_requests(run_id).await.unwrap();
         let model_request = &model_requests[0];
         assert_eq!(
@@ -4112,7 +4832,6 @@ mod tests {
                     capabilities: ModelCapabilityProfile {
                         streaming: true,
                         tools: true,
-                        structured_output: true,
                         stream_usage: true,
                         thinking: true,
                     },
@@ -4161,9 +4880,10 @@ mod tests {
                 .iter()
                 .all(|request| request.status == ModelRequestStatus::Succeeded)
         );
+        // 一次正文工具轮（调用 + 结果）加上阶段提交（提交工具调用 + 配对结果）。
         assert_eq!(
             store.list_agent_messages(body_run_id).await.unwrap().len(),
-            5
+            6
         );
         let replayed_tool = store
             .execute_chapter_body_agent_tool_call(
@@ -4270,7 +4990,6 @@ mod tests {
                     capabilities: ModelCapabilityProfile {
                         streaming: true,
                         tools: true,
-                        structured_output: true,
                         stream_usage: true,
                         thinking: true,
                     },
@@ -5030,8 +5749,7 @@ mod tests {
                 chapter_id,
                 Some("direct-submission-feedback-request".to_owned()),
                 json!({ "promptTokens": 18, "completionTokens": 7, "totalTokens": 25 }),
-                "{\"chapter_id\":\"ignored-by-store\",\"summary\":\"模型尝试直接提交本章。\"}"
-                    .to_owned(),
+                body_submission_message(request_id, "模型尝试直接提交本章。"),
                 "模型尝试直接提交本章。".to_owned(),
             )
             .await
@@ -5112,8 +5830,7 @@ mod tests {
                 chapter_id,
                 Some(format!("direct-submission-feedback-{label}-request")),
                 json!({ "promptTokens": 18, "completionTokens": 7, "totalTokens": 25 }),
-                "{\"chapter_id\":\"ignored-by-store\",\"summary\":\"模型反复直接提交本章。\"}"
-                    .to_owned(),
+                body_submission_message(request.id, "模型反复直接提交本章。"),
                 "模型反复直接提交本章。".to_owned(),
             )
             .await
@@ -5208,8 +5925,7 @@ mod tests {
                 chapter_id,
                 Some("direct-submission-pause-request".to_owned()),
                 json!({ "promptTokens": 18, "completionTokens": 7, "totalTokens": 25 }),
-                "{\"chapter_id\":\"ignored-by-store\",\"summary\":\"模型尝试直接提交本章。\"}"
-                    .to_owned(),
+                body_submission_message(request_id, "模型尝试直接提交本章。"),
                 "模型尝试直接提交本章。".to_owned(),
             )
             .await
@@ -5261,8 +5977,7 @@ mod tests {
                 chapter_id,
                 Some("empty-submission-pause-request".to_owned()),
                 json!({ "promptTokens": 18, "completionTokens": 7, "totalTokens": 25 }),
-                "{\"chapter_id\":\"ignored-by-store\",\"summary\":\"模型过早提交本章。\"}"
-                    .to_owned(),
+                body_submission_message(request_id, "模型过早提交本章。"),
                 "模型过早提交本章。".to_owned(),
             )
             .await
@@ -5537,29 +6252,13 @@ mod tests {
                     "title": "第一章：车站重逢",
                     "goal": "让主角在旧车站收到改变命运的信件。",
                 }],
-            })
-            .to_string();
-            let stream_payload = format!(
-                "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
-                json!({
-                    "choices": [{
-                        "index": 0,
-                        "delta": { "content": submission },
-                        "finish_reason": Value::Null,
-                    }],
-                }),
-                json!({
-                    "choices": [{
-                        "index": 0,
-                        "delta": {},
-                        "finish_reason": "stop",
-                    }],
-                    "usage": {
-                        "prompt_tokens": 17,
-                        "completion_tokens": 11,
-                        "total_tokens": 28,
-                    },
-                }),
+            });
+            let stream_payload = submission_sse_payload(
+                "preparation-call-1",
+                nekowriter_agent::runner::SUBMIT_PREPARATION_TOOL,
+                &submission,
+                17,
+                11,
             );
             stream
                 .write_all(
@@ -5589,33 +6288,161 @@ mod tests {
                 "passed": passed,
                 "confidence": confidence,
                 "issues": issues,
-            })
-            .to_string();
-            let stream_payload = format!(
-                "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
-                json!({
-                    "choices": [{
-                        "index": 0,
-                        "delta": { "content": decision },
-                        "finish_reason": Value::Null,
-                    }],
-                }),
-                json!({
-                    "choices": [{
-                        "index": 0,
-                        "delta": {},
-                        "finish_reason": "stop",
-                    }],
-                    "usage": {
-                        "prompt_tokens": 13,
-                        "completion_tokens": 7,
-                        "total_tokens": 20,
-                    },
-                }),
+            });
+            let stream_payload = submission_sse_payload(
+                "review-call-1",
+                nekowriter_agent::runner::SUBMIT_REVIEW_TOOL,
+                &decision,
+                13,
+                7,
             );
             write_sse_response(&mut stream, &stream_payload).await;
         });
         (format!("http://{address}/v1"), receiver)
+    }
+
+    /// 假审核服务：按顺序把多份 `submit_review` 参数原文发给应用。
+    ///
+    /// 同一次委托的重提会再次连到同一个 base URL，所以「被拒 → 纠正 → 重提」是
+    /// 一条真实链路：服务器按连接顺序取用下一份参数，并把每条收到的请求原文交回
+    /// 测试断言。
+    async fn review_sse_server_with_raw_arguments(
+        responses: Vec<(&'static str, String)>,
+    ) -> (String, oneshot::Receiver<Vec<String>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (sender, receiver) = oneshot::channel();
+        tokio::spawn(async move {
+            let mut requests = Vec::with_capacity(responses.len());
+            for (call_id, raw_arguments) in responses {
+                let (stream, _) = listener.accept().await.unwrap();
+                let (mut stream, request) = read_http_request(stream).await;
+                requests.push(request);
+                let payload = raw_submission_sse_payload(
+                    call_id,
+                    nekowriter_agent::runner::SUBMIT_REVIEW_TOOL,
+                    &raw_arguments,
+                );
+                write_sse_response(&mut stream, &payload).await;
+            }
+            let _ = sender.send(requests);
+        });
+        (format!("http://{address}/v1"), receiver)
+    }
+
+    /// 走一遍「四项产物已提交、背景产物的审核已委托」的链路。
+    ///
+    /// 返回的 `Store` 与稿本可直接接到调度器；假服务按 `responses` 顺序应答，
+    /// 请求原文由 oneshot 交回，供调用方断言真正发出去的内容。
+    async fn delegated_background_review(
+        responses: Vec<(&'static str, String)>,
+    ) -> (
+        TempDir,
+        Store,
+        VersionId,
+        nekowriter_store::ReviewDelegationResult,
+        oneshot::Receiver<Vec<String>>,
+    ) {
+        let (base_url, request_receiver) = review_sse_server_with_raw_arguments(responses).await;
+        let data_dir = TempDir::new().unwrap();
+        let store = Store::open(data_dir.path()).await.unwrap();
+        store
+            .save_system_model_settings(
+                Uuid::new_v4(),
+                0,
+                NewSystemModelSettings {
+                    api_base_url: base_url,
+                    credential_ref: None,
+                    credential_fingerprint: None,
+                    model_id: "test-review-model".to_owned(),
+                    capabilities: ModelCapabilityProfile {
+                        streaming: true,
+                        tools: true,
+                        stream_usage: true,
+                        thinking: true,
+                    },
+                    max_context_tokens: 32_768,
+                    reserved_output_tokens: 4_096,
+                },
+            )
+            .await
+            .unwrap();
+        let created = store
+            .create_project(
+                Uuid::new_v4(),
+                NewProject::new(
+                    "审核提交纠正",
+                    "被拒的审核提交必须拿到配对回执",
+                    None::<&str>,
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let version_id = created.version.id;
+        store
+            .save_novel_brief(
+                version_id,
+                Uuid::new_v4(),
+                NewNovelBrief::new("写一个围绕旧车站和匿名来信的悬疑故事。").unwrap(),
+            )
+            .await
+            .unwrap();
+        let started = store
+            .start_preparation(version_id, Uuid::new_v4(), 0)
+            .await
+            .unwrap();
+        let submitted = store
+            .submit_preparation_artifacts(
+                version_id,
+                Uuid::new_v4(),
+                started.workflow.state_revision,
+                vec![
+                    PreparationArtifactInput::new(
+                        PreparationArtifactKind::Background,
+                        "旧车站将在雨季结束后拆除。",
+                    )
+                    .unwrap(),
+                    PreparationArtifactInput::new(
+                        PreparationArtifactKind::Research,
+                        "匿名来信的来源尚待核验。",
+                    )
+                    .unwrap(),
+                    PreparationArtifactInput::new(
+                        PreparationArtifactKind::Characters,
+                        "沈宁在寻找失踪的姐姐。",
+                    )
+                    .unwrap(),
+                    PreparationArtifactInput::new(
+                        PreparationArtifactKind::Outline,
+                        "沈宁在末班车上收到匿名来信，决定去候车室寻找线索。",
+                    )
+                    .unwrap(),
+                ],
+                Some(vec![
+                    ChapterPlanDraft::new("末班车", "沈宁在末班车上收到匿名来信。").unwrap(),
+                ]),
+            )
+            .await
+            .unwrap();
+        let review_id = submitted
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.kind == PreparationArtifactKind::Background)
+            .and_then(|artifact| artifact.review.as_ref())
+            .unwrap()
+            .id;
+        let delegation = store
+            .delegate_review(
+                review_id,
+                Uuid::new_v4(),
+                submitted.workflow.state_revision,
+                "检查背景是否能支撑第一章。".to_owned(),
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        (data_dir, store, version_id, delegation, request_receiver)
     }
 
     /// 接受完整 HTTP 请求后不返回响应，直到测试通过显式停止中止客户端 future。
@@ -5645,30 +6472,13 @@ mod tests {
             let submission = json!({
                 "chapter_id": chapter_id,
                 "content": "模型生成的车站重逢细纲",
-                "goals": ["建立重逢的情绪张力"],
-            })
-            .to_string();
-            let stream_payload = format!(
-                "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
-                json!({
-                    "choices": [{
-                        "index": 0,
-                        "delta": { "content": submission },
-                        "finish_reason": Value::Null,
-                    }],
-                }),
-                json!({
-                    "choices": [{
-                        "index": 0,
-                        "delta": {},
-                        "finish_reason": "stop",
-                    }],
-                    "usage": {
-                        "prompt_tokens": 19,
-                        "completion_tokens": 12,
-                        "total_tokens": 31,
-                    },
-                }),
+            });
+            let stream_payload = submission_sse_payload(
+                "outline-call-1",
+                nekowriter_agent::runner::SUBMIT_CHAPTER_OUTLINE_TOOL,
+                &submission,
+                19,
+                12,
             );
             stream
                 .write_all(
@@ -5702,29 +6512,13 @@ mod tests {
             let submission = json!({
                 "chapter_id": chapter_id,
                 "summary": "车站重逢场景已经完成，并留下后续追查的悬念。",
-            })
-            .to_string();
-            let second_response = format!(
-                "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
-                json!({
-                    "choices": [{
-                        "index": 0,
-                        "delta": { "content": submission },
-                        "finish_reason": Value::Null,
-                    }],
-                }),
-                json!({
-                    "choices": [{
-                        "index": 0,
-                        "delta": {},
-                        "finish_reason": "stop",
-                    }],
-                    "usage": {
-                        "prompt_tokens": 29,
-                        "completion_tokens": 11,
-                        "total_tokens": 40,
-                    },
-                }),
+            });
+            let second_response = submission_sse_payload(
+                "body-submission-call-1",
+                nekowriter_agent::runner::SUBMIT_CHAPTER_TOOL,
+                &submission,
+                29,
+                11,
             );
             write_sse_response(&mut stream, &second_response).await;
         });
@@ -5746,6 +6540,47 @@ mod tests {
             write_sse_response(&mut stream, response).await;
         });
         (format!("http://{address}/v1"), receiver)
+    }
+
+    /// 阶段提交工具调用的完整流式响应：增量携带 `tool_calls`，结束原因是
+    /// `tool_calls`，并附带用量。阶段终态只能是提交工具调用，假服务也必须这样回答。
+    fn submission_sse_payload(
+        call_id: &str,
+        tool: &str,
+        arguments: &Value,
+        prompt_tokens: i64,
+        completion_tokens: i64,
+    ) -> String {
+        let chunk = json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": tool,
+                            "arguments": arguments.to_string(),
+                        },
+                    }],
+                },
+                "finish_reason": Value::Null,
+            }],
+        });
+        let finished = json!({
+            "choices": [{
+                "index": 0,
+                "delta": {},
+                "finish_reason": "tool_calls",
+            }],
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            },
+        });
+        format!("data: {chunk}\n\ndata: {finished}\n\ndata: [DONE]\n\n")
     }
 
     async fn write_sse_response(stream: &mut TcpStream, payload: &str) {

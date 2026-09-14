@@ -1142,3 +1142,188 @@ M3 使用真实 InferX `deepseek-v4.1-flash` 端点和 `reasoning_effort=low` �
 新版提示词把准备、细纲、正文和各类审核按实际职责分开：准备阶段固化可随折叠产物传递的创作约定，细纲明确起始状态、知情边界、场景目标/阻力/选择/后果与收束，正文强调人物声音、具体场景、因果连续性和增量工具编辑，审核按可见依据区分阻断问题与建议，并要求可定位、可修复的意见。质量原则参考 [no-ai-slop 编辑规则](https://github.com/petergyang/no-ai-slop/blob/main/skills/no-ai-slop/SKILL.md) 与本地 [NovelOps writer 提示词](/Users/misaka/Downloads/novel-ops-v1.0.0/novel-system/static/prompts/writer.md)，没有复制固定字数、AI 比例或跨题材禁词表。
 
 验证结果：`cargo fmt --all -- --check` 通过，工作区 198 个 Rust 测试全部通过；macOS `aarch64-apple-darwin` 使用 InferX `deepseek-v4.1-flash`、`reasoning_effort=low` 完成准备四产物、两章主线、一个番外、审核、完本、稿本复制和 Markdown/TXT 导出。三章均为已通过正文，16 次写作请求记录输入 69,857、输出 15,209、推理 9,705 个 token；请求快照保留有效思考等级，生成产物包含可传递创作约定和章节因果信息。
+
+## 35. 2026-09-13 阶段提交改为提交工具调用
+
+§15.6 与 §32、§33 里真实端点跑通的准备阶段，在换成 `deepseek-v4.1-flash` 后暴露出一个此前被掩盖的失败模式：模型连续三轮把 10 章章节清单写进 `outline` 产物的正文，从不输出顶层 `chapter_plan` 数组；三轮提交都是合法 JSON，但缺了合同要求的字段，于是同一个 `protocol_error` 被连续记录了三次，Run 以 `waitReason = protocol_error_limit` 停下。
+
+根因不在模型，而在协议本身。阶段提交原本是一段散文 JSON：模型唯一能得知「缺的是哪一项」的渠道是一条纯文本的用户纠正消息，而与提交同一轮的辅助文本无法携带字段级回执；`response_format=json_object` 又让 `OpenAI` 兼容服务把「本轮必须给 JSON」理解为「本轮不要调用工具」，工具与终态提交因此在带工具的阶段互相排斥（§15.6 记录过正文阶段为此去掉该字段）。
+
+本次把这层协议整体换成工具调用，并删掉随之失效的旧路径：
+
+- 每个阶段声明恰好一个提交工具（`submit_preparation` / `submit_chapter_outline` / `submit_chapter` / `submit_review`）。工具 schema 与 `parse_phase_submission` 同源：准备阶段的产物清单按本轮真正需要提交的项生成，本轮含粗纲时 `chapter_plan` 是 `required`；章节级 `chapter_id` 被声明成单值 `enum`，模型没有推断余地。
+- 提交参数校验失败时，被拒的那次调用拿到一条配对的错误工具结果，里面是解析器给出的具体原因（缺哪一项、哪个取值非法），模型可以在同一次调用里补齐；成功提交写配对的 `applied` 结果。账本因此始终成对，`serialize_request_messages` 的 `MissingToolResult` 校验在重放准备、细纲、正文历史时不会失败。
+- 没有提交工具调用的纯文本终态不再被当作提交：它按协议错误处理，纠正消息点名该调用哪个工具，Run 仍在剩余额度与连续协议错误上限内继续。
+- 所有阶段去掉 `response_format`，并删除 `ModelCapabilityProfile.structured_output` 与前端「结构化提交」开关；工具能力因此成为写作与审核共同的硬要求，`pre_dispatch_capability_problem` 不再需要按用途分支。
+- 细纲提交去掉 `goals`：它一直被解析校验却从未落库，属于合同里承诺了却不存在的字段。
+
+验证：`cargo test --workspace` 202 通过（agent 39、app 47、core 38、store 74、xtask 4）、`cargo fmt --all -- --check` 通过、`cargo clippy --workspace --all-targets` 无新增告警（余下的是既有基线）、`pnpm --dir webui typecheck` 与 `build` 通过。调度器的假服务改为真的发出 `tool_calls` 增量与 `tool_finish_reason`，准备、细纲、正文三条 lane 的端到端断言据此更新；账本消息数相应地从「1 条 assistant 文本」变为「提交调用 + 配对结果」。
+
+### 35.1 真实 InferX 端点复跑（同日随后执行）
+
+复跑口径：用当前源码构建的 `target/debug/nekowriter --data-dir /tmp/nw-toolcall-replay`（监听 127.0.0.1:8799），系统写作模型改指本机记录代理 127.0.0.1:8798，代理逐字节转发到 `https://model.inferx.net/endpoints/v1` 并把请求体与响应流落盘；代理唯一附加行为是在上游返回 429 时按固定间隔重试（端点当时经常整体无容量）。模型 `deepseek-v4.1-flash`，能力 streaming / tools / streamUsage / thinking，`maxContextTokens = 65536`，`reservedOutputTokens = 8192`，项目 `thinkingLevel = off`。新建 v2 稿本，用同一句小说目标（「写一个三章短篇：雨夜，值夜班的车站播音员收到一封预告列车事故的匿名信。」）发起准备阶段。
+
+**请求侧：改动已经在真实请求里生效。** 准备阶段第一轮请求体 6,988 字节，顶层字段恰好是 `messages, model, parallel_tool_calls, stream, stream_options, tool_choice, tools`——不再有 `response_format`。`tools` 两项：`ask_user`（required `questions`）与 `submit_preparation`（required `artifacts, chapter_plan`）。system 末尾的阶段提交契约原文为：
+
+> 阶段提交：本轮结果只能通过 `submit_preparation` 工具提交，不要在普通文本里输出 JSON，也不要在工具调用之外附加说明。
+> 工具参数的 `artifacts` 必须恰好包含 background、research、characters、outline 各一次（本轮只需提交这些产物），每项 content 不能为空。
+> `chapter_plan` 是本轮章节清单的唯一承载字段，至少一项；只把章节清单写进粗纲的 content 不算提交，它必须放在 chapter_plan 里，且标题、顺序与目标同粗纲一致。
+
+请求里没有 `max_tokens`，`reservedOutputTokens` 只影响上下文预算，不构成这把输出上限。
+
+**模型侧：不再走散文 JSON。** 真实响应流里出现的就是提交工具调用，例如 `data: {…,"delta":{"tool_calls":[{"index":0,"id":"call_05aab32cec87464db8b5850d","type":"function","function":{"name":"submit_preparation"}}]}}`，随后 `arguments` 以 `{"artifacts":[{"kind":"background","content":"【创作约定】…` 开头。原来那种「10 章清单塞进 outline 正文、顶层没有 `chapter_plan`」的形态在协议上已经不存在：散文 JSON 不再是一条可被接受的提交路径。
+
+**但这条真实请求没有跑完，原因在端点侧。** 应用侧的两次真实请求分别记到 `模型服务在首包阶段超时`（上游 429 把 45 秒首包窗口耗尽）与 `模型服务在流空闲阶段超时`；代理捕获的响应流停在 `research` 产物正文中间，`finish_reason` 与 usage 都没到。为把端点行为与应用的超时分开，用同一份请求体绕过应用直连端点复放：总共 850,076 字节 / 270 秒，**中途出现 134.2 秒完全没有字节的空档**（应用的流空闲上限是 90 秒），结束时给出 `finish_reason:"tool_calls"`、usage `prompt 1802 / completion 9127 / reasoning 4526 / cached 1792` 与 `[DONE]`，但 `arguments` 字符串在 1,889 字符处被截断（正文停在「…其中包括一」后直接跟 finish 事件），因此这轮工具调用的参数不是合法 JSON。两个事实同时成立：端点静默超过应用上限，请求会在拿到参数前就被中止（本次实际先到的就是这个错误）；而参数即便送达也已经是截断的——当时 `provider.rs` 把无法解析的工具参数记成 `ProviderError::InvalidStreamToolArguments`，所以它会以 `provider_error` 结束这一轮，而不是走「错误工具结果 + 纠正消息」那条协议路径，本轮 Run 因此需要用户显式继续。这一处分类缺陷已在 §35.2 修复；端点侧的静默与 429 未动，仍属下一步与用户确认的范围。
+
+**提交工具这条通道本身可用，字段级要求也已取得真实证据。** 受控探测（同端点、流式、`tools` 里一个 `submit_text`，required `payload`）在 400 / 2000 / 6000 字符三档上分别返回 418 / 2292 / 3271 字节的 `arguments`，全部完整合法、`finish_reason = tool_calls`，说明多 KB 的参数可以正常送达；以与 `submit_preparation` 相同的 schema（required 含 `chapter_plan`）发一次最小真实请求，模型返回完整工具调用，`chapter_plan` 是顶层数组、三项标题与目标齐全（如「第一章：末班车的第三封信」+ 该章需要发生什么）。因此「模型会把章节清单放进 `chapter_plan`」在真实端点上成立。
+
+**仍未取得的部分**：这条「四项产物 + 章节计划」的巨大提交没有在真实端点上完整落地，`docs/01` §8 的退出标准仍以完整跑通为准，本节不声称准备阶段端到端真实验收通过。复跑途中反复出现的端点侧约束是：`service failure: endpoint deepseek-v4.1-flash all replicas at capacity` 的 429（按 5 秒间隔重试时，一次请求在 45 秒首包窗口内重试 10 次仍未拿到 200；按 3 秒间隔重试时到第 6 次、约 26 秒后才拿到 200）、上面那条 >134 秒静默、以及这轮 `arguments` 的截断。是否为此放宽模型超时、下调单轮产物体积或改变提交粒度，属于与用户确认后的下一步。
+
+### 35.2 不可解码的提交工具参数改按「被拒的提交」处理
+
+§35.1 暴露的不只是端点行为，还有一处分类缺陷：上一轮提交工具的 `arguments` 不可解码（被截断、不是合法 JSON、不是 object）时，`provider.rs` 拿它当传输失败，整轮以 `provider_error` 收场。模型既拿不到自己那次调用被拒的配对回执，也没有任何可重试的路径，Run 只能等用户显式继续——这与「阶段结果必须通过提交工具提交，失败由调用方变成配对回执 + 纠正消息」这条协议正面冲突。本轮只修这一处，端点侧的首包/流空闲超时与 429 重试策略按用户边界未动。
+
+**改动的分界线在「谁的输入坏了」。** 参数是模型给的，就不是传输失败：适配器负责把响应里的每个调用完整还原，解码责任交给阶段守卫。因此 `complete_stream_tool_call` 不再对不可解码的参数报错，而是把模型给出的原文（JSON string）连同调用 ID、名称一起保留；`ModelToolCall::decode_arguments` 给出具体原因（「参数不是合法 JSON：…」/「参数必须是 JSON object」），来源是模型的那次调用就走被拒提交（`InvalidPhaseSubmission` + 参数原文），业务工具调用走 `UndecodableToolArguments`（同样配对错误结果 + 纠正）。两条路径都计入既有的连续协议错误上限，也就是模型可以在限额内补齐后重跑。
+
+同一个缺陷类的另一条出口是单参数 256 KiB 上限（`MAX_TOOL_ARGUMENT_BYTES`、`ToolArgumentsTooLarge`、`ToolCallArgumentsTooLarge`）：它同样是「模型把参数写长了」变成整轮传输失败。单次响应总上限（2 MiB）已经界定了参数体积，独立的参数上限只多造一条不可纠正的死路，因此随本轮一并删除；`validate_complete_tool_call` 现在接受 object 与原文两种形态——不可解码的那次调用必须能连同配对结果一起重放，否则重放的配对校验会把可纠正的协议错误升级成 `MissingToolResult`。
+
+**账本级回归测试**（`crates/nekowriter-app/src/scheduler.rs`，与「被拒的提交」共用同一条真实链路：假 SSE 服务 → 适配器 → 阶段守卫 → Store 事务）。
+
+| 测试 | 断言 | 修复前 | 修复后 |
+| --- | --- | --- | --- |
+| `submission_without_a_chapter_plan_records_a_paired_rejection` | 缺 `chapter_plan` 的提交：请求终态 `protocol_error`（不是 `provider_error`）、配对的错误工具结果含 `PHASE_SUBMISSION_INVALID` 与 `chapter_plan`、随后一条 `protocol_correction`、`consecutive_protocol_errors = 1`、历史重放为「调用 + 配对结果 + 纠正」三连 | 通过（守护 §35 的提交工具重构） | 通过 |
+| `truncated_submission_arguments_are_rejected_instead_of_failing_the_run` | §35.1 那轮被截断的参数：原文逐字保留在账本、配对错误工具结果含 `PHASE_SUBMISSION_INVALID` 与「不是合法 JSON」、纠正消息、`consecutive_protocol_errors = 1`、历史里调用与结果配对 | **失败**：`这一轮提交必须留下配对的工具结果: Elapsed(())`——整轮根本不落库 | 通过 |
+
+第二条的「修复前」不是推断：把 `complete_stream_tool_call` 的不可解码分支临时改回返回 `ProviderError`（备份原文后改动、跑完立即 `cp` 还原，还原后全量测试重跑通过），该测试即以上面那条 panic 失败；第一条同一时刻仍通过，说明它守护的是上一轮重构而不是本轮修复，两条各司其职。
+
+**验证**（一次批量）：`cargo test --workspace` 207 通过（agent 42、app 49、core 38、store 74、xtask 4）、`cargo fmt --all -- --check` 干净、`cargo clippy --workspace --all-targets` 无新增告警。真实端点复跑留给下一轮：本轮只证明「参数不可解码时协议仍然闭合」，不证明端点能把这份 8.5 KB 参数完整送达。
+
+**排查：其余仍会致死的坏提交路径**（同一次通读四条 lane 的 `classify_model_completion` 分支）。
+
+1. **委托审核 lane 没有纠正回路**（`scheduler.rs::handle_delegated_review_completion`，`classify_model_completion(PhaseSubmissionKind::Review, …)` 的 `Err` 分支）。准备、细纲、正文三条写作 lane 的 `Err` 都交给 `record_model_protocol_correction`，审核 lane 却直接 `persist_delegated_review_failure(…, "protocol_error", …)`，由 `fail_delegated_review_attempt` 把审核重新开放。这不是本轮修复覆盖的四条提交路径中的同一处缺陷，而是一种不同的设计：审核结论不可纠正，失败只重开审核，模型也拿不到配对回执。它按缺陷上报、本轮不改——要改成写作 lane 那样，需要先决定「审核失败重开」与「让模型改写结论」哪个才是要的行为。
+2. **提交已通过但 `commit_*_model_submission` 写库失败时，assistant 工具调用会落成未配对记录**（`persist_model_failure(…, "submission_commit", …)` → `resolve_model_request_inner` 只追加 assistant 消息）。这类 Run 以 `failed` 结束，但用户显式继续会在同一个 Run 上重放历史，`serialize_request_messages` 会以 `MissingToolResult` 拒绝——同样是「一个坏掉的消息序列变成 provider error」。它与本轮修的分类缺陷不同源（模型这次没说错，是本地事务失败），因此只上报。
+3. 纯文本终态已不存在可用路径：`classify_model_completion` 对空 `tool_calls` 返回 `MissingSubmissionToolCall`，三条写作 lane 都会把它变成点名提交工具的纠正消息（已由 §35 的 `preparation` lane 用例与 runner 单测覆盖）。
+
+### 35.3 真实端点完整复跑：准备阶段端到端跑通（同日 07:23–07:39）
+
+这一轮的目的是取回 §35.1 缺的那一段：**在同一条真实链路上确认模型把章节清单放在顶层 `chapter_plan`，而不是塞进粗纲正文**。
+
+**装置。** 应用是当前源码的 debug 构建（`cargo build -p nekowriter-app`），`--data-dir /tmp/nw-rerun/data`、监听 127.0.0.1:8801，由 `launchctl submit -l com.nekowriter.rerun` 拉起（不经终端会话，避免被信号回收）。驱动脚本 `/tmp/nw-rerun/{drive,answer,review}.py` **只调应用自己的 HTTP API**（`GET/PUT /api/settings` → `POST /api/settings/test-model` → `POST /api/projects` → `PUT /api/versions/{id}/brief` → `POST /api/versions/{id}/preparation/start` → `POST /api/questions/{id}/answer` → `POST /api/reviews/{id}/delegate`），模型请求全部由应用自己构造，没有手工拼过。抓包是 `/tmp/nw-rerun/proxy.py`——**透明中继**：不重试、不改写、不补字节，上游给什么就给应用什么，同时把每次请求体写入 `requests.jsonl`、响应流写入 `responses/`，并把上游状态码、首包时间、总耗时与**最长零字节空档**逐条记入 `timeline.jsonl`。
+
+**模型替换（必须写明的环境事实）。** `deepseek-v4.1-flash` 在本轮整个窗口内不可用：直连探测 8/8 都是 429 `service failure: endpoint deepseek-v4.1-flash all replicas at capacity`（07:17 一次、07:42 复核一次）。因此写作模型换成同一端点、同一凭据下的同族 `deepseek-v4-flash-0731`（同批探测 200）。**所以本节结论属于 `deepseek-v4-flash-0731`，不是§35.1 那个模型。**
+
+**请求侧（准备阶段第一轮真实提交，抓包第 4 条，10,821 字节）。** 顶层字段恰好是 `messages, model, parallel_tool_calls, stream, stream_options, tool_choice, tools`，**没有 `response_format`**；`tool_choice: auto`、`parallel_tool_calls: false`；`messages` 6 条（system、user，然后是两轮 `ask_user` 的调用/结果对）。`tools` 恰好两项，`required` 数组原文为：
+
+```
+ask_user            required = ["questions"]
+submit_preparation  required = ["artifacts", "chapter_plan"]
+```
+
+`submit_preparation` 的 schema 把 `chapter_plan` 定为**顶层**属性：`type: array`、`minItems: 1`、每项 `required: ["title", "goal"]`、`additionalProperties: false`；`required` 是 `["artifacts", "chapter_plan"]`。system 末尾的阶段提交契约原文：
+
+> 阶段提交：本轮结果只能通过 `submit_preparation` 工具提交，不要在普通文本里输出 JSON，也不要在工具调用之外附加说明。
+> 工具参数的 `artifacts` 必须恰好包含 background、research、characters、outline 各一次（本轮只需提交这些产物），每项 content 不能为空。
+> `chapter_plan` 是本轮章节清单的唯一承载字段，至少一项；只把章节清单写进粗纲的 content 不算提交，它必须放在 chapter_plan 里，且标题、顺序与目标同粗纲一致。
+> 缺少必填字段或字段非法时整轮提交会被拒绝、不会保存任何产物：工具结果里会给出具体原因，请在同一次调用里补齐后重新提交。
+
+**模型侧（同一次响应，抓包第 4 条）。** `finish_reason = "tool_calls"`，工具名 `submit_preparation`，调用 id `chatcmpl-tool-a4d0f3c5414c4cb0`；`arguments` **14,342 字节**，是合法 JSON object，顶层键恰好 `["artifacts", "chapter_plan"]`。`chapter_plan` 是顶层数组，**3 项**，与粗纲一致：
+
+| 序 | 标题 | goal（截断） |
+| --- | --- | --- |
+| 1 | 雨夜·来客 | 建立雨夜小站的值班环境与周辰的孤独处境；周辰在广播室发现预言列车的匿名信… |
+| 2 | 隐患·回溯 | 通过行车日志与监控碎片展开三年前广播失误致林婉事故的回忆，周辰核查预告条件… |
+| 3 | 零点·广播 | 揭示匿名信作者为林婉之姐林清、预告本为试探而非真实事故；周辰冲上站台公开道歉… |
+
+`artifacts` 四项齐全（background 1055 字符 / research 643 / characters 1578 / outline 1381）。§35.1 里「清单只进 outline 正文、顶层没有 `chapter_plan`」的形态没有出现。
+
+**账本侧（应用自己的库）。** 准备 Run `e6017282-00ba-45ea-b3ec-36a28e440e1f` 的 `agent_messages` 里，序列 7 是 `assistant_tool_calls`（`submit_preparation`，同一调用 id、同一份参数），序列 8 是 `tool_call_id = chatcmpl-tool-a4d0f3c5414c4cb0` 的 tool 消息，内容 `{"code":"PHASE_SUBMISSION_ACCEPTED","status":"applied"}`——**提交调用与它的结果在真实账本里配对闭合**。四个产物落库为 rev 1；`outline` 的 `chapterPlan.items` 是 3 项、`orderIndex` 1/2/3；`GET /api/versions/{id}/chapters` 给出 3 章，标题与顺序逐字等于上面的 `chapter_plan`（`雨夜·来客` / `隐患·回溯` / `零点·广播`）。**章节来源可以钉死**：`commit_preparation_model_submission`（`model_requests.rs:606`）只接受 `submission.chapter_plan`，没有任何一处从粗纲正文里解析章节。四项审核全部由审核 Agent 判过（`decision_source = agent`，confidence 0.92 / 0.85 / 0.82 / 0.85）。
+
+**终态（应用 API）。** 工作流 `preparing_generating/queued` →（两轮 `ask_user`）→ `preparing_reviewing/waiting_review` → **`writing_chapter_ready/idle`**（stateRevision 13）；准备 Run `status = succeeded`、`request_count = 3`、`consecutive_protocol_errors = 0`。9 条抓包请求全部 200，全程没有 429、没有 provider 错误（超时/连接失败一类都没有）；唯一的失败是下面那条审核协议错误。
+
+**一句诚实话：准备阶段这次端到端跑通了**——四项产物提交、落库、全部通过审核，工作流自己推进到了正文阶段。
+
+**同一轮里真实发生的审核 lane 缺陷（§35.2 上报第 1 条的第一个真实样本）。** 粗纲审核的第一次委派（review Run `04fd5ab6-22c6-4f12-907d-7f5660d6de00`）以 `failed` 结束，错误原文是 `{"kind":"protocol_error","message":"模型对提交工具 submit_review 的调用无效：提交工具的参数不是当前阶段要求的 JSON：invalid type: string \"[…\", expected a sequence"}`——模型把 `issues` 写成了**装着数组的 JSON 字符串**（`"issues":"[\"【建议】…\"]"`），内容对、形状错，正是本轮修的那一类失败在审核阶段的翻版。它的账本 `agent_messages` 只有 system / user / assistant 三条，**没有任何配对工具结果**：审核 lane 确实没有纠正回路。这一轮能继续，是因为驱动脚本在下一轮轮询里发现该审核又变回 `open` 并**第二次委派**（Run `914bbbe6-c5ae-47b8-9769-a37bee05a621`，同一次提交通过、confidence 0.85）；换成界面，用户得自己点重试。这条与 §35.2 的判断完全一致，也说明修它是下一轮值得做的事，而不是本轮顺手改的东西。
+
+**本节证明了什么、没证明什么。**
+
+- **在要求的路径上（应用自己的界面/API → 调度器 → 适配器 → 真实端点）新取得的证据**：顶层 `chapter_plan` 在真实提交里存在且被应用消费；提交调用与配对结果在真实账本里闭合；准备阶段端到端完成；14,342 字节的工具参数完整送达并解码（这同时替代了 §35.1 里 400/2000/6000 字符的受控探测——量级大得多，而且是应用自己发的请求）。
+- **仍然只有账本级测试、尚未取得真实端点证据**：§35.2 修的那条路径——「参数被截断/不可解码时按被拒提交处理」——本轮**没有复现**。§35.1 的 >134 秒零字节静默与 1,889 字符截断都没再出现：本轮准备阶段请求的最长空档是 32.4 秒（上限 90 秒），参数完整合法。所以那条修复目前只由 `truncated_submission_arguments_are_rejected_instead_of_failing_the_run` 与 runner/provider 单测证明，真实端点上的证据仍是空白。
+- **未参与本轮的对象**：`deepseek-v4.1-flash` 因端点容量全程 429，本轮没有任何一次它发出的响应，因此「原模型现在会把清单放进 `chapter_plan`」这一句在本节只对 `deepseek-v4-flash-0731` 成立；`docs/01` §8 的退出标准（完整跑通准备阶段）按本节结论对替换后的模型成立，对原模型未验证。
+
+### 35.4 审核 lane 的提交纠正回路（样本取自 §35.3）
+
+**真实样本。** §35.3 那轮里，粗纲审核的第一次委派（Run `04fd5ab6-22c6-4f12-907d-7f5660d6de00`）以 `failed` 收场，错误原文是 `{"kind":"protocol_error","message":"模型对提交工具 submit_review 的调用无效：提交工具的参数不是当前阶段要求的 JSON：invalid type: string \"[…\", expected a sequence"}`——模型把 `issues` 写成了装着数组的 JSON 字符串（`"issues":"[\"【建议】…\"]"`），内容对、形状错。它的 `agent_messages` 只有 system / user / assistant 三条，**没有任何配对工具结果、也没有纠正消息**；Review 直接回到 `open`，界面里用户必须再点一次「委托审核」（§35.3 是脚本第二次委派 `914bbbe6-c5ae-47b8-9769-a37bee05a621` 才通过）。写作三条 lane 从 §35.2 起对同一种输入走「配对错误工具结果 + 纠正 + 计数」，审核 lane 是唯一例外。
+
+**改动。**
+
+- `nekowriter-agent`：`deserialize_review_issues` 单独接管 `RawReviewSubmission.issues`，认出「装着数组的 JSON 字符串」并给出点名原因 `审核 issues 必须是字符串数组，不能是装着数组的 JSON 字符串；请把数组直接放在 issues 字段上`；字符串、非字符串项各有一句（`收到数组` / `收到字符串` / `收到布尔值` 等）。这句话原样进入配对的错误工具结果与纠正消息。
+- `nekowriter-app`：`handle_review_completion` 里 `classify_model_completion` 的 `Err` 分支不再直接收束本次委托，改走调度器唯一的 `record_protocol_correction`，以 `ProtocolCorrectionTarget::DelegatedReview { review_id }` 指明这次纠正记在审核子 Run 头上，与写作 lane 共用 `protocol_correction` 的原因码与文案（`PHASE_SUBMISSION_INVALID` / `TOOL_ARGUMENTS_INVALID` / `PARALLEL_TOOL_CALLS_NOT_ALLOWED` / `PROTOCOL_ERROR`）；`requeue` 为真时 lane 重发一次审核请求（同一个 `LaneCommand::Start` 入口，与写作 lane 一致）。
+- `nekowriter-store`：`record_model_protocol_correction` 接受 `ProtocolCorrectionTarget`，在目标 Run（写作 Run 或**审核子 Run 自己的**）账本里追加「被拒调用 + 配对错误结果 + 纠正」，`consecutive_protocol_errors` 沿用同一个 `MAX_CONSECUTIVE_PROTOCOL_ERRORS`；审核 target 达上限时按原行为收束（子 Run `failed`、`reopen_delegated_review`）。重排请求的历史只由该子 Run 的账本渲染，所以被拒调用与它的结果始终成对，`serialize_request_messages` 不会看到未配对的 assistant 工具调用（审核子 Run 本就不重放父 Run 历史）。§35.5 把这条路径收拢到 `store::protocol_correction` 一个模块。
+- `nekowriter-store`（可见性，本轮补上）：被拒的那一轮在同事务里写两条事件——`run.changed`（`kind = review`、`status`、`request_id`、`request_count`、`consecutive_protocol_errors`、达到上限时的 `wait_reason = protocol_error_limit` ＋ `protocol_correction = true`）与 `review.changed`（`status = delegated`、`attempt_id`、`review_id`、`request_id`、`consecutive_protocol_errors` ＋ `protocol_correction = true`），字段与写作 lane 的纠正事件一致。`consecutive_protocol_errors` 只通过事件暴露给客户端（快照与 Dashboard 的 DTO 都不含该字段），没有这两条事件，这次纠正对外就是完全不可见的——审核停在 `delegated`、随后突然重新开放，正是原始报告结尾那句抱怨。同时子 Run 的 `request_allowance_end` 从 1 改为 `MAX_CONSECUTIVE_PROTOCOL_ERRORS`（3）：被拒后必须能重提，额度要容得下重提轮数，否则「可纠正的提交」会在重排时撞上额度耗尽，反而变成不可纠正的失败（docs/02 §2.3 已写明这条例外）。
+
+**测试证据（本节的用例都实测「改前失败、改后通过」，包括本轮补上的事件断言）。**
+
+- `scheduler::tests::rejected_review_submissions_are_paired_and_retried_up_to_the_limit`：同一份 JSON 字符串 `issues` 连发三次——三条请求都 `succeeded` 且 `error.kind = protocol_error`，每次都能按 `tool_call_id` 找到配对的错误工具结果（含 `PHASE_SUBMISSION_INVALID`、`issues`、「不能是装着数组的 JSON 字符串」），末尾一条 `protocol_correction` 点名 `submit_review`；`requests.len() == 3` 之后 Review 重新 `open`。第二次请求原文里带着 `review-call-1`、`PHASE_SUBMISSION_INVALID` 与「未通过本阶段校验」，且 user/tool 消息计数为 2/1——重提确实带着自己的错误历史，初始输入没有重复堆叠。**改前**以 `被拒的审核提交必须重提: Elapsed(())` 失败（旧分支直接收束为 `failed`，不再排队）。
+- `scheduler::tests::corrected_review_resubmission_commits_the_decision`：第一次被拒、第二次合法提交真的落成 `approved`（`passed = Some(true)`），整次委托不作废。**改前**以 `合法重提必须应用审核决定: Elapsed(())` 失败。
+- `nekowriter-agent::runner::tests::review_issues_as_a_json_string_names_the_field_and_the_expected_shape`：解析器对同一形状给出点名原因，真正的数组仍然通过。**改前**失败（回落到泛泛的类型错误）。
+- 同一个用例还断言事件：三轮纠正各写一条 `run.changed`（`protocol_correction = true`，`consecutive_protocol_errors` 依次 1/2/3，最后一轮 `wait_reason = protocol_error_limit`，前两轮为 null）与一条 `review.changed`（`status = delegated`、`attempt_id` 为子 Run、“`consecutive_protocol_errors` = 1”），随后仍是原来的「委派失败 + Review 重新开放」两条事件。**改前**（只回退事件写入）以 `left: 0, right: 3` 失败。
+- `scheduler::tests::truncated_review_arguments_are_corrected_then_resubmitted`：把 §35.1 那种被端点截断的参数（`{"passed": true, "confidence": 0.82, "issues": ["【建议】第三章`）交给审核 lane——账本里逐字保留模型原文、回执含 `PHASE_SUBMISSION_INVALID` 与「不是合法 JSON」、请求终态是 `protocol_error` 而不是 `provider_error`，第二轮合法重提真的落成 `approved`（子 Run 只发两轮请求）。**改前**：事件断言失败（回退事件写入后同一位置失败）。
+
+**排查：其它仍会致死的 `submit_review` 形状。** 审核请求只声明 `submit_review`（`delegated_review_lane_declares_only_the_submission_tool` 断言请求里恰好只有它），所以 `classify_model_completion` 对审核阶段只可能返回 `Submission` 或 `Err`：任何非 `submit_review` 的调用名都命中 `DisallowedToolCall` / `UndeclaredToolCall`，同样走纠正。`handle_review_completion` 里 `Ok(outcome)` 的 `unexpected_outcome` 分支因此在当前声明下不可达（保留为防御）。仍然致死的两条路径都不是「提交形状」，按要求保持原行为：`Err(provider_error)`（传输失败）与 `submission_commit`（提交合法但写库事务失败，例如状态冲突或目标已变）。
+
+**未证明的部分。** 这条回路目前只有调度器/账本级测试背书：本轮按约定没有再用真实端点复跑，因此「真实端点上下一次委派能靠纠正自愈」仍未在端点上验证；§35.1 的 >134 秒静默与本节的 1,889 字符截断仍然是端点行为，不是应用能修的。§35.3 的环境事实（写作模型替换为 `deepseek-v4-flash-0731`、`deepseek-v4.1-flash` 全程 429）也不因此改变。截断参数（写作 lane 与审核 lane）这一形状同样仍未在真实端点复现过，两边的证据都来自假服务。另外这两条事件只是把纠正写进了事件流：工作台目前不渲染 `consecutive_protocol_errors`（没有任何 DTO 携带它，唯一消费者是事件订阅方），所以界面上仍看不到「正在第几次纠正」这样的进度，那是另一次界面工作。
+
+### 35.5 协议纠正收拢到单一模块（架构轮 + 真实二进制复跑）
+
+**背景。** §35.2 与 §35.4 给两条 lane 补上了同一种行为，但写成了两份事务：写作 Run 的 `Store::record_model_protocol_correction`（当时在 `model_requests.rs`）与审核子 Run 的 `Store::record_delegated_review_protocol_correction`（在 `preparation.rs`，连同 `apply_delegated_review_protocol_correction` / `settle_delegated_review_protocol_correction` / `review_correction_run_event` / `review_correction_review_event`），加上调度器里两个几乎逐行相同的 wrapper。同一条策略（配对消息、计数、事件、达上限收束）有两个所有者，任何一处改动都得改两遍。
+
+**结构（本轮产出，后续按此扩展）。** 新增 `crates/nekowriter-store/src/protocol_correction.rs`，它是「被调度器判为不合格的模型回合」的唯一入口（§35.6 修正了本节原来的说法：`preparation.rs` 还有两处不由调度器判定的拒绝，见那里）：
+
+- `record_model_protocol_correction(target, correction)` 是唯一的事务入口；请求 id 从 `correction.assistant_message.request_id` 推出，不再由调用方另传（少一个能写错的地方）。
+- `ProtocolCorrectionTarget`（`WritingRun` / `DelegatedReview { review_id }`）是两条 lane 唯一的差别开关，分派到 `settle_writing_run`（工作流继续/停止 + `run.changed`/`workflow.changed`）或 `settle_delegated_review`（`run.changed`/`review.changed` + 子 Run 失败/重开 Review）。`RejectedRound` 把两边都要用的那一轮事实只组装一次。
+- `ModelProtocolCorrection`、`ProtocolCorrectionOutcome` 随该模块公开；`ModelProtocolCorrectionResult`、`DelegatedReviewProtocolCorrectionResult` 删除——两条 lane 返回同一个结果类型。
+- 留在原处的是「因为一个回合怎么被拒」与「写给模型的消息长什么样」：阶段守卫在 `agent::runner`，纠正文案与原因码在调度器的 `protocol_correction`，消息构造 `protocol_correction_messages` / `validate_model_protocol_correction` / `protocol_error_tool_result_messages` 留在 `model_requests` 并改为 `pub(crate)`；`preparation` 只对 sibling 暴露收束所需的 `delegated_review_attempt`（字段对 crate 内可见）、`fail_delegated_review_child_run`、`reopen_delegated_review`。
+- 调度器侧两个 wrapper 合成一个 `record_protocol_correction(target, …)`，日志用 `lane = ?target` 区分。
+
+删掉的代码：`record_delegated_review_protocol_correction`、`apply_delegated_review_protocol_correction`、`settle_delegated_review_protocol_correction`、`review_correction_run_event`、`review_correction_review_event`、`DelegatedReviewProtocolCorrectionResult`、`ModelProtocolCorrectionResult` 与调度器的第二个 wrapper。这是形状改动，行为不变：既有用例（含 §35.2 / §35.4 的两条 ledger 级用例）一字未改地通过，正是这一步要的证词。
+
+**真实二进制复跑（本轮为此做的「真实运行」）。** 上一次真实端点复跑（§35.3）脚本：应用 `target/debug/nekowriter`（当前源码，`cargo build -p nekowriter-app`）监听 127.0.0.1:8802、全新数据目录 `/tmp/nw-refactor/data`，用 `launchctl submit` 拉起；模型侧换成脚本化假端点 `/tmp/nw-refactor/fake_model.py`（`launchctl submit -l com.nekowriter.fakemodel`，监听 127.0.0.1:8797/v1，实现 OpenAI 兼容流式子集）。驱动 `/tmp/nw-refactor/drive2.py` 只用应用自己的 HTTP API（settings → test-model → projects → brief → preparation/start → 逐个委派四项产物审核）。假端点按剧本制造两种被拒形状：第 1 次 `submit_preparation` 不带顶层 `chapter_plan`，第 1 次 `submit_review` 把 `issues` 写成装着数组的 JSON 字符串；之后都发合法提交。
+
+结果（全部取自这次运行自己的 SQLite 账本）：
+
+- 准备 Run `dc96883b-c4bc-4496-bf15-8945f5680d33`：`request_count = 2`、终态 `succeeded`、`consecutive_protocol_errors = 0`（成功提交后清零）。消息序列：3 = `submit_preparation` 调用（`artifacts` 齐全、无 `chapter_plan`）；4 = `tool_call_id = fake-prep-1` 的配对工具结果，内容 `PHASE_SUBMISSION_INVALID` + `提交粗纲时必须同时提交至少一项 chapter_plan`；5 = `protocol_correction` 用户消息点名 `submit_preparation`；6 = 模型重提；7 = `PHASE_SUBMISSION_ACCEPTED` 的配对结果。
+- 第一份审核（子 Run `802e346c-8392-4551-82c9-62fa588a34c3`）：第 3 条调用 `issues` 是字符串 `"[\"【建议】内容可以更扎实\"]"`，第 4 条回执点名「审核 issues 必须是字符串数组，不能是装着数组的 JSON 字符串」，第 5 条纠正、第 6 条合法重提、第 7 条接受。子 Run `request_count = 2`、`consecutive_protocol_errors = 1`、终态 `succeeded`——这次委派在**没有人工重试**的情况下自愈（§35.4 里真实端点靠脚本第二次委派才过）。
+- 事件流里两种 lane 的纠正信号同形：`workflow.changed`（seq 9，`protocol_correction = true`、`consecutive_protocol_errors = "1"`）与审核侧的 `run.changed`（seq 21，`kind = review`、`wait_reason = null`）+ `review.changed`（seq 22，`status = delegated`）。
+- 提交真的落了库：3 章标题与 `chapter_plan` 逐字相同（雨夜·来客 / 隐患·回溯 / 零点·广播），7 条 `model_requests` 全部 `succeeded`，两条被拒回合的 `error_json` 是本地协议原因（`kind = protocol_error`）；工作流从 `preparing_generating/queued` 走到 `writing_chapter_ready/idle`。
+
+**未证明的部分。** 这一轮用的是脚本化假端点，它证明的是应用自己这条链（二进制 / HTTP / SSE 解析 / SQLite 事务 / 事件流）在重构后仍然闭合，**不**证明端点行为：§35.1 的 >134 秒静默与 1,889 字符截断仍然只在 §35.3 的抓包里出现过，§35.2 / §35.4 那两条修复依然没有真实端点上的证据。工作台不渲染 `consecutive_protocol_errors` 这一点也不变（§35.4 末段）。假端点与驱动脚本在 `/tmp/nw-refactor/`，是临时装置，不入库。
+
+### 35.6 被拒回合的计数必须与它旁边的事件一致（交接前审计发现）
+
+**缺陷。** `protocol_correction.rs` 的 `settle_writing_run` 总是落库 `next_error_count`，而 `settle_delegated_review` 只在未达上限的分支里落库：达上限那一轮只把子 Run 标成 `failed`（`fail_delegated_review_child_run` 当时只写状态、结束时间与 `updated_at`）。后果是一次耗尽限额的审核委托（三轮被拒）在 `runs.consecutive_protocol_errors` 里停在 **2**，而它刚写的 `run.changed` / `review.changed` 两条事件都说 **3**——落库状态与它自己发出的事件矛盾，而避免这类矛盾正是这个模块存在的理由。发现方式：交接前审计用脚本化假端点把审核 lane 逼到上限（三个被拒轮），对比 `runs` 与 `events` 两张表时看到 `2 vs 3`，连续五次委派都是这个数字。
+
+**修复。** 子 Run 的行每轮只写一次，两条分支都带上这一轮的计数：
+
+- `settle_delegated_review` 先在一个 `ActiveModel` 上写 `consecutive_protocol_errors` 与 `updated_at`，达上限时再用 `fail_delegated_review_child_run` 补上失败状态并同一次 `update` 落库；重开 Review 仍在同一事务里跟在后面。计数与事件来自同一个 `round`，两者不可能再分叉。
+- `fail_delegated_review_child_run` 从「自己开事务写四列」改成纯字段函数（`run::ActiveModel -> run::ActiveModel`）：它只定义「失败长什么样」，本轮自己的字段由调用方在同一次写入里补齐。取消/失败尝试那条路径继续用它，行为不变。
+
+**同类扫描（本模块内）。** 逐字段检查了被拒回合里会写库、且旁边就写着事件的字段：
+
+- `consecutive_protocol_errors`：上述缺陷，已修。
+- `status` / `ended_at`：两条 target 都在每个分支里写，事件里的 `status` 取自同一个值（写作 lane 为 `queued` / `stopped`）。
+- `request_count`：由派发时写入，结算函数不碰它，事件读的也是派发后的值。
+- 请求行的 `status` / `provider_request_id` / `usage_json` / `error_json` / `completed_at`：`apply_rejected_round` 无条件写全部六列，没有分支差异。
+- 工作流快照：写作 lane 在同一事务里 `persist_workflow`，审核 lane 不动工作流（它的事件用 `state_revision` 作版本）。
+
+**发现但不改的一处（不同类）。** 审核 lane 的 `run.changed` 纠正事件里的 `status` 取的是**本轮被拒之前**的值（`running`），而达上限那一轮行最终是 `failed`——失败由紧随其后的 `reopen_delegated_review` 两条事件（`run.changed status=failed`、`review.changed status=open`）宣布。这是「事件是本轮快照、状态变更另有归属」，不是「只写一半」：客户端按序应用事件后落在 `failed`，同一事务内自洽。要把它改成后置状态就得改事件字段的值与顺序，属于本次明令禁止的对外可见变更，因此按上报处理、未改。
+
+**计数策略收拢。** `preparation.rs` 里三处内联的 `checked_add(1)` 加溢出文案（正文工具结果路径、`commit_chapter_body_model_submission`、未投递意见分支）改为调用 `store::model_requests::next_protocol_error_count`：同一个判定、同一句错误文案现在只有一份实现。错误码、文案、数字、事件字段与顺序一律未动——`PHASE_SUBMISSION_REJECTED` 与 `PHASE_SUBMISSION_INVALID` 仍是两套词汇，本轮只统一策略。`docs/02` §2.1 已改成真实地图：`store::protocol_correction` 是被调度器判为不合格的回合的唯一入口，`preparation.rs` 另有两处不由调度器判定、不共享词汇但共享计数规则的拒绝。
+
+**测试。** `store::tests::rejected_review_round_persists_the_counter_it_publishes`（新增）把审核 lane 逼到上限：每一轮都断言 `runs.consecutive_protocol_errors` 等于该轮事件公布的 `consecutive_protocol_errors`，达上限那轮再断言行是 `failed`、计数为 3、Review 重新开放。**改前**以 `left: 2, right: 3`（第 3 轮）失败。写作 lane 一侧的同一不变量由 `store::tests::protocol_errors_requeue_with_paired_results_then_stop_at_the_limit` 逐轮断言——它在改前就通过，是守护而不是回归证据（写作 lane 本来就总是落库计数）。
+
+**同一装置复跑（修复后）。** 交接前审计发现这个缺陷用的那个假端点（`/tmp/nw-refactor/fake_invalid.py`：审核每轮都发「装着数组的 JSON 字符串」）再跑一次完整准备阶段：两份被逼到上限的审核子 Run 都是 `request_count = 3`、`consecutive_protocol_errors = 3`、`failed`，与它们最后一轮事件里公布的 `3` 一致——同一探针在修复前读到的是 `2`。
+
+**验证。** `cargo test --workspace` 212 通过（agent 43、app 52、core 38、store 75、xtask 4）；`cargo fmt --all -- --check` 干净；`cargo clippy --workspace --all-targets` 在本次改动上无新增告警。全部命令带 `--config 'env.PROTOC.value="/opt/homebrew/bin/protoc"'`（工作区 `.cargo/config.toml` 把 `PROTOC` 钉在一个本 checkout 不存在的 Windows 路径上）。
+
+**未证明的部分。** 本次没有重跑真实端点：缺陷与修复由 store 级测试和交接前审计的假端点复跑证实，端点行为（§35.1 的 >134 秒静默、1,889 字符截断）依旧只有 §35.3 的抓包。`preparation.rs` 那两处拒绝路径仍未接进 `protocol_correction.rs` 的事务（本轮只统一了计数规则与文档地图）；它们的计数与事件是否逐轮一致，目前没有任何测试按 §35.6 的不变量去钉。工作台仍不渲染 `consecutive_protocol_errors`（§35.4 末段）：这个数字现在保证与落库一致，但界面依旧没有显示它的地方。
+

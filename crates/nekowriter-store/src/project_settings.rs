@@ -171,11 +171,11 @@ fn normalize_new_project_settings(
                 return Err(invalid_project_settings(format!(
                     "项目模型 ID 必须为 1–{MAX_PROJECT_MODEL_ID_LEN} 个字符"
                 )));
-            } else if !model.capabilities.streaming || !model.capabilities.structured_output {
-                // 流式响应与结构化提交是每个模型请求的硬要求；在保存时就拒绝，
-                // 而不是等到 dispatch 才以指向系统模型的文案失败。
+            } else if !model.capabilities.streaming {
+                // 流式响应是每个模型请求的硬要求；在保存时就拒绝，而不是等到
+                // dispatch 才以指向系统模型的文案失败。
                 return Err(invalid_project_settings(
-                    "项目模型必须支持流式响应与结构化提交".to_owned(),
+                    "项目模型必须支持流式响应".to_owned(),
                 ));
             } else {
                 Some(ProjectModelReference {
@@ -259,7 +259,6 @@ mod tests {
         ModelCapabilityProfile {
             streaming: true,
             tools: true,
-            structured_output: true,
             stream_usage: true,
             thinking: false,
         }
@@ -435,7 +434,6 @@ mod tests {
                         capabilities: ModelCapabilityProfile {
                             streaming: true,
                             tools: false,
-                            structured_output: true,
                             stream_usage: true,
                             thinking: true,
                         },
@@ -453,35 +451,27 @@ mod tests {
         // 读取路径必须带回同一份能力资料，否则解析出的有效模型会丢失声明。
         assert_eq!(store.get_project_settings(project_id).await.unwrap(), saved);
 
-        // 不能流式或不能结构化提交的模型在保存时就被拒绝，而不是等到 dispatch。
-        for broken in [
-            ModelCapabilityProfile {
-                streaming: false,
-                ..capabilities()
-            },
-            ModelCapabilityProfile {
-                structured_output: false,
-                ..capabilities()
-            },
-        ] {
-            let error = store
-                .save_project_settings(
-                    project_id,
-                    Uuid::new_v4(),
-                    1,
-                    NewProjectSettings {
-                        model: Some(ProjectModelReference {
-                            model_id: "project-model".to_owned(),
-                            capabilities: broken,
-                        }),
-                        thinking_level: ThinkingLevel::Off,
-                        auxiliary_tool_budget: 10,
-                    },
-                )
-                .await
-                .unwrap_err();
-            assert!(matches!(error, StoreError::InvalidProjectSettings(_)));
-        }
+        // 不能流式的模型在保存时就被拒绝，而不是等到 dispatch。
+        let error = store
+            .save_project_settings(
+                project_id,
+                Uuid::new_v4(),
+                1,
+                NewProjectSettings {
+                    model: Some(ProjectModelReference {
+                        model_id: "project-model".to_owned(),
+                        capabilities: ModelCapabilityProfile {
+                            streaming: false,
+                            ..capabilities()
+                        },
+                    }),
+                    thinking_level: ThinkingLevel::Off,
+                    auxiliary_tool_budget: 10,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(error, StoreError::InvalidProjectSettings(_)));
 
         // 超长模型 ID 被拒绝。
         let overlong = store

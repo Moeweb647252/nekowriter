@@ -150,6 +150,110 @@ pub(crate) fn validate_new_messages(messages: &[NewAgentMessage]) -> Result<(), 
     Ok(())
 }
 
+/// 阶段提交在消息账本里的两条记录：提交工具的调用，以及它配对的结果。
+///
+/// 阶段结果是一次声明过的提交工具调用，所以账本必须同时保留调用与结果：重放会
+/// 用 `serialize_request_messages` 校验配对，只有调用而没有结果的序列会被判为
+/// `MissingToolResult`。成功提交写 `applied` 结果；参数校验失败由
+/// `record_model_protocol_correction` 以同一形态写错误结果。
+///
+/// # Errors
+///
+/// assistant 消息不是当前请求的一次工具调用，或缺少非空调用 ID 时返回错误。
+pub(crate) fn phase_submission_messages(
+    request_id: Uuid,
+    assistant_message: NewAgentMessage,
+) -> Result<Vec<NewAgentMessage>, StoreError> {
+    let provider_call_id = phase_submission_call_id(request_id, &assistant_message)?;
+    let content = serde_json::to_string(&serde_json::json!({
+        "status": "applied",
+        "code": "PHASE_SUBMISSION_ACCEPTED",
+        "message": "阶段提交已接受，本阶段的结果已保存。",
+    }))?;
+    Ok(vec![
+        assistant_message,
+        NewAgentMessage {
+            role: AgentMessageRole::Tool,
+            content: serde_json::json!({
+                "kind": "tool_result",
+                "content": content,
+            }),
+            request_id: Some(request_id),
+            tool_call_id: Some(provider_call_id),
+        },
+    ])
+}
+
+/// 测试用的阶段提交工具调用消息。
+#[cfg(test)]
+pub(crate) fn phase_submission_test_message(
+    request_id: Uuid,
+    tool_name: &str,
+    arguments_json: &str,
+) -> NewAgentMessage {
+    NewAgentMessage {
+        role: AgentMessageRole::Assistant,
+        content: serde_json::json!({
+            "kind": "assistant_tool_calls",
+            "content": null,
+            "toolCalls": [{
+                "id": "call-submit-1",
+                "name": tool_name,
+                "arguments": serde_json::from_str::<Value>(arguments_json)
+                    .expect("测试阶段提交参数必须是 JSON"),
+            }],
+        }),
+        request_id: Some(request_id),
+        tool_call_id: None,
+    }
+}
+
+/// 校验一条 assistant 消息确实是当前请求的一次提交工具调用，并返回调用 ID。
+///
+/// 提交被拒绝（排队意见尚未投递、暂停恢复后发现提交不可应用）时写入的是错误工具
+/// 结果，因此拒绝路径也只需要这条校验，而不是成功路径的 `applied` 结果。
+pub(crate) fn phase_submission_call_id(
+    request_id: Uuid,
+    assistant_message: &NewAgentMessage,
+) -> Result<String, StoreError> {
+    if assistant_message.role != AgentMessageRole::Assistant
+        || assistant_message.tool_call_id.is_some()
+    {
+        return Err(StoreError::InvalidAgentMessage(
+            "阶段提交必须来自一条 assistant 工具调用消息".to_owned(),
+        ));
+    }
+    if assistant_message.request_id != Some(request_id) {
+        return Err(StoreError::InvalidAgentMessage(
+            "阶段提交 assistant 消息必须关联当前 model_request".to_owned(),
+        ));
+    }
+    if assistant_message
+        .content
+        .get("kind")
+        .and_then(Value::as_str)
+        != Some("assistant_tool_calls")
+    {
+        return Err(StoreError::InvalidAgentMessage(
+            "阶段提交的 assistant 消息必须是工具调用".to_owned(),
+        ));
+    }
+    assistant_message
+        .content
+        .get("toolCalls")
+        .and_then(Value::as_array)
+        .filter(|calls| calls.len() == 1)
+        .and_then(|calls| calls[0].get("id"))
+        .and_then(Value::as_str)
+        .filter(|id| !id.trim().is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            StoreError::InvalidAgentMessage(
+                "阶段提交必须恰好包含一个带非空 id 的工具调用".to_owned(),
+            )
+        })
+}
+
 pub(crate) async fn append_agent_messages_for_run(
     transaction: &sea_orm::DatabaseTransaction,
     run_model: &run::Model,

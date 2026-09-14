@@ -67,7 +67,6 @@ type Notice =
 const fallbackCapabilities: ModelCapabilityProfile = {
   streaming: true,
   tools: true,
-  structuredOutput: true,
   streamUsage: true,
   thinking: false,
 }

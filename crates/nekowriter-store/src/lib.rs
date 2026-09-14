@@ -50,6 +50,7 @@ mod preparation;
 mod project_settings;
 mod prompt_templates;
 mod prompts;
+mod protocol_correction;
 mod recycle;
 mod schema;
 mod settings;
@@ -65,8 +66,7 @@ pub use knowledge::{
     chunk_knowledge_content,
 };
 pub use model_requests::{
-    ModelProtocolCorrection, ModelProtocolCorrectionResult, ModelRequestResolution,
-    ModelRequestStatus, NewModelRequest, PersistedModelRequest,
+    ModelRequestResolution, ModelRequestStatus, NewModelRequest, PersistedModelRequest,
 };
 pub use nekowriter_core::recycle::{RecycleBin, RecycleItem, RecycleItemKind, RecycleParent};
 pub use preparation::{
@@ -77,6 +77,9 @@ pub use preparation::{
     QuestionAnswerResult, ReviewDelegationResult, StopWritingRunResult,
 };
 pub use prompts::{NewPromptOverride, PromptOverride, PromptOverrideReset, PromptOverrideScope};
+pub use protocol_correction::{
+    ModelProtocolCorrection, ProtocolCorrectionOutcome, ProtocolCorrectionTarget,
+};
 pub use settings::{NewSystemModelSettings, SYSTEM_WRITING_MODEL_KEY, SystemModelSettings};
 pub use system_operations::{
     NewSystemModelOperation, OPERATION_KIND_CONNECTION_TEST,
@@ -1417,7 +1420,6 @@ mod tests {
             capabilities: ModelCapabilityProfile {
                 streaming: true,
                 tools: true,
-                structured_output: true,
                 stream_usage: true,
                 thinking: true,
             },
@@ -2074,7 +2076,11 @@ mod tests {
                 request.id,
                 Some("provider-request-1".to_owned()),
                 json!({ "inputTokens": "21", "outputTokens": "8", "totalTokens": "29" }),
-                "{\"artifacts\":[...],\"chapter_plan\":[...]}".to_owned(),
+                crate::agent_messages::phase_submission_test_message(
+                    request.id,
+                    "submit_preparation",
+                    r#"{"artifacts":[],"chapter_plan":[]}"#,
+                ),
                 artifacts,
                 Some(chapter_plan),
             )
@@ -2094,7 +2100,8 @@ mod tests {
                 .iter()
                 .all(|artifact| artifact.revision_id.is_some() && artifact.review.is_some())
         );
-        assert_eq!(store.list_agent_messages(run_id).await.unwrap().len(), 2);
+        // 阶段提交在账本里是配对的两条：提交工具的调用与它被接受的结果。
+        assert_eq!(store.list_agent_messages(run_id).await.unwrap().len(), 3);
         assert_eq!(
             store.list_model_requests(run_id).await.unwrap()[0].status,
             ModelRequestStatus::Succeeded
@@ -2112,14 +2119,18 @@ mod tests {
                 request.id,
                 Some("provider-request-1".to_owned()),
                 json!({ "inputTokens": "21", "outputTokens": "8", "totalTokens": "29" }),
-                "ignored-by-terminal-replay".to_owned(),
+                crate::agent_messages::phase_submission_test_message(
+                    request.id,
+                    "submit_preparation",
+                    r#"{"artifacts":[]}"#,
+                ),
                 Vec::new(),
                 None,
             )
             .await
             .unwrap();
         assert_eq!(replayed.workflow, submitted.workflow);
-        assert_eq!(store.list_agent_messages(run_id).await.unwrap().len(), 2);
+        assert_eq!(store.list_agent_messages(run_id).await.unwrap().len(), 3);
     }
 
     /// 准备修订轮：模型一轮只提交「需要修订」的那些产物，而且只有粗纲也在待修订
@@ -2178,7 +2189,11 @@ mod tests {
                 first_request.id,
                 Some("provider-request-1".to_owned()),
                 json!({ "inputTokens": "21", "outputTokens": "8", "totalTokens": "29" }),
-                "{\"artifacts\":[...],\"chapter_plan\":[...]}".to_owned(),
+                crate::agent_messages::phase_submission_test_message(
+                    first_request.id,
+                    "submit_preparation",
+                    r#"{"artifacts":[],"chapter_plan":[]}"#,
+                ),
                 artifacts,
                 Some(vec![
                     ChapterPlanDraft::new("第一章：重逢", "旧车站的相遇").unwrap(),
@@ -2253,8 +2268,11 @@ mod tests {
                     revision_request.id,
                     Some("provider-request-2".to_owned()),
                     json!({ "inputTokens": "21", "outputTokens": "8", "totalTokens": "29" }),
-                    "{\"artifacts\":[{\"kind\":\"background\",\"content\":\"越权重写\"}]}"
-                        .to_owned(),
+                    crate::agent_messages::phase_submission_test_message(
+                        revision_request.id,
+                        "submit_preparation",
+                        "{\"artifacts\":[{\"kind\":\"background\",\"content\":\"越权重写\"}]}",
+                    ),
                     vec![
                         PreparationArtifactInput::new(
                             PreparationArtifactKind::Background,
@@ -2274,7 +2292,11 @@ mod tests {
                 revision_request.id,
                 Some("provider-request-2".to_owned()),
                 json!({ "inputTokens": "21", "outputTokens": "8", "totalTokens": "29" }),
-                "{\"artifacts\":[{\"kind\":\"research\",\"content\":\"补充后的资料\"}]}".to_owned(),
+                crate::agent_messages::phase_submission_test_message(
+                    revision_request.id,
+                    "submit_preparation",
+                    "{\"artifacts\":[{\"kind\":\"research\",\"content\":\"补充后的资料\"}]}",
+                ),
                 vec![
                     PreparationArtifactInput::new(
                         PreparationArtifactKind::Research,
@@ -2811,7 +2833,7 @@ mod tests {
             };
             let result = store
                 .record_model_protocol_correction(
-                    dispatched.id,
+                    ProtocolCorrectionTarget::WritingRun,
                     ModelProtocolCorrection {
                         provider_request_id: Some(format!("provider-{attempt}")),
                         usage: json!({ "totalTokens": "1" }),
@@ -2837,9 +2859,17 @@ mod tests {
                     ExecutionStatus::Stopped
                 }
             );
+            // 落库的计数必须等于同一轮事件公布的计数，且每一轮都是这样：被拒回合的
+            // 计数与收束状态在同一次写入里落库，任何分支都不得只写一半。
+            let persisted = persisted_protocol_error_count(&store, run_id).await;
+            assert_eq!(persisted, attempt);
+            assert_eq!(
+                published_protocol_error_count(&store, dispatched.id).await,
+                persisted
+            );
             let duplicate = store
                 .record_model_protocol_correction(
-                    dispatched.id,
+                    ProtocolCorrectionTarget::WritingRun,
                     ModelProtocolCorrection {
                         provider_request_id: Some(format!("provider-{attempt}")),
                         usage: json!({ "totalTokens": "1" }),
@@ -2918,6 +2948,188 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(resumed_run.consecutive_protocol_errors, 0);
+    }
+
+    /// 子 Run 行里落库的连续协议错误计数。
+    async fn persisted_protocol_error_count(store: &Store, run_id: RunId) -> i64 {
+        entity::run::Entity::find_by_id(db_id(run_id))
+            .one(&store.database)
+            .await
+            .unwrap()
+            .unwrap()
+            .consecutive_protocol_errors
+    }
+
+    /// 这一轮被拒时事件公布出来的连续协议错误计数。
+    ///
+    /// 这个数字只通过事件到达客户端（快照与 Dashboard 的 DTO 都不含它），所以它和
+    /// 落库值必须来自同一次写入、永远相等：否则行里的数字会与它刚发出的事件矛盾。
+    /// 两条 lane 的纠正事件都带 `request_id`，用它把范围锁在这一轮。
+    async fn published_protocol_error_count(store: &Store, request_id: Uuid) -> i64 {
+        store
+            .events_after(0)
+            .await
+            .unwrap()
+            .into_iter()
+            .rfind(|event| {
+                event.payload["protocol_correction"] == true
+                    && event.payload["request_id"].as_str() == Some(&request_id.to_string())
+            })
+            .expect("被拒的一轮必须留下纠正事件")
+            .payload["consecutive_protocol_errors"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap()
+    }
+
+    /// 委托审核的每一轮（含达上限的那一轮）落库的计数都必须等于这一轮事件公布的
+    /// 计数。
+    ///
+    /// 修复前达上限的那一轮只写失败状态、不写计数，子 Run 行里停在 2，而它刚写的
+    /// 两条事件都说 3——落库状态与自己发出的事件互相矛盾。
+    #[tokio::test]
+    async fn rejected_review_round_persists_the_counter_it_publishes() {
+        let data_dir = TempDir::new().unwrap();
+        let store = Store::open(data_dir.path()).await.unwrap();
+        let created = store
+            .create_project(
+                Uuid::new_v4(),
+                NewProject::new("审核协议纠正", "被拒的审核提交计数必须落库", None::<&str>)
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let version_id = created.version.id;
+        store
+            .save_novel_brief(
+                version_id,
+                Uuid::new_v4(),
+                NewNovelBrief::new("写一部围绕旧码头和匿名报纸的悬疑小说。").unwrap(),
+            )
+            .await
+            .unwrap();
+        let started = store
+            .start_preparation(version_id, Uuid::new_v4(), 0)
+            .await
+            .unwrap();
+        let mut snapshot = store
+            .submit_preparation_artifacts(
+                version_id,
+                Uuid::new_v4(),
+                started.workflow.state_revision,
+                vec![
+                    PreparationArtifactInput::new(
+                        PreparationArtifactKind::Background,
+                        "港城的旧码头将在雨季后拆除。",
+                    )
+                    .unwrap(),
+                    PreparationArtifactInput::new(
+                        PreparationArtifactKind::Research,
+                        "旧报纸来自 1998 年的港城晚报。",
+                    )
+                    .unwrap(),
+                    PreparationArtifactInput::new(
+                        PreparationArtifactKind::Characters,
+                        "林舟是追查父亲旧案的记者。",
+                    )
+                    .unwrap(),
+                    PreparationArtifactInput::new(
+                        PreparationArtifactKind::Outline,
+                        "林舟在码头收到匿名报纸，循着署名进入仓库并决定公开线索。",
+                    )
+                    .unwrap(),
+                ],
+                Some(vec![
+                    ChapterPlanDraft::new("雨夜来客", "林舟在码头收到匿名报纸。").unwrap(),
+                ]),
+            )
+            .await
+            .unwrap();
+        let review_id = snapshot
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.kind == PreparationArtifactKind::Background)
+            .and_then(|artifact| artifact.review.as_ref())
+            .map(|review| review.id)
+            .unwrap();
+        let delegation = store
+            .delegate_review(
+                review_id,
+                Uuid::new_v4(),
+                snapshot.workflow.state_revision,
+                "检查设定是否足以支撑第一章。".to_owned(),
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+
+        for attempt in 1..=MAX_CONSECUTIVE_PROTOCOL_ERRORS {
+            let request = store
+                .capture_and_dispatch_model_request(
+                    NewModelRequest {
+                        run_id: delegation.run_id,
+                        settings_snapshot: json!({ "model": "review-protocol-test" }),
+                        prompt_snapshot: json!({ "key": "review.preparation.background" }),
+                        context_snapshot: json!({ "messages": [] }),
+                    },
+                    Vec::new(),
+                )
+                .await
+                .unwrap();
+            let outcome = store
+                .record_model_protocol_correction(
+                    ProtocolCorrectionTarget::DelegatedReview { review_id },
+                    ModelProtocolCorrection {
+                        provider_request_id: Some(format!("review-provider-{attempt}")),
+                        usage: json!({ "totalTokens": "1" }),
+                        assistant_message: crate::agent_messages::phase_submission_test_message(
+                            request.id,
+                            "submit_review",
+                            r#"{"passed":true,"confidence":0.82,"issues":["【建议】章节清单还不完整"]}"#,
+                        ),
+                        error: json!({
+                            "kind": "protocol_error",
+                            "message": "审核提交与本阶段合同不符",
+                        }),
+                        correction: "请重新调用 submit_review。".to_owned(),
+                        tool_result_code: "PHASE_SUBMISSION_INVALID".to_owned(),
+                    },
+                )
+                .await
+                .unwrap();
+            assert!(outcome.newly_applied);
+            assert_eq!(outcome.consecutive_protocol_errors, attempt);
+            assert_eq!(outcome.requeue, attempt < MAX_CONSECUTIVE_PROTOCOL_ERRORS);
+
+            let persisted = persisted_protocol_error_count(&store, delegation.run_id).await;
+            assert_eq!(persisted, attempt);
+            assert_eq!(
+                published_protocol_error_count(&store, request.id).await,
+                persisted,
+                "第 {attempt} 轮：落库计数与同一轮事件公布的计数必须一致"
+            );
+        }
+
+        // 达上限那轮之后：子 Run 失败但计数仍然落库，Review 重新开放。
+        let child_run = entity::run::Entity::find_by_id(db_id(delegation.run_id))
+            .one(&store.database)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(child_run.status, "failed");
+        assert_eq!(
+            child_run.consecutive_protocol_errors,
+            MAX_CONSECUTIVE_PROTOCOL_ERRORS
+        );
+        snapshot = store.get_preparation_snapshot(version_id).await.unwrap();
+        let reopened = snapshot
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.kind == PreparationArtifactKind::Background)
+            .and_then(|artifact| artifact.review.as_ref())
+            .unwrap();
+        assert_eq!(reopened.status, ReviewStatus::Open);
     }
 
     #[tokio::test]
@@ -4467,7 +4679,11 @@ mod tests {
                 request.id,
                 Some("review-provider-1".to_owned()),
                 json!({}),
-                r#"{"passed":true,"confidence":0.91,"issues":[]}"#.to_owned(),
+                crate::agent_messages::phase_submission_test_message(
+                    request.id,
+                    "submit_review",
+                    r#"{"passed":true,"confidence":0.91,"issues":[]}"#,
+                ),
                 true,
                 0.91,
                 Vec::new(),
@@ -4489,7 +4705,11 @@ mod tests {
                 request.id,
                 Some("review-provider-1".to_owned()),
                 json!({}),
-                r#"{"passed":true,"confidence":0.91,"issues":[]}"#.to_owned(),
+                crate::agent_messages::phase_submission_test_message(
+                    request.id,
+                    "submit_review",
+                    r#"{"passed":true,"confidence":0.91,"issues":[]}"#,
+                ),
                 true,
                 0.91,
                 Vec::new(),
@@ -4551,7 +4771,11 @@ mod tests {
                     request.id,
                     None,
                     json!({}),
-                    r#"{"passed":true,"confidence":0.8,"issues":[]}"#.to_owned(),
+                    crate::agent_messages::phase_submission_test_message(
+                        request.id,
+                        "submit_review",
+                        r#"{"passed":true,"confidence":0.8,"issues":[]}"#,
+                    ),
                     true,
                     0.8,
                     Vec::new(),
@@ -4724,7 +4948,11 @@ mod tests {
                 outline_request.id,
                 Some("review-provider-outline".to_owned()),
                 json!({}),
-                r#"{"passed":true,"confidence":0.82,"issues":[]}"#.to_owned(),
+                crate::agent_messages::phase_submission_test_message(
+                    outline_request.id,
+                    "submit_review",
+                    r#"{"passed":true,"confidence":0.82,"issues":[]}"#,
+                ),
                 true,
                 0.82,
                 Vec::new(),
@@ -4868,7 +5096,11 @@ mod tests {
                 edit_request.id,
                 Some("review-provider-edit".to_owned()),
                 json!({}),
-                r#"{"passed":true,"confidence":0.77,"issues":[]}"#.to_owned(),
+                crate::agent_messages::phase_submission_test_message(
+                    edit_request.id,
+                    "submit_review",
+                    r#"{"passed":true,"confidence":0.77,"issues":[]}"#,
+                ),
                 true,
                 0.77,
                 Vec::new(),
@@ -4942,7 +5174,11 @@ mod tests {
                 final_request.id,
                 Some("review-provider-final".to_owned()),
                 json!({}),
-                r#"{"passed":true,"confidence":0.94,"issues":[]}"#.to_owned(),
+                crate::agent_messages::phase_submission_test_message(
+                    final_request.id,
+                    "submit_review",
+                    r#"{"passed":true,"confidence":0.94,"issues":[]}"#,
+                ),
                 true,
                 0.94,
                 Vec::new(),

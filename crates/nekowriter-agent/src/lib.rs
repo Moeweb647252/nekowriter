@@ -10,9 +10,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::provider::{
-    ModelRequest, ModelRequestMessage, StructuredOutput, validate_request_message_sequence,
-};
+use crate::provider::{ModelRequest, ModelRequestMessage, validate_request_message_sequence};
 
 pub mod embedding;
 pub mod engine;
@@ -289,15 +287,10 @@ impl BuiltAgentContext {
     /// 设置、提示词和来源元数据。思考等级由调用方从项目设置解析后传入，不在这里
     /// 读取全局状态。
     #[must_use]
-    pub fn model_request(
-        &self,
-        response_format: Option<StructuredOutput>,
-        thinking_level: ThinkingLevel,
-    ) -> ModelRequest {
+    pub fn model_request(&self, thinking_level: ThinkingLevel) -> ModelRequest {
         ModelRequest {
             messages: self.messages.clone(),
             tools: self.tools.clone(),
-            response_format,
             thinking_level,
         }
     }

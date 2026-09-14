@@ -88,22 +88,6 @@ export function ModelCapabilitiesEditor({
       </Field>
       <Field orientation="horizontal" data-disabled={locked || undefined}>
         <Switch
-          id={`${idPrefix}-structured-output`}
-          checked={value.structuredOutput}
-          onCheckedChange={(structuredOutput) =>
-            update("structuredOutput", structuredOutput)
-          }
-          disabled={locked}
-        />
-        <FieldContent>
-          <FieldLabel htmlFor={`${idPrefix}-structured-output`}>
-            结构化提交
-          </FieldLabel>
-          <FieldDescription>允许模型提交可验证的阶段产物。</FieldDescription>
-        </FieldContent>
-      </Field>
-      <Field orientation="horizontal" data-disabled={locked || undefined}>
-        <Switch
           id={`${idPrefix}-stream-usage`}
           checked={value.streamUsage}
           onCheckedChange={(streamUsage) => update("streamUsage", streamUsage)}

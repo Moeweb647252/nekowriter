@@ -1393,8 +1393,9 @@ const fn default_auxiliary_tool_budget() -> i64 {
 #[serde(rename_all = "camelCase")]
 pub struct ModelCapabilityProfile {
     pub streaming: bool,
+    /// 模型是否会调用工具。每个阶段的终态提交都是一次提交工具调用，因此写作与
+    /// 审核两条路径都要求它为真。
     pub tools: bool,
-    pub structured_output: bool,
     pub stream_usage: bool,
     /// 是否对该模型验证过显式思考参数（`reasoning_effort`）。
     ///

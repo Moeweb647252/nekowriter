@@ -135,8 +135,8 @@ export interface ShutdownResponse {
 
 export interface ModelCapabilityProfile {
   streaming: boolean
+  /** 每个阶段的终态提交都是一次提交工具调用，因此写作与审核都要求这个能力。 */
   tools: boolean
-  structuredOutput: boolean
   streamUsage: boolean
   /** 是否已确认模型接受显式思考参数（`reasoning_effort`）。 */
   thinking: boolean

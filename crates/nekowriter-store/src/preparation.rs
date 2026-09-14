@@ -42,13 +42,17 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use super::agent_messages::append_agent_messages_for_run;
+use super::agent_messages::{
+    append_agent_messages_for_run, phase_submission_call_id, phase_submission_messages,
+};
 use super::budget::ensure_quota_scope;
 use super::entity::{
     agent_message, chapter, document, document_revision, event, feedback, model_request,
     novel_version, question, review, revision_dependency, run, tool_call, workflow_instance,
 };
-use super::model_requests::model_request_status_from_db;
+use super::model_requests::{
+    model_request_status_from_db, next_protocol_error_count, protocol_error_tool_result_messages,
+};
 use super::{
     AgentMessageRole, CHAPTER_BODY_ROLE, CHAPTER_GUIDANCE_ROLE, CHAPTER_OUTLINE_ROLE,
     ModelRequestStatus, NOVEL_BRIEF_ROLE, NewAgentMessage, ProjectId, Store, StoreError, VersionId,
@@ -546,12 +550,13 @@ struct HeldChapterBodyToolPayload {
 
 /// 模型直接提交章节时命中暂停边界的 Run 检查点。
 ///
-/// 原始响应直到恢复后才进入 Agent 消息账本；这样暂停不会把“已提交章节”的文本提前
-/// 作为已完成事实注入下一轮上下文。
+/// 提交工具调用直到恢复后才进入 Agent 消息账本；这样暂停不会把“已提交章节”
+/// 提前作为已完成事实注入下一轮上下文。原始工具参数属于该 assistant 消息，
+/// 恢复时与它的配对工具结果一起写回。
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 struct HeldChapterBodySubmissionCheckpoint {
     held: HeldChapterBodySubmission,
-    raw_response: String,
+    assistant_message: NewAgentMessage,
 }
 
 fn held_chapter_body_tool_payload_from_model(
@@ -1326,14 +1331,7 @@ async fn commit_free_agent_tool_call(
     }
     let is_protocol_error = outcome.status == "error";
     let next_error_count = if is_protocol_error {
-        run_model
-            .consecutive_protocol_errors
-            .checked_add(1)
-            .ok_or_else(|| {
-                StoreError::InvalidModelRequest(
-                    "Run consecutive_protocol_errors 已达到 i64 上限".to_owned(),
-                )
-            })?
+        next_protocol_error_count(run_model.consecutive_protocol_errors)?
     } else {
         0
     };
@@ -1913,11 +1911,12 @@ async fn resolve_held_chapter_body_submission(
         .ok_or_else(|| {
             StoreError::InvalidChapterState("暂停状态缺少可恢复的章节提交".to_owned())
         })?;
-    if held.raw_response.trim().is_empty() || held.held.summary.trim().is_empty() {
+    if held.held.summary.trim().is_empty() {
         return Err(StoreError::CorruptRecord(
-            "已暂停章节提交缺少模型响应或摘要".to_owned(),
+            "已暂停章节提交缺少摘要".to_owned(),
         ));
     }
+    phase_submission_call_id(held.held.request_id, &held.assistant_message)?;
     let request = model_request::Entity::find_by_id(db_id(held.held.request_id))
         .one(transaction)
         .await?
@@ -1997,33 +1996,23 @@ async fn resolve_held_chapter_body_submission(
     {
         let next_workflow =
             nekowriter_core::resume_chapter_body_after_pause(workflow, chapter_id, run_id)?;
-        append_agent_messages_for_run(
-            transaction,
-            &body_run,
-            vec![
-                NewAgentMessage {
-                    role: AgentMessageRole::Assistant,
-                    content: json!({
-                        "kind": "text",
-                        "role": "assistant",
-                        "content": held.raw_response,
-                    }),
-                    request_id: Some(held.held.request_id),
-                    tool_call_id: None,
-                },
-                NewAgentMessage {
-                    role: AgentMessageRole::User,
-                    content: json!({
-                        "kind": "protocol_correction",
-                        "content": correction,
-                    }),
-                    request_id: Some(held.held.request_id),
-                    tool_call_id: None,
-                },
-            ],
-            now,
-        )
-        .await?;
+        let mut messages = vec![held.assistant_message.clone()];
+        messages.extend(protocol_error_tool_result_messages(
+            held.held.request_id,
+            &held.assistant_message,
+            &correction,
+            "PHASE_SUBMISSION_REJECTED",
+        )?);
+        messages.push(NewAgentMessage {
+            role: AgentMessageRole::User,
+            content: json!({
+                "kind": "protocol_correction",
+                "content": correction,
+            }),
+            request_id: Some(held.held.request_id),
+            tool_call_id: None,
+        });
+        append_agent_messages_for_run(transaction, &body_run, messages, now).await?;
         (next_workflow, "queued".to_owned(), None, true)
     } else {
         let (body_revision_id, dependency_revision_ids) = applicable_submission
@@ -2042,16 +2031,7 @@ async fn resolve_held_chapter_body_submission(
         append_agent_messages_for_run(
             transaction,
             &body_run,
-            vec![NewAgentMessage {
-                role: AgentMessageRole::Assistant,
-                content: json!({
-                    "kind": "text",
-                    "role": "assistant",
-                    "content": held.raw_response,
-                }),
-                request_id: Some(held.held.request_id),
-                tool_call_id: None,
-            }],
+            phase_submission_messages(held.held.request_id, held.assistant_message.clone())?,
             now,
         )
         .await?;
@@ -5474,14 +5454,7 @@ impl Store {
                     // 结果都没有推进正文，和非法 ask_user 一样必须受同一工程上限约束。
                     let is_protocol_error = !awaiting_review && tool_result["status"] != "applied";
                     let next_error_count = if is_protocol_error {
-                        run_model
-                            .consecutive_protocol_errors
-                            .checked_add(1)
-                            .ok_or_else(|| {
-                                StoreError::InvalidModelRequest(
-                                    "Run consecutive_protocol_errors 已达到 i64 上限".to_owned(),
-                                )
-                            })?
+                        next_protocol_error_count(run_model.consecutive_protocol_errors)?
                     } else {
                         0
                     };
@@ -6138,24 +6111,21 @@ impl Store {
         }
     }
 
-    /// 将正文 Agent 的结构化阶段提交、模型请求终态和整章终稿审核原子落库。
+    /// 将正文 Agent 的阶段提交、模型请求终态和整章终稿审核原子落库。
     ///
     /// 正文内容不从 `summary` 读取；它只能来自此前已经解析并执行的正文工具调用。
-    /// 因此模型无法通过终态 JSON 绕过正文修订、依赖或整章审核门槛。
+    /// 因此模型无法通过提交工具绕过正文修订、依赖或整章审核门槛。
     pub async fn commit_chapter_body_model_submission(
         &self,
         request_id: Uuid,
         chapter_id: ChapterId,
         provider_request_id: Option<String>,
         usage: Value,
-        raw_response: String,
+        assistant_message: NewAgentMessage,
         summary: String,
     ) -> Result<ChapterBodySnapshot, StoreError> {
-        if raw_response.trim().is_empty() {
-            return Err(StoreError::InvalidModelRequest(
-                "章节正文模型响应不能为空".to_owned(),
-            ));
-        }
+        // 提交是一次工具调用：成功路径写配对的应用结果，被拒路径写配对的错误结果。
+        let submission_messages = phase_submission_messages(request_id, assistant_message.clone())?;
         if !usage.is_object() {
             return Err(StoreError::InvalidModelRequest(
                 "章节正文模型响应的 usage 必须是 JSON object".to_owned(),
@@ -6182,7 +6152,7 @@ impl Store {
             .transaction::<_, _, StoreError>(|transaction| {
                 let provider_request_id = provider_request_id.clone();
                 let usage = usage.clone();
-                let raw_response = raw_response.clone();
+                let assistant_message = assistant_message.clone();
                 let summary = summary.clone();
                 Box::pin(async move {
                     let request = model_request::Entity::find_by_id(db_id(request_id))
@@ -6268,7 +6238,7 @@ impl Store {
                                     request_id,
                                     summary: summary.clone(),
                                 },
-                                raw_response: raw_response.clone(),
+                                assistant_message: assistant_message.clone(),
                             });
                         let mut active_request = request.into_active_model();
                         active_request.status = Set("succeeded".to_owned());
@@ -6332,14 +6302,8 @@ impl Store {
                     if has_pending_feedback {
                         // 无推进的纠正同样计入连续协议错误：模型反复提交而意见始终无从投递时，
                         // 必须触发工程执行限制并保留未投递意见，而不是无限重排请求。
-                        let next_error_count = body_run
-                            .consecutive_protocol_errors
-                            .checked_add(1)
-                            .ok_or_else(|| {
-                                StoreError::InvalidModelRequest(
-                                    "Run consecutive_protocol_errors 已达到 i64 上限".to_owned(),
-                                )
-                            })?;
+                        let next_error_count =
+                            next_protocol_error_count(body_run.consecutive_protocol_errors)?;
                         let stop = next_error_count >= MAX_CONSECUTIVE_PROTOCOL_ERRORS;
                         let next_workflow = if stop {
                             stop_writing_after_protocol_error(&workflow, run_id)?
@@ -6348,33 +6312,24 @@ impl Store {
                                 &workflow, chapter_id, run_id,
                             )?
                         };
-                        append_agent_messages_for_run(
-                            transaction,
-                            &body_run,
-                            vec![
-                                NewAgentMessage {
-                                    role: AgentMessageRole::Assistant,
-                                    content: json!({
-                                        "kind": "text",
-                                        "role": "assistant",
-                                        "content": raw_response,
-                                    }),
-                                    request_id: Some(request_id),
-                                    tool_call_id: None,
-                                },
-                                NewAgentMessage {
-                                    role: AgentMessageRole::User,
-                                    content: json!({
-                                        "kind": "protocol_correction",
-                                        "content": CHAPTER_BODY_FEEDBACK_PROTOCOL_CORRECTION,
-                                    }),
-                                    request_id: Some(request_id),
-                                    tool_call_id: None,
-                                },
-                            ],
-                            now,
-                        )
-                        .await?;
+                        let mut messages = vec![assistant_message.clone()];
+                        messages.extend(protocol_error_tool_result_messages(
+                            request_id,
+                            &assistant_message,
+                            CHAPTER_BODY_FEEDBACK_PROTOCOL_CORRECTION,
+                            "PHASE_SUBMISSION_REJECTED",
+                        )?);
+                        messages.push(NewAgentMessage {
+                            role: AgentMessageRole::User,
+                            content: json!({
+                                "kind": "protocol_correction",
+                                "content": CHAPTER_BODY_FEEDBACK_PROTOCOL_CORRECTION,
+                            }),
+                            request_id: Some(request_id),
+                            tool_call_id: None,
+                        });
+                        append_agent_messages_for_run(transaction, &body_run, messages, now)
+                            .await?;
                         let mut active_request = request.into_active_model();
                         active_request.status = Set("succeeded".to_owned());
                         active_request.provider_request_id = Set(provider_request_id);
@@ -6472,16 +6427,7 @@ impl Store {
                     append_agent_messages_for_run(
                         transaction,
                         &run_model,
-                        vec![NewAgentMessage {
-                            role: AgentMessageRole::Assistant,
-                            content: json!({
-                                "kind": "text",
-                                "role": "assistant",
-                                "content": raw_response,
-                            }),
-                            request_id: Some(request_id),
-                            tool_call_id: None,
-                        }],
+                        submission_messages.clone(),
                         now,
                     )
                     .await?;
@@ -8420,7 +8366,7 @@ impl Store {
         request_id: Uuid,
         provider_request_id: Option<String>,
         usage: Value,
-        raw_response: String,
+        assistant_message: NewAgentMessage,
         passed: bool,
         confidence: f64,
         issues: Vec<String>,
@@ -8431,11 +8377,7 @@ impl Store {
             issues,
         };
         validate_delegated_review_decision(&decision)?;
-        if raw_response.trim().is_empty() {
-            return Err(StoreError::InvalidModelRequest(
-                "审核 Agent 响应不能为空".to_owned(),
-            ));
-        }
+        let submission_messages = phase_submission_messages(request_id, assistant_message)?;
         if !usage.is_object() {
             return Err(StoreError::InvalidModelRequest(
                 "审核 Agent 用量必须是 JSON object".to_owned(),
@@ -8483,16 +8425,7 @@ impl Store {
                     append_agent_messages_for_run(
                         transaction,
                         &child_run,
-                        vec![NewAgentMessage {
-                            role: AgentMessageRole::Assistant,
-                            content: json!({
-                                "kind": "text",
-                                "role": "assistant",
-                                "content": raw_response,
-                            }),
-                            request_id: Some(request_id),
-                            tool_call_id: None,
-                        }],
+                        submission_messages.clone(),
                         now,
                     )
                     .await?;
@@ -8661,51 +8594,15 @@ impl Store {
                         active_request.completed_at = Set(Some(now));
                         active_request.update(transaction).await?;
                     }
-                    let mut active_child_run = child_run.into_active_model();
-                    active_child_run.status = Set("failed".to_owned());
-                    active_child_run.ended_at = Set(Some(now));
-                    active_child_run.updated_at = Set(now);
-                    active_child_run.update(transaction).await?;
-                    let review_model = review::Entity::find_by_id(db_id(review_id))
-                        .filter(review::Entity::COLUMN.status.eq("delegated"))
-                        .filter(review::Entity::COLUMN.attempt_id.eq(run_id.to_string()))
-                        .one(transaction)
-                        .await?
-                        .ok_or(StoreError::ReviewAlreadyResolved)?;
-                    let mut active_review = review_model.into_active_model();
-                    active_review.status = Set("open".to_owned());
-                    active_review.decision_source = Set(None);
-                    active_review.passed = Set(None);
-                    active_review.confidence = Set(None);
-                    active_review.issues_json = Set(None);
-                    active_review.updated_at = Set(now);
-                    active_review.update(transaction).await?;
-                    let workflow = workflow_for_version(transaction, attempt.version_id).await?;
-                    insert_event(
+                    fail_delegated_review_child_run(child_run.into_active_model(), now)
+                        .update(transaction)
+                        .await?;
+                    reopen_delegated_review(
                         transaction,
-                        attempt.version_id,
-                        "review.changed",
                         review_id,
-                        workflow.state_revision,
-                        json!({
-                            "status": "open",
-                            "failed_attempt_id": run_id,
-                            "error": failure,
-                        }),
-                        now,
-                    )
-                    .await?;
-                    insert_event(
-                        transaction,
-                        attempt.version_id,
-                        "run.changed",
                         run_id,
-                        workflow.state_revision,
-                        json!({
-                            "kind": "review",
-                            "status": "failed",
-                            "review_id": review_id,
-                        }),
+                        attempt.version_id,
+                        &failure,
                         now,
                     )
                     .await?;
@@ -9035,9 +8932,13 @@ struct DelegatableReviewTarget {
     workflow_revision: i64,
 }
 
-struct DelegatedReviewAttempt {
-    run_id: RunId,
-    version_id: VersionId,
+/// 一次委托尝试：`run_id` 是审核子 Run，`version_id` 是它归属的稿本版本。
+///
+/// 协议纠正（`protocol_correction`）与取消/失败共用这一个读取入口，所以字段对
+/// crate 内可见。
+pub(crate) struct DelegatedReviewAttempt {
+    pub(crate) run_id: RunId,
+    pub(crate) version_id: VersionId,
     kind: DelegatedReviewKind,
 }
 
@@ -9268,7 +9169,7 @@ async fn delegatable_review_target(
     })
 }
 
-async fn delegated_review_attempt(
+pub(crate) async fn delegated_review_attempt(
     transaction: &DatabaseTransaction,
     review_id: ReviewId,
 ) -> Result<DelegatedReviewAttempt, StoreError> {
@@ -9474,7 +9375,10 @@ async fn insert_delegated_review_run(
         status: Set("queued".to_owned()),
         resume_count: Set(0),
         request_count: Set(0),
-        request_allowance_end: Set(1),
+        // 一次审核只该提交一次结论，但协议允许模型在被拒之后重提：连续协议错误达到
+        // 上限才停止，因此子 Run 最多发出这么多轮请求。给少于这个数的额度会让
+        // 「可纠正的提交」在重排时撞上额度耗尽，反而变成不可纠正的失败。
+        request_allowance_end: Set(MAX_CONSECUTIVE_PROTOCOL_ERRORS),
         consecutive_protocol_errors: Set(0),
         checkpoint_json: Set(serde_json::to_string(&checkpoint)?),
         quota_scope_id: Set(None),
@@ -9485,6 +9389,79 @@ async fn insert_delegated_review_run(
         ..Default::default()
     }
     .insert(transaction)
+    .await?;
+    Ok(())
+}
+
+/// 把审核子 Run 标成失败：它不再接受任何回调，也不再发请求。
+///
+/// 只改字段、不落库：调用方在同一次写入里补上本轮自己的字段（例如被拒回合的连续
+/// 协议错误计数）。计数与失败状态必须落在同一次写入里，否则行里会留下上一轮的数字，
+/// 与同一事务里刚发出的事件互相矛盾。取消/失败尝试与被拒回合达到上限共用这一处。
+pub(crate) fn fail_delegated_review_child_run(
+    mut child_run: run::ActiveModel,
+    now: i64,
+) -> run::ActiveModel {
+    child_run.status = Set("failed".to_owned());
+    child_run.ended_at = Set(Some(now));
+    child_run.updated_at = Set(now);
+    child_run
+}
+
+/// 重新开放被失败的委托占住的 Review，并广播两个状态事件。
+///
+/// 只有仍由同一个 `attempt_id` 占有的 Review 可以被重开；已经被取消或被新委托
+/// 替换时返回 [`StoreError::ReviewAlreadyResolved`]。
+pub(crate) async fn reopen_delegated_review(
+    transaction: &DatabaseTransaction,
+    review_id: ReviewId,
+    run_id: RunId,
+    version_id: VersionId,
+    failure: &Value,
+    now: i64,
+) -> Result<(), StoreError> {
+    let review_model = review::Entity::find_by_id(db_id(review_id))
+        .filter(review::Entity::COLUMN.status.eq("delegated"))
+        .filter(review::Entity::COLUMN.attempt_id.eq(run_id.to_string()))
+        .one(transaction)
+        .await?
+        .ok_or(StoreError::ReviewAlreadyResolved)?;
+    let mut active_review = review_model.into_active_model();
+    active_review.status = Set("open".to_owned());
+    active_review.decision_source = Set(None);
+    active_review.passed = Set(None);
+    active_review.confidence = Set(None);
+    active_review.issues_json = Set(None);
+    active_review.updated_at = Set(now);
+    active_review.update(transaction).await?;
+    let workflow = workflow_for_version(transaction, version_id).await?;
+    insert_event(
+        transaction,
+        version_id,
+        "review.changed",
+        review_id,
+        workflow.state_revision,
+        json!({
+            "status": "open",
+            "failed_attempt_id": run_id,
+            "error": failure,
+        }),
+        now,
+    )
+    .await?;
+    insert_event(
+        transaction,
+        version_id,
+        "run.changed",
+        run_id,
+        workflow.state_revision,
+        json!({
+            "kind": "review",
+            "status": "failed",
+            "review_id": review_id,
+        }),
+        now,
+    )
     .await?;
     Ok(())
 }
@@ -10254,11 +10231,12 @@ async fn held_chapter_body_submission<C: ConnectionTrait>(
     }
     let held = checkpoint.held_chapter_body_submission;
     if let Some(held) = &held {
-        if held.raw_response.trim().is_empty() || held.held.summary.trim().is_empty() {
+        if held.held.summary.trim().is_empty() {
             return Err(StoreError::CorruptRecord(
-                "已暂停章节提交缺少模型响应或摘要".to_owned(),
+                "已暂停章节提交缺少摘要".to_owned(),
             ));
         }
+        phase_submission_call_id(held.held.request_id, &held.assistant_message)?;
         if workflow.active_chapter_id != Some(chapter_id)
             || workflow.stage != WorkflowStage::WritingDrafting
             || workflow.execution != ExecutionStatus::Paused

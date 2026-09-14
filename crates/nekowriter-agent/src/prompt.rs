@@ -336,23 +336,23 @@ mod tests {
             ),
             (
                 PromptKey::ReviewPreparationBackground,
-                &["阻断问题", "issues", "passed=false", "不调用工具"],
+                &["阻断问题", "issues", "passed=false", "阶段提交契约"],
             ),
             (
                 PromptKey::ReviewPreparationResearch,
-                &["证据边界", "关键事实", "passed=false", "不调用工具"],
+                &["证据边界", "关键事实", "passed=false", "阶段提交契约"],
             ),
             (
                 PromptKey::ReviewPreparationCharacters,
-                &["行动依据", "表达差异", "passed=false", "不调用工具"],
+                &["行动依据", "表达差异", "passed=false", "阶段提交契约"],
             ),
             (
                 PromptKey::ReviewPreparationOutline,
-                &["因果", "章节计划", "passed=false", "不调用工具"],
+                &["因果", "章节计划", "passed=false", "阶段提交契约"],
             ),
             (
                 PromptKey::ReviewChapterOutline,
-                &["关键场景", "因果路径", "passed=false", "不调用工具"],
+                &["关键场景", "因果路径", "passed=false", "阶段提交契约"],
             ),
             (
                 PromptKey::ReviewChapterEdit,

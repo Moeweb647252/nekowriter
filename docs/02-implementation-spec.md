@@ -50,7 +50,7 @@
 | --- | --- | --- |
 | `core::workflow` | 嵌套状态、命令校验、阶段守卫、产生业务决策 | 数据库连接、网络调用 |
 | `core::document` | 编辑校验、字数、引用位置、修订依赖 | React DOM、ORM Entity |
-| `agent::runner` | 构建一次请求、解析模型结果、请求工具执行、识别结构化阶段提交 | 自行持久化正文或批准审核 |
+| `agent::runner` | 构建一次请求、解析模型结果、请求工具执行、识别阶段提交工具调用 | 自行持久化正文或批准审核 |
 | `agent::provider` | 一种模型协议适配器、流解析、能力声明与用量映射 | 推测所有供应商都支持同一参数 |
 | `agent::prompts` | 内建提示词目录、变量声明、模板渲染、上下文编排 | 保存项目覆盖值 |
 | `store` | SeaORM Entity、事务、查询、SQLite 初始化、LanceDB 索引 | 决定某章是否通过审核 |
@@ -59,6 +59,12 @@
 | `app::http` | DTO 校验、API、SSE、错误映射、静态页面 | 在 HTTP handler 中等待用户回答 |
 
 Core 的决策函数以状态、命令、已读取的领域输入为参数，返回待提交的状态与变更；App 在同一短事务中检查修订并提交。不要把整套系统做成历史事件回放才能读取的 Event Sourcing：普通页面直接查询当前表，事件用于同步与诊断。
+
+一个模型回合只有两种结局：被接受的回合由 `store::model_requests`（准备、细纲、正文提交）与 `store::preparation`（审核结论）落账；被调度器判为不合格的回合由 `store::protocol_correction` 落账。写作 Run 与委托审核子 Run 的差别全部收敛在 `ProtocolCorrectionTarget` 与它分派到的两个 `settle_*` 收束函数：配对消息的构造、连续计数策略、事件字段与「达上限时收束」的判定都只有一份实现，新增 lane 只需再加一个 target，不得再复制一份事务。确定「这一轮为什么被拒」仍是 `agent::runner` 的阶段守卫，纠正提示的文案仍归调度器的 `protocol_correction`，被拒事实的持久化不参与这两件事。
+
+另有两处拒绝不由调度器判定，仍在 `store::preparation`：`resolve_held_chapter_body_submission`（在提交边界命中的暂停恢复时，正文提交不可应用或仍有未投递意见）与 `commit_chapter_body_model_submission` 的未投递意见分支。前者不计数；后者计入 `MAX_CONSECUTIVE_PROTOCOL_ERRORS`。两者的错误码是 `PHASE_SUBMISSION_REJECTED`，与调度器那条路径的 `PHASE_SUBMISSION_INVALID` / `TOOL_ARGUMENTS_INVALID` 刻意保持不同。
+
+不论哪条路径，`consecutive_protocol_errors` 只有 `store::model_requests::next_protocol_error_count` 一个实现，并且必须与它旁边的事件在同一次写入里落库：这一轮的计数既进 Run 行也进事件（`consecutive_protocol_errors`），只在部分分支写就会让行里的数字与刚发出的事件互相矛盾。
 
 ### 2.2 每稿本命令循环
 
@@ -72,13 +78,17 @@ Core 的决策函数以状态、命令、已读取的领域输入为参数，返
 
 ### 2.3 工程边界
 
-HTTP 超时、响应大小、单个工具参数大小和循环轮次使用集中定义的工程限制。建议初值：完整工具参数上限 256 KiB；单次模型响应上限 2 MiB；初始及每轮重新获准执行的请求额度各为 100 次；连续 3 次协议错误后停止自动推进并等待用户处理。这些限制不等于辅助工具 quota，界面必须说明具体触发原因。
+HTTP 超时、响应大小和循环轮次使用集中定义的工程限制。建议初值：单次模型响应上限 2 MiB；初始及每轮重新获准执行的请求额度各为 100 次；连续 3 次协议错误后停止自动推进并等待用户处理。这些限制不等于辅助工具 quota，界面必须说明具体触发原因。
+
+工具参数不设独立大小上限：单次响应总上限已经界定了它，而单独的「参数过大」判定会把模型一次写得太长的参数变成传输失败，模型拿不到任何回执。参数不可解码（被截断、不是合法 JSON、不是 object）一律按可纠正的协议错误处理——保留模型给出的原文，写一条配对的错误工具结果并把具体原因交给纠正消息，模型在剩余额度里重试。
 
 Run 分开保存累计 `request_count` 和本轮允许达到的累计上界 `request_allowance_end`，初始为 0 和 100。只有 `request_count < request_allowance_end` 才能发送下一次模型请求；在同一事务中将新 attempt 标为 dispatched 并使 request_count 加 1，之后再执行网络 I/O。prepared 后取消的请求不计次，dispatched 后失败或结果未知的请求仍计次；同一 attempt 的重复回调不增加次数。最后一个额度内请求的响应、工具结果和审核仍完整处理，额度耗尽只阻止下一次模型请求。
 
 额度耗尽或连续协议错误触发停止时，Run 进入 stopped，记录 `wait_reason = request_limit|protocol_error_limit`。用户显式继续 stopped/failed/interrupted 的原 Run 时，同事务设置 `request_allowance_end = request_count + 100`、清零连续协议错误数、增加 resume_count 并取得执行槽。累计请求数、Token、工具结果和辅助 quota 消耗保持不变。重复 command_id 返回原回执；Run 已恢复后再次提交新的继续命令返回状态冲突，不叠加额度。
 
 普通用户暂停的恢复、提交意见、回答问题、接受编辑、审核修订、网络重连及进程启动均不续授额度。UI 在额度耗尽时显示“本轮请求额度已用完，继续可再执行最多 100 次”，由用户明确继续；修改设置本身不重启任务。
+
+委托审核的子 Run 在额度上是例外：一次审核只该提交一次结论，但被拒后可以在连续协议错误上限内重提，因此它的 `request_allowance_end` 取该上限（3）而不是 100——给少于重提轮数的额度会让「可纠正的提交」在重排时撞上额度耗尽，反而变成不可纠正的失败。额度用尽后子 Run 失败、Review 重新开放，用户重新委托时由新子 Run 重新取得这份额度。
 
 模型请求超时区分连接、首包和流空闲时间，不用一个过短的总超时终止正常长输出。初值在 M1 实测后锁定并记录；请求失败不自动换模型、协议或研究引擎。
 
@@ -175,7 +185,7 @@ Execution（独立于 Workflow）
 
 第一个模型适配器采用 Chat Completions 兼容 HTTP 协议，使用配置的 API 根地址拼接 `chat/completions`；Embedding 适配器使用 `embeddings`。根地址明确以 `/v1` 等实际 API 前缀结尾，不通过失败请求猜测 URL。它可连接符合已验证合同的本地或远程服务；vLLM 官方也声明提供这些兼容端点，但本项目不包含部署 vLLM 的工作。[兼容端点说明](https://docs.vllm.ai/en/latest/serving/online_serving/openai_compatible_server/)
 
-协议层统一为 `ModelRequest → TextDelta / ToolCallDelta / Usage / Completed / Failed`；按 tool index 累积 ID、名称和参数，直到响应完整才交给 ToolHost。工具名称、arguments JSON、assistant/tool 消息配对和结束原因均显式校验。阶段提交采用完整 assistant 文本中的 JSON；服务端校验始终必须存在，不以供应商是否启用约束解码为转移。
+协议层统一为 `ModelRequest → TextDelta / ToolCallDelta / Usage / Completed / Failed`；按 tool index 累积 ID、名称和参数，直到响应完整才交给 ToolHost。工具名称、arguments JSON、assistant/tool 消息配对和结束原因均显式校验。阶段提交就是对本阶段提交工具（§4.3）的一次调用；服务端校验始终必须存在，不以供应商是否启用约束解码为转移。请求只声明工具，不附加 `response_format`：`response_format=json_object` 曾让 OpenAI 兼容服务在带工具的一轮直接跳过工具调用，阶段终态因此落空。
 
 ```text
 读取可继续的工作流
@@ -183,7 +193,7 @@ Execution（独立于 Workflow）
 → 在命令边界读取最新设置并封存请求
 → 流式调用模型
 → 持久化完整模型消息与用量
-→ 分支：工具调用 / 结构化阶段提交 / 协议错误
+→ 分支：业务工具调用 / 阶段提交工具调用 / 协议错误
 → 工具调用经门控和事务执行，或挂起等待用户
 → 在下一请求封存时物化工具结果与已排队意见
 → 下一轮，直到阶段提交通过业务守卫
@@ -202,24 +212,30 @@ Execution（独立于 Workflow）
 | 正文 Agent | `ask_user`、`append_content`、`replace_content` | 均为 0 |
 | 审核 Agent | 无业务写入工具；只读取服务端提供的审核上下文 | 不消耗辅助 quota |
 
+每个阶段另外声明恰好一个本阶段的提交工具（§4.3）；它不属于业务工具，也不消耗辅助 quota。
+
 `research_web` 注册表为空时不加入工具声明。`query_knowledge` 在 Embedding 未配置或索引不可查询时不宣告可用。工具不可用原因进入本轮能力说明；旧请求返回一个现已不可用的调用时返回明确错误，不能改用另一种工具。
 
 “免费”只表示不扣辅助工具次数，模型理解工具结果仍可能计 Token。用户直接在知识库页面搜索也不扣写作 quota，Embedding 实际用量独立记录。
 
-### 4.3 结构化阶段提交
+### 4.3 阶段提交工具
 
-提交采用模型响应中的类型化 JSON，由适配器解析为 `PhaseSubmission`，不是额外授予的正文工具。生产适配器必须能够区分工具响应和终态结构化输出，M1 用真实模型验证。
+每个阶段声明一个本阶段的提交工具，阶段提交就是对该工具的一次调用：`nekowriter_agent::runner::submission_tool` 生成工具定义，`parse_phase_submission` 解析它的参数。它不是额外授予的正文工具，也不依赖供应商的结构化输出开关。
 
 ```text
-PreparationSubmission { artifacts: [...], chapter_plan: [...] }
-OutlineSubmission     { chapter_id, content, goals: [...] }
-ChapterSubmission     { chapter_id, summary }
-ReviewSubmission      { passed, confidence, issues }
+submit_preparation      { artifacts: [...], chapter_plan: [...] }   本轮包含粗纲时 chapter_plan 必填
+submit_chapter_outline  { chapter_id, content }
+submit_chapter          { chapter_id, summary }
+submit_review           { passed, confidence, issues }
 ```
 
-`ChapterSubmission` 的摘要不是正文，正文只来自已接受的编辑工具。阶段提交不能覆盖一个非空待审提案，也不能替代终稿审核。
+工具 schema 与解析器同源：准备阶段要求提交的产物清单按本轮真正需要的产物生成，章节级提交的 `chapter_id` 被声明成单值 `enum`，钉死成本次请求对应的具体值——模型无法自行推断它。细纲不再接受从未落库的 `goals`。
 
-阶段角色的 system 消息必须写明本阶段的提交结构（字段名、取值约束与「只输出 JSON」的要求）；章节级提交还必须带上本次请求对应的 `chapter_id` 具体值，因为模型无法自行推断它。合同文本与解析器同源（`nekowriter_agent::runner::submission_contract`）：改了字段就必须同时改解析器与合同，否则模型只会拿到一份过期的要求。
+参数校验失败时，被拒的调用会得到一条配对的错误工具结果，里面带着解析器给出的具体原因（缺哪一项、哪个取值非法），模型可以在同一次调用里补齐后重试；成功提交写配对的 `applied` 结果。账本因此始终保存成对的 assistant 工具调用与工具结果，重放时 `serialize_request_messages` 的配对校验不会失败。
+
+没有调用提交工具的纯文本终态不是提交：它按协议错误处理，纠正消息点名模型该调用哪个工具。`ChapterSubmission` 的摘要不是正文，正文只来自已接受的编辑工具。阶段提交不能覆盖一个非空待审提案，也不能替代终稿审核。
+
+阶段角色的 system 消息必须写明本阶段的提交契约（工具名、必填字段、取值约束与「不要在普通文本里输出 JSON」的要求）；合同文本与工具 schema、解析器同源（`nekowriter_agent::runner::submission_contract`）：改了字段就必须同时改解析器、工具定义与合同，否则模型只会拿到一份过期的要求。
 
 格式无效时保留原始完整响应和校验错误，向模型返回明确协议纠正信息，在本轮剩余请求额度及连续协议错误限制内继续；不从散文中猜测 JSON 或审核结论。未完成流的片段不能作为有效提交。
 
@@ -348,13 +364,17 @@ ReviewSubmission      { passed, confidence, issues }
 
 ### 6.2 委托协议
 
-点击委托时保存当前草稿意见、引用及目标快照，创建子 Run。默认使用项目最新模型和该类型审核提示词，不新增一套用户必须配置的审核模型设置。审核子 Run 不获得写作工具，只能返回一次结构化审核结论。
+点击委托时保存当前草稿意见、引用及目标快照，创建子 Run。默认使用项目最新模型和该类型审核提示词，不新增一套用户必须配置的审核模型设置。审核子 Run 不获得写作工具；每次请求只提交一次结构化审核结论，被拒时在连续协议错误上限内重新提交（见下）。
 
 结构要求：`passed` 必须是 bool；`confidence` 必须是有限数且在 `[0,1]` 内；`issues` 必须是字符串数组；三个字段都必须存在。字符串不得作为布尔值，缺字段不可自动填充。
 
 `passed=true` 直接通过，置信度不参与阈值判断；非空 issues 作为观察项展示。`passed=false` 拒绝；如果 issues 为空，仍遵守原始协议，将“审核未通过，审核 Agent 未提供具体问题”作为系统说明交给写作 Agent，而不是伪造具体问题。
 
 委托产出的有效决定自动应用于本次审核，无需再加一次“确认 Agent 结论”。失败则保留未完成审核，用户可重新委托或自行审核；不会自动选择替代审核方。
+
+不符合合同的提交与写作 lane 同构：字段缺失、字段形状错误（例如 `issues` 是装着数组的 JSON 字符串）、参数不可解码、调用未声明的工具或纯文本终态，都保留原始参数、写一条配对的错误工具结果，并追加一条点名 `submit_review` 与具体原因的协议纠正，计入同一个 `consecutive_protocol_errors`，模型在限额内可以重新提交。只有传输失败、提交写库失败，或连续协议错误达到上限（3 次）才让本次委托失败、Review 回到 `open`。
+
+被拒的那一轮必须留下与写作 lane 同名的可见信号，否则界面上审核会停在 `delegated` 且没有任何进展可看：同事务写一条 `run.changed`（`kind = review`、`status`、`request_id`、`request_count`、`consecutive_protocol_errors`、达到上限时的 `wait_reason = protocol_error_limit`，以及 `protocol_correction = true`）与一条 `review.changed`（`status = delegated`、`attempt_id`、`request_id`、`consecutive_protocol_errors`、`protocol_correction = true`）。`consecutive_protocol_errors` 只通过事件暴露给客户端（快照与 Dashboard 的 DTO 都不含它），所以这两条事件不是调试信息，是这条回路唯一的对外信号。
 
 ### 6.3 并发与过期结果
 
@@ -549,7 +569,7 @@ MVP 只支持 `{{variable_name}}` 文本替换，不支持表达式、循环、�
 
 系统设置：模型服务地址与凭据引用、默认模型、模型能力资料、Embedding profile、内建提示词覆盖。项目设置：模型引用（模型 ID 与它自己的能力资料）、思考等级、辅助工具预算、项目提示词覆盖。没有额外审核模型开关，委托使用项目当前模型。
 
-每次请求先解析 `project → system default` 的有效模型设置，再解析提示词的三级优先级，最后用**有效模型自己的能力资料**验证模型支持工具、流式输出、结构化提交和当前思考参数。能力资料与被引用的模型 ID 一起声明，因此校验对象与请求实际发往的模型始终是同一个；同一套判定既用于调度器发请求前，也用于 HTTP 命令受理前。MVP 的协议适配器只承诺验收过的能力组合；不能宣称任意兼容地址都可用。
+每次请求先解析 `project → system default` 的有效模型设置，再解析提示词的三级优先级，最后用**有效模型自己的能力资料**验证模型支持工具、流式输出和当前思考参数；每个阶段的终态都是一次提交工具调用，所以工具能力对所有阶段都是硬要求。能力资料与被引用的模型 ID 一起声明，因此校验对象与请求实际发往的模型始终是同一个；同一套判定既用于调度器发请求前，也用于 HTTP 命令受理前。MVP 的协议适配器只承诺验收过的能力组合；不能宣称任意兼容地址都可用。
 
 请求保存：设置修订、提示词实际渲染内容及哈希、模型 ID、有效能力资料、有效思考参数、工具描述、上下文来源修订、最终消息数组、供应商请求 ID（若有）。凭据只在请求发送时读取，不进入快照或日志。
 

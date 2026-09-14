@@ -46,20 +46,9 @@ impl EffectiveModel<'_> {
     }
 }
 
-/// 能力资料适用于哪一类模型请求。
-///
-/// 写作阶段需要工具（`ask_user`）与结构化提交；委托审核不调用工具，但同样必须能
-/// 稳定返回结构化结论。这个差异只在这里表达一次。
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ModelUse {
-    Writing,
-    Review,
-}
-
 /// 阻止请求发出的能力缺口。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CapabilityProblem {
-    StructuredOutput,
     Tools,
     Thinking,
 }
@@ -69,8 +58,7 @@ impl CapabilityProblem {
     #[must_use]
     pub const fn describe(self) -> &'static str {
         match self {
-            Self::StructuredOutput => "未声明支持结构化提交，而当前阶段每次请求都要求 JSON 对象",
-            Self::Tools => "未声明支持工具调用，而写作阶段需要 ask_user",
+            Self::Tools => "未声明支持工具调用，而每个阶段都要用工具提交结果",
             Self::Thinking => "未声明支持思考参数，而项目设置了思考等级",
         }
     }
@@ -96,19 +84,17 @@ pub fn resolve_effective_model<'a>(
     }
 }
 
-/// 判断某个用途 + 思考等级在该能力资料下是否会必然失败。
+/// 判断给定能力资料与思考等级是否会必然失败。
 ///
-/// 返回 `None` 表示可以发出请求；否则调用方必须在 dispatch 之前失败。
+/// 每个阶段都要用工具提交结果，所以工具能力是硬要求；思考等级只要求模型在项目
+/// 设置了等级时声明支持。返回 `None` 表示可以发出请求；否则调用方必须在 dispatch
+/// 之前失败。
 #[must_use]
 pub fn pre_dispatch_capability_problem(
     capabilities: ModelCapabilityProfile,
-    use_case: ModelUse,
     thinking_level: ThinkingLevel,
 ) -> Option<CapabilityProblem> {
-    if !capabilities.structured_output {
-        return Some(CapabilityProblem::StructuredOutput);
-    }
-    if use_case == ModelUse::Writing && !capabilities.tools {
+    if !capabilities.tools {
         return Some(CapabilityProblem::Tools);
     }
     if thinking_level != ThinkingLevel::Off && !capabilities.thinking {
@@ -142,15 +128,10 @@ mod tests {
 
     use super::*;
 
-    fn capabilities(
-        tools: bool,
-        structured_output: bool,
-        thinking: bool,
-    ) -> ModelCapabilityProfile {
+    fn capabilities(tools: bool, thinking: bool) -> ModelCapabilityProfile {
         ModelCapabilityProfile {
             streaming: true,
             tools,
-            structured_output,
             stream_usage: true,
             thinking,
         }
@@ -172,11 +153,11 @@ mod tests {
 
     #[test]
     fn effective_model_prefers_project_reference() {
-        let system = system_settings(capabilities(true, true, false));
+        let system = system_settings(capabilities(true, false));
         let project = ProjectSettings {
             model: Some(ProjectModelReference {
                 model_id: "project-model".to_owned(),
-                capabilities: capabilities(true, true, true),
+                capabilities: capabilities(true, true),
             }),
             ..ProjectSettings::default()
         };
@@ -188,7 +169,7 @@ mod tests {
 
     #[test]
     fn effective_model_falls_back_to_system_without_reference() {
-        let system = system_settings(capabilities(true, true, true));
+        let system = system_settings(capabilities(true, true));
         let project = ProjectSettings {
             model: None,
             ..ProjectSettings::default()
@@ -206,43 +187,29 @@ mod tests {
     }
 
     #[test]
-    fn capability_matrix_matches_each_use() {
-        let complete = capabilities(true, true, true);
+    fn capability_matrix_requires_tools_and_declared_thinking() {
+        let complete = capabilities(true, true);
         assert_eq!(
-            pre_dispatch_capability_problem(complete, ModelUse::Writing, ThinkingLevel::High),
+            pre_dispatch_capability_problem(complete, ThinkingLevel::High),
             None
         );
         assert_eq!(
-            pre_dispatch_capability_problem(complete, ModelUse::Review, ThinkingLevel::Off),
+            pre_dispatch_capability_problem(complete, ThinkingLevel::Low),
             None
         );
-        // 审核阶段不要求工具。
-        let review_only = capabilities(false, true, false);
+        // 每个阶段都要提交工具：没有工具能力的模型在 dispatch 前就失败。
         assert_eq!(
-            pre_dispatch_capability_problem(review_only, ModelUse::Review, ThinkingLevel::Off),
-            None
-        );
-        assert_eq!(
-            pre_dispatch_capability_problem(review_only, ModelUse::Writing, ThinkingLevel::Off),
+            pre_dispatch_capability_problem(capabilities(false, false), ThinkingLevel::Off),
             Some(CapabilityProblem::Tools)
         );
+        let no_thinking = capabilities(true, false);
         assert_eq!(
-            pre_dispatch_capability_problem(complete, ModelUse::Writing, ThinkingLevel::Low),
-            None
-        );
-        let no_thinking = capabilities(true, true, false);
-        assert_eq!(
-            pre_dispatch_capability_problem(no_thinking, ModelUse::Writing, ThinkingLevel::Low),
+            pre_dispatch_capability_problem(no_thinking, ThinkingLevel::Low),
             Some(CapabilityProblem::Thinking)
         );
         assert_eq!(
-            pre_dispatch_capability_problem(no_thinking, ModelUse::Writing, ThinkingLevel::Off),
+            pre_dispatch_capability_problem(no_thinking, ThinkingLevel::Off),
             None
-        );
-        let no_structured = capabilities(true, false, true);
-        assert_eq!(
-            pre_dispatch_capability_problem(no_structured, ModelUse::Review, ThinkingLevel::Off),
-            Some(CapabilityProblem::StructuredOutput)
         );
     }
 }
