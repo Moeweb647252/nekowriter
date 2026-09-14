@@ -9,8 +9,9 @@ use std::collections::HashMap;
 
 use nekowriter_core::{
     DASHBOARD_ROLE_EMBEDDING, Dashboard, DashboardDailyTokens, DashboardDailyWords, DashboardJobs,
-    DashboardRange, DashboardReviewJob, DashboardTokenRole, DashboardTokens, DashboardWords,
-    PersistedModelUsage, UsageUnknownReason, dashboard_usage_role, utc_now_millis,
+    DashboardRange, DashboardTask, DashboardTaskCategory, DashboardTokenRole, DashboardTokens,
+    DashboardWords, ExecutionStatus, PersistedModelUsage, UsageUnknownReason, dashboard_usage_role,
+    utc_now_millis,
 };
 use sea_orm::{ColumnTrait, DerivePartialModel, EntityTrait, QueryFilter, prelude::TextUuid};
 use uuid::Uuid;
@@ -30,6 +31,15 @@ use super::{
 
 /// 顶层 Run 中仍处于进行中的状态。
 const ACTIVE_RUN_STATUSES: [&str; 5] = ["queued", "running", "waiting", "paused", "interrupted"];
+
+/// Dashboard 只需要工作流状态的一小部分；避免给历史诊断与测试造完整快照的负担。
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DashboardWorkflowState {
+    execution: ExecutionStatus,
+    #[serde(default)]
+    active_chapter_id: Option<Uuid>,
+}
 
 impl Store {
     /// 回算一次 Dashboard 统计。
@@ -189,15 +199,15 @@ impl Store {
         Ok(tokens)
     }
 
-    /// 统计顶层 Run，并展开仍在进行的审核子 Run。
+    /// 统计顶层 Run，并展开所有可操作的顶层与子 Run。
     async fn dashboard_jobs(&self, runs: &[run::Model]) -> Result<DashboardJobs, StoreError> {
-        let mut execution_by_version: HashMap<Uuid, String> = HashMap::new();
+        let mut workflow_by_version: HashMap<Uuid, DashboardWorkflowState> = HashMap::new();
         for run in runs {
-            if run.parent_run_id.is_some() || run.kind == "review" || run.status != "waiting" {
+            if !ACTIVE_RUN_STATUSES.contains(&run.status.as_str()) && run.status != "failed" {
                 continue;
             }
             let version_id = run.version_id.0;
-            if execution_by_version.contains_key(&version_id) {
+            if workflow_by_version.contains_key(&version_id) {
                 continue;
             }
             let Some(workflow) = workflow_instance::Entity::find_by_id(run.version_id)
@@ -206,13 +216,10 @@ impl Store {
             else {
                 continue;
             };
-            let state: serde_json::Value =
-                serde_json::from_str(&workflow.state_json).map_err(|error| {
-                    StoreError::CorruptRecord(format!("工作流状态不是 JSON：{error}"))
-                })?;
-            if let Some(execution) = state.get("execution").and_then(|value| value.as_str()) {
-                execution_by_version.insert(version_id, execution.to_owned());
-            }
+            let snapshot = serde_json::from_str(&workflow.state_json).map_err(|error| {
+                StoreError::CorruptRecord(format!("工作流状态不是 JSON：{error}"))
+            })?;
+            workflow_by_version.insert(version_id, snapshot);
         }
 
         let mut jobs = DashboardJobs {
@@ -222,13 +229,14 @@ impl Store {
             waiting_review: 0,
             paused: 0,
             needs_attention: 0,
-            reviews: Vec::new(),
+            tasks: Vec::new(),
         };
         for run in runs {
+            if ACTIVE_RUN_STATUSES.contains(&run.status.as_str()) || run.status == "failed" {
+                let workflow = workflow_by_version.get(&run.version_id.0);
+                jobs.tasks.push(dashboard_task(run, workflow)?);
+            }
             if run.kind == "review" {
-                if ACTIVE_RUN_STATUSES.contains(&run.status.as_str()) || run.status == "failed" {
-                    jobs.reviews.push(dashboard_review_job(run)?);
-                }
                 continue;
             }
             if run.parent_run_id.is_some() {
@@ -240,9 +248,13 @@ impl Store {
                 "paused" => jobs.paused += 1,
                 "interrupted" | "failed" => jobs.needs_attention += 1,
                 "waiting" => {
-                    let execution = execution_by_version
-                        .get(&run.version_id.0)
-                        .map_or("waiting_review", String::as_str);
+                    let execution = workflow_by_version.get(&run.version_id.0).map_or(
+                        "waiting_review",
+                        |workflow| match workflow.execution {
+                            ExecutionStatus::WaitingAnswer => "waiting_answer",
+                            _ => "waiting_review",
+                        },
+                    );
                     if execution == "waiting_answer" {
                         jobs.waiting_user += 1;
                     } else {
@@ -252,7 +264,12 @@ impl Store {
                 _ => {}
             }
         }
-        jobs.reviews.sort_by_key(|review| review.run_id);
+        jobs.tasks.sort_by(|left, right| {
+            right
+                .updated_at_ms
+                .cmp(&left.updated_at_ms)
+                .then(left.run_id.cmp(&right.run_id))
+        });
         Ok(jobs)
     }
 
@@ -372,8 +389,22 @@ struct RevisionStat {
     created_at: i64,
 }
 
-fn dashboard_review_job(run: &run::Model) -> Result<DashboardReviewJob, StoreError> {
-    Ok(DashboardReviewJob {
+fn dashboard_task(
+    run: &run::Model,
+    workflow: Option<&DashboardWorkflowState>,
+) -> Result<DashboardTask, StoreError> {
+    let category = if matches!(run.status.as_str(), "interrupted" | "failed") {
+        DashboardTaskCategory::Attention
+    } else if run.kind == "review" {
+        DashboardTaskCategory::Review
+    } else if workflow
+        .is_some_and(|workflow| matches!(workflow.execution, ExecutionStatus::WaitingAnswer))
+    {
+        DashboardTaskCategory::UserInput
+    } else {
+        DashboardTaskCategory::Writing
+    };
+    Ok(DashboardTask {
         run_id: run.id.0,
         parent_run_id: run
             .parent_run_id
@@ -382,8 +413,17 @@ fn dashboard_review_job(run: &run::Model) -> Result<DashboardReviewJob, StoreErr
             .transpose()?,
         project_id: run.project_id.0,
         version_id: run.version_id.0,
+        chapter_id: workflow.and_then(|workflow| workflow.active_chapter_id),
+        kind: run.kind.clone(),
         stage: run.stage.clone(),
         status: run.status.clone(),
+        category,
+        review_target: run
+            .kind
+            .eq("review")
+            .then(|| run.stage.trim_start_matches("review.").to_owned()),
+        started_at_ms: run.started_at,
+        updated_at_ms: run.updated_at,
     })
 }
 
@@ -596,8 +636,8 @@ mod tests {
         assert_eq!(dashboard.tokens.daily.len(), 7);
         assert_eq!(dashboard.jobs.queued, 0);
         assert_eq!(
-            dashboard.jobs.reviews,
-            [] as [nekowriter_core::DashboardReviewJob; 0]
+            dashboard.jobs.tasks,
+            [] as [nekowriter_core::DashboardTask; 0]
         );
         assert_eq!(dashboard.words.current_total, 0);
         assert_eq!(dashboard.words.net_increment, 0);
@@ -790,9 +830,15 @@ mod tests {
         assert_eq!(dashboard.jobs.waiting_review, 0);
         assert_eq!(dashboard.jobs.needs_attention, 1);
         assert_eq!(dashboard.jobs.queued, 0);
-        // 审核子 Run 展开显示，不进入主计数。
-        assert_eq!(dashboard.jobs.reviews.len(), 1);
-        assert_eq!(dashboard.jobs.reviews[0].parent_run_id, Some(parent_id));
+        // 审核子 Run 与顶层 Run 一起出现在任务列表，但不进入主计数。
+        assert_eq!(dashboard.jobs.tasks.len(), 3);
+        let review = dashboard
+            .jobs
+            .tasks
+            .iter()
+            .find(|task| task.category == DashboardTaskCategory::Review)
+            .expect("审核子 Run 应出现在统一任务列表");
+        assert_eq!(review.parent_run_id, Some(parent_id));
     }
 
     /// 项目筛选只汇总该项目的请求与正文。

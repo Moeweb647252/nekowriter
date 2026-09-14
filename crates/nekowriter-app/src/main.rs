@@ -727,6 +727,12 @@ impl IntoResponse for ApiError {
                 "自由意见不能为空".to_owned(),
                 json!({}),
             ),
+            Self::Store(StoreError::InvalidReviewDecision(message)) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "INVALID_REVIEW_DECISION",
+                message.clone(),
+                json!({ "reason": message }),
+            ),
             Self::Store(StoreError::InvalidCitation(message)) => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "INVALID_CITATION",
@@ -1139,6 +1145,8 @@ async fn main() -> Result<(), StartupError> {
 }
 
 fn router(state: AppState, web_dir: PathBuf) -> Router {
+    let root_index_html = web_dir.join("index.html");
+    let explicit_index_html = root_index_html.clone();
     let api = Router::new()
         .route("/health", get(health))
         .route("/system/shutdown", axum::routing::post(shutdown_service))
@@ -1292,6 +1300,7 @@ fn router(state: AppState, web_dir: PathBuf) -> Router {
             "/chapters/{chapter_id}/body/review",
             axum::routing::post(submit_chapter_final_review),
         )
+        .route("/events/cursor", get(get_event_cursor))
         .route("/events", get(stream_events))
         .route("/versions/{version_id}/preparation", get(get_preparation))
         .route("/versions/{version_id}/brief", put(save_novel_brief))
@@ -1359,8 +1368,34 @@ fn router(state: AppState, web_dir: PathBuf) -> Router {
 
     Router::new()
         .nest("/api", api)
+        .route("/", get(move || serve_index_html(root_index_html.clone())))
+        .route(
+            "/index.html",
+            get(move || serve_index_html(explicit_index_html.clone())),
+        )
         .fallback_service(ServeDir::new(web_dir).append_index_html_on_directories(true))
         .layer(TraceLayer::new_for_http())
+}
+
+/// 入口 HTML 不能被启发式缓存：每次启动新版本时，它必须引用同一构建产物里的懒加载 chunk。
+async fn serve_index_html(path: PathBuf) -> Response {
+    match tokio::fs::read(&path).await {
+        Ok(content) => (
+            [
+                (
+                    header::CONTENT_TYPE,
+                    HeaderValue::from_static("text/html; charset=utf-8"),
+                ),
+                (header::CACHE_CONTROL, HeaderValue::from_static("no-cache")),
+            ],
+            content,
+        )
+            .into_response(),
+        Err(error) => {
+            warn!(path = %path.display(), %error, "未找到前端入口文件");
+            StatusCode::NOT_FOUND.into_response()
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -1685,6 +1720,22 @@ async fn get_version_snapshot(
     AxumPath(version_id): AxumPath<VersionId>,
 ) -> Result<Json<VersionSnapshot>, ApiError> {
     Ok(Json(state.store.get_version_snapshot(version_id).await?))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EventCursorResponse {
+    event_watermark: String,
+}
+
+/// 返回全局可恢复事件流的当前水位，供单页应用在创建 SSE 连接前取得起点。
+async fn get_event_cursor(
+    State(state): State<AppState>,
+) -> Result<Json<EventCursorResponse>, ApiError> {
+    let bounds = state.store.event_stream_bounds().await?;
+    Ok(Json(EventCursorResponse {
+        event_watermark: bounds.watermark.to_string(),
+    }))
 }
 
 /// 导出查询参数；格式是必填项，不接受默认值。
@@ -3193,6 +3244,25 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn index_html_is_revalidated_before_loading_route_chunks() {
+        let web_dir = TempDir::new().unwrap();
+        let index_html = web_dir.path().join("index.html");
+        std::fs::write(&index_html, "<!doctype html><title>NekoWriter</title>").unwrap();
+
+        let response = serve_index_html(index_html).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CACHE_CONTROL),
+            Some(&HeaderValue::from_static("no-cache"))
+        );
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE),
+            Some(&HeaderValue::from_static("text/html; charset=utf-8"))
+        );
+    }
+
     #[test]
     fn loopback_host_validation_rejects_external_hosts() {
         assert!(is_loopback_host("127.0.0.1:47821"));
@@ -3222,6 +3292,31 @@ mod tests {
             event_cursor(&headers, None),
             Err(ApiError::InvalidEventCursor)
         ));
+    }
+
+    #[tokio::test]
+    async fn event_cursor_endpoint_reports_the_retained_global_watermark() {
+        let (_dir, state) = accumulation_app(ACCUMULATION_ENGINES).await;
+        state
+            .store
+            .create_project(
+                Uuid::new_v4(),
+                NewProject::new("事件游标", "雨夜的来客", None::<&str>).unwrap(),
+            )
+            .await
+            .unwrap();
+        let expected = state.store.event_stream_bounds().await.unwrap().watermark;
+        let base = spawn_app(state);
+        let response: Value = reqwest::Client::new()
+            .get(format!("{base}/api/events/cursor"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+
+        assert_eq!(response["eventWatermark"], expected.to_string());
     }
 
     #[test]
@@ -3328,6 +3423,21 @@ mod tests {
         assert_eq!(value["error"]["details"]["expected_state_revision"], "4");
         assert_eq!(value["error"]["details"]["actual_state_revision"], "5");
         assert!(Uuid::parse_str(value["error"]["request_id"].as_str().unwrap()).is_ok());
+    }
+
+    #[tokio::test]
+    async fn invalid_review_decision_is_a_client_validation_error() {
+        let response = ApiError::Store(StoreError::InvalidReviewDecision(
+            "退回时需要理由或引用".to_owned(),
+        ))
+        .into_response();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["error"]["code"], "INVALID_REVIEW_DECISION");
+        assert_eq!(value["error"]["details"]["reason"], "退回时需要理由或引用");
     }
 
     #[tokio::test]

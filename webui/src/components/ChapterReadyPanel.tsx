@@ -1,8 +1,9 @@
-import { useEffect, useState, type FormEvent } from "react"
+import { useEffect, useRef, useState, type FormEvent } from "react"
 import { BookOpenText, LoaderCircle, Play, Save } from "lucide-react"
 
 import { TemplateInserter } from "@/components/TemplatePanel"
 import { Button } from "@/components/ui/button"
+import { useWorkspaceDraftPersistence } from "@/hooks/use-workspace-draft"
 import {
   getChapterGuidance,
   getChapters,
@@ -15,6 +16,7 @@ import {
 
 type ChapterReadyPanelProps = {
   versionId: string
+  dataDir?: string
   preparation: PreparationSnapshot
   onChanged: (snapshot: PreparationSnapshot) => void
   onError: (message: string) => void
@@ -36,6 +38,7 @@ function chapterDisplayLabel(
 
 export function ChapterReadyPanel({
   versionId,
+  dataDir,
   preparation,
   onChanged,
   onError,
@@ -44,17 +47,66 @@ export function ChapterReadyPanel({
   const [chapter, setChapter] = useState<ChapterSummary | null>(null)
   const [chapters, setChapters] = useState<ChapterSummary[]>([])
   const [guidance, setGuidance] = useState("")
+  const [guidanceRevisionId, setGuidanceRevisionId] = useState<string | null>(
+    null
+  )
   const [loading, setLoading] = useState(true)
   const [pending, setPending] = useState<"save" | "start" | null>(null)
+  const [remoteGuidanceChanged, setRemoteGuidanceChanged] = useState(false)
+  const persistedGuidanceRef = useRef("")
+  const guidanceRef = useRef("")
 
   const chapterId = preparation.workflow.activeChapterId
   const chapterIsReady = preparation.workflow.stage === "writing_chapter_ready"
+
+  useEffect(() => {
+    guidanceRef.current = guidance
+  }, [guidance])
+
+  const { clear: clearGuidanceDraft } = useWorkspaceDraftPersistence({
+    dataDir,
+    versionId,
+    phase: "chapter_guidance",
+    targetId: chapterId,
+    baseRevision: guidanceRevisionId,
+    text: guidance,
+    dirty: guidance !== persistedGuidanceRef.current,
+    onRestore: (draft) => {
+      if (guidanceRef.current !== persistedGuidanceRef.current) return
+      guidanceRef.current = draft.text
+      setGuidance(draft.text)
+      if (draft.baseRevision !== guidanceRevisionId) {
+        setRemoteGuidanceChanged(true)
+      }
+    },
+  })
+
+  function applyGuidance(content: string | null, revisionId: string | null) {
+    const nextContent = content ?? ""
+    const hasUnsavedChanges =
+      guidanceRef.current !== persistedGuidanceRef.current
+    const changedRemotely = nextContent !== persistedGuidanceRef.current
+    persistedGuidanceRef.current = nextContent
+    setGuidanceRevisionId(revisionId)
+    if (!hasUnsavedChanges || nextContent === guidanceRef.current) {
+      guidanceRef.current = nextContent
+      setGuidance(nextContent)
+      setRemoteGuidanceChanged(false)
+    } else if (changedRemotely) {
+      setRemoteGuidanceChanged(true)
+    }
+  }
 
   useEffect(() => {
     let isCurrent = true
     if (!chapterId) {
       setChapter(null)
       setChapters([])
+      persistedGuidanceRef.current = ""
+      guidanceRef.current = ""
+      setGuidance("")
+      setGuidanceRevisionId(null)
+      setRemoteGuidanceChanged(false)
       setLoading(false)
       return () => {
         isCurrent = false
@@ -69,7 +121,7 @@ export function ChapterReadyPanel({
           chapters.find((item) => item.id === chapterId) ?? null
         setChapters(chapters)
         setChapter(selectedChapter)
-        setGuidance(nextGuidance.content ?? "")
+        applyGuidance(nextGuidance.content, nextGuidance.revisionId)
       })
       .catch((error: unknown) => {
         if (!isCurrent) return
@@ -98,7 +150,8 @@ export function ChapterReadyPanel({
         preparation.workflow.stateRevision,
         guidance
       )
-      setGuidance(saved.content ?? "")
+      applyGuidance(saved.content, saved.revisionId)
+      await clearGuidanceDraft()
       await refreshPreparation()
     } catch (error) {
       onError(error instanceof Error ? error.message : "章节指导未保存")
@@ -109,6 +162,10 @@ export function ChapterReadyPanel({
 
   async function handleStart() {
     if (!chapterId) return
+    if (guidance !== persistedGuidanceRef.current) {
+      onError("请先保存本章指导，再开始生成细纲")
+      return
+    }
     setPending("start")
     try {
       await startChapterOutline(chapterId, preparation.workflow.stateRevision)
@@ -160,6 +217,8 @@ export function ChapterReadyPanel({
           <label className="block text-sm font-medium">
             本章指导
             <textarea
+              name="chapter-guidance"
+              autoComplete="off"
               value={guidance}
               onChange={(event) => setGuidance(event.target.value)}
               maxLength={20_000}
@@ -168,6 +227,11 @@ export function ChapterReadyPanel({
               className="mt-1.5 min-h-32 w-full resize-y rounded-xl border border-input bg-background px-3 py-2 text-sm leading-6 transition outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-3 focus:ring-ring/20 disabled:cursor-not-allowed disabled:opacity-60"
             />
           </label>
+          {remoteGuidanceChanged && (
+            <p className="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
+              其他页面已更新已保存指导；你的本地草稿仍被保留。保存前请确认它仍适用于最新上下文。
+            </p>
+          )}
           <div className="mt-2">
             <TemplateInserter
               label="插入模板到本章指导"

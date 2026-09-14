@@ -934,6 +934,16 @@ Dashboard 的进行中任务包括排队、模型运行、等待用户、等待�
 - 模型失败、索引失败和零引擎能力显示实际原因，不能以无限 skeleton 隐藏不可完成状态。
 - 「本地服务」面板显示界面地址与实际数据目录，退出服务需二次确认并说明退出后保留什么；服务退出后界面区分「已退出」与「正在重连」，并给出重新启动方法与刷新提示。
 
+### 13.1 2026-09-14 路由、事件与草稿合同
+
+前端必须以 Hash 路由提供 `/works`、`/works/:projectId/versions/:versionId`、`/dashboard`、`/knowledge`、`/templates`、`/settings` 与 `/recycle`；根路径和未知路径重定向到 `/works`。作品库与管理页使用全局导航框架，工作台不嵌入全局侧栏。
+
+`GET /api/events/cursor` 返回当前保留的全局事件水位。前端先取水位再建立唯一的 `EventSource(/api/events?after=watermark)`；持久事件只使 Query 缓存失效，`preview.delta` 仅更新内存预览。创建项目、创建或复制稿本、切换项目选中稿本必须在同一事务写入 `project.changed`，前端收到后失效 `projects` 与 `dashboard` 查询。连接重置必须清空预览、失效缓存并重新按最新水位建连，不能为不同面板额外建流。
+
+`GET /api/projects` 的每项包含 `progress`：`mainChapterTotal`、`mainChapterApproved`、`extraChapterTotal` 和 `currentWordCount`。数值由当前选中稿本的可见章节与 `chapter_body` 当前修订批量回算；不读取正文内容，也不把它做成写入时累计字段。
+
+浏览器草稿必须以 `(dataDir, versionId, phase, targetId)` 隔离。`baseRevision` 是草稿的依赖元数据，用于检测远端变更，不属于存储键。草稿恢复不能自动提交；路由或章节切换前必须写入最后的 dirty 值；已确认的服务端命令才可删除对应条目。引用型反馈的前端校验为“文字非空或引用非空”，拒绝审核也采用同一条件。
+
 ## 14. 实施任务清单
 
 任务按阶段交付；每项的完成证据记录在实现 PR/变更说明中。M0 已在本机完成联合编译、测试和 HTTP 冒烟验证。M1 已有可运行的本地闭环、自动准备/细纲请求，以及自动接受的正文 `append_content` / `replace_content` 循环；macOS aarch64 上的 InferX 真实模型全流程证据见 §15.6。
@@ -1206,7 +1216,7 @@ Core 单元测试关注业务不变量与字符串边界；SQLite 临时文件�
 | 大部分软删除但非全部 | §8.4 | D06、P03 |
 | 本地运行补全：执行额度、继续与断线同步 | §2.3、§3.1、§10.3、§11 | Q03–Q06、D07–D09 |
 
-截至 2026-09-13，自动化 Rust 工作区测试共 198 个用例通过（agent 35、app 47、core 38、store 74、xtask 4），格式检查与前端生产构建通过。§15.7 完成了 M2 所属的 §15.2 A/E/F/R 竞态覆盖及真实浏览器复核，§15.8 又在真实 InferX 端点上验证了新版内建提示词，并完成 M3 的多章、复制稿本和番外 `reasoning_effort=low` 全流程。Q/K/C/D/U/P 是其它里程碑的验收组，保留各自既有证据；非 macOS 发行产物是全平台计划的唯一未验收项，不属于本轮 macOS aarch64 结论。
+截至 2026-09-14，自动化 Rust 工作区测试共 216 个用例通过（agent 43、app 55、core 38、store 76、xtask 4），格式检查与前端生产构建通过。§15.7 完成了 M2 所属的 §15.2 A/E/F/R 竞态覆盖及真实浏览器复核，§15.8 又在真实 InferX 端点上验证了新版内建提示词，并完成 M3 的多章、复制稿本和番外 `reasoning_effort=low` 全流程。本轮 UI/UX 重构的事件、草稿和路由合同见 §13.1，macOS aarch64 真实浏览器证据见[UI/UX 重构实施计划](04-ui-ux-refactor-plan.md) §6.1。Q/K/C/D/U/P 是其它里程碑的验收组，保留各自既有证据；非 macOS 发行产物是全平台计划的唯一未验收项，不属于本轮 macOS aarch64 结论。
 
 字数统计的列投影由真实进程探针覆盖：同一批 6,010 条修订（含 200 条隐藏文档的修订）在新旧两个 release 二进制上各跑四个测量回合，7 天、项目过滤与 90 天三份概览 JSON 除 `generatedAtMs` 外逐字节相同，且正文体积不影响任何一个数字；改动前小正文 25ms / RSS 40MB，同一批行换成 4,000 字符后 105ms / RSS 192MB，改动后两种情况都是 RSS 39MB（耗时 29ms → 46ms，剩下的差别来自 SQLite 把正文与统计列存在同一页里）。发行打包的两道硬检查同样有证据：未装标准库的目标在任何构建之前失败且不改写 `webui/dist`、不留下空壳发行目录（真实命令实测），容器与架构的错配由单元测试正面盯住（含 `aarch64-unknown-linux-gnu` 配 x86-64 ELF 这一例）。
 

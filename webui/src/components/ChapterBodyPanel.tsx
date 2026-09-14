@@ -19,6 +19,7 @@ import { TemplateInserter } from "@/components/TemplatePanel"
 import { UserQuestionPanel } from "@/components/UserQuestionPanel"
 import { WritingRecoveryPanel } from "@/components/WritingRecoveryPanel"
 import { type PickedTextRange } from "@/lib/citations"
+import { useWorkspaceDraftPersistence } from "@/hooks/use-workspace-draft"
 import {
   advanceToNextChapter,
   appendChapterBody,
@@ -44,6 +45,8 @@ import {
 
 type ChapterBodyPanelProps = {
   versionId: string
+  /** 本地服务数据目录用于隔离不同作品库的浏览器草稿。 */
+  dataDir?: string
   preparation: PreparationSnapshot
   onChanged: (snapshot: PreparationSnapshot) => void
   onError: (message: string) => void
@@ -59,6 +62,7 @@ type CitationDraft = {
 
 export function ChapterBodyPanel({
   versionId,
+  dataDir,
   preparation,
   onChanged,
   onError,
@@ -128,6 +132,87 @@ export function ChapterBodyPanel({
   useEffect(() => {
     contentRef.current = content
   }, [content])
+
+  const { clear: clearBodyDraft } = useWorkspaceDraftPersistence({
+    dataDir,
+    versionId,
+    phase: "chapter_body",
+    targetId: chapterId,
+    baseRevision: snapshot?.body.revisionId ?? null,
+    text: content,
+    dirty: content !== persistedContentRef.current,
+    onRestore: (draft) => {
+      if (contentRef.current !== persistedContentRef.current) return
+      contentRef.current = draft.text
+      setContent(draft.text)
+      if (draft.baseRevision !== (snapshot?.body.revisionId ?? null)) {
+        setRemoteBodyChanged(true)
+      }
+    },
+  })
+
+  const { clear: clearFeedbackDraft } = useWorkspaceDraftPersistence({
+    dataDir,
+    versionId,
+    phase: "feedback",
+    targetId: chapterId,
+    baseRevision: snapshot?.body.revisionId ?? null,
+    text: freeFeedback,
+    citations: feedbackCitations,
+    dirty: freeFeedback.trim().length > 0 || feedbackCitations.length > 0,
+    onRestore: (draft) => {
+      if (!chapterId || freeFeedback || feedbackCitations.length > 0) return
+      setFreeFeedback(draft.text)
+      if (Array.isArray(draft.citations)) {
+        setFeedbackCitations({
+          chapterId,
+          items: draft.citations as FeedbackCitation[],
+        })
+      }
+    },
+  })
+
+  const { clear: clearProposalDraft } = useWorkspaceDraftPersistence({
+    dataDir,
+    versionId,
+    phase: "feedback",
+    targetId: chapterId ? `proposal:${chapterId}` : null,
+    baseRevision: snapshot?.body.revisionId ?? null,
+    text: proposalFeedback,
+    citations: proposalCitations,
+    dirty: proposalFeedback.trim().length > 0 || proposalCitations.length > 0,
+    onRestore: (draft) => {
+      if (!chapterId || proposalFeedback || proposalCitations.length > 0) return
+      setProposalFeedback(draft.text)
+      if (Array.isArray(draft.citations)) {
+        setProposalCitations({
+          chapterId,
+          items: draft.citations as FeedbackCitation[],
+        })
+      }
+    },
+  })
+
+  const { clear: clearFinalReviewDraft } = useWorkspaceDraftPersistence({
+    dataDir,
+    versionId,
+    phase: "feedback",
+    targetId: chapterId ? `final-review:${chapterId}` : null,
+    baseRevision: snapshot?.body.revisionId ?? null,
+    text: issues,
+    citations: finalCitations,
+    dirty: issues.trim().length > 0 || finalCitations.length > 0,
+    onRestore: (draft) => {
+      if (!chapterId || issues || finalCitations.length > 0) return
+      setIssues(draft.text)
+      if (Array.isArray(draft.citations)) {
+        setFinalCitations({
+          chapterId,
+          items: draft.citations as FeedbackCitation[],
+        })
+      }
+    },
+  })
 
   function applyBodySnapshot(
     nextSnapshot: ChapterBodySnapshot,
@@ -354,6 +439,7 @@ export function ChapterBodyPanel({
             content
           )
       applyBodySnapshot(nextSnapshot, false)
+      await clearBodyDraft()
       onChanged(await getPreparation(versionId))
     } catch (error) {
       onError(error instanceof Error ? error.message : "正文未能保存")
@@ -391,22 +477,23 @@ export function ChapterBodyPanel({
   async function handleDecision(passed: boolean) {
     const review = snapshot?.body.review
     if (!chapterId || !review) return
-    if (!passed && !issues.trim()) {
-      onError("退回终稿时请说明需要调整的内容")
+    if (!passed && !issues.trim() && finalCitations.length === 0) {
+      onError("退回终稿时请说明需要调整的内容或引用正文片段")
       return
     }
     setPending(passed ? "approve" : "reject")
     try {
-      onChanged(
-        await decideChapterFinalReview(
-          review.id,
-          preparation.workflow.stateRevision,
-          passed,
-          issues,
-          finalCitations
-        )
+      const next = await decideChapterFinalReview(
+        review.id,
+        preparation.workflow.stateRevision,
+        passed,
+        issues,
+        finalCitations
       )
+      setIssues("")
       setFinalCitations({ chapterId, items: [] })
+      await clearFinalReviewDraft()
+      onChanged(next)
       await refreshBody()
     } catch (error) {
       onError(error instanceof Error ? error.message : "终稿审核决定未保存")
@@ -426,8 +513,10 @@ export function ChapterBodyPanel({
         issues,
         finalCitations
       )
-      onChanged(result.snapshot)
+      setIssues("")
       setFinalCitations({ chapterId, items: [] })
+      await clearFinalReviewDraft()
+      onChanged(result.snapshot)
       await refreshBody()
     } catch (error) {
       onError(error instanceof Error ? error.message : "审核委托未能启动")
@@ -505,6 +594,7 @@ export function ChapterBodyPanel({
       )
       setProposalFeedback("")
       setProposalCitations({ chapterId, items: [] })
+      await clearProposalDraft()
       onChanged(await getPreparation(versionId))
     } catch (error) {
       onError(error instanceof Error ? error.message : "正文编辑提案未能决定")
@@ -526,6 +616,7 @@ export function ChapterBodyPanel({
       )
       setProposalFeedback("")
       setProposalCitations({ chapterId, items: [] })
+      await clearProposalDraft()
       onChanged(result.snapshot)
       await refreshBody()
     } catch (error) {
@@ -556,8 +647,8 @@ export function ChapterBodyPanel({
   async function handleSubmitFreeFeedback() {
     const runId = snapshot?.workflow.activeRunId
     if (!runId || !snapshot || !chapterId) return
-    if (!freeFeedback.trim()) {
-      onError("请先填写要交给正文 Agent 的意见")
+    if (!freeFeedback.trim() && feedbackCitations.length === 0) {
+      onError("请填写意见或引用至少一段正文")
       return
     }
     setPending("feedback")
@@ -572,6 +663,7 @@ export function ChapterBodyPanel({
       )
       setFreeFeedback("")
       setFeedbackCitations({ chapterId, items: [] })
+      await clearFeedbackDraft()
       onChanged(await getPreparation(versionId))
     } catch (error) {
       onError(error instanceof Error ? error.message : "自由意见未能保存")
@@ -960,6 +1052,8 @@ export function ChapterBodyPanel({
             <label className="mt-3 block text-xs font-medium text-muted-foreground">
               新意见
               <textarea
+                name="run-feedback"
+                autoComplete="off"
                 value={freeFeedback}
                 onChange={(event) => setFreeFeedback(event.target.value)}
                 maxLength={20_000}
@@ -987,7 +1081,10 @@ export function ChapterBodyPanel({
               <Button
                 type="button"
                 variant="outline"
-                disabled={pending !== null || !freeFeedback.trim()}
+                disabled={
+                  pending !== null ||
+                  (!freeFeedback.trim() && feedbackCitations.length === 0)
+                }
                 onClick={() => void handleSubmitFreeFeedback()}
               >
                 {pending === "feedback" ? (
@@ -1085,6 +1182,8 @@ export function ChapterBodyPanel({
                 反馈（留空且没有引用即接受；有文字或引用即拒绝并反馈给
                 Agent；委托时作为关注点）
                 <textarea
+                  name="proposal-feedback"
+                  autoComplete="off"
                   value={proposalFeedback}
                   onChange={(event) => setProposalFeedback(event.target.value)}
                   maxLength={20_000}
@@ -1165,6 +1264,8 @@ export function ChapterBodyPanel({
             <label className="mt-4 block text-sm font-medium">
               本章正文
               <textarea
+                name="chapter-body"
+                autoComplete="off"
                 value={content}
                 onChange={(event) => setContent(event.target.value)}
                 maxLength={2_000_000}
@@ -1277,6 +1378,8 @@ export function ChapterBodyPanel({
               <label className="block text-xs font-medium text-muted-foreground">
                 审核意见（退回修订时必填）
                 <textarea
+                  name="final-review-issues"
+                  autoComplete="off"
                   value={issues}
                   onChange={(event) => setIssues(event.target.value)}
                   maxLength={20_000}

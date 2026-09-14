@@ -795,6 +795,17 @@ async fn validate_review_decision_citations(
     Ok(())
 }
 
+/// 退回审核可以由文字或已逐字验证的引用构成；这项判断必须留在引用校验之后，
+/// 否则一个伪造引用会错误地让空反馈通过。
+fn validate_review_decision_feedback(
+    decision: &HumanReviewDecision,
+    citations: &[FeedbackCitation],
+) -> Result<(), StoreError> {
+    decision
+        .validate_feedback(!citations.is_empty())
+        .map_err(|error| StoreError::InvalidReviewDecision(error.to_string()))
+}
+
 async fn held_candidate_for_feedback_citation(
     transaction: &DatabaseTransaction,
     run_id: RunId,
@@ -2575,6 +2586,7 @@ impl Store {
                         None,
                     )
                     .await?;
+                    validate_review_decision_feedback(&decision, &citations)?;
 
                     let now = utc_now_millis();
                     persist_human_review_decision(
@@ -6988,6 +7000,7 @@ impl Store {
                         Some(review_target.chapter_id),
                     )
                     .await?;
+                    validate_review_decision_feedback(&decision, &citations)?;
                     let now = utc_now_millis();
                     persist_human_review_decision(
                         transaction,
@@ -7767,6 +7780,7 @@ impl Store {
                         Some(review_target.chapter_id),
                     )
                     .await?;
+                    validate_review_decision_feedback(&decision, &citations)?;
                     let now = utc_now_millis();
                     persist_human_review_decision(
                         transaction,

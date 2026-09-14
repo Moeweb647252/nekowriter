@@ -10,8 +10,8 @@ use std::{
 
 use nekowriter_core::{
     ApprovalMode, ChapterId, DocumentId, NewNovelVersion, NewProject, NovelVersion,
-    PreparationArtifactKind, Project, ProjectBundle, ProjectId, ProjectListItem, ReviewId, RunId,
-    VersionId, VersionSnapshot, WorkflowSnapshot, utc_now_millis,
+    PreparationArtifactKind, Project, ProjectBundle, ProjectId, ProjectListItem, ProjectProgress,
+    ReviewId, RunId, VersionId, VersionSnapshot, WorkflowSnapshot, utc_now_millis,
 };
 use sea_orm::prelude::TextUuid;
 use sea_orm::{
@@ -88,7 +88,10 @@ pub use system_operations::{
     OPERATION_STATUS_UNKNOWN, is_embedding_operation,
 };
 
-use entity::{command_receipt, document, novel_version, project, workflow_instance};
+use entity::{
+    chapter, command_receipt, document, document_revision, novel_version, project,
+    workflow_instance,
+};
 
 #[derive(Clone)]
 pub struct Store {
@@ -146,6 +149,8 @@ pub enum StoreError {
     EmptyFeedback,
     #[error("引用无效：{0}")]
     InvalidCitation(String),
+    #[error("审核决定无效：{0}")]
+    InvalidReviewDecision(String),
     #[error("文档修订不存在或所属文档已删除")]
     DocumentRevisionNotFound,
     #[error("正文自由意见在构建请求期间发生变化，请重新封存上下文")]
@@ -402,7 +407,7 @@ impl Store {
             .filter(
                 workflow_instance::Entity::COLUMN
                     .version_id
-                    .is_in(version_ids),
+                    .is_in(version_ids.clone()),
             )
             .all(&self.database)
             .await?;
@@ -415,6 +420,7 @@ impl Store {
             .into_iter()
             .map(|workflow| (workflow.version_id, workflow))
             .collect::<std::collections::HashMap<_, _>>();
+        let progress_by_version_id = self.project_progress_by_version(&version_ids).await?;
 
         let mut items = Vec::with_capacity(projects.len());
         for project_model in projects {
@@ -429,9 +435,121 @@ impl Store {
                 project: bundle.project,
                 selected_version: bundle.version,
                 workflow: bundle.workflow,
+                progress: progress_by_version_id
+                    .get(&version_model.id)
+                    .cloned()
+                    .unwrap_or_default(),
             });
         }
         Ok(items)
+    }
+
+    /// 批量回算作品库所需的当前稿本进度；不读取正文内容，也不会为每张卡片单独查库。
+    async fn project_progress_by_version(
+        &self,
+        version_ids: &[TextUuid],
+    ) -> Result<std::collections::HashMap<TextUuid, ProjectProgress>, StoreError> {
+        let mut progress_by_version_id = version_ids
+            .iter()
+            .copied()
+            .map(|version_id| (version_id, ProjectProgress::default()))
+            .collect::<std::collections::HashMap<_, _>>();
+        if version_ids.is_empty() {
+            return Ok(progress_by_version_id);
+        }
+
+        let chapters = chapter::Entity::find()
+            .filter(
+                chapter::Entity::COLUMN
+                    .version_id
+                    .is_in(version_ids.to_vec()),
+            )
+            .filter(chapter::Entity::COLUMN.deleted_at.is_null())
+            .all(&self.database)
+            .await?;
+        for chapter in chapters {
+            let progress = progress_by_version_id
+                .get_mut(&chapter.version_id)
+                .expect("章节查询只会返回当前选中稿本");
+            match chapter.kind.as_str() {
+                "main" => {
+                    progress.main_chapter_total += 1;
+                    match chapter.status.as_str() {
+                        "approved" => progress.main_chapter_approved += 1,
+                        "planned" | "in_progress" => {}
+                        other => {
+                            return Err(StoreError::CorruptRecord(format!(
+                                "未知章节状态：{other}"
+                            )));
+                        }
+                    }
+                }
+                "extra" => {
+                    progress.extra_chapter_total += 1;
+                    if !matches!(
+                        chapter.status.as_str(),
+                        "planned" | "in_progress" | "approved"
+                    ) {
+                        return Err(StoreError::CorruptRecord(format!(
+                            "未知章节状态：{}",
+                            chapter.status
+                        )));
+                    }
+                }
+                other => {
+                    return Err(StoreError::CorruptRecord(format!("未知章节类型：{other}")));
+                }
+            }
+        }
+
+        let body_documents = document::Entity::find()
+            .filter(
+                document::Entity::COLUMN
+                    .version_id
+                    .is_in(version_ids.to_vec()),
+            )
+            .filter(document::Entity::COLUMN.deleted_at.is_null())
+            .filter(document::Entity::COLUMN.role.eq(CHAPTER_BODY_ROLE))
+            .all(&self.database)
+            .await?;
+        let current_revision_ids = body_documents
+            .iter()
+            .filter_map(|document| document.current_revision_id.as_deref())
+            .map(|revision_id| parse_id(revision_id, "document.current_revision_id"))
+            .collect::<Result<Vec<_>, _>>()?;
+        let revisions = document_revision::Entity::find()
+            .filter(
+                document_revision::Entity::COLUMN.id.is_in(
+                    current_revision_ids
+                        .into_iter()
+                        .map(db_id)
+                        .collect::<Vec<_>>(),
+                ),
+            )
+            .all(&self.database)
+            .await?;
+        let word_count_by_revision_id = revisions
+            .into_iter()
+            .map(|revision| (revision.id, revision.word_count))
+            .collect::<std::collections::HashMap<_, _>>();
+        for document in body_documents {
+            let Some(revision_id) = document.current_revision_id.as_deref() else {
+                continue;
+            };
+            let revision_id = db_id(parse_id(revision_id, "document.current_revision_id")?);
+            let word_count = word_count_by_revision_id
+                .get(&revision_id)
+                .copied()
+                .ok_or_else(|| {
+                    StoreError::CorruptRecord("正文槽指向不存在的当前修订".to_owned())
+                })?;
+            let progress = progress_by_version_id
+                .get_mut(&document.version_id)
+                .expect("正文槽查询只会返回当前选中稿本");
+            progress.current_word_count += word_count;
+        }
+
+        Ok(progress_by_version_id)
     }
 
     pub async fn get_project(&self, project_id: ProjectId) -> Result<ProjectBundle, StoreError> {
@@ -538,6 +656,19 @@ impl Store {
             .transaction::<_, _, StoreError>(move |transaction| {
                 Box::pin(async move {
                     insert_project_bundle(transaction, &bundle_for_transaction).await?;
+                    preparation::insert_app_event(
+                        transaction,
+                        "project.changed",
+                        bundle_for_transaction.project.id,
+                        bundle_for_transaction.project.revision,
+                        serde_json::json!({
+                            "action": "created",
+                            "project_id": bundle_for_transaction.project.id,
+                            "version_id": bundle_for_transaction.version.id,
+                        }),
+                        now,
+                    )
+                    .await?;
                     let response_json = serde_json::to_string(&bundle_for_transaction)?;
                     insert_receipt(
                         transaction,
@@ -557,7 +688,10 @@ impl Store {
             .map_err(transaction_error);
 
         match result {
-            Ok(bundle) => Ok(bundle),
+            Ok(bundle) => {
+                self.notify_event_listeners();
+                Ok(bundle)
+            }
             Err(StoreError::Database(error)) => {
                 self.replay_after_receipt_conflict(
                     command_id,
@@ -628,6 +762,19 @@ impl Store {
                         version,
                         workflow,
                     };
+                    preparation::insert_app_event(
+                        transaction,
+                        "project.changed",
+                        bundle.project.id,
+                        bundle.project.revision,
+                        serde_json::json!({
+                            "action": "version_created",
+                            "project_id": bundle.project.id,
+                            "version_id": bundle.version.id,
+                        }),
+                        now,
+                    )
+                    .await?;
                     let response_json = serde_json::to_string(&bundle)?;
                     insert_receipt(
                         transaction,
@@ -647,7 +794,10 @@ impl Store {
             .map_err(transaction_error);
 
         match result {
-            Ok(bundle) => Ok(bundle),
+            Ok(bundle) => {
+                self.notify_event_listeners();
+                Ok(bundle)
+            }
             Err(StoreError::Database(error)) => {
                 self.replay_after_receipt_conflict(
                     command_id,
@@ -721,6 +871,19 @@ impl Store {
                         &version_model,
                         &workflow_model,
                     )?;
+                    preparation::insert_app_event(
+                        transaction,
+                        "project.changed",
+                        bundle.project.id,
+                        bundle.project.revision,
+                        serde_json::json!({
+                            "action": "selected_version_changed",
+                            "project_id": bundle.project.id,
+                            "version_id": bundle.version.id,
+                        }),
+                        now,
+                    )
+                    .await?;
                     let response_json = serde_json::to_string(&bundle)?;
                     insert_receipt(
                         transaction,
@@ -1129,7 +1292,8 @@ mod tests {
         MAX_CONSECUTIVE_PROTOCOL_ERRORS, ModelCapabilityProfile, NewChapterGuidance,
         NewChapterOutline, NewCopiedNovelVersion, NewExtraChapter, NewNovelBrief, NewNovelVersion,
         NewProject, NewPromptTemplate, PreparationArtifactInput, PreparationArtifactKind,
-        ReplaceChapterContent, ReviewStatus, RunWaitReason, WorkflowStage,
+        ReplaceChapterContent, ReviewStatus, RevisionId, RunWaitReason, WorkflowStage,
+        non_whitespace_char_count,
     };
     use sea_orm::{EntityTrait, ModelTrait};
     use serde_json::json;
@@ -1151,12 +1315,126 @@ mod tests {
         let replayed = store.create_project(command_id, project).await.unwrap();
         assert_eq!(created, replayed);
         assert_eq!(store.list_projects().await.unwrap().len(), 1);
+        let project_events = store
+            .events_after(0)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|event| event.event_type == "project.changed")
+            .collect::<Vec<_>>();
+        assert_eq!(project_events.len(), 1, "重放命令不能重复写入项目事件");
+        assert_eq!(project_events[0].payload["action"], "created");
+        assert_eq!(
+            project_events[0].payload["project_id"],
+            created.project.id.to_string()
+        );
 
         drop(store);
         let reopened = Store::open(data_dir.path()).await.unwrap();
         assert_eq!(
             reopened.get_project(created.project.id).await.unwrap(),
             created
+        );
+    }
+
+    #[tokio::test]
+    async fn project_list_progress_is_batched_from_current_chapters_and_revisions() {
+        let data_dir = TempDir::new().unwrap();
+        let store = Store::open(data_dir.path()).await.unwrap();
+        let created = store
+            .create_project(
+                Uuid::new_v4(),
+                NewProject::new("进度摘要", "雨夜的来客", None::<&str>).unwrap(),
+            )
+            .await
+            .unwrap();
+        let now = utc_now_millis();
+        let main_approved_id = ChapterId::new_v4();
+        let main_planned_id = ChapterId::new_v4();
+        let extra_id = ChapterId::new_v4();
+        for (id, kind, status, order_index) in [
+            (main_approved_id, "main", "approved", 1),
+            (main_planned_id, "main", "planned", 2),
+            (extra_id, "extra", "in_progress", 1),
+        ] {
+            chapter::ActiveModel {
+                id: Set(db_id(id)),
+                version_id: Set(db_id(created.version.id)),
+                kind: Set(kind.to_owned()),
+                plan_item_id: Set(None),
+                order_index: Set(order_index),
+                title: Set(format!("章节 {order_index}")),
+                status: Set(status.to_owned()),
+                approved_revision_id: Set(None),
+                revision: Set(0),
+                created_at: Set(now),
+                updated_at: Set(now),
+                deleted_at: Set(None),
+            }
+            .insert(&store.database)
+            .await
+            .unwrap();
+        }
+
+        for (chapter_id, content) in [(main_approved_id, "雨落码头"), (extra_id, "尾声仍在继续")]
+        {
+            let document_id = DocumentId::new_v4();
+            let revision_id = RevisionId::new_v4();
+            document::ActiveModel {
+                id: Set(db_id(document_id)),
+                version_id: Set(db_id(created.version.id)),
+                chapter_id: Set(Some(chapter_id.to_string())),
+                role: Set(CHAPTER_BODY_ROLE.to_owned()),
+                current_revision_id: Set(None),
+                revision: Set(0),
+                created_at: Set(now),
+                updated_at: Set(now),
+                deleted_at: Set(None),
+            }
+            .insert(&store.database)
+            .await
+            .unwrap();
+            document_revision::ActiveModel {
+                id: Set(db_id(revision_id)),
+                document_id: Set(db_id(document_id)),
+                revision_no: Set(1),
+                content: Set(content.to_owned()),
+                structured_payload: Set(None),
+                word_count: Set(non_whitespace_char_count(content) as i64),
+                created_by: Set("test".to_owned()),
+                source_revision_id: Set(None),
+                created_at: Set(now),
+            }
+            .insert(&store.database)
+            .await
+            .unwrap();
+            document::ActiveModel {
+                id: Set(db_id(document_id)),
+                current_revision_id: Set(Some(revision_id.to_string())),
+                revision: Set(1),
+                updated_at: Set(now),
+                ..Default::default()
+            }
+            .update(&store.database)
+            .await
+            .unwrap();
+        }
+
+        let item = store
+            .list_projects()
+            .await
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
+        assert_eq!(
+            item.progress,
+            ProjectProgress {
+                main_chapter_total: 2,
+                main_chapter_approved: 1,
+                extra_chapter_total: 1,
+                current_word_count: 10,
+            }
         );
     }
 
@@ -3414,7 +3692,18 @@ mod tests {
             .unwrap();
         assert_eq!(snapshot.event_watermark, retained.seq.to_string());
         assert_ne!(snapshot.event_watermark, stale.seq.to_string());
-        assert_eq!(store.events_after(0).await.unwrap().len(), 1);
+        let events = store.events_after(0).await.unwrap();
+        assert_eq!(events.len(), 2);
+        assert!(
+            events
+                .iter()
+                .any(|event| event.seq == retained.seq.to_string())
+        );
+        assert!(
+            events
+                .iter()
+                .all(|event| event.seq != stale.seq.to_string())
+        );
     }
 
     #[tokio::test]
@@ -4531,13 +4820,27 @@ mod tests {
             Some(ReviewStatus::Open)
         );
 
-        // 正向：合法引用随人工决定落库，而不是只在前端存在。
+        // 负向：空文字且没有引用仍不能形成一条可执行的退回意见。
+        assert!(matches!(
+            store
+                .decide_review(
+                    review_id,
+                    Uuid::new_v4(),
+                    snapshot.workflow.state_revision,
+                    HumanReviewDecision::new(false, "").unwrap(),
+                    vec![],
+                )
+                .await,
+            Err(StoreError::InvalidReviewDecision(_))
+        ));
+
+        // 正向：退回可以只附一条经验证的引用，不必再拼一段重复文字。
         snapshot = store
             .decide_review(
                 review_id,
                 Uuid::new_v4(),
                 snapshot.workflow.state_revision,
-                HumanReviewDecision::new(true, "").unwrap(),
+                HumanReviewDecision::new(false, "").unwrap(),
                 vec![nekowriter_core::FeedbackCitation::Document {
                     document_id,
                     revision_id,
@@ -4558,7 +4861,7 @@ mod tests {
                 .find(|artifact| artifact.kind == PreparationArtifactKind::Background)
                 .and_then(|artifact| artifact.review.as_ref())
                 .map(|review| review.status.clone()),
-            Some(ReviewStatus::Approved)
+            Some(ReviewStatus::Rejected)
         );
 
         let review_model = entity::review::Entity::find_by_id(db_id(review_id))

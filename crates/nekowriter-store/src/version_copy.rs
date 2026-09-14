@@ -28,7 +28,9 @@ use crate::{
     },
     insert_document_slots, insert_novel_version, insert_receipt, insert_workflow,
     parse_optional_id, payload_hash,
-    preparation::{insert_chapter_document_slots, preparation_snapshot, workflow_for_version},
+    preparation::{
+        insert_app_event, insert_chapter_document_slots, preparation_snapshot, workflow_for_version,
+    },
     project_from_model, replay_or_conflict, transaction_error,
 };
 
@@ -703,6 +705,19 @@ impl Store {
                         version: target_version,
                         workflow: target_workflow,
                     };
+                    insert_app_event(
+                        transaction,
+                        "project.changed",
+                        bundle.project.id,
+                        bundle.project.revision,
+                        serde_json::json!({
+                            "action": "version_copied",
+                            "project_id": bundle.project.id,
+                            "version_id": bundle.version.id,
+                        }),
+                        now,
+                    )
+                    .await?;
                     let response_json = serde_json::to_string(&bundle)?;
                     insert_receipt(
                         transaction,

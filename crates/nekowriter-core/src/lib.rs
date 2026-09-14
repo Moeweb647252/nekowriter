@@ -1143,14 +1143,10 @@ impl HumanReviewDecision {
     ///
     /// # Errors
     ///
-    /// 当拒绝决定没有非空理由，或理由超过长度上限时返回 [`ValidationError`]。
+    /// 当理由超过长度上限时返回 [`ValidationError`]。是否允许空理由由带引用的
+    /// 审核命令在收齐引用后判断：退回时需要文字或至少一条有效引用。
     pub fn new(passed: bool, issues: impl AsRef<str>) -> Result<Self, ValidationError> {
         let issues = issues.as_ref();
-        if !passed && issues.trim().is_empty() {
-            return Err(ValidationError::Required {
-                field: "拒绝原因"
-            });
-        }
         if issues.chars().count() > MAX_REVIEW_ISSUES_LEN {
             return Err(ValidationError::TooLong {
                 field: "审核意见",
@@ -1161,6 +1157,18 @@ impl HumanReviewDecision {
             passed,
             issues: issues.to_owned(),
         })
+    }
+
+    /// 在审核命令已取得引用后验证退回理由。
+    ///
+    /// 引用必须先由存储层逐字验证；这里仅约束“退回不能没有任何可读反馈”。
+    pub fn validate_feedback(&self, has_citations: bool) -> Result<(), ValidationError> {
+        if !self.passed && self.issues.trim().is_empty() && !has_citations {
+            return Err(ValidationError::Required {
+                field: "拒绝原因或引用",
+            });
+        }
+        Ok(())
     }
 }
 
@@ -3022,6 +3030,21 @@ pub struct ProjectListItem {
     pub project: Project,
     pub selected_version: NovelVersion,
     pub workflow: WorkflowSnapshot,
+    /// 作品库卡片需要的轻量进度摘要。它只覆盖当前选中的稿本，避免列表读取整部正文。
+    pub progress: ProjectProgress,
+}
+
+/// 当前选中稿本在作品库中的进度摘要。
+///
+/// 字数来自每个正文槽的当前修订，章节计数只覆盖未删除章节；因此它可以随时由
+/// 事实表回算，不需要另存累计值。
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectProgress {
+    pub main_chapter_total: i64,
+    pub main_chapter_approved: i64,
+    pub extra_chapter_total: i64,
+    pub current_word_count: i64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

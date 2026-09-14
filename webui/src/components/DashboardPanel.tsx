@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react"
+import { useState } from "react"
+import { useQuery } from "@tanstack/react-query"
 import {
   CircleAlert,
   Coins,
@@ -63,8 +64,8 @@ const systemOperationStatusLabels: Record<string, string> = {
   unknown: "结果未知",
 }
 
-/** 审核子 Run 的阶段名去掉 `review.` 前缀后的中文说法。 */
-const reviewStageLabels: Record<string, string> = {
+/** Run 的阶段名去掉内部前缀后的中文说法。 */
+const taskStageLabels: Record<string, string> = {
   "preparation.background": "准备·背景",
   "preparation.research": "准备·研究",
   "preparation.characters": "准备·人物",
@@ -74,8 +75,8 @@ const reviewStageLabels: Record<string, string> = {
   "chapter.final": "整章终稿",
 }
 
-function reviewStageLabel(stage: string) {
-  return reviewStageLabels[stage.replace(/^review\./, "")] ?? stage
+function taskStageLabel(stage: string) {
+  return taskStageLabels[stage.replace(/^review\./, "")] ?? stage
 }
 
 const jobLabels: Array<[keyof Dashboard["jobs"], string]> = [
@@ -174,50 +175,28 @@ function DailyBars({
 
 interface DashboardPanelProps {
   projectId: string | null
-  refreshToken?: number
 }
 
-export function DashboardPanel({
-  projectId,
-  refreshToken,
-}: DashboardPanelProps) {
+export function DashboardPanel({ projectId }: DashboardPanelProps) {
   const [days, setDays] = useState<number>(7)
-  const [dashboard, setDashboard] = useState<Dashboard | null>(null)
-  const [pending, setPending] = useState(false)
-  const [notice, setNotice] = useState<string | null>(null)
+  const dashboardQuery = useQuery({
+    queryKey: ["dashboard", projectId, days],
+    queryFn: ({ signal }) =>
+      getDashboard(
+        -new Date().getTimezoneOffset(),
+        days,
+        projectId ?? undefined,
+        signal
+      ),
+  })
+  const dashboard = dashboardQuery.data
+  const pending = dashboardQuery.isFetching
+  const notice = dashboardQuery.isError
+    ? errorText(dashboardQuery.error, "无法读取统计")
+    : null
 
-  // 浏览器给出的偏移正好与「本地时间 - UTC」的分钟数相反。
-  const fetchDashboard = useCallback(() => {
-    const timezoneOffsetMinutes = -new Date().getTimezoneOffset()
-    return getDashboard(timezoneOffsetMinutes, days, projectId ?? undefined)
-  }, [days, projectId])
-
-  useEffect(() => {
-    let isCurrent = true
-    fetchDashboard()
-      .then((next) => {
-        if (!isCurrent) return
-        setDashboard(next)
-        setNotice(null)
-      })
-      .catch((error: unknown) => {
-        if (isCurrent) setNotice(errorText(error, "无法读取统计"))
-      })
-    return () => {
-      isCurrent = false
-    }
-  }, [fetchDashboard, refreshToken])
-
-  async function handleRefresh() {
-    setPending(true)
-    setNotice(null)
-    try {
-      setDashboard(await fetchDashboard())
-    } catch (error) {
-      setNotice(errorText(error, "无法读取统计"))
-    } finally {
-      setPending(false)
-    }
+  function handleRefresh() {
+    void dashboardQuery.refetch()
   }
 
   const tokens = dashboard?.tokens
@@ -268,10 +247,17 @@ export function DashboardPanel({
         </div>
 
         {notice ? (
-          <p className="flex items-center gap-2 text-sm text-destructive">
+          <p
+            className="flex items-center gap-2 text-sm text-destructive"
+            role="alert"
+          >
             <CircleAlert className="size-4" aria-hidden="true" />
             {notice}
           </p>
+        ) : null}
+
+        {dashboardQuery.isPending ? (
+          <p className="text-sm text-muted-foreground">正在读取统计…</p>
         ) : null}
 
         {tokens ? (
@@ -416,12 +402,13 @@ export function DashboardPanel({
                 </li>
               ))}
             </ul>
-            {dashboard.jobs.reviews.length > 0 ? (
+            {dashboard.jobs.tasks.length > 0 ? (
               <ul className="space-y-1 text-xs text-muted-foreground">
-                {dashboard.jobs.reviews.map((review) => (
-                  <li key={review.runId}>
-                    审核子任务 {reviewStageLabel(review.stage)}：
-                    {runStatusLabels[review.status] ?? review.status}
+                {dashboard.jobs.tasks.map((task) => (
+                  <li key={task.runId}>
+                    {task.category === "review" ? "审核" : "任务"} ·{" "}
+                    {taskStageLabel(task.stage)}：
+                    {runStatusLabels[task.status] ?? task.status}
                   </li>
                 ))}
               </ul>

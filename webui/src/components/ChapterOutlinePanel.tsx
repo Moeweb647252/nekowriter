@@ -13,6 +13,7 @@ import { CitationList } from "@/components/CitationList"
 import { CitableText } from "@/components/CitableText"
 import { UserQuestionPanel } from "@/components/UserQuestionPanel"
 import { WritingRecoveryPanel } from "@/components/WritingRecoveryPanel"
+import { useWorkspaceDraftPersistence } from "@/hooks/use-workspace-draft"
 import { type PickedTextRange } from "@/lib/citations"
 import {
   cancelReviewDelegation,
@@ -28,6 +29,7 @@ import {
 
 type ChapterOutlinePanelProps = {
   versionId: string
+  dataDir?: string
   preparation: PreparationSnapshot
   onChanged: (snapshot: PreparationSnapshot) => void
   onError: (message: string) => void
@@ -35,6 +37,7 @@ type ChapterOutlinePanelProps = {
 
 export function ChapterOutlinePanel({
   versionId,
+  dataDir,
   preparation,
   onChanged,
   onError,
@@ -63,6 +66,42 @@ export function ChapterOutlinePanel({
   useEffect(() => {
     contentRef.current = content
   }, [content])
+
+  const { clear: clearOutlineDraft } = useWorkspaceDraftPersistence({
+    dataDir,
+    versionId,
+    phase: "chapter_outline",
+    targetId: chapterId,
+    baseRevision: snapshot?.outline.revisionId ?? null,
+    text: content,
+    dirty: content !== persistedContentRef.current,
+    onRestore: (draft) => {
+      if (contentRef.current !== persistedContentRef.current) return
+      contentRef.current = draft.text
+      setContent(draft.text)
+      if (draft.baseRevision !== (snapshot?.outline.revisionId ?? null)) {
+        setRemoteOutlineChanged(true)
+      }
+    },
+  })
+
+  const { clear: clearReviewDraft } = useWorkspaceDraftPersistence({
+    dataDir,
+    versionId,
+    phase: "feedback",
+    targetId: chapterId ? `outline:${chapterId}` : null,
+    baseRevision: snapshot?.outline.revisionId ?? null,
+    text: issues,
+    citations,
+    dirty: issues.trim().length > 0 || citations.length > 0,
+    onRestore: (draft) => {
+      if (issues || citations.length > 0) return
+      setIssues(draft.text)
+      if (Array.isArray(draft.citations)) {
+        setCitations(draft.citations as FeedbackCitation[])
+      }
+    },
+  })
 
   function applyOutlineSnapshot(
     nextSnapshot: ChapterOutlineSnapshot,
@@ -163,6 +202,7 @@ export function ChapterOutlinePanel({
         content
       )
       applyOutlineSnapshot(nextSnapshot, false)
+      await clearOutlineDraft()
       onChanged(await getPreparation(versionId))
     } catch (error) {
       onError(error instanceof Error ? error.message : "细纲未能提交审核")
@@ -174,22 +214,23 @@ export function ChapterOutlinePanel({
   async function handleDecision(passed: boolean) {
     const review = snapshot?.outline.review
     if (!chapterId || !review) return
-    if (!passed && !issues.trim()) {
-      onError("退回细纲时请说明需要调整的内容")
+    if (!passed && !issues.trim() && citations.length === 0) {
+      onError("退回细纲时请说明需要调整的内容或引用细纲片段")
       return
     }
     setPending(passed ? "approve" : "reject")
     try {
-      onChanged(
-        await decideChapterOutlineReview(
-          review.id,
-          preparation.workflow.stateRevision,
-          passed,
-          issues,
-          citations
-        )
+      const next = await decideChapterOutlineReview(
+        review.id,
+        preparation.workflow.stateRevision,
+        passed,
+        issues,
+        citations
       )
+      setIssues("")
       setCitations([])
+      await clearReviewDraft()
+      onChanged(next)
       await refreshOutline()
     } catch (error) {
       onError(error instanceof Error ? error.message : "细纲审核决定未保存")
@@ -209,8 +250,10 @@ export function ChapterOutlinePanel({
         issues,
         citations
       )
-      onChanged(result.snapshot)
+      setIssues("")
       setCitations([])
+      await clearReviewDraft()
+      onChanged(result.snapshot)
       await refreshOutline()
     } catch (error) {
       onError(error instanceof Error ? error.message : "审核委托未能启动")
@@ -309,6 +352,8 @@ export function ChapterOutlinePanel({
             <label className="mt-4 block text-sm font-medium">
               本章细纲
               <textarea
+                name="chapter-outline"
+                autoComplete="off"
                 value={content}
                 onChange={(event) => setContent(event.target.value)}
                 required
@@ -382,6 +427,8 @@ export function ChapterOutlinePanel({
               <label className="block text-xs font-medium text-muted-foreground">
                 审核意见（退回修订时必填）
                 <textarea
+                  name="outline-review-issues"
+                  autoComplete="off"
                   value={issues}
                   onChange={(event) => setIssues(event.target.value)}
                   maxLength={20_000}

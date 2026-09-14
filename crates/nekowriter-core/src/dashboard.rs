@@ -264,8 +264,8 @@ pub struct DashboardDailyTokens {
 
 /// 进行中任务与需要处理的任务。
 ///
-/// 主计数只统计顶层 Run，避免一个作品因审核子 Run 重复计数；审核子 Run 在
-/// `reviews` 中展开显示。
+/// 主计数只统计顶层 Run，避免一个作品因审核子 Run 重复计数；`tasks` 则包含所有
+/// 可操作的顶层与子 Run，供全局任务页和工作台导航使用。
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DashboardJobs {
@@ -276,19 +276,39 @@ pub struct DashboardJobs {
     pub paused: i64,
     /// 已中断与失败，需要用户处理。
     pub needs_attention: i64,
-    pub reviews: Vec<DashboardReviewJob>,
+    pub tasks: Vec<DashboardTask>,
 }
 
-/// 一条展开显示的审核子 Run。
+/// 一条可从任务中心直接打开的 Run。
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DashboardReviewJob {
+pub struct DashboardTask {
     pub run_id: Uuid,
     pub parent_run_id: Option<Uuid>,
     pub project_id: Uuid,
     pub version_id: Uuid,
+    pub chapter_id: Option<Uuid>,
+    pub kind: String,
     pub stage: String,
     pub status: String,
+    pub category: DashboardTaskCategory,
+    /// 审核 Run 指向的稳定业务目标，例如 `chapter.final`。
+    pub review_target: Option<String>,
+    #[serde(with = "super::decimal_i64")]
+    pub started_at_ms: i64,
+    #[serde(with = "super::decimal_i64")]
+    pub updated_at_ms: i64,
+}
+
+/// 任务列表中的操作类型。类别用于选择入口和文案，原始 Run `kind` 与 `stage` 仍
+/// 原样保留，避免 UI 猜测后端状态机。
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DashboardTaskCategory {
+    Writing,
+    Review,
+    UserInput,
+    Attention,
 }
 
 /// 正文净字数增量与当前可见总量。

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react"
+import { useEffect, useRef, useState, type FormEvent } from "react"
 import {
   Check,
   FileText,
@@ -23,6 +23,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { UserQuestionPanel } from "@/components/UserQuestionPanel"
 import { WritingRecoveryPanel } from "@/components/WritingRecoveryPanel"
+import { useWorkspaceDraftPersistence } from "@/hooks/use-workspace-draft"
 import { type PickedTextRange } from "@/lib/citations"
 import { usePrimaryAction } from "@/lib/shortcuts"
 import {
@@ -85,21 +86,21 @@ type EditableChapterPlanItem = {
 }
 
 function ChapterPlanEditor({
-  initialItems,
+  items,
+  onChange,
+  disabled,
 }: {
-  initialItems: EditableChapterPlanItem[]
+  items: EditableChapterPlanItem[]
+  onChange: (items: EditableChapterPlanItem[]) => void
+  disabled: boolean
 }) {
-  const [items, setItems] = useState<EditableChapterPlanItem[]>(() =>
-    initialItems.length > 0 ? initialItems : [{ title: "第一章", goal: "" }]
-  )
-
   function updateItem(
     index: number,
     field: keyof EditableChapterPlanItem,
     value: string
   ) {
-    setItems((current) =>
-      current.map((item, itemIndex) =>
+    onChange(
+      items.map((item, itemIndex) =>
         itemIndex === index ? { ...item, [field]: value } : item
       )
     )
@@ -124,9 +125,10 @@ function ChapterPlanEditor({
                   type="button"
                   variant="ghost"
                   size="sm"
+                  disabled={disabled}
                   onClick={() =>
-                    setItems((current) =>
-                      current.filter((_, itemIndex) => itemIndex !== index)
+                    onChange(
+                      items.filter((_, itemIndex) => itemIndex !== index)
                     )
                   }
                 >
@@ -142,8 +144,10 @@ function ChapterPlanEditor({
                 <Input
                   id={`chapter-plan-title-${index}`}
                   name="chapterPlanTitle"
+                  autoComplete="off"
                   required
                   maxLength={200}
+                  disabled={disabled}
                   value={item.title}
                   onChange={(event) =>
                     updateItem(index, "title", event.target.value)
@@ -157,8 +161,10 @@ function ChapterPlanEditor({
                 <textarea
                   id={`chapter-plan-goal-${index}`}
                   name="chapterPlanGoal"
+                  autoComplete="off"
                   required
                   maxLength={20_000}
+                  disabled={disabled}
                   value={item.goal}
                   onChange={(event) =>
                     updateItem(index, "goal", event.target.value)
@@ -176,11 +182,11 @@ function ChapterPlanEditor({
         variant="outline"
         size="sm"
         className="mt-3"
-        disabled={items.length >= 500}
+        disabled={disabled || items.length >= 500}
         onClick={() =>
-          setItems((current) => [
-            ...current,
-            { title: `第${current.length + 1}章`, goal: "" },
+          onChange([
+            ...items,
+            { title: `第${items.length + 1}章`, goal: "" },
           ])
         }
       >
@@ -195,8 +201,493 @@ function ChapterPlanEditor({
   )
 }
 
+type PreparationArtifactsDraft = {
+  artifacts: Partial<Record<PreparationArtifactKind, string>>
+  chapterPlan: EditableChapterPlanItem[]
+}
+
+function initialChapterPlan(preparation: PreparationSnapshot) {
+  const items = preparation.artifacts
+    .find((artifact) => artifact.kind === "outline")
+    ?.chapterPlan?.items.map((item) => ({ title: item.title, goal: item.goal }))
+  return items?.length ? items : [{ title: "第一章", goal: "" }]
+}
+
+function preparationArtifactsDraft(
+  preparation: PreparationSnapshot,
+  editableKinds: PreparationArtifactKind[]
+): PreparationArtifactsDraft {
+  return {
+    artifacts: Object.fromEntries(
+      editableKinds.map((kind) => [
+        kind,
+        preparation.artifacts.find((artifact) => artifact.kind === kind)
+          ?.content ?? "",
+      ])
+    ) as Partial<Record<PreparationArtifactKind, string>>,
+    chapterPlan: editableKinds.includes("outline")
+      ? initialChapterPlan(preparation)
+      : [],
+  }
+}
+
+function serializePreparationArtifactsDraft(draft: PreparationArtifactsDraft) {
+  return JSON.stringify(draft)
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function restorePreparationArtifactsDraft(
+  text: string,
+  fallback: PreparationArtifactsDraft,
+  editableKinds: PreparationArtifactKind[]
+): PreparationArtifactsDraft {
+  try {
+    const parsed: unknown = JSON.parse(text)
+    if (!isPlainObject(parsed)) return fallback
+    const sourceArtifacts = isPlainObject(parsed.artifacts)
+      ? parsed.artifacts
+      : {}
+    const artifacts: Partial<Record<PreparationArtifactKind, string>> = {}
+    for (const kind of editableKinds) {
+      const value = sourceArtifacts[kind]
+      artifacts[kind] =
+        typeof value === "string" ? value : fallback.artifacts[kind] ?? ""
+    }
+    const sourcePlan = Array.isArray(parsed.chapterPlan)
+      ? parsed.chapterPlan
+      : fallback.chapterPlan
+    const chapterPlan = editableKinds.includes("outline")
+      ? sourcePlan
+          .filter(isPlainObject)
+          .map((item) => ({
+            title: typeof item.title === "string" ? item.title : "",
+            goal: typeof item.goal === "string" ? item.goal : "",
+          }))
+          .slice(0, 500)
+      : []
+    return {
+      artifacts,
+      chapterPlan:
+        editableKinds.includes("outline") && chapterPlan.length === 0
+          ? fallback.chapterPlan
+          : chapterPlan,
+    }
+  } catch {
+    return fallback
+  }
+}
+
+function PreparationArtifactEditor({
+  dataDir,
+  versionId,
+  preparation,
+  disabled,
+  onSubmit,
+}: {
+  dataDir?: string
+  versionId: string
+  preparation: PreparationSnapshot
+  disabled: boolean
+  onSubmit: (
+    draft: PreparationArtifactsDraft,
+    clear: () => Promise<void>
+  ) => void
+}) {
+  const editableKinds = editableArtifactKinds(preparation)
+  const baselineDraft = preparationArtifactsDraft(preparation, editableKinds)
+  const baselineKey = serializePreparationArtifactsDraft(baselineDraft)
+  const formRevision = artifactFormKey(preparation)
+  const [draft, setDraft] = useState<PreparationArtifactsDraft>(baselineDraft)
+  const [remoteArtifactsChanged, setRemoteArtifactsChanged] = useState(false)
+  const persistedDraftRef = useRef(baselineKey)
+  const draftRef = useRef(draft)
+  const lastVersionRef = useRef(versionId)
+
+  useEffect(() => {
+    draftRef.current = draft
+  }, [draft])
+
+  const { clear: clearArtifactsDraft } = useWorkspaceDraftPersistence({
+    dataDir,
+    versionId,
+    phase: "preparation",
+    targetId: "artifacts",
+    baseRevision: formRevision,
+    text: serializePreparationArtifactsDraft(draft),
+    dirty: serializePreparationArtifactsDraft(draft) !== persistedDraftRef.current,
+    onRestore: (stored) => {
+      if (
+        serializePreparationArtifactsDraft(draftRef.current) !==
+        persistedDraftRef.current
+      ) {
+        return
+      }
+      const restored = restorePreparationArtifactsDraft(
+        stored.text,
+        baselineDraft,
+        editableKinds
+      )
+      draftRef.current = restored
+      setDraft(restored)
+      if (stored.baseRevision !== formRevision) {
+        setRemoteArtifactsChanged(true)
+      }
+    },
+  })
+
+  useEffect(() => {
+    if (lastVersionRef.current !== versionId) {
+      lastVersionRef.current = versionId
+      persistedDraftRef.current = baselineKey
+      draftRef.current = baselineDraft
+      setDraft(baselineDraft)
+      setRemoteArtifactsChanged(false)
+      return
+    }
+    if (baselineKey === persistedDraftRef.current) return
+    const hasUnsavedChanges =
+      serializePreparationArtifactsDraft(draftRef.current) !==
+      persistedDraftRef.current
+    persistedDraftRef.current = baselineKey
+    if (!hasUnsavedChanges || baselineKey === serializePreparationArtifactsDraft(draftRef.current)) {
+      draftRef.current = baselineDraft
+      setDraft(baselineDraft)
+      setRemoteArtifactsChanged(false)
+    } else {
+      setRemoteArtifactsChanged(true)
+    }
+  }, [baselineDraft, baselineKey, versionId])
+
+  function updateArtifact(kind: PreparationArtifactKind, content: string) {
+    setDraft((current) => ({
+      ...current,
+      artifacts: { ...current.artifacts, [kind]: content },
+    }))
+  }
+
+  return (
+    <form
+      className="mt-5"
+      onSubmit={(event) => {
+        event.preventDefault()
+        onSubmit(draft, clearArtifactsDraft)
+      }}
+    >
+      <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/7 px-4 py-3 text-sm leading-6 text-muted-foreground">
+        <FileText
+          className="mr-2 inline size-4 text-amber-700"
+          aria-hidden="true"
+        />
+        {preparation.workflow.stage === "preparing_revising"
+          ? "请只修订被退回或因依赖变化失效的产物；已通过项不会被覆盖。"
+          : "模型请求未启动或已失败时，可在本地手动提交四项产物完成审核闭环。"}
+      </div>
+      {remoteArtifactsChanged && (
+        <p className="mb-4 text-xs leading-5 text-amber-700 dark:text-amber-300">
+          其他页面已更新已保存产物；你的本地草稿仍被保留。提交前请确认它们仍适用于最新上下文。
+        </p>
+      )}
+      <div className="grid gap-4 lg:grid-cols-2">
+        {editableKinds.map((kind) => {
+          const existing = preparation.artifacts.find(
+            (artifact) => artifact.kind === kind
+          )
+          const fieldId = `preparation-artifact-${kind}`
+          return (
+            <label
+              key={kind}
+              className="block rounded-xl border border-border bg-background/70 p-4 text-sm font-medium"
+              htmlFor={fieldId}
+            >
+              <span className="flex items-center justify-between gap-3">
+                {artifactMeta[kind].title}
+                {existing?.review && (
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-normal text-muted-foreground">
+                    {statusLabel(existing.review.status)}
+                  </span>
+                )}
+              </span>
+              <span className="mt-1 block text-xs leading-5 font-normal text-muted-foreground">
+                {artifactMeta[kind].hint}
+              </span>
+              <textarea
+                id={fieldId}
+                name={kind}
+                autoComplete="off"
+                required
+                maxLength={2_000_000}
+                disabled={disabled}
+                value={draft.artifacts[kind] ?? ""}
+                onChange={(event) => updateArtifact(kind, event.target.value)}
+                placeholder={`${artifactMeta[kind].title}…`}
+                className="mt-3 min-h-44 w-full resize-y rounded-lg border border-input bg-background px-3 py-2 leading-6 font-normal transition outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-3 focus:ring-ring/20 disabled:cursor-not-allowed disabled:opacity-60"
+              />
+            </label>
+          )
+        })}
+      </div>
+      {editableKinds.includes("outline") && (
+        <ChapterPlanEditor
+          disabled={disabled}
+          items={draft.chapterPlan}
+          onChange={(chapterPlan) =>
+            setDraft((current) => ({ ...current, chapterPlan }))
+          }
+        />
+      )}
+      <div className="mt-4 flex items-center justify-between gap-3">
+        <p className="text-xs leading-5 text-muted-foreground">
+          {preparation.workflow.stage === "preparing_generating"
+            ? "首次提交必须同时包含四项产物。"
+            : "只提交被拒绝或因依赖变化而失效的产物；已通过项不会被覆盖。"}
+        </p>
+        <Button
+          type="submit"
+          disabled={disabled || editableKinds.length === 0}
+        >
+          {disabled && <LoaderCircle className="animate-spin" aria-hidden="true" />}
+          提交审核
+        </Button>
+      </div>
+    </form>
+  )
+}
+
+function PreparationReviewCard({
+  dataDir,
+  versionId,
+  artifact,
+  review,
+  pendingAction,
+  onDecision,
+  onDelegate,
+  onCancelDelegation,
+  onError,
+}: {
+  dataDir?: string
+  versionId: string
+  artifact: CurrentPreparationArtifact
+  review: PreparationReview
+  pendingAction: string | null
+  onDecision: (
+    review: PreparationReview,
+    passed: boolean,
+    issues: string,
+    citations: FeedbackCitation[],
+    clear: () => Promise<void>
+  ) => Promise<void>
+  onDelegate: (
+    review: PreparationReview,
+    notes: string,
+    citations: FeedbackCitation[],
+    clear: () => Promise<void>
+  ) => Promise<void>
+  onCancelDelegation: (review: PreparationReview) => Promise<void>
+  onError: (message: string) => void
+}) {
+  const [issues, setIssues] = useState("")
+  const [citations, setCitations] = useState<FeedbackCitation[]>([])
+  const feedbackRef = useRef({ issues, citations })
+  const actionKey = `review-${review.id}`
+  const busy = pendingAction !== null
+
+  useEffect(() => {
+    feedbackRef.current = { issues, citations }
+  }, [citations, issues])
+
+  const { clear } = useWorkspaceDraftPersistence({
+    dataDir,
+    versionId,
+    phase: "feedback",
+    targetId: `preparation:${review.id}`,
+    baseRevision: artifact.revisionId,
+    text: issues,
+    citations,
+    dirty: issues.trim().length > 0 || citations.length > 0,
+    onRestore: (draft) => {
+      if (
+        feedbackRef.current.issues ||
+        feedbackRef.current.citations.length > 0
+      ) {
+        return
+      }
+      setIssues(draft.text)
+      if (Array.isArray(draft.citations)) {
+        setCitations(draft.citations as FeedbackCitation[])
+      }
+    },
+  })
+
+  function addCitation(range: PickedTextRange) {
+    const revisionId = artifact.revisionId
+    if (!revisionId) {
+      onError("当前产物还没有可引用的修订。")
+      return
+    }
+    setCitations((current) => [
+      ...current,
+      {
+        kind: "document",
+        documentId: artifact.documentId,
+        revisionId,
+        chapterId: null,
+        startChar: String(range.startChar),
+        endChar: String(range.endChar),
+        quote: range.quote,
+      },
+    ])
+  }
+
+  function decide(passed: boolean) {
+    if (!passed && !issues.trim() && citations.length === 0) {
+      onError("退回产物时请说明需要调整的内容或引用产物片段")
+      return
+    }
+    void onDecision(review, passed, issues, citations, clear)
+  }
+
+  return (
+    <article className="overflow-hidden rounded-xl border border-border bg-background/70">
+      <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+        <div>
+          <h3 className="text-sm font-semibold">{artifactMeta[artifact.kind].title}</h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            修订 {artifact.revisionNo}
+          </p>
+        </div>
+        <span className="rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">
+          {statusLabel(review.status)}
+        </span>
+      </div>
+      {review.status === "open" ? (
+        <CitableText
+          text={artifact.content ?? ""}
+          disabled={busy}
+          onCite={addCitation}
+          className="max-h-64 overflow-auto px-4 py-3 text-sm leading-6 whitespace-pre-wrap text-foreground"
+        />
+      ) : (
+        <pre className="max-h-64 overflow-auto px-4 py-3 text-sm leading-6 whitespace-pre-wrap text-foreground">
+          {artifact.content}
+        </pre>
+      )}
+      {artifact.kind === "outline" && artifact.chapterPlan && (
+        <div className="border-t border-border bg-muted/35 px-4 py-3">
+          <p className="text-xs font-semibold tracking-[0.12em] text-muted-foreground uppercase">
+            章节计划
+          </p>
+          <div className="mt-2 space-y-3 text-sm leading-6">
+            {artifact.chapterPlan.items.map((item) => (
+              <div key={item.planItemId}>
+                <p className="font-medium">
+                  第{item.orderIndex}章：{item.title}
+                </p>
+                <p className="text-muted-foreground">{item.goal}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {review.status === "open" && (
+        <form className="border-t border-border p-4">
+          <CitationList
+            citations={citations}
+            currentRevisionId={artifact.revisionId}
+            disabled={busy}
+            onRemove={(index) =>
+              setCitations((current) =>
+                current.filter((_, position) => position !== index)
+              )
+            }
+            onError={onError}
+          />
+          <label className="block text-xs font-medium text-muted-foreground">
+            审核意见（退回修订时需要文字或引用）
+            <textarea
+              name="issues"
+              autoComplete="off"
+              maxLength={20_000}
+              disabled={busy}
+              value={issues}
+              onChange={(event) => setIssues(event.target.value)}
+              placeholder="通过可留空；退回时说明需要调整的内容，或直接引用问题片段。"
+              className="mt-1.5 min-h-20 w-full resize-y rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-ring focus:ring-3 focus:ring-ring/20 disabled:cursor-not-allowed disabled:opacity-60"
+            />
+          </label>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button
+              type="button"
+              disabled={busy}
+              onClick={() => decide(true)}
+            >
+              {pendingAction === actionKey ? (
+                <LoaderCircle className="animate-spin" aria-hidden="true" />
+              ) : (
+                <Check aria-hidden="true" />
+              )}
+              通过
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={() => decide(false)}
+            >
+              <RotateCcw aria-hidden="true" />
+              退回修订
+            </Button>
+            <span className="self-center text-xs leading-5 text-muted-foreground">
+              选中产物文字后点“引用选中文字”可把原句随意见一并提交。
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={() => void onDelegate(review, issues, citations, clear)}
+            >
+              {pendingAction === `delegate-${review.id}` ? (
+                <LoaderCircle className="animate-spin" aria-hidden="true" />
+              ) : (
+                <Sparkles aria-hidden="true" />
+              )}
+              委托审核
+            </Button>
+          </div>
+        </form>
+      )}
+      {review.status === "delegated" && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-primary/5 p-4 text-sm text-muted-foreground">
+          <span className="flex items-center gap-2">
+            <LoaderCircle
+              className="size-4 animate-spin text-primary"
+              aria-hidden="true"
+            />
+            审核 Agent 正在依据当前修订审查。
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={busy}
+            onClick={() => void onCancelDelegation(review)}
+          >
+            {pendingAction === `cancel-delegation-${review.id}` && (
+              <LoaderCircle className="animate-spin" aria-hidden="true" />
+            )}
+            取消并自行审核
+          </Button>
+        </div>
+      )}
+    </article>
+  )
+}
+
 type PreparationPanelProps = {
   versionId: string
+  dataDir?: string
   preparation: PreparationSnapshot | null
   loading: boolean
   onChanged: (snapshot: PreparationSnapshot) => void
@@ -205,15 +696,62 @@ type PreparationPanelProps = {
 
 export function PreparationPanel({
   versionId,
+  dataDir,
   preparation,
   loading,
   onChanged,
   onError,
 }: PreparationPanelProps) {
   const [pendingAction, setPendingAction] = useState<string | null>(null)
-  const [citationDrafts, setCitationDrafts] = useState<
-    Record<string, FeedbackCitation[]>
-  >({})
+  const [brief, setBrief] = useState("")
+  const [remoteBriefChanged, setRemoteBriefChanged] = useState(false)
+  const persistedBriefRef = useRef("")
+  const briefRef = useRef("")
+  const lastBriefVersionRef = useRef(versionId)
+
+  useEffect(() => {
+    briefRef.current = brief
+  }, [brief])
+
+  const { clear: clearBriefDraft } = useWorkspaceDraftPersistence({
+    dataDir,
+    versionId,
+    phase: "brief",
+    targetId: null,
+    baseRevision: preparation?.novelBrief.revisionId ?? null,
+    text: brief,
+    dirty: brief !== persistedBriefRef.current,
+    onRestore: (draft) => {
+      if (briefRef.current !== persistedBriefRef.current) return
+      briefRef.current = draft.text
+      setBrief(draft.text)
+      if (draft.baseRevision !== (preparation?.novelBrief.revisionId ?? null)) {
+        setRemoteBriefChanged(true)
+      }
+    },
+  })
+
+  useEffect(() => {
+    const nextContent = preparation?.novelBrief.content ?? ""
+    if (lastBriefVersionRef.current !== versionId) {
+      lastBriefVersionRef.current = versionId
+      persistedBriefRef.current = nextContent
+      briefRef.current = nextContent
+      setBrief(nextContent)
+      setRemoteBriefChanged(false)
+      return
+    }
+    const hasUnsavedChanges = briefRef.current !== persistedBriefRef.current
+    const changedRemotely = nextContent !== persistedBriefRef.current
+    persistedBriefRef.current = nextContent
+    if (!hasUnsavedChanges || nextContent === briefRef.current) {
+      briefRef.current = nextContent
+      setBrief(nextContent)
+      setRemoteBriefChanged(false)
+    } else if (changedRemotely) {
+      setRemoteBriefChanged(true)
+    }
+  }, [preparation?.novelBrief.content, preparation?.novelBrief.revisionId, versionId])
 
   /**
    * 「开始准备」是准备阶段唯一的主操作：光标不在输入框里时 Ctrl/Cmd+Enter 也能触发。
@@ -230,7 +768,8 @@ export function PreparationPanel({
     enabled:
       preparation !== null &&
       preparation.workflow.stage === "initializing" &&
-      Boolean(preparation.novelBrief.content?.trim()) &&
+      Boolean(brief.trim()) &&
+      brief === persistedBriefRef.current &&
       pendingAction === null,
   })
 
@@ -250,47 +789,18 @@ export function PreparationPanel({
     }
   }
 
-  /** 把产物中的选中文字固定为一条指向当前修订的引用。 */
-  function citeArtifact(
-    artifact: CurrentPreparationArtifact,
-    reviewId: string,
-    range: PickedTextRange
-  ) {
-    if (!artifact.revisionId) {
-      onError("当前产物还没有可引用的修订。")
-      return
-    }
-    const citation: FeedbackCitation = {
-      kind: "document",
-      documentId: artifact.documentId,
-      revisionId: artifact.revisionId,
-      chapterId: null,
-      startChar: String(range.startChar),
-      endChar: String(range.endChar),
-      quote: range.quote,
-    }
-    setCitationDrafts((current) => ({
-      ...current,
-      [reviewId]: [...(current[reviewId] ?? []), citation],
-    }))
-  }
-
-  function removeCitation(reviewId: string, index: number) {
-    setCitationDrafts((current) => ({
-      ...current,
-      [reviewId]: (current[reviewId] ?? []).filter(
-        (_, position) => position !== index
-      ),
-    }))
-  }
-
   async function handleSaveBrief(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
     const content = String(form.get("brief") ?? "")
     setPendingAction("brief")
     try {
-      await saveNovelBrief(versionId, content)
+      const saved = await saveNovelBrief(versionId, content)
+      persistedBriefRef.current = saved.content ?? ""
+      briefRef.current = saved.content ?? ""
+      setBrief(saved.content ?? "")
+      setRemoteBriefChanged(false)
+      await clearBriefDraft()
       onChanged(await getPreparation(versionId))
     } catch (error) {
       onError(error instanceof Error ? error.message : "小说目标未保存")
@@ -299,67 +809,78 @@ export function PreparationPanel({
     }
   }
 
-  function handleSubmitArtifacts(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+  async function handleSubmitArtifacts(
+    draft: PreparationArtifactsDraft,
+    clear: () => Promise<void>
+  ) {
     if (!preparation) return
-    const form = new FormData(event.currentTarget)
     const editableKinds = editableArtifactKinds(preparation)
     const chapterPlan = editableKinds.includes("outline")
-      ? form.getAll("chapterPlanTitle").map((title, index) => ({
-          title: String(title),
-          goal: String(form.getAll("chapterPlanGoal")[index] ?? ""),
-        }))
+      ? draft.chapterPlan
       : undefined
-    void runAction("artifacts", () =>
-      submitPreparationArtifacts(
+    setPendingAction("artifacts")
+    try {
+      const next = await submitPreparationArtifacts(
         versionId,
         preparation.workflow.stateRevision,
         editableKinds.map((kind) => ({
           kind,
-          content: String(form.get(kind) ?? ""),
+          content: draft.artifacts[kind] ?? "",
         })),
         chapterPlan
       )
-    )
+      await clear()
+      onChanged(next)
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "准备产物未能提交审核")
+    } finally {
+      setPendingAction(null)
+    }
   }
 
-  function handleReview(
-    form: HTMLFormElement,
+  async function handleReview(
     review: PreparationReview,
-    passed: boolean
+    passed: boolean,
+    issues: string,
+    citations: FeedbackCitation[],
+    clear: () => Promise<void>
   ) {
     if (!preparation) return
-    const issues = String(new FormData(form).get("issues") ?? "")
-    void runAction(
-      `review-${review.id}`,
-      () =>
-        decidePreparationReview(
-          review.id,
-          preparation.workflow.stateRevision,
-          passed,
-          issues,
-          citationDrafts[review.id] ?? []
-        ),
-      () => setCitationDrafts((current) => ({ ...current, [review.id]: [] }))
-    )
+    setPendingAction(`review-${review.id}`)
+    try {
+      const next = await decidePreparationReview(
+        review.id,
+        preparation.workflow.stateRevision,
+        passed,
+        issues,
+        citations
+      )
+      await clear()
+      onChanged(next)
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "审核决定未能保存")
+    } finally {
+      setPendingAction(null)
+    }
   }
 
   async function handleDelegate(
-    form: HTMLFormElement,
-    review: PreparationReview
+    review: PreparationReview,
+    notes: string,
+    citations: FeedbackCitation[],
+    clear: () => Promise<void>
   ) {
     if (!preparation) return
-    const notes = String(new FormData(form).get("issues") ?? "")
     setPendingAction(`delegate-${review.id}`)
     try {
       const result = await delegateReview(
         review.id,
         preparation.workflow.stateRevision,
         notes,
-        citationDrafts[review.id] ?? []
+        citations
       )
+      await clear()
       onChanged(result.snapshot)
-      setCitationDrafts((current) => ({ ...current, [review.id]: [] }))
     } catch (error) {
       onError(error instanceof Error ? error.message : "审核委托未能启动")
     } finally {
@@ -393,8 +914,8 @@ export function PreparationPanel({
   }
 
   const { workflow } = preparation
-  const briefReady = Boolean(preparation.novelBrief.content?.trim())
-  const editableKinds = editableArtifactKinds(preparation)
+  const briefReady =
+    Boolean(brief.trim()) && brief === persistedBriefRef.current
   const automaticPreparationInFlight =
     workflow.stage === "preparing_generating" &&
     (workflow.execution === "queued" ||
@@ -421,21 +942,25 @@ export function PreparationPanel({
 
       {workflow.stage === "initializing" && (
         <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_14rem]">
-          <form
-            key={preparation.novelBrief.revisionId ?? "empty"}
-            onSubmit={handleSaveBrief}
-          >
+          <form onSubmit={handleSaveBrief}>
             <label className="block text-sm font-medium">
               小说目标
               <textarea
                 name="brief"
+                autoComplete="off"
                 required
                 maxLength={20_000}
-                defaultValue={preparation.novelBrief.content ?? ""}
+                value={brief}
+                onChange={(event) => setBrief(event.target.value)}
                 placeholder="你希望这部小说讲述什么？可以写主题、读者感受、人物关系或必须保留的元素。"
                 className="mt-1.5 min-h-32 w-full resize-y rounded-xl border border-input bg-background px-3 py-2 text-sm leading-6 transition outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-3 focus:ring-ring/20"
               />
             </label>
+            {remoteBriefChanged && (
+              <p className="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
+                其他页面已更新已保存目标；你的本地草稿仍被保留。保存前请确认它仍适用于最新上下文。
+              </p>
+            )}
             <div className="mt-3 flex flex-wrap gap-2">
               <Button type="submit" disabled={pendingAction !== null}>
                 {pendingAction === "brief" && (
@@ -509,81 +1034,15 @@ export function PreparationPanel({
         workflow.stage === "preparing_revising") &&
         !automaticPreparationInFlight &&
         workflow.execution !== "waiting_answer" && (
-          <form
-            key={artifactFormKey(preparation)}
-            className="mt-5"
-            onSubmit={handleSubmitArtifacts}
-          >
-            <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/7 px-4 py-3 text-sm leading-6 text-muted-foreground">
-              <FileText
-                className="mr-2 inline size-4 text-amber-700"
-                aria-hidden="true"
-              />
-              {workflow.stage === "preparing_revising"
-                ? "请只修订被退回或因依赖变化失效的产物；已通过项不会被覆盖。"
-                : "模型请求未启动或已失败时，可在本地手动提交四项产物完成审核闭环。"}
-            </div>
-            <div className="grid gap-4 lg:grid-cols-2">
-              {editableKinds.map((kind) => {
-                const existing = preparation.artifacts.find(
-                  (artifact) => artifact.kind === kind
-                )
-                return (
-                  <label
-                    key={kind}
-                    className="block rounded-xl border border-border bg-background/70 p-4 text-sm font-medium"
-                  >
-                    <span className="flex items-center justify-between gap-3">
-                      {artifactMeta[kind].title}
-                      {existing?.review && (
-                        <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-normal text-muted-foreground">
-                          {statusLabel(existing.review.status)}
-                        </span>
-                      )}
-                    </span>
-                    <span className="mt-1 block text-xs leading-5 font-normal text-muted-foreground">
-                      {artifactMeta[kind].hint}
-                    </span>
-                    <textarea
-                      name={kind}
-                      required
-                      maxLength={2_000_000}
-                      defaultValue={existing?.content ?? ""}
-                      className="mt-3 min-h-44 w-full resize-y rounded-lg border border-input bg-background px-3 py-2 leading-6 font-normal transition outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-3 focus:ring-ring/20"
-                    />
-                  </label>
-                )
-              })}
-            </div>
-            {editableKinds.includes("outline") && (
-              <ChapterPlanEditor
-                initialItems={
-                  preparation.artifacts
-                    .find((artifact) => artifact.kind === "outline")
-                    ?.chapterPlan?.items.map((item) => ({
-                      title: item.title,
-                      goal: item.goal,
-                    })) ?? []
-                }
-              />
-            )}
-            <div className="mt-4 flex items-center justify-between gap-3">
-              <p className="text-xs leading-5 text-muted-foreground">
-                {workflow.stage === "preparing_generating"
-                  ? "首次提交必须同时包含四项产物。"
-                  : "只提交被拒绝或因依赖变化而失效的产物；已通过项不会被覆盖。"}
-              </p>
-              <Button
-                type="submit"
-                disabled={pendingAction !== null || editableKinds.length === 0}
-              >
-                {pendingAction === "artifacts" && (
-                  <LoaderCircle className="animate-spin" aria-hidden="true" />
-                )}
-                提交审核
-              </Button>
-            </div>
-          </form>
+          <PreparationArtifactEditor
+            dataDir={dataDir}
+            disabled={pendingAction !== null}
+            onSubmit={(draft, clear) =>
+              void handleSubmitArtifacts(draft, clear)
+            }
+            preparation={preparation}
+            versionId={versionId}
+          />
         )}
 
       {workflow.stage === "preparing_reviewing" && (
@@ -594,152 +1053,19 @@ export function PreparationPanel({
             )
             const review = artifact?.review
             if (!artifact || !review) return null
-            const actionKey = `review-${review.id}`
             return (
-              <article
-                key={kind}
-                className="overflow-hidden rounded-xl border border-border bg-background/70"
-              >
-                <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
-                  <div>
-                    <h3 className="text-sm font-semibold">
-                      {artifactMeta[kind].title}
-                    </h3>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      修订 {artifact.revisionNo}
-                    </p>
-                  </div>
-                  <span className="rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">
-                    {statusLabel(review.status)}
-                  </span>
-                </div>
-                {review.status === "open" ? (
-                  <CitableText
-                    text={artifact.content ?? ""}
-                    disabled={pendingAction !== null}
-                    onCite={(range) => citeArtifact(artifact, review.id, range)}
-                    className="max-h-64 overflow-auto px-4 py-3 text-sm leading-6 whitespace-pre-wrap text-foreground"
-                  />
-                ) : (
-                  <pre className="max-h-64 overflow-auto px-4 py-3 text-sm leading-6 whitespace-pre-wrap text-foreground">
-                    {artifact.content}
-                  </pre>
-                )}
-                {kind === "outline" && artifact.chapterPlan && (
-                  <div className="border-t border-border bg-muted/35 px-4 py-3">
-                    <p className="text-xs font-semibold tracking-[0.12em] text-muted-foreground uppercase">
-                      章节计划
-                    </p>
-                    <div className="mt-2 space-y-3 text-sm leading-6">
-                      {artifact.chapterPlan.items.map((item) => (
-                        <div key={item.planItemId}>
-                          <p className="font-medium">
-                            第{item.orderIndex}章：{item.title}
-                          </p>
-                          <p className="text-muted-foreground">{item.goal}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {review.status === "open" && (
-                  <form className="border-t border-border p-4">
-                    <CitationList
-                      citations={citationDrafts[review.id] ?? []}
-                      currentRevisionId={artifact.revisionId}
-                      disabled={pendingAction !== null}
-                      onRemove={(index) => removeCitation(review.id, index)}
-                      onError={onError}
-                    />
-                    <label className="block text-xs font-medium text-muted-foreground">
-                      审核意见（退回修订时必填）
-                      <textarea
-                        name="issues"
-                        maxLength={20_000}
-                        className="mt-1.5 min-h-20 w-full resize-y rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-ring focus:ring-3 focus:ring-ring/20"
-                        placeholder="通过可留空；退回时说明需要调整的内容。"
-                      />
-                    </label>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <Button
-                        type="button"
-                        disabled={pendingAction !== null}
-                        onClick={(event) =>
-                          handleReview(event.currentTarget.form!, review, true)
-                        }
-                      >
-                        {pendingAction === actionKey ? (
-                          <LoaderCircle
-                            className="animate-spin"
-                            aria-hidden="true"
-                          />
-                        ) : (
-                          <Check aria-hidden="true" />
-                        )}
-                        通过
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        disabled={pendingAction !== null}
-                        onClick={(event) =>
-                          handleReview(event.currentTarget.form!, review, false)
-                        }
-                      >
-                        <RotateCcw aria-hidden="true" />
-                        退回修订
-                      </Button>
-                      <span className="self-center text-xs leading-5 text-muted-foreground">
-                        选中产物文字后点“引用选中文字”可把原句随意见一并提交。
-                      </span>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        disabled={pendingAction !== null}
-                        onClick={(event) =>
-                          handleDelegate(event.currentTarget.form!, review)
-                        }
-                      >
-                        {pendingAction === `delegate-${review.id}` ? (
-                          <LoaderCircle
-                            className="animate-spin"
-                            aria-hidden="true"
-                          />
-                        ) : (
-                          <Sparkles aria-hidden="true" />
-                        )}
-                        委托审核
-                      </Button>
-                    </div>
-                  </form>
-                )}
-                {review.status === "delegated" && (
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-primary/5 p-4 text-sm text-muted-foreground">
-                    <span className="flex items-center gap-2">
-                      <LoaderCircle
-                        className="size-4 animate-spin text-primary"
-                        aria-hidden="true"
-                      />
-                      审核 Agent 正在依据当前修订审查。
-                    </span>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={pendingAction !== null}
-                      onClick={() => void handleCancelDelegation(review)}
-                    >
-                      {pendingAction === `cancel-delegation-${review.id}` && (
-                        <LoaderCircle
-                          className="animate-spin"
-                          aria-hidden="true"
-                        />
-                      )}
-                      取消并自行审核
-                    </Button>
-                  </div>
-                )}
-              </article>
+              <PreparationReviewCard
+                key={review.id}
+                artifact={artifact}
+                dataDir={dataDir}
+                onCancelDelegation={handleCancelDelegation}
+                onDecision={handleReview}
+                onDelegate={handleDelegate}
+                onError={onError}
+                pendingAction={pendingAction}
+                review={review}
+                versionId={versionId}
+              />
             )
           })}
         </div>

@@ -74,6 +74,15 @@ export interface ProjectListItem {
   project: Project
   selectedVersion: NovelVersion
   workflow: WorkflowSnapshot
+  progress: ProjectProgress
+}
+
+/** 当前选中稿本的轻量进度摘要，用于作品库而不读取整部正文。 */
+export interface ProjectProgress {
+  mainChapterTotal: number
+  mainChapterApproved: number
+  extraChapterTotal: number
+  currentWordCount: number
 }
 
 export interface VersionSnapshot {
@@ -81,6 +90,10 @@ export interface VersionSnapshot {
   version: NovelVersion
   workflow: WorkflowSnapshot
   eventWatermark: string
+}
+
+export interface EventCursorResponse {
+  eventWatermark: DecimalString
 }
 
 export interface PersistedEvent {
@@ -584,8 +597,8 @@ export function createCommandId() {
   return crypto.randomUUID()
 }
 
-export function getHealth() {
-  return request<HealthResponse>("/api/health")
+export function getHealth(signal?: AbortSignal) {
+  return request<HealthResponse>("/api/health", { signal })
 }
 
 /**
@@ -656,8 +669,8 @@ export function saveProjectSettings(
   )
 }
 
-export function listProjects() {
-  return request<ProjectListItem[]>("/api/projects")
+export function listProjects(signal?: AbortSignal) {
+  return request<ProjectListItem[]>("/api/projects", { signal })
 }
 
 export function createProject(
@@ -720,12 +733,21 @@ export function copyVersion(
   )
 }
 
-export function getPreparation(versionId: string) {
-  return request<PreparationSnapshot>(`/api/versions/${versionId}/preparation`)
+export function getPreparation(versionId: string, signal?: AbortSignal) {
+  return request<PreparationSnapshot>(`/api/versions/${versionId}/preparation`, {
+    signal,
+  })
 }
 
-export function getVersionSnapshot(versionId: string) {
-  return request<VersionSnapshot>(`/api/versions/${versionId}/snapshot`)
+export function getVersionSnapshot(versionId: string, signal?: AbortSignal) {
+  return request<VersionSnapshot>(`/api/versions/${versionId}/snapshot`, {
+    signal,
+  })
+}
+
+/** 全局可恢复事件流的起始水位。 */
+export function getEventCursor(signal?: AbortSignal) {
+  return request<EventCursorResponse>("/api/events/cursor", { signal })
 }
 
 export function setApprovalMode(
@@ -742,8 +764,10 @@ export function setApprovalMode(
   )
 }
 
-export function getChapters(versionId: string) {
-  return request<ChapterSummary[]>(`/api/versions/${versionId}/chapters`)
+export function getChapters(versionId: string, signal?: AbortSignal) {
+  return request<ChapterSummary[]>(`/api/versions/${versionId}/chapters`, {
+    signal,
+  })
 }
 
 /**
@@ -1447,13 +1471,25 @@ export interface DashboardTokens {
   embedding: DashboardEmbeddingUsage
 }
 
-export interface DashboardReviewJob {
+export type DashboardTaskCategory =
+  | "writing"
+  | "review"
+  | "user_input"
+  | "attention"
+
+export interface DashboardTask {
   runId: string
   parentRunId: string | null
   projectId: string
   versionId: string
+  chapterId: string | null
+  kind: string
   stage: string
   status: string
+  category: DashboardTaskCategory
+  reviewTarget: string | null
+  startedAtMs: DecimalString
+  updatedAtMs: DecimalString
 }
 
 export interface DashboardJobs {
@@ -1463,7 +1499,7 @@ export interface DashboardJobs {
   waitingReview: number
   paused: number
   needsAttention: number
-  reviews: DashboardReviewJob[]
+  tasks: DashboardTask[]
 }
 
 export interface DashboardDailyWords {
@@ -1532,14 +1568,15 @@ export async function downloadVersionExport(
 export function getDashboard(
   timezoneOffsetMinutes: number,
   days: number,
-  projectId?: string
+  projectId?: string,
+  signal?: AbortSignal
 ) {
   const query = new URLSearchParams({
     timezoneOffsetMinutes: String(timezoneOffsetMinutes),
     days: String(days),
   })
   if (projectId) query.set("projectId", projectId)
-  return request<Dashboard>(`/api/dashboard?${query.toString()}`)
+  return request<Dashboard>(`/api/dashboard?${query.toString()}`, { signal })
 }
 
 export interface EmbeddingSettings {

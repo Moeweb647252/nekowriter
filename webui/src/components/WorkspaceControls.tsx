@@ -1,6 +1,7 @@
 import { Keyboard, Monitor, Moon, Sun } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useTheme } from "@/components/theme-provider"
 import { useShortcutHelp } from "@/lib/shortcuts"
 
@@ -22,32 +23,34 @@ export function WorkspaceControls() {
 
   return (
     <div className="flex items-center gap-2">
-      <div
-        className="flex items-center gap-1 rounded-full border border-border bg-background/75 p-1 shadow-sm backdrop-blur"
-        role="group"
+      <ToggleGroup
         aria-label="界面主题"
+        className="hidden md:flex"
+        onValueChange={(values) => {
+          const next = values[0]
+          if (next === "light" || next === "dark" || next === "system") {
+            setTheme(next)
+          }
+        }}
+        size="sm"
+        spacing={0}
+        value={[theme]}
+        variant="outline"
       >
         {THEME_OPTIONS.map((option) => {
           const Icon = option.icon
           return (
-            <button
+            <ToggleGroupItem
               key={option.value}
-              type="button"
-              aria-pressed={theme === option.value}
               title={`主题：${option.label}`}
-              onClick={() => setTheme(option.value)}
-              className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs whitespace-nowrap transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring ${
-                theme === option.value
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
-              }`}
+              value={option.value}
             >
-              <Icon className="size-3.5" aria-hidden="true" />
+              <Icon data-icon="inline-start" aria-hidden="true" />
               {option.label}
-            </button>
+            </ToggleGroupItem>
           )
         })}
-      </div>
+      </ToggleGroup>
       <Button
         type="button"
         size="sm"

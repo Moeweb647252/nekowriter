@@ -4,6 +4,7 @@ import { type PreviewTool } from "@/lib/api"
 
 export type GenerationPreviewBuffer = {
   key: string
+  versionId: string
   requestId: string
   tool?: PreviewTool
   content: string
