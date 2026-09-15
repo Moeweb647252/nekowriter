@@ -4,6 +4,7 @@ members = [
     "crates/nekowriter-agent",
     "crates/nekowriter-store",
     "crates/nekowriter-app",
+    "crates/nekowriter-prompt-lab",
     "crates/xtask",
 ]
 resolver = "3"

@@ -4179,6 +4179,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "nekowriter-prompt-lab"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "nekowriter-agent",
+ "reqwest",
+ "sea-orm",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror",
+ "tokio",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "nekowriter-store"
 version = "0.1.0"
 dependencies = [
