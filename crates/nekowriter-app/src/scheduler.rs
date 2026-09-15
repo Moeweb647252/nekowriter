@@ -20,8 +20,10 @@ use nekowriter_agent::{
         ProviderError,
     },
     runner::{
-        AgentRoundOutcome, AgentRunnerError, PhaseSubmission, PhaseSubmissionKind, ToolHost,
-        ToolHostError, ToolResult, classify_model_completion, submission_contract, submission_tool,
+        AgentRoundOutcome, AgentRunnerError, PhaseSubmission, PhaseSubmissionKind,
+        SUBMIT_CHAPTER_OUTLINE_TOOL, SUBMIT_CHAPTER_TOOL, SUBMIT_PREPARATION_TOOL,
+        SUBMIT_REVIEW_TOOL, ToolHost, ToolHostError, ToolResult, classify_model_completion,
+        submission_contract, submission_tool,
     },
 };
 use nekowriter_core::{
@@ -38,9 +40,8 @@ use nekowriter_store::{
     AgentMessageRole, AgentQuestionToolCall, AppliedAgentQuestionToolCall,
     AppliedChapterBodyToolCall, ChapterBodyAgentToolCall, CompletedRunContextFold,
     CompletedRunContextStage, DelegatedReviewKind, FreeAgentToolCall,
-    MaterializedChapterBodyFeedback, ModelProtocolCorrection, ModelRequestResolution,
-    NewAgentMessage, NewModelRequest, PersistedAgentMessage, ProtocolCorrectionTarget, Store,
-    StoreError,
+    MaterializedChapterBodyFeedback, ModelRequestResolution, NewAgentMessage, NewModelRequest,
+    PersistedAgentMessage, ProtocolCorrectionTarget, RejectedRoundRecord, Store, StoreError,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -71,8 +72,6 @@ async fn render_effective_prompt(
     Ok((rendered, source))
 }
 
-use crate::credentials;
-
 const LANE_CHANNEL_CAPACITY: usize = 32;
 #[cfg(test)]
 const PREVIEW_DELTA_CHANNEL_CAPACITY: usize = 256;
@@ -85,8 +84,6 @@ const CANCEL_SETTLE_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 pub enum SchedulerError {
     #[error(transparent)]
     Store(#[from] StoreError),
-    #[error(transparent)]
-    Credential(#[from] credentials::CredentialStoreError),
     #[error(transparent)]
     Provider(#[from] ProviderError),
     #[error("当前稿本没有可用的系统写作模型设置")]
@@ -691,10 +688,9 @@ impl WorkflowScheduler {
                 CapabilityProblem::Thinking => SchedulerError::ThinkingUnsupported(message),
             });
         }
-        let api_key = match settings.credential_ref.clone() {
-            Some(credential_ref) => Some(credentials::read_api_key(credential_ref).await?),
-            None => None,
-        };
+        // 密钥在取得全局网络许可之后、真正构建请求之前从库里读出，不进入任何
+        // 请求快照或跨异步边界传递的结构。
+        let api_key = self.store.system_model_api_key().await?;
         let max_context_tokens = usize::try_from(settings.max_context_tokens)
             .map_err(|_| SchedulerError::ContextLimitOutOfRange)?;
         let reserved_output_tokens = usize::try_from(settings.reserved_output_tokens)
@@ -1332,7 +1328,7 @@ impl WorkflowScheduler {
                             .commit_preparation_model_submission(
                                 request_id,
                                 provider_request_id.clone(),
-                                usage,
+                                usage.clone(),
                                 assistant_message.clone(),
                                 submission.artifacts,
                                 submission.chapter_plan,
@@ -1344,16 +1340,17 @@ impl WorkflowScheduler {
                                 false
                             }
                             Err(error) => {
-                                self.persist_model_failure(
-                                    request_id,
-                                    provider_request_id,
-                                    Some(assistant_message),
-                                    "submission_commit",
-                                    error.to_string(),
-                                    false,
-                                )
-                                .await;
-                                false
+                                return self
+                                    .record_phase_submission_rejection(
+                                        ProtocolCorrectionTarget::WritingRun,
+                                        provider_request_id,
+                                        usage,
+                                        assistant_message,
+                                        SUBMIT_PREPARATION_TOOL,
+                                        "PHASE_SUBMISSION_REJECTED",
+                                        &error,
+                                    )
+                                    .await;
                             }
                         }
                     }
@@ -1448,7 +1445,7 @@ impl WorkflowScheduler {
                                 request_id,
                                 chapter_id,
                                 provider_request_id.clone(),
-                                usage,
+                                usage.clone(),
                                 assistant_message.clone(),
                                 submission.content,
                             )
@@ -1459,16 +1456,17 @@ impl WorkflowScheduler {
                                 false
                             }
                             Err(error) => {
-                                self.persist_model_failure(
-                                    request_id,
-                                    provider_request_id,
-                                    Some(assistant_message),
-                                    "submission_commit",
-                                    error.to_string(),
-                                    false,
-                                )
-                                .await;
-                                false
+                                return self
+                                    .record_phase_submission_rejection(
+                                        ProtocolCorrectionTarget::WritingRun,
+                                        provider_request_id,
+                                        usage,
+                                        assistant_message,
+                                        SUBMIT_CHAPTER_OUTLINE_TOOL,
+                                        "PHASE_SUBMISSION_REJECTED",
+                                        &error,
+                                    )
+                                    .await;
                             }
                         }
                     }
@@ -1850,7 +1848,7 @@ impl WorkflowScheduler {
                                 request_id,
                                 chapter_id,
                                 provider_request_id.clone(),
-                                usage,
+                                usage.clone(),
                                 assistant_message.clone(),
                                 submission.summary,
                             )
@@ -1868,15 +1866,17 @@ impl WorkflowScheduler {
                                 }
                             }
                             Err(error) => {
-                                self.persist_model_failure(
-                                    request_id,
-                                    provider_request_id,
-                                    Some(assistant_message),
-                                    "submission_commit",
-                                    error.to_string(),
-                                    false,
-                                )
-                                .await;
+                                return self
+                                    .record_phase_submission_rejection(
+                                        ProtocolCorrectionTarget::WritingRun,
+                                        provider_request_id,
+                                        usage,
+                                        assistant_message,
+                                        SUBMIT_CHAPTER_TOOL,
+                                        "PHASE_SUBMISSION_REJECTED",
+                                        &error,
+                                    )
+                                    .await;
                             }
                         }
                         false
@@ -1950,7 +1950,7 @@ impl WorkflowScheduler {
                                 run_id,
                                 request_id,
                                 provider_request_id.clone(),
-                                usage,
+                                usage.clone(),
                                 assistant_message.clone(),
                                 submission.passed,
                                 submission.confidence,
@@ -1973,17 +1973,17 @@ impl WorkflowScheduler {
                                 }
                             }
                             Err(error) => {
-                                self.persist_delegated_review_failure(
-                                    review_id,
-                                    run_id,
-                                    request_id,
-                                    provider_request_id,
-                                    Some(assistant_message),
-                                    "submission_commit",
-                                    error.to_string(),
-                                    false,
-                                )
-                                .await;
+                                return self
+                                    .record_phase_submission_rejection(
+                                        ProtocolCorrectionTarget::DelegatedReview { review_id },
+                                        provider_request_id,
+                                        usage,
+                                        assistant_message,
+                                        SUBMIT_REVIEW_TOOL,
+                                        "INVALID_REVIEW_RESULT",
+                                        &error,
+                                    )
+                                    .await;
                             }
                         }
                     }
@@ -2096,7 +2096,7 @@ impl WorkflowScheduler {
             .store
             .record_model_protocol_correction(
                 target,
-                ModelProtocolCorrection {
+                RejectedRoundRecord {
                     provider_request_id,
                     usage,
                     assistant_message,
@@ -2133,6 +2133,65 @@ impl WorkflowScheduler {
                     lane = ?target,
                     error = %error,
                     "未能写入模型协议纠正结果"
+                );
+                false
+            }
+        }
+    }
+
+    /// 把被业务守卫拒绝的阶段提交记为被拒回合：配对错误工具结果 + 纠正提示，同一
+    /// Run（或同一次委托）立即重排。
+    ///
+    /// 与 [`Self::record_protocol_correction`] 一样，原始响应与用量会写进消息账本与
+    /// 请求行；它不参与连续协议错误计数——被拒的是提交内容，不是模型协议。因此这一轮
+    /// 不会把 Run 停在协议错误上限上：非进展回合的工程上限由请求额度承担。返回值表示
+    /// 是否应当立刻重排同一 Run / 同一次委托。
+    #[allow(clippy::too_many_arguments)]
+    async fn record_phase_submission_rejection(
+        &self,
+        target: ProtocolCorrectionTarget,
+        provider_request_id: Option<String>,
+        usage: Value,
+        assistant_message: NewAgentMessage,
+        tool: &str,
+        tool_result_code: &'static str,
+        error: &StoreError,
+    ) -> bool {
+        let request_id = assistant_message.request_id;
+        let (correction, tool_result_code) =
+            phase_submission_rejection(tool, tool_result_code, error);
+        match self
+            .store
+            .record_phase_submission_rejection(
+                target,
+                RejectedRoundRecord {
+                    provider_request_id,
+                    usage,
+                    assistant_message,
+                    error: json!({ "kind": "submission_commit", "message": error.to_string() }),
+                    correction,
+                    tool_result_code: tool_result_code.to_owned(),
+                },
+            )
+            .await
+        {
+            Ok(result) => {
+                if result.newly_applied {
+                    info!(
+                        request_id = ?request_id,
+                        lane = ?target,
+                        consecutive_protocol_errors = result.consecutive_protocol_errors,
+                        "阶段提交被业务守卫拒绝，已要求同一 Run 按纠正重提"
+                    );
+                }
+                result.requeue
+            }
+            Err(error) => {
+                warn!(
+                    request_id = ?request_id,
+                    lane = ?target,
+                    error = %error,
+                    "未能写入被拒阶段提交的纠正结果"
                 );
                 false
             }
@@ -2354,14 +2413,15 @@ fn protocol_correction(error: &AgentRunnerError) -> (String, &'static str) {
         ),
         // 提交工具的参数校验失败（含被端点截断、无法解码的那一轮）：工具结果
         // 与本段纠正都带上解析器给出的具体原因（缺少哪一项产物、参数从哪一
-        // 字符开始不完整、哪个字段形状不对），模型可以在同一次调用里补齐后重试。
+        // 字符开始不完整、哪个字段形状不对、哪个取值非法且合法值是什么），模型
+        // 可以在同一次调用里按原因改对后重试。
         AgentRunnerError::InvalidPhaseSubmission {
             tool,
             error: reason,
             ..
         } => (
             format!(
-                "上一轮对 `{tool}` 的调用未通过本阶段校验：{reason}\n请补齐后重新调用 `{tool}`；已提交且合法的内容可以原样复用，不必重写。"
+                "上一轮对 `{tool}` 的调用未通过本阶段校验：{reason}\n请按上面的原因修正后重新调用 `{tool}`；已提交且合法的内容可以原样复用，不必重写。"
             ),
             "PHASE_SUBMISSION_INVALID",
         ),
@@ -2378,6 +2438,24 @@ fn protocol_correction(error: &AgentRunnerError) -> (String, &'static str) {
             "PROTOCOL_ERROR",
         ),
     }
+}
+
+/// 阶段提交被业务守卫拒绝时的纠正提示与理由码。
+///
+/// 提示必须点名本阶段的提交工具与真实原因：模型要能据此把同一件事重做对，而不是只
+/// 看到一句「提交失败」。`error` 来自 Store 的业务守卫，文本原样进入工具结果与提示，
+/// 因此「缺什么、哪里不合法」对模型是可读的。
+fn phase_submission_rejection(
+    tool: &str,
+    tool_result_code: &'static str,
+    error: &StoreError,
+) -> (String, &'static str) {
+    (
+        format!(
+            "上一轮对 `{tool}` 的提交被本阶段守卫拒绝，本轮没有产生任何正式结果：{error}\n请按上面的原因修正后重新调用 `{tool}`；此前已提交且合法的内容可以原样复用，不必重写。"
+        ),
+        tool_result_code,
+    )
 }
 
 /// 只写入当前 Run 的原始输入。完成阶段的折叠块已经随 `context_snapshot` 封存，
@@ -2976,8 +3054,7 @@ mod tests {
                 0,
                 NewSystemModelSettings {
                     api_base_url: base_url,
-                    credential_ref: None,
-                    credential_fingerprint: None,
+                    api_key: None,
                     model_id: "test-writing-model".to_owned(),
                     capabilities: ModelCapabilityProfile {
                         streaming: true,
@@ -3087,8 +3164,7 @@ mod tests {
                 0,
                 NewSystemModelSettings {
                     api_base_url: base_url,
-                    credential_ref: None,
-                    credential_fingerprint: None,
+                    api_key: None,
                     model_id: "test-writing-model".to_owned(),
                     capabilities: ModelCapabilityProfile {
                         streaming: true,
@@ -3376,8 +3452,7 @@ mod tests {
                 0,
                 NewSystemModelSettings {
                     api_base_url: base_url,
-                    credential_ref: None,
-                    credential_fingerprint: None,
+                    api_key: None,
                     model_id: "system-model".to_owned(),
                     capabilities: system_capabilities,
                     max_context_tokens: 32_768,
@@ -3628,8 +3703,7 @@ mod tests {
                 0,
                 NewSystemModelSettings {
                     api_base_url: base_url,
-                    credential_ref: None,
-                    credential_fingerprint: None,
+                    api_key: None,
                     model_id: "test-review-model".to_owned(),
                     capabilities: ModelCapabilityProfile {
                         streaming: true,
@@ -4167,8 +4241,7 @@ mod tests {
                 0,
                 NewSystemModelSettings {
                     api_base_url: base_url,
-                    credential_ref: None,
-                    credential_fingerprint: None,
+                    api_key: None,
                     model_id: "reenqueue-test-model".to_owned(),
                     capabilities: ModelCapabilityProfile {
                         streaming: true,
@@ -4292,8 +4365,7 @@ mod tests {
                     api_base_url: "http://127.0.0.1:1/v1".to_owned(),
                     model_id: "stub-embed".to_owned(),
                     dimension: 3,
-                    credential_ref: None,
-                    credential_fingerprint: None,
+                    api_key: None,
                 },
             )
             .await
@@ -4586,6 +4658,115 @@ mod tests {
         ));
     }
 
+    /// 被业务守卫拒绝的阶段提交（正文为空）必须留下配对结果，而且下一轮请求仍然可以
+    /// 组装。
+    ///
+    /// 这是实战里卡死的那条路径：`submit_chapter` 的提交被守卫拒绝，却只写下 assistant
+    /// 调用；此后每一次「显式继续」都在构建上下文时以 `MissingToolResult` 失败，请求
+    /// 一次也没发出去。
+    #[tokio::test]
+    async fn business_rejected_chapter_submission_leaves_a_buildable_history() {
+        let data_dir = TempDir::new().unwrap();
+        let store = Store::open(data_dir.path()).await.unwrap();
+        let (_version_id, chapter_id, body_run_id, request_id) =
+            in_flight_empty_chapter_body_submission(&store, "rejected-submission").await;
+        let scheduler = WorkflowScheduler::new(
+            store.clone(),
+            Arc::new(Semaphore::new(1)),
+            Arc::new(Mutex::new(())),
+        );
+        let stage = PhaseSubmissionKind::Chapter { chapter_id };
+        let request = ModelRequest {
+            messages: Vec::new(),
+            tools: chapter_body_tools(submission_tool(&stage)),
+            thinking_level: ThinkingLevel::Off,
+        };
+
+        assert!(
+            scheduler
+                .handle_chapter_body_completion(
+                    chapter_id,
+                    request_id,
+                    &request,
+                    Ok(ModelCompletion {
+                        provider_request_id: Some("provider-rejected-submission".to_owned()),
+                        content: None,
+                        tool_calls: vec![ModelToolCall {
+                            id: "rejected-submit-call".to_owned(),
+                            name: nekowriter_agent::runner::SUBMIT_CHAPTER_TOOL.to_owned(),
+                            arguments: json!({
+                                "chapter_id": chapter_id,
+                                "summary": "本章已经完成，并留下后续追查的悬念。",
+                            }),
+                        }],
+                        usage: None,
+                        usage_raw: None,
+                        finish_reason: nekowriter_agent::provider::ModelFinishReason::ToolCalls,
+                    }),
+                )
+                .await,
+            "被拒的阶段提交必须立即退回模型"
+        );
+
+        let snapshot = store.get_chapter_body(chapter_id).await.unwrap();
+        assert_eq!(snapshot.workflow.execution, ExecutionStatus::Queued);
+        assert!(snapshot.body.content.is_none());
+        assert!(snapshot.body.review.is_none());
+
+        let messages = store.list_agent_messages(body_run_id).await.unwrap();
+        let (call_id, _arguments, receipt) = submission_ledger(&messages);
+        assert_eq!(call_id, "rejected-submit-call");
+        assert!(receipt.contains("PHASE_SUBMISSION_REJECTED"), "{receipt}");
+        assert!(receipt.contains("章节正文不能为空"), "{receipt}");
+        let correction = messages.last().unwrap();
+        assert_eq!(correction.role, AgentMessageRole::User);
+        assert_eq!(correction.content["kind"], "protocol_correction");
+        assert!(
+            correction.content["content"]
+                .as_str()
+                .is_some_and(|content| content.contains("submit_chapter")),
+            "{correction:?}"
+        );
+
+        // 这一轮不计入连续协议错误，事件只解释为什么没有推进。
+        let rejected = store
+            .events_after(0)
+            .await
+            .unwrap()
+            .into_iter()
+            .rfind(|event| event.event_type == "run.changed")
+            .unwrap();
+        assert_eq!(rejected.payload["reason"], "submission_rejected");
+        assert!(
+            rejected
+                .payload
+                .get("consecutive_protocol_errors")
+                .is_none()
+        );
+        assert!(rejected.payload.get("wait_reason").is_none());
+
+        // 关键不变量：账本可以还原成下一轮请求。实战里卡死的就是这一步。
+        let history = stage_agent_history_messages(body_run_id, messages, &[]).unwrap();
+        assert!(matches!(
+            history[0].message,
+            ModelRequestMessage::AssistantToolCalls { .. }
+        ));
+        assert!(matches!(
+            history[1].message,
+            ModelRequestMessage::ToolResult { .. }
+        ));
+        build_context_with_history(
+            "你是中文短篇小说写作助手。".to_owned(),
+            chapter_body_tools(submission_tool(&stage)),
+            Vec::new(),
+            Vec::new(),
+            history,
+            32_768,
+            4_096,
+        )
+        .expect("被业务守卫拒绝的提交之后仍然必须能组装下一次请求");
+    }
+
     #[tokio::test]
     async fn explicit_stop_aborts_the_in_flight_model_task_and_releases_its_permit() {
         let (base_url, request_receiver) = hanging_sse_server().await;
@@ -4597,8 +4778,7 @@ mod tests {
                 0,
                 NewSystemModelSettings {
                     api_base_url: base_url,
-                    credential_ref: None,
-                    credential_fingerprint: None,
+                    api_key: None,
                     model_id: "stop-test-model".to_owned(),
                     capabilities: ModelCapabilityProfile {
                         streaming: true,
@@ -4703,8 +4883,7 @@ mod tests {
                 0,
                 NewSystemModelSettings {
                     api_base_url: base_url,
-                    credential_ref: None,
-                    credential_fingerprint: None,
+                    api_key: None,
                     model_id: "test-writing-model".to_owned(),
                     capabilities: ModelCapabilityProfile {
                         streaming: true,
@@ -4826,8 +5005,7 @@ mod tests {
                 0,
                 NewSystemModelSettings {
                     api_base_url: base_url,
-                    credential_ref: None,
-                    credential_fingerprint: None,
+                    api_key: None,
                     model_id: "test-writing-model".to_owned(),
                     capabilities: ModelCapabilityProfile {
                         streaming: true,
@@ -4984,8 +5162,7 @@ mod tests {
                 0,
                 NewSystemModelSettings {
                     api_base_url: base_url,
-                    credential_ref: None,
-                    credential_fingerprint: None,
+                    api_key: None,
                     model_id: "test-writing-model".to_owned(),
                     capabilities: ModelCapabilityProfile {
                         streaming: true,
@@ -5771,37 +5948,37 @@ mod tests {
         );
         assert_eq!(corrected.workflow.version_id, version_id);
 
-        // 反复不推进的提交必须计入连续协议错误：第三次不再重排请求，而是触发工程
-        // 执行限制，未投递意见原样保留，等待用户显式继续。
-        let second =
-            commit_direct_chapter_submission(&store, body_run_id, chapter_id, "second").await;
-        assert_eq!(second.workflow.execution, ExecutionStatus::Queued);
-        assert_eq!(second.pending_feedback.len(), 1);
-
-        let third =
-            commit_direct_chapter_submission(&store, body_run_id, chapter_id, "third").await;
-        assert_eq!(third.workflow.stage, WorkflowStage::WritingDrafting);
-        assert_eq!(third.workflow.execution, ExecutionStatus::Stopped);
-        assert_eq!(
-            third.workflow.wait_reason,
-            Some(nekowriter_core::RunWaitReason::ProtocolErrorLimit)
-        );
-        assert!(third.body.review.is_none());
-        assert_eq!(third.pending_feedback.len(), 1);
-        assert_eq!(third.pending_feedback[0].status, FeedbackStatus::Queued);
-        let stopped = store
+        // 反复直接提交是被业务守卫拒绝的「被拒回合」：每次都只重排请求，既不推进
+        // 连续协议错误，也不触发工程执行限制——未投递意见原样保留，等模型用
+        // append/replace 形成下一条工具结果把它投递出去。
+        for label in ["second", "third", "fourth"] {
+            let rejected =
+                commit_direct_chapter_submission(&store, body_run_id, chapter_id, label).await;
+            assert_eq!(rejected.workflow.stage, WorkflowStage::WritingDrafting);
+            assert_eq!(rejected.workflow.execution, ExecutionStatus::Queued);
+            assert_eq!(rejected.workflow.wait_reason, None);
+            assert!(rejected.body.review.is_none());
+            assert_eq!(rejected.pending_feedback.len(), 1);
+            assert_eq!(rejected.pending_feedback[0].status, FeedbackStatus::Queued);
+        }
+        let last_rejection = store
             .events_after(0)
             .await
             .unwrap()
             .into_iter()
             .rfind(|event| event.event_type == "run.changed")
             .unwrap();
-        assert_eq!(stopped.payload["status"], "stopped");
-        assert_eq!(stopped.payload["wait_reason"], "protocol_error_limit");
-        assert_eq!(stopped.payload["consecutive_protocol_errors"], "3");
+        assert_eq!(last_rejection.payload["status"], "queued");
         assert_eq!(
-            stopped.payload["reason"],
+            last_rejection.payload["reason"],
             "pending_feedback_requires_tool_result"
+        );
+        assert!(last_rejection.payload.get("wait_reason").is_none());
+        assert!(
+            last_rejection
+                .payload
+                .get("consecutive_protocol_errors")
+                .is_none()
         );
     }
 
@@ -6352,8 +6529,7 @@ mod tests {
                 0,
                 NewSystemModelSettings {
                     api_base_url: base_url,
-                    credential_ref: None,
-                    credential_fingerprint: None,
+                    api_key: None,
                     model_id: "test-review-model".to_owned(),
                     capabilities: ModelCapabilityProfile {
                         streaming: true,

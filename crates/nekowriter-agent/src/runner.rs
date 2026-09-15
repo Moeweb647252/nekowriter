@@ -182,8 +182,17 @@ pub enum PhaseSubmissionError {
         "提交粗纲时必须同时提交至少一项 chapter_plan：本轮章节清单只能放在 chapter_plan，写进粗纲正文不算提交"
     )]
     MissingChapterPlan,
-    #[error("阶段提交的 chapter_id 与当前章节不一致")]
-    ChapterIdMismatch,
+    /// 章节级提交必须原样回传本阶段的 `chapter_id`。真实端点确实会把 UUID 抄错
+    /// （把中间两组的前一位互换），因此这条原因必须给出本轮唯一合法取值与收到的
+    /// 取值：纠正消息里没有那个值时，模型只能靠上下文重新抄一遍，就会把同一个
+    /// 转录错误重复到协议上限。
+    #[error(
+        "阶段提交的 chapter_id 与当前章节不一致：本轮必须原样提交 {expected}，收到的却是 {actual}"
+    )]
+    ChapterIdMismatch {
+        expected: ChapterId,
+        actual: ChapterId,
+    },
 }
 
 /// 组合一个模型协议适配器和单轮阶段守卫。
@@ -675,7 +684,10 @@ fn parse_outline_submission(
 ) -> Result<PhaseSubmission, PhaseSubmissionError> {
     let raw = decode_submission::<RawChapterOutlineSubmission>(arguments)?;
     if raw.chapter_id != expected_chapter_id {
-        return Err(PhaseSubmissionError::ChapterIdMismatch);
+        return Err(PhaseSubmissionError::ChapterIdMismatch {
+            expected: expected_chapter_id,
+            actual: raw.chapter_id,
+        });
     }
     let content =
         NewChapterOutline::new(raw.content).map_err(|error| PhaseSubmissionError::Invalid {
@@ -700,7 +712,10 @@ fn parse_chapter_submission(
 ) -> Result<PhaseSubmission, PhaseSubmissionError> {
     let raw = decode_submission::<RawChapterSubmission>(arguments)?;
     if raw.chapter_id != expected_chapter_id {
-        return Err(PhaseSubmissionError::ChapterIdMismatch);
+        return Err(PhaseSubmissionError::ChapterIdMismatch {
+            expected: expected_chapter_id,
+            actual: raw.chapter_id,
+        });
     }
     validate_text("章节摘要", &raw.summary, MAX_ARTIFACT_CONTENT_LEN)?;
     Ok(PhaseSubmission::Chapter(ChapterSubmission {
@@ -1081,7 +1096,7 @@ mod tests {
                 &PhaseSubmissionKind::ChapterOutline { chapter_id },
                 &mismatch
             ),
-            Err(PhaseSubmissionError::ChapterIdMismatch)
+            Err(PhaseSubmissionError::ChapterIdMismatch { .. })
         ));
 
         let chapter = json!({
@@ -1092,6 +1107,38 @@ mod tests {
             parse_phase_submission(&PhaseSubmissionKind::Chapter { chapter_id }, &chapter),
             Ok(PhaseSubmission::Chapter(_))
         ));
+    }
+
+    /// 抄错 `chapter_id` 的原因必须同时给出本轮唯一合法取值与收到的取值。
+    ///
+    /// 真实端点（`DeepSeek-V4-Pro`，2026-09-15 第二章正文 Run）连续三轮把
+    /// `c38cc529-7a2b-4409-…` 写成 `c38cc529-7a2b-4408-…`：原因里没有那个值时，
+    /// 模型只能从上下文重新抄一遍，同一个转录错误因此重复到协议上限。
+    #[test]
+    fn chapter_id_mismatch_names_the_only_legal_value() {
+        let expected = Uuid::parse_str("c38cc529-7a2b-4409-8edf-62328409ff6d").unwrap();
+        let actual = Uuid::parse_str("c38cc529-7a2b-4408-9edf-62328409ff6d").unwrap();
+        for (stage, arguments) in [
+            (
+                PhaseSubmissionKind::ChapterOutline {
+                    chapter_id: expected,
+                },
+                json!({ "chapter_id": actual, "content": "细纲" }),
+            ),
+            (
+                PhaseSubmissionKind::Chapter {
+                    chapter_id: expected,
+                },
+                json!({ "chapter_id": actual, "summary": "本章完成一次转折。" }),
+            ),
+        ] {
+            let Err(error) = parse_phase_submission(&stage, &arguments) else {
+                panic!("抄错的 chapter_id 必须被拒绝");
+            };
+            let message = error.to_string();
+            assert!(message.contains(&expected.to_string()), "{message}");
+            assert!(message.contains(&actual.to_string()), "{message}");
+        }
     }
 
     #[test]

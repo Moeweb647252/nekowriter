@@ -383,7 +383,7 @@ export function ModelSettingsPanel({
                 disabled={loading || saving}
               />
               <FieldDescription>
-                密钥只会交给本地服务，并存入本机系统凭据库；数据库和请求快照不保存密钥。
+                密钥只保存在本机数据库的模型设置里，只在构建请求前读出；请求快照、事件与日志都不写密钥。
               </FieldDescription>
             </Field>
 

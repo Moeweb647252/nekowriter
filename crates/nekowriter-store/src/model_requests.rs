@@ -15,8 +15,8 @@ use nekowriter_core::{
     stop_queued_model_run as stop_queued_workflow_run, utc_now_millis,
 };
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, EntityTrait, IntoActiveModel, QueryFilter, QueryOrder, Set,
-    TransactionTrait,
+    ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, IntoActiveModel, QueryFilter,
+    QueryOrder, Set, TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -28,15 +28,18 @@ use super::{
         append_agent_messages_for_run, phase_submission_messages, validate_new_messages,
     },
     db_id,
-    entity::{feedback, model_request, run, tool_call},
+    entity::{agent_message, feedback, model_request, run, tool_call},
     preparation::{
         chapter_outline_snapshot, insert_event, persist_chapter_outline_submission,
         persist_preparation_submission, persist_workflow, preparation_snapshot,
         reset_run_protocol_errors, update_preparation_run_status, workflow_for_version,
     },
-    protocol_correction::ModelProtocolCorrection,
+    protocol_correction::RejectedRoundRecord,
     transaction_error,
 };
+
+/// 终态失败写入时为未被执行的工具调用使用的理由码。
+const TOOL_NOT_EXECUTED: &str = "TOOL_NOT_EXECUTED";
 
 const STATUS_PREPARED: &str = "prepared";
 const STATUS_DISPATCHED: &str = "dispatched";
@@ -1055,13 +1058,16 @@ impl Store {
                     };
 
                     if let Some(assistant_message) = assistant_message {
-                        append_agent_messages_for_run(
+                        let messages = terminal_request_messages(
                             transaction,
                             &run_model,
-                            vec![assistant_message],
-                            now,
+                            request_id,
+                            &assistant_message,
+                            &resolution,
                         )
                         .await?;
+                        append_agent_messages_for_run(transaction, &run_model, messages, now)
+                            .await?;
                     }
 
                     let mut active_request = request.into_active_model();
@@ -1310,9 +1316,9 @@ fn validate_resolution(resolution: &ModelRequestResolution) -> Result<(), StoreE
 ///
 /// 写作 Run 与审核子 Run 共用这一处，因此两条路径写给模型看的形状与配对规则
 /// 不可能分叉。
-pub(crate) fn protocol_correction_messages(
+pub(crate) fn rejected_round_messages(
     request_id: Uuid,
-    correction: &ModelProtocolCorrection,
+    correction: &RejectedRoundRecord,
 ) -> Result<Vec<NewAgentMessage>, StoreError> {
     let mut messages = vec![correction.assistant_message.clone()];
     messages.extend(protocol_error_tool_result_messages(
@@ -1334,9 +1340,9 @@ pub(crate) fn protocol_correction_messages(
     Ok(messages)
 }
 
-pub(crate) fn validate_model_protocol_correction(
+pub(crate) fn validate_rejected_round(
     request_id: Uuid,
-    correction: &ModelProtocolCorrection,
+    correction: &RejectedRoundRecord,
 ) -> Result<(), StoreError> {
     if correction
         .provider_request_id
@@ -1372,10 +1378,11 @@ pub(crate) fn validate_model_protocol_correction(
     Ok(())
 }
 
-/// 为一条未被实际执行的 assistant tool call 生成协议错误结果。
+/// 为一条未被实际执行的 assistant tool call 生成配对的错误结果。
 ///
 /// 这不能复用正文工具调用表：调用还没有通过阶段白名单、单调用和参数校验，因而没有
-/// 可安全应用的业务 ToolCall。消息账本仍必须保持 Chat Completions 的一对一配对。
+/// 可安全应用的业务 ToolCall。消息账本仍必须保持 Chat Completions 的一对一配对，
+/// 因此协议纠正、被业务拒绝的阶段提交与终态失败写入都从这里取同一种结果形状。
 pub(crate) fn protocol_error_tool_result_messages(
     request_id: Uuid,
     assistant_message: &NewAgentMessage,
@@ -1443,6 +1450,68 @@ pub(crate) fn protocol_error_tool_result_messages(
         .collect()
 }
 
+/// 终态写入时的配对补齐：原始 assistant 响应，加上它里面尚未被执行过、因此还没有
+/// 工具结果的工具调用的配对错误结果。
+///
+/// 请求一旦进入终态就不会再有工具结果到达。若这次写入只留下 assistant 的调用，这个
+/// Run 的消息序列此后每一次组装请求都会被 `serialize_request_messages` 的配对校验
+/// 拒绝（`MissingToolResult`），Run 因此再也发不出请求。把配对做成写入层的性质，
+/// 任何一条失败路径都无法重现那种状态。
+///
+/// 已经写下的配对结果按 `tool_call_id` 跳过，因此成功路径在同一个事务里先追加真实
+/// 结果、后收束请求时不会多出一条假的「未被执行」。
+async fn terminal_request_messages(
+    transaction: &DatabaseTransaction,
+    run_model: &run::Model,
+    request_id: Uuid,
+    assistant_message: &NewAgentMessage,
+    resolution: &ModelRequestResolution,
+) -> Result<Vec<NewAgentMessage>, StoreError> {
+    let paired = protocol_error_tool_result_messages(
+        request_id,
+        assistant_message,
+        &terminal_request_reason(resolution),
+        TOOL_NOT_EXECUTED,
+    )?;
+    let mut messages = Vec::with_capacity(paired.len() + 1);
+    messages.push(assistant_message.clone());
+    if paired.is_empty() {
+        return Ok(messages);
+    }
+    let provider_call_ids = paired
+        .iter()
+        .filter_map(|message| message.tool_call_id.clone())
+        .collect::<Vec<_>>();
+    let already_paired = agent_message::Entity::find()
+        .filter(agent_message::Column::RunId.eq(run_model.id))
+        .filter(agent_message::Column::ToolCallId.is_in(provider_call_ids))
+        .all(transaction)
+        .await?
+        .into_iter()
+        .filter_map(|message| message.tool_call_id)
+        .collect::<HashSet<_>>();
+    messages.extend(paired.into_iter().filter(|message| {
+        !message
+            .tool_call_id
+            .as_ref()
+            .is_some_and(|provider_call_id| already_paired.contains(provider_call_id))
+    }));
+    Ok(messages)
+}
+
+/// 配对结果的说明文案：把这一次请求的结局带进工具结果，模型下一轮能看到自己那次
+/// 调用的真实结局。
+fn terminal_request_reason(resolution: &ModelRequestResolution) -> String {
+    match resolution
+        .error()
+        .and_then(|error| error.get("message"))
+        .and_then(Value::as_str)
+    {
+        Some(detail) => format!("该工具调用未被执行：本轮请求已结束（{detail}）。"),
+        None => "该工具调用未被执行：本轮请求已结束。".to_owned(),
+    }
+}
+
 /// 连续协议错误计数加一；负数说明记录已经损坏，溢出说明达到 i64 上限。
 ///
 /// 写作 Run 与审核子 Run 共用这一处计数规则：两条路径的「达到上限」必须是同一个
@@ -1460,9 +1529,9 @@ pub(crate) fn next_protocol_error_count(current: i64) -> Result<i64, StoreError>
     })
 }
 
-pub(crate) fn protocol_correction_matches(
+pub(crate) fn rejected_round_matches(
     request: &model_request::Model,
-    correction: &ModelProtocolCorrection,
+    correction: &RejectedRoundRecord,
 ) -> Result<bool, StoreError> {
     if model_request_status_from_db(&request.status)? != ModelRequestStatus::Succeeded
         || request.provider_request_id != correction.provider_request_id

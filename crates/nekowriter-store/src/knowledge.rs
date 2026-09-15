@@ -34,7 +34,7 @@ use uuid::Uuid;
 use super::{
     Store, StoreError, db_id,
     entity::{embedding_setting, knowledge_entry, knowledge_index_task, knowledge_space},
-    finish_write, insert_receipt, parse_id, payload_hash,
+    finish_write, insert_receipt, normalize_api_key, parse_id, payload_hash,
     preparation::insert_app_event,
     replay_or_conflict, transaction_error,
 };
@@ -102,16 +102,15 @@ pub struct UpdateKnowledgeEntry {
 
 /// 待保存的 Embedding 配置。
 ///
-/// `credential_ref` 与 `credential_fingerprint` 由应用层管理：前者指向 OS 凭据库，
-/// 后者只参与命令幂等哈希，避免同一 command 用不同密钥重放。
+/// `api_key` 是密钥正文：`None` 表示保留库中现有密钥，`Some` 表示替换。它参与命令幂等
+/// 哈希（只落摘要），避免同一 command 用不同密钥重放。
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NewEmbeddingSettings {
     pub api_base_url: String,
     pub model_id: String,
     pub dimension: i64,
-    pub credential_ref: Option<String>,
-    pub credential_fingerprint: Option<String>,
+    pub api_key: Option<String>,
 }
 
 /// 一个可被后台索引器领取的任务。
@@ -198,12 +197,22 @@ struct SaveEmbeddingSettingsPayload<'a> {
     api_base_url: &'a str,
     model_id: &'a str,
     dimension: i64,
-    credential_fingerprint: Option<&'a str>,
+    api_key: Option<&'a str>,
 }
 
 /// 保存 Embedding 配置这条命令的方法与目标，写入与可重放检查必须一致。
 const SAVE_EMBEDDING_SETTINGS_METHOD: &str = "PUT";
 const EMBEDDING_SETTINGS_TARGET: &str = "/api/settings/embedding";
+
+/// 一条已归一化的 Embedding 保存请求。
+///
+/// 命令指纹与真正落库必须用同一份归一化结果，所以这里一次算出、两处使用。
+struct NormalizedEmbeddingSettings {
+    api_base_url: String,
+    model_id: String,
+    dimension: i64,
+    api_key: Option<String>,
+}
 
 /// 校验一次 Embedding 保存请求，并算出这条命令的指纹。
 ///
@@ -212,7 +221,7 @@ const EMBEDDING_SETTINGS_TARGET: &str = "/api/settings/embedding";
 fn embedding_settings_payload(
     expected_revision: i64,
     settings: &NewEmbeddingSettings,
-) -> Result<(String, String, i64, String), StoreError> {
+) -> Result<(NormalizedEmbeddingSettings, String), StoreError> {
     let api_base_url = validate_api_base_url(&settings.api_base_url)?;
     let model_id = validate_required("Embedding 模型", &settings.model_id, 200)?;
     if settings.dimension <= 0 || settings.dimension > 65_536 {
@@ -221,14 +230,24 @@ fn embedding_settings_payload(
         ));
     }
     let dimension = settings.dimension;
+    let api_key = normalize_api_key(settings.api_key.clone())
+        .map_err(StoreError::InvalidEmbeddingSettings)?;
     let payload_hash = payload_hash(&SaveEmbeddingSettingsPayload {
         expected_revision,
         api_base_url: &api_base_url,
         model_id: &model_id,
         dimension,
-        credential_fingerprint: settings.credential_fingerprint.as_deref(),
+        api_key: api_key.as_deref(),
     })?;
-    Ok((api_base_url, model_id, dimension, payload_hash))
+    Ok((
+        NormalizedEmbeddingSettings {
+            api_base_url,
+            model_id,
+            dimension,
+            api_key,
+        },
+        payload_hash,
+    ))
 }
 
 #[derive(Serialize)]
@@ -898,22 +917,25 @@ impl Store {
                 model_id: model.model_id,
                 dimension: model.dimension,
             },
-            credential_configured: model.credential_ref.is_some(),
+            credential_configured: model.api_key.is_some(),
             revision: model.revision,
             updated_at_ms: model.updated_at,
         }))
     }
 
-    /// 读取 Embedding 凭据引用；凭据正文只存在于 OS 凭据库。
+    /// 读取 Embedding 密钥正文；尚未配置时为 `None`。
+    ///
+    /// 这是 Embedding 密钥的唯一读出口：对外视图只携带
+    /// `credential_configured`，不携带密钥。
     ///
     /// # Errors
     ///
     /// 数据库读取失败时返回错误。
-    pub async fn embedding_credential_ref(&self) -> Result<Option<String>, StoreError> {
+    pub async fn embedding_api_key(&self) -> Result<Option<String>, StoreError> {
         Ok(self
             .embedding_model()
             .await?
-            .and_then(|model| model.credential_ref))
+            .and_then(|model| model.api_key))
     }
 
     /// 读取 Embedding 配置及其 profile 指纹。
@@ -948,8 +970,7 @@ impl Store {
         expected_revision: i64,
         settings: NewEmbeddingSettings,
     ) -> Result<EmbeddingSettings, StoreError> {
-        let (api_base_url, model_id, dimension, payload_hash) =
-            embedding_settings_payload(expected_revision, &settings)?;
+        let (normalized, payload_hash) = embedding_settings_payload(expected_revision, &settings)?;
         let target = EMBEDDING_SETTINGS_TARGET.to_owned();
         if let Some(receipt) = self.find_receipt(command_id).await? {
             return replay_or_conflict(
@@ -959,7 +980,12 @@ impl Store {
                 &payload_hash,
             );
         }
-        let credential_ref = settings.credential_ref.clone();
+        let NormalizedEmbeddingSettings {
+            api_base_url,
+            model_id,
+            dimension,
+            api_key,
+        } = normalized;
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
         let result = self
@@ -978,13 +1004,18 @@ impl Store {
                             actual: actual_revision,
                         });
                     }
+                    // 并入既有密钥：`None` 表示这次保存不动它，与界面「不重填不覆盖」
+                    // 以及保存前那次真实探测所用的密钥保持一致。
+                    let api_key = api_key
+                        .clone()
+                        .or_else(|| existing.as_ref().and_then(|model| model.api_key.clone()));
                     let model = match existing {
                         Some(model) => {
                             let mut active = model.into_active_model();
                             active.api_base_url = Set(api_base_url.clone());
                             active.model_id = Set(model_id.clone());
                             active.dimension = Set(dimension);
-                            active.credential_ref = Set(credential_ref.clone());
+                            active.api_key = Set(api_key);
                             active.revision = Set(expected_revision + 1);
                             active.updated_at = Set(now);
                             active.update(transaction).await?
@@ -995,7 +1026,7 @@ impl Store {
                                 api_base_url: Set(api_base_url.clone()),
                                 model_id: Set(model_id.clone()),
                                 dimension: Set(dimension),
-                                credential_ref: Set(credential_ref.clone()),
+                                api_key: Set(api_key),
                                 revision: Set(1),
                                 created_at: Set(now),
                                 updated_at: Set(now),
@@ -1010,7 +1041,7 @@ impl Store {
                             model_id: model.model_id.clone(),
                             dimension: model.dimension,
                         },
-                        credential_configured: model.credential_ref.is_some(),
+                        credential_configured: model.api_key.is_some(),
                         revision: model.revision,
                         updated_at_ms: model.updated_at,
                     };
@@ -1055,7 +1086,7 @@ impl Store {
         expected_revision: i64,
         settings: &NewEmbeddingSettings,
     ) -> Result<Option<EmbeddingSettings>, StoreError> {
-        let (_, _, _, payload_hash) = embedding_settings_payload(expected_revision, settings)?;
+        let (_, payload_hash) = embedding_settings_payload(expected_revision, settings)?;
         self.find_receipt(command_id)
             .await?
             .map_or(Ok(None), |receipt| {
@@ -2105,8 +2136,7 @@ mod tests {
                     api_base_url: "https://embed.example/v1".to_owned(),
                     model_id: "test-embed".to_owned(),
                     dimension,
-                    credential_ref: None,
-                    credential_fingerprint: None,
+                    api_key: None,
                 },
             )
             .await
@@ -2302,8 +2332,7 @@ mod tests {
             api_base_url: "https://embed.example/v1".to_owned(),
             model_id: "test-embed".to_owned(),
             dimension: 4,
-            credential_ref: None,
-            credential_fingerprint: None,
+            api_key: None,
         };
         let command_id = Uuid::new_v4();
         // 尚未提交过：没有可重放的结果，调用方因此照常做真实验证。
@@ -2343,6 +2372,39 @@ mod tests {
         );
     }
 
+    /// `api_key: None` 表示保留库中现有密钥；密钥只能经由专属读出口取得。
+    #[tokio::test]
+    async fn embedding_api_key_is_kept_when_omitted() {
+        let (_dir, store) = open().await;
+        let settings = |api_key| NewEmbeddingSettings {
+            api_base_url: "https://embed.example/v1".to_owned(),
+            model_id: "test-embed".to_owned(),
+            dimension: 4,
+            api_key,
+        };
+
+        let first = store
+            .save_embedding_settings(Uuid::new_v4(), 0, settings(Some("secret-key-1".to_owned())))
+            .await
+            .unwrap();
+        assert!(first.credential_configured);
+        assert_eq!(
+            store.embedding_api_key().await.unwrap().as_deref(),
+            Some("secret-key-1")
+        );
+
+        let second = store
+            .save_embedding_settings(Uuid::new_v4(), 1, settings(None))
+            .await
+            .unwrap();
+        assert_eq!(second.revision, 2);
+        assert!(second.credential_configured);
+        assert_eq!(
+            store.embedding_api_key().await.unwrap().as_deref(),
+            Some("secret-key-1")
+        );
+    }
+
     #[tokio::test]
     async fn embedding_settings_reject_invalid_input_and_guard_revisions() {
         let (_dir, store) = open().await;
@@ -2356,8 +2418,7 @@ mod tests {
                     api_base_url: "ftp://embed.example/v1".to_owned(),
                     model_id: "test-embed".to_owned(),
                     dimension: 8,
-                    credential_ref: None,
-                    credential_fingerprint: None,
+                    api_key: None,
                 },
             )
             .await
@@ -2377,8 +2438,7 @@ mod tests {
                     api_base_url: "https://embed.example/v1".to_owned(),
                     model_id: "other-embed".to_owned(),
                     dimension: 4,
-                    credential_ref: None,
-                    credential_fingerprint: None,
+                    api_key: None,
                 },
             )
             .await

@@ -1,7 +1,8 @@
 //! 系统级模型设置的持久化与乐观并发控制。
 //!
-//! SQLite 只保存模型服务地址、能力资料和 OS 凭据的不透明引用。API key 本身只由
-//! App 在真正调用模型前从凭据库读出，绝不写入本模块的实体、回执或事件。
+//! SQLite 保存模型服务地址、能力资料与密钥正文。密钥只经由
+//! [`Store::system_model_api_key`] 读出，绝不进入对外视图、回执、事件或请求哈希之外
+//! 的任何产物；回执只落 payload 摘要，不落密钥正文。
 
 use nekowriter_core::{ModelCapabilityProfile, decimal_i64, utc_now_millis};
 use sea_orm::{ActiveModelTrait, EntityTrait, IntoActiveModel, Set, TransactionTrait};
@@ -13,7 +14,7 @@ use uuid::Uuid;
 use super::{
     Store, StoreError, db_id,
     entity::{event, system_model_setting},
-    insert_receipt, payload_hash, replay_or_conflict, transaction_error,
+    insert_receipt, normalize_api_key, payload_hash, replay_or_conflict, transaction_error,
 };
 
 const SAVE_SYSTEM_MODEL_SETTINGS_METHOD: &str = "PUT";
@@ -23,13 +24,13 @@ pub const SYSTEM_WRITING_MODEL_KEY: &str = "writing_model";
 
 /// 已持久化的系统写作模型设置。
 ///
-/// `credential_ref` 是 OS 凭据库中的不透明键；它从不包含 API key。HTTP 层应仅向
-/// 浏览器公开 `credential_configured`，而不是把该本地引用当成前端可编辑状态。
+/// 对外的设置视图：只携带「密钥是否已配置」，从不携带密钥正文。HTTP 层据此向
+/// 浏览器公开 `credential_configured`，而不是把本地密钥当成前端可编辑状态。
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SystemModelSettings {
     pub api_base_url: String,
-    pub credential_ref: Option<String>,
+    pub credential_configured: bool,
     pub model_id: String,
     pub capabilities: ModelCapabilityProfile,
     #[serde(with = "decimal_i64")]
@@ -44,16 +45,15 @@ pub struct SystemModelSettings {
     pub updated_at_ms: i64,
 }
 
-/// 待保存的非敏感模型设置。
+/// 待保存的模型设置。
 ///
-/// `credential_fingerprint` 只参与 command receipt 的请求哈希，以阻止同一个
-/// `command_id` 被不同密钥重放；它不会进入 `system_model_settings`、响应或事件。
+/// `api_key` 是密钥正文：`None` 表示「保留库中现有密钥」，`Some` 表示替换。它参与
+/// command receipt 的请求哈希（只落摘要），以阻止同一个 `command_id` 被不同密钥重放。
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NewSystemModelSettings {
     pub api_base_url: String,
-    pub credential_ref: Option<String>,
-    pub credential_fingerprint: Option<String>,
+    pub api_key: Option<String>,
     pub model_id: String,
     pub capabilities: ModelCapabilityProfile,
     #[serde(with = "decimal_i64")]
@@ -66,7 +66,7 @@ pub struct NewSystemModelSettings {
 struct SaveSystemModelSettingsPayload<'a> {
     expected_revision: i64,
     api_base_url: &'a str,
-    credential_fingerprint: Option<&'a str>,
+    api_key: Option<&'a str>,
     model_id: &'a str,
     capabilities: ModelCapabilityProfile,
     max_context_tokens: i64,
@@ -78,7 +78,7 @@ impl<'a> SaveSystemModelSettingsPayload<'a> {
         Self {
             expected_revision,
             api_base_url: &settings.api_base_url,
-            credential_fingerprint: settings.credential_fingerprint.as_deref(),
+            api_key: settings.api_key.as_deref(),
             model_id: &settings.model_id,
             capabilities: settings.capabilities,
             max_context_tokens: settings.max_context_tokens,
@@ -103,10 +103,27 @@ impl Store {
             .transpose()
     }
 
-    /// 在写入 OS 凭据前检查同一 command 是否已经有可重放的结果。
+    /// 返回系统写作模型的密钥正文；尚未配置时为 `None`。
     ///
-    /// App 以此避免网络重试用不同 API key 覆盖凭据库中的既有密钥。若返回
-    /// `Some`，调用方必须直接返回该结果而不得再写凭据。
+    /// 这是密钥的唯一读出口：设置视图、回执、事件与日志都只能拿到
+    /// `credential_configured`，不得拿到密钥。
+    ///
+    /// # Errors
+    ///
+    /// 数据库读取失败时返回错误。
+    pub async fn system_model_api_key(&self) -> Result<Option<String>, StoreError> {
+        Ok(
+            system_model_setting::Entity::find_by_id(SYSTEM_WRITING_MODEL_KEY.to_owned())
+                .one(&self.database)
+                .await?
+                .and_then(|model| model.api_key),
+        )
+    }
+
+    /// 在真正写库前检查同一 command 是否已经有可重放的结果。
+    ///
+    /// App 以此避免网络重试用不同 API key 覆盖库中的既有密钥。若返回 `Some`，
+    /// 调用方必须直接返回该结果，不得再写库。
     ///
     /// # Errors
     ///
@@ -135,10 +152,10 @@ impl Store {
             })
     }
 
-    /// 保存系统写作模型的非敏感配置并写入持久同步事件。
+    /// 保存系统写作模型配置并写入持久同步事件。
     ///
-    /// 调用方必须先将 `credential_ref` 指向的实际密钥安全写入 OS 凭据库；本方法
-    /// 不接受密钥正文。设置和 command receipt 在同一 SQLite 事务中提交。
+    /// 密钥与其余设置在同一事务中提交：保存失败不会留下与设置不一致的密钥。
+    /// 设置和 command receipt 也在同一事务中提交。
     ///
     /// # Errors
     ///
@@ -189,13 +206,18 @@ impl Store {
                     })?;
                     let capabilities_json =
                         serde_json::to_string(&settings_for_transaction.capabilities)?;
+                    // 并入既有密钥：`None` 表示这次保存不动它，与界面「不重填不覆盖」
+                    // 一致。密钥只存在于本事务内，不进入命令指纹之外的任何产物。
+                    let api_key = settings_for_transaction
+                        .api_key
+                        .clone()
+                        .or_else(|| existing.as_ref().and_then(|model| model.api_key.clone()));
                     let model = match existing {
                         Some(model) => {
                             let mut active = model.into_active_model();
                             active.api_base_url =
                                 Set(settings_for_transaction.api_base_url.clone());
-                            active.credential_ref =
-                                Set(settings_for_transaction.credential_ref.clone());
+                            active.api_key = Set(api_key);
                             active.model_id = Set(settings_for_transaction.model_id.clone());
                             active.capabilities_json = Set(capabilities_json);
                             active.max_context_tokens =
@@ -209,7 +231,7 @@ impl Store {
                         None => system_model_setting::ActiveModel {
                             key: Set(SYSTEM_WRITING_MODEL_KEY.to_owned()),
                             api_base_url: Set(settings_for_transaction.api_base_url.clone()),
-                            credential_ref: Set(settings_for_transaction.credential_ref.clone()),
+                            api_key: Set(api_key),
                             model_id: Set(settings_for_transaction.model_id.clone()),
                             capabilities_json: Set(capabilities_json),
                             max_context_tokens: Set(settings_for_transaction.max_context_tokens),
@@ -300,36 +322,8 @@ fn normalize_system_model_settings(
             "上下文窗口必须为正数，且预留输出必须小于上下文窗口",
         ));
     }
-    settings.credential_ref = normalize_optional_token(settings.credential_ref, "credential_ref")?;
-    settings.credential_fingerprint =
-        normalize_optional_token(settings.credential_fingerprint, "credential_fingerprint")?;
-    if let Some(fingerprint) = &settings.credential_fingerprint
-        && (fingerprint.len() != 64
-            || !fingerprint
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')))
-    {
-        return Err(invalid_settings(
-            "credential_fingerprint 必须是小写 SHA-256 十六进制摘要",
-        ));
-    }
+    settings.api_key = normalize_api_key(settings.api_key).map_err(invalid_settings)?;
     Ok(settings)
-}
-
-fn normalize_optional_token(
-    value: Option<String>,
-    name: &str,
-) -> Result<Option<String>, StoreError> {
-    value
-        .map(|value| {
-            let value = value.trim().to_owned();
-            if value.is_empty() || value.chars().count() > 256 {
-                Err(invalid_settings(format!("{name} 必须为 1–256 个字符")))
-            } else {
-                Ok(value)
-            }
-        })
-        .transpose()
 }
 
 fn invalid_settings(reason: impl Into<String>) -> StoreError {
@@ -344,8 +338,7 @@ fn system_model_settings_from_model(
     })?;
     normalize_system_model_settings(NewSystemModelSettings {
         api_base_url: model.api_base_url.clone(),
-        credential_ref: model.credential_ref.clone(),
-        credential_fingerprint: None,
+        api_key: model.api_key.clone(),
         model_id: model.model_id.clone(),
         capabilities,
         max_context_tokens: model.max_context_tokens,
@@ -358,7 +351,7 @@ fn system_model_settings_from_model(
     }
     Ok(SystemModelSettings {
         api_base_url: model.api_base_url.clone(),
-        credential_ref: model.credential_ref.clone(),
+        credential_configured: model.api_key.is_some(),
         model_id: model.model_id.clone(),
         capabilities,
         max_context_tokens: model.max_context_tokens,
@@ -400,8 +393,7 @@ mod tests {
     fn normalizes_and_rejects_invalid_model_settings() {
         let settings = normalize_system_model_settings(NewSystemModelSettings {
             api_base_url: " https://model.example/v1/ ".to_owned(),
-            credential_ref: Some(" credential-1 ".to_owned()),
-            credential_fingerprint: Some("a".repeat(64)),
+            api_key: Some("  secret-key-1  ".to_owned()),
             model_id: " writing-model ".to_owned(),
             capabilities: ModelCapabilityProfile {
                 streaming: true,
@@ -415,13 +407,54 @@ mod tests {
         .unwrap();
         assert_eq!(settings.api_base_url, "https://model.example/v1/");
         assert_eq!(settings.model_id, "writing-model");
-        assert_eq!(settings.credential_ref.as_deref(), Some("credential-1"));
+        assert_eq!(settings.api_key.as_deref(), Some("secret-key-1"));
         assert!(matches!(
             normalize_system_model_settings(NewSystemModelSettings {
                 api_base_url: "https://model.example/v1/chat/completions".to_owned(),
-                ..settings
+                ..settings.clone()
             }),
             Err(StoreError::InvalidSystemModelSettings(_))
         ));
+    }
+
+    /// `None` 表示保留既有密钥；给出时必须是单行非空正文。
+    #[test]
+    fn normalizes_and_rejects_invalid_api_keys() {
+        let base = |api_key| NewSystemModelSettings {
+            api_base_url: "https://model.example/v1".to_owned(),
+            api_key,
+            model_id: "writing-model".to_owned(),
+            capabilities: ModelCapabilityProfile {
+                streaming: true,
+                tools: true,
+                stream_usage: true,
+                thinking: true,
+            },
+            max_context_tokens: 32_768,
+            reserved_output_tokens: 4_096,
+        };
+
+        assert_eq!(
+            normalize_system_model_settings(base(None)).unwrap().api_key,
+            None
+        );
+        assert_eq!(
+            normalize_system_model_settings(base(Some(" key ".to_owned())))
+                .unwrap()
+                .api_key
+                .as_deref(),
+            Some("key")
+        );
+        for api_key in [
+            Some(String::new()),
+            Some("   ".to_owned()),
+            Some("line\nbreak".to_owned()),
+            Some("k".repeat(crate::MAX_API_KEY_CHARS + 1)),
+        ] {
+            assert!(matches!(
+                normalize_system_model_settings(base(api_key)),
+                Err(StoreError::InvalidSystemModelSettings(_))
+            ));
+        }
     }
 }

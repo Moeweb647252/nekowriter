@@ -23,7 +23,6 @@ clap = { version = "4.5.54", features = ["derive"] }
 directories = "6.0.0"
 fs4 = "1.1.0"
 futures-util = "0.3.31"
-keyring = { version = "4.2.0", default-features = false, features = ["v1"] }
 # 0.38.0 的默认特性组合存在 job.rs 引用 `Error::Http` 而未编译该枚举变体的
 # 上游编译问题；启用 remote 仅修复该 crate 的编译特性闭包，应用仍只使用本地路径。
 lancedb = { version = "0.38.0", features = ["remote"] }

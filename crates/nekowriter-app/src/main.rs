@@ -8,7 +8,6 @@ use std::{
     time::Duration,
 };
 
-mod credentials;
 mod dashboard;
 mod knowledge;
 mod lifecycle;
@@ -51,8 +50,9 @@ use nekowriter_core::{
     NewNovelVersion, NewProject, NewProjectSettings, PreparationArtifactInput,
     PreparationArtifactKind, PreparationSnapshot, ProjectBundle, ProjectId, ProjectListItem,
     ProjectModelReference, ProjectSettings, PromptTemplateValidationError, ReplaceChapterContent,
-    ReviewId, RevisionId, TemplateError, ThinkingLevel, UserQuestionAnswers, ValidationError,
-    VersionId, VersionSnapshot, WorkflowSnapshot, WorkflowStage, decimal_i64, utc_now_millis,
+    ReviewId, RevisionId, TemplateError, ThinkingLevel, UserQuestionAnswer, UserQuestionAnswers,
+    ValidationError, VersionId, VersionSnapshot, WorkflowSnapshot, WorkflowStage, decimal_i64,
+    utc_now_millis,
 };
 use nekowriter_store::{
     EventStreamBounds, InterruptionSource, NewPromptOverride, OPERATION_KIND_CONNECTION_TEST,
@@ -69,11 +69,10 @@ use crate::model_settings::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::sync::{Mutex, Semaphore, broadcast, watch};
 use tower_http::{services::ServeDir, trace::TraceLayer};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 const DEFAULT_PORT: u16 = 47_821;
@@ -341,7 +340,12 @@ struct AnswerQuestionRequest {
     command_id: Uuid,
     #[serde(with = "decimal_i64")]
     expected_state_revision: i64,
-    answers: UserQuestionAnswers,
+    /// 一次询问的整批答案。
+    ///
+    /// 这里直接收列表，而不是领域类型 `UserQuestionAnswers`：后者的唯一字段也叫
+    /// `answers`，把它当作同名字段会形成线上形状 `answers.answers`，与界面按本字段
+    /// 发送的 `answers: [...]` 不一致。
+    answers: Vec<UserQuestionAnswer>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -476,7 +480,6 @@ struct ErrorBody {
 enum ApiError {
     Validation(ValidationError),
     Store(StoreError),
-    Credential(credentials::CredentialStoreError),
     Embedding(nekowriter_agent::embedding::EmbeddingError),
     Engine(nekowriter_agent::engine::EngineError),
     Provider(ProviderError),
@@ -541,12 +544,6 @@ impl From<StoreError> for ApiError {
     }
 }
 
-impl From<credentials::CredentialStoreError> for ApiError {
-    fn from(value: credentials::CredentialStoreError) -> Self {
-        Self::Credential(value)
-    }
-}
-
 impl From<nekowriter_agent::embedding::EmbeddingError> for ApiError {
     fn from(value: nekowriter_agent::embedding::EmbeddingError) -> Self {
         Self::Embedding(value)
@@ -576,7 +573,6 @@ impl std::fmt::Display for ApiError {
         match self {
             Self::Validation(error) => write!(formatter, "{error}"),
             Self::Store(error) => write!(formatter, "{error}"),
-            Self::Credential(error) => write!(formatter, "{error}"),
             Self::Embedding(error) => write!(formatter, "{error}"),
             Self::Engine(error) => write!(formatter, "{error}"),
             Self::Provider(error) => write!(formatter, "{error}"),
@@ -931,15 +927,6 @@ impl IntoResponse for ApiError {
                 message.clone(),
                 json!({ "reason": message }),
             ),
-            Self::Credential(error) => {
-                warn!(request_id = %request_id, error = %error, "OS 凭据库操作失败");
-                (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "CREDENTIAL_STORE_UNAVAILABLE",
-                    "无法访问本机凭据库；请检查系统凭据库（Windows 凭据管理器 / macOS 钥匙串）后重试".to_owned(),
-                    json!({}),
-                )
-            }
             Self::Provider(error) => {
                 warn!(request_id = %request_id, error = %error, "模型服务调用失败");
                 (
@@ -949,25 +936,35 @@ impl IntoResponse for ApiError {
                     json!({}),
                 )
             }
-            Self::Embedding(
-                nekowriter_agent::embedding::EmbeddingError::InvalidApiBaseUrl { .. }
-                | nekowriter_agent::embedding::EmbeddingError::EndpointInsteadOfApiBase
-                | nekowriter_agent::embedding::EmbeddingError::EmptyModelId
-                | nekowriter_agent::embedding::EmbeddingError::EmptyDimension,
-            ) => (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "INVALID_EMBEDDING_SETTINGS",
-                "Embedding 配置无效；请检查地址、模型与输出维度".to_owned(),
-                json!({}),
-            ),
+            // 失败原因必须点名到具体一项：界面只展示 `message`，不读 `details`，一句
+            // 「请检查地址、模型、维度与密钥」会让用户无法判断该改哪一个字段。适配器
+            // 已经知道是维度不符、还是 HTTP 状态还是连不上，这里原样透出（`reason`
+            // 供机器读取）。密钥从不进入这些文本。
             Self::Embedding(error) => {
-                warn!(request_id = %request_id, error = %error, "Embedding 服务调用失败");
-                (
-                    StatusCode::BAD_GATEWAY,
-                    "EMBEDDING_SERVICE_FAILED",
-                    "Embedding 服务调用失败；请检查地址、模型、维度与密钥".to_owned(),
-                    json!({}),
-                )
+                let message = error.to_string();
+                let invalid_settings = matches!(
+                    error,
+                    nekowriter_agent::embedding::EmbeddingError::InvalidApiBaseUrl { .. }
+                        | nekowriter_agent::embedding::EmbeddingError::EndpointInsteadOfApiBase
+                        | nekowriter_agent::embedding::EmbeddingError::EmptyModelId
+                        | nekowriter_agent::embedding::EmbeddingError::EmptyDimension
+                );
+                if invalid_settings {
+                    (
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "INVALID_EMBEDDING_SETTINGS",
+                        message.clone(),
+                        json!({ "reason": message }),
+                    )
+                } else {
+                    warn!(request_id = %request_id, error = %error, "Embedding 服务调用失败");
+                    (
+                        StatusCode::BAD_GATEWAY,
+                        "EMBEDDING_SERVICE_FAILED",
+                        message.clone(),
+                        json!({ "reason": message }),
+                    )
+                }
             }
             Self::Scheduler(error) => {
                 warn!(request_id = %request_id, error = %error, "本地模型调度器操作失败");
@@ -1069,15 +1066,237 @@ impl IntoResponse for ApiError {
     }
 }
 
+/// 启动过程中的一步：说明里点名是哪一步失败，并给出这一步能走的下一步。
+///
+/// 启动期的几步各自会以不同方式失败（路径不存在、只读、被占用、来自更早版本），用户
+/// 需要的不是 Rust 错误行，而是「哪一步、为什么、现在能做什么」。
+#[derive(Clone, Copy)]
+enum StartupStep {
+    DataDirectory,
+    Logging,
+    ProcessLock,
+    Database,
+    WebDirectory,
+}
+
+impl StartupStep {
+    fn label(self) -> &'static str {
+        match self {
+            Self::DataDirectory => "无法准备数据目录",
+            Self::Logging => "无法在该目录下创建日志",
+            Self::ProcessLock => "无法锁定数据目录",
+            Self::Database => "无法打开该目录里的数据库",
+            Self::WebDirectory => "无法定位前端构建产物目录",
+        }
+    }
+
+    fn hint(self) -> &'static str {
+        match self {
+            Self::DataDirectory => {
+                "请确认这个路径存在且可写，然后重试；也可以改用另一个数据目录启动，例如：nekowriter --data-dir <新目录>"
+            }
+            Self::Logging => "请确认这个目录可写（应用需要它下面的 logs/ 子目录），然后重试",
+            Self::ProcessLock => {
+                "同一时间只允许一个进程打开同一个数据目录；请关闭正在运行的那个 NekoWriter，或改用另一个数据目录启动"
+            }
+            Self::Database => {
+                "请确认这个目录可写且属于 NekoWriter；由更早版本创建的目录请用创建它的旧版本打开，或改用另一个数据目录启动"
+            }
+            Self::WebDirectory => "请用 --web-dir <目录> 明确指定前端构建产物所在目录",
+        }
+    }
+}
+
+/// 启动失败的统一出口：任何一步失败都经这里给出同一种说明，并保留原始错误细节。
+///
+/// `logs_dir` 只在该目录下的日志确实可写后给出：日志初始化之前没有可写的日志文件，
+/// 说明因此不会声称原因已经记录在 `logs/`。返回值原样透传，进程仍以非零状态退出；
+/// stderr 上随后出现的 Rust 原始错误行保留完整细节，供事后核对。
+fn startup_failure(
+    data_dir: Option<&Path>,
+    logs_dir: Option<&Path>,
+    step: StartupStep,
+    error: StartupError,
+) -> StartupError {
+    error!(data_dir = ?data_dir, step = step.label(), %error, "启动失败");
+    eprintln!(
+        "{}",
+        startup_failure_message(data_dir, logs_dir, step, &error)
+    );
+    error
+}
+
+/// 一次启动失败的原因与它自己能走的下一步。
+///
+/// 「旧目录」两种情形自带详细说明与前进路径，因此不再叠加步骤提示。
+fn startup_failure_reason(
+    step: StartupStep,
+    error: &StartupError,
+) -> (String, Option<&'static str>) {
+    match error {
+        StartupError::Store(StoreError::UnsupportedSchema { found, expected }) => (
+            format!(
+                "这个目录由更早的 NekoWriter 创建，数据库 schema 版本为 {found}，本版本只支持 {expected}。\n\
+                 本版本不会读取或迁移其中的作品数据；要继续其中已有的作品，请用创建它的旧版本打开。\n\
+                 要用本版本开始创作，请指定另一个数据目录启动，例如：nekowriter --data-dir <新目录>"
+            ),
+            None,
+        ),
+        StartupError::Store(StoreError::UnknownSchema) => (
+            "这个目录里的数据库不是 NekoWriter 的数据（缺少 schema 标识）。\n\
+             请确认 --data-dir 指向正确的数据目录，或换一个空目录启动本版本，例如：nekowriter --data-dir <新目录>"
+                .to_owned(),
+            None,
+        ),
+        StartupError::NoLocalDataDirectory => (
+            "无法确定系统本地数据目录。".to_owned(),
+            Some("请用 --data-dir <目录> 明确指定数据目录，例如：nekowriter --data-dir <新目录>"),
+        ),
+        other => (format!("{}（{other}）", step.label()), Some(step.hint())),
+    }
+}
+
+/// 启动失败时给用户的说明：点名数据目录与失败的步骤、可诊断的原因与可以走的下一步。
+///
+/// 只在日志可写时才声明「往这个目录写了什么」，而且声明的内容就是实际写入的内容
+/// （启动日志与进程锁文件），不用「不会改动它」这种与行为不符的说法。
+fn startup_failure_message(
+    data_dir: Option<&Path>,
+    logs_dir: Option<&Path>,
+    step: StartupStep,
+    error: &StartupError,
+) -> String {
+    let (reason, hint) = startup_failure_reason(step, error);
+    let mut lines = vec!["NekoWriter 无法启动。".to_owned()];
+    if let Some(data_dir) = data_dir {
+        lines.push(format!("数据目录：{}", data_dir.display()));
+    }
+    lines.push(format!("原因：{reason}"));
+    if let Some(hint) = hint {
+        lines.push(hint.to_owned());
+    }
+    if let Some(logs_dir) = logs_dir {
+        lines.push(format!(
+            "除了该目录原有的文件，本次启动只写入了启动日志与进程锁文件，作品数据（SQLite 与向量）未被修改；日志：{}。",
+            logs_dir.display()
+        ));
+    }
+    lines.join("\n")
+}
+
+/// 启动期准备好的东西：数据库句柄、目录，以及必须随进程存活的日志写入器与进程锁。
+struct Startup {
+    store: Store,
+    data_dir: PathBuf,
+    web_dir: PathBuf,
+    /// 非阻塞日志写入器的守卫：drop 它会丢掉尚未落盘的日志行。
+    _log_guard: tracing_appender::non_blocking::WorkerGuard,
+    /// 进程锁：drop 它会释放 `nekowriter.lock`。
+    _lock: ProcessLock,
+}
+
+/// 完成启动期的全部步骤：数据目录、日志、进程锁、数据库、前端产物。
+///
+/// 每一步失败都经 `startup_failure` 给出同一种可诊断说明，因此这里不出现裸 `?`：
+/// 恰恰是这几步最容易因为「路径不存在、只读、被占用、来自更早版本」而失败，而那正是
+/// 用户最需要看到「哪一步、为什么、现在能做什么」的时候。日志在拿到数据目录后立即
+/// 落地，之后的所有诊断都会同时进入该目录的 `logs/`。
+///
+/// # Errors
+///
+/// 任意一步失败时返回原始错误；调用方只需要把它交给 `main` 的非零退出即可。
+async fn prepare(cli: &Cli) -> Result<Startup, StartupError> {
+    let requested_dir = match cli.data_dir.clone() {
+        Some(path) => path,
+        None => match default_data_dir() {
+            Ok(path) => path,
+            Err(error) => {
+                return Err(startup_failure(
+                    None,
+                    None,
+                    StartupStep::DataDirectory,
+                    error,
+                ));
+            }
+        },
+    };
+    let data_dir = match resolve_data_dir(requested_dir.clone()) {
+        Ok(data_dir) => data_dir,
+        Err(error) => {
+            return Err(startup_failure(
+                Some(&requested_dir),
+                None,
+                StartupStep::DataDirectory,
+                error,
+            ));
+        }
+    };
+    let log_guard = match lifecycle::init_logging(&data_dir) {
+        Ok(guard) => guard,
+        // 日志这一层自己失败时没有可写的日志文件，说明只落到 stderr。
+        Err(error) => {
+            return Err(startup_failure(
+                Some(&data_dir),
+                None,
+                StartupStep::Logging,
+                error,
+            ));
+        }
+    };
+    let logs_dir = data_dir.join("logs");
+    let lock = match ProcessLock::acquire(&data_dir) {
+        Ok(lock) => lock,
+        Err(error) => {
+            return Err(startup_failure(
+                Some(&data_dir),
+                Some(&logs_dir),
+                StartupStep::ProcessLock,
+                error,
+            ));
+        }
+    };
+    let store = match Store::open(&data_dir).await {
+        Ok(store) => store,
+        Err(error) => {
+            return Err(startup_failure(
+                Some(&data_dir),
+                Some(&logs_dir),
+                StartupStep::Database,
+                error.into(),
+            ));
+        }
+    };
+    let web_dir = match cli.web_dir.clone() {
+        Some(path) => path,
+        None => match default_web_dir() {
+            Ok(path) => path,
+            Err(error) => {
+                return Err(startup_failure(
+                    Some(&data_dir),
+                    Some(&logs_dir),
+                    StartupStep::WebDirectory,
+                    error,
+                ));
+            }
+        },
+    };
+    Ok(Startup {
+        store,
+        data_dir,
+        web_dir,
+        _log_guard: log_guard,
+        _lock: lock,
+    })
+}
+
 #[tokio::main]
 async fn main() -> Result<(), StartupError> {
     let cli = Cli::parse();
-    let data_dir = resolve_data_dir(cli.data_dir.unwrap_or(default_data_dir()?))?;
-    // 日志在拿到数据目录后立即落地，之后的所有启动诊断都会同时进入 logs/。
-    let _log_guard = lifecycle::init_logging(&data_dir)?;
-    let _lock = ProcessLock::acquire(&data_dir)?;
-    let store = Store::open(&data_dir).await?;
-    let web_dir = cli.web_dir.unwrap_or(default_web_dir()?);
+    // `startup` 必须存活到进程结束：日志守卫与进程锁都在它里面。
+    let startup = prepare(&cli).await?;
+    let store = startup.store.clone();
+    let data_dir = startup.data_dir.clone();
+    let web_dir = startup.web_dir.clone();
     if !web_dir.exists() {
         warn!(path = %web_dir.display(), "未找到前端构建产物；可使用 pnpm --dir webui build 后重启，或在开发模式下运行 Vite");
     }
@@ -1464,19 +1683,9 @@ async fn save_system_settings(
         api_key,
     } = request;
 
-    let credential_ref = match (&api_key, &current) {
-        (Some(_), Some(current)) => current
-            .credential_ref
-            .clone()
-            .or_else(|| Some(format!("writing-model-{}", Uuid::new_v4()))),
-        (Some(_), None) => Some(format!("writing-model-{}", Uuid::new_v4())),
-        (None, Some(current)) => current.credential_ref.clone(),
-        (None, None) => None,
-    };
     let settings = nekowriter_store::NewSystemModelSettings {
         api_base_url,
-        credential_ref: credential_ref.clone(),
-        credential_fingerprint: api_key.as_deref().map(credential_fingerprint),
+        api_key,
         model_id,
         capabilities,
         max_context_tokens,
@@ -1500,45 +1709,11 @@ async fn save_system_settings(
         .into());
     }
 
-    let previous_api_key = if let (Some(_), Some(credential_ref)) = (&api_key, &credential_ref) {
-        match credentials::read_api_key(credential_ref.clone()).await {
-            Ok(api_key) => Some(api_key),
-            Err(credentials::CredentialStoreError::Missing) => None,
-            Err(error) => return Err(error.into()),
-        }
-    } else {
-        None
-    };
-    let created_credential = api_key.is_some()
-        && current
-            .as_ref()
-            .and_then(|settings| settings.credential_ref.as_ref())
-            != credential_ref.as_ref();
-    if let (Some(api_key), Some(credential_ref)) = (api_key, credential_ref.clone()) {
-        credentials::write_api_key(credential_ref, api_key).await?;
-    }
-
-    match state
+    let saved = state
         .store
         .save_system_model_settings(command_id, expected_revision, settings)
-        .await
-    {
-        Ok(saved) => Ok(Json(system_settings_response(Some(saved)))),
-        Err(error) => {
-            if let Some(credential_ref) = credential_ref {
-                if let Some(previous_api_key) = previous_api_key {
-                    let _ = credentials::write_api_key(credential_ref, previous_api_key).await;
-                } else if created_credential {
-                    let _ = credentials::delete_api_key(credential_ref).await;
-                }
-            }
-            Err(error.into())
-        }
-    }
-}
-
-fn credential_fingerprint(api_key: &str) -> String {
-    format!("{:x}", Sha256::digest(api_key.as_bytes()))
+        .await?;
+    Ok(Json(system_settings_response(Some(saved))))
 }
 
 fn system_settings_response(
@@ -1552,7 +1727,7 @@ fn system_settings_response(
             max_context_tokens: settings.max_context_tokens.to_string(),
             reserved_output_tokens: settings.reserved_output_tokens.to_string(),
             revision: settings.revision.to_string(),
-            credential_configured: settings.credential_ref.is_some(),
+            credential_configured: settings.credential_configured,
             created_at_ms: settings.created_at_ms.to_string(),
             updated_at_ms: settings.updated_at_ms.to_string(),
         }),
@@ -1579,10 +1754,7 @@ async fn test_model_connection(
         .get_system_model_settings()
         .await?
         .ok_or_else(|| StoreError::InvalidSystemModelSettings("请先保存写作模型设置".to_owned()))?;
-    let api_key = match settings.credential_ref.clone() {
-        Some(credential_ref) => Some(credentials::read_api_key(credential_ref).await?),
-        None => None,
-    };
+    let api_key = state.store.system_model_api_key().await?;
     let thinking_probed = request.capabilities.thinking;
     let config = ChatCompletionsConfig::new(
         &settings.api_base_url,
@@ -2056,7 +2228,9 @@ async fn answer_question(
             question_id,
             request.command_id,
             request.expected_state_revision,
-            request.answers,
+            UserQuestionAnswers {
+                answers: request.answers,
+            },
         )
         .await?;
     enqueue_queued_writing_run(&state, &response.workflow).await?;
@@ -2386,11 +2560,6 @@ async fn ensure_model_ready(state: &AppState, project_id: ProjectId) -> Result<(
             ))
             .into(),
         );
-    }
-    if let Some(credential_ref) = system.credential_ref {
-        // 仅验证凭据库中的引用仍可读取；真实请求在取得全局许可后重新读取，绝不把
-        // 密钥封存进请求快照或跨异步边界传递。
-        let _ = credentials::read_api_key(credential_ref).await?;
     }
     Ok(())
 }
@@ -2938,6 +3107,82 @@ mod tests {
 
     use super::*;
 
+    /// 启动失败时，用户看到的必须是一句点明目录、失败步骤、原因与前进路径的说明，
+    /// 而不是一个只能看懂的 Rust 错误。
+    #[test]
+    fn startup_failure_messages_name_the_directory_step_cause_and_way_forward() {
+        let data_dir = Path::new("/tmp/nw-schema-probe");
+        let logs_dir = data_dir.join("logs");
+
+        let stale = startup_failure_message(
+            Some(data_dir),
+            Some(&logs_dir),
+            StartupStep::Database,
+            &StartupError::Store(StoreError::UnsupportedSchema {
+                found: "25".to_owned(),
+                expected: 26,
+            }),
+        );
+        assert!(stale.contains("数据目录：/tmp/nw-schema-probe"));
+        assert!(stale.contains("25") && stale.contains("26"));
+        assert!(stale.contains("旧版本"));
+        assert!(stale.contains("--data-dir"));
+        assert!(stale.contains("/tmp/nw-schema-probe/logs"));
+        // 只声明实际写下的东西：日志与进程锁，而不是「不会改动它」。
+        assert!(stale.contains("不会读取或迁移其中的作品数据"));
+        assert!(!stale.contains("不会改动它"));
+
+        let unknown = startup_failure_message(
+            Some(data_dir),
+            None,
+            StartupStep::Database,
+            &StartupError::Store(StoreError::UnknownSchema),
+        );
+        assert!(unknown.contains("数据目录：/tmp/nw-schema-probe"));
+        assert!(unknown.contains("schema"));
+        assert!(unknown.contains("--data-dir"));
+        // 日志没落地时不能声称原因已记录在 logs/。
+        assert!(!unknown.contains("只写入了启动日志"));
+
+        // 早期步骤（数据目录、日志）的 IO 失败：原因用中文点名是哪一步。
+        let unusable = startup_failure_message(
+            Some(data_dir),
+            None,
+            StartupStep::DataDirectory,
+            &StartupError::Io(std::io::Error::from_raw_os_error(20)),
+        );
+        assert!(unusable.contains("原因：无法准备数据目录（"));
+        assert!(unusable.contains("--data-dir"));
+
+        let locked = startup_failure_message(
+            Some(data_dir),
+            Some(&logs_dir),
+            StartupStep::ProcessLock,
+            &StartupError::DataDirectoryLocked(data_dir.join("nekowriter.lock")),
+        );
+        assert!(locked.contains("原因：无法锁定数据目录（"));
+        assert!(locked.contains("关闭正在运行的那个"));
+
+        let no_directory = startup_failure_message(
+            None,
+            None,
+            StartupStep::DataDirectory,
+            &StartupError::NoLocalDataDirectory,
+        );
+        assert!(no_directory.contains("NekoWriter 无法启动。"));
+        assert!(!no_directory.contains("数据目录："));
+        assert!(no_directory.contains("请用 --data-dir <目录> 明确指定"));
+
+        let web = startup_failure_message(
+            Some(data_dir),
+            Some(&logs_dir),
+            StartupStep::WebDirectory,
+            &StartupError::NoExecutableDirectory,
+        );
+        assert!(web.contains("无法定位前端构建产物目录"));
+        assert!(web.contains("--web-dir"));
+    }
+
     /// 契约测试用的积累引擎：返回两条候选，并记录被调用的次数。
     struct StubAccumulationEngine;
     /// 引擎调用失败时必须什么都不写。
@@ -3069,8 +3314,7 @@ mod tests {
                     api_base_url: "https://embed.example/v1".to_owned(),
                     model_id: "test-embed".to_owned(),
                     dimension: 2,
-                    credential_ref: None,
-                    credential_fingerprint: None,
+                    api_key: None,
                 },
             )
             .await
@@ -3405,6 +3649,235 @@ mod tests {
             }))
             .is_err()
         );
+    }
+
+    /// 审核决定的请求体形状必须与界面 `decideChapterFinalReview` 真正发出的 JSON 一致。
+    ///
+    /// 「退回修订」写下的意见是正文 Agent 的修订要求：服务端把它排进正文 Run 的自由
+    /// 意见批次（store 一侧见 `chapter_final_rejection_hands_its_issues_to_the_body_agent`）。
+    /// 这里钉住界面真实发出的报文，避免退回意见因字段名或取值形状不符而根本没到服务端。
+    #[test]
+    fn review_decision_accepts_the_payload_the_ui_sends() {
+        let command_id = Uuid::new_v4();
+        let issues = "让沈宁主动留下查清寄信人；第二段的雨声描写与结尾重复。";
+        let rejected: DecidePreparationReviewRequest = serde_json::from_value(json!({
+            "commandId": command_id,
+            "expectedStateRevision": "27",
+            "passed": false,
+            "issues": issues,
+            "citations": [
+                {
+                    "kind": "document",
+                    "documentId": Uuid::new_v4(),
+                    "revisionId": Uuid::new_v4(),
+                    "startChar": "4",
+                    "endChar": "6",
+                    "quote": "胶卷",
+                    "chapterId": null,
+                }
+            ],
+        }))
+        .unwrap();
+        assert_eq!(rejected.command_id, command_id);
+        assert_eq!(rejected.expected_state_revision, 27);
+        assert!(!rejected.passed);
+        assert_eq!(rejected.issues.as_deref(), Some(issues));
+        assert_eq!(rejected.citations.len(), 1);
+
+        // 通过时界面把 issues 写成空字符串、citations 写成空数组。
+        let approved: DecidePreparationReviewRequest = serde_json::from_value(json!({
+            "commandId": Uuid::new_v4(),
+            "expectedStateRevision": "28",
+            "passed": true,
+            "issues": "",
+            "citations": [],
+        }))
+        .unwrap();
+        assert!(approved.passed);
+        assert_eq!(approved.issues.as_deref(), Some(""));
+        assert!(approved.citations.is_empty());
+    }
+
+    /// 问答提交的请求体形状必须与界面 `answerQuestion` 真正发出的 JSON 一致。
+    ///
+    /// 实战里发现过反例：接口把领域类型 `UserQuestionAnswers` 当作同名字段，线上
+    /// 形状变成 `answers.answers`，而界面按 `answers: [...]` 提交，于是每次提交都是
+    /// 422——模型问一次问题就把整章卡在 `waiting_answer`，界面只给出一个永远不会
+    /// 成功的提交按钮。
+    #[test]
+    fn answer_question_request_accepts_the_payload_the_ui_sends() {
+        let command_id = Uuid::new_v4();
+        let parsed: AnswerQuestionRequest = serde_json::from_value(json!({
+            "commandId": command_id,
+            "expectedStateRevision": "38",
+            "answers": [
+                {
+                    "questionId": "q1",
+                    "selectedOptionIds": ["night"],
+                    "customText": "当夜约 2:10，巡道工因暴雨上线检查道岔。",
+                },
+                {
+                    "questionId": "q2",
+                    "selectedOptionIds": ["dialogue_only"],
+                    "customText": null,
+                },
+            ],
+        }))
+        .unwrap();
+        assert_eq!(parsed.command_id, command_id);
+        assert_eq!(parsed.expected_state_revision, 38);
+        assert_eq!(parsed.answers.len(), 2);
+        assert_eq!(parsed.answers[0].question_id, "q1");
+        assert_eq!(parsed.answers[0].selected_option_ids, ["night"]);
+        assert_eq!(parsed.answers[1].custom_text, None);
+        // 逐题答案仍然拒绝未知字段：多出来的一层 `answers` 不能静默通过。
+        assert!(
+            serde_json::from_value::<AnswerQuestionRequest>(json!({
+                "commandId": command_id,
+                "expectedStateRevision": "38",
+                "answers": {
+                    "answers": [
+                        { "questionId": "q1", "selectedOptionIds": [], "customText": null },
+                    ],
+                },
+            }))
+            .is_err()
+        );
+    }
+
+    /// Embedding 设置与连接测试的请求体形状必须与界面真正发出的 JSON 一致。
+    ///
+    /// 这条路径此前只有 store 级单测：`/api/questions/{id}/answer` 那个「服务端期望
+    /// `answers.answers`、界面发 `answers: [...]`」的缺陷正是同一种漏检。这里用界面
+    /// 真实抓到的报文（docs/03 §40）钉住两侧形状，而不只是 Rust 字段。
+    #[test]
+    fn embedding_requests_accept_the_payload_the_ui_sends() {
+        let command_id = Uuid::new_v4();
+        let save: knowledge::SaveEmbeddingSettingsRequest = serde_json::from_value(json!({
+            "commandId": command_id,
+            "expectedRevision": "2",
+            "apiBaseUrl": "http://127.0.0.1:8899/v1",
+            "modelId": "stub-embed",
+            "dimension": "8",
+            "apiKey": null,
+        }))
+        .unwrap();
+        assert_eq!(save.command_id, command_id);
+        assert_eq!(save.expected_revision, 2);
+        assert_eq!(save.api_base_url, "http://127.0.0.1:8899/v1");
+        assert_eq!(save.model_id, "stub-embed");
+        assert_eq!(save.dimension, 8);
+        // 界面留空密钥时提交 `apiKey: null`，语义是保留既有密钥。
+        assert_eq!(save.api_key, None);
+
+        let with_key: knowledge::SaveEmbeddingSettingsRequest = serde_json::from_value(json!({
+            "commandId": command_id,
+            "expectedRevision": "0",
+            "apiBaseUrl": "http://127.0.0.1:8899/v1",
+            "modelId": "stub-embed",
+            "dimension": "8",
+            "apiKey": "probe-embed-key-001",
+        }))
+        .unwrap();
+        assert_eq!(with_key.api_key.as_deref(), Some("probe-embed-key-001"));
+
+        let test: knowledge::TestEmbeddingRequest = serde_json::from_value(json!({
+            "apiBaseUrl": "http://127.0.0.1:8899/v1",
+            "modelId": "stub-embed",
+            "dimension": "8",
+            "apiKey": null,
+        }))
+        .unwrap();
+        assert_eq!(test.dimension, 8);
+        assert_eq!(test.api_key, None);
+
+        // 长整数只认十进制字符串；界面把 `dimension` 当字符串发，服务端不能顺手把
+        // 数字也收下，否则两侧会在超过 JS 安全整数时悄悄分叉。
+        assert!(
+            serde_json::from_value::<knowledge::TestEmbeddingRequest>(json!({
+                "apiBaseUrl": "http://127.0.0.1:8899/v1",
+                "modelId": "stub-embed",
+                "dimension": 8,
+                "apiKey": null,
+            }))
+            .is_err()
+        );
+    }
+
+    /// Embedding 设置响应必须与界面 `EmbeddingSettings` 接口同形。
+    #[test]
+    fn embedding_settings_response_matches_the_interface_shape() {
+        let empty =
+            serde_json::to_value(knowledge::EmbeddingSettingsResponse { embedding: None }).unwrap();
+        assert_eq!(empty, json!({ "embedding": null }));
+
+        let response = knowledge::EmbeddingSettingsResponse {
+            embedding: Some(nekowriter_core::EmbeddingSettings {
+                profile: nekowriter_core::EmbeddingProfile {
+                    api_base_url: "http://127.0.0.1:8899/v1".to_owned(),
+                    model_id: "stub-embed".to_owned(),
+                    dimension: 8,
+                },
+                credential_configured: true,
+                revision: 2,
+                updated_at_ms: 1_789_399_707_544,
+            }),
+        };
+        assert_eq!(
+            serde_json::to_value(response).unwrap(),
+            json!({
+                "embedding": {
+                    "profile": {
+                        "apiBaseUrl": "http://127.0.0.1:8899/v1",
+                        "modelId": "stub-embed",
+                        "dimension": "8",
+                    },
+                    "credentialConfigured": true,
+                    "revision": "2",
+                    "updatedAtMs": "1789399707544",
+                },
+            })
+        );
+    }
+
+    /// Embedding 失败必须点名到具体原因：界面只展示 `message`，一句「请检查地址、
+    /// 模型、维度与密钥」会让用户在四个字段之间猜。适配器已经知道原因（维不符、
+    /// HTTP 状态、连不上），这里要求它原样透出。
+    #[tokio::test]
+    async fn embedding_failures_name_the_concrete_reason() {
+        let response = ApiError::Embedding(
+            nekowriter_agent::embedding::EmbeddingError::DimensionMismatch {
+                expected: 4,
+                actual: 8,
+            },
+        )
+        .into_response();
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["error"]["code"], "EMBEDDING_SERVICE_FAILED");
+        assert_eq!(
+            value["error"]["message"],
+            "Embedding 维度不符：期望 4，实际 8"
+        );
+        assert_eq!(
+            value["error"]["details"]["reason"],
+            value["error"]["message"]
+        );
+
+        // 地址与字段本身不合规仍然是客户端错误，而且同样点名是哪一项。
+        let response =
+            ApiError::Embedding(nekowriter_agent::embedding::EmbeddingError::EmptyModelId)
+                .into_response();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["error"]["code"], "INVALID_EMBEDDING_SETTINGS");
+        assert_eq!(value["error"]["message"], "Embedding 模型 ID 不能为空");
     }
 
     #[tokio::test]

@@ -1021,6 +1021,94 @@ fn feedback_batch_anchors(
     Ok(Some(anchors))
 }
 
+/// 一条刚排进未封存批次的自由意见。
+struct QueuedChapterBodyFeedback {
+    id: Uuid,
+    sequence: i64,
+    status: FeedbackStatus,
+    /// 意见已归属的工具投放（同一批次共享），未归属时为 `None`。
+    bound_tool_call_id: Option<String>,
+}
+
+/// 把一条自由意见排进正文 Run 的未封存批次。
+///
+/// 与 [`Store::submit_run_feedback`] 共用同一套锚点规则（见 [`feedback_batch_anchors`]）：
+/// 已经有未封存批次时继承它的锚点，让同一批意见随同一个工具结果一起交付；否则挂到
+/// 最后一条已有结果的工具调用之后，等模型产生序号更大的下一条工具结果时由
+/// [`bind_pending_feedback_to_tool`] 绑定，随该结果的 `feedback` 数组在下一次请求里
+/// 交给模型。未封存期间这条意见同时挡住直接终稿提交（见
+/// `commit_chapter_body_model_submission`），因此模型必须先产生一条正文编辑。
+///
+/// 调用方负责把工作流留在能继续写正文的状态，并写 `feedback.changed` 事件。
+async fn queue_chapter_body_feedback(
+    transaction: &DatabaseTransaction,
+    body_run: &run::Model,
+    text: String,
+    citations: &[FeedbackCitation],
+    now: i64,
+) -> Result<QueuedChapterBodyFeedback, StoreError> {
+    let existing_batch = feedback::Entity::find()
+        .filter(feedback::Entity::COLUMN.run_id.eq(body_run.id))
+        .filter(feedback::Entity::COLUMN.status.is_in(["queued", "bound"]))
+        .order_by_asc(feedback::Entity::COLUMN.sequence)
+        .all(transaction)
+        .await?;
+    let anchors = feedback_batch_anchors(&existing_batch)?;
+    let (after_tool_sequence, preferred_tool_call_id, bound_tool_call_id, status) =
+        if let Some(anchors) = anchors {
+            (
+                anchors.after_tool_sequence,
+                anchors.preferred_tool_call_id,
+                anchors.bound_tool_call_id,
+                anchors.status,
+            )
+        } else {
+            let after_tool_sequence = tool_call::Entity::find()
+                .filter(tool_call::Entity::COLUMN.run_id.eq(body_run.id))
+                .filter(tool_call::Entity::COLUMN.result_json.is_not_null())
+                .order_by_desc(tool_call::Entity::COLUMN.sequence)
+                .one(transaction)
+                .await?
+                .map_or(0, |tool| tool.sequence);
+            (after_tool_sequence, None, None, FeedbackStatus::Queued)
+        };
+    let sequence = feedback::Entity::find()
+        .filter(feedback::Entity::COLUMN.run_id.eq(body_run.id))
+        .order_by_desc(feedback::Entity::COLUMN.sequence)
+        .one(transaction)
+        .await?
+        .map_or(Ok(1), |previous| {
+            previous.sequence.checked_add(1).ok_or_else(|| {
+                StoreError::InvalidChapterState("自由意见 sequence 已达到 i64 上限".to_owned())
+            })
+        })?;
+    let id = Uuid::new_v4();
+    feedback::ActiveModel {
+        id: Set(db_id(id)),
+        run_id: Set(body_run.id),
+        version_id: Set(body_run.version_id),
+        sequence: Set(sequence),
+        text: Set(text),
+        citations_json: Set(serde_json::to_string(citations)?),
+        after_tool_sequence: Set(after_tool_sequence),
+        preferred_tool_call_id: Set(preferred_tool_call_id),
+        bound_tool_call_id: Set(bound_tool_call_id.clone()),
+        included_request_id: Set(None),
+        status: Set(feedback_status_name(status).to_owned()),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    }
+    .insert(transaction)
+    .await?;
+    Ok(QueuedChapterBodyFeedback {
+        id,
+        sequence,
+        status,
+        bound_tool_call_id,
+    })
+}
+
 fn chapter_body_run_status_matches_execution(
     run_status: &str,
     execution: &ExecutionStatus,
@@ -3837,62 +3925,13 @@ impl Store {
                         Some(record_chapter_body_feedback(&workflow, chapter_id, run_id)?)
                     };
 
-                    let existing_batch = feedback::Entity::find()
-                        .filter(feedback::Entity::COLUMN.run_id.eq(body_run.id))
-                        .filter(feedback::Entity::COLUMN.status.is_in(["queued", "bound"]))
-                        .order_by_asc(feedback::Entity::COLUMN.sequence)
-                        .all(transaction)
+                    let QueuedChapterBodyFeedback {
+                        id: feedback_id,
+                        sequence,
+                        status,
+                        bound_tool_call_id,
+                    } = queue_chapter_body_feedback(transaction, &body_run, text, &citations, now)
                         .await?;
-                    let anchors = feedback_batch_anchors(&existing_batch)?;
-                    let (after_tool_sequence, preferred_tool_call_id, bound_tool_call_id, status) =
-                        if let Some(anchors) = anchors {
-                            (
-                                anchors.after_tool_sequence,
-                                anchors.preferred_tool_call_id,
-                                anchors.bound_tool_call_id,
-                                anchors.status,
-                            )
-                        } else {
-                            let after_tool_sequence = tool_call::Entity::find()
-                                .filter(tool_call::Entity::COLUMN.run_id.eq(body_run.id))
-                                .filter(tool_call::Entity::COLUMN.result_json.is_not_null())
-                                .order_by_desc(tool_call::Entity::COLUMN.sequence)
-                                .one(transaction)
-                                .await?
-                                .map_or(0, |tool| tool.sequence);
-                            (after_tool_sequence, None, None, FeedbackStatus::Queued)
-                        };
-                    let sequence = feedback::Entity::find()
-                        .filter(feedback::Entity::COLUMN.run_id.eq(body_run.id))
-                        .order_by_desc(feedback::Entity::COLUMN.sequence)
-                        .one(transaction)
-                        .await?
-                        .map_or(Ok(1), |previous| {
-                            previous.sequence.checked_add(1).ok_or_else(|| {
-                                StoreError::InvalidChapterState(
-                                    "自由意见 sequence 已达到 i64 上限".to_owned(),
-                                )
-                            })
-                        })?;
-                    let feedback_id = Uuid::new_v4();
-                    feedback::ActiveModel {
-                        id: Set(db_id(feedback_id)),
-                        run_id: Set(body_run.id),
-                        version_id: Set(body_run.version_id),
-                        sequence: Set(sequence),
-                        text: Set(text.clone()),
-                        citations_json: Set(serde_json::to_string(&citations)?),
-                        after_tool_sequence: Set(after_tool_sequence),
-                        preferred_tool_call_id: Set(preferred_tool_call_id),
-                        bound_tool_call_id: Set(bound_tool_call_id.clone()),
-                        included_request_id: Set(None),
-                        status: Set(feedback_status_name(status).to_owned()),
-                        created_at: Set(now),
-                        updated_at: Set(now),
-                        ..Default::default()
-                    }
-                    .insert(transaction)
-                    .await?;
                     match held_boundary {
                         Some(HeldChapterBodyPauseBoundary::Tool) => {
                             let resolved = resolve_held_chapter_body_tool(
@@ -6312,18 +6351,15 @@ impl Store {
                         .await?
                         .is_some();
                     if has_pending_feedback {
-                        // 无推进的纠正同样计入连续协议错误：模型反复提交而意见始终无从投递时，
-                        // 必须触发工程执行限制并保留未投递意见，而不是无限重排请求。
-                        let next_error_count =
-                            next_protocol_error_count(body_run.consecutive_protocol_errors)?;
-                        let stop = next_error_count >= MAX_CONSECUTIVE_PROTOCOL_ERRORS;
-                        let next_workflow = if stop {
-                            stop_writing_after_protocol_error(&workflow, run_id)?
-                        } else {
-                            continue_chapter_body_after_protocol_correction(
-                                &workflow, chapter_id, run_id,
-                            )?
-                        };
+                        // 这是业务守卫的拒绝，不是协议错误：§36.1 已把四条阶段提交路径统一成
+                        // 「被拒回合」——立即重排、不推进 `consecutive_protocol_errors`、永不触发
+                        // 上限，非进展回合的上限由请求额度承担。反例现场（2026-09-15 第二章正文
+                        // Run）：两个纯文本回合已占 2/3 计数，这次守卫拒绝把计数推到 3，Run 当场
+                        // 停下，模型刚收到的「请用 append_content / replace_content 投递意见」再没有
+                        // 执行机会，未投递意见永远留在队列里。
+                        let next_workflow = continue_chapter_body_after_protocol_correction(
+                            &workflow, chapter_id, run_id,
+                        )?;
                         let mut messages = vec![assistant_message.clone()];
                         messages.extend(protocol_error_tool_result_messages(
                             request_id,
@@ -6351,11 +6387,9 @@ impl Store {
                         active_request.completed_at = Set(Some(now));
                         active_request.update(transaction).await?;
                         let request_count = body_run.request_count;
-                        let run_status = if stop { "stopped" } else { "queued" };
                         let mut active_run = body_run.into_active_model();
-                        active_run.status = Set(run_status.to_owned());
-                        active_run.consecutive_protocol_errors = Set(next_error_count);
-                        active_run.ended_at = Set(if stop { Some(now) } else { None });
+                        active_run.status = Set("queued".to_owned());
+                        active_run.ended_at = Set(None);
                         active_run.updated_at = Set(now);
                         active_run.update(transaction).await?;
                         persist_workflow(transaction, &next_workflow).await?;
@@ -6368,16 +6402,10 @@ impl Store {
                             json!({
                                 "chapter_id": chapter_id,
                                 "kind": "chapter_body",
-                                "status": run_status,
+                                "status": "queued",
                                 "request_id": request_id,
                                 "request_count": request_count.to_string(),
                                 "reason": "pending_feedback_requires_tool_result",
-                                "consecutive_protocol_errors": next_error_count.to_string(),
-                                "wait_reason": if stop {
-                                    Some("protocol_error_limit")
-                                } else {
-                                    None::<&str>
-                                },
                             }),
                             now,
                         )
@@ -6991,7 +7019,8 @@ impl Store {
                     let run_id = workflow.active_run_id.ok_or_else(|| {
                         StoreError::CorruptRecord("整章审核缺少对应的活跃 Run".to_owned())
                     })?;
-                    chapter_body_run(transaction, run_id, review_target.chapter_id).await?;
+                    let body_run =
+                        chapter_body_run(transaction, run_id, review_target.chapter_id).await?;
                     // 整章终稿审核只能引用本章文档中的已持久化修订。
                     validate_review_decision_citations(
                         transaction,
@@ -7010,6 +7039,24 @@ impl Store {
                         now,
                     )
                     .await?;
+                    // 「退回修订」的审核意见就是这份稿子的修订要求，必须和面板里的自由意见
+                    // 走同一条通道到达正文 Agent，而不是只落在审核行里：先排进未封存批次，
+                    // 等模型产生下一条正文编辑的结果时随它投递；未投递期间直接终稿提交会被
+                    // 守卫拦住，所以模型必须先真的改一次正文。
+                    let rejection_feedback = if decision.passed {
+                        None
+                    } else {
+                        Some(
+                            queue_chapter_body_feedback(
+                                transaction,
+                                &body_run,
+                                decision.issues.clone(),
+                                &citations,
+                                now,
+                            )
+                            .await?,
+                        )
+                    };
                     let next_workflow = if decision.passed {
                         let context_fold = build_chapter_body_context_fold(
                             transaction,
@@ -7111,6 +7158,23 @@ impl Store {
                         now,
                     )
                     .await?;
+                    if let Some(feedback) = &rejection_feedback {
+                        insert_event(
+                            transaction,
+                            review_target.version_id,
+                            "feedback.changed",
+                            feedback.id,
+                            next_workflow.state_revision,
+                            json!({
+                                "chapter_id": review_target.chapter_id,
+                                "run_id": run_id,
+                                "status": feedback_status_name(feedback.status),
+                                "sequence": feedback.sequence.to_string(),
+                            }),
+                            now,
+                        )
+                        .await?;
+                    }
                     if decision.passed {
                         insert_event(
                             transaction,
@@ -12224,10 +12288,21 @@ async fn apply_delegated_chapter_final_review(
     let parent_run_id = workflow
         .active_run_id
         .ok_or_else(|| StoreError::CorruptRecord("整章审核缺少对应的活跃 Run".to_owned()))?;
-    chapter_body_run(transaction, parent_run_id, review_target.chapter_id).await?;
+    let body_run = chapter_body_run(transaction, parent_run_id, review_target.chapter_id).await?;
     persist_delegated_review_decision(transaction, review_id, review_run_id, delegated, now)
         .await?;
     let decision = delegated_review_decision_for_workflow(delegated);
+    // 与人工「退回修订」同一条通道：委托审核的意见也要随下一条正文编辑的结果交给
+    // 正文 Agent，而不是只落在审核行里。docs/02 §6.2 里那句「空 issues 时把系统说明
+    // 交给写作 Agent」正是靠这里才真的成立。
+    let rejection_feedback = if decision.passed {
+        None
+    } else {
+        Some(
+            queue_chapter_body_feedback(transaction, &body_run, decision.issues.clone(), &[], now)
+                .await?,
+        )
+    };
     let next_workflow = if decision.passed {
         let context_fold = build_chapter_body_context_fold(
             transaction,
@@ -12327,6 +12402,23 @@ async fn apply_delegated_chapter_final_review(
         now,
     )
     .await?;
+    if let Some(feedback) = &rejection_feedback {
+        insert_event(
+            transaction,
+            review_target.version_id,
+            "feedback.changed",
+            feedback.id,
+            next_workflow.state_revision,
+            json!({
+                "chapter_id": review_target.chapter_id,
+                "run_id": parent_run_id,
+                "status": feedback_status_name(feedback.status),
+                "sequence": feedback.sequence.to_string(),
+            }),
+            now,
+        )
+        .await?;
+    }
     if decision.passed {
         insert_event(
             transaction,

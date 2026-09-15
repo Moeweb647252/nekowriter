@@ -1,6 +1,6 @@
 import { createStore, del, get, set } from "idb-keyval"
 
-/** 仅保存尚未提交到本地服务的编辑草稿；模型凭据与服务设置永不进入浏览器草稿库。 */
+/** 仅保存尚未提交到本地服务的编辑草稿；模型密钥与服务设置永不进入浏览器草稿库。 */
 export type DraftPhase =
   | "brief"
   | "preparation"

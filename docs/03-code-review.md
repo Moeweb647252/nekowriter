@@ -4,7 +4,7 @@
 - 审查范围：`crates/`（core / agent / store / app）、`webui/`、`docs/01-implementation-plan.md`、`docs/02-implementation-spec.md`
 - 审查方式：代码审查 + 实测验证；本报告保留各轮发现时的证据，当前状态以 §33 和方案 §2.1 为准。
 
-当前本地收口状态：`cargo test --workspace` 通过 198 个用例（agent 35、app 47、core 38、store 74、xtask 4），前端生产构建通过；M0–M4 和 macOS aarch64 的 M5 范围均已完成。M2 的可达竞态与浏览器复核、M3 的多章/复制稿本/番外真实路径以及内建提示词升级均已在 §33–§34 收口；全平台计划只剩非 macOS 发行产物。
+当前本地收口状态：`cargo test --workspace` 通过 232 个用例（agent 44、app 单元 61 + 集成 2、core 38、store 83、xtask 4），前端生产构建通过；M0–M4 和 macOS aarch64 的 M5 范围均已完成。M2 的可达竞态与浏览器复核、M3 的多章/复制稿本/番外真实路径以及内建提示词升级均已在 §33–§34 收口。§36 记录最新一轮真实端点实战暴露的缺陷，§36.1 是它对应的修复（被业务拒绝的阶段提交按「被拒回合」处理），但修复尚未在真实端点上复跑；全平台计划只剩非 macOS 发行产物。
 
 ## 1. 初始审查实测验证结果（2026-09-11）
 
@@ -1327,3 +1327,776 @@ submit_preparation  required = ["artifacts", "chapter_plan"]
 
 **未证明的部分。** 本次没有重跑真实端点：缺陷与修复由 store 级测试和交接前审计的假端点复跑证实，端点行为（§35.1 的 >134 秒静默、1,889 字符截断）依旧只有 §35.3 的抓包。`preparation.rs` 那两处拒绝路径仍未接进 `protocol_correction.rs` 的事务（本轮只统一了计数规则与文档地图）；它们的计数与事件是否逐轮一致，目前没有任何测试按 §35.6 的不变量去钉。工作台仍不渲染 `consecutive_protocol_errors`（§35.4 末段）：这个数字现在保证与落库一致，但界面依旧没有显示它的地方。
 
+## 36. 2026-09-14 真实外部端点实战复跑：被业务拒绝的章节提交不写配对工具结果，正文 Run 从此发不出请求
+
+**装置。** 一次「新建作品 → 准备 → 审核 → 逐章细纲/正文」的完整业务走查，**只走应用自己的界面与 HTTP 接口**（由 ego-browser 驱动 webui，没有调内部函数、没有直接写库），模型是外部真实端点：
+
+- 应用：当前源码的 debug 构建 `target/debug/nekowriter`，用 `launchctl submit` 拉起（命令组会被回收，否则跨调用不存活），`--data-dir /tmp/nw-story-run/data --port 8811 --web-dir webui/dist --no-browser`；`GET /api/health` 返回 `schemaVersion=25`。
+- 系统设置：先指 `https://model.inferx.net/endpoints/v1` + `deepseek-v4.1-flash`，实战中途改指 `https://api.scnet.cn/api/llm/v1`（密钥重新配置，「测试真实连接」返回「已收到模型响应；输入 28，输出 22」）。
+- 业务目标：三章短篇（`#/works` → 新建作品 → 工作台 → 设定作品目标 → 开始准备 → 四项产物人工审核 → 第一章指导 → 开始细纲 → 细纲审核 → 正文）。
+
+**跑到正文阶段为止是通的。** 准备阶段在真实端点上一次生成成功：背景、资料、人物、粗纲四项与三章 `chapter_plan` 同批提交并落库，四项人工审核（均以空意见「通过」）后阶段折叠与目录冻结正常；第一章细纲一次生成、审核通过、`copiedContextFolds` 折叠正常，工作流自动进入 `writing.drafting`。也就是说，本次实战卡住的不是准备/审核/细纲链路，而是正文 lane 的一处状态收口。
+
+**缺陷。** 第一章正文 Run（`018a644d-ef7b-40df-bd1e-756cc66b4daa`，chapter `cebd70b3-fdd4-4f47-9209-155d3e68243f`）永久卡死，根因是**被业务拒绝的阶段提交只落了 assistant 消息，没有落下配对的工具结果**：
+
+1. 第 17 次模型请求成功返回，但模型把整章写成**普通文本**（`agent_messages.sequence=3`，2677 字符，内容确实是一章正文）而没有调用 `append_content`；服务端按协议错误纠正，写入 `sequence=4` 的纠正消息。
+2. 第 18 次请求里模型调用 `submit_chapter(chapter_id=…, summary=…)`（provider call id `call_2fd37d08dace4a29b43d05a5`，即 `agent_messages.sequence=5`）。此时章节正文为空（该 Run 从没有一次成功的正文编辑），`commit_chapter_body_model_submission` 返回 `StoreError::InvalidChapterBodyEdit("章节正文不能为空")`（`crates/nekowriter-store/src/preparation.rs:6405`），scheduler 走 `persist_model_failure(…, "submission_commit", …, unknown=false)`（`crates/nekowriter-app/src/scheduler.rs:1875` 一带）。
+3. `persist_model_failure` 只调 `resolve_model_request_with_assistant_message`，于是这一轮**只多了一条 assistant 消息**（`kind=assistant_tool_calls`），**没有任何 `role=tool` 的结果消息**：`select count(*) from agent_messages where run_id=… and role='tool' and content_json like '%call_2fd37d08dace4a29b43d05a5%'` 为 **0**；`tool_calls` 表里这个 Run 同样是 **0 行**。
+4. 之后每一次「显式继续」（界面点击与直接 `POST /api/runs/{id}/continue` 都试过；后者返回 200 并把执行轴置 `queued`，`resume_count` 从 16 一路涨到 20）都在派发前失败，请求一次也发不出去：
+
+```text
+WARN 无法启动模型请求 version_id=3ee73c0d-e367-4695-8d8c-0049688b4603 run_id=018a644d-ef7b-40df-bd1e-756cc66b4daa
+  kind="chapter_body"
+  error=模型上下文构建失败：当前消息不符合模型协议：工具调用 call_2fd37d08dace4a29b43d05a5 缺少紧随其后的工具结果
+```
+
+事件侧留下的痕迹是同一件事的两个快照：`run.changed`（`error.kind=pre_dispatch`，`revision=82`）与紧随其后的 `workflow.changed execution=failed`（`events.seq=178/179`）。Run 行停在 `status=failed, request_count=18, resume_count=20, consecutive_protocol_errors=0`，`model_requests` 不再新增任何 attempt——`resume_count` 增长而 `request_count` 不动，就是「受理了继续、但请求根本没发出去」。
+
+**为什么这是缺陷。** 模型发一条被业务拒绝的提交在规范内（提交守卫本来就该拒绝），规范同时要求这份账本始终可重放：docs/02 §4.3 写明「账本因此始终保存成对的 assistant 工具调用与工具结果，重放时 `serialize_request_messages` 的配对校验不会失败」。构造配对结果的机制在同一仓库里已经存在——`crates/nekowriter-store/src/model_requests.rs:1379` 的 `protocol_error_tool_result_messages` 专门为「未被实际执行的 assistant tool call」生成错误工具结果，协议纠正 lane 正是用它（`model_requests.rs:1318`）——但 `submission_commit` 这条 lane 没有走它。后果不是「这一轮被拒」，而是**这个 Run 连同它已经花掉的 18 次请求一起报废**：界面只提供「显式继续」，点多少次都只会重复同一条上下文错误，用户没有任何界面出口（`body/replace` + `body/review` 的人工正文路径仍在，但那是绕过 Agent 的另一条路，不是 run 的恢复）。
+
+**修复方向（本次未实施，按用户要求只记录）。** 对模型而言，「被拒的阶段提交」与「协议纠正」是同一件事：这一轮不推进，模型要在剩余额度内重提。把 `submission_commit` 的 assistant 消息也补上配对工具结果（复用 `protocol_error_tool_result_messages` 的形状），并按 §35.6 的不变量让计数与事件同一次落库，即可把「这一轮被拒」与「这个 Run 报废」分开。落地前必须先钉住语义：补配对结果之后这次提交仍然是**拒绝**——不得被当作成功提交写入正文、也不得进入整章审核。
+
+**另一处观察（不同类，未定论）。** 第 15、16 次请求（`effectiveModelId = DeepSeek-V4-Flash-0731`）都以 `provider_error: 模型响应超过 2097152 字节上限` 结束，两次稳定复现；换成 `DeepSeek-V4-Pro` 后同一条请求不再撞上限（转向了上面的提交语义问题）。实测该端点约 220 字节 SSE/token（单次 174 token 的流为 38,844 字节），2 MiB 上限大约允许 9.5k token；而应用不发送 `max_tokens`，重推理模型在这条正文请求上很容易把流推到上限。这属于「工程上限与模型选择」，本次只记录现象，未动任何上限。
+
+**现场保留与复现。** 应用仍在运行（`launchctl list com.nekowriter.storyrun`，`127.0.0.1:8811`，数据目录 `/tmp/nw-story-run/data`），稿本 `3ee73c0d-e367-4695-8d8c-0049688b4603`／第一章 `cebd70b3-fdd4-4f47-9209-155d3e68243f`／Run `018a644d-ef7b-40df-bd1e-756cc66b4daa` 都未被清理，界面停在 `writing.drafting` + `failed`。复现只要让模型在正文阶段先「只回普通文本、不调用正文工具」，再让它调用 `submit_chapter` 而正文仍为空；此后每次 continue 都会命中上面那条上下文配对错误。本次未修：用户明确要求先记录缺陷、暂停实战。
+
+### 36.1 修复：被业务拒绝的阶段提交按「被拒回合」处理（同日随后执行）
+
+**已确认的语义。** 被业务守卫拒绝的阶段提交是一条「被拒回合」：立即退回模型重提，不推进 `consecutive_protocol_errors`，也绝不写入正文或进入整章审核。非进展回合的工程上限由请求额度承担，不由协议错误计数承担。覆盖 `submit_preparation`、`submit_chapter_outline`、`submit_chapter`、`submit_review` 四条阶段提交路径。
+
+**改动。**
+
+| 位置 | 变化 |
+| --- | --- |
+| `nekowriter-store/src/protocol_correction.rs` | 模块改为「被拒回合的唯一归属地」：`ModelProtocolCorrection`/`ProtocolCorrectionOutcome` 更名为 `RejectedRoundRecord`/`RejectedRoundOutcome`，新增私有 `RejectedRoundCounting`，单一事务入口 `record_rejected_round` 配上两个公开入口——`record_model_protocol_correction`（计数加一、可触发上限收束）与 `record_phase_submission_rejection`（计数不变、永不触发上限）。事件构造集中到 `writing_run_event`/`writing_workflow_event`/`review_correction_run_event`/`review_correction_review_event`：协议错误公布计数与 `wait_reason`，被拒提交公布 `reason = submission_rejected` 且两者都不出现 |
+| `nekowriter-store/src/model_requests.rs` | `protocol_correction_messages`/`validate_model_protocol_correction`/`protocol_correction_matches` 更名为 `rejected_round_messages`/`validate_rejected_round`/`rejected_round_matches`；终态写入改为 `terminal_request_messages`，为响应里尚未被执行过的工具调用补写配对错误结果（已存在的按 `tool_call_id` 跳过，因此成功路径先追加真实结果的顺序不受影响），理由码 `TOOL_NOT_EXECUTED` 并带上本轮结局 |
+| `nekowriter-app/src/scheduler.rs` | 四条阶段提交的 `Err` 分支从 `persist_model_failure`/`persist_delegated_review_failure` 改走新的 `record_phase_submission_rejection`；新增 `phase_submission_rejection` 生成点名提交工具与真实原因的纠正提示（理由码 `PHASE_SUBMISSION_REJECTED`／`INVALID_REVIEW_RESULT`） |
+
+**被拒的提交不得被当成成功。** 新入口只在「提交已经被业务守卫拒绝」处调用，写入的永远是错误工具结果与纠正提示；正文、产物、审核决定一律不变。契约由测试钉住：被拒提交之后 `body.content` 仍为 `None`、`body.review` 仍为 `None`。
+
+**契约与测试。** 新增五个用例（store 四个、app 一个），并把审核 lane 两个用例的公共起点抽成 `delegated_background_review`：
+
+| 用例 | 断言 |
+| --- | --- |
+| `business_rejected_submission_pairs_the_result_the_next_request_needs`（store） | 账本只有三条且形状正确（assistant 调用 → 同 `tool_call_id` 的 `tool_result` → `protocol_correction`），结果为 `PHASE_SUBMISSION_REJECTED` 并点名 `submit_preparation`；计数仍为 0、请求以 `succeeded` 收束、事件带 `reason = submission_rejected` 且不含计数与 `wait_reason` |
+| `business_rejected_submissions_never_stop_at_the_protocol_limit`（store） | 连续 4 轮（超过上限 3）被拒后工作流仍是 `queued`、`wait_reason` 为 `null`、计数仍为 0，账本每轮各三条完整配对 |
+| `business_rejected_review_submission_keeps_the_delegation_running`（store） | 子 Run 的生命周期状态与 `ended_at` 不变（不为 `failed`）、计数为 0、Review 仍为 `delegated`、配对结果理由码为 `INVALID_REVIEW_RESULT` |
+| `terminal_failure_pairs_tool_calls_that_never_ran`（store） | 请求以 `failed` 收束时，响应里未被执行的工具调用也拿到配对结果（`TOOL_NOT_EXECUTED` ＋ 本轮失败原因），计数仍为 0 |
+| `business_rejected_chapter_submission_leaves_a_buildable_history`（app） | 第一次拒绝即重排；账本还原出 assistant 调用 + 配对结果，且 `build_context_with_history` 能成功组装下一次请求——即 §36 里每次 continue 都失败的那一步 |
+
+**验证。** `cargo test --workspace` 221 通过、0 失败（agent 43 / app 56 / core 38 / store 80 / xtask 4）；`cargo fmt --all -- --check` 干净；`cargo clippy --workspace --all-targets` 在改动文件上无新增诊断（既有 pedantic 告警仍在）。
+
+**本轮未做的两件事。**
+
+1. **没有用真实端点复跑。** §36 的现场（应用、数据目录、稿本与 Run）按用户要求原样保留，修复只由自动化用例验证；那条失效的正文 Run 仍停在 `failed`，需要新的真实端点轮次才能把完整业务流程走通。
+2. **两处仍按旧语义计的计数没有动。** `submit_chapter` 携带未投递意见时的直接提交（`pending_feedback_requires_tool_result`）仍在 `commit_chapter_body_model_submission` 内部计入 `consecutive_protocol_errors` 并在第三次把 Run 收束为 `stopped`（docs/02 §5.3 明确要求，`direct_chapter_submission_with_pending_feedback_requeues_for_a_tool_result` 覆盖）。它是提交内容被拒、却按协议错误计数的唯一一处，与 §36.1 的新语义不一致；按「只改方案已覆盖的四条路径」的范围没有改动，语义归属需要单独拍定。此外 §36 记录的「单次响应 2 MiB 上限」现象不属于本次范围。
+
+## 37. 2026-09-14 移除 OS 凭据库：模型密钥改存本地 SQLite 的设置行
+
+### 37.1 现场：凭据库读取把整条派发路径挂住
+
+第 3 章正文推进时 Run 回到 `queued`，之后再没有发出任何请求。定位结果不是调度器丢了任务，而是派发路径里的 `read_api_key` 卡在读系统凭据库上：`credentials::read_api_key` 走 `spawn_blocking` 且**没有任何超时**，macOS 首次访问会弹出钥匙串授权，弹窗无人确认时该 future 永远不返回。
+
+同一个原因让 `POST /api/runs/{id}/continue` 直接挂住不返回（实测 `http=000`、20 秒无响应），界面因此把「显式继续」按成永久 disabled（面板的 `pending` 状态等不到 promise 落地）。这条路径上没有任何应用内可自愈的出口：密钥读取不是业务逻辑，却决定了业务能否推进。
+
+### 37.2 处置：删除 keyring 与整个凭据库边界
+
+按用户要求「移除所有 keyring 功能」，应用不再接触任何 OS 凭据库。密钥正文与所属设置同库、同事务保存，只在构建请求前从设置行读出。
+
+| 位置 | 改动 |
+| --- | --- |
+| `Cargo.toml`、`crates/nekowriter-app/Cargo.toml` | 删除 `keyring` 依赖；app 侧同时删除只用于凭据指纹的 `sha2` |
+| `crates/nekowriter-app/src/credentials.rs` | 整文件删除（`OsCredentialStore`、三个异步包装、`CredentialStoreError`） |
+| `store/entity/system_model_setting.rs`、`entity/embedding_setting.rs` | 列 `credential_ref` → `api_key` |
+| `store/settings.rs` | `SystemModelSettings.credential_ref` → `credential_configured: bool`（对外视图不含密钥）；新增 `Store::system_model_api_key`；`NewSystemModelSettings` 的 `credential_ref` + `credential_fingerprint` 合并为 `api_key: Option<String>`（`None` = 保留原密钥），写入事务内并入既有密钥 |
+| `store/knowledge.rs` | `NewEmbeddingSettings` 同上；`embedding_credential_ref()` → `embedding_api_key()`；`embedding_settings_payload` 返回归一化结构体，命令指纹与落库用同一份结果 |
+| `store/lib.rs` | `SCHEMA_VERSION` 25 → 26；新增共享的 `normalize_api_key`，两条设置路径共用一套密钥规则（trim、非空、≤ 4096 字符、无控制字符） |
+| `app/src/main.rs` | 删除 `ApiError::Credential`、其 `From`、`Display` 与 `into_response` 分支及 `credential_fingerprint`；保存路径由「生成 ref → 写凭据库 → 失败回滚」三步改为一次事务写入；连接测试与命令前置检查改读 `system_model_api_key` |
+| `app/src/knowledge.rs`、`app/src/scheduler.rs` | 删除密钥的读包装与 `Credential` 错误变体，改调 store 的读出口；`SchedulerError` / `IndexError` 各去掉一个变体 |
+
+**对外合同不变。** 界面继续提交 `apiKey`、读取 `credentialConfigured`，`webui/` 未改动。
+
+**旧库不迁移。** 列名变化后，旧数据目录按仓库既有约定被拒绝打开（`UnsupportedSchema`），需要新的数据目录；这与 docs/02 §8 的不迁移约定一致。
+
+**不变量已写入 docs/02 §1.2 第 17 条。** 密钥只有一个读出口；对外视图、SSE 事件、命令回执、持久事件、日志与模型请求快照都不携带密钥正文；保存时省略密钥表示保留原值，密钥本身进入命令指纹（只落摘要），因此同一 `command_id` 换密钥重放仍然是冲突而不是幂等命中。
+
+### 37.3 测试与验证
+
+新增三个 store 用例：
+
+- `system_model_api_key_is_kept_when_omitted_and_guarded_when_replayed`：省略密钥的保存推进修订但不动密钥；空密钥被拒；同一命令换密钥重放得到 `IdempotencyConflict`。
+- `normalizes_and_rejects_invalid_api_keys`：`None`、需要 trim、空、含换行、超长五类输入的归一化结果。
+- `embedding_api_key_is_kept_when_omitted`：Embedding 路径的同一条语义。
+
+既有用例 `system_model_settings_are_revisioned_idempotent_and_emit_sync_events` 同步扩容：断言对外视图序列化后 `credentialConfigured` 为 `true` 且全文不含密钥，密钥只能由 `system_model_api_key` 取得。
+
+`cargo test --workspace` 225 通过、0 失败（agent 43 / app 57 / core 38 / store 83 / xtask 4）；`cargo fmt --all -- --check` 干净；`cargo clippy --workspace --all-targets` 在改动文件上无新增告警类别。
+
+### 37.4 附带发现：`.cargo/config.toml` 的 PROTOC 让非 Windows 的全新构建无法开始
+
+验证上述改动时 `target/` 为空，构建在 `lance-encoding` 的构建脚本处失败：
+
+```
+Error: Custom { kind: NotFound, error: "Could not find `protoc`..." }
+```
+
+原因不在代码，而在仓库的 `.cargo/config.toml`：它以 `force = true` 把 `PROTOC` 固定为 `tools/protoc/bin/protoc.exe`，那是 `tools/bootstrap-protoc.ps1` 在 Windows 上才会生成的路径；仓库里没有这个文件，而 `force` 让环境变量也无法覆盖。因此任何非 Windows 主机上的干净构建都会停在这里（此前能通过，是因为构建脚本产物已被缓存）。
+
+本轮没有改动这个文件：它属于发行引导，是独立问题。验证时用命令行覆盖绕过：`cargo --config 'env.PROTOC.value="/opt/homebrew/bin/protoc"' …`。正确的修法是把这条 `[env]` 收进 `[target.'cfg(windows)'.env]`，让非 Windows 主机使用系统 `protoc`。
+
+### 37.5 本轮未做的两件事
+
+1. **没有用真实端点复跑。** §36 的现场（应用、数据目录、失效的正文 Run）按用户要求原样保留，本次改动只由自动化用例验证。同日随后执行的真实端点全流程复跑见 §38。
+2. **只更新了 docs/02 与 docs/03。** docs/01 与 `NekoWriter.txt` 里仍写着密钥入 OS 凭据库的旧口径，按用户指示未改。（本节之后又更新了界面文案，见 §38.4。）
+
+## 38. 2026-09-14 移除 keyring 后的真实端点全流程复跑：三章短篇完本
+
+### 38.1 环境与配置
+
+数据目录 `/tmp/nw-story-run/data3`（schema 26），端口 8811，二进制由当前源码构建；写作模型 `https://api.scnet.cn/api/llm/v1` 上的 `DeepSeek-V4-Pro`，能力为流式输出、工具调用、流式用量，思考关闭，上下文上限 32768（中途改为 128000）、预留输出 4096。
+
+密钥保存后落在 `system_model_settings.api_key`（46 字符），整个流程期间机器上没有出现过钥匙串授权弹窗（`SecurityAgent` 进程不存在）。
+
+### 38.2 走通的链路
+
+新建作品与稿本 → 保存作品目标 → 准备四项产物与三章计划逐项审核通过 → 第 1 章指导/细纲审核/正文/整章审核/定稿 → 第 2 章（含一次失败与恢复）→ 第 3 章 → 确认完本 → 长篇阅读视图 → 导出 Markdown。
+
+三章正文 2,055 / 3,588 / 2,625 字符（合计 8,268），导出文件 23,594 字节，首行标明「正文 3 / 3 章已通过整章审核」，章标题与正文完整。7 个 Run 全部 `succeeded`（准备 1、细纲 2+2+2、正文 2+5+4 次请求），17 次模型请求，已报告用量为输入 274,662、输出 54,603、推理 22,015，未知用量 0。
+
+### 38.3 三个被这次复跑正面验证的修复
+
+**1. keyring 移除（§37）。** 上一轮同一台机器上，`POST /api/runs/{id}/continue` 会挂住 20 秒（`http=000`）、界面把「显式继续」按成永久 disabled、钥匙串弹窗等人点。这一次点「显式继续」在 3 毫秒内返回，Run 立即回到 `request_in_flight` 并真的发出了请求（`resume_count=1`，`request_count` 从 3 涨到 5）。密钥的写入与读取只经过 SQLite。
+
+**2. 省略密钥不覆盖既有密钥（本次新增的不变量）。** 把上下文上限从 32768 改成 128000 时，设置表单没有重填 API key；保存后 `revision` 从 1 进到 2，`api_key` 仍是原来那把 46 字符的密钥。
+
+**3. 被业务守卫拒绝的阶段提交按「被拒回合」处理（§36.1）。** 第 3 章正文 Run 在 11 秒内同时出现了两种纠正：
+
+```
+15:06:30 模型协议错误已保存，已要求同一 Run 纠正 consecutive_protocol_errors=1
+15:06:41 阶段提交被业务守卫拒绝，已要求同一 Run 按纠正重提 consecutive_protocol_errors=1
+15:07:12 章节正文工具调用已处理 status="applied"
+15:07:22 章节正文模型提交已进入整章审核
+```
+
+业务拒绝**没有**让计数前进（仍停在协议错误留下的 1，该 Run 行最终 `consecutive_protocol_errors=0`），Run 也没报废：11 秒后工具调用落库、31 秒后进入整章审核。这正是 §36 里「一次被拒就把 Run 永久卡死」的路径。此外第 2、3 章的细纲 Run 各出现一次真正的协议错误（14:50:48、15:04:22），都由同一 Run 纠正后继续并成功提交。
+
+### 38.4 这次复跑暴露的问题
+
+**1. 上下文超限是纯配置，界面没有把它说清。** 第 2 章正文在第 3 次请求时失败：`模型上下文构建失败：上下文预计使用 29039 Token，加上 4096 Token 输出预留后超过上限 32768`。产品行为符合 docs/02（不发出注定被拒的请求），但界面只给出这句话，没有指出「这是窗口大小可以调大」；用户需要自己从错误文本里推断。调大上限后，同一个 Run 用「显式继续」接着写完了该章。
+
+**2. 界面文案在这次改动前是错的（已修复并重建 `webui/dist`）。** 模型设置面板写着「密钥只会交给本地服务，并存入本机系统凭据库；数据库和请求快照不保存密钥」，知识库面板写着「只写入本机凭据库」，项目设置面板写着「服务地址与凭据仍来自系统设置」。三处分别改为「密钥只保存在本机数据库的模型设置里，只在构建请求前读出；请求快照、事件与日志都不写密钥」、「只写入本机数据库」与「服务地址与密钥仍来自系统设置」，`pnpm build` 后由同一个运行中的进程提供。
+
+### 38.5 未覆盖
+
+逐次确认模式下的正文编辑（本次用自动接受）、委托审核、知识库检索、退出与发行打包均未在本轮走通；准备四产物、章节指导、细纲、正文、整章审核、完本与导出都在真实端点下完成。
+
+## 39. 2026-09-14 旧 schema 数据目录被拒绝打开的现场与收口
+
+### 39.1 现场（未改动任何既有数据）
+
+§37 把 `SCHEMA_VERSION` 从 25 提到 26，却没有验过「已有数据目录」这条路径。取证方式：把上一轮实战的数据目录 `/tmp/nw-story-run/data2`（schema 25、6 章、含已定稿正文）整份拷到 `/tmp/nw-schema-probe/data2-copy`，用当前源码构建的二进制指向拷贝启动。
+
+用户真实看到的东西：
+
+- **进程直接退出，退出码 1，服务没有起来**：`/api/health` 与首页都是 `000`（连接不通）。浏览器打不开，没有页面、没有报错文案。
+- **stderr 上只有一行英文 Rust 调试输出**：`Error: Store(UnsupportedSchema { found: "25", expected: 26 })`。它给出两个版本号，但没说这是哪个目录、意味着什么、接下来能做什么。
+- **数据目录里连日志都没有**：`logs/` 里的文件名仍是上一轮 14:32 的正常退出记录，没有任何新行（`StartupError` 由 `main` 的返回值打印，从未经过 `tracing`）。
+- **既有作品完全无法访问**：库里有 6 章，但新版本既不打开也不导出。
+- **原目录没有被写坏**：拷贝与原始文件的 SHA-256 完全一致（`a1e37b05907f4444…`，收口后连同原目录一起复核，仍为同一值），数据库字节级不变——拒绝发生在任何写入之前。
+
+在图形界面启动（没有终端）时，这等同于「静默消失」。
+
+### 39.2 为什么保留版本拒绝，而不是让旧目录照常打开
+
+列改名是本次唯一的 schema 变化，「不动数据就能打开」看似可行。实测的反对证据在旧库的设置行里：
+
+```
+api_base_url   = https://api.scnet.cn/api/llm/v1
+model_id       = DeepSeek-V4-Pro
+credential_ref = writing-model-95e31d22-0eec-43bd-b980-e613a261e48e
+```
+
+那一列存的是**凭据库里的不透明引用**，不是密钥。沿用旧列名让旧目录打开，这个字符串就会被当成 API key 发往供应商（401），而界面仍显示「凭据已配置」——于是从「打不开」变成「能打开但静默坏掉」。保留版本拒绝、把原因与前进路径说清楚，比静默进入一个坏状态好。真正的迁移被 docs/02 §8.3 与项目约定禁止，本轮也没有新造导入导出。
+
+### 39.3 收口（最小改动）
+
+| 位置 | 改动 |
+| --- | --- |
+| `crates/nekowriter-app/src/main.rs`（进程锁与 `Store::open` 两处启动步骤） | 失败走统一出口 `startup_failure`：先 `error!` 写进该数据目录的 `logs/`，再向 stderr 打印 `startup_failure_message`，然后原样透传错误（进程仍以非零状态退出） |
+| 新增纯函数 `startup_failure_message` | 点名数据目录；`UnsupportedSchema` 说明「由更早的 NekoWriter 创建、on-disk 版本、本版本支持的版本、不会改动也读不了它、要继续已有作品请用旧版本、要用本版本请指定另一个数据目录」；`UnknownSchema` 说明它不是 NekoWriter 的数据；其余错误回落到 Display 文本；末尾给出 `logs/` 位置 |
+| 新增单测 `startup_failure_messages_name_the_directory_cause_and_way_forward` | 钉住三个要素：目录、原因、`--data-dir` 前进路径 |
+
+### 39.4 验证（同一份拷贝、同一台机器）
+
+修复后重新指向拷贝启动，用户看到的是：
+
+```
+ERROR 启动失败 data_dir=/private/tmp/nw-schema-probe/data2-copy error=无法启动 NekoWriter：数据库 schema 版本为 25，当前程序仅支持 26
+NekoWriter 无法使用数据目录：/private/tmp/nw-schema-probe/data2-copy
+原因：这个目录由更早的 NekoWriter 创建，数据库 schema 版本为 25，本版本只支持 26。
+本版本不会改动它，但读不了它；要继续其中已有的作品，请用创建它的旧版本打开。
+要用本版本开始创作，请指定另一个数据目录启动，例如：nekowriter --data-dir <新目录>
+本次启动失败的原因同时记录在 /private/tmp/nw-schema-probe/data2-copy/logs。
+Error: Store(UnsupportedSchema { found: "25", expected: 26 })
+```
+
+- 同一原因同时进了 `data2-copy/logs/nekowriter.2026-09-14.log`；从终端启动时这段说明打印在 stderr，不再只剩一行英文调试输出（图形界面启动看不到终端，可依赖的仍然只有 `logs/`，见 §39.5）。
+- 退出码仍为 1，数据库的 SHA-256 与探测前一致（`a1e37b05907f4444…`）：拒绝依旧不写入既有数据。
+- 另两条路径同场核验：指向一个装有非 NekoWriter SQLite 文件的目录 → 给出「这个目录里的数据库不是 NekoWriter 的数据（缺少 schema 标识）」与同样的前进路径；指向全新空目录 → 照常启动，`/api/health` 返回 `schemaVersion=26`，无回归。
+
+### 39.5 留下的事
+
+1. **图形界面启动仍无窗口级提示。** 现在保证的是 stderr 与 `logs/` 有说明；macOS 双击发行包启动时，用户依旧可能只看到「闪一下就没了」。真正做到可诊断需要一条启动失败的原生提示路径，那是独立的新功能，本轮按「不扩大范围」没有做。
+2. **旧目录被本版本读取的迁移仍然不存在。** 旧作品只能由创建它的旧版本打开，这是 docs/02 §8.3 写明的约定，不是本轮遗留的缺口。
+3. **拒绝打开时会在这个目录的 `logs/` 里多一行。** 日志在拿到数据目录之后、打开数据库之前初始化；数据库本体与既有日志内容不受影响，这是把「启动诊断进入 logs/」这条承诺兑现的代价。
+
+## 40. 2026-09-14 Embedding 设置与知识库路径的真界面核对（含一处报错可诊断性修复）
+
+### 40.1 为什么核对这条路径
+
+§37 移除 keyring 时改了两条设置路径（实体列改名、新增「`apiKey` 省略即保留原密钥」语义与唯一的密钥读取出口），但真实界面上只跑过**模型设置**；**Embedding 保存、连接测试与知识库检索**此前只有 store 层单测。同一类漏检本轮已经出现过两次：`/api/questions/{id}/answer` 期望 `answers.answers` 而界面发 `answers: [...]`，全程 422 却单测全绿；§39 的旧 schema 拒绝打开也是「断言过、没跑过」。这一轮把这条表面按真实入口走了一遍，并对请求体与响应体**两侧**抓报文核对，而不是只看返回码。
+
+### 40.2 环境与端点可用性
+
+| 对象 | 取值 |
+| --- | --- |
+| 实例一 | 数据目录 `/tmp/nw-embed-probe/data`（schema 26，端口 8814）：配置 Embedding，走完整知识路径 |
+| 实例二 | 数据目录 `/tmp/nw-embed-probe/data-nocfg`（端口 8815）：从不配置 Embedding，验降级 |
+| 二进制 | 由当前源码构建（本机仍需覆盖 `.cargo/config.toml` 的 `PROTOC`，见 §37.4）；界面为应用托管的 `webui/dist` |
+
+**真实 Embedding 端点在本环境不存在**：scnet 的 `GET /api/llm/v1/models` 返回 18 个对话模型、没有 Embedding 模型，`POST /api/llm/v1/embeddings`（模型 `bge-m3`）返回 422 `Model Not Exist`；InferX 的 `/embeddings` 返回 404。因此供应商一侧用本地 OpenAI 形状的桩（`/tmp/nw-embed-probe/embed-stub.py`，`http://127.0.0.1:8899/v1`）承接：它记录收到的每个请求体与 `Authorization` 的指纹（只记长度与 SHA-256 前 12 位），返回 8 维向量与 usage。请求规则与响应解析因此是被验证过的；**真实服务商的向量质量没有被验证，这一点不在下文结论里冒充。**
+
+### 40.3 两侧形状核对（请求体与响应体都抓）
+
+界面里注入 `fetch` 记录器（不改产品代码），把真实的请求体字符串与响应体原文都留下。逐次结果：
+
+| 界面动作 | 请求体（原文） | 响应 |
+| --- | --- | --- |
+| 打开面板 | `GET /api/settings/embedding` | `200 {"embedding":null}` |
+| 保存（带密钥） | `PUT` `{"commandId":"754082d0-…","expectedRevision":"0","apiBaseUrl":"http://127.0.0.1:8899/v1","modelId":"stub-embed","dimension":"8","apiKey":"probe-embed-key-001"}` | `200 {"embedding":{"profile":{…"dimension":"8"},"credentialConfigured":true,"revision":"1","updatedAtMs":"1789399705480"}}` |
+| 再保存（密钥留空） | `PUT` 同上，但 `"apiKey":null`、`"expectedRevision":"1"` | `200`，`revision` 进到 `"2"`，`credentialConfigured` 仍为 `true` |
+| 连接测试（密钥留空） | `POST /api/settings/test-embedding` `{"apiBaseUrl":…,"modelId":"stub-embed","dimension":"8","apiKey":null}` | `200 {"dimension":"8"}`，面板提示「连接成功，服务返回 8 维向量」 |
+
+供应商一侧（桩日志）证明密钥确实从设置行读出并发出：三条路径（`保存前验证`、`索引`、`查询`）的请求都是 `POST /v1/embeddings`，体为 `{"model":"stub-embed","input":[…],"encoding_format":"float"}`，`Authorization: Bearer <19 字符>`，其 SHA-256 前 12 位 `4a5a4da63eaf` 与 `sha256("probe-embed-key-001")` 的前 12 位相同。**第二次保存与连接测试的请求体里 `apiKey` 是 `null`，供应商收到的仍是同一把已存密钥**——这就是「省略即保留」语义与唯一读取出口 `embedding_api_key()` 的现场证据。
+
+密钥正文的落点也逐项核过：不在任何 HTTP 响应里（读取视图只带 `credentialConfigured`），不在应用日志里，不在 `command_receipts` 的响应列里，只在本机 SQLite 的 `embedding_settings.api_key` 列。回执里落的是 `payload_hash`（`2baf8e43…`、`9eafe2e4…`）——**正文不在那里，但那个摘要覆盖了请求里的密钥字段**，属 §37 遗留的开放项（见本轮 §41 末尾的遗留清单）。
+
+### 40.4 完整知识路径
+
+以「雾港设定 / 雾港的灯塔制度」为例，全部经真实界面触发：
+
+1. 建 Space：`POST /api/knowledge/spaces` `{"commandId":…,"title":"雾港设定"}` → `201`。
+2. 建条目：`POST /api/knowledge/entries`（`keywords` 是数组、`source` 可空）→ `201`，`indexStatus:"pending"`；索引器在 1 秒内完成：`knowledge_index_tasks.status = ready`，`embedding_profile_id = c823ca0c…`，条目正文作为一次 `input` 发给供应商（桩日志可见原文），向量写入 `data/lancedb/knowledge_c823ca0c….lance`。
+3. 检索：`POST /api/knowledge/search` `{"query":"守灯人的任期与铜牌","spaceIds":["19f9f2c3-…"],"topK":5}` → `200`，命中 `chunkId`/`entryId`/`entryRevision`/`spaceId`/`chunkIndex`/`title`/`text`/`score`，并在命中之外返回 `coverage`（`ready 1 · pending 0 · failed 0 · notConfigured 0`）。查询词作为一次 `input` 发给供应商。
+4. 重建索引：`POST /api/knowledge/reindex` `{"commandId":…}` → `200 {"readyEntries":"0","pendingEntries":"1",…}`，面板提示「已重建索引：已索引 0 · 等待 1 · 失败 0」；随后任务回到 `ready`，`embedding_index` 操作记录第二次。
+
+用量与操作记录（`system_model_operations`，全部 `usageSource = embeddings_http`、`usageStatus = reported`）：`embedding_connection_test` ×7、`embedding_index` ×2、`embedding_query` ×1；`system_model_operations` 的写入路径与模型请求共用一条（docs/02 §11）。
+
+### 40.5 降级：从未配置 Embedding（实例二）
+
+- 建 Space、建条目照常成功（`201`），条目的 `indexStatus` 是 `not_configured`，面板提示「已保存；尚未配置 Embedding，暂不索引」——知识不会被静默丢弃，也不会被标成已索引。
+- 检索返回 `409 {"error":{"code":"EMBEDDING_NOT_CONFIGURED","message":"尚未配置 Embedding，语义检索不可用；知识仍可正常保存",…}}`，同一条文案就是界面提示。
+- `GET /api/capabilities`、知识积累区显示「暂无可用引擎」（生产注册项为 0，docs/02 §7.4），因此**知识积累没有也不能在本轮走通**。
+
+### 40.6 发现的唯一实质缺陷：Embedding 失败不可诊断（已修）
+
+形状本身没有发现不匹配；发现的是**报错不可诊断**。修复前，两条失败路径都返回同一句不含原因的文案，`details` 还是空的：
+
+```
+PUT  /api/settings/embedding      dimension "4"（供应商返回 8 维）
+→ 502 {"code":"EMBEDDING_SERVICE_FAILED","message":"Embedding 服务调用失败；请检查地址、模型、维度与密钥","details":{}}
+
+POST /api/settings/test-embedding  apiBaseUrl http://127.0.0.1:9999/v1（无人监听）
+→ 502 同上文案、details:{}
+```
+
+而适配器早就知道确切原因（`Embedding 维度不符：期望 4，实际 8`、`Embedding 服务请求失败：error sending request for url (…)`），它只出现在日志与索引任务的 `index_error` 里。界面的错误提示只渲染 `message`（`KnowledgePanel.errorText` → `error.message`），用户拿到的是「请检查地址、模型、维度与密钥」——**四个候选里猜一个**，而这类失败恰恰是本轮要求修掉的那一类。
+
+修复（`crates/nekowriter-app/src/main.rs` 的 `ApiError::Embedding` 分支，单一分支按变体判定状态码）：
+
+| 项 | 修复前 | 修复后 |
+| --- | --- | --- |
+| `message` | 通用「请检查地址、模型、维度与密钥」 | 适配器的具体原因 |
+| `details` | `{}` | `{"reason": <同上>}`，机器可读 |
+| 状态码 | 配置类 `422 INVALID_EMBEDDING_SETTINGS`／其余 `502 EMBEDDING_SERVICE_FAILED` | 不变 |
+
+同场重放（同一份桩、同一台机器、同一个界面）：
+
+```
+502 {"code":"EMBEDDING_SERVICE_FAILED","message":"Embedding 维度不符：期望 4，实际 8","details":{"reason":"Embedding 维度不符：期望 4，实际 8"},…}
+502 {"code":"EMBEDDING_SERVICE_FAILED","message":"Embedding 服务请求失败：error sending request for url (http://127.0.0.1:9999/v1/embeddings)",…}
+```
+
+面板提示与 `message` 一致。两次失败都没有写坏状态：`embedding_settings` 仍是 `model_id = stub-embed / dimension = 8 / revision = 2`，密钥原样；失败也照旧落进 `system_model_operations`（维度不符记 `failed`，连不上记 `unknown`——无法断定请求是否到达供应商，与 docs/02 §11 的口径一致）。
+
+新增三个测试钉住这条路径的两侧真实形状（`crates/nekowriter-app/src/main.rs` tests）：
+
+| 测试 | 钉住的东西 |
+| --- | --- |
+| `embedding_requests_accept_the_payload_the_ui_sends` | 界面真实 PUT 与 POST 报文可解析；`apiKey: null` 保持 `None`；`dimension` 只接受十进制字符串（数字 8 被拒绝，避免与 JS 安全整数边界分叉） |
+| `embedding_settings_response_matches_the_interface_shape` | `{"embedding":null}` 与配置后的完整键名（`profile.apiBaseUrl`/`modelId`/`dimension`、`credentialConfigured`、`revision`、`updatedAtMs`，长整数一律字符串） |
+| `embedding_failures_name_the_concrete_reason` | 维度不符 → `502` + 具体文案 + `details.reason`；空模型 ID → `422` + 具体文案 |
+
+`nekowriter-app` 用例从 58 增至 61。
+
+### 40.7 验证与未覆盖
+
+- `cargo test --workspace` **229 通过 / 0 失败**（agent 43 / app 61 / core 38 / store 83 / xtask 4）；`cargo fmt --all -- --check` 干净；`cargo build -p nekowriter-app` 只有既有的链接器告警（`__eh_frame section too large`，与本改动无关）。
+- 实测留下的文件：`/tmp/nw-embed-probe/{data,data-nocfg}`、`stub.log`（供应商侧请求）、`app*.log`。实例一在本轮结束时仍在 `127.0.0.1:8814` 上运行；实例二（`8815`）在本节写完后即被关停，数据目录 `/tmp/nw-embed-probe/data-nocfg` 保留，需要时用同一条命令重启即可。
+- **未覆盖**：真实 Embedding 服务商（本环境没有，见 §40.2）；知识积累（生产注册项为 0）；写作流程里的 `query_knowledge` 工具调用（需要稿本内的一次准备/细纲运行，本轮没有为它起新稿本）；逐次确认模式与委托审核（同 §38.5）。
+- **并列缺口（本轮按范围没动）**：模型连接测试走 `ApiError::Provider`，仍是通用文案「模型服务未通过实际连接测试；请检查地址、模型、密钥和能力配置」+ `details: {}`。它和本次修复后的 Embedding 表面不再一致；要不要同样点名原因，需要拍定。
+
+## 41. 2026-09-14 启动诊断收口：每一步失败都可诊断，且说明与行为一致
+
+§39 引入的启动失败说明有两处缺陷（审计指出，本轮先复现后修）：出口只接住了五步里的两步；以及说明里那句「本版本不会改动它」与行为不符。本节记录修复、重放现场与口径修正，并修正 §40 里两处不准的陈述。
+
+### 41.1 缺陷 A：五步里只接住了两步（复现）
+
+`startup_failure` 只包住了 `ProcessLock::acquire` 与 `Store::open`；在它之前还有 `default_data_dir`、`resolve_data_dir`、`init_logging`，之后还有 `default_web_dir`，四处仍是裸 `?`。三个真实场景（现场文件：`/tmp/nw-startup-probe/before/{readonly,notdir,logs}.txt`）：
+
+```
+# 只读文件系统：--data-dir /nw-probe-should-fail（只读挂载的旧备份正是这个场景）
+exit=1
+Error: Io(Os { code: 30, kind: ReadOnlyFilesystem, message: "Read-only file system" })
+
+# 数据目录的父路径是一个普通文件（ENOTDIR）
+exit=1
+Error: Io(Os { code: 20, kind: NotADirectory, message: "Not a directory" })
+
+# 日志位置被一个普通文件占住（init_logging 失败）
+exit=1
+Error: Io(Os { code: 17, kind: AlreadyExists, message: "File exists" })
+```
+
+三例都有目录缺失、无中文原因、无下一步，也没留下任何日志行；`main.rs` 里那句注释「启动期失败的统一出口」因此名不副实。
+
+### 41.2 缺陷 B：说明声称「不会改动它」，实际会写（复现）
+
+拒绝打开旧目录时会往该目录写入两样东西：`logs/` 里一行 ERROR，以及 `nekowriter.lock`（一个此前没有锁文件的目录在拒绝后会多出 0 字节的锁文件：§39.1 的 `alien` 探针目录里就是如此）。而在修复前，同一场景的说明写着「本版本不会改动它，但读不了它」——「不改动作品数据」为真，「不会改动它」为假。
+
+### 41.3 收口（最小改动，均落在 `crates/nekowriter-app/src/main.rs`）
+
+| 位置 | 改动 |
+| --- | --- |
+| 新增 `StartupStep`（`DataDirectory` / `Logging` / `ProcessLock` / `Database` / `WebDirectory`） | 每一步一个中文标签与一句只属于该步的下一步（可写、不能用 `--data-dir`、只能有一个进程、用旧版本打开、用 `--web-dir`） |
+| `startup_failure(data_dir, logs_dir, step, error)` | 唯一的出口：先 `error!`（日志已就绪时同时进 `logs/`），再向 stderr 打印说明，然后原样透传错误；`logs_dir` 只在日志确实可写后给出 |
+| `startup_failure_reason(step, error)` | 原因与下一步的唯一出处：旧目录两种情形保留原有详细中文说明；`NoLocalDataDirectory` 单独一句；其余统为「步骤标签（原始错误）」+ 该步的下一步 |
+| `startup_failure_message(data_dir, logs_dir, step, error)` | 头部「NekoWriter 无法启动。」+「数据目录：…」+「原因：…」+ 下一步；日志可写时追加一句声明实际写入内容：**「除了该目录原有的文件，本次启动只写入了启动日志与进程锁文件，作品数据（SQLite 与向量）未被修改」**，不再出现「不会改动它」 |
+| `prepare(cli) -> Startup` | 启动期五步（`default_data_dir` / `resolve_data_dir` / `init_logging` / `ProcessLock::acquire` / `Store::open` / `default_web_dir`）从 `main` 移到这个函数，每一步都是 `match … { Err(error) => return Err(startup_failure(…)) }`，不再有裸 `?`；返回值持有日志守卫与进程锁，`main` 只负责把它们保持到进程结束 |
+
+不新增功能、不改其它行为：正常路径只是多了一层 `match`，`web_dir` 不存在仍只是一条 `warn!`。把启动步骤收进 `prepare` 是必需的：直接写在 `main` 里会让它超过 100 行并触发新的 clippy 告警（重构后 `crates/nekowriter-app` 的告警数与改动前一致，均为 18 条）。
+
+### 41.4 修复后现场（同一批场景重放）
+
+```
+# 只读文件系统（与 41.1 同一条命令）
+exit=1
+NekoWriter 无法启动。
+数据目录：/nw-probe-should-fail
+原因：无法准备数据目录（文件系统错误：Read-only file system (os error 30)）
+请确认这个路径存在且可写，然后重试；也可以改用另一个数据目录启动，例如：nekowriter --data-dir <新目录>
+Error: Io(Os { code: 30, kind: ReadOnlyFilesystem, message: "Read-only file system" })
+
+# logs 位置被文件占住
+exit=1
+NekoWriter 无法启动。
+数据目录：/private/tmp/nw-startup-probe/before/logsblocked/data
+原因：无法在该目录下创建日志（文件系统错误：File exists (os error 17)）
+请确认这个目录可写（应用需要它下面的 logs/ 子目录），然后重试
+Error: Io(Os { code: 17, kind: AlreadyExists, message: "File exists" })
+```
+
+在数据目录与日志两步失败时，说明里**不出现**「只写入了启动日志」这类话（那一步根本写不出日志）；修正后的单测与集成测试都钉住了这一点。
+
+只接住了两步的那个旧出口本来就带「进程锁」分支，但它此前只有笼统错误行；现在它也有同一套说明。同一份数据目录上开第二个进程（现场：`/tmp/nw-startup-probe/after/`）：
+
+```
+exit=1
+NekoWriter 无法启动。
+数据目录：/private/tmp/nw-startup-probe/ok
+原因：无法锁定数据目录（数据目录已被另一个 NekoWriter 进程占用：…/nekowriter.lock）
+同一时间只允许一个进程打开同一个数据目录；请关闭正在运行的那个 NekoWriter，或改用另一个数据目录启动
+除了该目录原有的文件，本次启动只写入了启动日志与进程锁文件，作品数据（SQLite 与向量）未被修改；日志：…/logs。
+```
+
+同一场回归还确认了重构没有碰坏正常启动：新目录在 `127.0.0.1:8816` 上起服务、`/api/health` 返回 `schemaVersion=26`，`logs/` 里确实落下了「已启动」那行（日志守卫没有被提前 drop），而上面那个第二进程被拒——进程锁仍然有效。
+
+拒绝打开 schema 25 的旧目录（把 `/tmp/nw-story-run/data2` 再拷一份到 `/tmp/nw-startup-probe/schema25/copy`，原始目录只读不动）：
+
+```
+exit=1
+NekoWriter 无法启动。
+数据目录：/private/tmp/nw-startup-probe/schema25/copy
+原因：这个目录由更早的 NekoWriter 创建，数据库 schema 版本为 25，本版本只支持 26。
+本版本不会读取或迁移其中的作品数据；要继续其中已有的作品，请用创建它的旧版本打开。
+要用本版本开始创作，请指定另一个数据目录启动，例如：nekowriter --data-dir <新目录>
+除了该目录原有的文件，本次启动只写入了启动日志与进程锁文件，作品数据（SQLite 与向量）未被修改；日志：/private/tmp/nw-startup-probe/schema25/copy/logs。
+Error: Store(UnsupportedSchema { found: "25", expected: 26 })
+```
+
+该说法逐项核过（拒绝前/后对同一份拷贝取文件清单与哈希）：
+
+| 对象 | 拒绝前 | 拒绝后 |
+| --- | --- | --- |
+| `nekowriter.sqlite3` | `a1e37b05907f4444…` | **同一值**（与原始 `data2` 也一致） |
+| `nekowriter.lock` | 0 字节 | 0 字节（哈希不变；本就没有时会被创建） |
+| `logs/nekowriter.2026-09-14.log` | `d28ad9f9c2c19574…` | `0f44549e543e44f3…`（只多一条 ERROR） |
+| 空的 `nekowriter.sqlite3-wal` / `-shm` | 存在 | 被 SQLite 在干净关闭时清掉 |
+
+也就是说：作品数据（主库内容）不变，写入的只有日志与进程锁；文案现在说的是这两件真事，而不是「不会改动它」。
+
+### 41.5 测试：把接线也钉住
+
+| 测试 | 位置 | 钉住的东西 |
+| --- | --- | --- |
+| `startup_failure_messages_name_the_directory_step_cause_and_way_forward`（改写自 §39 那条） | `crates/nekowriter-app/src/main.rs` 单测 | 旧 schema/未知 schema 两种详细说明；IO 失败时原因用中文点名步骤（`原因：无法准备数据目录（…）`）；进程锁失败给出「只能有一个进程」的下一步；未指定数据目录时给出 `--data-dir`；`--web-dir` 路径；**日志不可写时不得出现「只写入了启动日志」；不得出现「不会改动它」** |
+| `unusable_data_directory_is_reported_with_cause_and_next_step`、`unwritable_log_location_is_reported_too` | 新增 `crates/nekowriter-app/tests/startup_failure.rs` | 跑真正的二进制（`CARGO_BIN_EXE_nekowriter`），断言上面两个场景的 stderr 与退出码——纯函数测试证明不了「每一步都接在了出口上」，集成测试能 |
+
+两个集成用例用文件系统造确定性失败，不需要 root、不绑端口：数据目录的父路径放一个普通文件（ENOTDIR），以及把 `logs` 占位成普通文件（`init_logging` 失败）。
+
+### 41.6 同轮修正的口径差
+
+| 位置 | 修正 |
+| --- | --- |
+| docs/03 §40.3 | 「不在 `command_receipts`（那条只存 `payload_hash`）」改为「响应列里没有密钥；回执里落的 `payload_hash` 覆盖了请求里的密钥字段，属开放项」——原文读起来像那里没有密钥材料，与事实不符 |
+| docs/03 §40.7 | 实例二（`8815`）在本节写完后即被关停，原句写成「在 8815 上运行」已过期 |
+| docs/02 §8.3 | 「声明该目录未被修改」改为「声明其中的作品数据未被读取或修改」，并补上启动每一步都走同一出口、日志未就绪时不得声称已记录的两条要求 |
+| docs/01 | 密钥一行从「Windows 凭据存储 + keyring 生态」改为「本地 SQLite 设置行」（全仓最后一句 keyring 表述） |
+
+### 41.7 验证与未覆盖
+
+- `cargo test --workspace` **231 通过 / 0 失败**（agent 43 / app 单元 61 + 集成 2 / core 38 / store 83 / xtask 4）；`cargo fmt --all -- --check` 干净；`cargo clippy -p nekowriter-app --all-targets` 的告警数与改动前一致（bin 18 条、test 27 条），改动区域无新增告警——中途曾多出 3 条 `format_push_string` 与 1 条 `too_many_lines`，已由 `lines.join("\n")` 与 `prepare` 拆分消除。
+- 现场文件：`/tmp/nw-startup-probe/{before,after}/`（各场景的原始 stderr）。原始数据目录 `/tmp/nw-story-run/data2` 始终只读，未被本次实验改动（其拷贝的主库哈希与其自身一致）。
+- **未覆盖**：崩溃遗留**非空** WAL 的目录（本轮只造出 0 字节 WAL；观察到的是拒绝打开会清掉遗留的空 `-wal`/`-shm`，主库字节不变。若 WAL 非空，SQLite 在打开/关闭时可能把它 checkpoint 回主库——内容不变、字节可能重写，这一点没有实测）；图形界面双击启动仍无窗口级提示（§39.5.1，本轮按范围未做）。
+- **仍未动的开放项**：`command_receipts.payload_hash` 覆盖密钥（§40.7 已有，本轮按指示未碰）；没有任何路径把密钥清回未配置。
+
+## 42. 2026-09-14 移除 keyring 后的主流程验收跑：一章闭环（准备 → 细纲 → 正文 → 整章审核 → 定稿 → 导出）
+
+§37 到 §41 四次带代码改动的回合都只验过边界（启动失败出口、HTTP 表面、幂等与重启持久化、Embedding 表面）。本节补上一直没有发生的那件事：用**当前源码构建的二进制**在**全新数据目录**上、通过**真实界面**、对着**真实端点**从空目录跑完一章的完整闭环。结论：全流程走通，没有需要修的失败。
+
+### 42.1 环境与入口
+
+| 项 | 值 |
+| --- | --- |
+| 二进制 | `cargo build -p nekowriter-app`（沿用 `cargo --config 'env.PROTOC.value="/opt/homebrew/bin/protoc"'`，原因见 §37.4） |
+| 数据目录 | `/tmp/nw-e2e-chapter/data`（全新，schema 26），`--port 8820 --web-dir ./webui/dist --no-browser` |
+| 界面 | `http://127.0.0.1:8820`（桌面端预览标签页，真实渲染 + 真实指针/键盘事件） |
+| 服务 | `https://api.scnet.cn/api/llm/v1`，模型 `DeepSeek-V4-Pro`，上下文 131072 / 预留输出 4096，能力 streaming + tools + streamUsage，thinking=false |
+| 作品 | 项目「守灯人」/ 稿本「初稿」/ 小说《灯塔三夜》，现实向三章短篇，目标逐字写在界面的「小说目标」框里 |
+
+### 42.2 逐步现场
+
+**① 模型设置保存两次，第二次不填密钥。** 第一次（带密钥）落 `revision=1`；连接测试 `connection_test` `succeeded`，用时 7.2 秒，用量 输入 28 / 输出 22 / 推理 18。第二次只把上下文上限 128000 改成 131072、密钥框留空：
+
+```
+保存前: revision=1 key_sha=d4c2af9bd54f ctx=128000
+不重填密钥保存后: revision=2 key_sha=d4c2af9bd54f ctx=131072
+```
+
+（`key_sha` 是 `sqlite3 … 'select api_key from system_model_settings;' | shasum -a 256` 的前 12 位。）此后**全程 6 次成功的模型请求都由这条 revision=2 的设置派发**。
+
+**② 建作品、保存目标、开始准备。** 界面操作对应 `POST /api/projects` 201（返回 project/version 一对 id）、`PUT …/brief`、`POST …/preparation/start`。准备 Run `c8eb8eb1` 发生 3 次请求（121.4s / 207.9s / 94.6s）。
+
+**③ 模型反问 → 界面提交回答 → Run 真的续跑。** 准备阶段模型用 ask_user 提了 4 个问题，界面出现「继续前需要你的回答」，选完提交后抓到请求与响应两侧的真实形状：
+
+```
+POST /api/questions/b8d0ed73-…/answer
+{"commandId":"f1d48356-…","expectedStateRevision":"3",
+ "answers":[{"questionId":"location","selectedOptionIds":["east_china_sea"],"customText":null},
+            {"questionId":"letter_origin","selectedOptionIds":["supplies"],"customText":null},
+            {"questionId":"protagonist_age","selectedOptionIds":["mid40s"],"customText":null},
+            {"questionId":"ending_tone","selectedOptionIds":["brief_contact"],"customText":null}]}
+→ 200 {"questionId":"b8d0ed73-…","runId":"c8eb8eb1-…","workflow":{"stage":"preparing_generating","execution":"queued","stateRevision":"4",…}}
+```
+
+随后 Run 回到 `running` 并发出 attempt 2——这正是 §36 修掉的那个「提交回答后稿本卡在 `waiting_answer`、一次请求都发不出去」的路径，方向相反地验了一遍。
+
+**④ 四项准备产物逐项审核。** 界面出现 4 张待审卡片（背景设定 / 资料收集 / 人物设定 / 小说粗纲），逐一点「通过」：
+
+```
+POST /api/reviews/0995dbf4-…/decision
+{"commandId":"3672f7d5-…","expectedStateRevision":"16","passed":true,"issues":"","citations":[]}
+→ 200 {"versionId":"fc21be6c-…","workflow":{"stage":"writing_drafting",…}}
+```
+
+4 条 review 全部 `approved` / `decision_source=human`，Run `c8eb8eb1` `succeeded`（`requests=3`），章节计划按粗纲落库：`第一章「补给日」`、`第二章「对岸」`、`第三章「应答」`，状态 `planned`。
+
+**⑤ 本章指导 + 细纲。** 指导逐字填进「本章指导」框并保存，随后：
+
+```
+POST /api/chapters/c38cc529-…/outline/start  {"commandId":"…","expectedStateRevision":"24"} → 200，stage=writing_outline_generating
+```
+
+Run `91a59f0e` 一次请求（141.0s）产出细纲，内容忠实于指导（第三章标题与「通过信号灯与对岸简短交流」这条约定都落进了「本章定位 / 写作约定 / 收束与承接」）。
+
+**⑥ 细纲审核 → 正文。** 点「通过并进入正文」：`POST /api/reviews/…/decision` `passed:true` → 200，stage `writing_drafting`，Run `448c5257` 两次请求（115.6s / 27.5s）。日志两行把「工具落库 + 进入整章审核」写清：
+
+```
+16:46:48 INFO 章节正文工具调用已处理 request_id=fc16121f-… chapter_id=0b0e4de8-… tool_call_id=call_727dfdb2ed334ca0a41768bd status="applied"
+16:47:15 INFO 章节正文模型提交已进入整章审核 request_id=da32c7b6-… chapter_id=0b0e4de8-…
+```
+
+正文由 `append_content` 工具落库，正文修订幅 4202 字符。
+
+**⑦ 整章审核 → 定稿。** 点「通过并定稿」：`POST /api/reviews/e784393e-…/decision` `passed:true` → 200，stage `writing_chapter_done`、`execution=idle`。库中 `chapters` 第 1 章 `status=approved` 且 `approved_revision_id` 非空，第 2、3 章仍 `planned`。
+
+**⑧ 导出 Markdown 并落盘。** 界面「稿本管理 → 导出 Markdown」，面板提示 **「已导出 灯塔三夜.md」**；同端点取回文件核对：
+
+```
+GET /api/versions/fc21be6c-…/export?format=md → 200
+content-type: text/markdown; charset=utf-8
+content-disposition: attachment; filename="nekowriter-export.md"; filename*=UTF-8''%E7%81%AF%E5%A1%94%E4%B8%89%E5%A4%9C.md
+content-length: 12443
+```
+
+落盘 `/tmp/nw-e2e-chapter/export/灯塔三夜.md`，12443 字节；开头 `# 灯塔三夜` + `由 NekoWriter 导出 · 2026-09-14 16:50:15 UTC · 正文 1 / 3 章已通过整章审核`，第 1 章是完整定稿正文，第 2、3 章标「（草稿）」「（本章尚无正文）」。
+
+### 42.3 三条顺带确认
+
+**不重填密钥保存一次后，派发仍能拿到密钥。** 见 42.2 ①：保存把 `revision` 从 1 推到 2 而密钥摘要不变，之后 6 次请求全部成功。更强的证据是全库扫描——密钥正文在整个数据目录里**只出现 1 次**，就在 `system_model_settings` 那一行：
+
+```
+$ sqlite3 … ".dump" | rg -c "$K"          → 1
+$ sqlite3 … ".dump" | rg "$K" | rg -o "INSERT INTO [a-z_]*"  → INSERT INTO system_model_settings
+$ rg -c "$K" logs/*.log run.log            → 0（日志 0 次）
+$ rg -a -c "SecKeychain|find-generic-password|keyring" target/debug/nekowriter → 0 次
+```
+
+即：密钥不在任何一次请求快照、事件、工具调用、命令回执或日志里；二进制里连钥匙串符号都没有。
+
+**`/api/runs/{id}/continue` 立即返回且真的发出请求。** 为造出「需要显式继续」的状态，先把第 2 章细纲 Run 在运行中点「停止执行」（`attempt 1` 于 27.7s 被 `cancelled`），再直接调这个接口：
+
+```
+POST /api/runs/7757159b-…/continue  {"commandId":"…","expectedStateRevision":"27"}
+→ http=200 time=0.003374s
+立即:   stopped rq=1 resume=0  →  queued  rq=1 resume=1（stateRevision 27→28）
+15 秒后: running rq=2 resume=1；model_requests attempt 1 cancelled / attempt 2 dispatched
+```
+
+这条续跑没有停在「发出了请求」：attempt 2 于 267.0s 后 `succeeded`（输入 11278 Token），日志 `16:55:54 INFO 章节细纲模型产物已提交，等待审核 chapter_id=c38cc529-…`，Run 转入 `waiting`。即显式继续不只是把请求发出去，被中断阶段真的被接着做完了。
+
+对比 §37 记录的同一动作：keyring 时代它 `http=000`、20 秒超时、界面把「显式继续」按成永久 disabled。附带一条形状观察：同一接口在缺 `commandId` 时 422 用时 0.0035s、缺 `expectedStateRevision` 时 422 用时 0.0016s——拒绝也从不阻塞。
+
+**全过程没有钥匙串/授权弹窗。** 整轮里 `ps -eo pid,comm | rg -i SecurityAgent` 只出现过 `_securityagent /usr/sbin/distnoted agent`（系统常驻守护，与钥匙串弹窗无关），没有 SecurityAgent 提示进程。
+
+### 42.4 用量与耗时（本轮实测）
+
+| Run | 请求数 | 墙钟 |
+| --- | --- | --- |
+| `c8eb8eb1` preparation | 3 | 967.1s |
+| `91a59f0e` chapter_outline（第 1 章） | 1 | 622.4s |
+| `448c5257` chapter_body（第 1 章） | 2 | 263.2s |
+| `7757159b` chapter_outline（第 2 章，仅用于验 continue） | 2（1 cancelled + 1 dispatched） | — |
+
+6 次成功请求合计 **输入 40910 / 输出 30253 / 推理 12002 Token**；单次最慢 207.9s，最快 27.5s。`command_receipts` 18 条、`events` 81 条、`system_model_operations` 只有 1 条（连接测试）——写作请求走的是 `model_requests`，与 §40.1 的口径一致。
+
+### 42.5 过程中出现的一次协议错误（§36.1 再次现场生效）
+
+准备 Run 中途有一次协议错误：
+
+```
+16:25:18 INFO 模型协议错误已保存，已要求同一 Run 纠正 request_id=Some(a2eecd93-…) lane=WritingRun consecutive_protocol_errors=1
+```
+
+该 Run 最终 `succeeded`、`consecutive_protocol_errors` 归 0、请求数停在 3——与 §38 观察到的行为一致：协议错误只在同一 Run 内自适应纠正，不推进业务计数、不报废 Run。
+
+### 42.6 未覆盖（本轮范围之外）
+
+- **本轮只跑了第 1 章闭环。**（第 2 章的细纲→正文→定稿已于 §43 走完；第 3 章仍未跑。）第 2 章当时只走到细纲审核：那一轮用来验显式继续，续跑后确实产出细纲并停在 `waiting`（见 42.3），我没有再点「通过并进入正文」，也没有跑它的正文与定稿。章节计划已锁定的三章标题与 42.2 ④ 一致。
+- ~~**逐次确认正文编辑**与**委托审核**~~：两条路径已于 §43 补走（委托审核端到端走通；逐次确认候选接受两次；人工编辑正文后再提交整章审核）。其中一处界面事实值得记住：正文编辑器只在「自动接受」模式下渲染（§43.6）。
+- **知识库检索**：准备阶段没有声明 `query_knowledge`（本实例没有知识条目、生产引擎为 0），因此写作流程里的检索工具调用仍未走过；Embedding 表面见 §40。
+- **完本确认与长篇阅读视图**未走（只到单章定稿）。
+- **导出只验了 Markdown**：`format=txt` 未点，同一 handler 的不同分支。
+- 一条未进一步定位的工具观察：第一次用 DOM 合成 `click()` 提交细纲审核时没有产生请求，改用真实坐标点击后 200；没有深追（可能是我点击时那份待审列表正在按 SSE 重渲染）。
+
+## 43. 2026-09-15 分支实战：委托审核与正文逐次确认（同一真实实例续跑）
+
+§42 的一章闭环之后，本轮补走两条此前只在单测里绿过的分支，并在现场找到两个真缺陷（一个已修并在真实端点做了同一模型同一上下文的 A/B，一个记录了修法但语义待拍定）。
+
+### 43.1 装置与环境
+
+- 实例：`target/debug/nekowriter --port 8820 --data-dir /tmp/nw-e2e-chapter/data --web-dir ./webui/dist --no-browser`，schema 26，数据目录沿用 §42（第 1 章已定稿、第 2 章停在细纲审核、第 3 章 planned）。端点 `https://api.scnet.cn/api/llm/v1`、模型 `DeepSeek-V4-Pro`、上下文 131072、思考关闭。
+- 入口：真实界面（预览里的真实指针/键盘事件）。本轮既有真实坐标点击也有 DOM 合成 `click()`，两者都产生了真实请求（每次操作后都用 `POST/GET` 的真实报文核对），§42.6 里那条「合成 click 不产生请求」的观察在本轮没有复现。
+- 二进制在过程中重建两次（第一次带 43.3 的修复，第二次带 43.4 b 的修复），每次停旧进程、起新进程、`GET /api/health` 确认后继续。`/tmp/nw-story-run/data2` 与 `data3` 全程未动。
+
+### 43.2 委托审核：分支端到端走通
+
+待审对象是第二章细纲 `review 9e7c9905`（此前一次委托的子 Run `b88eca16` 因进程退出被记为 `failed` + `reason=process_shutdown`，review 回到 `open`——这条恢复本身也顺带验证了）。
+
+| 时刻 | 动作与证据 |
+| --- | --- |
+| 界面点「委托审核」 | `POST /api/reviews/9e7c9905-…/delegate` → **202** |
+| 子 Run 建出 | `f2c4908d`（`kind=review`，`parent_run_id=7757159b`，`stage=review.chapter.outline`）；events 91 `review.changed status=delegated` → 92 `run.changed queued` → 93 `running`（同一事务） |
+| 子 Run 进行期间 | 父 Run `7757159b` 停在 `waiting`（stage `writing.outline`，request_count 2、cpe 0），审核条目 `delegated` |
+| 子 Run 完成 | 1 次请求 102.4s，`succeeded`；events 94 `review.changed approved source=agent passed=true confidence=0.92`（issues 三条【建议】）→ 96 父 Run `succeeded` → 97 `workflow.changed stage=writing_drafting` → 98 子 Run `succeeded` |
+| 日志 | `审核 Agent 结论已应用 review_id=9e7c9905… run_id=f2c4908d… request_id=dd7bb17f…` |
+
+结论：委托审核在真实端点上完全正确——子 Run 生命周期、父 Run 停在 `waiting_review`、结论回填（`decision_source=agent`）与随后的阶段推进都对；委托之后工作流自动进入正文（不需要人再点「通过并进入正文」）。
+
+### 43.3 缺口一：`chapter_id` 抄写错误无法从纠正里恢复（已修，真实端点 A/B）
+
+**现场（修复前）。** 第二章正文 Run `735fc0e8` 在正文已经写入之后，模型连续三轮提交同一个抄错的 UUID：`c38cc529-7a2b-4408-9edf-…`，而真实值是 `c38cc529-7a2b-4409-8edf-…`（中间两组换位）。`agent_messages` seq 5/8/11 是三次 assistant 提交，seq 6-13 是三条配对错误结果与三条纠正；Run 以 `stopped`、`consecutive_protocol_errors=3` 收束（events 108-117，日志三行「模型协议错误已保存，已要求同一 Run 纠正…1/2」+「连续模型协议错误达到上限，已按 lane 收束…3」）。
+
+**根因不在模型，在协议本身**（与 §35 同类）：当时纠正文本实测为
+
+```text
+上一轮对 `submit_chapter` 的调用未通过本阶段校验：阶段提交的 chapter_id 与当前章节不一致
+请补齐后重新调用 `submit_chapter`；已提交且合法的内容可以原样复用，不必重写。
+```
+
+它既没有给出本轮唯一合法取值，也把「抄错」说成「缺字段」。模型的自救方式是**升级为提问**：点「显式继续」后它直接调 `ask_user`（seq 14，question `a2ae1ae1`，`wait_reason=ask_user`），问题正文就是「提交第二章时 chapter_id 持续被拒，提示与当前章节不一致。请确认应使用的 chapter_id，或指出问题所在。」——即从这条纠正里它无法修复。
+
+**修复。** `PhaseSubmissionError::ChapterIdMismatch` 由无字段变成 `{ expected, actual }`，消息点名两个取值；纠正模板「请补齐后重新调用」改为「请按上面的原因修正后重新调用」（`crates/nekowriter-app/src/scheduler.rs`）。docs/02 §4.3 补一句要求：章节级提交的取值类校验失败必须给出合法取值本身。
+
+**A/B 证据（同一 Run、同一模型、同一上下文，只差纠正文本）。** 人工回答把正确 `chapter_id` 写进答案后，模型**仍然**抄错（seq 16）；这一次纠正带上了两个取值（seq 17/18 原文）：
+
+```text
+上一轮对 `submit_chapter` 的调用未通过本阶段校验：阶段提交的 chapter_id 与当前章节不一致：本轮必须原样提交 c38cc529-7a2b-4409-8edf-62328409ff6d，收到的却是 c38cc529-7a2b-4408-9edf-62328409ff6d
+请按上面的原因修正后重新调用 `submit_chapter`；已提交且合法的内容可以原样复用，不必重写。
+```
+
+下一轮（seq 19）它一次就改对，seq 20 收到 `PHASE_SUBMISSION_ACCEPTED`；日志 `00:25:41` 协议错误 1 → `00:26:01` 「章节正文模型提交已进入整章审核」。修复前同一上下文连续三轮都没能改对。
+
+**测试。** `nekowriter-agent` 新增 `chapter_id_mismatch_names_the_only_legal_value`，直接用上面对 UUID 断言原因里同时出现必须原样提交的值与收到的值（细纲与正文两条提交路径都断言）；既有 `outline_and_chapter_submissions_are_bound_to_the_active_chapter` 改为匹配带字段的变体。agent 43 → 44。
+
+### 43.4 缺口二：整章审核退回意见到不了正文 Agent（已修，见 §44）与它暴露的旧语义停 Run（已修）
+
+**a. 退回意见只落在审核行里（语义待拍定）。** 在整章审核点「退回修订」并写下具体修改要求后：`POST /api/reviews/{id}/decision` 200、workflow 回到 `writing_drafting`、正文 Run 立刻被重新派发。但那份意见**只写进 `reviews.issues_json`**：
+
+- `feedback` 表在该时刻 0 行（对照：用面板的意见框提交同类文字会立刻入库并显示为队列 1 条，§43.5 那一条就是这样来的）；
+- 该意见文本在 `model_requests`（`prompt_snapshot_json`、`context_snapshot_json`）、`agent_messages`、`prompt_overrides` 里各 0 次命中。
+
+后果是**退回后原稿空转回到审核**：events 140（`review.rejected`）→ 153（`review.changed open source=agent_submission`）→ 158（`workflow.changed stage=writing_drafting`），第二次审核的 `target_revision_id` 与第一次完全相同，正文一个字符都没变；中间还额外吃了两条「没有调用提交工具」的协议错误（见 b）。界面标签（「退回时说明情节、叙事、人物或文本层面的修改要求」）与正文 system 提示词（「结合后续历史消息中的工具结果、审核意见和用户反馈」）都承诺这份意见会到达模型，所以这是缺陷而不是设计。修法清楚：在 `decide_chapter_final_review` 的拒绝分支按 `submit_run_feedback` 的形状入队一条 `feedback`，让意见走既有的投递通道。**已于 §44 收口**：先把「谁才是权威」核到底——界面标签只承诺「说明要求」，而正文提示词（`chapter.write.user.md` 要求「结合后续历史消息中的工具结果、审核意见和用户反馈」）与 docs/02 §6.2 都明确承诺送达，因此按缺陷处理，而不是按「退回=人工接管」的语义处理。
+
+**b. 未投递意见守卫的拒绝被当成协议错误，并在第三次把 Run 停下（已修）。** 现场（后一次退回 + 意见框提交之后）：模型先两个纯文本回合（日志 `00:33:06` 计数 1、`00:33:15` 计数 2），第三个回合它调 `submit_chapter`，被业务守卫拒绝——配对结果与纠正都写得很清楚：
+
+```text
+本章仍有未投递的自由意见，不能直接提交终稿审核。请继续正文阶段，并使用 append_content 或 replace_content 形成下一条完整工具结果，让意见随该结果投递。
+```
+
+但这一次拒绝被计入 `consecutive_protocol_errors`，计数到 3 → Run 当场 `stopped`（events 171：`reason=pending_feedback_requires_tool_result`、`consecutive_protocol_errors=3`、`wait_reason=protocol_error_limit`；172 workflow `stopped`；日志 `00:33:25`「章节提交连续不推进，已达到工程执行限制并停止」）。也就是说：**模型刚拿到的正确指令再没有执行机会，未投递意见永远留在 `queued`**（feedback seq 1 保持 `queued`），章节停在 `writing_drafting`。这正是 §36.1 明确留给后续处理的「提交内容被拒却按协议错误计数」那一处，现场证明它的后果不只是计数不准，而是整条 Run 报废。
+
+修复：`commit_chapter_body_model_submission` 的未投递意见分支改为 §36.1 的「被拒回合」语义——立即重排、不推进计数、永不触发上限（非进展回合的上限由请求额度承担），`run.changed` 仍公布 `reason=pending_feedback_requires_tool_result` 但不再带计数与 `wait_reason`。docs/02 §2.3/§4.3/§5 的三处旧口径同步改写（原来明写「计入 `MAX_CONSECUTIVE_PROTOCOL_ERRORS`、第三次收束为 `stopped`」）；`crates/nekowriter-app/src/scheduler.rs` 的 `direct_chapter_submission_with_pending_feedback_requeues_for_a_tool_result` 改成断言「连续 3 次直接提交都只重排、`wait_reason` 为 `None`、事件不带计数」。
+
+**已在真实端点复验**（见 §44.4）：修复后同一 Run 里守卫真实触发一次（请求 `9c1c06ab`），重排事件 seq 260 不带 `consecutive_protocol_errors`、不带 `wait_reason`，模型随后改用 `replace_content` 投递意见，Run 最终 `succeeded`、`cpe = 0`。触发一次而非修复前现场那种连续三次，但「不带计数、原地重排」的行为特征已在真实事件上出现。要完整复现「连续三次都被拒」仍需要桩模型，本轮没做。
+
+### 43.5 正文逐次确认 + 人工编辑 + 定稿：走通
+
+**逐次确认（`approve_required`）** 在真实界面设置：`POST /api/versions/{id}/approval-mode {mode:"approve_required"}` 200。随后：
+
+| 步骤 | 证据 |
+| --- | --- |
+| 意见框提交意见 | `POST /api/runs/735fc0e8/feedback` 200；`feedback` seq 1 `queued`，界面显示「队列 1 条」；events 161 `feedback.changed`。这就是 43.4 b 里停在 `queued` 的那一条：events 173 `08:41:04` 是修复重建进程后的「显式继续」，它在 183/187 才被 `bound`→`included` |
+| 模型改正文 | 事件 190 `tool.proposed name=replace_content status=awaiting_review`，候选 `baseRevisionId=99ddc296`（修订 1）、`candidateHash=f58df259…` |
+| 界面「接受编辑」 | `POST /api/chapters/{id}/body/proposals/32856ec9-…/decision` 200 → 修订 2（`0f5f2e96`，4885 字）；工具结果带 `base_revision_id` / `result_revision_id` / `word_count`；`chapter_edit` review `1f6287ab approved/human` |
+| 意见真的送达模型 | 同一 `feedback` 行转 `bound`→`included`（`included_request_id=1194969d`）；下一轮模型按意见把无线电段压到三句（seq 36），第二个候选 `ffc62001` → 接受 → 修订 3（`ef3be284`，4530 字），`chapter_edit 6ebcc43d approved/human` |
+| 计数 | 全过程中该 Run 的 `consecutive_protocol_errors` 始终 0；期间一次 `ask_user` 提问与一次纯文本回合都被同一 Run 纠正 |
+
+**人工编辑正文 + 再确认。** 一处界面事实先要说明：**正文编辑器只在「自动接受」模式下渲染**（`ChapterBodyPanel` 的条件 `approvalMode === "auto_approve"`），候选待决状态与整章审核状态都不渲染它。所以「人工改一段再走整章审核」的实际路径是：切回自动接受（`POST /api/versions/{id}/approval-mode {mode:"auto_approve"}` 200）→ 在「本章正文」里把「他关了台灯。宿舍陷入黑暗。」改为「他伸手关了台灯，宿舍陷入黑暗。」→ `POST /api/chapters/{id}/body/replace` 200 → **修订 4**（`0a2405b4`，4532 字，比修订 3 的 4530 字多 2 字；正文 4691 字符）→「提交整章审核」`POST /api/chapters/{id}/body/review` 200（review `34c8092a` open，`targetRevisionId=0a2405b4`）→「通过并定稿」`POST /api/reviews/34c8092a/decision passed:true` 200 → `writing_chapter_done`、`activeRunId=None`。章节 2 落库为 `approved`、`approvedRevisionId=0a2405b4`（人工那一版）、`bodyWordCount=4532`。人工链路不经过阶段提交，所以「提交被当成协议错误」在这条路上不存在；真正暴露它的是 43.4 b。
+
+Run 收口：`735fc0e8 succeeded`、`request_count=17`、`resume_count=2`、`cpe=0`。
+
+### 43.6 本轮确认的界面事实
+
+- 正文编辑器只在自动接受模式可见；逐次确认里人工只能对候选作决定（接受／拒绝／委托审核），不能自己直接改正文。
+- 整章审核状态下界面只提供审核决定与意见，不提供编辑器。
+- 「退回修订」是唯一会把工作流退回 `writing_drafting` 的动作，而一进 drafting 就会派发模型请求（实测退回后 1.4 秒内 `request_in_flight`）；想人工接管必须先「停止执行」（本轮实测：退回 → 停止，未浪费整轮请求）。
+- 审核阶段的外部入口在标题栏与面板两处都会出现同名按钮（「显式继续」出现两次），两次点击都命中同一 `POST /api/runs/{id}/continue`。
+
+### 43.7 验证与未覆盖
+
+`cargo test --workspace` **232 通过 / 0 失败**（agent 44、app 单元 61 + 集成 2、core 38、store 83、xtask 4），`cargo fmt --all -- --check` 干净。实例仍在 `127.0.0.1:8820`（数据目录 `/tmp/nw-e2e-chapter/data`），第 2 章已定稿、第 3 章仍 `planned`。
+
+未覆盖：~~43.4 b 的真实端点复验~~（已于 §44.4 复验：守卫拒绝的 `run.changed` 不带计数与 `wait_reason`，原地重排）；~~43.4 a 的修法~~（已于 §44 收口并真实复跑）；~~第 3 章闭环~~（第 3 章的指导→细纲→正文→退回改写→定稿已于 §44 走完）；完本确认（第 3 章已定稿但未点确认完本）；长篇阅读视图与导出（本轮未导出）；`format=txt` 导出分支。
+
+## 44. 验收：整章审核退回意见投递（审计发现 43.4 a 收口）
+
+### 44.1 谁才是权威：先定语义，再决定动不动代码
+
+审计给的前提是「界面标签与正文提示词都承诺这份意见会到达模型」。动代码前先把三处口径逐字读出来，确认这到底是被承诺的能力还是「退回 = 人工接管」的设计选择：
+
+- **界面标签**（`webui/src/components/ChapterBodyPanel.tsx` 的整章审核意见框）：「退回时说明情节、叙事、人物或文本层面的修改要求」——只承诺「说明要求」，本身不指明由谁消费。
+- **正文 system 提示词**（`chapter.write.user.md`）：「结合后续历史消息中的工具结果、审核意见和用户反馈」——明确承诺审核意见进入下一条正文请求。
+- **docs/02 §6.2**：`passed=false` 的拒绝必须把 `issues` 交给写作 Agent。
+
+三处里提示词与规格都明确承诺送达，界面标签也不与之冲突，所以权威在「送达」一侧：只把意见写进 `reviews.issues_json` 是缺陷，不是设计。修法因此限定为「让它走既有的投递通道」——不新增通道、不改界面文案、不改无关行为。
+
+### 44.2 修复
+
+`Store::decide_chapter_final_review`（`crates/nekowriter-store/src/lib.rs`）的拒绝分支此前只更新 Review 与工作流。现在它在同一事务里调用从 `Store::submit_run_feedback` 抽出的共享助手 `queue_chapter_body_feedback`（`crates/nekowriter-store/src/preparation.rs`）：意见按自由意见的批次锚点规则排进该章正文 Run 的未封存批次，沿用同一套 `queued → bound → included` 生命周期，并写一条 `feedback.changed`。把内联插入抽成助手而不是复制一段，是为了让「退回意见」与「意见框意见」共用同一份锚点规则（已有未封存批次就继承其锚点，否则挂到最后一条已有结果的工具调用之后）。
+
+docs/02 §6.2 补一段规格，钉住「人工整章终稿拒绝的 `issues` 必须交给写作 Agent，走与意见框相同的通道；只写 `reviews.issues_json` 属缺陷」。
+
+### 44.3 现场证据（真实界面，8820 / `/tmp/nw-e2e-chapter`）
+
+对象是第 3 章 `daeec0cd-d6a2-45ba-ab52-265ae536efb3`「第三章「应答」」。界面在整章审核面板点「退回修订」，意见框写入（原文即后来落库的 `issues_json`）：
+
+> 这一章的收束没有兑现承诺：林砚的「照三次」只写到伸手去按开关就结束了，没有写出对岸是否回应；请把结尾改成他真的做完三次长闪、并让他亲眼看到一个明确回应，再给出他离开或留下的不可撤销后果。另外第二段到第三段的时间跳跃没有交代，请补一句过渡。
+
+命令：
+
+```bash
+DB=/tmp/nw-e2e-chapter/data/nekowriter.sqlite3
+sqlite3 -header -column "$DB" "select seq, datetime(occurred_at/1000,'unixepoch','localtime') t, type, substr(entity_id,1,8) ent, substr(payload_json,1,95) payload from events where seq between 247 and 275 order by seq;"
+```
+
+事件与表行（`09:28:00` 同一秒：退回决定与意见入队同事务）：
+
+| 事件 | 时刻 | 内容 |
+| --- | --- | --- |
+| seq 250 `review.changed` `ce6b6139` | 09:28:00 | `passed:false`、`status:rejected`（人工决定，`target_revision_id = 5cf6cc16`） |
+| seq 251 `run.changed` `a6649032` | 09:28:00 | 正文 Run 回到 `queued` |
+| **seq 252 `feedback.changed` `742e31bc`** | **09:28:00** | **`status:queued`——退回的同一秒意见已入队，不再是 0 行** |
+| seq 266 `feedback.changed` `742e31bc` | 09:29:51 | `bound_tool_call_id = 2b4274d5`（`replace_content`） |
+| seq 270 `feedback.changed` `742e31bc` | 09:29:51 | `included_request_id = f9b07ba1` |
+| seq 273 `document.committed` `8b60478c` | 09:30:15 | 新修订，`word_count = 4484` |
+
+两侧报文核对（不是只看返回码）：`feedback.text` 与 `reviews.issues_json` 逐字一致；请求 `f9b07ba1` 的 `prompt_snapshot_json` 与 `context_snapshot_json` 都含意见正文：
+
+```bash
+sqlite3 "$DB" "select case when prompt_snapshot_json like '%照三次%' then 'prompt ✓' else 'prompt ✗' end from model_requests where id like 'f9b07ba1%';"
+# prompt ✓   （同一查询对 context_snapshot_json 亦为 context ✓）
+```
+
+第 3 章修订链（`document_revisions`，同一文档）：
+
+```
+b83b28a4  110   user   09:19:30   人工起始稿
+fa747238  5726  agent  09:22:22   第一次正文提交
+5cf6cc16  4447  agent  09:24:20   ← 被 ce6b6139 退回的那一版
+afd904be  4445  agent  09:29:51   ← 意见绑定的工具结果（2b4274d5）
+8b60478c  4484  agent  09:30:15   ← 携意见的请求 f9b07ba1 的产物，被 49612aa9 通过
+```
+
+修复前 / 修复后对照，关键判据是「下一次整章审核的目标修订是否变了」：
+
+| | 修复前（§43.4 a 现场） | 修复后（本轮） |
+| --- | --- | --- |
+| 退回产生的 `feedback` 行 | 0 行 | `742e31bc` `queued → bound → included` |
+| 意见进入模型请求 | `model_requests`/`agent_messages`/`prompt_overrides` 各 0 次命中 | `f9b07ba1` 的 prompt 与 context 均命中 |
+| 下一次整章审核 `target_revision_id` | `c6c01de4`/`4ae3627a` 都是 `99ddc296`（与第一次相同） | `49612aa9` = `8b60478c`，与退回时的 `5cf6cc16` 不同 |
+| 正文是否变化 | 一个字符都没变 | 新修订落库（`4484` 字，`afd904be 4445` 之后） |
+
+Run 收口：`a6649032` `succeeded`、`request_count = 7`、`resume_count = 0`、`consecutive_protocol_errors = 0`。
+
+### 44.4 顺带收口：43.4 b 也在真实端点复验到了
+
+同一个 Run 里 §43.4 b 修的「未投递意见守卫」真实触发了一次：请求 `9c1c06ab`（`09:28:44`）是模型在意见尚未投递时的直接提交，写回 `reason = pending_feedback_requires_tool_result` 并**原地重排**（seq 260 `run.changed` `status:queued`），模型随后改用 `replace_content` 投递了意见。与同一 Run 里真正的协议错误对照（seq 256 `run.changed`，那条是纯文本回合的纠正）：
+
+```text
+seq 256  {"consecutive_protocol_errors":"1","kind":"chapter_body","request_count":"3","request_id":"9c183ce7-…","status":"queued","wait_reason":null}
+seq 260  {"chapter_id":"daeec0cd-…","kind":"chapter_body","reason":"pending_feedback_requires_tool_result","request_count":"4","request_id":"9c1c06ab-…","status":"queued"}
+```
+
+守卫拒绝的载荷里**既没有 `consecutive_protocol_errors` 也没有 `wait_reason`**，真正的协议错误两者都带——这正是修复后的行为特征（对照 §43.4 b 记录的修复前 event 171，它带着 `consecutive_protocol_errors:3` 与 `wait_reason:protocol_error_limit`，并把 Run 收束为 `stopped`）。本次 Run 最终 `succeeded`、`cpe = 0`。因此 §43.7 里「43.4 b 只有 store/app 级测试」这一条也随之划掉：真实端点已复验（触发一次而非连续三次，但行为特征——不带计数、不带 `wait_reason`、原地重排——已在真实事件上出现）。
+
+### 44.5 测试
+
+- `crates/nekowriter-app/src/main.rs`：`review_decision_accepts_the_payload_the_ui_sends` 钉住界面实际发出的 `POST /api/reviews/{id}/decision` 请求形状（`passed:false` + `issues` 字符串；通过时 `issues:""` + `citations:[]`），防止再出现「单测全绿、界面 422」那类形状漂移。
+- `crates/nekowriter-store/src/lib.rs`：`chapter_final_rejection_hands_its_issues_to_the_body_agent` 钉住整条链：拒绝后 `pending_feedback` 出现一条、`text` 与 `issues` 一致、`queued → bound → included` 三步齐全、`included_request_id` 落到真实请求上。
+
+### 44.6 验证与未覆盖
+
+`cargo test --workspace` **234 通过 / 0 失败**（agent 44、app 单元 62 + 集成 2、core 38、store 84、xtask 4），`cargo fmt --all -- --check` 干净。审计发现 43.4 a 按「已收口」处理，43.4 b 的真实端点复验一并完成。
+
+仍未覆盖：本轮证明的是「意见进入了请求」，不是「模型一定按意见改稿」——本轮它确实改了（新修订被通过），但这取决于模型；`issues` 为空的拒绝（界面允许留空）只由 §6.2 的既有协议处理，没有现场；完本确认、长篇阅读视图、`format=txt` 导出仍未走。

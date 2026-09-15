@@ -24,13 +24,15 @@ use thiserror::Error;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-/// 24 新增用户提示词模板。旧格式不能安全反序列化为当前合同，因此按项目约定
-/// 拒绝打开而不尝试迁移。
-pub const SCHEMA_VERSION: u32 = 25;
+/// 24 新增用户提示词模板；26 把 OS 凭据库引用换成直接保存在本地的 `api_key` 列。
+/// 旧格式不能安全反序列化为当前合同，因此按项目约定拒绝打开而不尝试迁移。
+pub const SCHEMA_VERSION: u32 = 26;
 const CREATE_PROJECT_METHOD: &str = "POST";
 const CREATE_PROJECT_TARGET: &str = "/api/projects";
 const CREATE_VERSION_METHOD: &str = "POST";
 const SELECT_VERSION_METHOD: &str = "POST";
+/// 密钥正文的长度上限：足够容纳常见供应商的密钥，同时拒绝明显异常的粘贴内容。
+pub(crate) const MAX_API_KEY_CHARS: usize = 4096;
 pub(crate) const NOVEL_BRIEF_ROLE: &str = "novel_brief";
 pub(crate) const CHAPTER_GUIDANCE_ROLE: &str = "chapter_guidance";
 pub(crate) const CHAPTER_OUTLINE_ROLE: &str = "chapter_outline";
@@ -78,7 +80,7 @@ pub use preparation::{
 };
 pub use prompts::{NewPromptOverride, PromptOverride, PromptOverrideReset, PromptOverrideScope};
 pub use protocol_correction::{
-    ModelProtocolCorrection, ProtocolCorrectionOutcome, ProtocolCorrectionTarget,
+    ProtocolCorrectionTarget, RejectedRoundOutcome, RejectedRoundRecord,
 };
 pub use settings::{NewSystemModelSettings, SYSTEM_WRITING_MODEL_KEY, SystemModelSettings};
 pub use system_operations::{
@@ -1025,6 +1027,27 @@ impl<'a> From<&'a NewNovelVersion> for CreateVersionPayload<'a> {
     }
 }
 
+/// 归一化可选密钥：`None` 表示保留库中现有密钥，`Some` 表示替换为这条正文。
+///
+/// 返回 `Err` 时携带面向用户的原因，由调用方包进自己的设置错误变体：写作模型与
+/// Embedding 两条设置路径共用同一套密钥规则，不各自维护一份。
+pub(crate) fn normalize_api_key(value: Option<String>) -> Result<Option<String>, String> {
+    value
+        .map(|value| {
+            let value = value.trim().to_owned();
+            if value.is_empty() {
+                Err("API key 不能为空".to_owned())
+            } else if value.chars().count() > MAX_API_KEY_CHARS {
+                Err(format!("API key 不能超过 {MAX_API_KEY_CHARS} 个字符"))
+            } else if value.chars().any(char::is_control) {
+                Err("API key 不能包含控制字符".to_owned())
+            } else {
+                Ok(value)
+            }
+        })
+        .transpose()
+}
+
 fn payload_hash<T: Serialize>(payload: &T) -> Result<String, StoreError> {
     let bytes = serde_json::to_vec(payload)?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
@@ -1692,8 +1715,7 @@ mod tests {
         let command_id = Uuid::new_v4();
         let input = NewSystemModelSettings {
             api_base_url: "https://model.example/v1".to_owned(),
-            credential_ref: Some("credential-ref-1".to_owned()),
-            credential_fingerprint: Some("a".repeat(64)),
+            api_key: Some("secret-key-1".to_owned()),
             model_id: "writer-1".to_owned(),
             capabilities: ModelCapabilityProfile {
                 streaming: true,
@@ -1710,6 +1732,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(saved.revision, 1);
+        // 对外视图只公布「已配置」，密钥正文只能经由专属读出口取得。
+        let view = serde_json::to_value(&saved).unwrap();
+        assert_eq!(view["credentialConfigured"], serde_json::Value::Bool(true));
+        assert!(!view.to_string().contains("secret-key-1"));
+        assert_eq!(
+            store.system_model_api_key().await.unwrap().as_deref(),
+            Some("secret-key-1")
+        );
         assert_eq!(
             store
                 .save_system_model_settings(command_id, 0, input.clone())
@@ -1738,6 +1768,71 @@ mod tests {
                 .iter()
                 .any(|event| event.event_type == "settings.changed")
         );
+    }
+
+    /// `api_key: None` 表示保留库中现有密钥；换密钥重放同一命令仍然冲突。
+    #[tokio::test]
+    async fn system_model_api_key_is_kept_when_omitted_and_guarded_when_replayed() {
+        let data_dir = TempDir::new().unwrap();
+        let store = Store::open(data_dir.path()).await.unwrap();
+        let settings = |api_key| NewSystemModelSettings {
+            api_base_url: "https://model.example/v1".to_owned(),
+            api_key,
+            model_id: "writer-1".to_owned(),
+            capabilities: ModelCapabilityProfile {
+                streaming: true,
+                tools: true,
+                stream_usage: true,
+                thinking: true,
+            },
+            max_context_tokens: 32_768,
+            reserved_output_tokens: 4_096,
+        };
+
+        let first = store
+            .save_system_model_settings(
+                Uuid::new_v4(),
+                0,
+                settings(Some("secret-key-1".to_owned())),
+            )
+            .await
+            .unwrap();
+        assert!(first.credential_configured);
+
+        // 省略密钥的保存把既有密钥原样带过：修订前进，密钥不变。
+        let second = store
+            .save_system_model_settings(Uuid::new_v4(), 1, settings(None))
+            .await
+            .unwrap();
+        assert_eq!(second.revision, 2);
+        assert_eq!(second.api_base_url, first.api_base_url);
+        assert_eq!(
+            store.system_model_api_key().await.unwrap().as_deref(),
+            Some("secret-key-1")
+        );
+        assert!(
+            store
+                .save_system_model_settings(Uuid::new_v4(), 2, settings(Some(String::new())))
+                .await
+                .is_err()
+        );
+
+        // 同一 command 用不同密钥重放：不是可重放的幂等命中，而是冲突。
+        let command_id = Uuid::new_v4();
+        store
+            .save_system_model_settings(command_id, 2, settings(Some("secret-key-2".to_owned())))
+            .await
+            .unwrap();
+        assert!(matches!(
+            store
+                .save_system_model_settings(
+                    command_id,
+                    2,
+                    settings(Some("secret-key-3".to_owned()))
+                )
+                .await,
+            Err(StoreError::IdempotencyConflict)
+        ));
     }
 
     #[tokio::test]
@@ -3112,7 +3207,7 @@ mod tests {
             let result = store
                 .record_model_protocol_correction(
                     ProtocolCorrectionTarget::WritingRun,
-                    ModelProtocolCorrection {
+                    RejectedRoundRecord {
                         provider_request_id: Some(format!("provider-{attempt}")),
                         usage: json!({ "totalTokens": "1" }),
                         assistant_message,
@@ -3148,7 +3243,7 @@ mod tests {
             let duplicate = store
                 .record_model_protocol_correction(
                     ProtocolCorrectionTarget::WritingRun,
-                    ModelProtocolCorrection {
+                    RejectedRoundRecord {
                         provider_request_id: Some(format!("provider-{attempt}")),
                         usage: json!({ "totalTokens": "1" }),
                         assistant_message: if attempt == 1 {
@@ -3270,11 +3365,119 @@ mod tests {
     async fn rejected_review_round_persists_the_counter_it_publishes() {
         let data_dir = TempDir::new().unwrap();
         let store = Store::open(data_dir.path()).await.unwrap();
+        let (version_id, review_id, delegation_run_id) =
+            delegated_background_review(&store, "审核协议纠正").await;
+
+        for attempt in 1..=MAX_CONSECUTIVE_PROTOCOL_ERRORS {
+            let request = store
+                .capture_and_dispatch_model_request(
+                    NewModelRequest {
+                        run_id: delegation_run_id,
+                        settings_snapshot: json!({ "model": "review-protocol-test" }),
+                        prompt_snapshot: json!({ "key": "review.preparation.background" }),
+                        context_snapshot: json!({ "messages": [] }),
+                    },
+                    Vec::new(),
+                )
+                .await
+                .unwrap();
+            let outcome = store
+                .record_model_protocol_correction(
+                    ProtocolCorrectionTarget::DelegatedReview { review_id },
+                    RejectedRoundRecord {
+                        provider_request_id: Some(format!("review-provider-{attempt}")),
+                        usage: json!({ "totalTokens": "1" }),
+                        assistant_message: crate::agent_messages::phase_submission_test_message(
+                            request.id,
+                            "submit_review",
+                            r#"{"passed":true,"confidence":0.82,"issues":["【建议】章节清单还不完整"]}"#,
+                        ),
+                        error: json!({
+                            "kind": "protocol_error",
+                            "message": "审核提交与本阶段合同不符",
+                        }),
+                        correction: "请重新调用 submit_review。".to_owned(),
+                        tool_result_code: "PHASE_SUBMISSION_INVALID".to_owned(),
+                    },
+                )
+                .await
+                .unwrap();
+            assert!(outcome.newly_applied);
+            assert_eq!(outcome.consecutive_protocol_errors, attempt);
+            assert_eq!(outcome.requeue, attempt < MAX_CONSECUTIVE_PROTOCOL_ERRORS);
+
+            let persisted = persisted_protocol_error_count(&store, delegation_run_id).await;
+            assert_eq!(persisted, attempt);
+            assert_eq!(
+                published_protocol_error_count(&store, request.id).await,
+                persisted,
+                "第 {attempt} 轮：落库计数与同一轮事件公布的计数必须一致"
+            );
+        }
+
+        // 达上限那轮之后：子 Run 失败但计数仍然落库，Review 重新开放。
+        let child_run = entity::run::Entity::find_by_id(db_id(delegation_run_id))
+            .one(&store.database)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(child_run.status, "failed");
+        assert_eq!(
+            child_run.consecutive_protocol_errors,
+            MAX_CONSECUTIVE_PROTOCOL_ERRORS
+        );
+        let snapshot = store.get_preparation_snapshot(version_id).await.unwrap();
+        let reopened = snapshot
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.kind == PreparationArtifactKind::Background)
+            .and_then(|artifact| artifact.review.as_ref())
+            .unwrap();
+        assert_eq!(reopened.status, ReviewStatus::Open);
+    }
+
+    /// 已启动准备阶段、等待模型首轮响应的写作 Run。
+    async fn in_flight_preparation_run(store: &Store, title: &str) -> (VersionId, RunId) {
         let created = store
             .create_project(
                 Uuid::new_v4(),
-                NewProject::new("审核协议纠正", "被拒的审核提交计数必须落库", None::<&str>)
-                    .unwrap(),
+                NewProject::new(title, "被业务守卫拒绝的提交必须可继续", None::<&str>).unwrap(),
+            )
+            .await
+            .unwrap();
+        let version_id = created.version.id;
+        store
+            .save_novel_brief(
+                version_id,
+                Uuid::new_v4(),
+                NewNovelBrief::new("写一个结局清晰的短篇小说").unwrap(),
+            )
+            .await
+            .unwrap();
+        let initial = store
+            .get_version_snapshot(version_id)
+            .await
+            .unwrap()
+            .workflow;
+        let started = store
+            .start_preparation(version_id, Uuid::new_v4(), initial.state_revision)
+            .await
+            .unwrap();
+        (version_id, started.workflow.active_run_id.unwrap())
+    }
+
+    /// 已进入准备阶段并已把背景产物委派给审核子 Run 的稿本。
+    ///
+    /// 审核 lane 的两个用例（协议纠正、被业务守卫拒绝）需要完全相同的起点；把它写成
+    /// 一处，两条 lane 的差别就只留在各自真正要断言的收束行为上。
+    async fn delegated_background_review(
+        store: &Store,
+        title: &str,
+    ) -> (VersionId, ReviewId, RunId) {
+        let created = store
+            .create_project(
+                Uuid::new_v4(),
+                NewProject::new(title, "被拒的审核提交必须可继续", None::<&str>).unwrap(),
             )
             .await
             .unwrap();
@@ -3291,7 +3494,7 @@ mod tests {
             .start_preparation(version_id, Uuid::new_v4(), 0)
             .await
             .unwrap();
-        let mut snapshot = store
+        let snapshot = store
             .submit_preparation_artifacts(
                 version_id,
                 Uuid::new_v4(),
@@ -3341,14 +3544,109 @@ mod tests {
             )
             .await
             .unwrap();
+        (version_id, review_id, delegation.run_id)
+    }
 
-        for attempt in 1..=MAX_CONSECUTIVE_PROTOCOL_ERRORS {
+    /// 被业务守卫拒绝的阶段提交必须留下配对的工具结果与纠正提示，因而下一轮请求仍然
+    /// 可以组装；同时它不推进连续协议错误计数。
+    ///
+    /// 这正是实战卡死的那条路径：只写 assistant 调用、不写配对结果的提交会让
+    /// 此后每一次请求都在构建阶段被拒（`MissingToolResult`），Run 再也发不出请求。
+    #[tokio::test]
+    async fn business_rejected_submission_pairs_the_result_the_next_request_needs() {
+        let data_dir = TempDir::new().unwrap();
+        let store = Store::open(data_dir.path()).await.unwrap();
+        let (_version_id, run_id) = in_flight_preparation_run(&store, "提交被拒").await;
+        let request = store
+            .capture_and_dispatch_model_request(
+                NewModelRequest {
+                    run_id,
+                    settings_snapshot: json!({ "model": "rejected-submission" }),
+                    prompt_snapshot: json!({ "contentHash": "rejected-submission" }),
+                    context_snapshot: json!({ "messages": [] }),
+                },
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+
+        let outcome = store
+            .record_phase_submission_rejection(
+                ProtocolCorrectionTarget::WritingRun,
+                RejectedRoundRecord {
+                    provider_request_id: Some("rejected-submission-provider".to_owned()),
+                    usage: json!({ "totalTokens": "1" }),
+                    assistant_message: crate::agent_messages::phase_submission_test_message(
+                        request.id,
+                        "submit_preparation",
+                        r#"{"artifacts":[],"chapter_plan":[]}"#,
+                    ),
+                    error: json!({
+                        "kind": "submission_commit",
+                        "message": "准备提交缺少必需产物",
+                    }),
+                    correction: "上一轮对 `submit_preparation` 的提交被本阶段守卫拒绝。".to_owned(),
+                    tool_result_code: "PHASE_SUBMISSION_REJECTED".to_owned(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(outcome.newly_applied);
+        assert!(outcome.requeue);
+        assert_eq!(outcome.consecutive_protocol_errors, 0);
+        assert_eq!(outcome.workflow.execution, ExecutionStatus::Queued);
+
+        // 被拒的提交绝不留下一半的账本：assistant 调用、配对工具结果、纠正提示。
+        let messages = store.list_agent_messages(run_id).await.unwrap();
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].role, AgentMessageRole::Assistant);
+        assert_eq!(messages[1].role, AgentMessageRole::Tool);
+        assert_eq!(messages[1].tool_call_id.as_deref(), Some("call-submit-1"));
+        assert_eq!(messages[1].content["kind"], "tool_result");
+        let paired = messages[1].content["content"].as_str().unwrap();
+        assert!(paired.contains("PHASE_SUBMISSION_REJECTED"), "{paired}");
+        assert!(paired.contains("submit_preparation"), "{paired}");
+        assert_eq!(messages[2].role, AgentMessageRole::User);
+        assert_eq!(messages[2].content["kind"], "protocol_correction");
+
+        // 这一轮不再属于「模型协议不合格」：计数不变，事件也不公布计数与上限原因。
+        assert_eq!(persisted_protocol_error_count(&store, run_id).await, 0);
+        assert_eq!(
+            store.list_model_requests(run_id).await.unwrap()[0].status,
+            ModelRequestStatus::Succeeded
+        );
+        let published = store
+            .events_after(0)
+            .await
+            .unwrap()
+            .into_iter()
+            .rfind(|event| event.event_type == "run.changed")
+            .unwrap();
+        assert_eq!(published.payload["reason"], "submission_rejected");
+        assert!(
+            published
+                .payload
+                .get("consecutive_protocol_errors")
+                .is_none()
+        );
+        assert!(published.payload.get("wait_reason").is_none());
+    }
+
+    /// 被业务守卫拒绝的提交不参与连续协议错误计数，因此超过协议上限的轮数之后 Run 仍然
+    /// 退给模型重提：非进展回合的工程上限由请求额度承担，不由协议错误计数承担。
+    #[tokio::test]
+    async fn business_rejected_submissions_never_stop_at_the_protocol_limit() {
+        let data_dir = TempDir::new().unwrap();
+        let store = Store::open(data_dir.path()).await.unwrap();
+        let (version_id, run_id) = in_flight_preparation_run(&store, "提交持续被拒").await;
+
+        for round in 1..=MAX_CONSECUTIVE_PROTOCOL_ERRORS + 1 {
             let request = store
                 .capture_and_dispatch_model_request(
                     NewModelRequest {
-                        run_id: delegation.run_id,
-                        settings_snapshot: json!({ "model": "review-protocol-test" }),
-                        prompt_snapshot: json!({ "key": "review.preparation.background" }),
+                        run_id,
+                        settings_snapshot: json!({ "model": "rejected-submission" }),
+                        prompt_snapshot: json!({ "contentHash": format!("rejected-{round}") }),
                         context_snapshot: json!({ "messages": [] }),
                     },
                     Vec::new(),
@@ -3356,58 +3654,171 @@ mod tests {
                 .await
                 .unwrap();
             let outcome = store
-                .record_model_protocol_correction(
-                    ProtocolCorrectionTarget::DelegatedReview { review_id },
-                    ModelProtocolCorrection {
-                        provider_request_id: Some(format!("review-provider-{attempt}")),
+                .record_phase_submission_rejection(
+                    ProtocolCorrectionTarget::WritingRun,
+                    RejectedRoundRecord {
+                        provider_request_id: Some(format!("rejected-provider-{round}")),
                         usage: json!({ "totalTokens": "1" }),
                         assistant_message: crate::agent_messages::phase_submission_test_message(
                             request.id,
-                            "submit_review",
-                            r#"{"passed":true,"confidence":0.82,"issues":["【建议】章节清单还不完整"]}"#,
+                            "submit_preparation",
+                            r#"{"artifacts":[],"chapter_plan":[]}"#,
                         ),
                         error: json!({
-                            "kind": "protocol_error",
-                            "message": "审核提交与本阶段合同不符",
+                            "kind": "submission_commit",
+                            "message": "准备提交缺少必需产物",
                         }),
-                        correction: "请重新调用 submit_review。".to_owned(),
-                        tool_result_code: "PHASE_SUBMISSION_INVALID".to_owned(),
+                        correction: "上一轮对 `submit_preparation` 的提交被本阶段守卫拒绝。"
+                            .to_owned(),
+                        tool_result_code: "PHASE_SUBMISSION_REJECTED".to_owned(),
                     },
                 )
                 .await
                 .unwrap();
-            assert!(outcome.newly_applied);
-            assert_eq!(outcome.consecutive_protocol_errors, attempt);
-            assert_eq!(outcome.requeue, attempt < MAX_CONSECUTIVE_PROTOCOL_ERRORS);
-
-            let persisted = persisted_protocol_error_count(&store, delegation.run_id).await;
-            assert_eq!(persisted, attempt);
+            assert!(outcome.requeue, "第 {round} 轮必须立即退回模型");
+            assert_eq!(outcome.consecutive_protocol_errors, 0);
             assert_eq!(
-                published_protocol_error_count(&store, request.id).await,
-                persisted,
-                "第 {attempt} 轮：落库计数与同一轮事件公布的计数必须一致"
+                outcome.workflow.execution,
+                ExecutionStatus::Queued,
+                "第 {round} 轮不得触发协议错误上限"
             );
+            assert_eq!(outcome.workflow.wait_reason, None);
         }
 
-        // 达上限那轮之后：子 Run 失败但计数仍然落库，Review 重新开放。
-        let child_run = entity::run::Entity::find_by_id(db_id(delegation.run_id))
+        let snapshot = store.get_version_snapshot(version_id).await.unwrap();
+        assert_eq!(snapshot.workflow.execution, ExecutionStatus::Queued);
+        assert_eq!(snapshot.workflow.wait_reason, None);
+        assert_eq!(persisted_protocol_error_count(&store, run_id).await, 0);
+        // 每一轮都留下了完整配对，整个序列仍然可以组装成下一次请求。
+        assert_eq!(
+            store.list_agent_messages(run_id).await.unwrap().len(),
+            (MAX_CONSECUTIVE_PROTOCOL_ERRORS as usize + 1) * 3
+        );
+    }
+
+    /// 请求进入终态时也必须补写配对结果：终态之后不会再有工具结果到达，只留下
+    /// assistant 调用同样会让这个 Run 再也组装不出下一次请求。
+    #[tokio::test]
+    async fn terminal_failure_pairs_tool_calls_that_never_ran() {
+        let data_dir = TempDir::new().unwrap();
+        let store = Store::open(data_dir.path()).await.unwrap();
+        let (_version_id, run_id) = in_flight_preparation_run(&store, "终态失败配对").await;
+        let request = store
+            .capture_and_dispatch_model_request(
+                NewModelRequest {
+                    run_id,
+                    settings_snapshot: json!({ "model": "terminal-failure" }),
+                    prompt_snapshot: json!({ "contentHash": "terminal-failure" }),
+                    context_snapshot: json!({ "messages": [] }),
+                },
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+
+        let resolved = store
+            .resolve_model_request_with_assistant_message(
+                request.id,
+                ModelRequestResolution::Failed {
+                    provider_request_id: Some("terminal-failure-provider".to_owned()),
+                    error: json!({ "kind": "provider_error", "message": "流在响应完成前中断" }),
+                },
+                crate::agent_messages::phase_submission_test_message(
+                    request.id,
+                    "submit_preparation",
+                    r#"{"artifacts":[],"chapter_plan":[]}"#,
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resolved.status, ModelRequestStatus::Failed);
+
+        // 终态失败不推进协议计数；配对结果把「这次调用没有执行」的真实结局交给模型。
+        assert_eq!(persisted_protocol_error_count(&store, run_id).await, 0);
+        let messages = store.list_agent_messages(run_id).await.unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, AgentMessageRole::Assistant);
+        assert_eq!(messages[1].role, AgentMessageRole::Tool);
+        assert_eq!(messages[1].tool_call_id.as_deref(), Some("call-submit-1"));
+        let paired = messages[1].content["content"].as_str().unwrap();
+        assert!(paired.contains("TOOL_NOT_EXECUTED"), "{paired}");
+        assert!(paired.contains("流在响应完成前中断"), "{paired}");
+    }
+
+    /// 委托审核 lane 的被拒提交与写作 lane 同源：子 Run 的生命周期不变、Review 仍被
+    /// 这次委托占有、配对结果与纠正提示进账本，计数同样不推进。
+    #[tokio::test]
+    async fn business_rejected_review_submission_keeps_the_delegation_running() {
+        let data_dir = TempDir::new().unwrap();
+        let store = Store::open(data_dir.path()).await.unwrap();
+        let (version_id, review_id, delegation_run_id) =
+            delegated_background_review(&store, "审核提交被拒").await;
+        let request = store
+            .capture_and_dispatch_model_request(
+                NewModelRequest {
+                    run_id: delegation_run_id,
+                    settings_snapshot: json!({ "model": "review-rejected-test" }),
+                    prompt_snapshot: json!({ "key": "review.preparation.background" }),
+                    context_snapshot: json!({ "messages": [] }),
+                },
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        let before = entity::run::Entity::find_by_id(db_id(delegation_run_id))
             .one(&store.database)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(child_run.status, "failed");
-        assert_eq!(
-            child_run.consecutive_protocol_errors,
-            MAX_CONSECUTIVE_PROTOCOL_ERRORS
-        );
-        snapshot = store.get_preparation_snapshot(version_id).await.unwrap();
-        let reopened = snapshot
+        let outcome = store
+            .record_phase_submission_rejection(
+                ProtocolCorrectionTarget::DelegatedReview { review_id },
+                RejectedRoundRecord {
+                    provider_request_id: Some("review-rejected-provider".to_owned()),
+                    usage: json!({ "totalTokens": "1" }),
+                    assistant_message: crate::agent_messages::phase_submission_test_message(
+                        request.id,
+                        "submit_review",
+                        r#"{"passed":true,"confidence":0.82}"#,
+                    ),
+                    error: json!({
+                        "kind": "submission_commit",
+                        "message": "审核提交缺少结论",
+                    }),
+                    correction: "上一轮对 `submit_review` 的提交被本阶段守卫拒绝。".to_owned(),
+                    tool_result_code: "INVALID_REVIEW_RESULT".to_owned(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(outcome.newly_applied);
+        assert!(outcome.requeue);
+
+        let after = entity::run::Entity::find_by_id(db_id(delegation_run_id))
+            .one(&store.database)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.status, before.status);
+        assert_ne!(after.status, "failed");
+        assert_eq!(after.ended_at, None);
+        assert_eq!(after.consecutive_protocol_errors, 0);
+
+        let snapshot = store.get_preparation_snapshot(version_id).await.unwrap();
+        let delegated = snapshot
             .artifacts
             .iter()
             .find(|artifact| artifact.kind == PreparationArtifactKind::Background)
             .and_then(|artifact| artifact.review.as_ref())
             .unwrap();
-        assert_eq!(reopened.status, ReviewStatus::Open);
+        assert_eq!(delegated.status, ReviewStatus::Delegated);
+
+        let messages = store.list_agent_messages(delegation_run_id).await.unwrap();
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[1].role, AgentMessageRole::Tool);
+        let paired = messages[1].content["content"].as_str().unwrap();
+        assert!(paired.contains("INVALID_REVIEW_RESULT"), "{paired}");
+        assert_eq!(messages[2].content["kind"], "protocol_correction");
     }
 
     #[tokio::test]
@@ -5872,5 +6283,321 @@ mod tests {
             store.get_recycle_bin().await.unwrap().items,
             [] as [nekowriter_core::recycle::RecycleItem; 0]
         );
+    }
+
+    /// 整章审核「退回修订」写下的意见必须到达正文 Agent。
+    ///
+    /// 它与面板里的自由意见走同一条通道：退回时排进未封存批次（`queued`），模型产生
+    /// 下一条正文编辑的结果时绑定（`bound`），随该结果进入下一次请求（`included`）。
+    /// 只把意见写进 `reviews.issues_json` 会让退回后的原稿空转回到审核
+    /// （docs/03 §43.4 a），而界面标签与正文提示词都承诺这份意见会到模型。
+    #[tokio::test]
+    async fn chapter_final_rejection_hands_its_issues_to_the_body_agent() {
+        use crate::entity::{feedback, tool_call};
+
+        let data_dir = TempDir::new().unwrap();
+        let store = Store::open(data_dir.path()).await.unwrap();
+        let project = store
+            .create_project(
+                Uuid::new_v4(),
+                NewProject::new("退回修订", "雨夜车站", None::<&str>).unwrap(),
+            )
+            .await
+            .unwrap();
+        let version_id = project.version.id;
+        store
+            .save_novel_brief(
+                version_id,
+                Uuid::new_v4(),
+                NewNovelBrief::new("写一部围绕雨夜车站和失踪信件展开的悬疑短篇。").unwrap(),
+            )
+            .await
+            .unwrap();
+        let started = store
+            .start_preparation(version_id, Uuid::new_v4(), 0)
+            .await
+            .unwrap();
+        let mut snapshot = store
+            .submit_preparation_artifacts(
+                version_id,
+                Uuid::new_v4(),
+                started.workflow.state_revision,
+                vec![
+                    PreparationArtifactInput::new(
+                        PreparationArtifactKind::Background,
+                        "雨夜的旧车站即将拆除，末班车仍在运行。",
+                    )
+                    .unwrap(),
+                    PreparationArtifactInput::new(
+                        PreparationArtifactKind::Research,
+                        "用户提供了一封没有署名的旧信，出处尚待核验。",
+                    )
+                    .unwrap(),
+                    PreparationArtifactInput::new(
+                        PreparationArtifactKind::Characters,
+                        "沈宁是追查失踪姐姐下落的摄影记者。",
+                    )
+                    .unwrap(),
+                    PreparationArtifactInput::new(
+                        PreparationArtifactKind::Outline,
+                        "沈宁在末班车上收到旧信，决定进入废弃候车室寻找寄信人。",
+                    )
+                    .unwrap(),
+                ],
+                Some(vec![
+                    ChapterPlanDraft::new("末班车", "沈宁在雨夜车站收到一封旧信。").unwrap(),
+                ]),
+            )
+            .await
+            .unwrap();
+        for kind in PreparationArtifactKind::ALL {
+            let review_id = snapshot
+                .artifacts
+                .iter()
+                .find(|artifact| artifact.kind == kind)
+                .and_then(|artifact| artifact.review.as_ref())
+                .map(|review| review.id)
+                .unwrap();
+            snapshot = store
+                .decide_review(
+                    review_id,
+                    Uuid::new_v4(),
+                    snapshot.workflow.state_revision,
+                    HumanReviewDecision::new(true, "").unwrap(),
+                    Vec::new(),
+                )
+                .await
+                .unwrap();
+        }
+        let chapter_id = snapshot.workflow.active_chapter_id.unwrap();
+        store
+            .save_chapter_guidance(
+                chapter_id,
+                Uuid::new_v4(),
+                snapshot.workflow.state_revision,
+                NewChapterGuidance::new("让沈宁先辨认旧信上的车站印章。").unwrap(),
+            )
+            .await
+            .unwrap();
+        let ready = store.get_preparation_snapshot(version_id).await.unwrap();
+        let outline_started = store
+            .start_chapter_outline(chapter_id, Uuid::new_v4(), ready.workflow.state_revision)
+            .await
+            .unwrap();
+        let outline = store
+            .submit_chapter_outline(
+                chapter_id,
+                Uuid::new_v4(),
+                outline_started.state_revision,
+                NewChapterOutline::new(
+                    "1. 沈宁辨认旧信上的车站印章。\n2. 末班车鸣笛，迫使她决定是否追上寄信人。",
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let outline_review_id = outline.outline.review.as_ref().unwrap().id;
+        let drafting = store
+            .decide_review(
+                outline_review_id,
+                Uuid::new_v4(),
+                outline.workflow.state_revision,
+                HumanReviewDecision::new(true, "").unwrap(),
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(drafting.workflow.stage, WorkflowStage::WritingDrafting);
+        let body_run_id = drafting.workflow.active_run_id.unwrap();
+
+        // 模型写出正文，人工提交整章审核。
+        let request = store
+            .capture_and_dispatch_model_request(
+                NewModelRequest {
+                    run_id: body_run_id,
+                    settings_snapshot: json!({ "model": "writing-test" }),
+                    prompt_snapshot: json!({ "key": "chapter.write" }),
+                    context_snapshot: json!({ "messages": [] }),
+                },
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        let body_content = "沈宁攥紧旧信，踏上刚刚进站的末班车。";
+        let applied = store
+            .execute_chapter_body_agent_tool_call(
+                request.id,
+                chapter_id,
+                Some("writing-provider-body".to_owned()),
+                json!({}),
+                ChapterBodyAgentToolCall {
+                    provider_call_id: "body-call".to_owned(),
+                    name: "append_content".to_owned(),
+                    arguments: json!({ "content": body_content }),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(applied.newly_resolved);
+        let written = store.get_chapter_body(chapter_id).await.unwrap();
+        assert_eq!(written.body.content.as_deref(), Some(body_content));
+        let submitted = store
+            .submit_chapter_final_review(
+                chapter_id,
+                Uuid::new_v4(),
+                written.workflow.state_revision,
+            )
+            .await
+            .unwrap();
+        let review = submitted.body.review.clone().unwrap();
+        assert_eq!(review.status, ReviewStatus::Open);
+        let review_id = review.id;
+        let rejected_revision_id = review.target_revision_id;
+
+        // 退回：意见必须排进正文 Run 的自由意见批次，等着随下一条正文编辑投递。
+        let issues = "让沈宁主动留下查清寄信人；第二段的雨声描写与结尾重复。";
+        let rejected = store
+            .decide_review(
+                review_id,
+                Uuid::new_v4(),
+                submitted.workflow.state_revision,
+                HumanReviewDecision::new(false, issues).unwrap(),
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(rejected.workflow.stage, WorkflowStage::WritingDrafting);
+        assert_eq!(rejected.workflow.execution, ExecutionStatus::Queued);
+        assert_eq!(rejected.workflow.active_run_id, Some(body_run_id));
+        let rejected_body = store.get_chapter_body(chapter_id).await.unwrap();
+        assert_eq!(rejected_body.pending_feedback.len(), 1);
+        assert_eq!(rejected_body.pending_feedback[0].text, issues);
+        assert_eq!(
+            rejected_body.pending_feedback[0].status,
+            nekowriter_core::FeedbackStatus::Queued
+        );
+        assert_eq!(rejected_body.pending_feedback[0].bound_tool_call_id, None);
+        // 锚点取最后一条已有结果的工具调用：只有序号更大的下一条结果才会带上它。
+        let anchor = feedback::Entity::find()
+            .filter(feedback::Entity::COLUMN.run_id.eq(db_id(body_run_id)))
+            .one(&store.database)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(anchor.sequence, 1);
+        assert_eq!(anchor.after_tool_sequence, 1);
+        assert_eq!(anchor.status, "queued");
+        assert_eq!(
+            store
+                .list_materialized_chapter_body_feedback(body_run_id)
+                .await
+                .unwrap(),
+            Vec::new(),
+            "尚未产生新的工具结果时，意见还不能算已投递"
+        );
+
+        // 模型按退回意见改一次正文：意见随这条结果绑定。这一次请求也把上一轮那条
+        // 尚未封存的写作结果带进快照（调度器就是这么传的）。
+        assert_eq!(
+            store
+                .list_unsealed_agent_tool_result_provider_ids(body_run_id)
+                .await
+                .unwrap(),
+            vec!["body-call".to_owned()]
+        );
+        let revision_request = store
+            .capture_and_dispatch_model_request(
+                NewModelRequest {
+                    run_id: body_run_id,
+                    settings_snapshot: json!({ "model": "writing-test" }),
+                    prompt_snapshot: json!({ "key": "chapter.write" }),
+                    context_snapshot: json!({
+                        "messages": [],
+                        "toolResultBinding": { "providerCallIds": ["body-call"] },
+                    }),
+                },
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        store
+            .execute_chapter_body_agent_tool_call(
+                revision_request.id,
+                chapter_id,
+                Some("writing-provider-revision".to_owned()),
+                json!({}),
+                ChapterBodyAgentToolCall {
+                    provider_call_id: "revision-call".to_owned(),
+                    name: "replace_content".to_owned(),
+                    arguments: json!({ "old_str": "踏上刚刚进站的末班车", "new_str": "退掉车票，留下等寄信人" }),
+                },
+            )
+            .await
+            .unwrap();
+        let bound = store
+            .list_materialized_chapter_body_feedback(body_run_id)
+            .await
+            .unwrap();
+        assert_eq!(bound.len(), 1);
+        assert_eq!(bound[0].text, issues);
+        assert_eq!(bound[0].provider_tool_call_id, "revision-call");
+        assert_eq!(bound[0].status, nekowriter_core::FeedbackStatus::Bound);
+        let revised = store.get_chapter_body(chapter_id).await.unwrap();
+        assert_eq!(
+            revised.body.content.as_deref(),
+            Some("沈宁攥紧旧信，退掉车票，留下等寄信人。")
+        );
+        assert_ne!(revised.body.revision_id, Some(rejected_revision_id));
+
+        // 下一次请求封存时这条意见进入请求快照：退回后的修稿真的带上了意见。
+        // 两个绑定就是调度器实际写进上下文快照的形状（已绑定意见 + 它的工具结果）。
+        let sealed = store
+            .capture_and_dispatch_model_request(
+                NewModelRequest {
+                    run_id: body_run_id,
+                    settings_snapshot: json!({ "model": "writing-test" }),
+                    prompt_snapshot: json!({ "key": "chapter.write" }),
+                    context_snapshot: json!({
+                        "messages": [],
+                        "feedbackBinding": { "ids": [bound[0].id.to_string()] },
+                        "toolResultBinding": { "providerCallIds": ["revision-call"] },
+                    }),
+                },
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        let included = store
+            .list_materialized_chapter_body_feedback(body_run_id)
+            .await
+            .unwrap();
+        assert_eq!(included.len(), 1);
+        assert_eq!(
+            included[0].status,
+            nekowriter_core::FeedbackStatus::Included
+        );
+        let included_row = feedback::Entity::find()
+            .filter(feedback::Entity::COLUMN.run_id.eq(db_id(body_run_id)))
+            .one(&store.database)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(included_row.status, "included");
+        assert_eq!(
+            included_row.included_request_id,
+            Some(sealed.id.to_string())
+        );
+        let sealed_tool = tool_call::Entity::find()
+            .filter(tool_call::Entity::COLUMN.run_id.eq(db_id(body_run_id)))
+            .filter(
+                tool_call::Entity::COLUMN
+                    .provider_call_id
+                    .eq("revision-call"),
+            )
+            .one(&store.database)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(sealed_tool.included_request_id, Some(sealed.id.to_string()));
     }
 }

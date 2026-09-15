@@ -646,7 +646,7 @@ export function KnowledgePanel({ refreshToken = 0 }: KnowledgePanelProps) {
               placeholder={
                 embedding?.credentialConfigured
                   ? "已保存；留空表示保持不变"
-                  : "只写入本机凭据库"
+                  : "只写入本机数据库"
               }
             />
           </Label>

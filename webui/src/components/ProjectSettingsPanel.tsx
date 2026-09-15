@@ -355,7 +355,7 @@ export function ProjectSettingsPanel({
                 />
                 <FieldDescription>
                   只有需要为该项目单独指定服务上的模型时才填写。模型引用只换模型，
-                  服务地址与凭据仍来自系统设置。
+                  服务地址与密钥仍来自系统设置。
                 </FieldDescription>
               </Field>
 

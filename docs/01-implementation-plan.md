@@ -105,7 +105,7 @@ macOS aarch64 的用户验收范围现已完成；全平台计划仍不能因本
 | 前端交互状态 | XState | 显式描述分层状态及连接状态等并行区域。[并行状态](https://stately.ai/docs/parallel-states) |
 | 长篇阅读 | TanStack Virtual | 按章节虚拟化，保留页面与样式控制权。[官方说明](https://tanstack.com/virtual/latest/docs/introduction) |
 | 路由与校验 | React Router；Rust serde + 类型化校验 | 前端只用客户端路由，不引入另一套全栈框架。[声明式路由](https://reactrouter.com/start/declarative/installation) |
-| 密钥 | Windows 凭据存储 | Rust 采用 keyring 生态的对应平台存储；具体 API 随锁定版本核验。[当前 keyring 使用说明](https://docs.rs/keyring/latest/keyring/) |
+| 密钥 | 本地 SQLite 设置行 | 模型密钥与所属设置在同一个事务里写入 `system_model_settings.api_key` / `embedding_settings.api_key`，只在构建请求前读出；不接入任何 OS 凭据库（移除原因与现场见 docs/03 §37） |
 
 这些版本是查阅时的文档快照，不是已完成的联合构建结果。需求中的 `@latest` 解释为实施起点选择最新稳定版、排除预发布，再提交 `Cargo.lock` 与前端锁文件；不使用浮动 `*`。第一阶段必须验证 Windows 上的 Rust 工具链、LanceDB/Arrow 依赖及前端构建组合，之后按锁文件重现。
 

@@ -33,7 +33,7 @@ use tracing::warn;
 use uuid::Uuid;
 
 use crate::{
-    ApiError, AppState, credential_fingerprint, credentials, ensure_trusted_write_request,
+    ApiError, AppState, ensure_trusted_write_request,
     operations::{SystemOperationResult, record_system_operation},
 };
 
@@ -181,8 +181,8 @@ pub async fn get_embedding_settings(
 
 /// 保存 Embedding 配置。
 ///
-/// 与写作模型设置一致：API key 只写入 OS 凭据库，SQLite 只保存不透明引用；
-/// 提交失败时回滚刚写入的凭据，避免留下悬空密钥。
+/// 与写作模型设置一致：密钥正文由 Store 与其余字段在同一事务里落库，保存失败不会
+/// 留下与设置不一致的密钥。
 ///
 /// 保存前的真实验证调用必然排在准入检查之后：同一命令已有可重放结果时直接返回，
 /// 修订已过期时直接报冲突，两种情况下都不会先花掉一次真实请求。
@@ -194,7 +194,6 @@ pub async fn save_embedding_settings(
     ensure_trusted_write_request(&headers, &state)?;
     let _guard = state.settings_write_lock.lock().await;
     let current = state.store.get_embedding_settings().await?;
-    let existing_ref = state.store.embedding_credential_ref().await?;
     let SaveEmbeddingSettingsRequest {
         command_id,
         expected_revision,
@@ -204,20 +203,14 @@ pub async fn save_embedding_settings(
         api_key,
     } = request;
 
-    let credential_ref = match (&api_key, &existing_ref) {
-        (Some(_), Some(existing)) => Some(existing.clone()),
-        (Some(_), None) => Some(format!("embedding-{}", Uuid::new_v4())),
-        (None, existing) => existing.clone(),
-    };
     let settings = NewEmbeddingSettings {
         api_base_url,
         model_id,
         dimension,
-        credential_ref: credential_ref.clone(),
-        credential_fingerprint: api_key.as_deref().map(credential_fingerprint),
+        api_key: api_key.clone(),
     };
 
-    // 命中已记录的结果时直接返回：既不重复写凭据，也不重复调用供应商。
+    // 命中已记录的结果时直接返回：既不重复写库，也不重复调用供应商。
     if let Some(replayed) = state
         .store
         .replay_embedding_settings_if_known(command_id, expected_revision, &settings)
@@ -239,14 +232,16 @@ pub async fn save_embedding_settings(
     }
 
     // 保存前先用真实配置验证一次地址、维度与模型，避免存入不可用的配置。
+    // 未重填密钥时用库里现有的那把，与写入语义保持一致。
+    let api_key = match api_key {
+        Some(api_key) => Some(api_key),
+        None => state.store.embedding_api_key().await?,
+    };
     let probe = build_client(
         &settings.api_base_url,
         &settings.model_id,
         settings.dimension,
-        match &api_key {
-            Some(api_key) => Some(api_key.clone()),
-            None => read_stored_api_key(existing_ref.as_deref()).await?,
-        },
+        api_key,
     )?;
     // 保存前的验证是一次真实的 Embedding 调用，因此和连接测试一样必须落库：
     // 否则这次请求的用量会在统计里凭空消失。
@@ -264,28 +259,13 @@ pub async fn save_embedding_settings(
     .await?;
     outcome.map_err(ApiError::Embedding)?;
 
-    let created_credential = api_key.is_some() && existing_ref.is_none();
-    if let (Some(api_key), Some(credential_ref)) = (api_key, credential_ref.clone()) {
-        credentials::write_api_key(credential_ref, api_key).await?;
-    }
-
-    match state
+    let saved = state
         .store
         .save_embedding_settings(command_id, expected_revision, settings)
-        .await
-    {
-        Ok(saved) => Ok(Json(EmbeddingSettingsResponse {
-            embedding: Some(saved),
-        })),
-        Err(error) => {
-            if let Some(credential_ref) = credential_ref
-                && created_credential
-            {
-                let _ = credentials::delete_api_key(credential_ref).await;
-            }
-            Err(error.into())
-        }
-    }
+        .await?;
+    Ok(Json(EmbeddingSettingsResponse {
+        embedding: Some(saved),
+    }))
 }
 
 /// 用未保存的配置做一次真实 Embedding 调用，返回服务端实际输出维度。
@@ -295,10 +275,9 @@ pub async fn test_embedding_connection(
     Json(request): Json<TestEmbeddingRequest>,
 ) -> Result<Json<TestEmbeddingResponse>, ApiError> {
     ensure_trusted_write_request(&headers, &state)?;
-    let existing_ref = state.store.embedding_credential_ref().await?;
     let api_key = match request.api_key {
         Some(api_key) => Some(api_key),
-        None => read_stored_api_key(existing_ref.as_deref()).await?,
+        None => state.store.embedding_api_key().await?,
     };
     let client = build_client(
         &request.api_base_url,
@@ -749,27 +728,13 @@ async fn client_for_profile(
     store: &Store,
     profile: &EmbeddingProfile,
 ) -> Result<EmbeddingClient, ApiError> {
-    let credential_ref = store.embedding_credential_ref().await?;
-    let api_key = read_stored_api_key(credential_ref.as_deref()).await?;
+    let api_key = store.embedding_api_key().await?;
     build_client(
         &profile.api_base_url,
         &profile.model_id,
         profile.dimension,
         api_key,
     )
-}
-
-async fn read_stored_api_key(credential_ref: Option<&str>) -> Result<Option<String>, ApiError> {
-    let Some(credential_ref) = credential_ref else {
-        return Ok(None);
-    };
-    match credentials::read_api_key(credential_ref.to_owned()).await {
-        Ok(api_key) => Ok(Some(api_key)),
-        Err(credentials::CredentialStoreError::Missing) => {
-            Err(StoreError::EmbeddingNotConfigured.into())
-        }
-        Err(error) => Err(error.into()),
-    }
 }
 
 fn build_client(
@@ -800,8 +765,6 @@ enum IndexError {
     ProfileChanged,
     #[error(transparent)]
     Store(#[from] StoreError),
-    #[error(transparent)]
-    Credential(#[from] credentials::CredentialStoreError),
     #[error(transparent)]
     Embedding(#[from] nekowriter_agent::embedding::EmbeddingError),
 }
@@ -899,11 +862,7 @@ impl KnowledgeIndexer {
         &self,
         profile: &EmbeddingProfile,
     ) -> Result<EmbeddingClient, IndexError> {
-        let credential_ref = self.store.embedding_credential_ref().await?;
-        let api_key = match credential_ref {
-            Some(credential_ref) => Some(credentials::read_api_key(credential_ref).await?),
-            None => None,
-        };
+        let api_key = self.store.embedding_api_key().await?;
         let config = EmbeddingConfig::new(
             &profile.api_base_url,
             &profile.model_id,

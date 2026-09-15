@@ -4,8 +4,8 @@
 //! 解析只在这里实现一次，调度器构建请求、HTTP 命令放行判断与快照都必须经过它，
 //! 避免出现「用系统模型的能力校验项目引用的模型」这类第二套规则。
 //!
-//! 项目引用只改变「在已配置服务上使用哪个模型」，不改变服务地址与凭据，因此
-//! [`EffectiveModel`] 不携带 `api_base_url` / `credential_ref`。
+//! 项目引用只改变「在已配置服务上使用哪个模型」，不改变服务地址与密钥，因此
+//! [`EffectiveModel`] 不携带 `api_base_url` / `api_key`。
 
 use nekowriter_core::{ModelCapabilityProfile, ProjectSettings, ThinkingLevel};
 use nekowriter_store::SystemModelSettings;
@@ -140,7 +140,7 @@ mod tests {
     fn system_settings(capabilities: ModelCapabilityProfile) -> SystemModelSettings {
         SystemModelSettings {
             api_base_url: "https://model.example/v1".to_owned(),
-            credential_ref: None,
+            credential_configured: true,
             model_id: "system-model".to_owned(),
             capabilities,
             max_context_tokens: 32_768,
