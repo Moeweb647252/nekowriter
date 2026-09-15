@@ -54,10 +54,10 @@ use super::model_requests::{
     model_request_status_from_db, next_protocol_error_count, protocol_error_tool_result_messages,
 };
 use super::{
-    AgentMessageRole, CHAPTER_BODY_ROLE, CHAPTER_GUIDANCE_ROLE, CHAPTER_OUTLINE_ROLE,
-    ModelRequestStatus, NOVEL_BRIEF_ROLE, NewAgentMessage, ProjectId, Store, StoreError, VersionId,
-    approval_mode_name, db_id, insert_receipt, parse_id, parse_optional_id, payload_hash,
-    replay_or_conflict, transaction_error, utc_now_millis, workflow_from_model,
+    AgentMessageRole, CHAPTER_BODY_ROLE, CHAPTER_GUIDANCE_ROLE, CHAPTER_OUTLINE_ROLE, Command,
+    ModelRequestStatus, NOVEL_BRIEF_ROLE, NewAgentMessage, Notify, ProjectId, Store, StoreError,
+    VersionId, approval_mode_name, db_id, insert_receipt, parse_id, parse_optional_id,
+    payload_hash, replay_or_conflict, transaction_error, utc_now_millis, workflow_from_model,
 };
 
 const SAVE_NOVEL_BRIEF_METHOD: &str = "PUT";
@@ -2328,15 +2328,12 @@ impl Store {
         let payload_hash = payload_hash(&SaveNovelBriefPayload {
             content: &input.content,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, SAVE_NOVEL_BRIEF_METHOD, &target, &payload_hash);
-        }
+        let command = Command::new(command_id, SAVE_NOVEL_BRIEF_METHOD, &target, &payload_hash);
 
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let workflow = workflow_for_version(transaction, version_id).await?;
                     if workflow.stage != WorkflowStage::Initializing {
@@ -2385,23 +2382,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        match result {
-            Ok(response) => {
-                self.notify_event_listeners();
-                Ok(response)
-            }
-            Err(error) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    SAVE_NOVEL_BRIEF_METHOD,
-                    &target,
-                    &payload_hash,
-                    error,
-                )
-                .await
-            }
-        }
     }
 
     pub async fn start_preparation(
@@ -2414,15 +2394,12 @@ impl Store {
         let payload_hash = payload_hash(&StartPreparationPayload {
             expected_state_revision,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, START_PREPARATION_METHOD, &target, &payload_hash);
-        }
+        let command = Command::new(command_id, START_PREPARATION_METHOD, &target, &payload_hash);
 
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let workflow = workflow_for_version(transaction, version_id).await?;
                     ensure_expected_state_revision(&workflow, expected_state_revision)?;
@@ -2485,23 +2462,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        match result {
-            Ok(response) => {
-                self.notify_event_listeners();
-                Ok(response)
-            }
-            Err(error) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    START_PREPARATION_METHOD,
-                    &target,
-                    &payload_hash,
-                    error,
-                )
-                .await
-            }
-        }
     }
 
     pub async fn submit_preparation_artifacts(
@@ -2518,20 +2478,17 @@ impl Store {
             artifacts: &artifacts,
             chapter_plan: chapter_plan.as_deref(),
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(
-                receipt,
-                SUBMIT_PREPARATION_ARTIFACTS_METHOD,
-                &target,
-                &payload_hash,
-            );
-        }
+        let command = Command::new(
+            command_id,
+            SUBMIT_PREPARATION_ARTIFACTS_METHOD,
+            &target,
+            &payload_hash,
+        );
 
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let workflow = workflow_for_version(transaction, version_id).await?;
                     ensure_expected_state_revision(&workflow, expected_state_revision)?;
@@ -2601,23 +2558,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        match result {
-            Ok(response) => {
-                self.notify_event_listeners();
-                Ok(response)
-            }
-            Err(error) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    SUBMIT_PREPARATION_ARTIFACTS_METHOD,
-                    &target,
-                    &payload_hash,
-                    error,
-                )
-                .await
-            }
-        }
     }
 
     pub async fn decide_preparation_review(
@@ -2634,20 +2574,17 @@ impl Store {
             decision: &decision,
             citations: &citations,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(
-                receipt,
-                DECIDE_PREPARATION_REVIEW_METHOD,
-                &target,
-                &payload_hash,
-            );
-        }
+        let command = Command::new(
+            command_id,
+            DECIDE_PREPARATION_REVIEW_METHOD,
+            &target,
+            &payload_hash,
+        );
 
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let review_target = preparation_review_target(transaction, review_id).await?;
                     if review_target.status != ReviewStatus::Open {
@@ -2813,23 +2750,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        match result {
-            Ok(response) => {
-                self.notify_event_listeners();
-                Ok(response)
-            }
-            Err(error) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    DECIDE_PREPARATION_REVIEW_METHOD,
-                    &target,
-                    &payload_hash,
-                    error,
-                )
-                .await
-            }
-        }
     }
 
     pub async fn get_chapter_guidance(
@@ -2851,20 +2771,17 @@ impl Store {
             expected_state_revision,
             content: &input.content,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(
-                receipt,
-                SAVE_CHAPTER_GUIDANCE_METHOD,
-                &target,
-                &payload_hash,
-            );
-        }
+        let command = Command::new(
+            command_id,
+            SAVE_CHAPTER_GUIDANCE_METHOD,
+            &target,
+            &payload_hash,
+        );
 
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let (chapter_model, guidance_document) =
                         chapter_and_guidance_document(transaction, chapter_id).await?;
@@ -2932,23 +2849,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        match result {
-            Ok(response) => {
-                self.notify_event_listeners();
-                Ok(response)
-            }
-            Err(error) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    SAVE_CHAPTER_GUIDANCE_METHOD,
-                    &target,
-                    &payload_hash,
-                    error,
-                )
-                .await
-            }
-        }
     }
 
     pub async fn start_chapter_outline(
@@ -2961,20 +2861,17 @@ impl Store {
         let payload_hash = payload_hash(&StartChapterOutlinePayload {
             expected_state_revision,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(
-                receipt,
-                START_CHAPTER_OUTLINE_METHOD,
-                &target,
-                &payload_hash,
-            );
-        }
+        let command = Command::new(
+            command_id,
+            START_CHAPTER_OUTLINE_METHOD,
+            &target,
+            &payload_hash,
+        );
 
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let (chapter_model, guidance_document) =
                         chapter_and_guidance_document(transaction, chapter_id).await?;
@@ -3083,23 +2980,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        match result {
-            Ok(response) => {
-                self.notify_event_listeners();
-                Ok(response)
-            }
-            Err(error) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    START_CHAPTER_OUTLINE_METHOD,
-                    &target,
-                    &payload_hash,
-                    error,
-                )
-                .await
-            }
-        }
     }
 
     /// 读取当前章节的细纲文档、审核状态和已通过时的阶段折叠。
@@ -3131,8 +3011,11 @@ impl Store {
             expected_state_revision,
             mode: approval_mode,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, SET_APPROVAL_MODE_METHOD, &target, &payload_hash);
+        let command = Command::new(command_id, SET_APPROVAL_MODE_METHOD, &target, &payload_hash);
+        // 两段式站点：通知与否要看事务结果，收尾走 `finish`，而 `finish` 不做预查，
+        // 所以事务外的预查仍由这里承担。
+        if let Some(replayed) = command.replay_if_recorded(self).await? {
+            return Ok(replayed);
         }
 
         let target_for_transaction = target.clone();
@@ -3181,24 +3064,10 @@ impl Store {
             })
             .await
             .map_err(transaction_error);
-        match result {
-            Ok((workflow, changed)) => {
-                if changed {
-                    self.notify_event_listeners();
-                }
-                Ok(workflow)
-            }
-            Err(error) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    SET_APPROVAL_MODE_METHOD,
-                    &target,
-                    &payload_hash,
-                    error,
-                )
-                .await
-            }
-        }
+        // no-op 命令不通知：审批模式没变就不该让界面重读。
+        let notify = Notify::on_change(matches!(&result, Ok((_, changed)) if *changed));
+        let result = result.map(|(workflow, _)| workflow);
+        command.finish(self, notify, result).await
     }
 
     /// 请求在当前正文 Agent 的下一个完整工具调用边界暂停。
@@ -3215,13 +3084,16 @@ impl Store {
         let payload_hash = payload_hash(&RunWorkflowControlPayload {
             expected_state_revision,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(
-                receipt,
-                REQUEST_CHAPTER_BODY_PAUSE_METHOD,
-                &target,
-                &payload_hash,
-            );
+        let command = Command::new(
+            command_id,
+            REQUEST_CHAPTER_BODY_PAUSE_METHOD,
+            &target,
+            &payload_hash,
+        );
+        // 两段式站点：通知与否要看事务结果，收尾走 `finish`，而 `finish` 不做预查，
+        // 所以事务外的预查仍由这里承担。
+        if let Some(replayed) = command.replay_if_recorded(self).await? {
+            return Ok(replayed);
         }
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
@@ -3301,24 +3173,10 @@ impl Store {
             })
             .await
             .map_err(transaction_error);
-        match result {
-            Ok((response, changed)) => {
-                if changed {
-                    self.notify_event_listeners();
-                }
-                Ok(response)
-            }
-            Err(error) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    REQUEST_CHAPTER_BODY_PAUSE_METHOD,
-                    &target,
-                    &payload_hash,
-                    error,
-                )
-                .await
-            }
-        }
+        // no-op 命令不通知：暂停已经请求过就不该再让界面重读。
+        let notify = Notify::on_change(matches!(&result, Ok((_, changed)) if *changed));
+        let result = result.map(|(response, _)| response);
+        command.finish(self, notify, result).await
     }
 
     /// 恢复一个已经命中工具边界的正文暂停。
@@ -3336,15 +3194,17 @@ impl Store {
         let payload_hash = payload_hash(&RunWorkflowControlPayload {
             expected_state_revision,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, RESUME_CHAPTER_BODY_METHOD, &target, &payload_hash);
-        }
+        let command = Command::new(
+            command_id,
+            RESUME_CHAPTER_BODY_METHOD,
+            &target,
+            &payload_hash,
+        );
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
         let now = utc_now_millis();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let run_model = run::Entity::find_by_id(db_id(run_id))
                         .one(transaction)
@@ -3437,23 +3297,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        match result {
-            Ok(response) => {
-                self.notify_event_listeners();
-                Ok(response)
-            }
-            Err(error) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    RESUME_CHAPTER_BODY_METHOD,
-                    &target,
-                    &payload_hash,
-                    error,
-                )
-                .await
-            }
-        }
     }
 
     /// 显式停止当前顶层写作 Run，并作废尚未形成稳定结果的请求 attempt。
@@ -3471,15 +3314,12 @@ impl Store {
         let payload_hash = payload_hash(&RunWorkflowControlPayload {
             expected_state_revision,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, STOP_WRITING_RUN_METHOD, &target, &payload_hash);
-        }
+        let command = Command::new(command_id, STOP_WRITING_RUN_METHOD, &target, &payload_hash);
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
         let now = utc_now_millis();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let run_model = run::Entity::find_by_id(db_id(run_id))
                         .one(transaction)
@@ -3639,23 +3479,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        match result {
-            Ok(response) => {
-                self.notify_event_listeners();
-                Ok(response)
-            }
-            Err(error) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    STOP_WRITING_RUN_METHOD,
-                    &target,
-                    &payload_hash,
-                    error,
-                )
-                .await
-            }
-        }
     }
 
     /// 显式继续一个失败、停止或因服务重启而中断的顶层写作 Run。
@@ -3674,20 +3497,17 @@ impl Store {
         let payload_hash = payload_hash(&RunWorkflowControlPayload {
             expected_state_revision,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(
-                receipt,
-                CONTINUE_WRITING_RUN_METHOD,
-                &target,
-                &payload_hash,
-            );
-        }
+        let command = Command::new(
+            command_id,
+            CONTINUE_WRITING_RUN_METHOD,
+            &target,
+            &payload_hash,
+        );
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
         let now = utc_now_millis();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let run_model = run::Entity::find_by_id(db_id(run_id))
                         .one(transaction)
@@ -3805,23 +3625,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        match result {
-            Ok(workflow) => {
-                self.notify_event_listeners();
-                Ok(workflow)
-            }
-            Err(error) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    CONTINUE_WRITING_RUN_METHOD,
-                    &target,
-                    &payload_hash,
-                    error,
-                )
-                .await
-            }
-        }
     }
 
     /// 向当前正文 Run 追加一条自由意见。
@@ -3852,16 +3655,18 @@ impl Store {
             text: &text,
             citations: &citations,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, SUBMIT_RUN_FEEDBACK_METHOD, &target, &payload_hash);
-        }
+        let command = Command::new(
+            command_id,
+            SUBMIT_RUN_FEEDBACK_METHOD,
+            &target,
+            &payload_hash,
+        );
 
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
         let now = utc_now_millis();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 let text = text.clone();
                 let citations = citations.clone();
                 Box::pin(async move {
@@ -4107,23 +3912,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        match result {
-            Ok(response) => {
-                self.notify_event_listeners();
-                Ok(response)
-            }
-            Err(error) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    SUBMIT_RUN_FEEDBACK_METHOD,
-                    &target,
-                    &payload_hash,
-                    error,
-                )
-                .await
-            }
-        }
     }
 
     /// 读取当前正文 Run 已经绑定到工具结果的自由意见。
@@ -4732,15 +4520,12 @@ impl Store {
             expected_state_revision,
             answers: &answers,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, ANSWER_QUESTION_METHOD, &target, &payload_hash);
-        }
+        let command = Command::new(command_id, ANSWER_QUESTION_METHOD, &target, &payload_hash);
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
         let now = utc_now_millis();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 let answers = answers.clone();
                 Box::pin(async move {
                     let question_model = question::Entity::find_by_id(db_id(question_id))
@@ -4954,23 +4739,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        match result {
-            Ok(response) => {
-                self.notify_event_listeners();
-                Ok(response)
-            }
-            Err(error) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    ANSWER_QUESTION_METHOD,
-                    &target,
-                    &payload_hash,
-                    error,
-                )
-                .await
-            }
-        }
     }
 
     /// 读取当前章节的正文、终稿审核状态以及两个阶段的纯文本折叠。
@@ -5813,21 +5581,18 @@ impl Store {
             feedback: &feedback,
             citations: &citations,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(
-                receipt,
-                DECIDE_CHAPTER_BODY_PROPOSAL_METHOD,
-                &target,
-                &payload_hash,
-            );
-        }
+        let command = Command::new(
+            command_id,
+            DECIDE_CHAPTER_BODY_PROPOSAL_METHOD,
+            &target,
+            &payload_hash,
+        );
 
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
         let now = utc_now_millis();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 let feedback = feedback.clone();
                 let citations = citations.clone();
                 Box::pin(async move {
@@ -6143,23 +5908,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        match result {
-            Ok(response) => {
-                self.notify_event_listeners();
-                Ok(response)
-            }
-            Err(error) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    DECIDE_CHAPTER_BODY_PROPOSAL_METHOD,
-                    &target,
-                    &payload_hash,
-                    error,
-                )
-                .await
-            }
-        }
     }
 
     /// 将正文 Agent 的阶段提交、模型请求终态和整章终稿审核原子落库。
@@ -6559,15 +6307,12 @@ impl Store {
         method: &'static str,
         mutation: ChapterBodyMutation,
     ) -> Result<ChapterBodySnapshot, StoreError> {
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, method, &target, &payload_hash);
-        }
+        let command = Command::new(command_id, method, &target, &payload_hash);
 
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let (chapter_model, body_document) = chapter_and_document(
                         transaction,
@@ -6737,23 +6482,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        match result {
-            Ok(response) => {
-                self.notify_event_listeners();
-                Ok(response)
-            }
-            Err(error) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    method,
-                    &target,
-                    &payload_hash,
-                    error,
-                )
-                .await
-            }
-        }
     }
 
     /// 提交当前章节正文至整章终稿审核。
@@ -6767,20 +6495,17 @@ impl Store {
         let payload_hash = payload_hash(&SubmitChapterFinalReviewPayload {
             expected_state_revision,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(
-                receipt,
-                SUBMIT_CHAPTER_FINAL_REVIEW_METHOD,
-                &target,
-                &payload_hash,
-            );
-        }
+        let command = Command::new(
+            command_id,
+            SUBMIT_CHAPTER_FINAL_REVIEW_METHOD,
+            &target,
+            &payload_hash,
+        );
 
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let (chapter_model, _) = chapter_and_document(
                         transaction,
@@ -6919,23 +6644,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        match result {
-            Ok(response) => {
-                self.notify_event_listeners();
-                Ok(response)
-            }
-            Err(error) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    SUBMIT_CHAPTER_FINAL_REVIEW_METHOD,
-                    &target,
-                    &payload_hash,
-                    error,
-                )
-                .await
-            }
-        }
     }
 
     /// 对当前章节整章终稿审核作出人工决定。
@@ -6953,20 +6661,17 @@ impl Store {
             decision: &decision,
             citations: &citations,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(
-                receipt,
-                DECIDE_CHAPTER_FINAL_REVIEW_METHOD,
-                &target,
-                &payload_hash,
-            );
-        }
+        let command = Command::new(
+            command_id,
+            DECIDE_CHAPTER_FINAL_REVIEW_METHOD,
+            &target,
+            &payload_hash,
+        );
 
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let review_target = chapter_final_review_target(transaction, review_id).await?;
                     if review_target.status != ReviewStatus::Open {
@@ -7222,23 +6927,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        match result {
-            Ok(response) => {
-                self.notify_event_listeners();
-                Ok(response)
-            }
-            Err(error) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    DECIDE_CHAPTER_FINAL_REVIEW_METHOD,
-                    &target,
-                    &payload_hash,
-                    error,
-                )
-                .await
-            }
-        }
     }
 
     /// 在正文已确认完本后，新增一篇番外并进入其章节指导界面。
@@ -7257,15 +6945,12 @@ impl Store {
             expected_state_revision,
             title: &input.title,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, ADD_EXTRA_CHAPTER_METHOD, &target, &payload_hash);
-        }
+        let command = Command::new(command_id, ADD_EXTRA_CHAPTER_METHOD, &target, &payload_hash);
 
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let workflow = workflow_for_version(transaction, version_id).await?;
                     ensure_expected_state_revision(&workflow, expected_state_revision)?;
@@ -7375,23 +7060,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        match result {
-            Ok(response) => {
-                self.notify_event_listeners();
-                Ok(response)
-            }
-            Err(error) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    ADD_EXTRA_CHAPTER_METHOD,
-                    &target,
-                    &payload_hash,
-                    error,
-                )
-                .await
-            }
-        }
     }
 
     /// 在已定稿章节之后进入下一份计划章节的指导界面。
@@ -7409,20 +7077,17 @@ impl Store {
         let payload_hash = payload_hash(&AdvanceToNextChapterPayload {
             expected_state_revision,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(
-                receipt,
-                ADVANCE_TO_NEXT_CHAPTER_METHOD,
-                &target,
-                &payload_hash,
-            );
-        }
+        let command = Command::new(
+            command_id,
+            ADVANCE_TO_NEXT_CHAPTER_METHOD,
+            &target,
+            &payload_hash,
+        );
 
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let workflow = workflow_for_version(transaction, version_id).await?;
                     ensure_expected_state_revision(&workflow, expected_state_revision)?;
@@ -7500,23 +7165,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        match result {
-            Ok(response) => {
-                self.notify_event_listeners();
-                Ok(response)
-            }
-            Err(error) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    ADVANCE_TO_NEXT_CHAPTER_METHOD,
-                    &target,
-                    &payload_hash,
-                    error,
-                )
-                .await
-            }
-        }
     }
 
     /// 显式确认所有计划正文章节已经完成。
@@ -7533,20 +7181,17 @@ impl Store {
         let payload_hash = payload_hash(&ConfirmNovelCompletionPayload {
             expected_state_revision,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(
-                receipt,
-                CONFIRM_NOVEL_COMPLETION_METHOD,
-                &target,
-                &payload_hash,
-            );
-        }
+        let command = Command::new(
+            command_id,
+            CONFIRM_NOVEL_COMPLETION_METHOD,
+            &target,
+            &payload_hash,
+        );
 
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let workflow = workflow_for_version(transaction, version_id).await?;
                     ensure_expected_state_revision(&workflow, expected_state_revision)?;
@@ -7650,23 +7295,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        match result {
-            Ok(response) => {
-                self.notify_event_listeners();
-                Ok(response)
-            }
-            Err(error) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    CONFIRM_NOVEL_COMPLETION_METHOD,
-                    &target,
-                    &payload_hash,
-                    error,
-                )
-                .await
-            }
-        }
     }
 
     /// 提交当前章节的一份完整细纲以供人工审核。
@@ -7686,20 +7314,17 @@ impl Store {
             expected_state_revision,
             content: &input.content,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(
-                receipt,
-                SUBMIT_CHAPTER_OUTLINE_METHOD,
-                &target,
-                &payload_hash,
-            );
-        }
+        let command = Command::new(
+            command_id,
+            SUBMIT_CHAPTER_OUTLINE_METHOD,
+            &target,
+            &payload_hash,
+        );
 
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let (chapter_model, _) = chapter_and_document(
                         transaction,
@@ -7743,23 +7368,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        match result {
-            Ok(response) => {
-                self.notify_event_listeners();
-                Ok(response)
-            }
-            Err(error) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    SUBMIT_CHAPTER_OUTLINE_METHOD,
-                    &target,
-                    &payload_hash,
-                    error,
-                )
-                .await
-            }
-        }
     }
 
     /// 对当前章节细纲审核作出人工决定。
@@ -7777,20 +7385,17 @@ impl Store {
             decision: &decision,
             citations: &citations,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(
-                receipt,
-                DECIDE_CHAPTER_OUTLINE_REVIEW_METHOD,
-                &target,
-                &payload_hash,
-            );
-        }
+        let command = Command::new(
+            command_id,
+            DECIDE_CHAPTER_OUTLINE_REVIEW_METHOD,
+            &target,
+            &payload_hash,
+        );
 
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let review_target =
                         chapter_outline_review_target(transaction, review_id).await?;
@@ -8011,23 +7616,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        match result {
-            Ok(response) => {
-                self.notify_event_listeners();
-                Ok(response)
-            }
-            Err(error) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    DECIDE_CHAPTER_OUTLINE_REVIEW_METHOD,
-                    &target,
-                    &payload_hash,
-                    error,
-                )
-                .await
-            }
-        }
     }
 
     /// 按审核类型分派统一的 `/reviews/{id}/decision` 命令。
@@ -8048,6 +7636,10 @@ impl Store {
             decision: &decision,
             citations: &citations,
         })?;
+        // 派发前先查回执：命中即返回，省掉 `review_type_for_id` 的读库；而它下面的
+        // 各条分支自己会预查一次、`commit` 在事务前再确认一次。这里必须保留，因为
+        // `review_type_for_id` 在审核行不存在时返回 `ReviewNotFound`——重放一条已记账的
+        // 决定不应该因为审核行后来消失而从「返回既有结果」变成报错。
         if let Some(receipt) = self.find_receipt(command_id).await? {
             return replay_or_conflict(
                 receipt,
@@ -8116,15 +7708,12 @@ impl Store {
             notes: &notes,
             citations: &citations,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, DELEGATE_REVIEW_METHOD, &target, &payload_hash);
-        }
+        let command = Command::new(command_id, DELEGATE_REVIEW_METHOD, &target, &payload_hash);
 
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let target =
                         delegatable_review_target(transaction, review_id, expected_state_revision)
@@ -8222,23 +7811,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        match result {
-            Ok(response) => {
-                self.notify_event_listeners();
-                Ok(response)
-            }
-            Err(error) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    DELEGATE_REVIEW_METHOD,
-                    &target,
-                    &payload_hash,
-                    error,
-                )
-                .await
-            }
-        }
     }
 
     /// 取消正在等待或运行的审核 Agent，并重新开放同一项 Review 供人工决定或重试。
@@ -8255,20 +7827,17 @@ impl Store {
         let payload_hash = payload_hash(&CancelReviewDelegationPayload {
             expected_state_revision,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(
-                receipt,
-                CANCEL_REVIEW_DELEGATION_METHOD,
-                &target,
-                &payload_hash,
-            );
-        }
+        let command = Command::new(
+            command_id,
+            CANCEL_REVIEW_DELEGATION_METHOD,
+            &target,
+            &payload_hash,
+        );
 
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let delegated = delegated_review_attempt(transaction, review_id).await?;
                     let workflow = workflow_for_version(transaction, delegated.version_id).await?;
@@ -8397,23 +7966,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        match result {
-            Ok(response) => {
-                self.notify_event_listeners();
-                Ok(response)
-            }
-            Err(error) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    CANCEL_REVIEW_DELEGATION_METHOD,
-                    &target,
-                    &payload_hash,
-                    error,
-                )
-                .await
-            }
-        }
     }
 
     /// 读取一个仍然有效的审核 Agent 输入快照。

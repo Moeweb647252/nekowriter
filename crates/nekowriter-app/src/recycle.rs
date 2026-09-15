@@ -7,14 +7,13 @@
 use axum::{
     Json,
     extract::{Path, State},
-    http::HeaderMap,
 };
 use nekowriter_core::recycle::{RecycleBin, parse_recycle_item_kind};
 use nekowriter_core::{ChapterId, PreparationSnapshot, ProjectId, VersionId, decimal_i64};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::{ApiError, AppState, ensure_trusted_write_request};
+use crate::{ApiError, AppState};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,10 +52,8 @@ pub async fn get_recycle_bin(State(state): State<AppState>) -> Result<Json<Recyc
 pub async fn restore_recycle_item(
     State(state): State<AppState>,
     Path((kind, id)): Path<(String, Uuid)>,
-    headers: HeaderMap,
     Json(request): Json<RecycleItemActionRequest>,
 ) -> Result<Json<RecycleBin>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let kind = parse_recycle_item_kind(&kind)?;
     Ok(Json(
         state
@@ -69,10 +66,8 @@ pub async fn restore_recycle_item(
 pub async fn purge_recycle_item(
     State(state): State<AppState>,
     Path((kind, id)): Path<(String, Uuid)>,
-    headers: HeaderMap,
     Json(request): Json<RecycleItemActionRequest>,
 ) -> Result<Json<RecycleBin>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let kind = parse_recycle_item_kind(&kind)?;
     Ok(Json(
         state
@@ -86,10 +81,8 @@ pub async fn purge_recycle_item(
 pub async fn delete_project(
     State(state): State<AppState>,
     Path(project_id): Path<ProjectId>,
-    headers: HeaderMap,
     Json(request): Json<DeleteProjectRequest>,
 ) -> Result<Json<RecycleBin>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     Ok(Json(
         state
             .store
@@ -102,10 +95,8 @@ pub async fn delete_project(
 pub async fn delete_version(
     State(state): State<AppState>,
     Path(version_id): Path<VersionId>,
-    headers: HeaderMap,
     Json(request): Json<DeleteVersionRequest>,
 ) -> Result<Json<RecycleBin>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     Ok(Json(
         state
             .store
@@ -118,10 +109,8 @@ pub async fn delete_version(
 pub async fn delete_extra_chapter(
     State(state): State<AppState>,
     Path(chapter_id): Path<ChapterId>,
-    headers: HeaderMap,
     Json(request): Json<DeleteExtraChapterRequest>,
 ) -> Result<Json<PreparationSnapshot>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     Ok(Json(
         state
             .store

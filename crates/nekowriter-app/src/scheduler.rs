@@ -2918,8 +2918,9 @@ mod tests {
         UserQuestionAnswer, UserQuestionAnswers, WorkflowStage,
     };
     use nekowriter_store::{
-        AgentMessageRole, AgentQuestionToolCall, ChapterBodyAgentToolCall, ModelRequestResolution,
-        ModelRequestStatus, NewAgentMessage, NewModelRequest, NewSystemModelSettings,
+        AgentMessageRole, AgentQuestionToolCall, ChapterBodyAgentToolCall, CredentialPatch,
+        ModelRequestResolution, ModelRequestStatus, NewAgentMessage, NewModelRequest,
+        NewSystemModelSettings,
     };
     use serde_json::{Value, json};
     use tempfile::TempDir;
@@ -3054,7 +3055,7 @@ mod tests {
                 0,
                 NewSystemModelSettings {
                     api_base_url: base_url,
-                    api_key: None,
+                    api_key: CredentialPatch::Keep,
                     model_id: "test-writing-model".to_owned(),
                     capabilities: ModelCapabilityProfile {
                         streaming: true,
@@ -3164,7 +3165,7 @@ mod tests {
                 0,
                 NewSystemModelSettings {
                     api_base_url: base_url,
-                    api_key: None,
+                    api_key: CredentialPatch::Keep,
                     model_id: "test-writing-model".to_owned(),
                     capabilities: ModelCapabilityProfile {
                         streaming: true,
@@ -3452,7 +3453,7 @@ mod tests {
                 0,
                 NewSystemModelSettings {
                     api_base_url: base_url,
-                    api_key: None,
+                    api_key: CredentialPatch::Keep,
                     model_id: "system-model".to_owned(),
                     capabilities: system_capabilities,
                     max_context_tokens: 32_768,
@@ -3703,7 +3704,7 @@ mod tests {
                 0,
                 NewSystemModelSettings {
                     api_base_url: base_url,
-                    api_key: None,
+                    api_key: CredentialPatch::Keep,
                     model_id: "test-review-model".to_owned(),
                     capabilities: ModelCapabilityProfile {
                         streaming: true,
@@ -4241,7 +4242,7 @@ mod tests {
                 0,
                 NewSystemModelSettings {
                     api_base_url: base_url,
-                    api_key: None,
+                    api_key: CredentialPatch::Keep,
                     model_id: "reenqueue-test-model".to_owned(),
                     capabilities: ModelCapabilityProfile {
                         streaming: true,
@@ -4365,7 +4366,7 @@ mod tests {
                     api_base_url: "http://127.0.0.1:1/v1".to_owned(),
                     model_id: "stub-embed".to_owned(),
                     dimension: 3,
-                    api_key: None,
+                    api_key: CredentialPatch::Keep,
                 },
             )
             .await
@@ -4778,7 +4779,7 @@ mod tests {
                 0,
                 NewSystemModelSettings {
                     api_base_url: base_url,
-                    api_key: None,
+                    api_key: CredentialPatch::Keep,
                     model_id: "stop-test-model".to_owned(),
                     capabilities: ModelCapabilityProfile {
                         streaming: true,
@@ -4883,7 +4884,7 @@ mod tests {
                 0,
                 NewSystemModelSettings {
                     api_base_url: base_url,
-                    api_key: None,
+                    api_key: CredentialPatch::Keep,
                     model_id: "test-writing-model".to_owned(),
                     capabilities: ModelCapabilityProfile {
                         streaming: true,
@@ -5005,7 +5006,7 @@ mod tests {
                 0,
                 NewSystemModelSettings {
                     api_base_url: base_url,
-                    api_key: None,
+                    api_key: CredentialPatch::Keep,
                     model_id: "test-writing-model".to_owned(),
                     capabilities: ModelCapabilityProfile {
                         streaming: true,
@@ -5162,7 +5163,7 @@ mod tests {
                 0,
                 NewSystemModelSettings {
                     api_base_url: base_url,
-                    api_key: None,
+                    api_key: CredentialPatch::Keep,
                     model_id: "test-writing-model".to_owned(),
                     capabilities: ModelCapabilityProfile {
                         streaming: true,
@@ -6529,7 +6530,7 @@ mod tests {
                 0,
                 NewSystemModelSettings {
                     api_base_url: base_url,
-                    api_key: None,
+                    api_key: CredentialPatch::Keep,
                     model_id: "test-review-model".to_owned(),
                     capabilities: ModelCapabilityProfile {
                         streaming: true,

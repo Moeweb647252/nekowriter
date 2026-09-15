@@ -7,6 +7,7 @@ import {
   RefreshCw,
   Save,
   Settings2,
+  Trash2,
 } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -108,6 +109,8 @@ export function ModelSettingsPanel({
   const [apiKey, setApiKey] = useState("")
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [clearing, setClearing] = useState(false)
+  const [confirmingClear, setConfirmingClear] = useState(false)
   const [testing, setTesting] = useState(false)
   const [verifying, setVerifying] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
@@ -160,6 +163,7 @@ export function ModelSettingsPanel({
   }, [])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 挂载与刷新令牌变化时读取一次设置；loadSettings 先置「读取中」，那是这次请求自身的界面状态。
     void loadSettings()
   }, [loadSettings, refreshToken])
 
@@ -179,6 +183,7 @@ export function ModelSettingsPanel({
           capabilities: draft.capabilities,
           maxContextTokens: draft.maxContextTokens,
           reservedOutputTokens: draft.reservedOutputTokens,
+          // 留空表示保留已保存的密钥（省略字段），不是清除。
           ...(apiKey ? { apiKey } : {}),
         },
         commandId
@@ -199,6 +204,46 @@ export function ModelSettingsPanel({
       })
     } finally {
       setSaving(false)
+    }
+  }
+
+  /**
+   * 清除已保存的密钥，把模型服务退回「未配置」。
+   *
+   * 它刻意不提交表单草稿：命令只带已持久化的字段加上 `apiKey: null`，所以「清除密钥」
+   * 不会顺手保存用户还没确认的编辑。破坏性动作需要点两次。
+   */
+  async function handleClearCredential() {
+    if (!settings?.credentialConfigured) return
+    if (!confirmingClear) {
+      setConfirmingClear(true)
+      return
+    }
+    setConfirmingClear(false)
+    setClearing(true)
+    setNotice(null)
+    try {
+      const response = await saveSystemModelSettings({
+        expectedRevision: settings.revision,
+        apiBaseUrl: settings.apiBaseUrl,
+        modelId: settings.modelId,
+        capabilities: settings.capabilities,
+        maxContextTokens: settings.maxContextTokens,
+        reservedOutputTokens: settings.reservedOutputTokens,
+        apiKey: null,
+      })
+      setSettings(response.writingModel)
+      setNotice({
+        tone: "success",
+        message: "已清除本机保存的密钥；模型服务回到「未配置」，派发前会提示重新填写。",
+      })
+    } catch (error) {
+      setNotice({
+        tone: "error",
+        message: error instanceof Error ? error.message : "密钥未清除",
+      })
+    } finally {
+      setClearing(false)
     }
   }
 
@@ -385,6 +430,26 @@ export function ModelSettingsPanel({
               <FieldDescription>
                 密钥只保存在本机数据库的模型设置里，只在构建请求前读出；请求快照、事件与日志都不写密钥。
               </FieldDescription>
+              {settings?.credentialConfigured ? (
+                <Button
+                  type="button"
+                  variant={confirmingClear ? "destructive" : "ghost"}
+                  size="sm"
+                  onClick={() => void handleClearCredential()}
+                  disabled={loading || saving || clearing}
+                >
+                  {clearing ? (
+                    <Spinner data-icon="inline-start" aria-hidden="true" />
+                  ) : (
+                    <Trash2 data-icon="inline-start" aria-hidden="true" />
+                  )}
+                  {clearing
+                    ? "正在清除…"
+                    : confirmingClear
+                      ? "确认清除密钥"
+                      : "清除密钥"}
+                </Button>
+              ) : null}
             </Field>
 
             <div className="grid gap-4 sm:grid-cols-2">

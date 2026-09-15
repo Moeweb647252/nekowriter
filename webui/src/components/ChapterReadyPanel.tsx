@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type FormEvent } from "react"
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { BookOpenText, LoaderCircle, Play, Save } from "lucide-react"
 
 import { TemplateInserter } from "@/components/TemplatePanel"
 import { Button } from "@/components/ui/button"
+import { useLatestValue } from "@/hooks/use-latest-value"
 import { useWorkspaceDraftPersistence } from "@/hooks/use-workspace-draft"
 import {
   getChapterGuidance,
@@ -53,7 +54,11 @@ export function ChapterReadyPanel({
   const [loading, setLoading] = useState(true)
   const [pending, setPending] = useState<"save" | "start" | null>(null)
   const [remoteGuidanceChanged, setRemoteGuidanceChanged] = useState(false)
-  const persistedGuidanceRef = useRef("")
+  const {
+    value: persistedGuidance,
+    ref: persistedGuidanceRef,
+    commit: commitPersistedGuidance,
+  } = useLatestValue("")
   const guidanceRef = useRef("")
 
   const chapterId = preparation.workflow.activeChapterId
@@ -70,7 +75,7 @@ export function ChapterReadyPanel({
     targetId: chapterId,
     baseRevision: guidanceRevisionId,
     text: guidance,
-    dirty: guidance !== persistedGuidanceRef.current,
+    dirty: guidance !== persistedGuidance,
     onRestore: (draft) => {
       if (guidanceRef.current !== persistedGuidanceRef.current) return
       guidanceRef.current = draft.text
@@ -81,28 +86,33 @@ export function ChapterReadyPanel({
     },
   })
 
-  function applyGuidance(content: string | null, revisionId: string | null) {
-    const nextContent = content ?? ""
-    const hasUnsavedChanges =
-      guidanceRef.current !== persistedGuidanceRef.current
-    const changedRemotely = nextContent !== persistedGuidanceRef.current
-    persistedGuidanceRef.current = nextContent
-    setGuidanceRevisionId(revisionId)
-    if (!hasUnsavedChanges || nextContent === guidanceRef.current) {
-      guidanceRef.current = nextContent
-      setGuidance(nextContent)
-      setRemoteGuidanceChanged(false)
-    } else if (changedRemotely) {
-      setRemoteGuidanceChanged(true)
-    }
-  }
+  // 只读写 ref 与 setter，identity 稳定，读取副作用可以直接把它放进依赖。
+  const applyGuidance = useCallback(
+    (content: string | null, revisionId: string | null) => {
+      const nextContent = content ?? ""
+      const hasUnsavedChanges =
+        guidanceRef.current !== persistedGuidanceRef.current
+      const changedRemotely = nextContent !== persistedGuidanceRef.current
+      commitPersistedGuidance(nextContent)
+      setGuidanceRevisionId(revisionId)
+      if (!hasUnsavedChanges || nextContent === guidanceRef.current) {
+        guidanceRef.current = nextContent
+        setGuidance(nextContent)
+        setRemoteGuidanceChanged(false)
+      } else if (changedRemotely) {
+        setRemoteGuidanceChanged(true)
+      }
+    },
+    [commitPersistedGuidance, persistedGuidanceRef]
+  )
 
   useEffect(() => {
     let isCurrent = true
     if (!chapterId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 这是「为当前章节重新读取」这一步自己的界面状态：先把上一章的结果清空，面板在无活动章节时整体不渲染。
       setChapter(null)
       setChapters([])
-      persistedGuidanceRef.current = ""
+      commitPersistedGuidance("")
       guidanceRef.current = ""
       setGuidance("")
       setGuidanceRevisionId(null)
@@ -134,7 +144,14 @@ export function ChapterReadyPanel({
     return () => {
       isCurrent = false
     }
-  }, [chapterId, onError, preparation.workflow.stateRevision, versionId])
+  }, [
+    applyGuidance,
+    chapterId,
+    commitPersistedGuidance,
+    onError,
+    preparation.workflow.stateRevision,
+    versionId,
+  ])
 
   async function refreshPreparation() {
     onChanged(await getPreparation(versionId))

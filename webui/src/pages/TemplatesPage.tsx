@@ -1,6 +1,6 @@
 import { AppFrame } from "@/components/AppFrame"
 import { TemplatePanel } from "@/components/TemplatePanel"
-import { useEventSync } from "@/lib/events"
+import { useEventSync } from "@/lib/event-sync-context"
 
 export function TemplatesPage() {
   const { templateVersion } = useEventSync()

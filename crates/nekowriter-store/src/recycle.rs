@@ -12,7 +12,7 @@ use nekowriter_core::{
 };
 use sea_orm::{
     ConnectionTrait, DatabaseTransaction, EntityTrait, IntoActiveModel, QueryFilter, QueryOrder,
-    Set, TransactionTrait,
+    Set,
 };
 use uuid::Uuid;
 
@@ -27,8 +27,8 @@ use super::preparation::{
     open_review_exists, persist_workflow, preparation_snapshot, workflow_for_version,
 };
 use super::{
-    ActiveModelTrait, ProjectId, Store, StoreError, TextUuid, db_id, finish_write, insert_receipt,
-    parse_id, payload_hash, replay_or_conflict, transaction_error,
+    ActiveModelTrait, Command, Notify, ProjectId, Store, StoreError, TextUuid, db_id,
+    insert_receipt, parse_id, payload_hash,
 };
 
 const RESTORE_METHOD: &str = "POST";
@@ -74,19 +74,16 @@ impl Store {
         let payload_hash = payload_hash(&ExpectedStateRevisionPayload {
             expected_state_revision,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(
-                receipt,
-                DELETE_EXTRA_CHAPTER_METHOD,
-                &target,
-                &payload_hash,
-            );
-        }
+        let command = Command::new(
+            command_id,
+            DELETE_EXTRA_CHAPTER_METHOD,
+            &target,
+            &payload_hash,
+        );
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let now = utc_now_millis();
                     let model = chapter::Entity::find_by_id(db_id(chapter_id))
@@ -173,16 +170,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        finish_write(
-            self,
-            command_id,
-            DELETE_EXTRA_CHAPTER_METHOD,
-            &target,
-            &payload_hash,
-            result,
-        )
-        .await
     }
 
     /// 软删除一份稿本。
@@ -198,14 +185,11 @@ impl Store {
     ) -> Result<RecycleBin, StoreError> {
         let target = format!("/api/versions/{version_id}");
         let payload_hash = payload_hash(&ExpectedRevisionPayload { expected_revision })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, DELETE_VERSION_METHOD, &target, &payload_hash);
-        }
+        let command = Command::new(command_id, DELETE_VERSION_METHOD, &target, &payload_hash);
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let now = utc_now_millis();
                     let model = novel_version::Entity::find_by_id(db_id(version_id))
@@ -264,16 +248,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        finish_write(
-            self,
-            command_id,
-            DELETE_VERSION_METHOD,
-            &target,
-            &payload_hash,
-            result,
-        )
-        .await
     }
 
     /// 软删除一个项目。
@@ -290,14 +264,11 @@ impl Store {
     ) -> Result<RecycleBin, StoreError> {
         let target = format!("/api/projects/{project_id}");
         let payload_hash = payload_hash(&ExpectedRevisionPayload { expected_revision })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, DELETE_PROJECT_METHOD, &target, &payload_hash);
-        }
+        let command = Command::new(command_id, DELETE_PROJECT_METHOD, &target, &payload_hash);
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let now = utc_now_millis();
                     let model = project::Entity::find_by_id(db_id(project_id))
@@ -347,16 +318,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        finish_write(
-            self,
-            command_id,
-            DELETE_PROJECT_METHOD,
-            &target,
-            &payload_hash,
-            result,
-        )
-        .await
     }
 
     /// 回收站快照：所有软删除的对象，按删除时间倒序。
@@ -381,14 +342,11 @@ impl Store {
     ) -> Result<RecycleBin, StoreError> {
         let target = format!("/api/recycle-bin/{}/{id}/restore", kind.as_str());
         let payload_hash = payload_hash(&kind.as_str())?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, RESTORE_METHOD, &target, &payload_hash);
-        }
+        let command = Command::new(command_id, RESTORE_METHOD, &target, &payload_hash);
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let now = utc_now_millis();
                     match kind {
@@ -421,16 +379,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        finish_write(
-            self,
-            command_id,
-            RESTORE_METHOD,
-            &target,
-            &payload_hash,
-            result,
-        )
-        .await
     }
 
     /// 彻底删除一条回收站记录。
@@ -447,14 +395,11 @@ impl Store {
     ) -> Result<RecycleBin, StoreError> {
         let target = format!("/api/recycle-bin/{}/{id}/purge", kind.as_str());
         let payload_hash = payload_hash(&kind.as_str())?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, PURGE_METHOD, &target, &payload_hash);
-        }
+        let command = Command::new(command_id, PURGE_METHOD, &target, &payload_hash);
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let now = utc_now_millis();
                     match kind {
@@ -500,16 +445,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        finish_write(
-            self,
-            command_id,
-            PURGE_METHOD,
-            &target,
-            &payload_hash,
-            result,
-        )
-        .await
     }
 }
 

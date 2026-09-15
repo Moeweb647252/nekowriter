@@ -1,20 +1,19 @@
 //! 系统级模型设置的持久化与乐观并发控制。
 //!
 //! SQLite 保存模型服务地址、能力资料与密钥正文。密钥只经由
-//! [`Store::system_model_api_key`] 读出，绝不进入对外视图、回执、事件或请求哈希之外
-//! 的任何产物；回执只落 payload 摘要，不落密钥正文。
+//! [`Store::system_model_api_key`] 读出，绝不进入对外视图、事件、日志或回执；回执只落
+//! 请求指纹，而指纹不包含密钥正文、也不包含密钥的派生材料。
 
 use nekowriter_core::{ModelCapabilityProfile, decimal_i64, utc_now_millis};
-use sea_orm::{ActiveModelTrait, EntityTrait, IntoActiveModel, Set, TransactionTrait};
+use sea_orm::{ActiveModelTrait, EntityTrait, IntoActiveModel, Set};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use url::Url;
 use uuid::Uuid;
 
 use super::{
-    Store, StoreError, db_id,
-    entity::{event, system_model_setting},
-    insert_receipt, normalize_api_key, payload_hash, replay_or_conflict, transaction_error,
+    Command, CredentialIntent, CredentialPatch, Notify, Store, StoreError,
+    entity::system_model_setting, insert_receipt, payload_hash, preparation::insert_app_event,
+    validate_api_base_url,
 };
 
 const SAVE_SYSTEM_MODEL_SETTINGS_METHOD: &str = "PUT";
@@ -47,26 +46,30 @@ pub struct SystemModelSettings {
 
 /// 待保存的模型设置。
 ///
-/// `api_key` 是密钥正文：`None` 表示「保留库中现有密钥」，`Some` 表示替换。它参与
-/// command receipt 的请求哈希（只落摘要），以阻止同一个 `command_id` 被不同密钥重放。
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+/// `api_key` 是三态意图（保留 / 清除 / 替换），密钥正文不进入任何持久位置；命令指纹
+/// 也只记录意图，不记录密钥本身：以密钥为输入的摘要会留在库里，比密钥活得久，而且能被
+/// 离线核对。
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NewSystemModelSettings {
     pub api_base_url: String,
-    pub api_key: Option<String>,
+    pub api_key: CredentialPatch,
     pub model_id: String,
     pub capabilities: ModelCapabilityProfile,
-    #[serde(with = "decimal_i64")]
     pub max_context_tokens: i64,
-    #[serde(with = "decimal_i64")]
     pub reserved_output_tokens: i64,
 }
 
+/// 保存系统模型设置这条命令的指纹输入。
+///
+/// 只包含密钥意图而不包含密钥正文：摘要里不再有密钥的派生材料（以密钥为输入的摘要会
+/// 留在库里、比密钥活得久，而且能被离线核对）。代价是同一个 `command_id` 换一把密钥
+/// 重放会命中既有回执（返回原结果、不再写库），而不是报冲突——命令 id 由每次保存重新
+/// 生成，所以这只影响「复用 id 改正文」的调用方。
 #[derive(Serialize)]
 struct SaveSystemModelSettingsPayload<'a> {
     expected_revision: i64,
     api_base_url: &'a str,
-    api_key: Option<&'a str>,
+    credential: CredentialIntent,
     model_id: &'a str,
     capabilities: ModelCapabilityProfile,
     max_context_tokens: i64,
@@ -78,7 +81,7 @@ impl<'a> SaveSystemModelSettingsPayload<'a> {
         Self {
             expected_revision,
             api_base_url: &settings.api_base_url,
-            api_key: settings.api_key.as_deref(),
+            credential: settings.api_key.intent(),
             model_id: &settings.model_id,
             capabilities: settings.capabilities,
             max_context_tokens: settings.max_context_tokens,
@@ -123,7 +126,8 @@ impl Store {
     /// 在真正写库前检查同一 command 是否已经有可重放的结果。
     ///
     /// App 以此避免网络重试用不同 API key 覆盖库中的既有密钥。若返回 `Some`，
-    /// 调用方必须直接返回该结果，不得再写库。
+    /// 调用方必须直接返回该结果，不得再写库。这是路由层的幂等出口，发生在修订号
+    /// 校验之前，不是 `Command::commit` 的事务前预查。
     ///
     /// # Errors
     ///
@@ -139,17 +143,14 @@ impl Store {
             expected_revision,
             &settings,
         ))?;
-        self.find_receipt(command_id)
-            .await?
-            .map_or(Ok(None), |receipt| {
-                replay_or_conflict(
-                    receipt,
-                    SAVE_SYSTEM_MODEL_SETTINGS_METHOD,
-                    SYSTEM_MODEL_SETTINGS_TARGET,
-                    &payload_hash,
-                )
-                .map(Some)
-            })
+        Command::new(
+            command_id,
+            SAVE_SYSTEM_MODEL_SETTINGS_METHOD,
+            SYSTEM_MODEL_SETTINGS_TARGET,
+            &payload_hash,
+        )
+        .replay_if_recorded(self)
+        .await
     }
 
     /// 保存系统写作模型配置并写入持久同步事件。
@@ -171,21 +172,18 @@ impl Store {
             expected_revision,
             &settings,
         ))?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(
-                receipt,
-                SAVE_SYSTEM_MODEL_SETTINGS_METHOD,
-                SYSTEM_MODEL_SETTINGS_TARGET,
-                &payload_hash,
-            );
-        }
+        let command = Command::new(
+            command_id,
+            SAVE_SYSTEM_MODEL_SETTINGS_METHOD,
+            SYSTEM_MODEL_SETTINGS_TARGET,
+            &payload_hash,
+        );
 
         let settings_for_transaction = settings.clone();
         let payload_hash_for_transaction = payload_hash.clone();
         let now = utc_now_millis();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let existing = system_model_setting::Entity::find_by_id(
                         SYSTEM_WRITING_MODEL_KEY.to_owned(),
@@ -206,12 +204,13 @@ impl Store {
                     })?;
                     let capabilities_json =
                         serde_json::to_string(&settings_for_transaction.capabilities)?;
-                    // 并入既有密钥：`None` 表示这次保存不动它，与界面「不重填不覆盖」
-                    // 一致。密钥只存在于本事务内，不进入命令指纹之外的任何产物。
+                    // 并入既有密钥：`Keep` 不动它（与界面「不重填不覆盖」一致），
+                    // `Clear` 把列置回 NULL，`Replace` 换成新正文。密钥只存在于本事务内，
+                    // 不进入命令指纹之外的任何产物。
                     let api_key = settings_for_transaction
                         .api_key
                         .clone()
-                        .or_else(|| existing.as_ref().and_then(|model| model.api_key.clone()));
+                        .merge(existing.as_ref().and_then(|model| model.api_key.clone()));
                     let model = match existing {
                         Some(model) => {
                             let mut active = model.into_active_model();
@@ -264,50 +263,16 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-
-        match result {
-            Ok(settings) => {
-                self.notify_event_listeners();
-                Ok(settings)
-            }
-            Err(StoreError::Database(error)) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    SAVE_SYSTEM_MODEL_SETTINGS_METHOD,
-                    SYSTEM_MODEL_SETTINGS_TARGET,
-                    &payload_hash,
-                    StoreError::Database(error),
-                )
-                .await
-            }
-            Err(error) => Err(error),
-        }
     }
 }
 
 fn normalize_system_model_settings(
     mut settings: NewSystemModelSettings,
 ) -> Result<NewSystemModelSettings, StoreError> {
-    settings.api_base_url = settings.api_base_url.trim().to_owned();
+    // 地址规则与 Embedding 设置共用一处判定：不会一侧宽、一侧严。
+    settings.api_base_url =
+        validate_api_base_url(&settings.api_base_url).map_err(invalid_settings)?;
     settings.model_id = settings.model_id.trim().to_owned();
-    if settings.api_base_url.is_empty() {
-        return Err(invalid_settings("模型服务地址不能为空"));
-    }
-    let url = Url::parse(&settings.api_base_url)
-        .map_err(|error| invalid_settings(format!("模型服务地址无效：{error}")))?;
-    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
-        return Err(invalid_settings("模型服务地址必须是带主机的 HTTP(S) URL"));
-    }
-    if url.query().is_some() || url.fragment().is_some() {
-        return Err(invalid_settings("模型服务地址不能包含 query 或 fragment"));
-    }
-    let path = url.path().trim_matches('/');
-    if path.is_empty() || path.ends_with("chat/completions") {
-        return Err(invalid_settings(
-            "模型服务地址必须是 API 根路径（例如 https://host/v1），不能是 chat/completions 完整端点",
-        ));
-    }
     if settings.model_id.is_empty() || settings.model_id.chars().count() > 256 {
         return Err(invalid_settings("模型 ID 必须为 1–256 个字符"));
     }
@@ -322,7 +287,7 @@ fn normalize_system_model_settings(
             "上下文窗口必须为正数，且预留输出必须小于上下文窗口",
         ));
     }
-    settings.api_key = normalize_api_key(settings.api_key).map_err(invalid_settings)?;
+    settings.api_key = settings.api_key.normalize().map_err(invalid_settings)?;
     Ok(settings)
 }
 
@@ -338,7 +303,11 @@ fn system_model_settings_from_model(
     })?;
     normalize_system_model_settings(NewSystemModelSettings {
         api_base_url: model.api_base_url.clone(),
-        api_key: model.api_key.clone(),
+        // 读路径不修改密钥，但仍然校验库中那一行的正文（空正文应被当成损坏记录）。
+        api_key: model
+            .api_key
+            .clone()
+            .map_or(CredentialPatch::Keep, CredentialPatch::Replace),
         model_id: model.model_id.clone(),
         capabilities,
         max_context_tokens: model.max_context_tokens,
@@ -367,60 +336,27 @@ async fn insert_system_settings_event(
     settings: &SystemModelSettings,
     now: i64,
 ) -> Result<(), StoreError> {
-    event::ActiveModel {
-        version_id: Set(None),
-        event_type: Set("settings.changed".to_owned()),
-        entity_id: Set(db_id(Uuid::new_v4())),
-        revision: Set(settings.revision.to_string()),
-        payload_json: Set(serde_json::to_string(&json!({
+    insert_app_event(
+        transaction,
+        "settings.changed",
+        Uuid::new_v4(),
+        settings.revision,
+        json!({
             "scope": "system",
             "model_id": settings.model_id,
             "revision": settings.revision.to_string(),
-        }))?),
-        occurred_at: Set(now),
-        ..Default::default()
-    }
-    .insert(transaction)
-    .await?;
-    Ok(())
+        }),
+        now,
+    )
+    .await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn normalizes_and_rejects_invalid_model_settings() {
-        let settings = normalize_system_model_settings(NewSystemModelSettings {
-            api_base_url: " https://model.example/v1/ ".to_owned(),
-            api_key: Some("  secret-key-1  ".to_owned()),
-            model_id: " writing-model ".to_owned(),
-            capabilities: ModelCapabilityProfile {
-                streaming: true,
-                tools: true,
-                stream_usage: true,
-                thinking: true,
-            },
-            max_context_tokens: 32_768,
-            reserved_output_tokens: 4_096,
-        })
-        .unwrap();
-        assert_eq!(settings.api_base_url, "https://model.example/v1/");
-        assert_eq!(settings.model_id, "writing-model");
-        assert_eq!(settings.api_key.as_deref(), Some("secret-key-1"));
-        assert!(matches!(
-            normalize_system_model_settings(NewSystemModelSettings {
-                api_base_url: "https://model.example/v1/chat/completions".to_owned(),
-                ..settings.clone()
-            }),
-            Err(StoreError::InvalidSystemModelSettings(_))
-        ));
-    }
-
-    /// `None` 表示保留既有密钥；给出时必须是单行非空正文。
-    #[test]
-    fn normalizes_and_rejects_invalid_api_keys() {
-        let base = |api_key| NewSystemModelSettings {
+    fn settings_with(api_key: CredentialPatch) -> NewSystemModelSettings {
+        NewSystemModelSettings {
             api_base_url: "https://model.example/v1".to_owned(),
             api_key,
             model_id: "writing-model".to_owned(),
@@ -432,29 +368,115 @@ mod tests {
             },
             max_context_tokens: 32_768,
             reserved_output_tokens: 4_096,
-        };
+        }
+    }
 
+    #[test]
+    fn normalizes_and_rejects_invalid_model_settings() {
+        let settings = normalize_system_model_settings(NewSystemModelSettings {
+            api_base_url: " https://model.example/v1/ ".to_owned(),
+            model_id: " writing-model ".to_owned(),
+            ..settings_with(CredentialPatch::Replace("  secret-key-1  ".to_owned()))
+        })
+        .unwrap();
+        assert_eq!(settings.api_base_url, "https://model.example/v1");
+        assert_eq!(settings.model_id, "writing-model");
         assert_eq!(
-            normalize_system_model_settings(base(None)).unwrap().api_key,
-            None
+            settings.api_key,
+            CredentialPatch::Replace("secret-key-1".to_owned())
+        );
+        assert!(matches!(
+            normalize_system_model_settings(NewSystemModelSettings {
+                api_base_url: "https://model.example/v1/chat/completions".to_owned(),
+                ..settings.clone()
+            }),
+            Err(StoreError::InvalidSystemModelSettings(_))
+        ));
+    }
+
+    /// 三种意图各自成立：保留与清除不做正文校验，替换必须是单行非空正文。
+    #[test]
+    fn normalizes_and_rejects_invalid_api_keys() {
+        assert_eq!(
+            normalize_system_model_settings(settings_with(CredentialPatch::Keep))
+                .unwrap()
+                .api_key,
+            CredentialPatch::Keep
         );
         assert_eq!(
-            normalize_system_model_settings(base(Some(" key ".to_owned())))
+            normalize_system_model_settings(settings_with(CredentialPatch::Clear))
                 .unwrap()
-                .api_key
-                .as_deref(),
-            Some("key")
+                .api_key,
+            CredentialPatch::Clear
+        );
+        assert_eq!(
+            normalize_system_model_settings(settings_with(CredentialPatch::Replace(
+                " key ".to_owned()
+            )))
+            .unwrap()
+            .api_key,
+            CredentialPatch::Replace("key".to_owned())
         );
         for api_key in [
-            Some(String::new()),
-            Some("   ".to_owned()),
-            Some("line\nbreak".to_owned()),
-            Some("k".repeat(crate::MAX_API_KEY_CHARS + 1)),
+            String::new(),
+            "   ".to_owned(),
+            "line\nbreak".to_owned(),
+            "k".repeat(crate::MAX_API_KEY_CHARS + 1),
         ] {
             assert!(matches!(
-                normalize_system_model_settings(base(api_key)),
+                normalize_system_model_settings(settings_with(CredentialPatch::Replace(api_key))),
                 Err(StoreError::InvalidSystemModelSettings(_))
             ));
         }
+    }
+
+    /// 回执里的指纹不以密钥为输入：换一把密钥不会改变它（库里因此没有能被离线核对的
+    /// 密钥派生材料），但「保留」「替换」「清除」三种意图以及不同的请求版本仍分得开。
+    #[test]
+    fn request_fingerprint_ignores_the_credential_body() {
+        let fingerprint = |expected_revision: i64, api_key: CredentialPatch| {
+            let settings = normalize_system_model_settings(settings_with(api_key)).unwrap();
+            payload_hash(&SaveSystemModelSettingsPayload::new(
+                expected_revision,
+                &settings,
+            ))
+            .unwrap()
+        };
+        let replace = |key: &str| CredentialPatch::Replace(key.to_owned());
+
+        assert_eq!(
+            fingerprint(7, replace("first-key")),
+            fingerprint(7, replace("second-key"))
+        );
+        assert_ne!(
+            fingerprint(7, replace("first-key")),
+            fingerprint(7, CredentialPatch::Keep)
+        );
+        assert_ne!(
+            fingerprint(7, replace("first-key")),
+            fingerprint(7, CredentialPatch::Clear)
+        );
+        assert_ne!(
+            fingerprint(7, replace("first-key")),
+            fingerprint(8, replace("first-key"))
+        );
+    }
+
+    /// 三态来自 JSON：字段缺席是保留，`null` 是清除，字符串是替换。
+    #[test]
+    fn credential_patch_reads_the_three_json_shapes() {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Patch {
+            #[serde(default)]
+            api_key: CredentialPatch,
+        }
+
+        let keep: Patch = serde_json::from_str("{}").unwrap();
+        let clear: Patch = serde_json::from_str(r#"{"apiKey": null}"#).unwrap();
+        let replace: Patch = serde_json::from_str(r#"{"apiKey": "k-1"}"#).unwrap();
+        assert_eq!(keep.api_key, CredentialPatch::Keep);
+        assert_eq!(clear.api_key, CredentialPatch::Clear);
+        assert_eq!(replace.api_key, CredentialPatch::Replace("k-1".to_owned()));
     }
 }

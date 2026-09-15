@@ -12,7 +12,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { useEventSync } from "@/lib/events"
+import { useEventSync } from "@/lib/event-sync-context"
 import { getDashboard, listProjects, type DashboardTask } from "@/lib/api"
 
 const taskCategoryLabels: Record<DashboardTask["category"], string> = {

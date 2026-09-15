@@ -1,6 +1,5 @@
 import {
-  createContext,
-  useContext,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -11,40 +10,41 @@ import { useQueryClient } from "@tanstack/react-query"
 
 import { type GenerationPreviewBuffer } from "@/components/GenerationPreview"
 import {
+  EventSyncContext,
+  type EventConnection,
+} from "@/lib/event-sync-context"
+import {
   getEventCursor,
+  getHealth,
   type PersistedEvent,
   type PreviewDelta,
 } from "@/lib/api"
 
-type EventConnection = "connecting" | "connected" | "reconnecting"
-
-type EventSyncState = {
-  connection: EventConnection
-  knowledgeVersion: number
-  previews: Record<string, GenerationPreviewBuffer>
-  recycleVersion: number
-  settingsVersion: number
-  templateVersion: number
-}
-
-const EventSyncContext = createContext<EventSyncState | null>(null)
-
+/**
+ * 后端会写出的持久事件类型，必须与 `crates/nekowriter-store/src/event_types.rs` 的
+ * 清单逐项相同（少一个就会静默不刷新）；这条等式由 store 的
+ * `frontend_subscribes_to_exactly_the_manifest` 钉住。
+ */
 const persistentEventTypes = [
-  "project.changed",
-  "workflow.changed",
-  "run.changed",
-  "tool.proposed",
-  "tool.resolved",
-  "question.created",
-  "question.answered",
-  "review.changed",
+  "chapter.changed",
   "document.committed",
   "feedback.changed",
-  "settings.changed",
   "knowledge.index_changed",
+  "model_request.cancelled",
+  "project.changed",
   "prompt_template.changed",
-  "system.model_operation",
+  "question.answered",
+  "question.created",
   "recycle.changed",
+  "review.changed",
+  "run.changed",
+  "settings.changed",
+  "system.model_operation",
+  "tool.included",
+  "tool.proposed",
+  "tool.resolved",
+  "version.completed",
+  "workflow.changed",
 ] as const
 
 function previewBufferKey(delta: PreviewDelta) {
@@ -141,6 +141,13 @@ function requestIdFrom(event: PersistedEvent) {
 export function EventSyncProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient()
   const [connection, setConnection] = useState<EventConnection>("connecting")
+  const [serviceStopped, setServiceStopped] = useState(false)
+  const serviceStoppedRef = useRef(false)
+  const markServiceStopped = useCallback(() => {
+    if (serviceStoppedRef.current) return
+    serviceStoppedRef.current = true
+    setServiceStopped(true)
+  }, [])
   const [knowledgeVersion, setKnowledgeVersion] = useState(0)
   const [previews, setPreviews] = useState<
     Record<string, GenerationPreviewBuffer>
@@ -154,6 +161,22 @@ export function EventSyncProvider({ children }: { children: ReactNode }) {
     let disposed = false
     let source: EventSource | null = null
     let resetting = false
+
+    /**
+     * 事件流断开后确认服务是否还在。
+     *
+     * 连不上不等于服务退出：也可能是同一条流正在重连。因此先问一次健康检查，
+     * 只有确认不可达才切到「已退出」并停止重连。
+     */
+    const confirmServiceAlive = async () => {
+      if (serviceStoppedRef.current) return false
+      const alive = await getHealth().then(
+        () => true,
+        () => false
+      )
+      if (!alive) markServiceStopped()
+      return alive
+    }
 
     const invalidateFromEvent = (event: PersistedEvent, eventType: string) => {
       queryClient.invalidateQueries({ queryKey: ["projects"] })
@@ -184,6 +207,7 @@ export function EventSyncProvider({ children }: { children: ReactNode }) {
     }
 
     const connect = async () => {
+      if (serviceStoppedRef.current) return
       setConnection((current) =>
         current === "connected" ? "reconnecting" : "connecting"
       )
@@ -198,10 +222,17 @@ export function EventSyncProvider({ children }: { children: ReactNode }) {
           if (!disposed && source === nextSource) setConnection("connected")
         }
         nextSource.onerror = () => {
-          if (!disposed && source === nextSource) {
-            setPreviews({})
-            setConnection("reconnecting")
-          }
+          if (disposed || source !== nextSource) return
+          setPreviews({})
+          void confirmServiceAlive().then((alive) => {
+            if (disposed || source !== nextSource) return
+            if (alive) {
+              setConnection("reconnecting")
+              return
+            }
+            // 服务已经退出：关掉事件源，浏览器就不会再自动重连。
+            nextSource.close()
+          })
         }
         const reset = () => {
           if (disposed || resetting || source !== nextSource) return
@@ -284,7 +315,8 @@ export function EventSyncProvider({ children }: { children: ReactNode }) {
         })
         nextSource.addEventListener("stream.reset_required", reset)
       } catch {
-        if (!disposed) setConnection("reconnecting")
+        if (disposed) return
+        if (await confirmServiceAlive()) setConnection("reconnecting")
       }
     }
 
@@ -293,22 +325,26 @@ export function EventSyncProvider({ children }: { children: ReactNode }) {
       disposed = true
       source?.close()
     }
-  }, [queryClient])
+  }, [markServiceStopped, queryClient])
 
   const value = useMemo(
     () => ({
       connection,
       knowledgeVersion,
+      markServiceStopped,
       previews,
       recycleVersion,
+      serviceStopped,
       settingsVersion,
       templateVersion,
     }),
     [
       connection,
       knowledgeVersion,
+      markServiceStopped,
       previews,
       recycleVersion,
+      serviceStopped,
       settingsVersion,
       templateVersion,
     ]
@@ -318,12 +354,4 @@ export function EventSyncProvider({ children }: { children: ReactNode }) {
       {children}
     </EventSyncContext.Provider>
   )
-}
-
-export function useEventSync() {
-  const context = useContext(EventSyncContext)
-  if (!context) {
-    throw new Error("useEventSync must be used within EventSyncProvider")
-  }
-  return context
 }

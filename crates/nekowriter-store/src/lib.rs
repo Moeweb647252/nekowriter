@@ -4,7 +4,9 @@
 //! 版本；遇到旧格式时拒绝打开，而不是暗中迁移或重建。
 
 use std::{
+    future::Future,
     path::{Path, PathBuf},
+    pin::Pin,
     sync::Arc,
 };
 
@@ -15,13 +17,14 @@ use nekowriter_core::{
 };
 use sea_orm::prelude::TextUuid;
 use sea_orm::{
-    ActiveModelTrait, ConnectionTrait, DatabaseConnection, DbErr, EntityTrait, IntoActiveModel,
-    QueryFilter, QueryOrder, Set, TransactionError, TransactionTrait,
+    ActiveModelTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbErr, EntityTrait,
+    IntoActiveModel, QueryFilter, QueryOrder, Set, TransactionError, TransactionTrait,
 };
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::sync::broadcast;
+use url::Url;
 use uuid::Uuid;
 
 /// 24 新增用户提示词模板；26 把 OS 凭据库引用换成直接保存在本地的 `api_key` 列。
@@ -44,7 +47,9 @@ mod chapters;
 mod dashboard;
 pub(crate) mod entity;
 mod event_log;
+pub mod event_types;
 mod export;
+mod growth;
 mod knowledge;
 mod manuscript;
 mod model_requests;
@@ -61,6 +66,7 @@ mod version_copy;
 
 pub use agent_messages::{AgentMessageRole, NewAgentMessage, PersistedAgentMessage};
 pub use event_log::{EventStreamBounds, PersistedEvent};
+pub use growth::TableGrowth;
 pub use knowledge::{
     DEFAULT_SEARCH_TOP_K, INDEX_TASK_FAILED, INDEX_TASK_PENDING, INDEX_TASK_READY,
     INDEX_TASK_RUNNING, KnowledgeIndexTask, KnowledgeSearchQuery, KnowledgeSpaceInput,
@@ -613,14 +619,12 @@ impl Store {
         input: NewProject,
     ) -> Result<ProjectBundle, StoreError> {
         let payload_hash = payload_hash(&CreateProjectPayload::from(&input))?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(
-                receipt,
-                CREATE_PROJECT_METHOD,
-                CREATE_PROJECT_TARGET,
-                &payload_hash,
-            );
-        }
+        let command = Command::new(
+            command_id,
+            CREATE_PROJECT_METHOD,
+            CREATE_PROJECT_TARGET,
+            &payload_hash,
+        );
 
         let now = utc_now_millis();
         let project_id = Uuid::new_v4();
@@ -653,9 +657,8 @@ impl Store {
 
         let bundle_for_transaction = bundle.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     insert_project_bundle(transaction, &bundle_for_transaction).await?;
                     preparation::insert_app_event(
@@ -687,25 +690,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-
-        match result {
-            Ok(bundle) => {
-                self.notify_event_listeners();
-                Ok(bundle)
-            }
-            Err(StoreError::Database(error)) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    CREATE_PROJECT_METHOD,
-                    CREATE_PROJECT_TARGET,
-                    &payload_hash,
-                    StoreError::Database(error),
-                )
-                .await
-            }
-            Err(error) => Err(error),
-        }
     }
 
     pub async fn create_version(
@@ -716,15 +700,12 @@ impl Store {
     ) -> Result<ProjectBundle, StoreError> {
         let target = format!("/api/projects/{project_id}/versions");
         let payload_hash = payload_hash(&CreateVersionPayload::from(&input))?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, CREATE_VERSION_METHOD, &target, &payload_hash);
-        }
+        let command = Command::new(command_id, CREATE_VERSION_METHOD, &target, &payload_hash);
 
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let project_model = project::Entity::find_by_id(db_id(project_id))
                         .filter(project::Entity::COLUMN.deleted_at.is_null())
@@ -793,25 +774,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-
-        match result {
-            Ok(bundle) => {
-                self.notify_event_listeners();
-                Ok(bundle)
-            }
-            Err(StoreError::Database(error)) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    CREATE_VERSION_METHOD,
-                    &target,
-                    &payload_hash,
-                    StoreError::Database(error),
-                )
-                .await
-            }
-            Err(error) => Err(error),
-        }
     }
 
     /// 切换项目工作台当前选中的稿本。
@@ -827,15 +789,12 @@ impl Store {
             version_id,
             expected_project_revision,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, SELECT_VERSION_METHOD, &target, &payload_hash);
-        }
+        let command = Command::new(command_id, SELECT_VERSION_METHOD, &target, &payload_hash);
 
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let project_model = project::Entity::find_by_id(db_id(project_id))
                         .filter(project::Entity::COLUMN.deleted_at.is_null())
@@ -902,24 +861,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-
-        match result {
-            Ok(bundle) => {
-                self.notify_event_listeners();
-                Ok(bundle)
-            }
-            Err(error) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    SELECT_VERSION_METHOD,
-                    &target,
-                    &payload_hash,
-                    error,
-                )
-                .await
-            }
-        }
     }
 
     async fn replay_after_receipt_conflict<T: DeserializeOwned>(
@@ -1027,25 +968,128 @@ impl<'a> From<&'a NewNovelVersion> for CreateVersionPayload<'a> {
     }
 }
 
-/// 归一化可选密钥：`None` 表示保留库中现有密钥，`Some` 表示替换为这条正文。
+/// 一次设置保存对密钥列的意图。
+///
+/// 三态是显式的，而且直接对应 HTTP 合同：`apiKey` 省略 = [`CredentialPatch::Keep`]、
+/// `apiKey: null` = [`CredentialPatch::Clear`]、字符串 = [`CredentialPatch::Replace`]。
+/// 用枚举而不是 `Option<Option<String>>`，因为「未配置」是被其它逻辑依赖的合法状态
+/// （`EMBEDDING_NOT_CONFIGURED` 降级、界面「未配置」提示、`credential_configured`
+/// 都由它决定），调用点必须一眼分得清「不动密钥」与「把它清掉」。
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub enum CredentialPatch {
+    /// 省略：保留库中现有密钥。
+    #[default]
+    Keep,
+    /// 显式 `null`：把密钥列清回未配置。
+    Clear,
+    /// 字符串：替换为新的密钥正文。
+    Replace(String),
+}
+
+impl CredentialPatch {
+    /// 把这条意图并到库中现有密钥上，得到落库后的列值。
+    ///
+    /// 写入与「保存前的真实探测该用哪把密钥」共用这一处合并语义，两侧不会分叉。
+    #[must_use]
+    pub fn merge(self, existing: Option<String>) -> Option<String> {
+        match self {
+            Self::Keep => existing,
+            Self::Clear => None,
+            Self::Replace(value) => Some(value),
+        }
+    }
+
+    /// 校验并归一化密钥正文；`Keep` 与 `Clear` 原样通过。
+    pub(crate) fn normalize(self) -> Result<Self, String> {
+        match self {
+            Self::Replace(value) => normalize_api_key(value).map(Self::Replace),
+            patch => Ok(patch),
+        }
+    }
+
+    /// 命令指纹里的密钥意图：只区分三态，不含密钥正文。
+    pub(crate) const fn intent(&self) -> CredentialIntent {
+        match self {
+            Self::Keep => CredentialIntent::Keep,
+            Self::Clear => CredentialIntent::Clear,
+            Self::Replace(_) => CredentialIntent::Replace,
+        }
+    }
+}
+
+/// 命令指纹里的密钥意图；只记「保留 / 替换 / 清除」，不记密钥正文。
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CredentialIntent {
+    Keep,
+    Replace,
+    Clear,
+}
+
+/// 省略字段得到 [`CredentialPatch::Keep`]，`null` 得到 [`CredentialPatch::Clear`]。
+impl<'de> Deserialize<'de> for CredentialPatch {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(match Option::<String>::deserialize(deserializer)? {
+            Some(value) => Self::Replace(value),
+            None => Self::Clear,
+        })
+    }
+}
+
+/// 校验并归一化一条 API 根地址。
+///
+/// 系统写作模型与 Embedding 两条设置路径共用这一处判定，因此「API 根地址合法」
+/// 只有一种强度：http(s)、带主机、不带用户名/密码、不带 query/fragment、路径非空、
+/// 且不是 `chat/completions` 这类完整端点。判定覆盖了适配器发请求时再检查的那几条
+/// （见 `nekowriter_agent::provider`），所以设置能存进去就意味着它发得出去。
+///
+/// 返回去掉首尾空白与末尾斜杠的地址：两个适配器都会在拼接请求路径时补上分隔符。
+pub(crate) fn validate_api_base_url(value: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err("服务地址不能为空".to_owned());
+    }
+    let url = Url::parse(trimmed).map_err(|error| format!("服务地址无效：{error}"))?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err("服务地址必须是带主机的 HTTP(S) URL".to_owned());
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("服务地址不能携带用户名或密码".to_owned());
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err("服务地址不能包含 query 或 fragment".to_owned());
+    }
+    let path = url.path().trim_matches('/');
+    if path.is_empty() {
+        return Err("服务地址必须是 API 根路径（例如 https://host/v1）".to_owned());
+    }
+    if path.ends_with("chat/completions") {
+        return Err(
+            "服务地址必须是 API 根路径（例如 https://host/v1），不能是 chat/completions 完整端点"
+                .to_owned(),
+        );
+    }
+    Ok(trimmed.trim_end_matches('/').to_owned())
+}
+
+/// 归一化一条密钥正文：去掉首尾空白，拒绝空值、超长与控制字符。
 ///
 /// 返回 `Err` 时携带面向用户的原因，由调用方包进自己的设置错误变体：写作模型与
 /// Embedding 两条设置路径共用同一套密钥规则，不各自维护一份。
-pub(crate) fn normalize_api_key(value: Option<String>) -> Result<Option<String>, String> {
-    value
-        .map(|value| {
-            let value = value.trim().to_owned();
-            if value.is_empty() {
-                Err("API key 不能为空".to_owned())
-            } else if value.chars().count() > MAX_API_KEY_CHARS {
-                Err(format!("API key 不能超过 {MAX_API_KEY_CHARS} 个字符"))
-            } else if value.chars().any(char::is_control) {
-                Err("API key 不能包含控制字符".to_owned())
-            } else {
-                Ok(value)
-            }
-        })
-        .transpose()
+pub(crate) fn normalize_api_key(value: String) -> Result<String, String> {
+    let value = value.trim().to_owned();
+    if value.is_empty() {
+        Err("API key 不能为空".to_owned())
+    } else if value.chars().count() > MAX_API_KEY_CHARS {
+        Err(format!("API key 不能超过 {MAX_API_KEY_CHARS} 个字符"))
+    } else if value.chars().any(char::is_control) {
+        Err("API key 不能包含控制字符".to_owned())
+    } else {
+        Ok(value)
+    }
 }
 
 fn payload_hash<T: Serialize>(payload: &T) -> Result<String, StoreError> {
@@ -1267,34 +1311,125 @@ fn transaction_error(error: TransactionError<StoreError>) -> StoreError {
     }
 }
 
-/// 命令事务提交后的统一收尾：通知事件监听者，并在唯一键竞争时按回执重放。
+/// 一条写命令的幂等信封。
 ///
-/// 所有带 `command_id` 的写入共用它，因此幂等重放规则只有一处。
-async fn finish_write<T: DeserializeOwned + Serialize>(
-    store: &Store,
-    command_id: Uuid,
-    method: &str,
-    target: &str,
-    payload_hash: &str,
-    result: Result<T, StoreError>,
-) -> Result<T, StoreError> {
-    match result {
-        Ok(response) => {
-            store.notify_event_listeners();
-            Ok(response)
+/// `command_id`、方法、目标与指纹分三处出现：事务外预查、事务内的回执写入、收尾时的
+/// 重放还原。前两处由调用点自己拼（回执要与业务写入同事务提交），第三处由信封负责；
+/// 让同一个值持有这四样东西，调用点就不必把同一个方法/目标串抄三遍，也不会抄歪。
+struct Command<'a> {
+    id: Uuid,
+    method: &'a str,
+    target: &'a str,
+    payload_hash: &'a str,
+}
+
+/// 收尾是否把这次写入广播给事件监听者。
+///
+/// 用类型而不是 `bool`：`true` / `false` 在调用点读不出含义，而「no-op 命令不该打扰
+/// 界面重读」正是最容易写反、评审时也最难看出来的一处。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Notify {
+    /// 命令确实改了东西：界面需要重读。
+    Listeners,
+    /// 命令是 no-op：不打扰界面。
+    Quiet,
+}
+
+impl Notify {
+    /// no-op 命令不通知：`changed` 为真才代表这次命令真的写入了。
+    const fn on_change(changed: bool) -> Self {
+        if changed {
+            Self::Listeners
+        } else {
+            Self::Quiet
         }
-        Err(StoreError::Database(error)) => {
-            store
-                .replay_after_receipt_conflict(
-                    command_id,
-                    method,
-                    target,
-                    payload_hash,
-                    StoreError::Database(error),
-                )
-                .await
+    }
+}
+
+impl<'a> Command<'a> {
+    const fn new(id: Uuid, method: &'a str, target: &'a str, payload_hash: &'a str) -> Self {
+        Self {
+            id,
+            method,
+            target,
+            payload_hash,
         }
-        Err(error) => Err(error),
+    }
+
+    /// 事务外的幂等预查：已有同 `command_id` 的回执就直接还原（指纹不符是冲突）。
+    async fn replay_if_recorded<T: DeserializeOwned>(
+        &self,
+        store: &Store,
+    ) -> Result<Option<T>, StoreError> {
+        match store.find_receipt(self.id).await? {
+            Some(receipt) => {
+                replay_or_conflict(receipt, self.method, self.target, self.payload_hash).map(Some)
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// 一条写命令的完整幂等流程：预查 → `body`（事务体）→ 收尾。
+    ///
+    /// 事务外的预查由这里独占，调用点不再自己查一遍。例外只有两种，都在调用点写明
+    /// 了理由：早退能省掉真实前置计算的站点（例如 `embedding_profile_with_id()`，
+    /// 或预查之后的拒绝分支本身会改写重放结果），以及只看事务结果决定通知、收尾走
+    /// `finish` 的两段式站点。
+    ///
+    /// `body` 里仍自己写 `insert_receipt`：回执必须与业务写入在同一个事务里提交，
+    /// 把这一步也收进来只会让事务边界消失在两次调用之间。并发重复命令靠
+    /// `command_receipts.command_id` 主键冲突挡住，错误在 `finish` 里换成既有回执。
+    async fn commit<T, F>(&self, store: &Store, notify: Notify, body: F) -> Result<T, StoreError>
+    where
+        T: DeserializeOwned + Serialize + Send,
+        F: for<'c> FnOnce(
+                &'c DatabaseTransaction,
+            )
+                -> Pin<Box<dyn Future<Output = Result<T, StoreError>> + Send + 'c>>
+            + Send,
+    {
+        if let Some(replayed) = self.replay_if_recorded(store).await? {
+            return Ok(replayed);
+        }
+        let result = store
+            .database
+            .transaction::<_, _, StoreError>(body)
+            .await
+            .map_err(transaction_error);
+        self.finish(store, notify, result).await
+    }
+
+    /// 收尾：成功时按 `notify` 通知事件监听者，失败时把「并发重复命令」还原成既有回执。
+    ///
+    /// 所有带 `command_id` 的写入共用它，因此幂等重放规则只有一处。事务外的预查挡住了
+    /// 绝大多数重放，而两次预查之间可能已经有同 `command_id` 的命令提交了回执——这时唯一
+    /// 正确的结果是那条既有回执，不是报错；因此失败分支不去区分错误类型：有回执就按回执
+    /// 处理，没有就原样返回原错误。
+    async fn finish<T: DeserializeOwned + Serialize>(
+        &self,
+        store: &Store,
+        notify: Notify,
+        result: Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
+        match result {
+            Ok(response) => {
+                if notify == Notify::Listeners {
+                    store.notify_event_listeners();
+                }
+                Ok(response)
+            }
+            Err(error) => {
+                store
+                    .replay_after_receipt_conflict(
+                        self.id,
+                        self.method,
+                        self.target,
+                        self.payload_hash,
+                        error,
+                    )
+                    .await
+            }
+        }
     }
 }
 
@@ -1708,6 +1843,30 @@ mod tests {
             .unwrap();
     }
 
+    /// 地址规则只有一份：写作模型与 Embedding 两条设置路径拒绝同一批形状。
+    #[test]
+    fn api_base_url_rule_is_one_rule_for_both_settings() {
+        assert_eq!(
+            validate_api_base_url(" https://host/v1/ ").unwrap(),
+            "https://host/v1"
+        );
+        for invalid in [
+            "",
+            "host/v1",
+            "ftp://host/v1",
+            "https://user:pw@host/v1",
+            "https://host/v1?x=1",
+            "https://host/v1#frag",
+            "https://host",
+            "https://host/v1/chat/completions",
+        ] {
+            assert!(
+                validate_api_base_url(invalid).is_err(),
+                "应被拒绝：{invalid}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn system_model_settings_are_revisioned_idempotent_and_emit_sync_events() {
         let data_dir = TempDir::new().unwrap();
@@ -1715,7 +1874,7 @@ mod tests {
         let command_id = Uuid::new_v4();
         let input = NewSystemModelSettings {
             api_base_url: "https://model.example/v1".to_owned(),
-            api_key: Some("secret-key-1".to_owned()),
+            api_key: CredentialPatch::Replace("secret-key-1".to_owned()),
             model_id: "writer-1".to_owned(),
             capabilities: ModelCapabilityProfile {
                 streaming: true,
@@ -1770,7 +1929,7 @@ mod tests {
         );
     }
 
-    /// `api_key: None` 表示保留库中现有密钥；换密钥重放同一命令仍然冲突。
+    /// 省略密钥（`Keep`）保留库中现有密钥；换密钥重放同一命令命中既有回执。
     #[tokio::test]
     async fn system_model_api_key_is_kept_when_omitted_and_guarded_when_replayed() {
         let data_dir = TempDir::new().unwrap();
@@ -1793,7 +1952,7 @@ mod tests {
             .save_system_model_settings(
                 Uuid::new_v4(),
                 0,
-                settings(Some("secret-key-1".to_owned())),
+                settings(CredentialPatch::Replace("secret-key-1".to_owned())),
             )
             .await
             .unwrap();
@@ -1801,7 +1960,7 @@ mod tests {
 
         // 省略密钥的保存把既有密钥原样带过：修订前进，密钥不变。
         let second = store
-            .save_system_model_settings(Uuid::new_v4(), 1, settings(None))
+            .save_system_model_settings(Uuid::new_v4(), 1, settings(CredentialPatch::Keep))
             .await
             .unwrap();
         assert_eq!(second.revision, 2);
@@ -1812,27 +1971,292 @@ mod tests {
         );
         assert!(
             store
-                .save_system_model_settings(Uuid::new_v4(), 2, settings(Some(String::new())))
+                .save_system_model_settings(
+                    Uuid::new_v4(),
+                    2,
+                    settings(CredentialPatch::Replace(String::new()))
+                )
                 .await
                 .is_err()
         );
 
-        // 同一 command 用不同密钥重放：不是可重放的幂等命中，而是冲突。
+        // 指纹不记录密钥正文：同一 command 换一把密钥重放是幂等命中——返回既有回执、
+        // 不再写库，库里的密钥保持第一次落下的那一把。
         let command_id = Uuid::new_v4();
+        let replaced = store
+            .save_system_model_settings(
+                command_id,
+                2,
+                settings(CredentialPatch::Replace("secret-key-2".to_owned())),
+            )
+            .await
+            .unwrap();
+        let replayed = store
+            .save_system_model_settings(
+                command_id,
+                2,
+                settings(CredentialPatch::Replace("secret-key-3".to_owned())),
+            )
+            .await
+            .unwrap();
+        assert_eq!(replayed, replaced);
+        assert_eq!(replayed.revision, 3);
+        assert_eq!(
+            store.system_model_api_key().await.unwrap().as_deref(),
+            Some("secret-key-2")
+        );
+
+        // 「是否替换密钥」留在指纹里：同一 command 一次带密钥、一次省略是真冲突。
+        let mixed = Uuid::new_v4();
         store
-            .save_system_model_settings(command_id, 2, settings(Some("secret-key-2".to_owned())))
+            .save_system_model_settings(
+                mixed,
+                3,
+                settings(CredentialPatch::Replace("secret-key-4".to_owned())),
+            )
             .await
             .unwrap();
         assert!(matches!(
             store
-                .save_system_model_settings(
-                    command_id,
-                    2,
-                    settings(Some("secret-key-3".to_owned()))
-                )
+                .save_system_model_settings(mixed, 3, settings(CredentialPatch::Keep))
                 .await,
             Err(StoreError::IdempotencyConflict)
         ));
+
+        // 清除密钥把列置回 NULL：`credential_configured` 随之变回 false。
+        let cleared = store
+            .save_system_model_settings(Uuid::new_v4(), 4, settings(CredentialPatch::Clear))
+            .await
+            .unwrap();
+        assert_eq!(cleared.revision, 5);
+        assert!(!cleared.credential_configured);
+        assert_eq!(store.system_model_api_key().await.unwrap(), None);
+    }
+
+    /// 收尾的失败分支不区分错误类型：该 `command_id` 已有回执时，失败也要还原成那条回执。
+    ///
+    /// 事务外的预查挡住了绝大多数重放，但两次预查之间可能已经有同一个 `command_id` 的命令落库。
+    /// 那种情况下输的那一次会先撞上业务守卫（例如修订已被赢的那一次推进），拿到的不是一个
+    /// 数据库错误，而唯一正确的结果仍是那条既有回执。
+    ///
+    /// 本用例把「只认数据库错误」与「任何错误」分开钉住：把失败分支收窄回
+    /// `Err(StoreError::Database(error))` 后，第一次断言拿到的是那个业务错误而不是回执。
+    #[tokio::test]
+    async fn a_no_op_command_writes_its_receipt_but_does_not_wake_subscribers() {
+        let data_dir = TempDir::new().unwrap();
+        let store = Store::open(data_dir.path()).await.unwrap();
+        let created = store
+            .create_project(
+                Uuid::new_v4(),
+                NewProject::new("no-op 通知", "同一模式", None::<&str>).unwrap(),
+            )
+            .await
+            .unwrap();
+        let version_id = created.version.id;
+        let changed_mode = match created.workflow.approval_mode {
+            ApprovalMode::AutoApprove => ApprovalMode::ApproveRequired,
+            ApprovalMode::ApproveRequired => ApprovalMode::AutoApprove,
+        };
+        let mut notifications = store.subscribe_events();
+
+        // 真的改了模式：命令改了东西，界面需要重读。
+        let flipped = store
+            .set_approval_mode(version_id, Uuid::new_v4(), 0, changed_mode)
+            .await
+            .unwrap();
+        assert!(matches!(notifications.try_recv(), Ok(())));
+
+        // 再写同一个模式：这条命令是 no-op，不该打扰界面。
+        let no_op_command_id = Uuid::new_v4();
+        let repeated = store
+            .set_approval_mode(
+                version_id,
+                no_op_command_id,
+                flipped.state_revision,
+                changed_mode,
+            )
+            .await
+            .unwrap();
+        assert_eq!(repeated, flipped);
+        assert!(matches!(
+            notifications.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+        ));
+
+        // no-op 只是不广播，不是不记账：这条命令照样留下了自己的回执。
+        assert!(
+            entity::command_receipt::Entity::find_by_id(db_id(no_op_command_id))
+                .one(&store.database)
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn command_finish_replays_an_existing_receipt_for_a_non_database_error() {
+        let data_dir = TempDir::new().unwrap();
+        let store = Store::open(data_dir.path()).await.unwrap();
+
+        // 先用一条真实命令落一条回执：方法、目标与指纹都取自它自己算的那一份。
+        let command_id = Uuid::new_v4();
+        let stored = store
+            .save_system_model_settings(
+                command_id,
+                0,
+                NewSystemModelSettings {
+                    api_base_url: "https://model.example/v1".to_owned(),
+                    api_key: CredentialPatch::Replace("secret-key-1".to_owned()),
+                    model_id: "writer-1".to_owned(),
+                    capabilities: ModelCapabilityProfile {
+                        streaming: true,
+                        tools: true,
+                        stream_usage: true,
+                        thinking: true,
+                    },
+                    max_context_tokens: 32_768,
+                    reserved_output_tokens: 4_096,
+                },
+            )
+            .await
+            .unwrap();
+        let receipt = entity::command_receipt::Entity::find_by_id(db_id(command_id))
+            .one(&store.database)
+            .await
+            .unwrap()
+            .expect("成功命令必须留下回执");
+
+        // 同一 commandId 再走一次收尾，事务这次以非数据库错误结束：必须返回既有回执。
+        let replayed: SystemModelSettings = Command::new(
+            command_id,
+            &receipt.method,
+            &receipt.target,
+            &receipt.payload_hash,
+        )
+        .finish(
+            &store,
+            Notify::Listeners,
+            Err(StoreError::SystemSettingsRevisionConflict {
+                expected: 0,
+                actual: 1,
+            }),
+        )
+        .await
+        .expect("已有回执时，非数据库错误也必须还原成回执");
+        assert_eq!(replayed, stored);
+
+        // 没有回执时原样返回原错误。
+        let unknown: Result<SystemModelSettings, StoreError> =
+            Command::new(Uuid::new_v4(), "PUT", "/api/settings", "unknown-hash")
+                .finish(
+                    &store,
+                    Notify::Listeners,
+                    Err(StoreError::IdempotencyConflict),
+                )
+                .await;
+        assert!(matches!(unknown, Err(StoreError::IdempotencyConflict)));
+
+        // 有回执但指纹不同仍是真冲突，不会被这次放宽吞掉。
+        let mismatched: Result<SystemModelSettings, StoreError> =
+            Command::new(command_id, &receipt.method, &receipt.target, "another-hash")
+                .finish(
+                    &store,
+                    Notify::Listeners,
+                    Err(StoreError::SystemSettingsRevisionConflict {
+                        expected: 0,
+                        actual: 1,
+                    }),
+                )
+                .await;
+        assert!(matches!(mismatched, Err(StoreError::IdempotencyConflict)));
+    }
+
+    /// 事务外的回执预查只有一个所有者：`Command::commit`。
+    ///
+    /// 这条用例数的是源码形状，不是运行期行为。站点多查的那一次会把同一行的结果原样丢掉，
+    /// 没有任何断言看得出差别，所以运行期次数由 `docs/03` 的 SQL trace 现场核对：一次成功的
+    /// 写命令在事务前只查一次 `command_receipts`。形状在这里钉两侧：既预查又 `commit` 的函数
+    /// 只允许下面这五个（它们靠早退省掉 `embedding_profile_with_id()` 的读库，`reindex`
+    /// 还省掉整张 `knowledge_entry` 表的扫描）；而这五个必须仍然预查。
+    #[test]
+    fn transaction_external_recheck_has_a_single_owner() {
+        const ALLOWED: &[&str] = &[
+            "create_knowledge_entry",
+            "delete_knowledge_entry",
+            "insert_accumulated_entries",
+            "reindex_all_knowledge",
+            "update_knowledge_entry",
+        ];
+        // 只数生产代码：`lib.rs` 从这个文件的 `#[cfg(test)]` 起截掉，否则这条用例自己
+        // 会把自己的断言文本数进去。
+        let lib_source = include_str!("lib.rs");
+        let lib_source = lib_source
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap_or(lib_source);
+        let files = [
+            ("preparation.rs", include_str!("preparation.rs")),
+            ("knowledge.rs", include_str!("knowledge.rs")),
+            ("recycle.rs", include_str!("recycle.rs")),
+            ("lib.rs", lib_source),
+            ("prompts.rs", include_str!("prompts.rs")),
+            ("prompt_templates.rs", include_str!("prompt_templates.rs")),
+            ("settings.rs", include_str!("settings.rs")),
+            ("project_settings.rs", include_str!("project_settings.rs")),
+            ("version_copy.rs", include_str!("version_copy.rs")),
+        ];
+
+        // 把每个文件按 4 空格缩进的定义行切成函数体，注释行先去掉，避免注释里的名字被数进
+        // 形状。
+        fn functions(source: &str) -> Vec<(String, String)> {
+            let mut functions: Vec<(String, String)> = Vec::new();
+            for line in source.lines() {
+                if line.trim_start().starts_with("//") {
+                    continue;
+                }
+                let Some(rest) = line.strip_prefix("    ") else {
+                    if let Some((_, body)) = functions.last_mut() {
+                        body.push_str(line);
+                        body.push('\n');
+                    }
+                    continue;
+                };
+                let rest = rest.strip_prefix("pub ").unwrap_or(rest);
+                let rest = rest.strip_prefix("async ").unwrap_or(rest);
+                let is_definition = rest.starts_with("fn ") && !line.starts_with("        ");
+                if is_definition {
+                    let name = rest["fn ".len()..].split('(').next().unwrap_or_default();
+                    functions.push((name.to_owned(), String::new()));
+                }
+                if let Some((_, body)) = functions.last_mut() {
+                    body.push_str(line);
+                    body.push('\n');
+                }
+            }
+            functions
+        }
+
+        let mut both = Vec::new();
+        for (file, source) in files {
+            for (function, body) in functions(source) {
+                let prechecks = body.matches(".replay_if_recorded(").count();
+                let commits = body.matches(".commit(self, Notify::").count();
+                if prechecks == 0 || commits == 0 {
+                    continue;
+                }
+                assert_eq!(
+                    (prechecks, commits),
+                    (1, 1),
+                    "{file}::{function} 同时出现预查与 commit，但数量不是各一次"
+                );
+                both.push(function);
+            }
+        }
+        both.sort_unstable();
+        assert_eq!(
+            both, ALLOWED,
+            "既有事务外预查又调 commit 的函数，只允许白名单里那五个"
+        );
     }
 
     #[tokio::test]

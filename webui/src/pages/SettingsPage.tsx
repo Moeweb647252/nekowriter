@@ -1,17 +1,23 @@
-import { useQueryClient } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useSearchParams } from "react-router"
 
 import { AppFrame } from "@/components/AppFrame"
 import { ModelSettingsPanel } from "@/components/ModelSettingsPanel"
 import { ProjectSettingsPanel } from "@/components/ProjectSettingsPanel"
 import { PromptSettingsPanel } from "@/components/PromptSettingsPanel"
-import { useEventSync } from "@/lib/events"
+import { ServicePanel } from "@/components/ServicePanel"
+import { getHealth } from "@/lib/api"
+import { useEventSync } from "@/lib/event-sync-context"
 
 export function SettingsPage() {
   const [searchParams] = useSearchParams()
   const queryClient = useQueryClient()
-  const { settingsVersion } = useEventSync()
+  const { markServiceStopped, serviceStopped, settingsVersion } = useEventSync()
   const projectId = searchParams.get("project")
+  const health = useQuery({
+    queryKey: ["health"],
+    queryFn: ({ signal }) => getHealth(signal),
+  })
 
   return (
     <AppFrame
@@ -39,6 +45,11 @@ export function SettingsPage() {
         <PromptSettingsPanel
           projectId={projectId}
           refreshToken={settingsVersion}
+        />
+        <ServicePanel
+          health={health.data ?? null}
+          stopped={serviceStopped}
+          onStopped={markServiceStopped}
         />
       </div>
     </AppFrame>

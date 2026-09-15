@@ -1,0 +1,47 @@
+# 最小门禁：两个 job 就够了——Rust 的可执行检查，和前端自己的检查。
+# 这里不放发布步骤：发行目录仍由 `cargo xtask package` 在本地产出。
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # LanceDB 的构建脚本在 PATH 上找 protoc；Windows 之外平台不再用 .cargo/config.toml 钉它。
+      - name: 安装 protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: 安装 toolchain（由 rust-toolchain.toml 决定）
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: 格式
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets
+      - name: 测试
+        run: cargo test --workspace
+
+  webui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: webui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: webui/pnpm-lock.yaml
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      - name: lint
+        run: pnpm lint
+      - name: 测试
+        run: pnpm test
+      - name: 构建（含 tsc -b）
+        run: pnpm build

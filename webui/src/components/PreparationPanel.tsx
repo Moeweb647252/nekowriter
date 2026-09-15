@@ -23,6 +23,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { UserQuestionPanel } from "@/components/UserQuestionPanel"
 import { WritingRecoveryPanel } from "@/components/WritingRecoveryPanel"
+import { useLatestValue } from "@/hooks/use-latest-value"
 import { useWorkspaceDraftPersistence } from "@/hooks/use-workspace-draft"
 import { type PickedTextRange } from "@/lib/citations"
 import { usePrimaryAction } from "@/lib/shortcuts"
@@ -302,7 +303,11 @@ function PreparationArtifactEditor({
   const formRevision = artifactFormKey(preparation)
   const [draft, setDraft] = useState<PreparationArtifactsDraft>(baselineDraft)
   const [remoteArtifactsChanged, setRemoteArtifactsChanged] = useState(false)
-  const persistedDraftRef = useRef(baselineKey)
+  const {
+    value: persistedDraft,
+    ref: persistedDraftRef,
+    commit: commitPersistedDraft,
+  } = useLatestValue(baselineKey)
   const draftRef = useRef(draft)
   const lastVersionRef = useRef(versionId)
 
@@ -317,7 +322,7 @@ function PreparationArtifactEditor({
     targetId: "artifacts",
     baseRevision: formRevision,
     text: serializePreparationArtifactsDraft(draft),
-    dirty: serializePreparationArtifactsDraft(draft) !== persistedDraftRef.current,
+    dirty: serializePreparationArtifactsDraft(draft) !== persistedDraft,
     onRestore: (stored) => {
       if (
         serializePreparationArtifactsDraft(draftRef.current) !==
@@ -341,7 +346,7 @@ function PreparationArtifactEditor({
   useEffect(() => {
     if (lastVersionRef.current !== versionId) {
       lastVersionRef.current = versionId
-      persistedDraftRef.current = baselineKey
+      commitPersistedDraft(baselineKey)
       draftRef.current = baselineDraft
       setDraft(baselineDraft)
       setRemoteArtifactsChanged(false)
@@ -351,7 +356,7 @@ function PreparationArtifactEditor({
     const hasUnsavedChanges =
       serializePreparationArtifactsDraft(draftRef.current) !==
       persistedDraftRef.current
-    persistedDraftRef.current = baselineKey
+    commitPersistedDraft(baselineKey)
     if (!hasUnsavedChanges || baselineKey === serializePreparationArtifactsDraft(draftRef.current)) {
       draftRef.current = baselineDraft
       setDraft(baselineDraft)
@@ -359,7 +364,13 @@ function PreparationArtifactEditor({
     } else {
       setRemoteArtifactsChanged(true)
     }
-  }, [baselineDraft, baselineKey, versionId])
+  }, [
+    baselineDraft,
+    baselineKey,
+    commitPersistedDraft,
+    persistedDraftRef,
+    versionId,
+  ])
 
   function updateArtifact(kind: PreparationArtifactKind, content: string) {
     setDraft((current) => ({
@@ -705,7 +716,11 @@ export function PreparationPanel({
   const [pendingAction, setPendingAction] = useState<string | null>(null)
   const [brief, setBrief] = useState("")
   const [remoteBriefChanged, setRemoteBriefChanged] = useState(false)
-  const persistedBriefRef = useRef("")
+  const {
+    value: persistedBrief,
+    ref: persistedBriefRef,
+    commit: commitPersistedBrief,
+  } = useLatestValue("")
   const briefRef = useRef("")
   const lastBriefVersionRef = useRef(versionId)
 
@@ -720,7 +735,7 @@ export function PreparationPanel({
     targetId: null,
     baseRevision: preparation?.novelBrief.revisionId ?? null,
     text: brief,
-    dirty: brief !== persistedBriefRef.current,
+    dirty: brief !== persistedBrief,
     onRestore: (draft) => {
       if (briefRef.current !== persistedBriefRef.current) return
       briefRef.current = draft.text
@@ -735,7 +750,7 @@ export function PreparationPanel({
     const nextContent = preparation?.novelBrief.content ?? ""
     if (lastBriefVersionRef.current !== versionId) {
       lastBriefVersionRef.current = versionId
-      persistedBriefRef.current = nextContent
+      commitPersistedBrief(nextContent)
       briefRef.current = nextContent
       setBrief(nextContent)
       setRemoteBriefChanged(false)
@@ -743,7 +758,7 @@ export function PreparationPanel({
     }
     const hasUnsavedChanges = briefRef.current !== persistedBriefRef.current
     const changedRemotely = nextContent !== persistedBriefRef.current
-    persistedBriefRef.current = nextContent
+    commitPersistedBrief(nextContent)
     if (!hasUnsavedChanges || nextContent === briefRef.current) {
       briefRef.current = nextContent
       setBrief(nextContent)
@@ -751,7 +766,13 @@ export function PreparationPanel({
     } else if (changedRemotely) {
       setRemoteBriefChanged(true)
     }
-  }, [preparation?.novelBrief.content, preparation?.novelBrief.revisionId, versionId])
+  }, [
+    commitPersistedBrief,
+    persistedBriefRef,
+    preparation?.novelBrief.content,
+    preparation?.novelBrief.revisionId,
+    versionId,
+  ])
 
   /**
    * 「开始准备」是准备阶段唯一的主操作：光标不在输入框里时 Ctrl/Cmd+Enter 也能触发。
@@ -769,7 +790,7 @@ export function PreparationPanel({
       preparation !== null &&
       preparation.workflow.stage === "initializing" &&
       Boolean(brief.trim()) &&
-      brief === persistedBriefRef.current &&
+      brief === persistedBrief &&
       pendingAction === null,
   })
 
@@ -796,7 +817,7 @@ export function PreparationPanel({
     setPendingAction("brief")
     try {
       const saved = await saveNovelBrief(versionId, content)
-      persistedBriefRef.current = saved.content ?? ""
+      commitPersistedBrief(saved.content ?? "")
       briefRef.current = saved.content ?? ""
       setBrief(saved.content ?? "")
       setRemoteBriefChanged(false)
@@ -915,7 +936,7 @@ export function PreparationPanel({
 
   const { workflow } = preparation
   const briefReady =
-    Boolean(brief.trim()) && brief === persistedBriefRef.current
+    Boolean(brief.trim()) && brief === persistedBrief
   const automaticPreparationInFlight =
     workflow.stage === "preparing_generating" &&
     (workflow.execution === "queued" ||
@@ -1022,6 +1043,7 @@ export function PreparationPanel({
 
       {preparation.pendingQuestion && (
         <UserQuestionPanel
+          key={preparation.pendingQuestion.id}
           question={preparation.pendingQuestion}
           stateRevision={workflow.stateRevision}
           disabled={pendingAction !== null}

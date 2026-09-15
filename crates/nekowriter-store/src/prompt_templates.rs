@@ -7,14 +7,13 @@
 use nekowriter_core::{NewPromptTemplate, PromptTemplate, TemplateVariable, utc_now_millis};
 use sea_orm::{
     ActiveModelTrait, ConnectionTrait, EntityTrait, IntoActiveModel, QueryFilter, QueryOrder, Set,
-    TransactionTrait,
 };
 use serde::Serialize;
 use uuid::Uuid;
 
 use super::{
-    Store, StoreError, db_id, entity::prompt_template, finish_write, insert_receipt, payload_hash,
-    preparation::insert_app_event, replay_or_conflict, transaction_error,
+    Command, Notify, Store, StoreError, db_id, entity::prompt_template, insert_receipt,
+    payload_hash, preparation::insert_app_event,
 };
 
 /// 模板保存与修改的请求体。创建与更新使用同一形状，更新另带预期修订。
@@ -88,14 +87,11 @@ impl Store {
             body: &draft.body,
             variables: &draft.variables,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, "POST", &target, &payload_hash);
-        }
+        let command = Command::new(command_id, "POST", &target, &payload_hash);
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let now = utc_now_millis();
                     let model = prompt_template::ActiveModel {
@@ -135,8 +131,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        finish_write(self, command_id, "POST", &target, &payload_hash, result).await
     }
 
     /// 替换一份模板的内容；变量声明必须与正文一起提交。
@@ -160,14 +154,11 @@ impl Store {
             body: &draft.body,
             variables: &draft.variables,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, "PATCH", &target, &payload_hash);
-        }
+        let command = Command::new(command_id, "PATCH", &target, &payload_hash);
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let now = utc_now_millis();
                     let model = active_prompt_template(transaction, template_id).await?;
@@ -209,8 +200,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        finish_write(self, command_id, "PATCH", &target, &payload_hash, result).await
     }
 
     /// 软删除一份模板。
@@ -226,14 +215,11 @@ impl Store {
     ) -> Result<PromptTemplate, StoreError> {
         let target = format!("/api/prompt-templates/{template_id}");
         let payload_hash = payload_hash(&DeleteTemplatePayload { expected_revision })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, "DELETE", &target, &payload_hash);
-        }
+        let command = Command::new(command_id, "DELETE", &target, &payload_hash);
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let now = utc_now_millis();
                     let model = active_prompt_template(transaction, template_id).await?;
@@ -283,8 +269,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        finish_write(self, command_id, "DELETE", &target, &payload_hash, result).await
     }
 }
 

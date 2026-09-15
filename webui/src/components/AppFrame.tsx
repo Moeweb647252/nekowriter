@@ -9,6 +9,7 @@ import {
 } from "lucide-react"
 import { Link, useLocation } from "react-router"
 
+import { ServiceStoppedNotice } from "@/components/ServiceStoppedNotice"
 import { WorkspaceControls } from "@/components/WorkspaceControls"
 import {
   Sidebar,
@@ -119,6 +120,7 @@ export function AppFrame({
         </SidebarFooter>
       </Sidebar>
       <SidebarInset>
+        <ServiceStoppedNotice />
         <header className="flex min-h-14 shrink-0 items-center gap-3 border-b bg-background/90 px-4 backdrop-blur sm:px-6">
           <SidebarTrigger />
           <div className="min-w-0 flex-1">

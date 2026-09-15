@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react"
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import {
   BookOpenCheck,
   Check,
@@ -19,6 +19,7 @@ import { TemplateInserter } from "@/components/TemplatePanel"
 import { UserQuestionPanel } from "@/components/UserQuestionPanel"
 import { WritingRecoveryPanel } from "@/components/WritingRecoveryPanel"
 import { type PickedTextRange } from "@/lib/citations"
+import { useLatestValue } from "@/hooks/use-latest-value"
 import { useWorkspaceDraftPersistence } from "@/hooks/use-workspace-draft"
 import {
   advanceToNextChapter,
@@ -111,7 +112,11 @@ export function ChapterBodyPanel({
     | "complete"
     | null
   >(null)
-  const persistedContentRef = useRef("")
+  const {
+    value: persistedContent,
+    ref: persistedContentRef,
+    commit: commitPersistedContent,
+  } = useLatestValue("")
   const contentRef = useRef("")
 
   const chapterId = preparation.workflow.activeChapterId
@@ -140,7 +145,7 @@ export function ChapterBodyPanel({
     targetId: chapterId,
     baseRevision: snapshot?.body.revisionId ?? null,
     text: content,
-    dirty: content !== persistedContentRef.current,
+    dirty: content !== persistedContent,
     onRestore: (draft) => {
       if (contentRef.current !== persistedContentRef.current) return
       contentRef.current = draft.text
@@ -214,33 +219,36 @@ export function ChapterBodyPanel({
     },
   })
 
-  function applyBodySnapshot(
-    nextSnapshot: ChapterBodySnapshot,
-    preserveDraft = true
-  ) {
-    const nextContent = nextSnapshot.body.content ?? ""
-    const hasUnsavedChanges = contentRef.current !== persistedContentRef.current
-    const changedRemotely = nextContent !== persistedContentRef.current
-    persistedContentRef.current = nextContent
-    setSnapshot(nextSnapshot)
-    if (
-      !preserveDraft ||
-      !hasUnsavedChanges ||
-      nextContent === contentRef.current
-    ) {
-      contentRef.current = nextContent
-      setContent(nextContent)
-      setRemoteBodyChanged(false)
-    } else if (changedRemotely) {
-      setRemoteBodyChanged(true)
-    }
-  }
+  // 只读写 ref 与 setter，identity 稳定，读取副作用可以直接把它放进依赖。
+  const applyBodySnapshot = useCallback(
+    (nextSnapshot: ChapterBodySnapshot, preserveDraft = true) => {
+      const nextContent = nextSnapshot.body.content ?? ""
+      const hasUnsavedChanges =
+        contentRef.current !== persistedContentRef.current
+      const changedRemotely = nextContent !== persistedContentRef.current
+      commitPersistedContent(nextContent)
+      setSnapshot(nextSnapshot)
+      if (
+        !preserveDraft ||
+        !hasUnsavedChanges ||
+        nextContent === contentRef.current
+      ) {
+        contentRef.current = nextContent
+        setContent(nextContent)
+        setRemoteBodyChanged(false)
+      } else if (changedRemotely) {
+        setRemoteBodyChanged(true)
+      }
+    },
+    [commitPersistedContent, persistedContentRef]
+  )
 
   useEffect(() => {
     let isCurrent = true
     if (!chapterId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 这是「为当前章节重新读取」这一步自己的界面状态：先把上一章的结果清空，面板在无活动章节时整体不渲染。
       setSnapshot(null)
-      persistedContentRef.current = ""
+      commitPersistedContent("")
       contentRef.current = ""
       setRemoteBodyChanged(false)
       setLoading(false)
@@ -267,11 +275,18 @@ export function ChapterBodyPanel({
     return () => {
       isCurrent = false
     }
-  }, [chapterId, onError, preparation.workflow.stateRevision])
+  }, [
+    applyBodySnapshot,
+    chapterId,
+    commitPersistedContent,
+    onError,
+    preparation.workflow.stateRevision,
+  ])
 
   useEffect(() => {
     let isCurrent = true
     if (stage !== "writing_chapter_done" || !chapterId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 这是「为当前章节重新读取」这一步自己的界面状态：先把上一章的结果清空，面板在无活动章节时整体不渲染。
       setNextChapter(null)
       setAllMainChaptersApproved(false)
       setNextChapterLoading(false)
@@ -856,6 +871,7 @@ export function ChapterBodyPanel({
 
       {snapshot?.pendingQuestion && (
         <UserQuestionPanel
+          key={snapshot.pendingQuestion.id}
           question={snapshot.pendingQuestion}
           stateRevision={preparation.workflow.stateRevision}
           disabled={pending !== null}

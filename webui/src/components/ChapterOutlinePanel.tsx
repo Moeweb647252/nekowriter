@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react"
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import {
   Check,
   FileText,
@@ -13,6 +13,7 @@ import { CitationList } from "@/components/CitationList"
 import { CitableText } from "@/components/CitableText"
 import { UserQuestionPanel } from "@/components/UserQuestionPanel"
 import { WritingRecoveryPanel } from "@/components/WritingRecoveryPanel"
+import { useLatestValue } from "@/hooks/use-latest-value"
 import { useWorkspaceDraftPersistence } from "@/hooks/use-workspace-draft"
 import { type PickedTextRange } from "@/lib/citations"
 import {
@@ -51,7 +52,11 @@ export function ChapterOutlinePanel({
   const [pending, setPending] = useState<
     "submit" | "approve" | "reject" | "delegate" | "cancel-delegation" | null
   >(null)
-  const persistedContentRef = useRef("")
+  const {
+    value: persistedContent,
+    ref: persistedContentRef,
+    commit: commitPersistedContent,
+  } = useLatestValue("")
   const contentRef = useRef("")
   /** 引用只在取得它的那次细纲修订上成立；修订一变就丢弃草稿引用。 */
   const citationRevisionRef = useRef<string | null>(null)
@@ -74,7 +79,7 @@ export function ChapterOutlinePanel({
     targetId: chapterId,
     baseRevision: snapshot?.outline.revisionId ?? null,
     text: content,
-    dirty: content !== persistedContentRef.current,
+    dirty: content !== persistedContent,
     onRestore: (draft) => {
       if (contentRef.current !== persistedContentRef.current) return
       contentRef.current = draft.text
@@ -103,37 +108,40 @@ export function ChapterOutlinePanel({
     },
   })
 
-  function applyOutlineSnapshot(
-    nextSnapshot: ChapterOutlineSnapshot,
-    preserveDraft = true
-  ) {
-    const nextContent = nextSnapshot.outline.content ?? ""
-    const hasUnsavedChanges = contentRef.current !== persistedContentRef.current
-    const changedRemotely = nextContent !== persistedContentRef.current
-    persistedContentRef.current = nextContent
-    if (nextSnapshot.outline.revisionId !== citationRevisionRef.current) {
-      citationRevisionRef.current = nextSnapshot.outline.revisionId
-      setCitations([])
-    }
-    setSnapshot(nextSnapshot)
-    if (
-      !preserveDraft ||
-      !hasUnsavedChanges ||
-      nextContent === contentRef.current
-    ) {
-      contentRef.current = nextContent
-      setContent(nextContent)
-      setRemoteOutlineChanged(false)
-    } else if (changedRemotely) {
-      setRemoteOutlineChanged(true)
-    }
-  }
+  // 只读写 ref 与 setter，identity 稳定，读取副作用可以直接把它放进依赖。
+  const applyOutlineSnapshot = useCallback(
+    (nextSnapshot: ChapterOutlineSnapshot, preserveDraft = true) => {
+      const nextContent = nextSnapshot.outline.content ?? ""
+      const hasUnsavedChanges =
+        contentRef.current !== persistedContentRef.current
+      const changedRemotely = nextContent !== persistedContentRef.current
+      commitPersistedContent(nextContent)
+      if (nextSnapshot.outline.revisionId !== citationRevisionRef.current) {
+        citationRevisionRef.current = nextSnapshot.outline.revisionId
+        setCitations([])
+      }
+      setSnapshot(nextSnapshot)
+      if (
+        !preserveDraft ||
+        !hasUnsavedChanges ||
+        nextContent === contentRef.current
+      ) {
+        contentRef.current = nextContent
+        setContent(nextContent)
+        setRemoteOutlineChanged(false)
+      } else if (changedRemotely) {
+        setRemoteOutlineChanged(true)
+      }
+    },
+    [commitPersistedContent, persistedContentRef]
+  )
 
   useEffect(() => {
     let isCurrent = true
     if (!chapterId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 这是「为当前章节重新读取」这一步自己的界面状态：先把上一章的结果清空，面板在无活动章节时整体不渲染。
       setSnapshot(null)
-      persistedContentRef.current = ""
+      commitPersistedContent("")
       contentRef.current = ""
       setRemoteOutlineChanged(false)
       setLoading(false)
@@ -160,7 +168,13 @@ export function ChapterOutlinePanel({
     return () => {
       isCurrent = false
     }
-  }, [chapterId, onError, preparation.workflow.stateRevision])
+  }, [
+    applyOutlineSnapshot,
+    chapterId,
+    commitPersistedContent,
+    onError,
+    preparation.workflow.stateRevision,
+  ])
 
   async function refreshOutline() {
     if (!chapterId) return
@@ -331,6 +345,7 @@ export function ChapterOutlinePanel({
 
       {snapshot?.pendingQuestion && (
         <UserQuestionPanel
+          key={snapshot.pendingQuestion.id}
           question={snapshot.pendingQuestion}
           stateRevision={preparation.workflow.stateRevision}
           disabled={pending !== null}

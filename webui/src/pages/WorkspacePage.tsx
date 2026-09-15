@@ -37,7 +37,9 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useIsDesktop } from "@/hooks/use-is-desktop"
-import { useEventSync } from "@/lib/events"
+import { ServiceStoppedNotice } from "@/components/ServiceStoppedNotice"
+import { useEventSync } from "@/lib/event-sync-context"
+import { useWorkspaceFocusElement } from "@/lib/shortcuts"
 import {
   getChapters,
   getHealth,
@@ -236,6 +238,8 @@ export function WorkspacePage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const isDesktop = useIsDesktop()
   const { previews } = useEventSync()
+  // 快捷键动作可能让触发它的按钮消失，焦点会掉到 body；主区域因此注册为回落目标。
+  const workspaceFocusRef = useWorkspaceFocusElement()
   const [directoryOpen, setDirectoryOpen] = useState(false)
   const [versionsOpen, setVersionsOpen] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
@@ -340,6 +344,7 @@ export function WorkspacePage() {
       >
         跳到主要内容
       </a>
+      <ServiceStoppedNotice />
       <header className="flex min-h-14 shrink-0 items-center gap-2 border-b bg-background/90 px-3 backdrop-blur sm:px-4">
         <Button
           aria-label="返回作品库"
@@ -428,7 +433,12 @@ export function WorkspacePage() {
             <Directory onOpenChapter={openChapter} versionId={versionId} />
           </aside>
         ) : null}
-        <main className="min-w-0 flex-1" id="workspace-main" tabIndex={-1}>
+        <main
+          ref={workspaceFocusRef}
+          className="min-w-0 flex-1"
+          id="workspace-main"
+          tabIndex={-1}
+        >
           {view === "read" ? (
             chapters.data ? (
               <ManuscriptReader

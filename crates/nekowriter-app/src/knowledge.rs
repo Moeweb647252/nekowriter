@@ -7,7 +7,7 @@
 use axum::{
     Json,
     extract::{Path as AxumPath, Query, State},
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
 };
 use nekowriter_agent::{
     embedding::{
@@ -22,8 +22,8 @@ use nekowriter_core::{
     KnowledgeIndexCoverage, KnowledgeSearchResult, KnowledgeSpace, decimal_i64, utc_now_millis,
 };
 use nekowriter_store::{
-    KnowledgeSearchQuery, KnowledgeSpaceInput, NewEmbeddingSettings, NewKnowledgeEntry,
-    OPERATION_KIND_EMBEDDING_CONNECTION_TEST, OPERATION_KIND_EMBEDDING_INDEX,
+    CredentialPatch, KnowledgeSearchQuery, KnowledgeSpaceInput, NewEmbeddingSettings,
+    NewKnowledgeEntry, OPERATION_KIND_EMBEDDING_CONNECTION_TEST, OPERATION_KIND_EMBEDDING_INDEX,
     OPERATION_KIND_EMBEDDING_QUERY, Store, StoreError, UpdateKnowledgeEntry,
     chunk_knowledge_content,
 };
@@ -33,7 +33,7 @@ use tracing::warn;
 use uuid::Uuid;
 
 use crate::{
-    ApiError, AppState, ensure_trusted_write_request,
+    ApiError, AppState,
     operations::{SystemOperationResult, record_system_operation},
 };
 
@@ -52,8 +52,9 @@ pub struct SaveEmbeddingSettingsRequest {
     pub model_id: String,
     #[serde(with = "decimal_i64")]
     pub dimension: i64,
-    /// 省略表示保留已有凭据。
-    pub api_key: Option<String>,
+    /// 三态：省略 = 保留已有凭据，`null` = 清回未配置，字符串 = 替换。
+    #[serde(default)]
+    pub api_key: CredentialPatch,
 }
 
 #[derive(Debug, Serialize)]
@@ -188,10 +189,8 @@ pub async fn get_embedding_settings(
 /// 修订已过期时直接报冲突，两种情况下都不会先花掉一次真实请求。
 pub async fn save_embedding_settings(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<SaveEmbeddingSettingsRequest>,
 ) -> Result<Json<EmbeddingSettingsResponse>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let _guard = state.settings_write_lock.lock().await;
     let current = state.store.get_embedding_settings().await?;
     let SaveEmbeddingSettingsRequest {
@@ -209,7 +208,6 @@ pub async fn save_embedding_settings(
         dimension,
         api_key: api_key.clone(),
     };
-
     // 命中已记录的结果时直接返回：既不重复写库，也不重复调用供应商。
     if let Some(replayed) = state
         .store
@@ -231,33 +229,35 @@ pub async fn save_embedding_settings(
         .into());
     }
 
-    // 保存前先用真实配置验证一次地址、维度与模型，避免存入不可用的配置。
-    // 未重填密钥时用库里现有的那把，与写入语义保持一致。
-    let api_key = match api_key {
-        Some(api_key) => Some(api_key),
-        None => state.store.embedding_api_key().await?,
-    };
-    let probe = build_client(
-        &settings.api_base_url,
-        &settings.model_id,
-        settings.dimension,
-        api_key,
-    )?;
-    // 保存前的验证是一次真实的 Embedding 调用，因此和连接测试一样必须落库：
-    // 否则这次请求的用量会在统计里凭空消失。
-    let started_at_ms = utc_now_millis();
-    let outcome = probe.embed(&["连接测试".to_owned()]).await;
-    record_embedding_operation(
-        &state.store,
-        OPERATION_KIND_EMBEDDING_CONNECTION_TEST,
-        &settings.model_id,
-        &settings.api_base_url,
-        started_at_ms,
-        utc_now_millis(),
-        &outcome,
-    )
-    .await?;
-    outcome.map_err(ApiError::Embedding)?;
+    // 保存前先用真实配置验证一次地址、维度与模型，避免存入不可用的配置；探测用
+    // 「这次保存落库后的那把密钥」，与写入共享同一处合并语义。
+    //
+    // 清除密钥时跳过探测：这次保存的意义就是把凭据清掉，拿刚被移除的密钥去探测必然
+    // 失败，而地址与模型的其余字段本来就已按原样保存，没有需要新验证的东西。
+    if !matches!(api_key, CredentialPatch::Clear) {
+        let probe_api_key = api_key.merge(state.store.embedding_api_key().await?);
+        let probe = build_client(
+            &settings.api_base_url,
+            &settings.model_id,
+            settings.dimension,
+            probe_api_key,
+        )?;
+        // 保存前的验证是一次真实的 Embedding 调用，因此和连接测试一样必须落库：
+        // 否则这次请求的用量会在统计里凭空消失。
+        let started_at_ms = utc_now_millis();
+        let outcome = probe.embed(&["连接测试".to_owned()]).await;
+        record_embedding_operation(
+            &state.store,
+            OPERATION_KIND_EMBEDDING_CONNECTION_TEST,
+            &settings.model_id,
+            &settings.api_base_url,
+            started_at_ms,
+            utc_now_millis(),
+            &outcome,
+        )
+        .await?;
+        outcome.map_err(ApiError::Embedding)?;
+    }
 
     let saved = state
         .store
@@ -271,10 +271,8 @@ pub async fn save_embedding_settings(
 /// 用未保存的配置做一次真实 Embedding 调用，返回服务端实际输出维度。
 pub async fn test_embedding_connection(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<TestEmbeddingRequest>,
 ) -> Result<Json<TestEmbeddingResponse>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let api_key = match request.api_key {
         Some(api_key) => Some(api_key),
         None => state.store.embedding_api_key().await?,
@@ -312,10 +310,8 @@ pub async fn list_knowledge_spaces(
 
 pub async fn create_knowledge_space(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<CreateKnowledgeSpaceRequest>,
 ) -> Result<(StatusCode, Json<KnowledgeSpace>), ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let space = state
         .store
         .create_knowledge_space(
@@ -331,10 +327,8 @@ pub async fn create_knowledge_space(
 pub async fn rename_knowledge_space(
     State(state): State<AppState>,
     AxumPath(space_id): AxumPath<Uuid>,
-    headers: HeaderMap,
     Json(request): Json<RenameKnowledgeSpaceRequest>,
 ) -> Result<Json<KnowledgeSpace>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let space = state
         .store
         .rename_knowledge_space(
@@ -352,10 +346,8 @@ pub async fn rename_knowledge_space(
 pub async fn delete_knowledge_space(
     State(state): State<AppState>,
     AxumPath(space_id): AxumPath<Uuid>,
-    headers: HeaderMap,
     Json(request): Json<DeleteKnowledgeSpaceRequest>,
 ) -> Result<Json<KnowledgeSpace>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let space = state
         .store
         .delete_knowledge_space(space_id, request.command_id, request.expected_revision)
@@ -384,10 +376,8 @@ pub async fn get_knowledge_entry(
 
 pub async fn create_knowledge_entry(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<CreateKnowledgeEntryRequest>,
 ) -> Result<(StatusCode, Json<KnowledgeEntry>), ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let entry = state
         .store
         .create_knowledge_entry(
@@ -407,10 +397,8 @@ pub async fn create_knowledge_entry(
 pub async fn update_knowledge_entry(
     State(state): State<AppState>,
     AxumPath(entry_id): AxumPath<Uuid>,
-    headers: HeaderMap,
     Json(request): Json<UpdateKnowledgeEntryRequest>,
 ) -> Result<Json<KnowledgeEntry>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let entry = state
         .store
         .update_knowledge_entry(
@@ -431,10 +419,8 @@ pub async fn update_knowledge_entry(
 pub async fn delete_knowledge_entry(
     State(state): State<AppState>,
     AxumPath(entry_id): AxumPath<Uuid>,
-    headers: HeaderMap,
     Json(request): Json<DeleteKnowledgeEntryRequest>,
 ) -> Result<Json<KnowledgeEntry>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let entry = state
         .store
         .delete_knowledge_entry(entry_id, request.command_id, request.expected_revision)
@@ -445,10 +431,8 @@ pub async fn delete_knowledge_entry(
 /// 语义检索：先用当前 Embedding 配置算一次查询向量，再交给 Store 做补取检索。
 pub async fn search_knowledge(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<SearchKnowledgeRequest>,
 ) -> Result<Json<KnowledgeSearchResult>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let arguments = parse_knowledge_query_arguments(&json!({
         "query": request.query,
         "spaceIds": request.space_ids,
@@ -580,10 +564,8 @@ pub(crate) async fn run_knowledge_query(
 
 pub async fn reindex_knowledge(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<ReindexKnowledgeRequest>,
 ) -> Result<Json<KnowledgeIndexCoverage>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     Ok(Json(
         state
             .store
@@ -599,10 +581,8 @@ pub async fn reindex_knowledge(
 /// 预算，界面据此展示「暂无可用引擎」而不是模拟进度。
 pub async fn accumulate_knowledge(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<AccumulateKnowledgeRequest>,
 ) -> Result<Json<Vec<KnowledgeEntry>>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let clues = request.clues.trim();
     if clues.is_empty() {
         return Err(StoreError::InvalidKnowledgeEntry("积累线索不能为空".to_owned()).into());

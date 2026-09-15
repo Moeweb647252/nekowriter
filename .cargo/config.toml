@@ -1,7 +1,9 @@
-[env]
-# LanceDB 0.38 的构建脚本需要 protoc。M0 首发平台为 Windows x64，工具由
-# tools/bootstrap-protoc.ps1 从 Protocol Buffers 官方发布页下载并校验。
+# 非 Windows 平台不在这里指定 PROTOC：LanceDB 的构建脚本会在 PATH 上找它，
+# 安装方式见 tools/README.md。
+[target.x86_64-pc-windows-msvc.env]
+# Windows 使用 tools/bootstrap-protoc.ps1 下载的 protoc（LanceDB 0.38 的构建脚本需要）。
 PROTOC = { value = "tools/protoc/bin/protoc.exe", relative = true, force = true }
+
 [target.x86_64-pc-windows-msvc]
 linker = "lld-link"
 rustflags = ["-C", "link-arg=-fuse-ld=lld"]

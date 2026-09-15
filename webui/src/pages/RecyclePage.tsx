@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { AppFrame } from "@/components/AppFrame"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { RecycleBinPanel } from "@/components/RecycleBinPanel"
-import { useEventSync } from "@/lib/events"
+import { useEventSync } from "@/lib/event-sync-context"
 
 export function RecyclePage() {
   const queryClient = useQueryClient()

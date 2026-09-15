@@ -11,15 +11,14 @@ use nekowriter_core::{
     MAX_AUXILIARY_TOOL_BUDGET, MAX_PROJECT_MODEL_ID_LEN, NewProjectSettings, ProjectId,
     ProjectModelReference, ProjectSettings, utc_now_millis,
 };
-use sea_orm::{ActiveModelTrait, EntityTrait, IntoActiveModel, QueryFilter, Set, TransactionTrait};
+use sea_orm::{ActiveModelTrait, EntityTrait, IntoActiveModel, QueryFilter, Set};
 use serde::Serialize;
 use serde_json::json;
 use uuid::Uuid;
 
 use super::{
-    Store, StoreError, db_id,
-    entity::{event, project},
-    insert_receipt, payload_hash, replay_or_conflict, transaction_error,
+    Command, Notify, Store, StoreError, db_id, entity::project, insert_receipt, payload_hash,
+    preparation::insert_app_event,
 };
 
 const SAVE_PROJECT_SETTINGS_METHOD: &str = "PUT";
@@ -75,22 +74,19 @@ impl Store {
             thinking_level: input.thinking_level,
             auxiliary_tool_budget: input.auxiliary_tool_budget,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(
-                receipt,
-                SAVE_PROJECT_SETTINGS_METHOD,
-                &target,
-                &payload_hash,
-            );
-        }
+        let command = Command::new(
+            command_id,
+            SAVE_PROJECT_SETTINGS_METHOD,
+            &target,
+            &payload_hash,
+        );
 
         let input_for_transaction = input.clone();
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
         let now = utc_now_millis();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let model = project::Entity::find_by_id(db_id(project_id))
                         .filter(project::Entity::COLUMN.deleted_at.is_null())
@@ -136,25 +132,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-
-        match result {
-            Ok(settings) => {
-                self.notify_event_listeners();
-                Ok(settings)
-            }
-            Err(StoreError::Database(error)) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    SAVE_PROJECT_SETTINGS_METHOD,
-                    &target,
-                    &payload_hash,
-                    StoreError::Database(error),
-                )
-                .await
-            }
-            Err(error) => Err(error),
-        }
     }
 }
 
@@ -225,25 +202,22 @@ async fn insert_project_settings_event(
     settings: &ProjectSettings,
     now: i64,
 ) -> Result<(), StoreError> {
-    event::ActiveModel {
-        version_id: Set(None),
-        event_type: Set("settings.changed".to_owned()),
-        entity_id: Set(db_id(project_id)),
-        revision: Set(settings.revision.to_string()),
-        payload_json: Set(serde_json::to_string(&json!({
+    insert_app_event(
+        transaction,
+        "settings.changed",
+        project_id,
+        settings.revision,
+        json!({
             "scope": "project",
             "project_id": project_id.to_string(),
             "revision": settings.revision.to_string(),
             "model": settings.model.clone(),
             "thinking_level": settings.thinking_level.as_str(),
             "auxiliary_tool_budget": settings.auxiliary_tool_budget.to_string(),
-        }))?),
-        occurred_at: Set(now),
-        ..Default::default()
-    }
-    .insert(transaction)
-    .await?;
-    Ok(())
+        }),
+        now,
+    )
+    .await
 }
 
 #[cfg(test)]

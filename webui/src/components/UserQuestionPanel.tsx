@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react"
+import { useState, type FormEvent } from "react"
 import { LoaderCircle, MessageCircleQuestion, Send } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -40,11 +40,6 @@ export function UserQuestionPanel({
 }: UserQuestionPanelProps) {
   const [answers, setAnswers] = useState<Record<string, AnswerDraft>>(() => initialAnswers(question))
   const [submitting, setSubmitting] = useState(false)
-
-  useEffect(() => {
-    setAnswers(initialAnswers(question))
-    setSubmitting(false)
-  }, [question.id])
 
   function updateAnswer(questionId: string, update: Partial<AnswerDraft>) {
     setAnswers((current) => ({

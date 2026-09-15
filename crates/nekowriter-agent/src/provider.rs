@@ -112,11 +112,6 @@ impl ChatCompletionsConfig {
     }
 
     #[must_use]
-    pub fn api_base_url(&self) -> &Url {
-        &self.api_base_url
-    }
-
-    #[must_use]
     pub fn model(&self) -> &str {
         &self.model
     }

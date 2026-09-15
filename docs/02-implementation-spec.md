@@ -42,23 +42,25 @@
 14. 错误、中断、预算不足和未安装能力不得被解释为审核通过或阶段完成。
 15. 当前阶段全部必需产物审核通过后，该阶段历史消息在后续 Agent 上下文中必须折叠为仅含产物全文的纯文本；未通过阶段不得提前折叠，原始本地记录不删除。
 16. 消息账本里每一条 assistant 工具调用的 `id`，都必须在同一 Run 的后继消息里有一条 `role = tool`、`tool_call_id` 相同的记录。写入层（协议纠正、被业务拒绝的阶段提交、请求终态失败）负责保证这条配对，任何失败路径都不能只留下半条调用；否则该 Run 此后组装每一次请求都会被配对校验拒绝，再也发不出请求。
-17. 模型密钥只保存在本地 SQLite 的设置行（`system_model_settings.api_key` / `embedding_settings.api_key`），且各自只有一个读出口（`system_model_api_key` / `embedding_api_key`）。对外视图只公布是否已配置，密钥正文不进入 HTTP 响应、SSE 事件、命令回执、持久事件、日志与模型请求快照；保存时显式给出新密钥才替换，省略即保留原密钥。
+17. 模型密钥只保存在本地 SQLite 的设置行（`system_model_settings.api_key` / `embedding_settings.api_key`），且各自只有一个读出口（`system_model_api_key` / `embedding_api_key`）。对外视图只公布是否已配置，密钥正文不进入 HTTP 响应、SSE 事件、命令回执、持久事件、日志与模型请求快照；保存时显式给出新密钥才替换，省略即保留原密钥，显式 `null` 即把该列清回未配置（见 §8.4）。
 
 ## 2. 模块与执行模型
 
 ### 2.1 模块职责
 
+下表是**当前的**模块路径：写代码时按它找位置，不再按曾经设想的骨架。表里最后几行是已知的边界——它们今天把多个关注点放在同一个文件里（见 §2.4 列出的长期拆分项），而不是已经有了独立模块。
+
 | 模块 | 职责 | 不承担 |
 | --- | --- | --- |
-| `core::workflow` | 嵌套状态、命令校验、阶段守卫、产生业务决策 | 数据库连接、网络调用 |
-| `core::document` | 编辑校验、字数、引用位置、修订依赖 | React DOM、ORM Entity |
+| `core::lib`（含 `core::budget` / `core::manuscript` / `core::export` / `core::recycle` / `core::template` / `core::dashboard` / `core::usage` / `core::knowledge` 等） | 嵌套状态、命令校验、阶段守卫、编辑与引用规则、字数与导出视图、产生业务决策 | 数据库连接、网络调用、React DOM、ORM Entity |
 | `agent::runner` | 构建一次请求、解析模型结果、请求工具执行、识别阶段提交工具调用 | 自行持久化正文或批准审核 |
 | `agent::provider` | 一种模型协议适配器、流解析、能力声明与用量映射 | 推测所有供应商都支持同一参数 |
-| `agent::prompts` | 内建提示词目录、变量声明、模板渲染、上下文编排 | 保存项目覆盖值 |
-| `store` | SeaORM Entity、事务、查询、SQLite 初始化、LanceDB 索引 | 决定某章是否通过审核 |
-| `app::services` | 串行命令处理、事务编排、权限范围、工具 Host、任务恢复 | 通用流程脚本解释器 |
-| `app::capabilities` | Embedding、研究与积累注册表、预算封装 | MVP 中的研究/积累具体引擎 |
-| `app::http` | DTO 校验、API、SSE、错误映射、静态页面 | 在 HTTP handler 中等待用户回答 |
+| `agent::prompt` | 内建提示词目录、变量声明、模板渲染、上下文编排 | 保存项目覆盖值 |
+| `agent::engine` / `agent::embedding` | 研究与积累引擎的接口与注册表、Embedding 客户端 | 决定知识条目是否落库 |
+| `store::*`（`entity`、`schema`、`lib`、`chapters`、`manuscript`、`model_requests`、`preparation`、`protocol_correction`、`recycle`、`prompt_templates`、`prompts`、`project_settings`、`settings`、`knowledge`、`dashboard`、`budget`、`export`、`version_copy`、`system_operations`、`agent_messages`、`event_log`、`event_types`） | SeaORM Entity、事务、查询、SQLite 初始化、自增与保留规则、LanceDB 索引 | 决定某章是否通过审核 |
+| `app::operations` / `app::lifecycle` / `app::model_settings` / `app::prompts` | 共享命令策略、任务恢复与生命周期、有效模型解析与能力判定、提示词编排 | 通用流程脚本解释器 |
+| `app::scheduler` | 每稿本命令循环、lanes、许可、模型请求分派与协议纠正 | 直接写正文或审核结论 |
+| `app::main`（HTTP、DTO、SSE、错误映射、静态页面、启动诊断） | DTO 校验、路由与写信任中间件、错误映射、静态产物 | 在 HTTP handler 中等待用户回答 |
 
 Core 的决策函数以状态、命令、已读取的领域输入为参数，返回待提交的状态与变更；App 在同一短事务中检查修订并提交。不要把整套系统做成历史事件回放才能读取的 Event Sourcing：普通页面直接查询当前表，事件用于同步与诊断。
 
@@ -95,6 +97,27 @@ Run 分开保存累计 `request_count` 和本轮允许达到的累计上界 `req
 连续协议错误上限只统计「模型不符合本阶段协议」的回合。阶段提交被业务守卫拒绝（正文为空、缺必需产物、审核结论不合法等）算「被拒回合」：同样保留模型原文、写配对的错误工具结果与纠正提示并立即重排，但不推进该计数——被拒的是提交内容而不是模型协议，混算会让内容不合规的模型比协议不合规的模型更早失去重试机会，非进展回合的工程上限因此只由请求额度承担（见 §4.3、§5.3）。请求进入终态失败时，它响应里尚未被执行过的工具调用同样在写入时补上配对结果，Run 不会停在「只能显式继续、每次继续都在构建上下文时失败」的状态。
 
 模型请求超时区分连接、首包和流空闲时间，不用一个过短的总超时终止正常长输出。初值在 M1 实测后锁定并记录；请求失败不自动换模型、协议或研究引擎。
+
+### 2.4 已知的模块级债务
+
+两条已经确认、但**不能靠又一次重写来顺手解决**的结构问题，按这个顺序做：
+
+1. **幂等收尾已经统一**（2026-09-15 完成，同日精简收口）。`command_id`/方法/目标/指纹由
+   `store::Command` 一个值持有，「失败分支按既有回执重放」「确实改了东西才通知事件监听者」只有
+   `Command::replay_if_recorded` / `Command::commit` / `Command::finish` 一处实现；
+   要通知还是不通知由 `store::Notify`（`Listeners` / `Quiet`）表达，不再是一个布尔参数。
+   `model_requests` 里仍然直接调用 `notify_event_listeners` 的几处不是命令写入（内部尝试记录），不在这条规则之内。
+   事务外的预查也只有一个所有者：`Command::commit`；调用点不再自己查一遍（同日收口，删掉 41 处重复预查）。
+   例外只有两类，都在代码里逐一写了理由：靠早退省掉真实前置计算的五个知识库站点（`embedding_profile_with_id()`
+   的读库，`reindex_all_knowledge` 还省掉整张 `knowledge_entry` 表扫描），以及只看事务结果决定通知、收尾走
+   `finish` 的三个两段式站点。
+   每一条命令仍保留自己的事务体（算指纹 → 业务写入 + `insert_receipt` → 提交）：回执必须与业务写入在同一个
+   事务里提交，把它也搬进 helper 只会把事务边界藏起来。并发重复命令靠 `command_receipts.command_id` 主键冲突
+   挡住，错误在 `finish` 里换成既有回执——不存在也不需要「事务内复查回执」这一步。
+2. **文件规模**。`store::preparation`（万行级）、`app::scheduler`、`store::lib`、`app::main`、`core::lib`
+   各自把多个关注点放在同一文件里；其中 `ApiError` 的错误映射与 `scheduler` 的 lanes 是天然切缝，
+   可以只移动、不改行为地拆开。**本轮不做**：它是纯搬迁的万行级改动，与上面的行为修复混在同一批文件里
+   会让「哪一处改动改变了行为」无法核对；按只移动不改行为的方式单独做一轮。
 
 ## 3. 分层状态机与工作流
 
@@ -523,7 +546,7 @@ feedback 的 after_tool_sequence、preferred_tool_call_id、bound_tool_call_id �
 | 已有内容的正文计划章 | MVP 不提供独立删除，以保持冻结章节计划和依赖一致 |
 | 番外章 | 无活跃 Run/审核时允许软删除；所属内容随祖先不可见 |
 | 项目/系统提示词覆盖 | 明确“清除覆盖”，物理删除该覆盖行，使优先级解析重新生效 |
-| 模型密钥 | 不单独删除：随所属设置行一起更新，省略即保留 |
+| 模型密钥 / Embedding 密钥 | 可单独清除：保存命令里 `apiKey` 省略即保留、显式 `null` 即把该列清回未配置、字符串即替换；清除只动密钥列，设置行与其余字段保持不变，并照常推进修订、写事件与回执。密钥清空后服务回到「未配置」状态，而不是让用户填一把假密钥 |
 | 临时流片段、到期事件、已失效向量块 | 按各自保留规则物理清理，不承担唯一业务记录 |
 
 删除活跃项目/稿本返回 `RESOURCE_BUSY`，界面要求先停止任务，不暗中丢弃正在写作的数据。父对象软删除不批量改写所有孩子的 deleted_at；查询检查祖先，因此恢复父对象不会误恢复此前单独删除的孩子。
@@ -575,7 +598,7 @@ MVP 只支持 `{{variable_name}}` 文本替换，不支持表达式、循环、�
 
 系统设置：模型服务地址与密钥、默认模型、模型能力资料、Embedding profile、内建提示词覆盖。项目设置：模型引用（模型 ID 与它自己的能力资料）、思考等级、辅助工具预算、项目提示词覆盖。没有额外审核模型开关，委托使用项目当前模型。
 
-每次请求先解析 `project → system default` 的有效模型设置，再解析提示词的三级优先级，最后用**有效模型自己的能力资料**验证模型支持工具、流式输出和当前思考参数；每个阶段的终态都是一次提交工具调用，所以工具能力对所有阶段都是硬要求。能力资料与被引用的模型 ID 一起声明，因此校验对象与请求实际发往的模型始终是同一个；同一套判定既用于调度器发请求前，也用于 HTTP 命令受理前。MVP 的协议适配器只承诺验收过的能力组合；不能宣称任意兼容地址都可用。
+每次请求先解析 `project → system default` 的有效模型设置，再解析提示词的三级优先级，最后用**有效模型自己的能力资料**验证模型支持工具、流式输出和当前思考参数；每个阶段的终态都是一次提交工具调用，所以工具能力对所有阶段都是硬要求。能力资料与被引用的模型 ID 一起声明，因此校验对象与请求实际发往的模型始终是同一个；同一套判定既用于调度器发请求前，也用于 HTTP 命令受理前。MVP 的协议适配器只承诺验收过的能力组合；不能宣称任意兼容地址都可用。「API 根地址必须合法」在两处设置上是同一条规则：两者共用同一个 `validate_api_base_url` 判定，模型服务地址与 Embedding 服务地址不会出现一宽一严。
 
 请求保存：设置修订、提示词实际渲染内容及哈希、模型 ID、有效能力资料、有效思考参数、工具描述、上下文来源修订、最终消息数组、供应商请求 ID（若有）。密钥只在请求发送前从设置行读出，不进入快照或日志。
 
@@ -800,15 +823,19 @@ Dock 草稿按目标键存到浏览器本地存储，提交成功才清除；提
 - **`GET /api/health`** 额外返回实际使用的 `dataDir`，工作台「本地服务」面板直接展示它，用户不必去猜数据与日志在哪里。
 - **发行目录（全平台同一形状）**：`cargo xtask package [--target <三元组>] [--debug] [--protoc <路径>]` 先构建前端（`pnpm --dir webui build`，保证包里的 `webui/dist` 是本次构建的结果而不是仓库里的旧产物），再用 `--target`（缺省为本机三元组，由 `rustc -vV` 读出）显式构建 `nekowriter-app`，最后组装 `target/package/<三元组>/nekowriter/`：`nekowriter`（Windows 上是 `nekowriter.exe`）、`webui/dist`、`README.txt` 与 `release-manifest.txt`。因为资源按「可执行文件旁的 `webui/dist`」解析，所有平台的发行目录形状完全一致；显式传 `--target` 也让多个平台的产物能共存。
 - **发行清单 `release-manifest.txt`**：目标三元组、构建配置（`release` / `debug`）、可执行文件的容器格式、生成时间与逐个文件的字节数 / SHA-256（含 `webui/dist` 的完整资源清单）。打包时会读可执行文件头部判定容器格式（PE / Mach-O / ELF 及其机器类型），并在与三元组不符时**直接失败**：拷错或改名一个别的平台的二进制不会被当成打包成功。清单与包内文件可用 `sha256sum -c` 之类的工具逐行核对。
-- **非 Windows 主机打 Windows 包**：`.cargo/config.toml` 把 `PROTOC` 钉在 Windows 工具目录上（`tools/protoc/bin/protoc.exe`，由 `tools/bootstrap-protoc.ps1` 下载校验）且 `force = true`；从其它平台构建时用 `--protoc <本机 protoc>` 覆盖（只是宿主构建工具，与目标平台无关）。Windows 目标需要在 PATH 里有该目标的链接器与 C 编译器：`x86_64-pc-windows-msvc` 用 `lld-link`（见 `.cargo/config.toml`），`x86_64-pc-windows-gnu` 用 `mingw-w64` 的 `x86_64-w64-mingw32-gcc`。
+- **非 Windows 主机打 Windows 包**：`.cargo/config.toml` 只在 `[target.x86_64-pc-windows-msvc]` 下把 `PROTOC` 钉在 Windows 工具目录上（`tools/protoc/bin/protoc.exe`，由 `tools/bootstrap-protoc.ps1` 下载校验）；其它平台让 LanceDB 的构建脚本在 PATH 上找 `protoc`，因此 macOS / Linux 的干净构建不需要仓库外的配置（安装方式见 `tools/README.md`）。`cargo xtask package --protoc <路径>` 仍可覆盖（只是宿主构建工具，与目标平台无关）。Windows 目标需要在 PATH 里有该目标的链接器与 C 编译器：`x86_64-pc-windows-msvc` 用 `lld-link`（见 `.cargo/config.toml`），`x86_64-pc-windows-gnu` 用 `mingw-w64` 的 `x86_64-w64-mingw32-gcc`。
 
 ### 11.3 基础本地安全
 
-校验 Host 和写请求 Origin，写接口只接受 JSON 与自定义请求头；浏览器不能跨站直接触发本地写入。开发 CORS 仅允许明确的 Vite 地址。所有 GET 接口保持只读。
+写请求的信任边界由路由层中间件统一执行，不由每个 handler 自己记得校验：`Host` 必须是回环地址；带 `Origin` 时必须命中允许来源（本机端口与明确的 Vite 地址）。网关、读方法与静态资源不经这层校验，因此浏览器不能跨站触发本地写入，而同一个页面上的读流程不受影响。写接口只接受 JSON 请求体（没有额外的自定义请求头——这是实际防线，不再声称有）。所有 GET 接口保持只读。
+
+静态目录与 `/api` 的边界：未知的 `/api/*` 由嵌套路由自己的回落回答 JSON 错误信封（`NOT_FOUND`），不会被静态目录的回落吞掉。静态目录的回落只服务「末段不带 `.` 的路径」——那是前端路由形状的地址，磁盘上没有对应文件，回落入口 HTML 让直接打开或刷新可用；带扩展名的路径是静态资源（脚本、样式、图片、字体），磁盘上没有就如实 404，否则浏览器会把 HTML 当脚本执行（MIME 不匹配）或把坏资源当成加载成功，把真正的缺失掩盖成界面故障。
 
 渲染不启用 Markdown 原始 HTML，外链只允许 http/https 并安全打开，服务端文件导出名不包含路径穿越内容。知识和研究内容作为资料块输入模型，不当作能改变工具权限的系统指令。
 
 API key 与模型设置同在本地 SQLite 的设置行里，只在构建请求前读出；日志、SSE 事件与请求快照都不写密钥，设置接口与界面只公布「是否已配置」。移除服务配置前提示仍引用它的项目，不能留下不可见的悬空配置。日志滚动保存有限数量文件（当前为按天滚动、保留最近 7 个），不搭建外部监控平台。
+
+本地数据的长期增长有一条明确口径：`model_requests`（提示词与上下文快照）、`command_receipts`（响应副本）与 `agent_messages` 是**审计事实**，回答「当时到底发了什么、为什么失败」，因此本版本不做自动清理，也不给体积设上限；启动时会把这几张表（加 `document_revisions` 与有保留期的 `events` 作为对照）的行数与重文本字节数写入日志，长年使用后的体积因此可诊断，而不是等到备份或导出变慢才发现。将来若要压缩，只能针对已定稿且已导出超过一段时间的稿本压缩 `context_snapshot_json`，且必须先写进本节再实现。
 
 ### 11.4 导出
 
@@ -1004,7 +1031,7 @@ Dashboard 的进行中任务包括排队、模型运行、等待用户、等待�
 
 ### 15.1 测试层次
 
-Core 单元测试关注业务不变量与字符串边界；SQLite 临时文件集成测试关注跨表事务、去重和检查点；Agent 测试用可控假服务模拟流、工具与错误；Playwright 验证真实界面的关键写作路径。
+Core 单元测试关注业务不变量与字符串边界；SQLite 临时文件集成测试关注跨表事务、去重和检查点；Agent 测试用可控假服务模拟流、工具与错误；`app` 的 HTTP 用例在真实回环端口上启动真实路由，钉住请求与响应的形状（错误信封、状态码、静态资源与未知接口的边界）；前端用 vitest 跑纯逻辑模块（HTTP 失败映射与写重试、输入法组合判定）；真实界面的关键写作路径由人工在真实浏览器上验收（没有 Playwright 层）。
 
 假模型只用于自动化测试。M1、M3 和最终交付必须完成真实模型烟测，记录模型 ID、服务地址类型、锁定版本、已验证能力和用量；没有可用凭据时应明确标记真实模型验收未完成，不能以假模型替代。
 
@@ -1165,13 +1192,13 @@ Core 单元测试关注业务不变量与字符串边界；SQLite 临时文件�
 
 本轮按验收范围只检查 macOS `aarch64-apple-darwin`，未把 Windows 或其它目标计入结论。主机工具链为 Rust nightly `1.100.0`，已安装目标只有 `aarch64-apple-darwin`。
 
-真实模型端点使用 `https://model.inferx.net/endpoints/v1`，模型 ID 为 `deepseek-v4.1-flash`。先用用户提供的 Chat Completions 请求直接得到有效回复；随后启动当前源码的 NekoWriter 进程，在本地 `/tmp/nw-real-accept` 数据目录保存该服务设置，并调用 `POST /api/settings/test-model`。连接测试返回 `contentReceived=true`、`toolCallCount=0`，供应商用量为输入 54、输出 92、推理 87（总计 146），随后以 `POST /api/system/shutdown` 正常退出。API key 只写入 macOS 钥匙串引用，不写入仓库、数据库或本节文档。
+真实模型端点使用 `https://model.inferx.net/endpoints/v1`，模型 ID 为 `deepseek-v4.1-flash`。先用用户提供的 Chat Completions 请求直接得到有效回复；随后启动当前源码的 NekoWriter 进程，在本地 `/tmp/nw-real-accept` 数据目录保存该服务设置，并调用 `POST /api/settings/test-model`。连接测试返回 `contentReceived=true`、`toolCallCount=0`，供应商用量为输入 54、输出 92、推理 87（总计 146），随后以 `POST /api/system/shutdown` 正常退出。API key 不写入仓库或本节文档（当时它由 OS 凭据库提供；**此后已改为只存本机 SQLite 的设置行**，见 §15.9 与 docs/03 §37）。
 
 因此，M1/M3 的“真实模型端点可用”这一环境前置条件已经在本机满足；本节记录连接测试，完整创作回路见 §15.6。随后执行 `cargo xtask package --release --protoc /opt/homebrew/bin/protoc` 成功生成当前 aarch64 包：13 个文件、Mach-O arm64 可执行文件 262,596,528 字节；把包放在源码树外启动后，首页与 `/api/health` 均成功（schema 25），再通过 `POST /api/system/shutdown` 正常退出。Windows x64 不属于本轮验收范围。
 
 ### 15.6 2026-09-13 macOS aarch64 InferX reasoning_effort 全流程 E2E
 
-本轮继续只验收 macOS `aarch64-apple-darwin`，使用真实 InferX Chat Completions 端点和 `deepseek-v4.1-flash`。先用短请求显式发送 `reasoning_effort: "low"`，服务返回 HTTP 200、正文 `READY`，并报告输入 35、输出 15、推理 11、总计 50。当前源码进程随后通过 `POST /api/settings/test-model` 发出同样的能力探针，返回 `thinkingProbed=true`、`contentReceived=true`、`toolCallCount=0`，用量为输入 54、输出 54、推理 49、总计 108；系统设置保存为 `thinking=true`，项目设置保存为 `thinkingLevel=low`。凭据只由 macOS 钥匙串引用提供，本节不记录 API key。
+本轮继续只验收 macOS `aarch64-apple-darwin`，使用真实 InferX Chat Completions 端点和 `deepseek-v4.1-flash`。先用短请求显式发送 `reasoning_effort: "low"`，服务返回 HTTP 200、正文 `READY`，并报告输入 35、输出 15、推理 11、总计 50。当前源码进程随后通过 `POST /api/settings/test-model` 发出同样的能力探针，返回 `thinkingProbed=true`、`contentReceived=true`、`toolCallCount=0`，用量为输入 54、输出 54、推理 49、总计 108；系统设置保存为 `thinking=true`，项目设置保存为 `thinkingLevel=low`。本节不记录 API key（当时凭据来自 OS 凭据库，此后已改为只存本机 SQLite，见 §15.9）。
 
 真实进程使用 `/tmp/nw-real-e2e-clean` 数据目录完成一章全流程：项目与稿本创建、目标保存、准备阶段四项产物生成并逐项审核通过、章节细纲生成并审核通过、正文工具编辑、整章审核通过和完本确认。准备阶段因端点容量限制先收到两次 429，显式继续后成功；正文首轮因 InferX 同时发出 reasoning 文本与工具调用而被记录为失败，重建当前二进制后继续同一 Run，四次 `append_content` 工具调用依次把正文推进到 4,683 个字符、4 个正文修订，随后结构化终态提交使工作流进入整章审核并通过，版本最终为 `completed`。一次后续正文请求还遇到流空闲超时，保持 `unknown` 账本并显式继续，未自动重发不确定请求。
 
@@ -1246,7 +1273,7 @@ Core 单元测试关注业务不变量与字符串边界；SQLite 临时文件�
 
 ### 16.1 尚未覆盖的边界
 
-- 退出后的界面状态（「本地服务已退出」横幅与面板状态）只有静态检查：预览桥在服务进程结束后即断开，因此没有在真实界面里截到退出之后的那一次渲染。已验证的是退出前的面板（地址、实际数据目录、二次确认文案）与退出动作本身。
+- 退出后的界面状态（「本地服务已退出」横幅与面板状态）已在真实浏览器页面里截到（2026-09-15）：预览桥本身绑在服务进程上，因此探针经一个只做字节转发的本地 TCP 端口回连后端——后端被 SIGTERM 停掉后页面仍在，`role="status"` 横幅与面板的「服务已退出」状态都读到了。仍未覆盖的是退出后**重新启动服务**再刷新之外的恢复路径。
 - 退出收尾已在 macOS 的 **release** 产物上验证（见 §15）；Windows x64 发行包仍未经真实验收：本机（macOS arm64）没有 Windows 目标的链接器 / C 编译器，也没有 `x86_64-pc-windows-msvc` 标准库，因此没有 PE 产物可验。配方、`--target` 参数与 CI 步骤见 §11.5，这属于环境边界而非代码缺口。
 - 发行目录已在 macOS 上真实产出并验证，但只验证了本机三元组（`aarch64-apple-darwin`）；x86_64 的 macOS 目标、Linux 与 Windows 目标都只需要 `rustup target add <三元组>` 加上该目标的链接器，形状与本次相同，但没有实跑过。
 - release 产物未做符号裁剪：262.6MB（`__TEXT` 191MB、其中代码段 148MB，不含 DWARF）；本机实测 `strip -x` 可降到 205MB、完整 `strip` 降到 202MB，但没有把裁剪写进打包流程（各平台工具不同，且不影响「脱离源码可用」的验收）。
@@ -1275,6 +1302,6 @@ Core 单元测试关注业务不变量与字符串边界；SQLite 临时文件�
 - Dashboard 的进行中任务区只暴露分项计数与展开的审核子 Run，尚未提供「点击任务回到对应章节」的跳转。
 - 积累引擎的成功写入路径已按 §7.4 实现并有端到端验证，但生产注册项严格为 0（§7.4、方案 §3.3），因此运行中的应用不会产生任何积累写入：真实进程探针验证的是 `ENGINE_NOT_AVAILABLE` 与「不写条目、不建任务、不扣预算」，成功写入只在测试内注册表于真实端口上的真实 HTTP 里验证过；接入第一个真实引擎之前，界面上仍只显示「暂无可用引擎」。
 - 积累候选没有「先审后写」的中间状态：§7.4 定的是「未来引擎通过应用服务验证并插入条目、触发索引」，没有第二个审核阶段，因此引擎返回的候选要么整批写入、要么整批不写，不会以「待审候选」形式停在知识库里。
-- 阶段提交合同已经作为系统消息发出（§4.3）。本轮在真实 InferX 端点完成了连接测试；真实模型驱动的准备、细纲、正文、终稿完整端到端验收仍未完成。本地打桩服务走通四阶段只证明合同与状态机路径，不替代真实模型验收。
+- 阶段提交合同已经作为系统消息发出（§4.3）。**真实模型驱动的端到端验收已完成**：用真实端点与真实界面跑通了准备 → 细纲 → 正文 → 整章审核 → 定稿 → 导出的完整闭环（见 §15.9 与 [docs/03](03-code-review.md) 的验收节）。仍然未覆盖的是需要重跑整部作品的边界：多章连续写作、复制稿本与番外的完整回归，以及非 macOS 发行产物。
 - 本机没有可用的本地模型运行时：`ollama` / `llama-cli` / `llama-server` / `lms` / `mlx_lm.generate` / `text-generation-launcher` / `vllm` / `koboldcpp` 均不在 PATH，无 Ollama 与 LM Studio 的应用或数据目录，没有任何 `.gguf` / `.safetensors` 权重，无 `transformers` / `torch` / docker，常见本地端口（11434 / 1234 / 8000 等）无人监听。因此「用真实权重做一次 M1/M3 验收」在本机不可行，属于环境边界；能用真实权重完成验收的环境应重跑 §15 的完整回路。
 - 作为替代，用一个「只懂合同」的朴素桩证明了合同文本本身足以推导出合法提交：它不预设阶段名与字段名，只把系统消息里取出的 JSON 骨架当模板（含中文说明或 `…` 的字符串替换为生成文本，纯 ASCII 的枚举与 UUID 原样保留），工具调用只挑「合同正文提到且本次请求声明」的工具并按该工具的 JSON Schema 造参数。真实进程下准备四项 → 细纲 → 正文工具调用 → 终稿全部走通，第 1 章 `approved`。反例：只把章节级骨架的 `chapter_id` 改成 `chapterId` 并重建，同一回路在细纲阶段连续三次协议错误、Run 以 `waitReason = protocol_error_limit` 停在 `writing_outline_generating`（准备阶段合同未改，照常通过）；改回后再次 `approved`。这证明的是合同充分且修复位置正确，仍然不是真实模型验收。

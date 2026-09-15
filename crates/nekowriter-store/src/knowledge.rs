@@ -32,11 +32,11 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::{
-    Store, StoreError, db_id,
+    Command, CredentialIntent, CredentialPatch, Notify, Store, StoreError, db_id,
     entity::{embedding_setting, knowledge_entry, knowledge_index_task, knowledge_space},
-    finish_write, insert_receipt, normalize_api_key, parse_id, payload_hash,
+    insert_receipt, parse_id, payload_hash,
     preparation::insert_app_event,
-    replay_or_conflict, transaction_error,
+    transaction_error, validate_api_base_url,
 };
 
 /// 索引任务状态：等待执行。
@@ -102,15 +102,14 @@ pub struct UpdateKnowledgeEntry {
 
 /// 待保存的 Embedding 配置。
 ///
-/// `api_key` 是密钥正文：`None` 表示保留库中现有密钥，`Some` 表示替换。它参与命令幂等
-/// 哈希（只落摘要），避免同一 command 用不同密钥重放。
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+/// `api_key` 是三态意图（保留 / 清除 / 替换），密钥正文不进入任何持久位置；命令指纹
+/// 也只记录意图，不记录密钥本身。
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NewEmbeddingSettings {
     pub api_base_url: String,
     pub model_id: String,
     pub dimension: i64,
-    pub api_key: Option<String>,
+    pub api_key: CredentialPatch,
 }
 
 /// 一个可被后台索引器领取的任务。
@@ -190,14 +189,17 @@ struct DeleteEntryPayload {
     expected_revision: i64,
 }
 
+/// 保存 Embedding 设置这条命令的指纹输入。
+///
+/// 只包含密钥意图而不包含密钥正文，理由与系统模型设置相同：以密钥为输入的摘要会留在
+/// 库里，比密钥活得久，而且能被离线核对。
 #[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 struct SaveEmbeddingSettingsPayload<'a> {
     expected_revision: i64,
     api_base_url: &'a str,
     model_id: &'a str,
     dimension: i64,
-    api_key: Option<&'a str>,
+    credential: CredentialIntent,
 }
 
 /// 保存 Embedding 配置这条命令的方法与目标，写入与可重放检查必须一致。
@@ -211,7 +213,7 @@ struct NormalizedEmbeddingSettings {
     api_base_url: String,
     model_id: String,
     dimension: i64,
-    api_key: Option<String>,
+    api_key: CredentialPatch,
 }
 
 /// 校验一次 Embedding 保存请求，并算出这条命令的指纹。
@@ -222,7 +224,9 @@ fn embedding_settings_payload(
     expected_revision: i64,
     settings: &NewEmbeddingSettings,
 ) -> Result<(NormalizedEmbeddingSettings, String), StoreError> {
-    let api_base_url = validate_api_base_url(&settings.api_base_url)?;
+    // 地址规则与写作模型设置共用一处判定，不会一侧宽、一侧严。
+    let api_base_url = validate_api_base_url(&settings.api_base_url)
+        .map_err(StoreError::InvalidEmbeddingSettings)?;
     let model_id = validate_required("Embedding 模型", &settings.model_id, 200)?;
     if settings.dimension <= 0 || settings.dimension > 65_536 {
         return Err(StoreError::InvalidEmbeddingSettings(
@@ -230,14 +234,17 @@ fn embedding_settings_payload(
         ));
     }
     let dimension = settings.dimension;
-    let api_key = normalize_api_key(settings.api_key.clone())
+    let api_key = settings
+        .api_key
+        .clone()
+        .normalize()
         .map_err(StoreError::InvalidEmbeddingSettings)?;
     let payload_hash = payload_hash(&SaveEmbeddingSettingsPayload {
         expected_revision,
         api_base_url: &api_base_url,
         model_id: &model_id,
         dimension,
-        api_key: api_key.as_deref(),
+        credential: api_key.intent(),
     })?;
     Ok((
         NormalizedEmbeddingSettings {
@@ -301,15 +308,12 @@ impl Store {
         let title = validate_space_title(&input.title)?;
         let payload_hash = payload_hash(&CreateSpacePayload { title: &title })?;
         let target = "/api/knowledge/spaces".to_owned();
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, "POST", &target, &payload_hash);
-        }
+        let command = Command::new(command_id, "POST", &target, &payload_hash);
         let title_for_transaction = title.clone();
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let now = utc_now_millis();
                     let model = knowledge_space::ActiveModel {
@@ -338,8 +342,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        finish_write(self, command_id, "POST", &target, &payload_hash, result).await
     }
 
     /// 重命名一个 Space。
@@ -361,15 +363,12 @@ impl Store {
             expected_revision,
             title: &title,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, "PATCH", &target, &payload_hash);
-        }
+        let command = Command::new(command_id, "PATCH", &target, &payload_hash);
         let title_for_transaction = title.clone();
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let now = utc_now_millis();
                     let model = active_space(transaction, space_id).await?;
@@ -401,8 +400,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        finish_write(self, command_id, "PATCH", &target, &payload_hash, result).await
     }
 
     /// 软删除一个空的 Space。非空 Space 会被拒绝，避免隐式批量删除知识。
@@ -419,14 +416,11 @@ impl Store {
     ) -> Result<KnowledgeSpace, StoreError> {
         let target = format!("/api/knowledge/spaces/{space_id}");
         let payload_hash = payload_hash(&DeleteSpacePayload { expected_revision })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, "DELETE", &target, &payload_hash);
-        }
+        let command = Command::new(command_id, "DELETE", &target, &payload_hash);
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let now = utc_now_millis();
                     let model = active_space(transaction, space_id).await?;
@@ -469,8 +463,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        finish_write(self, command_id, "DELETE", &target, &payload_hash, result).await
     }
 
     /// 列出知识条目摘要；可按 Space 与标题/关键词筛选。
@@ -568,16 +560,20 @@ impl Store {
             content: &content,
             source: source.as_deref(),
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, "POST", &target, &payload_hash);
+        let command = Command::new(command_id, "POST", &target, &payload_hash);
+        // 站点自己保留这次预查：早退省掉的是紧随其后的 `embedding_profile_with_id()`
+        // 读库（它要读 `embedding_setting` 并重算 profile id）。这不是副作用，但一次已经
+        // 记过账的重放没有理由再付一次读库代价。事务外的预查由此处与 `commit` 分工：
+        // 命中在这里返回，未命中由 `commit` 在事务前再确认一次。
+        if let Some(replayed) = command.replay_if_recorded(self).await? {
+            return Ok(replayed);
         }
         let profile = self.embedding_profile_with_id().await?;
         let space_id = input.space_id;
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 let profile = profile.clone();
                 Box::pin(async move {
                     let now = utc_now_millis();
@@ -623,13 +619,13 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        finish_write(self, command_id, "POST", &target, &payload_hash, result).await
     }
 
     /// 查找一次积累命令的回执；命中且请求一致时返回上次写入的条目。
     ///
     /// 应用服务在调用引擎之前先问一次，因此重放命令不会再次执行引擎（细则 §10.2）。
+    /// 这是路由层的幂等出口，职责与 `Command::commit` 的事务前预查不同：它在任何真实
+    /// 工作开始之前就结束请求。
     ///
     /// # Errors
     ///
@@ -641,12 +637,9 @@ impl Store {
         clues: &str,
     ) -> Result<Option<Vec<KnowledgeEntry>>, StoreError> {
         let payload_hash = payload_hash(&AccumulatePayload { space_id, clues })?;
-        match self.find_receipt(command_id).await? {
-            Some(receipt) => {
-                replay_or_conflict(receipt, "POST", ACCUMULATE_TARGET, &payload_hash).map(Some)
-            }
-            None => Ok(None),
-        }
+        Command::new(command_id, "POST", ACCUMULATE_TARGET, &payload_hash)
+            .replay_if_recorded(self)
+            .await
     }
 
     /// 写入一次积累命令的全部候选条目，并为每条建立索引任务。
@@ -675,14 +668,15 @@ impl Store {
             ));
         }
         let payload_hash = payload_hash(&AccumulatePayload { space_id, clues })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, "POST", ACCUMULATE_TARGET, &payload_hash);
+        let command = Command::new(command_id, "POST", ACCUMULATE_TARGET, &payload_hash);
+        // 站点自己保留这次预查：早退省掉紧随其后的 `embedding_profile_with_id()` 读库。
+        if let Some(replayed) = command.replay_if_recorded(self).await? {
+            return Ok(replayed);
         }
         let profile = self.embedding_profile_with_id().await?;
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 let profile_id = profile.as_ref().map(|(_, id)| id.clone());
                 let validated = validated.clone();
                 Box::pin(async move {
@@ -728,16 +722,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        finish_write(
-            self,
-            command_id,
-            "POST",
-            ACCUMULATE_TARGET,
-            &payload_hash,
-            result,
-        )
-        .await
     }
 
     /// 修改一条知识条目的内容并建立新修订的索引任务。
@@ -765,15 +749,16 @@ impl Store {
             content: &content,
             source: source.as_deref(),
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, "PUT", &target, &payload_hash);
+        let command = Command::new(command_id, "PUT", &target, &payload_hash);
+        // 站点自己保留这次预查：早退省掉紧随其后的 `embedding_profile_with_id()` 读库。
+        if let Some(replayed) = command.replay_if_recorded(self).await? {
+            return Ok(replayed);
         }
         let profile = self.embedding_profile_with_id().await?;
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 let profile = profile.clone();
                 Box::pin(async move {
                     let now = utc_now_millis();
@@ -819,8 +804,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        finish_write(self, command_id, "PUT", &target, &payload_hash, result).await
     }
 
     /// 软删除一条知识条目。软删除后引用它的检索候选立即被回查过滤。
@@ -836,15 +819,16 @@ impl Store {
     ) -> Result<KnowledgeEntry, StoreError> {
         let target = format!("/api/knowledge/entries/{entry_id}");
         let payload_hash = payload_hash(&DeleteEntryPayload { expected_revision })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, "DELETE", &target, &payload_hash);
+        let command = Command::new(command_id, "DELETE", &target, &payload_hash);
+        // 站点自己保留这次预查：早退省掉紧随其后的 `embedding_profile_with_id()` 读库。
+        if let Some(replayed) = command.replay_if_recorded(self).await? {
+            return Ok(replayed);
         }
         let profile = self.embedding_profile_with_id().await?;
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 let profile = profile.clone();
                 Box::pin(async move {
                     let now = utc_now_millis();
@@ -898,8 +882,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        finish_write(self, command_id, "DELETE", &target, &payload_hash, result).await
     }
 
     /// 读取当前 Embedding 配置。
@@ -972,14 +954,12 @@ impl Store {
     ) -> Result<EmbeddingSettings, StoreError> {
         let (normalized, payload_hash) = embedding_settings_payload(expected_revision, &settings)?;
         let target = EMBEDDING_SETTINGS_TARGET.to_owned();
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(
-                receipt,
-                SAVE_EMBEDDING_SETTINGS_METHOD,
-                &target,
-                &payload_hash,
-            );
-        }
+        let command = Command::new(
+            command_id,
+            SAVE_EMBEDDING_SETTINGS_METHOD,
+            &target,
+            &payload_hash,
+        );
         let NormalizedEmbeddingSettings {
             api_base_url,
             model_id,
@@ -988,9 +968,8 @@ impl Store {
         } = normalized;
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let now = utc_now_millis();
                     let existing =
@@ -1004,11 +983,11 @@ impl Store {
                             actual: actual_revision,
                         });
                     }
-                    // 并入既有密钥：`None` 表示这次保存不动它，与界面「不重填不覆盖」
-                    // 以及保存前那次真实探测所用的密钥保持一致。
+                    // 并入既有密钥：`Keep` 不动它（与界面「不重填不覆盖」以及保存前那次
+                    // 真实探测所用的密钥一致），`Clear` 把列置回 NULL，`Replace` 换新正文。
                     let api_key = api_key
                         .clone()
-                        .or_else(|| existing.as_ref().and_then(|model| model.api_key.clone()));
+                        .merge(existing.as_ref().and_then(|model| model.api_key.clone()));
                     let model = match existing {
                         Some(model) => {
                             let mut active = model.into_active_model();
@@ -1060,22 +1039,13 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        finish_write(
-            self,
-            command_id,
-            SAVE_EMBEDDING_SETTINGS_METHOD,
-            &target,
-            &payload_hash,
-            result,
-        )
-        .await
     }
 
     /// 在真的调用 Embedding 供应商之前，检查同一命令是否已有可重放的结果。
     ///
     /// 保存前的验证本身是一次真实向量请求，因此命中已记录的结果时调用方必须直接
     /// 返回它，不得再花一次请求；同一 `command_id` 复用于不同配置仍然报冲突。
+    /// 这是路由层的幂等出口：它发生在向量请求之前，不是 `Command::commit` 的事务前预查。
     ///
     /// # Errors
     ///
@@ -1087,17 +1057,14 @@ impl Store {
         settings: &NewEmbeddingSettings,
     ) -> Result<Option<EmbeddingSettings>, StoreError> {
         let (_, payload_hash) = embedding_settings_payload(expected_revision, settings)?;
-        self.find_receipt(command_id)
-            .await?
-            .map_or(Ok(None), |receipt| {
-                replay_or_conflict(
-                    receipt,
-                    SAVE_EMBEDDING_SETTINGS_METHOD,
-                    EMBEDDING_SETTINGS_TARGET,
-                    &payload_hash,
-                )
-                .map(Some)
-            })
+        Command::new(
+            command_id,
+            SAVE_EMBEDDING_SETTINGS_METHOD,
+            EMBEDDING_SETTINGS_TARGET,
+            &payload_hash,
+        )
+        .replay_if_recorded(self)
+        .await
     }
 
     /// 领取一个待执行的索引任务并标记为 running。
@@ -1264,8 +1231,12 @@ impl Store {
     ) -> Result<KnowledgeIndexCoverage, StoreError> {
         let target = "/api/knowledge/reindex".to_owned();
         let payload_hash = payload_hash(&ReindexPayload { command_id })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, "POST", &target, &payload_hash);
+        let command = Command::new(command_id, "POST", &target, &payload_hash);
+        // 站点必须自己保留这次预查：早退省掉的是随后的 `embedding_profile_with_id()` 读库
+        // 与整张 `knowledge_entry` 表的扫描（并把未配置嵌入的部署拦在 `EmbeddingNotConfigured`
+        // 之前）。这两步在重放时是纯浪费，而且是这五处里最贵的一处。
+        if let Some(replayed) = command.replay_if_recorded(self).await? {
+            return Ok(replayed);
         }
         let Some((_, profile_id)) = self.embedding_profile_with_id().await? else {
             return Err(StoreError::EmbeddingNotConfigured);
@@ -1276,9 +1247,8 @@ impl Store {
             .await?;
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 let profile_id = profile_id.clone();
                 let entries = entries.clone();
                 Box::pin(async move {
@@ -1302,8 +1272,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-        finish_write(self, command_id, "POST", &target, &payload_hash, result).await
     }
 
     /// 计算可检索范围内的索引覆盖度。
@@ -2011,17 +1979,6 @@ fn validate_required(field: &str, value: &str, max: usize) -> Result<String, Sto
     Ok(value.to_owned())
 }
 
-fn validate_api_base_url(value: &str) -> Result<String, StoreError> {
-    let trimmed = value.trim();
-    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-        Ok(trimmed.trim_end_matches('/').to_owned())
-    } else {
-        Err(StoreError::InvalidEmbeddingSettings(
-            "Embedding 地址必须以 http:// 或 https:// 开头".to_owned(),
-        ))
-    }
-}
-
 fn normalize_keywords(values: &[String]) -> Result<Vec<String>, StoreError> {
     let mut normalized = Vec::new();
     for value in values {
@@ -2136,7 +2093,7 @@ mod tests {
                     api_base_url: "https://embed.example/v1".to_owned(),
                     model_id: "test-embed".to_owned(),
                     dimension,
-                    api_key: None,
+                    api_key: CredentialPatch::Keep,
                 },
             )
             .await
@@ -2332,7 +2289,7 @@ mod tests {
             api_base_url: "https://embed.example/v1".to_owned(),
             model_id: "test-embed".to_owned(),
             dimension: 4,
-            api_key: None,
+            api_key: CredentialPatch::Keep,
         };
         let command_id = Uuid::new_v4();
         // 尚未提交过：没有可重放的结果，调用方因此照常做真实验证。
@@ -2372,7 +2329,7 @@ mod tests {
         );
     }
 
-    /// `api_key: None` 表示保留库中现有密钥；密钥只能经由专属读出口取得。
+    /// 省略密钥（`Keep`）保留库中现有密钥；密钥只能经由专属读出口取得。
     #[tokio::test]
     async fn embedding_api_key_is_kept_when_omitted() {
         let (_dir, store) = open().await;
@@ -2384,7 +2341,11 @@ mod tests {
         };
 
         let first = store
-            .save_embedding_settings(Uuid::new_v4(), 0, settings(Some("secret-key-1".to_owned())))
+            .save_embedding_settings(
+                Uuid::new_v4(),
+                0,
+                settings(CredentialPatch::Replace("secret-key-1".to_owned())),
+            )
             .await
             .unwrap();
         assert!(first.credential_configured);
@@ -2394,7 +2355,7 @@ mod tests {
         );
 
         let second = store
-            .save_embedding_settings(Uuid::new_v4(), 1, settings(None))
+            .save_embedding_settings(Uuid::new_v4(), 1, settings(CredentialPatch::Keep))
             .await
             .unwrap();
         assert_eq!(second.revision, 2);
@@ -2402,6 +2363,19 @@ mod tests {
         assert_eq!(
             store.embedding_api_key().await.unwrap().as_deref(),
             Some("secret-key-1")
+        );
+
+        // 清除密钥：设置行仍在，但凭据回到「未配置」。
+        let cleared = store
+            .save_embedding_settings(Uuid::new_v4(), 2, settings(CredentialPatch::Clear))
+            .await
+            .unwrap();
+        assert_eq!(cleared.revision, 3);
+        assert!(!cleared.credential_configured);
+        assert_eq!(store.embedding_api_key().await.unwrap(), None);
+        assert_eq!(
+            store.get_embedding_settings().await.unwrap().unwrap(),
+            cleared
         );
     }
 
@@ -2418,7 +2392,7 @@ mod tests {
                     api_base_url: "ftp://embed.example/v1".to_owned(),
                     model_id: "test-embed".to_owned(),
                     dimension: 8,
-                    api_key: None,
+                    api_key: CredentialPatch::Keep,
                 },
             )
             .await
@@ -2438,7 +2412,7 @@ mod tests {
                     api_base_url: "https://embed.example/v1".to_owned(),
                     model_id: "other-embed".to_owned(),
                     dimension: 4,
-                    api_key: None,
+                    api_key: CredentialPatch::Keep,
                 },
             )
             .await

@@ -6,13 +6,13 @@
 use axum::{
     Json,
     extract::{Path as AxumPath, State},
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
 };
 use nekowriter_core::{NewPromptTemplate, PromptTemplate, TemplateVariable, decimal_i64};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::{ApiError, AppState, ensure_trusted_write_request};
+use crate::{ApiError, AppState};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,10 +59,8 @@ pub async fn get_prompt_template(
 
 pub async fn create_prompt_template(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<CreatePromptTemplateRequest>,
 ) -> Result<(StatusCode, Json<PromptTemplate>), ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let template = state
         .store
         .create_prompt_template(
@@ -80,10 +78,8 @@ pub async fn create_prompt_template(
 pub async fn update_prompt_template(
     State(state): State<AppState>,
     AxumPath(template_id): AxumPath<Uuid>,
-    headers: HeaderMap,
     Json(request): Json<UpdatePromptTemplateRequest>,
 ) -> Result<Json<PromptTemplate>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let template = state
         .store
         .update_prompt_template(
@@ -103,10 +99,8 @@ pub async fn update_prompt_template(
 pub async fn delete_prompt_template(
     State(state): State<AppState>,
     AxumPath(template_id): AxumPath<Uuid>,
-    headers: HeaderMap,
     Json(request): Json<DeletePromptTemplateRequest>,
 ) -> Result<Json<PromptTemplate>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let template = state
         .store
         .delete_prompt_template(template_id, request.command_id, request.expected_revision)

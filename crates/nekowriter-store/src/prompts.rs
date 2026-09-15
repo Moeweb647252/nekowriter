@@ -16,9 +16,11 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::{
-    Store, StoreError, db_id,
-    entity::{event, project, prompt_override},
-    insert_receipt, parse_optional_id, payload_hash, replay_or_conflict, transaction_error,
+    Command, Notify, Store, StoreError, db_id,
+    entity::{project, prompt_override},
+    insert_receipt, parse_optional_id, payload_hash,
+    preparation::insert_app_event,
+    transaction_error,
 };
 
 /// 单个提示词覆盖内容的长度上限（Unicode 字符）。
@@ -206,17 +208,14 @@ impl Store {
             user: &input.user,
         };
         let payload_hash = payload_hash(&payload)?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, "PUT", &target, &payload_hash);
-        }
+        let command = Command::new(command_id, "PUT", &target, &payload_hash);
 
         let input_for_transaction = input.clone();
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
         let now = utc_now_millis();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     ensure_project_exists(transaction, input_for_transaction.project_id).await?;
                     let existing = find_override_model(
@@ -281,25 +280,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-
-        match result {
-            Ok(saved) => {
-                self.notify_event_listeners();
-                Ok(saved)
-            }
-            Err(StoreError::Database(error)) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    "PUT",
-                    &target,
-                    &payload_hash,
-                    StoreError::Database(error),
-                )
-                .await
-            }
-            Err(error) => Err(error),
-        }
     }
 
     /// 删除一条提示词覆盖，回到更低优先级的来源。
@@ -334,8 +314,11 @@ impl Store {
             prompt_key: &prompt_key,
         };
         let payload_hash = payload_hash(&payload)?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, "DELETE", &target, &payload_hash);
+        let command = Command::new(command_id, "DELETE", &target, &payload_hash);
+        // 两段式站点：`removed` 要看事务结果，收尾走 `finish`，而 `finish` 不做预查，
+        // 所以事务外的预查仍由这里承担。
+        if let Some(replayed) = command.replay_if_recorded(self).await? {
+            return Ok(replayed);
         }
 
         let prompt_key_for_transaction = prompt_key.clone();
@@ -396,25 +379,9 @@ impl Store {
             .await
             .map_err(transaction_error);
 
-        match result {
-            Ok(reset) => {
-                if reset.removed {
-                    self.notify_event_listeners();
-                }
-                Ok(reset)
-            }
-            Err(StoreError::Database(error)) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    "DELETE",
-                    &target,
-                    &payload_hash,
-                    StoreError::Database(error),
-                )
-                .await
-            }
-            Err(error) => Err(error),
-        }
+        // no-op 命令不通知：本来就没有覆盖项可删就不该让界面重读。
+        let notify = Notify::on_change(matches!(&result, Ok(reset) if reset.removed));
+        command.finish(self, notify, result).await
     }
 }
 
@@ -557,24 +524,21 @@ async fn insert_prompt_override_event(
     action: &str,
     now: i64,
 ) -> Result<(), StoreError> {
-    event::ActiveModel {
-        version_id: Set(None),
-        event_type: Set("settings.changed".to_owned()),
-        entity_id: Set(db_id(Uuid::new_v4())),
-        revision: Set(response.revision.to_string()),
-        payload_json: Set(serde_json::to_string(&json!({
+    insert_app_event(
+        transaction,
+        "settings.changed",
+        Uuid::new_v4(),
+        response.revision,
+        json!({
             "scope": response.scope.as_str(),
             "project_id": response.project_id.map(|id| id.to_string()),
             "prompt_key": response.prompt_key,
             "action": action,
             "revision": response.revision.to_string(),
-        }))?),
-        occurred_at: Set(now),
-        ..Default::default()
-    }
-    .insert(transaction)
-    .await?;
-    Ok(())
+        }),
+        now,
+    )
+    .await
 }
 
 #[cfg(test)]

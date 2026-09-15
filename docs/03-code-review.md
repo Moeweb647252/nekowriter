@@ -2100,3 +2100,273 @@ seq 260  {"chapter_id":"daeec0cd-…","kind":"chapter_body","reason":"pending_fe
 `cargo test --workspace` **234 通过 / 0 失败**（agent 44、app 单元 62 + 集成 2、core 38、store 84、xtask 4），`cargo fmt --all -- --check` 干净。审计发现 43.4 a 按「已收口」处理，43.4 b 的真实端点复验一并完成。
 
 仍未覆盖：本轮证明的是「意见进入了请求」，不是「模型一定按意见改稿」——本轮它确实改了（新修订被通过），但这取决于模型；`issues` 为空的拒绝（界面允许留空）只由 §6.2 的既有协议处理，没有现场；完本确认、长篇阅读视图、`format=txt` 导出仍未走。
+
+## 45. 2026-09-15 修复轮收口：静态/`/api` 边界、幂等收尾统一、前端测试基建与真界面验收
+
+本轮把第 05 号全仓复核报告的修复项做到「有现场」为止，并为三处此前只有单测或静态检查的行为补上真实验证。
+
+### 45.1 静态目录与 `/api` 的边界（修复前 → 修复后）
+
+现场是当前二进制加全新数据目录（`target/debug/nekowriter --port 8841 --data-dir /tmp/nw-route2/data`）：
+
+| 请求 | 修复前 | 修复后 |
+| --- | --- | --- |
+| `GET /api/definitely-not-a-route` | 404 `application/json`，`{"error":{"code":"NOT_FOUND","message":"接口不存在",...}}` | 同左——`/api` 有自己的嵌套回落，没有被静态回落吞掉 |
+| `GET /settings`（裸路径） | 404，空响应体 | 200 `text/html`，入口 HTML |
+| `GET /assets/removed-chunk.js` | **200 `text/html`，入口 HTML** ← 缺陷 | 404 |
+
+「修复前」不是回忆：先把回落临时换回 `ServeFile::new(index.html)` 再跑本轮新加的用例，得到
+`assertion left: 200 right: 404: 缺失的静态资源被回落成了 HTML`；再退一步（完全没有回落）得到
+`/settings 未回落到入口 HTML: left: 404 right: 200`。两次都跑在真实回环端口上。
+
+**需要更正我自己先前的一处口径**：前端用的是 hash 路由（`webui/src/App.tsx` 的 `createHashRouter`），
+刷新 `http://127.0.0.1:8851/#/settings` 时服务端只看到 `/`，所以「刷新深链接」并**不**需要这个回落。
+它的实际价值只是裸路径（在地址栏敲 `/settings`）不再得到空 404；而它最初引入的真正代价是
+**把所有未命中的路径都变成 200 + HTML**，包括缺失的静态资源——浏览器会把 HTML 当脚本执行（MIME 不匹配），
+把「chunk 丢了」这种可诊断的 404 变成一条难定位的界面故障。
+
+收口在 `crates/nekowriter-app/src/main.rs`：`fallback_service` 改成「末段不带 `.` 的路径才回落到入口 HTML，
+带扩展名的路径如实 404」（`serve_client_route` / `is_static_asset_path`）；`/api` 保留自己的嵌套回落。
+
+钉住真实形状的用例是 `static_dir_serves_client_routes_and_reports_missing_assets_honestly`（真实回环端口 + 真实路由 + 真实 HTTP）：
+`/`、`/settings`、`/works/abc/versions/def` → 200 且 `text/html`、含入口标记；磁盘上存在的 `/assets/app.js` → 200 且是磁盘内容；
+缺失的 `/assets/removed-chunk.js` → 404；`/api/definitely-not-a-route` → 404 且 `content-type: application/json`、`error.code = NOT_FOUND`。
+同一个文件里，原本只覆盖 `Origin` 的路由级写信任用例补上了 `Host: evil.example`：403 的 `UNTRUSTED_ORIGIN` 与 400 的 `UNTRUSTED_HOST`（400 是该错误码既有的状态码映射）。
+
+### 45.2 幂等收尾统一（复核 F-05 收口）
+
+复核时的计数是「`finish_write` 只有 17/49 调用点」。统一第一轮把剩下 32 个站点迁到同一个收尾函数，
+本轮（收口后的精简轮）再把这套东西换成一个真正持有状态的**幂等信封**，调用点因此不再复述它：
+
+```rust
+struct Command<'a> { id: Uuid, method: &'a str, target: &'a str, payload_hash: &'a str }
+enum Notify { Listeners, Quiet }   // 取代 `notify: bool`
+
+Command::replay_if_recorded(store)          // 事务外预查：已有回执就还原，指纹不符是冲突
+Command::commit(store, notify, body)        // 预查 → 事务体 → 收尾，一条命令只写一行
+Command::finish(store, notify, result)      // 只给「按事务结果决定要不要通知」的站点用
+```
+
+现况计数（`crates/nekowriter-store/src/*.rs`）：
+
+| 项 | 数 | 分布 |
+| --- | --- | --- |
+| 命令站点 | **49** | `preparation` 24、`knowledge` 9、`recycle` 5、`lib` 3、`prompt_templates` 3、`prompts` 2、`version_copy` 1、`settings` 1、`project_settings` 1 |
+| 其中走 `commit`（三段合一） | **46** | 通知判定在提交前就已知 |
+| 其中走 `finish` + `Notify::on_change` | **3** | `set_approval_mode`、`request_chapter_body_pause`、提示词覆盖项重置：要不要通知由事务结果决定 |
+| 只做预查的 helper | **3** | `replay_system_model_settings_if_known`、`replay_embedding_settings_if_known`、`find_accumulation_result` |
+| 站点自己先预查一次（白名单） | **5** | `create_knowledge_entry`、`insert_accumulated_entries`、`update_knowledge_entry`、`delete_knowledge_entry`、`reindex_all_knowledge`：早退省掉 `embedding_profile_with_id()` 的读库（`reindex` 还省掉整张 `knowledge_entry` 表扫描） |
+| `finish_write` 自由函数 | **0** | 已删除（定义与全部调用点） |
+
+**为什么三个站点不硬塞进 `commit`：** 它们的 `notify` 来自事务体的返回值（`changed` / `removed`），
+提交之前根本无从判断。强行合并得让 `commit` 认识「结果里第二个元素是 bool」这种约定，
+那是把一处清晰的判断换成一个更隐晦的约定，因此这三个特意保留两步写法，只把通知判定换成了
+`Notify::on_change(matches!(&result, …))`——语义与原来逐字相同，名字替 `notify` 说出了含义。
+
+**为什么站点还留着自己的事务体：** 回执必须与业务写入在同一个事务里提交，`insert_receipt` 正是
+那个事务的一部分，`commit` 的 `body` 就是它，边界在调用点仍然看得见；把它也藏进 helper 只会让
+事务边界消失在两次调用之间。并发的重复命令由 `command_receipts.command_id` 主键冲突挡住，错误在
+`finish` 里换成既有回执。
+
+> 订正：此前这里（以及 `docs/02` §2.4、`docs/06` 的 F-05 行）写成「算指纹 → **事务内复查** → 写回执」，
+> 把原因说成「复查与业务写入必须在同一个事务里」。代码里没有、也不需要事务内的回执复查：事务体里只有业务写入
+> 与 `insert_receipt`，事务外的预查由 `Command::commit` 独占，并发正确性由主键冲突兜底。已按实现订正。
+
+仍然直接调用 `notify_event_listeners()` 的地方只剩不属于命令写入的内部尝试记录：
+`preparation` 8 处（Agent 工具调用落库、模型请求终态）、`model_requests` 6 处、
+`knowledge` 1 处（索引任务状态）、`protocol_correction` 1 处，加上信封自己那 1 处。
+它们都没有 `command_id`、也不写回执，不在幂等规则之内。
+
+**行数与形状（真实的 `wc -l` 对照，本轮前后各量一次）：**
+
+```
+knowledge.rs        2808 → 2704  (-104)
+lib.rs              6928 → 7025  (+97)     ← 信封本体 + 两个新增用例 + 钉住用例在这里，站点侧是净减
+preparation.rs     13522 → 13218 (-304)
+project_settings.rs  568 →  553  (-15)
+prompt_templates.rs  481 →  438  (-43)
+prompts.rs           850 →  830  (-20)
+recycle.rs          1330 → 1260  (-70)
+settings.rs          499 →  482  (-17)
+version_copy.rs     1077 → 1062  (-15)
+合计               28063 → 27572 (-491)
+```
+
+净减 **491 行**：信封重构 484 行 + 本轮预查去重 7 行（去重删掉 41 处纯重复预查共 123 行，
+保留站点的注释与钉住用例占回 116 行）。重构前那 49 个 `notify` 参数是 **46 个字面 `true` + 3 个计算值**
+（`notify`、`reset.removed`），现在全部消失：46 处写 `Notify::Listeners`，3 处写 `Notify::on_change(...)`——
+调用点不再能传错一个布尔值。
+
+**"等价"这一声称里唯一不成立的一处已单独钉住。** 收尾的失败分支在复核时是
+`Err(StoreError::Database(error)) => 按回执重放`（其余错误原样返回），统一后放宽为「任何错误都先查回执」。
+它今天只能由**并发或构造**真实抵达（两次预查之间另一条同 `command_id` 的命令已落库，而输的那次先撞上业务守卫），
+因此不靠现场而靠用例钉住它的契约与边界：`command_finish_replays_an_existing_receipt_for_a_non_database_error`
+（用一条真实命令留下真实回执，再以 `SystemSettingsRevisionConflict` 这条非数据库错误调用收尾）。
+把分支改回 `matches!(error, StoreError::Database(_))` 后它立即失败：
+
+```
+thread 'tests::command_finish_replays_an_existing_receipt_for_a_non_database_error' panicked at
+crates/nekowriter-store/src/lib.rs:2048:10:
+已有回执时，非数据库错误也必须还原成回执: SystemSettingsRevisionConflict { expected: 0, actual: 1 }
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 91 filtered out
+```
+
+安全性由 `replay_after_receipt_conflict` 自身的边界保证：无回执时原样返回传入的错误，
+有回执但方法/目标/指纹不一致仍是 `IdempotencyConflict`（两者都在同一用例里断言）。
+`docs/06` §3.1 把这条记为本轮**唯一有意的非等价改动**及其理由。
+
+**通知判定的新形状不是「编过就算」：两次反向实验证明它真被用例钉住。**
+
+新用例 `a_no_op_command_writes_its_receipt_but_does_not_wake_subscribers`：把同一个模式再写一遍
+（no-op 命令），断言它照样落回执、但不唤醒订阅者。
+
+| 实验 | 改动 | 结果 |
+| --- | --- | --- |
+| A | 把 `set_approval_mode` 的 `Notify::on_change(…)` 改回无条件 `Notify::Listeners` | `a_no_op_command_writes_its_receipt_but_does_not_wake_subscribers` 失败于 `lib.rs:2084`：`assertion failed: matches!(notifications.try_recv(), Err(… TryRecvError::Empty))`（`0 passed; 1 failed`） |
+| B | 把 `save_novel_brief` 站点的 `Notify::Listeners` 改反成 `Notify::Quiet` | `persisted_events_are_ordered_and_wake_subscribers` 失败于 `lib.rs:4481`：`assertion failed: notifications.try_recv().is_ok()`（`0 passed; 1 failed`） |
+
+两次都随即还原（`rg -c "Notify::on_change" preparation.rs` 回到 2、`rg -c "Notify::Quiet" preparation.rs` 为 0）。
+也就是说：这一轮既证明了 46 处常量通知不会被悄悄改成不通知，也证明了那 3 处「按结果决定」不会被悄悄改成无条件通知。
+
+**事务外预查收敛到唯一所有者（收口轮）。** 信封落地后，46 个 `commit` 站点里曾有 41 处又自己写了
+一遍同样的调用（`if let Some(replayed) = command.replay_if_recorded(self).await? { return Ok(replayed); }`），
+而 `commit` 开头就会查回执；两边之间什么都没有的那 41 处因此是把同一次点查做了两遍。现在：
+
+* 删掉 41 处纯重复预查（`preparation` 22、`recycle` 5、`knowledge` 4、`lib` 3、`prompt_templates` 3、
+  `prompts`/`settings`/`project_settings`/`version_copy` 各 1；共 123 行）。
+* 保留 5 处并把理由写在代码里（表格里的白名单）：它们后面紧跟着 `embedding_profile_with_id()` 的读库，
+  `reindex_all_knowledge` 还跟着整张 `knowledge_entry` 表扫描，早退在重放时省掉的是真实计算。
+* 3 个只看事务结果决定通知、收尾走 `finish` 的站点（`finish` 不做预查）与 3 个只做预查的 helper
+  （路由层的幂等出口，在任何真实工作之前结束请求）本来就不在这批里。
+
+**这条不变式靠源码形状钉住，因为多出来的那次查询在运行期不可观察**（结果被原样丢掉，重放语义不变）。
+新用例 `transaction_external_recheck_has_a_single_owner` 扫描 `store` 里九个生产文件，断言「既预查又 `commit`」
+的函数集合恰好等于那五个白名单。两个方向的故意反向实验都让它真的失败：
+
+| 实验 | 改动 | 结果 |
+| --- | --- | --- |
+| C | 给 `project_settings::save_project_settings` 把删掉的预查加回去 | `left` 多出 `save_project_settings`，失败于 `lib.rs:2256`（`0 passed; 1 failed`） |
+| D | 把白名单里的 `reindex_all_knowledge` 预查删掉 | `left` 少了 `reindex_all_knowledge`，失败于 `lib.rs:2256`（格式化前为 `2253`，同一断言） |
+
+运行期次数改用 SQL trace 现场对账（`RUST_LOG=info,sqlx=trace`，全新数据目录）：
+
+| 构建 | 成功的 `PUT /api/settings`（新命令） | 同一 `commandId` 重放 |
+| --- | --- | --- |
+| `HEAD`（`a8374ff` 源码构建的二进制，8876） | 写前查 **2** 次 `command_receipts`（`.112862`、`.113219`：路由 helper + 站点预查） | 1 次 |
+| 去重前（信封重构后、本次去重前的二进制，8873） | 写前查 **3** 次（`.325329`、`.325735`、`.326037`：路由 helper + 站点 + `commit`） | 1 次 |
+| 现在（8878，收口后的当前构建） | 写前查 **2** 次（`.931124`、`.931704`：路由 helper + `commit`） | 1 次 |
+
+即：写命令的回执查询次数与 HEAD 完全一致，多出来的那一次已经还回去；写入序列本身（`.932375` 起：
+事务内读设置 → `INSERT system_model_settings` → 事件 → `INSERT command_receipts` → 框架回读）与两条构建逐条同形。
+
+```
+PUT /api/settings  commandId=…  expectedRevision=0  apiKey=sk-final-first   → 200
+PUT /api/settings  commandId=…（同一个）  apiKey=sk-final-second（只换密钥）  → 200，响应逐字节相同
+
+command_receipts      : PUT /api/settings × 1，payload_hash=2493591dd8…（与上一轮同请求同值）
+events                : settings.changed × 1
+system_model_settings : revision=1，密钥仍是第一次那一个
+rg sk-final 于 服务日志 / payload_hash → 0 命中
+```
+
+（HEAD 那次对照有一个细节：它还没有「密钥不进指纹」的修正，所以同一 `commandId` 只换密钥会得到
+409 `IDEMPOTENCY_CONFLICT`；为了只比查询次数，HEAD 侧用的是逐字相同的请求体两次。）
+
+**真实现场（这条路径在每一条命令底下，所以重跑一遍幂等）。** 用当前源码构建的二进制、全新数据目录
+（`target/debug/nekowriter --port 8866 --data-dir /tmp/nw-envelope-live/data --no-browser`）：
+
+```
+PUT /api/settings  commandId=2fe9963f-…  expectedRevision=0  apiKey=sk-env-first   → 200  revision=1
+PUT /api/settings  commandId=2fe9963f-…（同一个）  apiKey=sk-env-second  → 200  响应与上一条逐字节相同
+
+system_model_settings : revision=1  model_id=envelope-live  key_set=1  key_len=12（仍是 first）
+command_receipts      : PUT /api/settings × 1
+events                : settings.changed × 1
+rg sk-env 于 payload_hash / 服务日志 → 0 命中
+```
+
+与重构前那次现场（§45.5）逐项相同：一条回执、一条事件、`revision` 不增、第二次的密钥正文既不入库也不入摘要。
+
+### 45.3 前端测试基建与 CI（复核 F-13、F-11）
+
+引入 vitest 5.0.1（`webui` 的 devDependency，`pnpm test` 即 `vitest run`）。配置只跑纯逻辑、
+`environment: "node"`、不加载 React/Tailwind 插件：`webui/vitest.config.ts`。
+
+| 用例 | 钉住的东西 |
+| --- | --- |
+| `api.test.ts` × 7 | 错误信封 → `ApiError`（`code` / `message` / `details` / `requestId`）；响应体不是信封（代理换成 HTML、502）时仍给出「本地服务返回 502」+ `HTTP_ERROR` 而不是 `undefined`；读请求不重试、写请求用逐字相同的请求体重试一次；命令请求重试用同一个 `commandId`；保存模型设置时省略密钥就是省略（请求体里没有 `apiKey`） |
+| `shortcuts.test.ts` × 3 | 中文输入法组合判定：`isComposing`、`keyCode === 229`（确认候选词那一次按键）、普通 Enter |
+
+实际运行：`pnpm test` → **2 个文件 / 10 个用例通过**；`pnpm lint` → **0 error / 2 warning**（两个都是
+`react-hooks/incompatible-library`：`ChapterDirectory.tsx` 与 `ManuscriptReader.tsx` 使用虚拟化库，
+属于该规则的已知边界，已记入 §16.1 一类的已知项）；`npx tsc --noEmit` 与 `pnpm build` 干净。
+
+CI 是 `.github/workflows/ci.yml` 两个 job：`rust`（装 `protobuf-compiler`、按 `rust-toolchain.toml` 装 nightly+clippy+rustfmt、
+`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets`、`cargo test --workspace`）与
+`webui`（`pnpm install --frozen-lockfile`、`pnpm lint`、`pnpm test`、`pnpm build`）。
+本地等价跑法逐条执行且全绿（见 45.6）。YAML 用 `ruby -ryaml` 解析确认结构（`on` 在 YAML 1.1 里是布尔键，
+解析出的 `true` 就是它）：「`job rust: [checkout, 安装 protoc, 安装 toolchain, rust-cache, 格式, Clippy, 测试]`、
+`job webui: [checkout, pnpm/action-setup, setup-node, 安装依赖, lint, 测试, 构建]`」。没有在 GitHub 上实跑过——
+这是本机没有远程执行器，不是没配。
+
+### 45.4 真界面验收（全新数据目录 `/tmp/nw-ui`，`webui/dist` 为当前构建）
+
+四个能力都在真实浏览器里点过、并用数据库/日志对账：
+
+1. **快捷键说明**（复核 F-01 丢失能力之一）：工作台/任何页头部的「快捷键」按钮点击后 `aria-expanded="true"`，
+   页面出现 `dialog "快捷键"`，含 5 条绑定（`⌘ + Enter` ×2、`⌘ + K`、`Esc`、`?`）与输入法说明，`关闭` 按钮可关。
+2. **本地服务面板**（F-01 丢失能力之二，挂在系统设置页）：显示「界面地址 `http://127.0.0.1:8851`」与
+   「数据与日志 `/private/tmp/nw-ui/data`」；点「退出服务」后按钮变为「确认退出 / 取消」，并给出
+   「退出会先停止接受新请求，取消在途的模型调用，再把正在执行的 Run 收束为「已中断」。待审提案、已提交正文与未投递意见都会保留。」
+   这一步同时证明了这个按钮不是死按钮（它依赖恢复回来的健康检查状态）。
+3. **清除密钥**（复核 F-16 新增能力）：在设置页填 `模型 ID = dummy-model`、`API 密钥 = sk-should-be-cleared` 并保存 →
+   界面「凭据已配置」、DB `revision=1 / api_key 长度 20`；点「清除密钥」第一次只是把按钮变成「确认清除密钥」
+   （DB 仍是 `key_is_null=0`，两步确认有效），再点一次 → 界面回到「尚未配置」且「清除密钥」按钮消失，
+   DB `revision=2 / api_key IS NULL`、`model_id` 与 `api_base_url` 原样保留、事件 `settings.changed @rev2`；
+   服务日志与 `logs/` 里 `rg sk-should-be-cleared` **0 命中**。
+4. **「本地服务已退出」横幅与面板状态**（`docs/02` §16.1 里原先写着「只有静态检查」的那一条）：预览桥绑在服务进程上，
+   服务一停预览就断，所以这一条以前截不到。本轮把页面接到一个只做字节转发的本地 TCP 端口（8860 → 8851），
+   预览绑在转发器上，然后真的 `kill -TERM` 后端：页面仍在，读到
+   `role="status"`「本地服务已退出」+「下方内容是本机最后读取到的数据，不会继续更新，也暂时无法提交新操作。重新运行 NekoWriter（发行目录里的 nekowriter，或源码目录里的 cargo run -p nekowriter-app）后刷新此页面即可继续。」，
+   面板同步变成「服务已退出，界面不再接收新事件」且退出按钮消失（没有留下死按钮）。后端日志侧是
+   `收到退出信号，正在停止服务 → 正在取消在途请求并收尾状态 → NekoWriter 已退出`。
+
+### 45.5 密钥不进回执摘要的现场（复核 F-15）
+
+在同一个数据目录上：第一次 `PUT /api/settings`（新 `commandId`、`apiKey=sk-a-first`）→ 200、`revision=3`；
+紧接着用**同一个 `commandId`、只把密钥换成 `sk-b-second`** → 也返回 200（重放既有回执），
+DB 里 `revision` 仍是 3、`api_key` 仍是 `sk-a-first`，`command_receipts`（`target=/api/settings`）与 `events` 都**没有**增加。
+这同时钉住两件事：密钥字段不进 `payload_hash`（否则同 ID 异体会是 409 冲突），以及重放不会重复写入、不会重复发事件。
+「没有清除密钥入口」这一项已由 45.4 的第 3 条关闭。
+
+本轮收口时又在一个**全新数据目录**上用当前二进制重跑了一遍同一条现场
+（`target/debug/nekowriter --port 8864 --data-dir /tmp/nw-replay/data --no-browser`，前端产物为当前构建）：
+
+```
+PUT /api/settings  commandId=546ee42d-…  expectedRevision=0  apiKey=sk-live-first   → 200
+  {"writingModel":{… "revision":"1", "credentialConfigured":true, …}}
+PUT /api/settings  commandId=546ee42d-…（同一个）  apiKey=sk-live-second（只换密钥）  → 200
+  与上一条响应逐字节相同（diff 无输出）
+
+system_model_settings : revision=1  model_id=live-model  api_base_url=https://api.example/v1  key_set=1  key_len=13（仍是 first）
+command_receipts      : PUT /api/settings × 1，payload_hash 长度 64
+events                : settings.changed × 1
+rg sk-live 于 payload_hash / 服务日志 / data/logs  → 0 命中
+```
+
+即：同一 `commandId` 两次 → **一条回执、一条事件、`revision` 不增**，第二次的密钥正文既没进库也没进摘要。
+
+### 45.6 门禁与仍未覆盖
+
+```
+cargo fmt --all -- --check                     干净
+cargo clippy --workspace --all-targets         0 error；warning 行 239（比复核基线 244 少 5 行，未新增）
+cargo test --workspace                         249 通过 / 0 失败（agent 44、app 单元 67、app 集成 2、core 38、store 94、xtask 4）
+webui: pnpm lint                               0 error / 2 warning
+webui: pnpm test                               10 通过 / 0 失败
+webui: npx tsc --noEmit && pnpm build          干净
+```
+
+仍未覆盖：CI 未在 GitHub 上实跑（只是本地等价命令全绿 + YAML 解析通过）；hash 路由下裸路径回落的行为只由路由级用例与
+curl 现场覆盖，没有用真实浏览器敲一次地址栏；删除密钥后 Embedding 侧的同一动作只在 store/HTTP 用例里（本机没有可用的
+Embedding 端点的实测见 §40）；`.agents/skills/**` 移出版本控制只改了索引与 `.gitignore`（文件仍在磁盘上），需要维护者在提交时确认。

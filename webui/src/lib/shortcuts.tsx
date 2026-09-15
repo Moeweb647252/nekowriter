@@ -77,27 +77,25 @@ export function isCompositionEvent(event: KeyboardEvent) {
 const IS_MAC =
   typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform)
 
-/** 快捷键说明与提示统一用同一个修饰键写法。 */
-export function commandKeyLabel() {
-  return IS_MAC ? "⌘" : "Ctrl"
-}
+/** 快捷键说明里的修饰键写法：Mac 上是 ⌘，其余平台是 Ctrl。 */
+const COMMAND_KEY = IS_MAC ? "⌘" : "Ctrl"
 
 /** 快捷键说明面板里的条目，顺序即展示顺序。 */
 export const SHORTCUT_ENTRIES = [
   {
-    keys: `${IS_MAC ? "⌘" : "Ctrl"} + Enter`,
+    keys: `${COMMAND_KEY} + Enter`,
     title: "提交当前表单",
     detail:
       "光标在任何一个输入框里时，提交这个表单的主操作（保存目标、提交产物、提交细纲、追加正文、查找）。",
   },
   {
-    keys: `${IS_MAC ? "⌘" : "Ctrl"} + Enter`,
+    keys: `${COMMAND_KEY} + Enter`,
     title: "触发唯一的阶段主操作",
     detail:
       "光标不在输入框里、且当前只有一个可用的阶段操作时（例如「开始准备」「显式继续」），同一次按键也能触发它。",
   },
   {
-    keys: `${IS_MAC ? "⌘" : "Ctrl"} + K`,
+    keys: `${COMMAND_KEY} + K`,
     title: "整稿查找",
     detail:
       "在阅读视图里把光标放到整稿查找框。写作视图里没有查找框，因此不生效。",

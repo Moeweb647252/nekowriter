@@ -625,7 +625,8 @@ export function saveSystemModelSettings(
     capabilities: ModelCapabilityProfile
     maxContextTokens: DecimalString
     reservedOutputTokens: DecimalString
-    apiKey?: string
+    /** 省略 = 保留已保存的密钥，`null` = 清回未配置，字符串 = 替换。 */
+    apiKey?: string | null
   },
   commandId: string = createCommandId()
 ) {
@@ -1676,7 +1677,8 @@ export function saveEmbeddingSettings(
   apiBaseUrl: string,
   modelId: string,
   dimension: string,
-  apiKey: string | null,
+  /** 省略 = 保留已保存的密钥，`null` = 清回未配置，字符串 = 替换。 */
+  apiKey?: string | null,
   commandId?: string
 ) {
   return commandRequest<EmbeddingSettingsResponse>(

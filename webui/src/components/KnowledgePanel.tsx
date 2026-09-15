@@ -147,6 +147,8 @@ export function KnowledgePanel({ refreshToken = 0 }: KnowledgePanelProps) {
   const [embeddingLoading, setEmbeddingLoading] = useState(true)
   const [savingEmbedding, setSavingEmbedding] = useState(false)
   const [testingEmbedding, setTestingEmbedding] = useState(false)
+  const [clearingKey, setClearingKey] = useState(false)
+  const [confirmingClearKey, setConfirmingClearKey] = useState(false)
 
   const [spaces, setSpaces] = useState<KnowledgeSpace[]>([])
   const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null)
@@ -286,12 +288,13 @@ export function KnowledgePanel({ refreshToken = 0 }: KnowledgePanelProps) {
     setSavingEmbedding(true)
     setNotice(null)
     try {
+      // 密钥留空就是省略字段（保留已保存的密钥）；清除要显式发 `null`，见「清除密钥」。
       const saved = await saveEmbeddingSettings(
         embedding?.revision ?? "0",
         embeddingDraft.apiBaseUrl.trim(),
         embeddingDraft.modelId.trim(),
         embeddingDraft.dimension.trim(),
-        embeddingDraft.apiKey.trim() ? embeddingDraft.apiKey.trim() : null,
+        embeddingDraft.apiKey.trim() || undefined,
         createCommandId()
       )
       setEmbedding(saved.embedding)
@@ -308,6 +311,46 @@ export function KnowledgePanel({ refreshToken = 0 }: KnowledgePanelProps) {
       })
     } finally {
       setSavingEmbedding(false)
+    }
+  }
+
+  /**
+   * 清除已保存的 Embedding 密钥，把知识库退回「未配置 Embedding」降级。
+   *
+   * 命令只带已持久化的字段加上 `apiKey: null`：既不会顺手保存草稿里的编辑，也不会
+   * 触发保存前那次真实探测（拿刚移除的密钥去探测必然失败）。
+   */
+  async function handleClearEmbeddingKey() {
+    if (!embedding?.credentialConfigured) return
+    if (!confirmingClearKey) {
+      setConfirmingClearKey(true)
+      return
+    }
+    setConfirmingClearKey(false)
+    setClearingKey(true)
+    setNotice(null)
+    try {
+      const saved = await saveEmbeddingSettings(
+        embedding.revision,
+        embedding.profile.apiBaseUrl,
+        embedding.profile.modelId,
+        embedding.profile.dimension,
+        null,
+        createCommandId()
+      )
+      setEmbedding(saved.embedding)
+      setReloadToken((current) => current + 1)
+      setNotice({
+        tone: "success",
+        message: "已清除本机保存的 Embedding 密钥；知识库回到「未配置」降级",
+      })
+    } catch (error) {
+      setNotice({
+        tone: "error",
+        message: errorText(error, "清除 Embedding 密钥失败"),
+      })
+    } finally {
+      setClearingKey(false)
     }
   }
 
@@ -650,6 +693,26 @@ export function KnowledgePanel({ refreshToken = 0 }: KnowledgePanelProps) {
               }
             />
           </Label>
+          {embedding?.credentialConfigured ? (
+            <Button
+              type="button"
+              size="sm"
+              variant={confirmingClearKey ? "destructive" : "ghost"}
+              onClick={() => void handleClearEmbeddingKey()}
+              disabled={clearingKey || savingEmbedding}
+            >
+              {clearingKey ? (
+                <LoaderCircle className="animate-spin" aria-hidden="true" />
+              ) : (
+                <Trash2 aria-hidden="true" />
+              )}
+              {clearingKey
+                ? "正在清除…"
+                : confirmingClearKey
+                  ? "确认清除密钥"
+                  : "清除密钥"}
+            </Button>
+          ) : null}
           <div className="flex flex-wrap gap-2">
             <Button type="submit" size="sm" disabled={savingEmbedding}>
               {savingEmbedding ? (

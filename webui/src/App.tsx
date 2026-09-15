@@ -1,6 +1,8 @@
 import { lazy, Suspense, type ReactNode } from "react"
 import { Navigate, RouterProvider, createHashRouter } from "react-router"
 
+import { ShortcutHelpPanel } from "@/components/ShortcutHelpPanel"
+
 const DashboardPage = lazy(async () => {
   const page = await import("@/pages/DashboardPage")
   return { default: page.DashboardPage }
@@ -58,5 +60,10 @@ const router = createHashRouter([
 ])
 
 export default function App() {
-  return <RouterProvider router={router} />
+  return (
+    <>
+      <RouterProvider router={router} />
+      <ShortcutHelpPanel />
+    </>
+  )
 }

@@ -13,15 +13,15 @@ use nekowriter_core::{
 };
 use sea_orm::{
     ActiveModelTrait, DatabaseTransaction, EntityTrait, IntoActiveModel, QueryFilter, QueryOrder,
-    Set, TransactionTrait,
+    Set,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{
-    CHAPTER_BODY_ROLE, CHAPTER_GUIDANCE_ROLE, CHAPTER_OUTLINE_ROLE, NOVEL_BRIEF_ROLE, Store,
-    StoreError, db_id,
+    CHAPTER_BODY_ROLE, CHAPTER_GUIDANCE_ROLE, CHAPTER_OUTLINE_ROLE, Command, NOVEL_BRIEF_ROLE,
+    Notify, Store, StoreError, db_id,
     entity::{
         chapter, document, document_revision, novel_version, project, review, revision_dependency,
         run, tool_call,
@@ -31,7 +31,7 @@ use crate::{
     preparation::{
         insert_app_event, insert_chapter_document_slots, preparation_snapshot, workflow_for_version,
     },
-    project_from_model, replay_or_conflict, transaction_error,
+    project_from_model,
 };
 
 const COPY_VERSION_METHOD: &str = "POST";
@@ -78,15 +78,12 @@ impl Store {
         let payload_hash = payload_hash(&CopyVersionPayload {
             label: &input.label,
         })?;
-        if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, COPY_VERSION_METHOD, &target, &payload_hash);
-        }
+        let command = Command::new(command_id, COPY_VERSION_METHOD, &target, &payload_hash);
 
         let target_for_transaction = target.clone();
         let payload_hash_for_transaction = payload_hash.clone();
-        let result = self
-            .database
-            .transaction::<_, _, StoreError>(move |transaction| {
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
                 Box::pin(async move {
                     let source_version =
                         novel_version::Entity::find_by_id(db_id(source_version_id))
@@ -734,24 +731,6 @@ impl Store {
                 })
             })
             .await
-            .map_err(transaction_error);
-
-        match result {
-            Ok(bundle) => {
-                self.notify_event_listeners();
-                Ok(bundle)
-            }
-            Err(error) => {
-                self.replay_after_receipt_conflict(
-                    command_id,
-                    COPY_VERSION_METHOD,
-                    &target,
-                    &payload_hash,
-                    error,
-                )
-                .await
-            }
-        }
     }
 }
 

@@ -21,8 +21,9 @@ mod templates;
 
 use axum::{
     Json, Router,
-    extract::{Path as AxumPath, Query, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header},
+    extract::{Path as AxumPath, Query, Request, State},
+    http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header},
+    middleware::{self, Next},
     response::{
         IntoResponse, Response,
         sse::{Event, KeepAlive, Sse},
@@ -402,8 +403,9 @@ struct SaveSystemModelSettingsRequest {
     max_context_tokens: i64,
     #[serde(with = "decimal_i64")]
     reserved_output_tokens: i64,
+    /// 三态：省略 = 保留既有密钥，`null` = 清回未配置，字符串 = 替换。
     #[serde(default)]
-    api_key: Option<String>,
+    api_key: nekowriter_store::CredentialPatch,
 }
 
 #[derive(Debug, Serialize)]
@@ -1333,6 +1335,19 @@ async fn main() -> Result<(), StartupError> {
     let address = SocketAddr::from(([127, 0, 0, 1], cli.port));
     let listener = tokio::net::TcpListener::bind(address).await?;
     info!(address = %address, data_dir = %data_dir.display(), "NekoWriter 已启动");
+    // 长期增长口径：请求快照、命令回执与消息账本是审计事实，不自动回收；把各表当前的
+    // 行数与重文本字节数写到日志，长年使用后的体积因此可诊断（见 docs/02 §11.3）。
+    match state.store.storage_growth().await {
+        Ok(growth) => info!(
+            table = %growth
+                .iter()
+                .map(|table| format!("{}={}行/{}字节", table.table, table.rows, table.text_bytes))
+                .collect::<Vec<_>>()
+                .join(" "),
+            "本地数据规模"
+        ),
+        Err(error) => warn!(%error, "本地数据规模统计失败"),
+    }
     if !cli.no_browser {
         lifecycle::open_browser(cli.port);
     }
@@ -1366,6 +1381,9 @@ async fn main() -> Result<(), StartupError> {
 fn router(state: AppState, web_dir: PathBuf) -> Router {
     let root_index_html = web_dir.join("index.html");
     let explicit_index_html = root_index_html.clone();
+    // 深链接回落用同一份入口 HTML：前端用 path 路由，磁盘上没有 `/works/...` 这样的文件。
+    let fallback_index_html = root_index_html.clone();
+    let static_files = web_dir.clone();
     let api = Router::new()
         .route("/health", get(health))
         .route("/system/shutdown", axum::routing::post(shutdown_service))
@@ -1583,6 +1601,10 @@ fn router(state: AppState, web_dir: PathBuf) -> Router {
             axum::routing::post(cancel_review_delegation),
         )
         .fallback(api_not_found)
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_trusted_write,
+        ))
         .with_state(state);
 
     Router::new()
@@ -1592,8 +1614,35 @@ fn router(state: AppState, web_dir: PathBuf) -> Router {
             "/index.html",
             get(move || serve_index_html(explicit_index_html.clone())),
         )
-        .fallback_service(ServeDir::new(web_dir).append_index_html_on_directories(true))
+        .fallback_service(
+            ServeDir::new(static_files)
+                .append_index_html_on_directories(true)
+                .fallback(get(move |uri: Uri| {
+                    let index_html = fallback_index_html.clone();
+                    async move { serve_client_route(uri, index_html).await }
+                })),
+        )
         .layer(TraceLayer::new_for_http())
+}
+
+/// 静态目录未命中时的回落：只有前端路由形的路径回落到入口 HTML。
+///
+/// 前端用 path 路由，磁盘上没有 `/works/<id>` 这样的文件，直接打开或刷新深链接必须由
+/// 路由接管，否则用户拿到的是一个空白 404。带扩展名的路径是静态资源（脚本、样式、
+/// 图片、字体）：磁盘上没有就如实 404，回落到 HTML 会把真正的缺失掩盖成界面故障——
+/// 浏览器把 HTML 当脚本执行（MIME 不匹配）或把坏资源当成加载成功。
+async fn serve_client_route(uri: Uri, index_html: PathBuf) -> Response {
+    if is_static_asset_path(uri.path()) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    serve_index_html(index_html).await
+}
+
+/// 末段带 `.` 的路径按静态资源看待；前端路由段（UUID、页面名）里不含点。
+fn is_static_asset_path(path: &str) -> bool {
+    path.rsplit('/')
+        .next()
+        .is_some_and(|segment| segment.contains('.'))
 }
 
 /// 入口 HTML 不能被启发式缓存：每次启动新版本时，它必须引用同一构建产物里的懒加载 chunk。
@@ -1628,9 +1677,7 @@ struct ShutdownResponse {
 /// 响应先写回客户端，服务随后停止接受连接并取消在途请求；界面据此显示连接已断开。
 async fn shutdown_service(
     State(state): State<AppState>,
-    headers: HeaderMap,
 ) -> Result<Json<ShutdownResponse>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     if state.shutdown.is_requested() {
         return Ok(Json(ShutdownResponse {
             status: "already_shutting_down",
@@ -1666,10 +1713,8 @@ async fn get_system_settings(
 
 async fn save_system_settings(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<SaveSystemModelSettingsRequest>,
 ) -> Result<Json<SystemSettingsResponse>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let _guard = state.settings_write_lock.lock().await;
     let current = state.store.get_system_model_settings().await?;
     let SaveSystemModelSettingsRequest {
@@ -1740,10 +1785,8 @@ fn system_settings_response(
 /// 不允许绕过已配置的服务。
 async fn test_model_connection(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<TestModelRequest>,
 ) -> Result<Json<TestModelResponse>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let model_id = request.model_id.trim().to_owned();
     if model_id.is_empty() {
         return Err(StoreError::InvalidSystemModelSettings("模型 ID 不能为空".to_owned()).into());
@@ -1970,10 +2013,8 @@ async fn list_chapters(
 async fn advance_to_next_chapter(
     State(state): State<AppState>,
     AxumPath(version_id): AxumPath<VersionId>,
-    headers: HeaderMap,
     Json(request): Json<AdvanceToNextChapterRequest>,
 ) -> Result<Json<PreparationSnapshot>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     Ok(Json(
         state
             .store
@@ -1989,10 +2030,8 @@ async fn advance_to_next_chapter(
 async fn confirm_novel_completion(
     State(state): State<AppState>,
     AxumPath(version_id): AxumPath<VersionId>,
-    headers: HeaderMap,
     Json(request): Json<ConfirmNovelCompletionRequest>,
 ) -> Result<Json<PreparationSnapshot>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     Ok(Json(
         state
             .store
@@ -2008,10 +2047,8 @@ async fn confirm_novel_completion(
 async fn add_extra_chapter(
     State(state): State<AppState>,
     AxumPath(version_id): AxumPath<VersionId>,
-    headers: HeaderMap,
     Json(request): Json<AddExtraChapterRequest>,
 ) -> Result<Json<PreparationSnapshot>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let input = NewExtraChapter::new(request.title)?;
     Ok(Json(
         state
@@ -2036,10 +2073,8 @@ async fn get_chapter_guidance(
 async fn save_chapter_guidance(
     State(state): State<AppState>,
     AxumPath(chapter_id): AxumPath<ChapterId>,
-    headers: HeaderMap,
     Json(request): Json<SaveChapterGuidanceRequest>,
 ) -> Result<Json<nekowriter_core::CurrentChapterGuidance>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let input = NewChapterGuidance::new(request.content)?;
     Ok(Json(
         state
@@ -2057,10 +2092,8 @@ async fn save_chapter_guidance(
 async fn start_chapter_outline(
     State(state): State<AppState>,
     AxumPath(chapter_id): AxumPath<ChapterId>,
-    headers: HeaderMap,
     Json(request): Json<StartChapterOutlineRequest>,
 ) -> Result<Json<nekowriter_core::WorkflowSnapshot>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let project_id = state.store.project_id_for_chapter(chapter_id).await?;
     ensure_model_ready(&state, project_id).await?;
     let workflow = state
@@ -2093,10 +2126,8 @@ async fn get_chapter_outline(
 async fn submit_chapter_outline(
     State(state): State<AppState>,
     AxumPath(chapter_id): AxumPath<ChapterId>,
-    headers: HeaderMap,
     Json(request): Json<SubmitChapterOutlineRequest>,
 ) -> Result<Json<nekowriter_core::ChapterOutlineSnapshot>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let input = NewChapterOutline::new(request.content)?;
     Ok(Json(
         state
@@ -2133,10 +2164,8 @@ async fn get_document_revision(
 async fn append_chapter_body(
     State(state): State<AppState>,
     AxumPath(chapter_id): AxumPath<ChapterId>,
-    headers: HeaderMap,
     Json(request): Json<AppendChapterBodyRequest>,
 ) -> Result<Json<nekowriter_core::ChapterBodySnapshot>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let input = AppendChapterContent::new(request.content)?;
     Ok(Json(
         state
@@ -2154,10 +2183,8 @@ async fn append_chapter_body(
 async fn replace_chapter_body(
     State(state): State<AppState>,
     AxumPath(chapter_id): AxumPath<ChapterId>,
-    headers: HeaderMap,
     Json(request): Json<ReplaceChapterBodyRequest>,
 ) -> Result<Json<nekowriter_core::ChapterBodySnapshot>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let input = ReplaceChapterContent::new(request.old_str, request.new_str)?;
     Ok(Json(
         state
@@ -2175,10 +2202,8 @@ async fn replace_chapter_body(
 async fn decide_chapter_body_proposal(
     State(state): State<AppState>,
     AxumPath((chapter_id, tool_call_id)): AxumPath<(ChapterId, Uuid)>,
-    headers: HeaderMap,
     Json(request): Json<DecideChapterBodyProposalRequest>,
 ) -> Result<Json<nekowriter_core::ChapterBodySnapshot>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let snapshot = state
         .store
         .decide_chapter_body_proposal(
@@ -2197,10 +2222,8 @@ async fn decide_chapter_body_proposal(
 async fn submit_run_feedback(
     State(state): State<AppState>,
     AxumPath(run_id): AxumPath<nekowriter_core::RunId>,
-    headers: HeaderMap,
     Json(request): Json<SubmitRunFeedbackRequest>,
 ) -> Result<Json<nekowriter_core::ChapterBodySnapshot>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let snapshot = state
         .store
         .submit_run_feedback(
@@ -2218,10 +2241,8 @@ async fn submit_run_feedback(
 async fn answer_question(
     State(state): State<AppState>,
     AxumPath(question_id): AxumPath<nekowriter_core::QuestionId>,
-    headers: HeaderMap,
     Json(request): Json<AnswerQuestionRequest>,
 ) -> Result<Json<nekowriter_store::QuestionAnswerResult>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let response = state
         .store
         .answer_user_question(
@@ -2240,10 +2261,8 @@ async fn answer_question(
 async fn continue_writing_run(
     State(state): State<AppState>,
     AxumPath(run_id): AxumPath<nekowriter_core::RunId>,
-    headers: HeaderMap,
     Json(request): Json<RunWorkflowControlRequest>,
 ) -> Result<Json<WorkflowSnapshot>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let project_id = state.store.project_id_for_run(run_id).await?;
     ensure_model_ready(&state, project_id).await?;
     let workflow = state
@@ -2257,10 +2276,8 @@ async fn continue_writing_run(
 async fn stop_writing_run(
     State(state): State<AppState>,
     AxumPath(run_id): AxumPath<nekowriter_core::RunId>,
-    headers: HeaderMap,
     Json(request): Json<RunWorkflowControlRequest>,
 ) -> Result<Json<WorkflowSnapshot>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let stopped = state
         .store
         .stop_writing_run(run_id, request.command_id, request.expected_state_revision)
@@ -2279,10 +2296,8 @@ async fn stop_writing_run(
 async fn request_chapter_body_pause(
     State(state): State<AppState>,
     AxumPath(run_id): AxumPath<nekowriter_core::RunId>,
-    headers: HeaderMap,
     Json(request): Json<RunWorkflowControlRequest>,
 ) -> Result<Json<nekowriter_core::ChapterBodySnapshot>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     Ok(Json(
         state
             .store
@@ -2294,10 +2309,8 @@ async fn request_chapter_body_pause(
 async fn resume_chapter_body_pause(
     State(state): State<AppState>,
     AxumPath(run_id): AxumPath<nekowriter_core::RunId>,
-    headers: HeaderMap,
     Json(request): Json<RunWorkflowControlRequest>,
 ) -> Result<Json<nekowriter_core::ChapterBodySnapshot>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let snapshot = state
         .store
         .resume_chapter_body_pause(run_id, request.command_id, request.expected_state_revision)
@@ -2309,10 +2322,8 @@ async fn resume_chapter_body_pause(
 async fn set_approval_mode(
     State(state): State<AppState>,
     AxumPath(version_id): AxumPath<VersionId>,
-    headers: HeaderMap,
     Json(request): Json<SetApprovalModeRequest>,
 ) -> Result<Json<WorkflowSnapshot>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     Ok(Json(
         state
             .store
@@ -2329,10 +2340,8 @@ async fn set_approval_mode(
 async fn submit_chapter_final_review(
     State(state): State<AppState>,
     AxumPath(chapter_id): AxumPath<ChapterId>,
-    headers: HeaderMap,
     Json(request): Json<SubmitChapterFinalReviewRequest>,
 ) -> Result<Json<nekowriter_core::ChapterBodySnapshot>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     Ok(Json(
         state
             .store
@@ -2495,10 +2504,8 @@ async fn get_preparation(
 async fn save_novel_brief(
     State(state): State<AppState>,
     AxumPath(version_id): AxumPath<VersionId>,
-    headers: HeaderMap,
     Json(request): Json<SaveNovelBriefRequest>,
 ) -> Result<Json<nekowriter_core::CurrentNovelBrief>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let input = NewNovelBrief::new(request.content)?;
     Ok(Json(
         state
@@ -2511,10 +2518,8 @@ async fn save_novel_brief(
 async fn start_preparation(
     State(state): State<AppState>,
     AxumPath(version_id): AxumPath<VersionId>,
-    headers: HeaderMap,
     Json(request): Json<StartPreparationRequest>,
 ) -> Result<Json<PreparationSnapshot>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let project_id = state.store.project_id_for_version(version_id).await?;
     ensure_model_ready(&state, project_id).await?;
     let snapshot = state
@@ -2567,10 +2572,8 @@ async fn ensure_model_ready(state: &AppState, project_id: ProjectId) -> Result<(
 async fn submit_preparation_artifacts(
     State(state): State<AppState>,
     AxumPath(version_id): AxumPath<VersionId>,
-    headers: HeaderMap,
     Json(request): Json<SubmitPreparationArtifactsRequest>,
 ) -> Result<Json<PreparationSnapshot>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let artifacts = request
         .artifacts
         .into_iter()
@@ -2602,10 +2605,8 @@ async fn submit_preparation_artifacts(
 async fn decide_review(
     State(state): State<AppState>,
     AxumPath(review_id): AxumPath<ReviewId>,
-    headers: HeaderMap,
     Json(request): Json<DecidePreparationReviewRequest>,
 ) -> Result<Json<PreparationSnapshot>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let decision = HumanReviewDecision::new(request.passed, request.issues.unwrap_or_default())?;
     let snapshot = state
         .store
@@ -2624,10 +2625,8 @@ async fn decide_review(
 async fn delegate_review(
     State(state): State<AppState>,
     AxumPath(review_id): AxumPath<ReviewId>,
-    headers: HeaderMap,
     Json(request): Json<DelegateReviewRequest>,
 ) -> Result<(StatusCode, Json<nekowriter_store::ReviewDelegationResult>), ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let project_id = state.store.project_id_for_review(review_id).await?;
     ensure_model_ready(&state, project_id).await?;
     let delegation = state
@@ -2681,10 +2680,8 @@ async fn delegate_review(
 async fn cancel_review_delegation(
     State(state): State<AppState>,
     AxumPath(review_id): AxumPath<ReviewId>,
-    headers: HeaderMap,
     Json(request): Json<CancelReviewDelegationRequest>,
 ) -> Result<Json<nekowriter_store::CancelReviewDelegationResult>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let cancellation = state
         .store
         .cancel_review_delegation(
@@ -2749,10 +2746,8 @@ async fn enqueue_queued_writing_run(
 
 async fn create_project(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<CreateProjectRequest>,
 ) -> Result<(StatusCode, Json<ProjectBundle>), ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let input = NewProject::new(
         request.name,
         request.novel_title,
@@ -2768,10 +2763,8 @@ async fn create_project(
 async fn create_version(
     State(state): State<AppState>,
     AxumPath(project_id): AxumPath<ProjectId>,
-    headers: HeaderMap,
     Json(request): Json<CreateVersionRequest>,
 ) -> Result<(StatusCode, Json<ProjectBundle>), ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let input = NewNovelVersion::new(request.label, request.novel_title)?;
     let bundle = state
         .store
@@ -2783,10 +2776,8 @@ async fn create_version(
 async fn select_version(
     State(state): State<AppState>,
     AxumPath(project_id): AxumPath<ProjectId>,
-    headers: HeaderMap,
     Json(request): Json<SelectVersionRequest>,
 ) -> Result<Json<ProjectBundle>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     Ok(Json(
         state
             .store
@@ -2803,10 +2794,8 @@ async fn select_version(
 async fn copy_version(
     State(state): State<AppState>,
     AxumPath(version_id): AxumPath<VersionId>,
-    headers: HeaderMap,
     Json(request): Json<CopyVersionRequest>,
 ) -> Result<(StatusCode, Json<ProjectBundle>), ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let input = NewCopiedNovelVersion::new(request.label)?;
     let bundle = state
         .store
@@ -2865,13 +2854,11 @@ async fn get_project_prompts(
 /// 保存覆盖前先按受限模板语言校验，拒绝未知变量与缺失的必需占位符。
 async fn save_prompt_override_command(
     state: &AppState,
-    headers: &HeaderMap,
     scope: PromptOverrideScope,
     project_id: Option<ProjectId>,
     prompt_key: &str,
     request: SavePromptOverrideRequest,
 ) -> Result<Json<PromptOverride>, ApiError> {
-    ensure_trusted_write_request(headers, state)?;
     let key = prompts::parse_prompt_key(prompt_key)?;
     validate_builtin_prompt_pair(key, &request.system, &request.user)?;
     Ok(Json(
@@ -2894,13 +2881,11 @@ async fn save_prompt_override_command(
 
 async fn reset_prompt_override_command(
     state: &AppState,
-    headers: &HeaderMap,
     scope: PromptOverrideScope,
     project_id: Option<ProjectId>,
     prompt_key: &str,
     request: ResetPromptOverrideRequest,
 ) -> Result<Json<PromptOverrideReset>, ApiError> {
-    ensure_trusted_write_request(headers, state)?;
     let key = prompts::parse_prompt_key(prompt_key)?;
     Ok(Json(
         state
@@ -2919,12 +2904,10 @@ async fn reset_prompt_override_command(
 async fn save_system_prompt_override(
     State(state): State<AppState>,
     AxumPath(prompt_key): AxumPath<String>,
-    headers: HeaderMap,
     Json(request): Json<SavePromptOverrideRequest>,
 ) -> Result<Json<PromptOverride>, ApiError> {
     save_prompt_override_command(
         &state,
-        &headers,
         PromptOverrideScope::System,
         None,
         &prompt_key,
@@ -2936,12 +2919,10 @@ async fn save_system_prompt_override(
 async fn reset_system_prompt_override(
     State(state): State<AppState>,
     AxumPath(prompt_key): AxumPath<String>,
-    headers: HeaderMap,
     Json(request): Json<ResetPromptOverrideRequest>,
 ) -> Result<Json<PromptOverrideReset>, ApiError> {
     reset_prompt_override_command(
         &state,
-        &headers,
         PromptOverrideScope::System,
         None,
         &prompt_key,
@@ -2953,12 +2934,10 @@ async fn reset_system_prompt_override(
 async fn save_project_prompt_override(
     State(state): State<AppState>,
     AxumPath((project_id, prompt_key)): AxumPath<(ProjectId, String)>,
-    headers: HeaderMap,
     Json(request): Json<SavePromptOverrideRequest>,
 ) -> Result<Json<PromptOverride>, ApiError> {
     save_prompt_override_command(
         &state,
-        &headers,
         PromptOverrideScope::Project,
         Some(project_id),
         &prompt_key,
@@ -2970,12 +2949,10 @@ async fn save_project_prompt_override(
 async fn reset_project_prompt_override(
     State(state): State<AppState>,
     AxumPath((project_id, prompt_key)): AxumPath<(ProjectId, String)>,
-    headers: HeaderMap,
     Json(request): Json<ResetPromptOverrideRequest>,
 ) -> Result<Json<PromptOverrideReset>, ApiError> {
     reset_prompt_override_command(
         &state,
-        &headers,
         PromptOverrideScope::Project,
         Some(project_id),
         &prompt_key,
@@ -2986,10 +2963,8 @@ async fn reset_project_prompt_override(
 
 async fn preview_prompt(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<prompts::PreviewPromptRequest>,
 ) -> Result<Json<prompts::PreviewPromptResponse>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     Ok(Json(prompts::preview_prompt(&state.store, request).await?))
 }
 
@@ -3005,10 +2980,8 @@ async fn get_project_settings(
 async fn save_project_settings(
     State(state): State<AppState>,
     AxumPath(project_id): AxumPath<ProjectId>,
-    headers: HeaderMap,
     Json(request): Json<SaveProjectSettingsRequest>,
 ) -> Result<Json<ProjectSettings>, ApiError> {
-    ensure_trusted_write_request(&headers, &state)?;
     let _guard = state.settings_write_lock.lock().await;
     Ok(Json(
         state
@@ -3029,6 +3002,24 @@ async fn save_project_settings(
 
 async fn api_not_found() -> ApiError {
     ApiError::NotFound
+}
+
+/// 写请求的信任边界：`Host` 必须是本机回环地址，带 `Origin` 时必须来自本机允许的来源。
+///
+/// 它挂成一层中间件，而不是由每个 handler 记得调用：新增写端点时不会漏掉这条校验。
+async fn require_trusted_write(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let is_write = !matches!(
+        *request.method(),
+        Method::GET | Method::HEAD | Method::OPTIONS
+    );
+    if is_write && let Err(error) = ensure_trusted_write_request(request.headers(), &state) {
+        return error.into_response();
+    }
+    next.run(request).await
 }
 
 fn ensure_trusted_write_request(headers: &HeaderMap, state: &AppState) -> Result<(), ApiError> {
@@ -3102,7 +3093,7 @@ mod tests {
         ACCUMULATION_ENGINES, AccumulatedEntry, AccumulationEngine, AccumulationOutcome,
         AccumulationRequest, EngineDescriptor, EngineError,
     };
-    use nekowriter_store::{KnowledgeSpaceInput, NewEmbeddingSettings};
+    use nekowriter_store::{CredentialPatch, KnowledgeSpaceInput, NewEmbeddingSettings};
     use tempfile::TempDir;
 
     use super::*;
@@ -3275,7 +3266,11 @@ mod tests {
 
     /// 在回环地址的真实端口上启动真实路由，返回基地址。
     fn spawn_app(state: AppState) -> String {
-        let app = router(state, std::env::temp_dir());
+        spawn_app_with_web_dir(state, std::env::temp_dir())
+    }
+
+    fn spawn_app_with_web_dir(state: AppState, web_dir: std::path::PathBuf) -> String {
+        let app = router(state, web_dir);
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         listener.set_nonblocking(true).unwrap();
@@ -3314,7 +3309,7 @@ mod tests {
                     api_base_url: "https://embed.example/v1".to_owned(),
                     model_id: "test-embed".to_owned(),
                     dimension: 2,
-                    api_key: None,
+                    api_key: CredentialPatch::Keep,
                 },
             )
             .await
@@ -3767,8 +3762,18 @@ mod tests {
         assert_eq!(save.api_base_url, "http://127.0.0.1:8899/v1");
         assert_eq!(save.model_id, "stub-embed");
         assert_eq!(save.dimension, 8);
-        // 界面留空密钥时提交 `apiKey: null`，语义是保留既有密钥。
-        assert_eq!(save.api_key, None);
+        // 保存命令里的 `apiKey` 是三态：`null` = 清除，省略 = 保留，字符串 = 替换。
+        assert_eq!(save.api_key, CredentialPatch::Clear);
+
+        let omitted: knowledge::SaveEmbeddingSettingsRequest = serde_json::from_value(json!({
+            "commandId": command_id,
+            "expectedRevision": "1",
+            "apiBaseUrl": "http://127.0.0.1:8899/v1",
+            "modelId": "stub-embed",
+            "dimension": "8",
+        }))
+        .unwrap();
+        assert_eq!(omitted.api_key, CredentialPatch::Keep);
 
         let with_key: knowledge::SaveEmbeddingSettingsRequest = serde_json::from_value(json!({
             "commandId": command_id,
@@ -3779,7 +3784,24 @@ mod tests {
             "apiKey": "probe-embed-key-001",
         }))
         .unwrap();
-        assert_eq!(with_key.api_key.as_deref(), Some("probe-embed-key-001"));
+        assert_eq!(
+            with_key.api_key,
+            CredentialPatch::Replace("probe-embed-key-001".to_owned())
+        );
+
+        // 连接测试不是命令、不落库，它的 `apiKey` 只有两种含义（给一把临时的 / 用库里
+        // 那把），所以刻意不用三态：省略与 `null` 都表示「用库中现有密钥」。
+        let probe_with_key: knowledge::TestEmbeddingRequest = serde_json::from_value(json!({
+            "apiBaseUrl": "http://127.0.0.1:8899/v1",
+            "modelId": "stub-embed",
+            "dimension": "8",
+            "apiKey": "probe-embed-key-001",
+        }))
+        .unwrap();
+        assert_eq!(
+            probe_with_key.api_key.as_deref(),
+            Some("probe-embed-key-001")
+        );
 
         let test: knowledge::TestEmbeddingRequest = serde_json::from_value(json!({
             "apiBaseUrl": "http://127.0.0.1:8899/v1",
@@ -3801,6 +3823,290 @@ mod tests {
                 "apiKey": null,
             }))
             .is_err()
+        );
+    }
+
+    /// 路由层的三条边界：深链接回落、静态资源、以及 `/api` 不被回落吞掉。
+    ///
+    /// 前端用 path 路由，而磁盘上没有 `/works/...` 这样的文件：发行目录（而不是 Vite
+    /// 开发服务器）里必须回落到入口 HTML，否则刷新或直接打开一个深链接只会看到 404。
+    /// 反过来，未知的 `/api/*` 必须仍然是 JSON 错误信封，不能被回落成一份 HTML。
+    #[tokio::test]
+    async fn deep_links_fall_back_to_the_entry_html_without_swallowing_api_errors() {
+        let dir = TempDir::new().unwrap();
+        let web_dir = dir.path().join("dist");
+        tokio::fs::create_dir_all(web_dir.join("assets"))
+            .await
+            .unwrap();
+        tokio::fs::write(web_dir.join("index.html"), "<!doctype html>入口")
+            .await
+            .unwrap();
+        tokio::fs::write(web_dir.join("assets").join("app.js"), "console.log(1)")
+            .await
+            .unwrap();
+
+        let (_data_dir, state) = accumulation_app(ACCUMULATION_ENGINES).await;
+        let base = spawn_app_with_web_dir(state, web_dir);
+        let client = reqwest::Client::new();
+
+        let deep_link = client
+            .get(format!("{base}/works/abc/versions/def"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(deep_link.status(), StatusCode::OK);
+        assert!(deep_link.text().await.unwrap().contains("入口"));
+
+        let asset = client
+            .get(format!("{base}/assets/app.js"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(asset.status(), StatusCode::OK);
+        assert_eq!(asset.text().await.unwrap(), "console.log(1)");
+
+        let unknown_api = client.get(format!("{base}/api/nope")).send().await.unwrap();
+        assert_eq!(unknown_api.status(), StatusCode::NOT_FOUND);
+        let body: Value = unknown_api.json().await.unwrap();
+        assert_eq!(body["error"]["code"], "NOT_FOUND");
+    }
+
+    /// 界面能力必须真的可达：组件文件存在、却没有任何挂载点时，界面只会在点击那一刻
+    /// 表现为「无反应」，既不会有编译错误，也不会让任何请求失败。
+    ///
+    /// 它只能在源码层对账——手法与事件清单相同。本轮之前 `ShortcutHelpPanel` 与
+    /// `ServicePanel` 就是这样丢掉了挂载点。
+    #[test]
+    fn restored_ui_capabilities_are_mounted_in_the_app_shell() {
+        let frontend = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../webui/src");
+        for (file, marker) in [
+            ("App.tsx", "<ShortcutHelpPanel"),
+            ("pages/SettingsPage.tsx", "<ServicePanel"),
+            ("components/AppFrame.tsx", "<ServiceStoppedNotice"),
+            ("pages/WorkspacePage.tsx", "<ServiceStoppedNotice"),
+        ] {
+            let path = frontend.join(file);
+            let source = std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("读取 {} 失败：{error}", path.display()));
+            assert!(
+                source.contains(marker),
+                "{} 不再挂载 {marker}：界面能力会静默消失",
+                path.display()
+            );
+        }
+    }
+
+    /// 写请求的信任校验挂在路由层，而不是由每个 handler 自己记得调用。
+    ///
+    /// 这里用一个 handler 自己不做校验的路由：它只能被中间件拦下。
+    #[tokio::test]
+    async fn write_trust_is_enforced_by_the_router_not_by_handlers() {
+        let (_dir, state) = accumulation_app(ACCUMULATION_ENGINES).await;
+        let base = spawn_app(state);
+        let client = reqwest::Client::new();
+
+        let blocked = client
+            .post(format!(
+                "{base}/api/recycle-bin/knowledge_entry/{}/purge",
+                Uuid::new_v4()
+            ))
+            .header("origin", "http://evil.example")
+            .json(&json!({ "commandId": Uuid::new_v4() }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(blocked.status(), StatusCode::FORBIDDEN);
+        let body: Value = blocked.json().await.unwrap();
+        assert_eq!(body["error"]["code"], "UNTRUSTED_ORIGIN");
+
+        // `Host` 不是回环地址时也拦下：DNS 重绑定式的请求到不了 handler。
+        let rebound = client
+            .post(format!("{base}/api/settings"))
+            .header("host", "evil.example")
+            .json(&json!({ "commandId": Uuid::new_v4() }))
+            .send()
+            .await
+            .unwrap();
+        // 400 是这个错误码既有的状态码映射（`ApiError::UntrustedHost`），这里只钉住拦截本身。
+        assert_eq!(rebound.status(), StatusCode::BAD_REQUEST);
+        let body: Value = rebound.json().await.unwrap();
+        assert_eq!(body["error"]["code"], "UNTRUSTED_HOST");
+
+        // 读方法不经过这层：同一个不被信任的来源上 GET 仍然可用。
+        let read = client
+            .get(format!("{base}/api/settings"))
+            .header("origin", "http://evil.example")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(read.status(), StatusCode::OK);
+    }
+
+    /// 静态目录与 `/api` 的边界：前端深链接回落，静态资源与未知接口如实报错。
+    ///
+    /// 走真实 HTTP 而不是读代码：`/api/*` 必须拿到 JSON 错误信封（不被 SPA 回落吞掉），
+    /// 缺失的静态资源必须 404（不被回落成 200 + HTML）。
+    #[tokio::test]
+    async fn static_dir_serves_client_routes_and_reports_missing_assets_honestly() {
+        let web_dir = TempDir::new().unwrap();
+        std::fs::write(
+            web_dir.path().join("index.html"),
+            "<!doctype html><div id=\"root\">NEKOWRITER_INDEX</div>",
+        )
+        .unwrap();
+        std::fs::create_dir_all(web_dir.path().join("assets")).unwrap();
+        std::fs::write(
+            web_dir.path().join("assets/app.js"),
+            "console.log('real-asset');",
+        )
+        .unwrap();
+
+        let (_dir, state) = accumulation_app(ACCUMULATION_ENGINES).await;
+        let base = spawn_app_with_web_dir(state, web_dir.path().to_path_buf());
+        let client = reqwest::Client::new();
+
+        // 前端路由（深链接）回落到入口 HTML：直接打开或刷新这些地址必须是界面而不是 404。
+        for path in ["/", "/settings", "/works/abc/versions/def"] {
+            let response = client.get(format!("{base}{path}")).send().await.unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::OK,
+                "{path} 未回落到入口 HTML"
+            );
+            let content_type = content_type(&response);
+            assert!(
+                content_type.starts_with("text/html"),
+                "{path} 的内容类型是 {content_type}"
+            );
+            let body = response.text().await.unwrap();
+            assert!(
+                body.contains("NEKOWRITER_INDEX"),
+                "{path} 拿到的不是入口 HTML"
+            );
+        }
+
+        // 磁盘上存在的静态资源按真实路径返回。
+        let asset = client
+            .get(format!("{base}/assets/app.js"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(asset.status(), StatusCode::OK);
+        assert!(asset.text().await.unwrap().contains("real-asset"));
+
+        // 不存在的静态资源如实 404。（存量检查：回落成 200 + HTML 会让浏览器把它当脚本执行。）
+        let missing = client
+            .get(format!("{base}/assets/removed-chunk.js"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            missing.status(),
+            StatusCode::NOT_FOUND,
+            "缺失的静态资源被回落成了 HTML"
+        );
+
+        // 未知的 `/api` 路径是 JSON 错误信封，而不是入口 HTML。
+        let unknown = client
+            .get(format!("{base}/api/definitely-not-a-route"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+        let content_type = content_type(&unknown);
+        assert!(
+            content_type.starts_with("application/json"),
+            "未知接口的内容类型是 {content_type}"
+        );
+        let body: Value = unknown.json().await.unwrap();
+        assert_eq!(body["error"]["code"], "NOT_FOUND");
+    }
+
+    fn content_type(response: &reqwest::Response) -> String {
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    /// 密钥三态在 HTTP 上真的成立：保存 → 省略 → 清除，且响应体从不带回密钥正文。
+    ///
+    /// 「未配置」是被降级逻辑依赖的合法状态，因此它必须能被写回，而不只是能读出。
+    #[tokio::test]
+    async fn system_model_credential_can_be_cleared_over_http() {
+        let (_dir, state) = accumulation_app(ACCUMULATION_ENGINES).await;
+        let base = spawn_app(state.clone());
+        let client = reqwest::Client::new();
+        let save = |revision: &str, api_key: Option<Value>| {
+            let mut body = json!({
+                "commandId": Uuid::new_v4(),
+                "expectedRevision": revision,
+                "apiBaseUrl": "https://model.example/v1",
+                "modelId": "writer-1",
+                "capabilities": {
+                    "streaming": true,
+                    "tools": true,
+                    "streamUsage": true,
+                    "thinking": true,
+                },
+                "maxContextTokens": "32768",
+                "reservedOutputTokens": "4096",
+            });
+            if let Some(api_key) = api_key {
+                body["apiKey"] = api_key;
+            }
+            body
+        };
+        let put = |body: Value| {
+            client
+                .put(format!("{base}/api/settings"))
+                .json(&body)
+                .send()
+        };
+
+        let created = put(save("0", Some(json!("secret-key-1")))).await.unwrap();
+        assert_eq!(created.status(), StatusCode::OK);
+        let created_body = created.text().await.unwrap();
+        assert!(created_body.contains("\"credentialConfigured\":true"));
+        // 响应体只公开「是否已配置」，密钥正文绝不出现在任何对外视图里。
+        assert!(!created_body.contains("secret-key-1"));
+
+        // 省略密钥：保留既有凭据。
+        let kept = put(save("1", None)).await.unwrap();
+        assert_eq!(kept.status(), StatusCode::OK);
+        assert!(
+            kept.text()
+                .await
+                .unwrap()
+                .contains("\"credentialConfigured\":true")
+        );
+        assert_eq!(
+            state.store.system_model_api_key().await.unwrap().as_deref(),
+            Some("secret-key-1")
+        );
+
+        // 显式 `null`：清回未配置。
+        let cleared = put(save("2", Some(Value::Null))).await.unwrap();
+        assert_eq!(cleared.status(), StatusCode::OK);
+        assert!(
+            cleared
+                .text()
+                .await
+                .unwrap()
+                .contains("\"credentialConfigured\":false")
+        );
+        assert_eq!(state.store.system_model_api_key().await.unwrap(), None);
+        assert_eq!(
+            state
+                .store
+                .get_system_model_settings()
+                .await
+                .unwrap()
+                .unwrap()
+                .revision,
+            3
         );
     }
 

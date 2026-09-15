@@ -1,6 +1,6 @@
 import { AppFrame } from "@/components/AppFrame"
 import { KnowledgePanel } from "@/components/KnowledgePanel"
-import { useEventSync } from "@/lib/events"
+import { useEventSync } from "@/lib/event-sync-context"
 
 export function KnowledgePage() {
   const { knowledgeVersion } = useEventSync()

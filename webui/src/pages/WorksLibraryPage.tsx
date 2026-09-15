@@ -49,7 +49,7 @@ import {
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
-import { useEventSync } from "@/lib/events"
+import { useEventSync } from "@/lib/event-sync-context"
 import {
   createProject,
   deleteProject,
