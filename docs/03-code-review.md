@@ -2,9 +2,11 @@
 
 - 初始审查日期：2026-09-11；最近收口更新：2026-09-13
 - 审查范围：`crates/`（core / agent / store / app）、`webui/`、`docs/01-implementation-plan.md`、`docs/02-implementation-spec.md`
-- 审查方式：代码审查 + 实测验证；本报告保留各轮发现时的证据，当前状态以 §33 和方案 §2.1 为准。
+- 审查方式：代码审查 + 实测验证；本报告保留各轮发现时的证据，**每一节的数字都是该节时点的值**，最新状态以 §45–§47 与方案 §2.1 为准。
 
-当前本地收口状态：`cargo test --workspace` 通过 232 个用例（agent 44、app 单元 61 + 集成 2、core 38、store 83、xtask 4），前端生产构建通过；M0–M4 和 macOS aarch64 的 M5 范围均已完成。M2 的可达竞态与浏览器复核、M3 的多章/复制稿本/番外真实路径以及内建提示词升级均已在 §33–§34 收口。§36 记录最新一轮真实端点实战暴露的缺陷，§36.1 是它对应的修复（被业务拒绝的阶段提交按「被拒回合」处理），但修复尚未在真实端点上复跑；全平台计划只剩非 macOS 发行产物。
+2026-09-13 收口状态（**该时点**，不是当前值）：`cargo test --workspace` 通过 232 个用例（agent 44、app 单元 61 + 集成 2、core 38、store 83、xtask 4），前端生产构建通过；M0–M4 和 macOS aarch64 的 M5 范围均已完成。M2 的可达竞态与浏览器复核、M3 的多章/复制稿本/番外真实路径以及内建提示词升级均已在 §33–§34 收口。§36 记录最新一轮真实端点实战暴露的缺陷，§36.1 是它对应的修复（被业务拒绝的阶段提交按「被拒回合」处理），但修复尚未在真实端点上复跑；全平台计划只剩非 macOS 发行产物。
+
+**该时点之后的数字变化**（当前值）：`cargo test --workspace` **253 通过 / 0 失败**（本仓 251：agent 44、app 单元 67、app 集成 2、core 38、store 96、xtask 4；另一线程在建的 `nekowriter-prompt-lab` 2），`cargo clippy -p …` 逐包与 `--workspace --all-targets` 均 **0 error / 0 warning**，前端 `pnpm lint` **0 error / 0 warning**。来源与口径见 §46.5、§47.4；本节以下各轮的用例数一律是各轮自己的值，不再回填。
 
 ## 1. 初始审查实测验证结果（2026-09-11）
 
@@ -39,7 +41,7 @@
 | F3（高） | 前端偏离既定选型（无 TanStack Query/XState/Virtual） | ⚠️ **维持原状**。`package.json` 仍只有 React + Tailwind + Base UI，无 Query/State 库；App.tsx 仍为手写状态管理。属于设计决策，需二选一：要么改文档选型，要么补齐 |
 | F4（中） | 折叠排序违反时间线 | ✅ **已解决**。`ContextBuilder::build` 现按 `(Preparation → chapter_order → within_chapter_order → run_id)` 排序，并校验 `requires_chapter_order()`，有对应测试 |
 | F5 | UI 章节计划只能录一项 | ✅ **已解决**。`PreparationPanel` 支持多计划项增删（上限 500），store 侧 `materialize_chapter_plan` 逐项物化 |
-| F6 | clippy 警告未消化 | ⚠️ 仍有历史 pedantic/结构性建议；本轮已应用可自动修复的低风险建议，但严格 `-D warnings` 仍不通过。该卫生项不属于 M2/M3 的功能验收条件。 |
+| F6 | clippy 警告未消化 | ⚠️（**该时点**）仍有历史 pedantic/结构性建议；本轮已应用可自动修复的低风险建议，但严格 `-D warnings` 仍不通过。该卫生项不属于 M2/M3 的功能验收条件。**后续状态**：§46 已把 `clippy` 清零（414 条 / 230 个唯一站点里 75 个机械项逐条修掉、155 个写成有理由的政策），该发现关闭，见 §46.1–46.3。 |
 | F7 | 25 张表仅建 13 张 | 维持。符合分期；未核对新表数量 |
 | F8 | 数据目录双重 NekoWriter | 未复核 |
 | F9 | nightly 工具链未固定日期 | 未复核（`rust-toolchain.toml` 仍存在） |
@@ -2177,7 +2179,7 @@ Command::finish(store, notify, result)      // 只给「按事务结果决定要
 `knowledge` 1 处（索引任务状态）、`protocol_correction` 1 处，加上信封自己那 1 处。
 它们都没有 `command_id`、也不写回执，不在幂等规则之内。
 
-**行数与形状（真实的 `wc -l` 对照，本轮前后各量一次）：**
+**行数与形状（真实的 `wc -l` 对照，§45.2 时点前后各量一次；右列现在等于 `HEAD`）：**
 
 ```
 knowledge.rs        2808 → 2704  (-104)
@@ -2196,6 +2198,12 @@ version_copy.rs     1077 → 1062  (-15)
 保留站点的注释与钉住用例占回 116 行）。重构前那 49 个 `notify` 参数是 **46 个字面 `true` + 3 个计算值**
 （`notify`、`reset.removed`），现在全部消失：46 处写 `Notify::Listeners`，3 处写 `Notify::on_change(...)`——
 调用点不再能传错一个布尔值。
+
+**该表的口径与时点（事后标注）。** 这张表是 §45.2 时点的测量，不是当前值，也不能与 `HEAD` 互相代入：
+
+- **右列现在等于 `HEAD`**（`873bed4`，就是收下本批的那个提交）逐文件一致，只有 `lib.rs` 差 2 行（提交时又多了 2 行：7025 → 7027，合计 27572 → 27574）。
+- **左列已不可重测**：它是当时的中转工作树（复核整改已应用、信封尚未落地），而 `HEAD~1`（`a8374ff`）是**整批整改之前**的提交，同 9 个文件合计 **27766** 行，与左列的 28063 不是同一个状态。本节保留左列原值，不反推。
+- **当前树**（§46 + §47 之后）同 9 个文件：`knowledge 2704`、`lib 7443`、`preparation 13205`、`project_settings 553`、`prompt_templates 438`、`prompts 830`、`recycle 1257`、`settings 481`、`version_copy 1061`，合计 **27972**；相对 `HEAD` 净增 **+398**（`lib.rs` +416，主要是 §47 的两个用例与两个测试辅助；其余四个文件是 §46 的 lint 机械项，−18）。所以**「净减 491 行」只是信封收口那一轮相对它自己左列的净额**，不是本批相对 `HEAD~1` 的净额。
 
 **"等价"这一声称里唯一不成立的一处已单独钉住。** 收尾的失败分支在复核时是
 `Err(StoreError::Database(error)) => 按回执重放`（其余错误原样返回），统一后放宽为「任何错误都先查回执」。
@@ -2367,6 +2375,271 @@ webui: pnpm test                               10 通过 / 0 失败
 webui: npx tsc --noEmit && pnpm build          干净
 ```
 
+**注（事后标注）**：这张表、§45.2 的行数表与 §45.3 的前端 lint 数字都是 §45 那一轮（2026-09-15）的现场数字，已被 §46 取代——
+`clippy` 的 239 行 warning 在 §46 清零（逐包与 `--workspace --all-targets` 现均为 0 error / 0 warning）；
+`cargo test --workspace` 的 249（store 94）现在是 §46.5 / §47.4 记的 **253 通过 / 0 失败（本仓 251，store 96）**；
+前端 `pnpm lint` 的 2 条 warning 也在 §46.4 按文件收窄为 0。本仓内的历史记录一律保留不改，只在被取代处标注。
+
 仍未覆盖：CI 未在 GitHub 上实跑（只是本地等价命令全绿 + YAML 解析通过）；hash 路由下裸路径回落的行为只由路由级用例与
 curl 现场覆盖，没有用真实浏览器敲一次地址栏；删除密钥后 Embedding 侧的同一动作只在 store/HTTP 用例里（本机没有可用的
 Embedding 端点的实测见 §40）；`.agents/skills/**` 移出版本控制只改了索引与 `.gitignore`（文件仍在磁盘上），需要维护者在提交时确认。
+
+## 46. 2026-09-15 clippy 与前端 lint 清零：机械项逐条修掉，结构性项写成明确政策
+
+本轮只动 lint，不改行为：`cargo clippy` 从 414 条（230 个唯一站点）降到 **0**，`pnpm lint` 从 2 条降到 **0**。
+
+### 46.1 先量后动：基线构成
+
+```
+cargo clippy -p nekowriter-core -p nekowriter-agent -p nekowriter-store -p nekowriter-app --all-targets --message-format=json
+→ 414 条（同一站点在 lib 与 test 两个目标下各计一次），按唯一站点去重 230：
+
+  75 too_many_lines         60 missing_errors_doc        38 needless_update
+  13 needless_pass_by_value  9 cast_possible_wrap         6 unused_async_trait_impl
+   6 too_many_arguments      5 missing_panics_doc         4 match_same_arms
+   3 struct_field_names      2 format_push_string        1 assert_is_empty
+   1 similar_names           1 trivially_copy_pass_by_ref
+   1 items_after_statements  1 cast_possible_truncation
+   1 large_enum_variant      1 map_unwrap_or             1 suspicious_open_options
+   1 match_wildcard_for_single_variants
+```
+
+`--workspace` 当时无法解析：另一个线程正在同一 checkout 里新建 `nekowriter-prompt-lab`，它的 `Cargo.toml` 已进 members
+而 `src/main.rs` 还不存在。所以本轮所有命令都用 `-p` 逐个指定包（六个包全部跑到，`-p xtask` 单独一次）。
+
+先试过一次 `cargo clippy --fix`：它只应用了 1 处，且把 `assert!(x.is_empty())` 改写成 `assert_eq!(x, [] as [T; 0])` 这种更难读的
+形式，已还原，改为逐类手改。
+
+**口径更正**：本轮开始前我口头给过一个「148 条」的数字，那是 `--all-targets` 下同一站点在 lib 与 test 两个目标里各计一次的
+重复计数，不是待修项。真实的待修项就是上表按唯一站点去重后的 **75 个**，本轮全部改掉（46.2 的表按 lint 分组，合计 75），
+没有任何一项被留成政策；政策收的是 155 个结构性 / 文档性项（46.3）。
+
+### 46.2 修掉的 75 个（外加本轮改动自身带出的 6 个）
+
+| lint | 站点 | 改法 |
+| --- | --- | --- |
+| `needless_update` | 38 | 删掉 `ActiveModel { …, ..Default::default() }` 里冗余的那一行：所有列都已显式 `Set`，`Default` 影响不到任何字段 |
+| `needless_pass_by_value` | 13 (+1) | 签名改收引用并同步全部调用点；`router(web_dir)` 与测试辅助 `spawn_app_with_web_dir` 连调用侧那次 `clone()` 一并去掉 |
+| `cast_possible_wrap` / `cast_possible_truncation` | 10 | 新增 `core::count_as_i64`（`TryInto` + 饱和到 `i64::MAX`）作为「内存计数 → `i64` 列」的唯一出口，替换 9 处 `as i64`；测试里的常量转换改 `usize::try_from(…)` |
+| `match_same_arms` | 4 | 合并同体分支（HTTP 错误映射、阶段序号） |
+| `format_push_string` | 2 | 改 `write!`（percent 编码、反馈拼接） |
+| `assert_is_empty` | 1 (+1) | 按 pedantic 要求改成等值断言（其中 1 处由本轮改动自身带出） |
+| `similar_names` | 1 | 测试里 `replaced`/`replayed` 只差一个字母，前者改 `recorded` |
+| `trivially_copy_pass_by_ref` | 1 | `approval_mode_name(&ApprovalMode)` 改按值 |
+| `items_after_statements` | 1 | 测试内的 `functions` 辅助函数提到模块级 |
+| `large_enum_variant` | 1 | `LaneCommand::ModelCompleted.result` 装箱 |
+| `map_unwrap_or` | 1 | `.map(…).unwrap_or(…)` 改 `.map_or(…)` |
+| `suspicious_open_options` | 1 | 进程锁文件显式 `.truncate(false)` |
+| `match_wildcard_for_single_variants` | 1 | 测试里点名唯一变体 |
+| `needless_borrow` | 4 | 本轮改动带出的多余取地址，回头删掉 |
+
+**这一行曾与上表对不上账，在此选定一侧并留下依据。** 本小节初稿把 `assert_is_empty` 记成 `2` 且未加标注，于是“表内合计 80”
+与标题的“75 + 5”只能靠“基线就是 2”自圆；但 §46.1 把该 lint 的基线记为 **1**，而 §46.1 只有按 1 算才自洽（20 条合计恰好 **230**，
+减去政策六类 **155** 后机械项恰好 **75**）。两侧差且只差这一项。**基线现场已不存在，无法重测**，因此按“可验证的那一侧”
+定为：`assert_is_empty` = 基线 **1**、本轮自身带出 **1**，标题的自身带出总数相应为 **6**（`needless_pass_by_value` 1 + `assert_is_empty` 1
++ `needless_borrow` 4）。按此口径可以对着表重算：站点列合计 **79** ＋ 两处 `(+1)` 标注 **2** ＝ **81** ＝ 基线 **75** ＋ 自身带出 **6**。
+若日后能从提交历史里重算基线，以重算结果为准。
+
+行为不变的依据：该时点本仓全部 249 条用例在改后仍全绿（当前树的 251 + 另一线程的 2 = **253**，口径见 46.5），
+且上面每一类都是等价改写——`as i64` 换饱和转换只在「字符数超过 `i64::MAX`」这种不可能出现的值域上有差别，
+其余是删除冗余、收引用与合并同体分支。
+
+### 46.3 剩下 155 个写成政策：4 类按批准，2 类按证据就地收窄
+
+这 155 个只能靠拆文件或补模板化文档消掉，因此逐条写成带理由的 `allow`，理由就写在配置里。
+**这里要把集合口径说清**：政策只覆盖方案里提出的 **4 类**（`too_many_lines`、`too_many_arguments`、`missing_errors_doc`、
+`missing_panics_doc`），写在 `Cargo.toml` 的 `[workspace.lints.clippy]` 里；另外 **2 类**（`unused_async_trait_impl`、
+`struct_field_names`）是我在实施中按证据就地收窄的，不在批准的四类之内——**这是一次 4 → 6 的口径扩张**（本小节即更正，
+此前把它笼统写成「剩下 155 个就是这六类」，读者看不出这层差别）。
+
+- `too_many_lines`（75）+ `too_many_arguments`（6）：全部落在 `preparation.rs`/`lib.rs` 的阶段命令体与它们的 8 参签名上，
+  与「拆分 store 巨型文件」（`docs/06` F-09，本轮仍搁置）是同一件事；为过阈值把参数打包成只此一处使用的结构体只会多一层跳转。
+- `missing_errors_doc`（60）+ `missing_panics_doc`（5）：为 65 个函数补模板化段落会稀释函数上方已有的注释；
+  失败路径由 `StoreError`/`SchedulerError` 的变体承担，调用方与实现同仓。
+- `unused_async_trait_impl`（6）+ `struct_field_names`（3）：两条都指向 sea-orm 的框架约定——`#[sea_orm::model]` 生成的 impl
+  不含 `.await`，`Model` 这个约定名必然与 `model_id` 这类列名相撞，而实体字段名即数据库列名，改名等于改 schema。
+  因为触发点只在这套实体定义上，这两条**没有**放进 `Cargo.toml`，而是收在
+  `crates/nekowriter-store/src/entity/mod.rs` 的模块级 `#![allow(…)]` 里；收窄的承重性与「范围外仍会提示」两侧证据见 46.6.2。
+  粒度选模块级而不是逐文件/逐结构体：这两条的触发点分散在 6 个实体文件里，而这套约定（实体字段名即列名）是实体注册表整体的事，
+  写 6 遍只会多出 6 处需要同步维护的抑制。
+
+#### 46.3.1 仓库里现存哪些抑制（单一完整清单）
+
+本批之后的**全部**抑制如下；「本批新增」指 §46 这一轮加上去的，其余在本批之前就已存在（用 `git show HEAD:<file>` 逐文件核对过）。
+
+| 范围 | 抑制 | 站点 |
+| --- | --- | --- |
+| workspace `[workspace.lints.clippy]` | `too_many_lines`、`too_many_arguments`、`missing_errors_doc`、`missing_panics_doc` | `Cargo.toml`（**本批新增 4 条**） |
+| workspace `[workspace.lints.clippy]` | `module_name_repetitions` | `Cargo.toml`（既有） |
+| 模块级 `#![allow(…)]` | `unused_async_trait_impl`、`struct_field_names` | `crates/nekowriter-store/src/entity/mod.rs:14`（**本批新增**，也是全仓唯一的 `#![allow`） |
+| 项级 `#[allow(…)]` | `ref_option` ×3 | `agent/src/provider.rs:1361`、`core/src/lib.rs:64`、`store/src/model_requests.rs:1916`（均既有） |
+| 项级 | `struct_excessive_bools` ×1 | `core/src/lib.rs:1399`（既有） |
+| 项级 | `too_many_arguments` ×5 | `store/src/knowledge.rs:1329`、`store/src/preparation.rs:7983`、`store/src/version_copy.rs:999`、`app/src/scheduler.rs:2041`、`app/src/scheduler.rs:2150`（均既有） |
+| 前端 eslint | `react-hooks/incompatible-library` 对 2 个文件 `off` | `webui/eslint.config.js`（**本批新增**，按 `files` 收窄） |
+
+本仓自有 crate 的项级抑制共 **9 处**（`ref_option` 3 + `struct_excessive_bools` 1 + `too_many_arguments` 5），与 `HEAD` 逐个一致：
+`git diff` 里唯一的 `+#[allow` 是上面那条 `entity/mod.rs`，没有任何 `-#[allow`。另一线程未跟踪的 `prompt-lab/src/main.rs:144` 还有一处
+`struct_excessive_bools`，不属于本仓这批改动。
+
+### 46.4 前端 2 条
+
+`ChapterDirectory` 与 `ManuscriptReader` 的 `react-hooks/incompatible-library` 来自虚拟化库（两个文件都 `useVirtualizer`）。
+该规则提示的是「React Compiler 会跳过这个组件的记忆化」，而本仓**没有接入 React Compiler**（`babel-plugin-react-compiler`
+只是 eslint 插件的可选依赖，不在 `package.json` 里），规则没有作用对象。覆盖**按 `files` 收在这两个文件上**
+（`webui/eslint.config.js`），不是对全部 `ts/tsx` 关闭，也不是整条规则停用；将来真的接入编译器时删掉这个覆盖即可恢复提示。
+范围外仍会提示的证据见 46.6.2。
+
+### 46.5 现场与门禁
+
+全新数据目录 + 当前二进制（`--port 8881 --data-dir /tmp/nw-lint-live/data`），这条路径正好经过本轮改过的两处：
+密钥归一化与回执重放。
+
+```
+PUT /api/settings  同一 commandId 两次（只换密钥）→ 200 / 200，两次响应逐字节相同
+  第二次的密钥没进库：系统设置仍是 sk-lint-first（key_len=13）
+PUT /api/settings  apiKey=""                 → 422 VALIDATION_ERROR「API key 不能为空」
+PUT /api/settings  apiKey="sk-lint\u0007bad" → 422 VALIDATION_ERROR「API key 不能包含控制字符」
+
+command_receipts      : PUT /api/settings × 1（payload_hash 长度 64）
+events                : settings.changed × 1
+system_model_settings : revision=1
+rg sk-lint 于 payload_hash / 服务日志 / data/logs → 0 命中
+```
+
+```
+cargo fmt --all -- --check                                            干净
+cargo clippy -p nekowriter-core -p nekowriter-agent -p nekowriter-store -p nekowriter-app --all-targets   0 error / 0 warning
+cargo clippy -p xtask --all-targets                                   0 error / 0 warning
+cargo clippy --workspace --all-targets                                0 error / 0 warning（测量过程见 46.6.3）
+cargo test --workspace                                                253 通过 / 0 失败（本仓 251：agent 44、app 单元 67、app 集成 2、core 38、store 96、xtask 4；另一线程的 nekowriter-prompt-lab 2）
+webui: pnpm lint                                                      0 error / 0 warning
+webui: pnpm test                                                      10 通过 / 0 失败
+webui: pnpm exec tsc --noEmit && pnpm build                           干净
+```
+
+用例数口径：**253 里含另一线程的 `nekowriter-prompt-lab` 2 条**，本仓自有 crate 是 251。本表的数字是**写入时按当前树重测**的
+（§47 新增两条用例后为 253；§46 收口当时为 251，其中 store 94）。同一份表格只保留一份数字，历史时点不再在本节重复。
+
+规模：§46 时点 20 个代码文件 +243 / −237（不含 `Cargo.lock`；文档改动另计）。**当前**同一批 20 个代码文件（`git diff --stat`，不含 `docs/`、`Cargo.lock` 与另一线程的 `prompt-lab`）是 **+670 / −237**：插入数比 §46 时点多出的 427 行全部来自 §47 写进 `crates/nekowriter-store/src/lib.rs` 的用例与测试辅助。
+
+仍在事实层面的两点：`Cargo.toml` 里新增的策略段与另一线程的 `members` 改动同处一个文件，提交时需要分开归属；
+`crates/nekowriter-prompt-lab/`（另一线程在建，未跟踪）不属本批，本轮的 workspace 级数字里它单独标出。
+
+### 46.6 收口：抑制范围、被切坏的注释与 workspace 级证据
+
+只读审计对 46.1–46.5 提了三处缺口（注释被搬动切坏、抑制范围大于证据、`--workspace` 级清零未演示），
+本轮只动抑制口径、注释与文档，不改任何运行时行为。
+
+#### 46.6.1 被切坏的注释已修回，并全仓扫描过同类
+
+`items_after_statements` 的修法把用例内的 `functions` 辅助函数提到 `lib.rs` 的模块级；第一次搬动把
+「事务外回执预查只有一个所有者」这段不变式说明挂到了 `functions` 上，而它所属的
+`transaction_external_recheck_has_a_single_owner` 丢了第一句。现在两段各归其位：不变式说明在用例上方，
+`functions` 只留描述它自己的注释。
+
+扫描方式：找「`///` 文档块后紧跟普通 `//` 注释、再往下才是项」的形状，在 `crates/**/*.rs`（整棵源码树）上返回 **0** 处；
+本批 diff 里被删除的 `///` 行也是 **0** 行（`git diff -U0 -- 'crates/**' | rg -c '^-\s*///'`），所以没有第二段注释被同样切错。
+
+#### 46.6.2 两条抑制收到证据所在处，且两侧都验过
+
+| 实验 | 做法 | 结果 |
+| --- | --- | --- |
+| 承重（收窄不是形式） | 在隔离副本里临时撤掉 `crates/nekowriter-store/src/entity/mod.rs` 的模块级 `#![allow(…)]` | `clippy -p nekowriter-store --all-targets` 立刻报 **6** 条 `unused_async_trait_impl` + **3** 条 `struct_field_names`，逐个落在 6 个实体文件的 `#[sea_orm::model]` 与 `Model::model_id` 上 |
+| 信号未丢 | 保持收窄，在 `entity` 模块**之外**放一个探针模块：一份 `#[sea_orm::model]` 实体 + 一个字段名与结构体名同前缀的 3 字段结构体 | 两条 lint 都在探针处触发（`unused_async_trait_impl` → 探针的 `#[sea_orm::model]`；`struct_field_names` → `all fields have the same prefix: \`widget\`` 与 3 个字段） |
+| 前端同样收窄 | 在覆盖范围之外放一个只用 `useVirtualizer()` 的组件 | `react-hooks/incompatible-library` 照常报出（`TanStack Virtual's \`useVirtualizer()\` API returns functions that cannot be memoized safely`）；被覆盖的两个文件仍为 0 |
+
+探针只在隔离副本与临时文件里存在，跑完即删；仓库里无残留（`rg -n "lint_probe|lint-probe" --glob '!docs/**' .` 为 0 命中）。
+
+#### 46.6.3 workspace 级清零的演示，与真实 checkout 的现状
+
+本轮开始时真实 checkout 跑不了 `--workspace`：另一线程的 `nekowriter-prompt-lab` 有 9 个编译错误
+（`E0282`×2、`E0277`×3、`E0308`×3 等），所以先在 `/tmp/nw-ws-clippy` 隔离副本（给它补一个最小占位）里跑：
+
+```
+/tmp/nw-ws-clippy$ cargo clippy --workspace --all-targets                                   3 警告，均为占位 manifest 的 unused dependency（clap / nekowriter-agent / sea-orm）
+/tmp/nw-ws-clippy$ cargo clippy --workspace --all-targets --exclude nekowriter-prompt-lab    0 警告
+```
+
+那个线程随后补齐了 `main.rs`，于是真实 checkout 也能跑 workspace 级命令，同一轮内出现了三个时点的状态（都如实记录，
+因为 prompt-lab 是另一线程的未跟踪 crate、双方并行改动）：
+
+```
+22:35  cargo clippy --workspace --all-targets   6 警告，全部在 crates/nekowriter-prompt-lab/src/main.rs（145 / 250 / 362 / 649 / 928 / 934）
+        （`unused_async`、`unnecessary_result_map_or_else`、`unnecessary_wraps`、`struct_excessive_bools`、`similar_names`、`semicolon_if_nothing_returned`）
+        → 本仓的 core / agent / store / app / xtask 五个包 0 条；这 6 条属另一线程，本批未动它
+22:47  cargo clippy --workspace --all-targets   0 警告（那 6 条已由另一线程自己修掉）
+22:47  cargo clippy -p nekowriter-prompt-lab --all-targets  0 警告
+```
+
+旁证：prompt-lab 当时报出的 `unused_async`（不是 `unused_async_trait_impl`）说明收窄没有关掉任何别处的提示；
+`docs/05` 复核里点名的 `--workspace` 级 CI 命令现在与本地结果一致。
+
+#### 46.6.4 收口轮的门禁
+
+见 46.5 的表格（本轮重跑）：`fmt` 干净、五个包 `clippy` 各 0 error / 0 warning、`cargo test --workspace` 253 通过 / 0 失败
+（本仓 251，含另一线程 `nekowriter-prompt-lab` 的 2 条）、前端 `lint / test / tsc / build` 全绿。本轮唯一一次未复现的抖动：连跑多轮逐包测试时 `nekowriter-app` 有一次
+（仅一次）出现 1 例失败，紧接着连跑 5 次都是 67 + 2 全绿，未抓到用例名也未复现；app 的测试端口用的是临时端口
+（`TcpListener::bind("127.0.0.1:0")`），所以最可能的解释是与另一个线程共用同一个 `target/` 目录时的构建竞争，
+不是本批代码的回归——但不复现就不结案，如实记在这里（后续追查见 §47.2）。
+
+## 47. 2026-09-15 两个工具错误出口的行为证据，与 app 抖动的隔离重跑
+
+本轮只加证明：新增两条经库层公开入口的用例，再加两次反向实验与一次隔离 target 的重复跑；
+运行时行为一行未改（对生产代码的唯一改动是 §47.1 里那个文档注释的 backtick）。
+
+### 47.1 新增用例：错误码与错误形状被断言到字段与消息
+
+| 用例（`crates/nekowriter-store/src/lib.rs` 测试模块） | 覆盖 |
+| --- | --- |
+| `tests::chapter_body_edit_failures_report_their_codes_shapes_and_keep_the_body` | 经 `Store::execute_chapter_body_agent_tool_call` 走 `EDIT_NO_MATCH` / `EDIT_AMBIGUOUS_MATCH` / `EDIT_NO_CHANGE` / 参数层 `VALIDATION_ERROR` 四条分支；每个结果都整对象相等（键集也钮住），并断言失败不推进正文（`revision_id`/`revision_no`/`content` 不变）、失败计协议错误、一成功后计数归零、全书结束时 Run 仍 `Queued` |
+| `tests::ask_user_argument_failures_keep_the_model_visible_shape` | 经 `Store::execute_agent_question_tool_call` 走两个触发：违反领域合同（零个问题 → 消息 `问题列表不能为空`）与连问题模式都解析不了（`questions` 不是数组）→ 四字段连键集一起断言，`tool_call_id` 等于 provider 调用 id |
+
+两条用例都使用新加的两个测试辅助（`drafting_chapter_body_run` 把「准备 → 四项审核 → 章节细纲 → 细纲审核 → 正文写作」写成一处，
+`dispatched_body_tool_call` 把「派发请求 + 执行工具调用」写成一处），因此用例本身只断言差异。
+
+### 47.2 两次反向实验：签名等价、码真被钮住
+
+实验 A（借用改动不改行为）：把 `agent_body_edit_error_result`、`agent_tool_error_result`、`question_tool_error_result`
+连同四个调用点**逐字改回 `HEAD` 的 `String` 形状**（先用脚本确认这三段与 `HEAD` 逐字一致），再跑两条新用例：
+
+```
+test tests::ask_user_argument_failures_keep_the_model_visible_shape ... ok
+test tests::chapter_body_edit_failures_report_their_codes_shapes_and_keep_the_body ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 94 filtered out; finished in 0.20s
+```
+
+即：`String` → `&str` 的改动两侧产出同一个可观察合同，而这两条用例就是那个合同本身。
+
+实验 B（码不是摆设）：临时把 `ChapterBodyEditError::NoMatch => "EDIT_NO_MATCH"` 改成 `"EDIT_UNKNOWN"`：
+
+```
+test tests::chapter_body_edit_failures_report_their_codes_shapes_and_keep_the_body ... FAILED
+assertion `left == right` failed
+  left: Object {"base_revision_id": …,"code": String("EDIT_UNKNOWN"), "feedback": Array [], "message": String("待替换正文在当前章节中没有匹配"), "status": String("error"), "tool_call_id": String("body-tool-call-2")}
+ right: Object {"base_revision_id": …,"code": String("EDIT_NO_MATCH"),  "feedback": Array [], "message": String("待替换正文在当前章节中没有匹配"), "status": String("error"), "tool_call_id": String("body-tool-call-2")}
+```
+
+两次实验都已还原，`crates/nekowriter-store/src/preparation.rs` 的 SHA-256 回到实验前的 `423c6e21…b21989`。
+
+### 47.3 app 抖动：在隔离 target 下重跑，未复现
+
+按上一轮的怀疑（与另一线程共用 `target/`）把 target 目录换掉：`CARGO_TARGET_DIR=/tmp/nw-app-iso`，冷构建 4 分 34 秒，然后：
+
+```
+直接重复执行同一测试二进制 8 次： 每次 67 通过 / 0 失败（集成用例同样 2 / 0）
+CARGO_TARGET_DIR=/tmp/nw-app-iso cargo test -p nekowriter-app  4 次：每次 67 / 0 + 2 / 0
+```
+
+即隔离 target 后 12 次全部全绿（加上本轮在共享 target 下的几次，共 17 次未复现）。按约定如实记为环境竞争、
+**这一点未结案**：既没有抓到用例名，也没有把「共用 target 导致失败」直接做出来（故意制造并发写入会干扰另一线程的构建，没有做）。
+
+### 47.4 本轮门禁（实测）
+
+```
+cargo fmt --all -- --check                     干净
+clippy core / agent / store / app / xtask      各 0 error / 0 warning
+cargo test -p nekowriter-store                 96 通过 / 0 失败（本轮 +2）
+cargo test --workspace                         253 通过 / 0 失败（本仓 251：agent 44、app 单元 67、app 集成 2、core 38、store 96、xtask 4；prompt-lab 2）
+```
+
+规模的唯一变化：`crates/nekowriter-store/src/lib.rs` 仅新增测试代码（两条用例 + 两个辅助 + 注释），生产代码只改了一个文档注释的 backtick。

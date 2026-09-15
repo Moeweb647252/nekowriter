@@ -351,7 +351,7 @@ mod tests {
         assert_eq!((latin[0].start_char, latin[0].end_char), (0, 5));
 
         // 没有正文的章节不会产生不可定位的命中。
-        assert!(search_manuscript(&chapters, "信纸").is_empty());
+        assert_eq!(search_manuscript(&chapters, "信纸"), vec![]);
     }
 
     #[test]

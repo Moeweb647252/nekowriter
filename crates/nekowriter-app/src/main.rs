@@ -1,6 +1,7 @@
 use std::{
     collections::{HashSet, VecDeque},
     convert::Infallible,
+    fmt::Write as _,
     fs::{File, OpenOptions},
     net::SocketAddr,
     path::{Path, PathBuf},
@@ -145,6 +146,7 @@ impl ProcessLock {
         let lock_path = data_dir.join("nekowriter.lock");
         let file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&lock_path)?;
@@ -808,7 +810,10 @@ impl IntoResponse for ApiError {
                 StoreError::InvalidKnowledgeEntry(message)
                 | StoreError::InvalidEmbeddingSettings(message)
                 | StoreError::InvalidKnowledgeSearch(message)
-                | StoreError::InvalidDashboardQuery(message),
+                | StoreError::InvalidDashboardQuery(message)
+                | StoreError::InvalidModelRequest(message)
+                | StoreError::InvalidAgentMessage(message)
+                | StoreError::InvalidSystemModelSettings(message),
             ) => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "VALIDATION_ERROR",
@@ -918,16 +923,6 @@ impl IntoResponse for ApiError {
                 "VALIDATION_ERROR",
                 "准备输入不完整或不符合当前阶段要求".to_owned(),
                 json!({}),
-            ),
-            Self::Store(
-                StoreError::InvalidModelRequest(message)
-                | StoreError::InvalidAgentMessage(message)
-                | StoreError::InvalidSystemModelSettings(message),
-            ) => (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "VALIDATION_ERROR",
-                message.clone(),
-                json!({ "reason": message }),
             ),
             Self::Provider(error) => {
                 warn!(request_id = %request_id, error = %error, "模型服务调用失败");
@@ -1222,7 +1217,7 @@ async fn prepare(cli: &Cli) -> Result<Startup, StartupError> {
             }
         },
     };
-    let data_dir = match resolve_data_dir(requested_dir.clone()) {
+    let data_dir = match resolve_data_dir(&requested_dir) {
         Ok(data_dir) => data_dir,
         Err(error) => {
             return Err(startup_failure(
@@ -1331,7 +1326,7 @@ async fn main() -> Result<(), StartupError> {
     let indexer = tokio::spawn(async move {
         knowledge::KnowledgeIndexer::new(indexer_store).run().await;
     });
-    let app = router(state.clone(), web_dir);
+    let app = router(state.clone(), &web_dir);
     let address = SocketAddr::from(([127, 0, 0, 1], cli.port));
     let listener = tokio::net::TcpListener::bind(address).await?;
     info!(address = %address, data_dir = %data_dir.display(), "NekoWriter 已启动");
@@ -1378,12 +1373,12 @@ async fn main() -> Result<(), StartupError> {
     Ok(())
 }
 
-fn router(state: AppState, web_dir: PathBuf) -> Router {
+fn router(state: AppState, web_dir: &Path) -> Router {
     let root_index_html = web_dir.join("index.html");
     let explicit_index_html = root_index_html.clone();
     // 深链接回落用同一份入口 HTML：前端用 path 路由，磁盘上没有 `/works/...` 这样的文件。
     let fallback_index_html = root_index_html.clone();
-    let static_files = web_dir.clone();
+    let static_files = web_dir.to_owned();
     let api = Router::new()
         .route("/health", get(health))
         .route("/system/shutdown", axum::routing::post(shutdown_service))
@@ -1994,7 +1989,7 @@ fn content_disposition(file_name: &str, format: ExportFormat) -> String {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
             encoded.push(char::from(*byte));
         } else {
-            encoded.push_str(&format!("%{byte:02X}"));
+            write!(encoded, "%{byte:02X}").expect("写入 String 不会失败");
         }
     }
     format!(
@@ -2423,7 +2418,7 @@ async fn next_sse_event(
                         Err(broadcast::error::RecvError::Closed) => return None,
                     },
                     result = state.preview_receiver.recv() => match result {
-                        Ok(delta) => return Some((Ok(to_preview_delta_sse_event(delta)), state)),
+                        Ok(delta) => return Some((Ok(to_preview_delta_sse_event(&delta)), state)),
                         // 预览是明确可丢弃的临时层；落后时直接等待下一段或持久状态。
                         Err(broadcast::error::RecvError::Lagged(_)) => {}
                         Err(broadcast::error::RecvError::Closed) => return None,
@@ -2450,7 +2445,7 @@ fn to_sse_event(event: PersistedEvent) -> Event {
 
 /// 临时预览故意不设置 SSE `id`。浏览器可能仍在 `lastEventId` 上保留上一条持久
 /// 事件的值，前端因此只按 `request/tool/offset` 处理这类事件。
-fn to_preview_delta_sse_event(delta: scheduler::PreviewDelta) -> Event {
+fn to_preview_delta_sse_event(delta: &scheduler::PreviewDelta) -> Event {
     let data = serde_json::to_string(&delta).expect("临时预览只包含可序列化的 UUID、标量与字符串");
     Event::default().event("preview.delta").data(data)
 }
@@ -3069,8 +3064,8 @@ fn default_data_dir() -> Result<PathBuf, StartupError> {
 /// 在取得进程锁、SQLite 和 `LanceDB` 连接之前固定数据目录的物理位置。
 ///
 /// 这样相同的相对 `--data-dir` 不会因启动工作目录不同而指向不同的本地作品库。
-fn resolve_data_dir(path: PathBuf) -> Result<PathBuf, StartupError> {
-    std::fs::create_dir_all(&path)?;
+fn resolve_data_dir(path: &Path) -> Result<PathBuf, StartupError> {
+    std::fs::create_dir_all(path)?;
     Ok(path.canonicalize()?)
 }
 
@@ -3266,10 +3261,10 @@ mod tests {
 
     /// 在回环地址的真实端口上启动真实路由，返回基地址。
     fn spawn_app(state: AppState) -> String {
-        spawn_app_with_web_dir(state, std::env::temp_dir())
+        spawn_app_with_web_dir(state, &std::env::temp_dir())
     }
 
-    fn spawn_app_with_web_dir(state: AppState, web_dir: std::path::PathBuf) -> String {
+    fn spawn_app_with_web_dir(state: AppState, web_dir: &Path) -> String {
         let app = router(state, web_dir);
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
@@ -3690,7 +3685,7 @@ mod tests {
         .unwrap();
         assert!(approved.passed);
         assert_eq!(approved.issues.as_deref(), Some(""));
-        assert!(approved.citations.is_empty());
+        assert_eq!(approved.citations, vec![]);
     }
 
     /// 问答提交的请求体形状必须与界面 `answerQuestion` 真正发出的 JSON 一致。
@@ -3846,7 +3841,7 @@ mod tests {
             .unwrap();
 
         let (_data_dir, state) = accumulation_app(ACCUMULATION_ENGINES).await;
-        let base = spawn_app_with_web_dir(state, web_dir);
+        let base = spawn_app_with_web_dir(state, &web_dir);
         let client = reqwest::Client::new();
 
         let deep_link = client
@@ -3962,7 +3957,7 @@ mod tests {
         .unwrap();
 
         let (_dir, state) = accumulation_app(ACCUMULATION_ENGINES).await;
-        let base = spawn_app_with_web_dir(state, web_dir.path().to_path_buf());
+        let base = spawn_app_with_web_dir(state, web_dir.path());
         let client = reqwest::Client::new();
 
         // 前端路由（深链接）回落到入口 HTML：直接打开或刷新这些地址必须是界面而不是 404。

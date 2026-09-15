@@ -454,7 +454,7 @@ fn persisted_usage(
 
 #[cfg(test)]
 mod tests {
-    use nekowriter_core::{NewProject, non_whitespace_char_count};
+    use nekowriter_core::{NewProject, count_as_i64, non_whitespace_char_count};
     use sea_orm::{ActiveModelTrait, IntoActiveModel, Set};
     use tempfile::TempDir;
 
@@ -467,7 +467,7 @@ mod tests {
     }
 
     fn word_count(content: &str) -> i64 {
-        non_whitespace_char_count(content) as i64
+        count_as_i64(non_whitespace_char_count(content))
     }
 
     async fn insert_run(
@@ -498,7 +498,6 @@ mod tests {
             ended_at: Set(None),
             created_at: Set(now),
             updated_at: Set(now),
-            ..Default::default()
         }
         .insert(&store.database)
         .await
@@ -529,7 +528,6 @@ mod tests {
             updated_at: Set(now),
             dispatched_at: Set(Some(now)),
             completed_at: Set(Some(now)),
-            ..Default::default()
         }
         .insert(&store.database)
         .await

@@ -498,7 +498,7 @@ fn prompt_override_from_model(
     model: &prompt_override::Model,
 ) -> Result<PromptOverride, StoreError> {
     let scope = PromptOverrideScope::parse(&model.scope)?;
-    let project_id = parse_optional_id(model.project_id.clone(), "prompt_overrides.project_id")?;
+    let project_id = parse_optional_id(model.project_id.as_deref(), "prompt_overrides.project_id")?;
     ensure_scope_matches_project(scope, project_id)?;
     let prompt_key = normalize_prompt_key(&model.prompt_key)?;
     if model.revision <= 0 || model.updated_at < model.created_at {

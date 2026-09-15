@@ -872,7 +872,7 @@ impl Store {
         original_error: StoreError,
     ) -> Result<T, StoreError> {
         if let Some(receipt) = self.find_receipt(command_id).await? {
-            return replay_or_conflict(receipt, method, target, expected_hash);
+            return replay_or_conflict(&receipt, method, target, expected_hash);
         }
         Err(original_error)
     }
@@ -1002,7 +1002,7 @@ impl CredentialPatch {
     /// 校验并归一化密钥正文；`Keep` 与 `Clear` 原样通过。
     pub(crate) fn normalize(self) -> Result<Self, String> {
         match self {
-            Self::Replace(value) => normalize_api_key(value).map(Self::Replace),
+            Self::Replace(value) => normalize_api_key(&value).map(Self::Replace),
             patch => Ok(patch),
         }
     }
@@ -1079,8 +1079,8 @@ pub(crate) fn validate_api_base_url(value: &str) -> Result<String, String> {
 ///
 /// 返回 `Err` 时携带面向用户的原因，由调用方包进自己的设置错误变体：写作模型与
 /// Embedding 两条设置路径共用同一套密钥规则，不各自维护一份。
-pub(crate) fn normalize_api_key(value: String) -> Result<String, String> {
-    let value = value.trim().to_owned();
+pub(crate) fn normalize_api_key(value: &str) -> Result<String, String> {
+    let value = value.trim();
     if value.is_empty() {
         Err("API key 不能为空".to_owned())
     } else if value.chars().count() > MAX_API_KEY_CHARS {
@@ -1088,7 +1088,7 @@ pub(crate) fn normalize_api_key(value: String) -> Result<String, String> {
     } else if value.chars().any(char::is_control) {
         Err("API key 不能包含控制字符".to_owned())
     } else {
-        Ok(value)
+        Ok(value.to_owned())
     }
 }
 
@@ -1098,7 +1098,7 @@ fn payload_hash<T: Serialize>(payload: &T) -> Result<String, StoreError> {
 }
 
 fn replay_or_conflict<T: DeserializeOwned>(
-    receipt: CommandReceipt,
+    receipt: &CommandReceipt,
     expected_method: &str,
     expected_target: &str,
     expected_hash: &str,
@@ -1126,7 +1126,6 @@ async fn insert_project_bundle<C: ConnectionTrait>(
         created_at: Set(bundle.project.created_at_ms),
         updated_at: Set(bundle.project.updated_at_ms),
         deleted_at: Set(None),
-        ..Default::default()
     }
     .insert(connection)
     .await?;
@@ -1150,7 +1149,6 @@ async fn insert_novel_version<C: ConnectionTrait>(
         created_at: Set(version.created_at_ms),
         updated_at: Set(version.updated_at_ms),
         deleted_at: Set(None),
-        ..Default::default()
     }
     .insert(connection)
     .await?;
@@ -1178,7 +1176,6 @@ async fn insert_document_slots<C: ConnectionTrait>(
             created_at: Set(created_at_ms),
             updated_at: Set(created_at_ms),
             deleted_at: Set(None),
-            ..Default::default()
         }
         .insert(connection)
         .await?;
@@ -1195,9 +1192,8 @@ async fn insert_workflow<C: ConnectionTrait>(
         state_json: Set(serde_json::to_string(workflow)?),
         state_revision: Set(workflow.state_revision),
         active_run_id: Set(workflow.active_run_id.map(|run_id| run_id.to_string())),
-        approval_mode: Set(approval_mode_name(&workflow.approval_mode).to_owned()),
+        approval_mode: Set(approval_mode_name(workflow.approval_mode).to_owned()),
         pause_requested: Set(workflow.pause_requested),
-        ..Default::default()
     }
     .insert(connection)
     .await?;
@@ -1222,7 +1218,6 @@ async fn insert_receipt<C: ConnectionTrait>(
         response_status: Set(response_status),
         response_json: Set(response_json.to_owned()),
         created_at: Set(created_at),
-        ..Default::default()
     }
     .insert(connection)
     .await?;
@@ -1257,7 +1252,10 @@ fn version_from_model(model: &novel_version::Model) -> Result<NovelVersion, Stor
         project_id: model.project_id.into(),
         label: model.label.clone(),
         novel_title: model.novel_title.clone(),
-        source_version_id: parse_optional_id(model.source_version_id.clone(), "source_version_id")?,
+        source_version_id: parse_optional_id(
+            model.source_version_id.as_deref(),
+            "source_version_id",
+        )?,
         body_completed_at_ms: model.body_completed_at,
         revision: model.revision,
         created_at_ms: model.created_at,
@@ -1279,7 +1277,7 @@ fn project_from_model(model: &project::Model) -> Project {
 fn workflow_from_model(model: &workflow_instance::Model) -> Result<WorkflowSnapshot, StoreError> {
     let workflow = serde_json::from_str::<WorkflowSnapshot>(&model.state_json)?;
     let version_id: Uuid = model.version_id.into();
-    let active_run_id = parse_optional_id(model.active_run_id.clone(), "active_run_id")?;
+    let active_run_id = parse_optional_id(model.active_run_id.as_deref(), "active_run_id")?;
     if workflow.version_id != version_id || workflow.active_run_id != active_run_id {
         return Err(StoreError::CorruptRecord(
             "工作流与稿本的归属不一致".to_owned(),
@@ -1297,11 +1295,8 @@ fn parse_id(value: &str, field: &str) -> Result<Uuid, StoreError> {
         .map_err(|error| StoreError::CorruptRecord(format!("{field} 不是有效 UUID：{error}")))
 }
 
-fn parse_optional_id(value: Option<String>, field: &str) -> Result<Option<Uuid>, StoreError> {
-    value
-        .as_deref()
-        .map(|value| parse_id(value, field))
-        .transpose()
+fn parse_optional_id(value: Option<&str>, field: &str) -> Result<Option<Uuid>, StoreError> {
+    value.map(|value| parse_id(value, field)).transpose()
 }
 
 fn transaction_error(error: TransactionError<StoreError>) -> StoreError {
@@ -1363,7 +1358,7 @@ impl<'a> Command<'a> {
     ) -> Result<Option<T>, StoreError> {
         match store.find_receipt(self.id).await? {
             Some(receipt) => {
-                replay_or_conflict(receipt, self.method, self.target, self.payload_hash).map(Some)
+                replay_or_conflict(&receipt, self.method, self.target, self.payload_hash).map(Some)
             }
             None => Ok(None),
         }
@@ -1433,7 +1428,7 @@ impl<'a> Command<'a> {
     }
 }
 
-const fn approval_mode_name(mode: &ApprovalMode) -> &'static str {
+const fn approval_mode_name(mode: ApprovalMode) -> &'static str {
     match mode {
         ApprovalMode::AutoApprove => "auto_approve",
         ApprovalMode::ApproveRequired => "approve_required",
@@ -1451,7 +1446,7 @@ mod tests {
         NewChapterOutline, NewCopiedNovelVersion, NewExtraChapter, NewNovelBrief, NewNovelVersion,
         NewProject, NewPromptTemplate, PreparationArtifactInput, PreparationArtifactKind,
         ReplaceChapterContent, ReviewStatus, RevisionId, RunWaitReason, WorkflowStage,
-        non_whitespace_char_count,
+        count_as_i64, non_whitespace_char_count,
     };
     use sea_orm::{EntityTrait, ModelTrait};
     use serde_json::json;
@@ -1558,7 +1553,7 @@ mod tests {
                 revision_no: Set(1),
                 content: Set(content.to_owned()),
                 structured_payload: Set(None),
-                word_count: Set(non_whitespace_char_count(content) as i64),
+                word_count: Set(count_as_i64(non_whitespace_char_count(content))),
                 created_by: Set("test".to_owned()),
                 source_revision_id: Set(None),
                 created_at: Set(now),
@@ -1983,7 +1978,7 @@ mod tests {
         // 指纹不记录密钥正文：同一 command 换一把密钥重放是幂等命中——返回既有回执、
         // 不再写库，库里的密钥保持第一次落下的那一把。
         let command_id = Uuid::new_v4();
-        let replaced = store
+        let recorded = store
             .save_system_model_settings(
                 command_id,
                 2,
@@ -1999,7 +1994,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(replayed, replaced);
+        assert_eq!(replayed, recorded);
         assert_eq!(replayed.revision, 3);
         assert_eq!(
             store.system_model_api_key().await.unwrap().as_deref(),
@@ -2171,6 +2166,36 @@ mod tests {
         assert!(matches!(mismatched, Err(StoreError::IdempotencyConflict)));
     }
 
+    // 把每个文件按 4 空格缩进的定义行切成函数体，注释行先去掉，避免注释里的名字被数进
+    // 形状。
+    fn functions(source: &str) -> Vec<(String, String)> {
+        let mut functions: Vec<(String, String)> = Vec::new();
+        for line in source.lines() {
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            let Some(rest) = line.strip_prefix("    ") else {
+                if let Some((_, body)) = functions.last_mut() {
+                    body.push_str(line);
+                    body.push('\n');
+                }
+                continue;
+            };
+            let rest = rest.strip_prefix("pub ").unwrap_or(rest);
+            let rest = rest.strip_prefix("async ").unwrap_or(rest);
+            let is_definition = rest.starts_with("fn ") && !line.starts_with("        ");
+            if is_definition {
+                let name = rest["fn ".len()..].split('(').next().unwrap_or_default();
+                functions.push((name.to_owned(), String::new()));
+            }
+            if let Some((_, body)) = functions.last_mut() {
+                body.push_str(line);
+                body.push('\n');
+            }
+        }
+        functions
+    }
+
     /// 事务外的回执预查只有一个所有者：`Command::commit`。
     ///
     /// 这条用例数的是源码形状，不是运行期行为。站点多查的那一次会把同一行的结果原样丢掉，
@@ -2205,36 +2230,6 @@ mod tests {
             ("project_settings.rs", include_str!("project_settings.rs")),
             ("version_copy.rs", include_str!("version_copy.rs")),
         ];
-
-        // 把每个文件按 4 空格缩进的定义行切成函数体，注释行先去掉，避免注释里的名字被数进
-        // 形状。
-        fn functions(source: &str) -> Vec<(String, String)> {
-            let mut functions: Vec<(String, String)> = Vec::new();
-            for line in source.lines() {
-                if line.trim_start().starts_with("//") {
-                    continue;
-                }
-                let Some(rest) = line.strip_prefix("    ") else {
-                    if let Some((_, body)) = functions.last_mut() {
-                        body.push_str(line);
-                        body.push('\n');
-                    }
-                    continue;
-                };
-                let rest = rest.strip_prefix("pub ").unwrap_or(rest);
-                let rest = rest.strip_prefix("async ").unwrap_or(rest);
-                let is_definition = rest.starts_with("fn ") && !line.starts_with("        ");
-                if is_definition {
-                    let name = rest["fn ".len()..].split('(').next().unwrap_or_default();
-                    functions.push((name.to_owned(), String::new()));
-                }
-                if let Some((_, body)) = functions.last_mut() {
-                    body.push_str(line);
-                    body.push('\n');
-                }
-            }
-            functions
-        }
 
         let mut both = Vec::new();
         for (file, source) in files {
@@ -4116,7 +4111,7 @@ mod tests {
         // 每一轮都留下了完整配对，整个序列仍然可以组装成下一次请求。
         assert_eq!(
             store.list_agent_messages(run_id).await.unwrap().len(),
-            (MAX_CONSECUTIVE_PROTOCOL_ERRORS as usize + 1) * 3
+            (usize::try_from(MAX_CONSECUTIVE_PROTOCOL_ERRORS).unwrap() + 1) * 3
         );
     }
 
@@ -4304,7 +4299,6 @@ mod tests {
             created_at: Set(now),
             updated_at: Set(now),
             deleted_at: Set(None),
-            ..Default::default()
         };
         first.insert(&store.database).await.unwrap();
 
@@ -4321,7 +4315,6 @@ mod tests {
             created_at: Set(now),
             updated_at: Set(now),
             deleted_at: Set(None),
-            ..Default::default()
         }
         .insert(&store.database)
         .await;
@@ -4337,7 +4330,6 @@ mod tests {
             created_at: Set(now),
             updated_at: Set(now),
             deleted_at: Set(None),
-            ..Default::default()
         };
         guidance.insert(&store.database).await.unwrap();
         let duplicate_guidance = document::ActiveModel {
@@ -4350,7 +4342,6 @@ mod tests {
             created_at: Set(now),
             updated_at: Set(now),
             deleted_at: Set(None),
-            ..Default::default()
         }
         .insert(&store.database)
         .await;
@@ -4445,7 +4436,6 @@ mod tests {
             ended_at: Set(None),
             created_at: Set(now),
             updated_at: Set(now),
-            ..Default::default()
         }
         .insert(&store.database)
         .await
@@ -4469,7 +4459,6 @@ mod tests {
             ended_at: Set(None),
             created_at: Set(now),
             updated_at: Set(now),
-            ..Default::default()
         };
         assert!(second_run.clone().insert(&store.database).await.is_err());
 
@@ -7023,5 +7012,432 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(sealed_tool.included_request_id, Some(sealed.id.to_string()));
+    }
+
+    /// 已进入正文写作阶段、章节 Run 可以继续派发请求的稿本。
+    ///
+    /// 正文工具调用的失败分支、以及失败之后“Run 仍可继续写”的断言都从同一处起点出发；
+    /// 把准备、四项审核、章节细纲与细纲审核写成一处，用例之间的差别就只留在各自真正要
+    /// 断言的正文编辑上。
+    async fn drafting_chapter_body_run(
+        store: &Store,
+        title: &str,
+    ) -> (VersionId, ChapterId, RunId) {
+        let created = store
+            .create_project(
+                Uuid::new_v4(),
+                NewProject::new(title, "雨夜车站", None::<&str>).unwrap(),
+            )
+            .await
+            .unwrap();
+        let version_id = created.version.id;
+        store
+            .save_novel_brief(
+                version_id,
+                Uuid::new_v4(),
+                NewNovelBrief::new("写一部围绕雨夜车站与失踪信件展开的悬疑短篇。").unwrap(),
+            )
+            .await
+            .unwrap();
+        let started = store
+            .start_preparation(version_id, Uuid::new_v4(), 0)
+            .await
+            .unwrap();
+        let mut snapshot = store
+            .submit_preparation_artifacts(
+                version_id,
+                Uuid::new_v4(),
+                started.workflow.state_revision,
+                vec![
+                    PreparationArtifactInput::new(
+                        PreparationArtifactKind::Background,
+                        "雨夜的旧车站即将拆除，末班车仍在运行。",
+                    )
+                    .unwrap(),
+                    PreparationArtifactInput::new(
+                        PreparationArtifactKind::Research,
+                        "写信人只留下了一枚车站印章，出处尚待核验。",
+                    )
+                    .unwrap(),
+                    PreparationArtifactInput::new(
+                        PreparationArtifactKind::Characters,
+                        "沈宁是追查失踪姐姐下落的摄影记者。",
+                    )
+                    .unwrap(),
+                    PreparationArtifactInput::new(
+                        PreparationArtifactKind::Outline,
+                        "沈宁在末班车上收到旧信，决定进入废弃候车室寻找寄信人。",
+                    )
+                    .unwrap(),
+                ],
+                Some(vec![
+                    ChapterPlanDraft::new("末班车", "沈宁在雨夜车站收到一封旧信。").unwrap(),
+                ]),
+            )
+            .await
+            .unwrap();
+        for kind in PreparationArtifactKind::ALL {
+            let review_id = snapshot
+                .artifacts
+                .iter()
+                .find(|artifact| artifact.kind == kind)
+                .and_then(|artifact| artifact.review.as_ref())
+                .map(|review| review.id)
+                .unwrap();
+            snapshot = store
+                .decide_review(
+                    review_id,
+                    Uuid::new_v4(),
+                    snapshot.workflow.state_revision,
+                    HumanReviewDecision::new(true, "").unwrap(),
+                    Vec::new(),
+                )
+                .await
+                .unwrap();
+        }
+        let chapter_id = snapshot.workflow.active_chapter_id.unwrap();
+        store
+            .save_chapter_guidance(
+                chapter_id,
+                Uuid::new_v4(),
+                snapshot.workflow.state_revision,
+                NewChapterGuidance::new("让沈宁先辨认旧信上的车站印章。").unwrap(),
+            )
+            .await
+            .unwrap();
+        let ready = store.get_preparation_snapshot(version_id).await.unwrap();
+        let outline_started = store
+            .start_chapter_outline(chapter_id, Uuid::new_v4(), ready.workflow.state_revision)
+            .await
+            .unwrap();
+        let outline = store
+            .submit_chapter_outline(
+                chapter_id,
+                Uuid::new_v4(),
+                outline_started.state_revision,
+                NewChapterOutline::new(
+                    "1. 沈宁辨认旧信上的车站印章。\n2. 末班车鸣笛，迫使她决定是否追上寄信人。",
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let drafting = store
+            .decide_review(
+                outline.outline.review.as_ref().unwrap().id,
+                Uuid::new_v4(),
+                outline.workflow.state_revision,
+                HumanReviewDecision::new(true, "").unwrap(),
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(drafting.workflow.stage, WorkflowStage::WritingDrafting);
+        let run_id = drafting.workflow.active_run_id.unwrap();
+        (version_id, chapter_id, run_id)
+    }
+
+    /// 在正文 Run 上派发一次模型请求并执行一次正文工具调用。
+    ///
+    /// 正文阶段的工具调用必须属于一条已经派发的请求（store 用它记账），所以用例里
+    /// “造一次调用”就是“派发 + 执行”这两步；写在一处，各条断言不必各拄一遍。
+    async fn dispatched_body_tool_call(
+        store: &Store,
+        chapter_id: ChapterId,
+        run_id: RunId,
+        attempt: usize,
+        name: &str,
+        arguments: serde_json::Value,
+    ) -> AppliedChapterBodyToolCall {
+        let request = store
+            .capture_and_dispatch_model_request(
+                NewModelRequest {
+                    run_id,
+                    settings_snapshot: json!({ "model": "body-tool-error-test" }),
+                    prompt_snapshot: json!({ "contentHash": format!("body-tool-{attempt}") }),
+                    context_snapshot: json!({ "messages": [] }),
+                },
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        store
+            .execute_chapter_body_agent_tool_call(
+                request.id,
+                chapter_id,
+                Some(format!("body-tool-provider-{attempt}")),
+                json!({}),
+                ChapterBodyAgentToolCall {
+                    provider_call_id: format!("body-tool-call-{attempt}"),
+                    name: name.to_owned(),
+                    arguments,
+                },
+            )
+            .await
+            .unwrap()
+    }
+
+    /// 正文编辑失败时模型看到的完整结果（码、消息、字段集），以及失败不推进正文。
+    ///
+    /// 这些码此前只出现在 `agent_body_edit_error_result` 的定义处。这里经公开入口
+    /// `execute_chapter_body_agent_tool_call` 把四条分支各走一遍：`agent_body_edit_error_result`
+    /// 的形参由 `ChapterBodyEditError` 改成 `&ChapterBodyEditError` 不改变其中任何一项。
+    #[tokio::test]
+    async fn chapter_body_edit_failures_report_their_codes_shapes_and_keep_the_body() {
+        let data_dir = TempDir::new().unwrap();
+        let store = Store::open(data_dir.path()).await.unwrap();
+        let (_version_id, chapter_id, run_id) =
+            drafting_chapter_body_run(&store, "正文编辑错误").await;
+
+        // 起点：追加一段含两处「钟」的正文，后面用其中一处构造“匹配多处”。
+        let opened = "灯火在雨里摇晃。车站的钟响了三次。钟声散进雾里。";
+        let appended = dispatched_body_tool_call(
+            &store,
+            chapter_id,
+            run_id,
+            1,
+            "append_content",
+            json!({ "content": opened }),
+        )
+        .await;
+        assert!(appended.newly_resolved);
+        assert_eq!(appended.result["status"], "applied");
+        let after_append = store.get_chapter_body(chapter_id).await.unwrap();
+        assert_eq!(after_append.body.content.as_deref(), Some(opened));
+        let revision_id = after_append.body.revision_id.unwrap();
+        let revision_no = after_append.body.revision_no;
+        assert_eq!(persisted_protocol_error_count(&store, run_id).await, 0);
+
+        // 1) 没有匹配 → EDIT_NO_MATCH：模型看到的就是这六个字段，没有多余键。
+        let missing = dispatched_body_tool_call(
+            &store,
+            chapter_id,
+            run_id,
+            2,
+            "replace_content",
+            json!({ "old_str": "候车室的灯灭了", "new_str": "候车室的灯又亮了" }),
+        )
+        .await;
+        assert!(missing.newly_resolved);
+        assert!(missing.requeue);
+        assert_eq!(missing.provider_call_id, "body-tool-call-2");
+        assert_eq!(
+            missing.result,
+            json!({
+                "status": "error",
+                "code": "EDIT_NO_MATCH",
+                "message": "待替换正文在当前章节中没有匹配",
+                "tool_call_id": "body-tool-call-2",
+                "base_revision_id": revision_id.to_string(),
+                "feedback": [],
+            })
+        );
+        let after_missing = store.get_chapter_body(chapter_id).await.unwrap();
+        assert_eq!(after_missing.body.revision_id, Some(revision_id));
+        assert_eq!(after_missing.body.revision_no, revision_no);
+        assert_eq!(after_missing.body.content.as_deref(), Some(opened));
+        assert_eq!(persisted_protocol_error_count(&store, run_id).await, 1);
+
+        // 2) 匹配多处 → EDIT_AMBIGUOUS_MATCH（“钟”在正文里出现两次）。
+        let ambiguous = dispatched_body_tool_call(
+            &store,
+            chapter_id,
+            run_id,
+            3,
+            "replace_content",
+            json!({ "old_str": "钟", "new_str": "远处的钟" }),
+        )
+        .await;
+        assert!(ambiguous.newly_resolved);
+        assert!(ambiguous.requeue);
+        assert_eq!(
+            ambiguous.result,
+            json!({
+                "status": "error",
+                "code": "EDIT_AMBIGUOUS_MATCH",
+                "message": "待替换正文在当前章节中匹配多处",
+                "tool_call_id": "body-tool-call-3",
+                "base_revision_id": revision_id.to_string(),
+                "feedback": [],
+            })
+        );
+        let after_ambiguous = store.get_chapter_body(chapter_id).await.unwrap();
+        assert_eq!(after_ambiguous.body.revision_id, Some(revision_id));
+        assert_eq!(persisted_protocol_error_count(&store, run_id).await, 2);
+
+        // 3) 一次成功替换：计数归零，正文确实推进一版——失败没有把 Run 写坏。
+        let applied = dispatched_body_tool_call(
+            &store,
+            chapter_id,
+            run_id,
+            4,
+            "replace_content",
+            json!({ "old_str": "灯火在雨里摇晃。", "new_str": "灯火在雨里摇晃，站台空得只剩回声。" }),
+        )
+        .await;
+        assert_eq!(applied.result["status"], "applied");
+        let after_replace = store.get_chapter_body(chapter_id).await.unwrap();
+        let replaced = "灯火在雨里摇晃，站台空得只剩回声。车站的钟响了三次。钟声散进雾里。";
+        assert_eq!(after_replace.body.content.as_deref(), Some(replaced));
+        assert_eq!(after_replace.body.revision_no, revision_no.map(|no| no + 1));
+        let revision_id = after_replace.body.revision_id.unwrap();
+        assert_eq!(persisted_protocol_error_count(&store, run_id).await, 0);
+
+        // 4) 新旧文本相同 → EDIT_NO_CHANGE（在匹配之前就判定，所以文本可以不在正文里）。
+        let unchanged = dispatched_body_tool_call(
+            &store,
+            chapter_id,
+            run_id,
+            5,
+            "replace_content",
+            json!({ "old_str": "站台空得只剩回声", "new_str": "站台空得只剩回声" }),
+        )
+        .await;
+        assert!(unchanged.newly_resolved);
+        assert_eq!(
+            unchanged.result,
+            json!({
+                "status": "error",
+                "code": "EDIT_NO_CHANGE",
+                "message": "替换前后文本完全相同，不会创建无意义修订",
+                "tool_call_id": "body-tool-call-5",
+                "base_revision_id": revision_id.to_string(),
+                "feedback": [],
+            })
+        );
+        assert_eq!(persisted_protocol_error_count(&store, run_id).await, 1);
+
+        // 5) 空 old_str 在参数解析阶段就被拒：码是参数层的 VALIDATION_ERROR，
+        //    消息来自 `ReplaceChapterContent::new`，不经过 `agent_body_edit_error_result`。
+        let empty = dispatched_body_tool_call(
+            &store,
+            chapter_id,
+            run_id,
+            6,
+            "replace_content",
+            json!({ "old_str": "", "new_str": "替换后的正文" }),
+        )
+        .await;
+        assert!(empty.newly_resolved);
+        assert_eq!(
+            empty.result,
+            json!({
+                "status": "error",
+                "code": "VALIDATION_ERROR",
+                "message": "待替换正文不能为空",
+                "tool_call_id": "body-tool-call-6",
+                "base_revision_id": revision_id.to_string(),
+                "feedback": [],
+            })
+        );
+
+        // 收束：失败计数是 2（未到上限 3），Run 仍可写，正文停在成功替换后的那一版。
+        assert_eq!(persisted_protocol_error_count(&store, run_id).await, 2);
+        let final_body = store.get_chapter_body(chapter_id).await.unwrap();
+        assert_eq!(final_body.workflow.execution, ExecutionStatus::Queued);
+        assert_eq!(final_body.body.content.as_deref(), Some(replaced));
+        assert_eq!(final_body.body.revision_no, revision_no.map(|no| no + 1));
+    }
+
+    /// `ask_user` 参数无效时模型看到的完整形状（码、消息、`tool_call_id`、字段集）。
+    ///
+    /// `question_tool_error_result` 的形参从 `String` 改成 `&str` 后，对外可见的就是这四个
+    /// 字段；两个触发条件（违反 `ask_user` 领域合同、连问题模式都解析不了）都经公开入口
+    /// `execute_agent_question_tool_call` 走一遍。
+    #[tokio::test]
+    async fn ask_user_argument_failures_keep_the_model_visible_shape() {
+        /// 派发一次请求并执行一次参数无效的 `ask_user`，回送模型的结果。
+        async fn invalid_ask_user(
+            store: &Store,
+            run_id: RunId,
+            attempt: usize,
+            arguments: serde_json::Value,
+        ) -> serde_json::Value {
+            let request = store
+                .capture_and_dispatch_model_request(
+                    NewModelRequest {
+                        run_id,
+                        settings_snapshot: json!({ "model": "ask-user-shape-test" }),
+                        prompt_snapshot: json!({ "contentHash": format!("ask-user-shape-{attempt}") }),
+                        context_snapshot: json!({ "messages": [] }),
+                    },
+                    Vec::new(),
+                )
+                .await
+                .unwrap();
+            let applied = store
+                .execute_agent_question_tool_call(
+                    request.id,
+                    Some(format!("ask-user-shape-provider-{attempt}")),
+                    json!({}),
+                    AgentQuestionToolCall {
+                        provider_call_id: format!("ask-user-shape-call-{attempt}"),
+                        arguments,
+                    },
+                )
+                .await
+                .unwrap();
+            let AppliedAgentQuestionToolCall::Resolved {
+                provider_call_id,
+                result,
+                newly_resolved,
+                requeue,
+            } = applied
+            else {
+                panic!("无效参数应形成可回送模型的错误结果，而不是等待用户");
+            };
+            assert_eq!(provider_call_id, format!("ask-user-shape-call-{attempt}"));
+            assert!(newly_resolved);
+            assert!(requeue);
+            result
+        }
+
+        let data_dir = TempDir::new().unwrap();
+        let store = Store::open(data_dir.path()).await.unwrap();
+        let (version_id, run_id) = in_flight_preparation_run(&store, "问题工具形状").await;
+
+        // 触发一：完整 JSON 但违反领域合同（零个问题）。
+        assert_eq!(
+            invalid_ask_user(&store, run_id, 1, json!({ "questions": [] })).await,
+            json!({
+                "status": "error",
+                "code": "TOOL_ARGUMENTS_INVALID",
+                "message": "问题列表不能为空",
+                "tool_call_id": "ask-user-shape-call-1",
+            })
+        );
+
+        // 触发二：连问题模式的形状都不对（`questions` 不是数组）。消息里的 serde 细节
+        // （具体哪个字段类型不对）不是本用例要钉的东西，其余三个字段连键集一起断言，
+        // 因此多写一个键也会失败。
+        let mut unparsable =
+            invalid_ask_user(&store, run_id, 2, json!({ "questions": "收件人是谁" })).await;
+        let message = unparsable["message"].as_str().unwrap().to_owned();
+        assert!(
+            message.starts_with("ask_user 参数不符合问题模式："),
+            "解析失败的消息应点明是 ask_user 参数问题：{message}"
+        );
+        unparsable["message"] = json!("<serde 细节>");
+        assert_eq!(
+            unparsable,
+            json!({
+                "status": "error",
+                "code": "TOOL_ARGUMENTS_INVALID",
+                "message": "<serde 细节>",
+                "tool_call_id": "ask-user-shape-call-2",
+            })
+        );
+
+        // 两次无效参数相当于两次工具协议错误（不到上限 3），Run 仍可继续。
+        assert_eq!(persisted_protocol_error_count(&store, run_id).await, 2);
+        assert_eq!(
+            store
+                .get_preparation_snapshot(version_id)
+                .await
+                .unwrap()
+                .workflow
+                .execution,
+            ExecutionStatus::Queued
+        );
     }
 }

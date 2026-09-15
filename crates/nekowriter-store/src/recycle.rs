@@ -8,7 +8,8 @@ use std::collections::HashMap;
 
 use nekowriter_core::recycle::{RecycleBin, RecycleItem, RecycleItemKind, RecycleParent};
 use nekowriter_core::{
-    ChapterId, PreparationSnapshot, VersionId, utc_now_millis, withdraw_extra_chapter,
+    ChapterId, PreparationSnapshot, VersionId, count_as_i64, non_whitespace_char_count,
+    utc_now_millis, withdraw_extra_chapter,
 };
 use sea_orm::{
     ConnectionTrait, DatabaseTransaction, EntityTrait, IntoActiveModel, QueryFilter, QueryOrder,
@@ -1251,10 +1252,6 @@ async fn chapter_word_count<C: ConnectionTrait>(
     .one(connection)
     .await?;
     Ok(revision.map_or(0, |revision| {
-        revision
-            .content
-            .chars()
-            .filter(|character| !character.is_whitespace())
-            .count() as i64
+        count_as_i64(non_whitespace_char_count(&revision.content))
     }))
 }

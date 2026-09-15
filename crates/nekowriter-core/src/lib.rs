@@ -961,7 +961,7 @@ impl ChapterPlan {
                     let normalized = ChapterPlanDraft::new(&draft.title, &draft.goal)?;
                     Ok(ChapterPlanItem {
                         plan_item_id: Uuid::new_v4(),
-                        order_index: (index + 1) as i64,
+                        order_index: count_as_i64(index + 1),
                         title: normalized.title,
                         goal: normalized.goal,
                     })
@@ -989,7 +989,7 @@ impl ChapterPlan {
         }
         let mut seen_ids = std::collections::HashSet::with_capacity(self.items.len());
         for (index, item) in self.items.iter().enumerate() {
-            if item.order_index != (index + 1) as i64 || !seen_ids.insert(item.plan_item_id) {
+            if item.order_index != count_as_i64(index + 1) || !seen_ids.insert(item.plan_item_id) {
                 return Err(ValidationError::Required {
                     field: "章节计划顺序",
                 });
@@ -3177,6 +3177,15 @@ pub fn non_whitespace_char_count(text: &str) -> u64 {
     text.chars()
         .filter(|character| !character.is_whitespace())
         .count() as u64
+}
+
+/// 内存中的计数（字符数、序号）写入 `i64` 列时的唯一出口。
+///
+/// 计数来自 `usize`/`u64`：真实文本不可能达到 `i64::MAX`，但 `as i64` 在 32 位平台上
+/// 会静默截断、超过上限时回绕成负数，所以这里饱和到上限。
+#[must_use]
+pub fn count_as_i64<T: TryInto<i64>>(value: T) -> i64 {
+    value.try_into().unwrap_or(i64::MAX)
 }
 
 #[must_use]

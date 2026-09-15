@@ -281,7 +281,6 @@ pub(crate) async fn append_agent_messages_for_run(
             request_id: Set(message.request_id.map(|id| id.to_string())),
             tool_call_id: Set(message.tool_call_id),
             created_at: Set(now),
-            ..Default::default()
         }
         .insert(transaction)
         .await?;

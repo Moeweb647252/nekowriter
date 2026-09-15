@@ -177,7 +177,7 @@ async fn load_manuscript_index<C: ConnectionTrait>(
     let mut rows = Vec::with_capacity(chapters.len());
     for (kind, model) in chapters {
         let approved_revision = parse_optional_id(
-            model.approved_revision_id.clone(),
+            model.approved_revision_id.as_deref(),
             "chapter.approved_revision_id",
         )?;
         let revision_id = body_slots
@@ -215,8 +215,10 @@ pub(crate) async fn body_slots_by_chapter<C: ConnectionTrait>(
         let Some(chapter_id) = document.chapter_id else {
             continue;
         };
-        let revision_id =
-            parse_optional_id(document.current_revision_id, "document.current_revision_id")?;
+        let revision_id = parse_optional_id(
+            document.current_revision_id.as_deref(),
+            "document.current_revision_id",
+        )?;
         let Some(revision_id) = revision_id else {
             continue;
         };
@@ -279,7 +281,7 @@ fn manuscript_kind_from_db(value: &str) -> Result<ChapterKind, StoreError> {
 #[cfg(test)]
 mod tests {
     use nekowriter_core::{
-        ChapterSummary, NewProject, parse_manuscript_window, parse_search_query,
+        ChapterSummary, NewProject, count_as_i64, parse_manuscript_window, parse_search_query,
     };
     use sea_orm::{ActiveModelTrait, IntoActiveModel, Set};
     use tempfile::TempDir;
@@ -373,7 +375,7 @@ mod tests {
             .unwrap();
             document_id
         };
-        let revision_no = document_revision::Entity::find()
+        let existing_revisions = document_revision::Entity::find()
             .filter(
                 document_revision::Entity::COLUMN
                     .document_id
@@ -382,8 +384,8 @@ mod tests {
             .all(&store.database)
             .await
             .unwrap()
-            .len() as i64
-            + 1;
+            .len();
+        let revision_no = count_as_i64(existing_revisions) + 1;
         let revision_id = Uuid::new_v4();
         document_revision::ActiveModel {
             id: Set(db_id(revision_id)),
@@ -391,7 +393,7 @@ mod tests {
             revision_no: Set(revision_no),
             content: Set(content.to_owned()),
             structured_payload: Set(None),
-            word_count: Set(content.chars().count() as i64),
+            word_count: Set(count_as_i64(content.chars().count())),
             created_by: Set("agent".to_owned()),
             source_revision_id: Set(None),
             created_at: Set(now),

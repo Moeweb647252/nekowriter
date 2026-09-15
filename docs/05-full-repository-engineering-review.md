@@ -4,6 +4,16 @@
 审查方式：**只读**。本轮没有修改任何源码、配置或既有文档，只重写本报告（第一轮草稿由本文件直接替换，不留第二份重叠报告）。
 命令一律带 `--config 'env.PROTOC.value="/opt/homebrew/bin/protoc"'` 覆盖，原因见 §5 F-03。
 
+**事后状态（不在本报告的审查范围内，仅作指针）：本报告是只读快照，下面每一处观测数字都是审查时点（`HEAD = a8374ff`）的值，不是当前值。**
+与本报告同时存在的另一类口径——每个 F 项的「已修 / 收窄 / 延期」——不在本文件里，而在
+[修复报告](06-remediation-report.md)（F-01…F-18 的处置矩阵）与 `docs/03` §45–§47（逐条现场证据）。
+与门禁有关的几条后来都变了，本文件不再回填：F-02 的前端 lint（审查时点 30 errors / 4 warnings）与
+F-09 的 clippy 警告（审查时点 244 条 warning 行）在 2026-09-15 那轮里都是 **0**（`docs/03` §46）；
+本报告的 `cargo test --workspace` 234 个用例也早已不是当前数（现为 253，见 §45.6 / §47.4）。
+本报告给出的**具体做法建议**也不等于最终方案：例如 F-02 第 ③ 条建议「剩余项逐条显式 `eslint-disable`」并未采用，
+实际是**按 `files` 把那条规则收窄到两个文件**（`docs/03` §46.4），仓库里没有新增散落的 `eslint-disable` 注释；
+关于「仓库里现存哪些抑制」只有一份完整答案，在 `docs/03` §46.3.1。
+
 本轮在第一轮（架构 / 正确性 / 一致性）之上，把**冗余与不必要复杂度**升为一等目标，并按「为什么它还存在 / 删掉它会怎样 / 哪条才是正典路径」三问逐项判定。
 凡未亲自跑过、未在代码里追到 enforce 点、或无法构造反例的，都写清置信度与未覆盖面，不写成确定结论。
 
@@ -40,7 +50,7 @@
 
 **其余风险集中在「谁保证它继续对」与「一次重构留下的新旧共存」两层：**
 
-1. 前端 `pnpm lint` 当前 **30 errors / 4 warnings**，而 `docs/03` 最后一次记录是 **8 errors / 3 warnings**，
+1. 前端 `pnpm lint` 审查时点 **30 errors / 4 warnings**（已在 `docs/03` §46 清零，见本文件开头的「事后状态」），而 `docs/03` 最后一次记录是 **8 errors / 3 warnings**，
    且 UI 重构回合的验收清单里**根本没有 lint**——唯一能抓「render 期读写 ref」「effect 里 setState」这类 React 正确性问题的门禁，
    已经静默失效了一整轮重写（`cedca66` 未改 eslint 插件版本，这 22 个新错误来自新代码）。
 2. 仓库**没有 CI**（无 `.github/`）；`.cargo/config.toml` 又把 `PROTOC` 以 `force = true` 钉在 Windows 路径，
@@ -231,7 +241,7 @@ NekoWriter（本地优先的 AI 小说写作应用，单进程、单用户、loo
 **F-02 前端 lint 门禁静默失效（8 → 30 个错误），UI 重写回合完全没有测它**（Confidence: Confirmed）
 
 - **Location**：`webui/`（`eslint.config.js`、`src/hooks/use-workspace-draft.ts`、`PreparationPanel.tsx` 等）；`docs/03` 的 lint 记录行。
-- **Observation**：`npx eslint . -f json` 现状 = **30 errors / 4 warnings**：
+- **Observation**：`npx eslint . -f json` 审查时点实测 = **30 errors / 4 warnings**：
   `react-hooks/refs` 16、`react-hooks/set-state-in-effect` 8、`react-refresh/only-export-components` 6；
   warnings 为 `react-hooks/incompatible-library` 与 `exhaustive-deps`。按文件：`use-workspace-draft.ts` 10、
   `PreparationPanel.tsx` 4、`ChapterBodyPanel.tsx` 3、`ChapterOutlinePanel.tsx` 2、`ChapterReadyPanel.tsx` 2。

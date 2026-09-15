@@ -18,7 +18,7 @@
 1. **抽象只迁移了一半**——幂等收尾（当时的 `finish_write`）与 `insert_app_event`（事件写入）都已存在且语义等价，
    但老模块的调用点没迁。修法是把剩下 32 个调用点迁到同一处，而不是再造一层抽象；
    收口后又把这套东西换成了持有 `command_id`/方法/目标/指纹的幂等信封（`Command`）与
-   `Notify` 类型（取代 49 个字面 `true` 的 `notify: bool`），调用点因此不再复述它——见 F-05 行与 §45.2。
+   `Notify` 类型（取代 49 个 `notify: bool` 实参：46 个字面 `true` + 3 个按事务结果计算的值），调用点因此不再复述它——见 F-05 行与 §45.2。
 2. **同一份规则写了两遍**——持久事件名两侧各写一份、API 根地址校验一严一松、
    界面能力在一次外壳重写里被写到新外壳之外（代码还在，只是没人挂载）。
    修法是让「两侧一致」变成可执行断言、让规则只留一份、让被丢的能力重新可达。
@@ -30,10 +30,10 @@
 | 发现 | 状态 | 处置 | 测试 / 证据 | 备注 |
 | --- | --- | --- | --- | --- |
 | F-01 两个已承诺的界面能力不可达（快捷键说明、本地服务面板） | 已修复 | `ShortcutHelpPanel` 挂进 `App.tsx`，`ServicePanel` 挂进 `pages/SettingsPage.tsx`；两者依赖的事件同步状态移到 `lib/event-sync-context.ts` 并补 `/api/health` 探针与 `serviceStopped` | Rust 用例 `restored_ui_capabilities_are_mounted_in_the_app_shell`（源码级挂载对账）+ 真界面点击（§45.4.1、§45.4.2） | 恢复必须连带健康检查状态，否则退出按钮是死按钮 |
-| F-02 前端 lint 门禁静默失效（8 → 30 error） | 已修复 | `use-workspace-draft.ts` 改渲染期只读（见 F-14）、`use-mobile` 改 `useSyncExternalStore`、`UserQuestionPanel` 改 `key` 重挂载、4 个阶段面板的 `persistedXxxRef` 改为渲染可见 state + 单写入 latest-ref、`ui/*` 的 react-refresh 靠拆分变体解决 | `pnpm lint` → **0 error / 2 warning**（§45.3） | 两条剩余 warning 是虚拟化库的已知边界（§9） |
+| F-02 前端 lint 门禁静默失效（8 → 30 error） | 已修复 | `use-workspace-draft.ts` 改渲染期只读（见 F-14）、`use-mobile` 改 `useSyncExternalStore`、`UserQuestionPanel` 改 `key` 重挂载、4 个阶段面板的 `persistedXxxRef` 改为渲染可见 state + 单写入 latest-ref、`ui/*` 的 react-refresh 靠拆分变体解决 | `pnpm lint` → **0 error / 2 warning**（§45.3）；两条虚拟化库 warning 已在 §46.4 按文件收窄，现为 **0 error / 0 warning** | 两条虚拟化库 warning 已在 §46.4 按文件收窄为 0（§9 第 4 条，已关闭）；「8 → 30 error」是复核时点（`HEAD a8374ff`）的基线差 |
 | F-03 `.cargo/config.toml` 用 `force = true` 钉死 Windows 路径的 `PROTOC` | 已修复 | `PROTOC` 只在 `[target.x86_64-pc-windows-msvc]` 下设置；非 Windows 让构建脚本在 PATH 上找，安装方式写进 `tools/README.md` | 本地非 Windows 构建不需要仓库外配置即可开始（§45.6） | 与 `docs/02` §11 的措辞同步改成事实 |
 | F-04 持久事件名在 Rust 与 TS 各写一份，且 4 个类型前端从不订阅 | 已修复 | `store/event_types.rs` 成为唯一清单（`EVENT_TYPES`），TS 侧 `persistentEventTypes` 与它逐项相同 | `manifest_is_sorted_and_unique`、`every_written_event_type_is_in_the_manifest`（扫生产代码里所有写入点）、`frontend_subscribes_to_exactly_the_manifest`（直接读 `events.tsx`） | 「两侧一致」现在是可执行断言，不是纪律 |
-| F-05 幂等收尾只迁移了一半（`finish_write` 17/49） | 已修复 | 第一轮把剩下 32 个站点迁到同一收尾路径；收口轮把它换成**幂等信封**：`Command { id, method, target, payload_hash }` + `Notify { Listeners, Quiet }`，46 个站点用 `command.commit(store, notify, body)` 一行完成「预查 → 事务体 → 收尾」，3 个「按结果决定通知」的站点用 `command.finish(store, notify, result)`，3 个只做预查的 helper 用 `replay_if_recorded`；`finish_write` 自由函数已删除。预查去重同轮收口：删掉 41 处「站点预查 + `commit` 又预查一遍」的纯重复，`commit` 成为事务外预查的唯一所有者 | `cargo test --workspace`（store 94）+ 逐模块计数与 `wc -l` 对照（§45.2）+ `command_finish_replays_an_existing_receipt_for_a_non_database_error`（钉住失败分支语义）+ `a_no_op_command_writes_its_receipt_but_does_not_wake_subscribers`（钉住「no-op 不通知」）+ `transaction_external_recheck_has_a_single_owner`（钉住预查唯一所有者）+ 与 `HEAD` 二进制的 SQL trace 对照（2 → 3 → 2，§45.2） | 每个命令站点仍自己写事务体（算指纹 → 业务写入 + `insert_receipt` → 提交）：回执必须与业务写入同事务，有意不搬；并发重复由 `command_receipts.command_id` 主键冲突兜底。（`docs/05` 的 S2 与 P3 里写的「事务内复查」是评审当时对代码的误读：当时与现在都没有这一步，事实口径以 `docs/02` §2.4 与 `docs/03` §45.2 为准。）白名单内的 5 个知识库站点保留早退预查（省 `embedding_profile_with_id()` 读库，`reindex` 还省整表扫描），3 个 `finish` 站点保留预查（`finish` 不预查）。**一处有意的非等价改动**：收尾的失败分支从「只认 `StoreError::Database`」放宽为「任何错误都先查回执」，理由与代价见 §3.1。行为等价性另由四次反向实验证明：通知判定两次（§45.2 实验 A/B）、预查唯一所有者两次（实验 C/D） |
+| F-05 幂等收尾只迁移了一半（`finish_write` 17/49） | 已修复 | 第一轮把剩下 32 个站点迁到同一收尾路径；收口轮把它换成**幂等信封**：`Command { id, method, target, payload_hash }` + `Notify { Listeners, Quiet }`，46 个站点用 `command.commit(store, notify, body)` 一行完成「预查 → 事务体 → 收尾」，3 个「按结果决定通知」的站点用 `command.finish(store, notify, result)`，3 个只做预查的 helper 用 `replay_if_recorded`；`finish_write` 自由函数已删除。预查去重同轮收口：删掉 41 处「站点预查 + `commit` 又预查一遍」的纯重复，`commit` 成为事务外预查的唯一所有者 | `cargo test --workspace`（F-05 收口那一轮 store 94；当前树 store 96、全仓 253，见 `docs/03` §46.5）+ 逐模块计数与 `wc -l` 对照（§45.2）+ `command_finish_replays_an_existing_receipt_for_a_non_database_error`（钉住失败分支语义）+ `a_no_op_command_writes_its_receipt_but_does_not_wake_subscribers`（钉住「no-op 不通知」）+ `transaction_external_recheck_has_a_single_owner`（钉住预查唯一所有者）+ 与 `HEAD` 二进制的 SQL trace 对照（2 → 3 → 2，§45.2） | 每个命令站点仍自己写事务体（算指纹 → 业务写入 + `insert_receipt` → 提交）：回执必须与业务写入同事务，有意不搬；并发重复由 `command_receipts.command_id` 主键冲突兜底。（`docs/05` 的 S2 与 P3 里写的「事务内复查」是评审当时对代码的误读：当时与现在都没有这一步，事实口径以 `docs/02` §2.4 与 `docs/03` §45.2 为准。）白名单内的 5 个知识库站点保留早退预查（省 `embedding_profile_with_id()` 读库，`reindex` 还省整表扫描），3 个 `finish` 站点保留预查（`finish` 不预查）。**一处有意的非等价改动**：收尾的失败分支从「只认 `StoreError::Database`」放宽为「任何错误都先查回执」，理由与代价见 §3.1。行为等价性另由四次反向实验证明：通知判定两次（§45.2 实验 A/B）、预查唯一所有者两次（实验 C/D） |
 | F-06 事件写入被 3 个模块绕过 | 已修复 | `settings.rs` / `project_settings.rs` / `prompts.rs` 改调 `insert_app_event`，删掉手搓 `event::ActiveModel` | 生产代码里 `rg "event::ActiveModel"` 只剩正典 `insert_event_row` 内部一处 | 与 F-04 同时做，事件清单才有唯一来源 |
 | F-07 两条设置命令平行实现（校验严宽不同） | 已修复 | 统一到一份严格实现 `validate_api_base_url`（`store/lib.rs`），模型侧与 Embedding 侧都用它；app 侧编排也收拢 | `api_base_url_rule_is_one_rule_for_both_settings`、`embedding_requests_accept_the_payload_the_ui_sends` | 「必须是 API 根路径」不再有两套判定 |
 | F-08 `docs/02` §2.1 模块表写着 6 个不存在的模块 | 已修复 | §2.1 改成当前真实模块路径与职责，并说明最后几行是「今天把多关注点放在同一文件里」的边界；§2.4 列出长期拆分项 | 文档与 `crates/*/src` 对账 | 维护者按文档找位置不再扑空 |
@@ -133,9 +133,11 @@
 
 ```
 cargo fmt --all -- --check                     干净
-cargo clippy --workspace --all-targets         0 error；warning 行 239（比复核基线 244 少 5 行，未新增）
-cargo test --workspace                         249 通过 / 0 失败（agent 44、app 单元 67、app 集成 2、core 38、store 94、xtask 4）
-webui pnpm lint                                0 error / 2 warning
+cargo clippy -p nekowriter-core -p nekowriter-agent -p nekowriter-store -p nekowriter-app --all-targets   0 error / 0 warning（本轮清零，见 docs/03 §46；包名必须写全，`-p core` 这类短名会以 "did not match any packages" 直接失败）
+cargo clippy -p xtask --all-targets            0 error / 0 warning
+cargo clippy --workspace --all-targets         0 error / 0 warning（本轮未开始时整个 workspace 还跑不了；测量过程见 docs/03 §46.6.3）
+cargo test --workspace                         253 通过 / 0 失败（本仓 251：agent 44、app 单元 67、app 集成 2、core 38、store 96、xtask 4；另一线程的 nekowriter-prompt-lab 2）
+webui pnpm lint                                0 error / 0 warning
 webui pnpm test                                10 通过 / 0 失败
 webui npx tsc --noEmit && pnpm build           干净
 ```
@@ -152,11 +154,13 @@ webui npx tsc --noEmit && pnpm build           干净
    `core::lib` 仍是多关注点单文件。方式是只移动不改行为、单独一轮；混在本轮会让人无法核对行为变化。
 2. **F-13 的收窄部分**：草稿 hook（含 IndexedDB 写入语义）没有自动化覆盖，需要 jsdom + `fake-indexeddb`；
    本轮只把纯逻辑层立了起来。「切换章节时不把上一章的文字写到下一章」因此仍依赖实现约束与人工路径。
-3. **clippy warning 仍与复核基线同量级**（239 行，基线 244）：主要是 `too_many_lines`、
-   `missing_errors_doc`、`needless_update`。它们大多是 F-09 的同根问题，随拆分一起处理更有意义，本轮刻意不动——
-   但本轮没有新增任何一条（前后计数相同）。
-4. **2 条前端 lint warning**：`ChapterDirectory.tsx` / `ManuscriptReader.tsx` 使用虚拟化库触发的
-   `react-hooks/incompatible-library`。这是该规则对第三方库的已知边界，不是我们的代码违规。
+3. ~~**clippy warning 仍与复核基线同量级**~~：**已关闭**（`docs/03` §46）。230 个唯一站点里 75 个机械项逐条改掉，
+   剩下 155 个写成抑制：其中 **4 类**（`too_many_lines` / `too_many_arguments` / `missing_errors_doc` / `missing_panics_doc`）
+   在 `Cargo.toml` 的 `[workspace.lints.clippy]` 里带理由关掉；另外 **2 类**框架约定项（`unused_async_trait_impl` /
+   `struct_field_names`）不在批准的四类内，是按证据收窄到 `crates/nekowriter-store/src/entity/mod.rs` 的模块级允许
+   ——这是一次 4 → 6 的口径扩张，已在 `docs/03` §46.3 更正并两侧验证（§46.6.2），现在 `clippy` 为 0 警告。
+4. ~~**2 条前端 lint warning**~~：**已关闭**（`docs/03` §46.4）。该规则针对 React Compiler，而本仓没有接入编译器，
+   覆盖按 `files` 收在 `ChapterDirectory.tsx` 与 `ManuscriptReader.tsx` 两个文件上（不是全仓关闭），并注明了恢复条件。
 5. **CI 未在 GitHub 上实跑**：workflow 只做过 YAML 解析与本地等价命令执行；`protobuf-compiler` 的
    安装步骤与 Linux runner 上的完整链路没有真实运行证据。
 6. **`.agents/` 移出版本控制只到索引层**：文件仍在磁盘、`.gitignore` 已加，但需要维护者在提交时确认这次索引改动。

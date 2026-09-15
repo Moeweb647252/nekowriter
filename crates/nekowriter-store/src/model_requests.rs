@@ -192,7 +192,6 @@ impl Store {
                         updated_at: Set(now),
                         dispatched_at: Set(None),
                         completed_at: Set(None),
-                        ..Default::default()
                     }
                     .insert(transaction)
                     .await?;
@@ -339,7 +338,6 @@ impl Store {
                         updated_at: Set(now),
                         dispatched_at: Set(Some(now)),
                         completed_at: Set(None),
-                        ..Default::default()
                     }
                     .insert(transaction)
                     .await?;

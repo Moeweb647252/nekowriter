@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap};
 use nekowriter_core::{
     ApprovedPreparationArtifact, ChapterPlan, ChapterPlanItem, ContextFold, CopiedContextFold,
     CopiedContextFoldStage, ExecutionStatus, NewCopiedNovelVersion, PreparationArtifactKind,
-    ReviewStatus, RevisionId, VersionId, WorkflowSnapshot, WorkflowStage,
+    ReviewStatus, RevisionId, VersionId, WorkflowSnapshot, WorkflowStage, count_as_i64,
     non_whitespace_char_count, render_preparation_artifact_plaintext, validate_document_content,
 };
 use sea_orm::{
@@ -143,7 +143,7 @@ impl Store {
                         match source_chapter.kind.as_str() {
                             "main" => {
                                 let plan_item_id = parse_optional_id(
-                                    source_chapter.plan_item_id.clone(),
+                                    source_chapter.plan_item_id.as_deref(),
                                     "chapter.plan_item_id",
                                 )?
                                 .ok_or_else(|| {
@@ -452,7 +452,7 @@ impl Store {
                         )
                         .await?;
                         if parse_optional_id(
-                            source_chapter.approved_revision_id.clone(),
+                            source_chapter.approved_revision_id.as_deref(),
                             "chapter.approved_revision_id",
                         )? != Some(body.source_revision_id)
                         {
@@ -876,7 +876,7 @@ async fn copy_document_head(
     label: &str,
 ) -> Result<CopiedRevision, StoreError> {
     let source_revision_id = parse_optional_id(
-        source_document.current_revision_id.clone(),
+        source_document.current_revision_id.as_deref(),
         "source_document.current_revision_id",
     )?
     .ok_or_else(|| StoreError::CorruptRecord(format!("{label} 缺少当前修订")))?;
@@ -903,11 +903,12 @@ async fn copy_document_head(
         structured_payload: Set(
             structured_payload_override.or(source_revision.structured_payload.clone())
         ),
-        word_count: Set(non_whitespace_char_count(&source_revision.content) as i64),
+        word_count: Set(count_as_i64(non_whitespace_char_count(
+            &source_revision.content,
+        ))),
         created_by: Set("copied".to_owned()),
         source_revision_id: Set(Some(source_revision_id.to_string())),
         created_at: Set(now),
-        ..Default::default()
     }
     .insert(transaction)
     .await?;
@@ -989,7 +990,6 @@ async fn insert_revision_dependency(
         revision_id: Set(db_id(revision_id)),
         dependency_revision_id: Set(db_id(dependency_revision_id)),
         purpose: Set(purpose.to_owned()),
-        ..Default::default()
     }
     .insert(transaction)
     .await?;
@@ -1045,7 +1045,6 @@ async fn copy_approved_review(
         user_input_json: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
-        ..Default::default()
     }
     .insert(transaction)
     .await?;

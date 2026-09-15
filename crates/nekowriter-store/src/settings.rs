@@ -240,7 +240,6 @@ impl Store {
                             revision: Set(revision),
                             created_at: Set(now),
                             updated_at: Set(now),
-                            ..Default::default()
                         }
                         .insert(transaction)
                         .await?,

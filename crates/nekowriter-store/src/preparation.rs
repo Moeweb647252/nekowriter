@@ -23,9 +23,9 @@ use nekowriter_core::{
     cancel_chapter_body_pause_for_feedback, confirm_novel_completion, continue_after_agent_tool,
     continue_after_user_answer, continue_chapter_body_after_proposal,
     continue_chapter_body_after_protocol_correction, continue_chapter_body_after_tool,
-    continue_writing_run, enter_extra_chapter, enter_next_chapter, finish_chapter_final_review,
-    finish_chapter_outline_review, finish_extra_chapter_final_review, finish_preparation_review,
-    hold_chapter_body_proposal, hold_chapter_body_submission_for_pause,
+    continue_writing_run, count_as_i64, enter_extra_chapter, enter_next_chapter,
+    finish_chapter_final_review, finish_chapter_outline_review, finish_extra_chapter_final_review,
+    finish_preparation_review, hold_chapter_body_proposal, hold_chapter_body_submission_for_pause,
     hold_chapter_body_tool_for_pause, interrupt_writing_run, non_whitespace_char_count,
     record_chapter_body_edit, record_chapter_body_feedback, record_chapter_guidance,
     record_preparation_review_decision, render_preparation_artifact_plaintext,
@@ -348,7 +348,7 @@ struct AgentBodyToolError {
 
 impl AgentBodyToolError {
     fn into_result(self) -> Value {
-        agent_tool_error_result(self.code, self.message)
+        agent_tool_error_result(self.code, &self.message)
     }
 }
 
@@ -425,7 +425,7 @@ fn parse_agent_body_mutation(
     }
 }
 
-fn agent_body_edit_error_result(error: ChapterBodyEditError) -> Value {
+fn agent_body_edit_error_result(error: &ChapterBodyEditError) -> Value {
     let message = error.to_string();
     let code = match error {
         ChapterBodyEditError::EmptyOldText => "VALIDATION_ERROR",
@@ -433,10 +433,10 @@ fn agent_body_edit_error_result(error: ChapterBodyEditError) -> Value {
         ChapterBodyEditError::MultipleMatches => "EDIT_AMBIGUOUS_MATCH",
         ChapterBodyEditError::NoChange => "EDIT_NO_CHANGE",
     };
-    agent_tool_error_result(code, message)
+    agent_tool_error_result(code, &message)
 }
 
-fn agent_tool_error_result(code: &'static str, message: String) -> Value {
+fn agent_tool_error_result(code: &'static str, message: &str) -> Value {
     json!({
         "status": "error",
         "code": code,
@@ -455,11 +455,7 @@ fn question_tool_result(
     })
 }
 
-fn question_tool_error_result(
-    provider_call_id: &str,
-    code: &'static str,
-    message: String,
-) -> Value {
+fn question_tool_error_result(provider_call_id: &str, code: &'static str, message: &str) -> Value {
     let mut result = agent_tool_error_result(code, message);
     result
         .as_object_mut()
@@ -741,8 +737,10 @@ async fn validate_document_citation(
             "引用必须属于当前稿本".to_owned(),
         ));
     }
-    let actual_chapter_id =
-        parse_optional_id(document_model.chapter_id, "citation.document.chapter_id")?;
+    let actual_chapter_id = parse_optional_id(
+        document_model.chapter_id.as_deref(),
+        "citation.document.chapter_id",
+    )?;
     if actual_chapter_id != cited_chapter_id {
         return Err(StoreError::InvalidCitation(
             "引用中的 chapter_id 与文档所属章节不匹配".to_owned(),
@@ -1097,7 +1095,6 @@ async fn queue_chapter_body_feedback(
         status: Set(feedback_status_name(status).to_owned()),
         created_at: Set(now),
         updated_at: Set(now),
-        ..Default::default()
     }
     .insert(transaction)
     .await?;
@@ -1469,7 +1466,6 @@ async fn commit_free_agent_tool_call(
         included_request_id: Set(None),
         created_at: Set(now),
         resolved_at: Set(Some(now)),
-        ..Default::default()
     }
     .insert(transaction)
     .await?;
@@ -4198,7 +4194,6 @@ impl Store {
                                 included_request_id: Set(None),
                                 created_at: Set(now),
                                 resolved_at: Set(None),
-                                ..Default::default()
                             }
                             .insert(transaction)
                             .await?;
@@ -4210,7 +4205,6 @@ impl Store {
                                 status: Set("open".to_owned()),
                                 created_at: Set(now),
                                 updated_at: Set(now),
-                                ..Default::default()
                             }
                             .insert(transaction)
                             .await?;
@@ -4288,7 +4282,7 @@ impl Store {
                             let tool_result = question_tool_error_result(
                                 &call.provider_call_id,
                                 "TOOL_ARGUMENTS_INVALID",
-                                message,
+                                &message,
                             );
                             let requeue = commit_free_agent_tool_call(
                                 transaction,
@@ -4792,7 +4786,7 @@ impl Store {
             revision_id,
             revision_no: revision.revision_no,
             role: document.role,
-            chapter_id: parse_optional_id(document.chapter_id, "document.chapter_id")?,
+            chapter_id: parse_optional_id(document.chapter_id.as_deref(), "document.chapter_id")?,
             word_count: revision.word_count,
             content: revision.content,
             is_current,
@@ -5003,7 +4997,7 @@ impl Store {
                             &input.old_str,
                             &input.new_str,
                         )
-                        .map_err(agent_body_edit_error_result),
+                        .map_err(|error| agent_body_edit_error_result(&error)),
                         Err(error) => Err(error.into_result()),
                     };
                     let tool_call_id = Uuid::new_v4();
@@ -5030,7 +5024,7 @@ impl Store {
                                     None,
                                     Some(agent_tool_error_result(
                                         "VALIDATION_ERROR",
-                                        format!(
+                                        &format!(
                                             "章节正文超过 {} 个字符",
                                             nekowriter_core::MAX_ARTIFACT_CONTENT_LEN
                                         ),
@@ -5094,7 +5088,6 @@ impl Store {
                             included_request_id: Set(None),
                             created_at: Set(now),
                             resolved_at: Set(None),
-                            ..Default::default()
                         }
                         .insert(transaction)
                         .await?;
@@ -5166,7 +5159,7 @@ impl Store {
                             (
                                 agent_tool_error_result(
                                     "VALIDATION_ERROR",
-                                    format!(
+                                    &format!(
                                         "章节正文超过 {} 个字符",
                                         nekowriter_core::MAX_ARTIFACT_CONTENT_LEN
                                     ),
@@ -5353,7 +5346,6 @@ impl Store {
                         included_request_id: Set(None),
                         created_at: Set(now),
                         resolved_at: Set((!awaiting_review).then_some(now)),
-                        ..Default::default()
                     }
                     .insert(transaction)
                     .await?;
@@ -7642,7 +7634,7 @@ impl Store {
         // 决定不应该因为审核行后来消失而从「返回既有结果」变成报错。
         if let Some(receipt) = self.find_receipt(command_id).await? {
             return replay_or_conflict(
-                receipt,
+                &receipt,
                 DECIDE_PREPARATION_REVIEW_METHOD,
                 &target,
                 &payload_hash,
@@ -8675,7 +8667,7 @@ async fn delegatable_review_target(
         .one(transaction)
         .await?
         .ok_or(StoreError::ReviewNotFound)?;
-    if review_status_from_db(review_model.status.clone())? != ReviewStatus::Open {
+    if review_status_from_db(&review_model.status)? != ReviewStatus::Open {
         return Err(StoreError::ReviewAlreadyResolved);
     }
 
@@ -9016,7 +9008,6 @@ async fn insert_delegated_review_run(
         ended_at: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
-        ..Default::default()
     }
     .insert(transaction)
     .await?;
@@ -9295,10 +9286,11 @@ async fn delegated_chapter_context(
         .unwrap_or_default();
     let plan_or_extra = match chapter_model.kind.as_str() {
         "main" => {
-            let plan_item_id =
-                parse_optional_id(chapter_model.plan_item_id, "chapter.plan_item_id")?.ok_or_else(
-                    || StoreError::CorruptRecord("正文章节缺少计划项标识".to_owned()),
-                )?;
+            let plan_item_id = parse_optional_id(
+                chapter_model.plan_item_id.as_deref(),
+                "chapter.plan_item_id",
+            )?
+            .ok_or_else(|| StoreError::CorruptRecord("正文章节缺少计划项标识".to_owned()))?;
             let plan = current_preparation_artifacts(transaction, version_id)
                 .await?
                 .into_iter()
@@ -9477,7 +9469,7 @@ async fn current_chapter_guidance<C: ConnectionTrait>(
 ) -> Result<CurrentChapterGuidance, StoreError> {
     let (_, guidance_document) = chapter_and_guidance_document(connection, chapter_id).await?;
     let revision_id = parse_optional_id(
-        guidance_document.current_revision_id.clone(),
+        guidance_document.current_revision_id.as_deref(),
         "chapter_guidance.current_revision_id",
     )?;
     let revision = match revision_id {
@@ -9504,7 +9496,7 @@ async fn current_chapter_outline<C: ConnectionTrait>(
     let (_, outline_document) =
         chapter_and_document(connection, chapter_id, CHAPTER_OUTLINE_ROLE, "章节细纲").await?;
     let revision_id = parse_optional_id(
-        outline_document.current_revision_id.clone(),
+        outline_document.current_revision_id.as_deref(),
         "chapter_outline.current_revision_id",
     )?;
     let revision = match revision_id {
@@ -9571,7 +9563,7 @@ async fn current_chapter_body<C: ConnectionTrait>(
     let (_, body_document) =
         chapter_and_document(connection, chapter_id, CHAPTER_BODY_ROLE, "章节正文").await?;
     let revision_id = parse_optional_id(
-        body_document.current_revision_id.clone(),
+        body_document.current_revision_id.as_deref(),
         "chapter_body.current_revision_id",
     )?;
     let revision = match revision_id {
@@ -9916,7 +9908,7 @@ fn pending_chapter_body_feedback_from_model(
     }
     let citations = feedback_citations_from_json(&model.citations_json)?;
     let bound_tool_call_id = parse_optional_id(
-        model.bound_tool_call_id.clone(),
+        model.bound_tool_call_id.as_deref(),
         "feedback.bound_tool_call_id",
     )?;
     if (status == FeedbackStatus::Queued && bound_tool_call_id.is_some())
@@ -9998,7 +9990,7 @@ fn delivered_chapter_body_feedback_from_model(
         ));
     }
     let included_request_id = parse_optional_id(
-        model.included_request_id.clone(),
+        model.included_request_id.as_deref(),
         "feedback.included_request_id",
     )?
     .ok_or_else(|| StoreError::CorruptRecord("已发送自由意见缺少请求 ID".to_owned()))?;
@@ -10008,7 +10000,7 @@ fn delivered_chapter_body_feedback_from_model(
         ));
     }
     if parse_optional_id(
-        model.bound_tool_call_id.clone(),
+        model.bound_tool_call_id.as_deref(),
         "feedback.bound_tool_call_id",
     )?
     .is_none()
@@ -10224,7 +10216,7 @@ async fn apply_chapter_edit_review_decision(
     }
     let proposal = pending_chapter_body_proposal_from_tool_call(&proposal_call)?;
     let review_base_revision_id = parse_optional_id(
-        review_model.target_revision_id.clone(),
+        review_model.target_revision_id.as_deref(),
         "chapter_edit.target_revision_id",
     )?;
     if review_base_revision_id != proposal.base_revision_id {
@@ -10258,7 +10250,7 @@ async fn apply_chapter_edit_review_decision(
     }
 
     let expected_attempt_id = decision.review_run_id.to_string();
-    if review_status_from_db(review_model.status.clone())? != ReviewStatus::Delegated
+    if review_status_from_db(&review_model.status)? != ReviewStatus::Delegated
         || review_model.attempt_id.as_deref() != Some(expected_attempt_id.as_str())
     {
         return Err(StoreError::ReviewAlreadyResolved);
@@ -10898,7 +10890,6 @@ async fn insert_revision_dependency(
         revision_id: Set(db_id(revision_id)),
         dependency_revision_id: Set(db_id(dependency_revision_id)),
         purpose: Set(purpose.to_owned()),
-        ..Default::default()
     }
     .insert(transaction)
     .await?;
@@ -10935,7 +10926,6 @@ async fn insert_preparation_review(
         user_input_json: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
-        ..Default::default()
     }
     .insert(transaction)
     .await?;
@@ -10972,7 +10962,6 @@ async fn insert_chapter_outline_review(
         user_input_json: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
-        ..Default::default()
     }
     .insert(transaction)
     .await?;
@@ -11009,7 +10998,6 @@ async fn insert_chapter_final_review(
         user_input_json: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
-        ..Default::default()
     }
     .insert(transaction)
     .await?;
@@ -11047,7 +11035,6 @@ async fn insert_chapter_edit_review(
         user_input_json: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
-        ..Default::default()
     }
     .insert(transaction)
     .await?;
@@ -11148,7 +11135,7 @@ async fn preparation_review_target(
             .map(|current_revision_id| parse_id(&current_revision_id, "current_revision_id"))
             .transpose()?
             .ok_or_else(|| StoreError::CorruptRecord("审核目标文档没有当前修订".to_owned()))?,
-        status: review_status_from_db(review_model.status)?,
+        status: review_status_from_db(&review_model.status)?,
     })
 }
 
@@ -11181,8 +11168,11 @@ async fn chapter_outline_review_target(
             "章节细纲审核目标不属于审核稿本".to_owned(),
         ));
     }
-    let chapter_id = parse_optional_id(document_model.chapter_id, "chapter_outline.chapter_id")?
-        .ok_or_else(|| StoreError::CorruptRecord("章节细纲审核目标缺少章节 ID".to_owned()))?;
+    let chapter_id = parse_optional_id(
+        document_model.chapter_id.as_deref(),
+        "chapter_outline.chapter_id",
+    )?
+    .ok_or_else(|| StoreError::CorruptRecord("章节细纲审核目标缺少章节 ID".to_owned()))?;
     let dependency_revision_ids =
         serde_json::from_str::<Vec<String>>(&review_model.dependencies_json)?
             .into_iter()
@@ -11199,7 +11189,7 @@ async fn chapter_outline_review_target(
             .transpose()?
             .ok_or_else(|| StoreError::CorruptRecord("审核目标文档没有当前修订".to_owned()))?,
         dependency_revision_ids,
-        status: review_status_from_db(review_model.status)?,
+        status: review_status_from_db(&review_model.status)?,
     })
 }
 
@@ -11232,8 +11222,11 @@ async fn chapter_final_review_target(
             "整章审核目标不属于审核稿本".to_owned(),
         ));
     }
-    let chapter_id = parse_optional_id(document_model.chapter_id, "chapter_body.chapter_id")?
-        .ok_or_else(|| StoreError::CorruptRecord("整章审核目标缺少章节 ID".to_owned()))?;
+    let chapter_id = parse_optional_id(
+        document_model.chapter_id.as_deref(),
+        "chapter_body.chapter_id",
+    )?
+    .ok_or_else(|| StoreError::CorruptRecord("整章审核目标缺少章节 ID".to_owned()))?;
     let dependency_revision_ids =
         serde_json::from_str::<Vec<String>>(&review_model.dependencies_json)?
             .into_iter()
@@ -11250,7 +11243,7 @@ async fn chapter_final_review_target(
             .transpose()?
             .ok_or_else(|| StoreError::CorruptRecord("审核目标文档没有当前修订".to_owned()))?,
         dependency_revision_ids,
-        status: review_status_from_db(review_model.status)?,
+        status: review_status_from_db(&review_model.status)?,
     })
 }
 
@@ -11310,7 +11303,7 @@ async fn chapter_edit_review_target(
     }
     let proposal = pending_chapter_body_proposal_from_tool_call(&proposal_call)?;
     let base_revision_id = parse_optional_id(
-        review_model.target_revision_id.clone(),
+        review_model.target_revision_id.as_deref(),
         "chapter_edit.target_revision_id",
     )?;
     if base_revision_id != proposal.base_revision_id {
@@ -12246,7 +12239,6 @@ pub(crate) async fn insert_chapter_document_slots<C: ConnectionTrait>(
             created_at: Set(now),
             updated_at: Set(now),
             deleted_at: Set(None),
-            ..Default::default()
         }
         .insert(connection)
         .await?;
@@ -12303,7 +12295,6 @@ async fn materialize_chapter_plan(
             created_at: Set(now),
             updated_at: Set(now),
             deleted_at: Set(None),
-            ..Default::default()
         }
         .insert(transaction)
         .await?;
@@ -12519,7 +12510,7 @@ async fn current_novel_brief<C: ConnectionTrait>(
         .await?
         .ok_or_else(|| StoreError::CorruptRecord("稿本缺少小说目标文档槽".to_owned()))?;
     let revision_id = parse_optional_id(
-        document_model.current_revision_id.clone(),
+        document_model.current_revision_id.as_deref(),
         "current_revision_id",
     )?;
     let content = match revision_id {
@@ -12568,7 +12559,7 @@ async fn current_preparation_artifacts<C: ConnectionTrait>(
     let mut current_revision_ids = HashSet::new();
     for document_model in documents_by_role.values() {
         if let Some(revision_id) = parse_optional_id(
-            document_model.current_revision_id.clone(),
+            document_model.current_revision_id.as_deref(),
             "current_revision_id",
         )? {
             current_revision_ids.insert(db_id(revision_id));
@@ -12617,7 +12608,7 @@ async fn current_preparation_artifacts<C: ConnectionTrait>(
             StoreError::CorruptRecord(format!("稿本缺少 {} 文档槽", kind.stable_key()))
         })?;
         let revision_id = parse_optional_id(
-            document_model.current_revision_id.clone(),
+            document_model.current_revision_id.as_deref(),
             "current_revision_id",
         )?;
         let revision = match revision_id {
@@ -12821,7 +12812,7 @@ fn preparation_review_from_model(
                 .ok_or_else(|| StoreError::CorruptRecord("准备审核缺少目标修订".to_owned()))?,
             "target_revision_id",
         )?,
-        status: review_status_from_db(model.status.clone())?,
+        status: review_status_from_db(&model.status)?,
         passed: model.passed,
         confidence: review_confidence_from_model(model)?,
         issues: model
@@ -12849,7 +12840,7 @@ fn chapter_outline_review_from_model(
                 .ok_or_else(|| StoreError::CorruptRecord("细纲审核缺少目标修订".to_owned()))?,
             "target_revision_id",
         )?,
-        status: review_status_from_db(model.status.clone())?,
+        status: review_status_from_db(&model.status)?,
         passed: model.passed,
         confidence: review_confidence_from_model(model)?,
         issues: model
@@ -12877,7 +12868,7 @@ fn chapter_final_review_from_model(
                 .ok_or_else(|| StoreError::CorruptRecord("整章审核缺少目标修订".to_owned()))?,
             "target_revision_id",
         )?,
-        status: review_status_from_db(model.status.clone())?,
+        status: review_status_from_db(&model.status)?,
         passed: model.passed,
         confidence: review_confidence_from_model(model)?,
         issues: model
@@ -12902,7 +12893,7 @@ fn chapter_edit_review_from_model(model: &review::Model) -> Result<ChapterEditRe
             })?,
             "target_tool_call_id",
         )?,
-        status: review_status_from_db(model.status.clone())?,
+        status: review_status_from_db(&model.status)?,
         passed: model.passed,
         confidence: review_confidence_from_model(model)?,
         issues: model
@@ -12913,8 +12904,8 @@ fn chapter_edit_review_from_model(model: &review::Model) -> Result<ChapterEditRe
     })
 }
 
-fn review_status_from_db(value: String) -> Result<ReviewStatus, StoreError> {
-    match value.as_str() {
+fn review_status_from_db(value: &str) -> Result<ReviewStatus, StoreError> {
+    match value {
         "open" => Ok(ReviewStatus::Open),
         "delegated" => Ok(ReviewStatus::Delegated),
         "approved" => Ok(ReviewStatus::Approved),
@@ -12981,11 +12972,10 @@ async fn insert_document_revision_with_payload_and_source(
         revision_no: Set(revision_no),
         content: Set(content.to_owned()),
         structured_payload: Set(structured_payload.map(ToOwned::to_owned)),
-        word_count: Set(non_whitespace_char_count(content) as i64),
+        word_count: Set(count_as_i64(non_whitespace_char_count(content))),
         created_by: Set(created_by.to_owned()),
         source_revision_id: Set(source_revision_id.map(|revision_id| revision_id.to_string())),
         created_at: Set(now),
-        ..Default::default()
     }
     .insert(transaction)
     .await?;
@@ -13047,7 +13037,6 @@ async fn insert_preparation_run(
         ended_at: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
-        ..Default::default()
     }
     .insert(transaction)
     .await?;
@@ -13090,7 +13079,6 @@ async fn insert_chapter_outline_run(
         ended_at: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
-        ..Default::default()
     }
     .insert(transaction)
     .await?;
@@ -13127,7 +13115,6 @@ async fn insert_chapter_body_run(
         ended_at: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
-        ..Default::default()
     }
     .insert(transaction)
     .await?;
@@ -13146,7 +13133,7 @@ pub(crate) async fn persist_workflow(
     active_workflow.state_json = Set(serde_json::to_string(workflow)?);
     active_workflow.state_revision = Set(workflow.state_revision);
     active_workflow.active_run_id = Set(workflow.active_run_id.map(|run_id| run_id.to_string()));
-    active_workflow.approval_mode = Set(approval_mode_name(&workflow.approval_mode).to_owned());
+    active_workflow.approval_mode = Set(approval_mode_name(workflow.approval_mode).to_owned());
     active_workflow.pause_requested = Set(workflow.pause_requested);
     active_workflow.update(transaction).await?;
     Ok(())

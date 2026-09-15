@@ -188,8 +188,7 @@ impl ContextFoldStage {
     /// 正文折叠会先于细纲折叠进入模型上下文。
     const fn within_chapter_order(self) -> u8 {
         match self {
-            Self::Preparation => 0,
-            Self::ChapterOutline => 0,
+            Self::Preparation | Self::ChapterOutline => 0,
             Self::ChapterBody => 1,
         }
     }

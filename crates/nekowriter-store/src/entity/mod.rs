@@ -7,6 +7,12 @@
 //! 这避开 `SeaORM` 2.0.2 `SQLite` 对 `Option<TextUuid>` 的 NULL 解码缺陷，不让该
 //! 细节泄漏到领域层。
 
+// `#[sea_orm::model]` 生成的 impl 不含 `.await`，而它约定的 `Model` 结构体名必然与
+// `model_id` 这类列名相撞。两条抑制都只针对这套框架约定（实体字段名即数据库列名，
+// 改名等于改 schema），范围收在本模块内：别处写出真正的「无 `.await` 的 async trait
+// impl」仍会被提示。
+#![allow(clippy::unused_async_trait_impl, clippy::struct_field_names)]
+
 pub mod agent_message;
 pub mod application_metadata;
 pub mod chapter;

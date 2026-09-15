@@ -6,6 +6,7 @@
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
+    fmt::Write as _,
     sync::Arc,
 };
 
@@ -161,7 +162,7 @@ enum LaneCommand {
         task: ScheduledRun,
         request_id: Uuid,
         request: ModelRequest,
-        result: Result<ModelCompletion, ProviderError>,
+        result: Box<Result<ModelCompletion, ProviderError>>,
     },
     RunStopped {
         run_id: RunId,
@@ -616,7 +617,7 @@ impl WorkflowScheduler {
                     result,
                 } => {
                     let requeue = self
-                        .handle_model_completion(task, request_id, &request, result)
+                        .handle_model_completion(task, request_id, &request, *result)
                         .await;
                     active_runs.remove(&task.run_id);
                     if requeue && sender.send(LaneCommand::Start { task }).await.is_err() {
@@ -1213,7 +1214,7 @@ impl WorkflowScheduler {
                     task,
                     request_id,
                     request,
-                    result,
+                    result: Box::new(result),
                 })
                 .await
                 .is_err()
@@ -2269,7 +2270,7 @@ fn delegated_review_user_content(
                     candidate_range, ..
                 } => ("待审候选引用", candidate_range.quote.as_str()),
             };
-            content.push_str(&format!("\n- {label}：「{quote}」"));
+            write!(content, "\n- {label}：「{quote}」").expect("写入 String 不会失败");
         }
     }
     content
@@ -2669,7 +2670,7 @@ fn stage_agent_history_messages(
                 // 失败后写入的明确纠正消息需要留在该 Run 的历史中。
                 AgentMessageRole::System => None,
                 AgentMessageRole::User => {
-                    decode_stage_protocol_correction_message(run_id, sequence, persisted.content)
+                    decode_stage_protocol_correction_message(run_id, sequence, &persisted.content)
                         .transpose()
                         .map(|message| {
                             message.map(|message| UnfoldedStageMessage {
@@ -2680,7 +2681,7 @@ fn stage_agent_history_messages(
                         })
                 }
                 AgentMessageRole::Assistant => Some(
-                    decode_stage_assistant_message(run_id, sequence, persisted.content).map(
+                    decode_stage_assistant_message(run_id, sequence, &persisted.content).map(
                         |message| UnfoldedStageMessage {
                             source_run_id: run_id,
                             sequence,
@@ -2693,13 +2694,12 @@ fn stage_agent_history_messages(
                         run_id,
                         sequence,
                         persisted.tool_call_id.clone(),
-                        persisted.content,
+                        &persisted.content,
                         persisted
                             .tool_call_id
                             .as_deref()
                             .and_then(|tool_call_id| feedback_by_tool_call.get(tool_call_id))
-                            .map(Vec::as_slice)
-                            .unwrap_or(&[]),
+                            .map_or(&[], Vec::as_slice),
                     )
                     .map(|message| UnfoldedStageMessage {
                         source_run_id: run_id,
@@ -2715,9 +2715,9 @@ fn stage_agent_history_messages(
 fn decode_stage_protocol_correction_message(
     run_id: RunId,
     sequence: i64,
-    content: Value,
+    content: &Value,
 ) -> Result<Option<ModelRequestMessage>, SchedulerError> {
-    if message_kind(&content, run_id, sequence)? != "protocol_correction" {
+    if message_kind(content, run_id, sequence)? != "protocol_correction" {
         return Ok(None);
     }
     let correction = content
@@ -2728,7 +2728,7 @@ fn decode_stage_protocol_correction_message(
             invalid_stage_history_message(
                 run_id,
                 sequence,
-                "protocol_correction 缺少非空字符串 content".to_owned(),
+                "protocol_correction 缺少非空字符串 content",
             )
         })?;
     Ok(Some(ModelRequestMessage::Text {
@@ -2740,26 +2740,26 @@ fn decode_stage_protocol_correction_message(
 fn decode_stage_assistant_message(
     run_id: RunId,
     sequence: i64,
-    content: Value,
+    content: &Value,
 ) -> Result<ModelRequestMessage, SchedulerError> {
-    let kind = message_kind(&content, run_id, sequence)?;
+    let kind = message_kind(content, run_id, sequence)?;
     match kind {
         "assistant_tool_calls" => {
             let assistant_content: Option<String> =
                 serde_json::from_value(content.get("content").cloned().unwrap_or(Value::Null))
                     .map_err(|error| {
-                        invalid_stage_history_message(run_id, sequence, error.to_string())
+                        invalid_stage_history_message(run_id, sequence, &error.to_string())
                     })?;
             let tool_calls: Vec<ModelToolCall> =
                 serde_json::from_value(content.get("toolCalls").cloned().ok_or_else(|| {
                     invalid_stage_history_message(
                         run_id,
                         sequence,
-                        "assistant_tool_calls 缺少 toolCalls".to_owned(),
+                        "assistant_tool_calls 缺少 toolCalls",
                     )
                 })?)
                 .map_err(|error| {
-                    invalid_stage_history_message(run_id, sequence, error.to_string())
+                    invalid_stage_history_message(run_id, sequence, &error.to_string())
                 })?;
             Ok(ModelRequestMessage::AssistantToolCalls {
                 content: assistant_content,
@@ -2774,7 +2774,7 @@ fn decode_stage_assistant_message(
                     invalid_stage_history_message(
                         run_id,
                         sequence,
-                        "assistant text 消息缺少字符串 content".to_owned(),
+                        "assistant text 消息缺少字符串 content",
                     )
                 })?
                 .to_owned();
@@ -2786,7 +2786,7 @@ fn decode_stage_assistant_message(
         other => Err(invalid_stage_history_message(
             run_id,
             sequence,
-            format!("assistant 消息 kind 不支持：{other}"),
+            &format!("assistant 消息 kind 不支持：{other}"),
         )),
     }
 }
@@ -2795,43 +2795,35 @@ fn decode_stage_tool_message(
     run_id: RunId,
     sequence: i64,
     tool_call_id: Option<String>,
-    content: Value,
+    content: &Value,
     feedback: &[Value],
 ) -> Result<ModelRequestMessage, SchedulerError> {
-    if message_kind(&content, run_id, sequence)? != "tool_result" {
+    if message_kind(content, run_id, sequence)? != "tool_result" {
         return Err(invalid_stage_history_message(
             run_id,
             sequence,
-            "tool 消息 kind 必须为 tool_result".to_owned(),
+            "tool 消息 kind 必须为 tool_result",
         ));
     }
     let tool_call_id = tool_call_id.ok_or_else(|| {
-        invalid_stage_history_message(run_id, sequence, "tool 消息缺少 tool_call_id".to_owned())
+        invalid_stage_history_message(run_id, sequence, "tool 消息缺少 tool_call_id")
     })?;
     let content = content
         .get("content")
         .and_then(Value::as_str)
         .ok_or_else(|| {
-            invalid_stage_history_message(
-                run_id,
-                sequence,
-                "tool_result 缺少字符串 content".to_owned(),
-            )
+            invalid_stage_history_message(run_id, sequence, "tool_result 缺少字符串 content")
         })?
         .to_owned();
     let mut result: Value = serde_json::from_str(&content).map_err(|error| {
         invalid_stage_history_message(
             run_id,
             sequence,
-            format!("tool_result 不是有效 JSON：{error}"),
+            &format!("tool_result 不是有效 JSON：{error}"),
         )
     })?;
     let result_object = result.as_object_mut().ok_or_else(|| {
-        invalid_stage_history_message(
-            run_id,
-            sequence,
-            "tool_result 必须是 JSON object".to_owned(),
-        )
+        invalid_stage_history_message(run_id, sequence, "tool_result 必须是 JSON object")
     })?;
     let result_feedback = result_object
         .entry("feedback".to_owned())
@@ -2841,7 +2833,7 @@ fn decode_stage_tool_message(
             invalid_stage_history_message(
                 run_id,
                 sequence,
-                "tool_result.feedback 必须是 JSON array".to_owned(),
+                "tool_result.feedback 必须是 JSON array",
             )
         })?;
     result_feedback.extend(feedback.iter().cloned());
@@ -2849,7 +2841,7 @@ fn decode_stage_tool_message(
         invalid_stage_history_message(
             run_id,
             sequence,
-            format!("tool_result 无法重新序列化：{error}"),
+            &format!("tool_result 无法重新序列化：{error}"),
         )
     })?;
     Ok(ModelRequestMessage::ToolResult {
@@ -2859,12 +2851,13 @@ fn decode_stage_tool_message(
 }
 
 fn message_kind(content: &Value, run_id: RunId, sequence: i64) -> Result<&str, SchedulerError> {
-    content.get("kind").and_then(Value::as_str).ok_or_else(|| {
-        invalid_stage_history_message(run_id, sequence, "消息缺少字符串 kind".to_owned())
-    })
+    content
+        .get("kind")
+        .and_then(Value::as_str)
+        .ok_or_else(|| invalid_stage_history_message(run_id, sequence, "消息缺少字符串 kind"))
 }
 
-fn invalid_stage_history_message(run_id: RunId, sequence: i64, reason: String) -> SchedulerError {
+fn invalid_stage_history_message(run_id: RunId, sequence: i64, reason: &str) -> SchedulerError {
     SchedulerError::Context(format!(
         "正文 Run {run_id} 的消息 {sequence} 无法重放：{reason}"
     ))
@@ -5598,7 +5591,9 @@ mod tests {
             .unwrap();
         let question = match waiting {
             AppliedAgentQuestionToolCall::AwaitingAnswer { question, .. } => question,
-            other => panic!("expected pending question, got {other:?}"),
+            other @ AppliedAgentQuestionToolCall::Resolved { .. } => {
+                panic!("expected pending question, got {other:?}");
+            }
         };
 
         let waiting_snapshot = store.get_chapter_body(chapter_id).await.unwrap();

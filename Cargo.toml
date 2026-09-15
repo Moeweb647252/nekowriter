@@ -49,3 +49,23 @@ unsafe_code = "forbid"
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 module_name_repetitions = "allow"
+
+# 下面四条是刻意关掉的 pedantic 项，覆盖全 workspace：每一条都只对某一类形状生效，
+# 改掉它们要么等于启动被单独搁置的重构，要么只是把模板化措辞搬进代码。另外两条
+# （`unused_async_trait_impl`、`struct_field_names`）的依据只在 sea-orm 的实体定义上
+# 成立，因此收在 `crates/nekowriter-store/src/entity/mod.rs` 里，不放在这里。
+
+# 阶段命令体：`preparation.rs` 与 `lib.rs` 里的正文/审核命令超过 100 行，边界由各自
+# 的事务语义决定。拆开只是把同一段事务切成互相传参的碎片，属于「拆分 store 巨型文件」
+# 那次重构的事，不在 lint 清理里顺手做。
+# too_many_arguments：6 个函数带 8 个 id/载荷参数，全部在阶段命令路径上。为过阈值把它们
+# 打包成只此一处使用的结构体，读者要多跳一层才能看到参数。
+too_many_lines = "allow"
+too_many_arguments = "allow"
+
+# `# Errors` / `# Panics` 要求为每个返回 `Result`、可能 panic 的公开函数补一段说明。
+# 本仓是单一应用，调用方与实现同仓，失败路径由 `StoreError`/`SchedulerError` 的变体
+# 与函数上方已有注释承担；按 lint 补 65 段模板化段落只会稀释真正有用的注释。
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+

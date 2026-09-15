@@ -149,7 +149,7 @@ fn persisted_event_from_model(model: event::Model) -> Result<PersistedEvent, Sto
     Ok(PersistedEvent {
         seq: model.seq.to_string(),
         event_type: model.event_type,
-        version_id: parse_optional_id(model.version_id, "event.version_id")?,
+        version_id: parse_optional_id(model.version_id.as_deref(), "event.version_id")?,
         entity_id: model.entity_id.into(),
         revision: model.revision,
         payload,
