@@ -2,15 +2,21 @@
 //!
 //! SQLite events 表是可恢复事件的唯一事实来源。内存广播不携带业务数据，仅用于
 //! 唤醒订阅者重新按游标读取该表；即使接收者滞后或广播丢失，也不会遗漏已提交事件。
+//!
+//! 写入侧也归本模块：`insert_event` 与 `insert_app_event` 是 events 表唯一的写入入口，
+//! 读、写、保留期清理与唤醒通知因此共用一个所有者。
 
 use nekowriter_core::{VersionId, utc_now_millis};
-use sea_orm::{ConnectionTrait, EntityTrait, QueryFilter, QueryOrder};
+use sea_orm::{
+    ActiveModelTrait, ConnectionTrait, DatabaseTransaction, EntityTrait, QueryFilter, QueryOrder,
+    Set,
+};
 use serde::Serialize;
 use serde_json::Value;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use crate::{Store, StoreError, entity::event, parse_optional_id};
+use crate::{Store, StoreError, db_id, entity::event, parse_optional_id};
 
 /// 可恢复 SSE 事件的保留期。
 ///
@@ -155,4 +161,69 @@ fn persisted_event_from_model(model: event::Model) -> Result<PersistedEvent, Sto
         payload,
         occurred_at: model.occurred_at.to_string(),
     })
+}
+
+pub(crate) async fn insert_event(
+    transaction: &DatabaseTransaction,
+    version_id: VersionId,
+    event_type: &str,
+    entity_id: Uuid,
+    revision: i64,
+    payload: serde_json::Value,
+    occurred_at: i64,
+) -> Result<(), StoreError> {
+    insert_event_row(
+        transaction,
+        Some(version_id),
+        event_type,
+        entity_id,
+        revision,
+        payload,
+        occurred_at,
+    )
+    .await
+}
+
+/// 写入一条不属于任何稿本的持久事件（如知识库索引状态变化）。
+pub(crate) async fn insert_app_event(
+    transaction: &DatabaseTransaction,
+    event_type: &str,
+    entity_id: Uuid,
+    revision: i64,
+    payload: serde_json::Value,
+    occurred_at: i64,
+) -> Result<(), StoreError> {
+    insert_event_row(
+        transaction,
+        None,
+        event_type,
+        entity_id,
+        revision,
+        payload,
+        occurred_at,
+    )
+    .await
+}
+
+async fn insert_event_row(
+    transaction: &DatabaseTransaction,
+    version_id: Option<VersionId>,
+    event_type: &str,
+    entity_id: Uuid,
+    revision: i64,
+    payload: serde_json::Value,
+    occurred_at: i64,
+) -> Result<(), StoreError> {
+    event::ActiveModel {
+        version_id: Set(version_id.map(|id| id.to_string())),
+        event_type: Set(event_type.to_owned()),
+        entity_id: Set(db_id(entity_id)),
+        revision: Set(revision.to_string()),
+        payload_json: Set(serde_json::to_string(&payload)?),
+        occurred_at: Set(occurred_at),
+        ..Default::default()
+    }
+    .insert(transaction)
+    .await?;
+    Ok(())
 }
