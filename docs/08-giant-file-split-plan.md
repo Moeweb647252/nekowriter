@@ -2262,8 +2262,9 @@ QuestionAnswerResult, StopWritingRunResult};`——这五个类型在 `lib.rs:75
   `--into preparation/mod.rs + body/mod.rs + body/control.rs`，**不给 `--allow`**）：退出码 **0，MOVE-ONLY OK**；
   定义项 **198 → 198**、项内行 **8,823 → 8,823**、项外自由行 **239 → 256**、**残留 0**、放行新增注释 **17 行**
   （= `body/mod.rs` 5 行 + `control.rs` 10 行（6 行模块文档 + 2 行导入说明 + `prefix` 的 2 行新文档）+ `mod.rs` 2 行）。
-  **xtask 的定义项集合包含 `mod x;` 与 `const fn`**（本批末核实），所以 `InterruptionSource::reason` /
-  `prefix` 这两个 `const fn` 也在那 198 项里——`项内行两侧完全相同` 已经把它们的可见性前缀比过。
+  **xtask 的定义项集合包含 `const fn`、但不包含 `mod x;`**（P3.9 收工时核实：`--list-items` 把
+  `impl InterruptionSource | const fn reason` / `prefix` 列成定义项，`mod …;` 只出现在「（项外）」行里），
+  所以这两个 `const fn` 也在那 198 项里——`项内行两侧完全相同` 已经把它们的可见性前缀比过。
   **项内行两侧完全相同 ⇒ 本批一行 rustfmt 重排都没有**（方法区与类型区都在列 0/4 两个既有缩进层里搬，
   行宽预算不变；`body/control.rs` 是 out-of-line 模块文件，与 `tools/held.rs` 一样按列 0 格式化）。
 - 整栈核对（`--base HEAD`，4 个 `--from` / **44 个 `--into`** = P3.7 的 42 个 + `body/mod.rs` + `body/control.rs`）：
