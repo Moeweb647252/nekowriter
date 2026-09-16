@@ -5,12 +5,13 @@
 //! app 侧原本就按方法语法调用，一行都不用改，也不需要任何再导出。
 
 use nekowriter_core::{
-    AppendChapterContent, ApprovalMode, ChapterBodySnapshot, ChapterId, DocumentId,
-    DocumentRevisionView, ExecutionStatus, FeedbackCitation, HeldChapterBodyTool,
+    AppendChapterContent, ApprovalMode, ChapterBodyEditError, ChapterBodySnapshot, ChapterId,
+    DocumentId, DocumentRevisionView, ExecutionStatus, FeedbackCitation, HeldChapterBodyTool,
     MAX_CONSECUTIVE_PROTOCOL_ERRORS, PendingChapterBodyProposal, ReplaceChapterContent, ReviewId,
     RevisionId, RunId, WorkflowStage, continue_chapter_body_after_proposal,
     continue_chapter_body_after_tool, hold_chapter_body_proposal, hold_chapter_body_tool_for_pause,
-    non_whitespace_char_count, replace_unique_chapter_content, stop_writing_after_protocol_error,
+    non_whitespace_char_count, record_chapter_body_edit, replace_unique_chapter_content,
+    stop_writing_after_protocol_error,
 };
 use sea_orm::{ActiveModelTrait, EntityTrait, IntoActiveModel, QueryFilter, Set, TransactionTrait};
 use serde::Serialize;
@@ -1223,6 +1224,193 @@ impl Store {
                         transaction,
                         command_id,
                         DECIDE_CHAPTER_BODY_PROPOSAL_METHOD,
+                        &target_for_transaction,
+                        &payload_hash_for_transaction,
+                        &response_json,
+                        200,
+                        now,
+                    )
+                    .await?;
+                    Ok(response)
+                })
+            })
+            .await
+    }
+
+    async fn mutate_chapter_body(
+        &self,
+        chapter_id: ChapterId,
+        command_id: Uuid,
+        expected_state_revision: i64,
+        target: String,
+        payload_hash: String,
+        method: &'static str,
+        mutation: ChapterBodyMutation,
+    ) -> Result<ChapterBodySnapshot, StoreError> {
+        let command = Command::new(command_id, method, &target, &payload_hash);
+
+        let target_for_transaction = target.clone();
+        let payload_hash_for_transaction = payload_hash.clone();
+        command
+            .commit(self, Notify::Listeners, move |transaction| {
+                Box::pin(async move {
+                    let (chapter_model, body_document) = chapter_and_document(
+                        transaction,
+                        chapter_id,
+                        CHAPTER_BODY_ROLE,
+                        "章节正文",
+                    )
+                    .await?;
+                    if chapter_model.status != "in_progress" {
+                        return Err(StoreError::InvalidChapterState(
+                            "章节尚未处于可编辑正文状态".to_owned(),
+                        ));
+                    }
+                    let version_id: VersionId = chapter_model.version_id.into();
+                    let workflow = workflow_for_version(transaction, version_id).await?;
+                    ensure_expected_state_revision(&workflow, expected_state_revision)?;
+                    if workflow.approval_mode != ApprovalMode::AutoApprove {
+                        return Err(StoreError::InvalidChapterState(
+                            "逐次确认模式下不能绕过待审提案直接修改正文".to_owned(),
+                        ));
+                    }
+                    if workflow.execution == ExecutionStatus::WaitingReview {
+                        return Err(StoreError::InvalidChapterState(
+                            "当前正文仍有待决定的编辑提案".to_owned(),
+                        ));
+                    }
+                    if workflow.pause_requested || workflow.execution == ExecutionStatus::Paused {
+                        return Err(StoreError::InvalidChapterState(
+                            "暂停请求尚未完成，不能绕过挂起工具直接修改正文".to_owned(),
+                        ));
+                    }
+                    // 即使候选文本不变，也必须先确认当前章节、阶段和 Run 没有被其他
+                    // 命令替换；但 NO_CHANGE 不写修订、不递增工作流版本。
+                    let _ = record_chapter_body_edit(&workflow, chapter_id)?;
+                    let run_id = workflow.active_run_id.ok_or_else(|| {
+                        StoreError::CorruptRecord("正文编辑缺少对应的活跃 Run".to_owned())
+                    })?;
+                    chapter_body_run(transaction, run_id, chapter_id).await?;
+                    let current_body = current_chapter_body(transaction, chapter_id).await?;
+                    let base_revision_id = current_body.revision_id;
+                    let current_content = current_body.content.unwrap_or_default();
+                    let next_content = match mutation {
+                        ChapterBodyMutation::Append(input) => {
+                            Some(format!("{current_content}{}", input.content))
+                        }
+                        ChapterBodyMutation::Replace(input) => {
+                            match replace_unique_chapter_content(
+                                &current_content,
+                                &input.old_str,
+                                &input.new_str,
+                            ) {
+                                Ok(content) => Some(content),
+                                Err(ChapterBodyEditError::NoChange) => None,
+                                Err(error) => return Err(StoreError::ChapterBodyEdit(error)),
+                            }
+                        }
+                    };
+                    let now = utc_now_millis();
+                    if let Some(next_content) = next_content {
+                        if next_content.chars().count() > nekowriter_core::MAX_ARTIFACT_CONTENT_LEN
+                        {
+                            return Err(StoreError::InvalidChapterBodyEdit(format!(
+                                "章节正文超过 {} 个字符",
+                                nekowriter_core::MAX_ARTIFACT_CONTENT_LEN
+                            )));
+                        }
+                        let dependency_revision_ids = chapter_body_revision_dependency_ids(
+                            transaction,
+                            version_id,
+                            chapter_id,
+                            base_revision_id,
+                        )
+                        .await?;
+                        let (revision_id, revision_no) =
+                            insert_document_revision_with_payload_and_source(
+                                transaction,
+                                body_document.id.into(),
+                                &next_content,
+                                None,
+                                "user",
+                                base_revision_id,
+                                now,
+                            )
+                            .await?;
+                        for dependency_revision_id in &dependency_revision_ids {
+                            insert_revision_dependency(
+                                transaction,
+                                revision_id,
+                                *dependency_revision_id,
+                                "chapter_body_input",
+                            )
+                            .await?;
+                        }
+                        let next_workflow = record_chapter_body_edit(&workflow, chapter_id)?;
+                        // 执行轴未变时说明模型回合仍在进行（排队中或在途），Run 的状态
+                        // 必须跟着那个回合走，不能改成 waiting 而把回调路径废掉。
+                        if next_workflow.execution != workflow.execution {
+                            update_chapter_body_run_status(
+                                transaction,
+                                run_id,
+                                chapter_id,
+                                "waiting",
+                                None,
+                                None,
+                                now,
+                            )
+                            .await?;
+                        }
+                        persist_workflow(transaction, &next_workflow).await?;
+                        insert_event(
+                            transaction,
+                            version_id,
+                            "document.committed",
+                            revision_id,
+                            revision_no,
+                            json!({
+                                "chapter_id": chapter_id,
+                                "role": CHAPTER_BODY_ROLE,
+                                "word_count": non_whitespace_char_count(&next_content),
+                            }),
+                            now,
+                        )
+                        .await?;
+                        insert_event(
+                            transaction,
+                            version_id,
+                            "run.changed",
+                            run_id,
+                            next_workflow.state_revision,
+                            json!({
+                                "chapter_id": chapter_id,
+                                "kind": "chapter_body",
+                                "status": "waiting",
+                            }),
+                            now,
+                        )
+                        .await?;
+                        insert_event(
+                            transaction,
+                            version_id,
+                            "workflow.changed",
+                            version_id,
+                            next_workflow.state_revision,
+                            json!({
+                                "stage": next_workflow.stage,
+                                "chapter_id": chapter_id,
+                                "run_id": run_id,
+                            }),
+                            now,
+                        )
+                        .await?;
+                    }
+                    let response = chapter_body_snapshot(transaction, chapter_id).await?;
+                    let response_json = serde_json::to_string(&response)?;
+                    insert_receipt(
+                        transaction,
+                        command_id,
+                        method,
                         &target_for_transaction,
                         &payload_hash_for_transaction,
                         &response_json,

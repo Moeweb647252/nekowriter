@@ -8,3 +8,6 @@ pub(crate) mod control;
 
 // 正文写入与提交搬到 `body::edit`（`docs/08` 的 P3.9）。
 pub(crate) mod edit;
+
+// 终稿提交搬到 `body::commit`（`docs/08` 的 P3.10）。
+pub(crate) mod commit;
