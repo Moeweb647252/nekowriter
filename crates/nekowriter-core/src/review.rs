@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    field::{Field, multi_line_text},
+    citation::{Citation, VerifiedCitation},
+    field::{Field, FieldError, FieldProblem, multi_line_text},
     preparation::ArtifactKind,
 };
 
@@ -92,7 +93,43 @@ pub enum ReviewStatus {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReviewDecision {
     Approve,
-    Reject { feedback: ReviewFeedback },
+    Reject(Rejection),
+}
+
+/// What a rejection asks the writer to change: in words, by citing passages, or both, but
+/// never nothing (§6, §9.5).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Rejection {
+    feedback: Option<ReviewFeedback>,
+    citations: Vec<Citation>,
+}
+
+impl Rejection {
+    pub fn new(
+        feedback: Option<ReviewFeedback>,
+        citations: Vec<Citation>,
+    ) -> Result<Self, FieldError> {
+        if feedback.is_none() && citations.is_empty() {
+            return Err(FieldError {
+                field: Field::ReviewFeedback,
+                problem: FieldProblem::Empty,
+            });
+        }
+        Ok(Self {
+            feedback,
+            citations,
+        })
+    }
+
+    #[must_use]
+    pub fn feedback(&self) -> Option<&ReviewFeedback> {
+        self.feedback.as_ref()
+    }
+
+    #[must_use]
+    pub fn citations(&self) -> &[Citation] {
+        &self.citations
+    }
 }
 
 /// Who decided a review.
@@ -118,22 +155,6 @@ pub enum DecisionSource {
 pub struct Decision {
     pub approved: bool,
     pub feedback: Option<String>,
+    pub citations: Vec<VerifiedCitation>,
     pub source: DecisionSource,
-}
-
-impl From<ReviewDecision> for Decision {
-    fn from(decision: ReviewDecision) -> Self {
-        match decision {
-            ReviewDecision::Approve => Self {
-                approved: true,
-                feedback: None,
-                source: DecisionSource::User,
-            },
-            ReviewDecision::Reject { feedback } => Self {
-                approved: false,
-                feedback: Some(feedback.as_str().to_owned()),
-                source: DecisionSource::User,
-            },
-        }
-    }
 }

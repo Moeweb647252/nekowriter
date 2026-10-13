@@ -130,7 +130,7 @@ export default {
   },
   delegation: {
     delegate: "交给审阅 Agent 决定",
-    delegateHint: "你已写下的意见会作为提示交给审阅 Agent。",
+    delegateHint: "你已写下的意见和引用会作为提示交给审阅 Agent。",
     delegated: "审阅 Agent 正在审阅。",
     cancel: "取消，由我审阅",
     failed: "审阅 Agent 没能完成：{{reason}}。请自己审阅，或再次交给它。",
@@ -150,13 +150,22 @@ export default {
     append: "Agent 提议在本章末尾追加文字。",
     replace: "Agent 提议把“{{old}}”替换为“{{new}}”。",
     delete: "Agent 提议删除“{{old}}”。",
-    feedback: "修改意见（留空即采纳这次修改）",
-    hint: "采纳后修改立即生效。填写意见则不采纳，Agent 会据此重新修改。",
+    feedback: "修改意见（不填意见也不引用即采纳这次修改）",
+    hint: "采纳后修改立即生效。填写意见或引用原文则不采纳，Agent 会据此重新修改。",
     accept: "采纳修改",
     reject: "不采纳并提出意见",
     label: "提议的修改，尚未生效",
     added: "新增",
     removed: "删除",
+  },
+  citations: {
+    label: "引用的原文",
+    cite: "引用选中的文字",
+    remove: "移除引用“{{quote}}”",
+    refused: {
+      nothing: "请先在正文或文档中选中一段文字。",
+      several_texts: "一条引用只能来自同一段文本，请在单个章节或文档中选择。",
+    },
   },
   reader: {
     label: "正文",

@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     body::EditProblem,
+    citation::VerifiedCitation,
     ids::{ReviewId, RevisionId, ToolCallId},
     preparation::ArtifactKind,
     question::{AnsweredQuestion, QuestionProblem},
@@ -69,7 +70,7 @@ pub enum UnsealedMessage {
         provider_call_id: String,
         outcome: ToolOutcome,
         /// The user's feedback that travels with this result, in order.
-        feedback: Vec<String>,
+        feedback: Vec<FeedbackItem>,
     },
     PreparationReviewOutcome {
         rejected: Vec<RejectedArtifact>,
@@ -79,6 +80,7 @@ pub enum UnsealedMessage {
         kind: ReviewKind,
         /// `None` when a review agent rejected without naming issues.
         feedback: Option<String>,
+        citations: Vec<VerifiedCitation>,
     },
     Correction {
         correction: Correction,
@@ -91,6 +93,14 @@ pub struct RejectedArtifact {
     pub artifact: ArtifactKind,
     /// `None` when a review agent rejected without naming issues.
     pub feedback: Option<String>,
+    pub citations: Vec<VerifiedCitation>,
+}
+
+/// One piece of the user's feedback with the passages it cites.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FeedbackItem {
+    pub text: String,
+    pub citations: Vec<VerifiedCitation>,
 }
 
 /// A tool call exactly as the model sent it.

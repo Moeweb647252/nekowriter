@@ -2,9 +2,10 @@
 //! review is about; what it does next depends on the review's kind.
 
 use nekowriter_core::{
+    citation::Citation,
     conflict::Resource,
     ids::{CommandId, ReviewId},
-    review::{Decision, DecisionSource, ReviewDecision, ReviewKind, ReviewStatus},
+    review::{Decision, DecisionSource, ReviewDecision, ReviewFeedback, ReviewKind, ReviewStatus},
 };
 use sea_orm::{ActiveModelTrait, EntityTrait, IntoActiveModel, Set};
 use serde::Serialize;
@@ -12,8 +13,10 @@ use serde::Serialize;
 use crate::{
     Store, StoreError,
     chapters::decide_chapter_review,
+    citations::verify_citations,
     command::{Begun, WriteTx},
     entity::{review, workflow},
+    feedback::stored,
     preparation::decide_preparation_review,
     proposals::decide_edit_review,
     workflow::{VersionContext, WorkspaceAck, load_version},
@@ -40,7 +43,22 @@ impl Store {
             .ok_or(StoreError::NotFound(Resource::Review))?;
         let context = load_version(tx.db(), review.version_id).await?;
         context.check_revision(expected_revision)?;
-        let workflow = apply_decision(tx.write(), context, review, decision.into()).await?;
+        let decision = match decision {
+            ReviewDecision::Approve => Decision {
+                approved: true,
+                feedback: None,
+                citations: Vec::new(),
+                source: DecisionSource::User,
+            },
+            ReviewDecision::Reject(rejection) => Decision {
+                approved: false,
+                feedback: rejection.feedback().map(|text| text.as_str().to_owned()),
+                citations: verify_citations(tx.db(), context.version.id, rejection.citations())
+                    .await?,
+                source: DecisionSource::User,
+            },
+        };
+        let workflow = apply_decision(tx.write(), context, review, decision).await?;
         tx.commit(WorkspaceAck {
             revision: workflow.revision,
         })
@@ -70,6 +88,7 @@ pub(crate) async fn record_decision(
         ReviewStatus::Rejected
     });
     decided.feedback = Set(decision.feedback.filter(|_| !decision.approved));
+    decided.citations = Set(stored(decision.citations));
     decided.decided_at = Set(Some(tx.now()));
     decided.decided_by = Set(Some(decision.source));
     decided.delegated_run_id = Set(None);
@@ -102,14 +121,16 @@ pub(crate) async fn apply_decision(
 #[derive(Serialize)]
 enum DecisionInput<'a> {
     Approve,
-    Reject(&'a str),
+    Reject(Option<&'a ReviewFeedback>, &'a [Citation]),
 }
 
 impl<'a> From<&'a ReviewDecision> for DecisionInput<'a> {
     fn from(decision: &'a ReviewDecision) -> Self {
         match decision {
             ReviewDecision::Approve => Self::Approve,
-            ReviewDecision::Reject { feedback } => Self::Reject(feedback.as_str()),
+            ReviewDecision::Reject(rejection) => {
+                Self::Reject(rejection.feedback(), rejection.citations())
+            }
         }
     }
 }

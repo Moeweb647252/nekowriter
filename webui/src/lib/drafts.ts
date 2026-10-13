@@ -9,16 +9,16 @@ interface StoredDraft {
   base: string
 }
 
-function read(key: string): StoredDraft | null {
+function read(key: string): unknown {
   try {
     const raw = localStorage.getItem(STORAGE_PREFIX + key)
-    return raw === null ? null : (JSON.parse(raw) as StoredDraft)
+    return raw === null ? null : JSON.parse(raw)
   } catch {
     return null
   }
 }
 
-function write(key: string, draft: StoredDraft | null) {
+function write(key: string, draft: unknown) {
   try {
     if (draft === null) localStorage.removeItem(STORAGE_PREFIX + key)
     else localStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(draft))
@@ -45,7 +45,7 @@ export interface Draft {
  * so drafts of different data directories never mix.
  */
 export function useDraft(key: string, saved: string): Draft {
-  const [draft, setDraft] = useState<StoredDraft | null>(() => read(key))
+  const [draft, setDraft] = useState(() => read(key) as StoredDraft | null)
 
   const setValue = useCallback(
     (text: string) => {
@@ -70,4 +70,36 @@ export function useDraft(key: string, saved: string): Draft {
     conflict: draft !== null && draft.base !== saved,
     clear,
   }
+}
+
+export interface DraftList<T> {
+  items: T[]
+  add: (item: T) => void
+  remove: (index: number) => void
+  /** Forgets the items; call it once the server confirmed them. */
+  clear: () => void
+}
+
+/** Unsent items that go with a text draft, such as its citations, kept the same way. */
+export function useDraftList<T>(key: string): DraftList<T> {
+  const [items, setItems] = useState(() => (read(key) as T[] | null) ?? [])
+
+  const update = useCallback(
+    (change: (current: T[]) => T[]) => {
+      setItems((current) => {
+        const next = change(current)
+        write(key, next.length === 0 ? null : next)
+        return next
+      })
+    },
+    [key],
+  )
+
+  const add = useCallback((item: T) => update((current) => [...current, item]), [update])
+  const remove = useCallback(
+    (index: number) => update((current) => current.filter((_, at) => at !== index)),
+    [update],
+  )
+  const clear = useCallback(() => update(() => []), [update])
+  return { items, add, remove, clear }
 }

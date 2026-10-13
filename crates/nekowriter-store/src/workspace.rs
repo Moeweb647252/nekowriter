@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use nekowriter_core::{
     chapter::{ChapterKind, ChapterStatus},
+    citation::Citation,
     document::DocumentRole,
     ids::{ChapterId, ModelRequestId, ReviewId, RevisionId, RunId, VersionId},
     preparation::ArtifactKind,
@@ -102,6 +103,8 @@ pub struct ReviewView {
     pub summary: Option<String>,
     /// The reviewer's feedback on a rejection; a review agent may reject without issues.
     pub feedback: Option<String>,
+    /// The passages a rejection quotes.
+    pub citations: Vec<Citation>,
     pub decided_at: Option<Timestamp>,
     pub decided_by: Option<DecisionSource>,
     /// A review agent's confidence in thousandths; shown only (D08).
@@ -120,6 +123,16 @@ impl From<&review::Model> for ReviewView {
             target: review.target_revision_id,
             summary: review.summary.clone(),
             feedback: review.feedback.clone(),
+            citations: review
+                .citations
+                .as_ref()
+                .map_or_else(Vec::new, |citations| {
+                    citations
+                        .0
+                        .iter()
+                        .map(|cited| cited.citation.clone())
+                        .collect()
+                }),
             decided_at: review.decided_at,
             decided_by: review.decided_by,
             confidence_permille: review.confidence_permille,

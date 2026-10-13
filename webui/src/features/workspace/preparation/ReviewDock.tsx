@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next"
 
+import { CitedQuotes } from "../CitationField"
 import type { DocumentKey } from "../documents"
 import { DecidedBy, DelegatedReview } from "../Delegation"
 import { ReviewForm } from "../ReviewForm"
@@ -77,6 +78,7 @@ function ReviewPanel({ view, artifact }: { view: WorkspaceView; artifact: Artifa
               {t(($) => $.workspace.preparation.rejectedNote, { feedback: review.feedback })}
             </Note>
           )}
+          <CitedQuotes citations={review.citations} />
           <Note>{t(($) => $.workspace.preparation.decided)}</Note>
           <DecidedBy review={review} />
         </div>

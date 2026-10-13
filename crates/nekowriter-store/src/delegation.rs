@@ -6,11 +6,13 @@
 
 use nekowriter_core::{
     call::CallRequest,
+    citation::Citation,
     conflict::{Resource, StateConflict},
     document::DocumentRole,
     ids::{CommandId, ReviewId, RunId},
-    review::{Decision, DecisionSource, ReviewKind, ReviewStatus},
+    review::{Decision, DecisionSource, ReviewFeedback, ReviewKind, ReviewStatus},
     run::{RunHalt, RunKind, RunStatus},
+    run_message::FeedbackItem,
     stage::{ReviewSubject, StageInput},
     submission::{SubmissionProblem, VerdictSubmission, accept_verdict},
 };
@@ -21,6 +23,7 @@ use sea_orm::{
 use crate::{
     Store, StoreError,
     chapters::{chapter_input, chapter_text, find_chapter},
+    citations::verify_citations,
     command::{Begun, WriteTx},
     documents::{current_revision, version_document},
     entity::{
@@ -28,21 +31,23 @@ use crate::{
         review, revision, run, tool_call,
     },
     execution::{check_model, halt},
+    feedback::stored,
     reviews::apply_decision,
     workflow::{WorkspaceAck, load_version, touch},
 };
 
 impl Store {
     /// Delegates an open review of the active run to a review agent, with the user's draft
-    /// feedback as notes for it.
+    /// feedback and the passages it cites as notes for it.
     pub async fn delegate_review(
         &self,
         command: CommandId,
         review_id: ReviewId,
         expected_revision: i64,
-        notes: Option<String>,
+        notes: Option<ReviewFeedback>,
+        citations: Vec<Citation>,
     ) -> Result<WorkspaceAck, StoreError> {
-        let input = (review_id, expected_revision, &notes);
+        let input = (review_id, expected_revision, &notes, &citations);
         let mut tx = match self
             .begin_command(command, "review.delegate", &input)
             .await?
@@ -67,6 +72,7 @@ impl Store {
             return Err(StoreError::StateConflict(StateConflict::ReviewNotOpen));
         }
         check_model(tx.db(), &context.project).await?;
+        let citations = verify_citations(tx.db(), context.version.id, &citations).await?;
         let now = tx.now();
         let child = run::ActiveModel {
             id: Set(RunId::generate()),
@@ -92,7 +98,8 @@ impl Store {
         let mut delegated = review.into_active_model();
         delegated.status = Set(ReviewStatus::Delegated);
         delegated.delegated_run_id = Set(Some(child.id));
-        delegated.delegation_notes = Set(notes.filter(|text| !text.trim().is_empty()));
+        delegated.delegation_notes = Set(notes.map(|notes| notes.as_str().to_owned()));
+        delegated.delegation_citations = Set(stored(citations));
         delegated.delegation_failure = Set(None);
         delegated.update(tx.db()).await?;
         let workflow = touch(tx.write(), context.version.id, context.project.id).await?;
@@ -211,6 +218,7 @@ pub(crate) async fn apply_verdict(
         approved: verdict.passed,
         feedback: (!verdict.passed && !verdict.issues.is_empty())
             .then(|| verdict.issues.join("\n")),
+        citations: Vec::new(),
         source: DecisionSource::Delegate,
     };
     let context = load_version(tx.db(), review.version_id).await?;
@@ -293,6 +301,12 @@ pub(crate) async fn review_subject<C: ConnectionTrait>(
     Ok(StageInput::Review {
         kind: review.kind,
         subject,
-        notes: review.delegation_notes,
+        notes: match (review.delegation_notes, review.delegation_citations) {
+            (None, None) => None,
+            (text, citations) => Some(FeedbackItem {
+                text: text.unwrap_or_default(),
+                citations: citations.map(|citations| citations.0).unwrap_or_default(),
+            }),
+        },
     })
 }

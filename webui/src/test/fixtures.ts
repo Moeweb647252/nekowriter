@@ -75,6 +75,7 @@ export function review(id: string, overrides: Partial<ReviewView> = {}): ReviewV
     target: "0190f5c8-0000-7000-8000-000000000999",
     summary: null,
     feedback: null,
+    citations: [],
     decidedAt: null,
     decidedBy: null,
     confidencePermille: null,

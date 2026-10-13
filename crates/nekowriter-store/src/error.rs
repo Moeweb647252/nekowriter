@@ -1,4 +1,5 @@
 use nekowriter_core::{
+    citation::CitationProblem,
     conflict::{Resource, StateConflict},
     ids::CommandId,
     model::ModelProblem,
@@ -32,6 +33,9 @@ pub enum StoreError {
     /// The model settings do not allow requests, so work that needs the model cannot start.
     #[error("the model is not ready: {0:?}")]
     ModelNotReady(ModelProblem),
+    /// A citation does not quote its text.
+    #[error("a citation does not quote its text: {0:?}")]
+    CitationInvalid(CitationProblem),
     /// The answers do not fit the questions they answer.
     #[error("the answers do not fit the questions: {0:?}")]
     AnswerInvalid(AnswerProblem),

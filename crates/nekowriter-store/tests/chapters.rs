@@ -177,6 +177,7 @@ async fn an_outline_is_reviewed_and_revised_before_the_body_starts() {
         UnsealedMessage::ReviewRejected {
             kind: ReviewKind::ChapterOutline,
             feedback: Some("Start with the storm.".to_owned()),
+            citations: Vec::new(),
         }
     );
 

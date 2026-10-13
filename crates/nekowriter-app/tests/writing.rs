@@ -234,10 +234,36 @@ async fn the_writer_takes_feedback_and_a_pause_while_it_writes() {
     let view = wait_for(&server, &version, |view| view["run"]["status"] == "running").await;
     let run = view["run"]["id"].as_str().unwrap().to_owned();
 
+    // A citation of text that does not exist is refused with its problem.
+    let response = server
+        .post(
+            &format!("/api/runs/{run}/feedback"),
+            &json!({
+                "commandId": common::command_id(),
+                "text": "Colder.",
+                "citations": [{
+                    "target": {
+                        "kind": "revision",
+                        "revisionId": "01900000-0000-7000-8000-000000000000"
+                    },
+                    "start": 0,
+                    "end": 4,
+                    "quote": "Rain"
+                }]
+            }),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 422);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["code"], "CITATION_INVALID");
+    assert_eq!(body["params"]["problem"]["kind"], "target_gone");
+
     for (path, body) in [
         (
             "feedback",
-            json!({ "commandId": common::command_id(), "text": "Colder." }),
+            json!({ "commandId": common::command_id(), "text": "Colder.", "citations": [] }),
         ),
         ("pause", json!({ "commandId": common::command_id() })),
     ] {

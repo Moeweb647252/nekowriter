@@ -226,6 +226,11 @@ impl Store {
                             ReviewStatus::Rejected => rejected.push(RejectedArtifact {
                                 artifact: kind,
                                 feedback: review.feedback.clone(),
+                                citations: review
+                                    .citations
+                                    .clone()
+                                    .map(|citations| citations.0)
+                                    .unwrap_or_default(),
                             }),
                             ReviewStatus::Stale => {
                                 stale.insert(kind);
@@ -249,6 +254,10 @@ impl Store {
                 Ok(UnsealedMessage::ReviewRejected {
                     kind: review.kind,
                     feedback: review.feedback,
+                    citations: review
+                        .citations
+                        .map(|citations| citations.0)
+                        .unwrap_or_default(),
                 })
             }
             RunMessageBody::Correction { correction } => {

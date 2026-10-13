@@ -256,7 +256,7 @@ pub fn build(
                 system: with_section(&render(prompts.system, &values)?, &contract),
                 user: with_section(
                     &render(prompts.user, &values)?,
-                    &review_material(subject, notes.as_deref()),
+                    &review_material(subject, notes.as_ref()),
                 ),
                 contract: Contract {
                     stage: StageKind::Review,
@@ -771,7 +771,8 @@ mod tests {
     #[test]
     fn a_review_stage_carries_the_subject_and_notes_and_submits_a_verdict() {
         use nekowriter_core::{
-            review::ReviewKind, stage::ReviewSubject, submission::VerdictSubmission,
+            review::ReviewKind, run_message::FeedbackItem, stage::ReviewSubject,
+            submission::VerdictSubmission,
         };
 
         let request = build(
@@ -785,7 +786,10 @@ mod tests {
                         new_str: "lit".to_owned(),
                     },
                 },
-                notes: Some("Mind the mood.".to_owned()),
+                notes: Some(FeedbackItem {
+                    text: "Mind the mood.".to_owned(),
+                    citations: Vec::new(),
+                }),
             },
             WritingLanguage::En,
             texts(PromptKey::ReviewChapterEdit),

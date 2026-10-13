@@ -1,4 +1,5 @@
 use nekowriter_core::{
+    citation::Citations,
     ids::{ChapterId, ReviewId, RevisionId, RunId, ToolCallId, VersionId},
     review::{DecisionSource, ReviewKind, ReviewStatus},
     run::RunHalt,
@@ -33,6 +34,8 @@ pub struct Model {
     /// The reviewer's feedback on a rejection; a review agent may reject without issues.
     #[sea_orm(column_type = "Text", nullable)]
     pub feedback: Option<String>,
+    /// The passages a rejection quotes, verified.
+    pub citations: Option<Citations>,
     pub decided_at: Option<Timestamp>,
     pub decided_by: Option<DecisionSource>,
     /// The review run deciding it, while it is delegated. A verdict from any other run is
@@ -41,6 +44,8 @@ pub struct Model {
     /// The user's draft feedback when they delegated, for the review agent.
     #[sea_orm(column_type = "Text", nullable)]
     pub delegation_notes: Option<String>,
+    /// The passages the delegation notes quote, verified.
+    pub delegation_citations: Option<Citations>,
     /// Why the last delegation failed, until the review is delegated again or decided.
     pub delegation_failure: Option<RunHalt>,
     /// A review agent's confidence in thousandths; shown only (D08).

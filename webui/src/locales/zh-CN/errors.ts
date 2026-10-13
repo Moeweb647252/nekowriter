@@ -80,6 +80,12 @@ export default {
       unknown_option: "选中的某个选项不存在。",
       too_long: "每个回答最多 {{maxChars}} 个字符。",
     },
+    CITATION_INVALID: {
+      limit_exceeded: "一次最多引用 {{max}} 段文字。",
+      bad_range: "有引用超出了原文范围，请移除后重新引用。",
+      quote_mismatch: "有引用与原文不再一致，请移除后重新引用。",
+      target_gone: "有引用的原文已经改变或不属于当前版本，请移除后重新引用。",
+    },
     MODEL_NOT_READY: "暂时无法使用模型。{{problem}}",
     MODEL_SERVICE_FAILED: "测试失败：{{failure}}。",
     SERVICE_STOPPING: "NekoWriter 正在关闭，该请求已放弃。",

@@ -1,10 +1,12 @@
 import type { SubmitEvent } from "react"
 import { useTranslation } from "react-i18next"
 
+import { CitationField } from "../CitationField"
 import { DelegatedReview, DelegationFailure } from "../Delegation"
 import { ApprovalModeSwitch } from "./DraftingDock"
 import { useProposalSummary } from "./edits"
 import { errorForField, errorForForm } from "@/api/fieldErrors"
+import type { Citation } from "@/api/generated/Citation"
 import type { ProposalView } from "@/api/generated/ProposalView"
 import type { WorkspaceView } from "@/api/generated/WorkspaceView"
 import { useDecideReview, useDelegateReview } from "@/api/queries/workspace"
@@ -13,12 +15,13 @@ import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Textarea } from "@/components/ui/textarea"
 import { useErrorText } from "@/i18n/errors"
-import { useDraft } from "@/lib/drafts"
+import { useDraft, useDraftList } from "@/lib/drafts"
 import { submitOnModEnter } from "@/lib/keyboard"
 
 /**
- * Reviewing one proposed edit (§9.5): empty feedback accepts it, any feedback rejects it,
- * and the button says which. The review can also go to the review agent (§10).
+ * Reviewing one proposed edit (§9.5): empty feedback without citations accepts it, any
+ * feedback or citation rejects it, and the button says which. The review can also go to
+ * the review agent (§10).
  */
 export function ProposalDock({ view, proposal }: { view: WorkspaceView; proposal: ProposalView }) {
   const summary = useProposalSummary()
@@ -45,10 +48,16 @@ function ProposalForm({ view, proposal }: { view: WorkspaceView; proposal: Propo
   const decide = useDecideReview(view.version.id)
   const delegate = useDelegateReview(view.version.id)
   const review = proposal.review
-  const feedback = useDraft(`${view.version.id}.review.${review.id}`, "")
-  const accepts = feedback.value.trim() === ""
+  const key = `${view.version.id}.review.${review.id}`
+  const feedback = useDraft(key, "")
+  const citations = useDraftList<Citation>(`${key}.citations`)
+  const accepts = feedback.value.trim() === "" && citations.items.length === 0
   const error = decide.error ?? delegate.error
   const pending = decide.isPending || delegate.isPending
+  const clear = () => {
+    feedback.clear()
+    citations.clear()
+  }
 
   const submit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -56,15 +65,22 @@ function ProposalForm({ view, proposal }: { view: WorkspaceView; proposal: Propo
       {
         revision: view.revision,
         reviewId: review.id,
-        decision: accepts ? { kind: "approve" } : { kind: "reject", feedback: feedback.value },
+        decision: accepts
+          ? { kind: "approve" }
+          : { kind: "reject", feedback: feedback.value, citations: citations.items },
       },
-      { onSuccess: feedback.clear },
+      { onSuccess: clear },
     )
   }
   const delegateIt = () => {
     delegate.mutate(
-      { revision: view.revision, reviewId: review.id, notes: feedback.value },
-      { onSuccess: feedback.clear },
+      {
+        revision: view.revision,
+        reviewId: review.id,
+        notes: feedback.value,
+        citations: citations.items,
+      },
+      { onSuccess: clear },
     )
   }
 
@@ -89,6 +105,7 @@ function ProposalForm({ view, proposal }: { view: WorkspaceView; proposal: Propo
         </FieldDescription>
         {fieldError !== undefined && <FieldError>{errorText(fieldError)}</FieldError>}
       </Field>
+      <CitationField citations={citations} />
       {formError !== undefined && <ErrorAlert error={formError} />}
       <div className="flex flex-wrap gap-2">
         <Button type="submit" disabled={pending} variant={accepts ? "default" : "outline"}>

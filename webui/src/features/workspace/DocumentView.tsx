@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next"
 
+import { type CiteSpan, citable, wholeRevision } from "./citations"
 import type { DocumentKey } from "./documents"
 import type { ReviewStatus } from "@/api/generated/ReviewStatus"
 import type { RevisionSummary } from "@/api/generated/RevisionSummary"
@@ -9,9 +10,16 @@ import { ErrorAlert } from "@/components/app/ErrorAlert"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 
-/** Committed text in the reading face (§18.2). */
-export function ReadingText({ text }: { text: string }) {
-  return <div className="font-reading text-lg leading-[1.85] whitespace-pre-wrap">{text}</div>
+/** Text in the reading face (§18.2); with `cite`, the text is citable as part of a target. */
+export function ReadingText({ text, cite }: { text: string; cite?: CiteSpan | undefined }) {
+  return (
+    <div
+      className="font-reading text-lg leading-[1.85] whitespace-pre-wrap"
+      {...(cite === undefined ? {} : citable(cite))}
+    >
+      {text}
+    </div>
+  )
 }
 
 /** A revision's committed text, loaded by its ID; `empty` stands in before the first one. */
@@ -28,7 +36,7 @@ export function RevisionText({
     return <ErrorAlert error={loaded.error} onRetry={() => void loaded.refetch()} />
   }
   if (loaded.data === undefined) return <Skeleton className="h-24 w-full" />
-  return <ReadingText text={loaded.data.content} />
+  return <ReadingText text={loaded.data.content} cite={wholeRevision(loaded.data.id)} />
 }
 
 export function ReviewBadge({ status }: { status: ReviewStatus }) {
@@ -88,7 +96,7 @@ export function DocumentView({ view, doc }: { view: WorkspaceView; doc: Document
         {view.brief === null ? (
           <p className="text-muted-foreground">{t(($) => $.workspace.brief.empty)}</p>
         ) : (
-          <ReadingText text={view.brief.content} />
+          <ReadingText text={view.brief.content} cite={wholeRevision(view.brief.id)} />
         )}
       </article>
     )

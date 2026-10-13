@@ -6,6 +6,11 @@ import type { BodyEdit } from "@/api/generated/BodyEdit"
 /** Quotes stay readable in a sentence however long the text is. */
 const QUOTE_CHARS = 60
 
+/** Line endings as the server stores them. */
+export function normalizeLineEndings(text: string): string {
+  return text.replace(/\r\n?/g, "\n")
+}
+
 export function quote(text: string): string {
   const chars = Array.from(text)
   return chars.length > QUOTE_CHARS ? `${chars.slice(0, QUOTE_CHARS).join("")}…` : text

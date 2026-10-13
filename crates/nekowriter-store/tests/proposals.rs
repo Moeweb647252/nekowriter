@@ -12,7 +12,7 @@ use nekowriter_core::{
     conflict::StateConflict,
     feedback::FeedbackText,
     ids::{CommandId, RunId, VersionId},
-    review::{ReviewDecision, ReviewFeedback},
+    review::ReviewDecision,
     run::RunStatus,
     run_message::ToolOutcome,
     workflow::ApprovalMode,
@@ -84,6 +84,7 @@ async fn a_declined_proposal_leaves_the_body_and_returns_the_feedback() {
             CommandId::generate(),
             run,
             FeedbackText::parse("Not yet.").unwrap(),
+            Vec::new(),
         )
         .await
         .unwrap_err();
@@ -92,14 +93,7 @@ async fn a_declined_proposal_leaves_the_body_and_returns_the_feedback() {
         StoreError::StateConflict(StateConflict::RunNotWriting)
     ));
 
-    decide_proposal(
-        &store,
-        version,
-        ReviewDecision::Reject {
-            feedback: ReviewFeedback::parse("Use snow instead.").unwrap(),
-        },
-    )
-    .await;
+    decide_proposal(&store, version, common::reject("Use snow instead.")).await;
 
     assert_eq!(body(&store, version).await, None);
     assert_eq!(

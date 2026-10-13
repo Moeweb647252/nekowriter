@@ -11,4 +11,9 @@ export type ProposalView = { review: ReviewView, callId: ToolCallId, edit: BodyE
 /**
  * The body revision the edit applies to; `None` for an empty body.
  */
-base: RevisionId | null, };
+base: RevisionId | null, 
+/**
+ * The SHA-256 of the body the edit would produce, which citations of the proposed
+ * text name.
+ */
+candidateHash: string, };

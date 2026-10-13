@@ -215,6 +215,7 @@ describe("WritingWorkspace", () => {
             {
               id: "0190f5c8-0000-7000-8000-000000000901",
               text: "Colder.",
+              citations: [],
               status: "included",
               delivery: "failed",
               createdAt: 0,
@@ -222,6 +223,7 @@ describe("WritingWorkspace", () => {
             {
               id: "0190f5c8-0000-7000-8000-000000000902",
               text: "Slower.",
+              citations: [],
               status: "queued",
               delivery: null,
               createdAt: 0,
@@ -260,6 +262,7 @@ describe("WritingWorkspace", () => {
         callId: "0190f5c8-0000-7000-8000-000000000a02",
         edit: { op: "replace" as const, oldStr: "dark", newStr: "lit" },
         base: body.id,
+        candidateHash: "a1b2",
       },
     })
 
@@ -286,7 +289,7 @@ describe("WritingWorkspace", () => {
       const { user } = renderWorkspace()
 
       await user.type(
-        await screen.findByLabelText("Feedback (leave empty to accept the edit)"),
+        await screen.findByLabelText("Feedback (leave empty and cite nothing to accept the edit)"),
         "Keep it dark.",
       )
       await user.click(screen.getByRole("button", { name: "Reject with feedback" }))
@@ -297,6 +300,44 @@ describe("WritingWorkspace", () => {
       expect((commands[0]?.body as DecideReviewRequest).decision).toEqual({
         kind: "reject",
         feedback: "Keep it dark.",
+        citations: [],
+      })
+    })
+
+    it("rejects the edit with a citation of the proposed text alone", async () => {
+      const { commands } = fakeWorkspace(proposing())
+      const { user } = renderWorkspace()
+
+      const added = await screen.findByText("lit")
+      const selected = document.createRange()
+      selected.selectNodeContents(added)
+      document.getSelection()?.removeAllRanges()
+      document.getSelection()?.addRange(selected)
+      await user.click(screen.getByRole("button", { name: "Cite selected text" }))
+
+      expect(
+        within(screen.getByRole("list", { name: "Cited passages" })).getByText("“lit”"),
+      ).toBeInTheDocument()
+      await user.click(screen.getByRole("button", { name: "Reject with feedback" }))
+
+      await waitFor(() => {
+        expect(commands).toHaveLength(1)
+      })
+      expect((commands[0]?.body as DecideReviewRequest).decision).toEqual({
+        kind: "reject",
+        feedback: "",
+        citations: [
+          {
+            target: {
+              kind: "proposal",
+              callId: "0190f5c8-0000-7000-8000-000000000a02",
+              candidateHash: "a1b2",
+            },
+            start: 13,
+            end: 16,
+            quote: "lit",
+          },
+        ],
       })
     })
 
@@ -383,7 +424,11 @@ describe("WritingWorkspace", () => {
         expect(commands).toHaveLength(1)
       })
       expect(commands[0]?.path).toBe("/api/reviews/0190f5c8-0000-7000-8000-000000000c01/delegate")
-      expect(commands[0]?.body).toMatchObject({ expectedRevision: 3, notes: "Check the pacing." })
+      expect(commands[0]?.body).toMatchObject({
+        expectedRevision: 3,
+        notes: "Check the pacing.",
+        citations: [],
+      })
     })
 
     it("takes a delegated review back", async () => {

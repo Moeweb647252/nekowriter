@@ -5,6 +5,7 @@ import { ApiError, NetworkError } from "@/api/client"
 import type { ApiErrorBody } from "@/api/generated/ApiErrorBody"
 import type { AnswerProblem } from "@/api/generated/AnswerProblem"
 import type { ApiProblem } from "@/api/generated/ApiProblem"
+import type { CitationProblem } from "@/api/generated/CitationProblem"
 import type { Field } from "@/api/generated/Field"
 import type { FieldProblem } from "@/api/generated/FieldProblem"
 import type { ModelProblem } from "@/api/generated/ModelProblem"
@@ -34,7 +35,9 @@ export interface ErrorCatalog {
         ? Record<StateConflict, string>
         : Code extends "ANSWER_INVALID"
           ? Record<AnswerProblem["kind"], string>
-          : string
+          : Code extends "CITATION_INVALID"
+            ? Record<CitationProblem["kind"], string>
+            : string
   }
 }
 
@@ -118,6 +121,12 @@ export function useErrorText(): (error: unknown) => string {
           return problem.kind === "too_long"
             ? t(($) => $.errors.codes.ANSWER_INVALID.too_long, { maxChars: problem.maxChars })
             : t(($) => $.errors.codes.ANSWER_INVALID[problem.kind])
+        }
+        case "CITATION_INVALID": {
+          const problem = body.params.problem
+          return problem.kind === "limit_exceeded"
+            ? t(($) => $.errors.codes.CITATION_INVALID.limit_exceeded, { max: problem.max })
+            : t(($) => $.errors.codes.CITATION_INVALID[problem.kind])
         }
         case "MODEL_NOT_READY":
           return t(($) => $.errors.codes.MODEL_NOT_READY, {

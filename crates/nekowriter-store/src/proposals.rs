@@ -22,7 +22,9 @@ use crate::{
     Store, StoreError,
     calls::{requeue, resolve},
     chapters::apply_edit,
+    citations::proposal_candidate,
     command::{Begun, WriteTx},
+    digest::sha256_hex,
     documents::{chapter_document, current_revision},
     entity::{
         review, run,
@@ -45,6 +47,9 @@ pub struct ProposalView {
     pub edit: BodyEdit,
     /// The body revision the edit applies to; `None` for an empty body.
     pub base: Option<RevisionId>,
+    /// The SHA-256 of the body the edit would produce, which citations of the proposed
+    /// text name.
+    pub candidate_hash: String,
 }
 
 impl Store {
@@ -186,13 +191,14 @@ pub(crate) async fn decide_edit_review(
     };
 
     let approved = decision.approved;
-    let feedback = decision.feedback.clone();
+    let feedback = decision.feedback.clone().unwrap_or_default();
+    let citations = decision.citations.clone();
     record_decision(tx, review, decision).await?;
     let outcome = if approved {
         accept(tx, &run, &call, &edit).await?
     } else {
-        if let Some(feedback) = feedback {
-            insert_bound_feedback(tx, run.id, call.id, &feedback).await?;
+        if !feedback.is_empty() || !citations.is_empty() {
+            insert_bound_feedback(tx, run.id, call.id, &feedback, citations).await?;
         }
         ToolOutcome::EditDeclined
     };
@@ -239,6 +245,10 @@ pub(crate) async fn proposal_view<C: ConnectionTrait>(
         .one(db)
         .await?
         .ok_or_else(|| StoreError::Corrupt(format!("proposal {} has no review", call.id)))?;
+    let chapter_id = review
+        .chapter_id
+        .ok_or_else(|| StoreError::Corrupt(format!("edit review {} has no chapter", review.id)))?;
+    let candidate = proposal_candidate(db, chapter_id, &call).await?;
     let Some(CallRequest::Edit { edit }) = call.parsed else {
         return Err(StoreError::Corrupt(format!(
             "proposal {} is not an edit",
@@ -246,6 +256,7 @@ pub(crate) async fn proposal_view<C: ConnectionTrait>(
         )));
     };
     Ok(Some(ProposalView {
+        candidate_hash: sha256_hex([candidate.as_bytes()]),
         review: ReviewView::from(&review),
         call_id: call.id,
         edit,

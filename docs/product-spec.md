@@ -267,7 +267,7 @@ A tool's base outcome is immutable; feedback bindings are stored separately. Whe
 
 - Every effective body change first becomes a proposal; the official body keeps its revision and the reader shows the candidate diff marked as pending. A run has at most one proposal.
 - Decision rule: text that is empty after trimming Unicode whitespace and no citations means accept; any text or citation means reject with feedback. The primary button reads "Accept edit" or "Reject with feedback" accordingly.
-- The free-feedback entry is different: empty feedback returns `EMPTY_FEEDBACK` and never approves an edit.
+- The free-feedback entry is different: it needs text, so empty feedback is refused as an empty field (`FIELD_INVALID`) and never approves an edit.
 - Accepting re-validates the base revision and commits; rejecting leaves the body unchanged and returns the user's feedback in the tool result, and the agent proposes again.
 - Per-edit approval never replaces the whole-chapter review.
 
@@ -288,7 +288,7 @@ A tool's base outcome is immutable; feedback bindings are stored separately. Whe
 - Statuses: `open → delegated → approved | rejected`, plus `stale`. User decisions go from `open` to a final status. Cancelling or failing a delegation fails the child run and returns the review to `open`; a failure (including an interruption) is shown with its reason until the review is delegated again or decided. A review run is never continued: the user delegates the review again.
 - Rejections: preparation follows the batch rule (§6); outline and whole-chapter rejections return to generation immediately; a proposal rejection rejects only that edit.
 - A user's rejection of the whole chapter delivers its issues to the body run like feedback (§9.2).
-- **Delegation** saves the current draft feedback, citations and target snapshot and creates a child run using the project's current model and the review kind's prompt. The review agent has no writing tools and submits exactly one structured verdict:
+- **Delegation** saves the current draft feedback and its verified citations as notes for the review agent, and creates a child run using the project's current model and the review kind's prompt. The run reviews the review's own target: an immutable revision, or the pending proposal. The review agent has no writing tools and submits exactly one structured verdict:
   - `passed` is a boolean, `confidence` a finite number in `[0, 1]`, `issues` an array of strings; all three are required and never auto-filled.
   - `passed` alone decides (D08); confidence is only displayed. With `passed = false` and no issues, the writer receives "the review failed and the review agent gave no specific issues" rather than invented issues.
   - A valid verdict applies automatically. Invalid submissions are corrected within the protocol-error limit; only transport failure, persistence failure or reaching the limit fails the delegation.
@@ -467,7 +467,9 @@ Button labels name the action; a generic "Send" never hides the difference betwe
 ### 18.4 Reading, previews and citations
 
 - The reader follows new content only when the user is at the end and not selecting or reviewing a diff; otherwise it keeps the viewport and shows a "new content" button. Streaming updates are batched per frame.
-- Citations store document ID, revision ID, start and end offsets (Unicode scalar values, half-open) and the quote; the backend verifies the quote. Browser UTF-16 offsets are converted explicitly. A citation stays within one document; cross-chapter selections cannot be cited. Text in a pending proposal is cited by tool call, candidate hash and range.
+- Free feedback, review rejections, proposal rejections and delegation notes can cite passages: at most 20 each, in addition to or, except for free feedback, instead of text.
+- A citation stores its target, start and end offsets (Unicode scalar values, half-open) and the quote. The target is a revision of this version's documents, or the text a pending proposal would produce, named by tool call and candidate hash. Browser UTF-16 offsets are converted explicitly. A citation stays within one text; cross-chapter selections cannot be cited.
+- The backend verifies every quote against its target when the command arrives and refuses the command otherwise (`CITATION_INVALID`). The writer and the review agent receive each quote labelled with where it comes from.
 - Diffs use color, symbols and text labels together.
 
 ### 18.5 Drafts and accessibility

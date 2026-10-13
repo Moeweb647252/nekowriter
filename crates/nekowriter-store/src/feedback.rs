@@ -8,11 +8,12 @@
 use nekowriter_core::{
     body::BodyEdit,
     call::CallRequest,
+    citation::{Citation, Citations, VerifiedCitation},
     conflict::{Resource, StateConflict},
     feedback::{FeedbackDelivery, FeedbackStatus, FeedbackText},
     ids::{CommandId, FeedbackId, ModelRequestId, RunId, ToolCallId},
     run::{RunKind, RunStatus},
-    run_message::RunMessageBody,
+    run_message::{FeedbackItem, RunMessageBody},
     time::Timestamp,
 };
 use sea_orm::{
@@ -25,6 +26,7 @@ use ts_rs::TS;
 use crate::{
     Store, StoreError,
     calls::{execute, held_call},
+    citations::verify_citations,
     command::{Begun, WriteTx},
     entity::{
         feedback,
@@ -42,6 +44,7 @@ use crate::{
 pub struct FeedbackView {
     pub id: FeedbackId,
     pub text: String,
+    pub citations: Vec<Citation>,
     pub status: FeedbackStatus,
     /// For included feedback: what became of the request that carried it.
     pub delivery: Option<FeedbackDelivery>,
@@ -68,8 +71,9 @@ impl Store {
         command: CommandId,
         run_id: RunId,
         text: FeedbackText,
+        citations: Vec<Citation>,
     ) -> Result<WorkspaceAck, StoreError> {
-        let input = (run_id, &text);
+        let input = (run_id, &text, &citations);
         let mut tx = match self
             .begin_command(command, "feedback.submit", &input)
             .await?
@@ -78,6 +82,7 @@ impl Store {
             Begun::Fresh(tx) => tx,
         };
         let (run, context) = writing_run(tx.db(), run_id).await?;
+        let citations = verify_citations(tx.db(), context.version.id, &citations).await?;
         let batch = feedback::Entity::find()
             .filter(feedback::Column::RunId.eq(run_id))
             .filter(feedback::Column::Status.is_in([FeedbackStatus::Queued, FeedbackStatus::Bound]))
@@ -113,6 +118,7 @@ impl Store {
             run_id: Set(run_id),
             sequence: Set(sequence),
             text: Set(text.as_str().to_owned()),
+            citations: Set(stored(citations)),
             status: Set(status),
             after_tool_sequence: Set(anchor),
             bound_tool_call_id: Set(bound_to),
@@ -254,6 +260,7 @@ pub(crate) async fn insert_bound_feedback(
     run_id: RunId,
     call: ToolCallId,
     text: &str,
+    citations: Vec<VerifiedCitation>,
 ) -> Result<(), StoreError> {
     let sequence = next_sequence(tx.db(), run_id).await?;
     feedback::ActiveModel {
@@ -261,6 +268,7 @@ pub(crate) async fn insert_bound_feedback(
         run_id: Set(run_id),
         sequence: Set(sequence),
         text: Set(text.to_owned()),
+        citations: Set(stored(citations)),
         status: Set(FeedbackStatus::Bound),
         after_tool_sequence: Set(None),
         bound_tool_call_id: Set(Some(call)),
@@ -313,11 +321,11 @@ pub(crate) async fn has_queued<C: ConnectionTrait>(
         .is_some())
 }
 
-/// The texts of the feedback bound to the call's result, in order.
+/// The feedback bound to the call's result, in order.
 pub(crate) async fn bound_feedback<C: ConnectionTrait>(
     db: &C,
     call: ToolCallId,
-) -> Result<Vec<String>, StoreError> {
+) -> Result<Vec<FeedbackItem>, StoreError> {
     Ok(feedback::Entity::find()
         .filter(feedback::Column::BoundToolCallId.eq(call))
         .filter(feedback::Column::Status.eq(FeedbackStatus::Bound))
@@ -325,8 +333,19 @@ pub(crate) async fn bound_feedback<C: ConnectionTrait>(
         .all(db)
         .await?
         .into_iter()
-        .map(|item| item.text)
+        .map(|item| FeedbackItem {
+            text: item.text,
+            citations: item
+                .citations
+                .map(|citations| citations.0)
+                .unwrap_or_default(),
+        })
         .collect())
+}
+
+/// Citations as a stored column: none is no column value.
+pub(crate) fn stored(citations: Vec<VerifiedCitation>) -> Option<Citations> {
+    (!citations.is_empty()).then_some(Citations(citations))
 }
 
 /// The run's newest feedback, so a request built before it arrived is built again.
@@ -430,6 +449,16 @@ pub(crate) async fn feedback_views<C: ConnectionTrait>(
             Some(FeedbackView {
                 id: item.id,
                 text: item.text,
+                citations: item
+                    .citations
+                    .map(|citations| {
+                        citations
+                            .0
+                            .into_iter()
+                            .map(|cited| cited.citation)
+                            .collect()
+                    })
+                    .unwrap_or_default(),
                 status: item.status,
                 delivery,
                 created_at: item.created_at,

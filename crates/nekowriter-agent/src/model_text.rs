@@ -67,6 +67,7 @@ pub struct ModelText {
     pub corrections: Corrections,
     pub review: ReviewText,
     pub review_material: ReviewMaterial,
+    pub citations: CitationText,
     pub folds: FoldText,
     pub chapters: ChapterText,
     pub connection_test: ConnectionTest,
@@ -303,6 +304,18 @@ pub struct ReviewText {
     pub outline_rejected: Text,
     pub chapter_rejected: Text,
     pub no_issues: Text,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CitationText {
+    pub heading: Text,
+    pub item: Text,
+    pub brief: Text,
+    pub guidance: Text,
+    pub outline: Text,
+    pub body: Text,
+    pub proposal: Text,
 }
 
 #[derive(Debug, Deserialize)]

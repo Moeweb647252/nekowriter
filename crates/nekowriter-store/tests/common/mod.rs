@@ -11,7 +11,7 @@ use nekowriter_core::{
     model::{ApiBaseUrl, ModelId, ModelProfile},
     preparation::{ArtifactDraft, ArtifactKind, NovelBrief, PlanItemDraft, PreparationSubmission},
     project::{NovelTitle, ProjectName, WritingLanguage},
-    review::{ReviewDecision, ReviewFeedback, ReviewStatus},
+    review::{Rejection, ReviewDecision, ReviewFeedback, ReviewStatus},
     run_message::{ModelToolCall, ToolOutcome, TranscriptMessage, UnsealedMessage},
     submission::{ChapterSubmission, OutlineSubmission},
     usage::TokenUsage,
@@ -285,9 +285,9 @@ pub async fn decide_review(
 }
 
 pub fn reject(feedback: &str) -> ReviewDecision {
-    ReviewDecision::Reject {
-        feedback: ReviewFeedback::parse(feedback).unwrap(),
-    }
+    ReviewDecision::Reject(
+        Rejection::new(Some(ReviewFeedback::parse(feedback).unwrap()), Vec::new()).unwrap(),
+    )
 }
 
 pub fn stage(view: &WorkspaceView) -> &WorkflowStage {
@@ -368,7 +368,7 @@ pub async fn answer_with(store: &Store, request: ModelRequestId, round: RoundRec
         .unwrap();
 }
 
-/// The results the next request will carry: each outcome with its feedback.
+/// The results the next request will carry: each outcome with its feedback texts.
 pub async fn next_results(store: &Store) -> Vec<(ToolOutcome, Vec<String>)> {
     let run = store
         .next_queued_run()
@@ -388,7 +388,10 @@ pub async fn next_results(store: &Store) -> Vec<(ToolOutcome, Vec<String>)> {
                         outcome, feedback, ..
                     },
                 ..
-            } => Some((outcome, feedback)),
+            } => Some((
+                outcome,
+                feedback.into_iter().map(|item| item.text).collect(),
+            )),
             _ => None,
         })
         .collect()

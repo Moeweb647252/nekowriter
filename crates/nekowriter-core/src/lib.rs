@@ -11,6 +11,7 @@
 pub mod body;
 pub mod call;
 pub mod chapter;
+pub mod citation;
 pub mod conflict;
 pub mod document;
 pub mod event;

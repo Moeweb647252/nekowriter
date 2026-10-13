@@ -81,6 +81,7 @@ async fn a_question_waits_for_its_answer_and_carries_feedback_given_meanwhile() 
             CommandId::generate(),
             run,
             FeedbackText::parse("Keep it short.").unwrap(),
+            Vec::new(),
         )
         .await
         .unwrap();

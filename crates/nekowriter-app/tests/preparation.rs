@@ -40,7 +40,7 @@ async fn preparation_runs_from_the_brief_through_a_revision_to_the_first_chapter
         &server,
         &version,
         "outline",
-        json!({ "kind": "reject", "feedback": "Give the keeper a name." }),
+        json!({ "kind": "reject", "feedback": "Give the keeper a name.", "citations": [] }),
     )
     .await;
     wait_for(&server, &version, |view| {
@@ -113,7 +113,7 @@ async fn a_rejection_needs_feedback() {
             &json!({
                 "commandId": command_id(),
                 "expectedRevision": view["revision"],
-                "decision": { "kind": "reject", "feedback": "  " }
+                "decision": { "kind": "reject", "feedback": "  ", "citations": [] }
             }),
         )
         .send()
@@ -323,7 +323,7 @@ async fn a_delegated_review_is_decided_by_the_review_agent() {
         &server,
         &format!("/api/reviews/{review}/delegate"),
         &version,
-        json!({ "notes": "Check the coast." }),
+        json!({ "notes": "Check the coast.", "citations": [] }),
     )
     .await;
 

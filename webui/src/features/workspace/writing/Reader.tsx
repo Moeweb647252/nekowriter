@@ -5,10 +5,14 @@ import { useTranslation } from "react-i18next"
 import { currentChapter, useChapterName } from "../chapters"
 import { ReadingText } from "../DocumentView"
 import { ScrollContainerContext } from "../scroll"
-import type { BodyEdit } from "@/api/generated/BodyEdit"
+import { citable, proposalTarget, scalarLength, wholeRevision } from "../citations"
+import { normalizeLineEndings } from "./edits"
 import type { ChapterId } from "@/api/generated/ChapterId"
 import type { ChapterView } from "@/api/generated/ChapterView"
 import type { Preview } from "@/api/generated/Preview"
+import type { ProposalView } from "@/api/generated/ProposalView"
+import type { RevisionId } from "@/api/generated/RevisionId"
+import type { RevisionView } from "@/api/generated/RevisionView"
 import type { WorkspaceView } from "@/api/generated/WorkspaceView"
 import { useRevision } from "@/api/queries/workspace"
 import { Button } from "@/components/ui/button"
@@ -107,7 +111,7 @@ export function Reader({
           chapter={chapter}
           streaming={chapter.id === current?.id ? streaming : null}
           held={chapter.id === current?.id ? heldAppend(view) : null}
-          proposal={chapter.id === current?.id ? (view.proposal?.edit ?? null) : null}
+          proposal={chapter.id === current?.id ? view.proposal : null}
         />
       ))}
       <div ref={end} aria-hidden className="h-px" />
@@ -135,25 +139,31 @@ function heldAppend(view: WorkspaceView): string | null {
 
 /**
  * The body with a proposed replacement marked in place: the removed text struck through
- * and the added text after it, each with a symbol, a color and a label (§18.4).
+ * and the added text after it, each with a symbol, a color and a label (§18.4). Everything
+ * but the removed text is citable as the text the proposal would produce.
  */
 function ProposedReplace({
-  text,
+  body,
+  proposal,
   edit,
 }: {
-  text: string
+  body: RevisionView
+  proposal: ProposalView
   edit: { oldStr: string; newStr: string }
 }) {
   const { t } = useTranslation()
-  const oldStr = edit.oldStr.replace(/\r\n?/g, "\n")
-  const newStr = edit.newStr.replace(/\r\n?/g, "\n")
+  const text = body.content
+  const oldStr = normalizeLineEndings(edit.oldStr)
+  const newStr = normalizeLineEndings(edit.newStr)
   const at = text.indexOf(oldStr)
-  if (at < 0) return <ReadingText text={text} />
+  if (at < 0) return <ReadingText text={text} cite={wholeRevision(body.id)} />
+  const target = proposalTarget(proposal)
+  const before = text.slice(0, at)
   return (
     <>
       <p className="mb-2 text-xs text-muted-foreground">{t(($) => $.workspace.proposal.label)}</p>
       <div className="font-reading text-lg leading-[1.85] whitespace-pre-wrap">
-        {text.slice(0, at)}
+        <span {...citable({ target, at: 0 })}>{before}</span>
         <del className="rounded-sm bg-destructive/15 text-destructive before:content-['-']">
           <span className="sr-only">{t(($) => $.workspace.proposal.removed)}: </span>
           {oldStr}
@@ -161,10 +171,12 @@ function ProposedReplace({
         {newStr !== "" && (
           <ins className="rounded-sm bg-emerald-500/15 text-emerald-900 no-underline before:content-['+'] dark:text-emerald-200">
             <span className="sr-only">{t(($) => $.workspace.proposal.added)}: </span>
-            {newStr}
+            <span {...citable({ target, at: scalarLength(before) })}>{newStr}</span>
           </ins>
         )}
-        {text.slice(at + oldStr.length)}
+        <span {...citable({ target, at: scalarLength(before) + scalarLength(newStr) })}>
+          {text.slice(at + oldStr.length)}
+        </span>
       </div>
     </>
   )
@@ -185,13 +197,19 @@ function ChapterSection({
   /** Text a paused run holds back. */
   held: string | null
   /** An edit waiting for the user's review. */
-  proposal: BodyEdit | null
+  proposal: ProposalView | null
 }) {
   const { t } = useTranslation()
   const chapterName = useChapterName()
   const body = useRevision(chapter.body?.id, { keepPrevious: true })
   const headingId = `${sectionId(chapter.id)}-title`
   const appended = streaming?.appended ?? null
+  const edit = proposal?.edit
+  // The committed body; undefined while it loads.
+  const base = chapter.body === null ? "" : body.data?.content
+  // While an edit is proposed, the body is cited as part of the text it would produce.
+  const bodyCite = (revision: RevisionId) =>
+    proposal === null ? wholeRevision(revision) : { target: proposalTarget(proposal), at: 0 }
 
   return (
     <section id={sectionId(chapter.id)} aria-labelledby={headingId} className="scroll-mt-6">
@@ -205,19 +223,26 @@ function ChapterSection({
         )
       ) : body.data === undefined ? (
         <Skeleton className="h-32 w-full" />
-      ) : proposal?.op === "replace" ? (
-        <ProposedReplace text={body.data.content} edit={proposal} />
+      ) : proposal !== null && edit?.op === "replace" ? (
+        <ProposedReplace body={body.data} proposal={proposal} edit={edit} />
       ) : (
-        <ReadingText text={body.data.content} />
+        <ReadingText text={body.data.content} cite={bodyCite(body.data.id)} />
       )}
-      {proposal?.op === "append" && (
+      {proposal !== null && edit?.op === "append" && (
         <div className="mt-2 border-l-2 border-emerald-600/60 pl-4">
           <p className="mb-1 text-xs text-muted-foreground">
             + {t(($) => $.workspace.proposal.label)}
           </p>
           <ins className="block text-emerald-900 no-underline dark:text-emerald-200">
             <span className="sr-only">{t(($) => $.workspace.proposal.added)}: </span>
-            <ReadingText text={proposal.content} />
+            <ReadingText
+              text={normalizeLineEndings(edit.content)}
+              cite={
+                base === undefined
+                  ? undefined
+                  : { target: proposalTarget(proposal), at: scalarLength(base) }
+              }
+            />
           </ins>
         </div>
       )}

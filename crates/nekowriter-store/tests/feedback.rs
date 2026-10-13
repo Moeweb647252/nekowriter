@@ -25,6 +25,7 @@ async fn feedback(store: &Store, run: RunId, text: &str) {
             CommandId::generate(),
             run,
             FeedbackText::parse(text).unwrap(),
+            Vec::new(),
         )
         .await
         .unwrap();
@@ -276,6 +277,7 @@ async fn only_a_body_that_is_being_written_takes_feedback_or_a_pause() {
             CommandId::generate(),
             run,
             FeedbackText::parse("Faster.").unwrap(),
+            Vec::new(),
         )
         .await
         .unwrap_err();

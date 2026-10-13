@@ -10,7 +10,7 @@ use nekowriter_core::{
     call::{CallRequest, StageSubmission},
     ids::{CommandId, ReviewId, VersionId},
     preparation::ArtifactKind,
-    review::{DecisionSource, ReviewKind, ReviewStatus},
+    review::{DecisionSource, ReviewFeedback, ReviewKind, ReviewStatus},
     run::{ProviderFailure, RunHalt, RunKind, RunStatus},
     run_message::{ToolOutcome, UnsealedMessage},
     stage::{ReviewSubject, StageInput},
@@ -41,7 +41,8 @@ async fn delegate(store: &Store, version: VersionId, review: ReviewId, notes: Op
             CommandId::generate(),
             review,
             revision,
-            notes.map(str::to_owned),
+            notes.map(|notes| ReviewFeedback::parse(notes).unwrap()),
+            Vec::new(),
         )
         .await
         .unwrap();
@@ -82,7 +83,10 @@ async fn a_delegated_review_is_decided_by_the_agents_verdict() {
             ..
         }
     ));
-    assert_eq!(notes.as_deref(), Some("Check the sources."));
+    assert_eq!(
+        notes.as_ref().map(|notes| notes.text.as_str()),
+        Some("Check the sources.")
+    );
     answer_with(&store, request, verdict(true, 0.9, &[])).await;
 
     let view = workspace(&store, version).await;

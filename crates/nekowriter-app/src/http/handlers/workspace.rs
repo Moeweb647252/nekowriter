@@ -4,11 +4,13 @@
 use axum::extract::State;
 use nekowriter_core::{
     chapter::{ChapterGuidance, ChapterTitle},
+    citation::Citation,
     feedback::FeedbackText,
+    field::{FieldError, FieldProblem},
     ids::{CommandId, ReviewId, RevisionId, RunId, ToolCallId, VersionId},
     preparation::NovelBrief,
     question::Answer,
-    review::{ReviewDecision, ReviewFeedback},
+    review::{Rejection, ReviewDecision, ReviewFeedback},
     workflow::ApprovalMode,
 };
 use nekowriter_store::{RevisionView, WorkspaceAck, WorkspaceView};
@@ -66,6 +68,8 @@ pub struct AddExtraChapterRequest {
 pub struct FeedbackRequest {
     pub command_id: CommandId,
     pub text: String,
+    /// Passages the feedback quotes.
+    pub citations: Vec<Citation>,
 }
 
 /// Switching how body edits are approved; a control command (§9.6).
@@ -93,8 +97,9 @@ pub struct AnswerRequest {
 pub struct DelegateReviewRequest {
     pub command_id: CommandId,
     pub expected_revision: i64,
-    #[ts(optional)]
-    pub notes: Option<String>,
+    /// The draft feedback, which may be empty, as notes for the review agent.
+    pub notes: String,
+    pub citations: Vec<Citation>,
 }
 
 /// A review decision as a request carries it.
@@ -103,9 +108,10 @@ pub struct DelegateReviewRequest {
 #[ts(export)]
 pub enum ReviewDecisionInput {
     Approve,
-    /// Feedback is required: the writer needs to know what to change.
+    /// The writer needs to know what to change: feedback, citations, or both.
     Reject {
         feedback: String,
+        citations: Vec<Citation>,
     },
 }
 
@@ -153,9 +159,10 @@ pub(crate) async fn decide_review(
 ) -> Result<axum::Json<WorkspaceAck>, ApiError> {
     let decision = match request.decision {
         ReviewDecisionInput::Approve => ReviewDecision::Approve,
-        ReviewDecisionInput::Reject { feedback } => ReviewDecision::Reject {
-            feedback: ReviewFeedback::parse(&feedback)?,
-        },
+        ReviewDecisionInput::Reject {
+            feedback,
+            citations,
+        } => ReviewDecision::Reject(Rejection::new(optional_feedback(&feedback)?, citations)?),
     };
     let ack = state
         .store
@@ -268,7 +275,7 @@ pub(crate) async fn submit_feedback(
     Ok(axum::Json(
         state
             .store
-            .submit_feedback(request.command_id, run_id, text)
+            .submit_feedback(request.command_id, run_id, text, request.citations)
             .await?,
     ))
 }
@@ -332,22 +339,24 @@ pub(crate) async fn answer_questions(
     ))
 }
 
+/// Review feedback that may be empty: empty feedback is none.
+fn optional_feedback(text: &str) -> Result<Option<ReviewFeedback>, FieldError> {
+    match ReviewFeedback::parse(text) {
+        Ok(feedback) => Ok(Some(feedback)),
+        Err(FieldError {
+            problem: FieldProblem::Empty,
+            ..
+        }) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 pub(crate) async fn delegate_review(
     State(state): State<AppState>,
     Path(review_id): Path<ReviewId>,
     Json(request): Json<DelegateReviewRequest>,
 ) -> Result<axum::Json<WorkspaceAck>, ApiError> {
-    let notes = request
-        .notes
-        .as_deref()
-        .map(ReviewFeedback::parse)
-        .transpose()
-        .or_else(|error| match error.problem {
-            // Empty notes are no notes.
-            nekowriter_core::field::FieldProblem::Empty => Ok(None),
-            _ => Err(error),
-        })?
-        .map(|notes| notes.as_str().to_owned());
+    let notes = optional_feedback(&request.notes)?;
     Ok(axum::Json(
         state
             .store
@@ -356,6 +365,7 @@ pub(crate) async fn delegate_review(
                 review_id,
                 request.expected_revision,
                 notes,
+                request.citations,
             )
             .await?,
     ))

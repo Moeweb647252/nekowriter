@@ -84,6 +84,13 @@ export default {
       unknown_option: "One of the chosen options does not exist.",
       too_long: "An answer can be at most {{maxChars}} characters.",
     },
+    CITATION_INVALID: {
+      limit_exceeded: "Cite at most {{max}} passages at a time.",
+      bad_range: "A cited passage is outside its text. Remove it and cite it again.",
+      quote_mismatch: "A cited passage no longer matches its text. Remove it and cite it again.",
+      target_gone:
+        "The text of a cited passage has changed or belongs elsewhere. Remove it and cite it again.",
+    },
     MODEL_NOT_READY: "The model cannot be used yet. {{problem}}",
     MODEL_SERVICE_FAILED: "The test failed: {{failure}}.",
     SERVICE_STOPPING: "NekoWriter is shutting down, so the request was abandoned.",

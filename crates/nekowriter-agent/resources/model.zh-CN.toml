@@ -196,6 +196,15 @@ chapter_rejected = """作者没有通过本章。审核意见：
 请根据意见修改正文，然后重新提交本章。"""
 no_issues = "审阅没有通过，但审阅者没有给出具体问题。请自行检查并改进。"
 
+[citations]
+heading = "引用的原文："
+item = "「{{quote}}」（{{source}}）"
+brief = "小说简介"
+guidance = "{{chapter}}的写作指导"
+outline = "{{chapter}}的大纲"
+body = "{{chapter}}的正文"
+proposal = "提议的修改"
+
 [review_material]
 artifact = """## 待审阅的产物：{{artifact}}
 

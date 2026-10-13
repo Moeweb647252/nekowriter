@@ -72,6 +72,7 @@ describe("WorkspacePage", () => {
     expect((commands[1]?.body as DecideReviewRequest).decision).toEqual({
       kind: "reject",
       feedback: "Cite the lamp manuals.",
+      citations: [],
     })
   })
 

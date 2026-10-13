@@ -7,14 +7,15 @@
 use nekowriter_core::{
     body::{BodyEdit, EditProblem},
     chapter::{ChapterInput, ChapterKind},
+    citation::{CitationSource, VerifiedCitation},
     document::DocumentRole,
     preparation::{ArtifactKind, ChapterPlan},
     project::WritingLanguage,
     question::QuestionProblem,
     review::ReviewKind,
     run_message::{
-        ArgumentsProblem, Correction, JsonType, ProtocolProblem, ToolOutcome, TranscriptMessage,
-        UnsealedMessage,
+        ArgumentsProblem, Correction, FeedbackItem, JsonType, ProtocolProblem, ToolOutcome,
+        TranscriptMessage, UnsealedMessage,
     },
     stage::{FoldInput, FoldStage, ReviewSubject},
     submission::SubmissionProblem,
@@ -159,14 +160,68 @@ fn plan_text(plan: &ChapterPlan) -> String {
         .join("\n")
 }
 
-/// A rejection's feedback, or the note that a review agent named no issues (§10).
-fn feedback_or_no_issues(feedback: Option<&str>) -> String {
-    feedback.map_or_else(|| model_text().review.no_issues.render(&[]), str::to_owned)
+/// A rejection's feedback with its citations, or the note that a review agent named no
+/// issues (§10).
+fn rejection_feedback(feedback: Option<&str>, citations: &[VerifiedCitation]) -> String {
+    match (feedback, citations.is_empty()) {
+        (None, true) => model_text().review.no_issues.render(&[]),
+        (feedback, _) => with_citations(feedback.unwrap_or_default(), citations),
+    }
+}
+
+/// Feedback text followed by the passages it quotes, each with where it comes from.
+#[must_use]
+pub fn with_citations(text: &str, citations: &[VerifiedCitation]) -> String {
+    if citations.is_empty() {
+        return text.to_owned();
+    }
+    let labels = &model_text().citations;
+    let mut lines = Vec::with_capacity(citations.len() + 2);
+    if !text.trim().is_empty() {
+        lines.push(text.to_owned());
+    }
+    lines.push(labels.heading.render(&[]));
+    for cited in citations {
+        lines.push(labels.item.render(&[
+            ("quote", &cited.citation.quote),
+            ("source", &citation_source(&cited.source)),
+        ]));
+    }
+    lines.join("\n")
+}
+
+fn citation_source(source: &CitationSource) -> String {
+    let labels = &model_text().citations;
+    let CitationSource::Document { role, chapter } = source else {
+        return labels.proposal.render(&[]);
+    };
+    let chapter = chapter.as_ref().map_or_else(String::new, |chapter| {
+        let kinds = &model_text().chapter_kinds;
+        let kind = match chapter.kind {
+            ChapterKind::Main => kinds.main.render(&[]),
+            ChapterKind::Extra => kinds.extra.render(&[]),
+        };
+        model_text().chapters.name.render(&[
+            ("kind", &kind),
+            ("number", &chapter.number.to_string()),
+            ("title", &chapter.title),
+        ])
+    });
+    match role {
+        DocumentRole::NovelBrief => labels.brief.render(&[]),
+        DocumentRole::ChapterGuidance => labels.guidance.render(&[("chapter", &chapter)]),
+        DocumentRole::ChapterOutline => labels.outline.render(&[("chapter", &chapter)]),
+        DocumentRole::ChapterBody => labels.body.render(&[("chapter", &chapter)]),
+        DocumentRole::Background
+        | DocumentRole::Research
+        | DocumentRole::Characters
+        | DocumentRole::Outline => artifact_of(*role).map(artifact_name).unwrap_or_default(),
+    }
 }
 
 /// What a review agent reviews, after its prompt: the subject and the user's notes.
 #[must_use]
-pub fn review_material(subject: &ReviewSubject, notes: Option<&str>) -> String {
+pub fn review_material(subject: &ReviewSubject, notes: Option<&FeedbackItem>) -> String {
     let text = &model_text().review_material;
     let mut parts = match subject {
         ReviewSubject::Artifact {
@@ -221,7 +276,8 @@ pub fn review_material(subject: &ReviewSubject, notes: Option<&str>) -> String {
         ],
     };
     if let Some(notes) = notes {
-        parts.push(text.notes.render(&[("notes", notes)]));
+        let notes = with_citations(&notes.text, &notes.citations);
+        parts.push(text.notes.render(&[("notes", &notes)]));
     }
     parts.join(&model_text().folds.separator.render(&[]))
 }
@@ -243,10 +299,16 @@ pub fn unsealed(message: &UnsealedMessage, submission_tool: &str) -> TranscriptM
             provider_call_id,
             outcome,
             feedback,
-        } => TranscriptMessage::Tool {
-            provider_call_id: provider_call_id.clone(),
-            content: tool_result(outcome, feedback),
-        },
+        } => {
+            let feedback: Vec<String> = feedback
+                .iter()
+                .map(|item| with_citations(&item.text, &item.citations))
+                .collect();
+            TranscriptMessage::Tool {
+                provider_call_id: provider_call_id.clone(),
+                content: tool_result(outcome, &feedback),
+            }
+        }
         UnsealedMessage::PreparationReviewOutcome { rejected, stale } => {
             let review = &model_text().review;
             let mut items: Vec<String> = rejected
@@ -254,7 +316,10 @@ pub fn unsealed(message: &UnsealedMessage, submission_tool: &str) -> TranscriptM
                 .map(|item| {
                     review.rejected.render(&[
                         ("artifact", &artifact_name(item.artifact)),
-                        ("feedback", &feedback_or_no_issues(item.feedback.as_deref())),
+                        (
+                            "feedback",
+                            &rejection_feedback(item.feedback.as_deref(), &item.citations),
+                        ),
                     ])
                 })
                 .collect();
@@ -268,8 +333,12 @@ pub fn unsealed(message: &UnsealedMessage, submission_tool: &str) -> TranscriptM
                 content: review.preparation_outcome.render(&[("items", &items)]),
             }
         }
-        UnsealedMessage::ReviewRejected { kind, feedback } => {
-            let feedback = feedback_or_no_issues(feedback.as_deref());
+        UnsealedMessage::ReviewRejected {
+            kind,
+            feedback,
+            citations,
+        } => {
+            let feedback = rejection_feedback(feedback.as_deref(), citations);
             let review = &model_text().review;
             let text = match kind {
                 ReviewKind::ChapterFinal => &review.chapter_rejected,
@@ -662,6 +731,7 @@ mod tests {
                 rejected: vec![RejectedArtifact {
                     artifact: ArtifactKind::Outline,
                     feedback: Some("More conflict.".to_owned()),
+                    citations: Vec::new(),
                 }],
                 stale: vec![ArtifactKind::Characters],
             },
@@ -725,6 +795,7 @@ mod tests {
                 &UnsealedMessage::ReviewRejected {
                     kind,
                     feedback: Some("More rain.".to_owned()),
+                    citations: Vec::new(),
                 },
                 "submit_chapter",
             ) else {
@@ -845,5 +916,42 @@ mod tests {
             let rendered = tool_outcome(&ToolOutcome::QuestionRejected { problem });
             assert!(rendered.contains("\"rejected\""), "{rendered}");
         }
+    }
+
+    #[test]
+    fn citations_follow_their_feedback_with_their_source() {
+        use nekowriter_core::{
+            citation::{ChapterLabel, Citation, CitationTarget},
+            ids::RevisionId,
+        };
+
+        let cited = VerifiedCitation {
+            citation: Citation {
+                target: CitationTarget::Revision {
+                    revision_id: RevisionId::generate(),
+                },
+                start: 0,
+                end: 4,
+                quote: "dark".to_owned(),
+            },
+            source: CitationSource::Document {
+                role: DocumentRole::ChapterBody,
+                chapter: Some(ChapterLabel {
+                    kind: ChapterKind::Main,
+                    number: 2,
+                    title: "Storm".to_owned(),
+                }),
+            },
+        };
+        let text = with_citations("Brighter.", std::slice::from_ref(&cited));
+        let brighter = text.find("Brighter.").unwrap();
+        let quote = text.find("dark").unwrap();
+        assert!(brighter < quote && text.contains("Storm"), "{text}");
+        assert_eq!(with_citations("Plain.", &[]), "Plain.");
+        assert!(rejection_feedback(None, &[cited]).contains("dark"));
+        assert_eq!(
+            rejection_feedback(None, &[]),
+            model_text().review.no_issues.render(&[])
+        );
     }
 }

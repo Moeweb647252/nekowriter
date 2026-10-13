@@ -4,6 +4,7 @@ import { useCommandIds } from "../command"
 import { workspaceApi } from "../endpoints/workspace"
 import type { Answer } from "../generated/Answer"
 import type { ApprovalMode } from "../generated/ApprovalMode"
+import type { Citation } from "../generated/Citation"
 import type { CommandId } from "../generated/CommandId"
 import type { ReviewDecisionInput } from "../generated/ReviewDecisionInput"
 import type { ReviewId } from "../generated/ReviewId"
@@ -93,13 +94,19 @@ export function useDelegateReview(versionId: VersionId) {
   return useWorkspaceCommand(
     versionId,
     (
-      { revision, reviewId, notes }: { revision: number; reviewId: ReviewId; notes: string },
+      {
+        revision,
+        reviewId,
+        notes,
+        citations,
+      }: { revision: number; reviewId: ReviewId; notes: string; citations: Citation[] },
       commandId,
     ) =>
       workspaceApi.delegateReview(reviewId, {
         commandId,
         expectedRevision: revision,
-        ...(notes.trim() === "" ? {} : { notes }),
+        notes,
+        citations,
       }),
   )
 }
@@ -173,8 +180,10 @@ export function useStopRun(versionId: VersionId) {
 export function useSubmitFeedback(versionId: VersionId) {
   return useControlCommand(
     versionId,
-    ({ runId, text }: { runId: RunId; text: string }, commandId) =>
-      workspaceApi.submitFeedback(runId, { commandId, text }),
+    (
+      { runId, text, citations }: { runId: RunId; text: string; citations: Citation[] },
+      commandId,
+    ) => workspaceApi.submitFeedback(runId, { commandId, text, citations }),
   )
 }
 

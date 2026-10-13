@@ -142,7 +142,7 @@ export default {
   },
   delegation: {
     delegate: "Let the review agent decide",
-    delegateHint: "Your feedback so far goes to the review agent as notes.",
+    delegateHint: "Your feedback and citations so far go to the review agent as notes.",
     delegated: "The review agent is reviewing this.",
     cancel: "Cancel and review myself",
     failed:
@@ -163,13 +163,22 @@ export default {
     append: "The agent proposes adding text to the end of the chapter.",
     replace: "The agent proposes replacing “{{old}}” with “{{new}}”.",
     delete: "The agent proposes deleting “{{old}}”.",
-    feedback: "Feedback (leave empty to accept the edit)",
-    hint: "Accepting applies the edit. With feedback, the edit is rejected and the agent tries again.",
+    feedback: "Feedback (leave empty and cite nothing to accept the edit)",
+    hint: "Accepting applies the edit. With feedback or a citation, the edit is rejected and the agent tries again.",
     accept: "Accept edit",
     reject: "Reject with feedback",
     label: "Proposed edit, not applied yet",
     added: "Added",
     removed: "Removed",
+  },
+  citations: {
+    label: "Cited passages",
+    cite: "Cite selected text",
+    remove: "Remove citation “{{quote}}”",
+    refused: {
+      nothing: "Select a passage in the manuscript or a document first.",
+      several_texts: "A citation stays within one text. Select a passage in a single chapter or document.",
+    },
   },
   reader: {
     label: "Manuscript",

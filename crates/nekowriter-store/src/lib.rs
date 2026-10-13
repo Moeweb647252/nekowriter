@@ -17,6 +17,7 @@ use thiserror::Error;
 
 mod calls;
 mod chapters;
+mod citations;
 mod command;
 mod delegation;
 mod digest;

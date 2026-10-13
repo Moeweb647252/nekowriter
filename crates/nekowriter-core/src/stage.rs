@@ -10,6 +10,7 @@ use crate::{
     document::DocumentRole,
     preparation::{ArtifactKind, ChapterPlan},
     review::ReviewKind,
+    run_message::FeedbackItem,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,8 +36,9 @@ pub enum StageInput {
     Review {
         kind: ReviewKind,
         subject: ReviewSubject,
-        /// The user's draft feedback when they delegated, if any.
-        notes: Option<String>,
+        /// The user's draft feedback when they delegated, with the passages it cites, if
+        /// there was any.
+        notes: Option<FeedbackItem>,
     },
 }
 

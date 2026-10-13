@@ -1,4 +1,5 @@
 use nekowriter_core::{
+    citation::Citations,
     feedback::FeedbackStatus,
     ids::{FeedbackId, ModelRequestId, RunId, ToolCallId},
     time::Timestamp,
@@ -18,8 +19,11 @@ pub struct Model {
     /// Position among the run's feedback, starting at 1; delivery keeps this order.
     #[sea_orm(unique_key = "run_sequence")]
     pub sequence: i32,
+    /// Empty when the feedback consists of citations only (a declined proposal).
     #[sea_orm(column_type = "Text")]
     pub text: String,
+    /// The passages it quotes, verified.
+    pub citations: Option<Citations>,
     pub status: FeedbackStatus,
     /// For queued feedback: the highest call sequence with a result when its batch
     /// opened. The batch binds to the result of a later call.

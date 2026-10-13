@@ -2,11 +2,13 @@ import { type SubmitEvent, useCallback } from "react"
 import { useTranslation } from "react-i18next"
 
 import { useChapterName } from "../chapters"
+import { CitationField, CitedQuotes } from "../CitationField"
 import { QuestionDock } from "../QuestionDock"
 import { RunProgress } from "../RunDock"
 import { quote } from "./edits"
 import { errorForField, errorForForm } from "@/api/fieldErrors"
 import type { ChapterView } from "@/api/generated/ChapterView"
+import type { Citation } from "@/api/generated/Citation"
 import type { FeedbackView } from "@/api/generated/FeedbackView"
 import type { HeldCallView } from "@/api/generated/HeldCallView"
 import type { RunView } from "@/api/generated/RunView"
@@ -25,7 +27,7 @@ import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { useErrorText } from "@/i18n/errors"
-import { useDraft } from "@/lib/drafts"
+import { useDraft, useDraftList } from "@/lib/drafts"
 import { submitOnModEnter } from "@/lib/keyboard"
 
 /**
@@ -157,13 +159,23 @@ function FeedbackPanel({ view, run }: { view: WorkspaceView; run: RunView }) {
   const { t } = useTranslation()
   const errorText = useErrorText()
   const send = useSubmitFeedback(view.version.id)
-  const text = useDraft(`${view.version.id}.feedback.${run.id}`, "")
+  const key = `${view.version.id}.feedback.${run.id}`
+  const text = useDraft(key, "")
+  const citations = useDraftList<Citation>(`${key}.citations`)
   // Feedback while paused, or before a requested pause is held, also lets the run go on.
   const continues = run.status === "paused" || view.pauseRequested
 
   const submit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault()
-    send.mutate({ runId: run.id, text: text.value }, { onSuccess: text.clear })
+    send.mutate(
+      { runId: run.id, text: text.value, citations: citations.items },
+      {
+        onSuccess: () => {
+          text.clear()
+          citations.clear()
+        },
+      },
+    )
   }
 
   const fieldError = errorForField(send.error, "feedback")
@@ -201,6 +213,7 @@ function FeedbackPanel({ view, run }: { view: WorkspaceView; run: RunView }) {
           </FieldDescription>
           {fieldError !== undefined && <FieldError>{errorText(fieldError)}</FieldError>}
         </Field>
+        <CitationField citations={citations} />
         {formError !== undefined && <ErrorAlert error={formError} />}
         <div>
           <Button
@@ -228,6 +241,7 @@ function FeedbackItem({ item }: { item: FeedbackView }) {
   return (
     <li className="flex flex-col rounded-md border bg-background px-3 py-2">
       <span className="whitespace-pre-wrap">{item.text}</span>
+      <CitedQuotes citations={item.citations} />
       <span className="text-xs text-muted-foreground">{state}</span>
     </li>
   )
