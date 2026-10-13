@@ -3,4 +3,4 @@
 /**
  * A request that is valid in itself but conflicts with the current state.
  */
-export type StateConflict = "project_not_deleted";
+export type StateConflict = "project_not_deleted" | "brief_locked" | "brief_missing" | "wrong_step" | "project_busy" | "review_not_open" | "run_active" | "run_not_continuable";

@@ -80,8 +80,7 @@ Collaboration, accounts, cloud sync, real-time co-editing, a rich-text editor, b
 The **workflow axis** says where the version is in the story:
 
 ```text
-initializing
-preparing.{generating, reviewing, revising}
+preparing.{not_started, generating, reviewing, revising}
 writing.{chapter_ready, outline_generating, outline_reviewing, drafting, chapter_reviewing, chapter_done}
 completed
 extras.{same sub-states as writing, for chapters of kind extra}
@@ -101,7 +100,8 @@ A top-level run exists per preparation stage, per chapter outline and per chapte
 
 | Workflow state | Input | Guards and effects | Next state |
 |---|---|---|---|
-| initializing | Version created | Brief slot, the four artifact documents, workflow and budget scope exist; execution idle | preparing.generating (waiting for the user to start) |
+| (none) | Version created | Brief slot, the four artifact documents and the workflow exist; no run | preparing.not_started |
+| preparing.not_started | Start preparation | The brief is non-empty and the model settings pass the capability check; create the preparation run and its budget scope | preparing.generating |
 | preparing.generating / revising | Preparation submitted | First round: all four artifacts and a valid chapter plan; revision round: exactly the artifacts that need revision | preparing.reviewing |
 | preparing.reviewing | Round decided | All four current revisions approved with valid dependencies; commit the preparation fold | writing.chapter_ready |
 | preparing.reviewing | Round decided | Some artifact rejected or stale; persist feedback and the set to revise | preparing.revising |
@@ -117,13 +117,14 @@ A top-level run exists per preparation stage, per chapter outline and per chapte
 | completed | Add extra chapter | Create an extra chapter with its own guidance slot and budget scope; the completion time stays | extras.chapter_ready |
 | extras.chapter_done | Finish extra chapter | The extra chapter is approved and nothing is pending | completed |
 
-An invalid transition returns `INVALID_TRANSITION` with the current snapshot. The UI never relies on hidden buttons in place of backend validation.
+An invalid transition is refused with `STATE_CONFLICT` and a typed reason (for example `wrong_step`), and the client reloads the workspace. The UI never relies on hidden buttons in place of backend validation.
 
 ## 6. Preparation
 
-- The novel brief must be non-empty before preparation starts.
+- The novel brief must be non-empty before preparation starts. It can be edited only until preparation starts.
 - The agent must submit four artifacts with stable keys `background`, `research`, `characters`, `outline`. Tabs are ordered background, research, characters, outline; this order does not constrain generation order.
 - The rough outline includes a structured chapter plan: stable `plan_item_id`, order, title and goal summary. The plan has at least one chapter with unique order. It freezes when writing starts. Extra chapters never modify it.
+- Each artifact is approved, or rejected with written feedback; a rejection without feedback is refused, because the agent needs to know what to change.
 - After the first round, the four artifacts are reviewed in any order. When every open review in the round is decided, the version moves to revising or to writing as one batch. A revision round reviews only new revisions and stale items.
 - Dependencies are fixed: research → background, characters, outline; background → characters, outline; characters → outline. Each dependency records the exact revision ID. A batch first creates all new revisions, then records dependencies, so order inside a batch cannot cause false staleness.
 - When a source revision changes, reviews of downstream artifacts that reference the old source become `stale`. Stale is not approved. The MVP does not judge whether a change is semantically irrelevant; the downstream artifact must be resubmitted against the new dependency.
@@ -145,7 +146,7 @@ An invalid transition returns `INVALID_TRANSITION` with the current snapshot. Th
 
 - One protocol: Chat Completions-compatible HTTP. The configured API root ends with its real prefix (for example `/v1`); the adapter appends `chat/completions`. URLs are never guessed from failures.
 - Requests declare tools and stream responses. Tool-call IDs, names and argument JSON are accumulated per tool index and handed over only when complete. `response_format` is not used.
-- Parallel tool calls are disabled in the request. If a response still contains several tool calls, none runs; each gets the result `PARALLEL_TOOL_CALLS_NOT_ALLOWED`, and the model is told to call tools one at a time.
+- Parallel tool calls are disabled in the request. If a response still contains several tool calls, none runs; each gets an error result saying that parallel calls are not allowed, and the model is told to call tools one at a time.
 - Timeouts distinguish connect, first byte and stream idle time. The response size limit is 2 MiB.
 
 ### 8.2 Rounds
@@ -161,6 +162,8 @@ continue the workflow
 → when the next request is sealed, render tool results and queued feedback into it
 → next round, until a submission passes the stage guards
 ```
+
+The global model permit lets one model request be in flight at a time, across all projects; queued runs are served oldest first. Each round checks the model settings again before sealing; settings that do not allow a request fail the run with the halt reason `model_not_ready`.
 
 Review and future research agents use separate conversations; their messages never enter the writing agent's ledger.
 
@@ -210,7 +213,7 @@ submit_review           { passed, confidence, issues }
 ### 8.7 Limits and continuation
 
 - Each run stores `request_count` and `request_allowance_end` (initially 0 and 100). A request is sent only while `request_count < request_allowance_end`; marking it dispatched and incrementing the count happen in one transaction before network I/O. Prepared-then-cancelled requests do not count; dispatched requests that failed or whose result is unknown do.
-- Three consecutive protocol errors stop the run with `wait_reason = protocol_error_limit`; an exhausted allowance stops it with `request_limit`.
+- Three consecutive protocol errors stop the run with the halt reason `protocol_error_limit`; an exhausted allowance stops it with `request_limit`.
 - Explicitly continuing a stopped, failed or interrupted run sets `request_allowance_end = request_count + 100`, resets the protocol-error count and increments `resume_count`. Pausing, feedback, answers, accepted edits, reviews, reconnects and restarts never grant allowance.
 - A delegated review child run gets an allowance of 3 (the protocol-error limit), because a review submits exactly one verdict but may be corrected.
 - When a request fails terminally, any of its tool calls that never ran get paired error results, so the run can always continue.
@@ -296,7 +299,7 @@ A tool's base outcome is immutable; feedback bindings are stored separately. Whe
 - **Transport:** the fold is sent as an ordinary assistant text message without tool calls, never as a system instruction.
 - **Transaction:** the approval, artifact lock, fold checkpoint, run success, next workflow state and events commit together, and only when nothing is pending (no request in flight, unresolved tool, proposal, unanswered question or undelivered feedback). Replays reuse the committed fold.
 - **Assembly order:** current role and task constraints → stable tool definitions → folds of completed stages in story order → current stage input, current body and the stage's unfolded messages. A folded stage appears exactly once.
-- **Limits:** when the context still exceeds the model's window after folding, the request fails with `CONTEXT_LIMIT_EXCEEDED`. Artifacts are never summarized or truncated (D16).
+- **Limits:** when the context still exceeds the model's input budget (the context window minus the tokens reserved for the answer) after folding, the run fails with the halt reason `context_limit_exceeded`, naming the estimate and the limit. Artifacts are never summarized or truncated (D16).
 - Settings and prompts are read fresh for every request; only stable blocks are kept stable, for provider cache friendliness.
 
 ## 12. Budget, knowledge and capabilities
@@ -353,7 +356,7 @@ Ten keys, each with a system and a user prompt: `preparation.generate`, `chapter
 
 - Creating a project creates its first version. A version has a label and a novel title. New versions are empty (D03, D15). The project's selected version is a display choice only; switching it never starts generation.
 - Soft delete applies to projects, versions, knowledge spaces and entries, and prompt templates. Restore is offered for projects. Deleting a parent does not rewrite its children; queries check ancestors. Plan chapters cannot be deleted; extra chapters can be soft-deleted when nothing is active.
-- Deleting a project or version with an active run or open review returns `RESOURCE_BUSY`. The selected version cannot be deleted.
+- Deleting a project or version with an active run or open review is refused with `STATE_CONFLICT` (`run_active`). The selected version cannot be deleted.
 - Clearing a prompt override deletes the override row.
 
 ## 15. Dashboard
@@ -386,6 +389,7 @@ Ten keys, each with a system and a user prompt: `preparation.generate`, `chapter
 - On startup, stable waits (questions, proposals, pauses) are restored; automatically executing states become `interrupted` and nothing is sent until the user continues.
 - Continuing: unsent request → rebuild from latest settings; uncertain request → mark `unknown` and create a new attempt; persisted but uncommitted tool → re-run through the current gate; committed edit not yet seen by the model → reuse the stored outcome; bound feedback → still bound; committed fold → build from the fold.
 - Stop: no further requests, cancel the in-flight request, keep committed text and undelivered feedback, mark the run stopped; late callbacks are ignored. Pending proposals stay pending.
+- A failure inside NekoWriter while it carries out a run's step fails the run with the halt reason `internal` instead of leaving it queued; the log has the details and the user can continue the run.
 - Shutdown (Ctrl+C, SIGTERM or the UI's "exit service" with confirmation): stop accepting connections, cancel in-flight requests, mark active runs interrupted and requests cancelled or unknown in one transaction, checkpoint the WAL, close the database. Startup recovery and shutdown share one implementation. The UI then shows "service stopped" with restart instructions.
 - Diagnostics: the health endpoint and the settings page show the version, the UI address, the data directory and the log directory.
 
@@ -486,7 +490,7 @@ Each line maps to the milestone that delivers it (M0–M5 in the build plan).
 | 9 | Preparation fold | §11 | M1 |
 | 10 | Model adapter, rounds, submission tools, protocol corrections, request allowance | §8 | M1 |
 | 11 | Chapter guidance, outline and review, body tools, whole-chapter review, next chapter, completion, extras | §7 | M2 |
-| 12 | Outline and body folds; context assembly; `CONTEXT_LIMIT_EXCEEDED` | §11 | M2 |
+| 12 | Outline and body folds; context assembly; `context_limit_exceeded` | §11 | M2 |
 | 13 | Workspace reader, chapter list, live preview | §18.2 | M2 |
 | 14 | Pause and feedback batches; AutoApprove matrix | §9.1–§9.4 | M3 |
 | 15 | ApproveRequired proposals and diffs; mode switching | §9.5–§9.6 | M3 |

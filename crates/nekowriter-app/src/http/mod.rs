@@ -10,9 +10,10 @@ use axum::{
     Router, middleware,
     routing::{get, post},
 };
+use nekowriter_agent::client::ChatClient;
 use nekowriter_store::Store;
 
-use crate::lifecycle::Shutdown;
+use crate::{lifecycle::Shutdown, preview::Previews};
 
 mod assets;
 mod error;
@@ -20,20 +21,13 @@ mod extract;
 mod gate;
 mod handlers;
 
-pub use error::{ApiErrorBody, ApiProblem};
-pub use handlers::{
-    events::{EventCursorView, EventStreamQuery, ServerMessage},
-    projects::{
-        CreateProjectRequest, ListProjectsQuery, ProjectRevisionRequest, RenameProjectRequest,
-    },
-    system::{HealthView, ShutdownStatus, ShutdownView},
-};
-
 /// Shared state of all handlers.
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) store: Store,
     pub(crate) shutdown: Shutdown,
+    pub(crate) client: ChatClient,
+    pub(crate) previews: Previews,
     pub(crate) diagnostics: Arc<Diagnostics>,
     /// The port the server listens on, for the trust gate's allowed origins.
     pub(crate) port: u16,
@@ -59,6 +53,40 @@ pub(crate) fn router(state: AppState) -> Router {
         .route("/projects/{id}/rename", post(handlers::projects::rename))
         .route("/projects/{id}/delete", post(handlers::projects::delete))
         .route("/projects/{id}/restore", post(handlers::projects::restore))
+        .route(
+            "/projects/{id}/settings",
+            post(handlers::projects::update_settings),
+        )
+        .route(
+            "/projects/{id}/versions",
+            post(handlers::projects::create_version),
+        )
+        .route(
+            "/projects/{id}/select-version",
+            post(handlers::projects::select_version),
+        )
+        .route(
+            "/settings",
+            get(handlers::settings::get).post(handlers::settings::save),
+        )
+        .route("/settings/test-model", post(handlers::settings::test_model))
+        .route("/versions/{id}/workspace", get(handlers::workspace::get))
+        .route(
+            "/versions/{id}/brief",
+            post(handlers::workspace::save_brief),
+        )
+        .route(
+            "/versions/{id}/preparation/start",
+            post(handlers::workspace::start_preparation),
+        )
+        .route(
+            "/reviews/{id}/decide",
+            post(handlers::workspace::decide_review),
+        )
+        .route(
+            "/runs/{id}/continue",
+            post(handlers::workspace::continue_run),
+        )
         .fallback(error::route_not_found);
     Router::new()
         .nest("/api", api)

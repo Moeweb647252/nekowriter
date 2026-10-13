@@ -12,6 +12,7 @@ name = "nekowriter"
 path = "src/main.rs"
 
 [dependencies]
+nekowriter-agent.workspace = true
 nekowriter-core.workspace = true
 nekowriter-store.workspace = true
 axum.workspace = true

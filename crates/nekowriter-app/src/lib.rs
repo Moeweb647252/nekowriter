@@ -1,5 +1,5 @@
-//! The NekoWriter application: the HTTP API, the event stream and the embedded web UI,
-//! served on the loopback interface.
+//! The NekoWriter application: the HTTP API, the event stream, the dispatcher that talks to
+//! the model service, and the embedded web UI, served on the loopback interface.
 //!
 //! `main.rs` turns command-line arguments into a [`Config`], sets up logging and calls
 //! [`start`]. Tests call [`start`] directly with a temporary data directory and port 0.
@@ -11,21 +11,19 @@ use std::{
     sync::Arc,
 };
 
+use nekowriter_agent::client::ChatClient;
 use nekowriter_store::{DATABASE_FILE, OpenError, Store, StoreError};
 use thiserror::Error;
 use tokio::{net::TcpListener, task::JoinHandle};
 
 mod data_dir;
+mod dispatcher;
 mod http;
 mod lifecycle;
 mod logging;
+mod preview;
 
 pub use data_dir::{DataDirError, DataDirLock, default_data_dir, prepare as prepare_data_dir};
-pub use http::{
-    ApiErrorBody, ApiProblem, CreateProjectRequest, EventCursorView, EventStreamQuery, HealthView,
-    ListProjectsQuery, ProjectRevisionRequest, RenameProjectRequest, ServerMessage, ShutdownStatus,
-    ShutdownView,
-};
 pub use lifecycle::Shutdown;
 pub use logging::{LoggingError, init_logging};
 
@@ -71,6 +69,10 @@ pub enum StartupError {
         source: OpenError,
     },
     #[error(
+        "The runs that were executing when NekoWriter last stopped could not be marked interrupted: {0}"
+    )]
+    Recovery(#[source] StoreError),
+    #[error(
         "NekoWriter could not listen on {address}: {source}. Another program may be using the port; start NekoWriter with --port <number>."
     )]
     Listen {
@@ -86,6 +88,10 @@ pub enum RunError {
     Serve(#[source] io::Error),
     #[error("the HTTP server task ended unexpectedly: {0}")]
     Task(#[source] tokio::task::JoinError),
+    #[error("the dispatcher task ended unexpectedly: {0}")]
+    Dispatcher(#[source] tokio::task::JoinError),
+    #[error("the executing runs could not be marked interrupted: {0}")]
+    Interrupt(#[source] StoreError),
     #[error("the database could not be closed cleanly: {0}")]
     Close(#[source] StoreError),
 }
@@ -96,6 +102,7 @@ pub struct RunningServer {
     shutdown: Shutdown,
     store: Store,
     server: JoinHandle<io::Result<()>>,
+    dispatcher: JoinHandle<()>,
     _lock: DataDirLock,
 }
 
@@ -112,23 +119,31 @@ impl RunningServer {
         self.shutdown.clone()
     }
 
-    /// Waits until the server has stopped, then closes the database and releases the data
+    /// Waits until the server and the dispatcher have stopped, marks the runs that were
+    /// executing interrupted (§16.3), then closes the database and releases the data
     /// directory.
     pub async fn wait(self) -> Result<(), RunError> {
-        self.server
+        let served = self.server.await;
+        let dispatched = self.dispatcher.await;
+        served.map_err(RunError::Task)?.map_err(RunError::Serve)?;
+        dispatched.map_err(RunError::Dispatcher)?;
+        interrupt_runs(&self.store)
             .await
-            .map_err(RunError::Task)?
-            .map_err(RunError::Serve)?;
+            .map_err(RunError::Interrupt)?;
         self.store.close().await.map_err(RunError::Close)
     }
 }
 
-/// Locks the data directory, opens the database and starts serving.
+/// Locks the data directory, opens the database, marks the runs that were executing when
+/// the application last stopped interrupted, and starts serving and dispatching.
 pub async fn start(config: Config) -> Result<RunningServer, StartupError> {
     let lock = DataDirLock::acquire(&config.data_dir)?;
     let store = Store::open(&config.data_dir.join(DATABASE_FILE), VERSION)
         .await
         .map_err(|source| open_error(&config.data_dir, source))?;
+    interrupt_runs(&store)
+        .await
+        .map_err(StartupError::Recovery)?;
     let requested = SocketAddr::from((Ipv4Addr::LOCALHOST, config.port));
     let listener = TcpListener::bind(requested)
         .await
@@ -143,9 +158,20 @@ pub async fn start(config: Config) -> Result<RunningServer, StartupError> {
             source,
         })?;
     let shutdown = Shutdown::new();
+    let client = ChatClient::new();
+    let previews = preview::Previews::new();
+    let dispatcher = dispatcher::Dispatcher {
+        store: store.clone(),
+        client: client.clone(),
+        previews: previews.clone(),
+        shutdown: shutdown.clone(),
+    }
+    .spawn();
     let state = http::AppState {
         store: store.clone(),
         shutdown: shutdown.clone(),
+        client,
+        previews,
         diagnostics: Arc::new(http::Diagnostics {
             data_dir: config.data_dir,
             log_dir: config.log_dir,
@@ -163,8 +189,21 @@ pub async fn start(config: Config) -> Result<RunningServer, StartupError> {
         shutdown,
         store,
         server,
+        dispatcher,
         _lock: lock,
     })
+}
+
+/// Startup recovery and shutdown share this step (§16.3).
+async fn interrupt_runs(store: &Store) -> Result<(), StoreError> {
+    let interrupted = store.interrupt_runs().await?;
+    if interrupted > 0 {
+        tracing::info!(
+            interrupted,
+            "runs that were executing are interrupted until the user continues them"
+        );
+    }
+    Ok(())
 }
 
 fn open_error(data_dir: &std::path::Path, source: OpenError) -> StartupError {

@@ -1,0 +1,162 @@
+import type { ArtifactKind } from "@/api/generated/ArtifactKind"
+import type { ChapterStatus } from "@/api/generated/ChapterStatus"
+import type { ChapterStep } from "@/api/generated/ChapterStep"
+import type { PreparationStep } from "@/api/generated/PreparationStep"
+import type { ReviewStatus } from "@/api/generated/ReviewStatus"
+import type { RunHalt } from "@/api/generated/RunHalt"
+import type { RunStatus } from "@/api/generated/RunStatus"
+import type { ThinkingLevel } from "@/api/generated/ThinkingLevel"
+
+export default {
+  backToWorks: "Works",
+  draft: "Draft saved in this browser",
+  dock: "Current step",
+  header: {
+    version: "Version {{number}}",
+    versions: "Versions",
+    versionItem: "Version {{number}}: {{title}}",
+    newVersion: "New version…",
+    settings: "Work settings",
+  },
+  stage: {
+    preparation: {
+      not_started: "Brief",
+      generating: "Preparing",
+      reviewing: "Reviewing the preparation",
+      revising: "Revising the preparation",
+    } satisfies Record<PreparationStep, string>,
+    chapter: {
+      ready: "Chapter ready",
+      outline_generating: "Outlining a chapter",
+      outline_reviewing: "Reviewing a chapter outline",
+      drafting: "Writing a chapter",
+      reviewing: "Reviewing a chapter",
+      done: "Chapter done",
+    } satisfies Record<ChapterStep, string>,
+    completed: "Completed",
+  },
+  nav: {
+    label: "Contents",
+    open: "Show contents",
+    preview: "Live preview",
+    preparation: "Preparation",
+    brief: "Novel brief",
+    chapters: "Chapters",
+    noChapters: "Chapters appear once the preparation is approved.",
+    chapter: "{{number}}. {{title}}",
+  },
+  chapterStatus: {
+    not_started: "Not started",
+    in_progress: "In progress",
+    approved: "Approved",
+  } satisfies Record<ChapterStatus, string>,
+  artifact: {
+    background: "Background",
+    research: "Research",
+    characters: "Characters",
+    outline: "Outline",
+  } satisfies Record<ArtifactKind, string>,
+  reviewStatus: {
+    open: "To review",
+    approved: "Approved",
+    rejected: "Changes requested",
+    stale: "Needs an update",
+  } satisfies Record<ReviewStatus, string>,
+  document: {
+    revision: "Revision {{number}}",
+    notWritten: "Not written yet.",
+    chapterPlan: "Chapter plan",
+    planItem: "{{number}}. {{title}}",
+  },
+  brief: {
+    label: "Novel brief",
+    description:
+      "Describe the novel: genre, premise, characters, tone, and anything the agents should know. You can change it until preparation starts.",
+    save: "Save brief",
+    saved: "Saved",
+    conflict: "The saved brief changed after this draft was started. Check it before saving.",
+    empty: "No brief yet.",
+  },
+  preparation: {
+    start: "Start preparation",
+    startHint:
+      "From the brief, the agent writes the background, research, characters and an outline with a chapter plan. You review each of them.",
+    saveFirst: "Save the brief before starting.",
+    generating: "The agent is writing the preparation documents.",
+    revising: "The agent is revising: {{documents}}.",
+    reviewTabs: "Preparation documents",
+    approve: "Approve {{document}}",
+    requestChanges: "Request changes",
+    feedback: "What should change?",
+    feedbackHint:
+      "The agent revises with this feedback once every document of this round is decided.",
+    decided: "Decided. The agent continues once every document of this round is decided.",
+    stale: "A document this one depends on changed, so the agent will update it in the next round.",
+    approvedNote: "Approved.",
+    rejectedNote: "Changes requested: {{feedback}}",
+    waiting: "Nothing to review in this document right now.",
+    done: "The preparation is approved.",
+  },
+  chapter: {
+    next: "Next: chapter {{number}}, “{{title}}”",
+    goal: "Goal: {{goal}}",
+    notYet: "Writing chapters is not available in this build yet.",
+  },
+  run: {
+    status: {
+      queued: "Waiting for the model",
+      running: "Writing",
+      waiting_review: "Waiting for your review",
+      interrupted: "Interrupted",
+      stopped: "Stopped",
+      failed: "Failed",
+      succeeded: "Done",
+    } satisfies Record<RunStatus, string>,
+    requests: "{{count}} of {{limit}} requests used",
+    continue: "Continue",
+    halt: {
+      request_limit:
+        "The run used all of its allowed requests. Continuing allows another 100 requests.",
+      protocol_error_limit:
+        "The model did not follow the writing protocol three times in a row. Continue to try again; another model may work better.",
+      model_not_ready: "{{problem}} Then continue.",
+      context_limit_exceeded:
+        "The request needs about {{estimated}} tokens, but the model accepts {{limit}}. Choose a model with a larger context window, then continue.",
+      provider: "The model service failed: {{failure}}. Check the service, then continue.",
+      process_stopped:
+        "NekoWriter stopped while this run was working. Continue when you are ready.",
+      internal:
+        "NekoWriter ran into an unexpected problem; the details are in its log. Continue to try again.",
+    } satisfies Record<RunHalt["kind"], string>,
+  },
+  preview: {
+    label: "Live preview",
+    note: "Still being written; nothing here is saved until the agent submits it.",
+    notes: "The agent's notes",
+  },
+  newVersion: {
+    title: "New version",
+    description:
+      "A new version is an empty manuscript with its own brief and preparation. The current version stays as it is.",
+    novelTitle: "Novel title",
+    submit: "Create version",
+    done: "Created version {{number}}.",
+  },
+  settings: {
+    title: "Work settings",
+    writingLanguage: "Writing language",
+    writingLanguageHint: "The agents write the novel in this language.",
+    ownModel: "Use its own model",
+    ownModelHint: "Otherwise the work uses the default model from Settings.",
+    thinking: "Thinking",
+    thinkingLevel: {
+      off: "Off",
+      low: "Low",
+      medium: "Medium",
+      high: "High",
+    } satisfies Record<ThinkingLevel, string>,
+    thinkingUnsupported: "The model this work uses does not support thinking.",
+    submit: "Save",
+    done: "Saved the work settings.",
+  },
+} as const

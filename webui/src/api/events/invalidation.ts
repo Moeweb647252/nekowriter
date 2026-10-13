@@ -2,19 +2,30 @@ import type { QueryClient, QueryKey } from "@tanstack/react-query"
 
 import type { Event } from "../generated/Event"
 import { queryKeys } from "../queries/keys"
+import { assertNever } from "@/lib/assert"
 
 /**
- * The cached reads each kind of event affects. The mapped type requires an entry for every
- * event type, so a new event cannot be forgotten.
+ * The cached reads an event affects. The switch covers every event type, so a new event
+ * cannot be forgotten.
  */
-const affectedQueries: {
-  [Type in Event["type"]]: (event: Extract<Event, { type: Type }>) => readonly QueryKey[]
-} = {
-  project_changed: () => [queryKeys.projects.all],
+function affectedQueries(event: Event): readonly QueryKey[] {
+  switch (event.type) {
+    // Workspaces show their project and its versions.
+    case "project_changed":
+      return [queryKeys.projects.all, queryKeys.workspaces.all]
+    // Project lists show the selected version's stage.
+    case "version_changed":
+      return [queryKeys.workspaces.version(event.versionId), queryKeys.projects.all]
+    case "settings_changed":
+      return [queryKeys.settings]
+    default:
+      return assertNever(event)
+  }
 }
 
 /** Refreshes the cached reads an event affects. */
 export async function invalidateFor(queryClient: QueryClient, event: Event): Promise<void> {
-  const affected = affectedQueries[event.type](event)
-  await Promise.all(affected.map((queryKey) => queryClient.invalidateQueries({ queryKey })))
+  await Promise.all(
+    affectedQueries(event).map((queryKey) => queryClient.invalidateQueries({ queryKey })),
+  )
 }

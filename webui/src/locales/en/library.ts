@@ -9,6 +9,7 @@ export default {
     deletedBody: "Deleted works appear here, and you can restore them.",
   },
   card: {
+    open: "Open {{name}}",
     version: "Version {{number}}",
     updated: "Updated {{time}}",
     deleted: "Deleted {{time}}",

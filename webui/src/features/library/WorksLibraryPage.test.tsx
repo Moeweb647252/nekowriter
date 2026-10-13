@@ -4,8 +4,8 @@ import { describe, expect, it } from "vitest"
 
 import { WorksLibraryPage } from "./WorksLibraryPage"
 import type { CreateProjectRequest } from "@/api/generated/CreateProjectRequest"
-import type { ProjectRevisionRequest } from "@/api/generated/ProjectRevisionRequest"
 import type { ProjectView } from "@/api/generated/ProjectView"
+import type { RevisionRequest } from "@/api/generated/RevisionRequest"
 import { projectView } from "@/test/fixtures"
 import { renderWithProviders } from "@/test/render"
 import { server } from "@/test/server"
@@ -28,13 +28,18 @@ function fakeProjects(initial: ProjectView[]) {
         id: crypto.randomUUID(),
         name: body.name,
         writingLanguage: body.writingLanguage,
-        selectedVersion: { id: crypto.randomUUID(), number: 1, novelTitle: body.novelTitle },
+        selectedVersion: {
+          id: crypto.randomUUID(),
+          number: 1,
+          novelTitle: body.novelTitle,
+          stage: { phase: "preparation", step: "not_started" },
+        },
       })
       projects = [created, ...projects]
       return HttpResponse.json(created, { status: 201 })
     }),
     http.post("*/api/projects/:id/delete", async ({ params, request }) => {
-      const body = (await request.json()) as ProjectRevisionRequest
+      const body = (await request.json()) as RevisionRequest
       const index = projects.findIndex((project) => project.id === params.id)
       const existing = projects[index]
       if (!existing) throw new Error("unknown project")
@@ -66,6 +71,11 @@ describe("WorksLibraryPage", () => {
     expect(await screen.findByText("Rain")).toBeInTheDocument()
     expect(screen.getByText("Rain Letters")).toBeInTheDocument()
     expect(screen.getByText("English")).toBeInTheDocument()
+    expect(screen.getByText("Brief")).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Open Rain" })).toHaveAttribute(
+      "href",
+      "/works/0190f5c8-0000-7000-8000-000000000001/versions/0190f5c8-0000-7000-8000-000000000002",
+    )
   })
 
   it("creates a work with a command ID and the chosen fields", async () => {

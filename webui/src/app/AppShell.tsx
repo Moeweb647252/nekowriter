@@ -1,14 +1,12 @@
 import { useTranslation } from "react-i18next"
 import { NavLink, Outlet } from "react-router"
 
-import { ServiceStopped } from "./ServiceStopped"
-import { useConnectionStatus } from "@/api/events/connection"
+import { ConnectionNotice } from "./ConnectionNotice"
 import { cn } from "@/lib/utils"
 
 /** The frame of the top-level pages: navigation, connection state and the page itself. */
 export function AppShell() {
   const { t } = useTranslation()
-  const connection = useConnectionStatus()
 
   const navItems = [
     { to: "/works", label: t(($) => $.common.nav.works) },
@@ -38,15 +36,10 @@ export function AppShell() {
           </nav>
         </div>
       </header>
-      {connection === "reconnecting" && (
-        <div role="status" className="bg-muted px-4 py-2 text-center text-sm text-muted-foreground">
-          {t(($) => $.common.connection.reconnecting)}
-        </div>
-      )}
+      <ConnectionNotice />
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8">
         <Outlet />
       </main>
-      {connection === "stopped" && <ServiceStopped />}
     </div>
   )
 }

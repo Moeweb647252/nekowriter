@@ -70,3 +70,44 @@ id_type!(
     /// the same action, which makes every command idempotent.
     CommandId
 );
+
+id_type!(
+    /// Identifies a document: a novel brief, a preparation artifact, or a chapter's
+    /// guidance, outline or body.
+    DocumentId
+);
+
+id_type!(
+    /// Identifies one immutable revision of a document.
+    RevisionId
+);
+
+id_type!(
+    /// Identifies a chapter.
+    ChapterId
+);
+
+id_type!(
+    /// Identifies an item of a chapter plan.
+    PlanItemId
+);
+
+id_type!(
+    /// Identifies a run: one agent execution for a stage, or one delegated review.
+    RunId
+);
+
+id_type!(
+    /// Identifies one request to the model service.
+    ModelRequestId
+);
+
+id_type!(
+    /// Identifies one tool call the model made.
+    ToolCallId
+);
+
+id_type!(
+    /// Identifies a review of a revision or proposal.
+    ReviewId
+);

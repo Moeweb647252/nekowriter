@@ -7,16 +7,48 @@ export default {
   field: {
     project_name: "Work name",
     novel_title: "Novel title",
+    novel_brief: "Novel brief",
+    review_feedback: "Feedback",
+    api_base_url: "API root",
+    api_key: "API key",
+    model_id: "Model ID",
+    context_window: "Context window",
+    max_output_tokens: "Tokens reserved for the answer",
   },
   resource: {
     project: "work",
     version: "version",
+    workspace: "workspace",
+    review: "review",
+    run: "run",
+    settings: "settings",
+  },
+  modelProblem: {
+    service_not_configured: "No model service is set up. Add its API root in Settings.",
+    model_not_configured:
+      "No model is chosen. Set a default model in Settings, or a model in the work settings.",
+    thinking_not_supported:
+      "Thinking is on, but the model does not support it. Turn thinking off in the work settings or choose another model.",
+  },
+  providerFailure: {
+    connect: "the service could not be reached",
+    timeout: "the service took too long while {{phase}}",
+    http_status: "the service answered with HTTP status {{status}}",
+    invalid_response: "the service sent an answer NekoWriter does not understand",
+    response_too_large: "the answer was larger than 2 MiB",
+  },
+  timeoutPhase: {
+    connect: "connecting",
+    first_byte: "waiting for the answer to start",
+    idle: "waiting for more of the answer",
   },
   codes: {
     FIELD_INVALID: {
       empty: "{{field}} is required.",
       too_long: "{{field}} can be at most {{maxChars}} characters.",
       control_character: "{{field}} must be a single line.",
+      invalid_url: "{{field}} must be a web address starting with http:// or https://.",
+      out_of_range: "{{field}} must be between {{min}} and {{max}}.",
     },
     NOT_FOUND: "This {{resource}} no longer exists or has been deleted.",
     REVISION_CONFLICT:
@@ -25,7 +57,17 @@ export default {
       "This action was already submitted with different content. Reload the page and check the result.",
     STATE_CONFLICT: {
       project_not_deleted: "This work is not deleted.",
+      brief_locked: "Preparation has started, so the brief can no longer change.",
+      brief_missing: "Save a brief before starting preparation.",
+      wrong_step: "This action does not fit the current step. The latest state is shown now.",
+      project_busy: "Another version of this work is being written. Wait until it finishes.",
+      review_not_open: "This document was already decided or is no longer under review.",
+      run_active: "This work has a run in progress. Wait until it finishes.",
+      run_not_continuable: "This run is not stopped or failed, so there is nothing to continue.",
     },
+    MODEL_NOT_READY: "The model cannot be used yet. {{problem}}",
+    MODEL_SERVICE_FAILED: "The test failed: {{failure}}.",
+    SERVICE_STOPPING: "NekoWriter is shutting down, so the request was abandoned.",
     MALFORMED_REQUEST: "The request was not understood. Reload the page and try again.",
     ROUTE_NOT_FOUND:
       "This page does not match the running NekoWriter. Reload the page to update it.",

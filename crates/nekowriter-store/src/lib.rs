@@ -17,15 +17,30 @@ use thiserror::Error;
 
 mod command;
 mod digest;
+mod documents;
 mod entity;
 mod error;
 mod events;
+mod execution;
+mod preparation;
 mod projects;
 mod schema;
+mod settings;
+mod versions;
+mod workflow;
+mod workspace;
 
+pub use documents::RevisionView;
 pub use error::StoreError;
 pub use events::{EventBatch, EventRecord, RETENTION_MILLIS};
-pub use projects::{NewProject, ProjectListFilter, ProjectView, VersionSummary};
+pub use execution::{
+    DispatchInput, DispatchOutcome, ModelSettings, RecordedAnswer, RoundRecord, SealedRequest,
+    TranscriptEntry,
+};
+pub use projects::{NewProject, ProjectListFilter, ProjectSettings, ProjectView, VersionSummary};
+pub use settings::{ApiKeyChange, SystemSettingsInput, SystemSettingsView};
+pub use workflow::WorkspaceAck;
+pub use workspace::{ArtifactView, ChapterView, ReviewView, RunView, WorkspaceView};
 
 /// The file name of the database inside the data directory.
 pub const DATABASE_FILE: &str = "nekowriter.sqlite3";

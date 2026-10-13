@@ -5,11 +5,24 @@
 //! into the view types that the rest of the application uses.
 
 // SeaORM's `DeriveModelEx` generates async trait methods without `.await` for entities
-// that have no relations; the generated code is not ours to change.
-#![allow(clippy::unused_async_trait_impl)]
+// that have no relations; the generated code is not ours to change. SeaORM also requires
+// every entity struct to be called `Model`, so columns such as `model` or
+// `default_model` read to Clippy as repeating the struct's name.
+#![allow(clippy::unused_async_trait_impl, clippy::struct_field_names)]
 
+pub(crate) mod chapter;
 pub(crate) mod command_receipt;
+pub(crate) mod document;
 pub(crate) mod event;
+pub(crate) mod model_request;
 pub(crate) mod project;
+pub(crate) mod review;
+pub(crate) mod revision;
+pub(crate) mod revision_dependency;
+pub(crate) mod run;
+pub(crate) mod run_message;
 pub(crate) mod schema_info;
+pub(crate) mod system_settings;
+pub(crate) mod tool_call;
 pub(crate) mod version;
+pub(crate) mod workflow;

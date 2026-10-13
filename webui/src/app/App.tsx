@@ -11,6 +11,7 @@ import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { WorksLibraryPage } from "@/features/library/WorksLibraryPage"
 import { SettingsPage } from "@/features/settings/SettingsPage"
+import { WorkspacePage } from "@/features/workspace/WorkspacePage"
 
 /**
  * Cached reads never go stale on a timer: the event stream invalidates exactly what
@@ -41,6 +42,8 @@ export function App() {
           <BrowserRouter>
             <EventStreamProvider splash={<Splash />}>
               <Routes>
+                {/* The workspace has its own frame, without the page navigation. */}
+                <Route path="/works/:projectId/versions/:versionId" element={<WorkspacePage />} />
                 <Route element={<AppShell />}>
                   <Route path="/works" element={<WorksLibraryPage />} />
                   <Route path="/settings" element={<SettingsPage />} />

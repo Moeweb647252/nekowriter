@@ -3,6 +3,8 @@
 // Each test binary uses a different subset of these helpers.
 #![allow(dead_code)]
 
+use std::path::Path;
+
 use nekowriter_app::{Config, RunningServer};
 use reqwest::{Client, RequestBuilder};
 use serde_json::{Value, json};
@@ -13,15 +15,24 @@ pub struct TestServer {
     pub server: RunningServer,
     pub client: Client,
     pub base: String,
-    _data_dir: TempDir,
+    /// The temporary data directory the server owns, if it owns one.
+    owned_data_dir: Option<TempDir>,
 }
 
 impl TestServer {
+    /// Starts a server with a fresh data directory that is removed with the server.
     pub async fn start() -> Self {
         let data_dir = tempfile::tempdir().unwrap();
+        let mut server = Self::start_in(data_dir.path()).await;
+        server.owned_data_dir = Some(data_dir);
+        server
+    }
+
+    /// Starts a server on an existing data directory, which outlives it.
+    pub async fn start_in(data_dir: &Path) -> Self {
         let server = nekowriter_app::start(Config {
-            data_dir: data_dir.path().to_owned(),
-            log_dir: data_dir.path().join("logs"),
+            data_dir: data_dir.to_owned(),
+            log_dir: data_dir.join("logs"),
             port: 0,
         })
         .await
@@ -31,8 +42,14 @@ impl TestServer {
             server,
             client: Client::new(),
             base,
-            _data_dir: data_dir,
+            owned_data_dir: None,
         }
+    }
+
+    /// Shuts the server down and waits until it has released the data directory.
+    pub async fn stop(self) {
+        self.server.shutdown().trigger();
+        self.server.wait().await.expect("the server stops cleanly");
     }
 
     pub fn get(&self, path: &str) -> RequestBuilder {

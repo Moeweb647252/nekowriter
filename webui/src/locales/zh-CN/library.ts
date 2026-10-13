@@ -12,6 +12,7 @@ export default {
     deletedBody: "删除的作品会出现在这里，可以随时恢复。",
   },
   card: {
+    open: "打开{{name}}",
     version: "第 {{number}} 版",
     updated: "{{time}}更新",
     deleted: "{{time}}删除",

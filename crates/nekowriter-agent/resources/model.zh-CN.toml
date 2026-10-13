@@ -1,0 +1,96 @@
+# Model-facing text: everything the application tells the model besides the prompts.
+# Placeholders such as {{name}} use the template language of
+# crates/nekowriter-core/src/template.rs. Every key is required by `ModelText`.
+
+[languages]
+"zh-CN" = "简体中文"
+en = "英语"
+
+[artifacts]
+background = "背景设定"
+research = "资料收集"
+characters = "人物设定"
+outline = "小说粗纲"
+
+[list]
+separator = "、"
+
+[contracts]
+preparation = """
+## 提交方式
+- 完成后调用 {{tool}} 工具提交，这是结束本阶段的唯一方式。不要在普通文本中输出产物正文或 JSON。
+- 每次回复最多调用一个工具。
+- artifacts 中每项产物只出现一次，kind 的取值为 background（背景设定）、research（资料收集）、characters（人物设定）、outline（小说粗纲），只提交本轮要求的产物。
+- 提交小说粗纲时必须同时提供 chapter_plan：按顺序列出每一章的标题（title）和本章目标（goal）。
+- 提交后作者会逐项审核。未通过的产物会附有审核意见，届时只修订并重新提交被要求的产物。"""
+
+[tools.submit_preparation]
+description = "提交本轮的准备产物。这是结束准备阶段的唯一方式。"
+artifacts = "本轮要求提交的产物，每项一次。"
+artifact_kind = "产物类型。"
+artifact_content = "产物全文，使用 Markdown。"
+chapter_plan = "全书的章节计划，按顺序排列。"
+chapter_title = "章节标题。"
+chapter_goal = "本章要完成的目标，一到两句话。"
+
+[results]
+submission_accepted = "提交成功，产物已交给作者审核。"
+submission_rejected = "提交未被接受：{{problem}}"
+protocol_error = "调用无效：{{problem}}"
+
+[submission_problems]
+missing_artifacts = "缺少本轮要求的产物：{{artifacts}}。"
+unexpected_artifacts = "本轮不需要提交这些产物：{{artifacts}}。"
+duplicate_artifact = "产物“{{artifact}}”出现了不止一次。"
+empty_artifact = "产物“{{artifact}}”的内容为空。"
+artifact_too_long = "产物“{{artifact}}”超过了 {{max_chars}} 个字符的上限。"
+chapter_plan_missing = "提交小说粗纲时必须提供 chapter_plan。"
+chapter_plan_not_expected = "本轮没有提交小说粗纲，不要提供 chapter_plan。"
+chapter_plan_empty = "chapter_plan 至少需要一章。"
+chapter_plan_too_long = "chapter_plan 最多 {{max_items}} 章。"
+chapter_title_empty = "第 {{number}} 章的标题为空。"
+chapter_title_not_single_line = "第 {{number}} 章的标题只能是一行文字。"
+chapter_title_too_long = "第 {{number}} 章的标题超过了 {{max_chars}} 个字符的上限。"
+chapter_goal_empty = "第 {{number}} 章的目标为空。"
+chapter_goal_too_long = "第 {{number}} 章的目标超过了 {{max_chars}} 个字符的上限。"
+
+[protocol_problems]
+unknown_tool = "本轮没有名为 {{name}} 的工具。"
+parallel_tool_calls = "一次回复只能调用一个工具，这次的调用都没有执行。请一次只调用一个工具。"
+invalid_arguments = "参数不符合要求：{{problem}}"
+
+[arguments_problems]
+not_json = "参数不是合法的 JSON。"
+missing_field = "{{location}}缺少必填字段 {{field}}。"
+wrong_type = "{{location}}的类型应为{{expected}}。"
+not_allowed = "{{location}}的值 {{value}} 不在允许的范围内，可选值：{{allowed}}。"
+root = "参数"
+field = "字段 {{path}} "
+
+[json_types]
+object = "对象"
+array = "数组"
+string = "字符串"
+integer = "整数"
+number = "数字"
+boolean = "布尔值"
+
+[corrections]
+no_tool_call = "你的回复没有调用工具。本阶段只能通过调用 {{tool}} 提交结果，不要在普通文本中输出结果或 JSON。请现在调用工具。"
+protocol_error = "上一次工具调用不符合要求，原因见对应的工具结果。请修正后重新调用。"
+submission_rejected = "提交内容没有通过检查，原因见对应的工具结果。请修正后重新提交。"
+
+[review]
+preparation_outcome = """作者已审核本轮提交的产物，以下产物需要修订后重新提交：
+
+{{items}}
+
+只修订并重新提交上面列出的产物，已通过的产物保持不变。"""
+rejected = """【{{artifact}}】未通过。审核意见：
+{{feedback}}"""
+stale = "【{{artifact}}】所依赖的产物已经修改，请据此检查并重新提交。"
+item_separator = "\n\n"
+
+[connection_test]
+system = "这是一次连接测试。"
+user = "请只回复 OK。"

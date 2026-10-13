@@ -3,4 +3,4 @@
 /**
  * What is wrong with a rejected field value.
  */
-export type FieldProblem = { "kind": "empty" } | { "kind": "too_long", maxChars: number, } | { "kind": "control_character" };
+export type FieldProblem = { "kind": "empty" } | { "kind": "too_long", maxChars: number, } | { "kind": "control_character" } | { "kind": "invalid_url" } | { "kind": "out_of_range", min: number, max: number, };

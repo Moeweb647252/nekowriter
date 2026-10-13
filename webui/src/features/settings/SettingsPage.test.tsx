@@ -1,12 +1,13 @@
 import { screen } from "@testing-library/react"
 import { HttpResponse, http } from "msw"
-import { describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { SettingsPage } from "./SettingsPage"
 import type { HealthView } from "@/api/generated/HealthView"
 import { LANGUAGE_STORAGE_KEY } from "@/i18n"
 import { UI_LANGUAGE_NAMES } from "@/locales/languages"
 import { zhCN } from "@/locales/zh-CN"
+import { systemSettings } from "@/test/fixtures"
 import { renderWithProviders } from "@/test/render"
 import { server } from "@/test/server"
 
@@ -18,6 +19,10 @@ const health: HealthView = {
 }
 
 describe("SettingsPage", () => {
+  beforeEach(() => {
+    server.use(http.get("*/api/settings", () => HttpResponse.json(systemSettings())))
+  })
+
   it("shows where the installation keeps its data", async () => {
     server.use(http.get("*/api/health", () => HttpResponse.json(health)))
     renderWithProviders(<SettingsPage />)

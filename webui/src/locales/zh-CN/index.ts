@@ -5,6 +5,13 @@ import common from "./common"
 import errors from "./errors"
 import library from "./library"
 import settings from "./settings"
+import workspace from "./workspace"
 
 /** The Simplified Chinese catalog. */
-export const zhCN = { common, errors, library, settings } satisfies Catalog<EnglishCatalog>
+export const zhCN = {
+  common,
+  errors,
+  library,
+  settings,
+  workspace,
+} satisfies Catalog<EnglishCatalog>

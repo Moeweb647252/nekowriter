@@ -3,4 +3,4 @@
 /**
  * A kind of stored object, used to say which object a request referred to.
  */
-export type Resource = "project" | "version";
+export type Resource = "project" | "version" | "workspace" | "review" | "run" | "settings";

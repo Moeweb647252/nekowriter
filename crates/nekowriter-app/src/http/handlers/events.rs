@@ -3,7 +3,8 @@
 //! A client reads the current cursor, loads its data, then subscribes with `after` set to
 //! that cursor, so no change between loading and subscribing is missed. Every message is
 //! one JSON [`ServerMessage`]; persisted events also carry their sequence number as the
-//! SSE `id`, so a reconnecting browser resumes through `Last-Event-ID`.
+//! SSE `id`, so a reconnecting browser resumes through `Last-Event-ID`. Previews carry no
+//! `id`: they are not part of the log.
 
 use std::{collections::VecDeque, convert::Infallible, time::Duration};
 
@@ -17,7 +18,7 @@ use futures_util::{Stream, stream};
 use nekowriter_core::event::Event;
 use nekowriter_store::{EventBatch, EventRecord, Store};
 use serde::{Deserialize, Serialize};
-use tokio::sync::watch;
+use tokio::{sync::watch, time::Instant};
 use ts_rs::TS;
 
 use crate::{
@@ -27,6 +28,7 @@ use crate::{
         extract::Query,
     },
     lifecycle::Shutdown,
+    preview::Preview,
 };
 
 /// How many events are read from the database at a time.
@@ -34,6 +36,9 @@ const BATCH_SIZE: u64 = 256;
 
 /// How often an idle stream sends a comment so proxies and browsers keep it open.
 const HEARTBEAT: Duration = Duration::from_secs(15);
+
+/// The shortest time between two previews on one stream.
+const PREVIEW_INTERVAL: Duration = Duration::from_millis(200);
 
 #[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -64,6 +69,8 @@ pub struct EventStreamQuery {
 pub enum ServerMessage {
     /// A committed change.
     Event { seq: i64, event: Event },
+    /// The latest preview of the request in flight; `null` once it ended.
+    Preview { preview: Option<Preview> },
     /// The cursor is outside the retained event log. Reload all data, read a new cursor
     /// and subscribe again. The stream ends after this message.
     ResetRequired,
@@ -87,6 +94,8 @@ pub(crate) async fn stream(
     let cursor = start_cursor(&headers, query.after)?;
     let messages = Messages {
         notifications: state.store.subscribe_events(),
+        previews: Some(state.previews.subscribe()),
+        next_preview: Instant::now(),
         store: state.store,
         shutdown: state.shutdown,
         cursor,
@@ -124,6 +133,10 @@ fn start_cursor(headers: &HeaderMap, after: Option<i64>) -> Result<i64, ApiError
 struct Messages {
     store: Store,
     notifications: watch::Receiver<i64>,
+    /// `None` once the preview channel closed.
+    previews: Option<watch::Receiver<Option<Preview>>>,
+    /// The earliest time the next preview may be sent.
+    next_preview: Instant,
     shutdown: Shutdown,
     cursor: i64,
     pending: VecDeque<EventRecord>,
@@ -169,15 +182,43 @@ impl Messages {
                         return None;
                     }
                 }
+                changed = preview_changed(self.previews.as_mut(), self.next_preview) => {
+                    if changed {
+                        return Some(self.preview());
+                    }
+                    self.previews = None;
+                }
                 () = self.shutdown.triggered() => return Some(self.last(&ServerMessage::ShuttingDown)),
             }
         }
+    }
+
+    fn preview(&mut self) -> SseEvent {
+        let preview = self
+            .previews
+            .as_mut()
+            .and_then(|previews| previews.borrow_and_update().clone());
+        self.next_preview = Instant::now() + PREVIEW_INTERVAL;
+        sse(&ServerMessage::Preview { preview })
     }
 
     fn last(&mut self, message: &ServerMessage) -> SseEvent {
         self.finished = true;
         sse(message)
     }
+}
+
+/// Completes with `true` once the preview changed and `not_before` has passed, or with
+/// `false` if the channel closed. Without a channel it never completes.
+async fn preview_changed(
+    previews: Option<&mut watch::Receiver<Option<Preview>>>,
+    not_before: Instant,
+) -> bool {
+    let Some(previews) = previews else {
+        return std::future::pending().await;
+    };
+    tokio::time::sleep_until(not_before).await;
+    previews.changed().await.is_ok()
 }
 
 fn sse(message: &ServerMessage) -> SseEvent {

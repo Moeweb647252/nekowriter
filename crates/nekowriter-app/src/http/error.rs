@@ -12,6 +12,8 @@ use axum::{
 use nekowriter_core::{
     conflict::{Resource, StateConflict},
     field::FieldError,
+    model::ModelProblem,
+    run::ProviderFailure,
 };
 use nekowriter_store::StoreError;
 use serde::Serialize;
@@ -49,6 +51,12 @@ pub enum ApiProblem {
     IdempotencyConflict,
     /// The request conflicts with the current state.
     StateConflict(StateConflict),
+    /// The model settings do not allow model requests.
+    ModelNotReady { problem: ModelProblem },
+    /// The model service did not answer a connection test properly.
+    ModelServiceFailed { failure: ProviderFailure },
+    /// The service is shutting down, so it abandoned the request.
+    ServiceStopping,
     /// The request is not valid JSON or does not have the expected shape.
     MalformedRequest,
     /// No API route matches the request.
@@ -66,9 +74,15 @@ impl ApiProblem {
         match self {
             Self::FieldInvalid(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::NotFound { .. } | Self::RouteNotFound => StatusCode::NOT_FOUND,
-            Self::RevisionConflict { .. } | Self::IdempotencyConflict | Self::StateConflict(_) => {
-                StatusCode::CONFLICT
-            }
+            Self::RevisionConflict { .. }
+            | Self::IdempotencyConflict
+            | Self::StateConflict(_)
+            | Self::ModelNotReady { .. } => StatusCode::CONFLICT,
+            Self::ModelServiceFailed {
+                failure: ProviderFailure::Timeout { .. },
+            } => StatusCode::GATEWAY_TIMEOUT,
+            Self::ModelServiceFailed { .. } => StatusCode::BAD_GATEWAY,
+            Self::ServiceStopping => StatusCode::SERVICE_UNAVAILABLE,
             Self::MalformedRequest => StatusCode::BAD_REQUEST,
             Self::UntrustedHost | Self::UntrustedOrigin => StatusCode::FORBIDDEN,
             Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
@@ -126,6 +140,7 @@ impl From<StoreError> for ApiError {
             }
             StoreError::IdempotencyConflict(_) => ApiProblem::IdempotencyConflict,
             StoreError::StateConflict(conflict) => ApiProblem::StateConflict(conflict),
+            StoreError::ModelNotReady(problem) => ApiProblem::ModelNotReady { problem },
             StoreError::Database(_) | StoreError::Corrupt(_) => ApiProblem::Internal,
         };
         Self::new(problem, cause)

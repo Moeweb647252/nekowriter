@@ -1,4 +1,4 @@
-import { useCallback } from "react"
+import { useCallback, useMemo } from "react"
 import { useTranslation } from "react-i18next"
 
 import { ApiError, NetworkError } from "@/api/client"
@@ -6,8 +6,11 @@ import type { ApiErrorBody } from "@/api/generated/ApiErrorBody"
 import type { ApiProblem } from "@/api/generated/ApiProblem"
 import type { Field } from "@/api/generated/Field"
 import type { FieldProblem } from "@/api/generated/FieldProblem"
+import type { ModelProblem } from "@/api/generated/ModelProblem"
+import type { ProviderFailure } from "@/api/generated/ProviderFailure"
 import type { Resource } from "@/api/generated/Resource"
 import type { StateConflict } from "@/api/generated/StateConflict"
+import type { TimeoutPhase } from "@/api/generated/TimeoutPhase"
 import { assertNever } from "@/lib/assert"
 
 /**
@@ -20,6 +23,9 @@ export interface ErrorCatalog {
   reference: string
   field: Record<Field, string>
   resource: Record<Resource, string>
+  modelProblem: Record<ModelProblem["kind"], string>
+  providerFailure: Record<ProviderFailure["kind"], string>
+  timeoutPhase: Record<TimeoutPhase, string>
   codes: {
     [Code in ApiProblem["code"]]: Code extends "FIELD_INVALID"
       ? Record<FieldProblem["kind"], string>
@@ -29,30 +35,71 @@ export interface ErrorCatalog {
   }
 }
 
+/** Describes why the model settings do not allow requests, and how to fix it. */
+export function useModelProblemText(): (problem: ModelProblem) => string {
+  const { t } = useTranslation()
+  return useCallback((problem) => t(($) => $.errors.modelProblem[problem.kind]), [t])
+}
+
+/** Describes how a request to the model service failed, as a clause. */
+export function useProviderFailureText(): (failure: ProviderFailure) => string {
+  const { t } = useTranslation()
+  return useCallback(
+    (failure: ProviderFailure) => {
+      switch (failure.kind) {
+        case "timeout":
+          return t(($) => $.errors.providerFailure.timeout, {
+            phase: t(($) => $.errors.timeoutPhase[failure.phase]),
+          })
+        case "http_status":
+          return t(($) => $.errors.providerFailure.http_status, { status: failure.status })
+        case "connect":
+        case "invalid_response":
+        case "response_too_large":
+          return t(($) => $.errors.providerFailure[failure.kind])
+        default:
+          return assertNever(failure)
+      }
+    },
+    [t],
+  )
+}
+
 /** Returns a function that describes any thrown error in the interface language. */
 export function useErrorText(): (error: unknown) => string {
   const { t } = useTranslation()
+  const modelProblem = useModelProblemText()
+  const providerFailure = useProviderFailureText()
 
-  const describeProblem = useCallback(
-    (body: ApiErrorBody): string => {
+  const describeProblem = useMemo(() => {
+    const fieldProblem = (field: string, problem: FieldProblem): string => {
+      switch (problem.kind) {
+        case "empty":
+        case "control_character":
+        case "invalid_url":
+          return t(($) => $.errors.codes.FIELD_INVALID[problem.kind], { field })
+        case "too_long":
+          return t(($) => $.errors.codes.FIELD_INVALID.too_long, {
+            field,
+            maxChars: problem.maxChars,
+          })
+        case "out_of_range":
+          return t(($) => $.errors.codes.FIELD_INVALID.out_of_range, {
+            field,
+            min: problem.min,
+            max: problem.max,
+          })
+        default:
+          return assertNever(problem)
+      }
+    }
+    return (body: ApiErrorBody): string => {
       switch (body.code) {
-        case "FIELD_INVALID": {
-          const field = t(($) => $.errors.field[body.params.field])
-          const problem = body.params.problem
-          switch (problem.kind) {
-            case "empty":
-              return t(($) => $.errors.codes.FIELD_INVALID.empty, { field })
-            case "too_long":
-              return t(($) => $.errors.codes.FIELD_INVALID.too_long, {
-                field,
-                maxChars: problem.maxChars,
-              })
-            case "control_character":
-              return t(($) => $.errors.codes.FIELD_INVALID.control_character, { field })
-            default:
-              return assertNever(problem)
-          }
-        }
+        case "FIELD_INVALID":
+          return fieldProblem(
+            t(($) => $.errors.field[body.params.field]),
+            body.params.problem,
+          )
         case "NOT_FOUND":
           return t(($) => $.errors.codes.NOT_FOUND, {
             resource: t(($) => $.errors.resource[body.params.resource]),
@@ -63,16 +110,21 @@ export function useErrorText(): (error: unknown) => string {
           })
         case "STATE_CONFLICT":
           return t(($) => $.errors.codes.STATE_CONFLICT[body.params])
+        case "MODEL_NOT_READY":
+          return t(($) => $.errors.codes.MODEL_NOT_READY, {
+            problem: modelProblem(body.params.problem),
+          })
+        case "MODEL_SERVICE_FAILED":
+          return t(($) => $.errors.codes.MODEL_SERVICE_FAILED, {
+            failure: providerFailure(body.params.failure),
+          })
         case "IDEMPOTENCY_CONFLICT":
-          return t(($) => $.errors.codes.IDEMPOTENCY_CONFLICT)
+        case "SERVICE_STOPPING":
         case "MALFORMED_REQUEST":
-          return t(($) => $.errors.codes.MALFORMED_REQUEST)
         case "ROUTE_NOT_FOUND":
-          return t(($) => $.errors.codes.ROUTE_NOT_FOUND)
         case "UNTRUSTED_HOST":
-          return t(($) => $.errors.codes.UNTRUSTED_HOST)
         case "UNTRUSTED_ORIGIN":
-          return t(($) => $.errors.codes.UNTRUSTED_ORIGIN)
+          return t(($) => $.errors.codes[body.code])
         case "INTERNAL":
           return `${t(($) => $.errors.codes.INTERNAL)} ${t(($) => $.errors.reference, {
             requestId: body.requestId,
@@ -80,9 +132,8 @@ export function useErrorText(): (error: unknown) => string {
         default:
           return assertNever(body)
       }
-    },
-    [t],
-  )
+    }
+  }, [t, modelProblem, providerFailure])
 
   return useCallback(
     (error: unknown) => {

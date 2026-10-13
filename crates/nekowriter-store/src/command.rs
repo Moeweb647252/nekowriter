@@ -1,16 +1,56 @@
-//! The idempotent command envelope: the only way to change stored data on behalf of a user.
+//! Write transactions: idempotent user commands, and the application's own writes.
 //!
-//! A command is identified by the `CommandId` the client generated for one user action.
+//! A [`WriteTx`] is a write transaction that collects events; committing it writes the
+//! events in the same transaction and then wakes event subscribers. The application's own
+//! writes (the dispatcher recording a model answer, startup recovery) use it directly.
+//!
+//! Writes on behalf of a user go through the command envelope instead: a command is
+//! identified by the `CommandId` the client generated for one user action.
 //! [`Store::begin_command`] either replays the recorded outcome of an earlier attempt or
-//! opens a write transaction. [`CommandTx::commit`] records the outcome, writes the
-//! command's events and commits in one transaction, then wakes event subscribers.
-//! Dropping a `CommandTx` without committing rolls everything back and records nothing, so
-//! a failed command can be retried with the same ID.
+//! opens a [`CommandTx`], whose commit also records the outcome. Dropping either without
+//! committing rolls everything back and records nothing, so a failed command can be
+//! retried with the same ID.
 
-use crate::{Store, StoreError, digest::sha256_hex, entity::command_receipt, events};
 use nekowriter_core::{event::Event, ids::CommandId, time::Timestamp};
 use sea_orm::{ActiveModelTrait, DatabaseTransaction, EntityTrait, Set, SqlErr};
 use serde::{Serialize, de::DeserializeOwned};
+
+use crate::{Store, StoreError, digest::sha256_hex, entity::command_receipt, events};
+
+/// A write transaction that commits its events with it.
+pub(crate) struct WriteTx {
+    store: Store,
+    txn: DatabaseTransaction,
+    now: Timestamp,
+    events: Vec<Event>,
+}
+
+impl WriteTx {
+    /// The transaction to read and write through.
+    pub(crate) fn db(&self) -> &DatabaseTransaction {
+        &self.txn
+    }
+
+    /// The time the write takes effect; use it for every timestamp it writes.
+    pub(crate) fn now(&self) -> Timestamp {
+        self.now
+    }
+
+    /// Records an event to be written with the transaction.
+    pub(crate) fn emit(&mut self, event: Event) {
+        self.events.push(event);
+    }
+
+    /// Writes the events, commits and wakes subscribers.
+    pub(crate) async fn commit(self) -> Result<(), StoreError> {
+        let last_seq = events::append(&self.txn, &self.events, self.now).await?;
+        self.txn.commit().await?;
+        if let Some(seq) = last_seq {
+            self.store.events.notify(seq);
+        }
+        Ok(())
+    }
+}
 
 /// The result of starting a command.
 pub(crate) enum Begun<T> {
@@ -22,16 +62,23 @@ pub(crate) enum Begun<T> {
 
 /// An open write transaction for one command.
 pub(crate) struct CommandTx {
-    store: Store,
-    txn: DatabaseTransaction,
+    write: WriteTx,
     id: CommandId,
     kind: &'static str,
     input_hash: String,
-    now: Timestamp,
-    events: Vec<Event>,
 }
 
 impl Store {
+    /// Opens a write transaction for the application's own writes.
+    pub(crate) async fn begin_internal(&self) -> Result<WriteTx, StoreError> {
+        Ok(WriteTx {
+            store: self.clone(),
+            txn: self.begin_write().await?,
+            now: Timestamp::now(),
+            events: Vec::new(),
+        })
+    }
+
     /// Starts command `kind` (for example `project.create`) with the given input.
     ///
     /// A retry is recognized by its command ID. It must repeat the same kind and input,
@@ -50,15 +97,11 @@ impl Store {
         if let Some(output) = self.replay::<T>(id, kind, &input_hash).await? {
             return Ok(Begun::Replayed(output));
         }
-        let txn = self.begin_write().await?;
         Ok(Begun::Fresh(CommandTx {
-            store: self.clone(),
-            txn,
+            write: self.begin_internal().await?,
             id,
             kind,
             input_hash,
-            now: Timestamp::now(),
-            events: Vec::new(),
         }))
     }
 
@@ -84,17 +127,23 @@ impl Store {
 impl CommandTx {
     /// The transaction to read and write through.
     pub(crate) fn db(&self) -> &DatabaseTransaction {
-        &self.txn
+        self.write.db()
     }
 
     /// The time this command takes effect; use it for every timestamp the command writes.
     pub(crate) fn now(&self) -> Timestamp {
-        self.now
+        self.write.now()
     }
 
     /// Records an event to be written with the command.
     pub(crate) fn emit(&mut self, event: Event) {
-        self.events.push(event);
+        self.write.emit(event);
+    }
+
+    /// The underlying write transaction, for helpers shared with the application's own
+    /// writes.
+    pub(crate) fn write(&mut self) -> &mut WriteTx {
+        &mut self.write
     }
 
     /// Records the output, writes the events and commits.
@@ -110,13 +159,13 @@ impl CommandTx {
             kind: Set(self.kind.to_owned()),
             input_hash: Set(self.input_hash.clone()),
             output: Set(serde_json::to_string(&output)?),
-            committed_at: Set(self.now),
+            committed_at: Set(self.write.now),
         };
-        if let Err(error) = receipt.insert(&self.txn).await {
+        if let Err(error) = receipt.insert(&self.write.txn).await {
             if matches!(error.sql_err(), Some(SqlErr::UniqueConstraintViolation(_))) {
-                self.txn.rollback().await?;
-                return self
-                    .store
+                let store = self.write.store.clone();
+                self.write.txn.rollback().await?;
+                return store
                     .replay(self.id, self.kind, &self.input_hash)
                     .await?
                     .ok_or_else(|| {
@@ -128,11 +177,7 @@ impl CommandTx {
             }
             return Err(error.into());
         }
-        let last_seq = events::append(&self.txn, &self.events, self.now).await?;
-        self.txn.commit().await?;
-        if let Some(seq) = last_seq {
-            self.store.events.notify(seq);
-        }
+        self.write.commit().await?;
         Ok(output)
     }
 }

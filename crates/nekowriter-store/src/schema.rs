@@ -17,7 +17,11 @@ use sea_orm::{
 
 use crate::{
     digest::sha256_hex,
-    entity::{command_receipt, event, project, schema_info, version},
+    entity::{
+        chapter, command_receipt, document, event, model_request, project, review, revision,
+        revision_dependency, run, run_message, schema_info, system_settings, tool_call, version,
+        workflow,
+    },
 };
 
 /// Bump this when the meaning of stored data changes without a DDL change, for example
@@ -31,8 +35,19 @@ fn create_statements() -> Vec<Statement> {
     let schema = Schema::new(DbBackend::Sqlite);
     let mut statements = Vec::new();
     add_entity(&mut statements, &schema, schema_info::Entity);
+    add_entity(&mut statements, &schema, system_settings::Entity);
     add_entity(&mut statements, &schema, project::Entity);
     add_entity(&mut statements, &schema, version::Entity);
+    add_entity(&mut statements, &schema, workflow::Entity);
+    add_entity(&mut statements, &schema, document::Entity);
+    add_entity(&mut statements, &schema, revision::Entity);
+    add_entity(&mut statements, &schema, revision_dependency::Entity);
+    add_entity(&mut statements, &schema, chapter::Entity);
+    add_entity(&mut statements, &schema, run::Entity);
+    add_entity(&mut statements, &schema, model_request::Entity);
+    add_entity(&mut statements, &schema, run_message::Entity);
+    add_entity(&mut statements, &schema, tool_call::Entity);
+    add_entity(&mut statements, &schema, review::Entity);
     add_entity(&mut statements, &schema, event::Entity);
     add_entity(&mut statements, &schema, command_receipt::Entity);
     statements

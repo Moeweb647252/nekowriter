@@ -2,6 +2,6 @@
 import type { CommandId } from "./CommandId";
 
 /**
- * The request of commands that only need the project's current revision.
+ * The request of commands that need nothing but the target's current revision.
  */
-export type ProjectRevisionRequest = { commandId: CommandId, expectedRevision: number, };
+export type RevisionRequest = { commandId: CommandId, expectedRevision: number, };

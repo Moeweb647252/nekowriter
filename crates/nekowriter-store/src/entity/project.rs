@@ -1,5 +1,6 @@
 use nekowriter_core::{
     ids::{ProjectId, VersionId},
+    model::{ModelProfile, ThinkingLevel},
     project::{ProjectName, WritingLanguage},
     time::Timestamp,
 };
@@ -13,6 +14,9 @@ pub struct Model {
     pub id: ProjectId,
     pub name: ProjectName,
     pub writing_language: WritingLanguage,
+    /// The project's own model; `None` uses the system default.
+    pub model: Option<ModelProfile>,
+    pub thinking_level: ThinkingLevel,
     /// The version the workspace shows. It always belongs to this project; there is no
     /// foreign key because versions also reference their project.
     pub selected_version_id: VersionId,

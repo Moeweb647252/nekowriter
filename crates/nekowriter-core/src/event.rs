@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::ids::ProjectId;
+use crate::ids::{ProjectId, VersionId};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(
@@ -20,4 +20,12 @@ pub enum Event {
     /// A project was created, renamed, deleted or restored, or its settings or selected
     /// version changed.
     ProjectChanged { project_id: ProjectId },
+    /// Something in a version's workspace changed: its workflow, runs, documents, reviews
+    /// or chapters.
+    VersionChanged {
+        project_id: ProjectId,
+        version_id: VersionId,
+    },
+    /// The system settings changed.
+    SettingsChanged,
 }

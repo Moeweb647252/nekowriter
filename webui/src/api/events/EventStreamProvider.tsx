@@ -5,6 +5,7 @@ import { systemApi } from "../endpoints/system"
 import type { ServerMessage } from "../generated/ServerMessage"
 import { type ConnectionStatus, ConnectionContext } from "./connection"
 import { invalidateFor } from "./invalidation"
+import { PreviewContext, PreviewStore } from "./preview"
 import { assertNever } from "@/lib/assert"
 
 /** How long to wait before trying again when the service cannot be reached. */
@@ -27,6 +28,7 @@ export function EventStreamProvider({
 }) {
   const queryClient = useQueryClient()
   const [status, setStatus] = useState<ConnectionStatus>("connecting")
+  const [previews] = useState(() => new PreviewStore())
 
   useEffect(() => {
     let source: EventSource | null = null
@@ -52,6 +54,8 @@ export function EventStreamProvider({
         handle(JSON.parse(message.data) as ServerMessage)
       }
       source.onerror = () => {
+        // A preview may have ended while disconnected; the stream resends a current one.
+        previews.set(null)
         if (source?.readyState === EventSource.CLOSED) {
           // The browser gave up reconnecting; start over from a fresh cursor.
           source = null
@@ -69,6 +73,9 @@ export function EventStreamProvider({
         case "event":
           void invalidateFor(queryClient, message.event)
           return
+        case "preview":
+          previews.set(message.preview)
+          return
         case "reset_required":
           source?.close()
           source = null
@@ -77,6 +84,7 @@ export function EventStreamProvider({
         case "shutting_down":
           source?.close()
           source = null
+          previews.set(null)
           setStatus("stopped")
           return
         default:
@@ -90,11 +98,13 @@ export function EventStreamProvider({
       clearTimeout(retryTimer)
       source?.close()
     }
-  }, [queryClient])
+  }, [queryClient, previews])
 
   return (
     <ConnectionContext value={status}>
-      {status === "connecting" ? splash : children}
+      <PreviewContext value={previews}>
+        {status === "connecting" ? splash : children}
+      </PreviewContext>
     </ConnectionContext>
   )
 }
