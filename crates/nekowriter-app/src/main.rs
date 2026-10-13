@@ -42,8 +42,12 @@ async fn main() -> ExitCode {
     match run(Cli::parse()).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            tracing::error!("{error}");
-            eprintln!("{error}");
+            // Once logging is set up, the log reaches both the terminal and the log file.
+            if tracing::dispatcher::has_been_set() {
+                tracing::error!("{error}");
+            } else {
+                eprintln!("{error}");
+            }
             ExitCode::FAILURE
         }
     }

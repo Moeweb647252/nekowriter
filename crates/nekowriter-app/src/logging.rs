@@ -1,4 +1,4 @@
-//! Logging to standard output and to daily log files in the data directory.
+//! Logging to standard error and to daily log files in the data directory.
 
 use std::{fs, io, path::Path};
 
@@ -25,7 +25,7 @@ pub enum LoggingError {
     Subscriber(#[from] tracing_subscriber::util::TryInitError),
 }
 
-/// Sends log records to standard output and to `log_dir/nekowriter.<date>.log`. Records
+/// Sends log records to standard error and to `log_dir/nekowriter.<date>.log`. Records
 /// are written to the file by a background thread until the returned guard drops.
 pub fn init_logging(log_dir: &Path) -> Result<WorkerGuard, LoggingError> {
     fs::create_dir_all(log_dir).map_err(|source| LoggingError::Directory {
@@ -43,7 +43,7 @@ pub fn init_logging(log_dir: &Path) -> Result<WorkerGuard, LoggingError> {
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(DEFAULT_FILTER));
     tracing_subscriber::registry()
         .with(filter)
-        .with(fmt::layer())
+        .with(fmt::layer().with_writer(io::stderr))
         .with(fmt::layer().with_ansi(false).with_writer(file_writer))
         .try_init()?;
     Ok(guard)

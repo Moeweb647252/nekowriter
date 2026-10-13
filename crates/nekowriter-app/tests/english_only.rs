@@ -15,7 +15,7 @@ use std::{
 const MULTILINGUAL_DIRS: [&str; 3] = [
     "crates/nekowriter-agent/resources/",
     "crates/nekowriter-app/resources/",
-    "webui/src/locales/zh-CN/",
+    "webui/src/locales/",
 ];
 
 /// Typographic characters allowed everywhere: em dash, en dash, ellipsis, curly quotes,

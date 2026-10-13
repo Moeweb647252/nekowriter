@@ -1,0 +1,45 @@
+export default {
+  title: "Works",
+  newWork: "New work",
+  filterLabel: "Show",
+  empty: {
+    activeTitle: "No works yet",
+    activeBody: "Create a work to start writing a novel.",
+    deletedTitle: "Nothing deleted",
+    deletedBody: "Deleted works appear here, and you can restore them.",
+  },
+  card: {
+    version: "Version {{number}}",
+    updated: "Updated {{time}}",
+    deleted: "Deleted {{time}}",
+    actions: "Actions for {{name}}",
+    rename: "Rename",
+    delete: "Delete",
+    restore: "Restore",
+  },
+  create: {
+    title: "New work",
+    description: "A work holds one novel. You can change everything except the novel later.",
+    name: "Work name",
+    novelTitle: "Novel title",
+    writingLanguage: "Writing language",
+    writingLanguageHint: "The agents write the novel in this language.",
+    submit: "Create work",
+  },
+  rename: {
+    title: "Rename work",
+    name: "Work name",
+    submit: "Rename",
+  },
+  delete: {
+    title: "Delete “{{name}}”?",
+    body: "The work moves to Deleted, where you can restore it.",
+    confirm: "Delete work",
+  },
+  done: {
+    created: "Created “{{name}}”.",
+    renamed: "Renamed to “{{name}}”.",
+    deleted: "Deleted “{{name}}”.",
+    restored: "Restored “{{name}}”.",
+  },
+} as const

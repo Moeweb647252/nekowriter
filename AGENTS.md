@@ -13,5 +13,5 @@
 - Do not compile or test just to look at something. Batch the verification a change actually needs into one run at the end of the change; a type check, a test run and a build are one verification, not three.
 - The work of writing documents needs to be taken seriously. Make sure that the documents are standardized, clear, and accurate. The only one purpose of writing documents is to give the maintainer enough information.
 - Write code, comments, logs, developer messages, commit messages and documents in English. The `english_only` test in `crates/nekowriter-app/tests/` enforces this.
-- Non-English text lives only in resource files: UI text in `webui/src/locales/<locale>/`, model-facing text (built-in prompts, tool text, corrections) in `crates/nekowriter-agent/resources/`, and export text in `crates/nekowriter-app/resources/export/`. The backend sends codes and data, never user-facing prose.
+- Non-English text lives only in resource files: UI text in `webui/src/locales/`, model-facing text (built-in prompts, tool text, corrections) in `crates/nekowriter-agent/resources/`, and export text in `crates/nekowriter-app/resources/export/`. The backend sends codes and data, never user-facing prose.
 - `docs/product-spec.md` is the behavior contract. Change it first when behavior changes.

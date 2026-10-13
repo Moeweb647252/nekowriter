@@ -1,0 +1,46 @@
+# One job, in dependency order: the Rust tests regenerate the TypeScript API types that the
+# web UI checks against, and the release binary embeds the web UI build.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: webui/pnpm-lock.yaml
+      - name: Install the Rust toolchain from rust-toolchain.toml
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Install web UI dependencies
+        run: pnpm --dir webui install --frozen-lockfile
+      - name: Rust formatting
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Rust tests (also regenerates the TypeScript API types)
+        run: |
+          rm -rf webui/src/api/generated
+          cargo test --workspace
+      - name: Generated TypeScript types are up to date
+        run: |
+          git diff --exit-code -- webui/src/api/generated
+          test -z "$(git ls-files --others --exclude-standard -- webui/src/api/generated)"
+      - name: Web UI lint
+        run: pnpm --dir webui lint
+      - name: Web UI type check
+        run: pnpm --dir webui typecheck
+      - name: Web UI tests
+        run: pnpm --dir webui test
+      - name: Web UI build
+        run: pnpm --dir webui build
+      - name: Release build (embeds the web UI)
+        run: cargo build --release -p nekowriter-app
