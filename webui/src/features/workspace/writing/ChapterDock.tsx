@@ -2,6 +2,7 @@ import { type SubmitEvent, useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import { nextMainChapter, useChapterName } from "../chapters"
+import { DelegatedReview } from "../Delegation"
 import { RevisionText } from "../DocumentView"
 import { QuestionDock } from "../QuestionDock"
 import { ReviewForm } from "../ReviewForm"
@@ -73,6 +74,9 @@ export function ChapterDock({
               <RevisionText revision={chapter.outline} empty="" />
             </div>
           </section>
+          {chapter.review?.status === "delegated" && (
+            <DelegatedReview view={view} review={chapter.review} />
+          )}
           {chapter.review?.status === "open" && (
             <ReviewForm
               key={chapter.review.id}
@@ -96,6 +100,9 @@ export function ChapterDock({
             </h3>
             <p className="whitespace-pre-wrap">{chapter.review?.summary}</p>
           </section>
+          {chapter.review?.status === "delegated" && (
+            <DelegatedReview view={view} review={chapter.review} />
+          )}
           {chapter.review?.status === "open" && (
             <ReviewForm
               key={chapter.review.id}

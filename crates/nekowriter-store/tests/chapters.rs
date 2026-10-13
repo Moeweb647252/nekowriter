@@ -176,7 +176,7 @@ async fn an_outline_is_reviewed_and_revised_before_the_body_starts() {
         last_pending(&store).await,
         UnsealedMessage::ReviewRejected {
             kind: ReviewKind::ChapterOutline,
-            feedback: "Start with the storm.".to_owned(),
+            feedback: Some("Start with the storm.".to_owned()),
         }
     );
 

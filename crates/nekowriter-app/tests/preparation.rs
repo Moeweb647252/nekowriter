@@ -302,3 +302,46 @@ async fn stopping_a_run_abandons_its_request_and_continuing_starts_a_new_one() {
     .await;
     assert_eq!(model.requests().len(), 2);
 }
+
+#[tokio::test]
+async fn a_delegated_review_is_decided_by_the_review_agent() {
+    let model = FakeModel::default();
+    let server = TestServer::start().await;
+    configure(&server, model.serve().await).await;
+    let version = first_round_in_review(&server, &model).await;
+    let view = workspace(&server, &version).await;
+    let review = view["artifacts"][0]["review"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    model.call(
+        "submit_review",
+        json!({ "passed": true, "confidence": 0.75, "issues": [] }),
+    );
+    command(
+        &server,
+        &format!("/api/reviews/{review}/delegate"),
+        &version,
+        json!({ "notes": "Check the coast." }),
+    )
+    .await;
+
+    let view = wait_for(&server, &version, |view| {
+        view["artifacts"][0]["review"]["status"] == "approved"
+    })
+    .await;
+    assert_eq!(view["artifacts"][0]["review"]["decidedBy"], "delegate");
+    assert_eq!(view["artifacts"][0]["review"]["confidencePermille"], 750);
+    let requests = model.requests();
+    let request = &requests.last().unwrap().body;
+    let tools: Vec<&str> = request["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["function"]["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(tools, ["submit_review"]);
+    let user = request["messages"][1]["content"].as_str().unwrap();
+    assert!(user.contains("A lighthouse on a cold coast.") && user.contains("Check the coast."));
+}

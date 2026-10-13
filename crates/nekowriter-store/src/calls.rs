@@ -19,6 +19,7 @@ use crate::{
     StoreError,
     chapters::{apply_chapter_submission, apply_edit, apply_outline_submission},
     command::WriteTx,
+    delegation::apply_verdict,
     entity::{
         run,
         tool_call::{self, ToolCallStatus},
@@ -139,6 +140,15 @@ pub(crate) async fn execute(
         StageSubmission::Chapter { submission } => {
             apply_chapter_submission(tx, &run, submission).await?
         }
+        StageSubmission::Review { verdict } => {
+            return match apply_verdict(tx, &run, verdict).await? {
+                Ok(()) => {
+                    resolve(tx, &call, ToolOutcome::SubmissionAccepted).await?;
+                    finish(tx, run).await
+                }
+                Err(problem) => settle_submission(tx, run, &call, Err(problem)).await,
+            };
+        }
     };
     settle_submission(tx, run, &call, accepted).await
 }
@@ -164,6 +174,18 @@ async fn ask(
     waiting.queued_at = Set(None);
     waiting.updated_at = Set(tx.now());
     waiting.update(tx.db()).await?;
+    touch(tx, version_id, project_id).await?;
+    Ok(())
+}
+
+/// Ends a review run whose verdict was taken.
+async fn finish(tx: &mut WriteTx, run: run::Model) -> Result<(), StoreError> {
+    let (version_id, project_id) = (run.version_id, run.project_id);
+    let mut done = run.into_active_model();
+    done.status = Set(RunStatus::Succeeded);
+    done.queued_at = Set(None);
+    done.updated_at = Set(tx.now());
+    done.update(tx.db()).await?;
     touch(tx, version_id, project_id).await?;
     Ok(())
 }

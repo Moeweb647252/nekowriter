@@ -24,6 +24,13 @@ ask_user = """
 ## 向作者提问
 - 遇到只有作者能决定的问题，或作者的要求互相矛盾时，可以调用 {{tool}} 提问，等作者回答后再继续。不要为你自己能决定的细节打扰作者。
 - 选择题的每个选项都要写清楚；作者还可以在选项之外补充自己的回答。"""
+review = """
+## 提交方式
+- 审阅完成后调用 {{tool}} 提交结论，这是结束审阅的唯一方式。不要在普通文本中输出结论。
+- passed：通过为 true，不通过为 false。只有确实存在需要修改的问题时才判为不通过。
+- confidence：你对结论的把握，0 到 1 之间的数字。
+- issues：不通过时逐条列出需要修改的问题，每条写清位置和改法；通过时为空数组。
+- 每次回复最多调用一个工具。"""
 preparation = """
 ## 提交方式
 - 完成后调用 {{tool}} 工具提交，这是结束本阶段的唯一方式。不要在普通文本中输出产物正文或 JSON。
@@ -78,6 +85,12 @@ options = "单选题和多选题的选项；自由回答题为空数组。"
 option_id = "选项的 ID，在本题中唯一，例如 a。"
 option_label = "选项的内容。"
 required = "作者是否必须回答。"
+
+[tools.submit_review]
+description = "提交审阅结论。这是结束审阅的唯一方式。"
+passed = "是否通过。"
+confidence = "对结论的把握，0 到 1 之间的数字。"
+issues = "不通过时需要修改的具体问题，每条一句话；通过时为空数组。"
 
 [tools.submit_chapter]
 description = "提交写完的本章，交给作者审核整章。"
@@ -135,6 +148,7 @@ summary_too_long = "本章摘要超过了 {{max_chars}} 个字符的上限。"
 body_empty = "本章正文还是空的。请先用工具写入正文，再提交本章。"
 wrong_chapter = "chapter_id 不是当前正在写作的章节。"
 feedback_pending = "作者还有尚未落实的意见，见本结果的 feedback。请先用工具修改正文落实这些意见，再提交本章。"
+confidence_out_of_range = "confidence 必须是 0 到 1 之间的数字。"
 
 [protocol_problems]
 unknown_tool = "本轮没有名为 {{name}} 的工具。"
@@ -180,6 +194,43 @@ chapter_rejected = """作者没有通过本章。审核意见：
 {{feedback}}
 
 请根据意见修改正文，然后重新提交本章。"""
+no_issues = "审阅没有通过，但审阅者没有给出具体问题。请自行检查并改进。"
+
+[review_material]
+artifact = """## 待审阅的产物：{{artifact}}
+
+{{content}}"""
+brief = """## 作者的小说目标
+
+{{brief}}"""
+outline = """## 待审阅的大纲：{{chapter}}
+
+{{outline}}"""
+guidance = """## 作者对本章的指导意见
+
+{{guidance}}"""
+chapter = """## 待审阅的章节：{{chapter}}
+
+{{body}}"""
+summary = """## 写作者对本章的概括
+
+{{summary}}"""
+body = """## 本章当前正文
+
+{{body}}"""
+append = """## 待审阅的修改：在本章末尾追加
+
+{{content}}"""
+replace = """## 待审阅的修改：替换一段文字
+
+原文：
+{{old}}
+
+改为：
+{{new}}"""
+notes = """## 作者给你的审阅提示
+
+{{notes}}"""
 
 [folds]
 intro = "以下是本书已经确定的内容，后续写作必须与之保持一致。"

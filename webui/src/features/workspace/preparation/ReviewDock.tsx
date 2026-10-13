@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next"
 
 import type { DocumentKey } from "../documents"
+import { DecidedBy, DelegatedReview } from "../Delegation"
 import { ReviewForm } from "../ReviewForm"
 import type { ArtifactKind } from "@/api/generated/ArtifactKind"
 import type { ArtifactView } from "@/api/generated/ArtifactView"
@@ -59,15 +60,25 @@ function ReviewPanel({ view, artifact }: { view: WorkspaceView; artifact: Artifa
           hint={t(($) => $.workspace.preparation.feedbackHint)}
         />
       )
+    case "delegated":
+      return <DelegatedReview view={view} review={review} />
     case "approved":
-      return <Note>{t(($) => $.workspace.preparation.decided)}</Note>
+      return (
+        <div className="flex flex-col gap-2">
+          <Note>{t(($) => $.workspace.preparation.decided)}</Note>
+          <DecidedBy review={review} />
+        </div>
+      )
     case "rejected":
       return (
         <div className="flex flex-col gap-2">
-          <Note>
-            {t(($) => $.workspace.preparation.rejectedNote, { feedback: review.feedback ?? "" })}
-          </Note>
+          {review.feedback !== null && (
+            <Note>
+              {t(($) => $.workspace.preparation.rejectedNote, { feedback: review.feedback })}
+            </Note>
+          )}
           <Note>{t(($) => $.workspace.preparation.decided)}</Note>
+          <DecidedBy review={review} />
         </div>
       )
     case "stale":

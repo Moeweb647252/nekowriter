@@ -285,7 +285,7 @@ A tool's base outcome is immutable; feedback bindings are stored separately. Whe
 ## 10. Reviews and delegation
 
 - Review kinds: `preparation.background`, `preparation.research`, `preparation.characters`, `preparation.outline`, `chapter.outline`, `chapter.edit`, `chapter.final`. Each review stores kind, target, target revision (or proposal), dependencies, status and decision source.
-- Statuses: `open → delegated → approved | rejected`, plus `stale`. User decisions go from `open` to a final status. Cancelling or failing a delegation fails the child run and returns the review to `open`.
+- Statuses: `open → delegated → approved | rejected`, plus `stale`. User decisions go from `open` to a final status. Cancelling or failing a delegation fails the child run and returns the review to `open`; a failure (including an interruption) is shown with its reason until the review is delegated again or decided. A review run is never continued: the user delegates the review again.
 - Rejections: preparation follows the batch rule (§6); outline and whole-chapter rejections return to generation immediately; a proposal rejection rejects only that edit.
 - A user's rejection of the whole chapter delivers its issues to the body run like feedback (§9.2).
 - **Delegation** saves the current draft feedback, citations and target snapshot and creates a child run using the project's current model and the review kind's prompt. The review agent has no writing tools and submits exactly one structured verdict:

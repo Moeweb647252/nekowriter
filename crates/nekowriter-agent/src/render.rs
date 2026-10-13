@@ -5,7 +5,7 @@
 //! object with a `status` and a model-facing `message`.
 
 use nekowriter_core::{
-    body::EditProblem,
+    body::{BodyEdit, EditProblem},
     chapter::{ChapterInput, ChapterKind},
     document::DocumentRole,
     preparation::{ArtifactKind, ChapterPlan},
@@ -16,7 +16,7 @@ use nekowriter_core::{
         ArgumentsProblem, Correction, JsonType, ProtocolProblem, ToolOutcome, TranscriptMessage,
         UnsealedMessage,
     },
-    stage::{FoldInput, FoldStage},
+    stage::{FoldInput, FoldStage, ReviewSubject},
     submission::SubmissionProblem,
 };
 use serde_json::json;
@@ -159,6 +159,82 @@ fn plan_text(plan: &ChapterPlan) -> String {
         .join("\n")
 }
 
+/// A rejection's feedback, or the note that a review agent named no issues (§10).
+fn feedback_or_no_issues(feedback: Option<&str>) -> String {
+    feedback.map_or_else(|| model_text().review.no_issues.render(&[]), str::to_owned)
+}
+
+/// What a review agent reviews, after its prompt: the subject and the user's notes.
+#[must_use]
+pub fn review_material(subject: &ReviewSubject, notes: Option<&str>) -> String {
+    let text = &model_text().review_material;
+    let mut parts = match subject {
+        ReviewSubject::Artifact {
+            artifact,
+            brief,
+            content,
+            chapter_plan,
+        } => {
+            let mut parts = vec![
+                text.brief.render(&[("brief", brief)]),
+                text.artifact.render(&[
+                    ("artifact", &artifact_name(*artifact)),
+                    ("content", content),
+                ]),
+            ];
+            if let Some(plan) = chapter_plan {
+                parts.push(model_text().folds.chapter_plan.render(&[]));
+                parts.push(plan_text(plan));
+            }
+            parts
+        }
+        ReviewSubject::ChapterOutline {
+            chapter,
+            guidance,
+            outline,
+        } => vec![
+            text.guidance.render(&[("guidance", &non_empty(guidance))]),
+            text.outline
+                .render(&[("chapter", &chapter_name(chapter)), ("outline", outline)]),
+        ],
+        ReviewSubject::Chapter {
+            chapter,
+            body,
+            summary,
+        } => vec![
+            text.chapter
+                .render(&[("chapter", &chapter_name(chapter)), ("body", body)]),
+            text.summary.render(&[("summary", &non_empty(summary))]),
+        ],
+        ReviewSubject::Edit {
+            chapter: _,
+            body,
+            edit,
+        } => vec![
+            text.body.render(&[("body", &non_empty(body))]),
+            match edit {
+                BodyEdit::Append { content } => text.append.render(&[("content", content)]),
+                BodyEdit::Replace { old_str, new_str } => text
+                    .replace
+                    .render(&[("old", old_str), ("new", &non_empty(new_str))]),
+            },
+        ],
+    };
+    if let Some(notes) = notes {
+        parts.push(text.notes.render(&[("notes", notes)]));
+    }
+    parts.join(&model_text().folds.separator.render(&[]))
+}
+
+/// The text, or the model's word for nothing.
+fn non_empty(text: &str) -> String {
+    if text.trim().is_empty() {
+        model_text().chapters.none.render(&[])
+    } else {
+        text.to_owned()
+    }
+}
+
 /// Renders a stored message for the request that first carries it.
 #[must_use]
 pub fn unsealed(message: &UnsealedMessage, submission_tool: &str) -> TranscriptMessage {
@@ -178,7 +254,7 @@ pub fn unsealed(message: &UnsealedMessage, submission_tool: &str) -> TranscriptM
                 .map(|item| {
                     review.rejected.render(&[
                         ("artifact", &artifact_name(item.artifact)),
-                        ("feedback", &item.feedback),
+                        ("feedback", &feedback_or_no_issues(item.feedback.as_deref())),
                     ])
                 })
                 .collect();
@@ -193,6 +269,7 @@ pub fn unsealed(message: &UnsealedMessage, submission_tool: &str) -> TranscriptM
             }
         }
         UnsealedMessage::ReviewRejected { kind, feedback } => {
+            let feedback = feedback_or_no_issues(feedback.as_deref());
             let review = &model_text().review;
             let text = match kind {
                 ReviewKind::ChapterFinal => &review.chapter_rejected,
@@ -206,7 +283,7 @@ pub fn unsealed(message: &UnsealedMessage, submission_tool: &str) -> TranscriptM
                 | ReviewKind::PreparationOutline => &review.outline_rejected,
             };
             TranscriptMessage::User {
-                content: text.render(&[("feedback", feedback)]),
+                content: text.render(&[("feedback", &feedback)]),
             }
         }
         UnsealedMessage::Correction { correction } => {
@@ -407,6 +484,7 @@ pub fn submission_problem(problem: &SubmissionProblem) -> String {
         SubmissionProblem::BodyEmpty => text.body_empty.render(&[]),
         SubmissionProblem::WrongChapter => text.wrong_chapter.render(&[]),
         SubmissionProblem::FeedbackPending => text.feedback_pending.render(&[]),
+        SubmissionProblem::ConfidenceOutOfRange => text.confidence_out_of_range.render(&[]),
     }
 }
 
@@ -514,6 +592,7 @@ mod tests {
             SubmissionProblem::BodyEmpty,
             SubmissionProblem::WrongChapter,
             SubmissionProblem::FeedbackPending,
+            SubmissionProblem::ConfidenceOutOfRange,
         ];
         for problem in problems {
             let rendered = tool_outcome(&ToolOutcome::SubmissionRejected { problem });
@@ -582,7 +661,7 @@ mod tests {
             &UnsealedMessage::PreparationReviewOutcome {
                 rejected: vec![RejectedArtifact {
                     artifact: ArtifactKind::Outline,
-                    feedback: "More conflict.".to_owned(),
+                    feedback: Some("More conflict.".to_owned()),
                 }],
                 stale: vec![ArtifactKind::Characters],
             },
@@ -645,7 +724,7 @@ mod tests {
             let TranscriptMessage::User { content } = unsealed(
                 &UnsealedMessage::ReviewRejected {
                     kind,
-                    feedback: "More rain.".to_owned(),
+                    feedback: Some("More rain.".to_owned()),
                 },
                 "submit_chapter",
             ) else {

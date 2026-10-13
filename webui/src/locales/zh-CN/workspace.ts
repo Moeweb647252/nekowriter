@@ -51,6 +51,7 @@ export default {
   },
   reviewStatus: {
     open: "待审阅",
+    delegated: "审阅 Agent 处理中",
     approved: "已通过",
     rejected: "已要求修改",
     stale: "需要更新",
@@ -126,6 +127,24 @@ export default {
     other: "或者用自己的话回答",
     answer: "你的回答",
     submit: "提交回答",
+  },
+  delegation: {
+    delegate: "交给审阅 Agent 决定",
+    delegateHint: "你已写下的意见会作为提示交给审阅 Agent。",
+    delegated: "审阅 Agent 正在审阅。",
+    cancel: "取消，由我审阅",
+    failed: "审阅 Agent 没能完成：{{reason}}。请自己审阅，或再次交给它。",
+    reason: {
+      request_limit: "请求次数已用完",
+      protocol_error_limit: "没有遵守审阅协议",
+      model_not_ready: "模型暂时无法使用",
+      context_limit_exceeded: "内容超出了模型能处理的长度",
+      provider: "模型服务出错",
+      process_stopped: "处理期间 NekoWriter 停止了运行",
+      stopped_by_user: "已被取消",
+      internal: "NekoWriter 遇到了意外问题",
+    },
+    decided: "由审阅 Agent 决定，把握 {{confidence}}。",
   },
   proposal: {
     append: "Agent 提议在本章末尾追加文字。",

@@ -7,7 +7,7 @@ use nekowriter_core::{
     conflict::{Resource, StateConflict},
     document::DocumentRole,
     ids::{CommandId, ReviewId, RevisionId, ToolCallId, VersionId},
-    review::{ReviewDecision, ReviewKind, ReviewStatus},
+    review::{Decision, ReviewKind, ReviewStatus},
     run::RunStatus,
     run_message::ToolOutcome,
     workflow::{ApprovalMode, ChapterStep, WorkflowStage},
@@ -30,7 +30,9 @@ use crate::{
         workflow,
     },
     feedback::insert_bound_feedback,
+    reviews::{decidable, record_decision},
     workflow::{VersionContext, WorkspaceAck, load_version, touch},
+    workspace::ReviewView,
 };
 
 /// A proposed edit as the dock and the reader show it.
@@ -38,7 +40,7 @@ use crate::{
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ProposalView {
-    pub review_id: ReviewId,
+    pub review: ReviewView,
     pub call_id: ToolCallId,
     pub edit: BodyEdit,
     /// The body revision the edit applies to; `None` for an empty body.
@@ -126,6 +128,7 @@ pub(crate) async fn propose(
         feedback: Set(None),
         decided_at: Set(None),
         created_at: Set(tx.now()),
+        ..Default::default()
     }
     .insert(tx.db())
     .await?;
@@ -146,7 +149,7 @@ pub(crate) async fn decide_edit_review(
     tx: &mut WriteTx,
     context: VersionContext,
     review: review::Model,
-    decision: ReviewDecision,
+    decision: Decision,
 ) -> Result<workflow::Model, StoreError> {
     let not_open = || StoreError::StateConflict(StateConflict::ReviewNotOpen);
     let drafting = matches!(
@@ -156,7 +159,7 @@ pub(crate) async fn decide_edit_review(
             ..
         }
     );
-    if review.status != ReviewStatus::Open
+    if !decidable(&review, decision.source)
         || !drafting
         || context.workflow.active_run_id != Some(review.run_id)
     {
@@ -182,21 +185,16 @@ pub(crate) async fn decide_edit_review(
         )));
     };
 
-    let mut decided = review.into_active_model();
-    decided.decided_at = Set(Some(tx.now()));
-    let outcome = match decision {
-        ReviewDecision::Approve => {
-            decided.status = Set(ReviewStatus::Approved);
-            decided.update(tx.db()).await?;
-            accept(tx, &run, &call, &edit).await?
+    let approved = decision.approved;
+    let feedback = decision.feedback.clone();
+    record_decision(tx, review, decision).await?;
+    let outcome = if approved {
+        accept(tx, &run, &call, &edit).await?
+    } else {
+        if let Some(feedback) = feedback {
+            insert_bound_feedback(tx, run.id, call.id, &feedback).await?;
         }
-        ReviewDecision::Reject { feedback } => {
-            decided.status = Set(ReviewStatus::Rejected);
-            decided.feedback = Set(Some(feedback.as_str().to_owned()));
-            decided.update(tx.db()).await?;
-            insert_bound_feedback(tx, run.id, call.id, feedback.as_str()).await?;
-            ToolOutcome::EditDeclined
-        }
+        ToolOutcome::EditDeclined
     };
     resolve(tx, &call, outcome).await?;
     let (version_id, project_id) = (run.version_id, run.project_id);
@@ -248,7 +246,7 @@ pub(crate) async fn proposal_view<C: ConnectionTrait>(
         )));
     };
     Ok(Some(ProposalView {
-        review_id: review.id,
+        review: ReviewView::from(&review),
         call_id: call.id,
         edit,
         base: call.base_revision_id,

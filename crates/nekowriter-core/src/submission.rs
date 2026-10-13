@@ -72,6 +72,50 @@ pub enum SubmissionProblem {
     WrongChapter,
     /// The user gave feedback the writer has not acted on yet; it comes with this result.
     FeedbackPending,
+    /// A review verdict's confidence is not a number from 0 to 1.
+    ConfidenceOutOfRange,
+}
+
+/// A review agent's verdict, as submitted (`submit_review`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerdictSubmission {
+    pub passed: bool,
+    pub confidence: serde_json::Number,
+    pub issues: Vec<String>,
+}
+
+/// A verdict that passed its rules. Confidence is kept in thousandths; it is only shown,
+/// never used to decide (D08).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Verdict {
+    pub passed: bool,
+    pub confidence_permille: i32,
+    pub issues: Vec<String>,
+}
+
+/// Checks a verdict: confidence is a finite number from 0 to 1, and blank issues are
+/// dropped.
+pub fn accept_verdict(submission: VerdictSubmission) -> Result<Verdict, SubmissionProblem> {
+    let confidence = submission
+        .confidence
+        .as_f64()
+        .filter(|value| (0.0..=1.0).contains(value))
+        .ok_or(SubmissionProblem::ConfidenceOutOfRange)?;
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "the value is between 0 and 1000"
+    )]
+    let confidence_permille = (confidence * 1000.0).round() as i32;
+    Ok(Verdict {
+        passed: submission.passed,
+        confidence_permille,
+        issues: submission
+            .issues
+            .into_iter()
+            .map(|issue| normalize_line_endings(issue.trim()))
+            .filter(|issue| !issue.is_empty())
+            .collect(),
+    })
 }
 
 /// The arguments of `submit_chapter_outline`.
@@ -136,6 +180,22 @@ fn accept_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_verdict_needs_a_confidence_from_zero_to_one() {
+        let verdict = |confidence: f64| VerdictSubmission {
+            passed: false,
+            confidence: serde_json::Number::from_f64(confidence).unwrap(),
+            issues: vec!["  Too fast. ".to_owned(), " ".to_owned()],
+        };
+        let accepted = accept_verdict(verdict(0.8)).unwrap();
+        assert_eq!(accepted.confidence_permille, 800);
+        assert_eq!(accepted.issues, ["Too fast."]);
+        assert_eq!(
+            accept_verdict(verdict(1.5)),
+            Err(SubmissionProblem::ConfidenceOutOfRange)
+        );
+    }
 
     #[test]
     fn an_outline_needs_text() {

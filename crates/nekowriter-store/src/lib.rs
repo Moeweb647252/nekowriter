@@ -18,6 +18,7 @@ use thiserror::Error;
 mod calls;
 mod chapters;
 mod command;
+mod delegation;
 mod digest;
 mod documents;
 mod entity;

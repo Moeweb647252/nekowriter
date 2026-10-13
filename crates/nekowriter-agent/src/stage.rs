@@ -27,7 +27,7 @@ use serde_json::Value;
 
 use crate::{
     model_text::model_text,
-    render::{artifact_list, current_body, language_name},
+    render::{artifact_list, current_body, language_name, review_material},
     schema::{Property, Schema},
 };
 
@@ -37,6 +37,8 @@ pub const SUBMIT_PREPARATION: &str = "submit_preparation";
 pub const SUBMIT_CHAPTER_OUTLINE: &str = "submit_chapter_outline";
 /// The name of the chapter submission tool.
 pub const SUBMIT_CHAPTER: &str = "submit_chapter";
+/// The name of the review verdict tool.
+pub const SUBMIT_REVIEW: &str = "submit_review";
 pub const APPEND_CONTENT: &str = "append_content";
 pub const REPLACE_CONTENT: &str = "replace_content";
 pub const ASK_USER: &str = "ask_user";
@@ -143,6 +145,7 @@ pub enum StageKind {
     Preparation,
     ChapterOutline,
     ChapterBody,
+    Review,
 }
 
 /// The effective texts of the stage's prompt pair: built-in, or overridden.
@@ -167,6 +170,7 @@ pub fn prompt_key(input: &StageInput) -> PromptKey {
         StageInput::Preparation { .. } => PromptKey::PreparationGenerate,
         StageInput::ChapterOutline { .. } => PromptKey::ChapterOutline,
         StageInput::ChapterBody { .. } => PromptKey::ChapterWrite,
+        StageInput::Review { kind, .. } => PromptKey::review(*kind),
     }
 }
 
@@ -242,6 +246,22 @@ pub fn build(
                         WorkTool::AskUser,
                     ],
                     submission: chapter_tool(chapter.id),
+                },
+            })
+        }
+        StageInput::Review { subject, notes, .. } => {
+            let values = [(PromptVariable::WritingLanguage, language.as_str())];
+            let contract = contracts.review.render(&[("tool", SUBMIT_REVIEW)]);
+            Ok(StageRequest {
+                system: with_section(&render(prompts.system, &values)?, &contract),
+                user: with_section(
+                    &render(prompts.user, &values)?,
+                    &review_material(subject, notes.as_deref()),
+                ),
+                contract: Contract {
+                    stage: StageKind::Review,
+                    tools: Vec::new(),
+                    submission: review_tool(),
                 },
             })
         }
@@ -380,6 +400,33 @@ fn preparation_tool(required: &BTreeSet<ArtifactKind>) -> ToolDefinition {
                     required.contains(&ArtifactKind::Outline),
                     Schema::Array {
                         items: Box::new(chapter),
+                    },
+                ),
+            ],
+        },
+    }
+}
+
+fn review_tool() -> ToolDefinition {
+    let text = &model_text().tools.submit_review;
+    ToolDefinition {
+        name: SUBMIT_REVIEW,
+        description: text.description.render(&[]),
+        parameters: Schema::Object {
+            properties: vec![
+                property("passed", text.passed.render(&[]), true, Schema::Boolean),
+                property(
+                    "confidence",
+                    text.confidence.render(&[]),
+                    true,
+                    Schema::Number,
+                ),
+                property(
+                    "issues",
+                    text.issues.render(&[]),
+                    true,
+                    Schema::Array {
+                        items: Box::new(string()),
                     },
                 ),
             ],
@@ -540,6 +587,9 @@ pub fn parse_submission(
         }
         StageKind::ChapterBody => {
             read(schema, arguments).map(|submission| StageSubmission::Chapter { submission })
+        }
+        StageKind::Review => {
+            read(schema, arguments).map(|verdict| StageSubmission::Review { verdict })
         }
     }
 }
@@ -716,5 +766,58 @@ mod tests {
         assert!(
             matches!(parsed, StageSubmission::ChapterOutline { submission } if submission.content == "Scene one.")
         );
+    }
+
+    #[test]
+    fn a_review_stage_carries_the_subject_and_notes_and_submits_a_verdict() {
+        use nekowriter_core::{
+            review::ReviewKind, stage::ReviewSubject, submission::VerdictSubmission,
+        };
+
+        let request = build(
+            &StageInput::Review {
+                kind: ReviewKind::ChapterEdit,
+                subject: ReviewSubject::Edit {
+                    chapter: chapter(),
+                    body: "The lamp was dark.".to_owned(),
+                    edit: BodyEdit::Replace {
+                        old_str: "dark".to_owned(),
+                        new_str: "lit".to_owned(),
+                    },
+                },
+                notes: Some("Mind the mood.".to_owned()),
+            },
+            WritingLanguage::En,
+            texts(PromptKey::ReviewChapterEdit),
+        )
+        .unwrap();
+
+        assert!(request.system.contains(SUBMIT_REVIEW));
+        for text in ["The lamp was dark.", "lit", "Mind the mood."] {
+            assert!(request.user.contains(text), "{text} in {}", request.user);
+        }
+        assert_eq!(request.contract.tools, Vec::new());
+        let parsed = parse_submission(
+            &request.contract,
+            &json!({ "passed": false, "confidence": 0.7, "issues": ["Too bright."] }),
+        )
+        .unwrap();
+        assert_eq!(
+            parsed,
+            StageSubmission::Review {
+                verdict: VerdictSubmission {
+                    passed: false,
+                    confidence: serde_json::Number::from_f64(0.7).unwrap(),
+                    issues: vec!["Too bright.".to_owned()],
+                }
+            }
+        );
+        assert!(matches!(
+            parse_submission(
+                &request.contract,
+                &json!({ "passed": "yes", "confidence": 1, "issues": [] })
+            ),
+            Err(ArgumentsProblem::WrongType { .. })
+        ));
     }
 }

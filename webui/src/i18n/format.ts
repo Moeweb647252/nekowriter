@@ -11,9 +11,12 @@ export function useFormatters() {
   return useMemo(() => {
     const dateTime = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" })
     const number = new Intl.NumberFormat(locale)
+    const percent = new Intl.NumberFormat(locale, { style: "percent" })
     return {
       dateTime: (timestamp: Timestamp) => dateTime.format(timestamp),
       number: (value: number) => number.format(value),
+      /** A share from 0 to 1. */
+      percent: (value: number) => percent.format(value),
     }
   }, [locale])
 }

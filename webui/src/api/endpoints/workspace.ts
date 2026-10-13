@@ -4,6 +4,7 @@ import type { AnswerRequest } from "../generated/AnswerRequest"
 import type { ApprovalModeRequest } from "../generated/ApprovalModeRequest"
 import type { ControlRequest } from "../generated/ControlRequest"
 import type { DecideReviewRequest } from "../generated/DecideReviewRequest"
+import type { DelegateReviewRequest } from "../generated/DelegateReviewRequest"
 import type { FeedbackRequest } from "../generated/FeedbackRequest"
 import type { ReviewId } from "../generated/ReviewId"
 import type { RevisionId } from "../generated/RevisionId"
@@ -25,6 +26,10 @@ export const workspaceApi = {
     postJson<WorkspaceAck>(`/api/versions/${versionId}/preparation/start`, request),
   decideReview: (reviewId: ReviewId, request: DecideReviewRequest) =>
     postJson<WorkspaceAck>(`/api/reviews/${reviewId}/decide`, request),
+  delegateReview: (reviewId: ReviewId, request: DelegateReviewRequest) =>
+    postJson<WorkspaceAck>(`/api/reviews/${reviewId}/delegate`, request),
+  cancelDelegation: (reviewId: ReviewId, request: ControlRequest) =>
+    postJson<WorkspaceAck>(`/api/reviews/${reviewId}/cancel-delegation`, request),
   continueRun: (runId: RunId, request: RevisionRequest) =>
     postJson<WorkspaceAck>(`/api/runs/${runId}/continue`, request),
   stopRun: (runId: RunId, request: ControlRequest) =>

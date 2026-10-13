@@ -39,6 +39,7 @@ use crate::{
     calls::{execute, held_call, hold, insert_call, requeue, resolve},
     chapters::{chapter_input, chapter_text, find_chapter},
     command::{Begun, WriteTx},
+    delegation::{release_delegation, review_subject},
     documents::{current_revision, version_document},
     entity::{
         document,
@@ -224,12 +225,14 @@ impl Store {
                         match review.status {
                             ReviewStatus::Rejected => rejected.push(RejectedArtifact {
                                 artifact: kind,
-                                feedback: review.feedback.clone().unwrap_or_default(),
+                                feedback: review.feedback.clone(),
                             }),
                             ReviewStatus::Stale => {
                                 stale.insert(kind);
                             }
-                            ReviewStatus::Open | ReviewStatus::Approved => {}
+                            ReviewStatus::Open
+                            | ReviewStatus::Delegated
+                            | ReviewStatus::Approved => {}
                         }
                     }
                 }
@@ -245,7 +248,7 @@ impl Store {
                     .ok_or_else(|| StoreError::Corrupt(format!("review {review_id} is missing")))?;
                 Ok(UnsealedMessage::ReviewRejected {
                     kind: review.kind,
-                    feedback: review.feedback.unwrap_or_default(),
+                    feedback: review.feedback,
                 })
             }
             RunMessageBody::Correction { correction } => {
@@ -472,6 +475,11 @@ impl Store {
             .ok_or(StoreError::NotFound(Resource::Run))?;
         let context: VersionContext = load_version(tx.db(), run.version_id).await?;
         context.check_revision(expected_revision)?;
+        if run.kind == RunKind::Review {
+            return Err(StoreError::StateConflict(
+                StateConflict::ReviewRunNotContinuable,
+            ));
+        }
         if !run.status.can_continue() {
             return Err(StoreError::StateConflict(StateConflict::RunNotContinuable));
         }
@@ -636,12 +644,13 @@ pub(crate) async fn create_run(
         project_id: Set(context.project.id),
         version_id: Set(context.version.id),
         chapter_id: Set(chapter_id),
+        review_id: Set(None),
         kind: Set(kind),
         status: Set(RunStatus::Queued),
         halt: Set(None),
         round: Set(0),
         request_count: Set(0),
-        request_allowance_end: Set(REQUEST_ALLOWANCE),
+        request_allowance_end: Set(kind.request_allowance()),
         consecutive_protocol_errors: Set(0),
         resume_count: Set(0),
         fold: Set(None),
@@ -710,6 +719,9 @@ async fn stage_input<C: ConnectionTrait>(
     db: &C,
     run: &run::Model,
 ) -> Result<StageInput, StoreError> {
+    if run.kind == RunKind::Review {
+        return review_subject(db, run).await;
+    }
     let chapter = match run.chapter_id {
         Some(id) => Some(find_chapter(db, id).await?),
         None => None,
@@ -750,6 +762,7 @@ async fn folds<C: ConnectionTrait>(
     let runs = run::Entity::find()
         .filter(run::Column::VersionId.eq(version_id))
         .filter(run::Column::Status.eq(RunStatus::Succeeded))
+        .filter(run::Column::Kind.ne(RunKind::Review))
         .order_by_asc(run::Column::CreatedAt)
         .all(db)
         .await?;
@@ -805,10 +818,13 @@ pub(crate) async fn halt(
     let (version_id, project_id) = (run.version_id, run.project_id);
     let mut halted = run.into_active_model();
     halted.status = Set(status);
-    halted.halt = Set(Some(reason));
+    halted.halt = Set(Some(reason.clone()));
     halted.queued_at = Set(None);
     halted.updated_at = Set(tx.now());
-    halted.update(tx.db()).await?;
+    let halted = halted.update(tx.db()).await?;
+    if halted.kind == RunKind::Review {
+        release_delegation(tx, &halted, reason).await?;
+    }
     touch(tx, version_id, project_id).await?;
     Ok(())
 }

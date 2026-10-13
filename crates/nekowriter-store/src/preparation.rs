@@ -9,7 +9,7 @@ use nekowriter_core::{
     document::DocumentRole,
     ids::{ChapterId, CommandId, ReviewId, VersionId},
     preparation::{ArtifactKind, NovelBrief, PreparationSubmission, accept_preparation},
-    review::{ReviewDecision, ReviewKind, ReviewStatus},
+    review::{Decision, DecisionSource, ReviewKind, ReviewStatus},
     run::{Fold, RunKind, RunStatus},
     run_message::RunMessageBody,
     submission::SubmissionProblem,
@@ -27,6 +27,7 @@ use crate::{
     documents::{NewRevision, add_revision, current_revision, version_document},
     entity::{review, revision, revision_dependency, run},
     execution::{append_message, check_model, create_run, queue_for_revision},
+    reviews::{decidable, record_decision},
     workflow::{
         VersionContext, WorkspaceAck, advance, load_version, project_has_other_active_run, touch,
     },
@@ -125,25 +126,16 @@ pub(crate) async fn decide_preparation_review(
     tx: &mut WriteTx,
     context: VersionContext,
     review: review::Model,
-    decision: ReviewDecision,
+    decision: Decision,
 ) -> Result<crate::entity::workflow::Model, StoreError> {
-    let run = current_review_run(tx.db(), &context, &review).await?;
+    let run = current_review_run(tx.db(), &context, &review, decision.source).await?;
     let round = review.round;
-    let mut decided = review.into_active_model();
-    match decision {
-        ReviewDecision::Approve => decided.status = Set(ReviewStatus::Approved),
-        ReviewDecision::Reject { feedback } => {
-            decided.status = Set(ReviewStatus::Rejected);
-            decided.feedback = Set(Some(feedback.as_str().to_owned()));
-        }
-    }
-    decided.decided_at = Set(Some(tx.now()));
-    decided.update(tx.db()).await?;
+    record_decision(tx, review, decision).await?;
 
     let still_open = review::Entity::find()
         .filter(review::Column::RunId.eq(run.id))
         .filter(review::Column::Round.eq(round))
-        .filter(review::Column::Status.eq(ReviewStatus::Open))
+        .filter(review::Column::Status.is_in([ReviewStatus::Open, ReviewStatus::Delegated]))
         .one(tx.db())
         .await?
         .is_some();
@@ -159,9 +151,10 @@ async fn current_review_run<C: ConnectionTrait>(
     db: &C,
     context: &VersionContext,
     review: &review::Model,
+    source: DecisionSource,
 ) -> Result<run::Model, StoreError> {
     let not_open = || StoreError::StateConflict(StateConflict::ReviewNotOpen);
-    if review.status != ReviewStatus::Open
+    if !decidable(review, source)
         || context.workflow.stage
             != (WorkflowStage::Preparation {
                 step: PreparationStep::Reviewing,
@@ -419,6 +412,7 @@ async fn insert_review(
         feedback: Set(None),
         decided_at: Set(None),
         created_at: Set(tx.now()),
+        ..Default::default()
     }
     .insert(tx.db())
     .await?;

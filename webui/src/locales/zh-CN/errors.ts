@@ -70,6 +70,8 @@ export default {
       run_not_writing: "只有正在写作的章节才能接收意见或暂停。",
       run_not_paused: "该任务没有暂停。",
       question_not_open: "这些问题已经回答过了。",
+      review_not_delegated: "这次审阅不在审阅 Agent 手中。",
+      review_run_not_continuable: "审阅 Agent 的任务不能继续，请重新交给它审阅。",
     },
     ANSWER_INVALID: {
       unknown_question: "有回答对应的问题并不存在。",

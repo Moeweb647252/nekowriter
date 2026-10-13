@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next"
 import { errorForField, errorForForm } from "@/api/fieldErrors"
 import type { ReviewView } from "@/api/generated/ReviewView"
 import type { WorkspaceView } from "@/api/generated/WorkspaceView"
-import { useDecideReview } from "@/api/queries/workspace"
+import { useDecideReview, useDelegateReview } from "@/api/queries/workspace"
 import { ErrorAlert } from "@/components/app/ErrorAlert"
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
@@ -13,6 +13,8 @@ import { useErrorText } from "@/i18n/errors"
 import { useDraft } from "@/lib/drafts"
 import { submitOnModEnter } from "@/lib/keyboard"
 import { cn } from "@/lib/utils"
+
+import { DelegationFailure } from "./Delegation"
 
 /**
  * Approving a submission, or rejecting it with feedback (§10). The two actions are separate
@@ -32,7 +34,10 @@ export function ReviewForm({
   const { t } = useTranslation()
   const errorText = useErrorText()
   const decide = useDecideReview(view.version.id)
+  const delegate = useDelegateReview(view.version.id)
   const feedback = useDraft(`${view.version.id}.review.${review.id}`, "")
+  const error = decide.error ?? delegate.error
+  const pending = decide.isPending || delegate.isPending
 
   const reject = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -52,12 +57,20 @@ export function ReviewForm({
     )
   }
 
-  const feedbackError = errorForField(decide.error, "review_feedback")
-  const formError = errorForForm(decide.error, ["review_feedback"])
+  const delegateIt = () => {
+    delegate.mutate(
+      { revision: view.revision, reviewId: review.id, notes: feedback.value },
+      { onSuccess: feedback.clear },
+    )
+  }
+
+  const feedbackError = errorForField(error, "review_feedback")
+  const formError = errorForForm(error, ["review_feedback"])
   const id = `feedback-${review.id}`
 
   return (
     <form onSubmit={reject} className="flex flex-col gap-3">
+      <DelegationFailure review={review} />
       <Field data-invalid={feedbackError !== undefined}>
         <FieldLabel htmlFor={id}>{t(($) => $.workspace.preparation.feedback)}</FieldLabel>
         <Textarea
@@ -75,15 +88,20 @@ export function ReviewForm({
       </Field>
       {formError !== undefined && <ErrorAlert error={formError} />}
       <div className="flex flex-wrap gap-2">
-        <Button type="button" disabled={decide.isPending} onClick={approve}>
+        <Button type="button" disabled={pending} onClick={approve}>
           {approveLabel}
         </Button>
-        <Button
-          type="submit"
-          variant="outline"
-          disabled={decide.isPending || feedback.value.trim() === ""}
-        >
+        <Button type="submit" variant="outline" disabled={pending || feedback.value.trim() === ""}>
           {t(($) => $.workspace.preparation.requestChanges)}
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          disabled={pending}
+          onClick={delegateIt}
+          title={t(($) => $.workspace.delegation.delegateHint)}
+        >
+          {t(($) => $.workspace.delegation.delegate)}
         </Button>
       </div>
     </form>

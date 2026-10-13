@@ -5,25 +5,29 @@ use nekowriter_core::prompt::{PromptKey, PromptRole};
 /// The built-in text of one half of a prompt pair.
 #[must_use]
 pub fn builtin(key: PromptKey, role: PromptRole) -> &'static str {
-    match (key, role) {
-        (PromptKey::PreparationGenerate, PromptRole::System) => {
-            include_str!("../resources/prompts/preparation.generate.system.md")
-        }
-        (PromptKey::PreparationGenerate, PromptRole::User) => {
-            include_str!("../resources/prompts/preparation.generate.user.md")
-        }
-        (PromptKey::ChapterOutline, PromptRole::System) => {
-            include_str!("../resources/prompts/chapter.outline.system.md")
-        }
-        (PromptKey::ChapterOutline, PromptRole::User) => {
-            include_str!("../resources/prompts/chapter.outline.user.md")
-        }
-        (PromptKey::ChapterWrite, PromptRole::System) => {
-            include_str!("../resources/prompts/chapter.write.system.md")
-        }
-        (PromptKey::ChapterWrite, PromptRole::User) => {
-            include_str!("../resources/prompts/chapter.write.user.md")
-        }
+    macro_rules! pair {
+        ($name:literal) => {
+            match role {
+                PromptRole::System => {
+                    include_str!(concat!("../resources/prompts/", $name, ".system.md"))
+                }
+                PromptRole::User => {
+                    include_str!(concat!("../resources/prompts/", $name, ".user.md"))
+                }
+            }
+        };
+    }
+    match key {
+        PromptKey::PreparationGenerate => pair!("preparation.generate"),
+        PromptKey::ChapterOutline => pair!("chapter.outline"),
+        PromptKey::ChapterWrite => pair!("chapter.write"),
+        PromptKey::ReviewPreparationBackground => pair!("review.preparation.background"),
+        PromptKey::ReviewPreparationResearch => pair!("review.preparation.research"),
+        PromptKey::ReviewPreparationCharacters => pair!("review.preparation.characters"),
+        PromptKey::ReviewPreparationOutline => pair!("review.preparation.outline"),
+        PromptKey::ReviewChapterOutline => pair!("review.chapter.outline"),
+        PromptKey::ReviewChapterEdit => pair!("review.chapter.edit"),
+        PromptKey::ReviewChapterFinal => pair!("review.chapter.final"),
     }
 }
 

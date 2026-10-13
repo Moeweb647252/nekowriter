@@ -146,7 +146,10 @@ async fn round_one_rejects_research(store: &Store, version: VersionId) {
         panic!("the review outcome follows the tool result");
     };
     assert_eq!(rejected[0].artifact, ArtifactKind::Research);
-    assert_eq!(rejected[0].feedback, "Cite the tide tables.");
+    assert_eq!(
+        rejected[0].feedback.as_deref(),
+        Some("Cite the tide tables.")
+    );
     assert_eq!(stale, &Vec::<ArtifactKind>::new());
 }
 

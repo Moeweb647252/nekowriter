@@ -65,6 +65,12 @@ pub enum StateConflict {
     /// Only a paused run can be resumed.
     #[error("the run is not paused")]
     RunNotPaused,
+    /// Only a review that is delegated can have its delegation cancelled.
+    #[error("the review is not delegated")]
+    ReviewNotDelegated,
+    /// A delegated review runs on its own; it cannot be continued.
+    #[error("a delegated review cannot be continued; delegate it again")]
+    ReviewRunNotContinuable,
     /// The question was already answered or is no longer waiting.
     #[error("the question is not waiting for an answer")]
     QuestionNotOpen,

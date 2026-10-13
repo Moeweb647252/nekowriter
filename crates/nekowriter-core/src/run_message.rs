@@ -77,7 +77,8 @@ pub enum UnsealedMessage {
     },
     ReviewRejected {
         kind: ReviewKind,
-        feedback: String,
+        /// `None` when a review agent rejected without naming issues.
+        feedback: Option<String>,
     },
     Correction {
         correction: Correction,
@@ -88,7 +89,8 @@ pub enum UnsealedMessage {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RejectedArtifact {
     pub artifact: ArtifactKind,
-    pub feedback: String,
+    /// `None` when a review agent rejected without naming issues.
+    pub feedback: Option<String>,
 }
 
 /// A tool call exactly as the model sent it.

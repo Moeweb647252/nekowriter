@@ -113,24 +113,25 @@ pub(crate) fn version_changed(project_id: ProjectId, version_id: VersionId) -> E
     }
 }
 
-/// Whether another run of the project holds its single writing slot (§4 invariant 2).
+/// Whether another writer run of the project holds its single writing slot (§4
+/// invariant 2). Review runs decide a writer's review and hold no slot of their own.
 pub(crate) async fn project_has_other_active_run<C: ConnectionTrait>(
     db: &C,
     project_id: ProjectId,
     except: Option<RunId>,
 ) -> Result<bool, StoreError> {
-    use nekowriter_core::run::RunStatus;
+    use nekowriter_core::run::{RunKind, RunStatus};
+    use sea_orm::Iterable;
 
     use crate::entity::run;
 
+    let active: Vec<RunStatus> = RunStatus::iter()
+        .filter(|status| status.is_active())
+        .collect();
     let mut query = run::Entity::find()
         .filter(run::Column::ProjectId.eq(project_id))
-        .filter(run::Column::Status.is_in([
-            RunStatus::Queued,
-            RunStatus::Running,
-            RunStatus::WaitingReview,
-            RunStatus::Interrupted,
-        ]));
+        .filter(run::Column::Kind.ne(RunKind::Review))
+        .filter(run::Column::Status.is_in(active));
     if let Some(except) = except {
         query = query.filter(run::Column::Id.ne(except));
     }

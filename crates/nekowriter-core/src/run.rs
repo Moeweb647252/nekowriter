@@ -14,6 +14,10 @@ pub const REQUEST_ALLOWANCE: i32 = 100;
 /// Consecutive protocol errors after which a run stops (§8.7).
 pub const MAX_CONSECUTIVE_PROTOCOL_ERRORS: i32 = 3;
 
+/// The requests a delegated review may make: it submits one verdict but may be corrected
+/// up to the protocol-error limit (§8.7).
+pub const REVIEW_REQUEST_ALLOWANCE: i32 = MAX_CONSECUTIVE_PROTOCOL_ERRORS;
+
 /// What a run does.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS, EnumIter, DeriveActiveEnum,
@@ -32,6 +36,19 @@ pub enum RunKind {
     ChapterOutline,
     /// Writes a chapter's body.
     ChapterBody,
+    /// Decides a delegated review.
+    Review,
+}
+
+impl RunKind {
+    /// The requests a run of this kind may make before the user continues it.
+    #[must_use]
+    pub fn request_allowance(self) -> i32 {
+        match self {
+            Self::Review => REVIEW_REQUEST_ALLOWANCE,
+            Self::Preparation | Self::ChapterOutline | Self::ChapterBody => REQUEST_ALLOWANCE,
+        }
+    }
 }
 
 /// What a run is doing now.

@@ -88,6 +88,22 @@ export function useDecideReview(versionId: VersionId) {
   )
 }
 
+/** Hands the review to a review agent, with the user's draft feedback as notes. */
+export function useDelegateReview(versionId: VersionId) {
+  return useWorkspaceCommand(
+    versionId,
+    (
+      { revision, reviewId, notes }: { revision: number; reviewId: ReviewId; notes: string },
+      commandId,
+    ) =>
+      workspaceApi.delegateReview(reviewId, {
+        commandId,
+        expectedRevision: revision,
+        ...(notes.trim() === "" ? {} : { notes }),
+      }),
+  )
+}
+
 export function useContinueRun(versionId: VersionId) {
   return useWorkspaceCommand(
     versionId,
@@ -193,5 +209,12 @@ export function useAnswerQuestions(versionId: VersionId) {
     versionId,
     ({ callId, answers }: { callId: ToolCallId; answers: Answer[] }, commandId) =>
       workspaceApi.answerQuestions(callId, { commandId, answers }),
+  )
+}
+
+/** Takes a delegated review back from the review agent. */
+export function useCancelDelegation(versionId: VersionId) {
+  return useControlCommand(versionId, (reviewId: ReviewId, commandId) =>
+    workspaceApi.cancelDelegation(reviewId, { commandId }),
   )
 }

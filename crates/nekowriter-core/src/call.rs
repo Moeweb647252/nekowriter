@@ -11,7 +11,7 @@ use crate::{
     body::BodyEdit,
     preparation::PreparationSubmission,
     question::Question,
-    submission::{ChapterSubmission, OutlineSubmission},
+    submission::{ChapterSubmission, OutlineSubmission, VerdictSubmission},
 };
 
 /// A tool call that passed the protocol checks.
@@ -41,4 +41,5 @@ pub enum StageSubmission {
     Preparation { submission: PreparationSubmission },
     ChapterOutline { submission: OutlineSubmission },
     Chapter { submission: ChapterSubmission },
+    Review { verdict: VerdictSubmission },
 }

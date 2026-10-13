@@ -35,6 +35,7 @@ export function ReviewBadge({ status }: { status: ReviewStatus }) {
   const { t } = useTranslation()
   const variant = {
     open: "default",
+    delegated: "outline",
     approved: "secondary",
     rejected: "destructive",
     stale: "outline",

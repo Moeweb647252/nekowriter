@@ -5,8 +5,11 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    chapter::ChapterInput, document::DocumentRole, preparation::ArtifactKind,
-    preparation::ChapterPlan,
+    body::BodyEdit,
+    chapter::ChapterInput,
+    document::DocumentRole,
+    preparation::{ArtifactKind, ChapterPlan},
+    review::ReviewKind,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -27,6 +30,42 @@ pub enum StageInput {
         guidance: String,
         /// The chapter's current body.
         body: String,
+    },
+    /// A delegated review: the subject under review and what the user noted so far.
+    Review {
+        kind: ReviewKind,
+        subject: ReviewSubject,
+        /// The user's draft feedback when they delegated, if any.
+        notes: Option<String>,
+    },
+}
+
+/// What a review agent reviews.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReviewSubject {
+    /// A preparation artifact, with the brief it was written from.
+    Artifact {
+        artifact: ArtifactKind,
+        brief: String,
+        content: String,
+        chapter_plan: Option<ChapterPlan>,
+    },
+    ChapterOutline {
+        chapter: ChapterInput,
+        guidance: String,
+        outline: String,
+    },
+    /// A finished chapter and the writer's summary of it.
+    Chapter {
+        chapter: ChapterInput,
+        body: String,
+        summary: String,
+    },
+    /// One proposed edit and the body it applies to.
+    Edit {
+        chapter: ChapterInput,
+        body: String,
+        edit: BodyEdit,
     },
 }
 

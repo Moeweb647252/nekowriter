@@ -86,6 +86,17 @@ pub struct AnswerRequest {
     pub answers: Vec<Answer>,
 }
 
+/// Delegating a review to a review agent (§10), with the user's draft feedback as notes.
+#[derive(Clone, Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DelegateReviewRequest {
+    pub command_id: CommandId,
+    pub expected_revision: i64,
+    #[ts(optional)]
+    pub notes: Option<String>,
+}
+
 /// A review decision as a request carries it.
 #[derive(Clone, Debug, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -317,6 +328,48 @@ pub(crate) async fn answer_questions(
         state
             .store
             .answer_questions(request.command_id, call_id, request.answers)
+            .await?,
+    ))
+}
+
+pub(crate) async fn delegate_review(
+    State(state): State<AppState>,
+    Path(review_id): Path<ReviewId>,
+    Json(request): Json<DelegateReviewRequest>,
+) -> Result<axum::Json<WorkspaceAck>, ApiError> {
+    let notes = request
+        .notes
+        .as_deref()
+        .map(ReviewFeedback::parse)
+        .transpose()
+        .or_else(|error| match error.problem {
+            // Empty notes are no notes.
+            nekowriter_core::field::FieldProblem::Empty => Ok(None),
+            _ => Err(error),
+        })?
+        .map(|notes| notes.as_str().to_owned());
+    Ok(axum::Json(
+        state
+            .store
+            .delegate_review(
+                request.command_id,
+                review_id,
+                request.expected_revision,
+                notes,
+            )
+            .await?,
+    ))
+}
+
+pub(crate) async fn cancel_delegation(
+    State(state): State<AppState>,
+    Path(review_id): Path<ReviewId>,
+    Json(request): Json<ControlRequest>,
+) -> Result<axum::Json<WorkspaceAck>, ApiError> {
+    Ok(axum::Json(
+        state
+            .store
+            .cancel_delegation(request.command_id, review_id)
             .await?,
     ))
 }

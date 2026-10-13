@@ -4,19 +4,19 @@
 use nekowriter_core::{
     conflict::Resource,
     ids::{CommandId, ReviewId},
-    review::{ReviewDecision, ReviewKind},
+    review::{Decision, DecisionSource, ReviewDecision, ReviewKind, ReviewStatus},
 };
-use sea_orm::EntityTrait;
+use sea_orm::{ActiveModelTrait, EntityTrait, IntoActiveModel, Set};
 use serde::Serialize;
 
 use crate::{
     Store, StoreError,
     chapters::decide_chapter_review,
-    command::Begun,
-    entity::review,
+    command::{Begun, WriteTx},
+    entity::{review, workflow},
     preparation::decide_preparation_review,
     proposals::decide_edit_review,
-    workflow::{WorkspaceAck, load_version},
+    workflow::{VersionContext, WorkspaceAck, load_version},
 };
 
 impl Store {
@@ -40,24 +40,61 @@ impl Store {
             .ok_or(StoreError::NotFound(Resource::Review))?;
         let context = load_version(tx.db(), review.version_id).await?;
         context.check_revision(expected_revision)?;
-        let workflow = match review.kind {
-            ReviewKind::PreparationBackground
-            | ReviewKind::PreparationResearch
-            | ReviewKind::PreparationCharacters
-            | ReviewKind::PreparationOutline => {
-                decide_preparation_review(tx.write(), context, review, decision).await?
-            }
-            ReviewKind::ChapterOutline | ReviewKind::ChapterFinal => {
-                decide_chapter_review(tx.write(), context, review, decision).await?
-            }
-            ReviewKind::ChapterEdit => {
-                decide_edit_review(tx.write(), context, review, decision).await?
-            }
-        };
+        let workflow = apply_decision(tx.write(), context, review, decision.into()).await?;
         tx.commit(WorkspaceAck {
             revision: workflow.revision,
         })
         .await
+    }
+}
+
+/// Whether `source` may decide the review now: the user decides an open review, a review
+/// agent the review delegated to it.
+pub(crate) fn decidable(review: &review::Model, source: DecisionSource) -> bool {
+    match source {
+        DecisionSource::User => review.status == ReviewStatus::Open,
+        DecisionSource::Delegate => review.status == ReviewStatus::Delegated,
+    }
+}
+
+/// Marks the review decided. A delegate's rejection may come without feedback.
+pub(crate) async fn record_decision(
+    tx: &WriteTx,
+    review: review::Model,
+    decision: Decision,
+) -> Result<review::Model, StoreError> {
+    let mut decided = review.into_active_model();
+    decided.status = Set(if decision.approved {
+        ReviewStatus::Approved
+    } else {
+        ReviewStatus::Rejected
+    });
+    decided.feedback = Set(decision.feedback.filter(|_| !decision.approved));
+    decided.decided_at = Set(Some(tx.now()));
+    decided.decided_by = Set(Some(decision.source));
+    decided.delegated_run_id = Set(None);
+    decided.delegation_failure = Set(None);
+    Ok(decided.update(tx.db()).await?)
+}
+
+/// Applies a decision by its review's kind.
+pub(crate) async fn apply_decision(
+    tx: &mut WriteTx,
+    context: VersionContext,
+    review: review::Model,
+    decision: Decision,
+) -> Result<workflow::Model, StoreError> {
+    match review.kind {
+        ReviewKind::PreparationBackground
+        | ReviewKind::PreparationResearch
+        | ReviewKind::PreparationCharacters
+        | ReviewKind::PreparationOutline => {
+            decide_preparation_review(tx, context, review, decision).await
+        }
+        ReviewKind::ChapterOutline | ReviewKind::ChapterFinal => {
+            decide_chapter_review(tx, context, review, decision).await
+        }
+        ReviewKind::ChapterEdit => decide_edit_review(tx, context, review, decision).await,
     }
 }
 

@@ -21,6 +21,7 @@ pub enum Schema {
         allowed: Option<Vec<String>>,
     },
     Boolean,
+    Number,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -63,6 +64,7 @@ impl Schema {
                 allowed: Some(values),
             } => json!({ "type": "string", "enum": values }),
             Self::Boolean => json!({ "type": "boolean" }),
+            Self::Number => json!({ "type": "number" }),
         };
         if let (Some(description), Value::Object(object)) = (description, &mut schema) {
             object.insert("description".to_owned(), description.into());
@@ -125,6 +127,10 @@ impl Schema {
             Self::Boolean => match value {
                 Value::Bool(_) => Ok(()),
                 _ => Err(wrong_type(path, JsonType::Boolean)),
+            },
+            Self::Number => match value {
+                Value::Number(_) => Ok(()),
+                _ => Err(wrong_type(path, JsonType::Number)),
             },
         }
     }

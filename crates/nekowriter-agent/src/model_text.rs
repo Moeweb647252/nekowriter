@@ -66,6 +66,7 @@ pub struct ModelText {
     pub json_types: JsonTypes,
     pub corrections: Corrections,
     pub review: ReviewText,
+    pub review_material: ReviewMaterial,
     pub folds: FoldText,
     pub chapters: ChapterText,
     pub connection_test: ConnectionTest,
@@ -105,6 +106,7 @@ pub struct ChapterKinds {
 #[serde(deny_unknown_fields)]
 pub struct Contracts {
     pub ask_user: Text,
+    pub review: Text,
     pub preparation: Text,
     pub chapter_outline: Text,
     pub chapter_body: Text,
@@ -119,6 +121,16 @@ pub struct Tools {
     pub replace_content: ReplaceContentText,
     pub submit_chapter: SubmitChapterText,
     pub ask_user: AskUserText,
+    pub submit_review: SubmitReviewText,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SubmitReviewText {
+    pub description: Text,
+    pub passed: Text,
+    pub confidence: Text,
+    pub issues: Text,
 }
 
 #[derive(Debug, Deserialize)]
@@ -240,6 +252,7 @@ pub struct SubmissionProblems {
     pub body_empty: Text,
     pub wrong_chapter: Text,
     pub feedback_pending: Text,
+    pub confidence_out_of_range: Text,
 }
 
 #[derive(Debug, Deserialize)]
@@ -289,6 +302,22 @@ pub struct ReviewText {
     pub item_separator: Text,
     pub outline_rejected: Text,
     pub chapter_rejected: Text,
+    pub no_issues: Text,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewMaterial {
+    pub artifact: Text,
+    pub brief: Text,
+    pub outline: Text,
+    pub guidance: Text,
+    pub chapter: Text,
+    pub summary: Text,
+    pub body: Text,
+    pub append: Text,
+    pub replace: Text,
+    pub notes: Text,
 }
 
 #[derive(Debug, Deserialize)]

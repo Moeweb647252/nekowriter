@@ -149,4 +149,33 @@ describe("WorkspacePage", () => {
     expect(commands[0]?.path).toBe(`/api/runs/${RUN_ID}/stop`)
     expect(commands[0]?.body).toEqual({ commandId: expect.any(String) as string })
   })
+
+  it("shows who decided a review and how confident the review agent was", async () => {
+    const reviewed = artifacts({
+      background: "open",
+      research: "approved",
+      characters: "open",
+      outline: "open",
+    }).map((artifact) =>
+      artifact.kind === "research" && artifact.review !== null
+        ? {
+            ...artifact,
+            review: { ...artifact.review, decidedBy: "delegate" as const, confidencePermille: 900 },
+          }
+        : artifact,
+    )
+    fakeWorkspace(
+      workspaceView(
+        { phase: "preparation", step: "reviewing" },
+        { run: runView({ status: "waiting_review" }), artifacts: reviewed },
+      ),
+    )
+    const { user } = renderWorkspace()
+
+    await user.click(await screen.findByRole("tab", { name: "Research" }))
+
+    expect(
+      await screen.findByText("Decided by the review agent, 90% confident."),
+    ).toBeInTheDocument()
+  })
 })

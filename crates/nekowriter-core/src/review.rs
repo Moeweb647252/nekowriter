@@ -78,6 +78,8 @@ impl ReviewKind {
 pub enum ReviewStatus {
     /// Waiting for a decision.
     Open,
+    /// A review agent decides it (§10).
+    Delegated,
     Approved,
     /// Rejected with feedback for the writer.
     Rejected,
@@ -86,9 +88,52 @@ pub enum ReviewStatus {
     Stale,
 }
 
-/// A reviewer's decision.
+/// A user's decision.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReviewDecision {
     Approve,
     Reject { feedback: ReviewFeedback },
+}
+
+/// Who decided a review.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS, EnumIter, DeriveActiveEnum,
+)]
+#[sea_orm(
+    rs_type = "String",
+    db_type = "String(StringLen::None)",
+    rename_all = "snake_case"
+)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum DecisionSource {
+    User,
+    /// A review agent the user delegated the review to.
+    Delegate,
+}
+
+/// A decision as it is applied, by the user or a delegate. A delegate's rejection may
+/// come without issues; the writer is then told the review failed without specifics.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Decision {
+    pub approved: bool,
+    pub feedback: Option<String>,
+    pub source: DecisionSource,
+}
+
+impl From<ReviewDecision> for Decision {
+    fn from(decision: ReviewDecision) -> Self {
+        match decision {
+            ReviewDecision::Approve => Self {
+                approved: true,
+                feedback: None,
+                source: DecisionSource::User,
+            },
+            ReviewDecision::Reject { feedback } => Self {
+                approved: false,
+                feedback: Some(feedback.as_str().to_owned()),
+                source: DecisionSource::User,
+            },
+        }
+    }
 }

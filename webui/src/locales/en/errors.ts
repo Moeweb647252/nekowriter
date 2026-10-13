@@ -73,6 +73,9 @@ export default {
       run_not_writing: "Feedback and pauses are for a chapter that is being written.",
       run_not_paused: "This run is not paused.",
       question_not_open: "These questions were already answered.",
+      review_not_delegated: "This review is not with the review agent.",
+      review_run_not_continuable:
+        "A review agent's run cannot be continued; delegate the review again.",
     },
     ANSWER_INVALID: {
       unknown_question: "An answer refers to a question that was not asked.",

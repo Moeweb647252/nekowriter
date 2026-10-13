@@ -60,6 +60,7 @@ export default {
   } satisfies Record<ArtifactKind, string>,
   reviewStatus: {
     open: "To review",
+    delegated: "With the review agent",
     approved: "Approved",
     rejected: "Changes requested",
     stale: "Needs an update",
@@ -138,6 +139,25 @@ export default {
     other: "Or answer in your own words",
     answer: "Your answer",
     submit: "Submit answer",
+  },
+  delegation: {
+    delegate: "Let the review agent decide",
+    delegateHint: "Your feedback so far goes to the review agent as notes.",
+    delegated: "The review agent is reviewing this.",
+    cancel: "Cancel and review myself",
+    failed:
+      "The review agent could not finish: {{reason}}. Review it yourself or delegate it again.",
+    reason: {
+      request_limit: "it ran out of requests",
+      protocol_error_limit: "it did not follow the review protocol",
+      model_not_ready: "the model cannot be used",
+      context_limit_exceeded: "the text is too long for the model",
+      provider: "the model service failed",
+      process_stopped: "NekoWriter stopped while it worked",
+      stopped_by_user: "it was cancelled",
+      internal: "NekoWriter ran into an unexpected problem",
+    } satisfies Record<RunHalt["kind"], string>,
+    decided: "Decided by the review agent, {{confidence}} confident.",
   },
   proposal: {
     append: "The agent proposes adding text to the end of the chapter.",

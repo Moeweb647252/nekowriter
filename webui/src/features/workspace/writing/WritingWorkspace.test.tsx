@@ -7,6 +7,7 @@ import type { AnswerRequest } from "@/api/generated/AnswerRequest"
 import type { ApprovalModeRequest } from "@/api/generated/ApprovalModeRequest"
 import type { DecideReviewRequest } from "@/api/generated/DecideReviewRequest"
 import type { FeedbackRequest } from "@/api/generated/FeedbackRequest"
+import type { ReviewView } from "@/api/generated/ReviewView"
 import type { StartChapterRequest } from "@/api/generated/StartChapterRequest"
 import type { WorkspaceView } from "@/api/generated/WorkspaceView"
 import {
@@ -252,7 +253,10 @@ describe("WritingWorkspace", () => {
       run: runView({ kind: "chapter_body", status: "waiting_review" }),
       approvalMode: "approve_required" as const,
       proposal: {
-        reviewId: "0190f5c8-0000-7000-8000-000000000a01",
+        review: review("0190f5c8-0000-7000-8000-000000000a01", {
+          kind: "chapter_edit",
+          target: null,
+        }),
         callId: "0190f5c8-0000-7000-8000-000000000a02",
         edit: { op: "replace" as const, oldStr: "dark", newStr: "lit" },
         base: body.id,
@@ -352,5 +356,64 @@ describe("WritingWorkspace", () => {
       { questionId: "q1", selectedOptionIds: ["b"], customText: "and fog" },
       { questionId: "q2", selectedOptionIds: [], customText: "Mara" },
     ])
+  })
+
+  describe("delegating a review", () => {
+    const outlined = (overrides: Partial<ReviewView> = {}) => ({
+      ...atChapter("outline_reviewing", [
+        {
+          ...FIRST,
+          status: "in_progress" as const,
+          outline: revision("0190f5c8-0000-7000-8000-000000000c00", "The storm comes first."),
+          review: review("0190f5c8-0000-7000-8000-000000000c01", overrides),
+        },
+        SECOND,
+      ]),
+      run: runView({ kind: "chapter_outline", status: "waiting_review" }),
+    })
+
+    it("hands the review to the review agent with the feedback so far as notes", async () => {
+      const { commands } = fakeWorkspace(outlined())
+      const { user } = renderWorkspace()
+
+      await user.type(await screen.findByLabelText("What should change?"), "Check the pacing.")
+      await user.click(screen.getByRole("button", { name: "Let the review agent decide" }))
+
+      await waitFor(() => {
+        expect(commands).toHaveLength(1)
+      })
+      expect(commands[0]?.path).toBe("/api/reviews/0190f5c8-0000-7000-8000-000000000c01/delegate")
+      expect(commands[0]?.body).toMatchObject({ expectedRevision: 3, notes: "Check the pacing." })
+    })
+
+    it("takes a delegated review back", async () => {
+      const { commands } = fakeWorkspace(outlined({ status: "delegated" }))
+      const { user } = renderWorkspace()
+
+      expect(await screen.findByText("The review agent is reviewing this.")).toBeInTheDocument()
+      await user.click(screen.getByRole("button", { name: "Cancel and review myself" }))
+
+      await waitFor(() => {
+        expect(commands).toHaveLength(1)
+      })
+      expect(commands[0]?.path).toBe(
+        "/api/reviews/0190f5c8-0000-7000-8000-000000000c01/cancel-delegation",
+      )
+    })
+
+    it("says why a delegation failed", async () => {
+      fakeWorkspace(
+        outlined({
+          delegationFailure: { kind: "provider", failure: { kind: "http_status", status: 500 } },
+        }),
+      )
+      renderWorkspace()
+
+      expect(
+        await screen.findByText(
+          "The review agent could not finish: the model service failed. Review it yourself or delegate it again.",
+        ),
+      ).toBeInTheDocument()
+    })
   })
 })

@@ -28,7 +28,7 @@ async fn set_mode(store: &Store, version: VersionId, mode: ApprovalMode) {
 
 async fn decide_proposal(store: &Store, version: VersionId, decision: ReviewDecision) {
     let view = workspace(store, version).await;
-    let review = view.proposal.expect("an edit is proposed").review_id;
+    let review = view.proposal.expect("an edit is proposed").review.id;
     store
         .decide_review(CommandId::generate(), review, view.revision, decision)
         .await

@@ -76,6 +76,9 @@ export function review(id: string, overrides: Partial<ReviewView> = {}): ReviewV
     summary: null,
     feedback: null,
     decidedAt: null,
+    decidedBy: null,
+    confidencePermille: null,
+    delegationFailure: null,
     ...overrides,
   }
 }

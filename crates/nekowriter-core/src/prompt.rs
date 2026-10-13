@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::template::VariableSpec;
+use crate::{review::ReviewKind, template::VariableSpec};
 
 /// A built-in prompt pair (a system prompt and a user prompt).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
@@ -18,6 +18,20 @@ pub enum PromptKey {
     ChapterOutline,
     #[serde(rename = "chapter.write")]
     ChapterWrite,
+    #[serde(rename = "review.preparation.background")]
+    ReviewPreparationBackground,
+    #[serde(rename = "review.preparation.research")]
+    ReviewPreparationResearch,
+    #[serde(rename = "review.preparation.characters")]
+    ReviewPreparationCharacters,
+    #[serde(rename = "review.preparation.outline")]
+    ReviewPreparationOutline,
+    #[serde(rename = "review.chapter.outline")]
+    ReviewChapterOutline,
+    #[serde(rename = "review.chapter.edit")]
+    ReviewChapterEdit,
+    #[serde(rename = "review.chapter.final")]
+    ReviewChapterFinal,
 }
 
 /// The two halves of a prompt pair.
@@ -94,12 +108,37 @@ const CHAPTER_USER: &[PromptVariableSpec] = &[
     spec(PromptVariable::WritingLanguage, false),
 ];
 
+/// Review prompts take no required variables: the review material is appended to the user
+/// prompt, so a custom prompt cannot lose it.
+const REVIEW_USER: &[PromptVariableSpec] = &[spec(PromptVariable::WritingLanguage, false)];
+
 impl PromptKey {
-    pub const ALL: [Self; 3] = [
+    pub const ALL: [Self; 10] = [
         Self::PreparationGenerate,
         Self::ChapterOutline,
         Self::ChapterWrite,
+        Self::ReviewPreparationBackground,
+        Self::ReviewPreparationResearch,
+        Self::ReviewPreparationCharacters,
+        Self::ReviewPreparationOutline,
+        Self::ReviewChapterOutline,
+        Self::ReviewChapterEdit,
+        Self::ReviewChapterFinal,
     ];
+
+    /// The review prompt of a review kind.
+    #[must_use]
+    pub fn review(kind: ReviewKind) -> Self {
+        match kind {
+            ReviewKind::PreparationBackground => Self::ReviewPreparationBackground,
+            ReviewKind::PreparationResearch => Self::ReviewPreparationResearch,
+            ReviewKind::PreparationCharacters => Self::ReviewPreparationCharacters,
+            ReviewKind::PreparationOutline => Self::ReviewPreparationOutline,
+            ReviewKind::ChapterOutline => Self::ReviewChapterOutline,
+            ReviewKind::ChapterEdit => Self::ReviewChapterEdit,
+            ReviewKind::ChapterFinal => Self::ReviewChapterFinal,
+        }
+    }
 
     /// The variables the system or user prompt of this pair may use. The writing language
     /// is required in the system prompts of the writing stages, so a custom prompt cannot
@@ -110,6 +149,16 @@ impl PromptKey {
             (_, PromptRole::System) => WRITING_SYSTEM,
             (Self::PreparationGenerate, PromptRole::User) => PREPARATION_GENERATE_USER,
             (Self::ChapterOutline | Self::ChapterWrite, PromptRole::User) => CHAPTER_USER,
+            (
+                Self::ReviewPreparationBackground
+                | Self::ReviewPreparationResearch
+                | Self::ReviewPreparationCharacters
+                | Self::ReviewPreparationOutline
+                | Self::ReviewChapterOutline
+                | Self::ReviewChapterEdit
+                | Self::ReviewChapterFinal,
+                PromptRole::User,
+            ) => REVIEW_USER,
         }
     }
 

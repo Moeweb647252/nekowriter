@@ -8,7 +8,7 @@ use nekowriter_core::{
     conflict::StateConflict,
     document::DocumentRole,
     ids::{ChapterId, CommandId, DocumentId, PlanItemId, ReviewId, RevisionId, VersionId},
-    review::{ReviewDecision, ReviewKind, ReviewStatus},
+    review::{Decision, ReviewKind, ReviewStatus},
     run::{Fold, RunKind, RunStatus},
     run_message::{RunMessageBody, ToolOutcome},
     submission::{
@@ -29,6 +29,7 @@ use crate::{
     documents::{NewRevision, add_revision, chapter_document, current_revision},
     entity::{chapter, document, review, run, workflow},
     execution::{append_message, check_model, create_run, queue_for_revision},
+    reviews::{decidable, record_decision},
     workflow::{VersionContext, WorkspaceAck, advance, load_version, project_has_other_active_run},
 };
 
@@ -492,6 +493,7 @@ async fn insert_chapter_review(
         feedback: Set(None),
         decided_at: Set(None),
         created_at: Set(tx.now()),
+        ..Default::default()
     }
     .insert(tx.db())
     .await?;
@@ -505,7 +507,7 @@ pub(crate) async fn decide_chapter_review(
     tx: &mut WriteTx,
     context: VersionContext,
     review: review::Model,
-    decision: ReviewDecision,
+    decision: Decision,
 ) -> Result<workflow::Model, StoreError> {
     let (review_step, revise_step, role) = match review.kind {
         ReviewKind::ChapterOutline => (
@@ -526,7 +528,7 @@ pub(crate) async fn decide_chapter_review(
     };
     let not_open = || StoreError::StateConflict(StateConflict::ReviewNotOpen);
     let chapter_id = chapter_at(&context, review_step).map_err(|_| not_open())?;
-    if review.status != ReviewStatus::Open
+    if !decidable(&review, decision.source)
         || review.chapter_id != Some(chapter_id)
         || context.workflow.active_run_id != Some(review.run_id)
     {
@@ -554,48 +556,39 @@ pub(crate) async fn decide_chapter_review(
     }
 
     let review_id = review.id;
-    let mut decided = review.into_active_model();
-    decided.decided_at = Set(Some(tx.now()));
     let project_id = context.project.id;
-    match decision {
-        ReviewDecision::Reject { feedback } => {
-            decided.status = Set(ReviewStatus::Rejected);
-            decided.feedback = Set(Some(feedback.as_str().to_owned()));
-            decided.update(tx.db()).await?;
-            append_message(tx, run.id, RunMessageBody::ReviewRejected { review_id }).await?;
-            let run_id = queue_for_revision(tx, run).await?;
-            let stage = WorkflowStage::Chapter {
-                chapter_id,
-                step: revise_step,
-            };
-            advance(tx, context.workflow, project_id, stage, Some(run_id)).await
-        }
-        ReviewDecision::Approve => {
-            decided.status = Set(ReviewStatus::Approved);
-            decided.update(tx.db()).await?;
-            let mut done = run.into_active_model();
-            done.status = Set(RunStatus::Succeeded);
-            done.fold = Set(Some(Fold(vec![target])));
-            done.queued_at = Set(None);
-            done.updated_at = Set(tx.now());
-            done.update(tx.db()).await?;
-            if role == DocumentRole::ChapterOutline {
-                let body = create_run(tx, &context, RunKind::ChapterBody, Some(chapter_id)).await?;
-                let stage = WorkflowStage::Chapter {
-                    chapter_id,
-                    step: ChapterStep::Drafting,
-                };
-                advance(tx, context.workflow, project_id, stage, Some(body.id)).await
-            } else {
-                let mut approved = find_chapter(tx.db(), chapter_id).await?.into_active_model();
-                approved.status = Set(ChapterStatus::Approved);
-                approved.update(tx.db()).await?;
-                let stage = WorkflowStage::Chapter {
-                    chapter_id,
-                    step: ChapterStep::Done,
-                };
-                advance(tx, context.workflow, project_id, stage, None).await
-            }
-        }
+    let approved = decision.approved;
+    record_decision(tx, review, decision).await?;
+    if !approved {
+        append_message(tx, run.id, RunMessageBody::ReviewRejected { review_id }).await?;
+        let run_id = queue_for_revision(tx, run).await?;
+        let stage = WorkflowStage::Chapter {
+            chapter_id,
+            step: revise_step,
+        };
+        return advance(tx, context.workflow, project_id, stage, Some(run_id)).await;
+    }
+    let mut done = run.into_active_model();
+    done.status = Set(RunStatus::Succeeded);
+    done.fold = Set(Some(Fold(vec![target])));
+    done.queued_at = Set(None);
+    done.updated_at = Set(tx.now());
+    done.update(tx.db()).await?;
+    if role == DocumentRole::ChapterOutline {
+        let body = create_run(tx, &context, RunKind::ChapterBody, Some(chapter_id)).await?;
+        let stage = WorkflowStage::Chapter {
+            chapter_id,
+            step: ChapterStep::Drafting,
+        };
+        advance(tx, context.workflow, project_id, stage, Some(body.id)).await
+    } else {
+        let mut chapter = find_chapter(tx.db(), chapter_id).await?.into_active_model();
+        chapter.status = Set(ChapterStatus::Approved);
+        chapter.update(tx.db()).await?;
+        let stage = WorkflowStage::Chapter {
+            chapter_id,
+            step: ChapterStep::Done,
+        };
+        advance(tx, context.workflow, project_id, stage, None).await
     }
 }

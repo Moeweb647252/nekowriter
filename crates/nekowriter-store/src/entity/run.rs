@@ -1,5 +1,5 @@
 use nekowriter_core::{
-    ids::{ChapterId, ProjectId, RunId, VersionId},
+    ids::{ChapterId, ProjectId, ReviewId, RunId, VersionId},
     run::{Fold, RunHalt, RunKind, RunStatus},
     time::Timestamp,
 };
@@ -17,6 +17,8 @@ pub struct Model {
     pub version_id: VersionId,
     /// The chapter a chapter run writes.
     pub chapter_id: Option<ChapterId>,
+    /// The review a review run decides; such a run is a child of the review's run.
+    pub review_id: Option<ReviewId>,
     pub kind: RunKind,
     #[sea_orm(indexed)]
     pub status: RunStatus,

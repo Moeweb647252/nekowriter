@@ -8,7 +8,7 @@ use nekowriter_core::{
     document::DocumentRole,
     ids::{ChapterId, ModelRequestId, ReviewId, RevisionId, RunId, VersionId},
     preparation::ArtifactKind,
-    review::{ReviewKind, ReviewStatus},
+    review::{DecisionSource, ReviewKind, ReviewStatus},
     run::{RunHalt, RunKind, RunStatus},
     time::Timestamp,
     workflow::ApprovalMode,
@@ -100,8 +100,14 @@ pub struct ReviewView {
     pub target: Option<RevisionId>,
     /// What the writer says a submitted chapter contains.
     pub summary: Option<String>,
+    /// The reviewer's feedback on a rejection; a review agent may reject without issues.
     pub feedback: Option<String>,
     pub decided_at: Option<Timestamp>,
+    pub decided_by: Option<DecisionSource>,
+    /// A review agent's confidence in thousandths; shown only (D08).
+    pub confidence_permille: Option<i32>,
+    /// Why the last delegation failed, until the review is delegated again or decided.
+    pub delegation_failure: Option<RunHalt>,
 }
 
 impl From<&review::Model> for ReviewView {
@@ -115,6 +121,9 @@ impl From<&review::Model> for ReviewView {
             summary: review.summary.clone(),
             feedback: review.feedback.clone(),
             decided_at: review.decided_at,
+            decided_by: review.decided_by,
+            confidence_permille: review.confidence_permille,
+            delegation_failure: review.delegation_failure.clone(),
         }
     }
 }
