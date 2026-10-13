@@ -4,6 +4,8 @@
 #![allow(dead_code)]
 
 use nekowriter_core::{
+    body::BodyEdit,
+    call::{CallRequest, StageSubmission},
     ids::{CommandId, ModelRequestId, ReviewId, VersionId},
     model::{ApiBaseUrl, ModelId, ModelProfile},
     preparation::{ArtifactDraft, ArtifactKind, NovelBrief, PlanItemDraft, PreparationSubmission},
@@ -76,13 +78,30 @@ pub fn call(name: &str) -> ModelToolCall {
     }
 }
 
+/// A round in which the model calls the stage's submission tool `tool`.
+pub fn submit_round(tool: &str, submission: StageSubmission) -> RoundRecord {
+    RoundRecord::Call {
+        call: call(tool),
+        request: CallRequest::Submit { submission },
+    }
+}
+
+/// A round in which the model edits the body.
+pub fn edit_round(edit: BodyEdit) -> RoundRecord {
+    let tool = match edit {
+        BodyEdit::Append { .. } => "append_content",
+        BodyEdit::Replace { .. } => "replace_content",
+    };
+    RoundRecord::Call {
+        call: call(tool),
+        request: CallRequest::Edit { edit },
+    }
+}
+
 /// Records the model's answer to the oldest queued run: `round` and the call it carries.
 pub async fn record(store: &Store, round: RoundRecord) {
     let call = match &round {
-        RoundRecord::PreparationSubmission { call, .. }
-        | RoundRecord::OutlineSubmission { call, .. }
-        | RoundRecord::ChapterSubmission { call, .. }
-        | RoundRecord::BodyEdit { call, .. } => call.clone(),
+        RoundRecord::Call { call, .. } => call.clone(),
         RoundRecord::ProtocolError { .. } => panic!("record protocol errors directly"),
     };
     let (_, request) = dispatch_next(store).await;
@@ -214,10 +233,12 @@ pub async fn submit(store: &Store, kinds: &[ArtifactKind]) {
         .record_answer(
             request,
             answer(&call("submit_preparation")),
-            RoundRecord::PreparationSubmission {
-                call: call("submit_preparation"),
-                submission: preparation_submission(kinds),
-            },
+            submit_round(
+                "submit_preparation",
+                StageSubmission::Preparation {
+                    submission: preparation_submission(kinds),
+                },
+            ),
         )
         .await
         .unwrap();

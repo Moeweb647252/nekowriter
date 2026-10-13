@@ -52,6 +52,8 @@ pub enum RunStatus {
     Running,
     /// Its submission waits for review.
     WaitingReview,
+    /// The user paused it: a tool call or submission is held until the user continues.
+    Paused,
     /// The process ended while the run was executing; the user decides whether to continue.
     Interrupted,
     /// Stopped by a limit or by the user; it can be continued.
@@ -69,7 +71,7 @@ impl RunStatus {
     pub fn is_active(self) -> bool {
         matches!(
             self,
-            Self::Queued | Self::Running | Self::WaitingReview | Self::Interrupted
+            Self::Queued | Self::Running | Self::WaitingReview | Self::Paused | Self::Interrupted
         )
     }
 
@@ -79,10 +81,17 @@ impl RunStatus {
         matches!(self, Self::Interrupted | Self::Stopped | Self::Failed)
     }
 
-    /// Whether the user can stop the run: it is waiting for the model or talking to it.
+    /// Whether the user can stop the run: it is waiting for the model, talking to it, or
+    /// paused.
     #[must_use]
     pub fn can_stop(self) -> bool {
-        matches!(self, Self::Queued | Self::Running)
+        matches!(self, Self::Queued | Self::Running | Self::Paused)
+    }
+
+    /// Whether the user can give the run feedback or pause it: it is writing.
+    #[must_use]
+    pub fn is_writing(self) -> bool {
+        matches!(self, Self::Queued | Self::Running | Self::Paused)
     }
 }
 

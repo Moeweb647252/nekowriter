@@ -230,6 +230,7 @@ A tool's base outcome is immutable; feedback bindings are stored separately. Whe
 
 ### 9.2 Feedback batches
 
+- Free feedback and pauses apply to a chapter body that is being written (its run is queued, running or paused).
 - Feedback states: `queued → bound → included`. `included` means it was sealed into a request; it promises nothing about the model's understanding.
 - All `queued` and `bound` feedback of a run forms its single unsealed batch. The batch waits for or binds one tool result and keeps accepting new feedback until a request carrying that result is sealed. Sealing drains the whole batch in sequence order. Feedback arriving after sealing opens the next batch.
 - Binding priority:
@@ -259,7 +260,7 @@ A tool's base outcome is immutable; feedback bindings are stored separately. Whe
 ### 9.4 No next tool call
 
 - If the model submits the chapter while `pause_requested`, the submission is held at the submission boundary and the run pauses; continuing re-checks the completion guards.
-- If the model submits the chapter while feedback is undelivered and no unsealed result exists to carry it, the submission is rejected as a rejected round (§8.4) and the model is told to continue with a tool call; the feedback is delivered with that call's result.
+- If the model submits the chapter while feedback is undelivered and no unsealed result exists to carry it, the submission is rejected as a rejected round (§8.4) whose result carries the feedback, and the model is told to act on it with tool calls before submitting again.
 - On request failure, stop or interruption, feedback keeps its delivery state; bound feedback stays bound to its result.
 
 ### 9.5 ApproveRequired

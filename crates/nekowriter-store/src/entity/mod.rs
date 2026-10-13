@@ -14,6 +14,7 @@ pub(crate) mod chapter;
 pub(crate) mod command_receipt;
 pub(crate) mod document;
 pub(crate) mod event;
+pub(crate) mod feedback;
 pub(crate) mod model_request;
 pub(crate) mod project;
 pub(crate) mod review;

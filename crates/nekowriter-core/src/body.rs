@@ -5,6 +5,7 @@
 //! matched exactly: no Unicode normalization, trimming, or case or whitespace folding.
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use crate::field::normalize_line_endings;
 
@@ -12,7 +13,9 @@ use crate::field::normalize_line_endings;
 pub const BODY_MAX_CHARS: u32 = 200_000;
 
 /// A change to the body, as the model asked for it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "op", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[ts(export)]
 pub enum BodyEdit {
     /// Adds `content` to the end of the body, verbatim.
     Append { content: String },

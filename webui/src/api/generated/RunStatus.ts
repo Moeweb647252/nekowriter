@@ -3,4 +3,4 @@
 /**
  * What a run is doing now.
  */
-export type RunStatus = "queued" | "running" | "waiting_review" | "interrupted" | "stopped" | "failed" | "succeeded";
+export type RunStatus = "queued" | "running" | "waiting_review" | "paused" | "interrupted" | "stopped" | "failed" | "succeeded";

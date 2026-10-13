@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next"
 import { nextMainChapter, useChapterName } from "../chapters"
 import { RevisionText } from "../DocumentView"
 import { ReviewForm } from "../ReviewForm"
+import { DraftingDock } from "./DraftingDock"
 import { isHalted } from "../run"
 import { RunProblem, RunProgress } from "../RunDock"
 import { errorForField, errorForForm } from "@/api/fieldErrors"
@@ -81,12 +82,7 @@ export function ChapterDock({
         </div>
       )
     case "drafting":
-      return run === null ? null : (
-        <RunProgress view={view} run={run}>
-          {t(($) => $.workspace.chapter.drafting, { chapter: name })}{" "}
-          {t(($) => $.workspace.chapter.words, { count: chapter.body?.wordCount ?? 0 })}
-        </RunProgress>
-      )
+      return run === null ? null : <DraftingDock view={view} chapter={chapter} run={run} />
     case "reviewing":
       return (
         <div className="flex flex-col gap-4">

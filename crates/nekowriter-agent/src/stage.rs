@@ -11,14 +11,14 @@ use std::collections::BTreeSet;
 
 use nekowriter_core::{
     body::BodyEdit,
+    call::{CallRequest, StageSubmission},
     chapter::{ChapterInput, ChapterKind},
     ids::ChapterId,
-    preparation::{ArtifactKind, PreparationSubmission},
+    preparation::ArtifactKind,
     project::WritingLanguage,
     prompt::{PromptKey, PromptVariable},
     run_message::{ArgumentsProblem, JsonType},
     stage::StageInput,
-    submission::{ChapterSubmission, OutlineSubmission},
     template::{Template, TemplateError},
 };
 use serde::de::DeserializeOwned;
@@ -95,7 +95,7 @@ impl WorkTool {
     }
 
     /// Parses the arguments of a call to this tool.
-    pub fn parse(self, arguments: &Value) -> Result<ToolRequest, ArgumentsProblem> {
+    pub fn parse(self, arguments: &Value) -> Result<CallRequest, ArgumentsProblem> {
         #[derive(serde::Deserialize)]
         struct Append {
             content: String,
@@ -107,17 +107,21 @@ impl WorkTool {
         }
         let schema = self.definition().parameters;
         match self {
-            Self::AppendContent => read::<Append>(&schema, arguments).map(|append| {
-                ToolRequest::Edit(BodyEdit::Append {
-                    content: append.content,
+            Self::AppendContent => {
+                read::<Append>(&schema, arguments).map(|append| CallRequest::Edit {
+                    edit: BodyEdit::Append {
+                        content: append.content,
+                    },
                 })
-            }),
-            Self::ReplaceContent => read::<Replace>(&schema, arguments).map(|replace| {
-                ToolRequest::Edit(BodyEdit::Replace {
-                    old_str: replace.old_str,
-                    new_str: replace.new_str,
+            }
+            Self::ReplaceContent => {
+                read::<Replace>(&schema, arguments).map(|replace| CallRequest::Edit {
+                    edit: BodyEdit::Replace {
+                        old_str: replace.old_str,
+                        new_str: replace.new_str,
+                    },
                 })
-            }),
+            }
         }
     }
 }
@@ -142,20 +146,6 @@ pub struct StageRequest {
     pub system: String,
     pub user: String,
     pub contract: Contract,
-}
-
-/// A parsed stage submission.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Submission {
-    Preparation(PreparationSubmission),
-    ChapterOutline(OutlineSubmission),
-    Chapter(ChapterSubmission),
-}
-
-/// A parsed call of one of the stage's work tools.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ToolRequest {
-    Edit(BodyEdit),
 }
 
 /// The prompt pair a stage uses.
@@ -466,12 +456,18 @@ fn read<T: DeserializeOwned>(schema: &Schema, arguments: &Value) -> Result<T, Ar
 pub fn parse_submission(
     contract: &Contract,
     arguments: &Value,
-) -> Result<Submission, ArgumentsProblem> {
+) -> Result<StageSubmission, ArgumentsProblem> {
     let schema = &contract.submission.parameters;
     match contract.stage {
-        StageKind::Preparation => read(schema, arguments).map(Submission::Preparation),
-        StageKind::ChapterOutline => read(schema, arguments).map(Submission::ChapterOutline),
-        StageKind::ChapterBody => read(schema, arguments).map(Submission::Chapter),
+        StageKind::Preparation => {
+            read(schema, arguments).map(|submission| StageSubmission::Preparation { submission })
+        }
+        StageKind::ChapterOutline => {
+            read(schema, arguments).map(|submission| StageSubmission::ChapterOutline { submission })
+        }
+        StageKind::ChapterBody => {
+            read(schema, arguments).map(|submission| StageSubmission::Chapter { submission })
+        }
     }
 }
 
@@ -530,7 +526,7 @@ mod tests {
             &json!({ "artifacts": [{ "kind": "characters", "content": "Mara" }] }),
         )
         .unwrap();
-        let Submission::Preparation(submission) = parsed else {
+        let StageSubmission::Preparation { submission } = parsed else {
             panic!("a preparation submission");
         };
         assert_eq!(submission.artifacts[0].kind, ArtifactKind::Characters);
@@ -598,16 +594,18 @@ mod tests {
         )
         .unwrap();
         assert!(
-            matches!(parsed, Submission::Chapter(submission) if submission.chapter_id == chapter.id)
+            matches!(parsed, StageSubmission::Chapter { submission } if submission.chapter_id == chapter.id)
         );
         assert_eq!(
             WorkTool::ReplaceContent
                 .parse(&json!({ "old_str": "woke", "new_str": "" }))
                 .unwrap(),
-            ToolRequest::Edit(BodyEdit::Replace {
-                old_str: "woke".to_owned(),
-                new_str: String::new()
-            })
+            CallRequest::Edit {
+                edit: BodyEdit::Replace {
+                    old_str: "woke".to_owned(),
+                    new_str: String::new()
+                }
+            }
         );
         assert!(matches!(
             WorkTool::AppendContent.parse(&json!({})),
@@ -640,7 +638,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            matches!(parsed, Submission::ChapterOutline(submission) if submission.content == "Scene one.")
+            matches!(parsed, StageSubmission::ChapterOutline { submission } if submission.content == "Scene one.")
         );
     }
 }

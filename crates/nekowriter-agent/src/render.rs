@@ -165,9 +165,10 @@ pub fn unsealed(message: &UnsealedMessage, submission_tool: &str) -> TranscriptM
         UnsealedMessage::ToolResult {
             provider_call_id,
             outcome,
+            feedback,
         } => TranscriptMessage::Tool {
             provider_call_id: provider_call_id.clone(),
-            content: tool_outcome(outcome),
+            content: tool_result(outcome, feedback),
         },
         UnsealedMessage::PreparationReviewOutcome { rejected, stale } => {
             let review = &model_text().review;
@@ -218,6 +219,18 @@ pub fn unsealed(message: &UnsealedMessage, submission_tool: &str) -> TranscriptM
             TranscriptMessage::User { content }
         }
     }
+}
+
+/// A tool result with the user's feedback that travels with it, as a separate `feedback`
+/// array that is never mixed into the message (§8.5).
+#[must_use]
+pub fn tool_result(outcome: &ToolOutcome, feedback: &[String]) -> String {
+    let mut result: serde_json::Value =
+        serde_json::from_str(&tool_outcome(outcome)).expect("tool outcomes are JSON objects");
+    if !feedback.is_empty() {
+        result["feedback"] = json!(feedback);
+    }
+    result.to_string()
 }
 
 /// A tool result: `{"status": ..., "message": ...}`, and the body's word count after an
@@ -342,6 +355,7 @@ pub fn submission_problem(problem: &SubmissionProblem) -> String {
             .render(&[("max_chars", &number(max_chars))]),
         SubmissionProblem::BodyEmpty => text.body_empty.render(&[]),
         SubmissionProblem::WrongChapter => text.wrong_chapter.render(&[]),
+        SubmissionProblem::FeedbackPending => text.feedback_pending.render(&[]),
     }
 }
 
@@ -448,6 +462,7 @@ mod tests {
             SubmissionProblem::SummaryTooLong { max_chars: 3 },
             SubmissionProblem::BodyEmpty,
             SubmissionProblem::WrongChapter,
+            SubmissionProblem::FeedbackPending,
         ];
         for problem in problems {
             let rendered = tool_outcome(&ToolOutcome::SubmissionRejected { problem });
@@ -647,5 +662,18 @@ mod tests {
         );
         assert!(current_body("The keeper woke.").contains("The keeper woke."));
         assert_ne!(current_body(" "), "");
+    }
+
+    #[test]
+    fn feedback_travels_in_its_own_array() {
+        let plain = tool_result(&ToolOutcome::EditNoChange { word_count: 1 }, &[]);
+        assert!(!plain.contains("feedback"), "{plain}");
+        let with_feedback = tool_result(
+            &ToolOutcome::EditNoChange { word_count: 1 },
+            &["More rain.".to_owned()],
+        );
+        let value: serde_json::Value = serde_json::from_str(&with_feedback).unwrap();
+        assert_eq!(value["feedback"], json!(["More rain."]));
+        assert_eq!(value["status"], "unchanged");
     }
 }

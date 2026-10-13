@@ -57,4 +57,10 @@ pub enum StateConflict {
     /// Only a run that is waiting for the model or talking to it can be stopped.
     #[error("the run cannot be stopped in its current state")]
     RunNotStoppable,
+    /// Feedback and pauses are for a chapter body that is being written.
+    #[error("the run is not writing a chapter body")]
+    RunNotWriting,
+    /// Only a paused run can be resumed.
+    #[error("the run is not paused")]
+    RunNotPaused,
 }

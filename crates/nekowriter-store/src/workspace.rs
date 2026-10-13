@@ -20,6 +20,7 @@ use crate::{
     Store, StoreError,
     documents::{RevisionSummary, RevisionView, current_revision, version_document},
     entity::{chapter, document, model_request, review, revision, run, version},
+    feedback::{FeedbackView, HeldCallView, feedback_views, held_view},
     projects::{ProjectView, VersionSummary, project_view, version_summaries},
     workflow::load_version,
 };
@@ -38,6 +39,12 @@ pub struct WorkspaceView {
     pub completed_at: Option<Timestamp>,
     /// The run of the current stage, if one exists.
     pub run: Option<RunView>,
+    /// The user asked the run to pause at its next tool call (§9.3).
+    pub pause_requested: bool,
+    /// The run's feedback the dock shows (§9.2).
+    pub feedback: Vec<FeedbackView>,
+    /// The call the run holds while it is paused.
+    pub held: Option<HeldCallView>,
     /// The novel brief, with its content: it is edited in the workspace.
     pub brief: Option<RevisionView>,
     /// The four preparation artifacts, in tab order.
@@ -138,9 +145,13 @@ async fn workspace<C: ConnectionTrait>(
 ) -> Result<WorkspaceView, StoreError> {
     let context = load_version(db, version_id).await?;
     let (version, versions) = versions(db, context.project.id, version_id).await?;
-    let run = match context.workflow.active_run_id {
-        Some(run_id) => Some(run_view(db, run_id).await?),
-        None => None,
+    let (run, feedback, held) = match context.workflow.active_run_id {
+        Some(run_id) => (
+            Some(run_view(db, run_id).await?),
+            feedback_views(db, run_id).await?,
+            held_view(db, run_id).await?,
+        ),
+        None => (None, Vec::new(), None),
     };
     let brief_document = version_document(db, version_id, DocumentRole::NovelBrief).await?;
     let brief = current_revision(db, &brief_document)
@@ -213,7 +224,10 @@ async fn workspace<C: ConnectionTrait>(
         versions,
         revision: context.workflow.revision,
         completed_at: context.workflow.completed_at,
+        pause_requested: context.workflow.pause_requested,
         run,
+        feedback,
+        held,
         brief,
         artifacts,
         chapters,

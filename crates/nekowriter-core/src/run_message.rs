@@ -67,6 +67,8 @@ pub enum UnsealedMessage {
     ToolResult {
         provider_call_id: String,
         outcome: ToolOutcome,
+        /// The user's feedback that travels with this result, in order.
+        feedback: Vec<String>,
     },
     PreparationReviewOutcome {
         rejected: Vec<RejectedArtifact>,

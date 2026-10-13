@@ -50,6 +50,7 @@ pub(crate) async fn create_version_rows<C: ConnectionTrait>(
         active_run_id: Set(None),
         revision: Set(1),
         completed_at: Set(None),
+        pause_requested: Set(false),
         updated_at: Set(now),
     }
     .insert(db)

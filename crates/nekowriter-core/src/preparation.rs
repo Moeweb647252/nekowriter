@@ -75,21 +75,22 @@ pub struct ChapterPlanItem {
 }
 
 /// A preparation submission with the shape the submission tool requires. Its content has
-/// not been checked against the business rules yet.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+/// not been checked against the business rules yet. Its fields are named as in the tool's
+/// arguments.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PreparationSubmission {
     pub artifacts: Vec<ArtifactDraft>,
     #[serde(default)]
     pub chapter_plan: Option<Vec<PlanItemDraft>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArtifactDraft {
     pub kind: ArtifactKind,
     pub content: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlanItemDraft {
     pub title: String,
     pub goal: String,

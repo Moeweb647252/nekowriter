@@ -201,3 +201,51 @@ async fn a_completed_novel_takes_extra_chapters() {
         json!({ "phase": "completed" })
     );
 }
+
+#[tokio::test]
+async fn the_writer_takes_feedback_and_a_pause_while_it_writes() {
+    let model = FakeModel::default();
+    let server = TestServer::start().await;
+    configure(&server, model.serve().await).await;
+    let version = prepared(&server, &model).await;
+    let chapter_id = current_chapter(&workspace(&server, &version).await);
+    model.call(
+        "submit_chapter_outline",
+        json!({ "chapter_id": chapter_id, "content": "Outline." }),
+    );
+    command(
+        &server,
+        &format!("/api/versions/{version}/chapters/start"),
+        &version,
+        json!({ "guidance": "" }),
+    )
+    .await;
+    wait_for(&server, &version, |view| {
+        step(view) == ("chapter", "outline_reviewing")
+    })
+    .await;
+    model.hang();
+    decide_chapter(&server, &version, json!({ "kind": "approve" })).await;
+    let view = wait_for(&server, &version, |view| view["run"]["status"] == "running").await;
+    let run = view["run"]["id"].as_str().unwrap().to_owned();
+
+    for (path, body) in [
+        (
+            "feedback",
+            json!({ "commandId": common::command_id(), "text": "Colder." }),
+        ),
+        ("pause", json!({ "commandId": common::command_id() })),
+    ] {
+        let response = server
+            .post(&format!("/api/runs/{run}/{path}"), &body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "{path}");
+    }
+
+    let view = workspace(&server, &version).await;
+    assert_eq!(view["pauseRequested"], true);
+    assert_eq!(view["feedback"][0]["text"], "Colder.");
+    assert_eq!(view["feedback"][0]["status"], "queued");
+}

@@ -1,11 +1,13 @@
-//! Classifying the model's answer to a round (`docs/product-spec.md` §8.2): a call of one
-//! of the stage's work tools, a stage submission, or a protocol error with the correction
-//! the model receives.
+//! Classifying the model's answer to a round (`docs/product-spec.md` §8.2): a valid call of
+//! one of the stage's tools, or a protocol error with the correction the model receives.
 
-use nekowriter_core::run_message::{ArgumentsProblem, Correction, ModelToolCall, ProtocolProblem};
+use nekowriter_core::{
+    call::CallRequest,
+    run_message::{ArgumentsProblem, Correction, ModelToolCall, ProtocolProblem},
+};
 use serde_json::Value;
 
-use crate::stage::{Contract, Submission, ToolRequest, parse_submission};
+use crate::stage::{Contract, parse_submission};
 
 /// The model's answer: its text and its tool calls, as sent.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -16,15 +18,10 @@ pub struct AssistantTurn {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RoundOutcome {
-    /// The model called a work tool with valid arguments.
-    Tool {
+    /// The model called a work tool or the submission tool with valid arguments.
+    Call {
         call: ModelToolCall,
-        request: ToolRequest,
-    },
-    /// The model called the submission tool with valid arguments.
-    Submission {
-        call: ModelToolCall,
-        submission: Submission,
+        request: CallRequest,
     },
     /// The answer broke the protocol. Every call gets an error result; the correction
     /// follows them.
@@ -69,19 +66,19 @@ fn check_call(contract: &Contract, call: &ModelToolCall) -> Result<RoundOutcome,
     let arguments: Value =
         serde_json::from_str(&call.arguments).map_err(|_| invalid(ArgumentsProblem::NotJson))?;
     let call = call.clone();
-    match tool {
-        Some(tool) => tool
-            .parse(&arguments)
-            .map(|request| RoundOutcome::Tool { call, request })
-            .map_err(invalid),
+    let request = match tool {
+        Some(tool) => tool.parse(&arguments),
         None => parse_submission(contract, &arguments)
-            .map(|submission| RoundOutcome::Submission { call, submission })
-            .map_err(invalid),
-    }
+            .map(|submission| CallRequest::Submit { submission }),
+    };
+    request
+        .map(|request| RoundOutcome::Call { call, request })
+        .map_err(invalid)
 }
 
 #[cfg(test)]
 mod tests {
+    use nekowriter_core::call::StageSubmission;
     use nekowriter_core::{
         preparation::ArtifactKind, project::WritingLanguage, prompt::PromptRole, stage::StageInput,
     };
@@ -133,7 +130,15 @@ mod tests {
                 r#"{"artifacts":[{"kind":"research","content":"Notes"}]}"#,
             )]),
         );
-        assert!(matches!(outcome, RoundOutcome::Submission { .. }));
+        assert!(matches!(
+            outcome,
+            RoundOutcome::Call {
+                request: CallRequest::Submit {
+                    submission: StageSubmission::Preparation { .. }
+                },
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -191,8 +196,6 @@ mod tests {
             prompt::PromptKey,
         };
 
-        use crate::stage::ToolRequest;
-
         let key = PromptKey::ChapterWrite;
         let contract = build(
             &StageInput::ChapterBody {
@@ -228,11 +231,13 @@ mod tests {
         );
         assert_eq!(
             outcome,
-            RoundOutcome::Tool {
+            RoundOutcome::Call {
                 call,
-                request: ToolRequest::Edit(BodyEdit::Append {
-                    content: "Rain.".to_owned()
-                })
+                request: CallRequest::Edit {
+                    edit: BodyEdit::Append {
+                        content: "Rain.".to_owned()
+                    }
+                }
             }
         );
     }

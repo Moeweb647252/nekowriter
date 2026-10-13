@@ -15,6 +15,7 @@ use sea_orm::{
 };
 use thiserror::Error;
 
+mod calls;
 mod chapters;
 mod command;
 mod digest;
@@ -23,6 +24,7 @@ mod entity;
 mod error;
 mod events;
 mod execution;
+mod feedback;
 mod preparation;
 mod projects;
 mod reviews;
@@ -39,6 +41,7 @@ pub use execution::{
     DispatchInput, DispatchOutcome, ModelSettings, RecordedAnswer, RoundRecord, SealedRequest,
     TranscriptEntry,
 };
+pub use feedback::{FeedbackView, HeldCallView};
 pub use projects::{NewProject, ProjectListFilter, ProjectSettings, ProjectView, VersionSummary};
 pub use settings::{ApiKeyChange, SystemSettingsInput, SystemSettingsView};
 pub use workflow::WorkspaceAck;

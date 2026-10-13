@@ -11,28 +11,23 @@
 use std::collections::BTreeSet;
 
 use nekowriter_core::{
-    body::BodyEdit,
+    call::CallRequest,
     conflict::{Resource, StateConflict},
     document::DocumentRole,
-    ids::{ChapterId, CommandId, ModelRequestId, ProjectId, RunId, ToolCallId, VersionId},
+    ids::{ChapterId, CommandId, ModelRequestId, ProjectId, RunId, VersionId},
     model::{
         EffectiveModel, ModelProblem, ModelProfile, ModelService, ThinkingLevel, effective_model,
     },
-    preparation::{ArtifactKind, PreparationSubmission},
+    preparation::ArtifactKind,
     project::WritingLanguage,
     review::ReviewStatus,
-    run::{
-        MAX_CONSECUTIVE_PROTOCOL_ERRORS, ProviderFailure, REQUEST_ALLOWANCE, RunHalt, RunKind,
-        RunStatus,
-    },
+    run::{ProviderFailure, REQUEST_ALLOWANCE, RunHalt, RunKind, RunStatus},
     run_message::{
         Correction, ModelToolCall, ProtocolProblem, RejectedArtifact, RunMessageBody, ToolOutcome,
         TranscriptMessage, UnsealedMessage,
     },
     stage::{FoldDocument, FoldInput, FoldStage, StageInput},
-    submission::{ChapterSubmission, OutlineSubmission, SubmissionProblem},
     usage::TokenUsage,
-    workflow::{PreparationStep, WorkflowStage},
 };
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, IntoActiveModel, QueryFilter,
@@ -41,10 +36,8 @@ use sea_orm::{
 
 use crate::{
     Store, StoreError,
-    chapters::{
-        apply_chapter_submission, apply_edit, apply_outline_submission, chapter_input,
-        chapter_text, find_chapter,
-    },
+    calls::{execute, held_call, hold, insert_call, requeue, resolve},
+    chapters::{chapter_input, chapter_text, find_chapter},
     command::{Begun, WriteTx},
     documents::{current_revision, version_document},
     entity::{
@@ -52,10 +45,9 @@ use crate::{
         model_request::{self, ModelRequestStatus},
         project, review, revision, run, run_message, system_settings, tool_call,
     },
-    preparation::{apply_submission, required_artifacts},
-    workflow::{
-        VersionContext, WorkspaceAck, advance, load_version, project_has_other_active_run, touch,
-    },
+    feedback::{bound_feedback, feedback_marker, seal_feedback},
+    preparation::required_artifacts,
+    workflow::{VersionContext, WorkspaceAck, load_version, project_has_other_active_run, touch},
 };
 
 /// Everything the application needs to build a run's next request.
@@ -74,6 +66,9 @@ pub struct DispatchInput {
     /// The newest message the conversation had; [`Store::dispatch`] refuses to seal if
     /// another one arrived since.
     last_message_id: Option<i64>,
+    /// The newest feedback the run had, for the same check: feedback can bind to a result
+    /// without adding a message.
+    feedback_marker: i32,
 }
 
 /// A message of the conversation, as the model sees it or still to be rendered.
@@ -125,21 +120,10 @@ pub struct RecordedAnswer {
 /// What the answer means for the run, as the agent classified it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RoundRecord {
-    PreparationSubmission {
+    /// A valid call of one of the stage's tools.
+    Call {
         call: ModelToolCall,
-        submission: PreparationSubmission,
-    },
-    OutlineSubmission {
-        call: ModelToolCall,
-        submission: OutlineSubmission,
-    },
-    ChapterSubmission {
-        call: ModelToolCall,
-        submission: ChapterSubmission,
-    },
-    BodyEdit {
-        call: ModelToolCall,
-        edit: BodyEdit,
+        request: CallRequest,
     },
     ProtocolError {
         calls: Vec<(ModelToolCall, ProtocolProblem)>,
@@ -172,6 +156,7 @@ impl Store {
             .all(&self.db)
             .await?;
         let last_message_id = rows.last().map(|row| row.id);
+        let feedback_marker = feedback_marker(&self.db, run_id).await?;
         let mut messages = Vec::with_capacity(rows.len());
         for row in rows {
             messages.push(match row.rendered {
@@ -193,6 +178,7 @@ impl Store {
             messages,
             model,
             last_message_id,
+            feedback_marker,
         })
     }
 
@@ -219,6 +205,7 @@ impl Store {
                 Ok(UnsealedMessage::ToolResult {
                     provider_call_id: call.provider_id,
                     outcome,
+                    feedback: bound_feedback(&self.db, tool_call_id).await?,
                 })
             }
             RunMessageBody::PreparationReviewOutcome { round } => {
@@ -282,7 +269,10 @@ impl Store {
             .one(tx.db())
             .await?
             .map(|row| row.id);
-        if run.status != RunStatus::Queued || last_message_id != input.last_message_id {
+        if run.status != RunStatus::Queued
+            || last_message_id != input.last_message_id
+            || feedback_marker(tx.db(), run.id).await? != input.feedback_marker
+        {
             return Ok(DispatchOutcome::Changed);
         }
         if run.request_count >= run.request_allowance_end {
@@ -337,6 +327,7 @@ impl Store {
             sealed.sealed_by = Set(Some(request_id));
             sealed.update(tx.db()).await?;
         }
+        seal_feedback(&tx, run.id, request_id).await?;
         let (version_id, project_id) = (run.version_id, run.project_id);
         let count = run.request_count + 1;
         let mut running = run.into_active_model();
@@ -410,42 +401,19 @@ impl Store {
         )
         .await?;
         match round {
-            RoundRecord::PreparationSubmission { call, submission } => {
-                let call_id = insert_tool_call(&tx, &run, request_id, &call).await?;
-                let accepted = apply_submission(&mut tx, &run, submission)
-                    .await?
-                    .map(|round| {
-                        let step = PreparationStep::Reviewing;
-                        (round, WorkflowStage::Preparation { step })
-                    });
-                settle_submission(&mut tx, run, call_id, accepted).await?;
-            }
-            RoundRecord::OutlineSubmission { call, submission } => {
-                let call_id = insert_tool_call(&tx, &run, request_id, &call).await?;
-                let accepted = apply_outline_submission(&mut tx, &run, submission).await?;
-                settle_submission(&mut tx, run, call_id, accepted).await?;
-            }
-            RoundRecord::ChapterSubmission { call, submission } => {
-                let call_id = insert_tool_call(&tx, &run, request_id, &call).await?;
-                let accepted = apply_chapter_submission(&mut tx, &run, submission).await?;
-                settle_submission(&mut tx, run, call_id, accepted).await?;
-            }
-            RoundRecord::BodyEdit { call, edit } => {
-                let call_id = insert_tool_call(&tx, &run, request_id, &call).await?;
-                let outcome = apply_edit(&mut tx, &run, &edit).await?;
-                resolve_tool_call(&mut tx, run.id, call_id, outcome).await?;
-                requeue(&mut tx, run, false).await?;
+            RoundRecord::Call { call, request } => {
+                let workflow = load_version(tx.db(), run.version_id).await?.workflow;
+                let call = insert_call(&tx, &run, request_id, &call, Some(request)).await?;
+                if workflow.pause_requested {
+                    hold(&mut tx, run, call, workflow).await?;
+                } else {
+                    execute(&mut tx, run, call).await?;
+                }
             }
             RoundRecord::ProtocolError { calls, correction } => {
                 for (call, problem) in calls {
-                    let call_id = insert_tool_call(&tx, &run, request_id, &call).await?;
-                    resolve_tool_call(
-                        &mut tx,
-                        run.id,
-                        call_id,
-                        ToolOutcome::ProtocolError { problem },
-                    )
-                    .await?;
+                    let call = insert_call(&tx, &run, request_id, &call, None).await?;
+                    resolve(&mut tx, &call, ToolOutcome::ProtocolError { problem }).await?;
                 }
                 append_message(&mut tx, run.id, RunMessageBody::Correction { correction }).await?;
                 requeue(&mut tx, run, true).await?;
@@ -512,13 +480,19 @@ impl Store {
         }
         check_model(tx.db(), &context.project).await?;
         let (count, resumes) = (run.request_count, run.resume_count);
+        // A run stopped at a held call returns to waiting for the user there.
+        let held = held_call(tx.db(), run.id).await?.is_some();
         let mut continued = run.into_active_model();
-        continued.status = Set(RunStatus::Queued);
+        continued.status = Set(if held {
+            RunStatus::Paused
+        } else {
+            RunStatus::Queued
+        });
         continued.halt = Set(None);
         continued.request_allowance_end = Set(count + REQUEST_ALLOWANCE);
         continued.consecutive_protocol_errors = Set(0);
         continued.resume_count = Set(resumes + 1);
-        continued.queued_at = Set(Some(tx.now()));
+        continued.queued_at = Set((!held).then(|| tx.now()));
         continued.updated_at = Set(tx.now());
         continued.update(tx.db()).await?;
         let workflow = touch(tx.write(), context.version.id, context.project.id).await?;
@@ -717,113 +691,6 @@ async fn mark_unknown(tx: &WriteTx, request: model_request::Model) -> Result<(),
     Ok(())
 }
 
-async fn insert_tool_call(
-    tx: &WriteTx,
-    run: &run::Model,
-    request_id: ModelRequestId,
-    call: &ModelToolCall,
-) -> Result<ToolCallId, StoreError> {
-    let id = ToolCallId::generate();
-    tool_call::ActiveModel {
-        id: Set(id),
-        run_id: Set(run.id),
-        request_id: Set(request_id),
-        provider_id: Set(call.provider_id.clone()),
-        name: Set(call.name.clone()),
-        arguments: Set(call.arguments.clone()),
-        outcome: Set(None),
-        created_at: Set(tx.now()),
-    }
-    .insert(tx.db())
-    .await?;
-    Ok(id)
-}
-
-/// Records a tool call's outcome and queues its result for the model.
-async fn resolve_tool_call(
-    tx: &mut WriteTx,
-    run_id: RunId,
-    call_id: ToolCallId,
-    outcome: ToolOutcome,
-) -> Result<(), StoreError> {
-    let call = tool_call::Entity::find_by_id(call_id)
-        .one(tx.db())
-        .await?
-        .ok_or_else(|| StoreError::Corrupt(format!("tool call {call_id} is missing")))?;
-    let mut resolved = call.into_active_model();
-    resolved.outcome = Set(Some(outcome));
-    resolved.update(tx.db()).await?;
-    append_message(
-        tx,
-        run_id,
-        RunMessageBody::ToolResult {
-            tool_call_id: call_id,
-        },
-    )
-    .await
-}
-
-/// Queues the run for its next round. A protocol error counts toward the consecutive
-/// limit; any other round, a rejected submission included, ends the series (§8.4).
-async fn requeue(
-    tx: &mut WriteTx,
-    run: run::Model,
-    protocol_error: bool,
-) -> Result<(), StoreError> {
-    let errors = if protocol_error {
-        run.consecutive_protocol_errors + 1
-    } else {
-        0
-    };
-    if errors >= MAX_CONSECUTIVE_PROTOCOL_ERRORS {
-        return halt(tx, run, RunStatus::Stopped, RunHalt::ProtocolErrorLimit).await;
-    }
-    if run.request_count >= run.request_allowance_end {
-        return halt(tx, run, RunStatus::Stopped, RunHalt::RequestLimit).await;
-    }
-    let (version_id, project_id) = (run.version_id, run.project_id);
-    let mut queued = run.into_active_model();
-    queued.status = Set(RunStatus::Queued);
-    queued.consecutive_protocol_errors = Set(errors);
-    queued.queued_at = Set(Some(tx.now()));
-    queued.updated_at = Set(tx.now());
-    queued.update(tx.db()).await?;
-    touch(tx, version_id, project_id).await?;
-    Ok(())
-}
-
-/// Ends a submission round: an accepted submission waits for review at `stage` with the
-/// new round number; a rejected one is corrected and the run goes on.
-async fn settle_submission(
-    tx: &mut WriteTx,
-    run: run::Model,
-    call_id: ToolCallId,
-    accepted: Result<(i32, WorkflowStage), SubmissionProblem>,
-) -> Result<(), StoreError> {
-    match accepted {
-        Ok((round, stage)) => {
-            resolve_tool_call(tx, run.id, call_id, ToolOutcome::SubmissionAccepted).await?;
-            let (project_id, version_id, run_id) = (run.project_id, run.version_id, run.id);
-            let mut waiting = run.into_active_model();
-            waiting.status = Set(RunStatus::WaitingReview);
-            waiting.round = Set(round);
-            waiting.consecutive_protocol_errors = Set(0);
-            waiting.updated_at = Set(tx.now());
-            waiting.update(tx.db()).await?;
-            let context = load_version(tx.db(), version_id).await?;
-            advance(tx, context.workflow, project_id, stage, Some(run_id)).await?;
-        }
-        Err(problem) => {
-            let outcome = ToolOutcome::SubmissionRejected { problem };
-            resolve_tool_call(tx, run.id, call_id, outcome).await?;
-            let correction = Correction::SubmissionRejected;
-            append_message(tx, run.id, RunMessageBody::Correction { correction }).await?;
-            requeue(tx, run, false).await?;
-        }
-    }
-    Ok(())
-}
-
 /// Queues a run whose submission was rejected in review, so it revises. Returns its ID.
 pub(crate) async fn queue_for_revision(
     tx: &mut WriteTx,
@@ -929,7 +796,7 @@ async fn folds<C: ConnectionTrait>(
 }
 
 /// Moves the run to `status` (stopped, failed or interrupted) with the reason.
-async fn halt(
+pub(crate) async fn halt(
     tx: &mut WriteTx,
     run: run::Model,
     status: RunStatus,
@@ -946,7 +813,10 @@ async fn halt(
     Ok(())
 }
 
-async fn find_run<C: ConnectionTrait>(db: &C, id: RunId) -> Result<run::Model, StoreError> {
+pub(crate) async fn find_run<C: ConnectionTrait>(
+    db: &C,
+    id: RunId,
+) -> Result<run::Model, StoreError> {
     run::Entity::find_by_id(id)
         .one(db)
         .await?

@@ -11,6 +11,7 @@ use common::{
 use std::collections::BTreeSet;
 
 use nekowriter_core::{
+    call::StageSubmission,
     chapter::ChapterStatus,
     conflict::StateConflict,
     ids::{CommandId, ModelRequestId, VersionId},
@@ -295,10 +296,12 @@ async fn messages_are_rendered_once_when_a_request_seals_them() {
         .record_answer(
             store_request(&store, run).await,
             answer(&call()),
-            RoundRecord::PreparationSubmission {
-                call: call(),
-                submission: preparation_submission(&[ArtifactKind::Research]),
-            },
+            common::submit_round(
+                "submit_preparation",
+                StageSubmission::Preparation {
+                    submission: preparation_submission(&[ArtifactKind::Research]),
+                },
+            ),
         )
         .await
         .unwrap();
@@ -336,10 +339,12 @@ async fn interrupted_runs_wait_for_the_user_to_continue() {
         .record_answer(
             request,
             answer(&call()),
-            RoundRecord::PreparationSubmission {
-                call: call(),
-                submission: preparation_submission(&ArtifactKind::ALL),
-            },
+            common::submit_round(
+                "submit_preparation",
+                StageSubmission::Preparation {
+                    submission: preparation_submission(&ArtifactKind::ALL),
+                },
+            ),
         )
         .await
         .unwrap();
@@ -428,10 +433,12 @@ async fn a_stopped_run_ignores_its_late_answer_and_continues_when_asked() {
         .record_answer(
             request,
             answer(&call()),
-            RoundRecord::PreparationSubmission {
-                call: call(),
-                submission: preparation_submission(&ArtifactKind::ALL),
-            },
+            common::submit_round(
+                "submit_preparation",
+                StageSubmission::Preparation {
+                    submission: preparation_submission(&ArtifactKind::ALL),
+                },
+            ),
         )
         .await
         .unwrap();

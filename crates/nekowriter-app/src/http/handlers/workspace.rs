@@ -4,6 +4,7 @@
 use axum::extract::State;
 use nekowriter_core::{
     chapter::{ChapterGuidance, ChapterTitle},
+    feedback::FeedbackText,
     ids::{CommandId, ReviewId, RevisionId, RunId, VersionId},
     preparation::NovelBrief,
     review::{ReviewDecision, ReviewFeedback},
@@ -54,6 +55,15 @@ pub struct AddExtraChapterRequest {
     pub command_id: CommandId,
     pub expected_revision: i64,
     pub title: String,
+}
+
+/// Feedback for a writing run; a control command (§16.3).
+#[derive(Clone, Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct FeedbackRequest {
+    pub command_id: CommandId,
+    pub text: String,
 }
 
 /// A review decision as a request carries it.
@@ -215,5 +225,52 @@ pub(crate) async fn stop_run(
 ) -> Result<axum::Json<WorkspaceAck>, ApiError> {
     Ok(axum::Json(
         state.store.stop_run(request.command_id, run_id).await?,
+    ))
+}
+
+pub(crate) async fn submit_feedback(
+    State(state): State<AppState>,
+    Path(run_id): Path<RunId>,
+    Json(request): Json<FeedbackRequest>,
+) -> Result<axum::Json<WorkspaceAck>, ApiError> {
+    let text = FeedbackText::parse(&request.text)?;
+    Ok(axum::Json(
+        state
+            .store
+            .submit_feedback(request.command_id, run_id, text)
+            .await?,
+    ))
+}
+
+pub(crate) async fn pause_run(
+    State(state): State<AppState>,
+    Path(run_id): Path<RunId>,
+    Json(request): Json<ControlRequest>,
+) -> Result<axum::Json<WorkspaceAck>, ApiError> {
+    Ok(axum::Json(
+        state
+            .store
+            .request_pause(request.command_id, run_id)
+            .await?,
+    ))
+}
+
+pub(crate) async fn cancel_pause(
+    State(state): State<AppState>,
+    Path(run_id): Path<RunId>,
+    Json(request): Json<ControlRequest>,
+) -> Result<axum::Json<WorkspaceAck>, ApiError> {
+    Ok(axum::Json(
+        state.store.cancel_pause(request.command_id, run_id).await?,
+    ))
+}
+
+pub(crate) async fn resume_run(
+    State(state): State<AppState>,
+    Path(run_id): Path<RunId>,
+    Json(request): Json<ControlRequest>,
+) -> Result<axum::Json<WorkspaceAck>, ApiError> {
+    Ok(axum::Json(
+        state.store.resume_run(request.command_id, run_id).await?,
     ))
 }

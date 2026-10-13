@@ -4,7 +4,9 @@ import { describe, expect, it } from "vitest"
 import { PreviewStore } from "@/api/events/preview"
 import type { AddExtraChapterRequest } from "@/api/generated/AddExtraChapterRequest"
 import type { DecideReviewRequest } from "@/api/generated/DecideReviewRequest"
+import type { FeedbackRequest } from "@/api/generated/FeedbackRequest"
 import type { StartChapterRequest } from "@/api/generated/StartChapterRequest"
+import type { WorkspaceView } from "@/api/generated/WorkspaceView"
 import {
   RUN_ID,
   VERSION_ID,
@@ -148,5 +150,94 @@ describe("WritingWorkspace", () => {
     })
     expect(commands[0]?.path).toBe(`/api/versions/${VERSION_ID}/extra-chapters`)
     expect((commands[0]?.body as AddExtraChapterRequest).title).toBe("Coda")
+  })
+
+  describe("while the body is written", () => {
+    const drafting = { ...FIRST, status: "in_progress" as const }
+    const writing = (overrides: Partial<WorkspaceView> = {}) => ({
+      ...atChapter("drafting", [drafting, SECOND]),
+      run: runView({ kind: "chapter_body", status: "running" }),
+      ...overrides,
+    })
+
+    it("pauses the writer", async () => {
+      const { commands } = fakeWorkspace(writing())
+      const { user } = renderWorkspace()
+
+      await user.click(await screen.findByRole("button", { name: "Pause" }))
+
+      await waitFor(() => {
+        expect(commands).toHaveLength(1)
+      })
+      expect(commands[0]?.path).toBe(`/api/runs/${RUN_ID}/pause`)
+    })
+
+    it("shows a requested pause, which feedback also lets go on", async () => {
+      fakeWorkspace(writing({ pauseRequested: true }))
+      renderWorkspace()
+
+      expect(
+        await screen.findByText("The agent pauses before its next change."),
+      ).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: "Cancel pause" })).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: "Send feedback and continue" })).toBeDisabled()
+    })
+
+    it("shows the held change and continues it", async () => {
+      const { commands } = fakeWorkspace(
+        writing({
+          run: runView({ kind: "chapter_body", status: "paused" }),
+          held: {
+            id: "0190f5c8-0000-7000-8000-000000000800",
+            tool: "replace_content",
+            edit: { op: "replace", oldStr: "dark", newStr: "lit" },
+          },
+        }),
+      )
+      const { user } = renderWorkspace()
+
+      expect(await screen.findByText("Replace “dark” with “lit”.")).toBeInTheDocument()
+      await user.click(screen.getByRole("button", { name: "Continue" }))
+
+      await waitFor(() => {
+        expect(commands).toHaveLength(1)
+      })
+      expect(commands[0]?.path).toBe(`/api/runs/${RUN_ID}/resume`)
+    })
+
+    it("sends feedback and shows where each piece is", async () => {
+      const { commands } = fakeWorkspace(
+        writing({
+          feedback: [
+            {
+              id: "0190f5c8-0000-7000-8000-000000000901",
+              text: "Colder.",
+              status: "included",
+              delivery: "failed",
+              createdAt: 0,
+            },
+            {
+              id: "0190f5c8-0000-7000-8000-000000000902",
+              text: "Slower.",
+              status: "queued",
+              delivery: null,
+              createdAt: 0,
+            },
+          ],
+        }),
+      )
+      const { user } = renderWorkspace()
+
+      expect(await screen.findByText("Not delivered: the request failed")).toBeInTheDocument()
+      expect(screen.getByText("Waiting for the next result")).toBeInTheDocument()
+      await user.type(screen.getByLabelText("Feedback for the writer"), "More rain.")
+      await user.click(screen.getByRole("button", { name: "Send feedback" }))
+
+      await waitFor(() => {
+        expect(commands).toHaveLength(1)
+      })
+      expect(commands[0]?.path).toBe(`/api/runs/${RUN_ID}/feedback`)
+      expect((commands[0]?.body as FeedbackRequest).text).toBe("More rain.")
+    })
   })
 })

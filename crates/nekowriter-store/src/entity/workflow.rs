@@ -19,6 +19,8 @@ pub struct Model {
     pub revision: i64,
     /// When the user first confirmed the novel complete; extra chapters keep it (§5.3).
     pub completed_at: Option<Timestamp>,
+    /// The user asked to pause the active run at its next tool call (§9.3).
+    pub pause_requested: bool,
     pub updated_at: Timestamp,
     #[sea_orm(belongs_to, from = "version_id", to = "id")]
     pub version: BelongsTo<super::version::Entity>,

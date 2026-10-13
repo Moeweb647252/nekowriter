@@ -14,9 +14,10 @@ use nekowriter_agent::{
     prompts::builtin,
     render,
     round::{self, RoundOutcome},
-    stage::{self, Contract, PromptTexts, Submission, ToolRequest},
+    stage::{self, Contract, PromptTexts},
 };
 use nekowriter_core::{
+    call::CallRequest,
     ids::{ModelRequestId, RunId},
     model::EffectiveModel,
     prompt::PromptRole,
@@ -183,21 +184,7 @@ impl Dispatcher {
         elapsed_ms: u128,
     ) -> Result<(), StoreError> {
         let round = match round::classify(contract, &completion.turn) {
-            RoundOutcome::Tool {
-                call,
-                request: ToolRequest::Edit(edit),
-            } => RoundRecord::BodyEdit { call, edit },
-            RoundOutcome::Submission { call, submission } => match submission {
-                Submission::Preparation(submission) => {
-                    RoundRecord::PreparationSubmission { call, submission }
-                }
-                Submission::ChapterOutline(submission) => {
-                    RoundRecord::OutlineSubmission { call, submission }
-                }
-                Submission::Chapter(submission) => {
-                    RoundRecord::ChapterSubmission { call, submission }
-                }
-            },
+            RoundOutcome::Call { call, request } => RoundRecord::Call { call, request },
             RoundOutcome::ProtocolError { calls, correction } => {
                 RoundRecord::ProtocolError { calls, correction }
             }
@@ -208,10 +195,14 @@ impl Dispatcher {
             stage = ?contract.stage,
             elapsed_ms,
             outcome = match &round {
-                RoundRecord::BodyEdit { .. } => "tool_call",
-                RoundRecord::PreparationSubmission { .. }
-                | RoundRecord::OutlineSubmission { .. }
-                | RoundRecord::ChapterSubmission { .. } => "submission",
+                RoundRecord::Call {
+                    request: CallRequest::Edit { .. },
+                    ..
+                } => "edit",
+                RoundRecord::Call {
+                    request: CallRequest::Submit { .. },
+                    ..
+                } => "submission",
                 RoundRecord::ProtocolError { .. } => "protocol_error",
             },
             "the model answered"

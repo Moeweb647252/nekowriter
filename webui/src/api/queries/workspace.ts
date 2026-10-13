@@ -149,3 +149,30 @@ export function useStopRun(versionId: VersionId) {
     workspaceApi.stopRun(runId, { commandId }),
   )
 }
+
+/** Gives the writing run feedback; while it is paused, this also continues it. */
+export function useSubmitFeedback(versionId: VersionId) {
+  return useControlCommand(
+    versionId,
+    ({ runId, text }: { runId: RunId; text: string }, commandId) =>
+      workspaceApi.submitFeedback(runId, { commandId, text }),
+  )
+}
+
+export function usePauseRun(versionId: VersionId) {
+  return useControlCommand(versionId, (runId: RunId, commandId) =>
+    workspaceApi.pauseRun(runId, { commandId }),
+  )
+}
+
+export function useCancelPause(versionId: VersionId) {
+  return useControlCommand(versionId, (runId: RunId, commandId) =>
+    workspaceApi.cancelPause(runId, { commandId }),
+  )
+}
+
+export function useResumeRun(versionId: VersionId) {
+  return useControlCommand(versionId, (runId: RunId, commandId) =>
+    workspaceApi.resumeRun(runId, { commandId }),
+  )
+}

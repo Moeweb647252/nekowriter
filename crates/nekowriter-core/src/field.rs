@@ -18,6 +18,7 @@ pub enum Field {
     ReviewFeedback,
     ChapterGuidance,
     ChapterTitle,
+    Feedback,
     ApiBaseUrl,
     ApiKey,
     ModelId,

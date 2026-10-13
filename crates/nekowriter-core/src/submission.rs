@@ -70,10 +70,12 @@ pub enum SubmissionProblem {
     BodyEmpty,
     /// The submission names another chapter than the one being written.
     WrongChapter,
+    /// The user gave feedback the writer has not acted on yet; it comes with this result.
+    FeedbackPending,
 }
 
 /// The arguments of `submit_chapter_outline`.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutlineSubmission {
     pub chapter_id: ChapterId,
     pub content: String,
@@ -81,7 +83,7 @@ pub struct OutlineSubmission {
 
 /// The arguments of `submit_chapter`. The summary describes the chapter for its review;
 /// it is not body text.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChapterSubmission {
     pub chapter_id: ChapterId,
     pub summary: String,

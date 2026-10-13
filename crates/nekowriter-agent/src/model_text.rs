@@ -205,6 +205,7 @@ pub struct SubmissionProblems {
     pub summary_too_long: Text,
     pub body_empty: Text,
     pub wrong_chapter: Text,
+    pub feedback_pending: Text,
 }
 
 #[derive(Debug, Deserialize)]

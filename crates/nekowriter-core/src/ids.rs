@@ -111,3 +111,8 @@ id_type!(
     /// Identifies a review of a revision or proposal.
     ReviewId
 );
+
+id_type!(
+    /// Identifies a piece of feedback the user gave a running writer.
+    FeedbackId
+);

@@ -2,6 +2,8 @@ import type { ArtifactKind } from "@/api/generated/ArtifactKind"
 import type { ChapterKind } from "@/api/generated/ChapterKind"
 import type { ChapterStatus } from "@/api/generated/ChapterStatus"
 import type { ChapterStep } from "@/api/generated/ChapterStep"
+import type { FeedbackDelivery } from "@/api/generated/FeedbackDelivery"
+import type { FeedbackStatus } from "@/api/generated/FeedbackStatus"
 import type { PreparationStep } from "@/api/generated/PreparationStep"
 import type { ReviewStatus } from "@/api/generated/ReviewStatus"
 import type { RunHalt } from "@/api/generated/RunHalt"
@@ -101,12 +103,41 @@ export default {
     main: "Chapter {{number}}: {{title}}",
     extra: "Extra {{number}}: {{title}}",
   } satisfies Record<ChapterKind, string>,
+  writing: {
+    pause: "Pause",
+    pausing: "The agent pauses before its next change.",
+    cancelPause: "Cancel pause",
+    paused: "Paused before this change:",
+    heldAppend: "Add text to the end of the chapter.",
+    heldReplace: "Replace “{{old}}” with “{{new}}”.",
+    heldDelete: "Delete “{{old}}”.",
+    heldSubmit: "Submit the chapter for review.",
+    continue: "Continue",
+    feedback: "Feedback for the writer",
+    feedbackHint:
+      "It goes with the agent's next tool result, so it never interrupts a change in progress.",
+    send: "Send feedback",
+    sendAndContinue: "Send feedback and continue",
+    queue: "Your feedback",
+    status: {
+      queued: "Waiting for the next result",
+      bound: "Goes with the next request",
+      included: "Sent",
+    } satisfies Record<FeedbackStatus, string>,
+    delivery: {
+      sent: "Sent; waiting for the answer",
+      failed: "Not delivered: the request failed",
+      unknown: "Delivery unknown: NekoWriter stopped during the request",
+      cancelled: "Not delivered: the run was stopped",
+    } satisfies Record<FeedbackDelivery, string>,
+  },
   reader: {
     label: "Manuscript",
     empty: "Not written yet.",
     newContent: "New content below",
     writing: "Being written",
     editing: "The agent is changing the text…",
+    held: "Held, not applied yet",
   },
   chapter: {
     goal: "Goal: {{goal}}",
@@ -139,6 +170,7 @@ export default {
       queued: "Waiting for the model",
       running: "Writing",
       waiting_review: "Waiting for your review",
+      paused: "Paused",
       interrupted: "Interrupted",
       stopped: "Stopped",
       failed: "Failed",

@@ -2,6 +2,7 @@ import { getJson, postJson } from "../client"
 import type { AddExtraChapterRequest } from "../generated/AddExtraChapterRequest"
 import type { ControlRequest } from "../generated/ControlRequest"
 import type { DecideReviewRequest } from "../generated/DecideReviewRequest"
+import type { FeedbackRequest } from "../generated/FeedbackRequest"
 import type { ReviewId } from "../generated/ReviewId"
 import type { RevisionId } from "../generated/RevisionId"
 import type { RevisionRequest } from "../generated/RevisionRequest"
@@ -25,6 +26,14 @@ export const workspaceApi = {
     postJson<WorkspaceAck>(`/api/runs/${runId}/continue`, request),
   stopRun: (runId: RunId, request: ControlRequest) =>
     postJson<WorkspaceAck>(`/api/runs/${runId}/stop`, request),
+  submitFeedback: (runId: RunId, request: FeedbackRequest) =>
+    postJson<WorkspaceAck>(`/api/runs/${runId}/feedback`, request),
+  pauseRun: (runId: RunId, request: ControlRequest) =>
+    postJson<WorkspaceAck>(`/api/runs/${runId}/pause`, request),
+  cancelPause: (runId: RunId, request: ControlRequest) =>
+    postJson<WorkspaceAck>(`/api/runs/${runId}/cancel-pause`, request),
+  resumeRun: (runId: RunId, request: ControlRequest) =>
+    postJson<WorkspaceAck>(`/api/runs/${runId}/resume`, request),
   revision: (revisionId: RevisionId) => getJson<RevisionView>(`/api/revisions/${revisionId}`),
   startChapter: (versionId: VersionId, request: StartChapterRequest) =>
     postJson<WorkspaceAck>(`/api/versions/${versionId}/chapters/start`, request),

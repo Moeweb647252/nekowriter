@@ -3,4 +3,4 @@
 /**
  * A user-editable field that validation can reject.
  */
-export type Field = "project_name" | "novel_title" | "novel_brief" | "review_feedback" | "chapter_guidance" | "chapter_title" | "api_base_url" | "api_key" | "model_id" | "context_window" | "max_output_tokens";
+export type Field = "project_name" | "novel_title" | "novel_brief" | "review_feedback" | "chapter_guidance" | "chapter_title" | "feedback" | "api_base_url" | "api_key" | "model_id" | "context_window" | "max_output_tokens";

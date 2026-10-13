@@ -5,10 +5,12 @@
 mod common;
 
 use common::{
-    answer, call, decide_review, dispatch_next, open_store, prepared, record, reject, workspace,
+    answer, call, decide_review, dispatch_next, edit_round, open_store, prepared, record, reject,
+    submit_round, workspace,
 };
 use nekowriter_core::{
     body::{BodyEdit, EditProblem},
+    call::StageSubmission,
     chapter::{ChapterGuidance, ChapterKind, ChapterStatus, ChapterTitle},
     conflict::StateConflict,
     document::DocumentRole,
@@ -20,7 +22,7 @@ use nekowriter_core::{
     submission::{ChapterSubmission, OutlineSubmission, SubmissionProblem},
     workflow::{ChapterStep, WorkflowStage},
 };
-use nekowriter_store::{RoundRecord, Store, StoreError, TranscriptEntry, WorkspaceView};
+use nekowriter_store::{Store, StoreError, TranscriptEntry, WorkspaceView};
 
 fn step(view: &WorkspaceView) -> (ChapterId, ChapterStep) {
     match view.version.stage {
@@ -45,26 +47,21 @@ async fn start(store: &Store, version: VersionId, guidance: &str) {
 async fn submit_outline(store: &Store, chapter_id: ChapterId, content: &str) {
     record(
         store,
-        RoundRecord::OutlineSubmission {
-            call: call("submit_chapter_outline"),
-            submission: OutlineSubmission {
-                chapter_id,
-                content: content.to_owned(),
+        submit_round(
+            "submit_chapter_outline",
+            StageSubmission::ChapterOutline {
+                submission: OutlineSubmission {
+                    chapter_id,
+                    content: content.to_owned(),
+                },
             },
-        },
+        ),
     )
     .await;
 }
 
 async fn edit(store: &Store, edit: BodyEdit) {
-    record(
-        store,
-        RoundRecord::BodyEdit {
-            call: call("append_content"),
-            edit,
-        },
-    )
-    .await;
+    record(store, edit_round(edit)).await;
 }
 
 fn append(content: &str) -> BodyEdit {
@@ -76,13 +73,15 @@ fn append(content: &str) -> BodyEdit {
 async fn submit_chapter(store: &Store, chapter_id: ChapterId) {
     record(
         store,
-        RoundRecord::ChapterSubmission {
-            call: call("submit_chapter"),
-            submission: ChapterSubmission {
-                chapter_id,
-                summary: "The keeper wakes.".to_owned(),
+        submit_round(
+            "submit_chapter",
+            StageSubmission::Chapter {
+                submission: ChapterSubmission {
+                    chapter_id,
+                    summary: "The keeper wakes.".to_owned(),
+                },
             },
-        },
+        ),
     )
     .await;
 }
@@ -148,13 +147,15 @@ async fn an_outline_is_reviewed_and_revised_before_the_body_starts() {
         .record_answer(
             store_request(&store, version).await,
             answer(&call("submit_chapter_outline")),
-            RoundRecord::OutlineSubmission {
-                call: call("submit_chapter_outline"),
-                submission: OutlineSubmission {
-                    chapter_id: first,
-                    content: "The keeper finds the letter.".to_owned(),
+            submit_round(
+                "submit_chapter_outline",
+                StageSubmission::ChapterOutline {
+                    submission: OutlineSubmission {
+                        chapter_id: first,
+                        content: "The keeper finds the letter.".to_owned(),
+                    },
                 },
-            },
+            ),
         )
         .await
         .unwrap();
@@ -224,10 +225,7 @@ async fn the_body_is_edited_exactly_and_reviewed_as_a_whole() {
         .record_answer(
             store_request(&store, version).await,
             answer(&call("append_content")),
-            RoundRecord::BodyEdit {
-                call: call("append_content"),
-                edit: append("The keeper woke. The lamp was dark."),
-            },
+            edit_round(append("The keeper woke. The lamp was dark.")),
         )
         .await
         .unwrap();

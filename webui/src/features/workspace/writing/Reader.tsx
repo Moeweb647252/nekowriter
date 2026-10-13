@@ -105,6 +105,7 @@ export function Reader({
           key={chapter.id}
           chapter={chapter}
           streaming={chapter.id === current?.id ? streaming : null}
+          held={chapter.id === current?.id ? heldAppend(view) : null}
         />
       ))}
       <div ref={end} aria-hidden className="h-px" />
@@ -124,6 +125,12 @@ export function Reader({
   )
 }
 
+/** The text a paused run holds back from appending, if it holds an append. */
+function heldAppend(view: WorkspaceView): string | null {
+  const edit = view.held?.edit
+  return edit?.op === "append" ? edit.content : null
+}
+
 function sectionId(chapter: ChapterId): string {
   return `chapter-${chapter}`
 }
@@ -131,9 +138,12 @@ function sectionId(chapter: ChapterId): string {
 function ChapterSection({
   chapter,
   streaming,
+  held,
 }: {
   chapter: ChapterView
   streaming: StreamingEdit | null
+  /** Text a paused run holds back. */
+  held: string | null
 }) {
   const { t } = useTranslation()
   const chapterName = useChapterName()
@@ -147,7 +157,8 @@ function ChapterSection({
         {chapterName(chapter)}
       </h2>
       {chapter.body === null ? (
-        appended === null && (
+        appended === null &&
+        held === null && (
           <p className="text-muted-foreground">{t(($) => $.workspace.reader.empty)}</p>
         )
       ) : body.data === undefined ? (
@@ -162,6 +173,14 @@ function ChapterSection({
           </p>
           <div className="text-foreground/75">
             <ReadingText text={appended} />
+          </div>
+        </div>
+      )}
+      {held !== null && (
+        <div className="mt-2 border-l-2 border-dotted border-muted-foreground/60 pl-4">
+          <p className="mb-1 text-xs text-muted-foreground">{t(($) => $.workspace.reader.held)}</p>
+          <div className="text-foreground/60">
+            <ReadingText text={held} />
           </div>
         </div>
       )}

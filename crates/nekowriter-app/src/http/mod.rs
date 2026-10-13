@@ -105,6 +105,16 @@ pub(crate) fn router(state: AppState) -> Router {
             post(handlers::workspace::continue_run),
         )
         .route("/runs/{id}/stop", post(handlers::workspace::stop_run))
+        .route(
+            "/runs/{id}/feedback",
+            post(handlers::workspace::submit_feedback),
+        )
+        .route("/runs/{id}/pause", post(handlers::workspace::pause_run))
+        .route(
+            "/runs/{id}/cancel-pause",
+            post(handlers::workspace::cancel_pause),
+        )
+        .route("/runs/{id}/resume", post(handlers::workspace::resume_run))
         .fallback(error::route_not_found);
     Router::new()
         .nest("/api", api)
