@@ -146,6 +146,7 @@ export default {
     } satisfies Record<RunStatus, string>,
     requests: "{{count}} of {{limit}} requests used",
     continue: "Continue",
+    stop: "Stop",
     halt: {
       request_limit:
         "The run used all of its allowed requests. Continuing allows another 100 requests.",
@@ -157,6 +158,8 @@ export default {
       provider: "The model service failed: {{failure}}. Check the service, then continue.",
       process_stopped:
         "NekoWriter stopped while this run was working. Continue when you are ready.",
+      stopped_by_user:
+        "You stopped the run. Its text and your feedback are kept; continue when you are ready.",
       internal:
         "NekoWriter ran into an unexpected problem; the details are in its log. Continue to try again.",
     } satisfies Record<RunHalt["kind"], string>,

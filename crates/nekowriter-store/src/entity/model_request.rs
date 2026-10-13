@@ -52,4 +52,7 @@ pub enum ModelRequestStatus {
     /// The process stopped while the request was in flight; the service may or may not
     /// have processed (and charged for) it.
     Unknown,
+    /// The user stopped the run while the request was in flight; the request was
+    /// abandoned.
+    Cancelled,
 }

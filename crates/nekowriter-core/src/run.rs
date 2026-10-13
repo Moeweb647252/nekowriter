@@ -78,6 +78,12 @@ impl RunStatus {
     pub fn can_continue(self) -> bool {
         matches!(self, Self::Interrupted | Self::Stopped | Self::Failed)
     }
+
+    /// Whether the user can stop the run: it is waiting for the model or talking to it.
+    #[must_use]
+    pub fn can_stop(self) -> bool {
+        matches!(self, Self::Queued | Self::Running)
+    }
 }
 
 /// Why a run stopped, failed or was interrupted.
@@ -104,6 +110,8 @@ pub enum RunHalt {
     Provider { failure: ProviderFailure },
     /// The application stopped while the run was executing.
     ProcessStopped,
+    /// The user stopped the run.
+    StoppedByUser,
     /// The application could not carry out the run's next step; the log has the details.
     Internal,
 }

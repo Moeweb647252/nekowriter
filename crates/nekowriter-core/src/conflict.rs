@@ -54,4 +54,7 @@ pub enum StateConflict {
     /// Only a stopped, failed or interrupted run can be continued.
     #[error("the run cannot be continued in its current state")]
     RunNotContinuable,
+    /// Only a run that is waiting for the model or talking to it can be stopped.
+    #[error("the run cannot be stopped in its current state")]
+    RunNotStoppable,
 }

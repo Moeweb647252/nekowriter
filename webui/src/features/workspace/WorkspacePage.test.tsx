@@ -131,4 +131,22 @@ describe("WorkspacePage", () => {
     expect(within(preview).getByText("A lighthouse on a cold co")).toBeInTheDocument()
     expect(screen.getByText("The agent is writing the preparation documents.")).toBeInTheDocument()
   })
+
+  it("stops a run that is writing", async () => {
+    const { commands } = fakeWorkspace(
+      workspaceView(
+        { phase: "preparation", step: "generating" },
+        { run: runView({ status: "running" }) },
+      ),
+    )
+    const { user } = renderWorkspace()
+
+    await user.click(await screen.findByRole("button", { name: "Stop" }))
+
+    await waitFor(() => {
+      expect(commands).toHaveLength(1)
+    })
+    expect(commands[0]?.path).toBe(`/api/runs/${RUN_ID}/stop`)
+    expect(commands[0]?.body).toEqual({ commandId: expect.any(String) as string })
+  })
 })

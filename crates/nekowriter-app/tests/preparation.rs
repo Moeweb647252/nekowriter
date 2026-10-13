@@ -8,7 +8,8 @@ use common::{
     TestServer, command_id,
     model::FakeModel,
     workspace::{
-        command, configure, decide, first_round_in_review, profile, step, wait_for, workspace,
+        command, configure, decide, first_round, first_round_in_review, profile, step, wait_for,
+        workspace,
     },
 };
 use serde_json::{Value, json};
@@ -238,4 +239,60 @@ async fn runs_in_flight_at_shutdown_are_interrupted_and_wait_for_the_user() {
     assert_eq!(view["run"]["status"], "interrupted");
     assert_eq!(view["run"]["halt"], json!({ "kind": "process_stopped" }));
     assert_eq!(view["run"]["requestInFlight"], Value::Null);
+}
+
+#[tokio::test]
+async fn stopping_a_run_abandons_its_request_and_continuing_starts_a_new_one() {
+    let model = FakeModel::default();
+    let server = TestServer::start().await;
+    configure(&server, model.serve().await).await;
+    let project = server.create_project("Rain").await;
+    let version = project["selectedVersion"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    command(
+        &server,
+        &format!("/api/versions/{version}/brief"),
+        &version,
+        json!({ "brief": "A ghost story in a lighthouse." }),
+    )
+    .await;
+    model.hang();
+    command(
+        &server,
+        &format!("/api/versions/{version}/preparation/start"),
+        &version,
+        json!({}),
+    )
+    .await;
+    let view = wait_for(&server, &version, |view| view["run"]["status"] == "running").await;
+    let run = view["run"]["id"].as_str().unwrap().to_owned();
+
+    let response = server
+        .post(
+            &format!("/api/runs/{run}/stop"),
+            &json!({ "commandId": command_id() }),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let view = workspace(&server, &version).await;
+    assert_eq!(view["run"]["status"], "stopped");
+    assert_eq!(view["run"]["halt"], json!({ "kind": "stopped_by_user" }));
+
+    model.call("submit_preparation", first_round());
+    command(
+        &server,
+        &format!("/api/runs/{run}/continue"),
+        &version,
+        json!({}),
+    )
+    .await;
+    wait_for(&server, &version, |view| {
+        step(view) == ("preparation", "reviewing")
+    })
+    .await;
+    assert_eq!(model.requests().len(), 2);
 }

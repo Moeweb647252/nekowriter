@@ -16,7 +16,7 @@ use crate::http::{
     AppState,
     error::ApiError,
     extract::{Json, Path},
-    handlers::RevisionRequest,
+    handlers::{ControlRequest, RevisionRequest},
 };
 
 #[derive(Clone, Debug, Deserialize, TS)]
@@ -206,4 +206,14 @@ pub(crate) async fn add_extra_chapter(
         )
         .await?;
     Ok(axum::Json(ack))
+}
+
+pub(crate) async fn stop_run(
+    State(state): State<AppState>,
+    Path(run_id): Path<RunId>,
+    Json(request): Json<ControlRequest>,
+) -> Result<axum::Json<WorkspaceAck>, ApiError> {
+    Ok(axum::Json(
+        state.store.stop_run(request.command_id, run_id).await?,
+    ))
 }

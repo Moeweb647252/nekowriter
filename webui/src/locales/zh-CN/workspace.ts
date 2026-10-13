@@ -135,6 +135,7 @@ export default {
     },
     requests: "已用 {{count}} / {{limit}} 次请求",
     continue: "继续",
+    stop: "停止",
     halt: {
       request_limit: "该任务已用完允许的请求次数。继续后可再发送 100 次请求。",
       protocol_error_limit:
@@ -144,6 +145,7 @@ export default {
         "该请求约需 {{estimated}} 个 token，但模型只接受 {{limit}} 个。请换用上下文窗口更大的模型，然后继续。",
       provider: "模型服务出错：{{failure}}。请检查服务，然后继续。",
       process_stopped: "该任务进行时 NekoWriter 停止了运行。准备好后点击继续。",
+      stopped_by_user: "你停止了该任务。已写的内容和你的意见都保留着，准备好后点击继续。",
       internal: "NekoWriter 遇到了意外问题，详细信息已写入日志。可以继续重试。",
     },
   },

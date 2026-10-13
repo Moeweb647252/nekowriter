@@ -1,5 +1,6 @@
 import { getJson, postJson } from "../client"
 import type { AddExtraChapterRequest } from "../generated/AddExtraChapterRequest"
+import type { ControlRequest } from "../generated/ControlRequest"
 import type { DecideReviewRequest } from "../generated/DecideReviewRequest"
 import type { ReviewId } from "../generated/ReviewId"
 import type { RevisionId } from "../generated/RevisionId"
@@ -22,6 +23,8 @@ export const workspaceApi = {
     postJson<WorkspaceAck>(`/api/reviews/${reviewId}/decide`, request),
   continueRun: (runId: RunId, request: RevisionRequest) =>
     postJson<WorkspaceAck>(`/api/runs/${runId}/continue`, request),
+  stopRun: (runId: RunId, request: ControlRequest) =>
+    postJson<WorkspaceAck>(`/api/runs/${runId}/stop`, request),
   revision: (revisionId: RevisionId) => getJson<RevisionView>(`/api/revisions/${revisionId}`),
   startChapter: (versionId: VersionId, request: StartChapterRequest) =>
     postJson<WorkspaceAck>(`/api/versions/${versionId}/chapters/start`, request),

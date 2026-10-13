@@ -1,4 +1,4 @@
-//! A scripted model service: it answers each request with the next scripted tool call, or
+//! A scripted model service: it answers each request with the next scripted answer, or
 //! with a short text when nothing is scripted, and records what it received.
 
 use std::{
@@ -12,8 +12,17 @@ use serde_json::{Value, json};
 
 #[derive(Clone, Default)]
 pub struct FakeModel {
-    script: Arc<Mutex<VecDeque<(String, Value)>>>,
+    script: Arc<Mutex<VecDeque<Answer>>>,
     requests: Arc<Mutex<Vec<Received>>>,
+}
+
+enum Answer {
+    Call {
+        tool: String,
+        arguments: Value,
+    },
+    /// Accepts the request and never answers it.
+    Hang,
 }
 
 #[derive(Clone, Debug)]
@@ -35,10 +44,15 @@ impl FakeModel {
 
     /// Scripts the model's next answer: a call of `tool` with `arguments`.
     pub fn call(&self, tool: &str, arguments: Value) {
-        self.script
-            .lock()
-            .unwrap()
-            .push_back((tool.to_owned(), arguments));
+        self.script.lock().unwrap().push_back(Answer::Call {
+            tool: tool.to_owned(),
+            arguments,
+        });
+    }
+
+    /// Scripts the next request to stay unanswered.
+    pub fn hang(&self) {
+        self.script.lock().unwrap().push_back(Answer::Hang);
     }
 
     pub fn requests(&self) -> Vec<Received> {
@@ -65,9 +79,10 @@ async fn complete(
     };
     let scripted = model.script.lock().unwrap().pop_front();
     let stream = match scripted {
-        Some((tool, arguments)) => {
+        Some(Answer::Call { tool, arguments }) => {
             tool_call_stream(&format!("call_{number}"), &tool, &arguments.to_string())
         }
+        Some(Answer::Hang) => std::future::pending().await,
         None => text_stream("pong"),
     };
     ([("content-type", "text/event-stream")], stream)

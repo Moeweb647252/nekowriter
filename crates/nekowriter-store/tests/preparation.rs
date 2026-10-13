@@ -398,3 +398,58 @@ async fn a_project_writes_one_version_at_a_time_and_the_brief_locks_at_the_start
         StoreError::StateConflict(StateConflict::BriefLocked)
     ));
 }
+
+#[tokio::test]
+async fn a_stopped_run_ignores_its_late_answer_and_continues_when_asked() {
+    let (_dir, store) = common::open_store().await;
+    let version = started(&store).await;
+    let (input, request) = dispatch_next(&store).await;
+
+    store
+        .stop_run(CommandId::generate(), input.run_id)
+        .await
+        .unwrap();
+    let run = workspace(&store, version).await.run.unwrap();
+    assert_eq!(
+        (run.status, run.halt),
+        (RunStatus::Stopped, Some(RunHalt::StoppedByUser))
+    );
+    let again = store
+        .stop_run(CommandId::generate(), input.run_id)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        again,
+        StoreError::StateConflict(StateConflict::RunNotStoppable)
+    ));
+
+    // An answer that still arrives counts as usage only.
+    store
+        .record_answer(
+            request,
+            answer(&call()),
+            RoundRecord::PreparationSubmission {
+                call: call(),
+                submission: preparation_submission(&ArtifactKind::ALL),
+            },
+        )
+        .await
+        .unwrap();
+    let view = workspace(&store, version).await;
+    assert_eq!(view.run.as_ref().unwrap().status, RunStatus::Stopped);
+    assert_eq!(
+        stage(&view),
+        &WorkflowStage::Preparation {
+            step: PreparationStep::Generating
+        }
+    );
+
+    store
+        .continue_run(CommandId::generate(), input.run_id, view.revision)
+        .await
+        .unwrap();
+    assert_eq!(
+        workspace(&store, version).await.run.unwrap().status,
+        RunStatus::Queued
+    );
+}

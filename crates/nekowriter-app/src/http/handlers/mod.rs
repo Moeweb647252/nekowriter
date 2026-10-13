@@ -8,6 +8,15 @@ pub(crate) mod settings;
 pub(crate) mod system;
 pub(crate) mod workspace;
 
+/// The request of control commands, which quote no revision (`docs/product-spec.md`
+/// §16.3).
+#[derive(Clone, Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ControlRequest {
+    pub command_id: CommandId,
+}
+
 /// The request of commands that need nothing but the target's current revision.
 #[derive(Clone, Debug, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]

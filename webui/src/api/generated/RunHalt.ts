@@ -5,4 +5,4 @@ import type { ProviderFailure } from "./ProviderFailure";
 /**
  * Why a run stopped, failed or was interrupted.
  */
-export type RunHalt = { "kind": "request_limit" } | { "kind": "protocol_error_limit" } | { "kind": "model_not_ready", problem: ModelProblem, } | { "kind": "context_limit_exceeded", estimatedTokens: number, limitTokens: number, } | { "kind": "provider", failure: ProviderFailure, } | { "kind": "process_stopped" } | { "kind": "internal" };
+export type RunHalt = { "kind": "request_limit" } | { "kind": "protocol_error_limit" } | { "kind": "model_not_ready", problem: ModelProblem, } | { "kind": "context_limit_exceeded", estimatedTokens: number, limitTokens: number, } | { "kind": "provider", failure: ProviderFailure, } | { "kind": "process_stopped" } | { "kind": "stopped_by_user" } | { "kind": "internal" };

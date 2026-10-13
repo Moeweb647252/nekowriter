@@ -20,7 +20,7 @@ use nekowriter_core::{
     ids::{ModelRequestId, RunId},
     model::EffectiveModel,
     prompt::PromptRole,
-    run::RunHalt,
+    run::{RunHalt, RunStatus},
     run_message::TranscriptMessage,
 };
 use nekowriter_store::{
@@ -123,12 +123,14 @@ impl Dispatcher {
         };
         let started = Instant::now();
         self.previews.start(run_id, input.version_id, request_id);
+        // A stop or the shutdown abandons the request; the store has recorded why.
         let result = tokio::select! {
             result = self.client.complete(
                 &model.service,
                 &body,
                 |delta| self.previews.add(delta),
             ) => Some(result),
+            () = self.run_leaves_running(run_id) => None,
             () = self.shutdown.triggered() => None,
         };
         self.previews.clear();
@@ -150,6 +152,24 @@ impl Dispatcher {
                 self.store
                     .record_request_failure(request_id, error.failure())
                     .await
+            }
+        }
+    }
+
+    /// Completes once the run is no longer running, for example because the user stopped
+    /// it.
+    async fn run_leaves_running(&self, run_id: RunId) {
+        let mut notifications = self.store.subscribe_events();
+        loop {
+            match self.store.run_status(run_id).await {
+                Ok(RunStatus::Running) => {}
+                Ok(_) => return,
+                Err(error) => {
+                    tracing::error!(run = %run_id, %error, "the run's status could not be read");
+                }
+            }
+            if notifications.changed().await.is_err() {
+                return std::future::pending().await;
             }
         }
     }

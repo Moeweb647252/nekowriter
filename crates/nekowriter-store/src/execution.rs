@@ -383,8 +383,11 @@ impl Store {
         let run = find_run(tx.db(), request.run_id).await?;
         let current =
             request.status == ModelRequestStatus::Dispatched && run.status == RunStatus::Running;
+        let in_flight = request.status == ModelRequestStatus::Dispatched;
         let mut completed = request.into_active_model();
-        completed.status = Set(ModelRequestStatus::Succeeded);
+        if in_flight {
+            completed.status = Set(ModelRequestStatus::Succeeded);
+        }
         completed.finish_reason = Set(answer.finish_reason);
         completed.usage = Set(Some(answer.usage));
         completed.raw_usage = Set(answer.raw_usage);
@@ -393,7 +396,8 @@ impl Store {
         completed.update(tx.db()).await?;
         if !current {
             // The run was stopped or interrupted while the request was in flight; the
-            // answer is kept for the usage record only.
+            // answer is kept for the usage record only, and a cancelled or unknown request
+            // keeps that status.
             return tx.commit().await;
         }
         append_message(
@@ -459,8 +463,11 @@ impl Store {
         let mut tx = self.begin_internal().await?;
         let request = find_request(tx.db(), request_id).await?;
         let run = find_run(tx.db(), request.run_id).await?;
-        let current =
-            request.status == ModelRequestStatus::Dispatched && run.status == RunStatus::Running;
+        if request.status != ModelRequestStatus::Dispatched {
+            // Stopped or interrupted first: the request keeps that status.
+            return tx.commit().await;
+        }
+        let current = run.status == RunStatus::Running;
         let mut failed = request.into_active_model();
         failed.status = Set(ModelRequestStatus::Failed);
         failed.failure = Set(Some(failure.clone()));
@@ -519,6 +526,51 @@ impl Store {
             revision: workflow.revision,
         })
         .await
+    }
+
+    /// Stops a run that is waiting for the model or talking to it (§16.3). A request in
+    /// flight is cancelled; its answer, if it still arrives, only counts as usage.
+    /// Committed text and feedback stay.
+    pub async fn stop_run(
+        &self,
+        command: CommandId,
+        run_id: RunId,
+    ) -> Result<WorkspaceAck, StoreError> {
+        let mut tx = match self.begin_command(command, "run.stop", &run_id).await? {
+            Begun::Replayed(ack) => return Ok(ack),
+            Begun::Fresh(tx) => tx,
+        };
+        let run = run::Entity::find_by_id(run_id)
+            .one(tx.db())
+            .await?
+            .ok_or(StoreError::NotFound(Resource::Run))?;
+        let context = load_version(tx.db(), run.version_id).await?;
+        if !run.status.can_stop() {
+            return Err(StoreError::StateConflict(StateConflict::RunNotStoppable));
+        }
+        let requests = model_request::Entity::find()
+            .filter(model_request::Column::RunId.eq(run_id))
+            .filter(model_request::Column::Status.eq(ModelRequestStatus::Dispatched))
+            .all(tx.db())
+            .await?;
+        for request in requests {
+            let mut cancelled = request.into_active_model();
+            cancelled.status = Set(ModelRequestStatus::Cancelled);
+            cancelled.completed_at = Set(Some(tx.now()));
+            cancelled.update(tx.db()).await?;
+        }
+        halt(tx.write(), run, RunStatus::Stopped, RunHalt::StoppedByUser).await?;
+        let workflow = load_version(tx.db(), context.version.id).await?.workflow;
+        tx.commit(WorkspaceAck {
+            revision: workflow.revision,
+        })
+        .await
+    }
+
+    /// The run's current status; the dispatcher watches it to abandon a request whose run
+    /// stopped.
+    pub async fn run_status(&self, run_id: RunId) -> Result<RunStatus, StoreError> {
+        Ok(find_run(&self.db, run_id).await?.status)
     }
 
     /// Marks every executing run interrupted and every request in flight unknown, so

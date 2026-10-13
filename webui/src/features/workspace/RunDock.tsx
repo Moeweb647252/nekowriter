@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next"
 import type { RunHalt } from "@/api/generated/RunHalt"
 import type { RunView } from "@/api/generated/RunView"
 import type { WorkspaceView } from "@/api/generated/WorkspaceView"
-import { useContinueRun } from "@/api/queries/workspace"
+import { useContinueRun, useStopRun } from "@/api/queries/workspace"
 import { ErrorAlert } from "@/components/app/ErrorAlert"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
@@ -38,6 +38,7 @@ function useHaltText(): (halt: RunHalt) => string {
         case "request_limit":
         case "protocol_error_limit":
         case "process_stopped":
+        case "stopped_by_user":
         case "internal":
           return t(($) => $.workspace.run.halt[halt.kind])
         default:
@@ -60,17 +61,37 @@ function RequestCount({ run }: { run: RunView }) {
   )
 }
 
-/** A run that is waiting for the model or writing. */
-export function RunProgress({ run, children }: { run: RunView; children: ReactNode }) {
+/** A run that is waiting for the model or writing, which the user can stop (§16.3). */
+export function RunProgress({
+  view,
+  run,
+  children,
+}: {
+  view: WorkspaceView
+  run: RunView
+  children: ReactNode
+}) {
   const { t } = useTranslation()
+  const stop = useStopRun(view.version.id)
   return (
-    <div role="status" className="flex flex-col gap-2">
-      <p className="flex items-center gap-2 font-medium">
-        <Spinner />
-        {t(($) => $.workspace.run.status[run.status])}
-      </p>
-      <p className="text-muted-foreground">{children}</p>
-      <RequestCount run={run} />
+    <div className="flex flex-col items-start gap-2">
+      <div role="status" className="flex flex-col gap-2">
+        <p className="flex items-center gap-2 font-medium">
+          <Spinner />
+          {t(($) => $.workspace.run.status[run.status])}
+        </p>
+        <p className="text-muted-foreground">{children}</p>
+        <RequestCount run={run} />
+      </div>
+      {stop.isError && <ErrorAlert error={stop.error} />}
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={stop.isPending}
+        onClick={() => stop.mutate(run.id)}
+      >
+        {t(($) => $.workspace.run.stop)}
+      </Button>
     </div>
   )
 }

@@ -59,7 +59,7 @@ export function PreparationWorkspace({
     ) : step === "reviewing" ? (
       <ReviewDock view={view} selected={selected} onSelect={select} />
     ) : run !== null ? (
-      <RunProgress run={run}>
+      <RunProgress view={view} run={run}>
         {step === "revising"
           ? t(($) => $.workspace.preparation.revising, { documents: revising.join(", ") })
           : t(($) => $.workspace.preparation.generating)}

@@ -67,6 +67,7 @@ export default {
       review_not_open: "This document was already decided or is no longer under review.",
       run_active: "This work has a run in progress. Wait until it finishes.",
       run_not_continuable: "This run is not stopped or failed, so there is nothing to continue.",
+      run_not_stoppable: "This run is not working right now, so there is nothing to stop.",
     },
     MODEL_NOT_READY: "The model cannot be used yet. {{problem}}",
     MODEL_SERVICE_FAILED: "The test failed: {{failure}}.",

@@ -64,6 +64,7 @@ export default {
       review_not_open: "该文档已经审阅过，或已不在审阅中。",
       run_active: "该作品有正在进行的任务，请等它完成。",
       run_not_continuable: "该任务没有停止或失败，无需继续。",
+      run_not_stoppable: "该任务当前没有在运行，无需停止。",
     },
     MODEL_NOT_READY: "暂时无法使用模型。{{problem}}",
     MODEL_SERVICE_FAILED: "测试失败：{{failure}}。",

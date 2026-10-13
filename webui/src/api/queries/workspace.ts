@@ -122,3 +122,30 @@ export function useAddExtraChapter(versionId: VersionId) {
       workspaceApi.addExtraChapter(versionId, { commandId, expectedRevision: revision, title }),
   )
 }
+
+/**
+ * A control command (`docs/product-spec.md` §16.3): it quotes no workspace revision, since
+ * the agent keeps advancing the workspace while the user acts.
+ */
+function useControlCommand<Input>(
+  versionId: VersionId,
+  send: (input: Input, commandId: CommandId) => Promise<WorkspaceAck>,
+) {
+  const queryClient = useQueryClient()
+  const commandIds = useCommandIds()
+  return useMutation({
+    mutationFn: (input: Input) => send(input, commandIds.idFor(input)),
+    onSuccess: () => {
+      commandIds.succeeded()
+    },
+    onSettled: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.workspaces.version(versionId) })
+    },
+  })
+}
+
+export function useStopRun(versionId: VersionId) {
+  return useControlCommand(versionId, (runId: RunId, commandId) =>
+    workspaceApi.stopRun(runId, { commandId }),
+  )
+}

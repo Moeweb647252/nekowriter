@@ -52,7 +52,7 @@ export function ChapterDock({
     case "outline_generating":
       return run === null ? null : (
         <div className="flex flex-col gap-4">
-          <RunProgress run={run}>
+          <RunProgress view={view} run={run}>
             {t(($) => $.workspace.chapter.outlining, { chapter: name })}
           </RunProgress>
           <OutlinePreview preview={preview} />
@@ -82,7 +82,7 @@ export function ChapterDock({
       )
     case "drafting":
       return run === null ? null : (
-        <RunProgress run={run}>
+        <RunProgress view={view} run={run}>
           {t(($) => $.workspace.chapter.drafting, { chapter: name })}{" "}
           {t(($) => $.workspace.chapter.words, { count: chapter.body?.wordCount ?? 0 })}
         </RunProgress>
