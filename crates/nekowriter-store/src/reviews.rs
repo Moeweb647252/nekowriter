@@ -15,6 +15,7 @@ use crate::{
     command::Begun,
     entity::review,
     preparation::decide_preparation_review,
+    proposals::decide_edit_review,
     workflow::{WorkspaceAck, load_version},
 };
 
@@ -48,6 +49,9 @@ impl Store {
             }
             ReviewKind::ChapterOutline | ReviewKind::ChapterFinal => {
                 decide_chapter_review(tx.write(), context, review, decision).await?
+            }
+            ReviewKind::ChapterEdit => {
+                decide_edit_review(tx.write(), context, review, decision).await?
             }
         };
         tx.commit(WorkspaceAck {

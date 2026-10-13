@@ -107,6 +107,7 @@ export default {
     send: "发送意见",
     sendAndContinue: "发送意见并继续",
     queue: "你的意见",
+    reviewEachEdit: "每次修改都先经过我审阅",
     status: {
       queued: "等待下一个结果",
       bound: "随下一次请求发送",
@@ -118,6 +119,18 @@ export default {
       unknown: "送达情况未知：请求期间 NekoWriter 停止了运行",
       cancelled: "未送达：任务已停止",
     },
+  },
+  proposal: {
+    append: "Agent 提议在本章末尾追加文字。",
+    replace: "Agent 提议把“{{old}}”替换为“{{new}}”。",
+    delete: "Agent 提议删除“{{old}}”。",
+    feedback: "修改意见（留空即采纳这次修改）",
+    hint: "采纳后修改立即生效。填写意见则不采纳，Agent 会据此重新修改。",
+    accept: "采纳修改",
+    reject: "不采纳并提出意见",
+    label: "提议的修改，尚未生效",
+    added: "新增",
+    removed: "删除",
   },
   reader: {
     label: "正文",

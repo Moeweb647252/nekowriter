@@ -76,6 +76,7 @@ protocol_error = "调用无效：{{problem}}"
 edit_applied = "修改已生效。本章正文现有 {{word_count}} 字。"
 edit_no_change = "新旧文字相同，正文没有变化。本章正文现有 {{word_count}} 字。"
 edit_rejected = "修改没有生效，正文保持不变：{{problem}}"
+edit_declined = "作者没有采纳这次修改，正文保持不变。修改意见见 feedback，请据此重新修改。"
 
 [edit_problems]
 empty_content = "content 为空，没有可以追加的内容。"
@@ -83,6 +84,7 @@ empty_old_str = "old_str 为空，无法确定要替换哪段文字。"
 no_match = "正文中找不到 old_str。old_str 必须与正文逐字一致，请对照当前正文重新选取。"
 ambiguous_match = "old_str 在正文中出现了 {{matches}} 次。请加长 old_str，让它在正文中只出现一次。"
 body_too_long = "修改后的正文会超过 {{max_chars}} 个字符的上限。"
+stale_base = "提出这次修改之后正文已经变化，修改没有生效。请对照当前正文重新修改。"
 
 [submission_problems]
 missing_artifacts = "缺少本轮要求的产物：{{artifacts}}。"

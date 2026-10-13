@@ -2,6 +2,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 
 import { useCommandIds } from "../command"
 import { workspaceApi } from "../endpoints/workspace"
+import type { ApprovalMode } from "../generated/ApprovalMode"
 import type { CommandId } from "../generated/CommandId"
 import type { ReviewDecisionInput } from "../generated/ReviewDecisionInput"
 import type { ReviewId } from "../generated/ReviewId"
@@ -174,5 +175,12 @@ export function useCancelPause(versionId: VersionId) {
 export function useResumeRun(versionId: VersionId) {
   return useControlCommand(versionId, (runId: RunId, commandId) =>
     workspaceApi.resumeRun(runId, { commandId }),
+  )
+}
+
+/** Switches between applying edits at once and reviewing each (§9.6). */
+export function useSetApprovalMode(versionId: VersionId) {
+  return useControlCommand(versionId, (mode: ApprovalMode, commandId) =>
+    workspaceApi.setApprovalMode(versionId, { commandId, mode }),
   )
 }

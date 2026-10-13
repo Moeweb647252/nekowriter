@@ -485,7 +485,8 @@ async fn insert_chapter_review(
         run_id: Set(run.id),
         round: Set(round),
         kind: Set(kind),
-        target_revision_id: Set(target),
+        target_revision_id: Set(Some(target)),
+        target_call_id: Set(None),
         status: Set(ReviewStatus::Open),
         summary: Set(summary),
         feedback: Set(None),
@@ -539,14 +540,20 @@ pub(crate) async fn decide_chapter_review(
         return Err(not_open());
     }
     let document = chapter_document(tx.db(), chapter_id, role).await?;
-    if document.current_revision_id != Some(review.target_revision_id) {
+    let Some(target) = review.target_revision_id else {
+        return Err(StoreError::Corrupt(format!(
+            "chapter review {} has no target revision",
+            review.id
+        )));
+    };
+    if document.current_revision_id != Some(target) {
         return Err(StoreError::Corrupt(format!(
             "review {} targets a revision that is no longer current",
             review.id
         )));
     }
 
-    let (review_id, target) = (review.id, review.target_revision_id);
+    let review_id = review.id;
     let mut decided = review.into_active_model();
     decided.decided_at = Set(Some(tx.now()));
     let project_id = context.project.id;

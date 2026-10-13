@@ -277,7 +277,7 @@ async fn approved_revisions<C: ConnectionTrait>(
         match (latest, document.current_revision_id) {
             (Some(review), Some(current))
                 if review.status == ReviewStatus::Approved
-                    && review.target_revision_id == current =>
+                    && review.target_revision_id == Some(current) =>
             {
                 revisions.push(current);
             }
@@ -412,7 +412,8 @@ async fn insert_review(
         run_id: Set(run.id),
         round: Set(round),
         kind: Set(kind.into()),
-        target_revision_id: Set(target),
+        target_revision_id: Set(Some(target)),
+        target_call_id: Set(None),
         status: Set(status),
         summary: Set(None),
         feedback: Set(None),

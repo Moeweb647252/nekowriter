@@ -36,6 +36,8 @@ pub enum ReviewKind {
     ChapterOutline,
     /// A finished chapter as a whole.
     ChapterFinal,
+    /// One proposed body edit, in `ApproveRequired` mode.
+    ChapterEdit,
 }
 
 impl From<ArtifactKind> for ReviewKind {
@@ -58,7 +60,7 @@ impl ReviewKind {
             Self::PreparationResearch => Some(ArtifactKind::Research),
             Self::PreparationCharacters => Some(ArtifactKind::Characters),
             Self::PreparationOutline => Some(ArtifactKind::Outline),
-            Self::ChapterOutline | Self::ChapterFinal => None,
+            Self::ChapterOutline | Self::ChapterFinal | Self::ChapterEdit => None,
         }
     }
 }

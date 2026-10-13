@@ -119,6 +119,7 @@ export default {
     send: "Send feedback",
     sendAndContinue: "Send feedback and continue",
     queue: "Your feedback",
+    reviewEachEdit: "Review each edit before it is applied",
     status: {
       queued: "Waiting for the next result",
       bound: "Goes with the next request",
@@ -130,6 +131,18 @@ export default {
       unknown: "Delivery unknown: NekoWriter stopped during the request",
       cancelled: "Not delivered: the run was stopped",
     } satisfies Record<FeedbackDelivery, string>,
+  },
+  proposal: {
+    append: "The agent proposes adding text to the end of the chapter.",
+    replace: "The agent proposes replacing “{{old}}” with “{{new}}”.",
+    delete: "The agent proposes deleting “{{old}}”.",
+    feedback: "Feedback (leave empty to accept the edit)",
+    hint: "Accepting applies the edit. With feedback, the edit is rejected and the agent tries again.",
+    accept: "Accept edit",
+    reject: "Reject with feedback",
+    label: "Proposed edit, not applied yet",
+    added: "Added",
+    removed: "Removed",
   },
   reader: {
     label: "Manuscript",

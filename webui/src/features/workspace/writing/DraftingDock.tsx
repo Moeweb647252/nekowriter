@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next"
 
 import { useChapterName } from "../chapters"
 import { RunProgress } from "../RunDock"
+import { quote } from "./edits"
 import { errorForField, errorForForm } from "@/api/fieldErrors"
 import type { ChapterView } from "@/api/generated/ChapterView"
 import type { FeedbackView } from "@/api/generated/FeedbackView"
@@ -13,24 +14,18 @@ import {
   useCancelPause,
   usePauseRun,
   useResumeRun,
+  useSetApprovalMode,
   useStopRun,
   useSubmitFeedback,
 } from "@/api/queries/workspace"
 import { ErrorAlert } from "@/components/app/ErrorAlert"
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
+import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { useErrorText } from "@/i18n/errors"
 import { useDraft } from "@/lib/drafts"
 import { submitOnModEnter } from "@/lib/keyboard"
-
-/** Quotes stay readable in a sentence however long the text is. */
-const QUOTE_CHARS = 60
-
-function quote(text: string): string {
-  const chars = Array.from(text)
-  return chars.length > QUOTE_CHARS ? `${chars.slice(0, QUOTE_CHARS).join("")}…` : text
-}
 
 /**
  * The dock while the body is written in AutoApprove (§9.3, §18.3): the run's state with
@@ -53,6 +48,7 @@ export function DraftingDock({
         ) : (
           <WritingState view={view} chapter={chapter} run={run} />
         )}
+        <ApprovalModeSwitch view={view} />
       </div>
       <FeedbackPanel view={view} run={run} />
     </div>
@@ -231,5 +227,30 @@ function FeedbackItem({ item }: { item: FeedbackView }) {
       <span className="whitespace-pre-wrap">{item.text}</span>
       <span className="text-xs text-muted-foreground">{state}</span>
     </li>
+  )
+}
+
+/** Switches between applying edits at once and reviewing each (§9.6). */
+export function ApprovalModeSwitch({ view }: { view: WorkspaceView }) {
+  const { t } = useTranslation()
+  const setMode = useSetApprovalMode(view.version.id)
+  const id = `approval-mode-${view.version.id}`
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <Switch
+          id={id}
+          checked={view.approvalMode === "approve_required"}
+          disabled={setMode.isPending}
+          onCheckedChange={(checked) =>
+            setMode.mutate(checked ? "approve_required" : "auto_approve")
+          }
+        />
+        <label htmlFor={id} className="text-sm">
+          {t(($) => $.workspace.writing.reviewEachEdit)}
+        </label>
+      </div>
+      {setMode.isError && <ErrorAlert error={setMode.error} />}
+    </div>
   )
 }

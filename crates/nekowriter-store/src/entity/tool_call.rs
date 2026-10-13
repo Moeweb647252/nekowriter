@@ -1,6 +1,6 @@
 use nekowriter_core::{
     call::CallRequest,
-    ids::{ModelRequestId, RunId, ToolCallId},
+    ids::{ModelRequestId, RevisionId, RunId, ToolCallId},
     run_message::ToolOutcome,
     time::Timestamp,
 };
@@ -26,6 +26,9 @@ pub struct Model {
     pub arguments: String,
     /// The parsed call; absent when the call broke the protocol.
     pub parsed: Option<CallRequest>,
+    /// For a proposed edit: the body revision it was computed against (`None` for an empty
+    /// body).
+    pub base_revision_id: Option<RevisionId>,
     pub status: ToolCallStatus,
     pub outcome: Option<ToolOutcome>,
     pub created_at: Timestamp,
@@ -50,6 +53,8 @@ pub enum ToolCallStatus {
     Received,
     /// Waiting for the user to continue a paused run.
     Held,
+    /// A proposed edit waiting for its review.
+    AwaitingReview,
     /// The outcome is recorded and its result message queued.
     Resolved,
 }

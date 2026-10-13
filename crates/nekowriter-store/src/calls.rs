@@ -26,6 +26,7 @@ use crate::{
     execution::{append_message, halt},
     feedback::{bind_queued, has_queued},
     preparation::apply_submission,
+    proposals::{needs_review, propose},
     workflow::{advance, load_version, touch},
 };
 
@@ -53,6 +54,7 @@ pub(crate) async fn insert_call(
         name: Set(call.name.clone()),
         arguments: Set(call.arguments.clone()),
         parsed: Set(parsed),
+        base_revision_id: Set(None),
         status: Set(ToolCallStatus::Received),
         outcome: Set(None),
         created_at: Set(tx.now()),
@@ -110,6 +112,9 @@ pub(crate) async fn execute(
         .ok_or_else(|| StoreError::Corrupt(format!("tool call {} was never parsed", call.id)))?;
     let submission = match request {
         CallRequest::Edit { edit } => {
+            if let Some(base) = needs_review(tx.db(), &run, &edit).await? {
+                return propose(tx, run, call, base).await;
+            }
             let outcome = apply_edit(tx, &run, &edit).await?;
             resolve(tx, &call, outcome).await?;
             return requeue(tx, run, false).await;

@@ -1,5 +1,5 @@
 use nekowriter_core::{
-    ids::{ChapterId, ReviewId, RevisionId, RunId, VersionId},
+    ids::{ChapterId, ReviewId, RevisionId, RunId, ToolCallId, VersionId},
     review::{ReviewKind, ReviewStatus},
     time::Timestamp,
 };
@@ -21,7 +21,10 @@ pub struct Model {
     /// The submission round of that run.
     pub round: i32,
     pub kind: ReviewKind,
-    pub target_revision_id: RevisionId,
+    /// The revision under review; absent for an edit review.
+    pub target_revision_id: Option<RevisionId>,
+    /// The call whose proposed edit is under review, for an edit review.
+    pub target_call_id: Option<ToolCallId>,
     pub status: ReviewStatus,
     /// What the writer says the submitted chapter contains, for whole-chapter reviews.
     #[sea_orm(column_type = "Text", nullable)]
@@ -33,7 +36,7 @@ pub struct Model {
     #[sea_orm(belongs_to, from = "run_id", to = "id")]
     pub run: BelongsTo<super::run::Entity>,
     #[sea_orm(belongs_to, from = "target_revision_id", to = "id")]
-    pub target: BelongsTo<super::revision::Entity>,
+    pub target: BelongsTo<Option<super::revision::Entity>>,
     #[sea_orm(belongs_to, from = "chapter_id", to = "id")]
     pub chapter: BelongsTo<Option<super::chapter::Entity>>,
 }

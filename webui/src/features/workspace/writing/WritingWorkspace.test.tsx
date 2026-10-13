@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 
 import { PreviewStore } from "@/api/events/preview"
 import type { AddExtraChapterRequest } from "@/api/generated/AddExtraChapterRequest"
+import type { ApprovalModeRequest } from "@/api/generated/ApprovalModeRequest"
 import type { DecideReviewRequest } from "@/api/generated/DecideReviewRequest"
 import type { FeedbackRequest } from "@/api/generated/FeedbackRequest"
 import type { StartChapterRequest } from "@/api/generated/StartChapterRequest"
@@ -238,6 +239,78 @@ describe("WritingWorkspace", () => {
       })
       expect(commands[0]?.path).toBe(`/api/runs/${RUN_ID}/feedback`)
       expect((commands[0]?.body as FeedbackRequest).text).toBe("More rain.")
+    })
+  })
+
+  describe("with each edit reviewed", () => {
+    const body = revision("0190f5c8-0000-7000-8000-000000000a00", "The lamp was dark.", {
+      wordCount: 4,
+    })
+    const proposing = () => ({
+      ...atChapter("drafting", [{ ...FIRST, status: "in_progress" as const, body }, SECOND]),
+      run: runView({ kind: "chapter_body", status: "waiting_review" }),
+      approvalMode: "approve_required" as const,
+      proposal: {
+        reviewId: "0190f5c8-0000-7000-8000-000000000a01",
+        callId: "0190f5c8-0000-7000-8000-000000000a02",
+        edit: { op: "replace" as const, oldStr: "dark", newStr: "lit" },
+        base: body.id,
+      },
+    })
+
+    it("marks the proposed change in place and accepts it with empty feedback", async () => {
+      const { commands } = fakeWorkspace(proposing())
+      const { user } = renderWorkspace()
+
+      expect(
+        await screen.findByText("The agent proposes replacing “dark” with “lit”."),
+      ).toBeInTheDocument()
+      expect((await screen.findByText("dark")).closest("del")).not.toBeNull()
+      expect(screen.getByText("lit").closest("ins")).not.toBeNull()
+      await user.click(screen.getByRole("button", { name: "Accept edit" }))
+
+      await waitFor(() => {
+        expect(commands).toHaveLength(1)
+      })
+      expect(commands[0]?.path).toBe("/api/reviews/0190f5c8-0000-7000-8000-000000000a01/decide")
+      expect((commands[0]?.body as DecideReviewRequest).decision).toEqual({ kind: "approve" })
+    })
+
+    it("rejects the edit once feedback is written", async () => {
+      const { commands } = fakeWorkspace(proposing())
+      const { user } = renderWorkspace()
+
+      await user.type(
+        await screen.findByLabelText("Feedback (leave empty to accept the edit)"),
+        "Keep it dark.",
+      )
+      await user.click(screen.getByRole("button", { name: "Reject with feedback" }))
+
+      await waitFor(() => {
+        expect(commands).toHaveLength(1)
+      })
+      expect((commands[0]?.body as DecideReviewRequest).decision).toEqual({
+        kind: "reject",
+        feedback: "Keep it dark.",
+      })
+    })
+
+    it("switches the mode", async () => {
+      const { commands } = fakeWorkspace({
+        ...atChapter("drafting", [{ ...FIRST, status: "in_progress" as const }, SECOND]),
+        run: runView({ kind: "chapter_body", status: "running" }),
+      })
+      const { user } = renderWorkspace()
+
+      await user.click(
+        await screen.findByRole("switch", { name: "Review each edit before it is applied" }),
+      )
+
+      await waitFor(() => {
+        expect(commands).toHaveLength(1)
+      })
+      expect(commands[0]?.path).toBe(`/api/versions/${VERSION_ID}/approval-mode`)
+      expect((commands[0]?.body as ApprovalModeRequest).mode).toBe("approve_required")
     })
   })
 })

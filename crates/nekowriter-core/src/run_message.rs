@@ -138,6 +138,8 @@ pub enum ToolOutcome {
     EditNoChange { word_count: u32 },
     /// The body edit could not be applied; the body is unchanged.
     EditRejected { problem: EditProblem },
+    /// The user declined the proposed edit; their feedback travels with the result.
+    EditDeclined,
 }
 
 /// How a tool call broke the protocol (§8.1, §8.4).

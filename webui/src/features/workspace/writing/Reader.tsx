@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next"
 import { currentChapter, useChapterName } from "../chapters"
 import { ReadingText } from "../DocumentView"
 import { ScrollContainerContext } from "../scroll"
+import type { BodyEdit } from "@/api/generated/BodyEdit"
 import type { ChapterId } from "@/api/generated/ChapterId"
 import type { ChapterView } from "@/api/generated/ChapterView"
 import type { Preview } from "@/api/generated/Preview"
@@ -106,6 +107,7 @@ export function Reader({
           chapter={chapter}
           streaming={chapter.id === current?.id ? streaming : null}
           held={chapter.id === current?.id ? heldAppend(view) : null}
+          proposal={chapter.id === current?.id ? (view.proposal?.edit ?? null) : null}
         />
       ))}
       <div ref={end} aria-hidden className="h-px" />
@@ -131,6 +133,43 @@ function heldAppend(view: WorkspaceView): string | null {
   return edit?.op === "append" ? edit.content : null
 }
 
+/**
+ * The body with a proposed replacement marked in place: the removed text struck through
+ * and the added text after it, each with a symbol, a color and a label (§18.4).
+ */
+function ProposedReplace({
+  text,
+  edit,
+}: {
+  text: string
+  edit: { oldStr: string; newStr: string }
+}) {
+  const { t } = useTranslation()
+  const oldStr = edit.oldStr.replace(/\r\n?/g, "\n")
+  const newStr = edit.newStr.replace(/\r\n?/g, "\n")
+  const at = text.indexOf(oldStr)
+  if (at < 0) return <ReadingText text={text} />
+  return (
+    <>
+      <p className="mb-2 text-xs text-muted-foreground">{t(($) => $.workspace.proposal.label)}</p>
+      <div className="font-reading text-lg leading-[1.85] whitespace-pre-wrap">
+        {text.slice(0, at)}
+        <del className="rounded-sm bg-destructive/15 text-destructive before:content-['-']">
+          <span className="sr-only">{t(($) => $.workspace.proposal.removed)}: </span>
+          {oldStr}
+        </del>
+        {newStr !== "" && (
+          <ins className="rounded-sm bg-emerald-500/15 text-emerald-900 no-underline before:content-['+'] dark:text-emerald-200">
+            <span className="sr-only">{t(($) => $.workspace.proposal.added)}: </span>
+            {newStr}
+          </ins>
+        )}
+        {text.slice(at + oldStr.length)}
+      </div>
+    </>
+  )
+}
+
 function sectionId(chapter: ChapterId): string {
   return `chapter-${chapter}`
 }
@@ -139,11 +178,14 @@ function ChapterSection({
   chapter,
   streaming,
   held,
+  proposal,
 }: {
   chapter: ChapterView
   streaming: StreamingEdit | null
   /** Text a paused run holds back. */
   held: string | null
+  /** An edit waiting for the user's review. */
+  proposal: BodyEdit | null
 }) {
   const { t } = useTranslation()
   const chapterName = useChapterName()
@@ -163,8 +205,21 @@ function ChapterSection({
         )
       ) : body.data === undefined ? (
         <Skeleton className="h-32 w-full" />
+      ) : proposal?.op === "replace" ? (
+        <ProposedReplace text={body.data.content} edit={proposal} />
       ) : (
         <ReadingText text={body.data.content} />
+      )}
+      {proposal?.op === "append" && (
+        <div className="mt-2 border-l-2 border-emerald-600/60 pl-4">
+          <p className="mb-1 text-xs text-muted-foreground">
+            + {t(($) => $.workspace.proposal.label)}
+          </p>
+          <ins className="block text-emerald-900 no-underline dark:text-emerald-200">
+            <span className="sr-only">{t(($) => $.workspace.proposal.added)}: </span>
+            <ReadingText text={proposal.content} />
+          </ins>
+        </div>
       )}
       {appended !== null && (
         <div className="mt-2 border-l-2 border-dashed border-primary/50 pl-4">

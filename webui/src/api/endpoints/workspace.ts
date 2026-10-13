@@ -1,5 +1,6 @@
 import { getJson, postJson } from "../client"
 import type { AddExtraChapterRequest } from "../generated/AddExtraChapterRequest"
+import type { ApprovalModeRequest } from "../generated/ApprovalModeRequest"
 import type { ControlRequest } from "../generated/ControlRequest"
 import type { DecideReviewRequest } from "../generated/DecideReviewRequest"
 import type { FeedbackRequest } from "../generated/FeedbackRequest"
@@ -34,6 +35,8 @@ export const workspaceApi = {
     postJson<WorkspaceAck>(`/api/runs/${runId}/cancel-pause`, request),
   resumeRun: (runId: RunId, request: ControlRequest) =>
     postJson<WorkspaceAck>(`/api/runs/${runId}/resume`, request),
+  setApprovalMode: (versionId: VersionId, request: ApprovalModeRequest) =>
+    postJson<WorkspaceAck>(`/api/versions/${versionId}/approval-mode`, request),
   revision: (revisionId: RevisionId) => getJson<RevisionView>(`/api/revisions/${revisionId}`),
   startChapter: (versionId: VersionId, request: StartChapterRequest) =>
     postJson<WorkspaceAck>(`/api/versions/${versionId}/chapters/start`, request),

@@ -1,7 +1,7 @@
 use nekowriter_core::{
     ids::{RunId, VersionId},
     time::Timestamp,
-    workflow::WorkflowStage,
+    workflow::{ApprovalMode, WorkflowStage},
 };
 use sea_orm::entity::prelude::*;
 
@@ -21,6 +21,8 @@ pub struct Model {
     pub completed_at: Option<Timestamp>,
     /// The user asked to pause the active run at its next tool call (§9.3).
     pub pause_requested: bool,
+    /// Whether body edits apply at once or wait for review (§9.5).
+    pub approval_mode: ApprovalMode,
     pub updated_at: Timestamp,
     #[sea_orm(belongs_to, from = "version_id", to = "id")]
     pub version: BelongsTo<super::version::Entity>,

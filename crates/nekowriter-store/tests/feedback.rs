@@ -3,95 +3,21 @@
 
 mod common;
 
-use common::{answer, dispatch_next, edit_round, open_store, prepared, submit_round, workspace};
+use common::{
+    answer_with, append, body, dispatch_next, drafting, next_results, open_store,
+    submit_chapter as submit, workspace,
+};
 use nekowriter_core::{
     body::BodyEdit,
-    call::StageSubmission,
-    chapter::ChapterGuidance,
     conflict::StateConflict,
     feedback::{FeedbackDelivery, FeedbackStatus, FeedbackText},
-    ids::{ChapterId, CommandId, ModelRequestId, RunId, VersionId},
-    review::ReviewDecision,
+    ids::{CommandId, RunId},
     run::{ProviderFailure, RunStatus},
-    run_message::{ToolOutcome, UnsealedMessage},
-    submission::{ChapterSubmission, OutlineSubmission, SubmissionProblem},
+    run_message::ToolOutcome,
+    submission::SubmissionProblem,
     workflow::{ChapterStep, WorkflowStage},
 };
-use nekowriter_store::{RoundRecord, Store, StoreError, TranscriptEntry};
-
-/// A version whose first chapter's body is being written, and the body run.
-async fn drafting(store: &Store) -> (VersionId, RunId, ChapterId) {
-    let version = prepared(store).await;
-    let revision = workspace(store, version).await.revision;
-    store
-        .start_chapter(
-            CommandId::generate(),
-            version,
-            revision,
-            ChapterGuidance::parse("").unwrap(),
-        )
-        .await
-        .unwrap();
-    let WorkflowStage::Chapter { chapter_id, .. } = workspace(store, version).await.version.stage
-    else {
-        panic!("at a chapter");
-    };
-    common::record(
-        store,
-        submit_round(
-            "submit_chapter_outline",
-            StageSubmission::ChapterOutline {
-                submission: OutlineSubmission {
-                    chapter_id,
-                    content: "Scene one.".to_owned(),
-                },
-            },
-        ),
-    )
-    .await;
-    let view = workspace(store, version).await;
-    let review = view.chapters[0].review.clone().unwrap();
-    store
-        .decide_review(
-            CommandId::generate(),
-            review.id,
-            view.revision,
-            ReviewDecision::Approve,
-        )
-        .await
-        .unwrap();
-    let run = workspace(store, version).await.run.unwrap().id;
-    (version, run, chapter_id)
-}
-
-fn append(content: &str) -> RoundRecord {
-    edit_round(BodyEdit::Append {
-        content: content.to_owned(),
-    })
-}
-
-fn submit(chapter_id: ChapterId) -> RoundRecord {
-    submit_round(
-        "submit_chapter",
-        StageSubmission::Chapter {
-            submission: ChapterSubmission {
-                chapter_id,
-                summary: "The keeper wakes.".to_owned(),
-            },
-        },
-    )
-}
-
-/// Records `round` as the answer to the request in flight.
-async fn answer_with(store: &Store, request: ModelRequestId, round: RoundRecord) {
-    let RoundRecord::Call { call: made, .. } = &round else {
-        panic!("a call");
-    };
-    store
-        .record_answer(request, answer(made), round.clone())
-        .await
-        .unwrap();
-}
+use nekowriter_store::{Store, StoreError};
 
 async fn feedback(store: &Store, run: RunId, text: &str) {
     store
@@ -109,38 +35,6 @@ async fn pause(store: &Store, run: RunId) {
         .request_pause(CommandId::generate(), run)
         .await
         .unwrap();
-}
-
-/// The results the next request will carry: each outcome with its feedback.
-async fn next_results(store: &Store) -> Vec<(ToolOutcome, Vec<String>)> {
-    let run = store
-        .next_queued_run()
-        .await
-        .unwrap()
-        .expect("a run is queued");
-    store
-        .dispatch_input(run)
-        .await
-        .unwrap()
-        .messages
-        .into_iter()
-        .filter_map(|entry| match entry {
-            TranscriptEntry::Pending {
-                message:
-                    UnsealedMessage::ToolResult {
-                        outcome, feedback, ..
-                    },
-                ..
-            } => Some((outcome, feedback)),
-            _ => None,
-        })
-        .collect()
-}
-
-async fn body(store: &Store, version: VersionId) -> Option<i32> {
-    workspace(store, version).await.chapters[0]
-        .body
-        .and_then(|body| body.word_count)
 }
 
 #[tokio::test]

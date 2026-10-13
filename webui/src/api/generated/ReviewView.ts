@@ -11,9 +11,9 @@ export type ReviewView = { id: ReviewId, kind: ReviewKind, status: ReviewStatus,
  */
 round: number, 
 /**
- * The revision under review.
+ * The revision under review; absent for an edit review.
  */
-target: RevisionId, 
+target: RevisionId | null, 
 /**
  * What the writer says a submitted chapter contains.
  */

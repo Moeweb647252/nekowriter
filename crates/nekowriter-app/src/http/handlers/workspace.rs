@@ -8,6 +8,7 @@ use nekowriter_core::{
     ids::{CommandId, ReviewId, RevisionId, RunId, VersionId},
     preparation::NovelBrief,
     review::{ReviewDecision, ReviewFeedback},
+    workflow::ApprovalMode,
 };
 use nekowriter_store::{RevisionView, WorkspaceAck, WorkspaceView};
 use serde::Deserialize;
@@ -64,6 +65,15 @@ pub struct AddExtraChapterRequest {
 pub struct FeedbackRequest {
     pub command_id: CommandId,
     pub text: String,
+}
+
+/// Switching how body edits are approved; a control command (§9.6).
+#[derive(Clone, Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ApprovalModeRequest {
+    pub command_id: CommandId,
+    pub mode: ApprovalMode,
 }
 
 /// A review decision as a request carries it.
@@ -272,5 +282,18 @@ pub(crate) async fn resume_run(
 ) -> Result<axum::Json<WorkspaceAck>, ApiError> {
     Ok(axum::Json(
         state.store.resume_run(request.command_id, run_id).await?,
+    ))
+}
+
+pub(crate) async fn set_approval_mode(
+    State(state): State<AppState>,
+    Path(version_id): Path<VersionId>,
+    Json(request): Json<ApprovalModeRequest>,
+) -> Result<axum::Json<WorkspaceAck>, ApiError> {
+    Ok(axum::Json(
+        state
+            .store
+            .set_approval_mode(request.command_id, version_id, request.mode)
+            .await?,
     ))
 }

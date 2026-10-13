@@ -4,7 +4,7 @@
 //! inside it. What the agent is doing at that point is the separate execution axis, the
 //! status of the version's active run (`crate::run`).
 
-use sea_orm::FromJsonQueryResult;
+use sea_orm::{DeriveActiveEnum, EnumIter, FromJsonQueryResult, sea_query::StringLen};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -62,4 +62,34 @@ impl WorkflowStage {
     pub const NEW_VERSION: Self = Self::Preparation {
         step: PreparationStep::NotStarted,
     };
+}
+
+/// Whether body edits apply at once or wait for the user's review (§9.5, D14).
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    TS,
+    EnumIter,
+    DeriveActiveEnum,
+)]
+#[sea_orm(
+    rs_type = "String",
+    db_type = "String(StringLen::None)",
+    rename_all = "snake_case"
+)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ApprovalMode {
+    /// Every valid edit is committed at once.
+    #[default]
+    AutoApprove,
+    /// Every edit that changes the body waits for the user as a proposal.
+    ApproveRequired,
 }

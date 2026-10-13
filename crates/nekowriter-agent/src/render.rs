@@ -198,6 +198,7 @@ pub fn unsealed(message: &UnsealedMessage, submission_tool: &str) -> TranscriptM
                 // Preparation reviews are delivered per round; only chapter outlines and
                 // chapters are rejected one at a time.
                 ReviewKind::ChapterOutline
+                | ReviewKind::ChapterEdit
                 | ReviewKind::PreparationBackground
                 | ReviewKind::PreparationResearch
                 | ReviewKind::PreparationCharacters
@@ -259,6 +260,7 @@ pub fn tool_outcome(outcome: &ToolOutcome) -> String {
                 .edit_rejected
                 .render(&[("problem", &edit_problem(problem))]),
         ),
+        ToolOutcome::EditDeclined => ("rejected", results.edit_declined.render(&[])),
         ToolOutcome::SubmissionAccepted => ("accepted", results.submission_accepted.render(&[])),
         ToolOutcome::SubmissionRejected { problem } => (
             "rejected",
@@ -289,6 +291,7 @@ pub fn edit_problem(problem: &EditProblem) -> String {
         EditProblem::BodyTooLong { max_chars } => text
             .body_too_long
             .render(&[("max_chars", &max_chars.to_string())]),
+        EditProblem::StaleBase => text.stale_base.render(&[]),
     }
 }
 
@@ -571,6 +574,8 @@ mod tests {
             applied.contains("\"applied\"") && applied.contains("12"),
             "{applied}"
         );
+        let declined = tool_outcome(&ToolOutcome::EditDeclined);
+        assert!(declined.contains("\"rejected\""), "{declined}");
         let unchanged = tool_outcome(&ToolOutcome::EditNoChange { word_count: 12 });
         assert!(unchanged.contains("\"unchanged\""), "{unchanged}");
         for problem in [
@@ -579,6 +584,7 @@ mod tests {
             EditProblem::NoMatch,
             EditProblem::AmbiguousMatch { matches: 3 },
             EditProblem::BodyTooLong { max_chars: 9 },
+            EditProblem::StaleBase,
         ] {
             let rendered = tool_outcome(&ToolOutcome::EditRejected { problem });
             assert!(rendered.contains("\"rejected\""), "{rendered}");

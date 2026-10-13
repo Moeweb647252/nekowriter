@@ -170,6 +170,7 @@ pub struct Results {
     pub edit_applied: Text,
     pub edit_no_change: Text,
     pub edit_rejected: Text,
+    pub edit_declined: Text,
 }
 
 #[derive(Debug, Deserialize)]
@@ -180,6 +181,7 @@ pub struct EditProblems {
     pub no_match: Text,
     pub ambiguous_match: Text,
     pub body_too_long: Text,
+    pub stale_base: Text,
 }
 
 #[derive(Debug, Deserialize)]

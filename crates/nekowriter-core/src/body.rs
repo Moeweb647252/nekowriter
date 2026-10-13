@@ -41,6 +41,8 @@ pub enum EditProblem {
     AmbiguousMatch { matches: u32 },
     /// The body would exceed [`BODY_MAX_CHARS`].
     BodyTooLong { max_chars: u32 },
+    /// The body changed after the edit was proposed, so the edit no longer applies to it.
+    StaleBase,
 }
 
 /// What an edit does to the body.

@@ -11,6 +11,7 @@ use nekowriter_core::{
     review::{ReviewKind, ReviewStatus},
     run::{RunHalt, RunKind, RunStatus},
     time::Timestamp,
+    workflow::ApprovalMode,
 };
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 use serde::{Deserialize, Serialize};
@@ -22,6 +23,7 @@ use crate::{
     entity::{chapter, document, model_request, review, revision, run, version},
     feedback::{FeedbackView, HeldCallView, feedback_views, held_view},
     projects::{ProjectView, VersionSummary, project_view, version_summaries},
+    proposals::{ProposalView, proposal_view},
     workflow::load_version,
 };
 
@@ -45,6 +47,10 @@ pub struct WorkspaceView {
     pub feedback: Vec<FeedbackView>,
     /// The call the run holds while it is paused.
     pub held: Option<HeldCallView>,
+    /// Whether body edits apply at once or wait for review (§9.5).
+    pub approval_mode: ApprovalMode,
+    /// The run's proposed edit waiting for review.
+    pub proposal: Option<ProposalView>,
     /// The novel brief, with its content: it is edited in the workspace.
     pub brief: Option<RevisionView>,
     /// The four preparation artifacts, in tab order.
@@ -87,8 +93,8 @@ pub struct ReviewView {
     pub status: ReviewStatus,
     /// The review round, counting the writer's submissions from 1.
     pub round: i32,
-    /// The revision under review.
-    pub target: RevisionId,
+    /// The revision under review; absent for an edit review.
+    pub target: Option<RevisionId>,
     /// What the writer says a submitted chapter contains.
     pub summary: Option<String>,
     pub feedback: Option<String>,
@@ -145,13 +151,14 @@ async fn workspace<C: ConnectionTrait>(
 ) -> Result<WorkspaceView, StoreError> {
     let context = load_version(db, version_id).await?;
     let (version, versions) = versions(db, context.project.id, version_id).await?;
-    let (run, feedback, held) = match context.workflow.active_run_id {
+    let (run, feedback, held, proposal) = match context.workflow.active_run_id {
         Some(run_id) => (
             Some(run_view(db, run_id).await?),
             feedback_views(db, run_id).await?,
             held_view(db, run_id).await?,
+            proposal_view(db, run_id).await?,
         ),
-        None => (None, Vec::new(), None),
+        None => (None, Vec::new(), None, None),
     };
     let brief_document = version_document(db, version_id, DocumentRole::NovelBrief).await?;
     let brief = current_revision(db, &brief_document)
@@ -205,9 +212,12 @@ async fn workspace<C: ConnectionTrait>(
             guidance: current(Some(chapter.id), DocumentRole::ChapterGuidance),
             outline: current(Some(chapter.id), DocumentRole::ChapterOutline),
             body: current(Some(chapter.id), DocumentRole::ChapterBody),
+            // Edit reviews are shown as the run's proposal.
             review: reviews
                 .iter()
-                .find(|review| review.chapter_id == Some(chapter.id))
+                .find(|review| {
+                    review.chapter_id == Some(chapter.id) && review.kind != ReviewKind::ChapterEdit
+                })
                 .map(ReviewView::from),
             id: chapter.id,
             kind: chapter.kind,
@@ -228,6 +238,8 @@ async fn workspace<C: ConnectionTrait>(
         run,
         feedback,
         held,
+        approval_mode: context.workflow.approval_mode,
+        proposal,
         brief,
         artifacts,
         chapters,

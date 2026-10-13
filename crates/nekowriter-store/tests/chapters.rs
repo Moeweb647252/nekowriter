@@ -275,10 +275,7 @@ async fn the_body_is_edited_exactly_and_reviewed_as_a_whole() {
     let review = view.chapters[0].review.clone().unwrap();
     assert_eq!(review.kind, ReviewKind::ChapterFinal);
     assert_eq!(review.summary.as_deref(), Some("The keeper wakes."));
-    assert_eq!(
-        Some(review.target),
-        view.chapters[0].body.map(|body| body.id)
-    );
+    assert_eq!(review.target, view.chapters[0].body.map(|body| body.id));
 
     chapter_review(&store, version, reject("More weather.")).await;
     assert_eq!(

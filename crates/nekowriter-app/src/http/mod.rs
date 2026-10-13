@@ -99,6 +99,10 @@ pub(crate) fn router(state: AppState) -> Router {
             "/versions/{id}/complete",
             post(handlers::workspace::complete),
         )
+        .route(
+            "/versions/{id}/approval-mode",
+            post(handlers::workspace::set_approval_mode),
+        )
         .route("/revisions/{id}", get(handlers::workspace::revision))
         .route(
             "/runs/{id}/continue",

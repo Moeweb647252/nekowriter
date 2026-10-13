@@ -9,7 +9,7 @@ use nekowriter_core::{
     ids::{CommandId, DocumentId, ProjectId, VersionId},
     project::NovelTitle,
     time::Timestamp,
-    workflow::WorkflowStage,
+    workflow::{ApprovalMode, WorkflowStage},
 };
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder,
@@ -51,6 +51,7 @@ pub(crate) async fn create_version_rows<C: ConnectionTrait>(
         revision: Set(1),
         completed_at: Set(None),
         pause_requested: Set(false),
+        approval_mode: Set(ApprovalMode::AutoApprove),
         updated_at: Set(now),
     }
     .insert(db)

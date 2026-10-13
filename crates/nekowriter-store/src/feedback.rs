@@ -107,12 +107,7 @@ impl Store {
                 }
             },
         };
-        let sequence = feedback::Entity::find()
-            .filter(feedback::Column::RunId.eq(run_id))
-            .order_by_desc(feedback::Column::Sequence)
-            .one(tx.db())
-            .await?
-            .map_or(1, |last| last.sequence + 1);
+        let sequence = next_sequence(tx.db(), run_id).await?;
         feedback::ActiveModel {
             id: Set(FeedbackId::generate()),
             run_id: Set(run_id),
@@ -251,6 +246,39 @@ async fn bind<C: ConnectionTrait>(
     bound.bound_tool_call_id = Set(Some(call));
     bound.update(db).await?;
     Ok(())
+}
+
+/// Feedback from a declined proposal: it travels with that call's result.
+pub(crate) async fn insert_bound_feedback(
+    tx: &WriteTx,
+    run_id: RunId,
+    call: ToolCallId,
+    text: &str,
+) -> Result<(), StoreError> {
+    let sequence = next_sequence(tx.db(), run_id).await?;
+    feedback::ActiveModel {
+        id: Set(FeedbackId::generate()),
+        run_id: Set(run_id),
+        sequence: Set(sequence),
+        text: Set(text.to_owned()),
+        status: Set(FeedbackStatus::Bound),
+        after_tool_sequence: Set(None),
+        bound_tool_call_id: Set(Some(call)),
+        included_in: Set(None),
+        created_at: Set(tx.now()),
+    }
+    .insert(tx.db())
+    .await?;
+    Ok(())
+}
+
+async fn next_sequence<C: ConnectionTrait>(db: &C, run_id: RunId) -> Result<i32, StoreError> {
+    Ok(feedback::Entity::find()
+        .filter(feedback::Column::RunId.eq(run_id))
+        .order_by_desc(feedback::Column::Sequence)
+        .one(db)
+        .await?
+        .map_or(1, |last| last.sequence + 1))
 }
 
 /// Binds the run's queued batch to the result of `call`, if the batch waits for a result
