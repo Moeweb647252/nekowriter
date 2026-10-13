@@ -1,0 +1,19 @@
+[package]
+name = "nekowriter-core"
+description = "Domain types, validation and pure workflow transitions."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+sea-orm.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+ts-rs.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

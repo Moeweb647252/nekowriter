@@ -1,0 +1,12 @@
+# Rust build output
+/target/
+
+# Web UI dependencies and build output
+/webui/node_modules/
+/webui/dist/
+/webui/coverage/
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/

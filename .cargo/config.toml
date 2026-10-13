@@ -1,0 +1,6 @@
+[env]
+# ts-rs writes the TypeScript form of every exported type here when `cargo test` runs.
+TS_RS_EXPORT_DIR = { value = "webui/src/api/generated", relative = true }
+# Every integer the API exposes (timestamps in milliseconds, revisions, sequence numbers,
+# counts) stays far below 2^53, so JavaScript numbers represent them exactly.
+TS_RS_LARGE_INT = "number"

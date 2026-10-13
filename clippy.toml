@@ -1,0 +1,3 @@
+# Proper nouns that the `doc_markdown` lint would otherwise want in backticks.
+# ".." keeps Clippy's default list.
+doc-valid-idents = ["NekoWriter", "SeaORM", "SQLite", "TypeScript", "JavaScript", "WebUI", ".."]

@@ -1,0 +1,49 @@
+[workspace]
+members = ["crates/nekowriter-core", "crates/nekowriter-store", "crates/nekowriter-app"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+nekowriter-core = { path = "crates/nekowriter-core" }
+nekowriter-store = { path = "crates/nekowriter-store" }
+
+axum = { version = "0.8.9", features = ["macros"] }
+clap = { version = "4.6.7", features = ["derive"] }
+directories = "6.0.0"
+futures-util = "0.3.34"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls"] }
+rust-embed = { version = "8.13.0", features = ["debug-embed", "mime-guess"] }
+sea-orm = { version = "2.0.4", default-features = false, features = ["macros", "with-json", "with-uuid"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+tempfile = "3.27.0"
+thiserror = "2.0.21"
+tokio = { version = "1.53.2", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tracing = "0.1.44"
+tracing-appender = "0.2.5"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+ts-rs = { version = "12.0.1", features = ["serde-json-impl", "uuid-impl"] }
+uuid = { version = "1.28.0", features = ["serde", "v7"] }
+webbrowser = "1.2.4"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Every public function in this single-application workspace is called from inside the
+# workspace; its failure modes are the variants of its typed error, so per-function
+# `# Errors` / `# Panics` sections would only restate those types.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# Module paths such as `store::projects::ProjectView` read naturally; renaming items to
+# avoid repeating the module name would make call sites less clear.
+module_name_repetitions = "allow"
