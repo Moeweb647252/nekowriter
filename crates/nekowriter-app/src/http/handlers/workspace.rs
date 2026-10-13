@@ -1,12 +1,14 @@
-//! A version's workspace: its view, the brief, preparation, reviews and runs.
+//! A version's workspace: its view, revisions, the brief, preparation, chapters, reviews
+//! and runs.
 
 use axum::extract::State;
 use nekowriter_core::{
-    ids::{CommandId, ReviewId, RunId, VersionId},
+    chapter::{ChapterGuidance, ChapterTitle},
+    ids::{CommandId, ReviewId, RevisionId, RunId, VersionId},
     preparation::NovelBrief,
     review::{ReviewDecision, ReviewFeedback},
 };
-use nekowriter_store::{WorkspaceAck, WorkspaceView};
+use nekowriter_store::{RevisionView, WorkspaceAck, WorkspaceView};
 use serde::Deserialize;
 use ts_rs::TS;
 
@@ -33,6 +35,25 @@ pub struct DecideReviewRequest {
     pub command_id: CommandId,
     pub expected_revision: i64,
     pub decision: ReviewDecisionInput,
+}
+
+#[derive(Clone, Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct StartChapterRequest {
+    pub command_id: CommandId,
+    pub expected_revision: i64,
+    /// What the user asks of the chapter; may be empty.
+    pub guidance: String,
+}
+
+#[derive(Clone, Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AddExtraChapterRequest {
+    pub command_id: CommandId,
+    pub expected_revision: i64,
+    pub title: String,
 }
 
 /// A review decision as a request carries it.
@@ -115,6 +136,74 @@ pub(crate) async fn continue_run(
     let ack = state
         .store
         .continue_run(request.command_id, run_id, request.expected_revision)
+        .await?;
+    Ok(axum::Json(ack))
+}
+
+/// A revision's content. Revisions never change, so clients can keep it.
+pub(crate) async fn revision(
+    State(state): State<AppState>,
+    Path(revision_id): Path<RevisionId>,
+) -> Result<axum::Json<RevisionView>, ApiError> {
+    Ok(axum::Json(state.store.revision(revision_id).await?))
+}
+
+pub(crate) async fn start_chapter(
+    State(state): State<AppState>,
+    Path(version_id): Path<VersionId>,
+    Json(request): Json<StartChapterRequest>,
+) -> Result<axum::Json<WorkspaceAck>, ApiError> {
+    let guidance = ChapterGuidance::parse(&request.guidance)?;
+    let ack = state
+        .store
+        .start_chapter(
+            request.command_id,
+            version_id,
+            request.expected_revision,
+            guidance,
+        )
+        .await?;
+    Ok(axum::Json(ack))
+}
+
+pub(crate) async fn next_chapter(
+    State(state): State<AppState>,
+    Path(version_id): Path<VersionId>,
+    Json(request): Json<RevisionRequest>,
+) -> Result<axum::Json<WorkspaceAck>, ApiError> {
+    let ack = state
+        .store
+        .next_chapter(request.command_id, version_id, request.expected_revision)
+        .await?;
+    Ok(axum::Json(ack))
+}
+
+pub(crate) async fn complete(
+    State(state): State<AppState>,
+    Path(version_id): Path<VersionId>,
+    Json(request): Json<RevisionRequest>,
+) -> Result<axum::Json<WorkspaceAck>, ApiError> {
+    let ack = state
+        .store
+        .complete_version(request.command_id, version_id, request.expected_revision)
+        .await?;
+    Ok(axum::Json(ack))
+}
+
+pub(crate) async fn add_extra_chapter(
+    State(state): State<AppState>,
+    Path(version_id): Path<VersionId>,
+    Json(request): Json<AddExtraChapterRequest>,
+) -> Result<axum::Json<WorkspaceAck>, ApiError> {
+    let title = ChapterTitle::parse(&request.title)?;
+    let ack = state
+        .store
+        .add_extra_chapter(
+            request.command_id,
+            version_id,
+            request.expected_revision,
+            title,
+        )
         .await?;
     Ok(axum::Json(ack))
 }

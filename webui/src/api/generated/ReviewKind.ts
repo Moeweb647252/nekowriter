@@ -3,4 +3,4 @@
 /**
  * What a review is about. Each kind has its own review prompt for delegation.
  */
-export type ReviewKind = "preparation_background" | "preparation_research" | "preparation_characters" | "preparation_outline";
+export type ReviewKind = "preparation_background" | "preparation_research" | "preparation_characters" | "preparation_outline" | "chapter_outline" | "chapter_final";

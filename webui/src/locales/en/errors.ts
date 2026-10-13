@@ -9,6 +9,8 @@ export default {
     novel_title: "Novel title",
     novel_brief: "Novel brief",
     review_feedback: "Feedback",
+    chapter_guidance: "Chapter guidance",
+    chapter_title: "Chapter title",
     api_base_url: "API root",
     api_key: "API key",
     model_id: "Model ID",
@@ -21,6 +23,7 @@ export default {
     workspace: "workspace",
     review: "review",
     run: "run",
+    revision: "revision",
     settings: "settings",
   },
   modelProblem: {

@@ -1,5 +1,5 @@
 use nekowriter_core::{
-    ids::{ProjectId, RunId, VersionId},
+    ids::{ChapterId, ProjectId, RunId, VersionId},
     run::{Fold, RunHalt, RunKind, RunStatus},
     time::Timestamp,
 };
@@ -15,6 +15,8 @@ pub struct Model {
     #[sea_orm(indexed)]
     pub project_id: ProjectId,
     pub version_id: VersionId,
+    /// The chapter a chapter run writes.
+    pub chapter_id: Option<ChapterId>,
     pub kind: RunKind,
     #[sea_orm(indexed)]
     pub status: RunStatus,
@@ -35,6 +37,8 @@ pub struct Model {
     pub updated_at: Timestamp,
     #[sea_orm(belongs_to, from = "version_id", to = "id")]
     pub version: BelongsTo<super::version::Entity>,
+    #[sea_orm(belongs_to, from = "chapter_id", to = "id")]
+    pub chapter: BelongsTo<Option<super::chapter::Entity>>,
 }
 
 impl ActiveModelBehavior for ActiveModel {}

@@ -1,4 +1,5 @@
 import type { ArtifactKind } from "@/api/generated/ArtifactKind"
+import type { ChapterKind } from "@/api/generated/ChapterKind"
 import type { ChapterStatus } from "@/api/generated/ChapterStatus"
 import type { ChapterStep } from "@/api/generated/ChapterStep"
 import type { PreparationStep } from "@/api/generated/PreparationStep"
@@ -43,7 +44,6 @@ export default {
     brief: "Novel brief",
     chapters: "Chapters",
     noChapters: "Chapters appear once the preparation is approved.",
-    chapter: "{{number}}. {{title}}",
   },
   chapterStatus: {
     not_started: "Not started",
@@ -97,10 +97,42 @@ export default {
     waiting: "Nothing to review in this document right now.",
     done: "The preparation is approved.",
   },
+  chapterName: {
+    main: "Chapter {{number}}: {{title}}",
+    extra: "Extra {{number}}: {{title}}",
+  } satisfies Record<ChapterKind, string>,
+  reader: {
+    label: "Manuscript",
+    empty: "Not written yet.",
+    newContent: "New content below",
+    writing: "Being written",
+    editing: "The agent is changing the text…",
+  },
   chapter: {
-    next: "Next: chapter {{number}}, “{{title}}”",
     goal: "Goal: {{goal}}",
-    notYet: "Writing chapters is not available in this build yet.",
+    guidance: "Guidance for {{chapter}}",
+    guidanceHint:
+      "Optional. What should this chapter do or avoid? The agent outlines it from its goal and your guidance.",
+    start: "Start outline",
+    outlining: "The agent is outlining {{chapter}}.",
+    outline: "Outline of {{chapter}}",
+    approveOutline: "Approve outline",
+    drafting: "The agent is writing {{chapter}}.",
+    words_one: "{{count, number}} word",
+    words_other: "{{count, number}} words",
+    summary: "The agent's summary of {{chapter}}",
+    approveChapter: "Approve chapter",
+    reviewHint: "The agent revises with this feedback.",
+    done: "{{chapter}} is approved.",
+    nextChapter: "Next chapter",
+    completionHint:
+      "Every planned chapter is approved. Confirm the novel complete; you can still add extra chapters afterwards.",
+    confirmCompletion: "Confirm the novel complete",
+    finishExtra: "Finish extra chapter",
+    completed: "The novel is complete.",
+    extraTitle: "Title of an extra chapter",
+    extraHint: "Extra chapters follow the same steps; the novel stays complete.",
+    addExtra: "Add extra chapter",
   },
   run: {
     status: {

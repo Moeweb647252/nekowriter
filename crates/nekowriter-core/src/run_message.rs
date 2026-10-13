@@ -10,8 +10,11 @@ use sea_orm::FromJsonQueryResult;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ids::ToolCallId,
-    preparation::{ArtifactKind, SubmissionProblem},
+    body::EditProblem,
+    ids::{ReviewId, RevisionId, ToolCallId},
+    preparation::ArtifactKind,
+    review::ReviewKind,
+    submission::SubmissionProblem,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, FromJsonQueryResult)]
@@ -30,6 +33,8 @@ pub enum RunMessageBody {
     ToolResult { tool_call_id: ToolCallId },
     /// The decisions of a preparation review round that rejected or invalidated artifacts.
     PreparationReviewOutcome { round: i32 },
+    /// A rejected chapter outline or chapter, with the reviewer's feedback.
+    ReviewRejected { review_id: ReviewId },
     /// Tells the model how to get back on protocol.
     Correction { correction: Correction },
 }
@@ -66,6 +71,10 @@ pub enum UnsealedMessage {
     PreparationReviewOutcome {
         rejected: Vec<RejectedArtifact>,
         stale: Vec<ArtifactKind>,
+    },
+    ReviewRejected {
+        kind: ReviewKind,
+        feedback: String,
     },
     Correction {
         correction: Correction,
@@ -117,6 +126,16 @@ pub enum ToolOutcome {
     SubmissionRejected { problem: SubmissionProblem },
     /// The call broke the protocol.
     ProtocolError { problem: ProtocolProblem },
+    /// The body edit was committed as a new revision.
+    EditApplied {
+        base_revision: Option<RevisionId>,
+        revision: RevisionId,
+        word_count: u32,
+    },
+    /// The replacement equals the text it replaces; nothing changed.
+    EditNoChange { word_count: u32 },
+    /// The body edit could not be applied; the body is unchanged.
+    EditRejected { problem: EditProblem },
 }
 
 /// How a tool call broke the protocol (§8.1, §8.4).

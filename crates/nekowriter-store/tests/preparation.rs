@@ -3,186 +3,28 @@
 
 mod common;
 
+use common::{
+    answer, briefed, decide, dispatch_next, preparation_submission, reject, review_of, stage,
+    started, submit, workspace,
+};
+
 use std::collections::BTreeSet;
 
 use nekowriter_core::{
     chapter::ChapterStatus,
     conflict::StateConflict,
-    ids::{CommandId, ModelRequestId, ReviewId, VersionId},
+    ids::{CommandId, ModelRequestId, VersionId},
     model::ModelProblem,
-    preparation::{ArtifactDraft, ArtifactKind, NovelBrief, PlanItemDraft, PreparationSubmission},
-    review::{ReviewDecision, ReviewFeedback, ReviewStatus},
+    preparation::{ArtifactKind, NovelBrief},
+    review::{ReviewDecision, ReviewStatus},
     run::{RunHalt, RunStatus},
     run_message::{
-        ArgumentsProblem, Correction, ModelToolCall, ProtocolProblem, ToolOutcome,
-        TranscriptMessage, UnsealedMessage,
+        ArgumentsProblem, Correction, ModelToolCall, ProtocolProblem, ToolOutcome, UnsealedMessage,
     },
     stage::StageInput,
-    usage::TokenUsage,
     workflow::{ChapterStep, PreparationStep, WorkflowStage},
 };
-use nekowriter_store::{
-    DispatchInput, DispatchOutcome, RecordedAnswer, RoundRecord, SealedRequest, Store, StoreError,
-    TranscriptEntry, WorkspaceView,
-};
-
-async fn workspace(store: &Store, version: VersionId) -> WorkspaceView {
-    store.workspace(version).await.unwrap()
-}
-
-/// A project whose first version has a brief, and the workflow revision after saving it.
-async fn briefed(store: &Store) -> (VersionId, i64) {
-    let project = common::create_project(store, "Rain").await;
-    let version = project.selected_version.id;
-    let revision = workspace(store, version).await.revision;
-    let ack = store
-        .save_brief(
-            CommandId::generate(),
-            version,
-            revision,
-            NovelBrief::parse("A ghost story in a lighthouse.").unwrap(),
-        )
-        .await
-        .unwrap();
-    (version, ack.revision)
-}
-
-/// A project whose first version has a brief and a started preparation run.
-async fn started(store: &Store) -> VersionId {
-    common::configure_model(store).await;
-    let (version, revision) = briefed(store).await;
-    store
-        .start_preparation(CommandId::generate(), version, revision)
-        .await
-        .unwrap();
-    version
-}
-
-/// Dispatches the oldest queued run, rendering pending messages as their debug text.
-async fn dispatch_next(store: &Store) -> (DispatchInput, ModelRequestId) {
-    let run = store
-        .next_queued_run()
-        .await
-        .unwrap()
-        .expect("a run is queued");
-    let input = store.dispatch_input(run).await.unwrap();
-    let rendered = input
-        .messages
-        .iter()
-        .filter_map(|entry| match entry {
-            TranscriptEntry::Pending { id, message } => Some((
-                *id,
-                TranscriptMessage::User {
-                    content: format!("{message:?}"),
-                },
-            )),
-            TranscriptEntry::Rendered(_) => None,
-        })
-        .collect();
-    let outcome = store
-        .dispatch(
-            &input,
-            SealedRequest {
-                rendered,
-                body: "{}".to_owned(),
-                estimated_input_tokens: 10,
-            },
-        )
-        .await
-        .unwrap();
-    let DispatchOutcome::Dispatched { request_id } = outcome else {
-        panic!("the queued run is dispatched");
-    };
-    (input, request_id)
-}
-
-fn answer(call: &ModelToolCall) -> RecordedAnswer {
-    RecordedAnswer {
-        content: None,
-        tool_calls: vec![call.clone()],
-        finish_reason: Some("tool_calls".to_owned()),
-        usage: TokenUsage::default(),
-        raw_usage: None,
-        provider_request_id: None,
-    }
-}
-
-fn call() -> ModelToolCall {
-    ModelToolCall {
-        provider_id: "call_1".to_owned(),
-        name: "submit_preparation".to_owned(),
-        arguments: "{}".to_owned(),
-    }
-}
-
-fn submission(kinds: &[ArtifactKind]) -> PreparationSubmission {
-    PreparationSubmission {
-        artifacts: kinds
-            .iter()
-            .map(|kind| ArtifactDraft {
-                kind: *kind,
-                content: format!("{kind:?} text"),
-            })
-            .collect(),
-        chapter_plan: kinds.contains(&ArtifactKind::Outline).then(|| {
-            vec![
-                PlanItemDraft {
-                    title: "Arrival".to_owned(),
-                    goal: "The keeper finds the letter.".to_owned(),
-                },
-                PlanItemDraft {
-                    title: "Storm".to_owned(),
-                    goal: "The lamp fails.".to_owned(),
-                },
-            ]
-        }),
-    }
-}
-
-/// Lets the model submit `kinds` for the next queued run.
-async fn submit(store: &Store, kinds: &[ArtifactKind]) {
-    let (_, request) = dispatch_next(store).await;
-    store
-        .record_answer(
-            request,
-            answer(&call()),
-            RoundRecord::PreparationSubmission {
-                call: call(),
-                submission: submission(kinds),
-            },
-        )
-        .await
-        .unwrap();
-}
-
-fn review_of(view: &WorkspaceView, kind: ArtifactKind) -> (ReviewId, ReviewStatus) {
-    let review = view
-        .artifacts
-        .iter()
-        .find(|artifact| artifact.kind == kind)
-        .and_then(|artifact| artifact.review.as_ref())
-        .expect("the artifact has a review");
-    (review.id, review.status)
-}
-
-async fn decide(store: &Store, version: VersionId, kind: ArtifactKind, decision: ReviewDecision) {
-    let view = workspace(store, version).await;
-    let (review, _) = review_of(&view, kind);
-    store
-        .decide_review(CommandId::generate(), review, view.revision, decision)
-        .await
-        .unwrap();
-}
-
-fn reject(feedback: &str) -> ReviewDecision {
-    ReviewDecision::Reject {
-        feedback: ReviewFeedback::parse(feedback).unwrap(),
-    }
-}
-
-fn stage(view: &WorkspaceView) -> &WorkflowStage {
-    &view.version.stage
-}
+use nekowriter_store::{DispatchInput, RoundRecord, Store, StoreError, TranscriptEntry};
 
 #[tokio::test]
 async fn preparation_needs_a_ready_model_to_start() {
@@ -228,6 +70,10 @@ const DOWNSTREAM: [ArtifactKind; 3] = [
     ArtifactKind::Outline,
 ];
 
+fn call() -> ModelToolCall {
+    common::call("submit_preparation")
+}
+
 fn pending_messages(input: &DispatchInput) -> Vec<UnsealedMessage> {
     input
         .messages
@@ -241,7 +87,10 @@ fn pending_messages(input: &DispatchInput) -> Vec<UnsealedMessage> {
 
 async fn required_next(store: &Store) -> BTreeSet<ArtifactKind> {
     let run = store.next_queued_run().await.unwrap().unwrap();
-    let StageInput::Preparation { required, .. } = store.dispatch_input(run).await.unwrap().stage;
+    let StageInput::Preparation { required, .. } = store.dispatch_input(run).await.unwrap().stage
+    else {
+        panic!("a preparation run is queued");
+    };
     required
 }
 
@@ -448,7 +297,7 @@ async fn messages_are_rendered_once_when_a_request_seals_them() {
             answer(&call()),
             RoundRecord::PreparationSubmission {
                 call: call(),
-                submission: submission(&[ArtifactKind::Research]),
+                submission: preparation_submission(&[ArtifactKind::Research]),
             },
         )
         .await
@@ -489,7 +338,7 @@ async fn interrupted_runs_wait_for_the_user_to_continue() {
             answer(&call()),
             RoundRecord::PreparationSubmission {
                 call: call(),
-                submission: submission(&ArtifactKind::ALL),
+                submission: preparation_submission(&ArtifactKind::ALL),
             },
         )
         .await

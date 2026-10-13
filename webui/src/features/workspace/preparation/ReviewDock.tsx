@@ -1,22 +1,11 @@
-import type { SubmitEvent } from "react"
 import { useTranslation } from "react-i18next"
 
 import type { DocumentKey } from "../documents"
-import { errorForField, errorForForm } from "@/api/fieldErrors"
+import { ReviewForm } from "../ReviewForm"
 import type { ArtifactKind } from "@/api/generated/ArtifactKind"
 import type { ArtifactView } from "@/api/generated/ArtifactView"
-import type { ReviewView } from "@/api/generated/ReviewView"
 import type { WorkspaceView } from "@/api/generated/WorkspaceView"
-import { useDecideReview } from "@/api/queries/workspace"
-import { ErrorAlert } from "@/components/app/ErrorAlert"
-import { Button } from "@/components/ui/button"
-import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Textarea } from "@/components/ui/textarea"
-import { useErrorText } from "@/i18n/errors"
-import { useDraft } from "@/lib/drafts"
-import { submitOnModEnter } from "@/lib/keyboard"
-import { cn } from "@/lib/utils"
 
 /**
  * Reviewing the preparation in four tabs (§18.3): each artifact is approved, or rejected
@@ -59,7 +48,17 @@ function ReviewPanel({ view, artifact }: { view: WorkspaceView; artifact: Artifa
   if (review === null) return <Note>{t(($) => $.workspace.preparation.waiting)}</Note>
   switch (review.status) {
     case "open":
-      return <ReviewForm key={review.id} view={view} kind={artifact.kind} review={review} />
+      return (
+        <ReviewForm
+          key={review.id}
+          view={view}
+          review={review}
+          approveLabel={t(($) => $.workspace.preparation.approve, {
+            document: t(($) => $.workspace.artifact[artifact.kind]),
+          })}
+          hint={t(($) => $.workspace.preparation.feedbackHint)}
+        />
+      )
     case "approved":
       return <Note>{t(($) => $.workspace.preparation.decided)}</Note>
     case "rejected":
@@ -78,77 +77,4 @@ function ReviewPanel({ view, artifact }: { view: WorkspaceView; artifact: Artifa
 
 function Note({ children }: { children: string }) {
   return <p className="whitespace-pre-wrap text-muted-foreground">{children}</p>
-}
-
-function ReviewForm({
-  view,
-  kind,
-  review,
-}: {
-  view: WorkspaceView
-  kind: ArtifactKind
-  review: ReviewView
-}) {
-  const { t } = useTranslation()
-  const errorText = useErrorText()
-  const decide = useDecideReview(view.version.id)
-  const feedback = useDraft(`${view.version.id}.review.${review.id}`, "")
-  const documentName = t(($) => $.workspace.artifact[kind])
-
-  const reject = (event: SubmitEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    decide.mutate(
-      {
-        revision: view.revision,
-        reviewId: review.id,
-        decision: { kind: "reject", feedback: feedback.value },
-      },
-      { onSuccess: feedback.clear },
-    )
-  }
-  const approve = () => {
-    decide.mutate(
-      { revision: view.revision, reviewId: review.id, decision: { kind: "approve" } },
-      { onSuccess: feedback.clear },
-    )
-  }
-
-  const feedbackError = errorForField(decide.error, "review_feedback")
-  const formError = errorForForm(decide.error, ["review_feedback"])
-  const id = `feedback-${review.id}`
-
-  return (
-    <form onSubmit={reject} className="flex flex-col gap-3">
-      <Field data-invalid={feedbackError !== undefined}>
-        <FieldLabel htmlFor={id}>{t(($) => $.workspace.preparation.feedback)}</FieldLabel>
-        <Textarea
-          id={id}
-          value={feedback.value}
-          onChange={(event) => feedback.setValue(event.target.value)}
-          onKeyDown={submitOnModEnter}
-          aria-invalid={feedbackError !== undefined}
-          rows={3}
-        />
-        <FieldDescription className={cn(feedback.unsaved && "text-foreground")}>
-          {feedback.unsaved
-            ? t(($) => $.workspace.draft)
-            : t(($) => $.workspace.preparation.feedbackHint)}
-        </FieldDescription>
-        {feedbackError !== undefined && <FieldError>{errorText(feedbackError)}</FieldError>}
-      </Field>
-      {formError !== undefined && <ErrorAlert error={formError} />}
-      <div className="flex flex-wrap gap-2">
-        <Button type="button" disabled={decide.isPending} onClick={approve}>
-          {t(($) => $.workspace.preparation.approve, { document: documentName })}
-        </Button>
-        <Button
-          type="submit"
-          variant="outline"
-          disabled={decide.isPending || feedback.value.trim() === ""}
-        >
-          {t(($) => $.workspace.preparation.requestChanges)}
-        </Button>
-      </div>
-    </form>
-  )
 }

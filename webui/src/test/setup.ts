@@ -23,6 +23,9 @@ window.matchMedia = (query: string) =>
     dispatchEvent: () => false,
   }) satisfies MediaQueryList
 Element.prototype.scrollIntoView = vi.fn()
+globalThis.IntersectionObserver = vi.fn(function IntersectionObserver() {
+  return { observe: vi.fn(), unobserve: vi.fn(), disconnect: vi.fn(), takeRecords: () => [] }
+}) as unknown as typeof IntersectionObserver
 
 beforeAll(() => {
   server.listen({ onUnhandledFrame: "error" })

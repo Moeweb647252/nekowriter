@@ -1,4 +1,5 @@
 import type { ProjectListFilter } from "../generated/ProjectListFilter"
+import type { RevisionId } from "../generated/RevisionId"
 import type { VersionId } from "../generated/VersionId"
 
 /**
@@ -14,6 +15,8 @@ export const queryKeys = {
     all: ["workspaces"] as const,
     version: (versionId: VersionId) => ["workspaces", versionId] as const,
   },
+  /** Revisions never change; no event invalidates them. */
+  revision: (revisionId: RevisionId) => ["revisions", revisionId] as const,
   settings: ["settings"] as const,
   health: ["health"] as const,
 }

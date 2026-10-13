@@ -3,6 +3,9 @@
 // Each test binary uses a different subset of these helpers.
 #![allow(dead_code)]
 
+pub mod model;
+pub mod workspace;
+
 use std::path::Path;
 
 use nekowriter_app::{Config, RunningServer};

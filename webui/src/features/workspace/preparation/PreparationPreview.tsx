@@ -1,10 +1,10 @@
-import { Allow, parse } from "partial-json"
 import { useMemo } from "react"
 import { useTranslation } from "react-i18next"
 
 import { ChapterPlanList, ReadingText } from "../DocumentView"
 import type { ArtifactKind } from "@/api/generated/ArtifactKind"
 import type { Preview } from "@/api/generated/Preview"
+import { objectsOf, readPartialObject, textOf } from "@/lib/partialJson"
 
 /** The preparation submission's tool, whose arguments carry the documents. */
 const SUBMISSION_TOOL = "submit_preparation"
@@ -21,41 +21,20 @@ interface PartialSubmission {
   plan: { title: string | undefined; goal: string | undefined }[]
 }
 
-function text(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined
-}
-
-function records(value: unknown): Record<string, unknown>[] {
-  return Array.isArray(value)
-    ? value.filter(
-        (item): item is Record<string, unknown> => typeof item === "object" && item !== null,
-      )
-    : []
-}
-
-/**
- * Reads the submission so far from its incomplete JSON. Anything that does not have the
- * expected shape yet is left out until more of it arrives.
- */
+/** The submission so far; parts without the expected shape yet are left out. */
 function readSubmission(json: string): PartialSubmission {
-  let value: unknown
-  try {
-    value = parse(json, Allow.ALL)
-  } catch {
-    return { artifacts: [], plan: [] }
-  }
-  const root = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {}
+  const root = readPartialObject(json)
   return {
-    artifacts: records(root.artifacts).map((artifact) => {
-      const kind = text(artifact.kind)
+    artifacts: objectsOf(root.artifacts).map((artifact) => {
+      const kind = textOf(artifact.kind)
       return {
         kind: kind !== undefined && ARTIFACT_KINDS.includes(kind) ? (kind as ArtifactKind) : null,
-        content: text(artifact.content) ?? "",
+        content: textOf(artifact.content) ?? "",
       }
     }),
-    plan: records(root.chapter_plan).map((item) => ({
-      title: text(item.title),
-      goal: text(item.goal),
+    plan: objectsOf(root.chapter_plan).map((item) => ({
+      title: textOf(item.title),
+      goal: textOf(item.goal),
     })),
   }
 }

@@ -14,6 +14,10 @@ use crate::template::VariableSpec;
 pub enum PromptKey {
     #[serde(rename = "preparation.generate")]
     PreparationGenerate,
+    #[serde(rename = "chapter.outline")]
+    ChapterOutline,
+    #[serde(rename = "chapter.write")]
+    ChapterWrite,
 }
 
 /// The two halves of a prompt pair.
@@ -36,6 +40,15 @@ pub enum PromptVariable {
     NovelBrief,
     /// The artifacts to submit in this round, in order.
     RequiredArtifacts,
+    /// Whether the chapter belongs to the plan or is an extra chapter.
+    ChapterKind,
+    /// The chapter's number among the chapters of its kind.
+    ChapterNumber,
+    ChapterTitle,
+    /// The goal of the chapter's plan item; empty for extra chapters.
+    ChapterGoal,
+    /// What the user asked of the chapter; may be empty.
+    ChapterGuidance,
 }
 
 impl PromptVariable {
@@ -46,6 +59,11 @@ impl PromptVariable {
             Self::WritingLanguage => "writing_language",
             Self::NovelBrief => "novel_brief",
             Self::RequiredArtifacts => "required_artifacts",
+            Self::ChapterKind => "chapter_kind",
+            Self::ChapterNumber => "chapter_number",
+            Self::ChapterTitle => "chapter_title",
+            Self::ChapterGoal => "chapter_goal",
+            Self::ChapterGuidance => "chapter_guidance",
         }
     }
 }
@@ -61,16 +79,27 @@ const fn spec(variable: PromptVariable, required: bool) -> PromptVariableSpec {
     PromptVariableSpec { variable, required }
 }
 
-const PREPARATION_GENERATE_SYSTEM: &[PromptVariableSpec] =
-    &[spec(PromptVariable::WritingLanguage, true)];
+const WRITING_SYSTEM: &[PromptVariableSpec] = &[spec(PromptVariable::WritingLanguage, true)];
 const PREPARATION_GENERATE_USER: &[PromptVariableSpec] = &[
     spec(PromptVariable::NovelBrief, true),
     spec(PromptVariable::RequiredArtifacts, true),
     spec(PromptVariable::WritingLanguage, false),
 ];
+const CHAPTER_USER: &[PromptVariableSpec] = &[
+    spec(PromptVariable::ChapterTitle, true),
+    spec(PromptVariable::ChapterGoal, true),
+    spec(PromptVariable::ChapterGuidance, true),
+    spec(PromptVariable::ChapterNumber, false),
+    spec(PromptVariable::ChapterKind, false),
+    spec(PromptVariable::WritingLanguage, false),
+];
 
 impl PromptKey {
-    pub const ALL: [Self; 1] = [Self::PreparationGenerate];
+    pub const ALL: [Self; 3] = [
+        Self::PreparationGenerate,
+        Self::ChapterOutline,
+        Self::ChapterWrite,
+    ];
 
     /// The variables the system or user prompt of this pair may use. The writing language
     /// is required in the system prompts of the writing stages, so a custom prompt cannot
@@ -78,8 +107,9 @@ impl PromptKey {
     #[must_use]
     pub fn variables(self, role: PromptRole) -> &'static [PromptVariableSpec] {
         match (self, role) {
-            (Self::PreparationGenerate, PromptRole::System) => PREPARATION_GENERATE_SYSTEM,
+            (_, PromptRole::System) => WRITING_SYSTEM,
             (Self::PreparationGenerate, PromptRole::User) => PREPARATION_GENERATE_USER,
+            (Self::ChapterOutline | Self::ChapterWrite, PromptRole::User) => CHAPTER_USER,
         }
     }
 

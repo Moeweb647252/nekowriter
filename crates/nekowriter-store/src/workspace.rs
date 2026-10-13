@@ -1,23 +1,25 @@
 //! The workspace view: everything the UI shows for one version (`docs/product-spec.md`
-//! §18.2).
+//! §18.2). Documents appear as revision summaries; their content is loaded by revision ID.
+
+use std::collections::HashMap;
 
 use nekowriter_core::{
     chapter::{ChapterKind, ChapterStatus},
     document::DocumentRole,
-    ids::{ChapterId, ModelRequestId, ReviewId, RunId, VersionId},
-    preparation::{ArtifactKind, ChapterPlan},
-    review::ReviewStatus,
+    ids::{ChapterId, ModelRequestId, ReviewId, RevisionId, RunId, VersionId},
+    preparation::ArtifactKind,
+    review::{ReviewKind, ReviewStatus},
     run::{RunHalt, RunKind, RunStatus},
     time::Timestamp,
 };
-use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder};
+use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
     Store, StoreError,
-    documents::{RevisionView, current_revision, version_document},
-    entity::{chapter, model_request, review, run, version},
+    documents::{RevisionSummary, RevisionView, current_revision, version_document},
+    entity::{chapter, document, model_request, review, revision, run, version},
     projects::{ProjectView, VersionSummary, project_view, version_summaries},
     workflow::load_version,
 };
@@ -32,11 +34,15 @@ pub struct WorkspaceView {
     pub versions: Vec<VersionSummary>,
     /// The workflow revision; workspace commands quote it.
     pub revision: i64,
+    /// When the user first confirmed the novel complete.
+    pub completed_at: Option<Timestamp>,
     /// The run of the current stage, if one exists.
     pub run: Option<RunView>,
+    /// The novel brief, with its content: it is edited in the workspace.
     pub brief: Option<RevisionView>,
     /// The four preparation artifacts, in tab order.
     pub artifacts: Vec<ArtifactView>,
+    /// The main chapters in plan order, then the extra chapters in order.
     pub chapters: Vec<ChapterView>,
 }
 
@@ -60,9 +66,7 @@ pub struct RunView {
 #[ts(export)]
 pub struct ArtifactView {
     pub kind: ArtifactKind,
-    pub revision: Option<RevisionView>,
-    /// The chapter plan, for the outline.
-    pub chapter_plan: Option<ChapterPlan>,
+    pub revision: Option<RevisionSummary>,
     /// The latest review of the artifact.
     pub review: Option<ReviewView>,
 }
@@ -72,11 +76,31 @@ pub struct ArtifactView {
 #[ts(export)]
 pub struct ReviewView {
     pub id: ReviewId,
+    pub kind: ReviewKind,
     pub status: ReviewStatus,
-    /// The review round, counting the agent's submissions from 1.
+    /// The review round, counting the writer's submissions from 1.
     pub round: i32,
+    /// The revision under review.
+    pub target: RevisionId,
+    /// What the writer says a submitted chapter contains.
+    pub summary: Option<String>,
     pub feedback: Option<String>,
     pub decided_at: Option<Timestamp>,
+}
+
+impl From<&review::Model> for ReviewView {
+    fn from(review: &review::Model) -> Self {
+        Self {
+            id: review.id,
+            kind: review.kind,
+            status: review.status,
+            round: review.round,
+            target: review.target_revision_id,
+            summary: review.summary.clone(),
+            feedback: review.feedback.clone(),
+            decided_at: review.decided_at,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -85,10 +109,17 @@ pub struct ReviewView {
 pub struct ChapterView {
     pub id: ChapterId,
     pub kind: ChapterKind,
+    /// The chapter's number among the chapters of its kind.
     pub number: i32,
     pub title: String,
+    /// The plan item's goal; empty for extra chapters.
     pub goal: String,
     pub status: ChapterStatus,
+    pub guidance: Option<RevisionSummary>,
+    pub outline: Option<RevisionSummary>,
+    pub body: Option<RevisionSummary>,
+    /// The latest outline or whole-chapter review.
+    pub review: Option<ReviewView>,
 }
 
 impl Store {
@@ -106,8 +137,97 @@ async fn workspace<C: ConnectionTrait>(
     version_id: VersionId,
 ) -> Result<WorkspaceView, StoreError> {
     let context = load_version(db, version_id).await?;
+    let (version, versions) = versions(db, context.project.id, version_id).await?;
+    let run = match context.workflow.active_run_id {
+        Some(run_id) => Some(run_view(db, run_id).await?),
+        None => None,
+    };
+    let brief_document = version_document(db, version_id, DocumentRole::NovelBrief).await?;
+    let brief = current_revision(db, &brief_document)
+        .await?
+        .map(RevisionView::from);
+
+    let documents = document::Entity::find()
+        .filter(document::Column::VersionId.eq(version_id))
+        .all(db)
+        .await?;
+    let summaries = revision_summaries(
+        db,
+        documents
+            .iter()
+            .filter_map(|document| document.current_revision_id)
+            .collect(),
+    )
+    .await?;
+    let current = |chapter: Option<ChapterId>, role: DocumentRole| {
+        documents
+            .iter()
+            .find(|document| document.chapter_id == chapter && document.role == role)
+            .and_then(|document| document.current_revision_id)
+            .and_then(|id| summaries.get(&id).copied())
+    };
+    let reviews = review::Entity::find()
+        .filter(review::Column::VersionId.eq(version_id))
+        .order_by_desc(review::Column::CreatedAt)
+        .all(db)
+        .await?;
+
+    let artifacts = ArtifactKind::ALL
+        .into_iter()
+        .map(|kind| ArtifactView {
+            kind,
+            revision: current(None, kind.into()),
+            review: reviews
+                .iter()
+                .find(|review| review.kind.artifact() == Some(kind))
+                .map(ReviewView::from),
+        })
+        .collect();
+    let mut chapters = chapter::Entity::find()
+        .filter(chapter::Column::VersionId.eq(version_id))
+        .all(db)
+        .await?;
+    chapters.sort_by_key(|chapter| (chapter.kind == ChapterKind::Extra, chapter.number));
+    let chapters = chapters
+        .into_iter()
+        .map(|chapter| ChapterView {
+            guidance: current(Some(chapter.id), DocumentRole::ChapterGuidance),
+            outline: current(Some(chapter.id), DocumentRole::ChapterOutline),
+            body: current(Some(chapter.id), DocumentRole::ChapterBody),
+            review: reviews
+                .iter()
+                .find(|review| review.chapter_id == Some(chapter.id))
+                .map(ReviewView::from),
+            id: chapter.id,
+            kind: chapter.kind,
+            number: chapter.number,
+            title: chapter.title,
+            goal: chapter.goal,
+            status: chapter.status,
+        })
+        .collect();
+
+    Ok(WorkspaceView {
+        project: project_view(db, context.project).await?,
+        version,
+        versions,
+        revision: context.workflow.revision,
+        completed_at: context.workflow.completed_at,
+        run,
+        brief,
+        artifacts,
+        chapters,
+    })
+}
+
+/// The version's summary and those of all the project's versions, in order.
+async fn versions<C: ConnectionTrait>(
+    db: &C,
+    project_id: nekowriter_core::ids::ProjectId,
+    version_id: VersionId,
+) -> Result<(VersionSummary, Vec<VersionSummary>), StoreError> {
     let version_ids: Vec<VersionId> = version::Entity::find()
-        .filter(version::Column::ProjectId.eq(context.project.id))
+        .filter(version::Column::ProjectId.eq(project_id))
         .filter(version::Column::DeletedAt.is_null())
         .order_by_asc(version::Column::Number)
         .all(db)
@@ -125,70 +245,40 @@ async fn workspace<C: ConnectionTrait>(
         .find(|summary| summary.id == version_id)
         .cloned()
         .ok_or_else(|| StoreError::Corrupt(format!("version {version_id} has no summary")))?;
+    Ok((version, versions))
+}
 
-    let run = match context.workflow.active_run_id {
-        Some(run_id) => Some(run_view(db, run_id).await?),
-        None => None,
-    };
-    let brief_document = version_document(db, version_id, DocumentRole::NovelBrief).await?;
-    let brief = current_revision(db, &brief_document)
-        .await?
-        .map(|revision| RevisionView::from(&revision));
-
-    let reviews = review::Entity::find()
-        .filter(review::Column::VersionId.eq(version_id))
-        .order_by_desc(review::Column::CreatedAt)
+/// Summaries of the given revisions, read without their content.
+async fn revision_summaries<C: ConnectionTrait>(
+    db: &C,
+    ids: Vec<RevisionId>,
+) -> Result<HashMap<RevisionId, RevisionSummary>, StoreError> {
+    let rows: Vec<(RevisionId, i32, Option<i32>, Timestamp)> = revision::Entity::find()
+        .select_only()
+        .columns([
+            revision::Column::Id,
+            revision::Column::Number,
+            revision::Column::WordCount,
+            revision::Column::CreatedAt,
+        ])
+        .filter(revision::Column::Id.is_in(ids))
+        .into_tuple()
         .all(db)
         .await?;
-    let mut artifacts = Vec::with_capacity(ArtifactKind::ALL.len());
-    for kind in ArtifactKind::ALL {
-        let document = version_document(db, version_id, kind.into()).await?;
-        let current = current_revision(db, &document).await?;
-        let review = reviews
-            .iter()
-            .find(|review| review.kind.artifact() == Some(kind))
-            .map(|review| ReviewView {
-                id: review.id,
-                status: review.status,
-                round: review.round,
-                feedback: review.feedback.clone(),
-                decided_at: review.decided_at,
-            });
-        artifacts.push(ArtifactView {
-            kind,
-            revision: current.as_ref().map(RevisionView::from),
-            chapter_plan: current.and_then(|revision| revision.chapter_plan),
-            review,
-        });
-    }
-
-    let chapters = chapter::Entity::find()
-        .filter(chapter::Column::VersionId.eq(version_id))
-        .order_by_asc(chapter::Column::Kind)
-        .order_by_asc(chapter::Column::Number)
-        .all(db)
-        .await?
+    Ok(rows
         .into_iter()
-        .map(|chapter| ChapterView {
-            id: chapter.id,
-            kind: chapter.kind,
-            number: chapter.number,
-            title: chapter.title,
-            goal: chapter.goal,
-            status: chapter.status,
+        .map(|(id, number, word_count, created_at)| {
+            (
+                id,
+                RevisionSummary {
+                    id,
+                    number,
+                    word_count,
+                    created_at,
+                },
+            )
         })
-        .collect();
-
-    Ok(WorkspaceView {
-        project: project_view(db, context.project).await?,
-        version,
-        versions,
-        revision: context.workflow.revision,
-        run,
-        brief,
-        artifacts,
-        chapters,
-    })
+        .collect())
 }
 
 async fn run_view<C: ConnectionTrait>(db: &C, run_id: RunId) -> Result<RunView, StoreError> {

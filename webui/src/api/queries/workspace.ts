@@ -1,10 +1,11 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 import { useCommandIds } from "../command"
 import { workspaceApi } from "../endpoints/workspace"
 import type { CommandId } from "../generated/CommandId"
 import type { ReviewDecisionInput } from "../generated/ReviewDecisionInput"
 import type { ReviewId } from "../generated/ReviewId"
+import type { RevisionId } from "../generated/RevisionId"
 import type { RunId } from "../generated/RunId"
 import type { VersionId } from "../generated/VersionId"
 import type { WorkspaceAck } from "../generated/WorkspaceAck"
@@ -14,6 +15,22 @@ export function useWorkspace(versionId: VersionId) {
   return useQuery({
     queryKey: queryKeys.workspaces.version(versionId),
     queryFn: () => workspaceApi.get(versionId),
+  })
+}
+
+/**
+ * A revision's content, loaded once: revisions never change. With `keepPrevious`, the
+ * previous revision stays shown while a newer one of the same document loads.
+ */
+export function useRevision(
+  revisionId: RevisionId | undefined,
+  { keepPrevious = false }: { keepPrevious?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: queryKeys.revision(revisionId ?? ""),
+    queryFn: () => workspaceApi.revision(revisionId ?? ""),
+    enabled: revisionId !== undefined,
+    ...(keepPrevious ? { placeholderData: keepPreviousData } : {}),
   })
 }
 
@@ -73,5 +90,35 @@ export function useContinueRun(versionId: VersionId) {
     versionId,
     ({ revision, runId }: { revision: number; runId: RunId }, commandId) =>
       workspaceApi.continueRun(runId, { commandId, expectedRevision: revision }),
+  )
+}
+
+/** Saves the chapter's guidance and starts its outline. */
+export function useStartChapter(versionId: VersionId) {
+  return useWorkspaceCommand(
+    versionId,
+    ({ revision, guidance }: { revision: number; guidance: string }, commandId) =>
+      workspaceApi.startChapter(versionId, { commandId, expectedRevision: revision, guidance }),
+  )
+}
+
+export function useNextChapter(versionId: VersionId) {
+  return useWorkspaceCommand(versionId, ({ revision }: { revision: number }, commandId) =>
+    workspaceApi.nextChapter(versionId, { commandId, expectedRevision: revision }),
+  )
+}
+
+/** Confirms the novel complete, or finishes an extra chapter. */
+export function useCompleteVersion(versionId: VersionId) {
+  return useWorkspaceCommand(versionId, ({ revision }: { revision: number }, commandId) =>
+    workspaceApi.complete(versionId, { commandId, expectedRevision: revision }),
+  )
+}
+
+export function useAddExtraChapter(versionId: VersionId) {
+  return useWorkspaceCommand(
+    versionId,
+    ({ revision, title }: { revision: number; title: string }, commandId) =>
+      workspaceApi.addExtraChapter(versionId, { commandId, expectedRevision: revision, title }),
   )
 }

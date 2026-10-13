@@ -10,6 +10,8 @@ export default {
     novel_title: "小说标题",
     novel_brief: "小说简介",
     review_feedback: "修改意见",
+    chapter_guidance: "章节指导",
+    chapter_title: "章节标题",
     api_base_url: "API 根地址",
     api_key: "API 密钥",
     model_id: "模型 ID",
@@ -22,6 +24,7 @@ export default {
     workspace: "工作区",
     review: "审阅",
     run: "任务",
+    revision: "修订版本",
     settings: "设置",
   },
   modelProblem: {

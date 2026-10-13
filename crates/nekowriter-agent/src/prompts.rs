@@ -12,6 +12,18 @@ pub fn builtin(key: PromptKey, role: PromptRole) -> &'static str {
         (PromptKey::PreparationGenerate, PromptRole::User) => {
             include_str!("../resources/prompts/preparation.generate.user.md")
         }
+        (PromptKey::ChapterOutline, PromptRole::System) => {
+            include_str!("../resources/prompts/chapter.outline.system.md")
+        }
+        (PromptKey::ChapterOutline, PromptRole::User) => {
+            include_str!("../resources/prompts/chapter.outline.user.md")
+        }
+        (PromptKey::ChapterWrite, PromptRole::System) => {
+            include_str!("../resources/prompts/chapter.write.system.md")
+        }
+        (PromptKey::ChapterWrite, PromptRole::User) => {
+            include_str!("../resources/prompts/chapter.write.user.md")
+        }
     }
 }
 

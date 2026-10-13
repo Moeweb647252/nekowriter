@@ -19,6 +19,8 @@ pub enum Resource {
     Review,
     #[error("run")]
     Run,
+    #[error("revision")]
+    Revision,
     #[error("settings")]
     Settings,
 }

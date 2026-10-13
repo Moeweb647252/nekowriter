@@ -1,6 +1,7 @@
-import { type ReactNode, useState } from "react"
+import { type ReactNode, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 
+import { ScrollContainerContext } from "./scroll"
 import { WorkspaceHeader } from "./WorkspaceHeader"
 import { ConnectionNotice } from "@/app/ConnectionNotice"
 import type { WorkspaceView } from "@/api/generated/WorkspaceView"
@@ -24,6 +25,7 @@ export function WorkspaceLayout({
 }) {
   const { t } = useTranslation()
   const [contentsOpen, setContentsOpen] = useState(false)
+  const scrollContainer = useRef<HTMLElement>(null)
 
   return (
     <div className="flex h-svh flex-col bg-background text-foreground">
@@ -33,8 +35,10 @@ export function WorkspaceLayout({
         <aside className="hidden w-60 shrink-0 overflow-y-auto border-r min-[1100px]:block">
           {contents}
         </aside>
-        <main className="min-w-0 flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-[52rem] px-6 py-10">{center}</div>
+        <main ref={scrollContainer} className="relative min-w-0 flex-1 overflow-y-auto">
+          <ScrollContainerContext value={scrollContainer}>
+            <div className="mx-auto w-full max-w-[52rem] px-6 py-10">{center}</div>
+          </ScrollContainerContext>
         </main>
       </div>
       <section

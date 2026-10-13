@@ -1,9 +1,9 @@
 //! Assembling a request's messages and checking that they fit the model
 //! (`docs/product-spec.md` §11).
 //!
-//! Order: the system prompt (role, task and submission contract), the stage input, then the
-//! run's conversation so far. Tool definitions travel next to the messages. Folds of
-//! completed stages come right after the system prompt once there are any.
+//! Order: the system prompt (role, task and contract), the folds of the completed stages as
+//! one assistant message, the stage input, then the run's conversation so far. Tool
+//! definitions travel next to the messages.
 
 use nekowriter_core::run_message::TranscriptMessage;
 use serde::Serialize;
@@ -28,24 +28,32 @@ pub struct ContextTooLarge {
     pub limit_tokens: u32,
 }
 
-/// Plans a request and checks it against `input_budget` tokens.
+/// Plans a request and checks it against `input_budget` tokens. `folds` is the rendered
+/// text of the completed stages, if there are any.
 pub fn plan(
     stage: &StageRequest,
+    folds: Option<String>,
     transcript: &[TranscriptMessage],
     input_budget: u32,
 ) -> Result<PlannedRequest, ContextTooLarge> {
-    let mut messages = vec![
-        ChatMessage::System {
-            content: stage.system.clone(),
-        },
-        ChatMessage::User {
-            content: stage.user.clone(),
-        },
-    ];
+    let mut messages = vec![ChatMessage::System {
+        content: stage.system.clone(),
+    }];
+    if let Some(folds) = folds {
+        // A fold is plain approved text from the model's side of the conversation, never
+        // an instruction (§11).
+        messages.push(ChatMessage::Assistant {
+            content: Some(folds),
+            tool_calls: Vec::new(),
+        });
+    }
+    messages.push(ChatMessage::User {
+        content: stage.user.clone(),
+    });
     messages.extend(transcript.iter().map(ChatMessage::from));
     let tools: Vec<Value> = stage
         .contract
-        .tools()
+        .all_tools()
         .into_iter()
         .map(|tool| {
             json!({
@@ -118,7 +126,7 @@ mod tests {
         let transcript = [TranscriptMessage::User {
             content: "Correction".to_owned(),
         }];
-        let planned = plan(&stage(), &transcript, 1_000_000).unwrap();
+        let planned = plan(&stage(), None, &transcript, 1_000_000).unwrap();
         assert!(matches!(planned.messages[0], ChatMessage::System { .. }));
         assert!(matches!(planned.messages[1], ChatMessage::User { .. }));
         assert_eq!(
@@ -131,8 +139,21 @@ mod tests {
     }
 
     #[test]
+    fn folds_follow_the_system_prompt_as_one_assistant_message() {
+        let planned = plan(&stage(), Some("Folded".to_owned()), &[], 1_000_000).unwrap();
+        assert_eq!(
+            planned.messages[1],
+            ChatMessage::Assistant {
+                content: Some("Folded".to_owned()),
+                tool_calls: Vec::new()
+            }
+        );
+        assert!(matches!(planned.messages[2], ChatMessage::User { .. }));
+    }
+
+    #[test]
     fn a_request_over_the_budget_is_refused() {
-        let error = plan(&stage(), &[], 10).unwrap_err();
+        let error = plan(&stage(), None, &[], 10).unwrap_err();
         assert_eq!(error.limit_tokens, 10);
         assert!(error.estimated_tokens > 10);
     }

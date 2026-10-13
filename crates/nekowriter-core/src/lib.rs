@@ -8,6 +8,7 @@
 //! JSON conventions: object keys are `camelCase`; enum values and event tags are
 //! `snake_case`.
 
+pub mod body;
 pub mod chapter;
 pub mod conflict;
 pub mod document;
@@ -22,7 +23,9 @@ pub mod review;
 pub mod run;
 pub mod run_message;
 pub mod stage;
+pub mod submission;
 pub mod template;
+pub mod text;
 pub mod time;
 pub mod usage;
 pub mod workflow;

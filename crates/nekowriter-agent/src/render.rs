@@ -5,12 +5,18 @@
 //! object with a `status` and a model-facing `message`.
 
 use nekowriter_core::{
-    preparation::{ArtifactKind, SubmissionProblem},
+    body::EditProblem,
+    chapter::{ChapterInput, ChapterKind},
+    document::DocumentRole,
+    preparation::{ArtifactKind, ChapterPlan},
     project::WritingLanguage,
+    review::ReviewKind,
     run_message::{
         ArgumentsProblem, Correction, JsonType, ProtocolProblem, ToolOutcome, TranscriptMessage,
         UnsealedMessage,
     },
+    stage::{FoldInput, FoldStage},
+    submission::SubmissionProblem,
 };
 use serde_json::json;
 
@@ -42,6 +48,114 @@ pub fn artifact_name(kind: ArtifactKind) -> String {
 pub fn artifact_list(kinds: impl IntoIterator<Item = ArtifactKind>) -> String {
     let names: Vec<_> = kinds.into_iter().map(artifact_name).collect();
     names.join(&model_text().list.separator.render(&[]))
+}
+
+/// A chapter's name, such as its kind, number and title.
+#[must_use]
+pub fn chapter_name(chapter: &ChapterInput) -> String {
+    let kinds = &model_text().chapter_kinds;
+    let kind = match chapter.kind {
+        ChapterKind::Main => kinds.main.render(&[]),
+        ChapterKind::Extra => kinds.extra.render(&[]),
+    };
+    model_text().chapters.name.render(&[
+        ("kind", &kind),
+        ("number", &chapter.number.to_string()),
+        ("title", &chapter.title),
+    ])
+}
+
+/// The chapter's current body, as the body run's stage input ends with it.
+#[must_use]
+pub fn current_body(body: &str) -> String {
+    let text = &model_text().chapters;
+    if body.trim().is_empty() {
+        text.empty_body.render(&[])
+    } else {
+        text.current_body.render(&[("body", body)])
+    }
+}
+
+/// The folds of the completed stages as one text, in story order (§11); `None` before any
+/// stage is completed.
+#[must_use]
+pub fn folds(folds: &[FoldInput]) -> Option<String> {
+    if folds.is_empty() {
+        return None;
+    }
+    let text = &model_text().folds;
+    let separator = text.separator.render(&[]);
+    let mut parts = vec![text.intro.render(&[])];
+    for fold in folds {
+        match &fold.stage {
+            FoldStage::Preparation => {
+                parts.push(text.preparation.render(&[]));
+                for document in &fold.documents {
+                    if let Some(kind) = artifact_of(document.role) {
+                        parts.push(text.document.render(&[("name", &artifact_name(kind))]));
+                    }
+                    parts.push(document.content.clone());
+                    if let Some(plan) = &document.chapter_plan {
+                        parts.push(text.chapter_plan.render(&[]));
+                        parts.push(plan_text(plan));
+                    }
+                }
+            }
+            FoldStage::ChapterOutline { chapter } => {
+                parts.push(
+                    text.chapter_outline
+                        .render(&[("chapter", &chapter_name(chapter))]),
+                );
+                parts.extend(
+                    fold.documents
+                        .iter()
+                        .map(|document| document.content.clone()),
+                );
+            }
+            FoldStage::ChapterBody { chapter } => {
+                parts.push(
+                    text.chapter_body
+                        .render(&[("chapter", &chapter_name(chapter))]),
+                );
+                parts.extend(
+                    fold.documents
+                        .iter()
+                        .map(|document| document.content.clone()),
+                );
+            }
+        }
+    }
+    Some(parts.join(&separator))
+}
+
+fn artifact_of(role: DocumentRole) -> Option<ArtifactKind> {
+    match role {
+        DocumentRole::Background => Some(ArtifactKind::Background),
+        DocumentRole::Research => Some(ArtifactKind::Research),
+        DocumentRole::Characters => Some(ArtifactKind::Characters),
+        DocumentRole::Outline => Some(ArtifactKind::Outline),
+        DocumentRole::NovelBrief
+        | DocumentRole::ChapterGuidance
+        | DocumentRole::ChapterOutline
+        | DocumentRole::ChapterBody => None,
+    }
+}
+
+/// The chapter plan as numbered lines.
+fn plan_text(plan: &ChapterPlan) -> String {
+    let item = &model_text().folds.plan_item;
+    plan.0
+        .iter()
+        .enumerate()
+        .map(|(index, chapter)| {
+            item.render(&[
+                ("number", &(index + 1).to_string()),
+                ("title", &chapter.title),
+                ("goal", &chapter.goal),
+            ])
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Renders a stored message for the request that first carries it.
@@ -76,6 +190,22 @@ pub fn unsealed(message: &UnsealedMessage, submission_tool: &str) -> TranscriptM
                 content: review.preparation_outcome.render(&[("items", &items)]),
             }
         }
+        UnsealedMessage::ReviewRejected { kind, feedback } => {
+            let review = &model_text().review;
+            let text = match kind {
+                ReviewKind::ChapterFinal => &review.chapter_rejected,
+                // Preparation reviews are delivered per round; only chapter outlines and
+                // chapters are rejected one at a time.
+                ReviewKind::ChapterOutline
+                | ReviewKind::PreparationBackground
+                | ReviewKind::PreparationResearch
+                | ReviewKind::PreparationCharacters
+                | ReviewKind::PreparationOutline => &review.outline_rejected,
+            };
+            TranscriptMessage::User {
+                content: text.render(&[("feedback", feedback)]),
+            }
+        }
         UnsealedMessage::Correction { correction } => {
             let corrections = &model_text().corrections;
             let content = match correction {
@@ -90,11 +220,32 @@ pub fn unsealed(message: &UnsealedMessage, submission_tool: &str) -> TranscriptM
     }
 }
 
-/// A tool result: `{"status": ..., "message": ...}`.
+/// A tool result: `{"status": ..., "message": ...}`, and the body's word count after an
+/// edit.
 #[must_use]
 pub fn tool_outcome(outcome: &ToolOutcome) -> String {
     let results = &model_text().results;
     let (status, message) = match outcome {
+        ToolOutcome::EditApplied { word_count, .. } => {
+            let message = results
+                .edit_applied
+                .render(&[("word_count", &word_count.to_string())]);
+            return json!({ "status": "applied", "message": message, "word_count": word_count })
+                .to_string();
+        }
+        ToolOutcome::EditNoChange { word_count } => {
+            let message = results
+                .edit_no_change
+                .render(&[("word_count", &word_count.to_string())]);
+            return json!({ "status": "unchanged", "message": message, "word_count": word_count })
+                .to_string();
+        }
+        ToolOutcome::EditRejected { problem } => (
+            "rejected",
+            results
+                .edit_rejected
+                .render(&[("problem", &edit_problem(problem))]),
+        ),
         ToolOutcome::SubmissionAccepted => ("accepted", results.submission_accepted.render(&[])),
         ToolOutcome::SubmissionRejected { problem } => (
             "rejected",
@@ -110,6 +261,22 @@ pub fn tool_outcome(outcome: &ToolOutcome) -> String {
         ),
     };
     json!({ "status": status, "message": message }).to_string()
+}
+
+#[must_use]
+pub fn edit_problem(problem: &EditProblem) -> String {
+    let text = &model_text().edit_problems;
+    match problem {
+        EditProblem::EmptyContent => text.empty_content.render(&[]),
+        EditProblem::EmptyOldStr => text.empty_old_str.render(&[]),
+        EditProblem::NoMatch => text.no_match.render(&[]),
+        EditProblem::AmbiguousMatch { matches } => text
+            .ambiguous_match
+            .render(&[("matches", &matches.to_string())]),
+        EditProblem::BodyTooLong { max_chars } => text
+            .body_too_long
+            .render(&[("max_chars", &max_chars.to_string())]),
+    }
 }
 
 #[must_use]
@@ -165,6 +332,16 @@ pub fn submission_problem(problem: &SubmissionProblem) -> String {
             ("number", &number(chapter)),
             ("max_chars", &number(max_chars)),
         ]),
+        SubmissionProblem::OutlineEmpty => text.outline_empty.render(&[]),
+        SubmissionProblem::OutlineTooLong { max_chars } => text
+            .outline_too_long
+            .render(&[("max_chars", &number(max_chars))]),
+        SubmissionProblem::SummaryEmpty => text.summary_empty.render(&[]),
+        SubmissionProblem::SummaryTooLong { max_chars } => text
+            .summary_too_long
+            .render(&[("max_chars", &number(max_chars))]),
+        SubmissionProblem::BodyEmpty => text.body_empty.render(&[]),
+        SubmissionProblem::WrongChapter => text.wrong_chapter.render(&[]),
     }
 }
 
@@ -265,6 +442,12 @@ mod tests {
                 number: 2,
                 max_chars: 3,
             },
+            SubmissionProblem::OutlineEmpty,
+            SubmissionProblem::OutlineTooLong { max_chars: 3 },
+            SubmissionProblem::SummaryEmpty,
+            SubmissionProblem::SummaryTooLong { max_chars: 3 },
+            SubmissionProblem::BodyEmpty,
+            SubmissionProblem::WrongChapter,
         ];
         for problem in problems {
             let rendered = tool_outcome(&ToolOutcome::SubmissionRejected { problem });
@@ -360,5 +543,109 @@ mod tests {
             panic!("a correction is a user message");
         };
         assert!(content.contains("submit_preparation"));
+    }
+
+    #[test]
+    fn every_edit_outcome_renders_with_its_status() {
+        let applied = tool_outcome(&ToolOutcome::EditApplied {
+            base_revision: None,
+            revision: nekowriter_core::ids::RevisionId::generate(),
+            word_count: 12,
+        });
+        assert!(
+            applied.contains("\"applied\"") && applied.contains("12"),
+            "{applied}"
+        );
+        let unchanged = tool_outcome(&ToolOutcome::EditNoChange { word_count: 12 });
+        assert!(unchanged.contains("\"unchanged\""), "{unchanged}");
+        for problem in [
+            EditProblem::EmptyContent,
+            EditProblem::EmptyOldStr,
+            EditProblem::NoMatch,
+            EditProblem::AmbiguousMatch { matches: 3 },
+            EditProblem::BodyTooLong { max_chars: 9 },
+        ] {
+            let rendered = tool_outcome(&ToolOutcome::EditRejected { problem });
+            assert!(rendered.contains("\"rejected\""), "{rendered}");
+        }
+    }
+
+    #[test]
+    fn rejected_outlines_and_chapters_carry_the_feedback() {
+        for kind in [ReviewKind::ChapterOutline, ReviewKind::ChapterFinal] {
+            let TranscriptMessage::User { content } = unsealed(
+                &UnsealedMessage::ReviewRejected {
+                    kind,
+                    feedback: "More rain.".to_owned(),
+                },
+                "submit_chapter",
+            ) else {
+                panic!("a review outcome is a user message");
+            };
+            assert!(content.contains("More rain."));
+        }
+    }
+
+    fn chapter(kind: ChapterKind) -> ChapterInput {
+        ChapterInput {
+            id: nekowriter_core::ids::ChapterId::generate(),
+            kind,
+            number: 2,
+            title: "Storm".to_owned(),
+            goal: String::new(),
+        }
+    }
+
+    #[test]
+    fn folds_render_every_stage_once_in_order() {
+        use nekowriter_core::{ids::PlanItemId, preparation::ChapterPlanItem, stage::FoldDocument};
+
+        assert_eq!(folds(&[]), None);
+        let document = |role, content: &str, chapter_plan| FoldDocument {
+            role,
+            content: content.to_owned(),
+            chapter_plan,
+        };
+        let plan = ChapterPlan(vec![ChapterPlanItem {
+            id: PlanItemId::generate(),
+            title: "Arrival".to_owned(),
+            goal: "The letter.".to_owned(),
+        }]);
+        let text = folds(&[
+            FoldInput {
+                stage: FoldStage::Preparation,
+                documents: vec![
+                    document(DocumentRole::Background, "BACKGROUND", None),
+                    document(DocumentRole::Outline, "OUTLINE", Some(plan)),
+                ],
+            },
+            FoldInput {
+                stage: FoldStage::ChapterBody {
+                    chapter: chapter(ChapterKind::Main),
+                },
+                documents: vec![document(DocumentRole::ChapterBody, "BODY", None)],
+            },
+        ])
+        .unwrap();
+        let background = text.find("BACKGROUND").unwrap();
+        let outline = text.find("OUTLINE").unwrap();
+        let plan = text.find("The letter.").unwrap();
+        let body = text.find("BODY").unwrap();
+        assert!(
+            background < outline && outline < plan && plan < body,
+            "{text}"
+        );
+        assert!(text.contains("Storm"));
+    }
+
+    #[test]
+    fn chapter_names_and_bodies_render() {
+        assert!(chapter_name(&chapter(ChapterKind::Extra)).contains("Storm"));
+        assert_ne!(
+            chapter_name(&chapter(ChapterKind::Main)),
+            chapter_name(&chapter(ChapterKind::Extra))
+        );
+        assert!(current_body("The keeper woke.").contains("The keeper woke."));
+        assert_ne!(current_body(" "), "");
     }
 }

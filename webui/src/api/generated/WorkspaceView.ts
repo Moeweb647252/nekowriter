@@ -4,6 +4,7 @@ import type { ChapterView } from "./ChapterView";
 import type { ProjectView } from "./ProjectView";
 import type { RevisionView } from "./RevisionView";
 import type { RunView } from "./RunView";
+import type { Timestamp } from "./Timestamp";
 import type { VersionSummary } from "./VersionSummary";
 
 export type WorkspaceView = { project: ProjectView, version: VersionSummary, 
@@ -16,10 +17,22 @@ versions: Array<VersionSummary>,
  */
 revision: number, 
 /**
+ * When the user first confirmed the novel complete.
+ */
+completedAt: Timestamp | null, 
+/**
  * The run of the current stage, if one exists.
  */
-run: RunView | null, brief: RevisionView | null, 
+run: RunView | null, 
+/**
+ * The novel brief, with its content: it is edited in the workspace.
+ */
+brief: RevisionView | null, 
 /**
  * The four preparation artifacts, in tab order.
  */
-artifacts: Array<ArtifactView>, chapters: Array<ChapterView>, };
+artifacts: Array<ArtifactView>, 
+/**
+ * The main chapters in plan order, then the extra chapters in order.
+ */
+chapters: Array<ChapterView>, };

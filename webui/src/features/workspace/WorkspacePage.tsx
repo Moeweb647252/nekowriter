@@ -3,7 +3,7 @@ import { Link, Navigate, useParams } from "react-router"
 
 import { PreparationWorkspace } from "./preparation/PreparationWorkspace"
 import { workspacePath } from "./stage"
-import { WritingWorkspace } from "./WritingWorkspace"
+import { WritingWorkspace } from "./writing/WritingWorkspace"
 import type { VersionId } from "@/api/generated/VersionId"
 import { useWorkspace } from "@/api/queries/workspace"
 import { ErrorAlert } from "@/components/app/ErrorAlert"

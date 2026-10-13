@@ -1,14 +1,34 @@
 import { useTranslation } from "react-i18next"
 
 import type { DocumentKey } from "./documents"
-import type { ChapterPlan } from "@/api/generated/ChapterPlan"
 import type { ReviewStatus } from "@/api/generated/ReviewStatus"
+import type { RevisionSummary } from "@/api/generated/RevisionSummary"
 import type { WorkspaceView } from "@/api/generated/WorkspaceView"
+import { useRevision } from "@/api/queries/workspace"
+import { ErrorAlert } from "@/components/app/ErrorAlert"
 import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 
-/** Committed text in the reading face (§18.2). Only committed revisions are shown here. */
+/** Committed text in the reading face (§18.2). */
 export function ReadingText({ text }: { text: string }) {
   return <div className="font-reading text-lg leading-[1.85] whitespace-pre-wrap">{text}</div>
+}
+
+/** A revision's committed text, loaded by its ID; `empty` stands in before the first one. */
+export function RevisionText({
+  revision,
+  empty,
+}: {
+  revision: RevisionSummary | null
+  empty: string
+}) {
+  const loaded = useRevision(revision?.id)
+  if (revision === null) return <p className="text-muted-foreground">{empty}</p>
+  if (loaded.isError) {
+    return <ErrorAlert error={loaded.error} onRetry={() => void loaded.refetch()} />
+  }
+  if (loaded.data === undefined) return <Skeleton className="h-24 w-full" />
+  return <ReadingText text={loaded.data.content} />
 }
 
 export function ReviewBadge({ status }: { status: ReviewStatus }) {
@@ -74,7 +94,6 @@ export function DocumentView({ view, doc }: { view: WorkspaceView; doc: Document
   }
 
   const artifact = view.artifacts.find((item) => item.kind === doc)
-  const plan: ChapterPlan | null = artifact?.chapterPlan ?? null
   return (
     <article>
       <header className="mb-6 flex flex-wrap items-baseline gap-3">
@@ -88,12 +107,19 @@ export function DocumentView({ view, doc }: { view: WorkspaceView; doc: Document
         )}
         {artifact?.review && <ReviewBadge status={artifact.review.status} />}
       </header>
-      {artifact?.revision ? (
-        <ReadingText text={artifact.revision.content} />
-      ) : (
-        <p className="text-muted-foreground">{t(($) => $.workspace.document.notWritten)}</p>
-      )}
-      {plan !== null && <ChapterPlanList plan={plan} />}
+      <ArtifactText revision={artifact?.revision ?? null} />
     </article>
+  )
+}
+
+/** An artifact's text and, for the outline, its chapter plan. */
+function ArtifactText({ revision }: { revision: RevisionSummary | null }) {
+  const { t } = useTranslation()
+  const loaded = useRevision(revision?.id)
+  return (
+    <>
+      <RevisionText revision={revision} empty={t(($) => $.workspace.document.notWritten)} />
+      {loaded.data?.chapterPlan && <ChapterPlanList plan={loaded.data.chapterPlan} />}
+    </>
   )
 }

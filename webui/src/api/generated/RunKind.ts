@@ -3,4 +3,4 @@
 /**
  * What a run does.
  */
-export type RunKind = "preparation";
+export type RunKind = "preparation" | "chapter_outline" | "chapter_body";

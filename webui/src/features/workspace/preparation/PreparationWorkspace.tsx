@@ -25,7 +25,7 @@ export function PreparationWorkspace({
 }) {
   const { t } = useTranslation()
   const run = view.run
-  const preview = usePreview(run?.id)
+  const preview = usePreview(run?.id, run?.requestInFlight)
   const streaming = preview !== null && run?.status === "running"
   const brief = useDraft(`${view.version.id}.brief`, view.brief?.content ?? "")
 

@@ -1,78 +1,11 @@
 import { screen, waitFor, within } from "@testing-library/react"
-import { HttpResponse, http } from "msw"
-import { Route, Routes } from "react-router"
 import { describe, expect, it } from "vitest"
 
-import { WorkspacePage } from "./WorkspacePage"
-import { PreviewContext, PreviewStore } from "@/api/events/preview"
+import { PreviewStore } from "@/api/events/preview"
 import type { DecideReviewRequest } from "@/api/generated/DecideReviewRequest"
 import type { RevisionRequest } from "@/api/generated/RevisionRequest"
-import type { SaveBriefRequest } from "@/api/generated/SaveBriefRequest"
-import type { WorkspaceView } from "@/api/generated/WorkspaceView"
-import {
-  PROJECT_ID,
-  RUN_ID,
-  VERSION_ID,
-  artifacts,
-  reviewId,
-  runView,
-  workspaceView,
-} from "@/test/fixtures"
-import { renderWithProviders } from "@/test/render"
-import { server } from "@/test/server"
-
-const PATH = `/works/${PROJECT_ID}/versions/${VERSION_ID}`
-
-/** A fake workspace endpoint, and the commands it received by path. */
-function fakeWorkspace(initial: WorkspaceView) {
-  let view = initial
-  const commands: { path: string; body: unknown }[] = []
-  const update = (change: (current: WorkspaceView) => WorkspaceView) => {
-    view = change({ ...view, revision: view.revision + 1 })
-    return HttpResponse.json({ revision: view.revision })
-  }
-  server.use(
-    http.get("*/api/versions/:id/workspace", () => HttpResponse.json(view)),
-    http.post("*/api/*", async ({ request }) => {
-      const path = new URL(request.url).pathname
-      const body: unknown = await request.json()
-      commands.push({ path, body })
-      if (path.endsWith("/brief")) {
-        const { brief } = body as SaveBriefRequest
-        return update((current) => ({
-          ...current,
-          brief: {
-            id: "0190f5c8-0000-7000-8000-000000000300",
-            number: 1,
-            content: brief,
-            createdAt: 0,
-          },
-        }))
-      }
-      if (path.endsWith("/preparation/start")) {
-        const stage = { phase: "preparation", step: "generating" } as const
-        return update((current) => ({
-          ...current,
-          version: { ...current.version, stage },
-          run: runView({ status: "queued", requestCount: 0 }),
-        }))
-      }
-      return update((current) => current)
-    }),
-  )
-  return { commands }
-}
-
-function renderWorkspace(previews = new PreviewStore()) {
-  return renderWithProviders(
-    <PreviewContext value={previews}>
-      <Routes>
-        <Route path="/works/:projectId/versions/:versionId" element={<WorkspacePage />} />
-      </Routes>
-    </PreviewContext>,
-    { route: PATH },
-  )
-}
+import { RUN_ID, VERSION_ID, artifacts, reviewId, runView, workspaceView } from "@/test/fixtures"
+import { fakeWorkspace, renderWorkspace } from "@/test/workspace"
 
 describe("WorkspacePage", () => {
   it("saves the brief, then starts preparation", async () => {

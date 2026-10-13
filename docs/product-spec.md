@@ -83,7 +83,7 @@ The **workflow axis** says where the version is in the story:
 preparing.{not_started, generating, reviewing, revising}
 writing.{chapter_ready, outline_generating, outline_reviewing, drafting, chapter_reviewing, chapter_done}
 completed
-extras.{same sub-states as writing, for chapters of kind extra}
+extras.{the writing sub-states, for a chapter of kind extra}
 ```
 
 The **execution axis** says what the active run is doing: `idle`, `queued`, `request_in_flight`, `tool_boundary`, `waiting_answer`, `waiting_review`, `paused`, `interrupted`, `failed`, `stopped`.
@@ -114,8 +114,10 @@ A top-level run exists per preparation stage, per chapter outline and per chapte
 | writing.chapter_reviewing | Rejected | Feedback joins the body run's next delivery; body history kept | writing.drafting |
 | writing.chapter_done | Next chapter | Unfinished plan items remain; stop at guidance, no model call | writing.chapter_ready |
 | writing.chapter_done | Confirm completion | Every plan chapter approved; no open review, proposal or execution | completed |
-| completed | Add extra chapter | Create an extra chapter with its own guidance slot and budget scope; the completion time stays | extras.chapter_ready |
+| completed | Add extra chapter | Create an extra chapter with its title, its own guidance slot and budget scope; the completion time stays | extras.chapter_ready |
 | extras.chapter_done | Finish extra chapter | The extra chapter is approved and nothing is pending | completed |
+
+The writing and extras states are stored as one chapter stage (the chapter and its step); the chapter's kind tells them apart. Approving an outline creates the chapter's body run, which starts without another user action.
 
 An invalid transition is refused with `STATE_CONFLICT` and a typed reason (for example `wrong_step`), and the client reloads the workspace. The UI never relies on hidden buttons in place of backend validation.
 
@@ -201,7 +203,7 @@ submit_review           { passed, confidence, issues }
 - `old_str == new_str` returns `NO_CHANGE`: no revision, no word-count change, no approval needed.
 - No match (`EDIT_NO_MATCH`), several matches (`EDIT_AMBIGUOUS_MATCH`), a stale base revision, a deleted chapter or a wrong stage never change the body.
 - Edit flow: complete arguments → validate context and arguments → record the call and its base revision → compute the candidate and diff → pause/approval gate → re-validate the base on acceptance → commit revision, word-count delta, tool outcome and event in one transaction.
-- Tool results are structured: `status` (`applied`, `rejected`, `error`), base and result revision IDs, data such as the word count, and a separate `feedback` array. Feedback is never mixed into error strings.
+- Tool results are structured: `status` (`applied`, `unchanged` for `NO_CHANGE`, `rejected`, `error`), base and result revision IDs, data such as the word count, and a separate `feedback` array. Feedback is never mixed into error strings.
 
 ### 8.6 Asking the user
 
@@ -296,7 +298,7 @@ A tool's base outcome is immutable; feedback bindings are stored separately. Whe
 
 - **When:** after all required artifacts of the current stage are approved (by the user or a delegate). Preparation folds when all four are approved; a chapter outline folds when approved; a chapter body folds when its whole-chapter review approves; extra chapters follow the same rule. Accepting a single edit never folds.
 - **Content:** the full text of the approved revisions, rendered deterministically without a model call, in fixed order (background, research, characters, outline with its chapter plan as readable text), separated by blank lines. The rendering used for folding is the same one shown for review. The fold contains no questions, tool calls, failed revisions, feedback, review reasons, flags, confidence, tokens or timestamps.
-- **Transport:** the fold is sent as an ordinary assistant text message without tool calls, never as a system instruction.
+- **Transport:** the folds are sent together as one ordinary assistant text message without tool calls, right after the system prompt, never as a system instruction. New folds are appended, so earlier ones stay a stable prefix.
 - **Transaction:** the approval, artifact lock, fold checkpoint, run success, next workflow state and events commit together, and only when nothing is pending (no request in flight, unresolved tool, proposal, unanswered question or undelivered feedback). Replays reuse the committed fold.
 - **Assembly order:** current role and task constraints → stable tool definitions → folds of completed stages in story order → current stage input, current body and the stage's unfolded messages. A folded stage appears exactly once.
 - **Limits:** when the context still exceeds the model's input budget (the context window minus the tokens reserved for the answer) after folding, the run fails with the halt reason `context_limit_exceeded`, naming the estimate and the limit. Artifacts are never summarized or truncated (D16).
@@ -381,6 +383,7 @@ Ten keys, each with a system and a user prompt: `preparation.generate`, `chapter
 - Every mutation carries a `command_id`; state-dependent commands carry an expected revision. A replay of the same command returns the original result; the same ID with different content returns `IDEMPOTENCY_CONFLICT`. Receipts are kept permanently.
 - Errors are `{code, params, requestId}` with 422 for invalid input, 409 for state or revision conflicts, 404 for missing or deleted resources, and 502/504 for external service failures.
 - Events are persisted with a sequence number in the same transaction as the change and streamed over SSE. The client takes a snapshot with its cursor, subscribes after it, and resumes with `Last-Event-ID`. Persistent events are kept 7 days; a cursor outside the window gets `stream.reset_required`. Heartbeats every 15 seconds. Streaming previews are ephemeral, unsequenced and dropped for slow subscribers.
+- Views name document revisions by ID, number and word count. A revision's content is read by its ID; revisions never change, so clients keep what they read.
 - Write requests require a loopback `Host` and, when present, an allowed `Origin` (the app itself and the Vite dev server). GET requests are read-only. Markdown never renders raw HTML; external links open safely; export filenames are sanitized.
 
 ### 16.3 Interruption, stop and shutdown

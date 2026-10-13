@@ -10,6 +10,7 @@ use ts_rs::TS;
 use crate::{
     field::{Field, multi_line_text, normalize_line_endings},
     ids::PlanItemId,
+    submission::SubmissionProblem,
 };
 
 multi_line_text!(
@@ -101,55 +102,6 @@ pub struct AcceptedPreparation {
     pub artifacts: Vec<(ArtifactKind, String)>,
     /// Present exactly when the outline is submitted.
     pub chapter_plan: Option<ChapterPlan>,
-}
-
-/// Why a well-formed submission was rejected. The agent receives it and resubmits.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(
-    tag = "kind",
-    rename_all = "snake_case",
-    rename_all_fields = "camelCase"
-)]
-pub enum SubmissionProblem {
-    MissingArtifacts {
-        kinds: Vec<ArtifactKind>,
-    },
-    UnexpectedArtifacts {
-        kinds: Vec<ArtifactKind>,
-    },
-    DuplicateArtifact {
-        artifact: ArtifactKind,
-    },
-    EmptyArtifact {
-        artifact: ArtifactKind,
-    },
-    ArtifactTooLong {
-        artifact: ArtifactKind,
-        max_chars: u32,
-    },
-    ChapterPlanMissing,
-    ChapterPlanNotExpected,
-    ChapterPlanEmpty,
-    ChapterPlanTooLong {
-        max_items: u32,
-    },
-    ChapterTitleEmpty {
-        number: u32,
-    },
-    ChapterTitleNotSingleLine {
-        number: u32,
-    },
-    ChapterTitleTooLong {
-        number: u32,
-        max_chars: u32,
-    },
-    ChapterGoalEmpty {
-        number: u32,
-    },
-    ChapterGoalTooLong {
-        number: u32,
-        max_chars: u32,
-    },
 }
 
 /// Checks a submission against the artifacts `required` this round (§6).

@@ -21,6 +21,8 @@ pub struct Model {
     pub content: String,
     /// The chapter plan, for revisions of the outline.
     pub chapter_plan: Option<ChapterPlan>,
+    /// The content's word count, for revisions of a chapter body (§15).
+    pub word_count: Option<i32>,
     /// The run that wrote it; `None` when the user wrote it.
     pub created_by_run: Option<RunId>,
     pub created_at: Timestamp,

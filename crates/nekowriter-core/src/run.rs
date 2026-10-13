@@ -28,6 +28,10 @@ pub const MAX_CONSECUTIVE_PROTOCOL_ERRORS: i32 = 3;
 pub enum RunKind {
     /// Writes the four preparation artifacts and the chapter plan.
     Preparation,
+    /// Writes a chapter's outline.
+    ChapterOutline,
+    /// Writes a chapter's body.
+    ChapterBody,
 }
 
 /// What a run is doing now.

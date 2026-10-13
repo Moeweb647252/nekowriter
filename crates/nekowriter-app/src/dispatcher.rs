@@ -14,7 +14,7 @@ use nekowriter_agent::{
     prompts::builtin,
     render,
     round::{self, RoundOutcome},
-    stage::{self, Contract, PromptTexts, Submission},
+    stage::{self, Contract, PromptTexts, Submission, ToolRequest},
 };
 use nekowriter_core::{
     ids::{ModelRequestId, RunId},
@@ -163,10 +163,21 @@ impl Dispatcher {
         elapsed_ms: u128,
     ) -> Result<(), StoreError> {
         let round = match round::classify(contract, &completion.turn) {
-            RoundOutcome::Submission {
+            RoundOutcome::Tool {
                 call,
-                submission: Submission::Preparation(submission),
-            } => RoundRecord::PreparationSubmission { call, submission },
+                request: ToolRequest::Edit(edit),
+            } => RoundRecord::BodyEdit { call, edit },
+            RoundOutcome::Submission { call, submission } => match submission {
+                Submission::Preparation(submission) => {
+                    RoundRecord::PreparationSubmission { call, submission }
+                }
+                Submission::ChapterOutline(submission) => {
+                    RoundRecord::OutlineSubmission { call, submission }
+                }
+                Submission::Chapter(submission) => {
+                    RoundRecord::ChapterSubmission { call, submission }
+                }
+            },
             RoundOutcome::ProtocolError { calls, correction } => {
                 RoundRecord::ProtocolError { calls, correction }
             }
@@ -177,7 +188,10 @@ impl Dispatcher {
             stage = ?contract.stage,
             elapsed_ms,
             outcome = match &round {
-                RoundRecord::PreparationSubmission { .. } => "submission",
+                RoundRecord::BodyEdit { .. } => "tool_call",
+                RoundRecord::PreparationSubmission { .. }
+                | RoundRecord::OutlineSubmission { .. }
+                | RoundRecord::ChapterSubmission { .. } => "submission",
                 RoundRecord::ProtocolError { .. } => "protocol_error",
             },
             "the model answered"
@@ -224,13 +238,14 @@ fn prepare(input: &DispatchInput) -> Result<Prepared, RunHalt> {
             }
         })
         .collect();
-    let planned =
-        context::plan(&stage, &transcript, model.profile.input_budget()).map_err(|too_large| {
-            RunHalt::ContextLimitExceeded {
-                estimated_tokens: too_large.estimated_tokens,
-                limit_tokens: too_large.limit_tokens,
-            }
-        })?;
+    let folds = render::folds(&input.folds);
+    let budget = model.profile.input_budget();
+    let planned = context::plan(&stage, folds, &transcript, budget).map_err(|too_large| {
+        RunHalt::ContextLimitExceeded {
+            estimated_tokens: too_large.estimated_tokens,
+            limit_tokens: too_large.limit_tokens,
+        }
+    })?;
     let body = request_body(&model, &planned);
     Ok(Prepared {
         sealed: SealedRequest {

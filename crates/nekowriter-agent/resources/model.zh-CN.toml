@@ -15,6 +15,10 @@ outline = "小说粗纲"
 [list]
 separator = "、"
 
+[chapter_kinds]
+main = "正篇"
+extra = "番外"
+
 [contracts]
 preparation = """
 ## 提交方式
@@ -23,6 +27,18 @@ preparation = """
 - artifacts 中每项产物只出现一次，kind 的取值为 background（背景设定）、research（资料收集）、characters（人物设定）、outline（小说粗纲），只提交本轮要求的产物。
 - 提交小说粗纲时必须同时提供 chapter_plan：按顺序列出每一章的标题（title）和本章目标（goal）。
 - 提交后作者会逐项审核。未通过的产物会附有审核意见，届时只修订并重新提交被要求的产物。"""
+chapter_outline = """
+## 提交方式
+- 大纲写好后调用 {{tool}} 工具提交，chapter_id 填写 {{chapter_id}}。这是结束本阶段的唯一方式，不要在普通文本中输出大纲。
+- 每次回复最多调用一个工具。
+- 提交后作者会审核大纲。未通过时会附有审核意见，届时根据意见修改，并重新提交完整的大纲。"""
+chapter_body = """
+## 写作方式
+- 正文只能通过工具修改：用 {{append}} 在正文末尾追加内容；用 {{replace}} 把正文中只出现一次的一段文字替换为新文字，新文字为空表示删除。
+- {{replace}} 的 old_str 必须与正文逐字一致，并且在正文中只出现一次；否则修改不会生效，正文保持不变。
+- 每次回复最多调用一个工具。正文较长时分多次追加，每次追加一段完整的内容。
+- 本章写完并检查无误后，调用 {{submit}} 提交，chapter_id 填写 {{chapter_id}}，summary 用几句话概括本章内容。摘要不会写入正文。
+- 提交后作者会审核整章。未通过时会附有审核意见，届时修改正文，然后重新提交本章。"""
 
 [tools.submit_preparation]
 description = "提交本轮的准备产物。这是结束准备阶段的唯一方式。"
@@ -33,10 +49,39 @@ chapter_plan = "全书的章节计划，按顺序排列。"
 chapter_title = "章节标题。"
 chapter_goal = "本章要完成的目标，一到两句话。"
 
+[tools.submit_chapter_outline]
+description = "提交本章大纲，交给作者审核。这是结束大纲阶段的唯一方式。"
+chapter_id = "本章的 ID。"
+content = "本章大纲全文，使用 Markdown。"
+
+[tools.append_content]
+description = "在本章正文末尾追加内容。"
+content = "要追加的正文，原样追加。需要另起段落时，以空行开头。"
+
+[tools.replace_content]
+description = "把本章正文中只出现一次的一段文字替换为新文字。"
+old_str = "要替换的原文，必须与正文逐字一致，并且在正文中只出现一次。"
+new_str = "替换后的文字；为空表示删除原文。"
+
+[tools.submit_chapter]
+description = "提交写完的本章，交给作者审核整章。"
+chapter_id = "本章的 ID。"
+summary = "用几句话概括本章内容。摘要不会写入正文。"
+
 [results]
-submission_accepted = "提交成功，产物已交给作者审核。"
+submission_accepted = "提交成功，已交给作者审核。"
 submission_rejected = "提交未被接受：{{problem}}"
 protocol_error = "调用无效：{{problem}}"
+edit_applied = "修改已生效。本章正文现有 {{word_count}} 字。"
+edit_no_change = "新旧文字相同，正文没有变化。本章正文现有 {{word_count}} 字。"
+edit_rejected = "修改没有生效，正文保持不变：{{problem}}"
+
+[edit_problems]
+empty_content = "content 为空，没有可以追加的内容。"
+empty_old_str = "old_str 为空，无法确定要替换哪段文字。"
+no_match = "正文中找不到 old_str。old_str 必须与正文逐字一致，请对照当前正文重新选取。"
+ambiguous_match = "old_str 在正文中出现了 {{matches}} 次。请加长 old_str，让它在正文中只出现一次。"
+body_too_long = "修改后的正文会超过 {{max_chars}} 个字符的上限。"
 
 [submission_problems]
 missing_artifacts = "缺少本轮要求的产物：{{artifacts}}。"
@@ -53,6 +98,12 @@ chapter_title_not_single_line = "第 {{number}} 章的标题只能是一行文�
 chapter_title_too_long = "第 {{number}} 章的标题超过了 {{max_chars}} 个字符的上限。"
 chapter_goal_empty = "第 {{number}} 章的目标为空。"
 chapter_goal_too_long = "第 {{number}} 章的目标超过了 {{max_chars}} 个字符的上限。"
+outline_empty = "大纲内容为空。"
+outline_too_long = "大纲超过了 {{max_chars}} 个字符的上限。"
+summary_empty = "本章摘要为空。"
+summary_too_long = "本章摘要超过了 {{max_chars}} 个字符的上限。"
+body_empty = "本章正文还是空的。请先用工具写入正文，再提交本章。"
+wrong_chapter = "chapter_id 不是当前正在写作的章节。"
 
 [protocol_problems]
 unknown_tool = "本轮没有名为 {{name}} 的工具。"
@@ -76,7 +127,7 @@ number = "数字"
 boolean = "布尔值"
 
 [corrections]
-no_tool_call = "你的回复没有调用工具。本阶段只能通过调用 {{tool}} 提交结果，不要在普通文本中输出结果或 JSON。请现在调用工具。"
+no_tool_call = "你的回复没有调用工具。本阶段的工作只能通过工具完成，结束时调用 {{tool}} 提交；不要在普通文本中输出结果或 JSON。请现在调用合适的工具。"
 protocol_error = "上一次工具调用不符合要求，原因见对应的工具结果。请修正后重新调用。"
 submission_rejected = "提交内容没有通过检查，原因见对应的工具结果。请修正后重新提交。"
 
@@ -90,6 +141,34 @@ rejected = """【{{artifact}}】未通过。审核意见：
 {{feedback}}"""
 stale = "【{{artifact}}】所依赖的产物已经修改，请据此检查并重新提交。"
 item_separator = "\n\n"
+outline_rejected = """作者没有通过本章大纲。审核意见：
+{{feedback}}
+
+请根据意见修改，并重新提交完整的大纲。"""
+chapter_rejected = """作者没有通过本章。审核意见：
+{{feedback}}
+
+请根据意见修改正文，然后重新提交本章。"""
+
+[folds]
+intro = "以下是本书已经确定的内容，后续写作必须与之保持一致。"
+separator = "\n\n"
+preparation = "# 已确定的准备产物"
+document = "## {{name}}"
+chapter_plan = "### 章节计划"
+plan_item = "{{number}}. {{title}}：{{goal}}"
+chapter_outline = "# {{chapter}}大纲（已确定）"
+chapter_body = "# {{chapter}}正文（已定稿）"
+
+[chapters]
+name = "{{kind}}第 {{number}} 章《{{title}}》"
+none = "（无）"
+current_body = """## 本章当前正文
+
+{{body}}"""
+empty_body = """## 本章当前正文
+
+（尚未写作）"""
 
 [connection_test]
 system = "这是一次连接测试。"

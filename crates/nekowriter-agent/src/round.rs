@@ -1,10 +1,11 @@
-//! Classifying the model's answer to a round (`docs/product-spec.md` §8.2): a stage
-//! submission, or a protocol error with the correction the model receives.
+//! Classifying the model's answer to a round (`docs/product-spec.md` §8.2): a call of one
+//! of the stage's work tools, a stage submission, or a protocol error with the correction
+//! the model receives.
 
 use nekowriter_core::run_message::{ArgumentsProblem, Correction, ModelToolCall, ProtocolProblem};
 use serde_json::Value;
 
-use crate::stage::{Contract, Submission, parse_submission};
+use crate::stage::{Contract, Submission, ToolRequest, parse_submission};
 
 /// The model's answer: its text and its tool calls, as sent.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -15,6 +16,11 @@ pub struct AssistantTurn {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RoundOutcome {
+    /// The model called a work tool with valid arguments.
+    Tool {
+        call: ModelToolCall,
+        request: ToolRequest,
+    },
     /// The model called the submission tool with valid arguments.
     Submission {
         call: ModelToolCall,
@@ -36,10 +42,7 @@ pub fn classify(contract: &Contract, turn: &AssistantTurn) -> RoundOutcome {
             correction: Correction::NoToolCall,
         },
         [call] => match check_call(contract, call) {
-            Ok(submission) => RoundOutcome::Submission {
-                call: call.clone(),
-                submission,
-            },
+            Ok(outcome) => outcome,
             Err(problem) => RoundOutcome::ProtocolError {
                 calls: vec![(call.clone(), problem)],
                 correction: Correction::ProtocolError,
@@ -55,8 +58,9 @@ pub fn classify(contract: &Contract, turn: &AssistantTurn) -> RoundOutcome {
     }
 }
 
-fn check_call(contract: &Contract, call: &ModelToolCall) -> Result<Submission, ProtocolProblem> {
-    if call.name != contract.submission.name {
+fn check_call(contract: &Contract, call: &ModelToolCall) -> Result<RoundOutcome, ProtocolProblem> {
+    let tool = contract.tools.iter().find(|tool| tool.name() == call.name);
+    if tool.is_none() && call.name != contract.submission.name {
         return Err(ProtocolProblem::UnknownTool {
             name: call.name.clone(),
         });
@@ -64,7 +68,16 @@ fn check_call(contract: &Contract, call: &ModelToolCall) -> Result<Submission, P
     let invalid = |problem| ProtocolProblem::InvalidArguments { problem };
     let arguments: Value =
         serde_json::from_str(&call.arguments).map_err(|_| invalid(ArgumentsProblem::NotJson))?;
-    parse_submission(contract, &arguments).map_err(invalid)
+    let call = call.clone();
+    match tool {
+        Some(tool) => tool
+            .parse(&arguments)
+            .map(|request| RoundOutcome::Tool { call, request })
+            .map_err(invalid),
+        None => parse_submission(contract, &arguments)
+            .map(|submission| RoundOutcome::Submission { call, submission })
+            .map_err(invalid),
+    }
 }
 
 #[cfg(test)]
@@ -167,5 +180,60 @@ mod tests {
             RoundOutcome::ProtocolError { ref calls, .. }
                 if calls[0].1 == ProtocolProblem::InvalidArguments { problem: ArgumentsProblem::NotJson }
         ));
+    }
+
+    #[test]
+    fn a_work_tool_call_is_a_tool_round() {
+        use nekowriter_core::{
+            body::BodyEdit,
+            chapter::{ChapterInput, ChapterKind},
+            ids::ChapterId,
+            prompt::PromptKey,
+        };
+
+        use crate::stage::ToolRequest;
+
+        let key = PromptKey::ChapterWrite;
+        let contract = build(
+            &StageInput::ChapterBody {
+                chapter: ChapterInput {
+                    id: ChapterId::generate(),
+                    kind: ChapterKind::Main,
+                    number: 1,
+                    title: "Arrival".to_owned(),
+                    goal: String::new(),
+                },
+                guidance: String::new(),
+                body: String::new(),
+            },
+            WritingLanguage::En,
+            PromptTexts {
+                system: builtin(key, PromptRole::System),
+                user: builtin(key, PromptRole::User),
+            },
+        )
+        .unwrap()
+        .contract;
+        let call = ModelToolCall {
+            provider_id: "call_1".to_owned(),
+            name: "append_content".to_owned(),
+            arguments: r#"{"content":"Rain."}"#.to_owned(),
+        };
+        let outcome = classify(
+            &contract,
+            &AssistantTurn {
+                content: None,
+                tool_calls: vec![call.clone()],
+            },
+        );
+        assert_eq!(
+            outcome,
+            RoundOutcome::Tool {
+                call,
+                request: ToolRequest::Edit(BodyEdit::Append {
+                    content: "Rain.".to_owned()
+                })
+            }
+        );
     }
 }

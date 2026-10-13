@@ -4,30 +4,29 @@
 use std::collections::BTreeSet;
 
 use nekowriter_core::{
-    chapter::{ChapterKind, ChapterStatus},
-    conflict::{Resource, StateConflict},
+    chapter::ChapterKind,
+    conflict::StateConflict,
     document::DocumentRole,
     ids::{ChapterId, CommandId, ReviewId, VersionId},
-    preparation::{
-        ArtifactKind, NovelBrief, PreparationSubmission, SubmissionProblem, accept_preparation,
-    },
+    preparation::{ArtifactKind, NovelBrief, PreparationSubmission, accept_preparation},
     review::{ReviewDecision, ReviewKind, ReviewStatus},
     run::{Fold, RunKind, RunStatus},
     run_message::RunMessageBody,
+    submission::SubmissionProblem,
     workflow::{ChapterStep, PreparationStep, WorkflowStage},
 };
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, IntoActiveModel, QueryFilter,
     QueryOrder, Set,
 };
-use serde::Serialize;
 
 use crate::{
     Store, StoreError,
+    chapters::{NewChapter, create_chapter_rows},
     command::{Begun, WriteTx},
     documents::{NewRevision, add_revision, current_revision, version_document},
-    entity::{chapter, review, revision, revision_dependency, run},
-    execution::{append_message, check_model, create_run},
+    entity::{review, revision, revision_dependency, run},
+    execution::{append_message, check_model, create_run, queue_for_revision},
     workflow::{
         VersionContext, WorkspaceAck, advance, load_version, project_has_other_active_run, touch,
     },
@@ -61,11 +60,7 @@ impl Store {
             add_revision(
                 tx.db(),
                 document,
-                NewRevision {
-                    content: brief.as_str().to_owned(),
-                    chapter_plan: None,
-                    created_by_run: None,
-                },
+                NewRevision::text(brief.as_str().to_owned(), None),
                 now,
             )
             .await?;
@@ -105,7 +100,7 @@ impl Store {
             return Err(StoreError::StateConflict(StateConflict::ProjectBusy));
         }
         check_model(tx.db(), &context.project).await?;
-        let run = create_run(tx.write(), &context, RunKind::Preparation).await?;
+        let run = create_run(tx.write(), &context, RunKind::Preparation, None).await?;
         let workflow = advance(
             tx.write(),
             context.workflow,
@@ -121,73 +116,41 @@ impl Store {
         })
         .await
     }
+}
 
-    /// Approves or rejects a preparation artifact. When the round's last open review is
-    /// decided, the round closes: the stage folds if everything is approved, otherwise the
-    /// run revises what was rejected or became stale.
-    pub async fn decide_review(
-        &self,
-        command: CommandId,
-        review_id: ReviewId,
-        expected_revision: i64,
-        decision: ReviewDecision,
-    ) -> Result<WorkspaceAck, StoreError> {
-        let input = (review_id, expected_revision, DecisionInput::from(&decision));
-        let mut tx = match self.begin_command(command, "review.decide", &input).await? {
-            Begun::Replayed(ack) => return Ok(ack),
-            Begun::Fresh(tx) => tx,
-        };
-        let review = review::Entity::find_by_id(review_id)
-            .one(tx.db())
-            .await?
-            .ok_or(StoreError::NotFound(Resource::Review))?;
-        let context = load_version(tx.db(), review.version_id).await?;
-        context.check_revision(expected_revision)?;
-        let run = current_review_run(tx.db(), &context, &review).await?;
-        let round = review.round;
-        let mut decided = review.into_active_model();
-        match decision {
-            ReviewDecision::Approve => decided.status = Set(ReviewStatus::Approved),
-            ReviewDecision::Reject { feedback } => {
-                decided.status = Set(ReviewStatus::Rejected);
-                decided.feedback = Set(Some(feedback.as_str().to_owned()));
-            }
+/// Approves or rejects a preparation artifact. When the round's last open review is
+/// decided, the round closes: the stage folds if everything is approved, otherwise the run
+/// revises what was rejected or became stale.
+pub(crate) async fn decide_preparation_review(
+    tx: &mut WriteTx,
+    context: VersionContext,
+    review: review::Model,
+    decision: ReviewDecision,
+) -> Result<crate::entity::workflow::Model, StoreError> {
+    let run = current_review_run(tx.db(), &context, &review).await?;
+    let round = review.round;
+    let mut decided = review.into_active_model();
+    match decision {
+        ReviewDecision::Approve => decided.status = Set(ReviewStatus::Approved),
+        ReviewDecision::Reject { feedback } => {
+            decided.status = Set(ReviewStatus::Rejected);
+            decided.feedback = Set(Some(feedback.as_str().to_owned()));
         }
-        decided.decided_at = Set(Some(tx.now()));
-        decided.update(tx.db()).await?;
-
-        let still_open = review::Entity::find()
-            .filter(review::Column::RunId.eq(run.id))
-            .filter(review::Column::Round.eq(round))
-            .filter(review::Column::Status.eq(ReviewStatus::Open))
-            .one(tx.db())
-            .await?
-            .is_some();
-        let workflow = if still_open {
-            touch(tx.write(), context.version.id, context.project.id).await?
-        } else {
-            close_round(tx.write(), context, run).await?
-        };
-        tx.commit(WorkspaceAck {
-            revision: workflow.revision,
-        })
-        .await
     }
-}
+    decided.decided_at = Set(Some(tx.now()));
+    decided.update(tx.db()).await?;
 
-/// The decision as hashed for idempotency.
-#[derive(Serialize)]
-enum DecisionInput<'a> {
-    Approve,
-    Reject(&'a str),
-}
-
-impl<'a> From<&'a ReviewDecision> for DecisionInput<'a> {
-    fn from(decision: &'a ReviewDecision) -> Self {
-        match decision {
-            ReviewDecision::Approve => Self::Approve,
-            ReviewDecision::Reject { feedback } => Self::Reject(feedback.as_str()),
-        }
+    let still_open = review::Entity::find()
+        .filter(review::Column::RunId.eq(run.id))
+        .filter(review::Column::Round.eq(round))
+        .filter(review::Column::Status.eq(ReviewStatus::Open))
+        .one(tx.db())
+        .await?
+        .is_some();
+    if still_open {
+        touch(tx, context.version.id, context.project.id).await
+    } else {
+        close_round(tx, context, run).await
     }
 }
 
@@ -253,12 +216,7 @@ async fn close_round(
             RunMessageBody::PreparationReviewOutcome { round: run.round },
         )
         .await?;
-        let active_run = run.id;
-        let mut revising = run.into_active_model();
-        revising.status = Set(RunStatus::Queued);
-        revising.queued_at = Set(Some(tx.now()));
-        revising.updated_at = Set(tx.now());
-        revising.update(tx.db()).await?;
+        let active_run = queue_for_revision(tx, run).await?;
         advance(
             tx,
             context.workflow,
@@ -353,21 +311,16 @@ async fn create_chapters(
     })?;
     let mut first = None;
     for (index, item) in plan.0.into_iter().enumerate() {
-        let id = ChapterId::generate();
+        let now = tx.now();
+        let new = NewChapter {
+            kind: ChapterKind::Main,
+            number: i32::try_from(index + 1).expect("the plan size is bounded"),
+            plan_item_id: Some(item.id),
+            title: item.title,
+            goal: item.goal,
+        };
+        let id = create_chapter_rows(tx.db(), version_id, new, now).await?;
         first.get_or_insert(id);
-        chapter::ActiveModel {
-            id: Set(id),
-            version_id: Set(version_id),
-            kind: Set(ChapterKind::Main),
-            number: Set(i32::try_from(index + 1).expect("the plan size is bounded")),
-            plan_item_id: Set(Some(item.id)),
-            title: Set(item.title),
-            goal: Set(item.goal),
-            status: Set(ChapterStatus::NotStarted),
-            created_at: Set(tx.now()),
-        }
-        .insert(tx.db())
-        .await?;
     }
     first.ok_or_else(|| {
         StoreError::Corrupt(format!("outline revision {outline_id} plans no chapters"))
@@ -403,9 +356,8 @@ pub(crate) async fn apply_submission(
             tx.db(),
             document,
             NewRevision {
-                content,
                 chapter_plan,
-                created_by_run: Some(run.id),
+                ..NewRevision::text(content, Some(run.id))
             },
             now,
         )
@@ -456,11 +408,13 @@ async fn insert_review(
     review::ActiveModel {
         id: Set(ReviewId::generate()),
         version_id: Set(run.version_id),
+        chapter_id: Set(None),
         run_id: Set(run.id),
         round: Set(round),
         kind: Set(kind.into()),
         target_revision_id: Set(target),
         status: Set(status),
+        summary: Set(None),
         feedback: Set(None),
         decided_at: Set(None),
         created_at: Set(tx.now()),

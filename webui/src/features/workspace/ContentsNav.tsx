@@ -1,7 +1,9 @@
 import type { ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 
+import { useChapterName } from "./chapters"
 import type { DocumentKey } from "./documents"
+import type { ChapterId } from "@/api/generated/ChapterId"
 import type { WorkspaceView } from "@/api/generated/WorkspaceView"
 import { cn } from "@/lib/utils"
 
@@ -11,14 +13,18 @@ export function ContentsNav({
   selected,
   onSelect,
   previewing,
+  onSelectChapter,
 }: {
   view: WorkspaceView
   selected: DocumentKey | null
   onSelect: (doc: DocumentKey | null) => void
   /** Whether a live preview can be shown. */
   previewing: boolean
+  /** Shows the chapter in the reader. */
+  onSelectChapter?: (chapter: ChapterId) => void
 }) {
   const { t } = useTranslation()
+  const chapterName = useChapterName()
 
   return (
     <nav aria-label={t(($) => $.workspace.nav.label)} className="flex flex-col gap-6 p-3 text-sm">
@@ -56,20 +62,14 @@ export function ContentsNav({
         ) : (
           <ol className="flex flex-col">
             {view.chapters.map((chapter) => (
-              <li
+              <NavItem
                 key={chapter.id}
-                className="flex items-baseline justify-between gap-2 px-2 py-1.5"
+                active={false}
+                onClick={() => onSelectChapter?.(chapter.id)}
+                note={t(($) => $.workspace.chapterStatus[chapter.status])}
               >
-                <span className="truncate">
-                  {t(($) => $.workspace.nav.chapter, {
-                    number: chapter.number,
-                    title: chapter.title,
-                  })}
-                </span>
-                <span className="shrink-0 text-xs text-muted-foreground">
-                  {t(($) => $.workspace.chapterStatus[chapter.status])}
-                </span>
-              </li>
+                {chapterName(chapter)}
+              </NavItem>
             ))}
           </ol>
         )}

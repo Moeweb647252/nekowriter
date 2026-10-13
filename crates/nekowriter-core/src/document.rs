@@ -24,9 +24,20 @@ pub enum DocumentRole {
     Research,
     Characters,
     Outline,
+    /// What the user asked of a chapter.
+    ChapterGuidance,
+    ChapterOutline,
+    ChapterBody,
 }
 
 impl DocumentRole {
+    /// The roles every chapter has from its creation.
+    pub const CHAPTER_ROLES: [Self; 3] = [
+        Self::ChapterGuidance,
+        Self::ChapterOutline,
+        Self::ChapterBody,
+    ];
+
     /// The roles every version has from its creation.
     pub const VERSION_ROLES: [Self; 5] = [
         Self::NovelBrief,

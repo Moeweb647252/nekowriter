@@ -3,4 +3,4 @@
 /**
  * A value a prompt can include. The UI explains each one.
  */
-export type PromptVariable = "writing_language" | "novel_brief" | "required_artifacts";
+export type PromptVariable = "writing_language" | "novel_brief" | "required_artifacts" | "chapter_kind" | "chapter_number" | "chapter_title" | "chapter_goal" | "chapter_guidance";

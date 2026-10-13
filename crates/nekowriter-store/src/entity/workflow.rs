@@ -17,6 +17,8 @@ pub struct Model {
     pub active_run_id: Option<RunId>,
     /// Increases with every change of the workspace; commands quote it.
     pub revision: i64,
+    /// When the user first confirmed the novel complete; extra chapters keep it (§5.3).
+    pub completed_at: Option<Timestamp>,
     pub updated_at: Timestamp,
     #[sea_orm(belongs_to, from = "version_id", to = "id")]
     pub version: BelongsTo<super::version::Entity>,

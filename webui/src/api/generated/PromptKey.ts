@@ -3,4 +3,4 @@
 /**
  * A built-in prompt pair (a system prompt and a user prompt).
  */
-export type PromptKey = "preparation.generate";
+export type PromptKey = "preparation.generate" | "chapter.outline" | "chapter.write";

@@ -84,6 +84,23 @@ pub(crate) fn router(state: AppState) -> Router {
             post(handlers::workspace::decide_review),
         )
         .route(
+            "/versions/{id}/chapters/start",
+            post(handlers::workspace::start_chapter),
+        )
+        .route(
+            "/versions/{id}/chapters/next",
+            post(handlers::workspace::next_chapter),
+        )
+        .route(
+            "/versions/{id}/extra-chapters",
+            post(handlers::workspace::add_extra_chapter),
+        )
+        .route(
+            "/versions/{id}/complete",
+            post(handlers::workspace::complete),
+        )
+        .route("/revisions/{id}", get(handlers::workspace::revision))
+        .route(
             "/runs/{id}/continue",
             post(handlers::workspace::continue_run),
         )

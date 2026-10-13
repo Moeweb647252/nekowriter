@@ -11,9 +11,10 @@
 use std::collections::BTreeSet;
 
 use nekowriter_core::{
+    body::BodyEdit,
     conflict::{Resource, StateConflict},
     document::DocumentRole,
-    ids::{CommandId, ModelRequestId, ProjectId, RunId, ToolCallId, VersionId},
+    ids::{ChapterId, CommandId, ModelRequestId, ProjectId, RunId, ToolCallId, VersionId},
     model::{
         EffectiveModel, ModelProblem, ModelProfile, ModelService, ThinkingLevel, effective_model,
     },
@@ -28,7 +29,8 @@ use nekowriter_core::{
         Correction, ModelToolCall, ProtocolProblem, RejectedArtifact, RunMessageBody, ToolOutcome,
         TranscriptMessage, UnsealedMessage,
     },
-    stage::StageInput,
+    stage::{FoldDocument, FoldInput, FoldStage, StageInput},
+    submission::{ChapterSubmission, OutlineSubmission, SubmissionProblem},
     usage::TokenUsage,
     workflow::{PreparationStep, WorkflowStage},
 };
@@ -39,11 +41,16 @@ use sea_orm::{
 
 use crate::{
     Store, StoreError,
+    chapters::{
+        apply_chapter_submission, apply_edit, apply_outline_submission, chapter_input,
+        chapter_text, find_chapter,
+    },
     command::{Begun, WriteTx},
     documents::{current_revision, version_document},
     entity::{
+        document,
         model_request::{self, ModelRequestStatus},
-        project, review, run, run_message, system_settings, tool_call,
+        project, review, revision, run, run_message, system_settings, tool_call,
     },
     preparation::{apply_submission, required_artifacts},
     workflow::{
@@ -59,6 +66,8 @@ pub struct DispatchInput {
     pub version_id: VersionId,
     pub writing_language: WritingLanguage,
     pub stage: StageInput,
+    /// The folds of the version's completed stages, in story order (§11).
+    pub folds: Vec<FoldInput>,
     /// The run's conversation, in order.
     pub messages: Vec<TranscriptEntry>,
     pub model: ModelSettings,
@@ -120,6 +129,18 @@ pub enum RoundRecord {
         call: ModelToolCall,
         submission: PreparationSubmission,
     },
+    OutlineSubmission {
+        call: ModelToolCall,
+        submission: OutlineSubmission,
+    },
+    ChapterSubmission {
+        call: ModelToolCall,
+        submission: ChapterSubmission,
+    },
+    BodyEdit {
+        call: ModelToolCall,
+        edit: BodyEdit,
+    },
     ProtocolError {
         calls: Vec<(ModelToolCall, ProtocolProblem)>,
         correction: Correction,
@@ -143,19 +164,8 @@ impl Store {
             .one(&self.db)
             .await?
             .ok_or_else(|| StoreError::Corrupt(format!("run {run_id} has no project")))?;
-        let stage = match run.kind {
-            RunKind::Preparation => {
-                let brief =
-                    version_document(&self.db, run.version_id, DocumentRole::NovelBrief).await?;
-                let brief = current_revision(&self.db, &brief)
-                    .await?
-                    .ok_or(StoreError::StateConflict(StateConflict::BriefMissing))?;
-                StageInput::Preparation {
-                    brief: brief.content,
-                    required: required_artifacts(&self.db, &run).await?,
-                }
-            }
-        };
+        let stage = stage_input(&self.db, &run).await?;
+        let folds = folds(&self.db, run.version_id).await?;
         let rows = run_message::Entity::find()
             .filter(run_message::Column::RunId.eq(run_id))
             .order_by_asc(run_message::Column::Id)
@@ -179,6 +189,7 @@ impl Store {
             version_id: run.version_id,
             writing_language: project.writing_language,
             stage,
+            folds,
             messages,
             model,
             last_message_id,
@@ -238,6 +249,16 @@ impl Store {
                 Ok(UnsealedMessage::PreparationReviewOutcome {
                     rejected,
                     stale: stale.into_iter().collect(),
+                })
+            }
+            RunMessageBody::ReviewRejected { review_id } => {
+                let review = review::Entity::find_by_id(review_id)
+                    .one(&self.db)
+                    .await?
+                    .ok_or_else(|| StoreError::Corrupt(format!("review {review_id} is missing")))?;
+                Ok(UnsealedMessage::ReviewRejected {
+                    kind: review.kind,
+                    feedback: review.feedback.unwrap_or_default(),
                 })
             }
             RunMessageBody::Correction { correction } => {
@@ -387,54 +408,29 @@ impl Store {
         match round {
             RoundRecord::PreparationSubmission { call, submission } => {
                 let call_id = insert_tool_call(&tx, &run, request_id, &call).await?;
-                match apply_submission(&mut tx, &run, submission).await? {
-                    Ok(new_round) => {
-                        resolve_tool_call(
-                            &mut tx,
-                            run.id,
-                            call_id,
-                            ToolOutcome::SubmissionAccepted,
-                        )
-                        .await?;
-                        let (project_id, version_id) = (run.project_id, run.version_id);
-                        let run_id = run.id;
-                        let mut waiting = run.into_active_model();
-                        waiting.status = Set(RunStatus::WaitingReview);
-                        waiting.round = Set(new_round);
-                        waiting.consecutive_protocol_errors = Set(0);
-                        waiting.updated_at = Set(tx.now());
-                        waiting.update(tx.db()).await?;
-                        let context = load_version(tx.db(), version_id).await?;
-                        advance(
-                            &mut tx,
-                            context.workflow,
-                            project_id,
-                            WorkflowStage::Preparation {
-                                step: PreparationStep::Reviewing,
-                            },
-                            Some(run_id),
-                        )
-                        .await?;
-                    }
-                    Err(problem) => {
-                        resolve_tool_call(
-                            &mut tx,
-                            run.id,
-                            call_id,
-                            ToolOutcome::SubmissionRejected { problem },
-                        )
-                        .await?;
-                        append_message(
-                            &mut tx,
-                            run.id,
-                            RunMessageBody::Correction {
-                                correction: Correction::SubmissionRejected,
-                            },
-                        )
-                        .await?;
-                        requeue(&mut tx, run, false).await?;
-                    }
-                }
+                let accepted = apply_submission(&mut tx, &run, submission)
+                    .await?
+                    .map(|round| {
+                        let step = PreparationStep::Reviewing;
+                        (round, WorkflowStage::Preparation { step })
+                    });
+                settle_submission(&mut tx, run, call_id, accepted).await?;
+            }
+            RoundRecord::OutlineSubmission { call, submission } => {
+                let call_id = insert_tool_call(&tx, &run, request_id, &call).await?;
+                let accepted = apply_outline_submission(&mut tx, &run, submission).await?;
+                settle_submission(&mut tx, run, call_id, accepted).await?;
+            }
+            RoundRecord::ChapterSubmission { call, submission } => {
+                let call_id = insert_tool_call(&tx, &run, request_id, &call).await?;
+                let accepted = apply_chapter_submission(&mut tx, &run, submission).await?;
+                settle_submission(&mut tx, run, call_id, accepted).await?;
+            }
+            RoundRecord::BodyEdit { call, edit } => {
+                let call_id = insert_tool_call(&tx, &run, request_id, &call).await?;
+                let outcome = apply_edit(&mut tx, &run, &edit).await?;
+                resolve_tool_call(&mut tx, run.id, call_id, outcome).await?;
+                requeue(&mut tx, run, false).await?;
             }
             RoundRecord::ProtocolError { calls, correction } => {
                 for (call, problem) in calls {
@@ -606,12 +602,14 @@ pub(crate) async fn create_run(
     tx: &mut WriteTx,
     context: &VersionContext,
     kind: RunKind,
+    chapter_id: Option<ChapterId>,
 ) -> Result<run::Model, StoreError> {
     let now = tx.now();
     Ok(run::ActiveModel {
         id: Set(RunId::generate()),
         project_id: Set(context.project.id),
         version_id: Set(context.version.id),
+        chapter_id: Set(chapter_id),
         kind: Set(kind),
         status: Set(RunStatus::Queued),
         halt: Set(None),
@@ -713,8 +711,8 @@ async fn resolve_tool_call(
     .await
 }
 
-/// Queues the run for its next request after a round that did not progress. A protocol
-/// error counts toward the consecutive limit; a rejected submission does not (§8.4).
+/// Queues the run for its next round. A protocol error counts toward the consecutive
+/// limit; any other round, a rejected submission included, ends the series (§8.4).
 async fn requeue(
     tx: &mut WriteTx,
     run: run::Model,
@@ -723,7 +721,7 @@ async fn requeue(
     let errors = if protocol_error {
         run.consecutive_protocol_errors + 1
     } else {
-        run.consecutive_protocol_errors
+        0
     };
     if errors >= MAX_CONSECUTIVE_PROTOCOL_ERRORS {
         return halt(tx, run, RunStatus::Stopped, RunHalt::ProtocolErrorLimit).await;
@@ -740,6 +738,142 @@ async fn requeue(
     queued.update(tx.db()).await?;
     touch(tx, version_id, project_id).await?;
     Ok(())
+}
+
+/// Ends a submission round: an accepted submission waits for review at `stage` with the
+/// new round number; a rejected one is corrected and the run goes on.
+async fn settle_submission(
+    tx: &mut WriteTx,
+    run: run::Model,
+    call_id: ToolCallId,
+    accepted: Result<(i32, WorkflowStage), SubmissionProblem>,
+) -> Result<(), StoreError> {
+    match accepted {
+        Ok((round, stage)) => {
+            resolve_tool_call(tx, run.id, call_id, ToolOutcome::SubmissionAccepted).await?;
+            let (project_id, version_id, run_id) = (run.project_id, run.version_id, run.id);
+            let mut waiting = run.into_active_model();
+            waiting.status = Set(RunStatus::WaitingReview);
+            waiting.round = Set(round);
+            waiting.consecutive_protocol_errors = Set(0);
+            waiting.updated_at = Set(tx.now());
+            waiting.update(tx.db()).await?;
+            let context = load_version(tx.db(), version_id).await?;
+            advance(tx, context.workflow, project_id, stage, Some(run_id)).await?;
+        }
+        Err(problem) => {
+            let outcome = ToolOutcome::SubmissionRejected { problem };
+            resolve_tool_call(tx, run.id, call_id, outcome).await?;
+            let correction = Correction::SubmissionRejected;
+            append_message(tx, run.id, RunMessageBody::Correction { correction }).await?;
+            requeue(tx, run, false).await?;
+        }
+    }
+    Ok(())
+}
+
+/// Queues a run whose submission was rejected in review, so it revises. Returns its ID.
+pub(crate) async fn queue_for_revision(
+    tx: &mut WriteTx,
+    run: run::Model,
+) -> Result<RunId, StoreError> {
+    let id = run.id;
+    let mut queued = run.into_active_model();
+    queued.status = Set(RunStatus::Queued);
+    queued.queued_at = Set(Some(tx.now()));
+    queued.updated_at = Set(tx.now());
+    queued.update(tx.db()).await?;
+    Ok(id)
+}
+
+/// What the run's stage is about.
+async fn stage_input<C: ConnectionTrait>(
+    db: &C,
+    run: &run::Model,
+) -> Result<StageInput, StoreError> {
+    let chapter = match run.chapter_id {
+        Some(id) => Some(find_chapter(db, id).await?),
+        None => None,
+    };
+    match (run.kind, chapter) {
+        (RunKind::Preparation, None) => {
+            let brief = version_document(db, run.version_id, DocumentRole::NovelBrief).await?;
+            let brief = current_revision(db, &brief)
+                .await?
+                .ok_or(StoreError::StateConflict(StateConflict::BriefMissing))?;
+            Ok(StageInput::Preparation {
+                brief: brief.content,
+                required: required_artifacts(db, run).await?,
+            })
+        }
+        (RunKind::ChapterOutline, Some(chapter)) => Ok(StageInput::ChapterOutline {
+            guidance: chapter_text(db, chapter.id, DocumentRole::ChapterGuidance).await?,
+            chapter: chapter_input(chapter),
+        }),
+        (RunKind::ChapterBody, Some(chapter)) => Ok(StageInput::ChapterBody {
+            guidance: chapter_text(db, chapter.id, DocumentRole::ChapterGuidance).await?,
+            body: chapter_text(db, chapter.id, DocumentRole::ChapterBody).await?,
+            chapter: chapter_input(chapter),
+        }),
+        (kind, _) => Err(StoreError::Corrupt(format!(
+            "run {} of kind {kind:?} has the wrong chapter",
+            run.id
+        ))),
+    }
+}
+
+/// The folds of the version's completed stages, in story order: the stages run one after
+/// another, so their runs' creation order is the story order.
+async fn folds<C: ConnectionTrait>(
+    db: &C,
+    version_id: VersionId,
+) -> Result<Vec<FoldInput>, StoreError> {
+    let runs = run::Entity::find()
+        .filter(run::Column::VersionId.eq(version_id))
+        .filter(run::Column::Status.eq(RunStatus::Succeeded))
+        .order_by_asc(run::Column::CreatedAt)
+        .all(db)
+        .await?;
+    let mut folds = Vec::with_capacity(runs.len());
+    for run in runs {
+        let fold = run
+            .fold
+            .ok_or_else(|| StoreError::Corrupt(format!("succeeded run {} has no fold", run.id)))?;
+        let chapter = match run.chapter_id {
+            Some(id) => Some(chapter_input(find_chapter(db, id).await?)),
+            None => None,
+        };
+        let stage = match (run.kind, chapter) {
+            (RunKind::Preparation, None) => FoldStage::Preparation,
+            (RunKind::ChapterOutline, Some(chapter)) => FoldStage::ChapterOutline { chapter },
+            (RunKind::ChapterBody, Some(chapter)) => FoldStage::ChapterBody { chapter },
+            (kind, _) => {
+                return Err(StoreError::Corrupt(format!(
+                    "run {} of kind {kind:?} has the wrong chapter",
+                    run.id
+                )));
+            }
+        };
+        let mut documents = Vec::with_capacity(fold.0.len());
+        for id in fold.0 {
+            let revision = revision::Entity::find_by_id(id)
+                .one(db)
+                .await?
+                .ok_or_else(|| StoreError::Corrupt(format!("folded revision {id} is missing")))?;
+            let role = document::Entity::find_by_id(revision.document_id)
+                .one(db)
+                .await?
+                .ok_or_else(|| StoreError::Corrupt(format!("revision {id} has no document")))?
+                .role;
+            documents.push(FoldDocument {
+                role,
+                content: revision.content,
+                chapter_plan: revision.chapter_plan,
+            });
+        }
+        folds.push(FoldInput { stage, documents });
+    }
+    Ok(folds)
 }
 
 /// Moves the run to `status` (stopped, failed or interrupted) with the reason.

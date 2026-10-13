@@ -54,15 +54,19 @@ pub struct ModelText {
     pub languages: Languages,
     pub artifacts: Artifacts,
     pub list: ListText,
+    pub chapter_kinds: ChapterKinds,
     pub contracts: Contracts,
     pub tools: Tools,
     pub results: Results,
+    pub edit_problems: EditProblems,
     pub submission_problems: SubmissionProblems,
     pub protocol_problems: ProtocolProblems,
     pub arguments_problems: ArgumentsProblems,
     pub json_types: JsonTypes,
     pub corrections: Corrections,
     pub review: ReviewText,
+    pub folds: FoldText,
+    pub chapters: ChapterText,
     pub connection_test: ConnectionTest,
 }
 
@@ -91,14 +95,58 @@ pub struct ListText {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ChapterKinds {
+    pub main: Text,
+    pub extra: Text,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Contracts {
     pub preparation: Text,
+    pub chapter_outline: Text,
+    pub chapter_body: Text,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Tools {
     pub submit_preparation: SubmitPreparationText,
+    pub submit_chapter_outline: SubmitChapterOutlineText,
+    pub append_content: AppendContentText,
+    pub replace_content: ReplaceContentText,
+    pub submit_chapter: SubmitChapterText,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SubmitChapterOutlineText {
+    pub description: Text,
+    pub chapter_id: Text,
+    pub content: Text,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppendContentText {
+    pub description: Text,
+    pub content: Text,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReplaceContentText {
+    pub description: Text,
+    pub old_str: Text,
+    pub new_str: Text,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SubmitChapterText {
+    pub description: Text,
+    pub chapter_id: Text,
+    pub summary: Text,
 }
 
 #[derive(Debug, Deserialize)]
@@ -119,6 +167,19 @@ pub struct Results {
     pub submission_accepted: Text,
     pub submission_rejected: Text,
     pub protocol_error: Text,
+    pub edit_applied: Text,
+    pub edit_no_change: Text,
+    pub edit_rejected: Text,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EditProblems {
+    pub empty_content: Text,
+    pub empty_old_str: Text,
+    pub no_match: Text,
+    pub ambiguous_match: Text,
+    pub body_too_long: Text,
 }
 
 #[derive(Debug, Deserialize)]
@@ -138,6 +199,12 @@ pub struct SubmissionProblems {
     pub chapter_title_too_long: Text,
     pub chapter_goal_empty: Text,
     pub chapter_goal_too_long: Text,
+    pub outline_empty: Text,
+    pub outline_too_long: Text,
+    pub summary_empty: Text,
+    pub summary_too_long: Text,
+    pub body_empty: Text,
+    pub wrong_chapter: Text,
 }
 
 #[derive(Debug, Deserialize)]
@@ -185,6 +252,30 @@ pub struct ReviewText {
     pub rejected: Text,
     pub stale: Text,
     pub item_separator: Text,
+    pub outline_rejected: Text,
+    pub chapter_rejected: Text,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FoldText {
+    pub intro: Text,
+    pub separator: Text,
+    pub preparation: Text,
+    pub document: Text,
+    pub chapter_plan: Text,
+    pub plan_item: Text,
+    pub chapter_outline: Text,
+    pub chapter_body: Text,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChapterText {
+    pub name: Text,
+    pub none: Text,
+    pub current_body: Text,
+    pub empty_body: Text,
 }
 
 #[derive(Debug, Deserialize)]

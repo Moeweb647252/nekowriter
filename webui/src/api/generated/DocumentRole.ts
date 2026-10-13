@@ -4,4 +4,4 @@
  * What a document holds. A version has one document of each version-level role; each
  * chapter has one of each chapter-level role.
  */
-export type DocumentRole = "novel_brief" | "background" | "research" | "characters" | "outline";
+export type DocumentRole = "novel_brief" | "background" | "research" | "characters" | "outline" | "chapter_guidance" | "chapter_outline" | "chapter_body";

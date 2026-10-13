@@ -49,6 +49,7 @@ pub(crate) async fn create_version_rows<C: ConnectionTrait>(
         stage: Set(WorkflowStage::NEW_VERSION),
         active_run_id: Set(None),
         revision: Set(1),
+        completed_at: Set(None),
         updated_at: Set(now),
     }
     .insert(db)
@@ -57,6 +58,7 @@ pub(crate) async fn create_version_rows<C: ConnectionTrait>(
         document::ActiveModel {
             id: Set(DocumentId::generate()),
             version_id: Set(version.id),
+            chapter_id: Set(None),
             role: Set(role),
             current_revision_id: Set(None),
         }

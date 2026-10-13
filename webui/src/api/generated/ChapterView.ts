@@ -2,5 +2,19 @@
 import type { ChapterId } from "./ChapterId";
 import type { ChapterKind } from "./ChapterKind";
 import type { ChapterStatus } from "./ChapterStatus";
+import type { ReviewView } from "./ReviewView";
+import type { RevisionSummary } from "./RevisionSummary";
 
-export type ChapterView = { id: ChapterId, kind: ChapterKind, number: number, title: string, goal: string, status: ChapterStatus, };
+export type ChapterView = { id: ChapterId, kind: ChapterKind, 
+/**
+ * The chapter's number among the chapters of its kind.
+ */
+number: number, title: string, 
+/**
+ * The plan item's goal; empty for extra chapters.
+ */
+goal: string, status: ChapterStatus, guidance: RevisionSummary | null, outline: RevisionSummary | null, body: RevisionSummary | null, 
+/**
+ * The latest outline or whole-chapter review.
+ */
+review: ReviewView | null, };

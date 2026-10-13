@@ -15,6 +15,7 @@ use sea_orm::{
 };
 use thiserror::Error;
 
+mod chapters;
 mod command;
 mod digest;
 mod documents;
@@ -24,13 +25,14 @@ mod events;
 mod execution;
 mod preparation;
 mod projects;
+mod reviews;
 mod schema;
 mod settings;
 mod versions;
 mod workflow;
 mod workspace;
 
-pub use documents::RevisionView;
+pub use documents::{RevisionSummary, RevisionView};
 pub use error::StoreError;
 pub use events::{EventBatch, EventRecord, RETENTION_MILLIS};
 pub use execution::{

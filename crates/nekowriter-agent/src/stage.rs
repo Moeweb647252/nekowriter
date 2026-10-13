@@ -1,31 +1,43 @@
 //! Stage contracts: what a run's request contains and what its answer may be
 //! (`docs/product-spec.md` §8.3, §8.4).
 //!
-//! Every stage is a sequence of rounds with the same shape: a system prompt, a stage input,
-//! the conversation so far, the stage's tools and exactly one submission tool. This module
-//! builds that per stage from the stage input and the effective prompts, and parses the
-//! submission. Adding a stage means adding its arm here.
+//! Every stage is a sequence of rounds with the same shape: a system prompt, the folds of
+//! the stages before it, a stage input, the conversation so far, the stage's tools and
+//! exactly one submission tool. This module builds that per stage from the stage input and
+//! the effective prompts, and parses submissions and tool calls. Adding a stage means
+//! adding its arm here.
 
 use std::collections::BTreeSet;
 
 use nekowriter_core::{
+    body::BodyEdit,
+    chapter::{ChapterInput, ChapterKind},
+    ids::ChapterId,
     preparation::{ArtifactKind, PreparationSubmission},
     project::WritingLanguage,
     prompt::{PromptKey, PromptVariable},
     run_message::{ArgumentsProblem, JsonType},
     stage::StageInput,
+    submission::{ChapterSubmission, OutlineSubmission},
     template::{Template, TemplateError},
 };
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::{
     model_text::model_text,
-    render::{artifact_list, language_name},
+    render::{artifact_list, current_body, language_name},
     schema::{Property, Schema},
 };
 
 /// The name of the preparation submission tool.
 pub const SUBMIT_PREPARATION: &str = "submit_preparation";
+/// The name of the chapter outline submission tool.
+pub const SUBMIT_CHAPTER_OUTLINE: &str = "submit_chapter_outline";
+/// The name of the chapter submission tool.
+pub const SUBMIT_CHAPTER: &str = "submit_chapter";
+pub const APPEND_CONTENT: &str = "append_content";
+pub const REPLACE_CONTENT: &str = "replace_content";
 
 /// A tool declared to the model.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,10 +47,13 @@ pub struct ToolDefinition {
     pub parameters: Schema,
 }
 
-/// What a round may end with.
+/// What a round may do: call one of the stage's work tools, or end the stage by
+/// submitting.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Contract {
     pub stage: StageKind,
+    /// The tools that do work within the stage.
+    pub tools: Vec<WorkTool>,
     /// The tool that ends the stage.
     pub submission: ToolDefinition,
 }
@@ -46,14 +61,72 @@ pub struct Contract {
 impl Contract {
     /// Every tool the round declares, in a stable order.
     #[must_use]
-    pub fn tools(&self) -> Vec<&ToolDefinition> {
-        vec![&self.submission]
+    pub fn all_tools(&self) -> Vec<ToolDefinition> {
+        self.tools
+            .iter()
+            .map(|tool| tool.definition())
+            .chain([self.submission.clone()])
+            .collect()
+    }
+}
+
+/// A tool that does work within a stage without ending it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkTool {
+    AppendContent,
+    ReplaceContent,
+}
+
+impl WorkTool {
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::AppendContent => APPEND_CONTENT,
+            Self::ReplaceContent => REPLACE_CONTENT,
+        }
+    }
+
+    #[must_use]
+    pub fn definition(self) -> ToolDefinition {
+        match self {
+            Self::AppendContent => append_tool(),
+            Self::ReplaceContent => replace_tool(),
+        }
+    }
+
+    /// Parses the arguments of a call to this tool.
+    pub fn parse(self, arguments: &Value) -> Result<ToolRequest, ArgumentsProblem> {
+        #[derive(serde::Deserialize)]
+        struct Append {
+            content: String,
+        }
+        #[derive(serde::Deserialize)]
+        struct Replace {
+            old_str: String,
+            new_str: String,
+        }
+        let schema = self.definition().parameters;
+        match self {
+            Self::AppendContent => read::<Append>(&schema, arguments).map(|append| {
+                ToolRequest::Edit(BodyEdit::Append {
+                    content: append.content,
+                })
+            }),
+            Self::ReplaceContent => read::<Replace>(&schema, arguments).map(|replace| {
+                ToolRequest::Edit(BodyEdit::Replace {
+                    old_str: replace.old_str,
+                    new_str: replace.new_str,
+                })
+            }),
+        }
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StageKind {
     Preparation,
+    ChapterOutline,
+    ChapterBody,
 }
 
 /// The effective texts of the stage's prompt pair: built-in, or overridden.
@@ -75,6 +148,14 @@ pub struct StageRequest {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Submission {
     Preparation(PreparationSubmission),
+    ChapterOutline(OutlineSubmission),
+    Chapter(ChapterSubmission),
+}
+
+/// A parsed call of one of the stage's work tools.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ToolRequest {
+    Edit(BodyEdit),
 }
 
 /// The prompt pair a stage uses.
@@ -82,74 +163,166 @@ pub enum Submission {
 pub fn prompt_key(input: &StageInput) -> PromptKey {
     match input {
         StageInput::Preparation { .. } => PromptKey::PreparationGenerate,
+        StageInput::ChapterOutline { .. } => PromptKey::ChapterOutline,
+        StageInput::ChapterBody { .. } => PromptKey::ChapterWrite,
     }
 }
 
-/// Builds the stage's part of a request. The submission contract is appended to the system
-/// prompt here, so a custom prompt cannot lose it.
+/// Builds the stage's part of a request. The contract is appended to the system prompt,
+/// and the current body to the user prompt, so a custom prompt cannot lose them.
 pub fn build(
     input: &StageInput,
     language: WritingLanguage,
     prompts: PromptTexts<'_>,
 ) -> Result<StageRequest, TemplateError> {
     let language = language_name(language);
+    let contracts = &model_text().contracts;
     match input {
         StageInput::Preparation { brief, required } => {
             let required_list = artifact_list(required.iter().copied());
-            let value = |variable: PromptVariable| match variable {
-                PromptVariable::WritingLanguage => language.as_str(),
-                PromptVariable::NovelBrief => brief.as_str(),
-                PromptVariable::RequiredArtifacts => required_list.as_str(),
-            };
-            let contract = Contract {
-                stage: StageKind::Preparation,
-                submission: preparation_tool(required),
-            };
-            let system = format!(
-                "{}\n\n{}",
-                render(prompts.system, value)?.trim_end(),
-                model_text()
-                    .contracts
-                    .preparation
-                    .render(&[("tool", SUBMIT_PREPARATION)])
-            );
+            let values = [
+                (PromptVariable::WritingLanguage, language.as_str()),
+                (PromptVariable::NovelBrief, brief.as_str()),
+                (PromptVariable::RequiredArtifacts, required_list.as_str()),
+            ];
+            let contract = contracts
+                .preparation
+                .render(&[("tool", SUBMIT_PREPARATION)]);
             Ok(StageRequest {
-                system,
-                user: render(prompts.user, value)?,
-                contract,
+                system: with_section(&render(prompts.system, &values)?, &contract),
+                user: render(prompts.user, &values)?,
+                contract: Contract {
+                    stage: StageKind::Preparation,
+                    tools: Vec::new(),
+                    submission: preparation_tool(required),
+                },
+            })
+        }
+        StageInput::ChapterOutline { chapter, guidance } => {
+            let chapter_values = ChapterValues::new(chapter, guidance);
+            let values = chapter_values.with_language(&language);
+            let id = chapter.id.to_string();
+            let contract = contracts
+                .chapter_outline
+                .render(&[("tool", SUBMIT_CHAPTER_OUTLINE), ("chapter_id", &id)]);
+            Ok(StageRequest {
+                system: with_section(&render(prompts.system, &values)?, &contract),
+                user: render(prompts.user, &values)?,
+                contract: Contract {
+                    stage: StageKind::ChapterOutline,
+                    tools: Vec::new(),
+                    submission: outline_tool(chapter.id),
+                },
+            })
+        }
+        StageInput::ChapterBody {
+            chapter,
+            guidance,
+            body,
+        } => {
+            let chapter_values = ChapterValues::new(chapter, guidance);
+            let values = chapter_values.with_language(&language);
+            let id = chapter.id.to_string();
+            let contract = contracts.chapter_body.render(&[
+                ("append", APPEND_CONTENT),
+                ("replace", REPLACE_CONTENT),
+                ("submit", SUBMIT_CHAPTER),
+                ("chapter_id", &id),
+            ]);
+            Ok(StageRequest {
+                system: with_section(&render(prompts.system, &values)?, &contract),
+                user: with_section(&render(prompts.user, &values)?, &current_body(body)),
+                contract: Contract {
+                    stage: StageKind::ChapterBody,
+                    tools: vec![WorkTool::AppendContent, WorkTool::ReplaceContent],
+                    submission: chapter_tool(chapter.id),
+                },
             })
         }
     }
 }
 
-fn render<'v>(
-    source: &str,
-    value: impl Fn(PromptVariable) -> &'v str,
-) -> Result<String, TemplateError> {
-    let variables = [
-        PromptVariable::WritingLanguage,
-        PromptVariable::NovelBrief,
-        PromptVariable::RequiredArtifacts,
-    ];
+/// The values of a chapter stage's prompt variables. Empty goals and guidance are named as
+/// such, so the model does not read a blank as something missing.
+struct ChapterValues {
+    kind: String,
+    number: String,
+    title: String,
+    goal: String,
+    guidance: String,
+}
+
+impl ChapterValues {
+    fn new(chapter: &ChapterInput, guidance: &str) -> Self {
+        let kinds = &model_text().chapter_kinds;
+        let or_none = |text: &str| {
+            if text.trim().is_empty() {
+                model_text().chapters.none.render(&[])
+            } else {
+                text.to_owned()
+            }
+        };
+        Self {
+            kind: match chapter.kind {
+                ChapterKind::Main => kinds.main.render(&[]),
+                ChapterKind::Extra => kinds.extra.render(&[]),
+            },
+            number: chapter.number.to_string(),
+            title: chapter.title.clone(),
+            goal: or_none(&chapter.goal),
+            guidance: or_none(guidance),
+        }
+    }
+
+    fn with_language<'a>(&'a self, language: &'a str) -> [(PromptVariable, &'a str); 6] {
+        [
+            (PromptVariable::WritingLanguage, language),
+            (PromptVariable::ChapterKind, self.kind.as_str()),
+            (PromptVariable::ChapterNumber, self.number.as_str()),
+            (PromptVariable::ChapterTitle, self.title.as_str()),
+            (PromptVariable::ChapterGoal, self.goal.as_str()),
+            (PromptVariable::ChapterGuidance, self.guidance.as_str()),
+        ]
+    }
+}
+
+fn with_section(text: &str, section: &str) -> String {
+    format!("{}\n\n{}", text.trim_end(), section.trim())
+}
+
+fn render(source: &str, values: &[(PromptVariable, &str)]) -> Result<String, TemplateError> {
     Template::parse(source)?.render(|name| {
-        variables
+        values
             .iter()
-            .find(|variable| variable.name() == name)
-            .map(|variable| value(*variable))
+            .find(|(variable, _)| variable.name() == name)
+            .map(|(_, value)| *value)
     })
+}
+
+fn property(name: &'static str, description: String, required: bool, schema: Schema) -> Property {
+    Property {
+        name,
+        description,
+        required,
+        schema,
+    }
+}
+
+fn string() -> Schema {
+    Schema::String { allowed: None }
+}
+
+/// A string that must be the chapter's ID, so the model cannot address another chapter.
+fn chapter_id(chapter: ChapterId) -> Schema {
+    Schema::String {
+        allowed: Some(vec![chapter.to_string()]),
+    }
 }
 
 /// The preparation submission tool. Artifact kinds are limited to the ones required this
 /// round, and the chapter plan is required exactly when the outline is.
 fn preparation_tool(required: &BTreeSet<ArtifactKind>) -> ToolDefinition {
     let text = &model_text().tools.submit_preparation;
-    let string = |allowed| Schema::String { allowed };
-    let property = |name, description: String, required, schema| Property {
-        name,
-        description,
-        required,
-        schema,
-    };
     let kinds = required
         .iter()
         .map(|kind| artifact_key(*kind).to_owned())
@@ -160,20 +333,17 @@ fn preparation_tool(required: &BTreeSet<ArtifactKind>) -> ToolDefinition {
                 "kind",
                 text.artifact_kind.render(&[]),
                 true,
-                string(Some(kinds)),
+                Schema::String {
+                    allowed: Some(kinds),
+                },
             ),
-            property(
-                "content",
-                text.artifact_content.render(&[]),
-                true,
-                string(None),
-            ),
+            property("content", text.artifact_content.render(&[]), true, string()),
         ],
     };
     let chapter = Schema::Object {
         properties: vec![
-            property("title", text.chapter_title.render(&[]), true, string(None)),
-            property("goal", text.chapter_goal.render(&[]), true, string(None)),
+            property("title", text.chapter_title.render(&[]), true, string()),
+            property("goal", text.chapter_goal.render(&[]), true, string()),
         ],
     };
     ToolDefinition {
@@ -202,6 +372,74 @@ fn preparation_tool(required: &BTreeSet<ArtifactKind>) -> ToolDefinition {
     }
 }
 
+fn outline_tool(chapter: ChapterId) -> ToolDefinition {
+    let text = &model_text().tools.submit_chapter_outline;
+    ToolDefinition {
+        name: SUBMIT_CHAPTER_OUTLINE,
+        description: text.description.render(&[]),
+        parameters: Schema::Object {
+            properties: vec![
+                property(
+                    "chapter_id",
+                    text.chapter_id.render(&[]),
+                    true,
+                    chapter_id(chapter),
+                ),
+                property("content", text.content.render(&[]), true, string()),
+            ],
+        },
+    }
+}
+
+fn chapter_tool(chapter: ChapterId) -> ToolDefinition {
+    let text = &model_text().tools.submit_chapter;
+    ToolDefinition {
+        name: SUBMIT_CHAPTER,
+        description: text.description.render(&[]),
+        parameters: Schema::Object {
+            properties: vec![
+                property(
+                    "chapter_id",
+                    text.chapter_id.render(&[]),
+                    true,
+                    chapter_id(chapter),
+                ),
+                property("summary", text.summary.render(&[]), true, string()),
+            ],
+        },
+    }
+}
+
+fn append_tool() -> ToolDefinition {
+    let text = &model_text().tools.append_content;
+    ToolDefinition {
+        name: APPEND_CONTENT,
+        description: text.description.render(&[]),
+        parameters: Schema::Object {
+            properties: vec![property(
+                "content",
+                text.content.render(&[]),
+                true,
+                string(),
+            )],
+        },
+    }
+}
+
+fn replace_tool() -> ToolDefinition {
+    let text = &model_text().tools.replace_content;
+    ToolDefinition {
+        name: REPLACE_CONTENT,
+        description: text.description.render(&[]),
+        parameters: Schema::Object {
+            properties: vec![
+                property("old_str", text.old_str.render(&[]), true, string()),
+                property("new_str", text.new_str.render(&[]), true, string()),
+            ],
+        },
+    }
+}
+
 /// The artifact's identifier in tool arguments; the same as its serde name.
 fn artifact_key(kind: ArtifactKind) -> &'static str {
     match kind {
@@ -212,21 +450,28 @@ fn artifact_key(kind: ArtifactKind) -> &'static str {
     }
 }
 
-/// Parses submission arguments that passed the contract's schema.
+/// Reads arguments that passed `schema` into their type.
+fn read<T: DeserializeOwned>(schema: &Schema, arguments: &Value) -> Result<T, ArgumentsProblem> {
+    schema.validate(arguments)?;
+    serde_json::from_value(arguments.clone())
+        // The schema covers every field the type reads, so this happens only if the two
+        // disagree; it is reported like any other malformed arguments.
+        .map_err(|_| ArgumentsProblem::WrongType {
+            path: String::new(),
+            expected: JsonType::Object,
+        })
+}
+
+/// Parses submission arguments.
 pub fn parse_submission(
     contract: &Contract,
     arguments: &Value,
 ) -> Result<Submission, ArgumentsProblem> {
-    contract.submission.parameters.validate(arguments)?;
+    let schema = &contract.submission.parameters;
     match contract.stage {
-        StageKind::Preparation => serde_json::from_value(arguments.clone())
-            .map(Submission::Preparation)
-            // The schema covers every field the submission reads, so this happens only if
-            // the two disagree; it is reported like any other malformed arguments.
-            .map_err(|_| ArgumentsProblem::WrongType {
-                path: String::new(),
-                expected: JsonType::Object,
-            }),
+        StageKind::Preparation => read(schema, arguments).map(Submission::Preparation),
+        StageKind::ChapterOutline => read(schema, arguments).map(Submission::ChapterOutline),
+        StageKind::ChapterBody => read(schema, arguments).map(Submission::Chapter),
     }
 }
 
@@ -285,7 +530,9 @@ mod tests {
             &json!({ "artifacts": [{ "kind": "characters", "content": "Mara" }] }),
         )
         .unwrap();
-        let Submission::Preparation(submission) = parsed;
+        let Submission::Preparation(submission) = parsed else {
+            panic!("a preparation submission");
+        };
         assert_eq!(submission.artifacts[0].kind, ArtifactKind::Characters);
 
         assert!(matches!(
@@ -295,5 +542,105 @@ mod tests {
             ),
             Err(ArgumentsProblem::NotAllowed { .. })
         ));
+    }
+
+    fn chapter() -> nekowriter_core::chapter::ChapterInput {
+        nekowriter_core::chapter::ChapterInput {
+            id: ChapterId::generate(),
+            kind: ChapterKind::Main,
+            number: 1,
+            title: "Arrival".to_owned(),
+            goal: "The letter arrives.".to_owned(),
+        }
+    }
+
+    fn texts(key: PromptKey) -> PromptTexts<'static> {
+        PromptTexts {
+            system: builtin(key, PromptRole::System),
+            user: builtin(key, PromptRole::User),
+        }
+    }
+
+    #[test]
+    fn a_body_stage_declares_the_edit_tools_and_pins_the_chapter() {
+        let chapter = chapter();
+        let request = build(
+            &StageInput::ChapterBody {
+                chapter: chapter.clone(),
+                guidance: String::new(),
+                body: "The keeper woke.".to_owned(),
+            },
+            WritingLanguage::En,
+            texts(PromptKey::ChapterWrite),
+        )
+        .unwrap();
+        assert!(request.user.contains("The keeper woke."));
+        assert!(request.user.contains("Arrival"));
+        assert!(request.system.contains(&chapter.id.to_string()));
+        let names: Vec<_> = request
+            .contract
+            .all_tools()
+            .iter()
+            .map(|tool| tool.name)
+            .collect();
+        assert_eq!(names, [APPEND_CONTENT, REPLACE_CONTENT, SUBMIT_CHAPTER]);
+
+        assert!(matches!(
+            parse_submission(
+                &request.contract,
+                &json!({ "chapter_id": "another", "summary": "x" })
+            ),
+            Err(ArgumentsProblem::NotAllowed { .. })
+        ));
+        let parsed = parse_submission(
+            &request.contract,
+            &json!({ "chapter_id": chapter.id.to_string(), "summary": "The keeper wakes." }),
+        )
+        .unwrap();
+        assert!(
+            matches!(parsed, Submission::Chapter(submission) if submission.chapter_id == chapter.id)
+        );
+        assert_eq!(
+            WorkTool::ReplaceContent
+                .parse(&json!({ "old_str": "woke", "new_str": "" }))
+                .unwrap(),
+            ToolRequest::Edit(BodyEdit::Replace {
+                old_str: "woke".to_owned(),
+                new_str: String::new()
+            })
+        );
+        assert!(matches!(
+            WorkTool::AppendContent.parse(&json!({})),
+            Err(ArgumentsProblem::MissingField { .. })
+        ));
+    }
+
+    #[test]
+    fn an_outline_stage_names_empty_guidance_and_submits_the_outline() {
+        let chapter = chapter();
+        let request = build(
+            &StageInput::ChapterOutline {
+                chapter: chapter.clone(),
+                guidance: " ".to_owned(),
+            },
+            WritingLanguage::ZhCn,
+            texts(PromptKey::ChapterOutline),
+        )
+        .unwrap();
+        assert!(
+            request
+                .user
+                .contains(&model_text().chapters.none.render(&[]))
+        );
+        assert_eq!(request.contract.tools, Vec::new());
+        assert_eq!(request.contract.submission.name, SUBMIT_CHAPTER_OUTLINE);
+        let parsed = parse_submission(
+            &request.contract,
+            &json!({ "chapter_id": chapter.id.to_string(), "content": "Scene one." }),
+        )
+        .unwrap();
+        assert!(
+            matches!(parsed, Submission::ChapterOutline(submission) if submission.content == "Scene one.")
+        );
     }
 }
