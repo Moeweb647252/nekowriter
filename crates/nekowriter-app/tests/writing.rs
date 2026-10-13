@@ -127,6 +127,28 @@ async fn the_model_writes_a_two_chapter_novel_that_the_user_completes() {
         .unwrap();
     assert_eq!(revision["content"], "Night 2. The keeper rose.");
 
+    let export = server
+        .get(&format!("/api/versions/{version}/export?format=markdown"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(export.status(), 200);
+    assert_eq!(
+        export.headers()["content-type"],
+        "text/markdown; charset=utf-8"
+    );
+    assert!(
+        export.headers()["content-disposition"]
+            .to_str()
+            .unwrap()
+            .starts_with("attachment; filename=\""),
+    );
+    let novel = export.text().await.unwrap();
+    assert!(novel.contains("2 of 2 planned chapters"), "{novel}");
+    let first = novel.find("Night 1. The keeper rose.").unwrap();
+    let second = novel.find("Night 2. The keeper rose.").unwrap();
+    assert!(first < second, "{novel}");
+
     // The second chapter's body requests carry every completed stage before them, once, as
     // one assistant message after the system prompt.
     let requests = model.requests();

@@ -1,0 +1,7 @@
+# Text of exported novels whose writing language is Simplified Chinese
+# (docs/product-spec.md §16.4).
+header = "导出时间：{{time}}（UTC）。已通过整章审阅的计划章节：{{approved}}/{{planned}}。"
+main_chapter = "第{{number}}章 {{title}}"
+extra_chapter = "番外{{number}} {{title}}"
+draft = "草稿：尚未通过审阅。"
+no_body = "尚未撰写。"

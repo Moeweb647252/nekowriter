@@ -26,6 +26,7 @@ mod entity;
 mod error;
 mod events;
 mod execution;
+mod export;
 mod feedback;
 mod preparation;
 mod projects;
@@ -45,6 +46,7 @@ pub use execution::{
     DispatchInput, DispatchOutcome, ModelSettings, RecordedAnswer, RoundRecord, SealedRequest,
     TranscriptEntry,
 };
+pub use export::{ExportedChapter, ExportedVersion};
 pub use feedback::{FeedbackView, HeldCallView};
 pub use projects::{NewProject, ProjectListFilter, ProjectSettings, ProjectView, VersionSummary};
 pub use proposals::ProposalView;

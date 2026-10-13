@@ -6,7 +6,7 @@
 //! the braces are ignored. `\{{` produces a literal `{{`. Values are inserted as they are;
 //! nothing inside a value is expanded. There are no expressions, loops or includes.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
 
@@ -141,6 +141,35 @@ impl Template {
             }
         }
         Ok(rendered)
+    }
+}
+
+/// A text with `{{placeholders}}` from a resource file, such as the model-facing text or
+/// the export text. The code that renders it always passes a value for every placeholder;
+/// the tests of each resource render every text with the values its callers pass.
+#[derive(Debug)]
+pub struct ResourceText(Template);
+
+impl ResourceText {
+    #[must_use]
+    pub fn render(&self, values: &[(&str, &str)]) -> String {
+        self.0
+            .render(|name| {
+                values
+                    .iter()
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| *value)
+            })
+            .expect("resource text placeholders match the values passed (checked by the tests)")
+    }
+}
+
+impl<'de> Deserialize<'de> for ResourceText {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let source = String::deserialize(deserializer)?;
+        Template::parse(&source)
+            .map(Self)
+            .map_err(serde::de::Error::custom)
     }
 }
 

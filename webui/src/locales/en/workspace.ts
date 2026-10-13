@@ -2,6 +2,7 @@ import type { ArtifactKind } from "@/api/generated/ArtifactKind"
 import type { ChapterKind } from "@/api/generated/ChapterKind"
 import type { ChapterStatus } from "@/api/generated/ChapterStatus"
 import type { ChapterStep } from "@/api/generated/ChapterStep"
+import type { ExportFormat } from "@/api/generated/ExportFormat"
 import type { FeedbackDelivery } from "@/api/generated/FeedbackDelivery"
 import type { FeedbackStatus } from "@/api/generated/FeedbackStatus"
 import type { PreparationStep } from "@/api/generated/PreparationStep"
@@ -14,6 +15,13 @@ export default {
   backToWorks: "Works",
   draft: "Draft saved in this browser",
   dock: "Current step",
+  export: {
+    label: "Export",
+    format: {
+      markdown: "Markdown (.md)",
+      text: "Plain text (.txt)",
+    } satisfies Record<ExportFormat, string>,
+  },
   header: {
     version: "Version {{number}}",
     versions: "Versions",

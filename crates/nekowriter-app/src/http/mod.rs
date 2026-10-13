@@ -104,6 +104,7 @@ pub(crate) fn router(state: AppState) -> Router {
             post(handlers::workspace::set_approval_mode),
         )
         .route("/revisions/{id}", get(handlers::workspace::revision))
+        .route("/versions/{id}/export", get(handlers::export::export))
         .route(
             "/reviews/{id}/delegate",
             post(handlers::workspace::delegate_review),

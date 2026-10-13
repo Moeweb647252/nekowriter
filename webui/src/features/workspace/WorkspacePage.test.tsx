@@ -8,6 +8,22 @@ import { RUN_ID, VERSION_ID, artifacts, reviewId, runView, workspaceView } from 
 import { fakeWorkspace, renderWorkspace } from "@/test/workspace"
 
 describe("WorkspacePage", () => {
+  it("offers the novel for download in both formats", async () => {
+    fakeWorkspace(workspaceView({ phase: "preparation", step: "not_started" }))
+    const { user } = renderWorkspace()
+
+    await user.click(await screen.findByRole("button", { name: "Export" }))
+
+    expect(await screen.findByRole("menuitem", { name: "Markdown (.md)" })).toHaveAttribute(
+      "href",
+      `/api/versions/${VERSION_ID}/export?format=markdown`,
+    )
+    expect(screen.getByRole("menuitem", { name: "Plain text (.txt)" })).toHaveAttribute(
+      "href",
+      `/api/versions/${VERSION_ID}/export?format=text`,
+    )
+  })
+
   it("saves the brief, then starts preparation", async () => {
     const { commands } = fakeWorkspace(workspaceView({ phase: "preparation", step: "not_started" }))
     const { user } = renderWorkspace()

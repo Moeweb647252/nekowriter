@@ -24,6 +24,7 @@ clap = { version = "4.6.7", features = ["derive"] }
 directories = "6.0.0"
 eventsource-stream = "0.2.3"
 futures-util = "0.3.34"
+percent-encoding = "2.3.2"
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls", "stream"] }
 rust-embed = { version = "8.13.0", features = ["debug-embed", "mime-guess"] }
 sea-orm = { version = "2.0.4", default-features = false, features = ["macros", "with-json", "with-uuid"] }
@@ -32,6 +33,7 @@ serde_json = "1.0.154"
 sha2 = "0.11.1"
 tempfile = "3.27.0"
 thiserror = "2.0.21"
+time = "0.3.55"
 toml = "1.1.8"
 tokio = { version = "1.53.2", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = "0.1.44"

@@ -2,6 +2,7 @@ import { ArrowLeftIcon, PanelLeftIcon } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { Link } from "react-router"
 
+import { ExportMenu } from "./ExportMenu"
 import { ProjectSettingsDialog } from "./ProjectSettingsDialog"
 import { useStageLabel } from "./stage"
 import { VersionMenu } from "./VersionMenu"
@@ -42,7 +43,8 @@ export function WorkspaceHeader({
       <Badge variant="secondary" className="hidden sm:inline-flex">
         {stageLabel(view.version.stage)}
       </Badge>
-      <div className="ml-auto">
+      <div className="ml-auto flex items-center gap-2">
+        <ExportMenu view={view} />
         <ProjectSettingsDialog project={view.project} />
       </div>
     </header>

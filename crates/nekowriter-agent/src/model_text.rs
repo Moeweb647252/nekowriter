@@ -5,8 +5,8 @@
 
 use std::sync::LazyLock;
 
-use nekowriter_core::template::Template;
-use serde::{Deserialize, Deserializer};
+use nekowriter_core::template::ResourceText as Text;
+use serde::Deserialize;
 
 static MODEL_TEXT: LazyLock<ModelText> = LazyLock::new(|| {
     toml::from_str(include_str!("../resources/model.zh-CN.toml"))
@@ -17,35 +17,6 @@ static MODEL_TEXT: LazyLock<ModelText> = LazyLock::new(|| {
 #[must_use]
 pub fn model_text() -> &'static ModelText {
     &MODEL_TEXT
-}
-
-/// A text with `{{placeholders}}`.
-#[derive(Debug)]
-pub struct Text(Template);
-
-impl Text {
-    /// Fills in the placeholders. Every placeholder needs a value; the tests render every
-    /// text with the values its callers pass.
-    #[must_use]
-    pub fn render(&self, values: &[(&str, &str)]) -> String {
-        self.0
-            .render(|name| {
-                values
-                    .iter()
-                    .find(|(key, _)| *key == name)
-                    .map(|(_, value)| *value)
-            })
-            .expect("model text placeholders match the values passed (checked by the tests)")
-    }
-}
-
-impl<'de> Deserialize<'de> for Text {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let source = String::deserialize(deserializer)?;
-        Template::parse(&source)
-            .map(Self)
-            .map_err(serde::de::Error::custom)
-    }
 }
 
 #[derive(Debug, Deserialize)]

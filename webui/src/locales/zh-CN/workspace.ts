@@ -5,6 +5,13 @@ export default {
   backToWorks: "作品",
   draft: "草稿已保存在本浏览器",
   dock: "当前步骤",
+  export: {
+    label: "导出",
+    format: {
+      markdown: "Markdown（.md）",
+      text: "纯文本（.txt）",
+    },
+  },
   header: {
     version: "第 {{number}} 版",
     versions: "版本",

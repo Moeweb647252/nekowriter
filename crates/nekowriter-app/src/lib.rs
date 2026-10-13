@@ -18,6 +18,7 @@ use tokio::{net::TcpListener, task::JoinHandle};
 
 mod data_dir;
 mod dispatcher;
+mod export;
 mod http;
 mod lifecycle;
 mod logging;

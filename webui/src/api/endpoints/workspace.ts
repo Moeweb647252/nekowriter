@@ -5,6 +5,7 @@ import type { ApprovalModeRequest } from "../generated/ApprovalModeRequest"
 import type { ControlRequest } from "../generated/ControlRequest"
 import type { DecideReviewRequest } from "../generated/DecideReviewRequest"
 import type { DelegateReviewRequest } from "../generated/DelegateReviewRequest"
+import type { ExportFormat } from "../generated/ExportFormat"
 import type { FeedbackRequest } from "../generated/FeedbackRequest"
 import type { ReviewId } from "../generated/ReviewId"
 import type { RevisionId } from "../generated/RevisionId"
@@ -20,6 +21,9 @@ import type { WorkspaceView } from "../generated/WorkspaceView"
 
 export const workspaceApi = {
   get: (versionId: VersionId) => getJson<WorkspaceView>(`/api/versions/${versionId}/workspace`),
+  /** Where the browser downloads the version's novel from. */
+  exportUrl: (versionId: VersionId, format: ExportFormat) =>
+    `/api/versions/${versionId}/export?format=${format}`,
   saveBrief: (versionId: VersionId, request: SaveBriefRequest) =>
     postJson<WorkspaceAck>(`/api/versions/${versionId}/brief`, request),
   startPreparation: (versionId: VersionId, request: RevisionRequest) =>

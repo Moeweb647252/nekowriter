@@ -1,0 +1,6 @@
+# Text of exported novels whose writing language is English (docs/product-spec.md §16.4).
+header = "Exported {{time}} (UTC). {{approved}} of {{planned}} planned chapters passed their whole-chapter review."
+main_chapter = "Chapter {{number}}: {{title}}"
+extra_chapter = "Extra {{number}}: {{title}}"
+draft = "Draft: not approved yet."
+no_body = "Not written yet."
