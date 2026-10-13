@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     body::BodyEdit,
     preparation::PreparationSubmission,
+    question::Question,
     submission::{ChapterSubmission, OutlineSubmission},
 };
 
@@ -23,6 +24,8 @@ use crate::{
 pub enum CallRequest {
     /// `append_content` or `replace_content`.
     Edit { edit: BodyEdit },
+    /// `ask_user`: the run waits for the user's answers.
+    Ask { questions: Vec<Question> },
     /// The stage's submission tool.
     Submit { submission: StageSubmission },
 }

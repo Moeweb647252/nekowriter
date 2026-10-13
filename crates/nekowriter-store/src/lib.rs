@@ -28,6 +28,7 @@ mod feedback;
 mod preparation;
 mod projects;
 mod proposals;
+mod questions;
 mod reviews;
 mod schema;
 mod settings;
@@ -45,6 +46,7 @@ pub use execution::{
 pub use feedback::{FeedbackView, HeldCallView};
 pub use projects::{NewProject, ProjectListFilter, ProjectSettings, ProjectView, VersionSummary};
 pub use proposals::ProposalView;
+pub use questions::QuestionView;
 pub use settings::{ApiKeyChange, SystemSettingsInput, SystemSettingsView};
 pub use workflow::WorkspaceAck;
 pub use workspace::{ArtifactView, ChapterView, ReviewView, RunView, WorkspaceView};

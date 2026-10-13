@@ -132,6 +132,13 @@ export default {
       cancelled: "Not delivered: the run was stopped",
     } satisfies Record<FeedbackDelivery, string>,
   },
+  question: {
+    title: "The agent asks",
+    required: "Required",
+    other: "Or answer in your own words",
+    answer: "Your answer",
+    submit: "Submit answer",
+  },
   proposal: {
     append: "The agent proposes adding text to the end of the chapter.",
     replace: "The agent proposes replacing “{{old}}” with “{{new}}”.",
@@ -184,6 +191,7 @@ export default {
       running: "Writing",
       waiting_review: "Waiting for your review",
       paused: "Paused",
+      waiting_answer: "Waiting for your answer",
       interrupted: "Interrupted",
       stopped: "Stopped",
       failed: "Failed",

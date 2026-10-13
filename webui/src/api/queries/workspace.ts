@@ -2,12 +2,14 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 
 import { useCommandIds } from "../command"
 import { workspaceApi } from "../endpoints/workspace"
+import type { Answer } from "../generated/Answer"
 import type { ApprovalMode } from "../generated/ApprovalMode"
 import type { CommandId } from "../generated/CommandId"
 import type { ReviewDecisionInput } from "../generated/ReviewDecisionInput"
 import type { ReviewId } from "../generated/ReviewId"
 import type { RevisionId } from "../generated/RevisionId"
 import type { RunId } from "../generated/RunId"
+import type { ToolCallId } from "../generated/ToolCallId"
 import type { VersionId } from "../generated/VersionId"
 import type { WorkspaceAck } from "../generated/WorkspaceAck"
 import { queryKeys } from "./keys"
@@ -182,5 +184,14 @@ export function useResumeRun(versionId: VersionId) {
 export function useSetApprovalMode(versionId: VersionId) {
   return useControlCommand(versionId, (mode: ApprovalMode, commandId) =>
     workspaceApi.setApprovalMode(versionId, { commandId, mode }),
+  )
+}
+
+/** Answers the agent's questions; the run goes on with the answers. */
+export function useAnswerQuestions(versionId: VersionId) {
+  return useControlCommand(
+    versionId,
+    ({ callId, answers }: { callId: ToolCallId; answers: Answer[] }, commandId) =>
+      workspaceApi.answerQuestions(callId, { commandId, answers }),
   )
 }

@@ -120,6 +120,13 @@ export default {
       cancelled: "未送达：任务已停止",
     },
   },
+  question: {
+    title: "Agent 的提问",
+    required: "必答",
+    other: "或者用自己的话回答",
+    answer: "你的回答",
+    submit: "提交回答",
+  },
   proposal: {
     append: "Agent 提议在本章末尾追加文字。",
     replace: "Agent 提议把“{{old}}”替换为“{{new}}”。",
@@ -170,6 +177,7 @@ export default {
       running: "写作中",
       waiting_review: "等待你审阅",
       paused: "已暂停",
+      waiting_answer: "等待你回答",
       interrupted: "已中断",
       stopped: "已停止",
       failed: "失败",

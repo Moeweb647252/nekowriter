@@ -6,6 +6,7 @@ import type { FeedbackView } from "./FeedbackView";
 import type { HeldCallView } from "./HeldCallView";
 import type { ProjectView } from "./ProjectView";
 import type { ProposalView } from "./ProposalView";
+import type { QuestionView } from "./QuestionView";
 import type { RevisionView } from "./RevisionView";
 import type { RunView } from "./RunView";
 import type { Timestamp } from "./Timestamp";
@@ -48,6 +49,10 @@ approvalMode: ApprovalMode,
  * The run's proposed edit waiting for review.
  */
 proposal: ProposalView | null, 
+/**
+ * The questions the run waits for answers to.
+ */
+question: QuestionView | null, 
 /**
  * The novel brief, with its content: it is edited in the workspace.
  */

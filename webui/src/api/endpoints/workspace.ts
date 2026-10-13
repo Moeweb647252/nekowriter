@@ -1,5 +1,6 @@
 import { getJson, postJson } from "../client"
 import type { AddExtraChapterRequest } from "../generated/AddExtraChapterRequest"
+import type { AnswerRequest } from "../generated/AnswerRequest"
 import type { ApprovalModeRequest } from "../generated/ApprovalModeRequest"
 import type { ControlRequest } from "../generated/ControlRequest"
 import type { DecideReviewRequest } from "../generated/DecideReviewRequest"
@@ -10,6 +11,7 @@ import type { RevisionRequest } from "../generated/RevisionRequest"
 import type { RevisionView } from "../generated/RevisionView"
 import type { RunId } from "../generated/RunId"
 import type { SaveBriefRequest } from "../generated/SaveBriefRequest"
+import type { ToolCallId } from "../generated/ToolCallId"
 import type { StartChapterRequest } from "../generated/StartChapterRequest"
 import type { VersionId } from "../generated/VersionId"
 import type { WorkspaceAck } from "../generated/WorkspaceAck"
@@ -35,6 +37,8 @@ export const workspaceApi = {
     postJson<WorkspaceAck>(`/api/runs/${runId}/cancel-pause`, request),
   resumeRun: (runId: RunId, request: ControlRequest) =>
     postJson<WorkspaceAck>(`/api/runs/${runId}/resume`, request),
+  answerQuestions: (callId: ToolCallId, request: AnswerRequest) =>
+    postJson<WorkspaceAck>(`/api/questions/${callId}/answer`, request),
   setApprovalMode: (versionId: VersionId, request: ApprovalModeRequest) =>
     postJson<WorkspaceAck>(`/api/versions/${versionId}/approval-mode`, request),
   revision: (revisionId: RevisionId) => getJson<RevisionView>(`/api/revisions/${revisionId}`),

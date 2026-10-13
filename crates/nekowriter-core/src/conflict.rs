@@ -21,6 +21,8 @@ pub enum Resource {
     Run,
     #[error("revision")]
     Revision,
+    #[error("question")]
+    Question,
     #[error("settings")]
     Settings,
 }
@@ -63,4 +65,7 @@ pub enum StateConflict {
     /// Only a paused run can be resumed.
     #[error("the run is not paused")]
     RunNotPaused,
+    /// The question was already answered or is no longer waiting.
+    #[error("the question is not waiting for an answer")]
+    QuestionNotOpen,
 }

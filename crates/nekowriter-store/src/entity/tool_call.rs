@@ -55,6 +55,8 @@ pub enum ToolCallStatus {
     Held,
     /// A proposed edit waiting for its review.
     AwaitingReview,
+    /// Questions waiting for the user's answers.
+    AwaitingAnswer,
     /// The outcome is recorded and its result message queued.
     Resolved,
 }

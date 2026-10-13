@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 
 import { PreviewStore } from "@/api/events/preview"
 import type { AddExtraChapterRequest } from "@/api/generated/AddExtraChapterRequest"
+import type { AnswerRequest } from "@/api/generated/AnswerRequest"
 import type { ApprovalModeRequest } from "@/api/generated/ApprovalModeRequest"
 import type { DecideReviewRequest } from "@/api/generated/DecideReviewRequest"
 import type { FeedbackRequest } from "@/api/generated/FeedbackRequest"
@@ -312,5 +313,44 @@ describe("WritingWorkspace", () => {
       expect(commands[0]?.path).toBe(`/api/versions/${VERSION_ID}/approval-mode`)
       expect((commands[0]?.body as ApprovalModeRequest).mode).toBe("approve_required")
     })
+  })
+
+  it("answers the agent's questions with choices and the user's own words", async () => {
+    const callId = "0190f5c8-0000-7000-8000-000000000b00"
+    const { commands } = fakeWorkspace({
+      ...atChapter("drafting", [{ ...FIRST, status: "in_progress" as const }, SECOND]),
+      run: runView({ kind: "chapter_body", status: "waiting_answer" }),
+      question: {
+        callId,
+        questions: [
+          {
+            id: "q1",
+            title: "What weather opens the chapter?",
+            kind: "single",
+            options: [
+              { id: "a", label: "Rain" },
+              { id: "b", label: "Snow" },
+            ],
+            required: true,
+          },
+          { id: "q2", title: "Name the keeper.", kind: "text", options: [], required: false },
+        ],
+      },
+    })
+    const { user } = renderWorkspace()
+
+    await user.click(await screen.findByRole("radio", { name: "Snow" }))
+    await user.type(screen.getByRole("textbox", { name: "Or answer in your own words" }), "and fog")
+    await user.type(screen.getByRole("textbox", { name: "Your answer" }), "Mara")
+    await user.click(screen.getByRole("button", { name: "Submit answer" }))
+
+    await waitFor(() => {
+      expect(commands).toHaveLength(1)
+    })
+    expect(commands[0]?.path).toBe(`/api/questions/${callId}/answer`)
+    expect((commands[0]?.body as AnswerRequest).answers).toEqual([
+      { questionId: "q1", selectedOptionIds: ["b"], customText: "and fog" },
+      { questionId: "q2", selectedOptionIds: [], customText: "Mara" },
+    ])
   })
 })

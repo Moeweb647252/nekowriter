@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next"
 
 import { ApiError, NetworkError } from "@/api/client"
 import type { ApiErrorBody } from "@/api/generated/ApiErrorBody"
+import type { AnswerProblem } from "@/api/generated/AnswerProblem"
 import type { ApiProblem } from "@/api/generated/ApiProblem"
 import type { Field } from "@/api/generated/Field"
 import type { FieldProblem } from "@/api/generated/FieldProblem"
@@ -31,7 +32,9 @@ export interface ErrorCatalog {
       ? Record<FieldProblem["kind"], string>
       : Code extends "STATE_CONFLICT"
         ? Record<StateConflict, string>
-        : string
+        : Code extends "ANSWER_INVALID"
+          ? Record<AnswerProblem["kind"], string>
+          : string
   }
 }
 
@@ -110,6 +113,12 @@ export function useErrorText(): (error: unknown) => string {
           })
         case "STATE_CONFLICT":
           return t(($) => $.errors.codes.STATE_CONFLICT[body.params])
+        case "ANSWER_INVALID": {
+          const problem = body.params.problem
+          return problem.kind === "too_long"
+            ? t(($) => $.errors.codes.ANSWER_INVALID.too_long, { maxChars: problem.maxChars })
+            : t(($) => $.errors.codes.ANSWER_INVALID[problem.kind])
+        }
         case "MODEL_NOT_READY":
           return t(($) => $.errors.codes.MODEL_NOT_READY, {
             problem: modelProblem(body.params.problem),

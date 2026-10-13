@@ -20,6 +20,10 @@ main = "正篇"
 extra = "番外"
 
 [contracts]
+ask_user = """
+## 向作者提问
+- 遇到只有作者能决定的问题，或作者的要求互相矛盾时，可以调用 {{tool}} 提问，等作者回答后再继续。不要为你自己能决定的细节打扰作者。
+- 选择题的每个选项都要写清楚；作者还可以在选项之外补充自己的回答。"""
 preparation = """
 ## 提交方式
 - 完成后调用 {{tool}} 工具提交，这是结束本阶段的唯一方式。不要在普通文本中输出产物正文或 JSON。
@@ -64,6 +68,17 @@ description = "把本章正文中只出现一次的一段文字替换为新文�
 old_str = "要替换的原文，必须与正文逐字一致，并且在正文中只出现一次。"
 new_str = "替换后的文字；为空表示删除原文。"
 
+[tools.ask_user]
+description = "向作者提出一个或几个问题，等作者回答后再继续。"
+questions = "要问的问题，按顺序排列。"
+question_id = "问题的 ID，在本次提问中唯一，例如 q1。"
+title = "问题本身，写清楚需要作者决定什么。"
+kind = "single 为单选，multiple 为多选，text 为自由回答。"
+options = "单选题和多选题的选项；自由回答题为空数组。"
+option_id = "选项的 ID，在本题中唯一，例如 a。"
+option_label = "选项的内容。"
+required = "作者是否必须回答。"
+
 [tools.submit_chapter]
 description = "提交写完的本章，交给作者审核整章。"
 chapter_id = "本章的 ID。"
@@ -77,6 +92,18 @@ edit_applied = "修改已生效。本章正文现有 {{word_count}} 字。"
 edit_no_change = "新旧文字相同，正文没有变化。本章正文现有 {{word_count}} 字。"
 edit_rejected = "修改没有生效，正文保持不变：{{problem}}"
 edit_declined = "作者没有采纳这次修改，正文保持不变。修改意见见 feedback，请据此重新修改。"
+answered = "作者已回答，见 answers：selected 是作者选中的选项，text 是作者补充的回答。"
+question_rejected = "问题没有发给作者：{{problem}}"
+
+[question_problems]
+no_questions = "questions 至少需要一个问题。"
+too_many_questions = "一次最多提 {{max}} 个问题。"
+duplicate_question = "问题 ID {{id}} 出现了不止一次。"
+empty_title = "问题 {{id}} 的内容为空。"
+no_options = "选择题 {{id}} 没有选项。"
+too_many_options = "问题 {{id}} 最多 {{max}} 个选项。"
+duplicate_option = "问题 {{id}} 的选项 ID {{option}} 出现了不止一次。"
+empty_option = "问题 {{id}} 的选项 {{option}} 内容为空。"
 
 [edit_problems]
 empty_content = "content 为空，没有可以追加的内容。"

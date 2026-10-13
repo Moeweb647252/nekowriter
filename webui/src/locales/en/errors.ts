@@ -25,6 +25,7 @@ export default {
     review: "review",
     run: "run",
     revision: "revision",
+    question: "question",
     settings: "settings",
   },
   modelProblem: {
@@ -71,6 +72,14 @@ export default {
       run_not_stoppable: "This run is not working right now, so there is nothing to stop.",
       run_not_writing: "Feedback and pauses are for a chapter that is being written.",
       run_not_paused: "This run is not paused.",
+      question_not_open: "These questions were already answered.",
+    },
+    ANSWER_INVALID: {
+      unknown_question: "An answer refers to a question that was not asked.",
+      missing: "Answer every required question.",
+      several_selected: "Choose only one option for a single-choice question.",
+      unknown_option: "One of the chosen options does not exist.",
+      too_long: "An answer can be at most {{maxChars}} characters.",
     },
     MODEL_NOT_READY: "The model cannot be used yet. {{problem}}",
     MODEL_SERVICE_FAILED: "The test failed: {{failure}}.",

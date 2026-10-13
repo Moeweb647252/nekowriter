@@ -26,6 +26,7 @@ export default {
     review: "审阅",
     run: "任务",
     revision: "修订版本",
+    question: "问题",
     settings: "设置",
   },
   modelProblem: {
@@ -68,6 +69,14 @@ export default {
       run_not_stoppable: "该任务当前没有在运行，无需停止。",
       run_not_writing: "只有正在写作的章节才能接收意见或暂停。",
       run_not_paused: "该任务没有暂停。",
+      question_not_open: "这些问题已经回答过了。",
+    },
+    ANSWER_INVALID: {
+      unknown_question: "有回答对应的问题并不存在。",
+      missing: "请回答所有必答的问题。",
+      several_selected: "单选题只能选择一个选项。",
+      unknown_option: "选中的某个选项不存在。",
+      too_long: "每个回答最多 {{maxChars}} 个字符。",
     },
     MODEL_NOT_READY: "暂时无法使用模型。{{problem}}",
     MODEL_SERVICE_FAILED: "测试失败：{{failure}}。",

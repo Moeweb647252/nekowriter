@@ -5,8 +5,9 @@ use axum::extract::State;
 use nekowriter_core::{
     chapter::{ChapterGuidance, ChapterTitle},
     feedback::FeedbackText,
-    ids::{CommandId, ReviewId, RevisionId, RunId, VersionId},
+    ids::{CommandId, ReviewId, RevisionId, RunId, ToolCallId, VersionId},
     preparation::NovelBrief,
+    question::Answer,
     review::{ReviewDecision, ReviewFeedback},
     workflow::ApprovalMode,
 };
@@ -74,6 +75,15 @@ pub struct FeedbackRequest {
 pub struct ApprovalModeRequest {
     pub command_id: CommandId,
     pub mode: ApprovalMode,
+}
+
+/// The user's answers to the agent's questions (§8.6).
+#[derive(Clone, Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AnswerRequest {
+    pub command_id: CommandId,
+    pub answers: Vec<Answer>,
 }
 
 /// A review decision as a request carries it.
@@ -294,6 +304,19 @@ pub(crate) async fn set_approval_mode(
         state
             .store
             .set_approval_mode(request.command_id, version_id, request.mode)
+            .await?,
+    ))
+}
+
+pub(crate) async fn answer_questions(
+    State(state): State<AppState>,
+    Path(call_id): Path<ToolCallId>,
+    Json(request): Json<AnswerRequest>,
+) -> Result<axum::Json<WorkspaceAck>, ApiError> {
+    Ok(axum::Json(
+        state
+            .store
+            .answer_questions(request.command_id, call_id, request.answers)
             .await?,
     ))
 }

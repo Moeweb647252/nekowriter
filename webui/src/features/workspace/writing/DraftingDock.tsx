@@ -2,6 +2,7 @@ import { type SubmitEvent, useCallback } from "react"
 import { useTranslation } from "react-i18next"
 
 import { useChapterName } from "../chapters"
+import { QuestionDock } from "../QuestionDock"
 import { RunProgress } from "../RunDock"
 import { quote } from "./edits"
 import { errorForField, errorForForm } from "@/api/fieldErrors"
@@ -43,7 +44,9 @@ export function DraftingDock({
   return (
     <div className="grid gap-6 md:grid-cols-2">
       <div className="flex flex-col items-start gap-3">
-        {run.status === "paused" ? (
+        {view.question !== null ? (
+          <QuestionDock view={view} question={view.question} />
+        ) : run.status === "paused" ? (
           <PausedState view={view} run={run} />
         ) : (
           <WritingState view={view} chapter={chapter} run={run} />

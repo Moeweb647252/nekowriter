@@ -54,6 +54,8 @@ pub enum RunStatus {
     WaitingReview,
     /// The user paused it: a tool call or submission is held until the user continues.
     Paused,
+    /// It asked the user questions and waits for the answers.
+    WaitingAnswer,
     /// The process ended while the run was executing; the user decides whether to continue.
     Interrupted,
     /// Stopped by a limit or by the user; it can be continued.
@@ -71,7 +73,12 @@ impl RunStatus {
     pub fn is_active(self) -> bool {
         matches!(
             self,
-            Self::Queued | Self::Running | Self::WaitingReview | Self::Paused | Self::Interrupted
+            Self::Queued
+                | Self::Running
+                | Self::WaitingReview
+                | Self::Paused
+                | Self::WaitingAnswer
+                | Self::Interrupted
         )
     }
 
@@ -88,10 +95,14 @@ impl RunStatus {
         matches!(self, Self::Queued | Self::Running | Self::Paused)
     }
 
-    /// Whether the user can give the run feedback or pause it: it is writing.
+    /// Whether the user can give the run feedback or pause it: it is writing, or waiting
+    /// for the answer to a question it asked.
     #[must_use]
     pub fn is_writing(self) -> bool {
-        matches!(self, Self::Queued | Self::Running | Self::Paused)
+        matches!(
+            self,
+            Self::Queued | Self::Running | Self::Paused | Self::WaitingAnswer
+        )
     }
 }
 

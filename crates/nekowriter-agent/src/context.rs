@@ -135,7 +135,7 @@ mod tests {
                 content: "Correction".to_owned()
             }
         );
-        assert_eq!(planned.tools.len(), 1);
+        assert_eq!(planned.tools.len(), 2);
     }
 
     #[test]

@@ -21,6 +21,7 @@ pub mod model;
 pub mod preparation;
 pub mod project;
 pub mod prompt;
+pub mod question;
 pub mod review;
 pub mod run;
 pub mod run_message;

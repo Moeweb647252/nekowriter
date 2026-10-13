@@ -105,6 +105,10 @@ pub(crate) fn router(state: AppState) -> Router {
         )
         .route("/revisions/{id}", get(handlers::workspace::revision))
         .route(
+            "/questions/{id}/answer",
+            post(handlers::workspace::answer_questions),
+        )
+        .route(
             "/runs/{id}/continue",
             post(handlers::workspace::continue_run),
         )

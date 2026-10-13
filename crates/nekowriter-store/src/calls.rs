@@ -5,6 +5,7 @@
 use nekowriter_core::{
     call::{CallRequest, StageSubmission},
     ids::{ModelRequestId, ToolCallId},
+    question::{Question, check_questions},
     run::{MAX_CONSECUTIVE_PROTOCOL_ERRORS, RunHalt, RunStatus},
     run_message::{Correction, ModelToolCall, RunMessageBody, ToolOutcome},
     submission::SubmissionProblem,
@@ -111,6 +112,7 @@ pub(crate) async fn execute(
         .clone()
         .ok_or_else(|| StoreError::Corrupt(format!("tool call {} was never parsed", call.id)))?;
     let submission = match request {
+        CallRequest::Ask { questions } => return ask(tx, run, &call, &questions).await,
         CallRequest::Edit { edit } => {
             if let Some(base) = needs_review(tx.db(), &run, &edit).await? {
                 return propose(tx, run, call, base).await;
@@ -139,6 +141,31 @@ pub(crate) async fn execute(
         }
     };
     settle_submission(tx, run, &call, accepted).await
+}
+
+/// Shows the questions and waits for the answers, or tells the agent why they cannot be
+/// shown.
+async fn ask(
+    tx: &mut WriteTx,
+    run: run::Model,
+    call: &tool_call::Model,
+    questions: &[Question],
+) -> Result<(), StoreError> {
+    if let Err(problem) = check_questions(questions) {
+        resolve(tx, call, ToolOutcome::QuestionRejected { problem }).await?;
+        return requeue(tx, run, false).await;
+    }
+    let mut waiting_call = call.clone().into_active_model();
+    waiting_call.status = Set(ToolCallStatus::AwaitingAnswer);
+    waiting_call.update(tx.db()).await?;
+    let (version_id, project_id) = (run.version_id, run.project_id);
+    let mut waiting = run.into_active_model();
+    waiting.status = Set(RunStatus::WaitingAnswer);
+    waiting.queued_at = Set(None);
+    waiting.updated_at = Set(tx.now());
+    waiting.update(tx.db()).await?;
+    touch(tx, version_id, project_id).await?;
+    Ok(())
 }
 
 /// Records the call's outcome and queues its result for the model. Queued feedback that

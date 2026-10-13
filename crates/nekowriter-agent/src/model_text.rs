@@ -59,6 +59,7 @@ pub struct ModelText {
     pub tools: Tools,
     pub results: Results,
     pub edit_problems: EditProblems,
+    pub question_problems: QuestionProblems,
     pub submission_problems: SubmissionProblems,
     pub protocol_problems: ProtocolProblems,
     pub arguments_problems: ArgumentsProblems,
@@ -103,6 +104,7 @@ pub struct ChapterKinds {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Contracts {
+    pub ask_user: Text,
     pub preparation: Text,
     pub chapter_outline: Text,
     pub chapter_body: Text,
@@ -116,6 +118,21 @@ pub struct Tools {
     pub append_content: AppendContentText,
     pub replace_content: ReplaceContentText,
     pub submit_chapter: SubmitChapterText,
+    pub ask_user: AskUserText,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AskUserText {
+    pub description: Text,
+    pub questions: Text,
+    pub question_id: Text,
+    pub title: Text,
+    pub kind: Text,
+    pub options: Text,
+    pub option_id: Text,
+    pub option_label: Text,
+    pub required: Text,
 }
 
 #[derive(Debug, Deserialize)]
@@ -171,6 +188,21 @@ pub struct Results {
     pub edit_no_change: Text,
     pub edit_rejected: Text,
     pub edit_declined: Text,
+    pub answered: Text,
+    pub question_rejected: Text,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionProblems {
+    pub no_questions: Text,
+    pub too_many_questions: Text,
+    pub duplicate_question: Text,
+    pub empty_title: Text,
+    pub no_options: Text,
+    pub too_many_options: Text,
+    pub duplicate_option: Text,
+    pub empty_option: Text,
 }
 
 #[derive(Debug, Deserialize)]

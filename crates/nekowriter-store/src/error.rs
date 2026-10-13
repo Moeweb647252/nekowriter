@@ -2,6 +2,7 @@ use nekowriter_core::{
     conflict::{Resource, StateConflict},
     ids::CommandId,
     model::ModelProblem,
+    question::AnswerProblem,
 };
 use sea_orm::DbErr;
 use thiserror::Error;
@@ -31,6 +32,9 @@ pub enum StoreError {
     /// The model settings do not allow requests, so work that needs the model cannot start.
     #[error("the model is not ready: {0:?}")]
     ModelNotReady(ModelProblem),
+    /// The answers do not fit the questions they answer.
+    #[error("the answers do not fit the questions: {0:?}")]
+    AnswerInvalid(AnswerProblem),
     /// Stored data violates an invariant the application maintains.
     #[error("stored data is inconsistent: {0}")]
     Corrupt(String),

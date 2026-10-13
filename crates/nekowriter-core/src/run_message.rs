@@ -13,6 +13,7 @@ use crate::{
     body::EditProblem,
     ids::{ReviewId, RevisionId, ToolCallId},
     preparation::ArtifactKind,
+    question::{AnsweredQuestion, QuestionProblem},
     review::ReviewKind,
     submission::SubmissionProblem,
 };
@@ -140,6 +141,10 @@ pub enum ToolOutcome {
     EditRejected { problem: EditProblem },
     /// The user declined the proposed edit; their feedback travels with the result.
     EditDeclined,
+    /// The user answered the questions.
+    Answered { answers: Vec<AnsweredQuestion> },
+    /// The questions cannot be shown; the agent may ask again.
+    QuestionRejected { problem: QuestionProblem },
 }
 
 /// How a tool call broke the protocol (§8.1, §8.4).

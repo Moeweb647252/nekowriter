@@ -17,6 +17,7 @@ use nekowriter_core::{
     preparation::ArtifactKind,
     project::WritingLanguage,
     prompt::{PromptKey, PromptVariable},
+    question::Question,
     run_message::{ArgumentsProblem, JsonType},
     stage::StageInput,
     template::{Template, TemplateError},
@@ -38,6 +39,7 @@ pub const SUBMIT_CHAPTER_OUTLINE: &str = "submit_chapter_outline";
 pub const SUBMIT_CHAPTER: &str = "submit_chapter";
 pub const APPEND_CONTENT: &str = "append_content";
 pub const REPLACE_CONTENT: &str = "replace_content";
+pub const ASK_USER: &str = "ask_user";
 
 /// A tool declared to the model.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -75,6 +77,7 @@ impl Contract {
 pub enum WorkTool {
     AppendContent,
     ReplaceContent,
+    AskUser,
 }
 
 impl WorkTool {
@@ -83,6 +86,7 @@ impl WorkTool {
         match self {
             Self::AppendContent => APPEND_CONTENT,
             Self::ReplaceContent => REPLACE_CONTENT,
+            Self::AskUser => ASK_USER,
         }
     }
 
@@ -91,6 +95,7 @@ impl WorkTool {
         match self {
             Self::AppendContent => append_tool(),
             Self::ReplaceContent => replace_tool(),
+            Self::AskUser => ask_tool(),
         }
     }
 
@@ -104,6 +109,10 @@ impl WorkTool {
         struct Replace {
             old_str: String,
             new_str: String,
+        }
+        #[derive(serde::Deserialize)]
+        struct Ask {
+            questions: Vec<Question>,
         }
         let schema = self.definition().parameters;
         match self {
@@ -122,6 +131,9 @@ impl WorkTool {
                     },
                 })
             }
+            Self::AskUser => read::<Ask>(&schema, arguments).map(|ask| CallRequest::Ask {
+                questions: ask.questions,
+            }),
         }
     }
 }
@@ -179,11 +191,11 @@ pub fn build(
                 .preparation
                 .render(&[("tool", SUBMIT_PREPARATION)]);
             Ok(StageRequest {
-                system: with_section(&render(prompts.system, &values)?, &contract),
+                system: with_section(&render(prompts.system, &values)?, &with_asking(&contract)),
                 user: render(prompts.user, &values)?,
                 contract: Contract {
                     stage: StageKind::Preparation,
-                    tools: Vec::new(),
+                    tools: vec![WorkTool::AskUser],
                     submission: preparation_tool(required),
                 },
             })
@@ -196,11 +208,11 @@ pub fn build(
                 .chapter_outline
                 .render(&[("tool", SUBMIT_CHAPTER_OUTLINE), ("chapter_id", &id)]);
             Ok(StageRequest {
-                system: with_section(&render(prompts.system, &values)?, &contract),
+                system: with_section(&render(prompts.system, &values)?, &with_asking(&contract)),
                 user: render(prompts.user, &values)?,
                 contract: Contract {
                     stage: StageKind::ChapterOutline,
-                    tools: Vec::new(),
+                    tools: vec![WorkTool::AskUser],
                     submission: outline_tool(chapter.id),
                 },
             })
@@ -220,11 +232,15 @@ pub fn build(
                 ("chapter_id", &id),
             ]);
             Ok(StageRequest {
-                system: with_section(&render(prompts.system, &values)?, &contract),
+                system: with_section(&render(prompts.system, &values)?, &with_asking(&contract)),
                 user: with_section(&render(prompts.user, &values)?, &current_body(body)),
                 contract: Contract {
                     stage: StageKind::ChapterBody,
-                    tools: vec![WorkTool::AppendContent, WorkTool::ReplaceContent],
+                    tools: vec![
+                        WorkTool::AppendContent,
+                        WorkTool::ReplaceContent,
+                        WorkTool::AskUser,
+                    ],
                     submission: chapter_tool(chapter.id),
                 },
             })
@@ -274,6 +290,15 @@ impl ChapterValues {
             (PromptVariable::ChapterGuidance, self.guidance.as_str()),
         ]
     }
+}
+
+/// The stage's contract followed by when and how to ask the user (every writer can).
+fn with_asking(contract: &str) -> String {
+    let asking = model_text()
+        .contracts
+        .ask_user
+        .render(&[("tool", ASK_USER)]);
+    with_section(contract, &asking)
 }
 
 fn with_section(text: &str, section: &str) -> String {
@@ -430,6 +455,54 @@ fn replace_tool() -> ToolDefinition {
     }
 }
 
+fn ask_tool() -> ToolDefinition {
+    let text = &model_text().tools.ask_user;
+    let option = Schema::Object {
+        properties: vec![
+            property("id", text.option_id.render(&[]), true, string()),
+            property("label", text.option_label.render(&[]), true, string()),
+        ],
+    };
+    let kinds = ["single", "multiple", "text"].map(str::to_owned).to_vec();
+    let question = Schema::Object {
+        properties: vec![
+            property("id", text.question_id.render(&[]), true, string()),
+            property("title", text.title.render(&[]), true, string()),
+            property(
+                "kind",
+                text.kind.render(&[]),
+                true,
+                Schema::String {
+                    allowed: Some(kinds),
+                },
+            ),
+            property(
+                "options",
+                text.options.render(&[]),
+                true,
+                Schema::Array {
+                    items: Box::new(option),
+                },
+            ),
+            property("required", text.required.render(&[]), true, Schema::Boolean),
+        ],
+    };
+    ToolDefinition {
+        name: ASK_USER,
+        description: text.description.render(&[]),
+        parameters: Schema::Object {
+            properties: vec![property(
+                "questions",
+                text.questions.render(&[]),
+                true,
+                Schema::Array {
+                    items: Box::new(question),
+                },
+            )],
+        },
+    }
+}
+
 /// The artifact's identifier in tool arguments; the same as its serde name.
 fn artifact_key(kind: ArtifactKind) -> &'static str {
     match kind {
@@ -579,7 +652,10 @@ mod tests {
             .iter()
             .map(|tool| tool.name)
             .collect();
-        assert_eq!(names, [APPEND_CONTENT, REPLACE_CONTENT, SUBMIT_CHAPTER]);
+        assert_eq!(
+            names,
+            [APPEND_CONTENT, REPLACE_CONTENT, ASK_USER, SUBMIT_CHAPTER]
+        );
 
         assert!(matches!(
             parse_submission(
@@ -630,7 +706,7 @@ mod tests {
                 .user
                 .contains(&model_text().chapters.none.render(&[]))
         );
-        assert_eq!(request.contract.tools, Vec::new());
+        assert_eq!(request.contract.tools, [WorkTool::AskUser]);
         assert_eq!(request.contract.submission.name, SUBMIT_CHAPTER_OUTLINE);
         let parsed = parse_submission(
             &request.contract,

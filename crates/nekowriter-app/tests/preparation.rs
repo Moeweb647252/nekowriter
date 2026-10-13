@@ -67,7 +67,13 @@ async fn preparation_runs_from_the_brief_through_a_revision_to_the_first_chapter
     let first = &requests[0].body;
     assert_eq!(first["model"], "writer");
     assert_eq!(first["parallel_tool_calls"], false);
-    assert_eq!(first["tools"][0]["function"]["name"], "submit_preparation");
+    let tools: Vec<&str> = first["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["function"]["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(tools, ["ask_user", "submit_preparation"]);
     assert!(
         first["messages"][1]["content"]
             .as_str()

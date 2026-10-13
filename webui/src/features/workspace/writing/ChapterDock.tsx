@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next"
 
 import { nextMainChapter, useChapterName } from "../chapters"
 import { RevisionText } from "../DocumentView"
+import { QuestionDock } from "../QuestionDock"
 import { ReviewForm } from "../ReviewForm"
 import { DraftingDock } from "./DraftingDock"
 import { ProposalDock } from "./ProposalDock"
@@ -52,6 +53,7 @@ export function ChapterDock({
     case "ready":
       return <ReadyDock view={view} chapter={chapter} />
     case "outline_generating":
+      if (view.question !== null) return <QuestionDock view={view} question={view.question} />
       return run === null ? null : (
         <div className="flex flex-col gap-4">
           <RunProgress view={view} run={run}>

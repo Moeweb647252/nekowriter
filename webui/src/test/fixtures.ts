@@ -144,6 +144,7 @@ export function workspaceView(
     held: null,
     approvalMode: "auto_approve",
     proposal: null,
+    question: null,
     brief: null,
     artifacts: artifacts(),
     chapters: [],

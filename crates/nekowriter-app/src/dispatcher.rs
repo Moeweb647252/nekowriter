@@ -200,6 +200,10 @@ impl Dispatcher {
                     ..
                 } => "edit",
                 RoundRecord::Call {
+                    request: CallRequest::Ask { .. },
+                    ..
+                } => "question",
+                RoundRecord::Call {
                     request: CallRequest::Submit { .. },
                     ..
                 } => "submission",

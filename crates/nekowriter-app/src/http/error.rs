@@ -13,6 +13,7 @@ use nekowriter_core::{
     conflict::{Resource, StateConflict},
     field::FieldError,
     model::ModelProblem,
+    question::AnswerProblem,
     run::ProviderFailure,
 };
 use nekowriter_store::StoreError;
@@ -43,6 +44,8 @@ pub struct ApiErrorBody {
 pub enum ApiProblem {
     /// A field value failed validation.
     FieldInvalid(FieldError),
+    /// The answers do not fit the questions they answer.
+    AnswerInvalid { problem: AnswerProblem },
     /// The referenced object does not exist or is deleted.
     NotFound { resource: Resource },
     /// The client acted on an outdated copy of the object and must reload it.
@@ -72,7 +75,7 @@ pub enum ApiProblem {
 impl ApiProblem {
     fn status(&self) -> StatusCode {
         match self {
-            Self::FieldInvalid(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::FieldInvalid(_) | Self::AnswerInvalid { .. } => StatusCode::UNPROCESSABLE_ENTITY,
             Self::NotFound { .. } | Self::RouteNotFound => StatusCode::NOT_FOUND,
             Self::RevisionConflict { .. }
             | Self::IdempotencyConflict
@@ -141,6 +144,7 @@ impl From<StoreError> for ApiError {
             StoreError::IdempotencyConflict(_) => ApiProblem::IdempotencyConflict,
             StoreError::StateConflict(conflict) => ApiProblem::StateConflict(conflict),
             StoreError::ModelNotReady(problem) => ApiProblem::ModelNotReady { problem },
+            StoreError::AnswerInvalid(problem) => ApiProblem::AnswerInvalid { problem },
             StoreError::Database(_) | StoreError::Corrupt(_) => ApiProblem::Internal,
         };
         Self::new(problem, cause)

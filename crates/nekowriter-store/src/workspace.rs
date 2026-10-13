@@ -24,6 +24,7 @@ use crate::{
     feedback::{FeedbackView, HeldCallView, feedback_views, held_view},
     projects::{ProjectView, VersionSummary, project_view, version_summaries},
     proposals::{ProposalView, proposal_view},
+    questions::{QuestionView, question_view},
     workflow::load_version,
 };
 
@@ -51,6 +52,8 @@ pub struct WorkspaceView {
     pub approval_mode: ApprovalMode,
     /// The run's proposed edit waiting for review.
     pub proposal: Option<ProposalView>,
+    /// The questions the run waits for answers to.
+    pub question: Option<QuestionView>,
     /// The novel brief, with its content: it is edited in the workspace.
     pub brief: Option<RevisionView>,
     /// The four preparation artifacts, in tab order.
@@ -151,14 +154,15 @@ async fn workspace<C: ConnectionTrait>(
 ) -> Result<WorkspaceView, StoreError> {
     let context = load_version(db, version_id).await?;
     let (version, versions) = versions(db, context.project.id, version_id).await?;
-    let (run, feedback, held, proposal) = match context.workflow.active_run_id {
+    let (run, feedback, held, proposal, question) = match context.workflow.active_run_id {
         Some(run_id) => (
             Some(run_view(db, run_id).await?),
             feedback_views(db, run_id).await?,
             held_view(db, run_id).await?,
             proposal_view(db, run_id).await?,
+            question_view(db, run_id).await?,
         ),
-        None => (None, Vec::new(), None, None),
+        None => (None, Vec::new(), None, None, None),
     };
     let brief_document = version_document(db, version_id, DocumentRole::NovelBrief).await?;
     let brief = current_revision(db, &brief_document)
@@ -240,6 +244,7 @@ async fn workspace<C: ConnectionTrait>(
         held,
         approval_mode: context.workflow.approval_mode,
         proposal,
+        question,
         brief,
         artifacts,
         chapters,

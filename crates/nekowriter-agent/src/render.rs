@@ -10,6 +10,7 @@ use nekowriter_core::{
     document::DocumentRole,
     preparation::{ArtifactKind, ChapterPlan},
     project::WritingLanguage,
+    question::QuestionProblem,
     review::ReviewKind,
     run_message::{
         ArgumentsProblem, Correction, JsonType, ProtocolProblem, ToolOutcome, TranscriptMessage,
@@ -261,6 +262,30 @@ pub fn tool_outcome(outcome: &ToolOutcome) -> String {
                 .render(&[("problem", &edit_problem(problem))]),
         ),
         ToolOutcome::EditDeclined => ("rejected", results.edit_declined.render(&[])),
+        ToolOutcome::Answered { answers } => {
+            let answers: Vec<_> = answers
+                .iter()
+                .map(|answer| {
+                    json!({
+                        "question": answer.question,
+                        "selected": answer.selected,
+                        "text": answer.custom_text,
+                    })
+                })
+                .collect();
+            return json!({
+                "status": "answered",
+                "message": results.answered.render(&[]),
+                "answers": answers,
+            })
+            .to_string();
+        }
+        ToolOutcome::QuestionRejected { problem } => (
+            "rejected",
+            results
+                .question_rejected
+                .render(&[("problem", &question_problem(problem))]),
+        ),
         ToolOutcome::SubmissionAccepted => ("accepted", results.submission_accepted.render(&[])),
         ToolOutcome::SubmissionRejected { problem } => (
             "rejected",
@@ -276,6 +301,29 @@ pub fn tool_outcome(outcome: &ToolOutcome) -> String {
         ),
     };
     json!({ "status": status, "message": message }).to_string()
+}
+
+#[must_use]
+pub fn question_problem(problem: &QuestionProblem) -> String {
+    let text = &model_text().question_problems;
+    match problem {
+        QuestionProblem::NoQuestions => text.no_questions.render(&[]),
+        QuestionProblem::TooManyQuestions { max } => {
+            text.too_many_questions.render(&[("max", &max.to_string())])
+        }
+        QuestionProblem::DuplicateQuestion { id } => text.duplicate_question.render(&[("id", id)]),
+        QuestionProblem::EmptyTitle { id } => text.empty_title.render(&[("id", id)]),
+        QuestionProblem::NoOptions { id } => text.no_options.render(&[("id", id)]),
+        QuestionProblem::TooManyOptions { id, max } => text
+            .too_many_options
+            .render(&[("id", id), ("max", &max.to_string())]),
+        QuestionProblem::DuplicateOption { id, option } => text
+            .duplicate_option
+            .render(&[("id", id), ("option", option)]),
+        QuestionProblem::EmptyOption { id, option } => {
+            text.empty_option.render(&[("id", id), ("option", option)])
+        }
+    }
 }
 
 #[must_use]
@@ -681,5 +729,42 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&with_feedback).unwrap();
         assert_eq!(value["feedback"], json!(["More rain."]));
         assert_eq!(value["status"], "unchanged");
+    }
+
+    #[test]
+    fn answers_and_question_problems_render() {
+        use nekowriter_core::question::AnsweredQuestion;
+
+        let answered = tool_outcome(&ToolOutcome::Answered {
+            answers: vec![AnsweredQuestion {
+                question: "Weather?".to_owned(),
+                selected: vec!["Snow".to_owned()],
+                custom_text: Some("and fog".to_owned()),
+            }],
+        });
+        let value: serde_json::Value = serde_json::from_str(&answered).unwrap();
+        assert_eq!(value["status"], "answered");
+        assert_eq!(value["answers"][0]["selected"], json!(["Snow"]));
+        assert_eq!(value["answers"][0]["text"], "and fog");
+        let id = || "q1".to_owned();
+        for problem in [
+            QuestionProblem::NoQuestions,
+            QuestionProblem::TooManyQuestions { max: 10 },
+            QuestionProblem::DuplicateQuestion { id: id() },
+            QuestionProblem::EmptyTitle { id: id() },
+            QuestionProblem::NoOptions { id: id() },
+            QuestionProblem::TooManyOptions { id: id(), max: 20 },
+            QuestionProblem::DuplicateOption {
+                id: id(),
+                option: "a".to_owned(),
+            },
+            QuestionProblem::EmptyOption {
+                id: id(),
+                option: "a".to_owned(),
+            },
+        ] {
+            let rendered = tool_outcome(&ToolOutcome::QuestionRejected { problem });
+            assert!(rendered.contains("\"rejected\""), "{rendered}");
+        }
     }
 }

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next"
 import { ContentsNav } from "../ContentsNav"
 import { type DocumentKey, firstOpenReview, useSelectedDocument } from "../documents"
 import { DocumentView } from "../DocumentView"
+import { QuestionDock } from "../QuestionDock"
 import { isHalted } from "../run"
 import { RunProblem, RunProgress } from "../RunDock"
 import { WorkspaceLayout } from "../WorkspaceLayout"
@@ -56,6 +57,8 @@ export function PreparationWorkspace({
       <StartDock view={view} brief={brief} />
     ) : run !== null && isHalted(run.status) ? (
       <RunProblem view={view} run={run} />
+    ) : view.question !== null ? (
+      <QuestionDock view={view} question={view.question} />
     ) : step === "reviewing" ? (
       <ReviewDock view={view} selected={selected} onSelect={select} />
     ) : run !== null ? (

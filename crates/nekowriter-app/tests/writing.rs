@@ -149,7 +149,12 @@ async fn the_model_writes_a_two_chapter_novel_that_the_user_completes() {
         .collect();
     assert_eq!(
         tools,
-        ["append_content", "replace_content", "submit_chapter"]
+        [
+            "append_content",
+            "replace_content",
+            "ask_user",
+            "submit_chapter"
+        ]
     );
 }
 
