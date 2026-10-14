@@ -213,16 +213,17 @@ impl ChatClient {
         Self { http }
     }
 
-    /// Sends a streaming chat completion request and collects the answer.
-    pub async fn complete(
+    /// Posts `body` to an endpoint of the service and returns the successful response,
+    /// whose body is still to be read.
+    pub(crate) async fn post(
         &self,
         service: &ModelService,
+        endpoint: &str,
         body: &Value,
-        mut on_delta: impl FnMut(Delta<'_>),
-    ) -> Result<Completion, ProviderError> {
+    ) -> Result<reqwest::Response, ProviderError> {
         let mut request = self
             .http
-            .post(service.base_url.endpoint("chat/completions"))
+            .post(service.base_url.endpoint(endpoint))
             .json(body);
         if let Some(key) = &service.api_key {
             request = request.bearer_auth(key.expose());
@@ -237,11 +238,6 @@ impl ChatClient {
                     ProviderError::Connect(error.to_string())
                 }
             })?;
-        let provider_request_id = response
-            .headers()
-            .get("x-request-id")
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_owned);
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
@@ -251,6 +247,22 @@ impl ChatClient {
                 body,
             });
         }
+        Ok(response)
+    }
+
+    /// Sends a streaming chat completion request and collects the answer.
+    pub async fn complete(
+        &self,
+        service: &ModelService,
+        body: &Value,
+        mut on_delta: impl FnMut(Delta<'_>),
+    ) -> Result<Completion, ProviderError> {
+        let response = self.post(service, "chat/completions", body).await?;
+        let provider_request_id = response
+            .headers()
+            .get("x-request-id")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
 
         let mut events = response.bytes_stream().eventsource();
         let mut answer = Answer::default();

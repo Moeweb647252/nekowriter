@@ -68,6 +68,11 @@ fn system_routes() -> Router<AppState> {
         )
         .route("/settings/test-model", post(handlers::settings::test_model))
         .route("/settings/prompts", post(handlers::prompts::save_system))
+        .route(
+            "/settings/embedding",
+            get(handlers::embedding::get).post(handlers::embedding::save),
+        )
+        .route("/settings/test-embedding", post(handlers::embedding::test))
         .route("/prompts", get(handlers::prompts::get))
         .route("/templates/render", post(handlers::prompts::render))
         .route(

@@ -32,6 +32,7 @@ pub enum Field {
     EntryTitle,
     EntryContent,
     Keyword,
+    Dimensions,
 }
 
 /// What is wrong with a rejected field value.

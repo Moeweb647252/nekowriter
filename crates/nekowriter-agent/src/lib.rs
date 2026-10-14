@@ -1,6 +1,6 @@
 //! The model protocol (`docs/product-spec.md` §8): everything the model reads and writes.
 //!
-//! - [`client`]: the Chat Completions client.
+//! - [`client`]: the Chat Completions client; [`embedding`]: the embeddings adapter.
 //! - [`stage`]: per-stage contracts: prompts, tools, submission parsing.
 //! - [`round`]: classifying an answer as a submission or a protocol error.
 //! - [`context`]: assembling a request and checking that it fits.
@@ -12,6 +12,7 @@
 
 pub mod client;
 pub mod context;
+pub mod embedding;
 pub mod model_text;
 pub mod prompts;
 pub mod render;

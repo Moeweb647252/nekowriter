@@ -15,6 +15,7 @@ pub mod citation;
 pub mod conflict;
 pub mod dashboard;
 pub mod document;
+pub mod embedding;
 pub mod event;
 pub mod feedback;
 pub mod field;

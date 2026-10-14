@@ -12,6 +12,7 @@ use axum::{
 use nekowriter_core::{
     citation::CitationProblem,
     conflict::{Resource, StateConflict},
+    embedding::EmbeddingFailure,
     field::FieldError,
     model::ModelProblem,
     question::AnswerProblem,
@@ -52,6 +53,8 @@ pub enum ApiProblem {
     CitationInvalid { problem: CitationProblem },
     /// A template uses variables it may not, misses a required one, or cannot be rendered.
     TemplateInvalid { error: TemplateError },
+    /// The embedding service failed or answered with vectors that do not fit the model.
+    EmbeddingFailed { failure: EmbeddingFailure },
     /// The referenced object does not exist or is deleted.
     NotFound { resource: Resource },
     /// The client acted on an outdated copy of the object and must reload it.
@@ -92,8 +95,16 @@ impl ApiProblem {
             | Self::ModelNotReady { .. } => StatusCode::CONFLICT,
             Self::ModelServiceFailed {
                 failure: ProviderFailure::Timeout { .. },
+            }
+            | Self::EmbeddingFailed {
+                failure:
+                    EmbeddingFailure::Provider {
+                        failure: ProviderFailure::Timeout { .. },
+                    },
             } => StatusCode::GATEWAY_TIMEOUT,
-            Self::ModelServiceFailed { .. } => StatusCode::BAD_GATEWAY,
+            Self::ModelServiceFailed { .. } | Self::EmbeddingFailed { .. } => {
+                StatusCode::BAD_GATEWAY
+            }
             Self::ServiceStopping => StatusCode::SERVICE_UNAVAILABLE,
             Self::MalformedRequest => StatusCode::BAD_REQUEST,
             Self::UntrustedHost | Self::UntrustedOrigin => StatusCode::FORBIDDEN,

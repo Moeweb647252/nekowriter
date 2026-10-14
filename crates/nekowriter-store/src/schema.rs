@@ -18,10 +18,10 @@ use sea_orm::{
 use crate::{
     digest::sha256_hex,
     entity::{
-        chapter, command_receipt, connection_test, document, event, feedback, knowledge_entry,
-        knowledge_space, model_request, project, project_prompt, prompt_template, review, revision,
-        revision_dependency, run, run_message, schema_info, system_prompt, system_settings,
-        tool_call, version, workflow,
+        chapter, command_receipt, connection_test, document, embedding_settings, event, feedback,
+        knowledge_entry, knowledge_space, model_request, project, project_prompt, prompt_template,
+        review, revision, revision_dependency, run, run_message, schema_info, system_prompt,
+        system_settings, tool_call, version, workflow,
     },
 };
 
@@ -38,6 +38,7 @@ fn create_statements() -> Vec<Statement> {
     add_entity(&mut statements, &schema, schema_info::Entity);
     add_entity(&mut statements, &schema, system_settings::Entity);
     add_entity(&mut statements, &schema, system_prompt::Entity);
+    add_entity(&mut statements, &schema, embedding_settings::Entity);
     add_entity(&mut statements, &schema, project::Entity);
     add_entity(&mut statements, &schema, project_prompt::Entity);
     add_entity(&mut statements, &schema, prompt_template::Entity);

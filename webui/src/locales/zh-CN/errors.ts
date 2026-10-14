@@ -26,6 +26,7 @@ export default {
     entry_title: "条目标题",
     entry_content: "条目内容",
     keyword: "关键词",
+    dimensions: "向量维度",
   },
   resource: {
     project: "作品",
@@ -108,6 +109,13 @@ export default {
       duplicate_variable: "占位符“{{name}}”重复列出。",
     },
     MODEL_NOT_READY: "暂时无法使用模型。{{problem}}",
+    EMBEDDING_FAILED: {
+      provider: "向量服务出错：{{failure}}。",
+      wrong_dimensions:
+        "返回的向量有 {{actual, number}} 维，但设置中是 {{expected, number}} 维。请检查模型和维度。",
+      not_finite: "向量服务返回了不是数字的值。",
+      wrong_count: "向量服务为 {{expected, number}} 段文字返回了 {{actual, number}} 个向量。",
+    },
     MODEL_SERVICE_FAILED: "测试失败：{{failure}}。",
     SERVICE_STOPPING: "NekoWriter 正在关闭，该请求已放弃。",
     MALFORMED_REQUEST: "请求无法识别，请重新加载页面后再试。",

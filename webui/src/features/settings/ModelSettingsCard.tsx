@@ -5,7 +5,12 @@ import { toast } from "sonner"
 import { errorForField, errorForForm } from "@/api/fieldErrors"
 import type { SystemSettingsView } from "@/api/generated/SystemSettingsView"
 import type { TestModelRequest } from "@/api/generated/TestModelRequest"
-import { type ApiKeyChange, useSaveSystemSettings, useSystemSettings } from "@/api/queries/settings"
+import {
+  type ApiKeyChange,
+  apiKeyField,
+  useSaveSystemSettings,
+  useSystemSettings,
+} from "@/api/queries/settings"
 import { ErrorAlert } from "@/components/app/ErrorAlert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -23,6 +28,7 @@ import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { ModelProfileFields } from "@/features/models/ModelProfileFields"
+import { ApiKeyField } from "@/features/settings/ApiKeyField"
 import { profileForm, profileFromForm } from "@/features/models/profileForm"
 import { ModelTest } from "@/features/models/ModelTest"
 import { useErrorText } from "@/i18n/errors"
@@ -92,7 +98,7 @@ function ModelSettingsForm({ settings }: { settings: SystemSettingsView }) {
 
   const testRequest = (): TestModelRequest => ({
     apiBaseUrl,
-    ...(apiKey.kind === "keep" ? {} : { apiKey: apiKey.kind === "clear" ? null : apiKey.key }),
+    ...apiKeyField(apiKey),
     model: profileFromForm(profile),
   })
 
@@ -118,39 +124,15 @@ function ModelSettingsForm({ settings }: { settings: SystemSettingsView }) {
           <FieldDescription>{t(($) => $.settings.model.baseUrlHint)}</FieldDescription>
           {urlError !== undefined && <FieldError>{errorText(urlError)}</FieldError>}
         </Field>
-        <Field data-invalid={keyError !== undefined}>
-          <FieldLabel htmlFor="model-api-key">{t(($) => $.settings.model.apiKey)}</FieldLabel>
-          <Input
-            id="model-api-key"
-            type="password"
-            value={newKey}
-            onChange={(event) => setNewKey(event.target.value)}
-            aria-invalid={keyError !== undefined}
-            autoComplete="new-password"
-          />
-          <FieldDescription>
-            {clearKey && newKey === ""
-              ? t(($) => $.settings.model.keyWillClear)
-              : settings.apiKeySet
-                ? t(($) => $.settings.model.apiKeyStored)
-                : t(($) => $.settings.model.apiKeyNone)}
-          </FieldDescription>
-          {settings.apiKeySet && (
-            <div>
-              <Button
-                type="button"
-                variant="link"
-                className="h-auto p-0"
-                onClick={() => setClearKey(!clearKey)}
-              >
-                {clearKey
-                  ? t(($) => $.settings.model.keepKey)
-                  : t(($) => $.settings.model.clearKey)}
-              </Button>
-            </div>
-          )}
-          {keyError !== undefined && <FieldError>{errorText(keyError)}</FieldError>}
-        </Field>
+        <ApiKeyField
+          id="model-api-key"
+          stored={settings.apiKeySet}
+          value={newKey}
+          onChange={setNewKey}
+          clear={clearKey}
+          onClear={setClearKey}
+          error={keyError}
+        />
         <FieldSet>
           <FieldLegend>{t(($) => $.settings.model.defaultModel)}</FieldLegend>
           <Field orientation="horizontal">

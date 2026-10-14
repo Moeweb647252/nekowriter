@@ -6,6 +6,7 @@ import type { ApiErrorBody } from "@/api/generated/ApiErrorBody"
 import type { AnswerProblem } from "@/api/generated/AnswerProblem"
 import type { ApiProblem } from "@/api/generated/ApiProblem"
 import type { CitationProblem } from "@/api/generated/CitationProblem"
+import type { EmbeddingFailure } from "@/api/generated/EmbeddingFailure"
 import type { Field } from "@/api/generated/Field"
 import type { FieldProblem } from "@/api/generated/FieldProblem"
 import type { ModelProblem } from "@/api/generated/ModelProblem"
@@ -40,7 +41,9 @@ export interface ErrorCatalog {
             ? Record<CitationProblem["kind"], string>
             : Code extends "TEMPLATE_INVALID"
               ? Record<TemplateError["kind"], string>
-              : string
+              : Code extends "EMBEDDING_FAILED"
+                ? Record<EmbeddingFailure["kind"], string>
+                : string
   }
 }
 
@@ -143,6 +146,25 @@ export function useErrorText(): (error: unknown) => string {
           return t(($) => $.errors.codes.MODEL_NOT_READY, {
             problem: modelProblem(body.params.problem),
           })
+        case "EMBEDDING_FAILED": {
+          const failure = body.params.failure
+          switch (failure.kind) {
+            case "provider":
+              return t(($) => $.errors.codes.EMBEDDING_FAILED.provider, {
+                failure: providerFailure(failure.failure),
+              })
+            case "wrong_dimensions":
+            case "wrong_count":
+              return t(($) => $.errors.codes.EMBEDDING_FAILED[failure.kind], {
+                expected: failure.expected,
+                actual: failure.actual,
+              })
+            case "not_finite":
+              return t(($) => $.errors.codes.EMBEDDING_FAILED.not_finite)
+            default:
+              return assertNever(failure)
+          }
+        }
         case "MODEL_SERVICE_FAILED":
           return t(($) => $.errors.codes.MODEL_SERVICE_FAILED, {
             failure: providerFailure(body.params.failure),

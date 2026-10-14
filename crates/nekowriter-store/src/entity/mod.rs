@@ -14,6 +14,7 @@ pub(crate) mod chapter;
 pub(crate) mod command_receipt;
 pub(crate) mod connection_test;
 pub(crate) mod document;
+pub(crate) mod embedding_settings;
 pub(crate) mod event;
 pub(crate) mod feedback;
 pub(crate) mod knowledge_entry;

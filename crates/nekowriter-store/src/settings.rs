@@ -149,11 +149,18 @@ fn hash_input(expected_revision: i64, input: &SystemSettingsInput) -> HashedInpu
     HashedInput {
         expected_revision,
         api_base_url: input.api_base_url.as_ref().map(ApiBaseUrl::as_str),
-        api_key: match &input.api_key {
-            ApiKeyChange::Keep => ("keep", None),
-            ApiKeyChange::Clear => ("clear", None),
-            ApiKeyChange::Replace(key) => ("replace", Some(key.expose())),
-        },
+        api_key: input.api_key.hashed(),
         default_model: input.default_model.as_ref(),
+    }
+}
+
+impl ApiKeyChange {
+    /// The change as a command input hashes it; the key enters only the hash.
+    pub(crate) fn hashed(&self) -> (&'static str, Option<&str>) {
+        match self {
+            Self::Keep => ("keep", None),
+            Self::Clear => ("clear", None),
+            Self::Replace(key) => ("replace", Some(key.expose())),
+        }
     }
 }

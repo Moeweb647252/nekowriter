@@ -67,3 +67,53 @@ async fn entries_are_saved_in_spaces_and_browsed_by_keyword() {
     let body: Value = refused.json().await.unwrap();
     assert_eq!(body["params"], "space_not_empty");
 }
+
+#[tokio::test]
+async fn the_embedding_test_checks_the_vectors() {
+    let model = common::model::FakeModel::default();
+    let address = model.serve().await;
+    let server = TestServer::start().await;
+    let settings = get(&server, "/api/settings/embedding").await;
+    let saved = server
+        .post(
+            "/api/settings/embedding",
+            &json!({
+                "commandId": command_id(),
+                "expectedRevision": settings["revision"],
+                "apiBaseUrl": format!("http://{address}/v1"),
+                "apiKey": "sk-embed",
+                "model": { "modelId": "embedder", "dimensions": 4 }
+            }),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(saved.status(), 200);
+    let saved: Value = saved.json().await.unwrap();
+    assert_eq!(saved["apiKeySet"], true);
+    assert!(saved.get("apiKey").is_none());
+
+    let test = |model: Value| {
+        server
+            .post("/api/settings/test-embedding", &json!({ "model": model }))
+            .send()
+    };
+    let passed = test(json!({ "modelId": "embedder", "dimensions": 4 }))
+        .await
+        .unwrap();
+    assert_eq!(passed.status(), 200);
+    let passed: Value = passed.json().await.unwrap();
+    assert_eq!(passed["dimensions"], 4);
+
+    model.embed_with_size(3);
+    let failed = test(json!({ "modelId": "embedder", "dimensions": 4 }))
+        .await
+        .unwrap();
+    assert_eq!(failed.status(), 502);
+    let body: Value = failed.json().await.unwrap();
+    assert_eq!(body["code"], "EMBEDDING_FAILED");
+    assert_eq!(
+        body["params"]["failure"],
+        json!({ "kind": "wrong_dimensions", "expected": 4, "actual": 3 })
+    );
+}

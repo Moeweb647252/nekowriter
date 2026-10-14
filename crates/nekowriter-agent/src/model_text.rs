@@ -331,6 +331,7 @@ pub struct ChapterText {
 pub struct ConnectionTest {
     pub system: Text,
     pub user: Text,
+    pub embedding: Text,
 }
 
 #[cfg(test)]

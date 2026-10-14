@@ -20,7 +20,12 @@ const health: HealthView = {
 
 describe("SettingsPage", () => {
   beforeEach(() => {
-    server.use(http.get("*/api/settings", () => HttpResponse.json(systemSettings())))
+    server.use(
+      http.get("*/api/settings", () => HttpResponse.json(systemSettings())),
+      http.get("*/api/settings/embedding", () =>
+        HttpResponse.json({ apiBaseUrl: null, apiKeySet: false, model: null, revision: 0 }),
+      ),
+    )
   })
 
   it("shows where the installation keeps its data", async () => {

@@ -264,3 +264,5 @@ empty_body = """## 本章当前正文
 [connection_test]
 system = "这是一次连接测试。"
 user = "请只回复 OK。"
+# The text the embedding connection test embeds.
+embedding = "灯塔在风暴中亮着。"

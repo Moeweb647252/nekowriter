@@ -31,6 +31,23 @@ export default {
     save: "Save",
     saved: "Saved the model settings.",
   },
+  embedding: {
+    title: "Embeddings",
+    description:
+      "Semantic knowledge search needs an embedding model. Without one, the knowledge base still works, but cannot be searched by meaning.",
+    baseUrlHint:
+      "An OpenAI-compatible service with an embeddings endpoint, including the version prefix.",
+    model: "Embedding model",
+    useModel: "Set an embedding model",
+    noModel: "Without an embedding model, entries are kept but not indexed.",
+    dimensions: "Dimensions",
+    dimensionsHint:
+      "The size of the vectors the model returns. Changing the model or this size indexes every entry again.",
+    save: "Save",
+    saved: "Saved the embedding settings.",
+    test: "Test embeddings",
+    passed: "Connected. A {{dimensions}}-dimensional vector came back in {{seconds}} s.",
+  },
   profile: {
     modelId: "Model ID",
     contextWindow: "Context window (tokens)",

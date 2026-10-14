@@ -21,6 +21,7 @@ export const queryKeys = {
   /** Revisions never change; no event invalidates them. */
   revision: (revisionId: RevisionId) => ["revisions", revisionId] as const,
   settings: ["settings"] as const,
+  embeddingSettings: ["settings", "embedding"] as const,
   templates: ["templates"] as const,
   knowledge: {
     all: ["knowledge"] as const,

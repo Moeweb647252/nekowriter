@@ -23,6 +23,7 @@ mod dashboard;
 mod delegation;
 mod digest;
 mod documents;
+mod embedding;
 mod entity;
 mod error;
 mod events;
@@ -47,6 +48,7 @@ pub use dashboard::{
     DashboardQuery, DashboardView, JobView, ProjectUsage, ProjectWords, UsageView, WordsView,
 };
 pub use documents::{RevisionSummary, RevisionView};
+pub use embedding::{EmbeddingService, EmbeddingSettingsInput, EmbeddingSettingsView};
 pub use error::StoreError;
 pub use events::{EventBatch, EventRecord, RETENTION_MILLIS};
 pub use execution::{
