@@ -12,7 +12,10 @@ use serde::{Deserialize, Serialize};
 use crate::{
     body::EditProblem,
     citation::VerifiedCitation,
+    embedding::EmbeddingFailure,
+    field::FieldProblem,
     ids::{ReviewId, RevisionId, ToolCallId},
+    knowledge::SearchUnavailable,
     preparation::ArtifactKind,
     question::{AnsweredQuestion, QuestionProblem},
     review::ReviewKind,
@@ -157,6 +160,32 @@ pub enum ToolOutcome {
     Answered { answers: Vec<AnsweredQuestion> },
     /// The questions cannot be shown; the agent may ask again.
     QuestionRejected { problem: QuestionProblem },
+    /// The knowledge base's passages most similar to the query; the call was charged.
+    KnowledgeFound {
+        hits: Vec<KnowledgeHit>,
+        remaining_budget: u32,
+    },
+    /// The embedding service failed; the call was charged all the same (§12.1).
+    KnowledgeFailed { failure: EmbeddingFailure },
+    /// Knowledge search cannot run now; the call was not charged.
+    KnowledgeUnavailable { reason: SearchUnavailable },
+    /// The query is empty or too long; the call was not charged.
+    KnowledgeQueryInvalid { problem: FieldProblem },
+    /// Named spaces no longer exist; the call was not charged.
+    KnowledgeSpacesGone { names: Vec<String> },
+    /// The stage's auxiliary budget is used up; the call was not charged.
+    QuotaExhausted { budget: u32 },
+}
+
+/// A passage the knowledge base returned for a query.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeHit {
+    pub title: String,
+    pub space: String,
+    pub text: String,
+    /// The cosine similarity in thousandths.
+    pub relevance_permille: i32,
 }
 
 /// How a tool call broke the protocol (§8.1, §8.4).

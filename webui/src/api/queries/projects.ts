@@ -73,6 +73,7 @@ export interface ProjectSettingsInput {
   writingLanguage: WritingLanguage
   model: ModelProfile | null
   thinkingLevel: ThinkingLevel
+  auxiliaryBudget: number
 }
 
 export function useUpdateProjectSettings() {

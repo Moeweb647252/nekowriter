@@ -313,6 +313,7 @@ A tool's base outcome is immutable; feedback bindings are stored separately. Whe
 - Revisions, pauses, continues and retries never create a new scope. Lowering the budget below usage leaves 0 remaining; raising it takes effect immediately.
 - A charged tool is charged once per `(scope, tool_call)` when it passes validation and actually executes; no-result and service failures still count. Validation failures, missing engines and an empty budget are not charged.
 - An empty budget returns `QUOTA_EXHAUSTED`; the agent may keep writing or ask the user.
+- `query_knowledge` takes a query and optionally the names of spaces to search (all when empty); the declared names are the live spaces. Its search needs the network, so the call waits as executing while its run stays queued, and the dispatcher carries it out before the run's next request: unavailable search, an invalid query, spaces deleted since and an empty budget resolve it without a charge; otherwise it is charged and returns the five most relevant passages with the budget left. A call interrupted after its charge is carried out again without a second charge.
 
 ### 12.2 Knowledge base
 

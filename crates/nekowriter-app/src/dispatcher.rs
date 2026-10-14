@@ -14,7 +14,7 @@ use nekowriter_agent::{
     prompts::builtin,
     render,
     round::{self, RoundOutcome},
-    stage::{self, Contract, PromptTexts},
+    stage::{self, Available, Contract, PromptTexts},
 };
 use nekowriter_core::{
     call::CallRequest,
@@ -22,16 +22,20 @@ use nekowriter_core::{
     model::EffectiveModel,
     prompt::PromptRole,
     run::{RunHalt, RunStatus},
-    run_message::TranscriptMessage,
+    run_message::{KnowledgeHit, ToolOutcome, TranscriptMessage},
 };
 use nekowriter_store::{
-    DispatchInput, DispatchOutcome, RecordedAnswer, RoundRecord, SealedRequest, Store, StoreError,
-    TranscriptEntry,
+    DispatchInput, DispatchOutcome, KnowledgeSearch, RecordedAnswer, RoundRecord, SealedRequest,
+    SearchHit, Store, StoreError, TranscriptEntry,
 };
 use serde_json::Value;
 use tokio::task::JoinHandle;
 
-use crate::{lifecycle::Shutdown, preview::Previews};
+use crate::{
+    knowledge_search::{self, SearchError},
+    lifecycle::Shutdown,
+    preview::Previews,
+};
 
 pub(crate) struct Dispatcher {
     pub(crate) store: Store,
@@ -86,6 +90,34 @@ impl Dispatcher {
         }
     }
 
+    /// Carries out a writer's knowledge search and records what came of it. A failure of
+    /// the embedding service is the call's outcome; the call stays charged (§12.1).
+    async fn search_knowledge(&self, search: KnowledgeSearch) -> Result<(), StoreError> {
+        let found = knowledge_search::search(
+            &self.store,
+            &self.client,
+            &search.query,
+            &search.spaces,
+            search.top_k,
+        )
+        .await;
+        let outcome = match found {
+            Ok(hits) => ToolOutcome::KnowledgeFound {
+                hits: hits.into_iter().map(knowledge_hit).collect(),
+                remaining_budget: search.remaining_budget,
+            },
+            Err(SearchError::Unavailable(reason)) => ToolOutcome::KnowledgeUnavailable { reason },
+            Err(SearchError::Embedding(error)) => {
+                tracing::warn!(call = %search.call_id, %error, "a knowledge search failed");
+                ToolOutcome::KnowledgeFailed {
+                    failure: error.failure(),
+                }
+            }
+            Err(SearchError::Store(error)) => return Err(error),
+        };
+        self.store.finish_tool(search.call_id, outcome).await
+    }
+
     /// Runs one round. When the store fails, the run fails with an internal error so the
     /// user sees it, instead of staying queued. Returns whether the dispatcher can go on
     /// without waiting for a change.
@@ -104,6 +136,10 @@ impl Dispatcher {
     }
 
     async fn round(&self, run_id: RunId) -> Result<(), StoreError> {
+        // A call that waits for the application is carried out before the next request.
+        if let Some(search) = self.store.begin_tool(run_id).await? {
+            return self.search_knowledge(search).await;
+        }
         let input = self.store.dispatch_input(run_id).await?;
         let prepared = match prepare(&input) {
             Ok(prepared) => prepared,
@@ -204,6 +240,10 @@ impl Dispatcher {
                     ..
                 } => "question",
                 RoundRecord::Call {
+                    request: CallRequest::QueryKnowledge { .. },
+                    ..
+                } => "knowledge_query",
+                RoundRecord::Call {
                     request: CallRequest::Submit { .. },
                     ..
                 } => "submission",
@@ -220,6 +260,18 @@ impl Dispatcher {
             provider_request_id: completion.provider_request_id,
         };
         self.store.record_answer(request_id, answer, round).await
+    }
+}
+
+/// The passage a search hit stands for, as the writer receives it.
+fn knowledge_hit(hit: SearchHit) -> KnowledgeHit {
+    #[allow(clippy::cast_possible_truncation)] // A cosine similarity times 1000 fits.
+    let relevance_permille = (hit.relevance * 1000.0).round() as i32;
+    KnowledgeHit {
+        title: hit.title,
+        space: hit.space_name,
+        text: hit.text,
+        relevance_permille,
     }
 }
 
@@ -243,10 +295,15 @@ fn prepare(input: &DispatchInput) -> Result<Prepared, RunHalt> {
         user: effective(PromptRole::User),
     };
     // Overrides are checked against their variables when saved, so this is a bug.
-    let stage = stage::build(&input.stage, input.writing_language, prompts).map_err(|error| {
-        tracing::error!(run = %input.run_id, ?key, %error, "a prompt does not render");
-        RunHalt::Internal
-    })?;
+    let available = Available {
+        knowledge_spaces: input.knowledge_spaces.as_deref(),
+    };
+    let stage = stage::build(&input.stage, input.writing_language, prompts, available).map_err(
+        |error| {
+            tracing::error!(run = %input.run_id, ?key, %error, "a prompt does not render");
+            RunHalt::Internal
+        },
+    )?;
     let mut rendered = Vec::new();
     let transcript: Vec<TranscriptMessage> = input
         .messages

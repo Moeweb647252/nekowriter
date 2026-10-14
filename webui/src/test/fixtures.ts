@@ -45,6 +45,7 @@ export function projectView(overrides: Partial<ProjectView> = {}): ProjectView {
     writingLanguage: "en",
     model: null,
     thinkingLevel: "off",
+    auxiliaryBudget: 10,
     selectedVersion: {
       id: VERSION_ID,
       number: 1,

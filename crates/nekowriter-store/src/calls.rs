@@ -114,6 +114,12 @@ pub(crate) async fn execute(
         .ok_or_else(|| StoreError::Corrupt(format!("tool call {} was never parsed", call.id)))?;
     let submission = match request {
         CallRequest::Ask { questions } => return ask(tx, run, &call, &questions).await,
+        CallRequest::QueryKnowledge { .. } => {
+            let mut executing = call.into_active_model();
+            executing.status = Set(ToolCallStatus::Executing);
+            executing.update(tx.db()).await?;
+            return requeue(tx, run, false).await;
+        }
         CallRequest::Edit { edit } => {
             if let Some(base) = needs_review(tx.db(), &run, &edit).await? {
                 return propose(tx, run, call, base).await;

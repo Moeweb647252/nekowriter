@@ -29,6 +29,7 @@ export default {
     dimensions: "向量维度",
     search_query: "检索内容",
     top_k: "结果数量",
+    auxiliary_budget: "辅助工具预算",
   },
   resource: {
     project: "作品",

@@ -9,20 +9,22 @@ use nekowriter_core::{
     chapter::{ChapterInput, ChapterKind},
     citation::{CitationSource, VerifiedCitation},
     document::DocumentRole,
+    field::FieldProblem,
+    knowledge::SearchUnavailable,
     preparation::{ArtifactKind, ChapterPlan},
     project::WritingLanguage,
     question::QuestionProblem,
     review::ReviewKind,
     run_message::{
-        ArgumentsProblem, Correction, FeedbackItem, JsonType, ProtocolProblem, ToolOutcome,
-        TranscriptMessage, UnsealedMessage,
+        ArgumentsProblem, Correction, FeedbackItem, JsonType, KnowledgeHit, ProtocolProblem,
+        ToolOutcome, TranscriptMessage, UnsealedMessage,
     },
     stage::{FoldInput, FoldStage, ReviewSubject},
     submission::SubmissionProblem,
 };
 use serde_json::json;
 
-use crate::model_text::model_text;
+use crate::{model_text::model_text, stage::ASK_USER};
 
 /// The writing language, named in the model's language.
 #[must_use]
@@ -49,6 +51,12 @@ pub fn artifact_name(kind: ArtifactKind) -> String {
 #[must_use]
 pub fn artifact_list(kinds: impl IntoIterator<Item = ArtifactKind>) -> String {
     let names: Vec<_> = kinds.into_iter().map(artifact_name).collect();
+    model_list(&names)
+}
+
+/// Names joined into one phrase.
+#[must_use]
+pub fn model_list(names: &[String]) -> String {
     names.join(&model_text().list.separator.render(&[]))
 }
 
@@ -445,8 +453,88 @@ pub fn tool_outcome(outcome: &ToolOutcome) -> String {
                 .protocol_error
                 .render(&[("problem", &protocol_problem(problem))]),
         ),
+        ToolOutcome::KnowledgeFound {
+            hits,
+            remaining_budget,
+        } => return knowledge_found(hits, *remaining_budget),
+        ToolOutcome::KnowledgeFailed { failure: _ } => (
+            "error",
+            results.knowledge_failed.render(&[(
+                "problem",
+                &model_text().knowledge.embedding_failed.render(&[]),
+            )]),
+        ),
+        ToolOutcome::KnowledgeUnavailable { reason } => (
+            "rejected",
+            results
+                .knowledge_unavailable
+                .render(&[("reason", &search_unavailable(reason))]),
+        ),
+        ToolOutcome::KnowledgeQueryInvalid { problem } => (
+            "rejected",
+            results
+                .knowledge_query_invalid
+                .render(&[("problem", &query_problem(problem))]),
+        ),
+        ToolOutcome::KnowledgeSpacesGone { names } => (
+            "rejected",
+            results
+                .knowledge_spaces_gone
+                .render(&[("spaces", &model_list(names))]),
+        ),
+        ToolOutcome::QuotaExhausted { budget } => (
+            "rejected",
+            results
+                .quota_exhausted
+                .render(&[("budget", &budget.to_string()), ("tool", ASK_USER)]),
+        ),
     };
     json!({ "status": status, "message": message }).to_string()
+}
+
+/// The passages a knowledge query found, with the budget left in its scope.
+fn knowledge_found(hits: &[KnowledgeHit], remaining: u32) -> String {
+    let results = &model_text().results;
+    let remaining = remaining.to_string();
+    if hits.is_empty() {
+        let message = results.knowledge_empty.render(&[("remaining", &remaining)]);
+        return json!({ "status": "found", "message": message, "hits": [] }).to_string();
+    }
+    let hits: Vec<_> = hits
+        .iter()
+        .map(|hit| {
+            json!({
+                "title": hit.title,
+                "space": hit.space,
+                "text": hit.text,
+                "relevance": f64::from(hit.relevance_permille) / 1000.0,
+            })
+        })
+        .collect();
+    let message = results.knowledge_found.render(&[("remaining", &remaining)]);
+    json!({ "status": "found", "message": message, "hits": hits }).to_string()
+}
+
+fn search_unavailable(reason: &SearchUnavailable) -> String {
+    let text = &model_text().knowledge;
+    match reason {
+        SearchUnavailable::NotConfigured => text.not_configured.render(&[]),
+        SearchUnavailable::Indexing { .. } => text.indexing.render(&[]),
+    }
+}
+
+fn query_problem(problem: &FieldProblem) -> String {
+    let text = &model_text().knowledge;
+    match problem {
+        FieldProblem::TooLong { max_chars } => text
+            .query_too_long
+            .render(&[("max_chars", &max_chars.to_string())]),
+        FieldProblem::ControlCharacter => text.query_control_character.render(&[]),
+        FieldProblem::Empty => text.query_empty.render(&[]),
+        FieldProblem::InvalidUrl | FieldProblem::OutOfRange { .. } => {
+            text.query_invalid.render(&[])
+        }
+    }
 }
 
 #[must_use]
@@ -617,6 +705,30 @@ mod tests {
     use nekowriter_core::run_message::RejectedArtifact;
 
     use super::*;
+
+    #[test]
+    fn knowledge_results_carry_the_hits_and_the_budget_left() {
+        let found: serde_json::Value =
+            serde_json::from_str(&tool_outcome(&ToolOutcome::KnowledgeFound {
+                hits: vec![KnowledgeHit {
+                    title: "Lamp oil".to_owned(),
+                    space: "Lighthouses".to_owned(),
+                    text: "Carried up the stairs.".to_owned(),
+                    relevance_permille: 875,
+                }],
+                remaining_budget: 4,
+            }))
+            .unwrap();
+        assert_eq!(found["status"], "found");
+        assert_eq!(found["hits"][0]["relevance"], 0.875);
+        assert!(found["message"].as_str().unwrap().contains('4'));
+
+        let exhausted = tool_outcome(&ToolOutcome::QuotaExhausted { budget: 10 });
+        assert!(
+            exhausted.contains("10") && exhausted.contains(ASK_USER),
+            "{exhausted}"
+        );
+    }
 
     // Together these tests render every message kind, so every placeholder in the resource
     // file is checked against the values the code passes.

@@ -10,6 +10,7 @@
 // `default_model` read to Clippy as repeating the struct's name.
 #![allow(clippy::unused_async_trait_impl, clippy::struct_field_names)]
 
+pub(crate) mod budget_charge;
 pub(crate) mod chapter;
 pub(crate) mod command_receipt;
 pub(crate) mod connection_test;

@@ -102,7 +102,7 @@ mod tests {
     use super::*;
     use crate::{
         prompts::builtin,
-        stage::{PromptTexts, build},
+        stage::{Available, PromptTexts, build},
     };
 
     fn stage() -> StageRequest {
@@ -117,6 +117,7 @@ mod tests {
                 system: builtin(key, PromptRole::System),
                 user: builtin(key, PromptRole::User),
             },
+            Available::default(),
         )
         .unwrap()
     }

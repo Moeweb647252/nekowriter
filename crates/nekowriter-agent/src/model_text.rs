@@ -29,6 +29,7 @@ pub struct ModelText {
     pub contracts: Contracts,
     pub tools: Tools,
     pub results: Results,
+    pub knowledge: KnowledgeText,
     pub edit_problems: EditProblems,
     pub question_problems: QuestionProblems,
     pub submission_problems: SubmissionProblems,
@@ -78,6 +79,7 @@ pub struct ChapterKinds {
 #[serde(deny_unknown_fields)]
 pub struct Contracts {
     pub ask_user: Text,
+    pub query_knowledge: Text,
     pub review: Text,
     pub preparation: Text,
     pub chapter_outline: Text,
@@ -93,7 +95,16 @@ pub struct Tools {
     pub replace_content: ReplaceContentText,
     pub submit_chapter: SubmitChapterText,
     pub ask_user: AskUserText,
+    pub query_knowledge: QueryKnowledgeText,
     pub submit_review: SubmitReviewText,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueryKnowledgeText {
+    pub description: Text,
+    pub query: Text,
+    pub spaces: Text,
 }
 
 #[derive(Debug, Deserialize)]
@@ -174,6 +185,25 @@ pub struct Results {
     pub edit_declined: Text,
     pub answered: Text,
     pub question_rejected: Text,
+    pub knowledge_found: Text,
+    pub knowledge_empty: Text,
+    pub knowledge_failed: Text,
+    pub knowledge_unavailable: Text,
+    pub knowledge_query_invalid: Text,
+    pub knowledge_spaces_gone: Text,
+    pub quota_exhausted: Text,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KnowledgeText {
+    pub not_configured: Text,
+    pub indexing: Text,
+    pub embedding_failed: Text,
+    pub query_empty: Text,
+    pub query_too_long: Text,
+    pub query_control_character: Text,
+    pub query_invalid: Text,
 }
 
 #[derive(Debug, Deserialize)]

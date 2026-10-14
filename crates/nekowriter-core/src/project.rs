@@ -1,10 +1,10 @@
 //! Projects and the values that describe them.
 
-use sea_orm::{DeriveActiveEnum, EnumIter, sea_query::StringLen};
+use sea_orm::{DeriveActiveEnum, DeriveValueType, EnumIter, sea_query::StringLen};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::field::{Field, single_line_text};
+use crate::field::{Field, FieldError, FieldProblem, single_line_text};
 
 single_line_text!(
     /// The name of a project. A project name is not the title of its novel.
@@ -19,6 +19,36 @@ single_line_text!(
     Field::NovelTitle,
     200
 );
+
+/// How many charged auxiliary tool calls (knowledge queries, web research) each budget
+/// scope of a project allows: the preparation, and each chapter outline (§12.1, D06).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS, DeriveValueType)]
+#[ts(export)]
+pub struct AuxiliaryBudget(u32);
+
+impl AuxiliaryBudget {
+    pub const DEFAULT: Self = Self(10);
+    pub const MAX: u32 = 1_000;
+
+    pub fn new(value: u32) -> Result<Self, FieldError> {
+        if value <= Self::MAX {
+            Ok(Self(value))
+        } else {
+            Err(FieldError {
+                field: Field::AuxiliaryBudget,
+                problem: FieldProblem::OutOfRange {
+                    min: 0,
+                    max: Self::MAX,
+                },
+            })
+        }
+    }
+
+    #[must_use]
+    pub fn get(self) -> u32 {
+        self.0
+    }
+}
 
 /// The language the agents write a project's novel in.
 ///

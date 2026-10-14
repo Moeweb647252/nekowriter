@@ -273,3 +273,75 @@ async fn search_ranks_chunks_by_meaning_once_indexed() {
     // Three entries were indexed and one query embedded.
     assert_eq!(dashboard["usage"]["embeddings"]["requests"], 4);
 }
+
+#[tokio::test]
+async fn the_preparation_writer_queries_the_knowledge_base() {
+    use common::workspace::{command, configure, first_round, step, wait_for};
+
+    let model = common::model::FakeModel::default();
+    let server = TestServer::start().await;
+    configure(&server, model.serve().await).await;
+    embed_with(&server, &model).await;
+    let space: Value = server
+        .post(
+            "/api/knowledge/spaces",
+            &json!({ "commandId": command_id(), "name": "Lighthouses" }),
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let oil = create_entry(&server, &space, "Lamp oil", "The lamp burns oil.").await;
+    wait_for_index(&server, &oil, "ready").await;
+
+    let project = server.create_project("Rain").await;
+    let version = project["selectedVersion"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    command(
+        &server,
+        &format!("/api/versions/{version}/brief"),
+        &version,
+        json!({ "brief": "A ghost story in a lighthouse." }),
+    )
+    .await;
+    model.call(
+        "query_knowledge",
+        json!({ "query": "lamp oil", "spaces": ["Lighthouses"] }),
+    );
+    model.call("submit_preparation", first_round());
+    command(
+        &server,
+        &format!("/api/versions/{version}/preparation/start"),
+        &version,
+        json!({}),
+    )
+    .await;
+    wait_for(&server, &version, |view| {
+        step(view) == ("preparation", "reviewing")
+    })
+    .await;
+
+    let requests = model.requests();
+    let first = requests[0].body["tools"].to_string();
+    assert!(
+        first.contains("query_knowledge") && first.contains("Lighthouses"),
+        "{first}"
+    );
+    let result = requests[1].body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|message| message["role"] == "tool")
+        .unwrap()["content"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let result: Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(result["status"], "found");
+    assert_eq!(result["hits"][0]["title"], "Lamp oil");
+    assert_eq!(result["hits"][0]["text"], "The lamp burns oil.");
+}

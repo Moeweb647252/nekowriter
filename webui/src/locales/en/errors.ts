@@ -28,6 +28,7 @@ export default {
     dimensions: "Dimensions",
     search_query: "Search",
     top_k: "Number of results",
+    auxiliary_budget: "Auxiliary tool budget",
   },
   resource: {
     project: "work",

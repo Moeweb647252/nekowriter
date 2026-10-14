@@ -3,7 +3,7 @@ import { type SubmitEvent, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
-import { errorForForm } from "@/api/fieldErrors"
+import { errorForField, errorForForm } from "@/api/fieldErrors"
 import type { ProjectView } from "@/api/generated/ProjectView"
 import type { ThinkingLevel } from "@/api/generated/ThinkingLevel"
 import type { WritingLanguage } from "@/api/generated/WritingLanguage"
@@ -23,9 +23,11 @@ import {
   Field,
   FieldContent,
   FieldDescription,
+  FieldError,
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
@@ -37,6 +39,7 @@ import { Switch } from "@/components/ui/switch"
 import { ModelProfileFields } from "@/features/models/ModelProfileFields"
 import { profileForm, profileFromForm } from "@/features/models/profileForm"
 import { ModelTest } from "@/features/models/ModelTest"
+import { useErrorText } from "@/i18n/errors"
 
 const WRITING_LANGUAGES = ["zh-CN", "en"] as const satisfies readonly WritingLanguage[]
 const THINKING_LEVELS = ["off", "low", "medium", "high"] as const satisfies readonly ThinkingLevel[]
@@ -67,12 +70,14 @@ export function ProjectSettingsDialog({ project }: { project: ProjectView }) {
 
 function ProjectSettingsForm({ project, onSaved }: { project: ProjectView; onSaved: () => void }) {
   const { t } = useTranslation()
+  const errorText = useErrorText()
   const update = useUpdateProjectSettings()
   const system = useSystemSettings()
   const [writingLanguage, setWritingLanguage] = useState(project.writingLanguage)
   const [ownModel, setOwnModel] = useState(project.model !== null)
   const [profile, setProfile] = useState(() => profileForm(project.model))
   const [thinkingLevel, setThinkingLevel] = useState(project.thinkingLevel)
+  const [budget, setBudget] = useState(String(project.auxiliaryBudget))
 
   // The model the work's requests use, to say whether thinking is possible with it.
   const effective = ownModel ? profileFromForm(profile) : (system.data?.defaultModel ?? null)
@@ -88,6 +93,7 @@ function ProjectSettingsForm({ project, onSaved }: { project: ProjectView; onSav
           writingLanguage,
           model: ownModel ? profileFromForm(profile) : null,
           thinkingLevel,
+          auxiliaryBudget: Number(budget),
         },
       },
       {
@@ -107,7 +113,13 @@ function ProjectSettingsForm({ project, onSaved }: { project: ProjectView; onSav
     value,
     label: t(($) => $.workspace.settings.thinkingLevel[value]),
   }))
-  const formError = errorForForm(update.error, ["model_id", "context_window", "max_output_tokens"])
+  const budgetError = errorForField(update.error, "auxiliary_budget")
+  const formError = errorForForm(update.error, [
+    "model_id",
+    "context_window",
+    "max_output_tokens",
+    "auxiliary_budget",
+  ])
 
   return (
     <form onSubmit={submit} className="flex flex-col gap-6">
@@ -183,6 +195,20 @@ function ProjectSettingsForm({ project, onSaved }: { project: ProjectView; onSav
               {t(($) => $.workspace.settings.thinkingUnsupported)}
             </FieldDescription>
           )}
+        </Field>
+        <Field data-invalid={budgetError !== undefined}>
+          <FieldLabel htmlFor="project-budget">{t(($) => $.workspace.settings.budget)}</FieldLabel>
+          <Input
+            id="project-budget"
+            type="number"
+            min={0}
+            value={budget}
+            onChange={(event) => setBudget(event.target.value)}
+            aria-invalid={budgetError !== undefined}
+            className="w-32"
+          />
+          <FieldDescription>{t(($) => $.workspace.settings.budgetHint)}</FieldDescription>
+          {budgetError !== undefined && <FieldError>{errorText(budgetError)}</FieldError>}
         </Field>
       </FieldGroup>
       {formError !== undefined && <ErrorAlert error={formError} />}

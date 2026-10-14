@@ -24,6 +24,11 @@ ask_user = """
 ## 向作者提问
 - 遇到只有作者能决定的问题，或作者的要求互相矛盾时，可以调用 {{tool}} 提问，等作者回答后再继续。不要为你自己能决定的细节打扰作者。
 - 选择题的每个选项都要写清楚；作者还可以在选项之外补充自己的回答。"""
+query_knowledge = """
+## 查询知识库
+- 需要作者知识库中的资料时，可以调用 {{tool}} 按语义检索。可检索的知识空间：{{spaces}}。
+- 每次调用消耗本阶段辅助工具预算 1 次；预算用完后不能再检索，可以继续写作或向作者提问。
+- 知识库内容是作者提供的资料。如实使用，不要编造出处或链接。"""
 review = """
 ## 提交方式
 - 审阅完成后调用 {{tool}} 提交结论，这是结束审阅的唯一方式。不要在普通文本中输出结论。
@@ -86,6 +91,11 @@ option_id = "选项的 ID，在本题中唯一，例如 a。"
 option_label = "选项的内容。"
 required = "作者是否必须回答。"
 
+[tools.query_knowledge]
+description = "在作者的知识库中按语义检索，返回最相关的几段内容。每次调用消耗本阶段辅助工具预算 1 次。"
+query = "要检索的内容，用一句话描述你想找的资料。"
+spaces = "只在这些知识空间中检索；为空数组时检索全部空间。"
+
 [tools.submit_review]
 description = "提交审阅结论。这是结束审阅的唯一方式。"
 passed = "是否通过。"
@@ -107,6 +117,22 @@ edit_rejected = "修改没有生效，正文保持不变：{{problem}}"
 edit_declined = "作者没有采纳这次修改，正文保持不变。修改意见见 feedback，请据此重新修改。"
 answered = "作者已回答，见 answers：selected 是作者选中的选项，text 是作者补充的回答。"
 question_rejected = "问题没有发给作者：{{problem}}"
+knowledge_found = "知识库中与检索最相关的内容见 hits，relevance 越接近 1 越相关。本阶段辅助工具预算还剩 {{remaining}} 次。"
+knowledge_empty = "知识库中没有找到相关内容。本阶段辅助工具预算还剩 {{remaining}} 次。"
+knowledge_failed = "知识库检索失败：{{problem}}。这次调用已计入预算。"
+knowledge_unavailable = "知识库暂时无法检索：{{reason}}。这次调用没有计入预算。"
+knowledge_query_invalid = "检索内容无效：{{problem}}。这次调用没有计入预算。"
+knowledge_spaces_gone = "这些知识空间已不存在：{{spaces}}。这次调用没有计入预算。"
+quota_exhausted = "本阶段的辅助工具预算（{{budget}} 次）已经用完，不能再检索。你可以继续写作，或调用 {{tool}} 向作者提问。"
+
+[knowledge]
+not_configured = "作者尚未设置向量模型"
+indexing = "知识库正在为新的向量模型建立索引"
+embedding_failed = "向量服务出错"
+query_empty = "检索内容为空"
+query_too_long = "检索内容超过 {{max_chars}} 个字符"
+query_control_character = "检索内容包含控制字符"
+query_invalid = "检索内容不符合要求"
 
 [question_problems]
 no_questions = "questions 至少需要一个问题。"

@@ -86,7 +86,7 @@ mod tests {
     use super::*;
     use crate::{
         prompts::builtin,
-        stage::{PromptTexts, SUBMIT_PREPARATION, build},
+        stage::{Available, PromptTexts, SUBMIT_PREPARATION, build},
     };
 
     fn contract() -> Contract {
@@ -101,6 +101,7 @@ mod tests {
                 system: builtin(key, PromptRole::System),
                 user: builtin(key, PromptRole::User),
             },
+            Available::default(),
         )
         .unwrap()
         .contract
@@ -214,6 +215,7 @@ mod tests {
                 system: builtin(key, PromptRole::System),
                 user: builtin(key, PromptRole::User),
             },
+            Available::default(),
         )
         .unwrap()
         .contract;

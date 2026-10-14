@@ -35,6 +35,7 @@ pub enum Field {
     Dimensions,
     SearchQuery,
     TopK,
+    AuxiliaryBudget,
 }
 
 /// What is wrong with a rejected field value.

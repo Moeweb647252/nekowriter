@@ -249,6 +249,9 @@ export default {
   settings: {
     title: "作品设置",
     writingLanguage: "写作语言",
+    budget: "辅助工具预算",
+    budgetHint:
+      "Agent 在前期准备阶段可以查询知识库的次数，每章大纲另有同样的次数。向你提问不计入预算。",
     writingLanguageHint: "Agent 会用这种语言撰写小说。",
     ownModel: "使用单独的模型",
     ownModelHint: "否则使用“设置”中的默认模型。",

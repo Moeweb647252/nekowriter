@@ -26,6 +26,9 @@ pub enum CallRequest {
     Edit { edit: BodyEdit },
     /// `ask_user`: the run waits for the user's answers.
     Ask { questions: Vec<Question> },
+    /// `query_knowledge`: a semantic search of the knowledge base, in the named spaces or
+    /// in all of them. The application carries it out between rounds (§12.1, §12.2).
+    QueryKnowledge { query: String, spaces: Vec<String> },
     /// The stage's submission tool.
     Submit { submission: StageSubmission },
 }

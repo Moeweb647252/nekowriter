@@ -57,6 +57,9 @@ pub enum ToolCallStatus {
     AwaitingReview,
     /// Questions waiting for the user's answers.
     AwaitingAnswer,
+    /// Work the application carries out between rounds, such as a knowledge search; the
+    /// run stays queued until it is done.
+    Executing,
     /// The outcome is recorded and its result message queued.
     Resolved,
 }

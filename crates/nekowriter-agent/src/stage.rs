@@ -27,7 +27,7 @@ use serde_json::Value;
 
 use crate::{
     model_text::model_text,
-    render::{artifact_list, current_body, language_name, review_material},
+    render::{artifact_list, current_body, language_name, model_list, review_material},
     schema::{Property, Schema},
 };
 
@@ -42,6 +42,7 @@ pub const SUBMIT_REVIEW: &str = "submit_review";
 pub const APPEND_CONTENT: &str = "append_content";
 pub const REPLACE_CONTENT: &str = "replace_content";
 pub const ASK_USER: &str = "ask_user";
+pub const QUERY_KNOWLEDGE: &str = "query_knowledge";
 
 /// A tool declared to the model.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -68,41 +69,47 @@ impl Contract {
     pub fn all_tools(&self) -> Vec<ToolDefinition> {
         self.tools
             .iter()
-            .map(|tool| tool.definition())
+            .map(WorkTool::definition)
             .chain([self.submission.clone()])
             .collect()
     }
 }
 
 /// A tool that does work within a stage without ending it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorkTool {
     AppendContent,
     ReplaceContent,
     AskUser,
+    /// Semantic search of the knowledge base, in the named spaces (§8.3, §12.2).
+    QueryKnowledge {
+        spaces: Vec<String>,
+    },
 }
 
 impl WorkTool {
     #[must_use]
-    pub fn name(self) -> &'static str {
+    pub fn name(&self) -> &'static str {
         match self {
             Self::AppendContent => APPEND_CONTENT,
             Self::ReplaceContent => REPLACE_CONTENT,
             Self::AskUser => ASK_USER,
+            Self::QueryKnowledge { .. } => QUERY_KNOWLEDGE,
         }
     }
 
     #[must_use]
-    pub fn definition(self) -> ToolDefinition {
+    pub fn definition(&self) -> ToolDefinition {
         match self {
             Self::AppendContent => append_tool(),
             Self::ReplaceContent => replace_tool(),
             Self::AskUser => ask_tool(),
+            Self::QueryKnowledge { spaces } => query_knowledge_tool(spaces),
         }
     }
 
     /// Parses the arguments of a call to this tool.
-    pub fn parse(self, arguments: &Value) -> Result<CallRequest, ArgumentsProblem> {
+    pub fn parse(&self, arguments: &Value) -> Result<CallRequest, ArgumentsProblem> {
         #[derive(serde::Deserialize)]
         struct Append {
             content: String,
@@ -115,6 +122,12 @@ impl WorkTool {
         #[derive(serde::Deserialize)]
         struct Ask {
             questions: Vec<Question>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Query {
+            query: String,
+            #[serde(default)]
+            spaces: Vec<String>,
         }
         let schema = self.definition().parameters;
         match self {
@@ -136,6 +149,12 @@ impl WorkTool {
             Self::AskUser => read::<Ask>(&schema, arguments).map(|ask| CallRequest::Ask {
                 questions: ask.questions,
             }),
+            Self::QueryKnowledge { .. } => {
+                read::<Query>(&schema, arguments).map(|query| CallRequest::QueryKnowledge {
+                    query: query.query,
+                    spaces: query.spaces,
+                })
+            }
         }
     }
 }
@@ -153,6 +172,14 @@ pub enum StageKind {
 pub struct PromptTexts<'a> {
     pub system: &'a str,
     pub user: &'a str,
+}
+
+/// What a stage may use beyond its fixed tools, as the store finds it for this request.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Available<'a> {
+    /// The knowledge spaces the writer can search, when semantic search is ready and some
+    /// space exists; the preparation and outline writers then get `query_knowledge`.
+    pub knowledge_spaces: Option<&'a [String]>,
 }
 
 /// Everything stage-specific in a request.
@@ -180,6 +207,7 @@ pub fn build(
     input: &StageInput,
     language: WritingLanguage,
     prompts: PromptTexts<'_>,
+    available: Available<'_>,
 ) -> Result<StageRequest, TemplateError> {
     let language = language_name(language);
     let contracts = &model_text().contracts;
@@ -194,12 +222,13 @@ pub fn build(
             let contract = contracts
                 .preparation
                 .render(&[("tool", SUBMIT_PREPARATION)]);
+            let (contract, tools) = with_research(with_asking(&contract), available);
             Ok(StageRequest {
-                system: with_section(&render(prompts.system, &values)?, &with_asking(&contract)),
+                system: with_section(&render(prompts.system, &values)?, &contract),
                 user: render(prompts.user, &values)?,
                 contract: Contract {
                     stage: StageKind::Preparation,
-                    tools: vec![WorkTool::AskUser],
+                    tools,
                     submission: preparation_tool(required),
                 },
             })
@@ -211,12 +240,13 @@ pub fn build(
             let contract = contracts
                 .chapter_outline
                 .render(&[("tool", SUBMIT_CHAPTER_OUTLINE), ("chapter_id", &id)]);
+            let (contract, tools) = with_research(with_asking(&contract), available);
             Ok(StageRequest {
-                system: with_section(&render(prompts.system, &values)?, &with_asking(&contract)),
+                system: with_section(&render(prompts.system, &values)?, &contract),
                 user: render(prompts.user, &values)?,
                 contract: Contract {
                     stage: StageKind::ChapterOutline,
-                    tools: vec![WorkTool::AskUser],
+                    tools,
                     submission: outline_tool(chapter.id),
                 },
             })
@@ -319,6 +349,29 @@ fn with_asking(contract: &str) -> String {
         .ask_user
         .render(&[("tool", ASK_USER)]);
     with_section(contract, &asking)
+}
+
+/// The tools of a stage that may ask and research: `ask_user`, and `query_knowledge`
+/// when it is available, with its section of the contract (§8.3).
+fn with_research(contract: String, available: Available<'_>) -> (String, Vec<WorkTool>) {
+    match available.knowledge_spaces {
+        Some(spaces) => {
+            let section = model_text()
+                .contracts
+                .query_knowledge
+                .render(&[("tool", QUERY_KNOWLEDGE), ("spaces", &model_list(spaces))]);
+            (
+                with_section(&contract, &section),
+                vec![
+                    WorkTool::AskUser,
+                    WorkTool::QueryKnowledge {
+                        spaces: spaces.to_vec(),
+                    },
+                ],
+            )
+        }
+        None => (contract, vec![WorkTool::AskUser]),
+    }
 }
 
 fn with_section(text: &str, section: &str) -> String {
@@ -502,6 +555,29 @@ fn replace_tool() -> ToolDefinition {
     }
 }
 
+fn query_knowledge_tool(spaces: &[String]) -> ToolDefinition {
+    let text = &model_text().tools.query_knowledge;
+    ToolDefinition {
+        name: QUERY_KNOWLEDGE,
+        description: text.description.render(&[]),
+        parameters: Schema::Object {
+            properties: vec![
+                property("query", text.query.render(&[]), true, string()),
+                property(
+                    "spaces",
+                    text.spaces.render(&[]),
+                    false,
+                    Schema::Array {
+                        items: Box::new(Schema::String {
+                            allowed: Some(spaces.to_vec()),
+                        }),
+                    },
+                ),
+            ],
+        },
+    }
+}
+
 fn ask_tool() -> ToolDefinition {
     let text = &model_text().tools.ask_user;
     let option = Schema::Object {
@@ -614,6 +690,7 @@ mod tests {
                 system: builtin(key, PromptRole::System),
                 user: builtin(key, PromptRole::User),
             },
+            Available::default(),
         )
         .unwrap()
     }
@@ -681,6 +758,42 @@ mod tests {
     }
 
     #[test]
+    fn an_outline_stage_can_search_the_spaces_that_exist() {
+        let outline = StageInput::ChapterOutline {
+            chapter: chapter(),
+            guidance: String::new(),
+        };
+        let texts = texts(PromptKey::ChapterOutline);
+        let without = build(&outline, WritingLanguage::En, texts, Available::default()).unwrap();
+        assert_eq!(without.contract.tools, [WorkTool::AskUser]);
+
+        let spaces = ["Lighthouses".to_owned(), "Tides".to_owned()];
+        let with = build(
+            &outline,
+            WritingLanguage::En,
+            texts,
+            Available {
+                knowledge_spaces: Some(&spaces),
+            },
+        )
+        .unwrap();
+        assert!(with.system.contains(QUERY_KNOWLEDGE));
+        assert!(with.system.contains("Lighthouses"));
+        let tool = &with.contract.tools[1];
+        assert_eq!(
+            tool.parse(&json!({ "query": "lamp oil", "spaces": ["Tides"] })),
+            Ok(CallRequest::QueryKnowledge {
+                query: "lamp oil".to_owned(),
+                spaces: vec!["Tides".to_owned()],
+            })
+        );
+        assert!(matches!(
+            tool.parse(&json!({ "query": "lamp oil", "spaces": ["Elsewhere"] })),
+            Err(ArgumentsProblem::NotAllowed { .. })
+        ));
+    }
+
+    #[test]
     fn a_body_stage_declares_the_edit_tools_and_pins_the_chapter() {
         let chapter = chapter();
         let request = build(
@@ -691,6 +804,7 @@ mod tests {
             },
             WritingLanguage::En,
             texts(PromptKey::ChapterWrite),
+            Available::default(),
         )
         .unwrap();
         assert!(request.user.contains("The keeper woke."));
@@ -749,6 +863,7 @@ mod tests {
             },
             WritingLanguage::ZhCn,
             texts(PromptKey::ChapterOutline),
+            Available::default(),
         )
         .unwrap();
         assert!(
@@ -793,6 +908,7 @@ mod tests {
             },
             WritingLanguage::En,
             texts(PromptKey::ReviewChapterEdit),
+            Available::default(),
         )
         .unwrap();
 

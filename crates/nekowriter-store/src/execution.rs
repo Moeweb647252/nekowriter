@@ -49,6 +49,7 @@ use crate::{
     feedback::{bound_feedback, feedback_marker, seal_feedback},
     preparation::required_artifacts,
     prompts::{PromptOverrides, prompt_overrides},
+    search::searchable_spaces,
     workflow::{VersionContext, WorkspaceAck, load_version, project_has_other_active_run, touch},
 };
 
@@ -67,6 +68,8 @@ pub struct DispatchInput {
     pub model: ModelSettings,
     /// The prompt overrides in force for the run's project.
     pub prompts: PromptOverrides,
+    /// The knowledge spaces a writer can search now, if any (§8.3).
+    pub knowledge_spaces: Option<Vec<String>>,
     /// The newest message the conversation had; [`Store::dispatch`] refuses to seal if
     /// another one arrived since.
     last_message_id: Option<i64>,
@@ -173,6 +176,7 @@ impl Store {
         }
         let model = model_settings(&self.db, &project).await?;
         let prompts = prompt_overrides(&self.db, Some(project.id)).await?;
+        let knowledge_spaces = searchable_spaces(&self.db).await?;
         Ok(DispatchInput {
             run_id,
             project_id: run.project_id,
@@ -183,6 +187,7 @@ impl Store {
             messages,
             model,
             prompts,
+            knowledge_spaces,
             last_message_id,
             feedback_marker,
         })

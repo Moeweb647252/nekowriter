@@ -1,7 +1,7 @@
 use nekowriter_core::{
     ids::{ProjectId, VersionId},
     model::{ModelProfile, ThinkingLevel},
-    project::{ProjectName, WritingLanguage},
+    project::{AuxiliaryBudget, ProjectName, WritingLanguage},
     time::Timestamp,
 };
 use sea_orm::entity::prelude::*;
@@ -17,6 +17,8 @@ pub struct Model {
     /// The project's own model; `None` uses the system default.
     pub model: Option<ModelProfile>,
     pub thinking_level: ThinkingLevel,
+    /// Charged auxiliary tool calls each budget scope allows (§12.1).
+    pub auxiliary_budget: AuxiliaryBudget,
     /// The version the workspace shows. It always belongs to this project; there is no
     /// foreign key because versions also reference their project.
     pub selected_version_id: VersionId,

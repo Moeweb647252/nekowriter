@@ -8,4 +8,8 @@ export type UpdateProjectSettingsRequest = { commandId: CommandId, expectedRevis
 /**
  * The project's own model; `null` uses the system default.
  */
-model: ModelProfile | null, thinkingLevel: ThinkingLevel, };
+model: ModelProfile | null, thinkingLevel: ThinkingLevel, 
+/**
+ * Charged auxiliary tool calls per budget scope (§12.1).
+ */
+auxiliaryBudget: number, };

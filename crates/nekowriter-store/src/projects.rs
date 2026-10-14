@@ -9,7 +9,7 @@ use nekowriter_core::{
     event::Event,
     ids::{CommandId, ProjectId, VersionId},
     model::{ModelProfile, ThinkingLevel},
-    project::{NovelTitle, ProjectName, WritingLanguage},
+    project::{AuxiliaryBudget, NovelTitle, ProjectName, WritingLanguage},
     time::Timestamp,
     workflow::WorkflowStage,
 };
@@ -39,6 +39,7 @@ pub struct ProjectView {
     /// The project's own model; `None` uses the system default.
     pub model: Option<ModelProfile>,
     pub thinking_level: ThinkingLevel,
+    pub auxiliary_budget: AuxiliaryBudget,
     pub selected_version: VersionSummary,
     /// Increases with every change; commands that modify the project must quote it.
     pub revision: i64,
@@ -85,6 +86,7 @@ pub struct ProjectSettings {
     pub writing_language: WritingLanguage,
     pub model: Option<ModelProfile>,
     pub thinking_level: ThinkingLevel,
+    pub auxiliary_budget: AuxiliaryBudget,
 }
 
 impl Store {
@@ -144,6 +146,7 @@ impl Store {
             writing_language: Set(input.writing_language),
             model: Set(None),
             thinking_level: Set(ThinkingLevel::Off),
+            auxiliary_budget: Set(AuxiliaryBudget::DEFAULT),
             selected_version_id: Set(version_id),
             revision: Set(1),
             created_at: Set(now),
@@ -199,6 +202,7 @@ impl Store {
             model.writing_language = Set(settings.writing_language);
             model.model = Set(settings.model);
             model.thinking_level = Set(settings.thinking_level);
+            model.auxiliary_budget = Set(settings.auxiliary_budget);
         })
         .await
     }
@@ -358,6 +362,7 @@ fn view(project: project::Model, selected_version: VersionSummary) -> ProjectVie
         writing_language: project.writing_language,
         model: project.model,
         thinking_level: project.thinking_level,
+        auxiliary_budget: project.auxiliary_budget,
         selected_version,
         revision: project.revision,
         created_at: project.created_at,

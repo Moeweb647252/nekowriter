@@ -42,6 +42,7 @@ mod schema;
 mod search;
 mod settings;
 mod templates;
+mod tools;
 mod versions;
 mod workflow;
 mod workspace;
@@ -68,6 +69,7 @@ pub use questions::QuestionView;
 pub use search::{SearchHit, SearchProfile};
 pub use settings::{ApiKeyChange, SystemSettingsInput, SystemSettingsView};
 pub use templates::PromptTemplateView;
+pub use tools::KnowledgeSearch;
 pub use workflow::WorkspaceAck;
 pub use workspace::{ArtifactView, ChapterView, ReviewView, RunView, WorkspaceView};
 

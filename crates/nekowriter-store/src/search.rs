@@ -11,8 +11,8 @@ use nekowriter_core::{
     model::ModelService,
 };
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DerivePartialModel, EntityTrait, PaginatorTrait, QueryFilter,
-    Set,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DerivePartialModel, EntityTrait,
+    PaginatorTrait, QueryFilter, QueryOrder, Set,
 };
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -53,6 +53,45 @@ pub struct SearchHit {
     pub relevance: f32,
 }
 
+/// Why search cannot run now, if it cannot: no model is set, or a newly chosen model is
+/// still indexing the entries.
+pub(crate) async fn search_unavailable<C: ConnectionTrait>(
+    db: &C,
+) -> Result<Option<SearchUnavailable>, StoreError> {
+    let Some(profile) = current_profile(db).await? else {
+        return Ok(Some(SearchUnavailable::NotConfigured));
+    };
+    if profile.ready_at.is_some() {
+        return Ok(None);
+    }
+    let remaining = knowledge_index::Entity::find()
+        .filter(knowledge_index::Column::ProfileId.eq(profile.id))
+        .filter(knowledge_index::Column::Status.is_in([IndexStatus::Pending, IndexStatus::Running]))
+        .count(db)
+        .await?;
+    Ok(Some(SearchUnavailable::Indexing {
+        remaining: u32::try_from(remaining).unwrap_or(u32::MAX),
+    }))
+}
+
+/// The names of the spaces a writer can search, when search can run and a space exists.
+pub(crate) async fn searchable_spaces<C: ConnectionTrait>(
+    db: &C,
+) -> Result<Option<Vec<String>>, StoreError> {
+    if search_unavailable(db).await?.is_some() {
+        return Ok(None);
+    }
+    let names: Vec<String> = knowledge_space::Entity::find()
+        .filter(knowledge_space::Column::DeletedAt.is_null())
+        .order_by_asc(knowledge_space::Column::Name)
+        .all(db)
+        .await?
+        .into_iter()
+        .map(|space| space.name.as_str().to_owned())
+        .collect();
+    Ok((!names.is_empty()).then_some(names))
+}
+
 #[derive(Debug, DerivePartialModel)]
 #[sea_orm(entity = "knowledge_entry::Entity")]
 struct EntryRow {
@@ -67,6 +106,9 @@ impl Store {
     pub async fn search_profile(
         &self,
     ) -> Result<Result<SearchProfile, SearchUnavailable>, StoreError> {
+        if let Some(reason) = search_unavailable(&self.db).await? {
+            return Ok(Err(reason));
+        }
         let settings = embedding_settings::Entity::find_by_id(ROW_ID)
             .one(&self.db)
             .await?;
@@ -76,19 +118,6 @@ impl Store {
         let (Some(base_url), Some(model)) = (settings.api_base_url, settings.model) else {
             return Ok(Err(SearchUnavailable::NotConfigured));
         };
-        if profile.ready_at.is_none() {
-            let remaining = knowledge_index::Entity::find()
-                .filter(knowledge_index::Column::ProfileId.eq(profile.id))
-                .filter(
-                    knowledge_index::Column::Status
-                        .is_in([IndexStatus::Pending, IndexStatus::Running]),
-                )
-                .count(&self.db)
-                .await?;
-            return Ok(Err(SearchUnavailable::Indexing {
-                remaining: u32::try_from(remaining).unwrap_or(u32::MAX),
-            }));
-        }
         Ok(Ok(SearchProfile {
             profile_id: profile.id,
             service: ModelService {

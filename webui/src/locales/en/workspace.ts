@@ -272,6 +272,9 @@ export default {
     title: "Work settings",
     writingLanguage: "Writing language",
     writingLanguageHint: "The agents write the novel in this language.",
+    budget: "Auxiliary tool budget",
+    budgetHint:
+      "How many knowledge queries the agents may make while preparing, and again for each chapter outline. Asking you questions is free.",
     ownModel: "Use its own model",
     ownModelHint: "Otherwise the work uses the default model from Settings.",
     thinking: "Thinking",

@@ -4,7 +4,7 @@ use axum::{extract::State, http::StatusCode};
 use nekowriter_core::{
     ids::{CommandId, ProjectId, VersionId},
     model::{ModelProfile, ThinkingLevel},
-    project::{NovelTitle, ProjectName, WritingLanguage},
+    project::{AuxiliaryBudget, NovelTitle, ProjectName, WritingLanguage},
 };
 use nekowriter_store::{NewProject, ProjectListFilter, ProjectSettings, ProjectView};
 use serde::Deserialize;
@@ -56,6 +56,8 @@ pub struct UpdateProjectSettingsRequest {
     #[ts(as = "Option<ModelProfile>")]
     pub model: Option<ModelProfileInput>,
     pub thinking_level: ThinkingLevel,
+    /// Charged auxiliary tool calls per budget scope (§12.1).
+    pub auxiliary_budget: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, TS)]
@@ -150,6 +152,7 @@ pub(crate) async fn update_settings(
         writing_language: request.writing_language,
         model: request.model.map(ModelProfileInput::parse).transpose()?,
         thinking_level: request.thinking_level,
+        auxiliary_budget: AuxiliaryBudget::new(request.auxiliary_budget)?,
     };
     let project = state
         .store
