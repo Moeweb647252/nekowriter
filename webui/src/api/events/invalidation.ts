@@ -12,10 +12,14 @@ function affectedQueries(event: Event): readonly QueryKey[] {
   switch (event.type) {
     // Workspaces show their project and its versions.
     case "project_changed":
-      return [queryKeys.projects.all, queryKeys.workspaces.all]
+      return [queryKeys.projects.all, queryKeys.workspaces.all, queryKeys.dashboard.all]
     // Project lists show the selected version's stage.
     case "version_changed":
-      return [queryKeys.workspaces.version(event.versionId), queryKeys.projects.all]
+      return [
+        queryKeys.workspaces.version(event.versionId),
+        queryKeys.projects.all,
+        queryKeys.dashboard.all,
+      ]
     case "settings_changed":
       return [queryKeys.settings]
     default:

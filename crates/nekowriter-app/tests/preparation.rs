@@ -202,6 +202,27 @@ async fn the_connection_test_sends_a_real_request_and_reports_failures_by_kind()
         body["params"]["failure"],
         json!({ "kind": "http_status", "status": 404 })
     );
+
+    // Both tests count on the dashboard, apart from runs.
+    let dashboard: Value = server
+        .get("/api/dashboard?boundaries=0,9999999999999")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let tests = &dashboard["usage"]["connectionTests"];
+    assert_eq!(
+        (&tests["requests"], &tests["noAnswer"]),
+        (&json!(2), &json!(1))
+    );
+    let refused = server
+        .get("/api/dashboard?boundaries=5,1")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), 400);
 }
 
 #[tokio::test]

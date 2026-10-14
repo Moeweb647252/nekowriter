@@ -6,6 +6,7 @@ export default {
   nav: {
     label: "主导航",
     works: "作品",
+    dashboard: "仪表盘",
     settings: "设置",
   },
   actions: {

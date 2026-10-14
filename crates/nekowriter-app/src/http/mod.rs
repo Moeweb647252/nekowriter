@@ -70,6 +70,7 @@ pub(crate) fn router(state: AppState) -> Router {
             get(handlers::settings::get).post(handlers::settings::save),
         )
         .route("/settings/test-model", post(handlers::settings::test_model))
+        .route("/dashboard", get(handlers::dashboard::get))
         .route("/versions/{id}/workspace", get(handlers::workspace::get))
         .route(
             "/versions/{id}/brief",

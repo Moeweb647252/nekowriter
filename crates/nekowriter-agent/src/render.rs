@@ -921,7 +921,8 @@ mod tests {
     #[test]
     fn citations_follow_their_feedback_with_their_source() {
         use nekowriter_core::{
-            citation::{ChapterLabel, Citation, CitationTarget},
+            chapter::ChapterLabel,
+            citation::{Citation, CitationTarget},
             ids::RevisionId,
         };
 

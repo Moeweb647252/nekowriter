@@ -19,6 +19,7 @@ mod calls;
 mod chapters;
 mod citations;
 mod command;
+mod dashboard;
 mod delegation;
 mod digest;
 mod documents;
@@ -39,6 +40,9 @@ mod versions;
 mod workflow;
 mod workspace;
 
+pub use dashboard::{
+    DashboardQuery, DashboardView, JobView, ProjectUsage, ProjectWords, UsageView, WordsView,
+};
 pub use documents::{RevisionSummary, RevisionView};
 pub use error::StoreError;
 pub use events::{EventBatch, EventRecord, RETENTION_MILLIS};

@@ -1,14 +1,15 @@
 import { useCallback } from "react"
 import { useTranslation } from "react-i18next"
 
+import type { ChapterLabel } from "@/api/generated/ChapterLabel"
 import type { ChapterView } from "@/api/generated/ChapterView"
 import type { WorkspaceView } from "@/api/generated/WorkspaceView"
 
 /** Names a chapter by its kind, number and title. */
-export function useChapterName(): (chapter: ChapterView) => string {
+export function useChapterName(): (chapter: ChapterLabel) => string {
   const { t } = useTranslation()
   return useCallback(
-    (chapter: ChapterView) =>
+    (chapter: ChapterLabel) =>
       t(($) => $.workspace.chapterName[chapter.kind], {
         number: chapter.number,
         title: chapter.title,

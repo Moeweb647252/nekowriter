@@ -3,9 +3,10 @@
 use nekowriter_core::{
     body::{self, EditResult},
     call::CallRequest,
+    chapter::ChapterLabel,
     citation::{
-        ChapterLabel, Citation, CitationProblem, CitationSource, CitationTarget, MAX_CITATIONS,
-        VerifiedCitation, check_quote,
+        Citation, CitationProblem, CitationSource, CitationTarget, MAX_CITATIONS, VerifiedCitation,
+        check_quote,
     },
     document::DocumentRole,
     ids::{ChapterId, VersionId},

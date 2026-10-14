@@ -18,9 +18,9 @@ use sea_orm::{
 use crate::{
     digest::sha256_hex,
     entity::{
-        chapter, command_receipt, document, event, feedback, model_request, project, review,
-        revision, revision_dependency, run, run_message, schema_info, system_settings, tool_call,
-        version, workflow,
+        chapter, command_receipt, connection_test, document, event, feedback, model_request,
+        project, review, revision, revision_dependency, run, run_message, schema_info,
+        system_settings, tool_call, version, workflow,
     },
 };
 
@@ -45,6 +45,7 @@ fn create_statements() -> Vec<Statement> {
     add_entity(&mut statements, &schema, chapter::Entity);
     add_entity(&mut statements, &schema, run::Entity);
     add_entity(&mut statements, &schema, model_request::Entity);
+    add_entity(&mut statements, &schema, connection_test::Entity);
     add_entity(&mut statements, &schema, run_message::Entity);
     add_entity(&mut statements, &schema, tool_call::Entity);
     add_entity(&mut statements, &schema, feedback::Entity);

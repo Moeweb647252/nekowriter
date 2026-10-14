@@ -181,13 +181,22 @@ pub(crate) async fn test_model(
     };
     let body = connection_test_body(&model);
     let started = Instant::now();
-    let completion = tokio::select! {
+    let result = tokio::select! {
         result = state.client.complete(&model.service, &body, |_| {}) => result,
         () = state.shutdown.triggered() => {
             return Err(ApiError::new(ApiProblem::ServiceStopping, None));
         }
-    }
-    .map_err(|error| {
+    };
+    // The dashboard counts the test's tokens apart from runs (§15).
+    let reported = result
+        .as_ref()
+        .ok()
+        .and_then(|completion| completion.raw_usage.is_some().then_some(completion.usage));
+    state
+        .store
+        .record_connection_test(result.is_ok(), reported)
+        .await?;
+    let completion = result.map_err(|error| {
         ApiError::new(
             ApiProblem::ModelServiceFailed {
                 failure: error.failure(),

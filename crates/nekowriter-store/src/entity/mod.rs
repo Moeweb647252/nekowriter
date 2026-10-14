@@ -12,6 +12,7 @@
 
 pub(crate) mod chapter;
 pub(crate) mod command_receipt;
+pub(crate) mod connection_test;
 pub(crate) mod document;
 pub(crate) mod event;
 pub(crate) mod feedback;

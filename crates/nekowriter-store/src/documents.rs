@@ -173,19 +173,25 @@ pub(crate) async fn add_revision<C: ConnectionTrait>(
     new: NewRevision,
     now: Timestamp,
 ) -> Result<revision::Model, StoreError> {
-    let number = match current_revision(db, &document).await? {
-        Some(current) => current.number + 1,
-        None => 1,
-    };
+    let current = current_revision(db, &document).await?;
+    let number = current.as_ref().map_or(1, |current| current.number + 1);
+    let word_count = new
+        .word_count
+        .map(|count| i32::try_from(count).unwrap_or(i32::MAX));
+    let word_delta = word_count.map(|count| {
+        count
+            - current
+                .and_then(|current| current.word_count)
+                .unwrap_or_default()
+    });
     let revision = revision::ActiveModel {
         id: Set(RevisionId::generate()),
         document_id: Set(document.id),
         number: Set(number),
         content: Set(new.content),
         chapter_plan: Set(new.chapter_plan),
-        word_count: Set(new
-            .word_count
-            .map(|count| i32::try_from(count).unwrap_or(i32::MAX))),
+        word_count: Set(word_count),
+        word_delta: Set(word_delta),
         created_by_run: Set(new.created_by_run),
         created_at: Set(now),
     }

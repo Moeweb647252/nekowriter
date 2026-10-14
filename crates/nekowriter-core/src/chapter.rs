@@ -16,6 +16,17 @@ single_line_text!(
     200
 );
 
+/// What names a chapter: its kind, its number among the chapters of that kind and its
+/// title.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ChapterLabel {
+    pub kind: ChapterKind,
+    pub number: i32,
+    pub title: String,
+}
+
 /// What the user asks of a chapter before it is written. It may be empty.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, TS, DeriveValueType)]
 #[ts(export)]

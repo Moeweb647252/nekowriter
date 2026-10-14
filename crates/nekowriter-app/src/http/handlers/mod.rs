@@ -2,6 +2,7 @@ use nekowriter_core::ids::CommandId;
 use serde::Deserialize;
 use ts_rs::TS;
 
+pub(crate) mod dashboard;
 pub(crate) mod events;
 pub(crate) mod export;
 pub(crate) mod projects;

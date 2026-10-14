@@ -6,6 +6,7 @@ export default {
   nav: {
     label: "Main",
     works: "Works",
+    dashboard: "Dashboard",
     settings: "Settings",
   },
   actions: {

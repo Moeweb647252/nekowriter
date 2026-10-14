@@ -185,7 +185,8 @@ export default {
     remove: "Remove citation “{{quote}}”",
     refused: {
       nothing: "Select a passage in the manuscript or a document first.",
-      several_texts: "A citation stays within one text. Select a passage in a single chapter or document.",
+      several_texts:
+        "A citation stays within one text. Select a passage in a single chapter or document.",
     },
   },
   reader: {

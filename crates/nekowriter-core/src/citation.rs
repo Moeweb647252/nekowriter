@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    chapter::ChapterKind,
+    chapter::ChapterLabel,
     document::DocumentRole,
     ids::{RevisionId, ToolCallId},
 };
@@ -58,14 +58,6 @@ pub enum CitationSource {
         chapter: Option<ChapterLabel>,
     },
     Proposal,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ChapterLabel {
-    pub kind: ChapterKind,
-    pub number: i32,
-    pub title: String,
 }
 
 /// A citation whose quote matched its text.

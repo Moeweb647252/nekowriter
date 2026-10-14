@@ -13,6 +13,7 @@ pub mod call;
 pub mod chapter;
 pub mod citation;
 pub mod conflict;
+pub mod dashboard;
 pub mod document;
 pub mod event;
 pub mod feedback;

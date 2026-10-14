@@ -23,6 +23,9 @@ pub struct Model {
     pub chapter_plan: Option<ChapterPlan>,
     /// The content's word count, for revisions of a chapter body (§15).
     pub word_count: Option<i32>,
+    /// The word count minus the previous revision's (or zero's, for the first one), for
+    /// revisions of a chapter body; negative when the body shrank (§15).
+    pub word_delta: Option<i32>,
     /// The run that wrote it; `None` when the user wrote it.
     pub created_by_run: Option<RunId>,
     pub created_at: Timestamp,

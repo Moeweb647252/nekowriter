@@ -4,9 +4,8 @@ mod common;
 
 use common::{answer_with, append, dispatch_next, drafting, open_store, workspace};
 use nekowriter_core::{
-    citation::{
-        ChapterLabel, Citation, CitationProblem, CitationSource, CitationTarget, VerifiedCitation,
-    },
+    chapter::ChapterLabel,
+    citation::{Citation, CitationProblem, CitationSource, CitationTarget, VerifiedCitation},
     document::DocumentRole,
     feedback::FeedbackText,
     ids::{CommandId, RevisionId, RunId, VersionId},

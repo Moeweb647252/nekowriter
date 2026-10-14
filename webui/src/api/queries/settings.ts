@@ -43,7 +43,11 @@ export function useSaveSystemSettings() {
   })
 }
 
-/** Sends a real request with the model under test (§13.3). */
+/** Sends a real request with the model under test (§13.3). The dashboard counts it. */
 export function useModelTest() {
-  return useMutation({ mutationFn: (request: TestModelRequest) => settingsApi.testModel(request) })
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (request: TestModelRequest) => settingsApi.testModel(request),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all }),
+  })
 }

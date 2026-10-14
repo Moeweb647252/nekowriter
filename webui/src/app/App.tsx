@@ -9,6 +9,7 @@ import { THEMES, THEME_STORAGE_KEY } from "./theme"
 import { EventStreamProvider } from "@/api/events/EventStreamProvider"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { DashboardPage } from "@/features/dashboard/DashboardPage"
 import { WorksLibraryPage } from "@/features/library/WorksLibraryPage"
 import { SettingsPage } from "@/features/settings/SettingsPage"
 import { WorkspacePage } from "@/features/workspace/WorkspacePage"
@@ -46,6 +47,7 @@ export function App() {
                 <Route path="/works/:projectId/versions/:versionId" element={<WorkspacePage />} />
                 <Route element={<AppShell />}>
                   <Route path="/works" element={<WorksLibraryPage />} />
+                  <Route path="/dashboard" element={<DashboardPage />} />
                   <Route path="/settings" element={<SettingsPage />} />
                   <Route path="*" element={<Navigate to="/works" replace />} />
                 </Route>

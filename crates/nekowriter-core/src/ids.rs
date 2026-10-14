@@ -116,3 +116,8 @@ id_type!(
     /// Identifies a piece of feedback the user gave a running writer.
     FeedbackId
 );
+
+id_type!(
+    /// Identifies one connection test against the model service.
+    ConnectionTestId
+);
