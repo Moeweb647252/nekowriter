@@ -137,3 +137,25 @@ pub(crate) async fn project_has_other_active_run<C: ConnectionTrait>(
     }
     Ok(query.one(db).await?.is_some())
 }
+
+/// Whether the version has a writing run that is working, waiting or interrupted.
+pub(crate) async fn version_has_active_run<C: ConnectionTrait>(
+    db: &C,
+    version_id: VersionId,
+) -> Result<bool, StoreError> {
+    use nekowriter_core::run::{RunKind, RunStatus};
+    use sea_orm::Iterable;
+
+    use crate::entity::run;
+
+    let active: Vec<RunStatus> = RunStatus::iter()
+        .filter(|status| status.is_active())
+        .collect();
+    Ok(run::Entity::find()
+        .filter(run::Column::VersionId.eq(version_id))
+        .filter(run::Column::Kind.ne(RunKind::Review))
+        .filter(run::Column::Status.is_in(active))
+        .one(db)
+        .await?
+        .is_some())
+}

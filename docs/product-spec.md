@@ -362,7 +362,8 @@ Ten keys, each with a system and a user prompt: `preparation.generate`, `chapter
 
 - Creating a project creates its first version. A version has a label and a novel title. New versions are empty (D03, D15). The project's selected version is a display choice only; switching it never starts generation.
 - Soft delete applies to projects, versions, knowledge spaces and entries, and prompt templates. Restore is offered for projects. Deleting a parent does not rewrite its children; queries check ancestors. Plan chapters cannot be deleted; extra chapters can be soft-deleted when nothing is active.
-- Deleting a project or version with an active run or open review is refused with `STATE_CONFLICT` (`run_active`). The selected version cannot be deleted.
+- Deleting a project or version with an active run or open review is refused with `STATE_CONFLICT` (`run_active`). The selected version cannot be deleted (`version_selected`).
+- A deleted extra chapter leaves the reader, the folds of later requests, the export and the word counts. A version that was at that chapter returns to its completed state.
 - Clearing a prompt override deletes the override row.
 
 ## 15. Dashboard

@@ -7,7 +7,7 @@ use nekowriter_core::{
     citation::Citation,
     feedback::FeedbackText,
     field::{FieldError, FieldProblem},
-    ids::{CommandId, ReviewId, RevisionId, RunId, ToolCallId, VersionId},
+    ids::{ChapterId, CommandId, ReviewId, RevisionId, RunId, ToolCallId, VersionId},
     preparation::NovelBrief,
     question::Answer,
     review::{Rejection, ReviewDecision, ReviewFeedback},
@@ -380,6 +380,20 @@ pub(crate) async fn cancel_delegation(
         state
             .store
             .cancel_delegation(request.command_id, review_id)
+            .await?,
+    ))
+}
+
+/// Deletes an extra chapter while nothing is active (§14).
+pub(crate) async fn delete_chapter(
+    State(state): State<AppState>,
+    Path(chapter_id): Path<ChapterId>,
+    Json(request): Json<RevisionRequest>,
+) -> Result<axum::Json<WorkspaceAck>, ApiError> {
+    Ok(axum::Json(
+        state
+            .store
+            .delete_extra_chapter(request.command_id, chapter_id, request.expected_revision)
             .await?,
     ))
 }

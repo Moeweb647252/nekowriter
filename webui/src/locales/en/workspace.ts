@@ -27,7 +27,24 @@ export default {
     versions: "Versions",
     versionItem: "Version {{number}}: {{title}}",
     newVersion: "New version…",
+    deleteVersions: "Delete versions…",
     settings: "Work settings",
+  },
+  deleteVersions: {
+    title: "Delete versions",
+    description:
+      "Deleting a version removes its manuscript from this work. The version shown now cannot be deleted, nor one an agent is working on.",
+    delete: "Delete",
+    confirm: "Delete version {{number}}",
+    cancel: "Keep",
+    done: "Deleted version {{number}}.",
+    none: "There is no other version to delete.",
+  },
+  deleteChapter: {
+    action: "Delete extra chapter",
+    title: "Delete “{{chapter}}”?",
+    body: "The extra chapter and its text are removed from the novel and from the agents' context.",
+    confirm: "Delete chapter",
   },
   stage: {
     preparation: {

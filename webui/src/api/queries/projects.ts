@@ -110,3 +110,15 @@ export function useSelectVersion() {
       }),
   )
 }
+
+/** Deletes a version the work does not show (§14). */
+export function useDeleteVersion() {
+  return useProjectCommand(
+    ({ project, versionId }: { project: ProjectView; versionId: VersionId }, commandId) =>
+      projectsApi.deleteVersion(project.id, {
+        commandId,
+        expectedRevision: project.revision,
+        versionId,
+      }),
+  )
+}

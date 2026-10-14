@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next"
 import { useNavigate } from "react-router"
 import { toast } from "sonner"
 
+import { DeleteVersionsDialog } from "./DeleteVersionsDialog"
 import { workspacePath } from "./stage"
 import { errorForField, errorForForm } from "@/api/fieldErrors"
 import type { ProjectView } from "@/api/generated/ProjectView"
@@ -42,6 +43,7 @@ export function VersionMenu({ view }: { view: WorkspaceView }) {
   const errorText = useErrorText()
   const selectVersion = useSelectVersion()
   const [creating, setCreating] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const open = (versionId: VersionId) => {
     if (versionId === view.version.id) return
@@ -81,8 +83,14 @@ export function VersionMenu({ view }: { view: WorkspaceView }) {
           <DropdownMenuItem onClick={() => setCreating(true)}>
             {t(($) => $.workspace.header.newVersion)}
           </DropdownMenuItem>
+          {view.versions.length > 1 && (
+            <DropdownMenuItem onClick={() => setDeleting(true)}>
+              {t(($) => $.workspace.header.deleteVersions)}
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
+      <DeleteVersionsDialog view={view} open={deleting} onOpenChange={setDeleting} />
       <Dialog open={creating} onOpenChange={setCreating}>
         <DialogContent>
           <DialogHeader>

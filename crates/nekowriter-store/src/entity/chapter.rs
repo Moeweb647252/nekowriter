@@ -25,6 +25,8 @@ pub struct Model {
     pub goal: String,
     pub status: ChapterStatus,
     pub created_at: Timestamp,
+    /// Set when an extra chapter is deleted; plan chapters are never deleted (§14).
+    pub deleted_at: Option<Timestamp>,
     #[sea_orm(belongs_to, from = "version_id", to = "id")]
     pub version: BelongsTo<super::version::Entity>,
 }

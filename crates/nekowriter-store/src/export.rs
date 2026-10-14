@@ -55,6 +55,7 @@ async fn export_version<C: ConnectionTrait>(
     let context = load_version(db, version_id).await?;
     let mut chapters = chapter::Entity::find()
         .filter(chapter::Column::VersionId.eq(version_id))
+        .filter(chapter::Column::DeletedAt.is_null())
         .all(db)
         .await?;
     chapters.sort_by_key(|chapter| (chapter.kind == ChapterKind::Extra, chapter.number));

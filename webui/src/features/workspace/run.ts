@@ -7,6 +7,11 @@ import { useModelProblemText, useProviderFailureText } from "@/i18n/errors"
 import { useFormatters } from "@/i18n/format"
 import { assertNever } from "@/lib/assert"
 
+/** Whether the run holds its version: working, waiting for the user, or interrupted. */
+export function isActive(status: RunStatus): boolean {
+  return status !== "stopped" && status !== "failed" && status !== "succeeded"
+}
+
 /** Whether the run ended its execution with a problem the user decides about. */
 export function isHalted(status: RunStatus): boolean {
   return status === "interrupted" || status === "stopped" || status === "failed"

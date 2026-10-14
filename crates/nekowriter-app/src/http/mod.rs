@@ -112,6 +112,10 @@ fn project_routes() -> Router<AppState> {
             "/projects/{id}/select-version",
             post(handlers::projects::select_version),
         )
+        .route(
+            "/projects/{id}/delete-version",
+            post(handlers::projects::delete_version),
+        )
 }
 
 /// A version's workspace: its stages, reviews, questions, revisions and export.
@@ -148,6 +152,10 @@ fn workspace_routes() -> Router<AppState> {
         )
         .route("/versions/{id}/export", get(handlers::export::export))
         .route("/revisions/{id}", get(handlers::workspace::revision))
+        .route(
+            "/chapters/{id}/delete",
+            post(handlers::workspace::delete_chapter),
+        )
         .route(
             "/reviews/{id}/decide",
             post(handlers::workspace::decide_review),

@@ -463,3 +463,38 @@ async fn a_stopped_run_ignores_its_late_answer_and_continues_when_asked() {
         RunStatus::Queued
     );
 }
+
+#[tokio::test]
+async fn only_an_idle_version_the_work_does_not_show_can_be_deleted() {
+    let (_dir, store) = common::open_store().await;
+    let first = started(&store).await;
+    let project = workspace(&store, first).await.project;
+    let project = store
+        .create_version(
+            CommandId::generate(),
+            project.id,
+            project.revision,
+            nekowriter_core::project::NovelTitle::parse("Second draft").unwrap(),
+        )
+        .await
+        .unwrap();
+    let second = project.selected_version.id;
+    let delete = |version, revision| {
+        store.delete_version(CommandId::generate(), project.id, revision, version)
+    };
+
+    assert!(matches!(
+        delete(second, project.revision).await,
+        Err(StoreError::StateConflict(StateConflict::VersionSelected))
+    ));
+    assert!(matches!(
+        delete(first, project.revision).await,
+        Err(StoreError::StateConflict(StateConflict::RunActive))
+    ));
+    let run = workspace(&store, first).await.run.unwrap().id;
+    store.stop_run(CommandId::generate(), run).await.unwrap();
+    let project = delete(first, project.revision).await.unwrap();
+    let versions = workspace(&store, second).await.versions;
+    assert_eq!(versions.len(), 1);
+    assert_eq!(project.selected_version.id, second);
+}

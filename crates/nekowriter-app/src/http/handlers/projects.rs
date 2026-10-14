@@ -72,7 +72,7 @@ pub struct CreateVersionRequest {
 #[derive(Clone, Debug, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
-pub struct SelectVersionRequest {
+pub struct VersionRequest {
     pub command_id: CommandId,
     pub expected_revision: i64,
     pub version_id: VersionId,
@@ -183,11 +183,29 @@ pub(crate) async fn create_version(
 pub(crate) async fn select_version(
     State(state): State<AppState>,
     Path(id): Path<ProjectId>,
-    Json(request): Json<SelectVersionRequest>,
+    Json(request): Json<VersionRequest>,
 ) -> Result<axum::Json<ProjectView>, ApiError> {
     let project = state
         .store
         .select_version(
+            request.command_id,
+            id,
+            request.expected_revision,
+            request.version_id,
+        )
+        .await?;
+    Ok(axum::Json(project))
+}
+
+/// Deletes a version the work does not show (§14).
+pub(crate) async fn delete_version(
+    State(state): State<AppState>,
+    Path(id): Path<ProjectId>,
+    Json(request): Json<VersionRequest>,
+) -> Result<axum::Json<ProjectView>, ApiError> {
+    let project = state
+        .store
+        .delete_version(
             request.command_id,
             id,
             request.expected_revision,

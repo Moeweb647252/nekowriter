@@ -6,7 +6,7 @@ import type { ProjectId } from "../generated/ProjectId"
 import type { ProjectView } from "../generated/ProjectView"
 import type { RenameProjectRequest } from "../generated/RenameProjectRequest"
 import type { RevisionRequest } from "../generated/RevisionRequest"
-import type { SelectVersionRequest } from "../generated/SelectVersionRequest"
+import type { VersionRequest } from "../generated/VersionRequest"
 import type { UpdateProjectSettingsRequest } from "../generated/UpdateProjectSettingsRequest"
 
 export const projectsApi = {
@@ -22,6 +22,8 @@ export const projectsApi = {
     postJson<ProjectView>(`/api/projects/${id}/settings`, request),
   createVersion: (id: ProjectId, request: CreateVersionRequest) =>
     postJson<ProjectView>(`/api/projects/${id}/versions`, request),
-  selectVersion: (id: ProjectId, request: SelectVersionRequest) =>
+  selectVersion: (id: ProjectId, request: VersionRequest) =>
     postJson<ProjectView>(`/api/projects/${id}/select-version`, request),
+  deleteVersion: (id: ProjectId, request: VersionRequest) =>
+    postJson<ProjectView>(`/api/projects/${id}/delete-version`, request),
 }

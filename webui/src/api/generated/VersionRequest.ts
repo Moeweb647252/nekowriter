@@ -2,4 +2,4 @@
 import type { CommandId } from "./CommandId";
 import type { VersionId } from "./VersionId";
 
-export type SelectVersionRequest = { commandId: CommandId, expectedRevision: number, versionId: VersionId, };
+export type VersionRequest = { commandId: CommandId, expectedRevision: number, versionId: VersionId, };

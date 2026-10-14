@@ -71,6 +71,9 @@ async fn cited_text<C: ConnectionTrait>(
             let chapter = match document.chapter_id {
                 Some(id) => {
                     let chapter = find_chapter(db, id).await?;
+                    if chapter.deleted_at.is_some() {
+                        return Err(gone());
+                    }
                     Some(ChapterLabel {
                         kind: chapter.kind,
                         number: chapter.number,

@@ -5,7 +5,7 @@
 use nekowriter_core::{
     body::{self, BodyEdit, EditResult},
     chapter::{ChapterGuidance, ChapterInput, ChapterKind, ChapterStatus, ChapterTitle},
-    conflict::StateConflict,
+    conflict::{Resource, StateConflict},
     document::DocumentRole,
     ids::{ChapterId, CommandId, DocumentId, PlanItemId, ReviewId, RevisionId, VersionId},
     review::{Decision, ReviewKind, ReviewStatus},
@@ -30,7 +30,10 @@ use crate::{
     entity::{chapter, document, review, run, workflow},
     execution::{append_message, check_model, create_run, queue_for_revision},
     reviews::{decidable, record_decision},
-    workflow::{VersionContext, WorkspaceAck, advance, load_version, project_has_other_active_run},
+    workflow::{
+        VersionContext, WorkspaceAck, advance, load_version, project_has_other_active_run, touch,
+        version_has_active_run,
+    },
 };
 
 /// The fields of a new chapter.
@@ -60,6 +63,7 @@ pub(crate) async fn create_chapter_rows<C: ConnectionTrait>(
         goal: Set(new.goal),
         status: Set(ChapterStatus::NotStarted),
         created_at: Set(now),
+        deleted_at: Set(None),
     }
     .insert(db)
     .await?;
@@ -257,6 +261,60 @@ impl Store {
             completed.update(tx.db()).await?
         } else {
             workflow
+        };
+        tx.commit(WorkspaceAck {
+            revision: workflow.revision,
+        })
+        .await
+    }
+
+    /// Deletes an extra chapter while nothing is active in its version (§14). A version
+    /// that was at the chapter returns to its completed state.
+    pub async fn delete_extra_chapter(
+        &self,
+        command: CommandId,
+        chapter_id: ChapterId,
+        expected_revision: i64,
+    ) -> Result<WorkspaceAck, StoreError> {
+        let input = (chapter_id, expected_revision);
+        let mut tx = match self
+            .begin_command(command, "chapter.delete", &input)
+            .await?
+        {
+            Begun::Replayed(ack) => return Ok(ack),
+            Begun::Fresh(tx) => tx,
+        };
+        let chapter = chapter::Entity::find_by_id(chapter_id)
+            .filter(chapter::Column::DeletedAt.is_null())
+            .one(tx.db())
+            .await?
+            .ok_or(StoreError::NotFound(Resource::Chapter))?;
+        let context = load_version(tx.db(), chapter.version_id).await?;
+        context.check_revision(expected_revision)?;
+        if chapter.kind != ChapterKind::Extra {
+            return Err(StoreError::StateConflict(StateConflict::ChapterNotExtra));
+        }
+        if version_has_active_run(tx.db(), context.version.id).await? {
+            return Err(StoreError::StateConflict(StateConflict::RunActive));
+        }
+        let mut deleted = chapter.into_active_model();
+        deleted.deleted_at = Set(Some(tx.now()));
+        deleted.update(tx.db()).await?;
+        let at_chapter = matches!(
+            context.workflow.stage,
+            WorkflowStage::Chapter { chapter_id: current, .. } if current == chapter_id
+        );
+        let workflow = if at_chapter {
+            advance(
+                tx.write(),
+                context.workflow,
+                context.project.id,
+                WorkflowStage::Completed,
+                None,
+            )
+            .await?
+        } else {
+            touch(tx.write(), context.version.id, context.project.id).await?
         };
         tx.commit(WorkspaceAck {
             revision: workflow.revision,

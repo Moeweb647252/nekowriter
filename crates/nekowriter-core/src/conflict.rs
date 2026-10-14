@@ -31,6 +31,8 @@ pub enum Resource {
     Space,
     #[error("knowledge entry")]
     Entry,
+    #[error("chapter")]
+    Chapter,
 }
 
 /// A request that is valid in itself but conflicts with the current state.
@@ -89,4 +91,10 @@ pub enum StateConflict {
     /// Indexing and semantic search need an embedding model in the settings.
     #[error("no embedding model is set")]
     EmbeddingNotConfigured,
+    /// The work shows this version; select another before deleting it.
+    #[error("the selected version cannot be deleted")]
+    VersionSelected,
+    /// Plan chapters belong to the outline; only extra chapters can be deleted.
+    #[error("only extra chapters can be deleted")]
+    ChapterNotExtra,
 }

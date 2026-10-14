@@ -2,6 +2,7 @@ import { getJson, postJson } from "../client"
 import type { AddExtraChapterRequest } from "../generated/AddExtraChapterRequest"
 import type { AnswerRequest } from "../generated/AnswerRequest"
 import type { ApprovalModeRequest } from "../generated/ApprovalModeRequest"
+import type { ChapterId } from "../generated/ChapterId"
 import type { ControlRequest } from "../generated/ControlRequest"
 import type { DecideReviewRequest } from "../generated/DecideReviewRequest"
 import type { DelegateReviewRequest } from "../generated/DelegateReviewRequest"
@@ -57,6 +58,8 @@ export const workspaceApi = {
     postJson<WorkspaceAck>(`/api/versions/${versionId}/chapters/next`, request),
   complete: (versionId: VersionId, request: RevisionRequest) =>
     postJson<WorkspaceAck>(`/api/versions/${versionId}/complete`, request),
+  deleteChapter: (chapterId: ChapterId, request: RevisionRequest) =>
+    postJson<WorkspaceAck>(`/api/chapters/${chapterId}/delete`, request),
   addExtraChapter: (versionId: VersionId, request: AddExtraChapterRequest) =>
     postJson<WorkspaceAck>(`/api/versions/${versionId}/extra-chapters`, request),
 }

@@ -42,6 +42,7 @@ export default {
     template: "template",
     space: "knowledge space",
     entry: "knowledge entry",
+    chapter: "chapter",
   },
   modelProblem: {
     service_not_configured: "No model service is set up. Add its API root in Settings.",
@@ -91,6 +92,9 @@ export default {
       space_not_empty: "The space still has entries. Move or delete them first.",
       space_name_taken: "Another space already has this name.",
       embedding_not_configured: "Set an embedding model in Settings first.",
+      version_selected:
+        "The work shows this version, so it cannot be deleted. Open another version first.",
+      chapter_not_extra: "Only extra chapters can be deleted; plan chapters belong to the outline.",
       review_not_delegated: "This review is not with the review agent.",
       review_run_not_continuable:
         "A review agent's run cannot be continued; delegate the review again.",

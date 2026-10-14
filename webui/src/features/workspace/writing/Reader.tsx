@@ -1,10 +1,12 @@
 import { ArrowDownIcon } from "lucide-react"
-import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react"
+import { type ReactNode, useContext, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import { currentChapter, useChapterName } from "../chapters"
 import { ReadingText } from "../DocumentView"
+import { isActive } from "../run"
 import { ScrollContainerContext } from "../scroll"
+import { DeleteChapterButton } from "./DeleteChapterButton"
 import { citable, proposalTarget, scalarLength, wholeRevision } from "../citations"
 import { normalizeLineEndings } from "./edits"
 import type { ChapterId } from "@/api/generated/ChapterId"
@@ -103,6 +105,8 @@ export function Reader({
   }, [growth])
 
   const writing = streaming.appended !== null || streaming.editing
+  // Extra chapters can be deleted while nothing is active in the version (§14).
+  const idle = view.run === null || !isActive(view.run.status)
   return (
     <article aria-label={t(($) => $.workspace.reader.label)} className="flex flex-col gap-16">
       {view.chapters.map((chapter) => (
@@ -112,6 +116,11 @@ export function Reader({
           streaming={chapter.id === current?.id ? streaming : null}
           held={chapter.id === current?.id ? heldAppend(view) : null}
           proposal={chapter.id === current?.id ? view.proposal : null}
+          action={
+            chapter.kind === "extra" && idle ? (
+              <DeleteChapterButton view={view} chapter={chapter} />
+            ) : null
+          }
         />
       ))}
       <div ref={end} aria-hidden className="h-px" />
@@ -191,6 +200,7 @@ function ChapterSection({
   streaming,
   held,
   proposal,
+  action,
 }: {
   chapter: ChapterView
   streaming: StreamingEdit | null
@@ -198,6 +208,8 @@ function ChapterSection({
   held: string | null
   /** An edit waiting for the user's review. */
   proposal: ProposalView | null
+  /** An action on the chapter, shown next to its title. */
+  action: ReactNode
 }) {
   const { t } = useTranslation()
   const chapterName = useChapterName()
@@ -213,9 +225,12 @@ function ChapterSection({
 
   return (
     <section id={sectionId(chapter.id)} aria-labelledby={headingId} className="scroll-mt-6">
-      <h2 id={headingId} className="mb-6 font-heading text-2xl font-semibold">
-        {chapterName(chapter)}
-      </h2>
+      <div className="mb-6 flex items-center gap-2">
+        <h2 id={headingId} className="font-heading text-2xl font-semibold">
+          {chapterName(chapter)}
+        </h2>
+        {action}
+      </div>
       {chapter.body === null ? (
         appended === null &&
         held === null && (

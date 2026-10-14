@@ -17,6 +17,7 @@ export default {
     versions: "版本",
     versionItem: "第 {{number}} 版：{{title}}",
     newVersion: "新建版本…",
+    deleteVersions: "删除版本…",
     settings: "作品设置",
   },
   stage: {
@@ -238,6 +239,21 @@ export default {
     label: "实时预览",
     note: "仍在撰写中；Agent 提交之前，这里的内容都不会保存。",
     notes: "Agent 的说明",
+  },
+  deleteVersions: {
+    title: "删除版本",
+    description: "删除版本会将其稿件从作品中移除。当前显示的版本和 Agent 正在处理的版本不能删除。",
+    delete: "删除",
+    confirm: "删除第 {{number}} 版",
+    cancel: "保留",
+    done: "已删除第 {{number}} 版。",
+    none: "没有其他可以删除的版本。",
+  },
+  deleteChapter: {
+    action: "删除番外章节",
+    title: "删除“{{chapter}}”？",
+    body: "这个番外章节及其正文将从小说和 Agent 的上下文中移除。",
+    confirm: "删除章节",
   },
   newVersion: {
     title: "新建版本",

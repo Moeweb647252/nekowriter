@@ -8,6 +8,26 @@ import { RUN_ID, VERSION_ID, artifacts, reviewId, runView, workspaceView } from 
 import { fakeWorkspace, renderWorkspace } from "@/test/workspace"
 
 describe("WorkspacePage", () => {
+  it("deletes another version, but never the one shown", async () => {
+    const view = workspaceView({ phase: "preparation", step: "not_started" })
+    const other = { ...view.version, id: "0190f5c8-0000-7000-8000-000000000a99", number: 2 }
+    const { commands } = fakeWorkspace({ ...view, versions: [view.version, other] })
+    const { user } = renderWorkspace()
+
+    await user.click(await screen.findByRole("button", { name: "Version 1" }))
+    await user.click(await screen.findByRole("menuitem", { name: "Delete versions…" }))
+    const dialog = await screen.findByRole("dialog")
+    expect(within(dialog).getAllByRole("button", { name: "Delete" })).toHaveLength(1)
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }))
+    await user.click(within(dialog).getByRole("button", { name: "Delete version 2" }))
+
+    await waitFor(() => {
+      expect(commands).toHaveLength(1)
+    })
+    expect(commands[0]?.path).toBe(`/api/projects/${view.project.id}/delete-version`)
+    expect(commands[0]?.body).toMatchObject({ versionId: other.id })
+  })
+
   it("offers the novel for download in both formats", async () => {
     fakeWorkspace(workspaceView({ phase: "preparation", step: "not_started" }))
     const { user } = renderWorkspace()

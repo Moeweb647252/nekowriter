@@ -41,6 +41,30 @@ function atChapter(
 }
 
 describe("WritingWorkspace", () => {
+  it("deletes an extra chapter of a completed novel after confirmation", async () => {
+    const coda = chapterView(3, {
+      kind: "extra",
+      number: 1,
+      title: "Coda",
+      status: "approved",
+    })
+    const { commands } = fakeWorkspace(
+      workspaceView({ phase: "completed" }, { artifacts: APPROVED, chapters: [FIRST, coda] }),
+    )
+    const { user } = renderWorkspace()
+
+    // Plan chapters offer no deletion.
+    expect(await screen.findAllByRole("button", { name: "Delete extra chapter" })).toHaveLength(1)
+    await user.click(screen.getByRole("button", { name: "Delete extra chapter" }))
+    await user.click(await screen.findByRole("button", { name: "Delete chapter" }))
+
+    await waitFor(() => {
+      expect(commands).toHaveLength(1)
+    })
+    expect(commands[0]?.path).toBe(`/api/chapters/${coda.id}/delete`)
+    expect(commands[0]?.body).toMatchObject({ expectedRevision: 3 })
+  })
+
   it("starts a chapter's outline from the guidance", async () => {
     const { commands } = fakeWorkspace(atChapter("ready"))
     const { user } = renderWorkspace()

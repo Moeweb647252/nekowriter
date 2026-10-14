@@ -43,6 +43,7 @@ export default {
     template: "模板",
     space: "知识空间",
     entry: "知识条目",
+    chapter: "章节",
   },
   modelProblem: {
     service_not_configured: "尚未设置模型服务，请在“设置”中填写 API 根地址。",
@@ -88,6 +89,8 @@ export default {
       space_not_empty: "该空间中还有条目，请先移走或删除它们。",
       space_name_taken: "已有其他空间使用这个名称。",
       embedding_not_configured: "请先在“设置”中设置向量模型。",
+      version_selected: "作品正在显示这个版本，不能删除。请先打开其他版本。",
+      chapter_not_extra: "只能删除番外章节；计划章节属于大纲。",
       review_not_delegated: "这次审阅不在审阅 Agent 手中。",
       review_run_not_continuable: "审阅 Agent 的任务不能继续，请重新交给它审阅。",
     },

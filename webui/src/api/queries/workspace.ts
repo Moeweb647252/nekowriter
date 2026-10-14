@@ -5,6 +5,7 @@ import { workspaceApi } from "../endpoints/workspace"
 import type { Answer } from "../generated/Answer"
 import type { ApprovalMode } from "../generated/ApprovalMode"
 import type { Citation } from "../generated/Citation"
+import type { ChapterId } from "../generated/ChapterId"
 import type { CommandId } from "../generated/CommandId"
 import type { ReviewDecisionInput } from "../generated/ReviewDecisionInput"
 import type { ReviewId } from "../generated/ReviewId"
@@ -146,6 +147,15 @@ export function useAddExtraChapter(versionId: VersionId) {
     versionId,
     ({ revision, title }: { revision: number; title: string }, commandId) =>
       workspaceApi.addExtraChapter(versionId, { commandId, expectedRevision: revision, title }),
+  )
+}
+
+/** Deletes an extra chapter while nothing is active (§14). */
+export function useDeleteChapter(versionId: VersionId) {
+  return useWorkspaceCommand(
+    versionId,
+    ({ revision, chapterId }: { revision: number; chapterId: ChapterId }, commandId) =>
+      workspaceApi.deleteChapter(chapterId, { commandId, expectedRevision: revision }),
   )
 }
 

@@ -791,7 +791,14 @@ async fn folds<C: ConnectionTrait>(
             .fold
             .ok_or_else(|| StoreError::Corrupt(format!("succeeded run {} has no fold", run.id)))?;
         let chapter = match run.chapter_id {
-            Some(id) => Some(chapter_input(find_chapter(db, id).await?)),
+            Some(id) => {
+                let chapter = find_chapter(db, id).await?;
+                // A deleted extra chapter is no longer part of the story.
+                if chapter.deleted_at.is_some() {
+                    continue;
+                }
+                Some(chapter_input(chapter))
+            }
             None => None,
         };
         let stage = match (run.kind, chapter) {

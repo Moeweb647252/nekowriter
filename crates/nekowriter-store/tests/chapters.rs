@@ -402,6 +402,66 @@ async fn the_last_chapter_completes_the_novel_and_extra_chapters_follow() {
     let view = workspace(&store, version).await;
     assert_eq!(view.version.stage, WorkflowStage::Completed);
     assert_eq!(view.completed_at, Some(completed_at));
+
+    // Plan chapters stay; extra chapters can be deleted while nothing is active.
+    assert!(matches!(
+        delete_chapter(&store, version, view.chapters[0].id).await,
+        Err(StoreError::StateConflict(StateConflict::ChapterNotExtra))
+    ));
+    let coda = view.chapters[2].id;
+    delete_chapter(&store, version, coda).await.unwrap();
+    let view = workspace(&store, version).await;
+    assert_eq!(view.chapters.len(), 2);
+
+    // A version at a new extra chapter returns to completion when it is deleted.
+    store
+        .add_extra_chapter(
+            CommandId::generate(),
+            version,
+            view.revision,
+            ChapterTitle::parse("Epilogue").unwrap(),
+        )
+        .await
+        .unwrap();
+    let (epilogue, _) = step(&workspace(&store, version).await);
+    delete_chapter(&store, version, epilogue).await.unwrap();
+    let view = workspace(&store, version).await;
+    assert_eq!(view.version.stage, WorkflowStage::Completed);
+    assert_eq!(view.chapters.len(), 2);
+
+    // The deleted extra chapter's stages no longer fold into later requests.
+    store
+        .add_extra_chapter(
+            CommandId::generate(),
+            version,
+            view.revision,
+            ChapterTitle::parse("Afterword").unwrap(),
+        )
+        .await
+        .unwrap();
+    start(&store, version, "").await;
+    assert_eq!(
+        fold_order(&store).await,
+        [
+            (0, "preparation"),
+            (1, "outline"),
+            (1, "body"),
+            (2, "outline"),
+            (2, "body")
+        ]
+    );
+}
+
+async fn delete_chapter(
+    store: &Store,
+    version: VersionId,
+    chapter: ChapterId,
+) -> Result<(), StoreError> {
+    let revision = workspace(store, version).await.revision;
+    store
+        .delete_extra_chapter(CommandId::generate(), chapter, revision)
+        .await
+        .map(drop)
 }
 
 async fn next(store: &Store, version: VersionId) -> Result<(), StoreError> {

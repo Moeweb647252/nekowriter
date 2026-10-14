@@ -7,7 +7,7 @@ use nekowriter_core::{
     chapter::ChapterLabel,
     dashboard::TimeBuckets,
     document::DocumentRole,
-    ids::{ConnectionTestId, ProjectId, RunId, VersionId},
+    ids::{ChapterId, ConnectionTestId, ProjectId, RunId, VersionId},
     review::ReviewStatus,
     run::{RunHalt, RunKind, RunStatus},
     time::Timestamp,
@@ -307,11 +307,26 @@ async fn words<C: ConnectionTrait>(
     live: &Live,
     buckets: &TimeBuckets,
 ) -> Result<WordsView, StoreError> {
-    let bodies = document::Entity::find()
+    // Deleted extra chapters no longer count, like deleted versions.
+    let deleted: HashSet<ChapterId> = chapter::Entity::find()
+        .filter(chapter::Column::VersionId.is_in(live.versions.keys().copied()))
+        .filter(chapter::Column::DeletedAt.is_not_null())
+        .all(db)
+        .await?
+        .into_iter()
+        .map(|chapter| chapter.id)
+        .collect();
+    let bodies: Vec<document::Model> = document::Entity::find()
         .filter(document::Column::Role.eq(DocumentRole::ChapterBody))
         .filter(document::Column::VersionId.is_in(live.versions.keys().copied()))
         .all(db)
-        .await?;
+        .await?
+        .into_iter()
+        .filter(|body| {
+            body.chapter_id
+                .is_none_or(|chapter| !deleted.contains(&chapter))
+        })
+        .collect();
     let project_of: HashMap<_, ProjectId> = bodies
         .iter()
         .filter_map(|body| {
