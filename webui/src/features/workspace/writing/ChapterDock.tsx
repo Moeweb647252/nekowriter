@@ -28,7 +28,8 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { useErrorText } from "@/i18n/errors"
 import { assertNever } from "@/lib/assert"
-import { useDraft } from "@/lib/drafts"
+import { InsertTemplate } from "@/features/templates/InsertTemplate"
+import { appended, useDraft } from "@/lib/drafts"
 import { submitOnModEnter } from "@/lib/keyboard"
 import { readPartialObject, textOf } from "@/lib/partialJson"
 
@@ -181,6 +182,9 @@ function ReadyDock({ view, chapter }: { view: WorkspaceView; chapter: ChapterVie
         </FieldDescription>
         {guidanceError !== undefined && <FieldError>{errorText(guidanceError)}</FieldError>}
       </Field>
+      <div>
+        <InsertTemplate onInsert={(text) => guidance.setValue(appended(guidance.value, text))} />
+      </div>
       {formError !== undefined && <ErrorAlert error={formError} />}
       <div>
         <Button type="submit" disabled={start.isPending}>

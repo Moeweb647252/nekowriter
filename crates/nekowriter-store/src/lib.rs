@@ -37,6 +37,7 @@ mod questions;
 mod reviews;
 mod schema;
 mod settings;
+mod templates;
 mod versions;
 mod workflow;
 mod workspace;
@@ -58,6 +59,7 @@ pub use prompts::{PromptOverrides, PromptSaved, PromptsRead};
 pub use proposals::ProposalView;
 pub use questions::QuestionView;
 pub use settings::{ApiKeyChange, SystemSettingsInput, SystemSettingsView};
+pub use templates::PromptTemplateView;
 pub use workflow::WorkspaceAck;
 pub use workspace::{ArtifactView, ChapterView, ReviewView, RunView, WorkspaceView};
 

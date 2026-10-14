@@ -69,6 +69,12 @@ fn system_routes() -> Router<AppState> {
         .route("/settings/prompts", post(handlers::prompts::save_system))
         .route("/prompts", get(handlers::prompts::get))
         .route("/templates/render", post(handlers::prompts::render))
+        .route(
+            "/templates",
+            get(handlers::templates::list).post(handlers::templates::create),
+        )
+        .route("/templates/{id}/update", post(handlers::templates::update))
+        .route("/templates/{id}/delete", post(handlers::templates::delete))
         .route("/dashboard", get(handlers::dashboard::get))
 }
 

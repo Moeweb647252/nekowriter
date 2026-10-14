@@ -7,6 +7,7 @@ import errors from "./errors"
 import library from "./library"
 import prompts from "./prompts"
 import settings from "./settings"
+import templates from "./templates"
 import workspace from "./workspace"
 
 /** The Simplified Chinese catalog. */
@@ -17,5 +18,6 @@ export const zhCN = {
   library,
   prompts,
   settings,
+  templates,
   workspace,
 } satisfies Catalog<EnglishCatalog>

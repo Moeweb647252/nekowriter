@@ -3,4 +3,4 @@
 /**
  * Why a template is invalid or cannot be rendered.
  */
-export type TemplateError = { "kind": "unclosed_placeholder", offset: number, } | { "kind": "invalid_variable_name", name: string, } | { "kind": "unknown_variable", name: string, } | { "kind": "missing_required_variable", name: string, } | { "kind": "missing_value", name: string, };
+export type TemplateError = { "kind": "unclosed_placeholder", offset: number, } | { "kind": "invalid_variable_name", name: string, } | { "kind": "unknown_variable", name: string, } | { "kind": "missing_required_variable", name: string, } | { "kind": "missing_value", name: string, } | { "kind": "duplicate_variable", name: string, };

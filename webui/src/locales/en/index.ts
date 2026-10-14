@@ -4,6 +4,7 @@ import errors from "./errors"
 import library from "./library"
 import prompts from "./prompts"
 import settings from "./settings"
+import templates from "./templates"
 import workspace from "./workspace"
 
 /** The English catalog. It defines the keys every other language must provide. */
@@ -14,6 +15,7 @@ export const en = {
   library,
   prompts,
   settings,
+  templates,
   workspace,
 } as const
 
@@ -27,6 +29,7 @@ export const NAMESPACES = [
   "library",
   "prompts",
   "settings",
+  "templates",
   "workspace",
 ] as const
 

@@ -345,7 +345,7 @@ Ten keys, each with a system and a user prompt: `preparation.generate`, `chapter
 
 - Only `{{variable_name}}` text substitution: no expressions, loops, includes or code. Substitution happens once in scan order; `{{...}}` inside values is not expanded. `\{{...}}` produces a literal placeholder.
 - Saving rejects unknown variables, missing required placeholders and incomplete braces; previews reject missing required runtime values.
-- User prompt templates are separate reusable content (title, body, own variable descriptions) that can be inserted into guidance or feedback drafts. They never override built-in prompts and never gain system-message authority. The built-in catalog and user templates share one template implementation.
+- User prompt templates are separate reusable content (title, body, own variable descriptions) that can be inserted into guidance or feedback drafts. A template's body uses exactly the placeholders it declares. Inserting asks for a value for each, renders the template through the server's template engine and appends the text to the draft. They never override built-in prompts and never gain system-message authority. The built-in catalog and user templates share one template implementation.
 
 ### 13.3 Settings
 

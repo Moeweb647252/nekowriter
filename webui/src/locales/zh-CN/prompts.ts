@@ -5,6 +5,10 @@ export default {
   title: "提示词",
   description:
     "各个 Agent 遵循的指令。作品自己的提示词优先于系统提示词，系统提示词优先于内置文本。内置提示词用中文写成；Agent 用作品的写作语言撰写小说。",
+  tabs: {
+    agents: "Agent 提示词",
+    templates: "我的模板",
+  },
   scope: "适用范围",
   allWorks: "全部作品",
   list: "提示词",

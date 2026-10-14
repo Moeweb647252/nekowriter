@@ -9,6 +9,7 @@ pub(crate) mod projects;
 pub(crate) mod prompts;
 pub(crate) mod settings;
 pub(crate) mod system;
+pub(crate) mod templates;
 pub(crate) mod workspace;
 
 /// The request of control commands, which quote no revision (`docs/product-spec.md`

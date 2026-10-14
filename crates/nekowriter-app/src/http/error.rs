@@ -14,10 +14,9 @@ use nekowriter_core::{
     conflict::{Resource, StateConflict},
     field::FieldError,
     model::ModelProblem,
-    prompt::PromptContentError,
     question::AnswerProblem,
     run::ProviderFailure,
-    template::TemplateError,
+    template::{TemplateError, TemplateTextError},
 };
 use nekowriter_store::StoreError;
 use serde::Serialize;
@@ -149,11 +148,11 @@ impl From<TemplateError> for ApiError {
     }
 }
 
-impl From<PromptContentError> for ApiError {
-    fn from(error: PromptContentError) -> Self {
+impl From<TemplateTextError> for ApiError {
+    fn from(error: TemplateTextError) -> Self {
         match error {
-            PromptContentError::Field(error) => error.into(),
-            PromptContentError::Template(error) => error.into(),
+            TemplateTextError::Field(error) => error.into(),
+            TemplateTextError::Template(error) => error.into(),
         }
     }
 }

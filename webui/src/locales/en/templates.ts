@@ -1,0 +1,30 @@
+export default {
+  description:
+    "Reusable text for chapter guidance and feedback. You fill in a template's placeholders when you insert it; templates never change what the agents are told.",
+  list: "Templates",
+  new: "New template",
+  empty: "No templates yet.",
+  title: "Title",
+  body: "Text",
+  bodyHint:
+    "Write a placeholder as its name in double braces. Every placeholder in the text must be listed below, and every listed one used.",
+  variables: "Placeholders",
+  name: "Name",
+  variableDescription: "What to fill in",
+  addVariable: "Add placeholder",
+  removeVariable: "Remove placeholder {{name}}",
+  create: "Create template",
+  save: "Save template",
+  saved: "Saved",
+  delete: "Delete",
+  deleteTitle: "Delete “{{title}}”?",
+  deleteBody: "The template is removed for good. Text you already inserted stays.",
+  deleteConfirm: "Delete template",
+  insert: {
+    open: "Insert template",
+    title: "Insert a template",
+    choose: "Template",
+    none: "You have no templates yet. Create them on the Prompts page.",
+    submit: "Insert",
+  },
+}

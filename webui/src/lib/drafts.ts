@@ -103,3 +103,8 @@ export function useDraftList<T>(key: string): DraftList<T> {
   const clear = useCallback(() => update(() => []), [update])
   return { items, add, remove, clear }
 }
+
+/** `text` added to the end of a draft, after a blank line unless the draft is empty. */
+export function appended(draft: string, text: string): string {
+  return draft.trim() === "" ? text : `${draft.trimEnd()}\n\n${text}`
+}

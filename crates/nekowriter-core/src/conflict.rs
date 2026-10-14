@@ -25,6 +25,8 @@ pub enum Resource {
     Question,
     #[error("settings")]
     Settings,
+    #[error("prompt template")]
+    Template,
 }
 
 /// A request that is valid in itself but conflicts with the current state.

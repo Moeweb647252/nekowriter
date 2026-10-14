@@ -18,6 +18,9 @@ export default {
     context_window: "Context window",
     max_output_tokens: "Tokens reserved for the answer",
     prompt_content: "Prompt text",
+    template_title: "Template title",
+    template_body: "Template text",
+    template_variable_description: "Placeholder description",
   },
   resource: {
     project: "work",
@@ -28,6 +31,7 @@ export default {
     revision: "revision",
     question: "question",
     settings: "settings",
+    template: "template",
   },
   modelProblem: {
     service_not_configured: "No model service is set up. Add its API root in Settings.",
@@ -99,6 +103,7 @@ export default {
       unknown_variable: "The placeholder “{{name}}” is not available here.",
       missing_required_variable: "The placeholder “{{name}}” is required here.",
       missing_value: "No value was given for the placeholder “{{name}}”.",
+      duplicate_variable: "The placeholder “{{name}}” is listed twice.",
     },
     MODEL_NOT_READY: "The model cannot be used yet. {{problem}}",
     MODEL_SERVICE_FAILED: "The test failed: {{failure}}.",

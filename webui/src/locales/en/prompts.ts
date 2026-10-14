@@ -6,6 +6,10 @@ export default {
   title: "Prompts",
   description:
     "The instructions each agent follows. A work's own prompt wins over the system's, which wins over the built-in text. Built-in prompts are written in Chinese; the agents write the novel in its writing language.",
+  tabs: {
+    agents: "Agent prompts",
+    templates: "Your templates",
+  },
   scope: "Applies to",
   allWorks: "All works",
   list: "Prompts",

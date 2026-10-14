@@ -121,3 +121,8 @@ id_type!(
     /// Identifies one connection test against the model service.
     ConnectionTestId
 );
+
+id_type!(
+    /// Identifies a user prompt template.
+    PromptTemplateId
+);

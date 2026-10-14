@@ -19,6 +19,7 @@ export const queryKeys = {
   /** Revisions never change; no event invalidates them. */
   revision: (revisionId: RevisionId) => ["revisions", revisionId] as const,
   settings: ["settings"] as const,
+  templates: ["templates"] as const,
   /** Prompts change with the settings (system overrides) and projects (theirs). */
   prompts: {
     all: ["prompts"] as const,

@@ -25,6 +25,9 @@ pub enum Field {
     ContextWindow,
     MaxOutputTokens,
     PromptContent,
+    TemplateTitle,
+    TemplateBody,
+    TemplateVariableDescription,
 }
 
 /// What is wrong with a rejected field value.

@@ -19,6 +19,7 @@ pub(crate) mod feedback;
 pub(crate) mod model_request;
 pub(crate) mod project;
 pub(crate) mod project_prompt;
+pub(crate) mod prompt_template;
 pub(crate) mod review;
 pub(crate) mod revision;
 pub(crate) mod revision_dependency;

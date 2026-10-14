@@ -15,7 +15,8 @@ import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Textarea } from "@/components/ui/textarea"
 import { useErrorText } from "@/i18n/errors"
-import { useDraft, useDraftList } from "@/lib/drafts"
+import { InsertTemplate } from "@/features/templates/InsertTemplate"
+import { appended, useDraft, useDraftList } from "@/lib/drafts"
 import { submitOnModEnter } from "@/lib/keyboard"
 
 /**
@@ -105,7 +106,12 @@ function ProposalForm({ view, proposal }: { view: WorkspaceView; proposal: Propo
         </FieldDescription>
         {fieldError !== undefined && <FieldError>{errorText(fieldError)}</FieldError>}
       </Field>
-      <CitationField citations={citations} />
+      <div className="flex flex-wrap items-start gap-2">
+        <CitationField citations={citations} />
+        <InsertTemplate
+          onInsert={(inserted) => feedback.setValue(appended(feedback.value, inserted))}
+        />
+      </div>
       {formError !== undefined && <ErrorAlert error={formError} />}
       <div className="flex flex-wrap gap-2">
         <Button type="submit" disabled={pending} variant={accepts ? "default" : "outline"}>

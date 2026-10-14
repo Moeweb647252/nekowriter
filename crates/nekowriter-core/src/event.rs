@@ -28,4 +28,6 @@ pub enum Event {
     },
     /// The system settings changed.
     SettingsChanged,
+    /// A user prompt template was created, changed or deleted.
+    TemplatesChanged,
 }

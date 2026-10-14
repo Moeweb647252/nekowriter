@@ -10,6 +10,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
 
+use crate::field::FieldError;
+
 /// A parsed template.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Template {
@@ -50,6 +52,17 @@ pub enum TemplateError {
     MissingRequiredVariable { name: String },
     #[error("no value was given for the variable `{name}`")]
     MissingValue { name: String },
+    #[error("the variable `{name}` is declared twice")]
+    DuplicateVariable { name: String },
+}
+
+/// Why text that is stored as a template was refused: as a text field, or as a template.
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
+pub enum TemplateTextError {
+    #[error(transparent)]
+    Field(#[from] FieldError),
+    #[error(transparent)]
+    Template(#[from] TemplateError),
 }
 
 impl Template {
@@ -173,7 +186,10 @@ impl<'de> Deserialize<'de> for ResourceText {
     }
 }
 
-fn is_variable_name(name: &str) -> bool {
+/// Whether `name` can name a variable: lowercase ASCII letters, digits and underscores,
+/// starting with a letter.
+#[must_use]
+pub fn is_variable_name(name: &str) -> bool {
     let mut characters = name.chars();
     characters
         .next()

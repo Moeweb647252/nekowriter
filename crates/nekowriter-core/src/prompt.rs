@@ -5,13 +5,12 @@
 
 use sea_orm::{DeriveActiveEnum, EnumIter, sea_query::StringLen};
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 use ts_rs::TS;
 
 use crate::{
     field::{Field, FieldError, FieldProblem, multi_line},
     review::ReviewKind,
-    template::{Template, TemplateError, VariableSpec},
+    template::{Template, TemplateTextError, VariableSpec},
 };
 
 /// A built-in prompt pair (a system prompt and a user prompt).
@@ -208,23 +207,10 @@ impl PromptKey {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct PromptContent(String);
 
-/// Why a prompt override was refused.
-#[derive(Clone, Debug, PartialEq, Eq, Error)]
-pub enum PromptContentError {
-    #[error(transparent)]
-    Field(#[from] FieldError),
-    #[error(transparent)]
-    Template(#[from] TemplateError),
-}
-
 impl PromptContent {
     pub const MAX_CHARS: u32 = 100_000;
 
-    pub fn parse(
-        key: PromptKey,
-        role: PromptRole,
-        value: &str,
-    ) -> Result<Self, PromptContentError> {
+    pub fn parse(key: PromptKey, role: PromptRole, value: &str) -> Result<Self, TemplateTextError> {
         let text = match multi_line(Field::PromptContent, value, Self::MAX_CHARS) {
             Ok(text) => text,
             Err(FieldError {
@@ -246,6 +232,7 @@ impl PromptContent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::template::TemplateError;
 
     #[test]
     fn overrides_use_only_their_prompts_variables() {
@@ -256,7 +243,7 @@ mod tests {
         );
         assert_eq!(
             system(""),
-            Err(PromptContentError::Template(
+            Err(TemplateTextError::Template(
                 TemplateError::MissingRequiredVariable {
                     name: "writing_language".to_owned()
                 }
@@ -264,7 +251,7 @@ mod tests {
         );
         assert_eq!(
             system("{{writing_language}} {{novel_brief}}"),
-            Err(PromptContentError::Template(
+            Err(TemplateTextError::Template(
                 TemplateError::UnknownVariable {
                     name: "novel_brief".to_owned()
                 }

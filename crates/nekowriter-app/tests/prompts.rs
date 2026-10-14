@@ -171,3 +171,80 @@ async fn templates_render_with_every_value_or_not_at_all() {
         json!({ "kind": "missing_value", "name": "name" })
     );
 }
+
+#[tokio::test]
+async fn templates_are_created_edited_and_deleted() {
+    let server = TestServer::start().await;
+    let template = |body: &str, variables: Value| {
+        json!({
+            "commandId": command_id(),
+            "title": "Slow down",
+            "body": body,
+            "variables": variables
+        })
+    };
+    let scene = json!([{ "name": "scene", "description": "The scene to slow down" }]);
+
+    let refused = server
+        .post(
+            "/api/templates",
+            &template("Slow {{scene}} down.", json!([])),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), 422);
+    let body: Value = refused.json().await.unwrap();
+    assert_eq!(body["params"]["error"]["kind"], "unknown_variable");
+
+    let created = server
+        .post(
+            "/api/templates",
+            &template("Slow {{scene}} down.", scene.clone()),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(created.status(), 201);
+    let created: Value = created.json().await.unwrap();
+    let id = created["id"].as_str().unwrap();
+
+    let mut update = template("Take {{scene}} slowly.", scene);
+    update["expectedRevision"] = created["revision"].clone();
+    let updated: Value = server
+        .post(&format!("/api/templates/{id}/update"), &update)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(updated["body"], "Take {{scene}} slowly.");
+    // The first revision is outdated now.
+    update["commandId"] = json!(command_id());
+    let stale = server
+        .post(&format!("/api/templates/{id}/update"), &update)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stale.status(), 409);
+
+    let deleted = server
+        .post(
+            &format!("/api/templates/{id}/delete"),
+            &json!({ "commandId": command_id(), "expectedRevision": updated["revision"] }),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(deleted.status(), 200);
+    let list: Value = server
+        .get("/api/templates")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(list, json!([]));
+}

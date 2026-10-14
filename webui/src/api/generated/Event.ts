@@ -2,4 +2,4 @@
 import type { ProjectId } from "./ProjectId";
 import type { VersionId } from "./VersionId";
 
-export type Event = { "type": "project_changed", projectId: ProjectId, } | { "type": "version_changed", projectId: ProjectId, versionId: VersionId, } | { "type": "settings_changed" };
+export type Event = { "type": "project_changed", projectId: ProjectId, } | { "type": "version_changed", projectId: ProjectId, versionId: VersionId, } | { "type": "settings_changed" } | { "type": "templates_changed" };

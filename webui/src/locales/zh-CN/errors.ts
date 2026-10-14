@@ -19,6 +19,9 @@ export default {
     context_window: "上下文窗口",
     max_output_tokens: "为回答预留的 token 数",
     prompt_content: "提示词内容",
+    template_title: "模板标题",
+    template_body: "模板内容",
+    template_variable_description: "占位符说明",
   },
   resource: {
     project: "作品",
@@ -29,6 +32,7 @@ export default {
     revision: "修订版本",
     question: "问题",
     settings: "设置",
+    template: "模板",
   },
   modelProblem: {
     service_not_configured: "尚未设置模型服务，请在“设置”中填写 API 根地址。",
@@ -93,6 +97,7 @@ export default {
       unknown_variable: "这里不能使用占位符“{{name}}”。",
       missing_required_variable: "这里必须使用占位符“{{name}}”。",
       missing_value: "占位符“{{name}}”没有提供值。",
+      duplicate_variable: "占位符“{{name}}”重复列出。",
     },
     MODEL_NOT_READY: "暂时无法使用模型。{{problem}}",
     MODEL_SERVICE_FAILED: "测试失败：{{failure}}。",
