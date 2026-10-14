@@ -6,6 +6,7 @@ import type { ModelProblem } from "./ModelProblem";
 import type { ProviderFailure } from "./ProviderFailure";
 import type { Resource } from "./Resource";
 import type { StateConflict } from "./StateConflict";
+import type { TemplateError } from "./TemplateError";
 
 /**
  * The body of every error response.
@@ -14,4 +15,4 @@ export type ApiErrorBody = {
 /**
  * Identifies the log entry that describes the cause.
  */
-requestId: string, } & ({ "code": "FIELD_INVALID", "params": FieldError } | { "code": "ANSWER_INVALID", "params": { problem: AnswerProblem, } } | { "code": "CITATION_INVALID", "params": { problem: CitationProblem, } } | { "code": "NOT_FOUND", "params": { resource: Resource, } } | { "code": "REVISION_CONFLICT", "params": { resource: Resource, } } | { "code": "IDEMPOTENCY_CONFLICT" } | { "code": "STATE_CONFLICT", "params": StateConflict } | { "code": "MODEL_NOT_READY", "params": { problem: ModelProblem, } } | { "code": "MODEL_SERVICE_FAILED", "params": { failure: ProviderFailure, } } | { "code": "SERVICE_STOPPING" } | { "code": "MALFORMED_REQUEST" } | { "code": "ROUTE_NOT_FOUND" } | { "code": "UNTRUSTED_HOST" } | { "code": "UNTRUSTED_ORIGIN" } | { "code": "INTERNAL" });
+requestId: string, } & ({ "code": "FIELD_INVALID", "params": FieldError } | { "code": "ANSWER_INVALID", "params": { problem: AnswerProblem, } } | { "code": "CITATION_INVALID", "params": { problem: CitationProblem, } } | { "code": "TEMPLATE_INVALID", "params": { error: TemplateError, } } | { "code": "NOT_FOUND", "params": { resource: Resource, } } | { "code": "REVISION_CONFLICT", "params": { resource: Resource, } } | { "code": "IDEMPOTENCY_CONFLICT" } | { "code": "STATE_CONFLICT", "params": StateConflict } | { "code": "MODEL_NOT_READY", "params": { problem: ModelProblem, } } | { "code": "MODEL_SERVICE_FAILED", "params": { failure: ProviderFailure, } } | { "code": "SERVICE_STOPPING" } | { "code": "MALFORMED_REQUEST" } | { "code": "ROUTE_NOT_FOUND" } | { "code": "UNTRUSTED_HOST" } | { "code": "UNTRUSTED_ORIGIN" } | { "code": "INTERNAL" });

@@ -5,6 +5,7 @@ import common from "./common"
 import dashboard from "./dashboard"
 import errors from "./errors"
 import library from "./library"
+import prompts from "./prompts"
 import settings from "./settings"
 import workspace from "./workspace"
 
@@ -14,6 +15,7 @@ export const zhCN = {
   dashboard,
   errors,
   library,
+  prompts,
   settings,
   workspace,
 } satisfies Catalog<EnglishCatalog>

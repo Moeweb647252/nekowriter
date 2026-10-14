@@ -7,6 +7,7 @@ export default {
     label: "主导航",
     works: "作品",
     dashboard: "仪表盘",
+    prompts: "提示词",
     settings: "设置",
   },
   actions: {

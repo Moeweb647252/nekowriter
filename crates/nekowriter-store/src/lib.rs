@@ -31,6 +31,7 @@ mod export;
 mod feedback;
 mod preparation;
 mod projects;
+mod prompts;
 mod proposals;
 mod questions;
 mod reviews;
@@ -53,6 +54,7 @@ pub use execution::{
 pub use export::{ExportedChapter, ExportedVersion};
 pub use feedback::{FeedbackView, HeldCallView};
 pub use projects::{NewProject, ProjectListFilter, ProjectSettings, ProjectView, VersionSummary};
+pub use prompts::{PromptOverrides, PromptSaved, PromptsRead};
 pub use proposals::ProposalView;
 pub use questions::QuestionView;
 pub use settings::{ApiKeyChange, SystemSettingsInput, SystemSettingsView};

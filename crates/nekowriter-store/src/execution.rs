@@ -48,6 +48,7 @@ use crate::{
     },
     feedback::{bound_feedback, feedback_marker, seal_feedback},
     preparation::required_artifacts,
+    prompts::{PromptOverrides, prompt_overrides},
     workflow::{VersionContext, WorkspaceAck, load_version, project_has_other_active_run, touch},
 };
 
@@ -64,6 +65,8 @@ pub struct DispatchInput {
     /// The run's conversation, in order.
     pub messages: Vec<TranscriptEntry>,
     pub model: ModelSettings,
+    /// The prompt overrides in force for the run's project.
+    pub prompts: PromptOverrides,
     /// The newest message the conversation had; [`Store::dispatch`] refuses to seal if
     /// another one arrived since.
     last_message_id: Option<i64>,
@@ -169,6 +172,7 @@ impl Store {
             });
         }
         let model = model_settings(&self.db, &project).await?;
+        let prompts = prompt_overrides(&self.db, Some(project.id)).await?;
         Ok(DispatchInput {
             run_id,
             project_id: run.project_id,
@@ -178,6 +182,7 @@ impl Store {
             folds,
             messages,
             model,
+            prompts,
             last_message_id,
             feedback_marker,
         })

@@ -14,8 +14,10 @@ use nekowriter_core::{
     conflict::{Resource, StateConflict},
     field::FieldError,
     model::ModelProblem,
+    prompt::PromptContentError,
     question::AnswerProblem,
     run::ProviderFailure,
+    template::TemplateError,
 };
 use nekowriter_store::StoreError;
 use serde::Serialize;
@@ -49,6 +51,8 @@ pub enum ApiProblem {
     AnswerInvalid { problem: AnswerProblem },
     /// A citation does not quote its text.
     CitationInvalid { problem: CitationProblem },
+    /// A template uses variables it may not, misses a required one, or cannot be rendered.
+    TemplateInvalid { error: TemplateError },
     /// The referenced object does not exist or is deleted.
     NotFound { resource: Resource },
     /// The client acted on an outdated copy of the object and must reload it.
@@ -78,9 +82,10 @@ pub enum ApiProblem {
 impl ApiProblem {
     fn status(&self) -> StatusCode {
         match self {
-            Self::FieldInvalid(_) | Self::AnswerInvalid { .. } | Self::CitationInvalid { .. } => {
-                StatusCode::UNPROCESSABLE_ENTITY
-            }
+            Self::FieldInvalid(_)
+            | Self::AnswerInvalid { .. }
+            | Self::CitationInvalid { .. }
+            | Self::TemplateInvalid { .. } => StatusCode::UNPROCESSABLE_ENTITY,
             Self::NotFound { .. } | Self::RouteNotFound => StatusCode::NOT_FOUND,
             Self::RevisionConflict { .. }
             | Self::IdempotencyConflict
@@ -135,6 +140,21 @@ impl IntoResponse for ApiError {
 impl From<FieldError> for ApiError {
     fn from(error: FieldError) -> Self {
         Self::new(ApiProblem::FieldInvalid(error), None)
+    }
+}
+
+impl From<TemplateError> for ApiError {
+    fn from(error: TemplateError) -> Self {
+        Self::new(ApiProblem::TemplateInvalid { error }, None)
+    }
+}
+
+impl From<PromptContentError> for ApiError {
+    fn from(error: PromptContentError) -> Self {
+        match error {
+            PromptContentError::Field(error) => error.into(),
+            PromptContentError::Template(error) => error.into(),
+        }
     }
 }
 

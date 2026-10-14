@@ -19,8 +19,8 @@ use crate::{
     digest::sha256_hex,
     entity::{
         chapter, command_receipt, connection_test, document, event, feedback, model_request,
-        project, review, revision, revision_dependency, run, run_message, schema_info,
-        system_settings, tool_call, version, workflow,
+        project, project_prompt, review, revision, revision_dependency, run, run_message,
+        schema_info, system_prompt, system_settings, tool_call, version, workflow,
     },
 };
 
@@ -36,7 +36,9 @@ fn create_statements() -> Vec<Statement> {
     let mut statements = Vec::new();
     add_entity(&mut statements, &schema, schema_info::Entity);
     add_entity(&mut statements, &schema, system_settings::Entity);
+    add_entity(&mut statements, &schema, system_prompt::Entity);
     add_entity(&mut statements, &schema, project::Entity);
+    add_entity(&mut statements, &schema, project_prompt::Entity);
     add_entity(&mut statements, &schema, version::Entity);
     add_entity(&mut statements, &schema, workflow::Entity);
     add_entity(&mut statements, &schema, document::Entity);

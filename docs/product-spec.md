@@ -338,7 +338,8 @@ Ten keys, each with a system and a user prompt: `preparation.generate`, `chapter
 
 - Built-in prompts are Chinese (§17.3). They are embedded at compile time.
 - Effective prompt: project override → system override → built-in. Resetting deletes the override; an empty override is real empty content.
-- Each built-in variable declares its name, type, whether it is required, an example and its runtime source; its help text lives in the UI catalogs.
+- Each prompt declares its variables and which of them it requires. Every variable is text; its help text and an example live in the UI catalogs. A preview renders the prompt text with those examples through the server's template engine; the agent adds the stage's material and tool instructions after the text.
+- Overrides are saved per scope: system overrides quote the system settings' revision, a project's overrides quote the project's revision.
 
 ### 13.2 Template language
 

@@ -11,6 +11,7 @@ export function AppShell() {
   const navItems = [
     { to: "/works", label: t(($) => $.common.nav.works) },
     { to: "/dashboard", label: t(($) => $.common.nav.dashboard) },
+    { to: "/prompts", label: t(($) => $.common.nav.prompts) },
     { to: "/settings", label: t(($) => $.common.nav.settings) },
   ]
 

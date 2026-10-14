@@ -19,6 +19,11 @@ export const queryKeys = {
   /** Revisions never change; no event invalidates them. */
   revision: (revisionId: RevisionId) => ["revisions", revisionId] as const,
   settings: ["settings"] as const,
+  /** Prompts change with the settings (system overrides) and projects (theirs). */
+  prompts: {
+    all: ["prompts"] as const,
+    scope: (project: ProjectId | null) => ["prompts", project] as const,
+  },
   /** Everything the dashboard counts changes with workspaces, projects and model tests. */
   dashboard: {
     all: ["dashboard"] as const,

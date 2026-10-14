@@ -2,11 +2,20 @@ import common from "./common"
 import dashboard from "./dashboard"
 import errors from "./errors"
 import library from "./library"
+import prompts from "./prompts"
 import settings from "./settings"
 import workspace from "./workspace"
 
 /** The English catalog. It defines the keys every other language must provide. */
-export const en = { common, dashboard, errors, library, settings, workspace } as const
+export const en = {
+  common,
+  dashboard,
+  errors,
+  library,
+  prompts,
+  settings,
+  workspace,
+} as const
 
 export type EnglishCatalog = typeof en
 
@@ -16,6 +25,7 @@ export const NAMESPACES = [
   "dashboard",
   "errors",
   "library",
+  "prompts",
   "settings",
   "workspace",
 ] as const

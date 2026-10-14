@@ -3,39 +3,65 @@
 //! The prompt texts themselves are model-facing and live in the agent crate's resources;
 //! this module defines what exists, so the store, the agent and the UI agree on it.
 
+use sea_orm::{DeriveActiveEnum, EnumIter, sea_query::StringLen};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use ts_rs::TS;
 
-use crate::{review::ReviewKind, template::VariableSpec};
+use crate::{
+    field::{Field, FieldError, FieldProblem, multi_line},
+    review::ReviewKind,
+    template::{Template, TemplateError, VariableSpec},
+};
 
 /// A built-in prompt pair (a system prompt and a user prompt).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS, EnumIter, DeriveActiveEnum,
+)]
+#[sea_orm(rs_type = "String", db_type = "String(StringLen::None)")]
 #[ts(export)]
 pub enum PromptKey {
     #[serde(rename = "preparation.generate")]
+    #[sea_orm(string_value = "preparation.generate")]
     PreparationGenerate,
     #[serde(rename = "chapter.outline")]
+    #[sea_orm(string_value = "chapter.outline")]
     ChapterOutline,
     #[serde(rename = "chapter.write")]
+    #[sea_orm(string_value = "chapter.write")]
     ChapterWrite,
     #[serde(rename = "review.preparation.background")]
+    #[sea_orm(string_value = "review.preparation.background")]
     ReviewPreparationBackground,
     #[serde(rename = "review.preparation.research")]
+    #[sea_orm(string_value = "review.preparation.research")]
     ReviewPreparationResearch,
     #[serde(rename = "review.preparation.characters")]
+    #[sea_orm(string_value = "review.preparation.characters")]
     ReviewPreparationCharacters,
     #[serde(rename = "review.preparation.outline")]
+    #[sea_orm(string_value = "review.preparation.outline")]
     ReviewPreparationOutline,
     #[serde(rename = "review.chapter.outline")]
+    #[sea_orm(string_value = "review.chapter.outline")]
     ReviewChapterOutline,
     #[serde(rename = "review.chapter.edit")]
+    #[sea_orm(string_value = "review.chapter.edit")]
     ReviewChapterEdit,
     #[serde(rename = "review.chapter.final")]
+    #[sea_orm(string_value = "review.chapter.final")]
     ReviewChapterFinal,
 }
 
 /// The two halves of a prompt pair.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS, EnumIter, DeriveActiveEnum,
+)]
+#[sea_orm(
+    rs_type = "String",
+    db_type = "String(StringLen::None)",
+    rename_all = "snake_case"
+)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum PromptRole {
@@ -83,7 +109,9 @@ impl PromptVariable {
 }
 
 /// A variable of a prompt, and whether the prompt must use it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct PromptVariableSpec {
     pub variable: PromptVariable,
     pub required: bool,
@@ -172,5 +200,77 @@ impl PromptKey {
                 required: spec.required,
             })
             .collect()
+    }
+}
+
+/// The content of a prompt override (§13.1, §13.2): text up to [`Self::MAX_CHARS`], which
+/// may be empty, using only its prompt's variables and every required one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct PromptContent(String);
+
+/// Why a prompt override was refused.
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
+pub enum PromptContentError {
+    #[error(transparent)]
+    Field(#[from] FieldError),
+    #[error(transparent)]
+    Template(#[from] TemplateError),
+}
+
+impl PromptContent {
+    pub const MAX_CHARS: u32 = 100_000;
+
+    pub fn parse(
+        key: PromptKey,
+        role: PromptRole,
+        value: &str,
+    ) -> Result<Self, PromptContentError> {
+        let text = match multi_line(Field::PromptContent, value, Self::MAX_CHARS) {
+            Ok(text) => text,
+            Err(FieldError {
+                problem: FieldProblem::Empty,
+                ..
+            }) => String::new(),
+            Err(error) => return Err(error.into()),
+        };
+        Template::parse(&text)?.check(&key.template_variables(role))?;
+        Ok(Self(text))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn overrides_use_only_their_prompts_variables() {
+        let system = |text| PromptContent::parse(PromptKey::ChapterWrite, PromptRole::System, text);
+        assert_eq!(
+            system("  Write in {{writing_language}}.\r\n").map(|content| content.0),
+            Ok("Write in {{writing_language}}.".to_owned())
+        );
+        assert_eq!(
+            system(""),
+            Err(PromptContentError::Template(
+                TemplateError::MissingRequiredVariable {
+                    name: "writing_language".to_owned()
+                }
+            ))
+        );
+        assert_eq!(
+            system("{{writing_language}} {{novel_brief}}"),
+            Err(PromptContentError::Template(
+                TemplateError::UnknownVariable {
+                    name: "novel_brief".to_owned()
+                }
+            ))
+        );
+        // A review's user prompt needs no variables, so it may be empty.
+        assert!(PromptContent::parse(PromptKey::ReviewChapterFinal, PromptRole::User, "").is_ok());
     }
 }

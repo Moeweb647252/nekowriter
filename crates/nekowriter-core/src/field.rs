@@ -24,6 +24,7 @@ pub enum Field {
     ModelId,
     ContextWindow,
     MaxOutputTokens,
+    PromptContent,
 }
 
 /// What is wrong with a rejected field value.

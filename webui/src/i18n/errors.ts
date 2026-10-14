@@ -12,6 +12,7 @@ import type { ModelProblem } from "@/api/generated/ModelProblem"
 import type { ProviderFailure } from "@/api/generated/ProviderFailure"
 import type { Resource } from "@/api/generated/Resource"
 import type { StateConflict } from "@/api/generated/StateConflict"
+import type { TemplateError } from "@/api/generated/TemplateError"
 import type { TimeoutPhase } from "@/api/generated/TimeoutPhase"
 import { assertNever } from "@/lib/assert"
 
@@ -37,7 +38,9 @@ export interface ErrorCatalog {
           ? Record<AnswerProblem["kind"], string>
           : Code extends "CITATION_INVALID"
             ? Record<CitationProblem["kind"], string>
-            : string
+            : Code extends "TEMPLATE_INVALID"
+              ? Record<TemplateError["kind"], string>
+              : string
   }
 }
 
@@ -127,6 +130,14 @@ export function useErrorText(): (error: unknown) => string {
           return problem.kind === "limit_exceeded"
             ? t(($) => $.errors.codes.CITATION_INVALID.limit_exceeded, { max: problem.max })
             : t(($) => $.errors.codes.CITATION_INVALID[problem.kind])
+        }
+        case "TEMPLATE_INVALID": {
+          const error = body.params.error
+          return error.kind === "unclosed_placeholder"
+            ? t(($) => $.errors.codes.TEMPLATE_INVALID.unclosed_placeholder, {
+                offset: error.offset,
+              })
+            : t(($) => $.errors.codes.TEMPLATE_INVALID[error.kind], { name: error.name })
         }
         case "MODEL_NOT_READY":
           return t(($) => $.errors.codes.MODEL_NOT_READY, {

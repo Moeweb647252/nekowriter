@@ -232,12 +232,19 @@ fn prepare(input: &DispatchInput) -> Result<Prepared, RunHalt> {
         .resolve()
         .map_err(|problem| RunHalt::ModelNotReady { problem })?;
     let key = stage::prompt_key(&input.stage);
-    let prompts = PromptTexts {
-        system: builtin(key, PromptRole::System),
-        user: builtin(key, PromptRole::User),
+    let effective = |role| {
+        input
+            .prompts
+            .effective(key, role)
+            .unwrap_or_else(|| builtin(key, role))
     };
+    let prompts = PromptTexts {
+        system: effective(PromptRole::System),
+        user: effective(PromptRole::User),
+    };
+    // Overrides are checked against their variables when saved, so this is a bug.
     let stage = stage::build(&input.stage, input.writing_language, prompts).map_err(|error| {
-        tracing::error!(run = %input.run_id, ?key, %error, "a built-in prompt does not render");
+        tracing::error!(run = %input.run_id, ?key, %error, "a prompt does not render");
         RunHalt::Internal
     })?;
     let mut rendered = Vec::new();

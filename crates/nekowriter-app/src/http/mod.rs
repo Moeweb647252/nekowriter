@@ -42,10 +42,39 @@ pub(crate) struct Diagnostics {
 
 pub(crate) fn router(state: AppState) -> Router {
     let api = Router::new()
+        .merge(system_routes())
+        .merge(project_routes())
+        .merge(workspace_routes())
+        .merge(run_routes())
+        .fallback(error::route_not_found);
+    Router::new()
+        .nest("/api", api)
+        .fallback(assets::serve)
+        .layer(middleware::from_fn_with_state(state.clone(), gate::trust))
+        .with_state(state)
+}
+
+/// The service, its events, the settings, prompts and the dashboard.
+fn system_routes() -> Router<AppState> {
+    Router::new()
         .route("/health", get(handlers::system::health))
         .route("/system/shutdown", post(handlers::system::shutdown))
         .route("/events", get(handlers::events::stream))
         .route("/events/cursor", get(handlers::events::cursor))
+        .route(
+            "/settings",
+            get(handlers::settings::get).post(handlers::settings::save),
+        )
+        .route("/settings/test-model", post(handlers::settings::test_model))
+        .route("/settings/prompts", post(handlers::prompts::save_system))
+        .route("/prompts", get(handlers::prompts::get))
+        .route("/templates/render", post(handlers::prompts::render))
+        .route("/dashboard", get(handlers::dashboard::get))
+}
+
+/// Projects and their versions.
+fn project_routes() -> Router<AppState> {
+    Router::new()
         .route(
             "/projects",
             get(handlers::projects::list).post(handlers::projects::create),
@@ -58,6 +87,10 @@ pub(crate) fn router(state: AppState) -> Router {
             post(handlers::projects::update_settings),
         )
         .route(
+            "/projects/{id}/prompts",
+            post(handlers::prompts::save_project),
+        )
+        .route(
             "/projects/{id}/versions",
             post(handlers::projects::create_version),
         )
@@ -65,12 +98,11 @@ pub(crate) fn router(state: AppState) -> Router {
             "/projects/{id}/select-version",
             post(handlers::projects::select_version),
         )
-        .route(
-            "/settings",
-            get(handlers::settings::get).post(handlers::settings::save),
-        )
-        .route("/settings/test-model", post(handlers::settings::test_model))
-        .route("/dashboard", get(handlers::dashboard::get))
+}
+
+/// A version's workspace: its stages, reviews, questions, revisions and export.
+fn workspace_routes() -> Router<AppState> {
+    Router::new()
         .route("/versions/{id}/workspace", get(handlers::workspace::get))
         .route(
             "/versions/{id}/brief",
@@ -79,10 +111,6 @@ pub(crate) fn router(state: AppState) -> Router {
         .route(
             "/versions/{id}/preparation/start",
             post(handlers::workspace::start_preparation),
-        )
-        .route(
-            "/reviews/{id}/decide",
-            post(handlers::workspace::decide_review),
         )
         .route(
             "/versions/{id}/chapters/start",
@@ -104,8 +132,12 @@ pub(crate) fn router(state: AppState) -> Router {
             "/versions/{id}/approval-mode",
             post(handlers::workspace::set_approval_mode),
         )
-        .route("/revisions/{id}", get(handlers::workspace::revision))
         .route("/versions/{id}/export", get(handlers::export::export))
+        .route("/revisions/{id}", get(handlers::workspace::revision))
+        .route(
+            "/reviews/{id}/decide",
+            post(handlers::workspace::decide_review),
+        )
         .route(
             "/reviews/{id}/delegate",
             post(handlers::workspace::delegate_review),
@@ -118,6 +150,11 @@ pub(crate) fn router(state: AppState) -> Router {
             "/questions/{id}/answer",
             post(handlers::workspace::answer_questions),
         )
+}
+
+/// Controlling a run.
+fn run_routes() -> Router<AppState> {
+    Router::new()
         .route(
             "/runs/{id}/continue",
             post(handlers::workspace::continue_run),
@@ -133,12 +170,6 @@ pub(crate) fn router(state: AppState) -> Router {
             post(handlers::workspace::cancel_pause),
         )
         .route("/runs/{id}/resume", post(handlers::workspace::resume_run))
-        .fallback(error::route_not_found);
-    Router::new()
-        .nest("/api", api)
-        .fallback(assets::serve)
-        .layer(middleware::from_fn_with_state(state.clone(), gate::trust))
-        .with_state(state)
 }
 
 /// Whether the web UI is embedded in this build.

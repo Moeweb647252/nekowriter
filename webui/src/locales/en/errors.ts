@@ -17,6 +17,7 @@ export default {
     model_id: "Model ID",
     context_window: "Context window",
     max_output_tokens: "Tokens reserved for the answer",
+    prompt_content: "Prompt text",
   },
   resource: {
     project: "work",
@@ -90,6 +91,14 @@ export default {
       quote_mismatch: "A cited passage no longer matches its text. Remove it and cite it again.",
       target_gone:
         "The text of a cited passage has changed or belongs elsewhere. Remove it and cite it again.",
+    },
+    TEMPLATE_INVALID: {
+      unclosed_placeholder: "A placeholder opened at character {{offset}} is never closed.",
+      invalid_variable_name:
+        "“{{name}}” is not a placeholder name: use lowercase letters, digits and underscores.",
+      unknown_variable: "The placeholder “{{name}}” is not available here.",
+      missing_required_variable: "The placeholder “{{name}}” is required here.",
+      missing_value: "No value was given for the placeholder “{{name}}”.",
     },
     MODEL_NOT_READY: "The model cannot be used yet. {{problem}}",
     MODEL_SERVICE_FAILED: "The test failed: {{failure}}.",

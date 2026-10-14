@@ -7,6 +7,7 @@ export default {
     label: "Main",
     works: "Works",
     dashboard: "Dashboard",
+    prompts: "Prompts",
     settings: "Settings",
   },
   actions: {

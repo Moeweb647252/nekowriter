@@ -18,6 +18,7 @@ export default {
     model_id: "模型 ID",
     context_window: "上下文窗口",
     max_output_tokens: "为回答预留的 token 数",
+    prompt_content: "提示词内容",
   },
   resource: {
     project: "作品",
@@ -85,6 +86,13 @@ export default {
       bad_range: "有引用超出了原文范围，请移除后重新引用。",
       quote_mismatch: "有引用与原文不再一致，请移除后重新引用。",
       target_gone: "有引用的原文已经改变或不属于当前版本，请移除后重新引用。",
+    },
+    TEMPLATE_INVALID: {
+      unclosed_placeholder: "第 {{offset}} 个字符处开始的占位符没有闭合。",
+      invalid_variable_name: "“{{name}}”不是有效的占位符名称：只能使用小写字母、数字和下划线。",
+      unknown_variable: "这里不能使用占位符“{{name}}”。",
+      missing_required_variable: "这里必须使用占位符“{{name}}”。",
+      missing_value: "占位符“{{name}}”没有提供值。",
     },
     MODEL_NOT_READY: "暂时无法使用模型。{{problem}}",
     MODEL_SERVICE_FAILED: "测试失败：{{failure}}。",

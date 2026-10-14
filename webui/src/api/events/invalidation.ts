@@ -12,7 +12,12 @@ function affectedQueries(event: Event): readonly QueryKey[] {
   switch (event.type) {
     // Workspaces show their project and its versions.
     case "project_changed":
-      return [queryKeys.projects.all, queryKeys.workspaces.all, queryKeys.dashboard.all]
+      return [
+        queryKeys.projects.all,
+        queryKeys.workspaces.all,
+        queryKeys.dashboard.all,
+        queryKeys.prompts.all,
+      ]
     // Project lists show the selected version's stage.
     case "version_changed":
       return [
@@ -21,7 +26,7 @@ function affectedQueries(event: Event): readonly QueryKey[] {
         queryKeys.dashboard.all,
       ]
     case "settings_changed":
-      return [queryKeys.settings]
+      return [queryKeys.settings, queryKeys.prompts.all]
     default:
       return assertNever(event)
   }
