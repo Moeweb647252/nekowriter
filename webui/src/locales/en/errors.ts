@@ -56,7 +56,7 @@ export default {
     timeout: "the service took too long while {{phase}}",
     http_status: "the service answered with HTTP status {{status}}",
     invalid_response: "the service sent an answer NekoWriter does not understand",
-    response_too_large: "the answer was larger than 2 MiB",
+    response_too_large: "the answer was larger than {{mebibytes}} MiB",
   },
   timeoutPhase: {
     connect: "connecting",

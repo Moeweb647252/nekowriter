@@ -175,8 +175,8 @@ pub enum ProviderFailure {
     HttpStatus { status: u16 },
     /// The service answered with something that is not a valid streamed completion.
     InvalidResponse,
-    /// The response exceeded the size limit.
-    ResponseTooLarge,
+    /// The answer exceeded the size limit, given in bytes.
+    ResponseTooLarge { max_bytes: u32 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]

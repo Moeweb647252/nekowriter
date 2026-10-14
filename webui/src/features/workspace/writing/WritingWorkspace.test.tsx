@@ -408,7 +408,9 @@ describe("WritingWorkspace", () => {
     })
     const { user } = renderWorkspace()
 
-    await user.click(await screen.findByRole("radio", { name: "Snow" }))
+    // The first question is required, so nothing can be sent before it has an answer.
+    expect(await screen.findByRole("button", { name: "Submit answer" })).toBeDisabled()
+    await user.click(screen.getByRole("radio", { name: "Snow" }))
     await user.type(screen.getByRole("textbox", { name: "Or answer in your own words" }), "and fog")
     await user.type(screen.getByRole("textbox", { name: "Your answer" }), "Mara")
     await user.click(screen.getByRole("button", { name: "Submit answer" }))

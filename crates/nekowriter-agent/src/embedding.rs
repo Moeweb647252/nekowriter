@@ -19,7 +19,7 @@ use crate::client::{ChatClient, ProviderError};
 /// The most texts sent in one request, which bounds the size of the answer.
 const MAX_BATCH: usize = 32;
 /// The largest answer accepted: a full batch of the largest vectors as JSON text.
-const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_RESPONSE_BYTES: u32 = 16 * 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// The vectors of some texts, in the order of the texts.
@@ -192,8 +192,10 @@ impl ChatClient {
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|error| ProviderError::InvalidResponse(error.to_string()))?;
-            if bytes.len() + chunk.len() > MAX_RESPONSE_BYTES {
-                return Err(ProviderError::ResponseTooLarge);
+            if bytes.len() + chunk.len() > MAX_RESPONSE_BYTES as usize {
+                return Err(ProviderError::ResponseTooLarge {
+                    max_bytes: MAX_RESPONSE_BYTES,
+                });
             }
             bytes.extend_from_slice(&chunk);
         }

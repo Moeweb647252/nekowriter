@@ -4,4 +4,4 @@ import type { TimeoutPhase } from "./TimeoutPhase";
 /**
  * How a request to the model service failed.
  */
-export type ProviderFailure = { "kind": "connect" } | { "kind": "timeout", phase: TimeoutPhase, } | { "kind": "http_status", status: number, } | { "kind": "invalid_response" } | { "kind": "response_too_large" };
+export type ProviderFailure = { "kind": "connect" } | { "kind": "timeout", phase: TimeoutPhase, } | { "kind": "http_status", status: number, } | { "kind": "invalid_response" } | { "kind": "response_too_large", maxBytes: number, };

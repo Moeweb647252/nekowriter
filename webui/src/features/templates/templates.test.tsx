@@ -1,5 +1,6 @@
 import { screen, waitFor } from "@testing-library/react"
 import { HttpResponse, http } from "msw"
+import type { SubmitEvent } from "react"
 import { describe, expect, it, vi } from "vitest"
 
 import { InsertTemplate } from "./InsertTemplate"
@@ -48,7 +49,7 @@ describe("templates", () => {
     })
   })
 
-  it("inserts a template with its placeholders filled in", async () => {
+  it("inserts a template with its placeholders filled in, leaving the draft's form alone", async () => {
     const renders: unknown[] = []
     server.use(
       http.get("*/api/templates", () => HttpResponse.json([SLOW])),
@@ -58,7 +59,15 @@ describe("templates", () => {
       }),
     )
     const onInsert = vi.fn()
-    const { user } = renderWithProviders(<InsertTemplate onInsert={onInsert} />)
+    const onSubmit = vi.fn((event: SubmitEvent<HTMLFormElement>) => {
+      event.preventDefault()
+    })
+    // It sits inside the form of the draft it adds to, as in the dock.
+    const { user } = renderWithProviders(
+      <form onSubmit={onSubmit}>
+        <InsertTemplate onInsert={onInsert} />
+      </form>,
+    )
 
     await user.click(screen.getByRole("button", { name: "Insert template" }))
     await user.click(await screen.findByRole("combobox", { name: "Template" }))
@@ -70,5 +79,6 @@ describe("templates", () => {
       expect(onInsert).toHaveBeenCalledWith("Slow the storm down.")
     })
     expect(renders[0]).toEqual({ template: "Slow {{scene}} down.", values: { scene: "the storm" } })
+    expect(onSubmit).not.toHaveBeenCalled()
   })
 })

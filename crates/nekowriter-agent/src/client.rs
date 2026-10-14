@@ -21,8 +21,9 @@ use tokio::time::timeout;
 
 use crate::{context::PlannedRequest, model_text::model_text, round::AssistantTurn};
 
-/// The largest response accepted, counting the streamed event data.
-pub const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+/// The largest answer accepted: its text and tool-call names and arguments. The stream's
+/// framing and the reasoning text, which are discarded as they arrive, do not count.
+pub const MAX_ANSWER_BYTES: u32 = 2 * 1024 * 1024;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Until the response headers arrive. Reasoning models may think for a while first.
 const FIRST_BYTE_TIMEOUT: Duration = Duration::from_secs(300);
@@ -173,8 +174,8 @@ pub enum ProviderError {
     HttpStatus { status: u16, body: String },
     #[error("the model service sent an invalid response: {0}")]
     InvalidResponse(String),
-    #[error("the response exceeded {MAX_RESPONSE_BYTES} bytes")]
-    ResponseTooLarge,
+    #[error("the answer exceeded {max_bytes} bytes")]
+    ResponseTooLarge { max_bytes: u32 },
 }
 
 impl ProviderError {
@@ -186,7 +187,9 @@ impl ProviderError {
             Self::Timeout(phase) => ProviderFailure::Timeout { phase: *phase },
             Self::HttpStatus { status, .. } => ProviderFailure::HttpStatus { status: *status },
             Self::InvalidResponse(_) => ProviderFailure::InvalidResponse,
-            Self::ResponseTooLarge => ProviderFailure::ResponseTooLarge,
+            Self::ResponseTooLarge { max_bytes } => ProviderFailure::ResponseTooLarge {
+                max_bytes: *max_bytes,
+            },
         }
     }
 }
@@ -266,7 +269,6 @@ impl ChatClient {
 
         let mut events = response.bytes_stream().eventsource();
         let mut answer = Answer::default();
-        let mut received = 0_usize;
         loop {
             let Some(event) = timeout(IDLE_TIMEOUT, events.next())
                 .await
@@ -278,16 +280,17 @@ impl ChatClient {
             if event.data.trim() == "[DONE]" {
                 break;
             }
-            received += event.data.len();
-            if received > MAX_RESPONSE_BYTES {
-                return Err(ProviderError::ResponseTooLarge);
-            }
             let chunk: StreamChunk = serde_json::from_str(&event.data)
                 .map_err(|error| ProviderError::InvalidResponse(error.to_string()))?;
             if let Some(error) = chunk.error {
                 return Err(ProviderError::InvalidResponse(error.to_string()));
             }
             answer.add(chunk, &mut on_delta);
+            if answer.bytes > MAX_ANSWER_BYTES as usize {
+                return Err(ProviderError::ResponseTooLarge {
+                    max_bytes: MAX_ANSWER_BYTES,
+                });
+            }
         }
         Ok(answer.finish(provider_request_id))
     }
@@ -342,6 +345,8 @@ struct ChunkFunction {
 struct Answer {
     content: String,
     tool_calls: BTreeMap<u32, PartialCall>,
+    /// The bytes of text, tool-call names and arguments so far.
+    bytes: usize,
     finish_reason: Option<String>,
     usage: Option<Value>,
 }
@@ -361,6 +366,7 @@ impl Answer {
         for choice in chunk.choices {
             if let Some(text) = choice.delta.content.filter(|text| !text.is_empty()) {
                 on_delta(Delta::Text(&text));
+                self.bytes += text.len();
                 self.content.push_str(&text);
             }
             for (position, call) in choice.delta.tool_calls.into_iter().enumerate() {
@@ -376,8 +382,10 @@ impl Answer {
                     .map(|function| (function.name, function.arguments.unwrap_or_default()))
                     .unwrap_or_default();
                 if let Some(name) = &name {
+                    self.bytes += name.len();
                     partial.name.push_str(name);
                 }
+                self.bytes += arguments.len();
                 partial.arguments.push_str(&arguments);
                 on_delta(Delta::ToolCall {
                     index,
@@ -526,6 +534,53 @@ mod tests {
             }
         );
         assert_eq!(previews.len(), 3);
+    }
+
+    /// A stream of `count` events, each with `text` as content and `reasoning` as reasoning
+    /// text, which the adapter discards.
+    fn repeated_stream(count: usize, text: &str, reasoning: &str) -> &'static str {
+        let event = format!(
+            "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{text}\",\"reasoning_content\":\"{reasoning}\"}}}}]}}\n\n"
+        );
+        let mut stream = event.repeat(count);
+        stream.push_str("data: [DONE]\n\n");
+        stream.leak()
+    }
+
+    #[tokio::test]
+    async fn framing_and_reasoning_do_not_count_toward_the_answer_limit() {
+        // About 3 MiB of stream around 4 KiB of answer.
+        let stream = repeated_stream(1024, "word", &"r".repeat(3 * 1024));
+        let (address, _seen) = serve(stream, 200).await;
+
+        let completion = ChatClient::new()
+            .complete(&service(address), &json!({}), |_| {})
+            .await
+            .unwrap();
+
+        assert_eq!(
+            completion.turn.content.map(|text| text.len()),
+            Some(4 * 1024)
+        );
+    }
+
+    #[tokio::test]
+    async fn an_answer_over_the_limit_fails() {
+        let piece = "a".repeat(1024);
+        let count = MAX_ANSWER_BYTES as usize / piece.len() + 1;
+        let (address, _seen) = serve(repeated_stream(count, &piece, ""), 200).await;
+
+        let error = ChatClient::new()
+            .complete(&service(address), &json!({}), |_| {})
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            error.failure(),
+            ProviderFailure::ResponseTooLarge {
+                max_bytes: MAX_ANSWER_BYTES
+            }
+        );
     }
 
     #[tokio::test]

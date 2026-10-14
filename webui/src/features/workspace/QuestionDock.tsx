@@ -28,6 +28,11 @@ export function QuestionDock({ view, question }: { view: WorkspaceView; question
   const answer = useAnswerQuestions(view.version.id)
   const [drafts, setDrafts] = useState<Record<string, Draft>>({})
   const draftOf = (id: string): Draft => drafts[id] ?? { selected: [], text: "" }
+  // A required question needs a selection or some text (§8.6).
+  const complete = question.questions.every((item) => {
+    const draft = draftOf(item.id)
+    return !item.required || draft.selected.length > 0 || draft.text.trim() !== ""
+  })
 
   const submit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -58,7 +63,7 @@ export function QuestionDock({ view, question }: { view: WorkspaceView; question
       ))}
       {answer.isError && <ErrorAlert error={answer.error} />}
       <div>
-        <Button type="submit" disabled={answer.isPending}>
+        <Button type="submit" disabled={!complete || answer.isPending}>
           {t(($) => $.workspace.question.submit)}
         </Button>
       </div>

@@ -149,7 +149,8 @@ An invalid transition is refused with `STATE_CONFLICT` and a typed reason (for e
 - One protocol: Chat Completions-compatible HTTP. The configured API root ends with its real prefix (for example `/v1`); the adapter appends `chat/completions`. URLs are never guessed from failures.
 - Requests declare tools and stream responses. Tool-call IDs, names and argument JSON are accumulated per tool index and handed over only when complete. `response_format` is not used.
 - Parallel tool calls are disabled in the request. If a response still contains several tool calls, none runs; each gets an error result saying that parallel calls are not allowed, and the model is told to call tools one at a time.
-- Timeouts distinguish connect, first byte and stream idle time. The response size limit is 2 MiB.
+- Timeouts distinguish connect, first byte and stream idle time.
+- An answer may hold at most 2 MiB of text and tool-call names and arguments; a larger answer fails the request. The limit counts what the adapter keeps, not the stream's framing or reasoning text it discards.
 
 ### 8.2 Rounds
 

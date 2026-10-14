@@ -68,9 +68,12 @@ export function useProviderFailureText(): (failure: ProviderFailure) => string {
           })
         case "http_status":
           return t(($) => $.errors.providerFailure.http_status, { status: failure.status })
+        case "response_too_large":
+          return t(($) => $.errors.providerFailure.response_too_large, {
+            mebibytes: failure.maxBytes / 2 ** 20,
+          })
         case "connect":
         case "invalid_response":
-        case "response_too_large":
           return t(($) => $.errors.providerFailure[failure.kind])
         default:
           return assertNever(failure)

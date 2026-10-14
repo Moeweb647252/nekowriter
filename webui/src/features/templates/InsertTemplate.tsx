@@ -63,6 +63,9 @@ function InsertTemplateForm({ onInsert }: { onInsert: (text: string) => void }) 
 
   const submit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault()
+    // The dialog is portaled out of the DOM, but React still bubbles its events through
+    // the component tree, so the feedback form around the trigger would submit too.
+    event.stopPropagation()
     if (template === undefined) return
     const filled = Object.fromEntries(
       template.variables.map(({ name }) => [name, values[name] ?? ""]),

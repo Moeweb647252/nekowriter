@@ -55,7 +55,7 @@ export default {
     timeout: "服务在{{phase}}时超时",
     http_status: "服务返回了 HTTP 状态码 {{status}}",
     invalid_response: "服务返回了 NekoWriter 无法识别的回答",
-    response_too_large: "回答超过了 2 MiB",
+    response_too_large: "回答超过了 {{mebibytes}} MiB",
   },
   timeoutPhase: {
     connect: "建立连接",
