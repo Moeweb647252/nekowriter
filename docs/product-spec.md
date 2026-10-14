@@ -485,32 +485,34 @@ Button labels name the action; a generic "Send" never hides the difference betwe
 
 ## 19. MVP checklist
 
-Each line maps to the milestone that delivers it (M0–M5 in the build plan).
+Each line maps to the milestone that delivered it (M0–M5 in the build plan).
 
-| # | Requirement | Section | Milestone |
-|---|---|---|---|
-| 1 | Workspace, schema v1, version check, process lock, logging, loopback server, embedded UI | §16.1 | M0 |
-| 2 | Commands with idempotency, events with SSE cursors, typed error codes | §16.2 | M0 |
-| 3 | Project create, rename, list, soft delete, restore; first version | §14 | M0 |
-| 4 | UI in en and zh-CN with switching; writing language chosen at creation | §17 | M0 |
-| 5 | Diagnostics and explicit shutdown | §16.3 | M0 |
-| 6 | System model settings, capability check, connection test; project model and thinking level | §13.3 | M1 |
-| 7 | Versions (create empty, select) | §14 | M1 |
-| 8 | Preparation: brief, four artifacts, chapter plan, review tabs, revise, dependencies, stale | §6 | M1 |
-| 9 | Preparation fold | §11 | M1 |
-| 10 | Model adapter, rounds, submission tools, protocol corrections, request allowance | §8 | M1 |
-| 11 | Chapter guidance, outline and review, body tools, whole-chapter review, next chapter, completion, extras | §7 | M2 |
-| 12 | Outline and body folds; context assembly; `context_limit_exceeded` | §11 | M2 |
-| 13 | Workspace reader, chapter list, live preview | §18.2 | M2 |
-| 14 | Pause and feedback batches; AutoApprove matrix | §9.1–§9.4 | M3 |
-| 15 | ApproveRequired proposals and diffs; mode switching | §9.5–§9.6 | M3 |
-| 16 | `ask_user` | §8.6 | M3 |
-| 17 | Review delegation for every review kind | §10 | M3 |
-| 18 | Stop, continue, interruption recovery | §16.3 | M3 |
-| 19 | Citations | §18.4 | M3 |
-| 20 | Knowledge spaces and entries, embedding settings, indexing, search, `query_knowledge`, budget scopes | §12 | M4 |
-| 21 | Research and accumulation interfaces with empty registries | §12.3 | M4 |
-| 22 | Prompt catalog, overrides, variable help, preview; user templates | §13 | M4 |
-| 23 | Dashboard | §15 | M4 |
-| 24 | Export | §16.4 | M4 |
-| 25 | README and architecture document | — | M5 |
+| # | Requirement | Section | Milestone | Status |
+|---|---|---|---|---|
+| 1 | Workspace, schema v1, version check, process lock, logging, loopback server, embedded UI | §16.1 | M0 | Done |
+| 2 | Commands with idempotency, events with SSE cursors, typed error codes | §16.2 | M0 | Done |
+| 3 | Project create, rename, list, soft delete, restore; first version | §14 | M0 | Done |
+| 4 | UI in en and zh-CN with switching; writing language chosen at creation | §17 | M0 | Done |
+| 5 | Diagnostics and explicit shutdown | §16.3 | M0 | Done |
+| 6 | System model settings, capability check, connection test; project model and thinking level | §13.3 | M1 | Done |
+| 7 | Versions (create empty, select, delete) | §14 | M1 | Done |
+| 8 | Preparation: brief, four artifacts, chapter plan, review tabs, revise, dependencies, stale | §6 | M1 | Done |
+| 9 | Preparation fold | §11 | M1 | Done |
+| 10 | Model adapter, rounds, submission tools, protocol corrections, request allowance | §8 | M1 | Done |
+| 11 | Chapter guidance, outline and review, body tools, whole-chapter review, next chapter, completion, extras and their deletion | §7 | M2 | Done |
+| 12 | Outline and body folds; context assembly; `context_limit_exceeded` | §11 | M2 | Done |
+| 13 | Workspace reader, chapter list, live preview | §18.2 | M2 | Done |
+| 14 | Pause and feedback batches; AutoApprove matrix | §9.1–§9.4 | M3 | Done |
+| 15 | ApproveRequired proposals and diffs; mode switching | §9.5–§9.6 | M3 | Done |
+| 16 | `ask_user` | §8.6 | M3 | Done |
+| 17 | Review delegation for every review kind | §10 | M3 | Done |
+| 18 | Stop, continue, interruption recovery | §16.3 | M3 | Done |
+| 19 | Citations | §18.4 | M3 | Done |
+| 20 | Knowledge spaces and entries, embedding settings, indexing, search, `query_knowledge`, budget scopes | §12 | M4 | Done |
+| 21 | Research and accumulation interfaces with empty registries | §12.3 | M4 | Done |
+| 22 | Prompt catalog, overrides, variable help, preview; user templates | §13 | M4 | Done |
+| 23 | Dashboard | §15 | M4 | Done |
+| 24 | Export | §16.4 | M4 | Done |
+| 25 | README and architecture document | — | M5 | Done |
+
+Verification: every item is covered by store, app and web UI tests, which run in one gate together with formatting, Clippy, the English-only check, the generated-type freshness check and the release build (see the README). The release binary was started on a fresh data directory, served the embedded UI, created a work, exported it, refused a foreign origin and shut down cleanly. Still to do by hand: a pass through every page in both interface languages, and a novel written end to end against a real model service.

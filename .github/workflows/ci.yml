@@ -34,6 +34,8 @@ jobs:
         run: |
           git diff --exit-code -- webui/src/api/generated
           test -z "$(git ls-files --others --exclude-standard -- webui/src/api/generated)"
+      - name: Web UI formatting
+        run: pnpm --dir webui exec prettier --check src
       - name: Web UI lint
         run: pnpm --dir webui lint
       - name: Web UI type check
