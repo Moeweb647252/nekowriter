@@ -31,6 +31,7 @@ export default {
     failed: "Indexing failed",
   } satisfies Record<IndexState["state"], string>,
   reindex: "Index again",
+  accumulation: "Knowledge accumulation: no engine available.",
   search: {
     label: "Search by meaning",
     placeholder: "What are you looking for?",

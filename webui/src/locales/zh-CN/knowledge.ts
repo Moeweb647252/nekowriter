@@ -31,6 +31,7 @@ export default {
     failed: "建立索引失败",
   },
   reindex: "重新建立索引",
+  accumulation: "知识积累：没有可用的引擎。",
   search: {
     label: "按语义检索",
     placeholder: "想找什么？",

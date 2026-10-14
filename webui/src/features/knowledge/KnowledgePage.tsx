@@ -7,6 +7,7 @@ import { SearchPanel } from "./SearchPanel"
 import { SpacesPanel } from "./SpacesPanel"
 import type { KnowledgeEntryId } from "@/api/generated/KnowledgeEntryId"
 import type { KnowledgeSpaceId } from "@/api/generated/KnowledgeSpaceId"
+import { useEngines } from "@/api/queries/engines"
 import { useSpaces } from "@/api/queries/knowledge"
 import { ErrorAlert } from "@/components/app/ErrorAlert"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -19,6 +20,7 @@ export type EditorTarget =
 export function KnowledgePage() {
   const { t } = useTranslation()
   const spaces = useSpaces()
+  const engines = useEngines()
   const [space, setSpace] = useState<KnowledgeSpaceId | null>(null)
   const [target, setTarget] = useState<EditorTarget>({ kind: "none" })
 
@@ -31,6 +33,9 @@ export function KnowledgePage() {
       {spaces.isPending && <Skeleton className="h-96" />}
       {spaces.isError && <ErrorAlert error={spaces.error} onRetry={() => void spaces.refetch()} />}
       <SearchPanel space={space} onOpen={(id) => setTarget({ kind: "entry", id })} />
+      {engines.data?.accumulation.engines.length === 0 && (
+        <p className="text-sm text-muted-foreground">{t(($) => $.knowledge.accumulation)}</p>
+      )}
       {spaces.isSuccess && (
         <div className="grid gap-6 lg:grid-cols-[13rem_16rem_1fr]">
           <SpacesPanel

@@ -13,6 +13,7 @@
 pub mod client;
 pub mod context;
 pub mod embedding;
+pub mod engines;
 pub mod model_text;
 pub mod prompts;
 pub mod render;

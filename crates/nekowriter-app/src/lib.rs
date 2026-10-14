@@ -11,7 +11,7 @@ use std::{
     sync::Arc,
 };
 
-use nekowriter_agent::client::ChatClient;
+use nekowriter_agent::{client::ChatClient, engines::Engines};
 use nekowriter_store::{DATABASE_FILE, OpenError, Store, StoreError};
 use thiserror::Error;
 use tokio::{net::TcpListener, task::JoinHandle};
@@ -190,6 +190,7 @@ pub async fn start(config: Config) -> Result<RunningServer, StartupError> {
         store: store.clone(),
         shutdown: shutdown.clone(),
         client,
+        engines: Engines::builtin(),
         previews,
         diagnostics: Arc::new(http::Diagnostics {
             data_dir: config.data_dir,

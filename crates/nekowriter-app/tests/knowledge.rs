@@ -345,3 +345,16 @@ async fn the_preparation_writer_queries_the_knowledge_base() {
     assert_eq!(result["hits"][0]["title"], "Lamp oil");
     assert_eq!(result["hits"][0]["text"], "The lamp burns oil.");
 }
+
+#[tokio::test]
+async fn no_engines_are_registered_and_the_reason_is_given() {
+    let server = TestServer::start().await;
+    let engines = get(&server, "/api/engines").await;
+    for kind in ["research", "accumulation"] {
+        assert_eq!(
+            engines[kind],
+            json!({ "engines": [], "unavailable": "none_registered" }),
+            "{kind}"
+        );
+    }
+}

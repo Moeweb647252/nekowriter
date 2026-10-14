@@ -45,6 +45,14 @@ export default {
     test: "测试向量服务",
     passed: "连接成功。{{seconds}} 秒内返回了 {{dimensions}} 维向量。",
   },
+  engines: {
+    title: "研究与资料积累",
+    description:
+      "引擎让 Agent 能够联网研究，并按你的线索充实知识库。当前版本不含任何引擎，Agent 会如实记录找不到的资料。",
+    research: "联网研究",
+    accumulation: "知识积累",
+    none: "没有可用的引擎",
+  },
   profile: {
     modelId: "模型 ID",
     contextWindow: "上下文窗口（token）",

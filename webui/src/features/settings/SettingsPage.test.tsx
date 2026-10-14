@@ -22,6 +22,12 @@ describe("SettingsPage", () => {
   beforeEach(() => {
     server.use(
       http.get("*/api/settings", () => HttpResponse.json(systemSettings())),
+      http.get("*/api/engines", () =>
+        HttpResponse.json({
+          research: { engines: [], unavailable: "none_registered" },
+          accumulation: { engines: [], unavailable: "none_registered" },
+        }),
+      ),
       http.get("*/api/settings/embedding", () =>
         HttpResponse.json({ apiBaseUrl: null, apiKeySet: false, model: null, revision: 0 }),
       ),
@@ -34,6 +40,13 @@ describe("SettingsPage", () => {
 
     expect(await screen.findByText(health.dataDir)).toBeInTheDocument()
     expect(screen.getByText(health.logDir)).toBeInTheDocument()
+  })
+
+  it("says that no research or accumulation engine is available", async () => {
+    server.use(http.get("*/api/health", () => HttpResponse.json(health)))
+    renderWithProviders(<SettingsPage />)
+
+    expect(await screen.findAllByText("No engine available")).toHaveLength(2)
   })
 
   it("switches the interface language and remembers the choice", async () => {

@@ -10,7 +10,7 @@ use axum::{
     Router, middleware,
     routing::{get, post},
 };
-use nekowriter_agent::client::ChatClient;
+use nekowriter_agent::{client::ChatClient, engines::Engines};
 use nekowriter_store::Store;
 
 use crate::{lifecycle::Shutdown, preview::Previews};
@@ -27,6 +27,7 @@ pub(crate) struct AppState {
     pub(crate) store: Store,
     pub(crate) shutdown: Shutdown,
     pub(crate) client: ChatClient,
+    pub(crate) engines: Engines,
     pub(crate) previews: Previews,
     pub(crate) diagnostics: Arc<Diagnostics>,
     /// The port the server listens on, for the trust gate's allowed origins.
@@ -82,6 +83,7 @@ fn system_routes() -> Router<AppState> {
         .route("/templates/{id}/update", post(handlers::templates::update))
         .route("/templates/{id}/delete", post(handlers::templates::delete))
         .route("/dashboard", get(handlers::dashboard::get))
+        .route("/engines", get(handlers::engines::get))
 }
 
 /// Projects and their versions.

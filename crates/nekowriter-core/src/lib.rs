@@ -16,6 +16,7 @@ pub mod conflict;
 pub mod dashboard;
 pub mod document;
 pub mod embedding;
+pub mod engine;
 pub mod event;
 pub mod feedback;
 pub mod field;

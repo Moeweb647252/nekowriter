@@ -330,7 +330,7 @@ A tool's base outcome is immutable; feedback bindings are stored separately. Whe
 
 - Web research contract: question, user hints, language and run context in; findings, sources (URL, title, access time), limitations and usage out. It never writes novel text.
 - Knowledge accumulation contract: user hints and target space in; candidate entries with sources out. Candidates are validated like manual entries and inserted in one transaction with their index tasks.
-- Both registries are empty in the MVP. Capability queries return an empty list with a reason; invoking an unregistered engine returns `ENGINE_NOT_AVAILABLE`, creates no run and charges nothing. The UI shows "no engine available", never fake progress.
+- Both registries are empty in the MVP. The capability query returns each empty list with the reason `none_registered`, and the UI shows "no engine available", never fake progress. With no engine, no run declares `research_web` (a call to it is refused like any undeclared tool) and nothing offers accumulation. Registering an engine adds its invocation path; invoking an unregistered engine then returns `ENGINE_NOT_AVAILABLE`, creates no run and charges nothing.
 
 ## 13. Prompts and settings
 

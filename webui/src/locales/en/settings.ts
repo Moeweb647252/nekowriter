@@ -48,6 +48,14 @@ export default {
     test: "Test embeddings",
     passed: "Connected. A {{dimensions}}-dimensional vector came back in {{seconds}} s.",
   },
+  engines: {
+    title: "Research and accumulation",
+    description:
+      "Engines let agents research the web and fill the knowledge base from your hints. This version includes none, so agents record what they could not find instead.",
+    research: "Web research",
+    accumulation: "Knowledge accumulation",
+    none: "No engine available",
+  },
   profile: {
     modelId: "Model ID",
     contextWindow: "Context window (tokens)",

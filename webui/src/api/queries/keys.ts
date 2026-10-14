@@ -23,6 +23,8 @@ export const queryKeys = {
   settings: ["settings"] as const,
   embeddingSettings: ["settings", "embedding"] as const,
   templates: ["templates"] as const,
+  /** The registered engines come with the build; no event changes them. */
+  engines: ["engines"] as const,
   knowledge: {
     all: ["knowledge"] as const,
     spaces: ["knowledge", "spaces"] as const,
