@@ -3,8 +3,14 @@ import { afterEach, describe, expect, it } from "vitest"
 import { citable, citeSelection } from "./citations"
 import type { CitationTarget } from "@/api/generated/CitationTarget"
 
-const BODY: CitationTarget = { kind: "revision", revisionId: "0190f5c8-0000-7000-8000-000000000a00" }
-const OTHER: CitationTarget = { kind: "revision", revisionId: "0190f5c8-0000-7000-8000-000000000a01" }
+const BODY: CitationTarget = {
+  kind: "revision",
+  revisionId: "0190f5c8-0000-7000-8000-000000000a00",
+}
+const OTHER: CitationTarget = {
+  kind: "revision",
+  revisionId: "0190f5c8-0000-7000-8000-000000000a01",
+}
 
 /** An element whose text is a segment of `target` starting at `at`. */
 function segment(text: string, target: CitationTarget, at: number): HTMLElement {

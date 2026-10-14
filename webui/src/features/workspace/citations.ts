@@ -92,8 +92,8 @@ function segmentsIn(range: Range): HTMLElement[] {
   const element = ancestor instanceof HTMLElement ? ancestor : ancestor.parentElement
   const enclosing = element?.closest<HTMLElement>(`[${TARGET}]`)
   if (enclosing !== null && enclosing !== undefined) return [enclosing]
-  return Array.from(element?.querySelectorAll<HTMLElement>(`[${TARGET}]`) ?? []).filter(
-    (segment) => range.intersectsNode(segment),
+  return Array.from(element?.querySelectorAll<HTMLElement>(`[${TARGET}]`) ?? []).filter((segment) =>
+    range.intersectsNode(segment),
   )
 }
 
