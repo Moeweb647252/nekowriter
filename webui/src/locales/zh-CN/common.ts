@@ -8,6 +8,7 @@ export default {
     works: "作品",
     dashboard: "仪表盘",
     prompts: "提示词",
+    knowledge: "知识库",
     settings: "设置",
   },
   actions: {

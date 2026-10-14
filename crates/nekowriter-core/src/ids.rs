@@ -126,3 +126,13 @@ id_type!(
     /// Identifies a user prompt template.
     PromptTemplateId
 );
+
+id_type!(
+    /// Identifies a knowledge space.
+    KnowledgeSpaceId
+);
+
+id_type!(
+    /// Identifies a knowledge entry.
+    KnowledgeEntryId
+);

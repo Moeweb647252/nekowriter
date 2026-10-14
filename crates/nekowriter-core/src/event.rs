@@ -30,4 +30,7 @@ pub enum Event {
     SettingsChanged,
     /// A user prompt template was created, changed or deleted.
     TemplatesChanged,
+    /// A knowledge space or entry was created, changed or deleted, or an entry's index
+    /// changed.
+    KnowledgeChanged,
 }

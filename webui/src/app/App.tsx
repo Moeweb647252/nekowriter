@@ -10,6 +10,7 @@ import { EventStreamProvider } from "@/api/events/EventStreamProvider"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { DashboardPage } from "@/features/dashboard/DashboardPage"
+import { KnowledgePage } from "@/features/knowledge/KnowledgePage"
 import { WorksLibraryPage } from "@/features/library/WorksLibraryPage"
 import { PromptsPage } from "@/features/prompts/PromptsPage"
 import { SettingsPage } from "@/features/settings/SettingsPage"
@@ -50,6 +51,7 @@ export function App() {
                   <Route path="/works" element={<WorksLibraryPage />} />
                   <Route path="/dashboard" element={<DashboardPage />} />
                   <Route path="/prompts" element={<PromptsPage />} />
+                  <Route path="/knowledge" element={<KnowledgePage />} />
                   <Route path="/settings" element={<SettingsPage />} />
                   <Route path="*" element={<Navigate to="/works" replace />} />
                 </Route>

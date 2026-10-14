@@ -29,6 +29,8 @@ function affectedQueries(event: Event): readonly QueryKey[] {
       return [queryKeys.settings, queryKeys.prompts.all]
     case "templates_changed":
       return [queryKeys.templates]
+    case "knowledge_changed":
+      return [queryKeys.knowledge.all]
     default:
       return assertNever(event)
   }

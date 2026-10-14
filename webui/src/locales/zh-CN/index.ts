@@ -4,6 +4,7 @@ import type { Catalog } from "@/i18n/catalog"
 import common from "./common"
 import dashboard from "./dashboard"
 import errors from "./errors"
+import knowledge from "./knowledge"
 import library from "./library"
 import prompts from "./prompts"
 import settings from "./settings"
@@ -15,6 +16,7 @@ export const zhCN = {
   common,
   dashboard,
   errors,
+  knowledge,
   library,
   prompts,
   settings,

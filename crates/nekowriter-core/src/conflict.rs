@@ -27,6 +27,10 @@ pub enum Resource {
     Settings,
     #[error("prompt template")]
     Template,
+    #[error("knowledge space")]
+    Space,
+    #[error("knowledge entry")]
+    Entry,
 }
 
 /// A request that is valid in itself but conflicts with the current state.
@@ -76,4 +80,10 @@ pub enum StateConflict {
     /// The question was already answered or is no longer waiting.
     #[error("the question is not waiting for an answer")]
     QuestionNotOpen,
+    /// A space that still holds entries cannot be deleted.
+    #[error("the knowledge space still has entries")]
+    SpaceNotEmpty,
+    /// Another space already has the name; agents choose spaces by name.
+    #[error("another knowledge space has this name")]
+    SpaceNameTaken,
 }

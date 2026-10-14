@@ -316,7 +316,7 @@ A tool's base outcome is immutable; feedback bindings are stored separately. Whe
 
 ### 12.2 Knowledge base
 
-- Entries have a title, keywords, content, a space and a content revision; spaces can be created and renamed. Deleting a non-empty space is rejected.
+- Entries have a title, keywords, content, a space and a content revision; spaces can be created and renamed. Deleting a non-empty space is rejected. Spaces belong to no project, and live spaces have unique names because agents choose spaces by name.
 - Saving an entry commits it and creates an index task. Index status per entry: `not_configured`, `pending`, `running`, `ready`, `failed` (with the reason and an explicit reindex action).
 - An explicit embedding configuration (API root, model, dimensions, key) with one Chat-Completions-family `embeddings` adapter is required for semantic search (D10). Without it, manual knowledge management still works.
 - Chunking: paragraph-first, target 600 non-whitespace characters, hard limit 1000 characters, about 80 characters overlap, splitting long paragraphs on character boundaries.

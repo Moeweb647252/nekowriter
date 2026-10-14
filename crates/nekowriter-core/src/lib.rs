@@ -19,6 +19,7 @@ pub mod event;
 pub mod feedback;
 pub mod field;
 pub mod ids;
+pub mod knowledge;
 pub mod model;
 pub mod preparation;
 pub mod project;

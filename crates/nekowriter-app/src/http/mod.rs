@@ -46,6 +46,7 @@ pub(crate) fn router(state: AppState) -> Router {
         .merge(project_routes())
         .merge(workspace_routes())
         .merge(run_routes())
+        .merge(knowledge_routes())
         .fallback(error::route_not_found);
     Router::new()
         .nest("/api", api)
@@ -155,6 +156,36 @@ fn workspace_routes() -> Router<AppState> {
         .route(
             "/questions/{id}/answer",
             post(handlers::workspace::answer_questions),
+        )
+}
+
+/// Knowledge spaces and entries.
+fn knowledge_routes() -> Router<AppState> {
+    Router::new()
+        .route(
+            "/knowledge/spaces",
+            get(handlers::knowledge::spaces).post(handlers::knowledge::create_space),
+        )
+        .route(
+            "/knowledge/spaces/{id}/rename",
+            post(handlers::knowledge::rename_space),
+        )
+        .route(
+            "/knowledge/spaces/{id}/delete",
+            post(handlers::knowledge::delete_space),
+        )
+        .route(
+            "/knowledge/entries",
+            get(handlers::knowledge::entries).post(handlers::knowledge::create_entry),
+        )
+        .route("/knowledge/entries/{id}", get(handlers::knowledge::entry))
+        .route(
+            "/knowledge/entries/{id}/update",
+            post(handlers::knowledge::update_entry),
+        )
+        .route(
+            "/knowledge/entries/{id}/delete",
+            post(handlers::knowledge::delete_entry),
         )
 }
 

@@ -12,6 +12,7 @@ export function AppShell() {
     { to: "/works", label: t(($) => $.common.nav.works) },
     { to: "/dashboard", label: t(($) => $.common.nav.dashboard) },
     { to: "/prompts", label: t(($) => $.common.nav.prompts) },
+    { to: "/knowledge", label: t(($) => $.common.nav.knowledge) },
     { to: "/settings", label: t(($) => $.common.nav.settings) },
   ]
 

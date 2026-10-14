@@ -16,6 +16,8 @@ pub(crate) mod connection_test;
 pub(crate) mod document;
 pub(crate) mod event;
 pub(crate) mod feedback;
+pub(crate) mod knowledge_entry;
+pub(crate) mod knowledge_space;
 pub(crate) mod model_request;
 pub(crate) mod project;
 pub(crate) mod project_prompt;

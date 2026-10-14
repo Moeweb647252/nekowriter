@@ -1,3 +1,5 @@
+import type { KnowledgeEntryId } from "../generated/KnowledgeEntryId"
+import type { KnowledgeSpaceId } from "../generated/KnowledgeSpaceId"
 import type { ProjectId } from "../generated/ProjectId"
 import type { ProjectListFilter } from "../generated/ProjectListFilter"
 import type { RevisionId } from "../generated/RevisionId"
@@ -20,6 +22,13 @@ export const queryKeys = {
   revision: (revisionId: RevisionId) => ["revisions", revisionId] as const,
   settings: ["settings"] as const,
   templates: ["templates"] as const,
+  knowledge: {
+    all: ["knowledge"] as const,
+    spaces: ["knowledge", "spaces"] as const,
+    entries: (space: KnowledgeSpaceId | null, filter: string) =>
+      ["knowledge", "entries", space, filter] as const,
+    entry: (id: KnowledgeEntryId) => ["knowledge", "entry", id] as const,
+  },
   /** Prompts change with the settings (system overrides) and projects (theirs). */
   prompts: {
     all: ["prompts"] as const,

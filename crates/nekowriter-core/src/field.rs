@@ -28,6 +28,10 @@ pub enum Field {
     TemplateTitle,
     TemplateBody,
     TemplateVariableDescription,
+    SpaceName,
+    EntryTitle,
+    EntryContent,
+    Keyword,
 }
 
 /// What is wrong with a rejected field value.

@@ -8,6 +8,7 @@ export default {
     works: "Works",
     dashboard: "Dashboard",
     prompts: "Prompts",
+    knowledge: "Knowledge",
     settings: "Settings",
   },
   actions: {

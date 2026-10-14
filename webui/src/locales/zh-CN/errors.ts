@@ -22,6 +22,10 @@ export default {
     template_title: "模板标题",
     template_body: "模板内容",
     template_variable_description: "占位符说明",
+    space_name: "空间名称",
+    entry_title: "条目标题",
+    entry_content: "条目内容",
+    keyword: "关键词",
   },
   resource: {
     project: "作品",
@@ -33,6 +37,8 @@ export default {
     question: "问题",
     settings: "设置",
     template: "模板",
+    space: "知识空间",
+    entry: "知识条目",
   },
   modelProblem: {
     service_not_configured: "尚未设置模型服务，请在“设置”中填写 API 根地址。",
@@ -75,6 +81,8 @@ export default {
       run_not_writing: "只有正在写作的章节才能接收意见或暂停。",
       run_not_paused: "该任务没有暂停。",
       question_not_open: "这些问题已经回答过了。",
+      space_not_empty: "该空间中还有条目，请先移走或删除它们。",
+      space_name_taken: "已有其他空间使用这个名称。",
       review_not_delegated: "这次审阅不在审阅 Agent 手中。",
       review_run_not_continuable: "审阅 Agent 的任务不能继续，请重新交给它审阅。",
     },

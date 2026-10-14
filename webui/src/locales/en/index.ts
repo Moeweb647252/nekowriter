@@ -1,6 +1,7 @@
 import common from "./common"
 import dashboard from "./dashboard"
 import errors from "./errors"
+import knowledge from "./knowledge"
 import library from "./library"
 import prompts from "./prompts"
 import settings from "./settings"
@@ -12,6 +13,7 @@ export const en = {
   common,
   dashboard,
   errors,
+  knowledge,
   library,
   prompts,
   settings,
@@ -26,6 +28,7 @@ export const NAMESPACES = [
   "common",
   "dashboard",
   "errors",
+  "knowledge",
   "library",
   "prompts",
   "settings",
