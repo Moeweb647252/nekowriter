@@ -5,7 +5,7 @@ use nekowriter_core::{
     ids::{CommandId, KnowledgeEntryId, KnowledgeSpaceId},
     knowledge::{EntryContent, EntryTitle, Keywords, SpaceName},
 };
-use nekowriter_store::{EntrySummary, EntryView, NewEntry, SpaceView};
+use nekowriter_store::{EntryDeleted, EntrySummary, EntryView, NewEntry, SpaceView};
 use serde::Deserialize;
 use ts_rs::TS;
 
@@ -13,7 +13,7 @@ use crate::http::{
     AppState,
     error::ApiError,
     extract::{Json, Path, Query},
-    handlers::RevisionRequest,
+    handlers::{ControlRequest, RevisionRequest},
 };
 
 #[derive(Clone, Debug, Deserialize, TS)]
@@ -172,11 +172,22 @@ pub(crate) async fn delete_entry(
     State(state): State<AppState>,
     Path(id): Path<KnowledgeEntryId>,
     Json(request): Json<RevisionRequest>,
-) -> Result<axum::Json<EntryView>, ApiError> {
+) -> Result<axum::Json<EntryDeleted>, ApiError> {
     Ok(axum::Json(
         state
             .store
             .delete_entry(request.command_id, id, request.expected_revision)
             .await?,
+    ))
+}
+
+/// Queues an entry for indexing again, for example after a failure.
+pub(crate) async fn reindex_entry(
+    State(state): State<AppState>,
+    Path(id): Path<KnowledgeEntryId>,
+    Json(request): Json<ControlRequest>,
+) -> Result<axum::Json<EntryView>, ApiError> {
+    Ok(axum::Json(
+        state.store.reindex_entry(request.command_id, id).await?,
     ))
 }

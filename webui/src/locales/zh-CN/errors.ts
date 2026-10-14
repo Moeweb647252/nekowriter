@@ -84,6 +84,7 @@ export default {
       question_not_open: "这些问题已经回答过了。",
       space_not_empty: "该空间中还有条目，请先移走或删除它们。",
       space_name_taken: "已有其他空间使用这个名称。",
+      embedding_not_configured: "请先在“设置”中设置向量模型。",
       review_not_delegated: "这次审阅不在审阅 Agent 手中。",
       review_run_not_continuable: "审阅 Agent 的任务不能继续，请重新交给它审阅。",
     },

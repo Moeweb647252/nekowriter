@@ -87,6 +87,7 @@ export default {
       question_not_open: "These questions were already answered.",
       space_not_empty: "The space still has entries. Move or delete them first.",
       space_name_taken: "Another space already has this name.",
+      embedding_not_configured: "Set an embedding model in Settings first.",
       review_not_delegated: "This review is not with the review agent.",
       review_run_not_continuable:
         "A review agent's run cannot be continued; delegate the review again.",

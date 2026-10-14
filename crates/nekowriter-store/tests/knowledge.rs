@@ -121,3 +121,116 @@ async fn only_an_empty_space_can_be_deleted() {
     // The name is free again.
     space(&store, "Notes").await.unwrap();
 }
+
+mod indexing {
+    use nekowriter_core::{
+        embedding::{EmbeddingFailure, EmbeddingModel},
+        knowledge::IndexState,
+        model::{ApiBaseUrl, ModelId},
+    };
+    use nekowriter_store::{ApiKeyChange, EmbeddingSettingsInput};
+
+    use super::*;
+
+    async fn embed_with(store: &Store, model: &str, dimensions: u32) {
+        let revision = store.embedding_settings().await.unwrap().revision;
+        store
+            .save_embedding_settings(
+                CommandId::generate(),
+                revision,
+                EmbeddingSettingsInput {
+                    api_base_url: Some(ApiBaseUrl::parse("http://127.0.0.1:9/v1").unwrap()),
+                    api_key: ApiKeyChange::Keep,
+                    model: Some(EmbeddingModel {
+                        model_id: ModelId::parse(model).unwrap(),
+                        dimensions,
+                    }),
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    async fn state(store: &Store, entry: nekowriter_core::ids::KnowledgeEntryId) -> IndexState {
+        store.entry(entry).await.unwrap().index
+    }
+
+    #[tokio::test]
+    async fn entries_are_indexed_under_the_current_model() {
+        let (_dir, store) = open_store().await;
+        let notes = space(&store, "Notes").await.unwrap();
+        let tides = store
+            .create_entry(CommandId::generate(), entry(notes.id, "Tides", &[]))
+            .await
+            .unwrap();
+        assert_eq!(tides.index, IndexState::NotConfigured);
+        assert!(store.next_index_task().await.unwrap().is_none());
+
+        // Choosing a model queues every entry.
+        embed_with(&store, "embedder", 2).await;
+        assert_eq!(state(&store, tides.id).await, IndexState::Pending);
+        let task = store.next_index_task().await.unwrap().unwrap();
+        assert_eq!(state(&store, tides.id).await, IndexState::Running);
+        store
+            .finish_index_task(
+                &task,
+                Ok(vec![("Lamp oil.".to_owned(), vec![1.0, 0.0])]),
+                Some(3),
+            )
+            .await
+            .unwrap();
+        assert_eq!(state(&store, tides.id).await, IndexState::Ready);
+
+        // An edit while a task runs makes that task's outcome stale.
+        let task = {
+            let current = store.entry(tides.id).await.unwrap();
+            store
+                .update_entry(
+                    CommandId::generate(),
+                    tides.id,
+                    current.revision,
+                    entry(notes.id, "Tides", &["sea"]),
+                )
+                .await
+                .unwrap();
+            store.next_index_task().await.unwrap().unwrap()
+        };
+        let current = store.entry(tides.id).await.unwrap();
+        store
+            .update_entry(
+                CommandId::generate(),
+                tides.id,
+                current.revision,
+                entry(notes.id, "Tides and moons", &["sea"]),
+            )
+            .await
+            .unwrap();
+        store
+            .finish_index_task(&task, Err(EmbeddingFailure::NotFinite), None)
+            .await
+            .unwrap();
+        assert_eq!(state(&store, tides.id).await, IndexState::Pending);
+
+        let task = store.next_index_task().await.unwrap().unwrap();
+        store
+            .finish_index_task(&task, Err(EmbeddingFailure::NotFinite), None)
+            .await
+            .unwrap();
+        assert_eq!(
+            state(&store, tides.id).await,
+            IndexState::Failed {
+                failure: EmbeddingFailure::NotFinite
+            }
+        );
+        store
+            .reindex_entry(CommandId::generate(), tides.id)
+            .await
+            .unwrap();
+        assert_eq!(state(&store, tides.id).await, IndexState::Pending);
+
+        // Another model indexes from scratch; its tasks are separate.
+        embed_with(&store, "other", 3).await;
+        let task = store.next_index_task().await.unwrap().unwrap();
+        assert_eq!(task.model.model_id.as_str(), "other");
+    }
+}

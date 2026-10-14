@@ -77,11 +77,39 @@ export function useProviderFailureText(): (failure: ProviderFailure) => string {
   )
 }
 
+/** Describes why texts could not be embedded, as a sentence. */
+export function useEmbeddingFailureText(): (failure: EmbeddingFailure) => string {
+  const { t } = useTranslation()
+  const providerFailure = useProviderFailureText()
+  return useCallback(
+    (failure: EmbeddingFailure) => {
+      switch (failure.kind) {
+        case "provider":
+          return t(($) => $.errors.codes.EMBEDDING_FAILED.provider, {
+            failure: providerFailure(failure.failure),
+          })
+        case "wrong_dimensions":
+        case "wrong_count":
+          return t(($) => $.errors.codes.EMBEDDING_FAILED[failure.kind], {
+            expected: failure.expected,
+            actual: failure.actual,
+          })
+        case "not_finite":
+          return t(($) => $.errors.codes.EMBEDDING_FAILED.not_finite)
+        default:
+          return assertNever(failure)
+      }
+    },
+    [t, providerFailure],
+  )
+}
+
 /** Returns a function that describes any thrown error in the interface language. */
 export function useErrorText(): (error: unknown) => string {
   const { t } = useTranslation()
   const modelProblem = useModelProblemText()
   const providerFailure = useProviderFailureText()
+  const embeddingFailure = useEmbeddingFailureText()
 
   const describeProblem = useMemo(() => {
     const fieldProblem = (field: string, problem: FieldProblem): string => {
@@ -146,25 +174,8 @@ export function useErrorText(): (error: unknown) => string {
           return t(($) => $.errors.codes.MODEL_NOT_READY, {
             problem: modelProblem(body.params.problem),
           })
-        case "EMBEDDING_FAILED": {
-          const failure = body.params.failure
-          switch (failure.kind) {
-            case "provider":
-              return t(($) => $.errors.codes.EMBEDDING_FAILED.provider, {
-                failure: providerFailure(failure.failure),
-              })
-            case "wrong_dimensions":
-            case "wrong_count":
-              return t(($) => $.errors.codes.EMBEDDING_FAILED[failure.kind], {
-                expected: failure.expected,
-                actual: failure.actual,
-              })
-            case "not_finite":
-              return t(($) => $.errors.codes.EMBEDDING_FAILED.not_finite)
-            default:
-              return assertNever(failure)
-          }
-        }
+        case "EMBEDDING_FAILED":
+          return embeddingFailure(body.params.failure)
         case "MODEL_SERVICE_FAILED":
           return t(($) => $.errors.codes.MODEL_SERVICE_FAILED, {
             failure: providerFailure(body.params.failure),
@@ -184,7 +195,7 @@ export function useErrorText(): (error: unknown) => string {
           return assertNever(body)
       }
     }
-  }, [t, modelProblem, providerFailure])
+  }, [t, modelProblem, providerFailure, embeddingFailure])
 
   return useCallback(
     (error: unknown) => {

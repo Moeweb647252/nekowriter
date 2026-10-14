@@ -7,7 +7,7 @@ use nekowriter_core::{
     conflict::{Resource, StateConflict},
     event::Event,
     ids::{CommandId, KnowledgeEntryId, KnowledgeSpaceId},
-    knowledge::{EntryContent, EntryTitle, Keywords, SpaceName},
+    knowledge::{EntryContent, EntryTitle, IndexState, Keywords, SpaceName},
     time::Timestamp,
 };
 use sea_orm::{
@@ -21,6 +21,7 @@ use crate::{
     Store, StoreError,
     command::{Begun, CommandTx},
     entity::{knowledge_entry, knowledge_space},
+    indexing::{forget_entry, index_state, index_states, queue_entry},
     projects::check_revision,
 };
 
@@ -46,6 +47,7 @@ pub struct EntrySummary {
     pub keywords: Vec<String>,
     pub revision: i64,
     pub updated_at: Timestamp,
+    pub index: IndexState,
 }
 
 /// The columns of an entry that lists need; the content is left in the database.
@@ -71,10 +73,11 @@ pub struct EntryView {
     pub content: String,
     pub revision: i64,
     pub updated_at: Timestamp,
+    pub index: IndexState,
 }
 
-impl From<knowledge_entry::Model> for EntryView {
-    fn from(entry: knowledge_entry::Model) -> Self {
+impl EntryView {
+    pub(crate) fn new(entry: knowledge_entry::Model, index: IndexState) -> Self {
         Self {
             id: entry.id,
             space_id: entry.space_id,
@@ -83,8 +86,18 @@ impl From<knowledge_entry::Model> for EntryView {
             content: entry.content,
             revision: entry.revision,
             updated_at: entry.updated_at,
+            index,
         }
     }
+}
+
+/// A deleted entry's last revision.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct EntryDeleted {
+    pub id: KnowledgeEntryId,
+    pub revision: i64,
 }
 
 /// An entry's content as the user saves it.
@@ -202,7 +215,7 @@ impl Store {
             query = query.filter(knowledge_entry::Column::SpaceId.eq(space));
         }
         let needle = filter.trim().to_lowercase();
-        Ok(query
+        let rows: Vec<EntryRow> = query
             .into_partial_model::<EntryRow>()
             .all(&self.db)
             .await?
@@ -216,7 +229,14 @@ impl Store {
                         .iter()
                         .any(|keyword| keyword.to_lowercase().contains(&needle))
             })
-            .map(|entry| EntrySummary {
+            .collect();
+        let ids: Vec<KnowledgeEntryId> = rows.iter().map(|row| row.id).collect();
+        let states = index_states(&self.db, &ids).await?;
+        Ok(rows
+            .into_iter()
+            .zip(states)
+            .map(|(entry, index)| EntrySummary {
+                index,
                 id: entry.id,
                 space_id: entry.space_id,
                 title: entry.title.as_str().to_owned(),
@@ -228,7 +248,9 @@ impl Store {
     }
 
     pub async fn entry(&self, id: KnowledgeEntryId) -> Result<EntryView, StoreError> {
-        Ok(live_entry(&self.db, id).await?.into())
+        let entry = live_entry(&self.db, id).await?;
+        let state = index_state(&self.db, entry.id).await?;
+        Ok(EntryView::new(entry, state))
     }
 
     pub async fn create_entry(
@@ -255,8 +277,9 @@ impl Store {
         }
         .insert(tx.db())
         .await?;
+        let index = queued_state(queue_entry(tx.db(), entry.id, entry.revision, now).await?);
         tx.emit(Event::KnowledgeChanged);
-        tx.commit(entry.into()).await
+        tx.commit(EntryView::new(entry, index)).await
     }
 
     /// Replaces an entry's space, title, keywords and content.
@@ -268,20 +291,23 @@ impl Store {
         new: NewEntry,
     ) -> Result<EntryView, StoreError> {
         let input = (id, expected_revision, &new);
-        let tx = match self.begin_command(command, "entry.update", &input).await? {
+        let mut tx = match self.begin_command(command, "entry.update", &input).await? {
             Begun::Replayed(view) => return Ok(view),
             Begun::Fresh(tx) => tx,
         };
         let entry = live_entry(tx.db(), id).await?;
         check_revision(Resource::Entry, expected_revision, entry.revision)?;
         live_space(tx.db(), new.space_id).await?;
-        change_entry(tx, entry, |model, _| {
+        let entry = save_entry(&mut tx, entry, |model, _| {
             model.space_id = Set(new.space_id);
             model.title = Set(new.title);
             model.keywords = Set(new.keywords);
             model.content = Set(new.content.as_str().to_owned());
         })
-        .await
+        .await?;
+        let now = tx.now();
+        let index = queued_state(queue_entry(tx.db(), entry.id, entry.revision, now).await?);
+        tx.commit(EntryView::new(entry, index)).await
     }
 
     pub async fn delete_entry(
@@ -289,15 +315,33 @@ impl Store {
         command: CommandId,
         id: KnowledgeEntryId,
         expected_revision: i64,
-    ) -> Result<EntryView, StoreError> {
+    ) -> Result<EntryDeleted, StoreError> {
         let input = (id, expected_revision);
-        let tx = match self.begin_command(command, "entry.delete", &input).await? {
+        let mut tx = match self.begin_command(command, "entry.delete", &input).await? {
             Begun::Replayed(view) => return Ok(view),
             Begun::Fresh(tx) => tx,
         };
         let entry = live_entry(tx.db(), id).await?;
         check_revision(Resource::Entry, expected_revision, entry.revision)?;
-        change_entry(tx, entry, |model, now| model.deleted_at = Set(Some(now))).await
+        forget_entry(tx.db(), entry.id).await?;
+        let entry = save_entry(&mut tx, entry, |model, now| {
+            model.deleted_at = Set(Some(now));
+        })
+        .await?;
+        tx.commit(EntryDeleted {
+            id: entry.id,
+            revision: entry.revision,
+        })
+        .await
+    }
+}
+
+/// The state of an entry that was just queued, or could not be for want of a model.
+fn queued_state(queued: bool) -> IndexState {
+    if queued {
+        IndexState::Pending
+    } else {
+        IndexState::NotConfigured
     }
 }
 
@@ -316,7 +360,7 @@ async fn live_space<C: ConnectionTrait>(
         .ok_or(StoreError::NotFound(Resource::Space))
 }
 
-async fn live_entry<C: ConnectionTrait>(
+pub(crate) async fn live_entry<C: ConnectionTrait>(
     db: &C,
     id: KnowledgeEntryId,
 ) -> Result<knowledge_entry::Model, StoreError> {
@@ -380,18 +424,18 @@ async fn change_space(
     .await
 }
 
-async fn change_entry(
-    mut tx: CommandTx,
+/// Applies a change to an entry, bumping its revision.
+async fn save_entry(
+    tx: &mut CommandTx,
     entry: knowledge_entry::Model,
     apply: impl FnOnce(&mut knowledge_entry::ActiveModel, Timestamp),
-) -> Result<EntryView, StoreError> {
+) -> Result<knowledge_entry::Model, StoreError> {
     let now = tx.now();
     let revision = entry.revision + 1;
     let mut model = entry.into_active_model();
     apply(&mut model, now);
     model.revision = Set(revision);
     model.updated_at = Set(now);
-    let entry = model.update(tx.db()).await?;
     tx.emit(Event::KnowledgeChanged);
-    tx.commit(entry.into()).await
+    Ok(model.update(tx.db()).await?)
 }

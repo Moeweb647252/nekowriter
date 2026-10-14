@@ -1,6 +1,8 @@
 import { getJson, postJson } from "../client"
+import type { ControlRequest } from "../generated/ControlRequest"
 import type { CreateEntryRequest } from "../generated/CreateEntryRequest"
 import type { CreateSpaceRequest } from "../generated/CreateSpaceRequest"
+import type { EntryDeleted } from "../generated/EntryDeleted"
 import type { EntrySummary } from "../generated/EntrySummary"
 import type { EntryView } from "../generated/EntryView"
 import type { KnowledgeEntryId } from "../generated/KnowledgeEntryId"
@@ -29,5 +31,7 @@ export const knowledgeApi = {
   updateEntry: (id: KnowledgeEntryId, request: UpdateEntryRequest) =>
     postJson<EntryView>(`/api/knowledge/entries/${id}/update`, request),
   deleteEntry: (id: KnowledgeEntryId, request: RevisionRequest) =>
-    postJson<EntryView>(`/api/knowledge/entries/${id}/delete`, request),
+    postJson<EntryDeleted>(`/api/knowledge/entries/${id}/delete`, request),
+  reindexEntry: (id: KnowledgeEntryId, request: ControlRequest) =>
+    postJson<EntryView>(`/api/knowledge/entries/${id}/reindex`, request),
 }

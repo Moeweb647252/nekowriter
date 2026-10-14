@@ -136,3 +136,9 @@ id_type!(
     /// Identifies a knowledge entry.
     KnowledgeEntryId
 );
+
+id_type!(
+    /// Identifies an embedding model with its vector size; vectors of different profiles
+    /// are never compared.
+    EmbeddingProfileId
+);

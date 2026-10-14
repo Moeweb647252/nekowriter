@@ -34,6 +34,7 @@ describe("KnowledgePage", () => {
           content: body.content,
           revision: 1,
           updatedAt: 0,
+          index: { state: "pending" },
         }
         return HttpResponse.json(created, { status: 201 })
       }),

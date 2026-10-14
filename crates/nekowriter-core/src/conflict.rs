@@ -86,4 +86,7 @@ pub enum StateConflict {
     /// Another space already has the name; agents choose spaces by name.
     #[error("another knowledge space has this name")]
     SpaceNameTaken,
+    /// Indexing and semantic search need an embedding model in the settings.
+    #[error("no embedding model is set")]
+    EmbeddingNotConfigured,
 }

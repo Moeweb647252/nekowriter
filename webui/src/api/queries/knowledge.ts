@@ -82,3 +82,9 @@ export function useDeleteEntry() {
     knowledgeApi.deleteEntry(entry.id, { commandId, expectedRevision: entry.revision }),
   )
 }
+
+export function useReindexEntry() {
+  return useKnowledgeCommand((entry: EntryView, commandId) =>
+    knowledgeApi.reindexEntry(entry.id, { commandId }),
+  )
+}

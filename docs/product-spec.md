@@ -318,6 +318,7 @@ A tool's base outcome is immutable; feedback bindings are stored separately. Whe
 
 - Entries have a title, keywords, content, a space and a content revision; spaces can be created and renamed. Deleting a non-empty space is rejected. Spaces belong to no project, and live spaces have unique names because agents choose spaces by name.
 - Saving an entry commits it and creates an index task. Index status per entry: `not_configured`, `pending`, `running`, `ready`, `failed` (with the reason and an explicit reindex action).
+- A background indexer works through the tasks one at a time. An outcome for an entry or profile that changed while it was embedded is dropped, so a slow task never overwrites a newer one. A task in flight at shutdown is queued again at the next start. Deleting an entry removes its chunks.
 - An explicit embedding configuration (API root, model, dimensions, key) with one Chat-Completions-family `embeddings` adapter is required for semantic search (D10). Without it, manual knowledge management still works.
 - Chunking: paragraph-first, target 600 non-whitespace characters, hard limit 1000 characters, about 80 characters overlap, splitting long paragraphs on character boundaries.
 - Vectors are stored per chunk and embedding profile (model + dimensions); changing the profile requires a new index, and search is unavailable until the new profile is ready. Old and new vectors are never mixed, and keyword filtering never stands in for semantic search.

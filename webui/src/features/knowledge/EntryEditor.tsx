@@ -7,7 +7,13 @@ import type { EntryView } from "@/api/generated/EntryView"
 import type { KnowledgeEntryId } from "@/api/generated/KnowledgeEntryId"
 import type { KnowledgeSpaceId } from "@/api/generated/KnowledgeSpaceId"
 import type { SpaceView } from "@/api/generated/SpaceView"
-import { useCreateEntry, useDeleteEntry, useEntry, useUpdateEntry } from "@/api/queries/knowledge"
+import {
+  useCreateEntry,
+  useDeleteEntry,
+  useEntry,
+  useReindexEntry,
+  useUpdateEntry,
+} from "@/api/queries/knowledge"
 import { ErrorAlert } from "@/components/app/ErrorAlert"
 import {
   AlertDialog,
@@ -32,7 +38,8 @@ import {
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
-import { useErrorText } from "@/i18n/errors"
+import { useEmbeddingFailureText, useErrorText } from "@/i18n/errors"
+import { cn } from "@/lib/utils"
 
 const FIELDS = ["entry_title", "entry_content", "keyword"] as const
 
@@ -217,6 +224,35 @@ function EntryForm({
           <span className="text-sm text-muted-foreground">{t(($) => $.knowledge.entry.saved)}</span>
         )}
       </div>
+      {entry !== null && <IndexStatus entry={entry} />}
     </form>
+  )
+}
+
+/** Whether the entry can be found by meaning, and why not if indexing failed. */
+function IndexStatus({ entry }: { entry: EntryView }) {
+  const { t } = useTranslation()
+  const failureText = useEmbeddingFailureText()
+  const reindex = useReindexEntry()
+  const index = entry.index
+  return (
+    <div className="flex flex-col items-start gap-2 text-sm">
+      <p role="status" className={cn(index.state === "failed" && "text-destructive")}>
+        {t(($) => $.knowledge.index[index.state])}
+        {index.state === "failed" && `: ${failureText(index.failure)}`}
+      </p>
+      {index.state === "failed" && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={reindex.isPending}
+          onClick={() => reindex.mutate(entry)}
+        >
+          {t(($) => $.knowledge.reindex)}
+        </Button>
+      )}
+      {reindex.isError && <ErrorAlert error={reindex.error} />}
+    </div>
   )
 }

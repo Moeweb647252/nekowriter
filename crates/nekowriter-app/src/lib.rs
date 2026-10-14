@@ -20,6 +20,7 @@ mod data_dir;
 mod dispatcher;
 mod export;
 mod http;
+mod indexer;
 mod lifecycle;
 mod logging;
 mod preview;
@@ -69,9 +70,7 @@ pub enum StartupError {
         data_dir: PathBuf,
         source: OpenError,
     },
-    #[error(
-        "The runs that were executing when NekoWriter last stopped could not be marked interrupted: {0}"
-    )]
+    #[error("The work that was executing when NekoWriter last stopped could not be recovered: {0}")]
     Recovery(#[source] StoreError),
     #[error(
         "NekoWriter could not listen on {address}: {source}. Another program may be using the port; start NekoWriter with --port <number>."
@@ -91,6 +90,8 @@ pub enum RunError {
     Task(#[source] tokio::task::JoinError),
     #[error("the dispatcher task ended unexpectedly: {0}")]
     Dispatcher(#[source] tokio::task::JoinError),
+    #[error("the indexer task ended unexpectedly: {0}")]
+    Indexer(#[source] tokio::task::JoinError),
     #[error("the executing runs could not be marked interrupted: {0}")]
     Interrupt(#[source] StoreError),
     #[error("the database could not be closed cleanly: {0}")]
@@ -104,6 +105,7 @@ pub struct RunningServer {
     store: Store,
     server: JoinHandle<io::Result<()>>,
     dispatcher: JoinHandle<()>,
+    indexer: JoinHandle<()>,
     _lock: DataDirLock,
 }
 
@@ -126,8 +128,10 @@ impl RunningServer {
     pub async fn wait(self) -> Result<(), RunError> {
         let served = self.server.await;
         let dispatched = self.dispatcher.await;
+        let indexed = self.indexer.await;
         served.map_err(RunError::Task)?.map_err(RunError::Serve)?;
         dispatched.map_err(RunError::Dispatcher)?;
+        indexed.map_err(RunError::Indexer)?;
         interrupt_runs(&self.store)
             .await
             .map_err(RunError::Interrupt)?;
@@ -145,6 +149,13 @@ pub async fn start(config: Config) -> Result<RunningServer, StartupError> {
     interrupt_runs(&store)
         .await
         .map_err(StartupError::Recovery)?;
+    let resumed = store
+        .resume_indexing()
+        .await
+        .map_err(StartupError::Recovery)?;
+    if resumed > 0 {
+        tracing::info!(resumed, "queued the index tasks that were running again");
+    }
     let requested = SocketAddr::from((Ipv4Addr::LOCALHOST, config.port));
     let listener = TcpListener::bind(requested)
         .await
@@ -165,6 +176,12 @@ pub async fn start(config: Config) -> Result<RunningServer, StartupError> {
         store: store.clone(),
         client: client.clone(),
         previews: previews.clone(),
+        shutdown: shutdown.clone(),
+    }
+    .spawn();
+    let indexer = indexer::Indexer {
+        store: store.clone(),
+        client: client.clone(),
         shutdown: shutdown.clone(),
     }
     .spawn();
@@ -191,6 +208,7 @@ pub async fn start(config: Config) -> Result<RunningServer, StartupError> {
         store,
         server,
         dispatcher,
+        indexer,
         _lock: lock,
     })
 }

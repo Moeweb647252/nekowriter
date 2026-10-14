@@ -16,6 +16,7 @@ use crate::{
     ApiKeyChange, Store, StoreError,
     command::Begun,
     entity::embedding_settings::{self, ROW_ID},
+    indexing::activate_profile,
     projects::check_revision,
 };
 
@@ -112,6 +113,9 @@ impl Store {
             ApiKeyChange::Replace(key) => Some(key),
         };
         let now = tx.now();
+        if let Some(model) = &input.model {
+            activate_profile(tx.db(), model, now).await?;
+        }
         let row = match existing {
             Some(row) => {
                 let mut row = row.into_active_model();

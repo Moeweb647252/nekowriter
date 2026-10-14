@@ -192,6 +192,10 @@ fn knowledge_routes() -> Router<AppState> {
             "/knowledge/entries/{id}/delete",
             post(handlers::knowledge::delete_entry),
         )
+        .route(
+            "/knowledge/entries/{id}/reindex",
+            post(handlers::knowledge::reindex_entry),
+        )
 }
 
 /// Controlling a run.

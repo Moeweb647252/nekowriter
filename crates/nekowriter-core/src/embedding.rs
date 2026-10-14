@@ -63,3 +63,58 @@ pub enum EmbeddingFailure {
         actual: u32,
     },
 }
+
+/// A vector as stored: its values as little-endian `f32`.
+#[must_use]
+pub fn vector_bytes(vector: &[f32]) -> Vec<u8> {
+    vector
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect()
+}
+
+/// A stored vector; `None` if the bytes are not a whole number of `f32` values.
+#[must_use]
+pub fn vector_from_bytes(bytes: &[u8]) -> Option<Vec<f32>> {
+    let (values, rest) = bytes.as_chunks::<4>();
+    rest.is_empty().then(|| {
+        values
+            .iter()
+            .map(|value| f32::from_le_bytes(*value))
+            .collect()
+    })
+}
+
+/// The cosine similarity of two vectors of the same size; 0 when either is zero.
+#[must_use]
+pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
+    let (mut dot, mut norm_a, mut norm_b) = (0.0_f32, 0.0_f32, 0.0_f32);
+    for (x, y) in a.iter().zip(b) {
+        dot += x * y;
+        norm_a += x * x;
+        norm_b += y * y;
+    }
+    if norm_a == 0.0 || norm_b == 0.0 {
+        0.0
+    } else {
+        dot / (norm_a.sqrt() * norm_b.sqrt())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vectors_round_trip_and_compare_by_direction() {
+        let vector = [1.0, -0.5, 0.25];
+        assert_eq!(
+            vector_from_bytes(&vector_bytes(&vector)),
+            Some(vector.to_vec())
+        );
+        assert_eq!(vector_from_bytes(&[0, 1, 2]), None);
+        assert!((cosine(&[1.0, 0.0], &[2.0, 0.0]) - 1.0).abs() < f32::EPSILON);
+        assert!(cosine(&[1.0, 0.0], &[0.0, 3.0]).abs() < f32::EPSILON);
+        assert!(cosine(&[0.0, 0.0], &[1.0, 0.0]).abs() < f32::EPSILON);
+    }
+}

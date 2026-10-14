@@ -1,3 +1,5 @@
+import type { IndexState } from "@/api/generated/IndexState"
+
 export default {
   title: "Knowledge",
   description:
@@ -21,6 +23,14 @@ export default {
   noEntries: "No entries here yet.",
   noSpaces: "Create a space first: every entry belongs to one.",
   select: "Choose an entry, or create one.",
+  index: {
+    not_configured: "Not searchable: no embedding model is set",
+    pending: "Waiting to be indexed",
+    running: "Indexing",
+    ready: "Searchable",
+    failed: "Indexing failed",
+  } satisfies Record<IndexState["state"], string>,
+  reindex: "Index again",
   entry: {
     space: "Space",
     title: "Title",

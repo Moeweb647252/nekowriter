@@ -23,6 +23,14 @@ export default {
   noEntries: "这里还没有条目。",
   noSpaces: "请先创建空间：每个条目都属于一个空间。",
   select: "选择一个条目，或新建一个。",
+  index: {
+    not_configured: "无法检索：尚未设置向量模型",
+    pending: "等待建立索引",
+    running: "正在建立索引",
+    ready: "可检索",
+    failed: "建立索引失败",
+  },
+  reindex: "重新建立索引",
   entry: {
     space: "空间",
     title: "标题",

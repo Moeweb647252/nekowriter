@@ -77,6 +77,18 @@ export function EntriesPanel({
                         {entry.keywords.join(" · ")}
                       </span>
                     )}
+                    {entry.index.state !== "ready" && (
+                      <span
+                        className={cn(
+                          "text-xs",
+                          entry.index.state === "failed"
+                            ? "text-destructive"
+                            : "text-muted-foreground",
+                        )}
+                      >
+                        {t(($) => $.knowledge.index[entry.index.state])}
+                      </span>
+                    )}
                   </button>
                 </li>
               )

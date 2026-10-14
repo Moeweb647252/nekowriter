@@ -30,6 +30,7 @@ mod events;
 mod execution;
 mod export;
 mod feedback;
+mod indexing;
 mod knowledge;
 mod preparation;
 mod projects;
@@ -57,7 +58,8 @@ pub use execution::{
 };
 pub use export::{ExportedChapter, ExportedVersion};
 pub use feedback::{FeedbackView, HeldCallView};
-pub use knowledge::{EntrySummary, EntryView, NewEntry, SpaceView};
+pub use indexing::{IndexTask, IndexedChunks};
+pub use knowledge::{EntryDeleted, EntrySummary, EntryView, NewEntry, SpaceView};
 pub use projects::{NewProject, ProjectListFilter, ProjectSettings, ProjectView, VersionSummary};
 pub use prompts::{PromptOverrides, PromptSaved, PromptsRead};
 pub use proposals::ProposalView;
