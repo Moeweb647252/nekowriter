@@ -3,17 +3,20 @@
 use axum::{extract::State, http::StatusCode};
 use nekowriter_core::{
     ids::{CommandId, KnowledgeEntryId, KnowledgeSpaceId},
-    knowledge::{EntryContent, EntryTitle, Keywords, SpaceName},
+    knowledge::{EntryContent, EntryTitle, Keywords, SearchQuery, SpaceName, TopK},
 };
-use nekowriter_store::{EntryDeleted, EntrySummary, EntryView, NewEntry, SpaceView};
-use serde::Deserialize;
+use nekowriter_store::{EntryDeleted, EntrySummary, EntryView, NewEntry, SearchHit, SpaceView};
+use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::http::{
-    AppState,
-    error::ApiError,
-    extract::{Json, Path, Query},
-    handlers::{ControlRequest, RevisionRequest},
+use crate::{
+    http::{
+        AppState,
+        error::ApiError,
+        extract::{Json, Path, Query},
+        handlers::{ControlRequest, RevisionRequest},
+    },
+    knowledge_search,
 };
 
 #[derive(Clone, Debug, Deserialize, TS)]
@@ -190,4 +193,37 @@ pub(crate) async fn reindex_entry(
     Ok(axum::Json(
         state.store.reindex_entry(request.command_id, id).await?,
     ))
+}
+
+/// A semantic search of the knowledge base.
+#[derive(Clone, Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SearchRequest {
+    pub query: String,
+    /// The spaces to search; all spaces when empty.
+    pub spaces: Vec<KnowledgeSpaceId>,
+    /// How many results to return: 5 when omitted, at most 10.
+    #[ts(optional)]
+    pub top_k: Option<u32>,
+}
+
+#[derive(Clone, Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SearchResults {
+    pub hits: Vec<SearchHit>,
+}
+
+/// Searches by meaning. Searching from the knowledge page never charges a writing budget.
+pub(crate) async fn search(
+    State(state): State<AppState>,
+    Json(request): Json<SearchRequest>,
+) -> Result<axum::Json<SearchResults>, ApiError> {
+    let query = SearchQuery::parse(&request.query)?;
+    let top_k = request.top_k.map_or(Ok(TopK::DEFAULT), TopK::new)?;
+    let hits =
+        knowledge_search::search(&state.store, &state.client, &query, &request.spaces, top_k)
+            .await?;
+    Ok(axum::Json(SearchResults { hits }))
 }

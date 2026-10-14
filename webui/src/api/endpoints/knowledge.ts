@@ -9,6 +9,8 @@ import type { KnowledgeEntryId } from "../generated/KnowledgeEntryId"
 import type { KnowledgeSpaceId } from "../generated/KnowledgeSpaceId"
 import type { RenameSpaceRequest } from "../generated/RenameSpaceRequest"
 import type { RevisionRequest } from "../generated/RevisionRequest"
+import type { SearchRequest } from "../generated/SearchRequest"
+import type { SearchResults } from "../generated/SearchResults"
 import type { SpaceView } from "../generated/SpaceView"
 import type { UpdateEntryRequest } from "../generated/UpdateEntryRequest"
 
@@ -32,6 +34,7 @@ export const knowledgeApi = {
     postJson<EntryView>(`/api/knowledge/entries/${id}/update`, request),
   deleteEntry: (id: KnowledgeEntryId, request: RevisionRequest) =>
     postJson<EntryDeleted>(`/api/knowledge/entries/${id}/delete`, request),
+  search: (request: SearchRequest) => postJson<SearchResults>("/api/knowledge/search", request),
   reindexEntry: (id: KnowledgeEntryId, request: ControlRequest) =>
     postJson<EntryView>(`/api/knowledge/entries/${id}/reindex`, request),
 }

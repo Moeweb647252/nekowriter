@@ -31,6 +31,14 @@ export default {
     failed: "建立索引失败",
   },
   reindex: "重新建立索引",
+  search: {
+    label: "按语义检索",
+    placeholder: "想找什么？",
+    submit: "检索",
+    results: "检索结果",
+    none: "没有找到相近的内容。",
+    relevance: "相关度 {{relevance, number}}",
+  },
   entry: {
     space: "空间",
     title: "标题",

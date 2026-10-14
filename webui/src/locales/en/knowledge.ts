@@ -31,6 +31,14 @@ export default {
     failed: "Indexing failed",
   } satisfies Record<IndexState["state"], string>,
   reindex: "Index again",
+  search: {
+    label: "Search by meaning",
+    placeholder: "What are you looking for?",
+    submit: "Search",
+    results: "Results",
+    none: "Nothing similar was found.",
+    relevance: "Relevance {{relevance, number}}",
+  },
   entry: {
     space: "Space",
     title: "Title",

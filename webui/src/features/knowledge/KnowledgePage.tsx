@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next"
 
 import { EntriesPanel } from "./EntriesPanel"
 import { EntryEditor } from "./EntryEditor"
+import { SearchPanel } from "./SearchPanel"
 import { SpacesPanel } from "./SpacesPanel"
 import type { KnowledgeEntryId } from "@/api/generated/KnowledgeEntryId"
 import type { KnowledgeSpaceId } from "@/api/generated/KnowledgeSpaceId"
@@ -29,6 +30,7 @@ export function KnowledgePage() {
       </div>
       {spaces.isPending && <Skeleton className="h-96" />}
       {spaces.isError && <ErrorAlert error={spaces.error} onRetry={() => void spaces.refetch()} />}
+      <SearchPanel space={space} onOpen={(id) => setTarget({ kind: "entry", id })} />
       {spaces.isSuccess && (
         <div className="grid gap-6 lg:grid-cols-[13rem_16rem_1fr]">
           <SpacesPanel

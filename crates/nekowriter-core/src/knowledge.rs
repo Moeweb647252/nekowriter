@@ -146,6 +146,56 @@ pub fn chunks(content: &str) -> Vec<String> {
     chunks
 }
 
+multi_line_text!(
+    /// What a semantic search looks for.
+    SearchQuery,
+    Field::SearchQuery,
+    2_000
+);
+
+/// How many results a search returns: 5 unless asked otherwise, at most 10 (§12.2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct TopK(u32);
+
+impl TopK {
+    pub const DEFAULT: Self = Self(5);
+    pub const MAX: u32 = 10;
+
+    pub fn new(value: u32) -> Result<Self, FieldError> {
+        if (1..=Self::MAX).contains(&value) {
+            Ok(Self(value))
+        } else {
+            Err(FieldError {
+                field: Field::TopK,
+                problem: FieldProblem::OutOfRange {
+                    min: 1,
+                    max: Self::MAX,
+                },
+            })
+        }
+    }
+
+    #[must_use]
+    pub fn get(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// Why semantic search cannot run now.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+#[ts(export)]
+pub enum SearchUnavailable {
+    /// No embedding model is set.
+    NotConfigured,
+    /// A new embedding model is still indexing the entries; `remaining` tasks are open.
+    Indexing { remaining: u32 },
+}
+
 /// How far an entry's index is for the current embedding model.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(

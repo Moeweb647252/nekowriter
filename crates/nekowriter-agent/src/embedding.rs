@@ -110,6 +110,24 @@ impl ChatClient {
         Ok(embeddings)
     }
 
+    /// Embeds one text, such as a search query.
+    pub async fn embed_one(
+        &self,
+        service: &ModelService,
+        model: &EmbeddingModel,
+        text: String,
+    ) -> Result<(Vec<f32>, Option<i64>), EmbeddingError> {
+        let embeddings = self.embed(service, model, &[text]).await?;
+        let count = embeddings.vectors.len();
+        match <[Vec<f32>; 1]>::try_from(embeddings.vectors) {
+            Ok([vector]) => Ok((vector, embeddings.input_tokens)),
+            Err(_) => Err(EmbeddingError::WrongCount {
+                expected: 1,
+                actual: u32::try_from(count).unwrap_or(u32::MAX),
+            }),
+        }
+    }
+
     async fn embed_batch(
         &self,
         service: &ModelService,

@@ -27,6 +27,8 @@ export default {
     entry_content: "条目内容",
     keyword: "关键词",
     dimensions: "向量维度",
+    search_query: "检索内容",
+    top_k: "结果数量",
   },
   resource: {
     project: "作品",
@@ -110,6 +112,10 @@ export default {
       duplicate_variable: "占位符“{{name}}”重复列出。",
     },
     MODEL_NOT_READY: "暂时无法使用模型。{{problem}}",
+    SEARCH_UNAVAILABLE: {
+      not_configured: "按语义检索需要向量模型，请在“设置”中设置。",
+      indexing: "正在为新的向量模型建立索引，还剩 {{remaining, number}} 个条目。",
+    },
     EMBEDDING_FAILED: {
       provider: "向量服务出错：{{failure}}。",
       wrong_dimensions:

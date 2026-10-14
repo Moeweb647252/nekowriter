@@ -196,6 +196,7 @@ fn knowledge_routes() -> Router<AppState> {
             "/knowledge/entries/{id}/reindex",
             post(handlers::knowledge::reindex_entry),
         )
+        .route("/knowledge/search", post(handlers::knowledge::search))
 }
 
 /// Controlling a run.

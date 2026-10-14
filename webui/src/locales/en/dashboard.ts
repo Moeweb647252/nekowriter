@@ -43,6 +43,7 @@ export default {
       writing: "Writing",
       review: "Review agents",
       connectionTests: "Connection tests",
+      embeddings: "Embeddings",
     },
     requests: "Requests",
     input: "Input",

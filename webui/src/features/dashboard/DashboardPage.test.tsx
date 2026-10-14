@@ -37,6 +37,7 @@ const VIEW: DashboardView = {
     writing: WRITING,
     review: NONE,
     connectionTests: NONE,
+    embeddings: NONE,
     buckets: [NONE, NONE, NONE, NONE, NONE, NONE, WRITING],
     projects: [{ projectId: PROJECT_ID, name: "Rain", writing: WRITING, review: NONE }],
   },

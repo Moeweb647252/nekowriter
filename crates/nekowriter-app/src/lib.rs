@@ -21,6 +21,7 @@ mod dispatcher;
 mod export;
 mod http;
 mod indexer;
+mod knowledge_search;
 mod lifecycle;
 mod logging;
 mod preview;

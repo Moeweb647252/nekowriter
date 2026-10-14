@@ -26,6 +26,8 @@ export default {
     entry_content: "Entry content",
     keyword: "Keywords",
     dimensions: "Dimensions",
+    search_query: "Search",
+    top_k: "Number of results",
   },
   resource: {
     project: "work",
@@ -117,6 +119,11 @@ export default {
     },
     MODEL_NOT_READY: "The model cannot be used yet. {{problem}}",
     MODEL_SERVICE_FAILED: "The test failed: {{failure}}.",
+    SEARCH_UNAVAILABLE: {
+      not_configured: "Search by meaning needs an embedding model. Set one in Settings.",
+      indexing:
+        "The knowledge base is being indexed for the new embedding model; {{remaining, number}} entries remain.",
+    },
     EMBEDDING_FAILED: {
       provider: "The embedding service failed: {{failure}}.",
       wrong_dimensions:

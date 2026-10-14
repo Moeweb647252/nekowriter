@@ -19,6 +19,11 @@ review: UsageTotals,
  */
 connectionTests: UsageTotals, 
 /**
+ * Embedding requests for indexing and search, which belong to no project; their
+ * tokens are input only and never mixed into the conversation totals.
+ */
+embeddings: UsageTotals, 
+/**
  * Writing and review requests in each time bucket.
  */
 buckets: Array<UsageTotals>, 

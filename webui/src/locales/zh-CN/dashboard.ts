@@ -41,6 +41,7 @@ export default {
       writing: "写作",
       review: "审阅 Agent",
       connectionTests: "连接测试",
+      embeddings: "向量嵌入",
     },
     requests: "请求数",
     input: "输入",

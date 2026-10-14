@@ -39,6 +39,7 @@ mod proposals;
 mod questions;
 mod reviews;
 mod schema;
+mod search;
 mod settings;
 mod templates;
 mod versions;
@@ -64,6 +65,7 @@ pub use projects::{NewProject, ProjectListFilter, ProjectSettings, ProjectView, 
 pub use prompts::{PromptOverrides, PromptSaved, PromptsRead};
 pub use proposals::ProposalView;
 pub use questions::QuestionView;
+pub use search::{SearchHit, SearchProfile};
 pub use settings::{ApiKeyChange, SystemSettingsInput, SystemSettingsView};
 pub use templates::PromptTemplateView;
 pub use workflow::WorkspaceAck;

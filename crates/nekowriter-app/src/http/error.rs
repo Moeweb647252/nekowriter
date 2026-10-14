@@ -14,6 +14,7 @@ use nekowriter_core::{
     conflict::{Resource, StateConflict},
     embedding::EmbeddingFailure,
     field::FieldError,
+    knowledge::SearchUnavailable,
     model::ModelProblem,
     question::AnswerProblem,
     run::ProviderFailure,
@@ -23,6 +24,8 @@ use nekowriter_store::StoreError;
 use serde::Serialize;
 use ts_rs::TS;
 use uuid::Uuid;
+
+use crate::knowledge_search::SearchError;
 
 /// The body of every error response.
 #[derive(Clone, Debug, Serialize, TS)]
@@ -55,6 +58,8 @@ pub enum ApiProblem {
     TemplateInvalid { error: TemplateError },
     /// The embedding service failed or answered with vectors that do not fit the model.
     EmbeddingFailed { failure: EmbeddingFailure },
+    /// Semantic search cannot run now.
+    SearchUnavailable { reason: SearchUnavailable },
     /// The referenced object does not exist or is deleted.
     NotFound { resource: Resource },
     /// The client acted on an outdated copy of the object and must reload it.
@@ -92,7 +97,8 @@ impl ApiProblem {
             Self::RevisionConflict { .. }
             | Self::IdempotencyConflict
             | Self::StateConflict(_)
-            | Self::ModelNotReady { .. } => StatusCode::CONFLICT,
+            | Self::ModelNotReady { .. }
+            | Self::SearchUnavailable { .. } => StatusCode::CONFLICT,
             Self::ModelServiceFailed {
                 failure: ProviderFailure::Timeout { .. },
             }
@@ -191,6 +197,23 @@ impl From<StoreError> for ApiError {
 /// the web UI.
 pub(crate) async fn route_not_found() -> ApiError {
     ApiError::new(ApiProblem::RouteNotFound, None)
+}
+
+impl From<SearchError> for ApiError {
+    fn from(error: SearchError) -> Self {
+        match error {
+            SearchError::Unavailable(reason) => {
+                Self::new(ApiProblem::SearchUnavailable { reason }, None)
+            }
+            SearchError::Embedding(error) => Self::new(
+                ApiProblem::EmbeddingFailed {
+                    failure: error.failure(),
+                },
+                error.to_string(),
+            ),
+            SearchError::Store(error) => error.into(),
+        }
+    }
 }
 
 #[cfg(test)]

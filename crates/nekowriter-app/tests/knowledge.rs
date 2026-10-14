@@ -191,3 +191,85 @@ async fn the_indexer_embeds_saved_entries() {
         ["Lamp oil was carried up the stairs before the storm."]
     );
 }
+
+async fn create_entry(server: &TestServer, space: &Value, title: &str, content: &str) -> String {
+    let entry: Value = server
+        .post(
+            "/api/knowledge/entries",
+            &json!({
+                "commandId": command_id(),
+                "spaceId": space["id"],
+                "title": title,
+                "keywords": [],
+                "content": content
+            }),
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    entry["id"].as_str().unwrap().to_owned()
+}
+
+async fn search(server: &TestServer, query: &str) -> reqwest::Response {
+    server
+        .post(
+            "/api/knowledge/search",
+            &json!({ "query": query, "spaces": [], "topK": 2 }),
+        )
+        .send()
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn search_ranks_chunks_by_meaning_once_indexed() {
+    let server = TestServer::start().await;
+    let unavailable = search(&server, "lamp").await;
+    assert_eq!(unavailable.status(), 409);
+    let body: Value = unavailable.json().await.unwrap();
+    assert_eq!(body["code"], "SEARCH_UNAVAILABLE");
+    assert_eq!(
+        body["params"]["reason"],
+        json!({ "kind": "not_configured" })
+    );
+
+    let model = common::model::FakeModel::default();
+    embed_with(&server, &model).await;
+    let space: Value = server
+        .post(
+            "/api/knowledge/spaces",
+            &json!({ "commandId": command_id(), "name": "Lighthouses" }),
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let oil = create_entry(
+        &server,
+        &space,
+        "Lamp oil",
+        "The lamp burns oil. Lamp oil is heavy.",
+    )
+    .await;
+    let storms = create_entry(&server, &space, "Storms", "A storm rolls in from the sea.").await;
+    let calm = create_entry(&server, &space, "Calm", "Nothing happens.").await;
+    for entry in [&oil, &storms, &calm] {
+        wait_for_index(&server, entry, "ready").await;
+    }
+
+    let found: Value = search(&server, "storm at sea").await.json().await.unwrap();
+    let hits = found["hits"].as_array().unwrap();
+    assert_eq!(hits.len(), 2);
+    assert_eq!(hits[0]["title"], "Storms");
+    assert_eq!(hits[0]["spaceName"], "Lighthouses");
+    assert!(hits[0]["relevance"].as_f64().unwrap() > hits[1]["relevance"].as_f64().unwrap());
+
+    let dashboard = get(&server, "/api/dashboard?boundaries=0,9999999999999").await;
+    // Three entries were indexed and one query embedded.
+    assert_eq!(dashboard["usage"]["embeddings"]["requests"], 4);
+}

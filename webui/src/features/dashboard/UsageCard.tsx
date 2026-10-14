@@ -29,6 +29,7 @@ export function UsageCard({
     { key: "writing", totals: usage.writing },
     { key: "review", totals: usage.review },
     { key: "connectionTests", totals: usage.connectionTests },
+    { key: "embeddings", totals: usage.embeddings },
   ] as const
   const unknown = roles.reduce(
     (sum, role) => ({

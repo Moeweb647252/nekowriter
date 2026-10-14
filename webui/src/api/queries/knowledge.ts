@@ -7,6 +7,7 @@ import type { EntryFields } from "../generated/EntryFields"
 import type { EntryView } from "../generated/EntryView"
 import type { KnowledgeEntryId } from "../generated/KnowledgeEntryId"
 import type { KnowledgeSpaceId } from "../generated/KnowledgeSpaceId"
+import type { SearchRequest } from "../generated/SearchRequest"
 import type { SpaceView } from "../generated/SpaceView"
 import { queryKeys } from "./keys"
 
@@ -87,4 +88,13 @@ export function useReindexEntry() {
   return useKnowledgeCommand((entry: EntryView, commandId) =>
     knowledgeApi.reindexEntry(entry.id, { commandId }),
   )
+}
+
+/** Searches by meaning; a search records embedding usage, so it is a mutation. */
+export function useKnowledgeSearch() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (request: SearchRequest) => knowledgeApi.search(request),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all }),
+  })
 }

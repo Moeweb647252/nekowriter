@@ -11,6 +11,7 @@ import type { Field } from "@/api/generated/Field"
 import type { FieldProblem } from "@/api/generated/FieldProblem"
 import type { ModelProblem } from "@/api/generated/ModelProblem"
 import type { ProviderFailure } from "@/api/generated/ProviderFailure"
+import type { SearchUnavailable } from "@/api/generated/SearchUnavailable"
 import type { Resource } from "@/api/generated/Resource"
 import type { StateConflict } from "@/api/generated/StateConflict"
 import type { TemplateError } from "@/api/generated/TemplateError"
@@ -43,7 +44,9 @@ export interface ErrorCatalog {
               ? Record<TemplateError["kind"], string>
               : Code extends "EMBEDDING_FAILED"
                 ? Record<EmbeddingFailure["kind"], string>
-                : string
+                : Code extends "SEARCH_UNAVAILABLE"
+                  ? Record<SearchUnavailable["kind"], string>
+                  : string
   }
 }
 
@@ -176,6 +179,12 @@ export function useErrorText(): (error: unknown) => string {
           })
         case "EMBEDDING_FAILED":
           return embeddingFailure(body.params.failure)
+        case "SEARCH_UNAVAILABLE": {
+          const reason = body.params.reason
+          return reason.kind === "indexing"
+            ? t(($) => $.errors.codes.SEARCH_UNAVAILABLE.indexing, { remaining: reason.remaining })
+            : t(($) => $.errors.codes.SEARCH_UNAVAILABLE.not_configured)
+        }
         case "MODEL_SERVICE_FAILED":
           return t(($) => $.errors.codes.MODEL_SERVICE_FAILED, {
             failure: providerFailure(body.params.failure),

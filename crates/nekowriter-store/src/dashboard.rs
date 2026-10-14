@@ -22,7 +22,7 @@ use ts_rs::TS;
 use crate::{
     Store, StoreError,
     entity::{
-        chapter, connection_test, document,
+        chapter, connection_test, document, embedding_request,
         model_request::{self, ModelRequestStatus},
         project, review, revision, run, version, workflow,
     },
@@ -58,6 +58,9 @@ pub struct UsageView {
     pub review: UsageTotals,
     /// Connection tests, which belong to no project.
     pub connection_tests: UsageTotals,
+    /// Embedding requests for indexing and search, which belong to no project; their
+    /// tokens are input only and never mixed into the conversation totals.
+    pub embeddings: UsageTotals,
     /// Writing and review requests in each time bucket.
     pub buckets: Vec<UsageTotals>,
     /// Projects that sent requests in the time range.
@@ -212,6 +215,7 @@ async fn usage<C: ConnectionTrait>(
         writing: UsageTotals::default(),
         review: UsageTotals::default(),
         connection_tests: UsageTotals::default(),
+        embeddings: UsageTotals::default(),
         buckets: vec![UsageTotals::default(); buckets.count()],
         projects: Vec::new(),
     };
@@ -259,6 +263,26 @@ async fn usage<C: ConnectionTrait>(
         };
         view.connection_tests
             .add(UsageStatus::of(test.usage, answer));
+    }
+
+    let embeddings = embedding_request::Entity::find()
+        .filter(embedding_request::Column::SentAt.gte(buckets.start()))
+        .filter(embedding_request::Column::SentAt.lt(buckets.end()))
+        .all(db)
+        .await?;
+    for request in embeddings {
+        let reported = request.input_tokens.map(|input| TokenUsage {
+            input_tokens: Some(input),
+            output_tokens: Some(0),
+            cached_input_tokens: None,
+            reasoning_tokens: None,
+        });
+        let answer = if request.answered {
+            Answer::Received
+        } else {
+            Answer::Missing
+        };
+        view.embeddings.add(UsageStatus::of(reported, answer));
     }
     Ok(view)
 }
