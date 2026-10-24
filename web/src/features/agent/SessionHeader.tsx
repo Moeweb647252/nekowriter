@@ -92,7 +92,12 @@ export function SessionHeader({
         </div>
         <div className="truncate text-xs text-muted-foreground">{session.model_label}</div>
       </div>
-      <SessionStatusBadge status={session.status} pausing={pausing} stopping={stopping} />
+      <SessionStatusBadge
+        status={session.status}
+        pausing={pausing}
+        stopping={stopping}
+        retrying={session.retrying}
+      />
 
       <Popover>
         <PopoverTrigger asChild>

@@ -572,6 +572,11 @@ async fn run_with_retry(
                         error = %error,
                         "retrying the model request"
                     );
+                    // spec/04 §6: `session.updated` carries `retrying: {attempt, wait_seconds,
+                    // reason}` so the UI can show "Provider overloaded — retrying in 8 s". The
+                    // state is per-attempt and in flight, so it is published here rather than
+                    // stored: `SessionDto.retrying` is `None` everywhere else (spec/10 §2.8).
+                    publish_retrying(ctx, attempt, wait, &error).await;
                     tokio::select! {
                         biased;
                         _ = ctx.cancel.cancelled() => return Err(StepStop::Cancelled),
@@ -1739,6 +1744,40 @@ async fn edit_report_text(
             Ok(Some(report.render(prompts)?))
         }
     }
+}
+
+// ───────────────────────────── retry state ─────────────────────────────
+
+/// Publishes the `retrying` state of an in-flight retry as a `session.updated` event
+/// (spec/04 §6, spec/10 §2.8).
+///
+/// `SessionDto.retrying` is transport state, not a column: the model request is not persisted
+/// until it succeeds, so the only way the UI can show "Provider overloaded — retrying in 8 s" is
+/// an event published when the wait starts. A failed publish must not abort the retry.
+async fn publish_retrying(
+    ctx: &RunnerCtx,
+    attempt: u32,
+    wait: Duration,
+    error: &nekowriter_llm::retry::LlmError,
+) {
+    let Ok(row) = session::load(ctx.state.db().conn(), ctx.session_id).await else {
+        return;
+    };
+    let Ok(mut dto) = session::to_dto(ctx.state.db().conn(), &row, Vec::new()).await else {
+        return;
+    };
+    dto.retrying = Some(crate::api::dto::sessions::RetryingDto {
+        attempt: i32::try_from(attempt).unwrap_or(i32::MAX),
+        // Round up, so "retrying in 1 s" never hides a 1.4 s wait behind a 1.
+        wait_seconds: i32::try_from(wait.as_secs().max(1)).unwrap_or(i32::MAX),
+        // The provider's own wording, so the code stays English-only (AGENTS.md §2): it is a
+        // classification label, not a user-visible sentence (the UI localizes by this string).
+        reason: error.to_string(),
+    });
+    ctx.state.events().publish(ServerEvent::SessionUpdated {
+        session: dto,
+        warnings: Vec::new(),
+    });
 }
 
 // ───────────────────────────── text-only replies ─────────────────────────────

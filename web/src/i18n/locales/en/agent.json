@@ -32,7 +32,8 @@
     "superseded": "Continued in a new session",
     "abandoned": "Abandoned",
     "pausing": "Pausing…",
-    "stopping": "Stopping…"
+    "stopping": "Stopping…",
+    "retrying": "Retrying in {{seconds}} s"
   },
   "controls": {
     "pause": "Pause",

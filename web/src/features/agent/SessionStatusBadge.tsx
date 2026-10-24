@@ -39,6 +39,7 @@ export function SessionStatusBadge({
   status,
   pausing = false,
   stopping = false,
+  retrying = null,
   className,
 }: {
   status: SessionStatus
@@ -46,6 +47,8 @@ export function SessionStatusBadge({
   pausing?: boolean
   /** The author pressed Stop; the badge says "Stopping…". */
   stopping?: boolean
+  /** The provider is being retried (spec/04 §6): "Retrying in 8 s". */
+  retrying?: { attempt: number; wait_seconds: number; reason: string } | null
   className?: string
 }) {
   const { t } = useTranslation()
@@ -60,6 +63,22 @@ export function SessionStatusBadge({
     return (
       <Badge variant="outline" className={cn("animate-pulse", className)}>
         {t("agent:status.stopping")}
+      </Badge>
+    )
+  }
+  // A retry outranks the plain status: the session is still `running`, but what the author needs
+  // to know is that the provider is being retried and how long it will be (spec/04 §6).
+  if (retrying) {
+    return (
+      <Badge
+        variant="outline"
+        className={cn(
+          "animate-pulse border-transparent bg-amber-500/15 text-amber-700 dark:text-amber-400",
+          className,
+        )}
+        title={retrying.reason}
+      >
+        {t("agent:status.retrying", { seconds: retrying.wait_seconds })}
       </Badge>
     )
   }
