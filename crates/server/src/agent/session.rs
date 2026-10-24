@@ -224,6 +224,26 @@ pub async fn transition(
         "session transition"
     );
 
+    // An archivist session that fails or is abandoned leaves the chapter's canon `failed`, so the
+    // chapter never stays `syncing` without a session and Retry works (spec/06 §6, D-048). This
+    // runs in the transition's own transaction, so the status and the chapter flag commit
+    // together.
+    if matches!(to, SessionStatus::Failed | SessionStatus::Abandoned)
+        && matches!(
+            kind_of(session),
+            SessionKind::ChapterMaintenance | SessionKind::ChapterResync
+        )
+        && let Some(chapter_id) = session.chapter_id
+    {
+        conn.execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "UPDATE chapters SET canon_status = 'failed', updated_at = ? \
+             WHERE id = ? AND canon_status = 'syncing'",
+            vec![now.into(), chapter_id.into()],
+        ))
+        .await?;
+    }
+
     let row = load(conn, session.id).await?;
     let dto = to_dto(conn, &row, Vec::new()).await?;
     Ok(vec![ServerEvent::SessionUpdated {

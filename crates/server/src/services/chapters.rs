@@ -734,16 +734,21 @@ pub async fn approve(
     for reviewer in super::reviews::open_reviewer_sessions(state.db().conn(), chapter_id).await? {
         super::sessions::abandon(state, reviewer.id).await?;
     }
+    let state_owned = state.clone();
     let (response, published) = super::write(state.db(), move |tx| {
-        Box::pin(async move { approve_inner(tx, chapter_id).await })
+        Box::pin(async move { approve_inner(&state_owned, tx, chapter_id).await })
     })
     .await?;
     state.events().publish_all(published);
+    if let Some(session_id) = response.maintenance_session_id {
+        state.manager().spawn(state.clone(), session_id);
+    }
     Ok(response)
 }
 
 pub async fn approve_inner(
-    tx: &impl ConnectionTrait,
+    state: &crate::state::AppState,
+    tx: &sea_orm::DatabaseTransaction,
     chapter_id: i32,
 ) -> Result<(ApproveChapterResponse, Vec<ServerEvent>), AppError> {
     use sea_orm::ActiveModelTrait;
@@ -796,24 +801,36 @@ pub async fn approve_inner(
 
     let row = load(tx, chapter_id).await?;
     let dto = to_dto(tx, &row).await?;
+    // `auto_maintenance` starts the archivist in the approval transaction (spec/08 §1.1): the
+    // official version, the canon status and the session either all commit or none does.
+    let mut warnings = Vec::new();
+    let mut events = vec![
+        ServerEvent::ChapterUpdated {
+            chapter: dto.list_item.clone(),
+            outline_changed: false,
+        },
+        ServerEvent::BookUpdated {
+            book_id: existing.book_id,
+            op: BookOp::Update,
+        },
+    ];
+    let mut maintenance_session_id = None;
+    if super::maintenance::auto_maintenance_enabled(tx, existing.book_id).await? {
+        let (session_id, session_events, session_warnings) =
+            super::maintenance::start_after_approval(state, tx, &existing).await?;
+        maintenance_session_id = session_id;
+        events.extend(session_events);
+        warnings.extend(session_warnings);
+    }
+    warnings.sort();
+    warnings.dedup();
     Ok((
         ApproveChapterResponse {
             chapter: dto.clone(),
-            maintenance_session_id: None,
-            // `auto_maintenance` starts a maintenance session in M3+; until then the canon simply
-            // stays `pending` and the author maintains it by hand.
-            warnings: Vec::new(),
+            maintenance_session_id,
+            warnings,
         },
-        vec![
-            ServerEvent::ChapterUpdated {
-                chapter: dto.list_item,
-                outline_changed: false,
-            },
-            ServerEvent::BookUpdated {
-                book_id: existing.book_id,
-                op: BookOp::Update,
-            },
-        ],
+        events,
     ))
 }
 

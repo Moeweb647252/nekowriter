@@ -6,6 +6,8 @@
 //! `prompts/tools.toml` (spec/09 §1) and are frozen into the session; results and errors are
 //! rendered from `prompts/results.toml` — code never writes model-facing text.
 
+pub mod archivist;
+pub mod proposals;
 pub mod registry;
 pub mod resolve;
 pub mod retrieval;

@@ -143,6 +143,13 @@ pub enum ServerEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         revision: Option<i32>,
     },
+    /// A setting proposal was created or decided (spec/06 §5, spec/10 §3).
+    #[serde(rename = "proposal.changed")]
+    ProposalChanged {
+        book_id: i32,
+        proposal_id: i32,
+        status: crate::db::json::ProposalStatus,
+    },
     /// A lagging subscriber missed events; refetch everything visible.
     #[serde(rename = "resync")]
     Resync,

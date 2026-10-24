@@ -464,10 +464,17 @@ async fn revising_ignores_chapter_end_and_hints_at_finish_revision() {
         content.paragraphs
     );
     let (status, _, _) = chapter_row(&runtime, runtime.chapter_id).await;
-    assert_eq!(status, "revising", "the chapter stays in revising");
+    assert_eq!(
+        status, "in_review",
+        "a completed revision waits for the author's review (spec/08 §1.1)"
+    );
     // A `backup` version exists from the creation side effect of a revise session
-    // (spec/03 §4); the `revision` version belongs to M6.2's handler.
-    assert_eq!(runtime.version_kinds().await, vec!["backup".to_owned()]);
+    // (spec/03 §4); M6.2's completion handler adds the `revision` version.
+    assert_eq!(
+        runtime.version_kinds().await,
+        vec!["backup".to_owned(), "revision".to_owned()],
+        "the revision version is saved on completion (spec/08 §1.1)"
+    );
 }
 
 // ───────────────────────────── empty segments ─────────────────────────────

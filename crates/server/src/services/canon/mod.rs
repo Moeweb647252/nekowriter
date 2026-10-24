@@ -717,9 +717,8 @@ pub async fn record_change(
     write: &CanonWrite,
     change: ChangeWrite<'_>,
 ) -> CanonResult<i32> {
-    // A revert's inverse operation writes the revert row itself: it gets the `system` actor, the
-    // author's revert note and `reverts_id`, so no second row is written for one operation
-    // (D-079).
+    // A revert's inverse operation writes the revert row itself: it gets the `system` actor, an
+    // empty note and `reverts_id`, so no second row is written for one operation (D-079, D-085).
     let revert = write.revert.as_ref();
     Ok(change_log_service::record(
         tx,

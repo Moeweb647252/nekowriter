@@ -73,6 +73,7 @@ fn event_book(event: &ServerEvent) -> Option<i32> {
         ServerEvent::ChapterUpdated { chapter, .. } => Some(chapter.book_id),
         ServerEvent::SettingsChanged { book_id, .. } => Some(*book_id),
         ServerEvent::CanonChanged { book_id, .. } => Some(*book_id),
+        ServerEvent::ProposalChanged { book_id, .. } => Some(*book_id),
         ServerEvent::SessionUpdated { session, .. } => session.book_id,
         // No book id in the payload (spec/10 §3).
         ServerEvent::ChapterContentChanged { .. }
@@ -152,6 +153,7 @@ pub fn event_type(event: &ServerEvent) -> &'static str {
         ServerEvent::ChapterUpdated { .. } => "chapter.updated",
         ServerEvent::ChapterContentChanged { .. } => "chapter.content",
         ServerEvent::CanonChanged { .. } => "canon.changed",
+        ServerEvent::ProposalChanged { .. } => "proposal.changed",
         ServerEvent::SettingsChanged { .. } => "settings.changed",
         ServerEvent::SessionUpdated { .. } => "session.updated",
         ServerEvent::SessionMessage { .. } => "session.message",

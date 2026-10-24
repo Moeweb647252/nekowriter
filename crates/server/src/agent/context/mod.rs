@@ -26,9 +26,10 @@ use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
 use crate::prompts::PromptSet;
 use crate::prompts::context::{
-    BookContext, CastEntryContext, ChapterContext, CharacterContext, DraftContext, FeedbackContext,
-    FeedbackIssueContext, GranularityContext, MemoryContext, MemoryCountsContext, ParagraphContext,
-    PriorReportContext, ScopeContext, SettingsContext, TrackContext,
+    BookContext, CastEntryContext, ChapterContext, CharacterContext, DiffChangeContext,
+    DiffContext, DraftContext, FeedbackContext, FeedbackIssueContext, GranularityContext,
+    MemoryContext, MemoryCountsContext, ParagraphContext, PriorReportContext, ScopeContext,
+    SettingsContext, TrackContext,
 };
 use crate::text;
 
@@ -188,7 +189,7 @@ async fn block_context(
         })),
         "block.chapter_diff" => Ok(json!({
             "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
-            "diff": json!({ "changes": [] }),
+            "diff": chapter_diff_context(conn, session).await?,
         })),
         "block.anchor" => Ok(json!({
             "track": track_context(conn, prompts, session.track_id).await?,
@@ -534,14 +535,126 @@ fn empty_memory_context() -> MemoryContext {
     }
 }
 
-/// `block.cast_index`: the visible entities the archivist matches against (spec/06 §4.5, M5).
+/// `block.cast_index`: up to 300 visible entities with aliases, so the archivist matches existing
+/// entities instead of duplicating them (spec/06 §4.5).
 async fn cast_index_context(
     conn: &impl ConnectionTrait,
     prompts: &PromptSet,
     session: &agent_sessions::Model,
 ) -> Result<Vec<CastEntryContext>, AppError> {
-    let _ = (conn, prompts, session);
-    Ok(Vec::new())
+    let Some(book_id) = session.book_id else {
+        return Ok(Vec::new());
+    };
+    let track = match session.track_id {
+        Some(track_id) => tracks::Entity::find_by_id(track_id).one(conn).await?,
+        None => None,
+    };
+    let visibility = crate::services::canon::visibility_of_track(book_id, track.as_ref());
+    let mut rows = crate::services::canon::visible_entities(conn, visibility)
+        .await
+        .map_err(|err| err.into_app_error())?;
+    rows.sort_by(|a, b| {
+        b.importance
+            .cmp(&a.importance)
+            .then_with(|| b.last_chapter_id.cmp(&a.last_chapter_id))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    rows.truncate(300);
+    Ok(rows
+        .into_iter()
+        .map(|row| CastEntryContext {
+            id: row.id,
+            name: row.name,
+            kind_label: prompts.label("entity_kind", &row.kind),
+            status_label: prompts.label("entity_status", &row.status),
+            status: row.status,
+            aliases: json::from_json_or_default(&row.aliases),
+            summary: row.summary,
+        })
+        .collect())
+}
+
+/// `block.chapter_diff` (spec/06 §8): the paragraph-level diff between `synced_version_id` and the
+/// new official version, so the re-sync task shows only what the author changed.
+async fn chapter_diff_context(
+    conn: &impl ConnectionTrait,
+    session: &agent_sessions::Model,
+) -> Result<DiffContext, AppError> {
+    let Some(chapter_id) = session.chapter_id else {
+        return Ok(DiffContext {
+            changes: Vec::new(),
+        });
+    };
+    let Some(chapter) = chapters::Entity::find_by_id(chapter_id).one(conn).await? else {
+        return Ok(DiffContext {
+            changes: Vec::new(),
+        });
+    };
+    let previous = match chapter.synced_version_id {
+        Some(version_id) => chapter_versions::Entity::find_by_id(version_id)
+            .one(conn)
+            .await?
+            .and_then(|row| json::from_json::<ChapterContent>(&row.content).ok())
+            .unwrap_or_default(),
+        None => ChapterContent::default(),
+    };
+    let current = match chapter.official_version_id {
+        Some(version_id) => chapter_versions::Entity::find_by_id(version_id)
+            .one(conn)
+            .await?
+            .and_then(|row| json::from_json::<ChapterContent>(&row.content).ok())
+            .unwrap_or_default(),
+        None => json::from_json_or_default(&chapter.content),
+    };
+    Ok(DiffContext {
+        changes: paragraph_diff(&previous, &current),
+    })
+}
+
+/// The paragraph diff of two chapter contents (spec/06 §8): modifications keep their pid, insertions
+/// are located by their preceding pid, deletions carry their old text.
+fn paragraph_diff(previous: &ChapterContent, current: &ChapterContent) -> Vec<DiffChangeContext> {
+    use std::collections::BTreeMap;
+    let mut old_by_pid: BTreeMap<&str, &str> = BTreeMap::new();
+    for paragraph in &previous.paragraphs {
+        old_by_pid.insert(paragraph.pid.as_str(), paragraph.text.as_str());
+    }
+    let mut changes = Vec::new();
+    let mut seen: BTreeMap<&str, ()> = BTreeMap::new();
+    let mut previous_pid: Option<String> = None;
+    for paragraph in &current.paragraphs {
+        seen.insert(paragraph.pid.as_str(), ());
+        match old_by_pid.get(paragraph.pid.as_str()) {
+            Some(old) if *old == paragraph.text => {}
+            Some(old) => changes.push(DiffChangeContext {
+                op: "modify".to_owned(),
+                pid: paragraph.pid.clone(),
+                after: None,
+                old: (*old).to_owned(),
+                new: paragraph.text.clone(),
+            }),
+            None => changes.push(DiffChangeContext {
+                op: "insert".to_owned(),
+                pid: paragraph.pid.clone(),
+                after: previous_pid.clone(),
+                old: String::new(),
+                new: paragraph.text.clone(),
+            }),
+        }
+        previous_pid = Some(paragraph.pid.clone());
+    }
+    for paragraph in &previous.paragraphs {
+        if !seen.contains_key(paragraph.pid.as_str()) {
+            changes.push(DiffChangeContext {
+                op: "delete".to_owned(),
+                pid: paragraph.pid.clone(),
+                after: None,
+                old: paragraph.text.clone(),
+                new: String::new(),
+            });
+        }
+    }
+    changes
 }
 
 /// `block.chapter_draft` and the writer tasks: the current text with pids (spec/03 §10).
@@ -1289,8 +1402,15 @@ pub async fn apply_completion(
         }
         // M6.1 owns the review report.
         CompletionKind::Review => {}
-        // M6.3 owns the canon status.
-        CompletionKind::Maintenance => {}
+        // `finish_maintenance` (M6.3, spec/06 §6): `synced`, or `stale` when the author edited
+        // the text during maintenance (D-026).
+        CompletionKind::Maintenance => {
+            if let Some(chapter_id) = session.chapter_id {
+                events.extend(
+                    super::completion::finish_maintenance(tx, session, call, chapter_id).await?,
+                );
+            }
+        }
         // M8.3 owns the research task.
         CompletionKind::Research => {}
     }

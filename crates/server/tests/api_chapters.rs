@@ -357,14 +357,21 @@ async fn approve_creates_the_official_version_and_pends_canon() {
     let approved = body["chapter"].clone();
     assert_eq!(approved["status"], "official");
     assert_eq!(approved["canon_status"], "pending");
+    // `auto_maintenance` defaults to on, but no archivist model is configured here: the chapter
+    // is still approved and its canon stays `pending`, with the warning the UI localizes
+    // (spec/08 §1.1).
     assert_eq!(
         body["warnings"],
-        json!([]),
-        "M1 starts no maintenance session"
+        json!(["model.missing_role"]),
+        "no archivist model means a warning, not a failed approval"
     );
     assert!(
         body.get("maintenance_session_id").is_none(),
-        "the field is omitted until a maintenance session starts"
+        "the field is omitted when no session starts"
+    );
+    assert_eq!(
+        approved["canon_status"], "pending",
+        "canon stays pending for a manual Retry"
     );
     let official_version_id = approved["official_version_id"]
         .as_i64()

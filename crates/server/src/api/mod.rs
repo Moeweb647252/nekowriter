@@ -11,6 +11,7 @@ pub mod dto;
 pub mod events;
 pub mod health;
 pub mod prompts;
+pub mod proposals;
 pub mod providers;
 pub mod reviews;
 pub mod sessions;
@@ -81,6 +82,8 @@ pub fn build_app(state: AppState) -> Router {
         .route("/chapters/{chapter_id}/review", post(reviews::review))
         .route("/chapters/{chapter_id}/send-back", post(reviews::send_back))
         .route("/chapters/{chapter_id}/reviews", get(reviews::reports))
+        .route("/chapters/{chapter_id}/maintain", post(reviews::maintain))
+        .route("/chapters/{chapter_id}/resync", post(reviews::resync))
         .route(
             "/review-reports/{report_id}/rereview",
             post(reviews::rereview),
@@ -114,6 +117,9 @@ pub fn build_app(state: AppState) -> Router {
             "/books/{book_id}/characters/reorder",
             post(settings_materials::reorder_characters),
         )
+        .route("/books/{book_id}/proposals", get(proposals::list))
+        .route("/proposals/{proposal_id}/accept", post(proposals::accept))
+        .route("/proposals/{proposal_id}/reject", post(proposals::reject))
         .route(
             "/characters/{character_id}",
             get(settings_materials::get_character)

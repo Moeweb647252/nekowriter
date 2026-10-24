@@ -10,10 +10,12 @@ use chrono::Utc;
 use sea_orm::{ActiveModelTrait, ConnectionTrait, EntityTrait, Set};
 
 use crate::db::entities::{agent_sessions, agent_tool_calls, chapter_versions, chapters};
-use crate::db::json::{ChapterContent, ChapterStatus, VersionKind};
+use crate::db::json::{CanonStatus, ChapterContent, ChapterStatus, VersionKind};
 use crate::error::AppError;
 use crate::events::{ContentActor, ServerEvent};
 use crate::text;
+
+use crate::api::dto::ChapterListItemDto;
 
 use super::session;
 
@@ -118,6 +120,44 @@ pub async fn finish_revision(
         "summary",
     )
     .await
+}
+
+/// `finish_maintenance` (spec/06 §6): the chapter's canon is synced to the official version it
+/// was maintained from. When the author edited the text meanwhile, `content_version` no longer
+/// equals the session's `base_content_version` and the chapter becomes `stale` (spec/03 §14,
+/// D-026) — an author edit during maintenance is allowed and is exactly what produces this.
+pub async fn finish_maintenance(
+    tx: &sea_orm::DatabaseTransaction,
+    session: &agent_sessions::Model,
+    _call: &agent_tool_calls::Model,
+    chapter_id: i32,
+) -> Result<Vec<ServerEvent>, AppError> {
+    let Some(chapter) = chapters::Entity::find_by_id(chapter_id).one(tx).await? else {
+        return Ok(Vec::new());
+    };
+    let synced = session.base_content_version == Some(chapter.content_version);
+    let canon_status = if synced {
+        CanonStatus::Synced
+    } else {
+        CanonStatus::Stale
+    };
+    chapters::ActiveModel {
+        id: Set(chapter_id),
+        canon_status: Set(canon_status.as_str().to_owned()),
+        synced_version_id: Set(chapter.official_version_id),
+        updated_at: Set(Utc::now()),
+        ..Default::default()
+    }
+    .update(tx)
+    .await?;
+    let row = chapters::Entity::find_by_id(chapter_id)
+        .one(tx)
+        .await?
+        .ok_or_else(|| AppError::internal("chapter vanished after maintenance"))?;
+    Ok(vec![ServerEvent::ChapterUpdated {
+        chapter: ChapterListItemDto::from(row),
+        outline_changed: false,
+    }])
 }
 
 /// The `note` of the version a completing call saves (spec/08 §1.1).

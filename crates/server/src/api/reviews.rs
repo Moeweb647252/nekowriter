@@ -7,6 +7,7 @@ use crate::api::dto::reviews::{
     RereviewInput, ReviewSessionResponse, ReviewsResponse, SendBackInput,
 };
 use crate::error::AppResult;
+use crate::services::maintenance;
 use crate::services::reviews as service;
 use crate::state::AppState;
 
@@ -42,4 +43,20 @@ pub async fn reports(
     Path(chapter_id): Path<i32>,
 ) -> AppResult<Json<ReviewsResponse>> {
     Ok(Json(service::reports(state.db().conn(), chapter_id).await?))
+}
+
+/// `POST /api/chapters/:id/maintain` (spec/08 §1.1): continue a failed session or start a new one.
+pub async fn maintain(
+    State(state): State<AppState>,
+    Path(chapter_id): Path<i32>,
+) -> AppResult<Json<ReviewSessionResponse>> {
+    Ok(Json(maintenance::maintain(&state, chapter_id).await?))
+}
+
+/// `POST /api/chapters/:id/resync` (spec/08 §1.1, spec/06 §8).
+pub async fn resync(
+    State(state): State<AppState>,
+    Path(chapter_id): Path<i32>,
+) -> AppResult<Json<ReviewSessionResponse>> {
+    Ok(Json(maintenance::resync(&state, chapter_id).await?))
 }

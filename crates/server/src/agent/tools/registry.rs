@@ -270,6 +270,13 @@ impl ToolRegistry {
         for handler in super::reviewer::all() {
             handlers.insert(handler.name().to_owned(), handler);
         }
+        // The archivist write tools and the setting-proposal tool of M6.3–6.4 (spec/05 §6).
+        for handler in super::archivist::all() {
+            handlers.insert(handler.name().to_owned(), handler);
+        }
+        for handler in super::proposals::all() {
+            handlers.insert(handler.name().to_owned(), handler);
+        }
         for handler in super::test_tools::all() {
             handlers.insert(handler.name().to_owned(), handler);
         }

@@ -30,6 +30,25 @@ async fn create(app: &TestApp, book_id: i32, name: &str) -> i32 {
     body["id"].as_i64().expect("entity id") as i32
 }
 
+/// Creates a private entity of an isolated track through the service and returns its id.
+async fn create_private(app: &TestApp, book_id: i32, track_id: i32, name: &str) -> i32 {
+    let write = CanonWrite::author().with_visibility(Visibility::isolated(book_id, track_id));
+    let name = name.to_owned();
+    let (dto, _) = canon::write(app.db(), move |tx| {
+        Box::pin(async move {
+            let input = EntityInput {
+                kind: EntityKind::Character,
+                name,
+                ..EntityInput::default()
+            };
+            entity::create_inner(tx, &write, book_id, input).await
+        })
+    })
+    .await
+    .expect("private entity");
+    dto.id
+}
+
 /// Creates a shared active relation through the API and returns its id.
 async fn relate(app: &TestApp, book_id: i32, source: i32, target: i32, kind: &str) -> i32 {
     let (status, body) = app
@@ -155,6 +174,46 @@ async fn merging_moves_a_side_tracks_focus_entity() {
         json!(target),
         "the focus entity moves with the merge: {side}"
     );
+}
+
+/// Private entities of two different isolated tracks belong to different canons and cannot be
+/// merged: the moved rows would point at a row the other track cannot see (spec/06 §2, §9).
+#[tokio::test]
+async fn merging_two_isolated_tracks_private_entities_is_refused() {
+    use nekowriter::services::canon::CanonError;
+
+    let app = TestApp::new().await;
+    let (book_id, _track_id) = book(&app).await;
+    let first_track = isolated_track(&app, book_id, "Side one").await;
+    let second_track = isolated_track(&app, book_id, "Side two").await;
+    let target = create_private(&app, book_id, second_track, "Side Two Hero").await;
+    let source = create_private(&app, book_id, first_track, "Side One Hero").await;
+
+    let result = canon::write(app.db(), move |tx| {
+        Box::pin(async move {
+            entity::merge_inner(
+                tx,
+                target,
+                nekowriter::api::dto::canon::EntityMergeInput { from_id: source },
+            )
+            .await
+        })
+    })
+    .await;
+    match result {
+        Err(CanonError::App(error)) => assert_eq!(
+            error.code,
+            ErrorCode::ValidationFailed,
+            "400 validation.failed: {error:?}"
+        ),
+        other => panic!("expected validation.failed, got {other:?}"),
+    }
+
+    // Both rows are still there: the refused merge changed nothing.
+    for entity_id in [target, source] {
+        let (status, _) = app.get(&format!("/api/entities/{entity_id}")).await;
+        assert_eq!(status, StatusCode::OK, "entity #{entity_id} still exists");
+    }
 }
 
 /// At most one entity per book has `is_protagonist = 1` (spec/02 §5 (7)); a second one is

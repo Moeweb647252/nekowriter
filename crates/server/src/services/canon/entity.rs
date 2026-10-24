@@ -584,6 +584,15 @@ pub async fn merge_inner(
             "a shared entity cannot be merged into an isolated track's private entity",
         ));
     }
+    // Moving another isolated track's private rows would leave them pointing at a row their own
+    // track cannot see (spec/06 §2): the two private canons are separate.
+    if let (Some(source_track), Some(target_track)) = (source.track_id, target.track_id)
+        && source_track != target_track
+    {
+        return Err(CanonError::validation(
+            "entities of two isolated tracks belong to different canons and cannot be merged",
+        ));
+    }
     let target_before = entity_snapshot(&target)?;
     let source_before = entity_snapshot(&source)?;
     let note = merge_note(&source.name, &target.name);

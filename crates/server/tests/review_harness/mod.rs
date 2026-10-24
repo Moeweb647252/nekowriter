@@ -150,3 +150,117 @@ pub async fn kickoff_text(runtime: &Runtime, session_id: i32) -> String {
         .map(|message| message.text())
         .unwrap_or_default()
 }
+
+/// The chapter's `(status, canon_status, official_version_id, synced_version_id, content_version)`.
+pub async fn chapter_state(runtime: &Runtime) -> (String, String, Option<i32>, Option<i32>, i32) {
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+    let row = runtime
+        .app
+        .db()
+        .conn()
+        .query_one_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT status, canon_status, official_version_id, synced_version_id, content_version \
+             FROM chapters WHERE id = ?",
+            vec![runtime.chapter_id.into()],
+        ))
+        .await
+        .expect("query chapter")
+        .expect("chapter row");
+    (
+        row.try_get::<String>("", "status").expect("status"),
+        row.try_get::<String>("", "canon_status").expect("canon"),
+        row.try_get::<Option<i32>>("", "official_version_id")
+            .expect("official"),
+        row.try_get::<Option<i32>>("", "synced_version_id")
+            .expect("synced"),
+        row.try_get::<i32>("", "content_version")
+            .expect("content_version"),
+    )
+}
+
+/// One integer result of a raw `SELECT count(*) AS value …` query.
+pub async fn count(runtime: &Runtime, table: &str, where_sql: &str) -> i64 {
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+    let sql = format!("SELECT count(*) AS value FROM {table} WHERE {where_sql}");
+    let row = runtime
+        .app
+        .db()
+        .conn()
+        .query_one_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            &sql,
+            vec![],
+        ))
+        .await
+        .expect("query count")
+        .expect("count row");
+    row.try_get::<i64>("", "value").expect("value")
+}
+
+/// Creates a character entity through the author API and returns its id.
+pub async fn create_entity(runtime: &Runtime, name: &str, is_protagonist: bool) -> i32 {
+    let (status, body) = runtime
+        .app
+        .post(
+            &format!("/api/books/{}/entities", runtime.book_id),
+            json!({
+                "kind": "character",
+                "name": name,
+                "summary": "a test entity",
+                "is_protagonist": is_protagonist,
+            }),
+        )
+        .await;
+    assert_eq!(status, 201, "create entity: {body}");
+    body["id"].as_i64().expect("entity id") as i32
+}
+
+/// Creates a side track and returns its id.
+pub async fn create_side_track(runtime: &Runtime, title: &str, canon_mode: &str) -> i32 {
+    let (status, body) = runtime
+        .app
+        .post(
+            &format!("/api/books/{}/tracks", runtime.book_id),
+            json!({
+                "title": title,
+                "kind": "side",
+                "synopsis": "a side story",
+                "canon_mode": canon_mode,
+                "anchor_kind": "none",
+            }),
+        )
+        .await;
+    assert_eq!(status, 201, "create side track: {body}");
+    body["id"].as_i64().expect("track id") as i32
+}
+
+/// Starts a real `chapter_maintenance` / `chapter_resync` session for a chapter.
+pub async fn start_archivist(
+    runtime: &Runtime,
+    chapter_id: i32,
+    kind: nekowriter::db::json::SessionKind,
+) -> i32 {
+    let (session_id, _warnings) = sessions::create(
+        runtime.app.state(),
+        CreateSession {
+            kind,
+            book_id: Some(runtime.book_id),
+            chapter_id: Some(chapter_id),
+            ..CreateSession::default()
+        },
+    )
+    .await
+    .expect("create archivist session");
+    session_id
+}
+
+/// Marks a chapter official with canon `pending` (a fixture for maintenance tests).
+pub async fn mark_official(runtime: &Runtime, chapter_id: i32) {
+    runtime
+        .app
+        .execute(&format!(
+            "UPDATE chapters SET status = 'official', canon_status = 'pending' WHERE id = {chapter_id}"
+        ))
+        .await;
+}
