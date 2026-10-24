@@ -49,11 +49,14 @@ export const useChapterDoc = create<ChapterDocState>()((set, get) => ({
     for (const op of ops) {
       switch (op.op) {
         case "insert": {
-          const index =
-            op.after === null
-              ? 0
-              : paragraphs.findIndex((p) => p.pid === op.after) + 1
-          paragraphs.splice(index, 0, { pid: op.pid, text: op.text })
+          // An anchor the local document does not have means the two have diverged; inserting at
+          // index 0 would silently corrupt the order, so report a gap and let the caller refetch
+          // (spec/10 §3: "apply the ops if version = local + 1, else refetch").
+          const anchor = paragraphs.findIndex((p) => p.pid === op.after)
+          if (op.after !== null && anchor < 0) {
+            return "gap"
+          }
+          paragraphs.splice(anchor + 1, 0, { pid: op.pid, text: op.text })
           if (actor === "agent") {
             highlights[op.pid] = { kind: "inserted", at: Date.now() }
           }
@@ -61,15 +64,19 @@ export const useChapterDoc = create<ChapterDocState>()((set, get) => ({
         }
         case "update": {
           const index = paragraphs.findIndex((p) => p.pid === op.pid)
-          if (index >= 0) {
-            paragraphs[index] = { ...paragraphs[index], text: op.text }
-            if (actor === "agent") {
-              highlights[op.pid] = { kind: "updated", at: Date.now() }
-            }
+          if (index < 0) {
+            return "gap"
+          }
+          paragraphs[index] = { ...paragraphs[index], text: op.text }
+          if (actor === "agent") {
+            highlights[op.pid] = { kind: "updated", at: Date.now() }
           }
           break
         }
         case "delete": {
+          if (!paragraphs.some((p) => p.pid === op.pid)) {
+            return "gap"
+          }
           paragraphs = paragraphs.filter((p) => p.pid !== op.pid)
           delete highlights[op.pid]
           break

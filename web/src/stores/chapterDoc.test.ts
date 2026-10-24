@@ -99,6 +99,31 @@ describe("chapterDoc.applyOps", () => {
     expect(paragraphs().some(([pid]) => pid === "p1")).toBe(true)
   })
 
+  it("reports a gap when an op refers to a pid the local document lacks", () => {
+    // The server only sends ops that apply to the document a client holds, so a missing pid means
+    // the two diverged. Inserting at index 0 (the old behaviour) silently reordered the chapter
+    // and left no way to notice; the only correct recovery is a refetch.
+    const store = useChapterDoc.getState()
+    store.load(1, 5, {
+      paragraphs: [{ pid: "p1", text: "one" }],
+      next_pid: 2,
+      tail_open: false,
+    })
+    const before = useChapterDoc.getState().paragraphs
+
+    for (const op of [
+      { op: "insert", after: "p99", pid: "p2", text: "two" },
+      { op: "update", pid: "p99", text: "x" },
+      { op: "delete", pid: "p99" },
+    ] as ContentOp[]) {
+      const state = useChapterDoc.getState()
+      state.load(1, 5, { paragraphs: before, next_pid: 2, tail_open: false })
+      expect(useChapterDoc.getState().applyOps(6, [op], "user"), JSON.stringify(op)).toBe("gap")
+      expect(useChapterDoc.getState().version, "a gap must not advance the version").toBe(5)
+      expect(useChapterDoc.getState().paragraphs).toEqual(before)
+    }
+  })
+
   it("reports a version gap instead of applying it", () => {
     useChapterDoc.getState().load(1, 4, content([["p1", "one"]]))
     const result = useChapterDoc
