@@ -1,0 +1,209 @@
+# Context blocks assembled into kickoff messages (spec/03 §10) or included by tasks.
+
+[[prompt]]
+key = "block.settings"
+kind = "block"
+agent = "shared"
+vars = ["book", "settings"]
+title_en = "Block — setting materials"
+title_zh = "上下文 · 设定资料"
+text = '''
+# 设定资料
+
+本书：《{{ book.title }}》{% if book.genre %}　类型：{{ book.genre }}{% endif %}
+
+本书写作语言：{{ book.writing_language_name }}。正文、章纲、摘要、档案等一切产出都必须使用该语言。
+
+以下是作者审定的设定资料，是本书创作的根本依据。每份文档包在标签中，标签内的标题属于文档本身。
+
+## 一、故事大纲
+<book_outline>
+{{ settings.outline or "（尚未填写）" }}
+</book_outline>
+
+## 二、人物设定（按重要性排序）
+{% for c in settings.characters %}
+<character rank="{{ c.rank }}" name="{{ c.name }}"{% if c.role_label %} role="{{ c.role_label }}"{% endif %}>
+{% if c.summary %}{{ c.summary }}
+{% endif %}{% if c.profile %}
+{{ c.profile }}
+{% endif %}
+</character>
+{% else %}
+（尚未填写）
+{% endfor %}
+
+## 三、世界观
+<world_setting>
+{{ settings.world or "（尚未填写）" }}
+</world_setting>
+
+## 四、主角详细设定
+<protagonist_profile>
+{{ settings.protagonist or "（尚未填写）" }}
+</protagonist_profile>
+{% if settings.scopes %}
+
+## 可检索的知识库范围
+{% for s in settings.scopes %}- {{ s.name }}{% if s.description %}：{{ s.description }}{% endif %}
+
+{% endfor %}{% endif %}
+'''
+
+[[prompt]]
+key = "block.memory"
+kind = "block"
+agent = "shared"
+vars = ["memory", "chapter"]
+title_en = "Block — tiered memory"
+title_zh = "上下文 · 分层记忆"
+text = '''
+# 记忆
+
+## 短期记忆
+当前任务：{{ chapter.label }}{% if chapter.title %}《{{ chapter.title }}》{% endif %}
+
+{% if memory.is_first and chapter.number == 1 %}
+这是本书（本轨道）的第一章，暂无前文。
+{% elif memory.is_first %}
+前面的章节都还没有定稿，记忆中暂无前文；本章并不是本书（本轨道）的第一章。
+{% else %}
+### 近期章节摘要（由远及近）
+{% for s in memory.recent_summaries %}- {{ s.label }}{% if s.title %}《{{ s.title }}》{% endif %}：{{ s.summary or "（尚无摘要）" }}
+{% endfor %}{% if memory.previous_tail %}
+### 上一章结尾（{{ memory.previous_tail.label }}）
+{{ memory.previous_tail.text }}
+{% endif %}{% endif %}{% if memory.protagonist %}
+### 主角当前状态：{{ memory.protagonist.name }}(#{{ memory.protagonist.id }}){% if memory.protagonist.status != "active" %}【{{ memory.protagonist.status_label }}】{% endif %}
+
+{% if memory.protagonist.after_anchor %}（这是正文锚点之后的状态，对本番外可能尚不成立，请结合锚点判断。）
+{% endif %}{{ memory.protagonist.state or "（尚无记录）" }}
+{% if memory.protagonist.attributes %}{% for a in memory.protagonist.attributes %}{{ a.key }}：{{ a.value }}{% if not loop.last %}；{% endif %}{% endfor %}
+
+{% endif %}{% endif %}{% if chapter.outline %}
+### 本章章纲
+<chapter_outline>
+{{ chapter.outline }}
+</chapter_outline>
+{% endif %}
+
+## 中期记忆（近 {{ memory.window_mid }} 章）
+{% if memory.recent_changes %}
+### 近期状态与关系变化
+{% for c in memory.recent_changes %}- {{ c.chapter_label }} · {{ c.target }}：{{ c.note }}
+{% endfor %}{% else %}
+近期没有记录到状态或关系变化。
+{% endif %}{% if memory.appearances %}
+### 人物出场记录
+{% for a in memory.appearances %}- {{ a.name }}(#{{ a.id }})：{{ a.count }} 次（{% for i in a.chapters %}{{ i.label }}·{{ i.role_label }}{% if not loop.last %}、{% endif %}{% endfor %}）
+{% endfor %}{% endif %}{% if memory.absent_important %}
+### 久未出场的重要人物
+{% for a in memory.absent_important %}- {{ a.name }}(#{{ a.id }})：最近出场于{{ a.last_label }}
+{% endfor %}{% endif %}
+
+## 长期记忆索引（详情请用工具检索）
+{% if memory.key_notes %}
+### 核心事实与世界规则
+{% for n in memory.key_notes %}- [{{ n.kind_label }}#{{ n.id }}] {{ n.content }}
+{% endfor %}{% endif %}{% if memory.open_foreshadowing %}
+### 未回收的伏笔
+{% for f in memory.open_foreshadowing %}- #{{ f.id }} {{ f.title }}（埋于{{ f.planted_label }}）
+{% endfor %}{% endif %}{% if memory.cast %}
+### 主要实体
+{% for e in memory.cast %}- #{{ e.id }} {{ e.name }}【{{ e.kind_label }}】{% if e.summary %}— {{ e.summary }}{% endif %}
+
+{% endfor %}{% endif %}
+档案规模：人物 {{ memory.counts.character }}，组织 {{ memory.counts.organization }}，地点 {{ memory.counts.location }}，物品 {{ memory.counts.item }}，其他 {{ memory.counts.other }}；时间线事件 {{ memory.counts.event }}；事实 {{ memory.counts.fact }}，世界规则 {{ memory.counts.world_rule }}；未回收伏笔 {{ memory.counts.foreshadowing_open }}。
+'''
+
+[[prompt]]
+key = "block.chapter_draft"
+kind = "block"
+agent = "shared"
+vars = ["chapter", "draft"]
+title_en = "Block — chapter outline, notes and text"
+title_zh = "上下文 · 本章章纲与正文"
+text = '''
+# 本章正文（{{ chapter.label }}{% if chapter.title %}《{{ chapter.title }}》{% endif %}）
+{% if chapter.outline %}
+## 章纲
+<chapter_outline>
+{{ chapter.outline }}
+</chapter_outline>
+{% endif %}{% if chapter.reference_notes %}
+## 参考要点
+<reference_notes>
+{{ chapter.reference_notes }}
+</reference_notes>
+{% endif %}
+## 正文（共 {{ draft.paragraph_count }} 段，{{ draft.word_count }} 字）
+<chapter_text>
+{% for p in draft.paragraphs %}[{{ p.pid }}] {{ p.text }}{% if loop.last and draft.tail_open %}（本段未完）{% endif %}
+
+{% else %}（暂无正文）
+{% endfor %}
+</chapter_text>
+'''
+
+[[prompt]]
+key = "block.cast_index"
+kind = "block"
+agent = "archivist"
+vars = ["cast_index"]
+title_en = "Block — entity index for maintenance"
+title_zh = "上下文 · 实体索引"
+text = '''
+# 实体索引（维护时请复用已有实体，不要重复创建）
+{% for e in cast_index %}- #{{ e.id }} {{ e.name }}【{{ e.kind_label }}】{% if e.aliases %}（别名：{{ e.aliases | join("、") }}）{% endif %}{% if e.status != "active" %}［{{ e.status_label }}］{% endif %}{% if e.summary %} — {{ e.summary }}{% endif %}
+
+{% else %}（档案中还没有任何实体）
+{% endfor %}
+'''
+
+[[prompt]]
+key = "block.chapter_diff"
+kind = "block"
+agent = "archivist"
+vars = ["chapter", "diff"]
+title_en = "Block — text changes since canon sync"
+title_zh = "上下文 · 正文变更"
+text = '''
+# 正文变更（{{ chapter.label }}，建档版本 → 当前版本）
+{% for d in diff.changes %}{% if d.op == "insert" %}- 新增 {{ d.pid }}（{% if d.after %}位于 {{ d.after }} 之后{% else %}位于开头{% endif %}）：{{ d.new }}
+{% elif d.op == "delete" %}- 删除 {{ d.pid }}：{{ d.old }}
+{% else %}- 修改 {{ d.pid }}：
+  原文：{{ d.old }}
+  现文：{{ d.new }}
+{% endif %}{% else %}（没有检测到变更）
+{% endfor %}
+'''
+
+[[prompt]]
+key = "block.anchor"
+kind = "block"
+agent = "shared"
+vars = ["track"]
+title_en = "Block — side story notice"
+title_zh = "上下文 · 番外说明"
+text = '''
+【番外说明】本章属于番外《{{ track.title }}》{% if track.canon_mode == "isolated" %}（独立番外：可以读取正史的设定与记录，但本番外中发生的事件不会改变正史）{% else %}（正史番外：其中发生的事件属于正史）{% endif %}。
+{% if track.synopsis %}番外梗概：{{ track.synopsis }}
+{% endif %}{% if track.anchor_kind == "after_chapter" %}时间锚点：发生在{{ track.anchor_label }}之后。锚点之后的正文事件，对本番外中的角色而言尚未发生；检索结果中标注“（锚点之后）”的内容，角色不能知晓，也不能提前发生。
+{% elif track.anchor_kind == "before_start" %}时间锚点：发生在正文开始之前，正文中的所有事件都尚未发生。
+{% elif track.anchor_kind == "after_end" %}时间锚点：发生在正文完结之后。
+{% endif %}
+'''
+
+[[prompt]]
+key = "block.book_brief"
+kind = "block"
+agent = "researcher"
+vars = ["book"]
+title_en = "Block — book brief for research"
+title_zh = "上下文 · 所属作品简介"
+text = '''
+# 所属作品
+《{{ book.title }}》{% if book.genre %}（{{ book.genre }}）{% endif %}，写作语言：{{ book.writing_language_name }}
+{% if book.idea %}作品构想：{{ book.idea }}
+{% endif %}请让收集的资料服务于这部作品的创作需要。
+'''

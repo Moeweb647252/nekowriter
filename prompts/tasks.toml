@@ -1,0 +1,305 @@
+# Task instructions: the last block of a kickoff message, plus follow-up user messages.
+# Variables are documented in variables.toml.
+
+[[prompt]]
+key = "conception.kickoff"
+kind = "task"
+agent = "conception"
+vars = ["conception"]
+title_en = "Conception — kickoff"
+title_zh = "构思 · 开始任务"
+text = '''
+【新书构思】
+书名：《{{ conception.title }}》
+{% if conception.genre %}类型：{{ conception.genre }}
+{% endif %}本书写作语言：{{ conception.writing_language_name }}（所有文档都必须使用该语言撰写）
+
+作者的初步想法：
+{{ conception.idea }}
+
+请开始构思。建议的顺序：先判断想法中缺少哪些关键信息，用 ask_user 向作者提问；必要时调研；然后起草故事大纲、人物设定、世界观、主角详细设定与资料收集主题，并用 request_review 请作者审阅。
+'''
+
+[[prompt]]
+key = "researcher.kickoff"
+kind = "task"
+agent = "researcher"
+vars = ["research"]
+title_en = "Researcher — kickoff"
+title_zh = "资料员 · 开始任务"
+text = '''
+【资料收集任务】
+主题：{{ research.topic }}
+{% if research.requirements %}具体要求：
+{{ research.requirements }}
+{% endif %}存入知识范围：{{ research.scope_name }}{% if research.scope_description %}（{{ research.scope_description }}）{% endif %}
+
+撰写语言：{{ research.language_name }}
+
+{% if research.existing_titles %}该范围已有以下条目（避免重复，可以补充完善）：
+{% for t in research.existing_titles %}- {{ t }}
+{% endfor %}{% else %}该范围目前还没有条目。
+{% endif %}
+预算：最多约 {{ research.max_tool_calls }} 次工具调用、{{ research.max_entries }} 个条目。请优先收集对写作最有用的内容，完成后调用 finish_research。
+'''
+
+[[prompt]]
+key = "writer.kickoff.chapter"
+kind = "task"
+agent = "writer"
+vars = ["book", "track", "chapter", "draft"]
+title_en = "Writer — write a chapter"
+title_zh = "写手 · 撰写章节"
+text = '''
+【写作任务】{{ chapter.label }}{% if chapter.title %}《{{ chapter.title }}》{% endif %}
+
+本书写作语言：{{ book.writing_language_name }}
+目标字数：{{ chapter.target_min }}–{{ chapter.target_max }} 字
+{% if not track.is_main %}
+{% include "block.anchor" %}
+{% endif %}{% if chapter.guidance %}
+【作者对本章的要求】
+{{ chapter.guidance }}
+{% endif %}{% if chapter.has_draft %}
+本章已有部分正文：
+{% include "block.chapter_draft" %}
+
+请在规划时考虑已有内容：章纲覆盖全章，正文从草稿末尾继续写，不要重复已写部分。
+{% endif %}
+当前处于【规划阶段】：
+1. 结合故事大纲、近期章节摘要与上一章结尾，确定本章在全书中的位置与任务。
+2. 针对本章涉及的人物、地点、物品、设定、时间顺序与伏笔，用检索工具核实需要的信息。
+3. 用 submit_outline 提交：
+   - outline：详细章纲。按场景列出场景目标、出场人物、地点与时间、冲突与转折、关键对话或细节、情绪走向、伏笔的埋设或回收、结尾钩子，并预估各场景篇幅。
+   - reference_notes：正文阶段必须遵守的参考要点，写成简洁的条目，例如人物当前状态与能力边界、称谓、物品归属、时间与地点细节、需要呼应的前文。正文阶段无法再检索，请把需要的信息都整理进来。
+   - title：本章还没有标题时，请拟一个。
+提交章纲后进入正文阶段，届时会告诉你写作粒度的规则。
+'''
+
+[[prompt]]
+key = "writer.kickoff.redraft"
+kind = "task"
+agent = "writer"
+vars = ["book", "track", "chapter", "feedback", "previous_outline"]
+title_en = "Writer — redraft a chapter"
+title_zh = "写手 · 重写章节"
+text = '''
+【重写任务】{{ chapter.label }}{% if chapter.title %}《{{ chapter.title }}》{% endif %}
+
+本书写作语言：{{ book.writing_language_name }}
+目标字数：{{ chapter.target_min }}–{{ chapter.target_max }} 字
+{% if not track.is_main %}
+{% include "block.anchor" %}
+{% endif %}
+作者审阅了本章的上一版，决定推倒重写。上一版正文已经存档，现在的草稿为空。
+
+【作者的意见】
+{{ feedback.text }}
+{% if feedback.issues %}
+【相关问题（引文出自已存档的上一版）】
+{% for i in feedback.issues %}- [{{ i.severity_label }}·{{ i.category_label }}]{% if i.quote %}「{{ i.quote }}」{% endif %}：{{ i.problem }} → {{ i.suggestion }}
+{% endfor %}{% endif %}{% if previous_outline %}
+【上一版章纲（供参考，请按意见调整）】
+<chapter_outline>
+{{ previous_outline }}
+</chapter_outline>
+{% endif %}{% if chapter.guidance %}
+【作者对本章的原始要求】
+{{ chapter.guidance }}
+{% endif %}
+当前处于【规划阶段】：根据作者的意见重新规划本章，必要时查阅资料，然后用 submit_outline 提交新的章纲与参考要点。作者的意见优先于原来的章纲。
+'''
+
+[[prompt]]
+key = "writer.kickoff.revise"
+kind = "task"
+agent = "writer"
+vars = ["book", "track", "chapter", "feedback"]
+title_en = "Writer — revise a chapter"
+title_zh = "写手 · 修订章节"
+text = '''
+【修订任务】{{ chapter.label }}{% if chapter.title %}《{{ chapter.title }}》{% endif %}
+
+本书写作语言：{{ book.writing_language_name }}
+目标字数：{{ chapter.target_min }}–{{ chapter.target_max }} 字（当前 {{ chapter.word_count }} 字）
+{% if not track.is_main %}
+{% include "block.anchor" %}
+{% endif %}{% if chapter.guidance %}
+【作者对本章的原始要求】
+{{ chapter.guidance }}
+{% endif %}
+作者审阅了本章（正文见上方），要求按以下意见修改。
+
+【作者的意见】
+{{ feedback.text }}
+{% if feedback.issues %}
+【相关问题】
+{% for i in feedback.issues %}- [{{ i.severity_label }}·{{ i.category_label }}] {{ i.pids | join("、") }}「{{ i.quote }}」：{{ i.problem }} → {{ i.suggestion }}
+{% endfor %}{% endif %}
+当前处于【修订规划阶段】：
+1. 逐条理解意见；需要核实的信息用检索工具查清楚。
+2. 用 submit_revision_plan 提交修订计划：逐条说明怎么改、改哪些段落（pid）。只改需要改的地方，保留作者认可的部分；若某条意见与设定冲突，说明你的处理方式。
+提交计划后进入修订阶段，那时只能使用写作工具修改正文，改完调用 finish_revision。
+'''
+
+[[prompt]]
+key = "writer.kickoff.rollover"
+kind = "task"
+agent = "writer"
+vars = ["book", "track", "chapter", "feedback", "revision_plan", "author_notes", "granularity", "phase"]
+title_en = "Writer — continue in a new context"
+title_zh = "写手 · 续写（新会话）"
+text = '''
+【继续写作】{{ chapter.label }}{% if chapter.title %}《{{ chapter.title }}》{% endif %}
+
+本书写作语言：{{ book.writing_language_name }}
+目标字数：{{ chapter.target_min }}–{{ chapter.target_max }} 字
+{% if not track.is_main %}
+{% include "block.anchor" %}
+{% endif %}{% if chapter.guidance %}
+【作者对本章的要求】
+{{ chapter.guidance }}
+{% endif %}
+由于上下文过长，系统为你开启了一个新的会话。上方是本章{% if chapter.outline %}的章纲、参考要点与{% endif %}目前的全部正文，你之前的工作都还在。
+{% if phase == "revising" %}
+你正处于【修订阶段】，正在按以下作者意见修改本章：
+{{ feedback.text }}
+{% if feedback.issues %}
+【相关问题】
+{% for i in feedback.issues %}- [{{ i.severity_label }}·{{ i.category_label }}] {{ i.pids | join("、") }}「{{ i.quote }}」：{{ i.problem }} → {{ i.suggestion }}
+{% endfor %}{% endif %}{% if revision_plan %}
+你提交并已生效的修订计划：
+{{ revision_plan }}
+{% endif %}
+请从当前状态继续修改，完成后调用 finish_revision。
+{% else %}
+你正处于【正文阶段】。请从草稿末尾继续写，衔接自然，不要重复已经写过的内容。
+{% if feedback %}
+本章是按作者的意见重写的，这些意见仍然有效：
+{{ feedback.text }}
+{% if feedback.issues %}
+【相关问题（引文出自已存档的上一版）】
+{% endif %}{% for i in feedback.issues %}- [{{ i.severity_label }}·{{ i.category_label }}]{% if i.quote %}「{{ i.quote }}」{% endif %}：{{ i.problem }} → {{ i.suggestion }}
+{% endfor %}{% endif %}{% endif %}{% if author_notes %}
+【作者此前给出的意见（按时间先后，最后一条最新）】这些意见仍然有效：
+{% for n in author_notes %}- {{ n }}
+{% endfor %}{% endif %}
+{% include "writer.rules.granularity" %}
+'''
+
+[[prompt]]
+key = "reviewer.kickoff"
+kind = "task"
+agent = "reviewer"
+vars = ["book", "track", "chapter", "prior"]
+title_en = "Reviewer — review a chapter"
+title_zh = "审稿 · 审阅章节"
+text = '''
+【审阅任务】{{ chapter.label }}{% if chapter.title %}《{{ chapter.title }}》{% endif %}
+
+本书写作语言：{{ book.writing_language_name }}
+目标字数：{{ chapter.target_min }}–{{ chapter.target_max }} 字（当前 {{ chapter.word_count }} 字）
+{% if not track.is_main %}
+{% include "block.anchor" %}
+{% endif %}{% if chapter.guidance %}
+作者对本章的要求：{{ chapter.guidance }}
+{% endif %}{% if prior %}
+【上一次审阅（第 {{ prior.attempt }} 次，针对修改前的版本）】
+结论：{{ prior.verdict_label }}
+总体评价：{{ prior.summary }}
+给写手的意见：{{ prior.feedback }}
+
+【作者对这次审阅的意见】
+{{ prior.comment }}
+
+正文在那次审阅之后有过修改。请结合作者的意见审阅当前版本：上一次指出的问题若已解决就不要再提，判断有误的地方要纠正。
+{% endif %}
+请审阅上方的本章正文{% if chapter.outline %}（含章纲与参考要点）{% else %}（本章没有章纲，“章纲执行”这一维度不必审阅）{% endif %}。步骤：通读全文 → 针对可疑之处检索核实 → 按审阅维度整理问题 → 调用 submit_review 提交 verdict、summary、issues 与 feedback。
+'''
+
+[[prompt]]
+key = "reviewer.rereview"
+kind = "task"
+agent = "reviewer"
+vars = ["review"]
+title_en = "Reviewer — re-review after the author's comment"
+title_zh = "审稿 · 根据作者意见复审"
+text = '''
+【作者对第 {{ review.attempt }} 次审阅结果的意见】
+{{ review.comment }}
+
+请认真考虑作者的意见：需要时检索核实，承认判断失误之处，补充作者要求关注的方面，然后重新调用 submit_review，提交一份完整的审阅结果（不是只提交改动的部分）。
+'''
+
+[[prompt]]
+key = "archivist.kickoff.maintenance"
+kind = "task"
+agent = "archivist"
+vars = ["book", "track", "chapter"]
+title_en = "Archivist — maintain canon after a chapter"
+title_zh = "档案员 · 章节档案维护"
+text = '''
+【档案维护任务】{{ chapter.label }}{% if chapter.title %}《{{ chapter.title }}》{% endif %}
+
+本书写作语言：{{ book.writing_language_name }}（所有记录使用该语言）
+{% if not track.is_main %}
+{% include "block.anchor" %}
+{% endif %}
+本章已由作者审定为正式文本（见上方正文）。请根据本章内容更新档案：
+1. record_appearances：记录本章出场或被提及的全部实体及其角色（pov、major、minor、mentioned）。（必做）
+2. 实体：新出现且有意义的人物、组织、地点、物品，用 create_entity 创建；已有实体的状态、属性、身份或描述发生变化，用 update_entity 更新，并写明 note。
+3. 主角状态：主角（即记忆中“主角当前状态”所示的人物）在本章出场时，用 update_entity 更新其 state，反映本章结尾时的情况。
+{% if track.canon_mode == "isolated" %}   如果该人物属于正史（不是本番外专属的实体），则不能修改；请用 add_memory_note 把其在番外中的状态变化记为番外内的笔记。
+{% endif %}4. 关系：用 set_relation 或 end_relation 记录关系的建立与变化，写明 note。
+5. 时间线：用 add_timeline_event 记录本章的重要事件，按故事时间先后插入正确的位置。
+6. 记忆笔记：用 add_memory_note 记录新确立的事实与世界规则；被推翻的用 retire_memory_note 撤销。
+7. 伏笔：用 add_foreshadowing 记录新埋下的伏笔；用 resolve_foreshadowing 更新已回收的伏笔。
+8. set_chapter_summary：撰写本章摘要（150 到 400 字：发生了什么、涉及谁、结尾停在哪里）。（必做）
+{% if track.canon_mode == "isolated" %}9. 本章属于独立番外，不对设定资料提出修改建议；番外中的变化只记录为番外内的新记录。
+{% else %}9. 如果正文与设定资料矛盾，或确立了应写入设定的重要内容，用 propose_setting_change 提出建议。
+{% endif %}10. 调用 finish_maintenance，简要报告做了哪些更新。
+'''
+
+[[prompt]]
+key = "archivist.kickoff.seed"
+kind = "task"
+agent = "archivist"
+vars = ["book"]
+title_en = "Archivist — seed canon from the setting materials"
+title_zh = "档案员 · 建立初始档案"
+text = '''
+【建立初始档案】
+本书写作语言：{{ book.writing_language_name }}（所有记录使用该语言）
+
+本书刚刚完成构思，还没有正文。请根据上方的设定资料建立初始档案：
+1. 人物：为人物设定中的每个人物创建实体（kind=character）。排第一位的主角设置 is_protagonist=true；重要度依据排名与定位；summary、description、state（故事开始时的状态）与 attributes（年龄、身份、所属、能力等级等）依据设定填写。
+2. 组织、地点、物品：世界观与大纲中明确提到、后续会反复出现的势力、地点、重要物品，各自创建实体。
+3. 关系：根据设定建立人物之间、人物与组织之间的关系（师徒、亲属、所属、敌对等）。
+4. 世界规则与事实：用 add_memory_note 记录世界观中的核心规则（kind=world_rule）与重要的背景事实（kind=fact），重要的设为高重要度。
+5. 时间线：设定中明确的背景事件（故事开始之前发生的事）按时间先后加入时间线。
+6. 伏笔：大纲中明确规划的悬念，可以用 add_foreshadowing 记录（planned_payoff 写回收方向）。
+只记录设定资料中明确写出的内容，不要补充设定里没有的信息。完成后调用 finish_maintenance。
+'''
+
+[[prompt]]
+key = "archivist.kickoff.resync"
+kind = "task"
+agent = "archivist"
+vars = ["book", "track", "chapter"]
+title_en = "Archivist — re-sync canon after an edit"
+title_zh = "档案员 · 正文修改后同步档案"
+text = '''
+【档案同步任务】{{ chapter.label }}{% if chapter.title %}《{{ chapter.title }}》{% endif %}
+
+本书写作语言：{{ book.writing_language_name }}（所有记录使用该语言）
+{% if not track.is_main %}
+{% include "block.anchor" %}
+{% endif %}
+作者在本章建档之后修改了正文，变化见上方的“正文变更”。请让档案与新的正文保持一致：
+- 检查变更涉及的实体、关系、时间线事件、记忆笔记与伏笔，必要时更新、结束或撤销；
+- 上方只列出了变化的段落。需要全文时（重新记录出场、改写摘要），先用 read_chapter（chapter="#{{ chapter.id }}"）阅读本章当前的全文；
+- 出场人物有变化时，重新调用 record_appearances，提供本章完整的出场列表（它会替换原有记录），而不只是变化的部分；
+- 有必要时更新本章摘要（set_chapter_summary，摘要概括全章）；
+- 完成后调用 finish_maintenance。
+不要改动与本次变更无关的记录。
+'''

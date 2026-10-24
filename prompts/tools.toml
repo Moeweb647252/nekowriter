@@ -1,0 +1,639 @@
+# Tool definitions (spec/05). `description` is the default for prompt key `tool.<name>`;
+# `input_schema` and its parameter descriptions are fixed contracts; `examples` are valid inputs used by tests.
+# Every object schema sets additionalProperties = false.
+
+# ───────────────────────────── Retrieval ─────────────────────────────
+
+[tools.get_entity]
+description = '''查看一个实体（人物、组织、地点、物品等）的完整档案：简介、详细描述、当前状态、属性、关系、最近变化与出场情况。在写作或审阅前核实人物的当前状态、能力、称谓与关系时使用。'''
+examples = [ { entity = "林凡" }, { entity = "#12" } ]
+[tools.get_entity.input_schema]
+type = "object"
+additionalProperties = false
+required = ["entity"]
+properties.entity = { type = "string", description = "实体的名称、别名，或编号（如 #12）" }
+
+[tools.list_entities]
+description = '''列出档案中的实体，可以按类型、状态或关键词筛选。不确定某个人物、地点或物品是否已有记录、记不清名字时使用。'''
+examples = [ {}, { kind = "character", query = "青云", limit = 20 } ]
+[tools.list_entities.input_schema]
+type = "object"
+additionalProperties = false
+properties.kind = { type = "string", enum = ["character", "organization", "location", "item", "other"], description = "实体类型" }
+properties.status = { type = "string", enum = ["active", "inactive", "dead", "destroyed", "missing", "unknown"], description = "实体状态" }
+properties.query = { type = "string", description = "在名称、别名与简介中匹配的关键词" }
+properties.limit = { type = "integer", minimum = 1, maximum = 100, description = "最多返回多少个，默认 30" }
+
+[tools.get_relations]
+description = '''查询某个实体的人物关系或从属关系；指定 other 时只看两者之间的关系。核实称谓、立场、亲疏远近时使用。'''
+examples = [ { entity = "林凡" }, { entity = "林凡", other = "苏婉", include_ended = true } ]
+[tools.get_relations.input_schema]
+type = "object"
+additionalProperties = false
+required = ["entity"]
+properties.entity = { type = "string", description = "实体的名称、别名或编号" }
+properties.other = { type = "string", description = "只查看与这个实体之间的关系（可选）" }
+properties.include_ended = { type = "boolean", description = "是否包含已经结束的关系，默认 false" }
+
+[tools.query_timeline]
+description = '''按故事时间先后查询时间线事件，可以按实体、关键词、章节范围筛选，或查看某个事件前后发生了什么。核实事件先后、时间间隔，或某人经历过什么时使用。'''
+examples = [ { entity = "林凡", limit = 10 }, { around_event = 42 }, { order = "recent_first", limit = 15 } ]
+[tools.query_timeline.input_schema]
+type = "object"
+additionalProperties = false
+properties.entity = { type = "string", description = "只看涉及这个实体的事件" }
+properties.query = { type = "string", description = "在事件标题与描述中匹配的关键词" }
+properties.around_event = { type = "integer", description = "查看这个事件（编号）前后各 5 个事件" }
+properties.from_chapter = { type = "integer", minimum = 1, description = "只看来源于正文第几章之后（含）的事件" }
+properties.to_chapter = { type = "integer", minimum = 1, description = "只看来源于正文第几章之前（含）的事件" }
+properties.limit = { type = "integer", minimum = 1, maximum = 50, description = "最多返回多少条，默认 20" }
+properties.order = { type = "string", enum = ["chronological", "recent_first"], description = "chronological：按故事时间先后（默认）；recent_first：最晚发生的在前" }
+
+[tools.list_foreshadowing]
+description = '''列出伏笔（默认列出未回收的伏笔），可以按实体筛选。规划情节、考虑呼应或回收伏笔时使用。'''
+examples = [ {}, { status = "resolved", entity = "苏婉" } ]
+[tools.list_foreshadowing.input_schema]
+type = "object"
+additionalProperties = false
+properties.status = { type = "string", enum = ["open", "resolved", "abandoned"], description = "伏笔状态，默认 open（未回收）" }
+properties.entity = { type = "string", description = "只看与这个实体相关的伏笔" }
+properties.limit = { type = "integer", minimum = 1, maximum = 50, description = "最多返回多少条，默认 20" }
+
+[tools.search_canon]
+description = '''在本书档案（实体、记忆笔记、伏笔、时间线事件、章节摘要）中做语义与关键词混合检索。不确定信息记录在哪里，或想按含义查找相关设定时使用。'''
+examples = [ { query = "剑冢 禁制" }, { query = "苏婉 身世", kinds = ["entity", "note"], limit = 5 } ]
+[tools.search_canon.input_schema]
+type = "object"
+additionalProperties = false
+required = ["query"]
+properties.query = { type = "string", description = "检索内容，可以是关键词或自然语言描述" }
+properties.kinds = { type = "array", items = { type = "string", enum = ["entity", "note", "foreshadowing", "event", "summary"] }, description = "限定检索的记录类型（可选）" }
+properties.limit = { type = "integer", minimum = 1, maximum = 20, description = "最多返回多少条，默认 8" }
+
+[tools.search_knowledge]
+description = '''在知识库中检索参考资料（历史、地理、职业、科学、类型惯例等现实知识）。需要核实现实世界的知识或专业细节时使用。'''
+examples = [ { query = "宋代 茶馆 陈设" }, { query = "唐代官职品级", scope = "唐代史料", limit = 5 } ]
+[tools.search_knowledge.input_schema]
+type = "object"
+additionalProperties = false
+required = ["query"]
+properties.query = { type = "string", description = "检索内容，可以是关键词或自然语言描述" }
+properties.scope = { type = "string", description = "只在这个知识范围中检索（填写范围名称，可选）" }
+properties.limit = { type = "integer", minimum = 1, maximum = 15, description = "最多返回多少条，默认 6" }
+
+[tools.read_knowledge_entry]
+description = '''阅读一个知识条目的全文。检索结果的摘录不够用时使用。'''
+examples = [ { entry_id = 7 }, { entry_id = 7, offset = 6000 } ]
+[tools.read_knowledge_entry.input_schema]
+type = "object"
+additionalProperties = false
+required = ["entry_id"]
+properties.entry_id = { type = "integer", description = "条目编号" }
+properties.offset = { type = "integer", minimum = 0, description = "从第几个字开始读，默认 0；长条目按提示分段读取" }
+
+[tools.search_chapters]
+description = '''在已定稿章节的正文中检索原文片段。需要核对前文的原话、细节描写或某个场景的具体写法时使用。'''
+examples = [ { query = "林凡第一次见到苏婉" } ]
+[tools.search_chapters.input_schema]
+type = "object"
+additionalProperties = false
+required = ["query"]
+properties.query = { type = "string", description = "检索内容，可以是关键词或场景描述" }
+properties.limit = { type = "integer", minimum = 1, maximum = 15, description = "最多返回多少条，默认 6" }
+
+[tools.read_chapter]
+description = '''阅读一个已定稿章节的原文（带段落编号）。需要完整回顾某一章时使用。'''
+examples = [ { chapter = "12" }, { chapter = "main 3", from_pid = "p20", max_chars = 4000 } ]
+[tools.read_chapter.input_schema]
+type = "object"
+additionalProperties = false
+required = ["chapter"]
+properties.chapter = { type = "string", description = "章节：\"12\" 表示当前轨道第12章，\"main 12\" 表示正文第12章，\"#345\" 表示章节编号" }
+properties.from_pid = { type = "string", description = "从这个段落开始读（可选）" }
+properties.max_chars = { type = "integer", minimum = 500, maximum = 20000, description = "最多读取多少字，默认 8000" }
+
+# ───────────────────────────── Writer ─────────────────────────────
+
+[tools.submit_outline]
+description = '''【规划阶段】提交本章的详细章纲与参考要点。提交后进入正文阶段，检索工具将停用。'''
+examples = [ { outline = "## 场景一：剑冢外\n- 目标：……", reference_notes = "- 林凡左臂有伤，不能用右手剑招以外的招式\n- ……", title = "剑冢" } ]
+[tools.submit_outline.input_schema]
+type = "object"
+additionalProperties = false
+required = ["outline", "reference_notes"]
+properties.outline = { type = "string", description = "详细章纲（Markdown），按场景组织" }
+properties.reference_notes = { type = "string", description = "正文阶段必须遵守的参考要点，写成简洁的条目" }
+properties.title = { type = "string", description = "本章标题（本章还没有标题时填写）" }
+
+[tools.submit_revision_plan]
+description = '''【修订规划阶段】提交修订计划：逐条说明怎么改、改哪些段落。提交后进入修订阶段，检索工具将停用。'''
+examples = [ { plan = "1. p12–p14：删除重复的心理描写……\n2. ……" } ]
+[tools.submit_revision_plan.input_schema]
+type = "object"
+additionalProperties = false
+required = ["plan"]
+properties.plan = { type = "string", description = "修订计划，逐条对应作者的意见" }
+
+[tools.read_draft]
+description = '''查看本章当前的草稿（带段落编号）。修改已写内容之前，或作者改动较多时使用。'''
+examples = [ {}, { from_pid = "p10", to_pid = "p20" } ]
+[tools.read_draft.input_schema]
+type = "object"
+additionalProperties = false
+properties.from_pid = { type = "string", description = "从这个段落开始（可选）" }
+properties.to_pid = { type = "string", description = "到这个段落为止（可选）" }
+properties.max_chars = { type = "integer", minimum = 500, maximum = 30000, description = "最多返回多少字，默认 12000" }
+
+[tools.insert_text]
+description = '''在本章正文末尾追加内容。每次写多少由当前的写作粒度决定（逐句、逐段、自由、整章），以最新的系统通知为准。写完全章时设置 chapter_end=true。'''
+examples = [ { text = "林凡抬起头，望向剑冢深处那一点幽蓝的光。", paragraph_end = false }, { text = "他没有回头。", paragraph_end = true, chapter_end = true } ]
+[tools.insert_text.input_schema]
+type = "object"
+additionalProperties = false
+required = ["text"]
+properties.text = { type = "string", description = "要追加的正文。逐句、逐段粒度下不能包含换行；自由、整章粒度下用换行分隔段落" }
+properties.paragraph_end = { type = "boolean", description = "最后一段是否已经写完，默认 true；为 false 时，下一次写入会接在这一段后面（逐句、自由粒度下有效）" }
+properties.chapter_end = { type = "boolean", description = "写完这段内容后本章是否完成，默认 false" }
+
+[tools.insert_paragraphs]
+description = '''在指定段落之后插入完整的新段落（在正文中间补写时使用）。逐句、逐段粒度下每次只能插入一个段落；自由、整章粒度下可以用换行分隔多个段落。'''
+examples = [ { after = "p7", text = "风停了。" }, { after = "start", text = "第一段\n第二段" } ]
+[tools.insert_paragraphs.input_schema]
+type = "object"
+additionalProperties = false
+required = ["after", "text"]
+properties.after = { type = "string", description = "插入到哪个段落之后；填 \"start\" 表示插入到最前面" }
+properties.text = { type = "string", description = "新段落的内容，多个段落用换行分隔" }
+
+[tools.replace_text]
+description = '''替换某一段中的一处文字（小范围修改）。old 必须与原文逐字一致，并且在该段中只出现一次；new 为空字符串表示删除这处文字。'''
+examples = [ { pid = "p12", old = "心中一震", new = "指尖一僵" } ]
+[tools.replace_text.input_schema]
+type = "object"
+additionalProperties = false
+required = ["pid", "old", "new"]
+properties.pid = { type = "string", description = "段落编号，如 p12" }
+properties.old = { type = "string", description = "要替换的原文（逐字一致）" }
+properties.new = { type = "string", description = "替换后的文字，可以为空" }
+
+[tools.rewrite_paragraph]
+description = '''重写一整段。自由、整章粒度下，新内容可以用换行拆成多段：第一段沿用原段落编号，其余段落获得新编号；逐句、逐段粒度下只能写一个段落。'''
+examples = [ { pid = "p5", text = "雨下得更急了。" } ]
+[tools.rewrite_paragraph.input_schema]
+type = "object"
+additionalProperties = false
+required = ["pid", "text"]
+properties.pid = { type = "string", description = "要重写的段落编号" }
+properties.text = { type = "string", description = "新的段落内容" }
+
+[tools.delete_paragraphs]
+description = '''删除一个或多个段落。'''
+examples = [ { pids = ["p8", "p9"] } ]
+[tools.delete_paragraphs.input_schema]
+type = "object"
+additionalProperties = false
+required = ["pids"]
+properties.pids = { type = "array", minItems = 1, items = { type = "string" }, description = "要删除的段落编号列表" }
+
+[tools.finish_draft]
+description = '''【正文阶段】宣告本章初稿完成，提交作者审阅。在修改完已写内容、无需再追加正文时使用。字数明显少于目标时，第一次调用会提示你确认。'''
+examples = [ {}, { note = "结尾按作者要求停在苏婉转身的瞬间。" } ]
+[tools.finish_draft.input_schema]
+type = "object"
+additionalProperties = false
+properties.note = { type = "string", description = "给作者的简短说明（可选）" }
+
+[tools.finish_revision]
+description = '''【修订阶段】宣告修订完成，提交作者审阅。'''
+examples = [ { summary = "按意见删去了 p12–p14 的重复描写，重写了结尾对话。" } ]
+[tools.finish_revision.input_schema]
+type = "object"
+additionalProperties = false
+required = ["summary"]
+properties.summary = { type = "string", description = "改了什么、分别对应作者的哪条意见" }
+
+# ───────────────────────────── Reviewer ─────────────────────────────
+
+[tools.submit_review]
+description = '''提交本章的审阅结果：结论、总体评价、问题列表与给写手的综合修改意见。'''
+examples = [ { verdict = "revise", summary = "整体流畅，但结尾与时间线矛盾。", issues = [ { severity = "critical", category = "continuity", pids = ["p30"], quote = "他再次拔出青冥剑", problem = "青冥剑已在第38章被毁。", suggestion = "改为使用断剑或其他兵器。" } ], feedback = "请优先修正 p30 的兵器问题……" } ]
+[tools.submit_review.input_schema]
+type = "object"
+additionalProperties = false
+required = ["verdict", "summary", "issues", "feedback"]
+properties.verdict = { type = "string", enum = ["pass", "revise"], description = "pass：建议通过；revise：建议退回修改" }
+properties.summary = { type = "string", description = "总体评价" }
+properties.feedback = { type = "string", description = "给写手的综合修改意见，按优先级整理，具体、可执行" }
+[tools.submit_review.input_schema.properties.issues]
+type = "array"
+description = "问题列表，可以为空"
+[tools.submit_review.input_schema.properties.issues.items]
+type = "object"
+additionalProperties = false
+required = ["severity", "category", "pids", "quote", "problem", "suggestion"]
+properties.severity = { type = "string", enum = ["critical", "major", "minor"], description = "严重程度" }
+properties.category = { type = "string", enum = ["canon", "continuity", "outline", "character", "logic", "pacing", "prose", "other"], description = "问题类别" }
+properties.pids = { type = "array", items = { type = "string" }, description = "相关段落编号" }
+properties.quote = { type = "string", description = "引用的原文片段" }
+properties.problem = { type = "string", description = "问题所在" }
+properties.suggestion = { type = "string", description = "具体的修改建议" }
+
+# ───────────────────────────── Archivist ─────────────────────────────
+
+[tools.create_entity]
+description = '''创建一个新实体（人物、组织、地点、物品等）。创建前先确认它不存在；已有的实体请用 update_entity。'''
+examples = [ { kind = "character", name = "苏婉", summary = "青云宗内门弟子，林凡的师姐", state = "在剑冢外等候", attributes = { "修为" = "筑基后期" }, importance = 4 } ]
+[tools.create_entity.input_schema]
+type = "object"
+additionalProperties = false
+required = ["kind", "name", "summary"]
+properties.kind = { type = "string", enum = ["character", "organization", "location", "item", "other"], description = "实体类型" }
+properties.name = { type = "string", description = "名称（正文中最常用的称呼）" }
+properties.summary = { type = "string", description = "一句话简介" }
+properties.aliases = { type = "array", items = { type = "string" }, description = "别名列表" }
+properties.description = { type = "string", description = "详细描述（较稳定的档案信息）" }
+properties.state = { type = "string", description = "当前即时状态" }
+properties.attributes = { type = "object", additionalProperties = { type = "string" }, description = "关键事实的键值对，例如 {\"修为\": \"筑基中期\"}" }
+properties.importance = { type = "integer", minimum = 1, maximum = 5, description = "重要度 1–5，默认 2" }
+properties.status = { type = "string", enum = ["active", "inactive", "dead", "destroyed", "missing", "unknown"], description = "状态，默认 active" }
+properties.is_protagonist = { type = "boolean", description = "是否为主角（只在建立初始档案时使用）" }
+properties.note = { type = "string", description = "说明（可选）" }
+
+[tools.update_entity]
+description = '''更新已有实体：状态、属性、描述、别名、重要度或生死状态。note 必须写明这次变化。'''
+examples = [ { entity = "林凡", state = "离开剑冢，左臂伤势加重", attributes_set = { "修为" = "筑基中期" }, note = "修为：筑基初期→筑基中期；左臂伤势加重" } ]
+[tools.update_entity.input_schema]
+type = "object"
+additionalProperties = false
+required = ["entity", "note"]
+properties.entity = { type = "string", description = "实体的名称、别名或编号" }
+properties.note = { type = "string", description = "这次变化的说明，例如“修为：筑基初期→筑基中期”" }
+properties.name = { type = "string", description = "新名称（改名时使用；旧名会自动加入别名）" }
+properties.aliases_add = { type = "array", items = { type = "string" }, description = "新增别名" }
+properties.aliases_remove = { type = "array", items = { type = "string" }, description = "移除别名" }
+properties.summary = { type = "string", description = "新的一句话简介" }
+properties.description = { type = "string", description = "替换整个详细描述（慎用；不能与 description_append 同时使用）" }
+properties.description_append = { type = "string", description = "追加到详细描述末尾的新信息" }
+properties.state = { type = "string", description = "新的当前即时状态（替换旧状态）" }
+properties.attributes_set = { type = "object", additionalProperties = { type = "string" }, description = "设置或覆盖的属性" }
+properties.attributes_remove = { type = "array", items = { type = "string" }, description = "删除的属性名" }
+properties.importance = { type = "integer", minimum = 1, maximum = 5, description = "新的重要度" }
+properties.status = { type = "string", enum = ["active", "inactive", "dead", "destroyed", "missing", "unknown"], description = "新的状态" }
+
+[tools.set_relation]
+description = '''建立或更新两个实体之间的关系。kind 表示 source 是 target 的什么（例如 source=林凡、target=张三、kind=师兄，表示林凡是张三的师兄）。'''
+examples = [ { source = "林凡", target = "苏婉", kind = "盟友", inverse_kind = "盟友", description = "剑冢中并肩作战后结盟", note = "初识→盟友" } ]
+[tools.set_relation.input_schema]
+type = "object"
+additionalProperties = false
+required = ["source", "target", "kind"]
+properties.source = { type = "string", description = "关系的一方（名称、别名或编号）" }
+properties.target = { type = "string", description = "关系的另一方" }
+properties.kind = { type = "string", description = "source 是 target 的什么，例如 师兄、父亲、宿敌、所属成员" }
+properties.inverse_kind = { type = "string", description = "target 是 source 的什么，例如 师弟（可选）" }
+properties.description = { type = "string", description = "关系的具体说明" }
+properties.note = { type = "string", description = "这次变化的说明" }
+
+[tools.end_relation]
+description = '''结束一段关系（例如决裂、退出组织、死亡导致的关系终结），保留历史记录。'''
+examples = [ { source = "林凡", target = "青云宗", kind = "弟子", note = "被逐出师门" } ]
+[tools.end_relation.input_schema]
+type = "object"
+additionalProperties = false
+required = ["source", "target", "kind", "note"]
+properties.source = { type = "string", description = "关系的一方" }
+properties.target = { type = "string", description = "关系的另一方" }
+properties.kind = { type = "string", description = "要结束的关系类型（与记录一致）" }
+properties.note = { type = "string", description = "结束的原因" }
+
+[tools.record_appearances]
+description = '''记录本章出场或被提及的全部实体（会替换本章已有的出场记录，请提供完整列表）。'''
+examples = [ { appearances = [ { entity = "林凡", role = "pov" }, { entity = "苏婉", role = "major" }, { entity = "青云宗", role = "mentioned" } ] } ]
+[tools.record_appearances.input_schema]
+type = "object"
+additionalProperties = false
+required = ["appearances"]
+[tools.record_appearances.input_schema.properties.appearances]
+type = "array"
+minItems = 1
+description = "本章出场或被提及的实体"
+[tools.record_appearances.input_schema.properties.appearances.items]
+type = "object"
+additionalProperties = false
+required = ["entity", "role"]
+properties.entity = { type = "string", description = "实体的名称、别名或编号" }
+properties.role = { type = "string", enum = ["pov", "major", "minor", "mentioned"], description = "pov：视角人物；major：主要出场；minor：次要出场；mentioned：仅被提及" }
+properties.note = { type = "string", description = "补充说明（可选）" }
+
+[tools.add_timeline_event]
+description = '''向时间线添加一个事件，按故事时间先后插入：用 after_event 或 before_event 指定相邻事件，都不填则放在最后。'''
+examples = [ { title = "林凡在剑冢获得青冥剑", description = "……", story_time = "宗门大比第三日夜", after_event = 41, entities = ["林凡", "青冥剑"], importance = 4 } ]
+[tools.add_timeline_event.input_schema]
+type = "object"
+additionalProperties = false
+required = ["title"]
+properties.title = { type = "string", description = "事件标题，简洁明确" }
+properties.description = { type = "string", description = "事件经过与影响" }
+properties.story_time = { type = "string", description = "故事内的时间（如“天元历三千年春”“第三日夜”）" }
+properties.after_event = { type = "integer", description = "插入到这个事件之后（事件编号）" }
+properties.before_event = { type = "integer", description = "插入到这个事件之前（事件编号）" }
+properties.entities = { type = "array", items = { type = "string" }, description = "涉及的实体" }
+properties.importance = { type = "integer", minimum = 1, maximum = 5, description = "重要度 1–5，默认 2" }
+
+[tools.update_timeline_event]
+description = '''修改时间线事件的内容，或调整它在时间线上的位置。'''
+examples = [ { event_id = 42, story_time = "第三日黄昏", move_before = 40 } ]
+[tools.update_timeline_event.input_schema]
+type = "object"
+additionalProperties = false
+required = ["event_id"]
+properties.event_id = { type = "integer", description = "事件编号" }
+properties.title = { type = "string", description = "新标题" }
+properties.description = { type = "string", description = "新描述" }
+properties.story_time = { type = "string", description = "新的故事内时间" }
+properties.entities = { type = "array", items = { type = "string" }, description = "涉及的实体（替换原列表）" }
+properties.importance = { type = "integer", minimum = 1, maximum = 5, description = "新的重要度" }
+properties.move_after = { type = "integer", description = "移动到这个事件之后" }
+properties.move_before = { type = "integer", description = "移动到这个事件之前" }
+
+[tools.add_memory_note]
+description = '''记录正文确立的事实（fact）或世界规则（world_rule），供后续章节保持一致。例如“林凡的玉佩是母亲的遗物”“筑基之前无法御剑飞行”。'''
+examples = [ { kind = "fact", content = "苏婉不知道林凡身怀剑灵。", entities = ["苏婉", "林凡"], importance = 4 } ]
+[tools.add_memory_note.input_schema]
+type = "object"
+additionalProperties = false
+required = ["kind", "content"]
+properties.kind = { type = "string", enum = ["fact", "world_rule", "other"], description = "fact：事实；world_rule：世界规则；other：其他" }
+properties.content = { type = "string", description = "笔记内容，一条只写一件事" }
+properties.entities = { type = "array", items = { type = "string" }, description = "相关实体" }
+properties.importance = { type = "integer", minimum = 1, maximum = 5, description = "重要度 1–5，默认 2" }
+
+[tools.retire_memory_note]
+description = '''撤销一条已被正文推翻或不再成立的记忆笔记。'''
+examples = [ { note_id = 17, reason = "第45章揭示玉佩并非遗物" } ]
+[tools.retire_memory_note.input_schema]
+type = "object"
+additionalProperties = false
+required = ["note_id", "reason"]
+properties.note_id = { type = "integer", description = "笔记编号" }
+properties.reason = { type = "string", description = "撤销原因" }
+
+[tools.add_foreshadowing]
+description = '''记录正文中新埋下的伏笔。'''
+examples = [ { title = "黑衣人的剑穗", description = "黑衣人遗落的剑穗上绣着林家家纹。", planned_payoff = "揭示黑衣人与林家的渊源", entities = ["林凡"], importance = 4 } ]
+[tools.add_foreshadowing.input_schema]
+type = "object"
+additionalProperties = false
+required = ["title", "description"]
+properties.title = { type = "string", description = "伏笔名称" }
+properties.description = { type = "string", description = "伏笔的具体内容，以及它在正文中是如何埋下的" }
+properties.planned_payoff = { type = "string", description = "预期的回收方向（章纲或设定中有的话）" }
+properties.entities = { type = "array", items = { type = "string" }, description = "相关实体" }
+properties.importance = { type = "integer", minimum = 1, maximum = 5, description = "重要度 1–5，默认 2" }
+
+[tools.resolve_foreshadowing]
+description = '''把伏笔标记为已回收或已放弃。'''
+examples = [ { foreshadowing_id = 9, status = "resolved", resolution = "第52章揭示剑穗属于林凡的叔父。" } ]
+[tools.resolve_foreshadowing.input_schema]
+type = "object"
+additionalProperties = false
+required = ["foreshadowing_id", "status", "resolution"]
+properties.foreshadowing_id = { type = "integer", description = "伏笔编号" }
+properties.status = { type = "string", enum = ["resolved", "abandoned"], description = "resolved：已回收；abandoned：已放弃" }
+properties.resolution = { type = "string", description = "如何回收（或为何放弃）" }
+
+[tools.set_chapter_summary]
+description = '''保存本章摘要（150 到 400 字）：发生了什么、涉及谁、结尾停在哪里。后续章节会把它作为短期记忆。'''
+examples = [ { summary = "林凡与苏婉闯入剑冢第三层……章末，黑衣人现身。" } ]
+[tools.set_chapter_summary.input_schema]
+type = "object"
+additionalProperties = false
+required = ["summary"]
+properties.summary = { type = "string", description = "本章摘要" }
+
+[tools.propose_setting_change]
+description = '''对设定资料提出修改建议（由作者决定是否采纳）。只在正文与设定矛盾，或正文确立了应写入设定的重要内容时使用。edits、append、character 三者只能提供一个。'''
+examples = [ { target = "world", edits = [ { find = "筑基修士可以御剑飞行", replace = "筑基后期修士才能御剑飞行" } ], rationale = "第41章明确筑基中期的林凡无法御剑。" }, { target = "new_character", character = { name = "黑衣人", role_label = "神秘人", summary = "……", profile = "……" }, rationale = "该角色将长期出现。" } ]
+[tools.propose_setting_change.input_schema]
+type = "object"
+additionalProperties = false
+required = ["target", "rationale"]
+properties.target = { type = "string", description = "修改对象：outline（故事大纲）、world（世界观）、protagonist（主角详细设定）、character:人物名（修改该人物设定的详情，edits 与 append 作用于详情文本），或 new_character（新增人物设定）" }
+properties.rationale = { type = "string", description = "修改理由，引用相关章节" }
+properties.append = { type = "string", description = "追加到文档末尾的内容" }
+[tools.propose_setting_change.input_schema.properties.edits]
+type = "array"
+minItems = 1
+description = "逐处替换：每个 find 必须与原文逐字一致且只出现一次"
+[tools.propose_setting_change.input_schema.properties.edits.items]
+type = "object"
+additionalProperties = false
+required = ["find", "replace"]
+properties.find = { type = "string", description = "原文片段" }
+properties.replace = { type = "string", description = "替换后的文字" }
+[tools.propose_setting_change.input_schema.properties.character]
+type = "object"
+additionalProperties = false
+required = ["name", "summary"]
+description = "新增的人物设定（target=new_character 时使用）"
+properties.name = { type = "string", description = "人物名" }
+properties.role_label = { type = "string", description = "定位，例如 配角、反派" }
+properties.summary = { type = "string", description = "一句话概要" }
+properties.profile = { type = "string", description = "人物设定详情（Markdown）" }
+
+[tools.finish_maintenance]
+description = '''完成本次档案维护，并给出简要报告。'''
+examples = [ { report = "新增实体 2 个，更新 5 处状态，时间线新增 3 个事件，记录伏笔 1 个。" } ]
+[tools.finish_maintenance.input_schema]
+type = "object"
+additionalProperties = false
+required = ["report"]
+properties.report = { type = "string", description = "做了哪些更新" }
+
+# ───────────────────────────── Conception ─────────────────────────────
+
+[tools.ask_user]
+description = '''向作者提出 1 到 4 个问题，等待作者回答。尽量给出具体选项，同时允许作者自由回答。用于确认构思中的关键空白。'''
+examples = [ { questions = [ { id = "tone", question = "整体基调更偏向哪种？", options = [ { label = "热血爽快" }, { label = "沉郁厚重" }, { label = "轻松幽默" } ] } ] } ]
+[tools.ask_user.input_schema]
+type = "object"
+additionalProperties = false
+required = ["questions"]
+[tools.ask_user.input_schema.properties.questions]
+type = "array"
+minItems = 1
+maxItems = 4
+description = "问题列表"
+[tools.ask_user.input_schema.properties.questions.items]
+type = "object"
+additionalProperties = false
+required = ["id", "question"]
+properties.id = { type = "string", description = "问题标识（英文短词，用于对应回答）" }
+properties.question = { type = "string", description = "问题内容" }
+properties.multi_select = { type = "boolean", description = "是否允许多选，默认 false" }
+properties.allow_other = { type = "boolean", description = "是否允许作者自由回答，默认 true" }
+[tools.ask_user.input_schema.properties.questions.items.properties.options]
+type = "array"
+maxItems = 6
+description = "选项（0 到 6 个）"
+[tools.ask_user.input_schema.properties.questions.items.properties.options.items]
+type = "object"
+additionalProperties = false
+required = ["label"]
+properties.label = { type = "string", description = "选项文字" }
+properties.description = { type = "string", description = "选项说明（可选）" }
+
+[tools.web_search]
+description = '''搜索互联网。需要了解现实世界的知识、类型惯例或最新信息时使用。搜索结果只是线索，重要内容请用 web_fetch 阅读原文。'''
+examples = [ { query = "宋代 市井 茶馆 布局" }, { query = "xianxia cultivation stages", max_results = 5 } ]
+[tools.web_search.input_schema]
+type = "object"
+additionalProperties = false
+required = ["query"]
+properties.query = { type = "string", description = "搜索关键词" }
+properties.max_results = { type = "integer", minimum = 1, maximum = 10, description = "最多返回多少条结果" }
+
+[tools.web_fetch]
+description = '''读取一个网页的正文内容（转换为 Markdown）。长网页按提示用 offset 分段读取。'''
+examples = [ { url = "https://example.com/article" }, { url = "https://example.com/article", offset = 8000 } ]
+[tools.web_fetch.input_schema]
+type = "object"
+additionalProperties = false
+required = ["url"]
+properties.url = { type = "string", description = "网页地址（http 或 https）" }
+properties.offset = { type = "integer", minimum = 0, description = "从第几个字开始读，默认 0" }
+properties.max_chars = { type = "integer", minimum = 1000, maximum = 20000, description = "最多读取多少字，默认 8000" }
+
+[tools.write_setting_doc]
+description = '''撰写或整篇重写一份设定文档：outline（故事大纲）、world（世界观）、protagonist（主角详细设定）。局部修改请用 edit_setting_doc。'''
+examples = [ { doc = "outline", content = "# 故事大纲\n\n## 核心设定\n……" } ]
+[tools.write_setting_doc.input_schema]
+type = "object"
+additionalProperties = false
+required = ["doc", "content"]
+properties.doc = { type = "string", enum = ["outline", "world", "protagonist"], description = "文档" }
+properties.content = { type = "string", description = "完整的文档内容（Markdown）" }
+
+[tools.edit_setting_doc]
+description = '''局部修改一份设定文档：逐处替换文字。所有替换一起生效，任何一处失败则都不生效。'''
+examples = [ { doc = "world", edits = [ { find = "三大宗门", replace = "四大宗门" } ] } ]
+[tools.edit_setting_doc.input_schema]
+type = "object"
+additionalProperties = false
+required = ["doc", "edits"]
+properties.doc = { type = "string", enum = ["outline", "world", "protagonist"], description = "文档" }
+[tools.edit_setting_doc.input_schema.properties.edits]
+type = "array"
+minItems = 1
+description = "逐处替换：每个 find 必须与原文逐字一致且只出现一次"
+[tools.edit_setting_doc.input_schema.properties.edits.items]
+type = "object"
+additionalProperties = false
+required = ["find", "replace"]
+properties.find = { type = "string", description = "原文片段" }
+properties.replace = { type = "string", description = "替换后的文字" }
+
+[tools.upsert_character]
+description = '''新增或更新一个人物设定（按名称匹配）。可以同时调整排名（rank，1 为最重要）。'''
+examples = [ { name = "林凡", role_label = "主角", summary = "身怀残破剑灵的外门弟子", profile = "## 身份\n……", rank = 1 } ]
+[tools.upsert_character.input_schema]
+type = "object"
+additionalProperties = false
+required = ["name"]
+properties.name = { type = "string", description = "人物名（用于匹配已有设定）" }
+properties.new_name = { type = "string", description = "改名时填写新名称" }
+properties.role_label = { type = "string", description = "定位，例如 主角、女主、反派、导师、配角" }
+properties.summary = { type = "string", description = "一句话概要" }
+properties.profile = { type = "string", description = "人物设定详情（Markdown）" }
+properties.rank = { type = "integer", minimum = 1, description = "重要性排名，1 为最重要" }
+
+[tools.remove_character]
+description = '''删除一个人物设定。'''
+examples = [ { name = "王二" } ]
+[tools.remove_character.input_schema]
+type = "object"
+additionalProperties = false
+required = ["name"]
+properties.name = { type = "string", description = "人物名" }
+
+[tools.reorder_characters]
+description = '''按重要性重新排列全部人物设定（必须包含所有人物）。'''
+examples = [ { names = ["林凡", "苏婉", "张三"] } ]
+[tools.reorder_characters.input_schema]
+type = "object"
+additionalProperties = false
+required = ["names"]
+properties.names = { type = "array", minItems = 1, items = { type = "string" }, description = "按重要性从高到低排列的全部人物名" }
+
+[tools.set_research_topics]
+description = '''设置资料收集主题（会替换此前尚未执行的主题）。每个主题说明要收集什么、用于什么，并指定归入的知识范围名称。'''
+examples = [ { topics = [ { topic = "宋代市井生活", requirements = "茶馆、酒楼、夜市的布局与经营方式，用于汴京场景描写", scope = "宋代社会" } ] } ]
+[tools.set_research_topics.input_schema]
+type = "object"
+additionalProperties = false
+required = ["topics"]
+[tools.set_research_topics.input_schema.properties.topics]
+type = "array"
+description = "资料收集主题列表"
+[tools.set_research_topics.input_schema.properties.topics.items]
+type = "object"
+additionalProperties = false
+required = ["topic", "requirements", "scope"]
+properties.topic = { type = "string", description = "主题" }
+properties.requirements = { type = "string", description = "具体要求：收集什么、用于什么" }
+properties.scope = { type = "string", description = "归入的知识范围名称（同类主题使用同一个范围名）" }
+
+[tools.request_review]
+description = '''请作者审阅当前的设定资料与资料收集主题，并等待作者的意见。'''
+examples = [ { message = "大纲与世界观已完成初稿，请重点看第二卷的转折是否合理。" } ]
+[tools.request_review.input_schema]
+type = "object"
+additionalProperties = false
+required = ["message"]
+properties.message = { type = "string", description = "给作者的说明：这一轮做了什么、希望作者重点看什么" }
+
+# ───────────────────────────── Researcher ─────────────────────────────
+
+[tools.save_knowledge_entry]
+description = '''在目标知识范围中保存一个新条目。一个条目只讲一个主题，标题清楚具体，写明来源。'''
+examples = [ { title = "宋代茶馆的布局与经营", content = "## 概述\n……\n## 写作参考\n……", source_urls = ["https://example.com/a"], tags = ["宋代", "市井"] } ]
+[tools.save_knowledge_entry.input_schema]
+type = "object"
+additionalProperties = false
+required = ["title", "content", "source_urls"]
+properties.title = { type = "string", description = "条目标题" }
+properties.content = { type = "string", description = "条目内容（Markdown）" }
+properties.source_urls = { type = "array", items = { type = "string" }, description = "来源网址；只有内容属于常识、没有具体来源时才可以为空" }
+properties.tags = { type = "array", items = { type = "string" }, description = "标签" }
+
+[tools.update_knowledge_entry]
+description = '''补充或修改目标知识范围中已有的条目。'''
+examples = [ { entry_id = 7, edits = [ { find = "约三百家", replace = "据记载约三百余家" } ], source_urls_add = ["https://example.com/b"] } ]
+[tools.update_knowledge_entry.input_schema]
+type = "object"
+additionalProperties = false
+required = ["entry_id"]
+properties.entry_id = { type = "integer", description = "条目编号" }
+properties.title = { type = "string", description = "新标题" }
+properties.content = { type = "string", description = "替换整个内容（慎用；不能与 edits 同时使用）" }
+properties.source_urls_add = { type = "array", items = { type = "string" }, description = "新增来源" }
+properties.tags = { type = "array", items = { type = "string" }, description = "标签（替换原列表）" }
+[tools.update_knowledge_entry.input_schema.properties.edits]
+type = "array"
+minItems = 1
+description = "逐处替换：每个 find 必须与原文逐字一致且只出现一次"
+[tools.update_knowledge_entry.input_schema.properties.edits.items]
+type = "object"
+additionalProperties = false
+required = ["find", "replace"]
+properties.find = { type = "string", description = "原文片段" }
+properties.replace = { type = "string", description = "替换后的文字" }
+
+[tools.finish_research]
+description = '''完成资料收集任务，并给出报告。'''
+examples = [ { report = "已覆盖：……；未找到可靠来源：……；建议后续收集：……" } ]
+[tools.finish_research.input_schema]
+type = "object"
+additionalProperties = false
+required = ["report"]
+properties.report = { type = "string", description = "覆盖了哪些内容、哪些没有找到或存疑、建议的后续主题" }

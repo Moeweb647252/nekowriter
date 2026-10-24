@@ -1,0 +1,154 @@
+# Documentation of template variables, shown in the prompt editor (spec/09 §1).
+# Each [vars.<name>] is a top-level variable; `fields` documents its members ("[]" marks list items).
+# Labels (`*_label`) are rendered by code through shared.label / shared.chapter_label.
+
+[vars.book]
+en = "The current book"
+zh = "当前书籍"
+fields.title = { en = "Title", zh = "书名" }
+fields.genre = { en = "Genre (may be empty)", zh = "类型（可能为空）" }
+fields.idea = { en = "The author's original idea", zh = "作者最初的想法" }
+fields.writing_language = { en = "Writing language code (BCP-47)", zh = "写作语言代码" }
+fields.writing_language_name = { en = "Writing language display name", zh = "写作语言名称" }
+fields.unspaced = { en = "True for languages written without spaces (zh, ja, …)", zh = "是否为不以空格分词的语言" }
+
+[vars.track]
+en = "The chapter's track (main story or side story)"
+zh = "章节所属轨道（正文或番外）"
+fields.is_main = { en = "True for the main story", zh = "是否为正文" }
+fields.kind = { en = "main | side", zh = "main 或 side" }
+fields.title = { en = "Track title (empty for the main track)", zh = "轨道名称（正文轨道为空）" }
+fields.synopsis = { en = "Side story premise", zh = "番外梗概" }
+fields.canon_mode = { en = "canon | isolated", zh = "canon（正史）或 isolated（独立）" }
+fields.anchor_kind = { en = "none | before_start | after_chapter | after_end", zh = "时间锚点类型" }
+fields.anchor_label = { en = "Label of the anchor chapter (after_chapter only)", zh = "锚点章节的称呼" }
+
+[vars.chapter]
+en = "The target chapter"
+zh = "目标章节"
+fields.id = { en = "Chapter id", zh = "章节编号" }
+fields.number = { en = "Number within its track", zh = "轨道内序号" }
+fields.label = { en = "Rendered label, e.g. 第12章", zh = "章节称呼" }
+fields.title = { en = "Title (may be empty)", zh = "标题（可能为空）" }
+fields.guidance = { en = "The author's instructions for this chapter", zh = "作者对本章的要求" }
+fields.outline = { en = "Chapter outline (may be empty)", zh = "章纲（可能为空）" }
+fields.reference_notes = { en = "Reference notes from planning", zh = "参考要点" }
+fields.target_min = { en = "Target length, minimum", zh = "目标字数下限" }
+fields.target_max = { en = "Target length, maximum", zh = "目标字数上限" }
+fields.word_count = { en = "Current word count", zh = "当前字数" }
+fields.has_draft = { en = "True when the chapter already has text", zh = "是否已有正文" }
+
+[vars.settings]
+en = "Setting materials"
+zh = "设定资料"
+fields.outline = { en = "Book outline (Markdown)", zh = "故事大纲" }
+fields.world = { en = "World setting (Markdown)", zh = "世界观" }
+fields.protagonist = { en = "Protagonist profile (Markdown)", zh = "主角详细设定" }
+fields."characters[]" = { en = "Character designs by rank: rank, name, role_label, summary, profile", zh = "人物设定（按排名）：rank、name、role_label、summary、profile" }
+fields."scopes[]" = { en = "Visible knowledge scopes: name, description", zh = "可检索的知识范围：name、description" }
+
+[vars.memory]
+en = "Tiered memory snapshot (spec/06 §4)"
+zh = "分层记忆快照"
+fields.is_first = { en = "True when no earlier chapter is official yet (the chapter may still not be the first)", zh = "是否还没有已定稿的前文" }
+fields.window_mid = { en = "Mid-term window size (chapters)", zh = "中期记忆窗口（章数）" }
+fields."recent_summaries[]" = { en = "label, title, summary", zh = "近期章节摘要：label、title、summary" }
+fields.previous_tail = { en = "Ending of the previous chapter: label, text (or none)", zh = "上一章结尾：label、text（可能为空）" }
+fields.protagonist = { en = "The protagonist, or the side track's focus character: id, name, status, status_label, state, after_anchor (side tracks: the state comes from after the anchor), attributes[] {key, value} (or none)", zh = "主角（番外中可为番外主角）当前状态（可能为空）" }
+fields."recent_changes[]" = { en = "chapter_label, target, note", zh = "近期变化：chapter_label、target、note" }
+fields."appearances[]" = { en = "id, name, count, chapters[] {label, role_label}", zh = "出场记录" }
+fields."absent_important[]" = { en = "id, name, last_label", zh = "久未出场的重要人物" }
+fields."key_notes[]" = { en = "id, kind_label, content", zh = "核心事实与世界规则" }
+fields."open_foreshadowing[]" = { en = "id, title, planted_label", zh = "未回收的伏笔" }
+fields."cast[]" = { en = "id, name, kind_label, summary", zh = "主要实体" }
+fields.counts = { en = "character, organization, location, item, other, event, fact, world_rule, foreshadowing_open", zh = "档案规模统计" }
+
+[vars.draft]
+en = "Chapter text"
+zh = "章节正文"
+fields."paragraphs[]" = { en = "pid, text", zh = "段落：pid、text" }
+fields.tail_open = { en = "True when the last paragraph is unfinished", zh = "末段是否未完" }
+fields.word_count = { en = "Word count", zh = "字数" }
+fields.paragraph_count = { en = "Number of paragraphs", zh = "段落数" }
+
+[vars.feedback]
+en = "The author's feedback for a revision or redraft (rollover: the feedback the session addresses, or none)"
+zh = "作者的修改意见（续写时为会话正在处理的意见，可能为空）"
+fields.text = { en = "Feedback text", zh = "意见正文" }
+fields."issues[]" = { en = "The issues the author ticked: severity_label, category_label, pids (list, in the reviewed version), quote, problem, suggestion", zh = "作者勾选的相关问题：severity_label、category_label、pids（列表，对应作者审阅的版本）、quote、problem、suggestion" }
+
+[vars.previous_outline]
+en = "The outline of the previous version (redraft)"
+zh = "上一版章纲（重写时）"
+
+[vars.granularity]
+en = "Drafting granularity"
+zh = "写作粒度"
+fields.key = { en = "sentence | paragraph | free | chapter", zh = "粒度标识" }
+fields.label = { en = "Display label", zh = "粒度名称" }
+fields.revising = { en = "True in the revising phase (chapter_end has no effect there)", zh = "是否处于修订阶段" }
+fields.tail_open = { en = "True when the last paragraph is unfinished", zh = "末段是否尚未写完" }
+fields.last_pid = { en = "Pid of the last paragraph", zh = "末段的段落编号" }
+
+[vars.phase]
+en = "Session phase: drafting | revising (rollover)"
+zh = "当前阶段（续写时）"
+
+[vars.revision_plan]
+en = "The accepted revision plan (rollover in the revising phase; may be empty)"
+zh = "已生效的修订计划（续写时，可能为空）"
+
+[vars.author_notes]
+en = "The author's earlier feedback and messages from the parent session chain, oldest first (rollover)"
+zh = "作者此前给出的意见与留言（续写时，按时间先后）"
+
+[vars.review]
+en = "Re-review request"
+zh = "复审请求"
+fields.comment = { en = "The author's comment on the report", zh = "作者对审阅结果的意见" }
+fields.attempt = { en = "Attempt number of the report being discussed", zh = "被讨论的审阅次数" }
+
+[vars.prior]
+en = "The previous report and the author's comment, when a re-review starts a new session because the text changed (or none)"
+zh = "上一次审阅结果与作者意见（正文已修改、需要新会话复审时；否则为空）"
+fields.attempt = { en = "Attempt number", zh = "审阅次数" }
+fields.verdict_label = { en = "Verdict label", zh = "结论" }
+fields.summary = { en = "Summary", zh = "总体评价" }
+fields.feedback = { en = "Feedback for the writer", zh = "给写手的意见" }
+fields.comment = { en = "The author's comment", zh = "作者的意见" }
+
+[vars.research]
+en = "Research task"
+zh = "资料收集任务"
+fields.topic = { en = "Topic", zh = "主题" }
+fields.requirements = { en = "Requirements", zh = "具体要求" }
+fields.scope_name = { en = "Target scope name", zh = "目标知识范围" }
+fields.scope_description = { en = "Target scope description", zh = "知识范围说明" }
+fields.language_name = { en = "Language to write entries in", zh = "条目撰写语言" }
+fields."existing_titles[]" = { en = "Titles already in the scope", zh = "已有条目标题" }
+fields.max_tool_calls = { en = "Tool call budget", zh = "工具调用预算" }
+fields.max_entries = { en = "Entry budget", zh = "条目数量预算" }
+
+[vars.conception]
+en = "New book conception input"
+zh = "新书构思输入"
+fields.title = { en = "Title", zh = "书名" }
+fields.idea = { en = "Rough idea", zh = "初步想法" }
+fields.genre = { en = "Genre (may be empty)", zh = "类型（可能为空）" }
+fields.writing_language_name = { en = "Writing language display name", zh = "写作语言名称" }
+
+[vars.cast_index]
+en = "Entity index for maintenance: id, name, kind_label, status, status_label, aliases (list), summary"
+zh = "实体索引（维护用）"
+
+[vars.diff]
+en = "Text changes since the canon sync: changes[] {op: insert|delete|modify, pid, after, old, new}"
+zh = "正文变更列表"
+
+[vars.notice]
+en = "Notice templates receive the variables named in their `vars` list (spec/03 §5.3, §7)"
+zh = "通知模板使用其 vars 中列出的变量"
+
+[vars.result]
+en = "Result templates receive the variables named in their `vars` list; result.error receives `code` plus code-specific fields (spec/05)"
+zh = "结果模板使用其 vars 中列出的变量；result.error 接收 code 及对应字段"

@@ -1,0 +1,436 @@
+# Tool result and error renderings (spec/05 §1.5). Code passes structured data; all wording lives here.
+
+[[prompt]]
+key = "result.error"
+kind = "result"
+agent = "shared"
+vars = ["code"]
+title_en = "Result — tool errors"
+title_zh = "工具结果 · 错误信息"
+text = '''
+{%- if code == "invalid_json" -%}
+工具参数不是合法的 JSON，没有执行。收到的参数开头为：{{ raw }}
+{%- elif code == "validation" -%}
+工具参数不符合要求，没有执行：{% for e in errors %}{{ e }}{% if not loop.last %}；{% endif %}{% endfor %}
+{%- elif code == "entity_not_found" -%}
+找不到实体「{{ query }}」。{% if suggestions %}你是不是要找：{% for s in suggestions %}{{ s.name }}(#{{ s.id }}){% if not loop.last %}、{% endif %}{% endfor %}？{% else %}可以用 list_entities 或 search_canon 查找。{% endif %}
+{%- elif code == "entity_ambiguous" -%}
+「{{ query }}」对应多个实体，请用编号指定：{% for c in candidates %}{{ c.name }}(#{{ c.id }}，{{ c.kind_label }}){% if not loop.last %}、{% endif %}{% endfor %}。
+{%- elif code == "entity_exists" -%}
+已有名称或别名为「{{ name }}」的实体(#{{ id }})，名称不能重复。如果指的是同一个实体，请用 update_entity 更新它。
+{%- elif code == "pid_not_found" -%}
+找不到段落：{{ pids | join("、") }}。{% if tool == "read_chapter" %}请去掉 from_pid，从头阅读该章以确认段落编号。{% else %}请用 read_draft 查看当前正文的段落编号。{% endif %}
+{%- elif code == "text_not_found" -%}
+在 {{ pid }} 中找不到要替换的原文（old 必须与原文逐字一致）。该段当前内容：{{ text }}
+{%- elif code == "text_ambiguous" -%}
+要替换的原文在 {{ pid }} 中出现了 {{ count }} 次，请提供更长、能唯一定位的片段。
+{%- elif code == "granularity" -%}
+当前写作粒度为「{{ mode_label }}」，{% if reason == "newline" %}这次内容包含换行，{{ tool }} 每次只能写{{ "一句" if mode == "sentence" and tool == "insert_text" else "一个段落" }}{% elif reason == "too_long" %}这次内容过长（{{ length }} 字，上限 {{ limit }} 字），请拆分后分次写入{% elif reason == "empty" %}这次内容为空{% else %}这次内容不符合要求{% endif %}，没有写入。
+{%- elif code == "draft_empty" -%}
+本章还没有任何正文，不能完成。请先写入正文。
+{%- elif code == "isolated_readonly" -%}
+当前是独立番外，不能修改正史记录 {{ target }}。请把番外中的变化记录为番外内的新记录（例如用 add_memory_note）。
+{%- elif code == "chapter_not_found" -%}
+找不到章节「{{ query }}」。写法："12"（当前轨道第12章）、"main 12"（正文第12章）或 "#编号"。
+{%- elif code == "chapter_not_official" -%}
+{{ label }}尚未定稿，不能读取。
+{%- elif code == "no_knowledge_scope" -%}
+本书没有可检索的知识库范围。
+{%- elif code == "scope_not_found" -%}
+没有名为「{{ name }}」的可检索知识范围。可以检索的范围：{{ available | join("、") }}。
+{%- elif code == "not_found" -%}
+找不到{{ what_label }} #{{ id }}。
+{%- elif code == "entry_exists" -%}
+该知识范围中已有同名条目《{{ title }}》(#{{ id }})，请用 update_knowledge_entry 补充。
+{%- elif code == "find_failed" -%}
+在{{ doc_label }}中{% if count == 0 %}找不到{% else %}出现了 {{ count }} 次{% endif %}要替换的原文「{{ find }}」。find 必须与原文逐字一致，且只出现一次。
+{%- elif code == "maintenance_incomplete" -%}
+档案维护尚未完成，缺少：{% for m in missing %}{{ {"summary": "本章摘要（set_chapter_summary）", "appearances": "出场记录（record_appearances）"}[m] }}{% if not loop.last %}、{% endif %}{% endfor %}。请补全后再调用 finish_maintenance。
+{%- elif code == "search_not_configured" -%}
+没有配置网络搜索服务，无法搜索。请基于已有的知识继续，并在结果或报告中说明哪些内容未经检索核实。
+{%- elif code == "search_failed" -%}
+网络搜索失败：{% if reason == "timeout" %}请求超时{% elif reason == "auth" %}搜索服务拒绝了密钥{% elif reason == "status" %}搜索服务返回 HTTP {{ status }}{% else %}网络错误{% endif %}。可以稍后换个关键词重试；如果仍然失败，请基于已有的知识继续，并在结果或报告中说明哪些内容未经检索核实。
+{%- elif code == "fetch_failed" -%}
+无法读取网页 {{ url }}：{% if reason == "invalid_url" %}网址无效（只支持 http 和 https，且不能包含用户名或密码）{% elif reason == "blocked" %}该地址指向本机或内网，出于安全原因不能访问{% elif reason == "too_many_redirects" %}重定向次数过多{% elif reason == "timeout" %}请求超时{% elif reason == "too_large" %}页面超过 5 MB 的上限{% elif reason == "status" %}服务器返回 HTTP {{ status }}{% else %}网络错误{% endif %}。
+{%- elif code == "unsupported_content_type" -%}
+不支持读取这种类型的内容（{{ content_type }}）：{{ url }}。
+{%- elif code == "character_not_found" -%}
+人物设定中没有「{{ name }}」。
+{%- elif code == "character_exists" -%}
+人物设定中已有「{{ name }}」，名称不能重复。如果指的是同一个人物，请修改它已有的设定，不要另建。
+{%- elif code == "reorder_mismatch" -%}
+排序列表必须完整包含全部人物且不能重复：{{ expected | join("、") }}。
+{%- elif code == "relation_not_found" -%}
+找不到有效的关系：{{ source }} → {{ target }}（{{ kind }}）。
+{%- elif code == "seed_only" -%}
+{{ tool }} 的 {{ field }} 参数只能在建立初始档案时使用。
+{%- elif code == "exactly_one" -%}
+{{ fields | join("、") }} 中必须且只能提供一个。
+{%- elif code == "mutually_exclusive" -%}
+{{ fields | join("、") }} 不能同时提供，请只用其中一个。
+{%- elif code == "tool_not_allowed" -%}
+{% include "notice.tool_not_allowed" %}
+{%- elif code == "output_truncated" -%}
+{% include "notice.output_truncated" %}
+{%- elif code == "after_completion" -%}
+同一轮中排在它前面的调用已经完成了本次任务，这次调用没有执行。
+{%- else -%}
+工具执行失败（内部错误）。请稍后重试，或换一种方式继续。
+{%- endif -%}
+'''
+
+[[prompt]]
+key = "result.truncated"
+kind = "result"
+agent = "shared"
+vars = ["next_offset"]
+title_en = "Result — truncation hint"
+title_zh = "工具结果 · 截断提示"
+text = '''
+（内容较长，已截断。{% if next_offset is not none %}如需继续阅读，请使用 offset={{ next_offset }} 再次调用。{% endif %}）
+'''
+
+[[prompt]]
+key = "result.entity_card"
+kind = "result"
+agent = "shared"
+vars = ["e", "relations", "changes", "appearances", "design"]
+title_en = "Result — entity card"
+title_zh = "工具结果 · 实体档案"
+text = '''
+【{{ e.kind_label }}】{{ e.name }}(#{{ e.id }}){% if e.is_protagonist %}【主角】{% endif %} · 重要度 {{ e.importance }} · {{ e.status_label }}
+{% if e.aliases %}别名：{{ e.aliases | join("、") }}
+{% endif %}{% if e.summary %}简介：{{ e.summary }}
+{% endif %}{% if design %}设定定位：{{ design.role_label }}{% if design.summary %} — {{ design.summary }}{% endif %}
+
+{% endif %}{% if e.state %}当前状态{% if e.state_after_anchor %}（锚点之后）{% endif %}：{{ e.state }}
+{% endif %}{% if e.attributes %}属性：{% for a in e.attributes %}{{ a.key }}={{ a.value }}{% if not loop.last %}；{% endif %}{% endfor %}
+
+{% endif %}{% if e.description %}详细描述：
+{{ e.description }}
+{% endif %}{% if relations %}关系：
+{% for r in relations %}- {{ r.subject }} 是 {{ r.object }} 的 {{ r.kind }}{% if r.ended %}（已结束{% if r.until_label %}，{{ r.until_label }}{% endif %}）{% endif %}{% if r.description %}：{{ r.description }}{% endif %}{% if r.since_label %}（自{{ r.since_label }}）{% endif %}
+
+{% endfor %}{% endif %}{% if changes %}最近变化：
+{% for c in changes %}- {{ c.chapter_label }}：{{ c.note }}{% if c.after_anchor %}（锚点之后）{% endif %}
+
+{% endfor %}{% endif %}出场：{% if appearances.first_label %}首次{{ appearances.first_label }}，最近{{ appearances.last_label }}，近 {{ appearances.window_size }} 章出场 {{ appearances.window_count }} 次{% else %}尚无出场记录{% endif %}
+'''
+
+[[prompt]]
+key = "result.entity_list"
+kind = "result"
+agent = "shared"
+vars = ["items", "total", "shown"]
+title_en = "Result — entity list"
+title_zh = "工具结果 · 实体列表"
+text = '''
+{% for e in items %}#{{ e.id }} 【{{ e.kind_label }}】{{ e.name }}{% if e.aliases %}（{{ e.aliases | join("、") }}）{% endif %}{% if e.summary %} — {{ e.summary }}{% endif %}{% if e.status != "active" %} [{{ e.status_label }}]{% endif %}
+
+{% else %}没有符合条件的实体。
+{% endfor %}{% if total > shown %}（共 {{ total }} 个，只显示前 {{ shown }} 个，可以用 query 缩小范围。）{% endif %}
+'''
+
+[[prompt]]
+key = "result.relations"
+kind = "result"
+agent = "shared"
+vars = ["entity", "items"]
+title_en = "Result — relations"
+title_zh = "工具结果 · 关系"
+text = '''
+{{ entity }} 的关系：
+{% for r in items %}- {{ r.subject }} 是 {{ r.object }} 的 {{ r.kind }}{% if r.ended %}（已结束{% if r.until_label %}，{{ r.until_label }}{% endif %}）{% endif %}{% if r.description %}：{{ r.description }}{% endif %}{% if r.since_label %}（自{{ r.since_label }}）{% endif %}
+
+{% else %}（没有记录的关系）
+{% endfor %}
+'''
+
+[[prompt]]
+key = "result.timeline"
+kind = "result"
+agent = "shared"
+vars = ["items", "total", "shown", "mode"]
+title_en = "Result — timeline events"
+title_zh = "工具结果 · 时间线"
+text = '''
+{% if mode == "recent_first" %}时间线（由近及远）：{% else %}时间线（按故事时间先后）：{% endif %}
+
+{% for t in items %}[#{{ t.id }}]{% if t.story_time %} ({{ t.story_time }}){% endif %} {{ t.title }}{% if t.description %} — {{ t.description }}{% endif %}{% if t.chapter_label %} · {{ t.chapter_label }}{% endif %}{% if t.entities %} · 涉及：{{ t.entities | join("、") }}{% endif %}{% if t.after_anchor %}（锚点之后）{% endif %}
+
+{% else %}（没有符合条件的事件）
+{% endfor %}{% if total > shown %}（共 {{ total }} 条，只显示 {{ shown }} 条。）{% endif %}
+'''
+
+[[prompt]]
+key = "result.foreshadowing_list"
+kind = "result"
+agent = "shared"
+vars = ["items"]
+title_en = "Result — foreshadowing list"
+title_zh = "工具结果 · 伏笔列表"
+text = '''
+{% for f in items %}[#{{ f.id }}] {{ f.title }}【{{ f.status_label }}】{% if f.description %} — {{ f.description }}{% endif %}{% if f.planted_label %} · 埋设于{{ f.planted_label }}{% endif %}{% if f.planned_payoff %} · 计划回收：{{ f.planned_payoff }}{% endif %}{% if f.resolution %} · 回收：{{ f.resolution }}{% if f.resolved_label %}（{{ f.resolved_label }}）{% endif %}{% endif %}
+
+{% else %}（没有符合条件的伏笔）
+{% endfor %}
+'''
+
+[[prompt]]
+key = "result.search_hits"
+kind = "result"
+agent = "shared"
+vars = ["corpus", "query", "hits", "vector_available"]
+title_en = "Result — search hits"
+title_zh = "工具结果 · 检索结果"
+text = '''
+「{{ query }}」的检索结果：
+{% for h in hits %}{{ loop.index }}. {% if corpus == "knowledge" %}[条目#{{ h.ref }}]《{{ h.title }}》（{{ h.location }}）{% elif corpus == "chapters" %}{{ h.title }} {{ h.pids | first }}{% if h.pids | length > 1 %}–{{ h.pids | last }}{% endif %}{% else %}【{{ h.kind_label }}】{{ h.title }}(#{{ h.ref }}){% endif %}{% if h.after_anchor %}（锚点之后）{% endif %}
+
+   {{ h.snippet }}
+{% else %}没有找到相关内容。可以换个关键词，或改用其他检索工具。
+{% endfor %}{% if not vector_available %}（语义检索暂不可用，本次只进行了关键词匹配。）{% endif %}
+'''
+
+[[prompt]]
+key = "result.knowledge_entry"
+kind = "result"
+agent = "shared"
+vars = ["id", "title", "scope", "sources", "content", "offset", "end", "total", "next_offset"]
+title_en = "Result — knowledge entry"
+title_zh = "工具结果 · 知识条目"
+text = '''
+[条目#{{ id }}]《{{ title }}》 · 范围：{{ scope }}
+{% if sources %}来源：{% for s in sources %}{{ s }}{% if not loop.last %}；{% endif %}{% endfor %}
+
+{% endif %}
+{{ content }}
+{% if next_offset is not none %}
+（第 {{ offset }}–{{ end }} 字，共 {{ total }} 字。继续阅读请使用 offset={{ next_offset }}。）{% endif %}
+'''
+
+[[prompt]]
+key = "result.chapter_text"
+kind = "result"
+agent = "shared"
+vars = ["label", "paragraphs", "next_pid", "total_paragraphs"]
+title_en = "Result — official chapter text"
+title_zh = "工具结果 · 章节原文"
+text = '''
+{{ label }}
+{% for p in paragraphs %}[{{ p.pid }}] {{ p.text }}
+{% endfor %}{% if next_pid %}（没有显示完，共 {{ total_paragraphs }} 段。继续阅读请使用 from_pid="{{ next_pid }}"。）{% endif %}
+'''
+
+[[prompt]]
+key = "result.draft_text"
+kind = "result"
+agent = "writer"
+vars = ["paragraphs", "tail_open", "word_count", "target_min", "target_max", "next_pid", "total_paragraphs"]
+title_en = "Result — current draft"
+title_zh = "工具结果 · 当前草稿"
+text = '''
+当前正文（{{ word_count }} 字，目标 {{ target_min }}–{{ target_max }} 字）：
+{% for p in paragraphs %}[{{ p.pid }}] {{ p.text }}{% if loop.last and tail_open and not next_pid %}（本段未完）{% endif %}
+
+{% else %}（暂无正文）
+{% endfor %}{% if next_pid %}（没有显示完，共 {{ total_paragraphs }} 段。继续请使用 from_pid="{{ next_pid }}"。）{% endif %}
+'''
+
+[[prompt]]
+key = "result.draft_edit"
+kind = "result"
+agent = "writer"
+vars = ["action", "inserted", "appended_to", "pid", "deleted", "after", "tail_open", "last_pid", "word_count", "target_min", "target_max", "chapter_end", "short_of_target", "ignored_chapter_end"]
+title_en = "Result — text inserted or edited"
+title_zh = "工具结果 · 写入与修改"
+text = '''
+{%- if action == "insert_text" -%}
+已写入：{% if appended_to %}接在 {{ appended_to }} 之后{% if inserted %}，并新增 {{ inserted | join("、") }}{% endif %}{% else %}新增 {{ inserted | join("、") }}{% endif %}。
+{%- elif action == "insert_paragraphs" -%}
+{% if after %}已在 {{ after }} 之后插入{% else %}已在开头插入{% endif %} {{ inserted | join("、") }}。
+{%- elif action == "replace_text" -%}
+已修改 {{ pid }}{% if deleted %}（修改后该段为空，已删除）{% endif %}。
+{%- elif action == "rewrite_paragraph" -%}
+已重写 {{ pid }}{% if inserted %}，并在其后新增 {{ inserted | join("、") }}{% endif %}。
+{%- elif action == "delete_paragraphs" -%}
+已删除 {{ deleted | join("、") }}。
+{%- endif %}
+本章当前 {{ word_count }} 字（目标 {{ target_min }}–{{ target_max }} 字）。{% if chapter_end %}已标记本章完成。{% elif short_of_target %}字数明显少于目标下限，所以这次没有标记完成。如果本章确实已经写完，请调用 finish_draft 确认；否则请继续写。{% elif tail_open %}末段 {{ last_pid }} 尚未结束，下一次 insert_text 会接在它后面。{% endif %}{% if ignored_chapter_end %}（修订阶段的 chapter_end 无效；完成修订请调用 finish_revision。）{% endif %}
+'''
+
+[[prompt]]
+key = "result.writer_control"
+kind = "result"
+agent = "writer"
+vars = ["action", "word_count", "target_min", "confirm_needed", "title_set", "title"]
+title_en = "Result — outline, plan and completion"
+title_zh = "工具结果 · 章纲、计划与完成"
+text = '''
+{%- if action == "submit_outline" -%}
+章纲与参考要点已保存{% if title_set %}，本章标题设为《{{ title }}》{% endif %}。
+{%- elif action == "submit_revision_plan" -%}
+修订计划已保存。
+{%- elif action == "finish_draft" and confirm_needed -%}
+本章目前只有 {{ word_count }} 字，明显少于目标下限 {{ target_min }} 字，所以这次没有完成。如果本章确实已经写完，请再次调用 finish_draft 确认；否则请继续写。
+{%- elif action == "finish_draft" -%}
+本章初稿完成，共 {{ word_count }} 字，已提交作者审阅。
+{%- elif action == "finish_revision" -%}
+修订完成，共 {{ word_count }} 字，已提交作者审阅。
+{%- endif -%}
+'''
+
+[[prompt]]
+key = "result.submit_review"
+kind = "result"
+agent = "reviewer"
+vars = ["attempt", "issues", "dropped_pids"]
+title_en = "Result — review submitted"
+title_zh = "工具结果 · 审阅已提交"
+text = '''
+第 {{ attempt }} 次审阅结果已提交（{{ issues }} 个问题），作者将据此决定是否通过。{% if dropped_pids %}（以下段落编号不存在，已从问题中移除：{{ dropped_pids | join("、") }}。）{% endif %}
+'''
+
+[[prompt]]
+key = "result.canon_write"
+kind = "result"
+agent = "archivist"
+vars = ["action", "target", "count", "prev_event", "next_event", "moved"]
+title_en = "Result — canon record written"
+title_zh = "工具结果 · 档案已更新"
+text = '''
+{%- set verbs = {
+  "create_entity": "已创建实体", "update_entity": "已更新实体", "set_relation": "已记录关系",
+  "end_relation": "已结束关系", "record_appearances": "已记录出场", "add_timeline_event": "已加入时间线",
+  "update_timeline_event": "已更新时间线事件", "add_memory_note": "已记录笔记", "retire_memory_note": "已撤销笔记",
+  "add_foreshadowing": "已记录伏笔", "resolve_foreshadowing": "已更新伏笔", "set_chapter_summary": "已保存本章摘要",
+  "propose_setting_change": "已提交设定修改建议，等待作者决定"
+} -%}
+{{ verbs[action] }}{% if target %}：{{ target }}{% endif %}{% if action == "record_appearances" %}（共 {{ count }} 个）{% endif %}{% if action == "add_timeline_event" or moved %}（位置：{% if prev_event %}#{{ prev_event }} 之后{% else %}最前{% endif %}{% if next_event %}，#{{ next_event }} 之前{% endif %}）{% endif %}。
+'''
+
+[[prompt]]
+key = "result.finish_maintenance"
+kind = "result"
+agent = "archivist"
+vars = ["confirm_needed", "changes", "proposals"]
+title_en = "Result — maintenance finished"
+title_zh = "工具结果 · 档案维护完成"
+text = '''
+{%- if confirm_needed -%}
+提示：主角在本章出场，但你没有更新主角的当前状态（state）。需要更新的话，请先调用 update_entity；确认无需更新时，再次调用 finish_maintenance。
+{%- else -%}
+档案维护完成：共 {{ changes }} 项更新{% if proposals %}，另有 {{ proposals }} 条设定修改建议等待作者决定{% endif %}。
+{%- endif -%}
+'''
+
+[[prompt]]
+key = "result.ask_user"
+kind = "result"
+agent = "conception"
+vars = ["answers"]
+title_en = "Result — the author's answers"
+title_zh = "工具结果 · 作者的回答"
+text = '''
+作者的回答：
+{% for a in answers %}- {{ a.question }}
+  {% if a.selected %}选择：{{ a.selected | join("、") }}{% endif %}{% if a.other %}{% if a.selected %}；{% endif %}补充：{{ a.other }}{% endif %}{% if not a.selected and not a.other %}（未作答）{% endif %}
+
+{% endfor %}
+'''
+
+[[prompt]]
+key = "result.request_review"
+kind = "result"
+agent = "conception"
+vars = ["items", "general", "all_approved"]
+title_en = "Result — the author's review of the setting materials"
+title_zh = "工具结果 · 作者的审阅意见"
+text = '''
+作者的审阅意见：
+{% for it in items %}- {{ it.doc_label }}：{% if it.approved %}通过{% else %}需要修改{% endif %}{% if it.feedback %}。{{ it.feedback }}{% endif %}
+
+{% endfor %}{% if general %}
+总体意见：{{ general }}
+{% endif %}{% if all_approved %}
+全部内容都已通过。请告诉作者可以点击“定稿”按钮（英文界面中为 Finalize book）。
+{% else %}
+请根据意见修改未通过的部分，完成后再次调用 request_review。
+{% endif %}
+'''
+
+[[prompt]]
+key = "result.conception_write"
+kind = "result"
+agent = "conception"
+vars = ["action", "doc_label", "revision", "chars", "name", "rank", "order", "count", "created"]
+title_en = "Result — setting material written"
+title_zh = "工具结果 · 设定已保存"
+text = '''
+{%- if action == "write_setting_doc" -%}
+已保存{{ doc_label }}（第 {{ revision }} 版，{{ chars }} 字）。
+{%- elif action == "edit_setting_doc" -%}
+已修改{{ doc_label }}（第 {{ revision }} 版）。
+{%- elif action == "upsert_character" -%}
+{% if created %}已新增人物{% else %}已更新人物{% endif %}：{{ name }}（排第 {{ rank }} 位）。
+{%- elif action == "remove_character" -%}
+已删除人物：{{ name }}。
+{%- elif action == "reorder_characters" -%}
+人物排序已更新：{{ order | join(" > ") }}。
+{%- elif action == "set_research_topics" -%}
+已设置 {{ count }} 个资料收集主题。
+{%- endif -%}
+'''
+
+[[prompt]]
+key = "result.web_search"
+kind = "result"
+agent = "shared"
+vars = ["query", "hits"]
+title_en = "Result — web search"
+title_zh = "工具结果 · 网络搜索"
+text = '''
+「{{ query }}」的搜索结果：
+{% for h in hits %}{{ loop.index }}. {{ h.title }}
+   {{ h.url }}{% if h.published %}（{{ h.published }}）{% endif %}
+
+   {{ h.snippet }}
+{% else %}没有搜索结果。
+{% endfor %}
+'''
+
+[[prompt]]
+key = "result.web_fetch"
+kind = "result"
+agent = "shared"
+vars = ["url", "title", "offset", "end", "total", "next_offset", "body"]
+title_en = "Result — web page"
+title_zh = "工具结果 · 网页内容"
+text = '''
+网页：{% if title %}{{ title }} {% endif %}{{ url }}
+（第 {{ offset }}–{{ end }} 字，共 {{ total }} 字）
+{{ body }}
+{% if next_offset is not none %}（没有读完，继续阅读请使用 offset={{ next_offset }}。）{% endif %}
+'''
+
+[[prompt]]
+key = "result.knowledge_write"
+kind = "result"
+agent = "researcher"
+vars = ["action", "id", "title", "scope"]
+title_en = "Result — knowledge entry saved"
+title_zh = "工具结果 · 条目已保存"
+text = '''
+{% if action == "created" %}已保存{% else %}已更新{% endif %}条目《{{ title }}》(#{{ id }})，范围：{{ scope }}。
+'''
+
+[[prompt]]
+key = "result.finish_research"
+kind = "result"
+agent = "researcher"
+vars = ["entries"]
+title_en = "Result — research finished"
+title_zh = "工具结果 · 资料收集完成"
+text = '''
+资料收集完成，本次共保存或更新 {{ entries }} 个条目。
+'''

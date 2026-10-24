@@ -1,0 +1,42 @@
+# Shared helper templates. Code renders labels through these, so no Chinese text lives in code.
+# `shared.label` maps an enum value to its display label; `shared.chapter_label` formats a chapter reference.
+
+[[prompt]]
+key = "shared.label"
+kind = "shared"
+agent = "shared"
+vars = ["enum", "value"]
+title_en = "Shared — enum labels"
+title_zh = "通用 · 枚举标签"
+text = '''
+{%- set labels = {
+  "entity_kind": {"character": "人物", "organization": "组织", "location": "地点", "item": "物品", "other": "其他"},
+  "entity_status": {"active": "活跃", "inactive": "暂离", "dead": "已死亡", "destroyed": "已损毁", "missing": "下落不明", "unknown": "未知"},
+  "appearance_role": {"pov": "视角", "major": "主要", "minor": "次要", "mentioned": "提及"},
+  "note_kind": {"fact": "事实", "world_rule": "世界规则", "other": "其他"},
+  "foreshadowing_status": {"open": "未回收", "resolved": "已回收", "abandoned": "已放弃"},
+  "relation_status": {"active": "有效", "ended": "已结束"},
+  "setting_doc": {"outline": "故事大纲", "world": "世界观", "protagonist": "主角详细设定", "characters": "人物设定", "research_topics": "资料收集主题"},
+  "granularity": {"sentence": "逐句", "paragraph": "逐段", "free": "自由", "chapter": "整章"},
+  "phase": {"none": "本任务", "planning": "规划阶段", "drafting": "正文阶段", "revision_planning": "修订规划阶段", "revising": "修订阶段"},
+  "severity": {"critical": "严重", "major": "重要", "minor": "轻微"},
+  "verdict": {"pass": "建议通过", "revise": "建议修改"},
+  "category": {"canon": "设定", "continuity": "连续性", "outline": "章纲", "character": "人物", "logic": "逻辑", "pacing": "节奏", "prose": "文字", "other": "其他"},
+  "target_type": {"entity": "实体", "relation": "关系", "timeline_event": "时间线事件", "memory_note": "记忆笔记", "foreshadowing": "伏笔", "knowledge_entry": "知识条目"},
+  "search_kind": {"entity": "实体", "note": "笔记", "foreshadowing": "伏笔", "event": "事件", "summary": "章节摘要", "passage": "正文片段"},
+  "language": {"zh-CN": "简体中文", "zh-TW": "繁體中文", "zh": "中文", "en": "英语（English）", "ja": "日语（日本語）", "ko": "韩语（한국어）", "fr": "法语（Français）", "de": "德语（Deutsch）", "es": "西班牙语（Español）", "ru": "俄语（Русский）"}
+} -%}
+{%- if enum in labels and value in labels[enum] -%}{{ labels[enum][value] }}{%- else -%}{{ value }}{%- endif -%}
+'''
+
+[[prompt]]
+key = "shared.chapter_label"
+kind = "shared"
+agent = "shared"
+vars = ["track_kind", "track_title", "number", "title", "with_title"]
+title_en = "Shared — chapter label"
+title_zh = "通用 · 章节称呼"
+text = '''
+{%- if track_kind == "main" -%}第{{ number }}章{%- else -%}番外《{{ track_title }}》第{{ number }}章{%- endif -%}
+{%- if with_title and title -%}《{{ title }}》{%- endif -%}
+'''
