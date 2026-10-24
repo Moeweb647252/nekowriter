@@ -2,8 +2,8 @@
 
 ## 1. Conventions
 
-- Base path `/api`. JSON in and out (`application/json; charset=utf-8`). Field names are
-  `snake_case`.
+- Base path `/api`. JSON in and out (`application/json`; RFC 8259 fixes the encoding to UTF-8,
+  and axum does not append a `charset` parameter). Field names are `snake_case`.
 - IDs are integers. Timestamps are RFC 3339 strings.
 - Every DTO is a Rust struct with `#[derive(Serialize, Deserialize, TS)] #[ts(export)]`, exported
   to `web/src/api/gen/` (`cargo test -p nekowriter export_bindings`). The frontend imports types

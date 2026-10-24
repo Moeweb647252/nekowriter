@@ -420,6 +420,15 @@ technical decisions.
 - **Consequences**: an open chapter never misses its own text updates, and the client's "apply if
   version = local + 1, else refetch" rule stays the only gap handler.
 
+### D-061 Responses declare `application/json`, not a charset parameter
+- **Context**: spec/10 §1 promised `application/json; charset=utf-8`, but the framework's JSON
+  response type emits `application/json`. RFC 8259 defines JSON text as UTF-8, so the parameter
+  adds no information.
+- **Decision**: responses send `application/json`; spec/10 §1 now says so. No middleware rewrites
+  the header, because the value carries no semantics for the client.
+- **Consequences**: the API matches what the framework emits, and the frontend keeps parsing the
+  body as UTF-8 JSON.
+
 ## Open items (questions for the author)
 1. Confirm the reading of "this time it cannot be delegated to a lower-level review agent" as
    "the author judges the reviewer's report; no further delegation" (PROJECT §10.9).
