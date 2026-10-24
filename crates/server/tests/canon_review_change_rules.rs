@@ -210,6 +210,119 @@ async fn concurrent_reverts_of_deleted_rows_get_distinct_fresh_ids() {
     }
 }
 
+/// Reverting a delete restores the join rows whose entities still exist (spec/02 §5.10): an
+/// event's `entity_ids` come back for the survivors only.
+#[tokio::test]
+async fn revert_of_a_deleted_event_restores_the_surviving_entity_links() {
+    let app = TestApp::new().await;
+    let (book_id, _track_id) = book(&app).await;
+    let survivor = create(&app, book_id, "Lin Fan").await;
+    let removed = create(&app, book_id, "Zhang San").await;
+    let (status, event) = app
+        .post(
+            &format!("/api/books/{book_id}/timeline"),
+            json!({
+                "title": "The gate",
+                "entity_ids": [survivor, removed],
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{event}");
+    let event_id = event["id"].as_i64().expect("event id") as i32;
+    let (status, _) = app
+        .delete(&format!("/api/timeline-events/{event_id}"))
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    // One endpoint disappears before the revert: its join row cannot be restored.
+    let (status, _) = app.delete(&format!("/api/entities/{removed}")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let delete_change = changes_of(&app, ChangeTargetType::TimelineEvent, event_id).await[0].id;
+    let (status, revert) = app
+        .post(&format!("/api/changes/{delete_change}/revert"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{revert}");
+    let new_id = revert["target_id"].as_i64().expect("new id") as i32;
+    assert_ne!(new_id, event_id, "a reverted delete gets a new id");
+    let (status, recreated) = app.get(&format!("/api/timeline-events/{new_id}")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        recreated["entity_ids"],
+        json!([survivor]),
+        "the link to the surviving entity is restored and the dead one is skipped: {recreated}"
+    );
+}
+
+/// Every recreated row takes a new id, not the deleted row's reused rowid (spec/02 §5.10): the
+/// relation, note and foreshadowing paths of `fresh_id` in addition to the entity and event ones.
+#[tokio::test]
+async fn reverting_a_delete_recreates_every_canon_target_with_a_new_id() {
+    let app = TestApp::new().await;
+    let (book_id, _track_id) = book(&app).await;
+    let first = create(&app, book_id, "Lin Fan").await;
+    let second = create(&app, book_id, "Zhang San").await;
+
+    // Relation.
+    let (status, relation) = app
+        .post(
+            &format!("/api/books/{book_id}/relations"),
+            json!({ "source_id": first, "target_id": second, "kind": "ally" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{relation}");
+    let relation_id = relation["id"].as_i64().expect("relation id") as i32;
+    // Memory note.
+    let (status, note) = app
+        .post(
+            &format!("/api/books/{book_id}/memory-notes"),
+            json!({ "kind": "fact", "content": "The sword was a gift." }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{note}");
+    let note_id = note["id"].as_i64().expect("note id") as i32;
+    // Foreshadowing.
+    let (status, hook) = app
+        .post(
+            &format!("/api/books/{book_id}/foreshadowing"),
+            json!({ "title": "The broken hilt" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{hook}");
+    let hook_id = hook["id"].as_i64().expect("hook id") as i32;
+
+    let targets: Vec<(ChangeTargetType, &str, i32)> = vec![
+        (ChangeTargetType::Relation, "relations", relation_id),
+        (ChangeTargetType::MemoryNote, "memory-notes", note_id),
+        (ChangeTargetType::Foreshadowing, "foreshadowing", hook_id),
+    ];
+    for (target, _path, target_id) in targets {
+        let (status, _) = app
+            .delete(&format!(
+                "/api/{}/{}",
+                match target {
+                    ChangeTargetType::Relation => "relations",
+                    ChangeTargetType::MemoryNote => "memory-notes",
+                    ChangeTargetType::Foreshadowing => "foreshadowing",
+                    _ => unreachable!(),
+                },
+                target_id
+            ))
+            .await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "delete {target:?}");
+        let delete_change = changes_of(&app, target, target_id).await[0].id;
+        let (status, revert) = app
+            .post(&format!("/api/changes/{delete_change}/revert"), json!({}))
+            .await;
+        assert_eq!(status, StatusCode::OK, "revert {target:?}: {revert}");
+        let new_id = revert["target_id"].as_i64().expect("new id");
+        assert_ne!(
+            new_id as i32, target_id,
+            "{target:?} is recreated with a new id"
+        );
+        assert_eq!(revert["op"], json!("create"), "{target:?}");
+    }
+}
+
 /// The revert response's `before`/`after` describe the inverse operation like any other change
 /// (D-079), so the Changes page can diff it.
 #[tokio::test]
