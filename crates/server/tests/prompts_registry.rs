@@ -704,6 +704,32 @@ async fn api_saves_and_resets_global_and_book_overrides() {
     assert!(!body["default_text"].as_str().expect("text").is_empty());
 }
 
+/// A book override names a real book: the override row has a foreign key on `books.id`, so a
+/// stale id used to surface as a 500 `internal` on the constraint instead of a 404 (spec/10 §4).
+#[tokio::test]
+async fn api_rejects_a_book_override_for_a_book_that_does_not_exist() {
+    let app = TestApp::new().await;
+    let (status, body) = app
+        .put(
+            "/api/prompts/writer.system",
+            json!({ "scope": "book", "book_id": 4242, "content": "Book writer prompt." }),
+        )
+        .await;
+    assert_eq!(status, 404, "{body}");
+    assert_error(&body, "not_found");
+    // Nothing was written for the missing book.
+    let (status, listed) = app.get("/api/prompts?book_id=4242").await;
+    assert_eq!(status, 200, "{listed}");
+    let entry = listed
+        .as_array()
+        .expect("array")
+        .iter()
+        .find(|entry| entry["key"] == "writer.system")
+        .expect("entry");
+    assert_eq!(entry["book_override"], Value::Null);
+    assert_eq!(entry["source"], "default");
+}
+
 #[tokio::test]
 async fn api_reports_template_errors_with_line_and_column() {
     let app = TestApp::new().await;

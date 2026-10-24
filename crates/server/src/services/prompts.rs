@@ -11,7 +11,7 @@ use sea_orm::{ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, Query
 use crate::api::dto::prompts::{
     PromptEntryDto, PromptSaveInput, PromptVariableDocDto, PromptVariableFieldDocDto,
 };
-use crate::db::entities::prompt_overrides;
+use crate::db::entities::{books, prompt_overrides};
 use crate::db::json::PromptScope;
 use crate::error::AppError;
 use crate::prompts::{PromptError, PromptSource};
@@ -70,6 +70,22 @@ pub async fn list(state: &AppState, book_id: Option<i32>) -> Result<Vec<PromptEn
         .collect())
 }
 
+/// Rejects a book override that names no book.
+///
+/// The override row has a foreign key on `books.id`, so without this check a stale id would
+/// surface as a 500 `internal` on the constraint instead of the 404 the API promises (spec/10 §4).
+async fn require_book(conn: &impl ConnectionTrait, book_id: i32) -> Result<(), AppError> {
+    let exists = books::Entity::find_by_id(book_id)
+        .one(conn)
+        .await?
+        .is_some();
+    if exists {
+        Ok(())
+    } else {
+        Err(AppError::not_found(format!("book {book_id}")))
+    }
+}
+
 /// Reads both override levels for a book (`scope = 'book'` rows of that book only).
 async fn load_overrides(
     conn: &impl ConnectionTrait,
@@ -123,6 +139,9 @@ pub async fn save(
             )
         })?),
     };
+    if let Some(book_id) = book_id {
+        require_book(state.db().conn(), book_id).await?;
+    }
     registry
         .validate_override(key, &input.content)
         .map_err(PromptError::into_app_error)?;
@@ -162,7 +181,6 @@ pub async fn reset(
             )
         })?),
     };
-
     let key_owned = key.to_owned();
     crate::services::write(state.db(), move |tx| {
         Box::pin(async move {
