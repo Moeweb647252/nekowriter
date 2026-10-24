@@ -1,9 +1,11 @@
 /**
  * Ghost text and the hold bar (PROJECT §8.5, spec/11 §5.2).
  *
- * `GhostText` shows the text of an `insert_text` the writer is still generating: muted, with a
- * blinking caret, appended to the open tail paragraph or as a new block (spec/03 §12). The preview
- * is dropped as soon as the persisted tool call arrives, so nothing is ever shown twice.
+ * `GhostText` shows the text a writer tool is still generating: muted, with a blinking caret
+ * (spec/03 §12). It covers every writer tool whose preview field is `text` — `insert_text`,
+ * `insert_paragraphs` and `rewrite_paragraph` — because all three add prose the author wants to see
+ * before it lands. The preview is dropped as soon as the persisted tool call arrives, so nothing is
+ * ever shown twice.
  *
  * `HoldBar` appears under the paragraphs a held call touched (from `ToolCallDto.ui`) with Continue
  * and Feedback; for a held `submit_outline` it renders the outline variant instead.
@@ -19,17 +21,23 @@ import { isComposing } from "@/lib/hotkeys"
 /** The live preview of one in-flight tool call (spec/11 §4.3 `live.previews`). */
 export type Preview = { name: string; field: string; text: string }
 
+/** The writer tools whose preview field is the prose they are about to write (spec/03 §12). */
+const TEXT_PREVIEW_TOOLS = ["insert_text", "insert_paragraphs", "rewrite_paragraph"]
+
 /**
  * The paragraph preview of the chapter's running writer session.
  *
- * An `insert_text` preview is appended to the last paragraph: the agent always writes at the end of
- * the draft (spec/05 §4). The other text tools name their target in the tool card instead.
+ * The ghost is a block of its own: the preview event carries only the tool name, the field and the
+ * decoded text, never the target pid (`after` / `pid` arrive with the persisted call, which exists
+ * only after the arguments are complete). `insert_text` always writes at the end of the draft
+ * (spec/05 §4), so its block is in the right place; for `insert_paragraphs` and `rewrite_paragraph`
+ * the tool card names the target (D-078).
  */
 export function GhostText({ preview }: { preview: Preview | undefined }) {
   if (preview === undefined || preview.text === "") {
     return null
   }
-  if (preview.name !== "insert_text" || preview.field !== "text") {
+  if (preview.field !== "text" || !TEXT_PREVIEW_TOOLS.includes(preview.name)) {
     return null
   }
   return (
@@ -46,33 +54,20 @@ export type HoldBarProps = {
   /** The paragraph pids the held call touched, for the label. */
   pids: string[]
   busy: boolean
+  /**
+   * Continue / approve. The caller saves any unsaved outline or notes *before* it calls the resume
+   * endpoint, so the agent reads them (spec/11 §5.2); a save that fails aborts the resume there,
+   * because resuming anyway would hand the agent the text the author just replaced.
+   */
   onContinue: () => void
   onFeedback: (text: string) => void
-  /** Saves any unsaved outline/notes edits before the resume call (spec/11 §5.2). */
-  onBeforeContinue?: () => Promise<void>
 }
 
 /** The inline bar under the held paragraphs, with an expandable feedback textarea. */
-export function HoldBar({
-  outline,
-  pids,
-  busy,
-  onContinue,
-  onFeedback,
-  onBeforeContinue,
-}: HoldBarProps) {
+export function HoldBar({ outline, pids, busy, onContinue, onFeedback }: HoldBarProps) {
   const { t } = useTranslation()
   const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [feedback, setFeedback] = useState("")
-
-  const run = (action: () => void) => {
-    if (onBeforeContinue === undefined) {
-      action()
-      return
-    }
-    // A failed save must not swallow the resume the author asked for.
-    void onBeforeContinue().then(action, action)
-  }
 
   const label = outline
     ? t("chapter:hold.outline_label")
@@ -88,7 +83,7 @@ export function HoldBar({
           {label}
         </span>
         <div className="ml-auto flex items-center gap-2">
-          <Button size="sm" disabled={busy} onClick={() => run(onContinue)}>
+          <Button size="sm" disabled={busy} onClick={onContinue}>
             <Check className="size-4" aria-hidden="true" />
             {outline ? t("chapter:hold.approve_outline") : t("agent:controls.continue")}
           </Button>
@@ -127,7 +122,7 @@ export function HoldBar({
                 event.preventDefault()
                 const text = feedback.trim()
                 if (text !== "") {
-                  run(() => onFeedback(text))
+                  onFeedback(text)
                 }
               }
             }}
@@ -135,7 +130,7 @@ export function HoldBar({
           <Button
             size="sm"
             disabled={busy || feedback.trim() === ""}
-            onClick={() => run(() => onFeedback(feedback.trim()))}
+            onClick={() => onFeedback(feedback.trim())}
           >
             {t("agent:feedback.submit")}
           </Button>

@@ -109,13 +109,7 @@ export default function ChapterPage() {
           />
         </TabsContent>
         <TabsContent value="outline" className="min-h-0 p-6">
-          <OutlineTab
-            chapter={document}
-            bookId={bookId}
-            unspaced={unspaced}
-            saving={patchChapter.isPending}
-            onSave={(patch) => patchChapter.mutate(patch)}
-          />
+          <OutlineTab chapter={document} bookId={bookId} unspaced={unspaced} />
         </TabsContent>
         <TabsContent value="history" className="min-h-0 p-6">
           <HistoryTab chapter={document} bookId={bookId} unspaced={unspaced} />
