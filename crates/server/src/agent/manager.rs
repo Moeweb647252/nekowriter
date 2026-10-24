@@ -77,12 +77,14 @@ impl SessionManager {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             + 1;
         let task = tokio::spawn(async move {
-            let reason_value = { *lock(&reason_for_task) };
+            // The shared cell, not its current value: `cancel` writes the reason after this task
+            // started, so a value captured here would always be `None` and every cancellation
+            // (shutdown and abandon included) would look like a Stop (spec/03 §5.1, spec/01 §5).
             let ctx = RunnerCtx {
                 state,
                 session_id,
                 cancel: cancel_for_task,
-                cancel_reason: reason_value.unwrap_or(CancelReason::Stop),
+                cancel_reason: reason_for_task,
             };
             if let Err(error) = runner::drive(ctx).await {
                 tracing::error!(session_id, error = %error, "session runner failed");
@@ -308,7 +310,7 @@ pub async fn clear_session_error(
     session::store_error(conn, session_id, error).await
 }
 
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     match mutex.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),

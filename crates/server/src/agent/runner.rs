@@ -20,6 +20,7 @@
 //! - persisted messages and sealed tool results are never modified (spec/03 §1.3).
 
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
@@ -42,7 +43,7 @@ use crate::events::{DeltaKind, ServerEvent};
 use crate::prompts::PromptSet;
 use crate::state::AppState;
 
-use super::manager::CancelReason;
+use super::manager::{CancelReason, lock};
 use super::preview::PreviewExtractor;
 use super::seal;
 use super::session::{self, TransitionCause};
@@ -72,12 +73,45 @@ pub const INPUT_TEXT_DISPLAY_LIMIT: usize = 20_000;
 /// How often streamed deltas are flushed as `session.delta` events (spec/03 §5.5).
 const DELTA_FLUSH: Duration = Duration::from_millis(50);
 
+/// What a cancelled runner must do (spec/03 §5.1, spec/01 §5).
+///
+/// The cancellation token carries a **reason**: `stop` gives `stopped`, `shutdown` gives
+/// `interrupted` (exactly as startup recovery would leave the session), and `abandon` makes the
+/// runner exit without a transition because the abandon operation writes `abandoned` itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CancelledTransition {
+    /// Apply this status with this cause: `shutdown` → `interrupted`, `stop` → `stopped`.
+    Transition(SessionStatus, TransitionCause),
+    /// `abandon`: the operation writes `abandoned`, so the runner just exits.
+    Exit,
+}
+
 /// Everything one runner needs.
 pub struct RunnerCtx {
     pub state: AppState,
     pub session_id: i32,
     pub cancel: CancellationToken,
-    pub cancel_reason: CancelReason,
+    /// The reason cell owned by `SessionManager`, **not** its current value: `cancel` writes it
+    /// after the task started, so a value captured at spawn time would always be `None` and every
+    /// cancellation (shutdown and abandon included) would look like a Stop (spec/03 §5.1).
+    pub cancel_reason: Arc<Mutex<Option<CancelReason>>>,
+}
+
+impl RunnerCtx {
+    /// What this runner must do if it was cancelled, or `None` when it was not (spec/03 §5.1).
+    pub fn cancelled_transition(&self) -> Option<CancelledTransition> {
+        let reason = (*lock(&self.cancel_reason))?;
+        Some(match reason {
+            CancelReason::Shutdown => CancelledTransition::Transition(
+                SessionStatus::Interrupted,
+                TransitionCause::Shutdown,
+            ),
+            CancelReason::Stop => {
+                CancelledTransition::Transition(SessionStatus::Stopped, TransitionCause::Stop)
+            }
+            CancelReason::Abandon => CancelledTransition::Exit,
+        })
+    }
 }
 
 /// The tail of the conversation (spec/03 §5.1 `classify_tail`).
@@ -97,19 +131,24 @@ pub async fn drive(ctx: RunnerCtx) -> Result<(), AppError> {
             return Ok(());
         }
         if ctx.cancel.is_cancelled() {
-            let status = match ctx.cancel_reason {
-                CancelReason::Shutdown => SessionStatus::Interrupted,
-                CancelReason::Stop => SessionStatus::Stopped,
+            let Some(action) = ctx.cancelled_transition() else {
+                // Defensive: `is_cancelled()` guarantees a reason, but a token set without one
+                // must not strand the session.
+                tracing::warn!(
+                    session_id = ctx.session_id,
+                    "cancel token set without a reason"
+                );
+                return Ok(());
+            };
+            match action {
                 // Abandon writes `abandoned` itself; the runner just exits (spec/03 §5.1).
-                CancelReason::Abandon => return Ok(()),
-            };
-            let cause = match ctx.cancel_reason {
-                CancelReason::Shutdown => TransitionCause::Shutdown,
-                _ => TransitionCause::Stop,
-            };
-            let events =
-                session::transition(ctx.state.db().conn(), &session, status, cause).await?;
-            ctx.state.events().publish_all(events);
+                CancelledTransition::Exit => return Ok(()),
+                CancelledTransition::Transition(status, cause) => {
+                    let events =
+                        session::transition(ctx.state.db().conn(), &session, status, cause).await?;
+                    ctx.state.events().publish_all(events);
+                }
+            }
             return Ok(());
         }
 
@@ -446,13 +485,15 @@ async fn step_model(ctx: &RunnerCtx, session: &agent_sessions::Model) -> Result<
             sink.flush();
             let fresh = session::load(state.db().conn(), session.id).await?;
             if fresh.status == SessionStatus::Running.as_str() {
-                let events = session::transition(
-                    state.db().conn(),
-                    &fresh,
-                    SessionStatus::Stopped,
-                    TransitionCause::Stop,
-                )
-                .await?;
+                // The reason decides the status: a shutdown during a stream gives `interrupted`,
+                // exactly as startup recovery would (spec/03 §5.1, spec/01 §5). The fallback keeps
+                // the Stop behaviour for a defensive token without a reason.
+                let (status, cause) = match ctx.cancelled_transition() {
+                    Some(CancelledTransition::Transition(status, cause)) => (status, cause),
+                    Some(CancelledTransition::Exit) => return Ok(()),
+                    None => (SessionStatus::Stopped, TransitionCause::Stop),
+                };
+                let events = session::transition(state.db().conn(), &fresh, status, cause).await?;
                 state.events().publish_all(events);
             }
             Ok(())
@@ -748,7 +789,10 @@ async fn persist_assistant(
         warnings: Vec::new(),
     });
 
-    // `refusal` finishes every call as an error and fails the session (spec/03 §5.5).
+    // `refusal` finishes every call as an error (not executed) and fails the session
+    // (spec/03 §5.5). Like `max_tokens`, a stop reason that ends the turn must resolve its batch:
+    // leaving a call `pending` would make the next step execute it, the opposite of "not
+    // executed".
     if let StopReason::Refusal {
         category,
         explanation,
@@ -766,6 +810,8 @@ async fn persist_assistant(
         };
         let fresh = session::load(state.db().conn(), session.id).await?;
         if fresh.status == SessionStatus::Running.as_str() {
+            let mut resolved = refuse_batch(state, &fresh, &prompts).await?;
+            events.append(&mut resolved);
             session::set_error_running(state.db().conn(), session.id, &error).await?;
             let reloaded = session::load(state.db().conn(), session.id).await?;
             let mut transition = session::transition(
@@ -778,6 +824,68 @@ async fn persist_assistant(
             events.append(&mut transition);
         }
     }
+    Ok(events)
+}
+
+/// Resolves every unresolved call of the latest assistant message as `error.refusal` and seals the
+/// batch, so a refused response leaves no executable work behind (spec/03 §5.5).
+async fn refuse_batch(
+    state: &AppState,
+    session: &agent_sessions::Model,
+    prompts: &std::sync::Arc<PromptSet>,
+) -> Result<Vec<ServerEvent>, AppError> {
+    let session_owned = session.clone();
+    let prompts = prompts.clone();
+    let events = crate::services::write(state.db(), move |tx| {
+        Box::pin(async move {
+            let mut events = Vec::new();
+            let messages = messages_of(tx, session_owned.id).await?;
+            let Some(last) = messages
+                .iter()
+                .rev()
+                .find(|message| message.role == MessageRole::Assistant.as_str())
+            else {
+                return Ok(events);
+            };
+            // The refusal text is the model-facing explanation of *why* the call was not run.
+            let text = ToolOutcome::error(&prompts, &ToolError::new(ToolErrorKind::Internal)).text;
+            for call in calls_of(tx, last.id).await? {
+                if !matches!(
+                    ToolCallStatus::from_str_opt(&call.status),
+                    Some(ToolCallStatus::Pending)
+                        | Some(ToolCallStatus::Executing)
+                        | Some(ToolCallStatus::Held)
+                        | Some(ToolCallStatus::AwaitingInput)
+                ) {
+                    continue;
+                }
+                agent_tool_calls::ActiveModel {
+                    id: Set(call.id),
+                    status: Set(ToolCallStatus::Error.as_str().to_owned()),
+                    raw_result_text: Set(Some(text.clone())),
+                    is_error: Set(1),
+                    finished_at: Set(Some(Utc::now())),
+                    effects: Set(Some(
+                        json::to_json(&ToolEffects::default())
+                            .map_err(|err| AppError::internal(err.to_string()))?,
+                    )),
+                    ..Default::default()
+                }
+                .update(tx)
+                .await?;
+                let row = load_call(tx, call.id).await?;
+                events.push(ServerEvent::SessionToolCall {
+                    session_id: session_owned.id,
+                    tool_call: session::tool_call_dto(&row)?,
+                });
+            }
+            // Seal the whole batch: a failed session keeps a valid history for Continue.
+            let mut sealed = seal_inner(tx, &session_owned, &prompts).await?;
+            events.append(&mut sealed);
+            Ok(events)
+        })
+    })
+    .await?;
     Ok(events)
 }
 
@@ -888,7 +996,8 @@ async fn step_tool(
                     None => {
                         // Stop during `prepare`: the call returns to `pending`, nothing was
                         // written (spec/03 §5.2, test 17).
-                        let events = reset_call_to_pending_and_stop(state, session, &call).await?;
+                        let events =
+                            reset_call_to_pending_and_stop(ctx, state, session, &call).await?;
                         state.events().publish_all(events);
                         return Ok(());
                     }
@@ -1381,10 +1490,20 @@ async fn record_internal_failure(
 
 /// Returns a call in its prepare phase to `pending` and stops the session (spec/03 §5.2).
 async fn reset_call_to_pending_and_stop(
+    ctx: &RunnerCtx,
     state: &AppState,
     session: &agent_sessions::Model,
     call: &agent_tool_calls::Model,
 ) -> Result<Vec<ServerEvent>, AppError> {
+    // Resolve the transition BEFORE the transaction: the reason cell is read once, and the call
+    // reset and the transition stay one atomic unit (spec/03 §5.2, D-033). A shutdown during a
+    // tool's prepare gives `interrupted`, exactly as startup recovery would (spec/03 §5.1).
+    let (status, cause) = match ctx.cancelled_transition() {
+        Some(CancelledTransition::Transition(status, cause)) => (status, cause),
+        // Abandon writes `abandoned` itself; the call still goes back to `pending` so it is
+        // re-runnable, and the defensive no-reason case keeps the Stop behaviour.
+        Some(CancelledTransition::Exit) | None => (SessionStatus::Stopped, TransitionCause::Stop),
+    };
     let call_id = call.id;
     let session_owned = session.clone();
     let mut events = crate::services::write(state.db(), move |tx| {
@@ -1397,13 +1516,7 @@ async fn reset_call_to_pending_and_stop(
             }
             .update(tx)
             .await?;
-            session::transition(
-                tx,
-                &session_owned,
-                SessionStatus::Stopped,
-                TransitionCause::Stop,
-            )
-            .await
+            session::transition(tx, &session_owned, status, cause).await
         })
     })
     .await?;

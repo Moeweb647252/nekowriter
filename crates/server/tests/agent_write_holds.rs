@@ -862,3 +862,68 @@ async fn a_pause_request_during_a_writer_stream_holds_the_call() {
 fn chunk_text_is_available() {
     assert_eq!(chunk_text("ab", 1), vec!["a".to_owned(), "b".to_owned()]);
 }
+
+/// spec/03 §5.5: a `refusal` stop reason finishes every call of the refusing response as an error
+/// (not executed) and seals the batch, so Continue cannot execute it later.
+#[tokio::test]
+async fn a_refusal_finishes_its_calls_as_errors_and_never_executes_them() {
+    use nekowriter_llm::StopReason;
+
+    let runtime = runtime(vec![
+        outline_step(),
+        // A response that carries a call AND refuses: the call must never run.
+        ScriptStep::new()
+            .tool("insert_text", json!({ "text": "这段文字不应该被写入。" }))
+            .stop(StopReason::Refusal {
+                category: Some("safety".to_owned()),
+                explanation: Some("cannot continue".to_owned()),
+            }),
+        insert_step("恢复后写入的一段。"),
+        finish_pair()[0].clone(),
+        finish_pair()[1].clone(),
+    ])
+    .await;
+    let session_id = start_writer(&runtime, Granularity::Paragraph, false, false).await;
+    let row = runtime.wait_status(session_id, SessionStatus::Failed).await;
+    assert_eq!(row.error().expect("error").code, "provider.refusal");
+
+    let calls = runtime.calls(session_id).await;
+    let refused = calls
+        .iter()
+        .find(|call| call.name == "insert_text")
+        .expect("the refused call");
+    assert_eq!(
+        refused.status_enum(),
+        ToolCallStatus::Error,
+        "a refusal resolves its calls (spec/03 §5.5)"
+    );
+    assert!(refused.is_error);
+    assert!(
+        refused.sealed,
+        "the batch is sealed so Continue can re-send"
+    );
+    // Not executed: the chapter is untouched.
+    assert!(
+        chapter_content(&runtime, runtime.chapter_id)
+            .await
+            .paragraphs
+            .is_empty(),
+        "a refused call is never executed"
+    );
+
+    // Continue re-sends the request, and the call is not picked up by step A.
+    let (status, body) = runtime
+        .app
+        .post(&format!("/api/sessions/{session_id}/continue"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::OK, "continue: {body}");
+    agent_write_harness::resume_until_done(&runtime, session_id, None).await;
+    let content = chapter_content(&runtime, runtime.chapter_id).await;
+    assert_eq!(
+        content.paragraphs.len(),
+        1,
+        "only the post-continue paragraph exists: {:?}",
+        content.paragraphs
+    );
+    assert_eq!(content.paragraphs[0].text, "恢复后写入的一段。");
+}
