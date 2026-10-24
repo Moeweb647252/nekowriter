@@ -22,8 +22,8 @@ Never bypass a failing step.
 ## Shared Rust foundation (already in place)
 
 - `crates/server/src/config.rs` — `Config` (clap + env + `.env` in debug builds).
-- `crates/server/src/error.rs` — `AppError`, `AppError::as_str()` codes, `IntoResponse`, HTTP
-  status mapping. Add a code to `ErrorCode` only if spec/10 §4 lists it.
+- `crates/server/src/error.rs` — `AppError`, `ErrorCode::as_str()` dotted codes, `IntoResponse`,
+  HTTP status mapping. Add a code to `ErrorCode` only if spec/10 §4 lists it.
 - `crates/server/src/state.rs` — `AppState` (`db`, `config`, `vec_version`). Milestones add
   fields here (`Mutex`/`Arc` handles); keep it cheap to clone.
 - `crates/server/src/db/mod.rs` — `Db::connect`, `Db::write` (the only write path),
