@@ -736,6 +736,68 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
 - **Consequences**: one visibility rule for every author-facing list and one write rule for
   relations, with less chance of an M10 track filter having to re-audit each service.
 
+### D-086 A re-review session receives the previous report through `kickoff_extra`
+- **Context**: spec/03 §6 says a new `chapter_review` session's kickoff carries the previous report
+  and the author's comment (`reviewer.kickoff` with `prior`), but the schema has no column for "the
+  report this session re-reviews"; adding one would be a migration for a value used exactly once,
+  at creation.
+- **Decision**: `CreateSession.kickoff_extra` (reserved since M3) carries
+  `{"prior_report_id": id}`; the kickoff builder loads that report and renders `prior`, taking the
+  comment from `pending_comment` (which the schema already has for this purpose). Continuing the
+  completed session uses the same `pending_comment`; `submit_review` copies it into `user_comment`
+  and clears it.
+- **Consequences**: no schema change, and the persisted state still reconstructs the history (the
+  report row, the comment on the session while it runs). The kickoff builder is the only reader of
+  the transient value.
+
+### D-087 Send-back stores the feedback row and starts the writer session in one transaction
+- **Context**: the revision and redraft kickoffs render `chapter_feedback` (spec/08 §3), so the row
+  must exist before the session is created; a failed creation (e.g. no writer model) must not leave
+  a feedback row that later reads as "the author sent this back" without a session.
+- **Decision**: `services::reviews::send_back` runs one `Db::write` transaction that inserts the
+  feedback row, calls `sessions::create_inner` (made `pub(crate)`) with the revise or redraft
+  `CreateSession`, then stamps `chapter_feedback.session_id`. The outer function publishes the
+  accumulated events and spawns the runner only after the commit.
+- **Consequences**: all-or-nothing send-back with no compensation path; `sessions::create_inner` is
+  now the reusable in-transaction entry point for services that start a session as part of a larger
+  operation.
+
+### D-088 Canon `failed` is written by `transition`, not by each failure path
+- **Context**: spec/06 §6 and D-048 require `canon_status = failed` when an archivist session fails
+  or is abandoned. There are three failure paths in the runner plus the API abandon path, and a
+  caller that forgets one leaves the chapter stuck in `syncing` with no session (the defect D-048
+  fixed).
+- **Decision**: `agent::session::transition` performs the side effect in the same transaction as the
+  status change: when the target status is `failed` or `abandoned`, the kind is `chapter_maintenance`
+  or `chapter_resync`, and the chapter's `canon_status` is `syncing`, it becomes `failed`. The
+  `syncing` guard means a second session's successful completion is never clobbered.
+- **Consequences**: every way a session can fail or be abandoned goes through one function, so the
+  chapter can never stay `syncing` without a session. Recovery (`running` → `interrupted`) does not
+  count as failure: Retry then continues the interrupted session.
+
+### D-089 A proposal preview is the full before/after text, not an API-side diff
+- **Context**: spec/10 §2.3 says the proposals list carries "the computed preview diff" without
+  defining its shape, while the frontend already owns an inline diff renderer for chapter versions
+  (`DiffView`) that splits words for spaced languages and characters for CJK.
+- **Decision**: `ProposalPreviewDto { before, after }` returns the target's current text and the
+  text after applying the proposal (a stale `find` leaves `after == before`, which is exactly the
+  pre-accept conflict signal); a new-character proposal returns the empty string and the created
+  summary+profile. The UI renders it with `DiffView`.
+- **Consequences**: one preview shape for all three proposal kinds, no locale-dependent diff in the
+  API, and the calculation is shared with accept (`apply_edits` is the same function).
+
+### D-090 The Demo maintenance creates the character it records when the book has no canon yet
+- **Context**: D-047 promises a Demo maintenance that records appearances and proposes one
+  world-setting append so the manual loop works without keys. M6 ships before M9's canon seeding, so
+  a book created without conception has no entities and `record_appearances` would fail; the manual
+  loop must still run end to end.
+- **Decision**: the Demo maintenance reads the protagonist hint; when there is none it first calls
+  `create_entity` with the corpus' first character, then walks the normal sequence
+  (appearances → protagonist state → timeline → summary → world proposal → `finish_maintenance`).
+  An isolated track skips the proposal (spec/06 §6 step 9).
+- **Consequences**: the M6.5 manual loop runs on a fresh book, and the extra `create_entity` step
+  disappears on its own once the book has a protagonist (after M9 seeding).
+
 ## Open items (questions for the author)
 1. Confirm the reading of "this time it cannot be delegated to a lower-level review agent" as
    "the author judges the reviewer's report; no further delegation" (PROJECT §10.9).
