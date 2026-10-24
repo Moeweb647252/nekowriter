@@ -381,7 +381,6 @@ fn chapter_write_drafting(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
         return DemoPlan {
             text: Some(lang.finish_note.clone()),
             tools: vec![tool("finish_draft", json!({}))],
-            ..DemoPlan::default()
         };
     }
 
