@@ -4,6 +4,8 @@
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, Set};
 use std::collections::HashSet;
 
+use crate::api::dto::chapters::ChapterWriteInput;
+use crate::api::dto::chapters::ChapterWriteResponse;
 use crate::api::dto::chapters::{
     ApproveChapterResponse, ChapterContentPatch, ChapterContentResult, ChapterContentTextPut,
     ChapterDto, ChapterInput, ChapterListItemDto, ChapterPatch, ChapterReorderInput,
@@ -532,6 +534,108 @@ async fn write_content(
             },
         ],
     ))
+}
+
+/// `POST /api/chapters/:id/write` (spec/08 §1.1): start a `chapter_write` session in planning.
+///
+/// Preconditions: the chapter is `planned` or `drafting`, it has no open writer session, and the
+/// previous chapter of the track is `official` with `canon_status = synced` — unless `force`, which
+/// the Write dialog sends after explaining why the check failed. The side-track anchor chapter's
+/// readiness (the first chapter of a side story) arrives with M10, which adds the anchor rule to
+/// the same check.
+pub async fn write(
+    state: &crate::state::AppState,
+    chapter_id: i32,
+    input: ChapterWriteInput,
+) -> Result<ChapterWriteResponse, AppError> {
+    let chapter = load(state.db().conn(), chapter_id).await?;
+    let status = status_of(&chapter);
+    if !matches!(status, ChapterStatus::Planned | ChapterStatus::Drafting) {
+        return Err(invalid_state(
+            "only a planned or drafting chapter can be written by the agent",
+            status,
+        ));
+    }
+    if let Some(session_id) = super::open_writer_session(state.db().conn(), chapter_id).await? {
+        return Err(super::conflict(
+            ErrorCode::ChapterSessionExists,
+            "the chapter already has an open writer session",
+            serde_json::json!({ "session_id": session_id }),
+        ));
+    }
+    // The previous chapter must be official and canonically synced before the next one is written,
+    // unless the author explicitly forces it (spec/08 §1.1).
+    if !input.force
+        && let Some(reason) = previous_chapter_blocker(state.db().conn(), &chapter).await?
+    {
+        return Err(super::conflict(
+            ErrorCode::ChapterPreviousNotReady,
+            "the previous chapter is not ready",
+            reason,
+        ));
+    }
+    // The guidance is stored before the session reads it into its kickoff.
+    if let Some(guidance) = input.guidance.as_deref()
+        && guidance != chapter.guidance
+    {
+        use sea_orm::ActiveModelTrait;
+        chapters::ActiveModel {
+            id: Set(chapter_id),
+            guidance: Set(guidance.to_owned()),
+            updated_at: Set(now()),
+            ..Default::default()
+        }
+        .update(state.db().conn())
+        .await?;
+    }
+    let (session_id, warnings) = super::sessions::create(
+        state,
+        super::sessions::CreateSession {
+            kind: crate::db::json::SessionKind::ChapterWrite,
+            book_id: Some(chapter.book_id),
+            chapter_id: Some(chapter_id),
+            research_task_id: None,
+            granularity: input.granularity,
+            auto_pause: input.auto_pause,
+            pause_after_outline: input.pause_after_outline,
+            redraft: false,
+            kickoff_extra: None,
+        },
+    )
+    .await?;
+    Ok(ChapterWriteResponse {
+        session_id,
+        warnings,
+    })
+}
+
+/// Why the previous chapter blocks a write, as the `details` of `chapter.previous_not_ready`
+/// (spec/08 §1.1). `None` means the chapter may be written.
+async fn previous_chapter_blocker(
+    conn: &impl ConnectionTrait,
+    chapter: &chapters::Model,
+) -> Result<Option<serde_json::Value>, AppError> {
+    let previous = chapters::Entity::find()
+        .filter(chapters::Column::TrackId.eq(chapter.track_id))
+        .filter(chapters::Column::Ord.lt(chapter.ord))
+        .order_by_desc(chapters::Column::Ord)
+        .one(conn)
+        .await?;
+    let Some(previous) = previous else {
+        // The first chapter of the track has no predecessor.
+        return Ok(None);
+    };
+    let ready = previous.status == ChapterStatus::Official.as_str()
+        && previous.canon_status == crate::db::json::CanonStatus::Synced.as_str();
+    if ready {
+        return Ok(None);
+    }
+    Ok(Some(serde_json::json!({
+        "chapter_id": previous.id,
+        "chapter_number": previous.ord,
+        "status": previous.status,
+        "canon_status": previous.canon_status,
+    })))
 }
 
 /// `POST /api/chapters/:id/submit` (spec/08 §1.1): version `draft`/`revision`, status `in_review`.

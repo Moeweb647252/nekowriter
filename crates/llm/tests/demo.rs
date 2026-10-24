@@ -51,13 +51,15 @@ fn planning_submits_an_outline_in_the_book_language() {
     }
 }
 
+/// Every kind that has no behavior of its own yet replies with the closing message, so the agent
+/// panel shows something and the runtime's nudge path is exercised.
 #[test]
 fn other_kinds_reply_with_text_for_now() {
     let provider = DemoProvider::new();
     for (kind, phase) in [
-        ("chapter_revise", "revision_planning"),
         ("chapter_review", "none"),
         ("chapter_maintenance", "none"),
+        ("canon_seed", "none"),
         ("conception", "none"),
         ("research", "none"),
         ("unknown_kind", "none"),
@@ -167,4 +169,92 @@ fn corpus_parses_for_both_languages() {
             "{language}: proposal text"
         );
     }
+}
+
+/// spec/04 §7.2: planning submits a three-scene outline with reference notes and a title.
+#[test]
+fn planning_carries_notes_and_a_title() {
+    let provider = DemoProvider::new();
+    for language in ["zh-CN", "en"] {
+        let h = hints("chapter_write", "planning", language);
+        let lang = provider.lang(Some(&h));
+        let plan = choose_action(&h, lang);
+        let arguments = &plan.tools[0].2;
+        assert!(
+            arguments["reference_notes"]
+                .as_str()
+                .is_some_and(|notes| !notes.is_empty()),
+            "{language}: the planning step submits reference notes"
+        );
+        assert_eq!(
+            arguments["title"].as_str(),
+            Some(lang.chapter_title.as_str()),
+            "{language}: the planning step proposes a title"
+        );
+    }
+}
+
+/// spec/04 §7.2: the drafting step matches the granularity it was told to write at.
+#[test]
+fn drafting_matches_the_granularity() {
+    let provider = DemoProvider::new();
+    for language in ["zh-CN", "en"] {
+        for (granularity, expect_break) in [
+            ("sentence", false),
+            ("paragraph", false),
+            ("free", true),
+            ("chapter", true),
+        ] {
+            let mut h = hints("chapter_write", "drafting", language);
+            h.granularity = Some(granularity.to_owned());
+            let lang = provider.lang(Some(&h));
+            let plan = choose_action(&h, lang);
+            assert_eq!(plan.tools.len(), 1, "{language}/{granularity}");
+            assert_eq!(plan.tools[0].1, "insert_text", "{language}/{granularity}");
+            let text = plan.tools[0].2["text"].as_str().expect("text");
+            assert!(!text.is_empty(), "{language}/{granularity}: some text");
+            assert_eq!(
+                text.contains('\n'),
+                expect_break,
+                "{language}/{granularity}: line breaks separate paragraphs only when allowed"
+            );
+        }
+    }
+}
+
+/// A `sentence` drafting step never exceeds the 400-character limit, and the tail alternates so
+/// the chapter gains several paragraphs.
+#[test]
+fn sentence_steps_obey_the_matrix() {
+    let provider = DemoProvider::new();
+    for step in 1..12u32 {
+        let mut h = hints("chapter_write", "drafting", "zh-CN");
+        h.granularity = Some("sentence".to_owned());
+        h.step_in_phase = step;
+        let lang = provider.lang(Some(&h));
+        let plan = choose_action(&h, lang);
+        let text = plan.tools[0].2["text"].as_str().expect("text");
+        assert!(text.chars().count() <= 400, "step {step}: {text}");
+        assert!(!text.contains('\n'), "step {step}: no line break");
+        assert!(
+            plan.tools[0].2["paragraph_end"].is_boolean(),
+            "step {step}: paragraph_end is stated"
+        );
+    }
+}
+
+/// The `chapter` granularity writes several paragraphs in one call (spec/04 §7.2 "~8").
+#[test]
+fn chapter_granularity_writes_several_paragraphs_at_once() {
+    let provider = DemoProvider::new();
+    let mut h = hints("chapter_write", "drafting", "en");
+    h.granularity = Some("chapter".to_owned());
+    h.step_in_phase = 1;
+    let lang = provider.lang(Some(&h));
+    let plan = choose_action(&h, lang);
+    let text = plan.tools[0].2["text"].as_str().expect("text");
+    assert!(
+        text.split("\n\n").count() >= 8,
+        "the chapter granularity writes the rest of the chapter: {text}"
+    );
 }

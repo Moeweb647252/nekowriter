@@ -114,6 +114,34 @@ pub struct ChapterContentResult {
     pub word_count: i32,
 }
 
+/// `POST /chapters/:id/write` body (spec/08 §1.1, spec/10 §2.2).
+///
+/// The writer switches default to the book's settings; `force` overrides the "previous chapter is
+/// ready" precondition after the Write dialog explained why it failed.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[ts(optional_fields = nullable)]
+pub struct ChapterWriteInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guidance: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub granularity: Option<crate::db::json::Granularity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_pause: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pause_after_outline: Option<bool>,
+    #[serde(default)]
+    pub force: bool,
+}
+
+/// `POST /chapters/:id/write` response (spec/10 §2.2).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ChapterWriteResponse {
+    pub session_id: i32,
+    pub warnings: Vec<String>,
+}
+
 /// `POST /tracks/:id/chapters/reorder` body (spec/08 §1.1).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]

@@ -44,6 +44,14 @@ outline = """# 第三章：旧信
 - 结尾留一个悬念：门外有人送来第二封信。
 """
 
+reference_notes = """- 沈砚佩剑「承影」，剑鞘有裂痕，左臂有旧伤。
+- 柳照称沈砚为「沈大哥」，沈砚称她「柳副使」。
+- 望川城入夜后实行夜禁，持铜牌者方可通行。
+- 旧信的火漆印模糊，尚未拆开。
+"""
+chapter_title = "旧信"
+finish_note = "后面的场景我已经想好了，继续往下写。"
+
 closing_message = "设定已经整理好了。你可以先看看文档，需要我调整哪一部分，直接告诉我。"
 review_summary = "整体节奏稳，人物动机清楚，但中段的场景转换略显突兀，个别句子可以更克制。"
 review_issue = "中段场景从城楼转到街市时缺少过渡，读者会一时找不到位置。"
@@ -200,6 +208,14 @@ outline = """# Chapter Three: The Old Letter
 - Night falls; the lamps are lit.
 - End on a hook: a second letter arrives at the door.
 """
+
+reference_notes = """- Shen Yan carries the sword Chengying; the scabbard is cracked and his left arm is scarred.
+- Liu Zhao calls him "Brother Shen"; he calls her "Deputy Liu".
+- Wangchuan keeps a curfew after nightfall; only tally holders walk the streets.
+- The letter's wax seal is blurred and still unbroken.
+"""
+chapter_title = "The Old Letter"
+finish_note = "I have the next scenes planned; let me keep going."
 
 closing_message = "The setting materials are ready. Read them over, and tell me what to change."
 review_summary = "The pacing holds and the motives are clear, but the middle scene change is abrupt and a few sentences could be leaner."

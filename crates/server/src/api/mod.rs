@@ -73,6 +73,7 @@ pub fn build_app(state: AppState) -> Router {
             "/chapters/{chapter_id}/content/text",
             put(chapters::put_content_text),
         )
+        .route("/chapters/{chapter_id}/write", post(chapters::write))
         .route("/chapters/{chapter_id}/submit", post(chapters::submit))
         .route("/chapters/{chapter_id}/approve", post(chapters::approve))
         .route(

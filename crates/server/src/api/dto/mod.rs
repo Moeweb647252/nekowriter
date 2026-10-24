@@ -18,7 +18,8 @@ pub use books::{
 pub use chapters::{
     ApproveChapterResponse, ChapterContentPatch, ChapterContentResult, ChapterContentTextPut,
     ChapterDto, ChapterInput, ChapterListItemDto, ChapterPatch, ChapterReorderInput,
-    ChapterVersionDto, ChapterVersionMetaDto, ManualVersionInput,
+    ChapterVersionDto, ChapterVersionMetaDto, ChapterWriteInput, ChapterWriteResponse,
+    ManualVersionInput,
 };
 pub use content_ops::{ContentOp, ContentOpInput};
 pub use prompts::{

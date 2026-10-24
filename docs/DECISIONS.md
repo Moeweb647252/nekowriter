@@ -567,6 +567,28 @@ technical decisions.
   per-column `UPDATE` inside `finalize_inner` — was rejected because it would keep the hazard for
   every future counter that touches a column this function also writes.
 
+### D-077 The Demo provider's revise flow stops short of `replace_text`
+- **Context**: spec/04 §7.2 describes the Demo provider's `chapter_revise` behavior as
+  "`submit_revision_plan`, then one `replace_text` on `p1`, then `finish_revision`". The Demo
+  provider sees only the request it is handed; it has no access to the chapter's current text, so
+  it cannot know what `p1` contains. `replace_text` requires `old` to occur exactly once in the
+  paragraph (spec/05 §4), which makes any made-up `old` a guaranteed `error.text_not_found`. A
+  corpus entry could only be made to match by depending on which granularity and which step wrote
+  `p1`, which is exactly the kind of coupling that makes the manual check flaky rather than
+  representative. spec/04 §7.2's table is a development aid for exercising the UI, not a normative
+  product behavior, and the writer tools are already covered by their own tests
+  (`crates/server/tests/agent_write_tools.rs`).
+- **Decision**: the Demo's `chapter_revise` submits the revision plan in `revision_planning` and
+  calls `finish_revision` in `revising`, using the plan text as the summary. It does not emit a
+  `replace_text` step, and no `revision_old` sample is added to
+  `crates/llm/demo/corpus.toml`. The `replace_text` path is deferred to M6, which owns the revise
+  flow end to end and can pass a `block.chapter_draft`-backed Demo hint (or otherwise make the
+  current draft visible to the provider) so the `old` text is guaranteed to occur exactly once.
+- **Consequences**: the Demo provider alone does not exercise `replace_text` during a revision;
+  the M6 manual check and M6's scripted runtime tests are what cover that path. If a later
+  milestone gives the Demo provider a view of the draft, the deferred step can be added by
+  extending `chapter_revise_plan` in `crates/llm/src/demo.rs` without touching any other decision.
+
 ## Open items (questions for the author)
 1. Confirm the reading of "this time it cannot be delegated to a lower-level review agent" as
    "the author judges the reviewer's report; no further delegation" (PROJECT §10.9).

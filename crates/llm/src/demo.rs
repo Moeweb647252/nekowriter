@@ -34,6 +34,15 @@ pub struct LangCorpus {
     pub paragraphs: Vec<String>,
     #[serde(default)]
     pub outline: String,
+    /// `submit_outline` reference notes (the demo writes a short list).
+    #[serde(default)]
+    pub reference_notes: String,
+    /// The chapter title the demo proposes in `submit_outline`.
+    #[serde(default)]
+    pub chapter_title: String,
+    /// The short ask-for-more text when a completion is withheld.
+    #[serde(default)]
+    pub finish_note: String,
     #[serde(default)]
     pub setting_docs: SettingDocs,
     #[serde(default)]
@@ -68,6 +77,15 @@ pub struct LangCorpus {
 pub struct SettingDocs {
     #[serde(default)]
     pub outline: String,
+    /// `submit_outline` reference notes (the demo writes a short list).
+    #[serde(default)]
+    pub reference_notes: String,
+    /// The chapter title the demo proposes in `submit_outline`.
+    #[serde(default)]
+    pub chapter_title: String,
+    /// The short ask-for-more text when a completion is withheld.
+    #[serde(default)]
+    pub finish_note: String,
     #[serde(default)]
     pub world: String,
     #[serde(default)]
@@ -276,12 +294,11 @@ pub fn choose_action(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
             if hints.phase == "planning" {
                 chapter_write_planning(lang)
             } else {
-                // Drafting, revision planning and revising arrive with M4 (writer tools).
-                text_plan(lang)
+                chapter_write_drafting(hints, lang)
             }
         }
-        // M4: submit_revision_plan → replace_text → finish_revision.
-        "chapter_revise" => text_plan(lang),
+        // M4 writes drafting too; a revision plan and a revision arrive with M6.
+        "chapter_revise" => chapter_revise_plan(hints, lang),
         // M6: submit_review with one issue on `p2`.
         "chapter_review" => text_plan(lang),
         // M6: canon writes, one world-setting proposal, finish_maintenance.
@@ -320,13 +337,109 @@ fn debug_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
     }
 }
 
-/// Planning step: submit a three-scene outline. M5 adds the leading `get_entity` call for the
-/// protagonist.
+/// Planning step: submit a three-scene outline (spec/04 §7.2). M5 adds the leading `get_entity`
+/// call for the protagonist.
 fn chapter_write_planning(lang: &LangCorpus) -> DemoPlan {
+    let mut arguments = json!({
+        "outline": lang.outline,
+        "reference_notes": lang.reference_notes,
+    });
+    if !lang.chapter_title.is_empty() {
+        arguments["title"] = json!(lang.chapter_title);
+    }
+    DemoPlan {
+        tools: vec![tool("submit_outline", arguments)],
+        ..DemoPlan::default()
+    }
+}
+
+/// The drafting step: write one unit matching the granularity, complete after ~8 paragraphs, and
+/// confirm a withheld short completion with `finish_draft` (spec/04 §7.2).
+///
+/// `step_in_phase` counts the steps of the whole session, and drafting begins after the outline
+/// step, so the drafting index is `step_in_phase - 1`. The demo cycles the corpus so a long
+/// chapter keeps producing fresh text.
+fn chapter_write_drafting(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
+    let index = hints.step_in_phase.saturating_sub(1) as usize;
+    let paragraph = index % lang.paragraphs.len().max(1);
+    let sentence = index % lang.sentences.len().max(1);
+    let target = lang.paragraphs.get(paragraph).cloned().unwrap_or_default();
+    match hints.granularity.as_deref().unwrap_or("paragraph") {
+        "sentence" => {
+            // A sentence is its own segment; `paragraph_end` closes it every few sentences so the
+            // chapter has several paragraphs rather than one long one.
+            let text = lang.sentences.get(sentence).cloned().unwrap_or_default();
+            let paragraph_end = index % 3 == 2;
+            DemoPlan {
+                tools: vec![tool(
+                    "insert_text",
+                    json!({ "text": text, "paragraph_end": paragraph_end }),
+                )],
+                ..DemoPlan::default()
+            }
+        }
+        "paragraph" => DemoPlan {
+            tools: vec![tool("insert_text", json!({ "text": target }))],
+            ..DemoPlan::default()
+        },
+        "free" => {
+            // Two or three paragraphs per call, with the tail open so the next call continues it.
+            let second = lang
+                .paragraphs
+                .get((paragraph + 1) % lang.paragraphs.len().max(1))
+                .cloned()
+                .unwrap_or_default();
+            let text = format!("{target}\n\n{second}");
+            DemoPlan {
+                tools: vec![tool(
+                    "insert_text",
+                    json!({ "text": text, "paragraph_end": true }),
+                )],
+                ..DemoPlan::default()
+            }
+        }
+        // `chapter`: one call writes the rest of the chapter and completes it.
+        _ => {
+            let mut paragraphs: Vec<String> = Vec::new();
+            for offset in 0..MIN_CHAPTER_PARAGRAPHS {
+                let position = (paragraph + offset) % lang.paragraphs.len().max(1);
+                if let Some(text) = lang.paragraphs.get(position) {
+                    paragraphs.push(text.clone());
+                }
+            }
+            DemoPlan {
+                tools: vec![tool(
+                    "insert_text",
+                    json!({ "text": paragraphs.join("\n\n") }),
+                )],
+                ..DemoPlan::default()
+            }
+        }
+    }
+}
+
+/// How many paragraphs the `chapter` granularity writes in one call (spec/04 §7.2 "~8").
+const MIN_CHAPTER_PARAGRAPHS: usize = 8;
+
+/// Revision planning: submit the plan (spec/04 §7.2 `chapter_revise`).
+fn chapter_revise_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
+    if hints.phase == "revision_planning" {
+        return DemoPlan {
+            tools: vec![tool(
+                "submit_revision_plan",
+                json!({ "plan": lang.revision_plan }),
+            )],
+            ..DemoPlan::default()
+        };
+    }
+    // Revising: finish. M6 owns the revise flow end to end, and it is the milestone that can do a
+    // `replace_text` safely: the demo provider has no access to the chapter text, so a made-up
+    // `old` would always be a `text_not_found` error (spec/04 §7.2's "one replace_text on p1"
+    // belongs with the flow that reads the draft first).
     DemoPlan {
         tools: vec![tool(
-            "submit_outline",
-            json!({ "outline": lang.outline, "reference_notes": "" }),
+            "finish_revision",
+            json!({ "summary": lang.revision_plan }),
         )],
         ..DemoPlan::default()
     }
