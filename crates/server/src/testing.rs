@@ -259,6 +259,29 @@ impl TestApp {
         row.try_get::<i32>("", "value").expect("call id")
     }
 
+    /// Runs a read-only query returning one row as a JSON object (test fixtures).
+    pub async fn query_json(&self, sql: &str, values: Vec<sea_orm::Value>) -> Value {
+        use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+        let statement = Statement::from_sql_and_values(DatabaseBackend::Sqlite, sql, values);
+        let row = self
+            .db
+            .conn()
+            .query_one_raw(statement)
+            .await
+            .expect("query")
+            .expect("row");
+        let mut map = serde_json::Map::new();
+        for (index, column) in row.column_names().iter().enumerate() {
+            let value: Value = row
+                .try_get_by_index::<Option<Value>>(index)
+                .ok()
+                .flatten()
+                .unwrap_or(Value::Null);
+            map.insert((*column).to_owned(), value);
+        }
+        Value::Object(map)
+    }
+
     /// Removes every session row (fixture cleanup).
     pub async fn clear_sessions(&self) {
         self.execute("DELETE FROM agent_sessions").await;

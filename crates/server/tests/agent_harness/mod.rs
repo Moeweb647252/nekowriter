@@ -360,6 +360,25 @@ impl Runtime {
             .collect()
     }
 
+    /// The frozen model snapshot of a session, decoded.
+    pub async fn model_snapshot(&self, session_id: i32) -> serde_json::Value {
+        use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+        let row = self
+            .app
+            .db()
+            .conn()
+            .query_one_raw(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "SELECT model_snapshot FROM agent_sessions WHERE id = ?",
+                vec![session_id.into()],
+            ))
+            .await
+            .expect("query snapshot")
+            .expect("session row");
+        let raw: String = row.try_get("", "model_snapshot").expect("snapshot column");
+        serde_json::from_str(&raw).expect("json")
+    }
+
     /// The chapter's status and canon status.
     pub async fn chapter_status(&self) -> (String, String, i32) {
         use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};

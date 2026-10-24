@@ -117,3 +117,7 @@ path = "tests/agent_tools.rs"
 [[test]]
 name = "agent_status_table"
 path = "tests/agent_status_table.rs"
+
+[[test]]
+name = "agent_creation"
+path = "tests/agent_creation.rs"

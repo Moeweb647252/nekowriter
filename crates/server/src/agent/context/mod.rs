@@ -102,9 +102,15 @@ pub async fn assemble_kickoff(
         if rendered.text.trim().is_empty() {
             continue;
         }
+        // Only the settings block places a cache breakpoint (spec/03 §10); the others store no
+        // flag, so `StoredBlock::cache` stays absent.
         blocks.push(StoredBlock::Text {
             text: rendered.text,
-            cache: Some(block_is_cached(key)),
+            cache: if block_is_cached(key) {
+                Some(true)
+            } else {
+                None
+            },
         });
     }
     Ok(blocks)
