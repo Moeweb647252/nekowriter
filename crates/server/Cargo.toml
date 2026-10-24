@@ -18,7 +18,7 @@ default = []
 # Embed `web/dist` into the release binary (spec/01 §12).
 embed-web = ["dep:rust-embed"]
 # Expose the test helpers (`src/testing.rs`) to integration tests.
-testing = []
+testing = ["dep:tempfile"]
 
 [dependencies]
 nekowriter-llm.workspace = true
@@ -68,6 +68,7 @@ htmd.workspace = true
 encoding_rs.workspace = true
 url.workspace = true
 ipnet.workspace = true
+tempfile = { workspace = true, optional = true }
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 libsqlite3-sys = { version = "0.37", default-features = false }
@@ -83,3 +84,11 @@ tokio.workspace = true
 [[test]]
 name = "api_health"
 path = "tests/api_health.rs"
+
+[[test]]
+name = "api_books"
+path = "tests/api_books.rs"
+
+[[test]]
+name = "api_chapters"
+path = "tests/api_chapters.rs"

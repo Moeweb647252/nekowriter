@@ -4,8 +4,14 @@ pub mod api;
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod events;
+pub mod services;
 pub mod state;
 pub mod text;
+
+/// Test helpers behind the `testing` feature (spec/01 §11).
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 
 use anyhow::Context;
 use tracing_subscriber::EnvFilter;

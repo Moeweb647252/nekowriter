@@ -1,0 +1,145 @@
+//! Book DTOs (spec/10 §2.2, §2.8, spec/08 §7).
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use ts_rs::TS;
+
+use crate::db::json::{
+    BookSettings, BookStatus, ChapterStatus, ConceptionState, RoleModels, Usage,
+};
+
+/// `GET /books/:id`, and the `book` field of the create response.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct BookDto {
+    pub id: i32,
+    pub title: String,
+    pub idea: String,
+    pub genre: String,
+    /// BCP-47 tag, e.g. `zh-CN`.
+    pub writing_language: String,
+    pub status: BookStatus,
+    pub settings: BookSettings,
+    pub model_overrides: RoleModels,
+    pub conception: ConceptionState,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// One row of the library grid (spec/10 §2.2: counts, words, latest activity, attention count).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct BookSummaryDto {
+    pub id: i32,
+    pub title: String,
+    pub genre: String,
+    pub writing_language: String,
+    pub status: BookStatus,
+    pub chapter_count: i32,
+    pub official_chapter_count: i32,
+    /// Sum of `chapters.word_count` over the book's chapters.
+    pub word_count: i32,
+    /// The chapter the card's status line shows (highest `ord` of the main track).
+    pub latest_chapter: Option<ChapterPointerDto>,
+    /// Open sessions needing the author plus chapters in review; always 0 until agents exist.
+    pub attention_count: i32,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// The minimum a card needs to describe a chapter.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ChapterPointerDto {
+    pub id: i32,
+    /// The chapter's number within its track (= `ord`).
+    pub number: i32,
+    pub title: String,
+    pub status: ChapterStatus,
+}
+
+/// `POST /books` body (spec/10 §2.2, spec/08 §5).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct BookInput {
+    pub title: String,
+    #[serde(default)]
+    pub idea: String,
+    #[serde(default)]
+    pub genre: String,
+    /// BCP-47 tag. Required: the writing language decides prose style and word counting.
+    pub writing_language: String,
+    /// Starts the conception studio. Milestone M9 implements it; for now the book is created
+    /// active with empty setting materials.
+    #[serde(default)]
+    pub start_conception: bool,
+}
+
+/// `PATCH /books/:id` body. Omitted fields are unchanged.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct BookPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub genre: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub writing_language: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings: Option<BookSettings>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_overrides: Option<RoleModels>,
+    /// Only `archived` (hides the book) and `active` (unhides it) are accepted here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<BookStatus>,
+}
+
+/// `POST /books` response (spec/10 §2.2). `session_id` arrives with the conception studio (M9).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CreateBookResponse {
+    pub book: BookDto,
+    pub warnings: Vec<String>,
+}
+
+/// `GET /books/:id/overview` (spec/08 §7). M1 fills `progress` and `recent_changes`; the next
+/// action, the attention list and usage arrive with later milestones.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct BookOverviewDto {
+    pub book: BookDto,
+    pub progress: BookProgressDto,
+    pub recent_changes: Vec<super::changes::ChangeDto>,
+    pub usage: Usage,
+}
+
+/// Chapter counts and words per track (spec/08 §7).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct BookProgressDto {
+    pub total_chapters: i32,
+    pub official_chapters: i32,
+    pub total_words: i32,
+    pub official_words: i32,
+    pub tracks: Vec<TrackProgressDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TrackProgressDto {
+    pub track_id: i32,
+    pub kind: crate::db::json::TrackKind,
+    /// Empty for the main track; the UI composes its name.
+    pub title: String,
+    pub chapters: i32,
+    pub words: i32,
+    /// One entry per chapter status, in the enum's order.
+    pub by_status: Vec<StatusCountDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct StatusCountDto {
+    pub status: ChapterStatus,
+    pub count: i32,
+}

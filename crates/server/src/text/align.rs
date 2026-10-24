@@ -24,8 +24,13 @@ pub struct AlignedContent {
     pub kept_pids: usize,
 }
 
-/// Minimum similarity for a replaced paragraph to keep its pid.
+/// Minimum similarity for a replaced paragraph to keep its pid, measured against the longer of
+/// the two texts.
 const KEEP_SIMILARITY: f32 = 0.4;
+
+/// A paragraph that keeps most of its own text keeps its pid even when the edit adds a lot: a
+/// short paragraph that grows from "two" to "two, slightly edited" is an edit, not a replacement.
+const KEEP_COVERAGE: f32 = 0.6;
 
 /// Splits a full-text document into trimmed, non-empty paragraphs (blank lines separate them).
 pub fn split_document(text: &str) -> Vec<String> {
@@ -208,8 +213,9 @@ fn pair_replaced(
             if used_old[slot_index] {
                 continue;
             }
-            let similarity = text_similarity(&old[*old_index].text, text);
-            if similarity >= KEEP_SIMILARITY && best.is_none_or(|(_, score)| similarity > score) {
+            let (similarity, coverage) = text_similarity(&old[*old_index].text, text);
+            let keeps = similarity >= KEEP_SIMILARITY || coverage >= KEEP_COVERAGE;
+            if keeps && best.is_none_or(|(_, score)| similarity > score) {
                 best = Some((slot_index, similarity));
             }
         }
@@ -227,13 +233,13 @@ fn pair_replaced(
     slots
 }
 
-/// Character-level similarity of two paragraphs, in `0.0..=1.0`.
-fn text_similarity(a: &str, b: &str) -> f32 {
+/// Character-level similarity of two paragraphs.
+///
+/// Returns `(relative, coverage)`: `relative` is the shared characters over the longer text and
+/// `coverage` the shared characters over the shorter one.
+fn text_similarity(a: &str, b: &str) -> (f32, f32) {
     if a == b {
-        return 1.0;
-    }
-    if a.is_empty() && b.is_empty() {
-        return 1.0;
+        return (1.0, 1.0);
     }
     let diff = TextDiff::from_chars(a, b);
     let mut matched = 0usize;
@@ -242,12 +248,18 @@ fn text_similarity(a: &str, b: &str) -> f32 {
             matched += change.value().chars().count();
         }
     }
-    let total = a.chars().count().max(b.chars().count());
-    if total == 0 {
-        1.0
-    } else {
-        matched as f32 / total as f32
+    let longest = a.chars().count().max(b.chars().count());
+    let shortest = a.chars().count().min(b.chars().count());
+    if longest == 0 {
+        return (1.0, 1.0);
     }
+    let relative = matched as f32 / longest as f32;
+    let coverage = if shortest == 0 {
+        0.0
+    } else {
+        matched as f32 / shortest as f32
+    };
+    (relative, coverage)
 }
 
 #[cfg(test)]

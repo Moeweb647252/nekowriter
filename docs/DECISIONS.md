@@ -384,6 +384,42 @@ technical decisions.
   a track-local note and `finish_maintenance` skips the state confirmation. The zh-CN label of
   the Finalize action is “定稿”, the name the conception prompts use (with "Finalize book").
 
+### D-061 Service errors cross `Db::write` as an encoded payload
+- **Context**: `Db::write` speaks `sea_orm::DbErr`, but service functions must return
+  `AppError` so handlers get the exact spec/10 §4 code and `details` (e.g. `chapter.locked`
+  with `session_id`) instead of a generic 500.
+- **Decision**: `services::write` wraps a service closure: an `AppError` is serialized into
+  `DbErr::Custom` behind a marker prefix and decoded again at the transaction boundary. Genuine
+  database errors still become `internal`. Every outer service function uses it, so no service
+  re-implements the encoding.
+- **Consequences**: the typed error survives a rollback, and `Db::write`'s signature stays the
+  only write path (spec/01 §7). Plain-TEXT enum columns are read with `services::enum_of`, while
+  JSON columns keep using `parse_json` — mixing the two was the bug this found.
+
+### D-062 M1 defers what later milestones own
+- **Context**: several M1 endpoints have preconditions that only later milestones can produce
+  (writer sessions, canon maintenance, side stories, conception).
+- **Decision**: the state rules are implemented and tested against the real rows now, and the
+  endpoint that creates that state arrives with its milestone: `POST /books` with
+  `start_conception` creates the book `active` and returns the warning `conception.unavailable`
+  (M9 adds the session); a `side` track create is `validation.failed` (M10); `POST /tracks/:id/tracks`
+  re-creating a main track is `conflict.exists`; `submit`/`approve` refuse a chapter whose
+  writer session is running with `chapter.session_exists`, and an open non-running writer session
+  must be abandoned by the caller (M3) before submit. Tests set the session and canon rows
+  directly through `TestApp` fixtures.
+- **Consequences**: no half-built flow is exposed, and the conditions are already enforced the
+  moment the later milestone supplies the state.
+
+### D-063 SSE events are pushed for every connection; `chapter.content` carries no book id
+- **Context**: spec/10 §3 says `GET /api/events?book_id=` "sends events of that book plus global
+  events", but the `chapter.content` payload has no `book_id` field, and `settings.changed` does.
+- **Decision**: the filter drops events whose payload names a different book; events without a
+  book id (`chapter.content`, `resync`) reach every connection and the client ignores what it does
+  not show. `seq` is not part of the SSE `data:` payload — it is only the `id:` field, exactly as
+  spec/10 §3 frames it.
+- **Consequences**: an open chapter never misses its own text updates, and the client's "apply if
+  version = local + 1, else refetch" rule stays the only gap handler.
+
 ## Open items (questions for the author)
 1. Confirm the reading of "this time it cannot be delegated to a lower-level review agent" as
    "the author judges the reviewer's report; no further delegation" (PROJECT §10.9).

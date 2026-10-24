@@ -1,7 +1,13 @@
 //! API router assembly, the host/origin guard and the root hint page (spec/01 §10).
 
+pub mod app_settings;
+pub mod books;
+pub mod changes;
+pub mod chapters;
 pub mod dto;
 pub mod health;
+pub mod settings_materials;
+pub mod tracks;
 
 use axum::Router;
 use axum::body::Body;
@@ -9,7 +15,7 @@ use axum::extract::Request;
 use axum::http::{HeaderValue, header};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, patch, post, put};
 
 use crate::error::{AppError, ErrorCode};
 use crate::state::AppState;
@@ -21,6 +27,89 @@ const ALLOWED_HOSTS: [&str; 3] = ["localhost", "127.0.0.1", "[::1]"];
 pub fn build_app(state: AppState) -> Router {
     let api = Router::new()
         .route("/health", get(health::health))
+        .route(
+            "/app-settings",
+            get(app_settings::get).patch(app_settings::patch),
+        )
+        .route("/books", get(books::list).post(books::create))
+        .route(
+            "/books/{book_id}",
+            get(books::get).patch(books::patch).delete(books::delete),
+        )
+        .route("/books/{book_id}/overview", get(books::overview))
+        .route(
+            "/books/{book_id}/tracks",
+            get(tracks::list).post(tracks::create),
+        )
+        .route(
+            "/tracks/{track_id}",
+            get(tracks::get).patch(tracks::patch).delete(tracks::delete),
+        )
+        .route(
+            "/tracks/{track_id}/chapters",
+            get(tracks::list_chapters).post(tracks::create_chapter),
+        )
+        .route(
+            "/tracks/{track_id}/chapters/reorder",
+            post(tracks::reorder_chapters),
+        )
+        .route(
+            "/chapters/{chapter_id}",
+            get(chapters::get)
+                .patch(chapters::patch)
+                .delete(chapters::delete),
+        )
+        .route(
+            "/chapters/{chapter_id}/content",
+            patch(chapters::patch_content),
+        )
+        .route(
+            "/chapters/{chapter_id}/content/text",
+            put(chapters::put_content_text),
+        )
+        .route("/chapters/{chapter_id}/submit", post(chapters::submit))
+        .route("/chapters/{chapter_id}/approve", post(chapters::approve))
+        .route(
+            "/chapters/{chapter_id}/versions",
+            get(chapters::list_versions).post(chapters::create_version),
+        )
+        .route("/chapter-versions/{version_id}", get(chapters::get_version))
+        .route(
+            "/chapter-versions/{version_id}/restore",
+            post(chapters::restore_version),
+        )
+        .route(
+            "/books/{book_id}/setting-docs",
+            get(settings_materials::list_docs),
+        )
+        .route(
+            "/books/{book_id}/setting-docs/{kind}",
+            get(settings_materials::get_doc).put(settings_materials::put_doc),
+        )
+        .route(
+            "/books/{book_id}/setting-docs/{kind}/history",
+            get(settings_materials::doc_history),
+        )
+        .route(
+            "/books/{book_id}/characters",
+            get(settings_materials::list_characters).post(settings_materials::create_character),
+        )
+        .route(
+            "/books/{book_id}/characters/reorder",
+            post(settings_materials::reorder_characters),
+        )
+        .route(
+            "/characters/{character_id}",
+            get(settings_materials::get_character)
+                .patch(settings_materials::patch_character)
+                .delete(settings_materials::delete_character),
+        )
+        .route(
+            "/characters/{character_id}/history",
+            get(settings_materials::character_history),
+        )
+        .route("/books/{book_id}/changes", get(changes::list))
+        .route("/changes/{change_id}", get(changes::get))
         .with_state(state.clone());
 
     Router::new()
