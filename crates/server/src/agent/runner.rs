@@ -50,7 +50,7 @@ use super::session::{self, TransitionCause};
 use super::tools::spec::validate_input;
 use super::tools::{
     PrepareCtx, Prepared, ToolCtx, ToolError, ToolErrorKind, ToolOutcome, Visibility,
-    allowed_tools, is_permitted, phase_label,
+    allowed_tools, cap_result, is_permitted, phase_label,
 };
 
 /// The frozen tool names of a session (spec/03 §1.2).
@@ -1217,10 +1217,13 @@ async fn finalize_inner(
     };
     let now = Utc::now();
 
+    // Every result goes through the default cap here, tool-agnostically (spec/05 §1.5): tools
+    // that own a `max_chars` cap are exempt inside `cap_result`.
+    let raw_result_text = cap_result(prompts, &outcome.text, &call.name);
     agent_tool_calls::ActiveModel {
         id: Set(call.id),
         status: Set(status.as_str().to_owned()),
-        raw_result_text: Set(Some(outcome.text.clone())),
+        raw_result_text: Set(Some(raw_result_text)),
         appendices: Set(
             json::to_json(&appendices).map_err(|err| AppError::internal(err.to_string()))?
         ),

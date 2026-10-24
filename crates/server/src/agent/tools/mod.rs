@@ -348,6 +348,68 @@ impl ToolOutcome {
     }
 }
 
+// ───────────────────────────── result cap (spec/05 §1.5) ─────────────────────────────
+
+/// The default cap of a tool result, in characters (spec/05 §1.5).
+pub const RESULT_CHAR_LIMIT: usize = 12_000;
+
+/// Tools that enforce their own `max_chars` cap, so the global cap must not cut a second time:
+/// `read_chapter` and `read_draft` page with `max_chars`, `web_fetch` with its own conversion
+/// cap, and `read_knowledge_entry` reads from an `offset` in 6,000-character slices (spec/05 §3).
+const TOOL_OWNED_RESULT_CAPS: [&str; 4] = [
+    "read_chapter",
+    "read_draft",
+    "web_fetch",
+    "read_knowledge_entry",
+];
+
+/// Caps one tool result at [`RESULT_CHAR_LIMIT`] characters (spec/05 §1.5).
+///
+/// The text is cut at the last paragraph (or, failing that, line) boundary that fits, so a model
+/// never receives half a sentence when the result has structure. The cut is counted in
+/// characters (not bytes) so CJK prose keeps its full budget, and the `result.truncated` prompt
+/// template is appended — the model-facing wording stays in `prompts/` (D-017). Tools that own a
+/// `max_chars` cap are left untouched (their own bound is the documented contract).
+pub fn cap_result(prompts: &PromptSet, text: &str, tool: &str) -> String {
+    if TOOL_OWNED_RESULT_CAPS.contains(&tool) || text.chars().count() <= RESULT_CHAR_LIMIT {
+        return text.to_owned();
+    }
+    let cut = boundary_at_or_before(text, RESULT_CHAR_LIMIT);
+    let head = &text[..cut];
+    let notice = prompts
+        .render(
+            "result.truncated",
+            &serde_json::json!({ "next_offset": serde_json::Value::Null }),
+        )
+        .map(|rendered| rendered.text)
+        .unwrap_or_default();
+    if notice.trim().is_empty() {
+        return head.to_owned();
+    }
+    format!("{head}\n{notice}")
+}
+
+/// The byte index where `text` can be cut after at most `max_chars` characters: the last
+/// paragraph break, else the last line break, else the character boundary itself. Always a char
+/// boundary, so the result is valid UTF-8 (spec/05 §1.5).
+fn boundary_at_or_before(text: &str, max_chars: usize) -> usize {
+    // `nth(max_chars)` is the first character past the budget; its byte index is the cut.
+    let end = text
+        .char_indices()
+        .nth(max_chars)
+        .map(|(index, _)| index)
+        .unwrap_or(text.len());
+    let window = &text[..end];
+    // A break at index 0 would leave an empty head; keep looking for a usable one.
+    if let Some(position) = window.rfind("\n\n").filter(|position| *position > 0) {
+        return position;
+    }
+    if let Some(position) = window.rfind('\n').filter(|position| *position > 0) {
+        return position;
+    }
+    end
+}
+
 /// One tool of a role (spec/05 §1.2, §1.3).
 #[async_trait::async_trait]
 pub trait ToolHandler: Send + Sync {
@@ -426,5 +488,83 @@ mod tests {
         assert_eq!(unique.len(), codes.len(), "codes must be unique");
         assert!(codes.contains(&"after_completion"));
         assert!(codes.contains(&"refusal"));
+    }
+
+    fn prompts() -> PromptSet {
+        crate::prompts::PromptRegistry::embedded()
+            .expect("the embedded prompt pack")
+            .defaults_only()
+    }
+
+    fn truncated_notice(prompts: &PromptSet) -> String {
+        prompts
+            .render(
+                "result.truncated",
+                &serde_json::json!({ "next_offset": serde_json::Value::Null }),
+            )
+            .expect("result.truncated")
+            .text
+    }
+
+    #[test]
+    fn the_result_cap_leaves_a_result_at_exactly_the_limit_untouched() {
+        let prompts = prompts();
+        let text = "x".repeat(RESULT_CHAR_LIMIT);
+        assert_eq!(cap_result(&prompts, &text, "get_entity"), text);
+    }
+
+    #[test]
+    fn the_result_cap_cuts_at_a_line_boundary_and_appends_the_template() {
+        let prompts = prompts();
+        let line = format!("{} {}", "y".repeat(64), "z".repeat(8));
+        let text = (0..400)
+            .map(|index| format!("{line} {index:03}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let capped = cap_result(&prompts, &text, "get_entity");
+        let notice = truncated_notice(&prompts);
+        assert!(capped.ends_with(&notice), "the template is appended");
+        let head = capped
+            .strip_suffix(&notice)
+            .expect("the notice suffix")
+            .trim_end_matches('\n');
+        assert!(head.chars().count() <= RESULT_CHAR_LIMIT);
+        let full_line = format!("{line} ");
+        assert!(
+            head.lines()
+                .all(|candidate| candidate.starts_with(&full_line)),
+            "every line in the head is complete"
+        );
+    }
+
+    #[test]
+    fn the_result_cap_counts_characters_not_bytes() {
+        let prompts = prompts();
+        // 11,999 CJK characters are ~36 KB but still within a character budget.
+        let cjk = "字".repeat(RESULT_CHAR_LIMIT - 1);
+        assert_eq!(cap_result(&prompts, &cjk, "get_entity"), cjk);
+        // One character past the cap truncates; the cut is a valid UTF-8 boundary.
+        let longer = "字".repeat(RESULT_CHAR_LIMIT + 1);
+        let capped = cap_result(&prompts, &longer, "get_entity");
+        assert!(capped.contains('（'), "the rendered notice is there");
+        assert!(capped.chars().count() >= RESULT_CHAR_LIMIT);
+    }
+
+    #[test]
+    fn a_tool_owned_cap_is_not_cut_by_the_global_one() {
+        let prompts = prompts();
+        let text = "x".repeat(RESULT_CHAR_LIMIT + 500);
+        for tool in [
+            "read_chapter",
+            "read_draft",
+            "web_fetch",
+            "read_knowledge_entry",
+        ] {
+            assert_eq!(
+                cap_result(&prompts, &text, tool),
+                text,
+                "{tool} owns its cap"
+            );
+        }
     }
 }
