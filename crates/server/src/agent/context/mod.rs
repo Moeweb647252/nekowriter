@@ -173,7 +173,7 @@ async fn block_context(
                 chapter_context(conn, prompts, session.chapter_id, session.book_id).await?;
             let chapter = memory_chapter_view(chapter, plan);
             Ok(json!({
-                "memory": memory_context(conn, prompts, session, plan).await?,
+                "memory": memory_context(conn, prompts, session).await?,
                 "chapter": chapter,
             }))
         }
@@ -219,7 +219,7 @@ async fn block_context(
             "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
             "feedback": feedback_context(conn, prompts, session.chapter_id).await?,
         })),
-        "writer.kickoff.rollover" => rollover_context(conn, prompts, session, plan).await,
+        "writer.kickoff.rollover" => rollover_context(conn, prompts, session).await,
         "reviewer.kickoff" => Ok(json!({
             "book": book_context(conn, prompts, session.book_id).await?,
             "track": track_context(conn, prompts, session.track_id).await?,
@@ -457,7 +457,6 @@ async fn memory_context(
     conn: &impl ConnectionTrait,
     prompts: &PromptSet,
     session: &agent_sessions::Model,
-    plan: KickoffPlan,
 ) -> Result<MemoryContext, AppError> {
     let Some(chapter_id) = session.chapter_id else {
         return Ok(empty_memory_context());
@@ -472,7 +471,6 @@ async fn memory_context(
         return Ok(empty_memory_context());
     };
     let snapshot = crate::services::memory::snapshot(conn, prompts, &track, &chapter).await?;
-    let _ = plan;
     Ok(MemoryContext {
         is_first: snapshot.is_first,
         window_mid: snapshot.window_mid,
@@ -692,11 +690,14 @@ async fn previous_outline(
 }
 
 /// `writer.kickoff.rollover` (spec/03 §9): the continuation task of a superseded session.
+///
+/// The accepted revision plan travels here rather than through the block list, because the
+/// rollover blocks are fixed (`block.settings`, `block.memory`, `block.chapter_draft`, this task)
+/// and the plan only exists for a revising session.
 async fn rollover_context(
     conn: &impl ConnectionTrait,
     prompts: &PromptSet,
     session: &agent_sessions::Model,
-    plan: KickoffPlan,
 ) -> Result<Value, AppError> {
     let phase = session::phase_of(session);
     let revising = matches!(phase, Phase::RevisionPlanning | Phase::Revising);
@@ -717,10 +718,6 @@ async fn rollover_context(
         "granularity": granularity,
         "phase": if revising { "revising" } else { "drafting" },
     }))
-    .map(|value| {
-        let _ = plan;
-        value
-    })
 }
 
 /// The accepted revision plan of a revising session (spec/03 §9): the `submit_revision_plan`

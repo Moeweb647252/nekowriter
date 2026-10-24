@@ -10,6 +10,7 @@ pub mod registry;
 pub mod resolve;
 pub mod spec;
 pub mod test_tools;
+pub mod writer;
 
 use std::collections::BTreeMap;
 
@@ -276,6 +277,11 @@ pub struct ToolOutcome {
     pub effects: ToolEffects,
     /// `Some` when the call needs the author's input before it can finish.
     pub await_input: Option<AwaitInputKind>,
+    /// Deferred counter flag applied by `finalize` in the same transaction (spec/03 §8: a short
+    /// completion is withheld exactly once, remembered in `counters.finish_warned`). It travels on
+    /// the outcome because `finalize` writes the counters from the row it loaded before `execute`
+    /// ran, so a direct write inside `execute` would be overwritten.
+    pub finish_warned: bool,
 }
 
 impl ToolOutcome {
@@ -287,6 +293,7 @@ impl ToolOutcome {
             ui: Value::Null,
             effects: ToolEffects::default(),
             await_input: None,
+            finish_warned: false,
         }
     }
 
@@ -323,7 +330,14 @@ impl ToolOutcome {
             ui: Value::Null,
             effects: ToolEffects::default(),
             await_input: None,
+            finish_warned: false,
         }
+    }
+
+    /// Records that the one withheld completion was used (spec/03 §8, D-029).
+    pub fn with_finish_warned(mut self) -> Self {
+        self.finish_warned = true;
+        self
     }
 }
 

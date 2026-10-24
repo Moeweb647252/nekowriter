@@ -1067,6 +1067,9 @@ async fn finalize_inner(
     } else {
         counters.consecutive_tool_errors = 0;
     }
+    // A tool can consume a one-shot counter flag (e.g. the withheld short completion of
+    // spec/03 §8); it is applied here because this transaction writes the counters.
+    counters.finish_warned |= outcome.finish_warned;
 
     let status = if await_input.is_some() {
         ToolCallStatus::AwaitingInput

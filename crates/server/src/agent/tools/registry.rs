@@ -257,6 +257,11 @@ impl ToolRegistry {
     /// for them, because they are not part of any role list.
     pub fn new() -> Self {
         let mut handlers: BTreeMap<String, Arc<dyn ToolHandler>> = BTreeMap::new();
+        // The writer tools of M4 (spec/05 §4). They are registered unconditionally: a session that
+        // did not freeze one can still never run it (spec/03 §1.2, D-072).
+        for handler in super::writer::all() {
+            handlers.insert(handler.name().to_owned(), handler);
+        }
         for handler in super::test_tools::all() {
             handlers.insert(handler.name().to_owned(), handler);
         }
