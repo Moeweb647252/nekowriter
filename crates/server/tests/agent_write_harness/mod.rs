@@ -227,3 +227,95 @@ pub async fn resume_raw(
         .post(&format!("/api/sessions/{session_id}/resume"), body)
         .await
 }
+
+/// The session DTO as the API returns it (`GET /api/sessions/:id`).
+pub async fn session_dto(runtime: &Runtime, session_id: i32) -> serde_json::Value {
+    let (status, body) = runtime
+        .app
+        .get(&format!("/api/sessions/{session_id}"))
+        .await;
+    assert_eq!(status, 200, "session snapshot: {body}");
+    body["session"].clone()
+}
+
+/// Waits until the session has held a call whose id is not `exclude` (a NEW hold after a resume;
+/// the row keeps `held_tool_call_id` while the resume is in flight, so comparing ids is the only
+/// reliable way to see the next hold).
+pub async fn wait_for_new_hold(runtime: &Runtime, session_id: i32, exclude: i32) -> SessionRow {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let row = runtime.session_row(session_id).await;
+        if row.status == "held" && row.held_tool_call_id.is_some_and(|id| id != exclude) {
+            return row;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "session {session_id} did not hold a new call; it is {} (held {})",
+            row.status,
+            row.held_tool_call_id
+                .map_or_else(|| "-".to_owned(), |id| id.to_string())
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
+/// Waits until the session reaches `status`, returning its row.
+pub async fn wait_for_status(runtime: &Runtime, session_id: i32, status: &str) -> SessionRow {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let row = runtime.session_row(session_id).await;
+        if row.status == status {
+            return row;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "session {session_id} never reached {status}; it is {}",
+            row.status
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
+/// A runtime whose scripted provider fails every request with `error` (a provider that rejects the
+/// request outright, so no scripted step is consumed).
+pub async fn runtime_failing(error: nekowriter_llm::retry::LlmError) -> Runtime {
+    let runtime = runtime(Vec::new()).await;
+    let mut runtime = runtime;
+    let scripted = runtime.app.set_provider(
+        nekowriter_llm::mock::ScriptedProvider::new(Vec::new()).fail_when_exhausted(error),
+    );
+    runtime.scripted = scripted;
+    runtime
+}
+
+/// A runtime whose scripted provider serves `steps` and then fails every further request with
+/// `error` (a provider that rejects the request outright after the scripted ones).
+pub async fn runtime_with_failure(
+    steps: Vec<nekowriter_llm::mock::ScriptStep>,
+    error: nekowriter_llm::retry::LlmError,
+) -> Runtime {
+    let mut runtime = runtime(Vec::new()).await;
+    let scripted = runtime.app.set_provider(
+        nekowriter_llm::mock::ScriptedProvider::new(steps).fail_when_exhausted(error),
+    );
+    runtime.scripted = scripted;
+    runtime
+}
+
+/// Reads one integer from a query (`count(*) AS value`).
+pub async fn query_i64(runtime: &Runtime, sql: &str, values: Vec<sea_orm::Value>) -> i64 {
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+    let row = runtime
+        .app
+        .db()
+        .conn()
+        .query_one_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            sql,
+            values,
+        ))
+        .await
+        .expect("query")
+        .expect("row");
+    row.try_get::<i64>("", "value").expect("value")
+}

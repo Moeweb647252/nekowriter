@@ -501,6 +501,16 @@ async fn step_model(ctx: &RunnerCtx, session: &agent_sessions::Model) -> Result<
         Err(StepStop::Failed(error)) => {
             sink.flush();
             let fresh = session::load(state.db().conn(), session.id).await?;
+            // A context overflow rolls over when the session is eligible (spec/03 §9); otherwise
+            // it fails with `provider.context_overflow` and suggests a larger model. The runner
+            // has not persisted anything, so the rollover would retry the same request.
+            if error.code == CONTEXT_OVERFLOW_CODE {
+                let mut overflowed = fresh.clone();
+                overflowed.error = Some(crate::db::json::to_json(&*error).unwrap_or_default());
+                if rollover_needed(&overflowed) {
+                    return super::context::rollover(state, &fresh).await;
+                }
+            }
             let mut events = Vec::new();
             if fresh.status == SessionStatus::Running.as_str() {
                 session::set_error_running(state.db().conn(), session.id, &error).await?;
@@ -586,7 +596,7 @@ fn classify_llm_error(error: &nekowriter_llm::LlmError) -> SessionError {
             ("provider.unavailable", true)
         }
         LlmError::Auth(_) => ("provider.auth", false),
-        LlmError::ContextOverflow(_) => ("provider.context_overflow", false),
+        LlmError::ContextOverflow(_) => (CONTEXT_OVERFLOW_CODE, false),
         LlmError::BadRequest(_) | LlmError::NotFound(_) => ("provider.bad_request", false),
         LlmError::Provider(_) | LlmError::Protocol(_) => ("provider.bad_request", false),
         LlmError::Cancelled => ("internal", false),
@@ -1910,6 +1920,21 @@ fn nudge_key(kind: SessionKind, phase: Phase) -> &'static str {
 
 /// True when the next request would overflow the context window (spec/03 §9).
 pub fn rollover_needed(session: &agent_sessions::Model) -> bool {
+    // Eligibility first: only a writer that is drafting or revising rolls over (spec/03 §9).
+    let eligible = matches!(
+        (session::kind_of(session), session::phase_of(session)),
+        (SessionKind::ChapterWrite, Phase::Drafting)
+            | (SessionKind::ChapterRevise, Phase::Revising)
+    );
+    if !eligible {
+        return false;
+    }
+    // The previous request failed with a context overflow: the next step rolls over even when the
+    // token estimate says otherwise (spec/03 §9 "or the previous request failed with context
+    // overflow").
+    if session::error_of(session).is_some_and(|error| error.code == CONTEXT_OVERFLOW_CODE) {
+        return true;
+    }
     let Ok(snapshot) = json::from_json::<json::ModelSnapshot>(&session.model_snapshot) else {
         return false;
     };
@@ -1919,15 +1944,11 @@ pub fn rollover_needed(session: &agent_sessions::Model) -> bool {
         return false;
     }
     let projected = usage.last_prompt_tokens + i64::from(snapshot.max_output_tokens);
-    if projected <= (window as f64 * 0.85) as i64 {
-        return false;
-    }
-    matches!(
-        (session::kind_of(session), session::phase_of(session)),
-        (SessionKind::ChapterWrite, Phase::Drafting)
-            | (SessionKind::ChapterRevise, Phase::Revising)
-    )
+    projected > (window as f64 * 0.85) as i64
 }
+
+/// The session error code of a context overflow (spec/03 §5.7, §9).
+pub const CONTEXT_OVERFLOW_CODE: &str = "provider.context_overflow";
 
 // ───────────────────────────── shared helpers ─────────────────────────────
 
