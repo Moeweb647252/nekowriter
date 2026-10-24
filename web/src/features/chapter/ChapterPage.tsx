@@ -9,6 +9,7 @@ import { useChapter, usePatchChapter } from "@/api/hooks/chapters"
 import { ChapterHeader } from "@/features/chapter/ChapterHeader"
 import { ChapterText } from "@/features/chapter/ChapterText"
 import { OutlineTab } from "@/features/chapter/OutlineTab"
+import { ReviewTab } from "@/features/chapter/ReviewTab"
 import { HistoryTab } from "@/features/chapter/HistoryTab"
 import { EmptyState } from "@/components/common/EmptyState"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -17,7 +18,7 @@ import { keys } from "@/api/keys"
 import { useChapterDoc } from "@/stores/chapterDoc"
 import { isUnspaced } from "@/lib/language"
 
-const TABS = ["text", "outline", "history"] as const
+const TABS = ["text", "outline", "review", "history"] as const
 type Tab = (typeof TABS)[number]
 
 export default function ChapterPage() {
@@ -35,6 +36,8 @@ export default function ChapterPage() {
 
   const rawTab = searchParams.get("tab")
   const tab: Tab = TABS.includes(rawTab as Tab) ? (rawTab as Tab) : "text"
+  // A review issue jumps to the paragraph it quotes (`?tab=text&pid=p12`).
+  const focusPid = searchParams.get("pid") ?? undefined
   const [fullText, setFullText] = useState(false)
 
   // The store owns the open chapter's paragraphs (spec/11 §4.3). It is reloaded only when the
@@ -78,9 +81,10 @@ export default function ChapterPage() {
         settings={book.data.settings}
         language={book.data.writing_language}
         onRename={(title) => patchChapter.mutate({ title })}
-        onWriterStarted={() => {
+        onSessionStarted={() => {
           // The agent panel picks the chapter's open session from `open_sessions` (spec/10 §2.8).
           void queryClient.invalidateQueries({ queryKey: keys.chapters.detail(chapterId) })
+          void queryClient.invalidateQueries({ queryKey: keys.chapters.reviews(chapterId) })
         }}
       />
       <Tabs
@@ -96,6 +100,7 @@ export default function ChapterPage() {
           <TabsList variant="line">
             <TabsTrigger value="text">{t("chapter:tab_text")}</TabsTrigger>
             <TabsTrigger value="outline">{t("chapter:tab_outline")}</TabsTrigger>
+            <TabsTrigger value="review">{t("chapter:tab_review")}</TabsTrigger>
             <TabsTrigger value="history">{t("chapter:tab_history")}</TabsTrigger>
           </TabsList>
         </div>
@@ -106,10 +111,27 @@ export default function ChapterPage() {
             unspaced={unspaced}
             fullTextOpen={fullText}
             onFullTextOpenChange={setFullText}
+            focusPid={tab === "text" ? focusPid : undefined}
           />
         </TabsContent>
         <TabsContent value="outline" className="min-h-0 p-6">
           <OutlineTab chapter={document} bookId={bookId} unspaced={unspaced} />
+        </TabsContent>
+        <TabsContent value="review" className="min-h-0 p-6">
+          <ReviewTab
+            chapter={document}
+            bookId={bookId}
+            onSessionStarted={() => {
+              void queryClient.invalidateQueries({ queryKey: keys.chapters.detail(chapterId) })
+              void queryClient.invalidateQueries({ queryKey: keys.chapters.reviews(chapterId) })
+            }}
+            onFocusPid={(pid) => {
+              const params = new URLSearchParams(searchParams)
+              params.set("tab", "text")
+              params.set("pid", pid)
+              setSearchParams(params, { replace: true })
+            }}
+          />
         </TabsContent>
         <TabsContent value="history" className="min-h-0 p-6">
           <HistoryTab chapter={document} bookId={bookId} unspaced={unspaced} />

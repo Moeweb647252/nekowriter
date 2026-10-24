@@ -6,7 +6,10 @@ import { useTranslation } from "react-i18next"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
+import { useBook } from "@/api/hooks/books"
 import { usePutSettingDoc, useSettingDocHistory, useSettingDocs } from "@/api/hooks/settings-materials"
+import { useProposals } from "@/api/hooks/reviews"
+import { ProposalCard } from "@/features/proposals/ProposalCard"
 import { useErrorToast } from "@/components/common/ErrorToast"
 import { EmptyState } from "@/components/common/EmptyState"
 import { Button } from "@/components/ui/button"
@@ -14,6 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { formatDateTime } from "@/lib/format"
+import { isUnspaced } from "@/lib/language"
 
 /** The document kinds this page renders. */
 const KINDS = ["outline", "world", "protagonist"] as const
@@ -38,6 +42,13 @@ export function SettingDocEditor({ bookId, kind }: SettingDocEditorProps) {
   const docs = useSettingDocs(bookId)
   const history = useSettingDocHistory(bookId, kind)
   const put = usePutSettingDoc(bookId, kind)
+  const book = useBook(bookId)
+  const proposals = useProposals(bookId, "pending")
+  // Proposals for this document are shown inline above the editor (PROJECT §8.9).
+  const pending = (proposals.data ?? []).filter(
+    (proposal) => proposal.target_type === "setting_doc" && proposal.target_kind === kind,
+  )
+  const unspaced = isUnspaced(book.data?.writing_language ?? "en")
   const document = docs.data?.find((candidate) => candidate.kind === kind)
   // The draft is keyed by revision, so a background refetch never overwrites unsaved typing and
   // no effect has to copy the query into state.
@@ -105,6 +116,23 @@ export function SettingDocEditor({ bookId, kind }: SettingDocEditorProps) {
           </Button>
         </div>
       </header>
+
+      {pending.length === 0 ? null : (
+        <section className="space-y-2">
+          <h2 className="text-sm font-medium">{t("book:proposal.inline_title")}</h2>
+          <div className="space-y-2">
+            {pending.map((proposal) => (
+              <ProposalCard
+                key={proposal.id}
+                proposal={proposal}
+                bookId={bookId}
+                unspaced={unspaced}
+                compact
+              />
+            ))}
+          </div>
+        </section>
+      )}
 
       <Tabs defaultValue="edit">
         <TabsList variant="line">

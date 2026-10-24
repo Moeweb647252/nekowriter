@@ -56,6 +56,10 @@ export const keys = {
       ["canon", "memory", bookId, position ?? "default"] as const,
     appearances: (chapterId: number) => ["canon", "appearances", chapterId] as const,
   },
+  proposals: {
+    list: (bookId: number, status?: string) =>
+      ["proposals", "list", bookId, status ?? "all"] as const,
+  },
   sessions: {
     list: (bookId: number, filters?: string) =>
       ["sessions", "list", bookId, filters ?? ""] as const,

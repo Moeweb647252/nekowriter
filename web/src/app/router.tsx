@@ -142,6 +142,14 @@ const router = createBrowserRouter([
             },
           },
           {
+            // The archivist's setting proposals (PROJECT §8.5, spec/06 §5).
+            path: "proposals",
+            lazy: async () => {
+              const module = await import("@/features/proposals/ProposalsPage")
+              return { Component: module.default }
+            },
+          },
+          {
             // The book-level prompt overrides (PROJECT §8.11).
             path: "prompts",
             lazy: async () => {

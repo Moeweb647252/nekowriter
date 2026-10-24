@@ -1,5 +1,5 @@
 /** The reading column with in-place paragraph editing and a full-text editor (PROJECT §8.5). */
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { AnimatePresence, motion } from "motion/react"
 
@@ -27,6 +27,8 @@ export type ChapterTextProps = {
   unspaced: boolean
   fullTextOpen: boolean
   onFullTextOpenChange: (open: boolean) => void
+  /** A pid to scroll to and highlight (a review issue jumped here). */
+  focusPid?: string
 }
 
 /** Renders the open document; a click edits one paragraph, the toolbar switches to full text. */
@@ -36,6 +38,7 @@ export function ChapterText({
   unspaced,
   fullTextOpen,
   onFullTextOpenChange,
+  focusPid,
 }: ChapterTextProps) {
   const { t } = useTranslation()
   const showError = useErrorToast()
@@ -118,6 +121,7 @@ export function ChapterText({
                     : undefined
                 }
                 onlyParagraph={paragraphs.length === 1}
+                focus={paragraph.pid === focusPid}
                 highlight={highlights[paragraph.pid]?.kind}
                 onHighlightEnd={clearHighlight}
                 saving={patch.isPending}
@@ -179,6 +183,8 @@ type ParagraphProps = {
   ghost?: Preview
   /** The document has exactly one paragraph, which may not be deleted. */
   onlyParagraph: boolean
+  /** True when a review issue jumped to this paragraph. */
+  focus?: boolean
   highlight?: "inserted" | "updated"
   saving: boolean
   locked: boolean
@@ -197,6 +203,7 @@ function Paragraph({
   text,
   ghost,
   onlyParagraph,
+  focus,
   highlight,
   saving,
   locked,
@@ -207,6 +214,12 @@ function Paragraph({
 }: ParagraphProps) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(text)
+
+  useEffect(() => {
+    if (focus === true) {
+      document.querySelector(`[data-pid="${pid}"]`)?.scrollIntoView({ block: "center" })
+    }
+  }, [focus, pid])
 
   if (editing) {
     return (
@@ -299,6 +312,7 @@ function Paragraph({
         "cursor-text rounded-sm",
         highlight === "inserted" && "bg-status-done/10",
         highlight === "updated" && "bg-status-running/10",
+        focus === true && "bg-amber-500/10 ring-2 ring-amber-500/40",
       )}
     >
       {text}

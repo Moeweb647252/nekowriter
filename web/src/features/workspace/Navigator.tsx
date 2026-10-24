@@ -21,6 +21,7 @@ import {
 import { CSS } from "@dnd-kit/utilities"
 import {
   Brain,
+  ClipboardCheck,
   FileClock,
   FileText,
   GripVertical,
@@ -35,6 +36,7 @@ import {
   Users,
 } from "lucide-react"
 
+import { useProposals } from "@/api/hooks/reviews"
 import { useChapters, useCreateChapter, useReorderChapters, useTracks } from "@/api/hooks/tracks"
 import type { BookDto } from "@/api/gen/BookDto"
 import type { ChapterListItemDto } from "@/api/gen/ChapterListItemDto"
@@ -98,6 +100,8 @@ export function Navigator({ book }: NavigatorProps) {
   const { t } = useTranslation()
   const tracks = useTracks(book.id)
   const mainTrack = tracks.data?.find((track) => track.kind === "main")
+  // The pending proposal count is the navigator badge (PROJECT §8.5, spec/06 §5).
+  const pendingProposals = useProposals(book.id, "pending").data?.length ?? 0
 
   return (
     <nav className="flex h-full flex-col overflow-y-auto border-r bg-sidebar/40 p-2">
@@ -151,6 +155,12 @@ export function Navigator({ book }: NavigatorProps) {
         to={`/books/${book.id}/canon/changes`}
         icon={FileClock}
         label={t("book:changes")}
+      />
+      <NavLink
+        to={`/books/${book.id}/proposals`}
+        icon={ClipboardCheck}
+        label={t("book:proposals")}
+        badge={pendingProposals}
       />
       <SectionTitle>{t("book:book_settings")}</SectionTitle>
       <NavLink

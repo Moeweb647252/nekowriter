@@ -4,7 +4,14 @@ import { useTranslation } from "react-i18next"
 import { useQueryClient } from "@tanstack/react-query"
 
 import { useApproveChapter, useSubmitChapter } from "@/api/hooks/chapters"
+import {
+  useMaintainChapter,
+  useResyncChapter,
+  useReviews,
+  useStartReview,
+} from "@/api/hooks/reviews"
 import { WriteDialog } from "@/features/chapter/WriteDialog"
+import { SendBackDialog } from "@/features/chapter/SendBackDialog"
 import { useErrorToast, useWarningToasts } from "@/components/common/ErrorToast"
 import { StatusBadge } from "@/components/common/StatusBadge"
 import { WordCount } from "@/components/common/WordCount"
@@ -20,8 +27,8 @@ export type ChapterHeaderProps = {
   settings: BookSettings
   language: string
   onRename: (title: string) => void
-  /** Called with the new session id after the writer started (the panel focuses it). */
-  onWriterStarted?: (sessionId: number) => void
+  /** Called with a new session id (writer, reviewer or archivist) so the panel can focus it. */
+  onSessionStarted?: (sessionId: number) => void
 }
 
 /** Name/status/actions of one chapter. */
@@ -30,7 +37,7 @@ export function ChapterHeader({
   settings,
   language,
   onRename,
-  onWriterStarted,
+  onSessionStarted,
 }: ChapterHeaderProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
@@ -38,9 +45,14 @@ export function ChapterHeader({
   const showWarnings = useWarningToasts()
   const submit = useSubmitChapter(chapter.id, chapter.book_id)
   const approve = useApproveChapter(chapter.id, chapter.book_id)
+  const reviews = useReviews(chapter.id)
+  const startReview = useStartReview(chapter.id, chapter.book_id)
+  const maintain = useMaintainChapter(chapter.id, chapter.book_id)
+  const resync = useResyncChapter(chapter.id, chapter.book_id)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(chapter.title)
   const [writeOpen, setWriteOpen] = useState(false)
+  const [sendBackOpen, setSendBackOpen] = useState(false)
 
   const save = () => {
     setEditing(false)
@@ -50,9 +62,14 @@ export function ChapterHeader({
     }
   }
 
-  // Status actions from PROJECT §8.5; drafting/revising are driven by the agent panel in M4.
+  // Status actions from PROJECT §8.5; drafting/revising are driven by the agent panel.
   const canSubmit = chapter.status === "drafting" || chapter.status === "revising"
   const canApprove = chapter.status === "in_review"
+  const latestReport = reviews.data?.reports[0]
+  const canMaintain =
+    chapter.status === "official" &&
+    (chapter.canon_status === "pending" || chapter.canon_status === "failed")
+  const canResync = chapter.status === "official" && chapter.canon_status === "stale"
 
   return (
     <header className="space-y-2 border-b px-6 py-4">
@@ -130,20 +147,88 @@ export function ChapterHeader({
           </Button>
         ) : null}
         {canApprove ? (
+          <>
+            <Button
+              size="sm"
+              disabled={approve.isPending}
+              onClick={() =>
+                approve.mutate(undefined, {
+                  onSuccess: ({ warnings, maintenance_session_id }) => {
+                    showWarnings(warnings)
+                    if (maintenance_session_id !== undefined && maintenance_session_id !== null) {
+                      onSessionStarted?.(maintenance_session_id)
+                    }
+                  },
+                  onError: showError,
+                })
+              }
+            >
+              {t("chapter:approve")}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={chapter.content.paragraphs.length === 0}
+              onClick={() => setSendBackOpen(true)}
+            >
+              {t("chapter:send_back")}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={startReview.isPending}
+              onClick={() =>
+                startReview.mutate(undefined, {
+                  onSuccess: (response) => onSessionStarted?.(response.session_id),
+                  onError: showError,
+                })
+              }
+            >
+              {t("chapter:review.ask_reviewer")}
+            </Button>
+          </>
+        ) : null}
+        {canMaintain ? (
           <Button
             size="sm"
-            disabled={approve.isPending}
+            variant="outline"
+            disabled={maintain.isPending}
             onClick={() =>
-              approve.mutate(undefined, {
-                onSuccess: ({ warnings }) => showWarnings(warnings),
+              maintain.mutate(undefined, {
+                onSuccess: (response) => onSessionStarted?.(response.session_id),
                 onError: showError,
               })
             }
           >
-            {t("chapter:approve")}
+            {chapter.canon_status === "failed"
+              ? t("chapter:review.retry_maintenance")
+              : t("chapter:maintain")}
+          </Button>
+        ) : null}
+        {canResync ? (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={resync.isPending}
+            onClick={() =>
+              resync.mutate(undefined, {
+                onSuccess: (response) => onSessionStarted?.(response.session_id),
+                onError: showError,
+              })
+            }
+          >
+            {t("chapter:resync")}
           </Button>
         ) : null}
       </div>
+      <SendBackDialog
+        chapterId={chapter.id}
+        bookId={chapter.book_id}
+        open={sendBackOpen}
+        onOpenChange={setSendBackOpen}
+        report={latestReport}
+        onSentBack={(sessionId) => onSessionStarted?.(sessionId)}
+      />
       <WriteDialog
         chapterId={chapter.id}
         bookId={chapter.book_id}
@@ -151,7 +236,7 @@ export function ChapterHeader({
         guidance={chapter.guidance}
         open={writeOpen}
         onOpenChange={setWriteOpen}
-        onStarted={(sessionId) => onWriterStarted?.(sessionId)}
+        onStarted={(sessionId) => onSessionStarted?.(sessionId)}
       />
     </header>
   )
