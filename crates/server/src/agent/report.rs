@@ -77,8 +77,82 @@ impl ChapterEditReport {
             && !self.notes_changed
     }
 
+    /// The rendered length of the paragraph part of the report (spec/03 §7).
+    ///
+    /// The spec measures the **report's** paragraph part, so the measure is the text the template
+    /// actually prints for the modified/deleted/inserted lines: the prompt punctuation lives in
+    /// `prompts/notices.toml` and must not be duplicated in code. The trick is to render twice
+    /// with the same context except for the paragraph lists, and with a tail change present in
+    /// both so the "no change" branch never fires: the difference is exactly the paragraph lines.
+    pub fn paragraph_part_chars(
+        &self,
+        prompts: &PromptSet,
+    ) -> Result<usize, crate::error::AppError> {
+        let mut probe = self.clone();
+        probe.compact = false;
+        probe.outline_changed = false;
+        probe.notes_changed = false;
+        probe.tail_changed = true;
+        probe.tail_open = true;
+        let with_paragraphs = self.render_with(prompts, &probe)?.chars().count();
+        let mut bare = probe.clone();
+        bare.modified.clear();
+        bare.deleted.clear();
+        bare.inserted.clear();
+        let without = self.render_with(prompts, &bare)?.chars().count();
+        Ok(with_paragraphs.saturating_sub(without))
+    }
+
+    /// True when the compact variant replaces the paragraph part (spec/03 §7).
+    pub fn is_compact(&self, prompts: &PromptSet) -> Result<bool, crate::error::AppError> {
+        if self.compact {
+            return Ok(true);
+        }
+        Ok(self.paragraph_part_chars(prompts)? > COMPACT_THRESHOLD)
+    }
+
+    /// Renders `notice.user_edits` for a variant of this report (compaction measurement).
+    fn render_with(
+        &self,
+        prompts: &PromptSet,
+        variant: &ChapterEditReport,
+    ) -> Result<String, crate::error::AppError> {
+        let context = json!({
+            "compact": variant.compact,
+            "counts": EditCountsContext {
+                modified: variant.modified.len() as i32,
+                deleted: variant.deleted.len() as i32,
+                inserted: variant.inserted.len() as i32,
+            },
+            "modified": if variant.compact { Value::Array(Vec::new()) } else { clone_json(&variant.modified) },
+            "deleted": if variant.compact { Value::Array(Vec::new()) } else { clone_json(&variant.deleted) },
+            "inserted": if variant.compact { Value::Array(Vec::new()) } else { clone_json(&variant.inserted) },
+            "tail_changed": variant.tail_changed,
+            "tail_open": variant.tail_open,
+            "outline_changed": variant.outline_changed,
+            "outline": variant.outline,
+            "notes_changed": variant.notes_changed,
+            "reference_notes": variant.reference_notes,
+        });
+        prompts
+            .render_value(
+                "notice.user_edits",
+                crate::prompts::template_value(&context),
+            )
+            .map(|rendered| rendered.text)
+            .map_err(|err| err.into_app_error())
+    }
+
     /// Renders `notice.user_edits` (spec/03 §7). Labels are rendered by the registry.
+    ///
+    /// Above 4,000 characters of paragraph report the compact variant replaces the paragraph part
+    /// with counts and the instruction to call `read_draft`.
     pub fn render(&self, prompts: &PromptSet) -> Result<String, crate::error::AppError> {
+        if self.is_compact(prompts)? {
+            let mut compact = self.clone();
+            compact.compact = true;
+            return compact.render_with(prompts, &compact);
+        }
         let context = json!({
             "compact": self.compact,
             "counts": EditCountsContext {
@@ -169,7 +243,7 @@ pub fn chapter_report(snapshot: &ViewSnapshot, current: &ChapterState) -> Chapte
         previous = Some(paragraph.pid.clone());
     }
 
-    let mut report = ChapterEditReport {
+    ChapterEditReport {
         modified,
         deleted,
         inserted,
@@ -179,31 +253,11 @@ pub fn chapter_report(snapshot: &ViewSnapshot, current: &ChapterState) -> Chapte
         outline: current.outline.clone(),
         notes_changed: reference_notes != &current.reference_notes,
         reference_notes: current.reference_notes.clone(),
+        // The compaction decision needs the rendered template, so it is made by `render`/
+        // `is_compact` (spec/03 §7); `chapter_report` stays a pure comparison.
         compact: false,
         paragraph_chars: 0,
-    };
-    let paragraph_chars = paragraph_part_chars(&report);
-    report.paragraph_chars = paragraph_chars;
-    // Above 4,000 characters the compact variant replaces the paragraph part (spec/03 §7).
-    report.compact = paragraph_chars > COMPACT_THRESHOLD;
-    report
-}
-
-/// The length of the paragraph part of the report, as the template renders it.
-fn paragraph_part_chars(report: &ChapterEditReport) -> usize {
-    let mut total = 0usize;
-    for entry in &report.modified {
-        total += entry.pid.chars().count() + entry.old.chars().count() + entry.new.chars().count();
     }
-    for entry in &report.deleted {
-        total += entry.pid.chars().count() + entry.old.chars().count();
-    }
-    for entry in &report.inserted {
-        total += entry.pid.chars().count()
-            + entry.text.chars().count()
-            + entry.after.as_deref().unwrap_or_default().chars().count();
-    }
-    total
 }
 
 /// A report for a chapter the session never saw a snapshot of (defensive: nothing to report).
@@ -677,10 +731,13 @@ mod tests {
             .collect();
         let report = chapter_report(&snapshot(&before_refs, false), &state(&after_refs, false));
         assert_eq!(report.modified.len(), 60);
+        let prompts = crate::prompts::PromptRegistry::embedded()
+            .expect("pack")
+            .defaults_only();
         assert!(
-            report.compact,
+            report.is_compact(&prompts).expect("compaction"),
             "paragraph part was {} characters",
-            report.paragraph_chars
+            report.paragraph_part_chars(&prompts).expect("chars")
         );
     }
 
@@ -690,7 +747,69 @@ mod tests {
             &snapshot(&[("p1", "old")], false),
             &state(&[("p1", "new")], false),
         );
-        assert!(!report.compact);
+        let prompts = crate::prompts::PromptRegistry::embedded()
+            .expect("pack")
+            .defaults_only();
+        assert!(!report.is_compact(&prompts).expect("compaction"));
+    }
+
+    /// spec/03 §7: the compact variant replaces the paragraph part only above 4,000 characters.
+    /// The boundary is exclusive, and the measure is the rendered report (prompt punctuation
+    /// included), not a character sum computed in code.
+    #[test]
+    fn the_compaction_threshold_is_the_rendered_paragraph_part() {
+        let prompts = crate::prompts::PromptRegistry::embedded()
+            .expect("pack")
+            .defaults_only();
+        // One inserted paragraph whose rendered line is exactly the threshold is NOT compact.
+        let candidate = || {
+            let mut report = chapter_report(&snapshot(&[], false), &state(&[("p1", "")], false));
+            report.inserted.clear();
+            report.modified.clear();
+            report.deleted.clear();
+            report.tail_changed = true;
+            report
+        };
+        // Measure the overhead of one inserted line by fixing the text length.
+        let mut probe = candidate();
+        probe.inserted.push(InsertedParagraphContext {
+            pid: "p1".to_owned(),
+            after: None,
+            text: String::new(),
+        });
+        let overhead = probe.paragraph_part_chars(&prompts).expect("chars");
+        assert!(overhead > 0, "an inserted line prints something");
+        // The largest text that still fits, and one more character.
+        let fits = COMPACT_THRESHOLD.saturating_sub(overhead);
+        let mut at_limit = candidate();
+        at_limit.inserted.push(InsertedParagraphContext {
+            pid: "p1".to_owned(),
+            after: None,
+            text: "x".repeat(fits),
+        });
+        assert_eq!(
+            at_limit.paragraph_part_chars(&prompts).expect("chars"),
+            COMPACT_THRESHOLD,
+            "the probe measures exactly the rendered line length"
+        );
+        assert!(
+            !at_limit.is_compact(&prompts).expect("compaction"),
+            "exactly 4,000 characters is still detailed"
+        );
+        let mut over = candidate();
+        over.inserted.push(InsertedParagraphContext {
+            pid: "p1".to_owned(),
+            after: None,
+            text: "x".repeat(fits + 1),
+        });
+        assert_eq!(
+            over.paragraph_part_chars(&prompts).expect("chars"),
+            COMPACT_THRESHOLD + 1
+        );
+        assert!(
+            over.is_compact(&prompts).expect("compaction"),
+            "4,001 characters switches to the compact variant"
+        );
     }
 
     #[test]

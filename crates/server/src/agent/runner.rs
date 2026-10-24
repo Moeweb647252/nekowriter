@@ -1026,8 +1026,15 @@ async fn finalize_inner(
     // The field is public API for later milestones (M4 appends its reference notes notice).
     let _ = &prompts;
 
-    // Effect notices are appended by the transaction that finalizes the call (spec/03 §5.3).
-    if let Some(notice_key) = phase_notice(&call.name)
+    let hold = hold_condition(session, call, outcome);
+    let await_input = outcome.await_input;
+    let deferred = hold || await_input.is_some();
+
+    // Effect notices are appended by the transaction that finalizes the call (spec/03 §5.3):
+    // while the call is held its effects are not applied yet, so its acceptance notice waits for
+    // the resume that applies them.
+    if !deferred
+        && let Some(notice_key) = phase_notice(&call.name)
         && outcome.effects.phase_to.is_some()
     {
         let granularity = granularity_value(session, outcome, prompts);
@@ -1039,9 +1046,6 @@ async fn finalize_inner(
             });
         }
     }
-
-    let hold = hold_condition(session, call, outcome);
-    let await_input = outcome.await_input;
 
     // Counters (spec/03 §5.2).
     let mut counters = session::counters_of(session);
@@ -1080,7 +1084,6 @@ async fn finalize_inner(
     } else {
         ToolCallStatus::Done
     };
-    let deferred = matches!(status, ToolCallStatus::Held | ToolCallStatus::AwaitingInput);
     let stored_effects = if deferred {
         json::to_json(&outcome.effects).map_err(|err| AppError::internal(err.to_string()))?
     } else {
@@ -1120,7 +1123,9 @@ async fn finalize_inner(
         sets.push("held_tool_call_id = ?".to_owned());
         values.push(Some(call.id).into());
     }
-    if let Some(phase) = outcome.effects.phase_to {
+    // Deferred effects are applied by the transaction that *finalizes* the call (spec/03 §5.4):
+    // a held or awaiting call only stores them, so its phase change must not happen yet.
+    if !deferred && let Some(phase) = outcome.effects.phase_to {
         sets.push("phase = ?".to_owned());
         values.push(phase.as_str().to_owned().into());
     }
@@ -1267,7 +1272,10 @@ async fn run_completion_handler(
 }
 
 /// The notice key of a phase-changing effect (spec/03 §5.3 slot 1).
-fn phase_notice(tool: &str) -> Option<&'static str> {
+///
+/// Public inside the crate because the resume path appends the same notice when it applies a held
+/// call's kept effects (spec/03 §5.4).
+pub fn phase_notice(tool: &str) -> Option<&'static str> {
     match tool {
         "submit_outline" => Some("writer.notice.outline_accepted"),
         "submit_revision_plan" => Some("writer.notice.revision_plan_accepted"),

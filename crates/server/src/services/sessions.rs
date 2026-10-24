@@ -758,6 +758,59 @@ async fn resume_inner(
             if revoke {
                 effects = crate::db::json::ToolEffects::default();
             }
+            // NOTE: the call row is written after the kept effects are resolved, because applying
+            // a phase change appends its acceptance notice to `appendices` (spec/03 §5.3 slot 1).
+            // Apply the kept effects (a phase change) when no feedback revoked them. This is the
+            // transaction that finalizes the call, so the acceptance notice is appended here
+            // (spec/03 §5.3 slot 1, §5.4).
+            if !revoke {
+                if let Some(phase) = effects.phase_to {
+                    if let Some(notice_key) = phase_notice(&held.name) {
+                        let content: crate::db::json::ChapterContent =
+                            crate::db::json::from_json_or_default(
+                                &chapters::Entity::find_by_id(
+                                    session.chapter_id.unwrap_or_default(),
+                                )
+                                .one(tx)
+                                .await?
+                                .map(|chapter| chapter.content)
+                                .unwrap_or_else(|| "{}".to_owned()),
+                            );
+                        let granularity = crate::agent::context::granularity_context(
+                            &prompts,
+                            session::granularity_of(&session),
+                            phase,
+                            &content,
+                        );
+                        let rendered = prompts
+                            .render_value(
+                                notice_key,
+                                crate::prompts::template_value(&json!({
+                                    "granularity": granularity,
+                                })),
+                            )
+                            .map_err(|err| err.into_app_error())?;
+                        appendices.push(crate::db::json::Appendix {
+                            kind: crate::db::json::AppendixKind::EffectNotice,
+                            text: rendered.text,
+                            inbox_id: None,
+                        });
+                    }
+                    agent_sessions::ActiveModel {
+                        id: Set(session_id),
+                        phase: Set(phase.as_str().to_owned()),
+                        ..Default::default()
+                    }
+                    .update(tx)
+                    .await?;
+                }
+                if let Some(completion) = effects.complete {
+                    let mut completion_events =
+                        crate::agent::context::apply_completion(tx, &session, &held, completion)
+                            .await?;
+                    events.append(&mut completion_events);
+                }
+            }
             agent_tool_calls::ActiveModel {
                 id: Set(held.id),
                 status: Set(if held.is_error != 0 {
@@ -776,24 +829,6 @@ async fn resume_inner(
             }
             .update(tx)
             .await?;
-            // Apply the kept effects (a phase change) when no feedback revoked them.
-            if !revoke {
-                if let Some(phase) = effects.phase_to {
-                    agent_sessions::ActiveModel {
-                        id: Set(session_id),
-                        phase: Set(phase.as_str().to_owned()),
-                        ..Default::default()
-                    }
-                    .update(tx)
-                    .await?;
-                }
-                if let Some(completion) = effects.complete {
-                    let mut completion_events =
-                        crate::agent::context::apply_completion(tx, &session, &held, completion)
-                            .await?;
-                    events.append(&mut completion_events);
-                }
-            }
             held = runner::load_call(tx, held.id).await?;
             events.push(ServerEvent::SessionToolCall {
                 session_id,
@@ -834,6 +869,11 @@ async fn resume_inner(
         events,
         session::to_dto(tx, &session::load(tx, session_id).await?, Vec::new()).await?,
     ))
+}
+
+/// The acceptance notice of a phase-changing tool (spec/03 §5.3 slot 1).
+fn phase_notice(tool: &str) -> Option<&'static str> {
+    crate::agent::runner::phase_notice(tool)
 }
 
 /// The rejection notice of a held call whose effects were revoked (spec/03 §5.4).
@@ -1165,9 +1205,11 @@ pub async fn patch(
             session::guard_columns(tx, session_id, &session.status, &sets.join(", "), values)
                 .await?;
             // A granularity change during drafting or revising queues the notice (spec/03 §8).
+            // The notice names the open tail when there is one, because the new mode's first
+            // segment continues it (spec/03 §8 "open tail").
             if let Some(granularity) = notice {
                 let prompts = state_prompts(&state, &session).await?;
-                let (tail_open, last_pid) = (false, String::new());
+                let (tail_open, last_pid) = tail_state(tx, session.chapter_id).await?;
                 let key = granularity.as_str();
                 let context = json!({
                     "granularity": {
@@ -1527,6 +1569,30 @@ async fn insert_inbox(
     }
     .insert(tx)
     .await?)
+}
+
+/// The tail state and last pid of a session's chapter, for the granularity contexts
+/// (spec/03 §8: every notice says whether the tail is open).
+async fn tail_state(
+    conn: &impl sea_orm::ConnectionTrait,
+    chapter_id: Option<i32>,
+) -> Result<(bool, String), AppError> {
+    let Some(chapter_id) = chapter_id else {
+        return Ok((false, String::new()));
+    };
+    let Some(chapter) = chapters::Entity::find_by_id(chapter_id).one(conn).await? else {
+        return Ok((false, String::new()));
+    };
+    let content: crate::db::json::ChapterContent =
+        crate::db::json::from_json_or_default(&chapter.content);
+    Ok((
+        content.tail_open,
+        content
+            .paragraphs
+            .last()
+            .map(|paragraph| paragraph.pid.clone())
+            .unwrap_or_default(),
+    ))
 }
 
 /// The prompt set of a session's book.

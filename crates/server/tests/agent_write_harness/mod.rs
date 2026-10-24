@@ -5,6 +5,9 @@
 //! path, so the frozen tool list, the kickoff and the phase machine are the shipped ones rather
 //! than a debug stand-in.
 
+// The harness is shared by several test binaries, and each uses a different subset of it.
+#![allow(dead_code)]
+
 #[path = "../agent_harness/mod.rs"]
 pub mod base;
 
@@ -158,4 +161,69 @@ pub async fn call_ui(runtime: &Runtime, session_id: i32, name: &str) -> serde_js
 pub async fn phase_of(runtime: &Runtime, session_id: i32) -> Phase {
     let row = runtime.session_row(session_id).await;
     Phase::from_str_opt(&row.phase).expect("phase")
+}
+
+/// Resumes every hold the session makes until it reaches a terminal status, collecting the held
+/// calls in order. With `auto_pause` on, every write tool holds, so a test that wants the whole
+/// script executed must approve each one (spec/03 §15 test 3).
+pub async fn resume_until_done(
+    runtime: &Runtime,
+    session_id: i32,
+    feedback: Option<&str>,
+) -> Vec<i32> {
+    let mut held = Vec::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let row = runtime.session_row(session_id).await;
+        match row.status.as_str() {
+            "held" => {
+                let call_id = row.held_tool_call_id.expect("a held call id");
+                held.push(call_id);
+                let body = match feedback {
+                    Some(text) => serde_json::json!({ "feedback": text }),
+                    None => serde_json::json!({}),
+                };
+                let (status, response) = runtime
+                    .app
+                    .post(&format!("/api/sessions/{session_id}/resume"), body)
+                    .await;
+                assert_eq!(status, 200, "resume {call_id}: {response}");
+            }
+            "paused" => {
+                let (status, response) = runtime
+                    .app
+                    .post(
+                        &format!("/api/sessions/{session_id}/resume"),
+                        serde_json::json!({}),
+                    )
+                    .await;
+                assert_eq!(status, 200, "resume paused: {response}");
+            }
+            "completed" | "abandoned" | "superseded" => return held,
+            _ => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "session {session_id} did not finish; it is {}",
+                    row.status
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        }
+    }
+}
+
+/// `POST /api/sessions/:id/resume`, returning the raw status and body.
+pub async fn resume_raw(
+    runtime: &Runtime,
+    session_id: i32,
+    feedback: Option<&str>,
+) -> (axum::http::StatusCode, serde_json::Value) {
+    let body = match feedback {
+        Some(text) => serde_json::json!({ "feedback": text }),
+        None => serde_json::json!({}),
+    };
+    runtime
+        .app
+        .post(&format!("/api/sessions/{session_id}/resume"), body)
+        .await
 }
