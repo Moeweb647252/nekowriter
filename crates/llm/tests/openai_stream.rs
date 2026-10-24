@@ -231,6 +231,11 @@ async fn in_stream_error_object_is_a_provider_error() {
         .await
         .expect_err("error");
     assert!(matches!(error, LlmError::Provider(_)), "got {error:?}");
+    // The error belongs to this request, so it carries the response's request id (spec/04 §4).
+    assert!(
+        error.to_string().contains("req-123"),
+        "the request id must be captured: {error}"
+    );
 }
 
 #[tokio::test]

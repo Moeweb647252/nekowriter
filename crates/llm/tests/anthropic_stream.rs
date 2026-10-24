@@ -178,6 +178,23 @@ async fn overloaded_error_event() {
     assert!(error.retryable());
 }
 
+/// An in-stream error object is still an error of this HTTP request, so it carries the request
+/// id of the response like the status-based errors do (spec/04 §4).
+#[tokio::test]
+async fn in_stream_errors_carry_the_request_id() {
+    let server = serve("anthropic_invalid_request.sse").await;
+    let client = AnthropicClient::new(config(&server.uri())).expect("client");
+    let error = client
+        .run(&request(), &mut |_event| {})
+        .await
+        .expect_err("invalid request");
+    assert!(matches!(error, LlmError::BadRequest(_)), "got {error:?}");
+    assert!(
+        error.to_string().contains("msg_req_1"),
+        "the request id must be captured: {error}"
+    );
+}
+
 #[tokio::test]
 async fn list_models_maps_anthropic_shape() {
     let server = MockServer::start().await;
@@ -545,4 +562,21 @@ async fn eager_input_streaming_can_be_disabled() {
     };
     let body = build_body(&request(), &options);
     assert_eq!(body["tools"][0]["eager_input_streaming"], false);
+}
+
+/// The API rejects empty text blocks, and the connection test sends no system prompt
+/// (spec/04 §8), so an empty system prompt omits the field instead of sending `text: ""`.
+#[test]
+fn an_empty_system_prompt_is_omitted() {
+    let ping = ChatRequest::ping("claude-test", "");
+    let body = build_body(&ping, &ModelOptions::default());
+    assert!(
+        body.get("system").is_none(),
+        "an empty system prompt must not become an empty text block: {body}"
+    );
+    // A real system prompt keeps its cache breakpoint with the session TTL.
+    let body = build_body(&request(), &ModelOptions::default());
+    assert_eq!(body["system"][0]["type"], "text");
+    assert_eq!(body["system"][0]["text"], "You are a writer.");
+    assert_eq!(body["system"][0]["cache_control"]["ttl"], "1h");
 }

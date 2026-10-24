@@ -95,14 +95,19 @@ impl OpenAiClient {
             if data == "[DONE]" {
                 break;
             }
-            let value: Value = serde_json::from_str(data)
-                .map_err(|err| LlmError::Protocol(format!("invalid JSON chunk: {err}")))?;
+            let value: Value = serde_json::from_str(data).map_err(|err| {
+                LlmError::Protocol(format!("invalid JSON chunk: {err}"))
+                    .with_request_id(request_id.as_deref())
+            })?;
             if let Some(error) = value.get("error") {
                 return Err(
                     LlmError::Provider(error.to_string()).with_request_id(request_id.as_deref())
                 );
             }
-            state.consume_chunk(&value, options, on_event)?;
+            // Failures inside the stream still belong to this request, so they carry its id.
+            state
+                .consume_chunk(&value, options, on_event)
+                .map_err(|err| err.with_request_id(request_id.as_deref()))?;
         }
 
         Ok(state.finish(req, request_id))

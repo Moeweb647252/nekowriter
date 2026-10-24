@@ -90,7 +90,11 @@ impl AnthropicClient {
             let Some(item) = next else {
                 break;
             };
-            state.consume_event(&item, &req.options, on_event)?;
+            // An in-stream error object still belongs to this HTTP request, so it carries the
+            // response's request id like every other failure of the turn (spec/04 §4).
+            state
+                .consume_event(&item, &req.options, on_event)
+                .map_err(|err| err.with_request_id(request_id.as_deref()))?;
             if state.done {
                 break;
             }
@@ -258,14 +262,18 @@ pub fn build_body(req: &ChatRequest, options: &ModelOptions) -> Value {
     body.insert("model".to_owned(), json!(req.model));
     body.insert("max_tokens".to_owned(), json!(req.max_output_tokens));
     body.insert("stream".to_owned(), json!(true));
-    body.insert(
-        "system".to_owned(),
-        json!([{
-            "type": "text",
-            "text": req.system,
-            "cache_control": cache_control(ttl),
-        }]),
-    );
+    // The Messages API rejects empty text blocks, and the connection test has no system prompt;
+    // an absent system prompt is sent as an absent field (spec/04 §3, §8).
+    if !req.system.trim().is_empty() {
+        body.insert(
+            "system".to_owned(),
+            json!([{
+                "type": "text",
+                "text": req.system,
+                "cache_control": cache_control(ttl),
+            }]),
+        );
+    }
     if !req.tools.is_empty() {
         let eager = options.eager_input_streaming();
         let tools: Vec<Value> = req
