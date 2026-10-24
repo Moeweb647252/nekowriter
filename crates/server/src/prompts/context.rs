@@ -72,7 +72,8 @@ pub struct SettingsContext {
 pub struct CharacterContext {
     pub rank: i32,
     pub name: String,
-    /// The stored role label (主角, 反派): the one label that is stored text (spec/09 §1).
+    /// The stored role label (the design's Chinese protagonist/antagonist wording, D-041):
+    /// the one label that is stored text rather than rendered (spec/09 §1).
     pub role_label: String,
     pub summary: String,
     pub profile: String,
