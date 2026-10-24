@@ -292,7 +292,7 @@ pub fn choose_action(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
     match hints.kind.as_str() {
         "chapter_write" => {
             if hints.phase == "planning" {
-                chapter_write_planning(lang)
+                chapter_write_planning(hints, lang)
             } else {
                 chapter_write_drafting(hints, lang)
             }
@@ -337,9 +337,20 @@ fn debug_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
     }
 }
 
-/// Planning step: submit a three-scene outline (spec/04 §7.2). M5 adds the leading `get_entity`
-/// call for the protagonist.
-fn chapter_write_planning(lang: &LangCorpus) -> DemoPlan {
+/// Planning step: look the protagonist up, then submit a three-scene outline (spec/04 §7.2).
+///
+/// Step 0 is the `get_entity` call, but only when the book has a protagonist to look up; step 1
+/// submits the outline. The demo never writes prose while planning.
+fn chapter_write_planning(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
+    if hints.step_in_phase == 0
+        && let Some(protagonist) = &hints.protagonist
+        && !protagonist.is_empty()
+    {
+        return DemoPlan {
+            tools: vec![tool("get_entity", json!({ "entity": protagonist }))],
+            ..DemoPlan::default()
+        };
+    }
     let mut arguments = json!({
         "outline": lang.outline,
         "reference_notes": lang.reference_notes,

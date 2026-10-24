@@ -262,6 +262,10 @@ impl ToolRegistry {
         for handler in super::writer::all() {
             handlers.insert(handler.name().to_owned(), handler);
         }
+        // The retrieval tools of M5 (spec/05 §3).
+        for handler in super::retrieval::all() {
+            handlers.insert(handler.name().to_owned(), handler);
+        }
         for handler in super::test_tools::all() {
             handlers.insert(handler.name().to_owned(), handler);
         }

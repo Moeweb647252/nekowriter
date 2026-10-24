@@ -11,6 +11,7 @@ fn hints(kind: &str, phase: &str, language: &str) -> DemoHints {
         step_in_phase: 0,
         language: language.to_owned(),
         tools: Vec::new(),
+        protagonist: None,
     }
 }
 
@@ -169,6 +170,37 @@ fn corpus_parses_for_both_languages() {
             "{language}: proposal text"
         );
     }
+}
+
+/// spec/04 §7.2: planning looks the protagonist up first (when there is one), then submits a
+/// three-scene outline with reference notes and a title.
+#[test]
+fn planning_starts_with_get_entity_when_the_book_has_a_protagonist() {
+    let provider = DemoProvider::new();
+    let mut with_protagonist = hints("chapter_write", "planning", "zh-CN");
+    with_protagonist.protagonist = Some("沈砚".to_owned());
+    let lang = provider.lang(Some(&with_protagonist));
+    let first = choose_action(&with_protagonist, lang);
+    assert_eq!(first.tools.len(), 1);
+    assert_eq!(first.tools[0].1, "get_entity");
+    assert_eq!(first.tools[0].2["entity"], "沈砚");
+
+    // The step after the lookup submits the outline.
+    let mut second = with_protagonist.clone();
+    second.step_in_phase = 1;
+    let plan = choose_action(&second, lang);
+    assert_eq!(plan.tools.len(), 1);
+    assert_eq!(plan.tools[0].1, "submit_outline");
+}
+
+/// Without a protagonist, planning goes straight to the outline (the demo never invents one).
+#[test]
+fn planning_without_a_protagonist_goes_straight_to_the_outline() {
+    let provider = DemoProvider::new();
+    let h = hints("chapter_write", "planning", "zh-CN");
+    let plan = choose_action(&h, provider.lang(Some(&h)));
+    assert_eq!(plan.tools.len(), 1);
+    assert_eq!(plan.tools[0].1, "submit_outline");
 }
 
 /// spec/04 §7.2: planning submits a three-scene outline with reference notes and a title.

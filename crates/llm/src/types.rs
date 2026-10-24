@@ -360,6 +360,10 @@ pub struct DemoHints {
     /// debug session (spec/04 §7.2, spec/10 §2.7).
     #[serde(default)]
     pub tools: Vec<String>,
+    /// The name of the protagonist the writer may look up, when the book has one (spec/04 §7.2:
+    /// planning starts with `get_entity` on the protagonist *if any*).
+    #[serde(default)]
+    pub protagonist: Option<String>,
 }
 
 /// A model advertised by the provider's model-list endpoint.
