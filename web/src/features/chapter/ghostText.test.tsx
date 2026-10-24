@@ -36,3 +36,21 @@ describe("GhostText", () => {
     expect(container).toBeEmptyDOMElement()
   })
 })
+
+describe("GhostText placement", () => {
+  it("renders an appended insert_text preview as an inline span", () => {
+    const { container } = render(
+      <GhostText preview={{ name: "insert_text", field: "text", text: "接着写。" }} appended />,
+    )
+    // Inside the open tail paragraph, so it must not introduce a block of its own.
+    expect(container.querySelector("p")).toBeNull()
+    expect(screen.getByText("接着写。")).toBeInTheDocument()
+  })
+
+  it("renders a block preview as a paragraph", () => {
+    const { container } = render(
+      <GhostText preview={{ name: "insert_text", field: "text", text: "新的一段。" }} />,
+    )
+    expect(container.querySelector("p.ghost-text")).not.toBeNull()
+  })
+})

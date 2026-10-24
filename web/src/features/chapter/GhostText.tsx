@@ -27,18 +27,33 @@ const TEXT_PREVIEW_TOOLS = ["insert_text", "insert_paragraphs", "rewrite_paragra
 /**
  * The paragraph preview of the chapter's running writer session.
  *
- * The ghost is a block of its own: the preview event carries only the tool name, the field and the
- * decoded text, never the target pid (`after` / `pid` arrive with the persisted call, which exists
- * only after the arguments are complete). `insert_text` always writes at the end of the draft
- * (spec/05 §4), so its block is in the right place; for `insert_paragraphs` and `rewrite_paragraph`
- * the tool card names the target (D-078).
+ * `appended` mirrors spec/11 §5.2: an `insert_text` preview goes *into* the open tail paragraph
+ * (the agent always writes at the end of the draft, spec/05 §4), while `insert_paragraphs` and
+ * `rewrite_paragraph` previews are a block of their own. The preview event carries only the tool
+ * name, the field and the decoded text — never the target pid, which arrives with the persisted
+ * call — so a paragraph tool's ghost cannot be placed under its target; the tool card names it.
  */
-export function GhostText({ preview }: { preview: Preview | undefined }) {
+export function GhostText({
+  preview,
+  appended = false,
+}: {
+  preview: Preview | undefined
+  appended?: boolean
+}) {
   if (preview === undefined || preview.text === "") {
     return null
   }
   if (preview.field !== "text" || !TEXT_PREVIEW_TOOLS.includes(preview.name)) {
     return null
+  }
+  if (appended) {
+    // Inside the open tail paragraph, so no `<p>` of its own.
+    return (
+      <span className="ghost-text" aria-live="polite">
+        {preview.text}
+        <span className="ghost-caret" aria-hidden="true" />
+      </span>
+    )
   }
   return (
     <p className="ghost-text" aria-live="polite">

@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from "motion/react"
 
 import { useContentMutations } from "@/api/hooks/chapters"
 import { useResumeSession } from "@/api/hooks/sessions"
-import { GhostText, HoldBar } from "@/features/chapter/GhostText"
+import { GhostText, HoldBar, type Preview } from "@/features/chapter/GhostText"
 import { useWriterState } from "@/features/chapter/useWriterState"
 import { useErrorToast } from "@/components/common/ErrorToast"
 import { EmptyState } from "@/components/common/EmptyState"
@@ -40,6 +40,7 @@ export function ChapterText({
   const { t } = useTranslation()
   const showError = useErrorToast()
   const paragraphs = useChapterDoc((state) => state.paragraphs)
+  const tailOpen = useChapterDoc((state) => state.tailOpen)
   const version = useChapterDoc((state) => state.version)
   const highlights = useChapterDoc((state) => state.highlights)
   const clearHighlight = useChapterDoc((state) => state.clearHighlight)
@@ -103,11 +104,19 @@ export function ChapterText({
       ) : (
         <div className={unspaced ? "prose-cjk" : "prose-latin"}>
           <AnimatePresence initial={false}>
-            {paragraphs.map((paragraph) => (
+            {paragraphs.map((paragraph, index) => (
               <Paragraph
                 key={paragraph.pid}
                 pid={paragraph.pid}
                 text={paragraph.text}
+                // An `insert_text` preview streams into the open tail paragraph (spec/11 §5.2).
+                ghost={
+                  writer.preview?.name === "insert_text" &&
+                  tailOpen &&
+                  index === paragraphs.length - 1
+                    ? writer.preview
+                    : undefined
+                }
                 onlyParagraph={paragraphs.length === 1}
                 highlight={highlights[paragraph.pid]?.kind}
                 onHighlightEnd={clearHighlight}
@@ -132,7 +141,8 @@ export function ChapterText({
               />
             ))}
           </AnimatePresence>
-          <GhostText preview={writer.preview} />
+          {/* The paragraph tools' previews are a block of their own. */}
+          {tailOpen ? null : <GhostText preview={writer.preview} />}
           {writer.held === undefined ? null : (
             <HoldBar
               outline={writer.heldOutline}
@@ -165,6 +175,8 @@ export function ChapterText({
 type ParagraphProps = {
   pid: string
   text: string
+  /** The live preview to append inside this paragraph (the open tail), if any. */
+  ghost?: Preview
   /** The document has exactly one paragraph, which may not be deleted. */
   onlyParagraph: boolean
   highlight?: "inserted" | "updated"
@@ -183,6 +195,7 @@ type ParagraphProps = {
 function Paragraph({
   pid,
   text,
+  ghost,
   onlyParagraph,
   highlight,
   saving,
@@ -289,6 +302,12 @@ function Paragraph({
       )}
     >
       {text}
+      {ghost === undefined ? null : (
+        <span className="ghost-text" aria-live="polite">
+          {ghost.text}
+          <span className="ghost-caret" aria-hidden="true" />
+        </span>
+      )}
     </motion.p>
   )
 }
