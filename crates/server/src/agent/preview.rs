@@ -164,12 +164,16 @@ impl PreviewExtractor {
         let first = chars.next()?;
         match first {
             'u' => {
+                // `\uXXXX` is four hex digits. Slice by CHAR, not by byte: a malformed stream (or
+                // one where multi-byte text follows `\u`) would otherwise panic on a
+                // non-char-boundary index, and a panic here kills the runner task mid-session.
                 let hex: String = chars.collect();
                 if hex.chars().count() < 4 {
                     return None;
                 }
                 self.pending_escape.clear();
-                let value = u16::from_str_radix(&hex[..4], 16).ok()?;
+                let digits: String = hex.chars().take(4).collect();
+                let value = u16::from_str_radix(&digits, 16).ok()?;
                 self.decode_unicode(value)
             }
             other => {
@@ -338,5 +342,38 @@ mod tests {
         let payload = r#"{"text":"half writ"#;
         assert_eq!(extract_all("text", payload), "half writ");
         extract_at_every_split("text", payload);
+    }
+
+    /// A malformed `\u` sequence must not panic the extractor (spec/03 §12).
+    ///
+    /// The four-hex-digit slice used to index **bytes** while its length guard counted
+    /// **characters**, so `\u` followed by multi-byte text made the slice land inside a character
+    /// and panicked. The extractor runs inside the runner task, so a panic there ends the session
+    /// mid-flight instead of degrading the preview.
+    #[test]
+    fn a_multibyte_escape_sequence_does_not_panic() {
+        for payload in [
+            r#"{"text":"\u你好ab"}"#,
+            r#"{"text":"\u中文"}"#,
+            r#"{"text":"\ué"}"#,
+            // Four characters, more than four bytes: the exact shape that panicked.
+            r#"{"text":"\u好好"}"#,
+        ] {
+            let mut extractor = PreviewExtractor::new("text");
+            let _ = extractor.feed(payload);
+            // Every byte split too: the escape is buffered across fragments and completed later.
+            for split in (0..=payload.len()).filter(|s| payload.is_char_boundary(*s)) {
+                let mut split_extractor = PreviewExtractor::new("text");
+                let _ = split_extractor.feed(&payload[..split]);
+                let _ = split_extractor.feed(&payload[split..]);
+            }
+        }
+    }
+
+    /// A non-hex `\u` sequence yields no text rather than panicking.
+    #[test]
+    fn an_invalid_unicode_escape_is_ignored() {
+        assert_eq!(extract_all("text", r#"{"text":"\uzzzz"}"#), "");
+        assert_eq!(extract_all("text", r#"{"text":"\u12zz"}"#), "");
     }
 }
