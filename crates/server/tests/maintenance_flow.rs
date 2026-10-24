@@ -989,3 +989,64 @@ async fn a_failed_maintenance_session_marks_canon_failed() {
         "a failed maintenance fails the canon in the same transition"
     );
 }
+
+/// `error.not_found`'s `what_label` is model-facing text: it must come from `shared.label`
+/// (`prompts.label("target_type", …)`), never a literal in code (spec/09 §1, AGENTS §2).
+#[tokio::test]
+async fn unknown_canon_ids_render_the_target_label_from_the_prompt_pack() {
+    let runtime = runtime(vec![
+        create_character("林凡", "主角"),
+        step(
+            "update_timeline_event",
+            json!({ "event_id": 999_001, "title": "不存在的事件" }),
+        ),
+        step(
+            "retire_memory_note",
+            json!({ "note_id": 999_002, "reason": "不存在" }),
+        ),
+        step(
+            "resolve_foreshadowing",
+            json!({ "foreshadowing_id": 999_003, "status": "resolved", "resolution": "不存在" }),
+        ),
+        step(
+            "record_appearances",
+            json!({ "appearances": [ { "entity": "林凡", "role": "pov" } ] }),
+        ),
+        step(
+            "set_chapter_summary",
+            json!({ "summary": "林凡进入剑冢。" }),
+        ),
+        step("finish_maintenance", json!({ "report": "done" })),
+    ])
+    .await;
+    runtime.app.put_text(runtime.chapter_id, 0, "正文。").await;
+    review_harness::mark_official(&runtime, runtime.chapter_id).await;
+    let session = start_archivist(
+        &runtime,
+        runtime.chapter_id,
+        SessionKind::ChapterMaintenance,
+    )
+    .await;
+    runtime
+        .wait_status_within(session, SessionStatus::Completed, Duration::from_secs(20))
+        .await;
+
+    let calls = runtime.calls(session).await;
+    let expect_label = |name: &str, label: &str, id: i64| {
+        let call = calls
+            .iter()
+            .find(|call| call.name == name)
+            .unwrap_or_else(|| panic!("{name} ran"));
+        assert!(call.is_error, "{name} is an error");
+        let text = call.raw_result_text.clone().unwrap_or_default();
+        assert!(
+            text.contains(label) && text.contains(&id.to_string()),
+            "{name} renders the {label} label and id {id}: {text:?}"
+        );
+    };
+    // The labels come from `shared.label` (`target_type`) via the prompt pack.
+    expect_label("update_timeline_event", "时间线事件", 999_001);
+    expect_label("retire_memory_note", "记忆笔记", 999_002);
+    expect_label("resolve_foreshadowing", "伏笔", 999_003);
+    assert_eq!(chapter_state(&runtime).await.1, "synced");
+}

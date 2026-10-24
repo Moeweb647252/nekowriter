@@ -426,10 +426,16 @@ impl ToolHandler for UpdateEntityTool {
             patch.attributes = Some(attributes);
         }
         let confict_name = patch.name.clone();
+        // `what_label` is model-facing text, so it comes from `shared.label` (spec/09 §1).
+        let entity_label = ctx.prompts.label("target_type", "entity");
         let (dto, events) = entity::update_inner(ctx.tx, &write_of(ctx)?, entity.id, patch)
             .await
             .map_err(|error| {
-                map_canon(error, Some(("实体", entity.id)), confict_name.as_deref())
+                map_canon(
+                    error,
+                    Some((entity_label.as_str(), entity.id)),
+                    confict_name.as_deref(),
+                )
             })?;
         canon_outcome(
             ctx,
@@ -797,7 +803,10 @@ impl ToolHandler for UpdateTimelineEventTool {
             },
         )
         .await
-        .map_err(|error| map_canon(error, Some(("时间线事件", input.event_id)), None))?;
+        .map_err(|error| {
+            let label = ctx.prompts.label("target_type", "timeline_event");
+            map_canon(error, Some((label.as_str(), input.event_id)), None)
+        })?;
         let (prev, next) = timeline_neighbors(ctx.tx, book_id, dto.id).await?;
         canon_outcome_with(
             ctx,
@@ -933,7 +942,10 @@ impl ToolHandler for RetireMemoryNoteTool {
         let reason = require_note(&input.reason)?;
         let (dto, events) = note::retire_inner(ctx.tx, &write_of(ctx)?, input.note_id, &reason)
             .await
-            .map_err(|error| map_canon(error, Some(("记忆笔记", input.note_id)), None))?;
+            .map_err(|error| {
+                let label = ctx.prompts.label("target_type", "memory_note");
+                map_canon(error, Some((label.as_str(), input.note_id)), None)
+            })?;
         let name: String = dto.content.chars().take(40).collect();
         canon_outcome(
             ctx,
@@ -1059,7 +1071,10 @@ impl ToolHandler for ResolveForeshadowingTool {
             &resolution,
         )
         .await
-        .map_err(|error| map_canon(error, Some(("伏笔", input.foreshadowing_id)), None))?;
+        .map_err(|error| {
+            let label = ctx.prompts.label("target_type", "foreshadowing");
+            map_canon(error, Some((label.as_str(), input.foreshadowing_id)), None)
+        })?;
         canon_outcome(
             ctx,
             "resolve_foreshadowing",
