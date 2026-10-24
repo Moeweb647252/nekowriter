@@ -1,5 +1,6 @@
 /target/
 /web/node_modules/
 /web/dist/
-/data/
+# Default NW_DATA_DIR from .env.example (PLAN 0.1): the dev database and logs.
+/.data/
 .env

@@ -1,7 +1,7 @@
 //! Configuration from CLI flags, environment variables and (in debug builds) `.env`.
 
-use std::net::{IpAddr, SocketAddr};
-use std::path::{Path, PathBuf};
+use std::net::SocketAddr;
+use std::path::PathBuf;
 
 use clap::Parser;
 
@@ -86,22 +86,12 @@ impl Config {
             self.bind
         )
     }
-
-    /// The database URL for sqlx (spec/01 §5 step 4).
-    pub fn database_url(data_dir: &Path) -> String {
-        format!("sqlite://{}/nekowriter.db?mode=rwc", data_dir.display())
-    }
 }
 
 fn default_data_dir() -> anyhow::Result<PathBuf> {
     let dirs = directories::ProjectDirs::from("", "", "NekoWriter")
         .ok_or_else(|| anyhow::anyhow!("cannot determine the OS data directory"))?;
     Ok(dirs.data_dir().to_path_buf())
-}
-
-/// True when an IP is loopback (IPv4 or IPv6).
-pub fn is_loopback(ip: IpAddr) -> bool {
-    ip.is_loopback()
 }
 
 #[cfg(test)]

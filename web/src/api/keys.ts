@@ -2,6 +2,17 @@
 
 export const keys = {
   health: ["health"] as const,
+  appSettings: ["app-settings"] as const,
+  providers: {
+    all: ["providers"] as const,
+    presets: ["provider-presets"] as const,
+  },
+  modelProfiles: {
+    all: ["model-profiles"] as const,
+  },
+  prompts: {
+    list: (bookId?: number) => ["prompts", "list", bookId ?? "global"] as const,
+  },
   books: {
     all: ["books"] as const,
     list: (status?: string) => ["books", "list", status ?? "all"] as const,
@@ -16,7 +27,19 @@ export const keys = {
   chapters: {
     detail: (id: number) => ["chapters", "detail", id] as const,
     versions: (id: number) => ["chapters", id, "versions"] as const,
+    version: (versionId: number) => ["chapters", "version", versionId] as const,
     reviews: (id: number) => ["chapters", id, "reviews"] as const,
+  },
+  settings: {
+    docs: (bookId: number) => ["settings", "docs", bookId] as const,
+    docHistory: (bookId: number, kind: string) =>
+      ["settings", "docs", bookId, kind, "history"] as const,
+    characters: (bookId: number) => ["settings", "characters", bookId] as const,
+  },
+  changes: {
+    all: ["changes"] as const,
+    list: (bookId: number, filter?: string) =>
+      ["changes", "list", bookId, filter ?? "all"] as const,
   },
   sessions: {
     list: (bookId: number, filters?: string) =>

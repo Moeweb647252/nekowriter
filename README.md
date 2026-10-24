@@ -4,7 +4,8 @@ A local-first studio for writing long-form fiction with AI agents. The author di
 approves; agents plan, research, draft, review, and keep an explicit canon (tiered memory,
 entity graph, timeline, setting materials) so long stories stay consistent.
 
-**Status:** design complete, implementation not started. Implementation follows
+**Status:** the foundations are implemented (workspace, configuration, database and full schema,
+ts-rs bindings, web shell, `scripts/check.sh`). Feature work proceeds through the milestones in
 [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Highlights
@@ -31,10 +32,36 @@ entity graph, timeline, setting materials) so long stories stay consistent.
 - [`AGENTS.md`](AGENTS.md): guide for the implementing agent.
 - [`prompts/`](prompts): the shipped prompt pack.
 
-## Development (once implemented)
+## Development
+
+Requirements: a Rust toolchain (edition 2024, see `rust-version` in `Cargo.toml`), Node.js with
+`pnpm`, and `python3` (for the prompt validator). `npm`/`npx` are not used.
+
 ```bash
-pnpm --dir web install
+pnpm --dir web install           # once
+cp .env.example .env             # optional: NW_DATA_DIR, RUST_LOG
 cargo run -p nekowriter          # API on http://127.0.0.1:7878
-pnpm --dir web dev               # UI on http://localhost:5173
-scripts/check.sh                 # all checks
+pnpm --dir web dev               # UI on http://localhost:5173 (proxies /api)
+scripts/check.sh                 # every check, in the spec/01 §12 order
 ```
+
+The server binds `127.0.0.1:7878` by default and refuses a non-loopback address unless
+`--allow-remote` is passed. Its data directory (`NW_DATA_DIR`, default `./.data` via
+`.env.example`, otherwise the OS data dir) holds `nekowriter.db`, `models/` and `logs/`. Debug
+builds enable the Demo provider, so `mock://demo` works without API keys.
+
+Regenerate the TypeScript API types after changing a DTO:
+
+```bash
+cargo test -p nekowriter export_bindings
+```
+
+Project-specific commands:
+
+| Purpose | Command |
+|---|---|
+| Go backend | `cargo run -p nekowriter` (`--bind`, `--data-dir`, `--web-dir`, `--allow-remote`) |
+| Go frontend | `pnpm --dir web dev` |
+| Generate TS types | `cargo test -p nekowriter export_bindings` |
+| Validate the prompt pack | `python3 -I scripts/validate_prompts.py .` |
+| All checks | `scripts/check.sh` |

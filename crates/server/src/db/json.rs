@@ -454,6 +454,7 @@ impl Default for BookSettings {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
 #[serde(default, rename_all = "snake_case")]
 #[ts(export)]
+#[ts(optional_fields = nullable)]
 pub struct RoleModels {
     pub conception: Option<i32>,
     pub researcher: Option<i32>,
@@ -647,17 +648,26 @@ pub struct SessionCounters {
 }
 
 /// Cumulative token usage of a session or a single request (spec/02 §4).
+///
+/// The counters are `i64` in Rust but cross the wire as JSON numbers, which `JSON.parse` always
+/// yields as `number`, so the exported TS type is `number` rather than `bigint`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
 #[serde(default, rename_all = "snake_case")]
 #[ts(export)]
 pub struct Usage {
     pub requests: i32,
+    #[ts(type = "number")]
     pub input_tokens: i64,
+    #[ts(type = "number")]
     pub cached_input_tokens: i64,
+    #[ts(type = "number")]
     pub cache_write_tokens: i64,
+    #[ts(type = "number")]
     pub output_tokens: i64,
+    #[ts(type = "number")]
     pub reasoning_tokens: i64,
     /// Total prompt size of the latest request (rollover check).
+    #[ts(type = "number")]
     pub last_prompt_tokens: i64,
     /// The provider sent no usage; counts are estimates (spec/04 §2).
     pub estimated: bool,
@@ -913,4 +923,434 @@ pub fn from_json<T: for<'de> Deserialize<'de>>(raw: &str) -> Result<T, serde_jso
 /// percent-new optional columns so a hand-edited database cannot break the API.
 pub fn from_json_or_default<T: for<'de> Deserialize<'de> + Default>(raw: &str) -> T {
     serde_json::from_str(raw).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Round-trips one typed JSON column value through its stored `TEXT` form, exactly as
+    /// `Db::write` stores it and as `from_json` reads it back (PLAN 0.3).
+    fn round_trip<T>(value: &T) -> T
+    where
+        T: Serialize + for<'de> Deserialize<'de>,
+    {
+        let stored = to_json(value).expect("serialize to the column TEXT form");
+        from_json(&stored).expect("deserialize back from the column TEXT form")
+    }
+
+    // Every typed JSON column of spec/02 §2 gets a round trip below.
+
+    /// `books.settings`.
+    #[test]
+    fn book_settings_round_trip() {
+        let value = BookSettings {
+            granularity: Granularity::Sentence,
+            auto_pause: true,
+            pause_after_outline: false,
+            target_words_min: 1500,
+            target_words_max: 2500,
+            recent_summary_count: 3,
+            midterm_window: 7,
+            auto_maintenance: false,
+        };
+        assert_eq!(round_trip(&value), value);
+    }
+
+    /// `books.model_overrides`, `app_settings["roles.defaults"]`.
+    #[test]
+    fn role_models_round_trip() {
+        let value = RoleModels {
+            conception: Some(1),
+            researcher: None,
+            writer: Some(3),
+            reviewer: Some(4),
+            archivist: None,
+        };
+        assert_eq!(round_trip(&value), value);
+    }
+
+    /// `books.conception`.
+    #[test]
+    fn conception_state_round_trip() {
+        let value = ConceptionState {
+            session_id: Some(9),
+            characters_revision: 2,
+            characters_approved_revision: Some(1),
+            topics_revision: 4,
+            topics_approved_revision: None,
+            finalized_at: Some(DateTime::from_timestamp_millis(1_767_225_600_000).expect("ts")),
+        };
+        assert_eq!(round_trip(&value), value);
+    }
+
+    /// `chapters.content`, `chapter_versions.content`.
+    #[test]
+    fn chapter_content_round_trip() {
+        let value = ChapterContent {
+            paragraphs: vec![
+                Paragraph {
+                    pid: "p1".to_owned(),
+                    text: "First.".to_owned(),
+                },
+                Paragraph {
+                    pid: "p2".to_owned(),
+                    text: "Second.".to_owned(),
+                },
+            ],
+            next_pid: 3,
+            tail_open: true,
+        };
+        assert_eq!(round_trip(&value), value);
+    }
+
+    /// `agent_sessions.view_snapshot` (both variants).
+    #[test]
+    fn view_snapshot_round_trip() {
+        let chapter = ViewSnapshot::Chapter {
+            content: ChapterContent::default(),
+            outline: "outline".to_owned(),
+            reference_notes: "notes".to_owned(),
+        };
+        assert_eq!(round_trip(&chapter), chapter);
+
+        let mut docs = BTreeMap::new();
+        docs.insert(
+            "outline".to_owned(),
+            ConceptionDocSnapshot {
+                revision: 2,
+                content: "doc".to_owned(),
+            },
+        );
+        let conception = ViewSnapshot::Conception {
+            docs,
+            characters: vec![ConceptionCharacterSnapshot {
+                id: 1,
+                rank: 1,
+                name: "A".to_owned(),
+                role_label: "lead".to_owned(),
+                summary: "sum".to_owned(),
+                profile: "prof".to_owned(),
+            }],
+            topics: vec![ConceptionTopicSnapshot {
+                topic: "t".to_owned(),
+                requirements: "r".to_owned(),
+                scope: "s".to_owned(),
+            }],
+        };
+        assert_eq!(round_trip(&conception), conception);
+    }
+
+    /// `agent_messages.content`.
+    #[test]
+    fn stored_block_round_trip() {
+        let blocks = vec![
+            StoredBlock::Text {
+                text: "hello".to_owned(),
+                cache: Some(true),
+            },
+            StoredBlock::Reasoning {
+                text: "thinking".to_owned(),
+            },
+            StoredBlock::ToolCall {
+                call_id: "call_1".to_owned(),
+                name: "read_chapter".to_owned(),
+                input_text: "{}".to_owned(),
+            },
+        ];
+        assert_eq!(round_trip(&blocks), blocks);
+    }
+
+    /// `agent_messages.provider_payload` (all three protocols).
+    #[test]
+    fn provider_payload_round_trip() {
+        let openai = ProviderPayload::Openai {
+            content: Some("text".to_owned()),
+            reasoning_content: Some("reasoning".to_owned()),
+            tool_calls: vec![json!({"id": "call_1", "type": "function"})],
+        };
+        assert_eq!(round_trip(&openai), openai);
+
+        let anthropic = ProviderPayload::Anthropic {
+            content: vec![json!({"type": "thinking", "signature": "sig"})],
+        };
+        assert_eq!(round_trip(&anthropic), anthropic);
+
+        let mock = ProviderPayload::Mock {
+            content: json!({"anything": [1, 2, 3]}),
+        };
+        assert_eq!(round_trip(&mock), mock);
+    }
+
+    /// `agent_sessions.model_snapshot`.
+    #[test]
+    fn model_snapshot_round_trip() {
+        let mut extra_headers = BTreeMap::new();
+        extra_headers.insert("x-extra".to_owned(), "1".to_owned());
+        let value = ModelSnapshot {
+            provider_id: 2,
+            protocol: Protocol::Anthropic,
+            base_url: "https://example.test".to_owned(),
+            extra_headers,
+            model: "a-model".to_owned(),
+            context_window: 200_000,
+            max_output_tokens: 8192,
+            options: json!({"cache_ttl": "5m"}),
+        };
+        assert_eq!(round_trip(&value), value);
+    }
+
+    /// `agent_sessions.counters`.
+    #[test]
+    fn session_counters_round_trip() {
+        let value = SessionCounters {
+            steps: 7,
+            tool_calls: 3,
+            retrieval_calls: 1,
+            consecutive_tool_errors: 2,
+            consecutive_nudges: 1,
+            finish_warned: true,
+        };
+        assert_eq!(round_trip(&value), value);
+    }
+
+    /// `agent_sessions.usage`, `agent_messages.usage`.
+    #[test]
+    fn usage_round_trip() {
+        let value = Usage {
+            requests: 5,
+            input_tokens: 1000,
+            cached_input_tokens: 200,
+            cache_write_tokens: 50,
+            output_tokens: 300,
+            reasoning_tokens: 20,
+            last_prompt_tokens: 1250,
+            estimated: true,
+        };
+        assert_eq!(round_trip(&value), value);
+    }
+
+    /// `agent_sessions.error`.
+    #[test]
+    fn session_error_round_trip() {
+        let value = SessionError {
+            code: "provider.unavailable".to_owned(),
+            message: "upstream failed".to_owned(),
+            retryable: true,
+            at: DateTime::from_timestamp_millis(1_767_225_600_000).expect("ts"),
+        };
+        assert_eq!(round_trip(&value), value);
+    }
+
+    /// `agent_messages.request_meta`.
+    #[test]
+    fn request_meta_round_trip() {
+        let value = RequestMeta {
+            phase: Phase::Drafting,
+            granularity: Some(Granularity::Free),
+        };
+        assert_eq!(round_trip(&value), value);
+
+        let no_granularity = RequestMeta {
+            phase: Phase::None,
+            granularity: None,
+        };
+        assert_eq!(round_trip(&no_granularity), no_granularity);
+    }
+
+    /// `agent_tool_calls.appendices` (all kinds).
+    #[test]
+    fn appendix_round_trip() {
+        let value = vec![
+            Appendix {
+                kind: AppendixKind::EffectNotice,
+                text: "notice".to_owned(),
+                inbox_id: None,
+            },
+            Appendix {
+                kind: AppendixKind::EditReport,
+                text: "report".to_owned(),
+                inbox_id: None,
+            },
+            Appendix {
+                kind: AppendixKind::UserFeedback,
+                text: "feedback".to_owned(),
+                inbox_id: None,
+            },
+            Appendix {
+                kind: AppendixKind::Inbox,
+                text: "inbox".to_owned(),
+                inbox_id: Some(4),
+            },
+        ];
+        assert_eq!(round_trip(&value), value);
+    }
+
+    /// `agent_tool_calls.effects`.
+    #[test]
+    fn tool_effects_round_trip() {
+        let value = ToolEffects {
+            phase_to: Some(Phase::Drafting),
+            complete: Some(CompletionKind::Draft),
+            await_input: Some(AwaitInputKind::RequestReview),
+        };
+        assert_eq!(round_trip(&value), value);
+        assert_eq!(round_trip(&ToolEffects::default()), ToolEffects::default());
+    }
+
+    /// `review_reports.issues`, `chapter_feedback.issues`.
+    #[test]
+    fn review_issue_round_trip() {
+        let value = vec![ReviewIssue {
+            severity: IssueSeverity::Major,
+            category: IssueCategory::Continuity,
+            pids: vec!["p3".to_owned(), "p7".to_owned()],
+            quote: "quote".to_owned(),
+            problem: "problem".to_owned(),
+            suggestion: "suggestion".to_owned(),
+        }];
+        assert_eq!(round_trip(&value), value);
+    }
+
+    /// `setting_proposals.edits` (all three variants).
+    #[test]
+    fn proposal_edits_round_trip() {
+        let edits = ProposalEdits::Edits {
+            edits: vec![FindReplace {
+                find: "a".to_owned(),
+                replace: "b".to_owned(),
+            }],
+        };
+        assert_eq!(round_trip(&edits), edits);
+
+        let append = ProposalEdits::Append {
+            text: "more".to_owned(),
+        };
+        assert_eq!(round_trip(&append), append);
+
+        let character = ProposalEdits::CreateCharacter {
+            character: NewCharacter {
+                name: "N".to_owned(),
+                role_label: "lead".to_owned(),
+                summary: "s".to_owned(),
+                profile: "p".to_owned(),
+            },
+        };
+        assert_eq!(round_trip(&character), character);
+    }
+
+    /// `change_log.before` / `after` (every snapshot variant, spec/02 §4).
+    #[test]
+    fn snapshot_round_trip() {
+        let mut attributes = BTreeMap::new();
+        attributes.insert("age".to_owned(), "30".to_owned());
+        let snapshots = vec![
+            Snapshot::Entity {
+                kind: EntityKind::Character,
+                name: "A".to_owned(),
+                aliases: vec!["B".to_owned()],
+                summary: "s".to_owned(),
+                description: "d".to_owned(),
+                state: "st".to_owned(),
+                attributes,
+                importance: 3,
+                status: EntityStatus::Active,
+                is_protagonist: true,
+                track_id: None,
+            },
+            Snapshot::Relation {
+                source_id: 1,
+                target_id: 2,
+                kind: "friend".to_owned(),
+                inverse_kind: "friend".to_owned(),
+                description: "d".to_owned(),
+                status: RelationStatus::Active,
+                since_chapter_id: Some(1),
+                until_chapter_id: None,
+                track_id: Some(2),
+            },
+            Snapshot::TimelineEvent {
+                position: 1.5,
+                story_time: "day 1".to_owned(),
+                title: "t".to_owned(),
+                description: "d".to_owned(),
+                chapter_id: None,
+                importance: 2,
+                entity_ids: vec![1, 2],
+                track_id: None,
+            },
+            Snapshot::Note {
+                kind: NoteKind::Fact,
+                content: "c".to_owned(),
+                chapter_id: Some(3),
+                importance: 2,
+                status: NoteStatus::Active,
+                entity_ids: vec![],
+                track_id: None,
+            },
+            Snapshot::Foreshadowing {
+                title: "t".to_owned(),
+                description: "d".to_owned(),
+                planned_payoff: "p".to_owned(),
+                status: ForeshadowingStatus::Open,
+                planted_chapter_id: Some(1),
+                resolved_chapter_id: None,
+                resolution: String::new(),
+                importance: 4,
+                entity_ids: vec![1],
+                track_id: None,
+            },
+            Snapshot::AppearanceSet {
+                appearances: vec![AppearanceSnapshot {
+                    entity_id: 1,
+                    role: AppearanceRole::Pov,
+                    note: "n".to_owned(),
+                }],
+            },
+            Snapshot::ChapterSummary {
+                summary: "s".to_owned(),
+            },
+            Snapshot::SettingDoc {
+                content: "c".to_owned(),
+            },
+            Snapshot::CharacterDesign {
+                rank: 1,
+                name: "A".to_owned(),
+                role_label: "lead".to_owned(),
+                summary: "s".to_owned(),
+                profile: "p".to_owned(),
+                entity_id: Some(3),
+            },
+        ];
+        assert_eq!(round_trip(&snapshots), snapshots);
+    }
+
+    /// Untagged union columns: a JSON `string[]` and a `Record<string, string>`.
+    #[test]
+    fn scalar_collections_round_trip() {
+        let aliases: Vec<String> = vec!["one".to_owned(), "two".to_owned()];
+        assert_eq!(round_trip(&aliases), aliases);
+
+        let mut attributes = BTreeMap::new();
+        attributes.insert("k".to_owned(), "v".to_owned());
+        assert_eq!(round_trip(&attributes), attributes);
+
+        let arbitrary = json!({"pids": ["p3", "p7"]});
+        assert_eq!(round_trip(&arbitrary), arbitrary);
+    }
+
+    /// `from_json_or_default` keeps a hand-edited database loadable (spec/02 §4).
+    #[test]
+    fn invalid_json_falls_back_to_default() {
+        let parsed: BookSettings = from_json_or_default("{not json");
+        assert_eq!(parsed, BookSettings::default());
+    }
+
+    /// A stored column is always valid JSON, so `from_json` never sees a raw SQL `NULL`.
+    #[test]
+    fn stored_form_is_a_json_object() {
+        let stored = to_json(&BookSettings::default()).expect("serialize");
+        assert!(stored.starts_with('{'), "stored form was {stored}");
+    }
 }

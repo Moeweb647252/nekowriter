@@ -73,6 +73,7 @@ impl Default for EmbeddingSettingsDto {
 /// `PATCH /app-settings` body. Omitted sections are unchanged (spec/10 §2.1).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[ts(export)]
+#[ts(optional_fields = nullable)]
 pub struct AppSettingsPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roles_defaults: Option<RoleModels>,
@@ -87,6 +88,7 @@ pub struct AppSettingsPatch {
 /// The patchable part of `app_settings["search"]`. `tavily_api_key: null` clears the key.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[ts(export)]
+#[ts(optional_fields = nullable)]
 pub struct SearchSettingsPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<SearchProvider>,

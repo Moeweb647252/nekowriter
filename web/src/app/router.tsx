@@ -16,6 +16,112 @@ const router = createBrowserRouter([
           return { Component: module.default }
         },
       },
+      {
+        // The global prompt pack (PROJECT §8.11, spec/11 §3).
+        path: "prompts",
+        lazy: async () => {
+          const module = await import("@/features/prompts/PromptsPage")
+          return { Component: module.default }
+        },
+      },
+      {
+        // Settings sections: providers, models, roles, appearance (PROJECT §8.12).
+        path: "settings",
+        lazy: async () => {
+          const module = await import("@/features/settings/SettingsPage")
+          return { Component: module.default }
+        },
+        children: [
+          {
+            index: true,
+            lazy: async () => {
+              const module = await import("@/features/settings/ProvidersPage")
+              return { Component: module.default }
+            },
+          },
+          {
+            path: "providers",
+            lazy: async () => {
+              const module = await import("@/features/settings/ProvidersPage")
+              return { Component: module.default }
+            },
+          },
+          {
+            path: "models",
+            lazy: async () => {
+              const module = await import("@/features/settings/ModelsPage")
+              return { Component: module.default }
+            },
+          },
+          {
+            path: "roles",
+            lazy: async () => {
+              const module = await import("@/features/settings/RolesPage")
+              return { Component: module.default }
+            },
+          },
+          {
+            path: "appearance",
+            lazy: async () => {
+              const module = await import("@/features/settings/AppearancePage")
+              return { Component: module.default }
+            },
+          },
+        ],
+      },
+      {
+        // The three-panel workspace (PROJECT §8.4, spec/11 §3).
+        path: "books/:bookId",
+        lazy: async () => {
+          const module = await import("@/features/workspace/BookLayout")
+          return { Component: module.default }
+        },
+        children: [
+          {
+            index: true,
+            lazy: async () => {
+              const module = await import("@/features/overview/OverviewPage")
+              return { Component: module.default }
+            },
+          },
+          {
+            path: "chapters/:chapterId",
+            lazy: async () => {
+              const module = await import("@/features/chapter/ChapterPage")
+              return { Component: module.default }
+            },
+          },
+          {
+            path: "settings/:doc",
+            lazy: async () => {
+              const module = await import("@/features/settings-materials/SettingDocPage")
+              return { Component: module.default }
+            },
+          },
+          {
+            path: "settings/characters",
+            lazy: async () => {
+              const module = await import("@/features/settings-materials/CharactersPage")
+              return { Component: module.default }
+            },
+          },
+          {
+            // The book-level prompt overrides (PROJECT §8.11).
+            path: "prompts",
+            lazy: async () => {
+              const module = await import("@/features/prompts/BookPromptsPage")
+              return { Component: module.default }
+            },
+          },
+          {
+            path: "book-settings",
+            lazy: async () => {
+              const module = await import("@/features/settings-materials/BookSettingsPage")
+              return { Component: module.default }
+            },
+          },
+        ],
+      },
     ],
   },
 ])

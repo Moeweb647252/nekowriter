@@ -15,6 +15,7 @@ use crate::services::providers::PresetKey;
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
 #[serde(default, rename_all = "snake_case")]
 #[ts(export)]
+#[ts(optional_fields = nullable)]
 pub struct ModelOptionsDto {
     // OpenAI-compatible
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -47,6 +48,7 @@ pub struct ModelOptionsDto {
 /// One provider (spec/10 §2.1). The key is never returned in clear text.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
+#[ts(optional_fields = nullable)]
 pub struct ProviderDto {
     pub id: i32,
     pub name: String,
@@ -67,6 +69,7 @@ pub struct ProviderDto {
 /// keeps the stored key.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
+#[ts(optional_fields = nullable)]
 pub struct ProviderInput {
     pub name: String,
     pub protocol: Protocol,
@@ -126,6 +129,7 @@ pub struct ProviderPresetDto {
 /// `POST /api/providers/:id/test` response (spec/10 §2.1, spec/04 §8).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
+#[ts(optional_fields = nullable)]
 pub struct ProviderTestDto {
     pub ok: bool,
     pub latency_ms: i64,
@@ -147,6 +151,7 @@ pub struct ProviderTestErrorDto {
 /// `GET /api/providers/:id/remote-models` (spec/04 §8).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
+#[ts(optional_fields = nullable)]
 pub struct RemoteModelDto {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]

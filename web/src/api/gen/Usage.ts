@@ -2,12 +2,15 @@
 
 /**
  * Cumulative token usage of a session or a single request (spec/02 §4).
+ *
+ * The counters are `i64` in Rust but cross the wire as JSON numbers, which `JSON.parse` always
+ * yields as `number`, so the exported TS type is `number` rather than `bigint`.
  */
-export type Usage = { requests: number, input_tokens: bigint, cached_input_tokens: bigint, cache_write_tokens: bigint, output_tokens: bigint, reasoning_tokens: bigint, 
+export type Usage = { requests: number, input_tokens: number, cached_input_tokens: number, cache_write_tokens: number, output_tokens: number, reasoning_tokens: number, 
 /**
  * Total prompt size of the latest request (rollover check).
  */
-last_prompt_tokens: bigint, 
+last_prompt_tokens: number, 
 /**
  * The provider sent no usage; counts are estimates (spec/04 §2).
  */

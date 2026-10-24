@@ -11,6 +11,7 @@ use crate::prompts::PromptSource;
 /// levels, the effective source and the variable docs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
+#[ts(optional_fields = nullable)]
 pub struct PromptEntryDto {
     pub key: String,
     pub kind: PromptKind,
@@ -55,6 +56,7 @@ pub struct PromptVariableFieldDocDto {
 /// `PUT /api/prompts/:key` body (spec/10 §2.6).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
+#[ts(optional_fields = nullable)]
 pub struct PromptSaveInput {
     pub scope: PromptScope,
     /// Required for `scope: "book"` and ignored for `scope: "global"`.

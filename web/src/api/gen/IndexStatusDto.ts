@@ -4,4 +4,13 @@ import type { IndexState } from "./IndexState";
 /**
  * Embedding/index state (spec/10 §3 `index.status`). Filled in from M7 onwards.
  */
-export type IndexStatusDto = { model: string, state: IndexState, message: string | null, pending: bigint, failed: bigint, done: bigint, };
+export type IndexStatusDto = { model: string, state: IndexState, 
+/**
+ * Explains a `failed` state (spec/07 §4).
+ */
+message: string | null, 
+/**
+ * Counts are `i64` in Rust but cross the wire as JSON numbers, which `JSON.parse` always
+ * yields as `number`, so the exported TS type is `number` rather than `bigint`.
+ */
+pending: number, failed: number, done: number, };

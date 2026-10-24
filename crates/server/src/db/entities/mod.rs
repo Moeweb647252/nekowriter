@@ -18,6 +18,7 @@ pub mod entities;
 
 pub mod foreshadowing;
 pub mod foreshadowing_entities;
+pub mod index_meta;
 pub mod knowledge_chunks;
 pub mod knowledge_entries;
 pub mod knowledge_scopes;

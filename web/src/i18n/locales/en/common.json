@@ -25,5 +25,22 @@
   "theme_system": "System",
   "language": "Language",
   "language_en": "English",
-  "language_zh_cn": "简体中文"
+  "language_zh_cn": "简体中文",
+  "type_to_confirm": "Type “{{text}}” to confirm",
+  "words_unit": "words",
+  "reset": "Reset",
+  "add": "Add",
+  "open": "Open",
+  "more": "More",
+  "language_code.zh-CN": "Chinese (Simplified)",
+  "language_code.en": "English",
+  "language_code.ja": "Japanese",
+  "language_code.ko": "Korean",
+  "language_code.fr": "French",
+  "language_code.de": "German",
+  "language_code.es": "Spanish",
+  "language_code.ru": "Russian",
+  "prompts": "Prompts",
+  "settings": "Settings",
+  "library": "Library"
 }

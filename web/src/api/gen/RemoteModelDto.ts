@@ -3,4 +3,4 @@
 /**
  * `GET /api/providers/:id/remote-models` (spec/04 §8).
  */
-export type RemoteModelDto = { id: string, display_name: string | null, context_window: bigint | null, max_output_tokens: bigint | null, };
+export type RemoteModelDto = { id: string, display_name?: string | null, context_window?: bigint | null, max_output_tokens?: bigint | null, };

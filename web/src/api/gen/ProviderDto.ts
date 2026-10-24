@@ -9,7 +9,7 @@ export type ProviderDto = { id: number, name: string, protocol: Protocol, base_u
 /**
  * `…abcd` for a stored literal key, `env:NAME` verbatim for an environment key.
  */
-api_key_masked: string | null, has_api_key: boolean, extra_headers: { [key in string]: string }, 
+api_key_masked?: string | null, has_api_key: boolean, extra_headers: { [key in string]: string }, 
 /**
  * The provider's model profiles, so the settings page needs one request.
  */

@@ -130,6 +130,14 @@ impl Db {
             .ok_or_else(|| DbErr::Custom("vec_version() returned no row".to_owned()))?;
         row.try_get::<String>("", "version")
     }
+
+    /// Runs the initial migration against this database (test helper, spec/02 §2).
+    #[cfg(test)]
+    async fn migrate(&self) -> Result<(), DbErr> {
+        nekowriter_migration::up(self.conn())
+            .await
+            .map_err(|err| DbErr::Custom(format!("migration failed: {err}")))
+    }
 }
 
 #[cfg(test)]
@@ -294,5 +302,159 @@ mod tests {
             .expect("row");
         let value: i64 = row.try_get("", "value").expect("value");
         assert_eq!(value, 50, "no lost updates without SQLITE_BUSY");
+    }
+
+    async fn migrated_db() -> (tempfile::TempDir, Db) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db = Db::connect(&dir.path().join("test.db"))
+            .await
+            .expect("connect");
+        db.migrate().await.expect("migrate");
+        (dir, db)
+    }
+
+    async fn count(db: &Db, sql: &str) -> i64 {
+        let row = db
+            .conn()
+            .query_one_raw(sea_orm::Statement::from_string(
+                sea_orm::DatabaseBackend::Sqlite,
+                sql,
+            ))
+            .await
+            .expect("query")
+            .expect("row");
+        row.try_get("", "c").expect("count")
+    }
+
+    /// Seeds one book with a main track, a chapter, a `search_docs` row (kind `passage`) and its
+    /// `fts_book` row, plus a knowledge scope with an entry and its `fts_knowledge` row.
+    async fn seed_indexed_book(db: &Db) -> (i32, i32, i32) {
+        db.conn()
+            .execute_unprepared(
+                "INSERT INTO books(id, title, writing_language, status, settings, created_at, updated_at)
+                 VALUES (1, 'Book', 'en', 'active', '{}', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+                 INSERT INTO tracks(id, book_id, kind, title, canon_mode, ord, created_at, updated_at)
+                 VALUES (1, 1, 'main', 'Main', 'canon', 0, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+                 INSERT INTO chapters(id, book_id, track_id, ord, status, content, created_at, updated_at)
+                 VALUES (1, 1, 1, 1, 'drafting', '{\"paragraphs\":[],\"next_pid\":1,\"tail_open\":false}',
+                         '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+                 INSERT INTO search_docs(id, book_id, kind, ref_id, body, content_hash, updated_at)
+                 VALUES (1, 1, 'passage', 1, 'hello world', 'h1', '2026-01-01T00:00:00.000Z');
+                 INSERT INTO fts_book(rowid, title, body) VALUES (1, '', 'hello world');
+                 INSERT INTO knowledge_scopes(id, name, created_at, updated_at)
+                 VALUES (1, 'Scope', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+                 INSERT INTO knowledge_entries(id, scope_id, title, content, source, created_at, updated_at)
+                 VALUES (1, 1, 'Entry', 'body', 'manual', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+                 INSERT INTO knowledge_chunks(id, entry_id, scope_id, ord, text, content_hash)
+                 VALUES (1, 1, 1, 0, 'chunk text', 'h2');
+                 INSERT INTO fts_knowledge(rowid, title, body) VALUES (1, '', 'chunk text');",
+            )
+            .await
+            .expect("seed");
+        (1, 1, 1)
+    }
+
+    /// spec/02 §5 invariant 11: deleting a book removes every index row of that book.
+    #[tokio::test]
+    async fn deleting_a_book_removes_its_index_rows() {
+        let (_dir, db) = migrated_db().await;
+        seed_indexed_book(&db).await;
+        assert_eq!(count(&db, "SELECT count(*) AS c FROM fts_book").await, 1);
+
+        db.conn()
+            .execute_unprepared("DELETE FROM books WHERE id = 1")
+            .await
+            .expect("delete book");
+
+        assert_eq!(count(&db, "SELECT count(*) AS c FROM search_docs").await, 0);
+        assert_eq!(
+            count(&db, "SELECT count(*) AS c FROM fts_book").await,
+            0,
+            "the book cascade must also remove the FTS row"
+        );
+    }
+
+    /// spec/02 §5 invariant 11: deleting a knowledge scope removes every index row of that scope.
+    #[tokio::test]
+    async fn deleting_a_scope_removes_its_index_rows() {
+        let (_dir, db) = migrated_db().await;
+        seed_indexed_book(&db).await;
+        assert_eq!(
+            count(&db, "SELECT count(*) AS c FROM fts_knowledge").await,
+            1
+        );
+
+        db.conn()
+            .execute_unprepared("DELETE FROM knowledge_scopes WHERE id = 1")
+            .await
+            .expect("delete scope");
+
+        assert_eq!(
+            count(&db, "SELECT count(*) AS c FROM knowledge_chunks").await,
+            0
+        );
+        assert_eq!(
+            count(&db, "SELECT count(*) AS c FROM fts_knowledge").await,
+            0,
+            "the scope cascade must also remove the FTS row"
+        );
+    }
+
+    /// spec/02 §5 invariant 11 (PLAN 0.3 "the delete triggers remove FTS rows"): a direct
+    /// `search_docs` delete removes its `fts_book` row.
+    #[tokio::test]
+    async fn deleting_a_search_doc_removes_its_fts_row() {
+        let (_dir, db) = migrated_db().await;
+        seed_indexed_book(&db).await;
+
+        db.conn()
+            .execute_unprepared("DELETE FROM search_docs WHERE id = 1")
+            .await
+            .expect("delete doc");
+
+        assert_eq!(count(&db, "SELECT count(*) AS c FROM fts_book").await, 0);
+    }
+
+    /// spec/02 §5 invariant 11: deleting a chapter removes its summary/passage docs and their FTS
+    /// rows (those reference the chapter by `ref_id`, not by foreign key).
+    #[tokio::test]
+    async fn deleting_a_chapter_removes_its_summary_and_passage_rows() {
+        let (_dir, db) = migrated_db().await;
+        seed_indexed_book(&db).await;
+
+        db.conn()
+            .execute_unprepared("DELETE FROM chapters WHERE id = 1")
+            .await
+            .expect("delete chapter");
+
+        assert_eq!(count(&db, "SELECT count(*) AS c FROM search_docs").await, 0);
+        assert_eq!(count(&db, "SELECT count(*) AS c FROM fts_book").await, 0);
+    }
+
+    /// spec/02 §5 invariant 11 the other way round: no `fts_*` row may outlive its source, for
+    /// every source table that cascades into the index.
+    #[tokio::test]
+    async fn no_fts_row_outlives_its_source() {
+        let (_dir, db) = migrated_db().await;
+        seed_indexed_book(&db).await;
+
+        db.conn()
+            .execute_unprepared("DELETE FROM knowledge_entries WHERE id = 1")
+            .await
+            .expect("delete entry");
+
+        let orphan_book = count(
+            &db,
+            "SELECT count(*) AS c FROM fts_book WHERE rowid NOT IN (SELECT id FROM search_docs)",
+        )
+        .await;
+        let orphan_knowledge = count(
+            &db,
+            "SELECT count(*) AS c FROM fts_knowledge
+             WHERE rowid NOT IN (SELECT id FROM knowledge_chunks)",
+        )
+        .await;
+        assert_eq!(orphan_book, 0, "orphaned fts_book rows");
+        assert_eq!(orphan_knowledge, 0, "orphaned fts_knowledge rows");
     }
 }

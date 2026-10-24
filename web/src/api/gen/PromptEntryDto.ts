@@ -23,7 +23,7 @@ vars: Array<string>,
 /**
  * The shipped default template.
  */
-default_text: string, global_override: string | null, book_override: string | null, 
+default_text: string, global_override?: string | null, book_override?: string | null, 
 /**
  * Which level the effective template comes from.
  */

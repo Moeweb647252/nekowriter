@@ -3,4 +3,4 @@
 /**
  * `books.model_overrides` and `app_settings["roles.defaults"]`.
  */
-export type RoleModels = { conception: number | null, researcher: number | null, writer: number | null, reviewer: number | null, archivist: number | null, };
+export type RoleModels = { conception?: number | null, researcher?: number | null, writer?: number | null, reviewer?: number | null, archivist?: number | null, };

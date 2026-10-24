@@ -148,6 +148,9 @@ pub fn build_app(state: AppState) -> Router {
             state.clone(),
             host_origin_guard,
         ))
+        // Outermost, so the headers are also present on the guard's 403 and on 404s
+        // (spec/01 §10.6).
+        .layer(middleware::from_fn(security_headers))
         .with_state(state)
 }
 
@@ -176,8 +179,10 @@ async fn host_origin_guard(request: Request, next: Next) -> Result<Response, App
         }
     }
 
+    // spec/01 §10.2 checks `Origin` for every non-GET method; `HEAD` is not GET, so it is
+    // checked too. Only GET is exempt (it is the method a plain navigation uses, and it carries
+    // no `Origin`).
     if method != axum::http::Method::GET
-        && method != axum::http::Method::HEAD
         && let Some(origin) = headers.get(header::ORIGIN)
         && !origin_allowed(origin)
     {
@@ -328,6 +333,149 @@ mod tests {
             assert!(
                 !origin_allowed(&HeaderValue::from_str(origin).expect("header")),
                 "{origin} should be rejected"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod guard_tests {
+    use super::*;
+    use axum::body::Body;
+    use tower::ServiceExt;
+
+    fn test_config(data_dir: &std::path::Path) -> crate::config::Config {
+        crate::config::Config {
+            bind: "127.0.0.1:0".parse().expect("bind"),
+            data_dir: Some(data_dir.to_path_buf()),
+            web_dir: None,
+            enable_demo_provider: true,
+            allow_remote: false,
+        }
+    }
+
+    async fn test_app() -> (tempfile::TempDir, Router) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db = crate::db::Db::connect(&dir.path().join("test.db"))
+            .await
+            .expect("db");
+        nekowriter_migration::up(db.conn()).await.expect("migrate");
+        let vec_version = db.vec_version().await.expect("vec");
+        let state = AppState::new(db, test_config(dir.path()), vec_version);
+        (dir, build_app(state))
+    }
+
+    /// Sends one request through the app and returns its status and headers.
+    async fn send(
+        app: Router,
+        method: axum::http::Method,
+        path: &str,
+        origin: Option<&str>,
+    ) -> (axum::http::StatusCode, axum::http::HeaderMap) {
+        let mut request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::HOST, "127.0.0.1:7878");
+        if let Some(origin) = origin {
+            request = request.header(header::ORIGIN, origin);
+        }
+        let response = app
+            .oneshot(request.body(Body::empty()).expect("request"))
+            .await
+            .expect("response");
+        (response.status(), response.headers().clone())
+    }
+
+    /// spec/01 §10.2: for **non-GET** methods a foreign `Origin` is rejected. `HEAD` is not GET,
+    /// so it must be rejected too — otherwise `HEAD` is a CSRF hole around the guard.
+    #[tokio::test]
+    async fn head_with_foreign_origin_is_forbidden() {
+        let (_dir, app) = test_app().await;
+        let (status, _) = send(
+            app,
+            axum::http::Method::HEAD,
+            "/api/health",
+            Some("http://evil.com"),
+        )
+        .await;
+        assert_eq!(
+            status,
+            axum::http::StatusCode::FORBIDDEN,
+            "HEAD must be subject to the Origin check (spec/01 §10.2)"
+        );
+    }
+
+    /// The other non-GET methods are rejected as well (spec/01 §10.2).
+    #[tokio::test]
+    async fn non_get_methods_with_foreign_origin_are_forbidden() {
+        for method in [
+            axum::http::Method::POST,
+            axum::http::Method::PUT,
+            axum::http::Method::PATCH,
+            axum::http::Method::DELETE,
+            axum::http::Method::OPTIONS,
+        ] {
+            let (_dir, app) = test_app().await;
+            let (status, _) =
+                send(app, method.clone(), "/api/health", Some("http://evil.com")).await;
+            assert_eq!(
+                status,
+                axum::http::StatusCode::FORBIDDEN,
+                "{method} with a foreign Origin must be forbidden"
+            );
+        }
+    }
+
+    /// `GET` stays exempt: a plain navigation carries no `Origin`, and the guard must not break
+    /// reads (spec/01 §10.2 checks non-GET methods only).
+    #[tokio::test]
+    async fn get_is_exempt_from_the_origin_check() {
+        let (_dir, app) = test_app().await;
+        let (status, _) = send(
+            app,
+            axum::http::Method::GET,
+            "/api/health",
+            Some("http://evil.com"),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+    }
+
+    /// A loopback `Origin` on a non-GET request is accepted (the Vite dev server case).
+    #[tokio::test]
+    async fn loopback_origin_on_a_mutation_is_accepted() {
+        let (_dir, app) = test_app().await;
+        let (status, _) = send(
+            app,
+            axum::http::Method::HEAD,
+            "/api/health",
+            Some("http://localhost:5173"),
+        )
+        .await;
+        assert_ne!(status, axum::http::StatusCode::FORBIDDEN);
+    }
+
+    /// spec/01 §10.6: static files are served with `X-Content-Type-Options: nosniff` and a CSP
+    /// that allows only self. The layer must cover API responses, the hint page and 404s.
+    #[tokio::test]
+    async fn security_headers_are_present_on_every_response() {
+        for path in ["/api/health", "/", "/does-not-exist"] {
+            let (_dir, app) = test_app().await;
+            let (_, headers) = send(app, axum::http::Method::GET, path, None).await;
+            assert_eq!(
+                headers
+                    .get(header::X_CONTENT_TYPE_OPTIONS)
+                    .map(|value| value.to_str().expect("header")),
+                Some("nosniff"),
+                "{path} is missing X-Content-Type-Options (spec/01 §10.6)"
+            );
+            let csp = headers
+                .get(header::CONTENT_SECURITY_POLICY)
+                .map(|value| value.to_str().expect("header"))
+                .unwrap_or_default();
+            assert!(
+                csp.contains("default-src 'self'"),
+                "{path} is missing the CSP (got {csp:?})"
             );
         }
     }

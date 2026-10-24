@@ -7,6 +7,7 @@ import enChapter from "./locales/en/chapter.json"
 import enCommon from "./locales/en/common.json"
 import enErrors from "./locales/en/errors.json"
 import enLibrary from "./locales/en/library.json"
+import enPrompts from "./locales/en/prompts.json"
 import enSettings from "./locales/en/settings.json"
 import zhAgent from "./locales/zh-CN/agent.json"
 import zhBook from "./locales/zh-CN/book.json"
@@ -14,6 +15,7 @@ import zhChapter from "./locales/zh-CN/chapter.json"
 import zhCommon from "./locales/zh-CN/common.json"
 import zhErrors from "./locales/zh-CN/errors.json"
 import zhLibrary from "./locales/zh-CN/library.json"
+import zhPrompts from "./locales/zh-CN/prompts.json"
 import zhSettings from "./locales/zh-CN/settings.json"
 
 export const SUPPORTED_LANGUAGES = ["en", "zh-CN"] as const
@@ -27,6 +29,7 @@ export const NAMESPACES = [
   "chapter",
   "agent",
   "settings",
+  "prompts",
   "errors",
 ] as const
 
@@ -39,6 +42,7 @@ export const resources = {
     chapter: enChapter,
     agent: enAgent,
     settings: enSettings,
+    prompts: enPrompts,
     errors: enErrors,
   },
   "zh-CN": {
@@ -48,6 +52,7 @@ export const resources = {
     chapter: zhChapter,
     agent: zhAgent,
     settings: zhSettings,
+    prompts: zhPrompts,
     errors: zhErrors,
   },
 } as const

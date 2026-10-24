@@ -4,4 +4,4 @@ import type { ProviderTestErrorDto } from "./ProviderTestErrorDto";
 /**
  * `POST /api/providers/:id/test` response (spec/10 §2.1, spec/04 §8).
  */
-export type ProviderTestDto = { ok: boolean, latency_ms: bigint, text: string | null, error: ProviderTestErrorDto | null, };
+export type ProviderTestDto = { ok: boolean, latency_ms: bigint, text?: string | null, error?: ProviderTestErrorDto | null, };
