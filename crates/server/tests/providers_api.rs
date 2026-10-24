@@ -6,7 +6,7 @@
 use nekowriter::api::dto::providers as dto;
 use nekowriter::testing::{TestApp, assert_error};
 use serde_json::{Value, json};
-use wiremock::matchers::{bearer_token, method, path};
+use wiremock::matchers::{bearer_token, body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 // ───────────────────────────── helpers ─────────────────────────────
@@ -566,6 +566,68 @@ async fn test_connection_reports_success_with_latency_and_text() {
     let received = server.received_requests().await.expect("requests");
     let sent: Value = serde_json::from_slice(&received[0].body).expect("body");
     assert_eq!(sent["max_tokens"], 32);
+    assert!(sent["tools"].is_null());
+    assert_eq!(sent["messages"][1]["content"], "ping");
+}
+
+/// The connection test reports on the saved profile, so it must send that profile's
+/// `ModelOptions` (spec/04 §5). The OpenAI preset's own reason for
+/// `max_tokens_field: max_completion_tokens` is a model that rejects `max_tokens`; a test that
+/// always sends the default reports a false failure for exactly the correct configuration.
+#[tokio::test]
+async fn test_connection_uses_the_saved_profile_options() {
+    let server = MockServer::start().await;
+    // Priority 1: the body a connection test used to send (`max_tokens`) fails, exactly like a
+    // real model that only accepts `max_completion_tokens`.
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(body_string_contains("\"max_tokens\":"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(
+            "{\"error\":{\"message\":\"Unsupported parameter: 'max_tokens' is not supported with this model.\",\"type\":\"invalid_request_error\"}}",
+        ))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(sse_text("pong")),
+        )
+        .with_priority(2)
+        .mount(&server)
+        .await;
+
+    let app = TestApp::new().await;
+    let provider = create_openai_provider(&app, &server.uri(), "sk-test").await;
+    let provider_id = provider["id"].as_i64().expect("id");
+    let (status, profile) = app
+        .post(
+            "/api/model-profiles",
+            json!({
+                "provider_id": provider_id,
+                "display_name": "GPT",
+                "model": "gpt-test",
+                "context_window": 400000,
+                "max_output_tokens": 128000,
+                "options": { "max_tokens_field": "max_completion_tokens" },
+            }),
+        )
+        .await;
+    assert_eq!(status, 201, "{profile}");
+
+    // The saved profile's options are used, so the provider accepts the request.
+    let (status, body) = app
+        .post(&format!("/api/providers/{provider_id}/test"), json!({}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["ok"], true, "{body}");
+    let received = server.received_requests().await.expect("requests");
+    let sent: Value = serde_json::from_slice(&received[0].body).expect("body");
+    assert_eq!(sent["max_completion_tokens"], 32, "body: {sent}");
+    assert!(sent.get("max_tokens").is_none(), "body: {sent}");
+    // The request stays tiny (spec/04 §8).
     assert!(sent["tools"].is_null());
     assert_eq!(sent["messages"][1]["content"], "ping");
 }

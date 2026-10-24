@@ -739,12 +739,19 @@ pub async fn test_connection(
     model: Option<String>,
 ) -> Result<ProviderTestDto, AppError> {
     let provider = find_provider(state.db().conn(), id).await?;
-    let model_id = match model {
-        Some(model) if !model.trim().is_empty() => model.trim().to_owned(),
-        _ => default_test_model(state, id).await?,
-    };
+    // The test reports on the *saved* configuration, so it uses the profile's model id and its
+    // frozen `ModelOptions` (spec/04 §8, §5). Sending the defaults instead would report a false
+    // failure for a correct profile — the OpenAI preset, for one, needs
+    // `max_tokens_field: max_completion_tokens`, and Anthropic would get the default effort.
+    let requested = model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .map(str::to_owned);
+    let (model_id, options) = test_request_config(state, id, requested, &provider).await?;
     let client = client_for(&provider, state.config().demo_provider_enabled())?;
-    let request = nekowriter_llm::ChatRequest::ping(model_id, "");
+    let mut request = nekowriter_llm::ChatRequest::ping(model_id, "");
+    request.options = options;
     let started = std::time::Instant::now();
     let mut text = String::new();
     let result = client
@@ -774,19 +781,40 @@ pub async fn test_connection(
     }
 }
 
-/// The model a connection test uses when the caller did not name one.
-async fn default_test_model(state: &AppState, provider_id: i32) -> Result<String, AppError> {
-    let models = model_profiles::Entity::find()
+/// The model id and the `ModelOptions` a connection test uses (spec/04 §8).
+///
+/// The test reports on the *saved* configuration, so a named model borrows its profile's options
+/// and an unnamed one borrows the provider's first profile. Sending the defaults instead would
+/// report a false failure for a correct profile: the OpenAI preset needs
+/// `max_tokens_field: max_completion_tokens`, and Anthropic would silently get the default effort.
+/// A model without a profile is still testable — the caller may name any id — but then there are
+/// no options to borrow.
+async fn test_request_config(
+    state: &AppState,
+    provider_id: i32,
+    requested: Option<String>,
+    provider: &providers::Model,
+) -> Result<(String, nekowriter_llm::ModelOptions), AppError> {
+    let rows = model_profiles::Entity::find()
         .filter(model_profiles::Column::ProviderId.eq(provider_id))
         .order_by_asc(model_profiles::Column::Id)
         .all(state.db().conn())
         .await?;
-    if let Some(model) = models.first() {
-        return Ok(model.model.clone());
+    let borrowed = match requested.as_deref() {
+        Some(model_id) => rows.iter().find(|row| row.model == model_id),
+        None => rows.first(),
+    };
+    let options = borrowed
+        .and_then(|row| serde_json::from_str(&row.options).ok())
+        .unwrap_or_default();
+    if let Some(model_id) = requested {
+        return Ok((model_id, options));
     }
-    let provider = find_provider(state.db().conn(), provider_id).await?;
+    if let Some(row) = borrowed {
+        return Ok((row.model.clone(), options));
+    }
     if provider.protocol == Protocol::Mock.as_str() {
-        return Ok(DEMO_MODEL_ID.to_owned());
+        return Ok((DEMO_MODEL_ID.to_owned(), options));
     }
     Err(AppError::validation(
         "test the connection with a model id: this provider has no saved models",
