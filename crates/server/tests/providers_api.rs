@@ -849,3 +849,47 @@ async fn app_settings_carry_role_defaults_and_mask_the_search_key() {
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["search"]["tavily_api_key"], "…wxyz");
 }
+
+// ───────────────────────────── demo protocol gate ─────────────────────────────
+
+/// A `mock` provider is only usable with the demo provider enabled (spec/01 §6). Creating one is
+/// already gated, but the gate has to cover a *stored* row too: a debug build writes the row, and
+/// a later `--enable-demo-provider`-less run must not act on it.
+///
+/// The config helper cannot be exercised through HTTP, because
+/// `Config::demo_provider_enabled()` ORs in `cfg!(debug_assertions)`, which is always true in a
+/// test binary — the whole "disabled" state is unreachable through the router here. The gate is
+/// therefore tested where it lives: on the row-level check every use funnels through.
+#[test]
+fn a_stored_demo_provider_is_only_usable_when_the_demo_provider_is_enabled() {
+    let row = nekowriter::db::entities::providers::Model {
+        id: 1,
+        name: "Demo".to_owned(),
+        protocol: "mock".to_owned(),
+        base_url: "mock://demo".to_owned(),
+        api_key: None,
+        extra_headers: "{}".to_owned(),
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+    let error = nekowriter::services::providers::client_for(&row, false)
+        .err()
+        .expect("the demo gate must reject a stored mock row when the flag is off");
+    assert!(
+        matches!(error.code, nekowriter::error::ErrorCode::ValidationFailed),
+        "unexpected code: {:?}",
+        error.code
+    );
+    assert!(
+        nekowriter::services::providers::client_for(&row, true).is_ok(),
+        "an enabled demo provider must build a client"
+    );
+
+    // An ordinary provider is unaffected by the flag.
+    let openai = nekowriter::db::entities::providers::Model {
+        protocol: "openai".to_owned(),
+        base_url: "https://example.invalid/v1".to_owned(),
+        ..row
+    };
+    assert!(nekowriter::services::providers::client_for(&openai, false).is_ok());
+}
