@@ -24,5 +24,11 @@
   "group.notices": "Notices",
   "group.results": "Results",
   "group.shared": "Shared",
-  "group.tools": "Tools"
+  "group.tools": "Tools",
+  "agent.conception": "Conception",
+  "agent.researcher": "Researcher",
+  "agent.writer": "Writer",
+  "agent.reviewer": "Reviewer",
+  "agent.archivist": "Archivist",
+  "agent.shared": "Shared"
 }

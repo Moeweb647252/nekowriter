@@ -24,5 +24,11 @@
   "group.notices": "系统通知",
   "group.results": "工具结果",
   "group.shared": "通用",
-  "group.tools": "工具说明"
+  "group.tools": "工具说明",
+  "agent.conception": "构思",
+  "agent.researcher": "资料员",
+  "agent.writer": "写手",
+  "agent.reviewer": "审稿",
+  "agent.archivist": "档案",
+  "agent.shared": "通用"
 }

@@ -1,6 +1,6 @@
 /** The prompt editor shared by the global page and the book page (PROJECT §8.11, spec/09 §4):
  * grouped list, metadata, variable docs, editor, diff vs default, reset and validation errors. */
-import { useMemo, useState } from "react"
+import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { ChevronDown, ChevronRight, RotateCcw, Search, Sparkles } from "lucide-react"
 
@@ -21,8 +21,8 @@ import type { PromptKind } from "@/api/gen/PromptKind"
 import type { PromptSource } from "@/api/gen/PromptSource"
 import { cn } from "@/lib/utils"
 
-/** The groups of the left list, in the order of spec/09 §2. */
-const GROUP_ORDER: Array<{ key: string; kinds: PromptKind[]; agents?: string[] }> = [
+/** The category groups inside every agent, in the order of spec/09 §2 (PROJECT §8.11). */
+const GROUP_ORDER: Array<{ key: string; kinds: PromptKind[] }> = [
   { key: "system", kinds: ["system"] },
   { key: "tasks", kinds: ["task"] },
   { key: "blocks", kinds: ["block"] },
@@ -31,6 +31,49 @@ const GROUP_ORDER: Array<{ key: string; kinds: PromptKind[]; agents?: string[] }
   { key: "shared", kinds: ["shared"] },
   { key: "tools", kinds: ["tool"] },
 ]
+
+/** The agents of the left list, in the order the spec lists the roles (PROJECT §8.11). */
+const AGENT_ORDER = [
+  "writer",
+  "reviewer",
+  "archivist",
+  "conception",
+  "researcher",
+  "shared",
+] as const
+
+/** One category group of one agent. */
+export type PromptCategoryGroup = { key: string; entries: PromptEntryDto[] }
+
+/** One agent of the left list with its categories (PROJECT §8.11: agent *and* category). */
+export type PromptAgentGroup = { agent: string; groups: PromptCategoryGroup[] }
+
+/**
+ * Builds the two-level list of the prompts page: one group per agent, each holding its
+ * categories (PROJECT §8.11, F8.1). An agent the pack adds later still appears — it is appended
+ * after the known roles rather than dropped.
+ */
+export function groupPrompts(entries: PromptEntryDto[]): PromptAgentGroup[] {
+  const agents = [...new Set(entries.map((entry) => entry.agent))]
+  agents.sort((left, right) => {
+    const leftIndex = AGENT_ORDER.indexOf(left as (typeof AGENT_ORDER)[number])
+    const rightIndex = AGENT_ORDER.indexOf(right as (typeof AGENT_ORDER)[number])
+    const leftRank = leftIndex === -1 ? AGENT_ORDER.length : leftIndex
+    const rightRank = rightIndex === -1 ? AGENT_ORDER.length : rightIndex
+    return leftRank - rightRank || left.localeCompare(right)
+  })
+  return agents
+    .map((agent) => ({
+      agent,
+      groups: GROUP_ORDER.map((group) => ({
+        key: group.key,
+        entries: entries.filter(
+          (entry) => entry.agent === agent && group.kinds.includes(entry.kind),
+        ),
+      })).filter((group) => group.entries.length > 0),
+    }))
+    .filter((group) => group.groups.length > 0)
+}
 
 /** True for languages written without spaces (used by the diff, spec/11 §5.2). */
 const UNSPACED_LANGUAGES = ["zh", "ja", "th", "lo", "km", "my"]
@@ -87,24 +130,15 @@ export function PromptEditor({ bookId, bookScope }: PromptEditorProps) {
           {filtered.length === 0 ? (
             <p className="px-1 py-2 text-xs text-muted-foreground">{t("prompts:no_matches")}</p>
           ) : (
-            GROUP_ORDER.map((group) => {
-              const groupEntries = filtered.filter((entry) =>
-                group.kinds.includes(entry.kind),
-              )
-              if (groupEntries.length === 0) {
-                return null
-              }
-              return (
-                <PromptGroup
-                  key={group.key}
-                  group={group.key}
-                  entries={groupEntries}
-                  selected={current?.key}
-                  onSelect={setSelected}
-                  bookScope={bookScope}
-                />
-              )
-            })
+            groupPrompts(filtered).map((agentGroup) => (
+              <PromptAgentSection
+                key={agentGroup.agent}
+                agentGroup={agentGroup}
+                selected={current?.key}
+                onSelect={setSelected}
+                bookScope={bookScope}
+              />
+            ))
           )}
         </div>
       </aside>
@@ -127,7 +161,57 @@ export function PromptEditor({ bookId, bookScope }: PromptEditorProps) {
   )
 }
 
-/** One collapsible group of the left list. */
+/** One agent of the left list: its name, then its collapsible categories (PROJECT §8.11). */
+function PromptAgentSection({
+  agentGroup,
+  selected,
+  onSelect,
+  bookScope,
+}: {
+  agentGroup: PromptAgentGroup
+  selected: string | undefined
+  onSelect: (key: string) => void
+  bookScope: boolean
+}) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(true)
+  const Chevron = open ? ChevronDown : ChevronRight
+  const count = agentGroup.groups.reduce((total, group) => total + group.entries.length, 0)
+  return (
+    <div className="mb-1">
+      <button
+        type="button"
+        className="flex w-full items-center gap-1 rounded-md px-1 py-1 text-xs font-semibold"
+        onClick={() => setOpen(!open)}
+      >
+        <Chevron className="size-3.5" />
+        {agentLabel(t, agentGroup.agent)}
+        <span className="ml-auto font-normal text-muted-foreground">{count}</span>
+      </button>
+      {open ? (
+        <div className="mt-0.5 ml-1 border-l pl-1.5">
+          {agentGroup.groups.map((group) => (
+            <PromptGroup
+              key={group.key}
+              group={group.key}
+              entries={group.entries}
+              selected={selected}
+              onSelect={onSelect}
+              bookScope={bookScope}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+/** The localized name of a pack agent; `shared` is the pack's own word for cross-role prompts. */
+function agentLabel(t: (key: string) => string, agent: string): string {
+  return t(`prompts:agent.${agent}`)
+}
+
+/** One collapsible category group inside an agent. */
 function PromptGroup({
   group,
   entries,
@@ -411,15 +495,4 @@ function FieldRow({
 /** Picks the documentation in the UI language, like the pack titles (spec/09 §1). */
 function documentation(en: string, zh: string, unspaced: boolean): string {
   return unspaced && zh !== "" ? zh : en
-}
-
-/** Memoizes the grouped list so typing in the editor does not rebuild it. */
-export function usePromptGroups(entries: PromptEntryDto[] | undefined) {
-  return useMemo(() => {
-    const list = entries ?? []
-    return GROUP_ORDER.map((group) => ({
-      key: group.key,
-      entries: list.filter((entry) => group.kinds.includes(entry.kind)),
-    })).filter((group) => group.entries.length > 0)
-  }, [entries])
 }

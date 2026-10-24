@@ -2,10 +2,12 @@
 import { describe, expect, it } from "vitest"
 
 import { parseHeaders } from "@/features/settings/ProvidersPage"
+import { groupPrompts } from "@/features/prompts/PromptEditor"
 import enPrompts from "@/i18n/locales/en/prompts.json"
 import zhPrompts from "@/i18n/locales/zh-CN/prompts.json"
 import enSettings from "@/i18n/locales/en/settings.json"
 import zhSettings from "@/i18n/locales/zh-CN/settings.json"
+import type { PromptEntryDto } from "@/api/gen/PromptEntryDto"
 import type { PromptKind } from "@/api/gen/PromptKind"
 import type { Protocol } from "@/api/gen/Protocol"
 
@@ -38,6 +40,66 @@ describe("provider form", () => {
   it("rejects a line without a name or a colon", () => {
     expect(parseHeaders("nocolon")).toBeNull()
     expect(parseHeaders(": value")).toBeNull()
+  })
+})
+
+describe("prompts list grouping", () => {
+  /** A minimal entry; only the fields `groupPrompts` reads matter. */
+  const entry = (agent: string, kind: PromptKind, key: string): PromptEntryDto => ({
+    key,
+    kind,
+    agent,
+    title_en: key,
+    title_zh: "",
+    vars: [],
+    default_text: "",
+    source: "default",
+    variables: [],
+  })
+
+  // PROJECT §8.11 / F8.1: "the left list is grouped by agent **and** category".
+  it("groups by agent first, then by category", () => {
+    const groups = groupPrompts([
+      entry("writer", "system", "writer.system"),
+      entry("writer", "task", "writer.kickoff.chapter"),
+      entry("reviewer", "system", "reviewer.system"),
+      entry("shared", "block", "block.settings"),
+    ])
+    expect(groups.map((group) => group.agent)).toEqual(["writer", "reviewer", "shared"])
+    const writer = groups[0]
+    expect(writer.groups.map((group) => group.key)).toEqual(["system", "tasks"])
+    expect(writer.groups[0].entries[0].key).toBe("writer.system")
+    expect(writer.groups[1].entries[0].key).toBe("writer.kickoff.chapter")
+  })
+
+  it("orders the agents as the spec lists the roles", () => {
+    const groups = groupPrompts([
+      entry("shared", "shared", "shared.label"),
+      entry("archivist", "task", "archivist.kickoff.seed"),
+      entry("writer", "task", "writer.kickoff.chapter"),
+      entry("researcher", "task", "researcher.kickoff"),
+      entry("conception", "task", "conception.kickoff"),
+      entry("reviewer", "task", "reviewer.kickoff"),
+    ])
+    expect(groups.map((group) => group.agent)).toEqual([
+      "writer",
+      "reviewer",
+      "archivist",
+      "conception",
+      "researcher",
+      "shared",
+    ])
+  })
+
+  it("drops empty categories and keeps an unknown agent visible", () => {
+    const groups = groupPrompts([
+      entry("writer", "system", "writer.system"),
+      entry("later_role", "task", "later_role.kickoff"),
+    ])
+    // The writer has no tasks, so that category is not rendered empty.
+    expect(groups[0].groups.map((group) => group.key)).toEqual(["system"])
+    // An agent added by a later milestone is appended, not silently hidden.
+    expect(groups.map((group) => group.agent)).toEqual(["writer", "later_role"])
   })
 })
 
