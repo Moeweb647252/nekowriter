@@ -398,13 +398,16 @@ async fn anchor_ord(
 }
 
 /// A chapter's label, rendered by `shared.chapter_label` (spec/09 §1).
+///
+/// The memory templates render the label and the title side by side
+/// (`{{ label }}《{{ title }}》`), so the label never carries the title itself.
 fn label_of(prompts: &PromptSet, track: &tracks::Model, chapter: &chapters::Model) -> String {
     prompts.chapter_label(
         &track.kind,
         &track.title,
         i64::from(chapter.ord),
         &chapter.title,
-        true,
+        false,
     )
 }
 
@@ -770,6 +773,8 @@ async fn key_notes(
 }
 
 /// Open items sorted by importance desc, then planted chapter asc, at most 20 (spec/06 §4.4).
+///
+/// Every open item is listed — unlike `key_notes`, this part has no importance threshold.
 async fn open_foreshadowing(
     conn: &impl ConnectionTrait,
     prompts: &PromptSet,
@@ -780,7 +785,6 @@ async fn open_foreshadowing(
         .filter(foreshadowing::Column::BookId.eq(visibility.book_id))
         .filter(visibility.visible_condition(foreshadowing::Column::TrackId))
         .filter(foreshadowing::Column::Status.eq(ForeshadowingStatus::Open.as_str()))
-        .filter(foreshadowing::Column::Importance.gte(IMPORTANT))
         .all(conn)
         .await?;
     rows.sort_by(|a, b| {

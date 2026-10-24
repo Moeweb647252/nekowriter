@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 
 use crate::db::entities::{
     agent_messages, agent_sessions, agent_tool_calls, books, chapter_versions, chapters,
-    character_designs, research_tasks, setting_docs, tracks,
+    character_designs, entities, research_tasks, setting_docs, tracks,
 };
 use crate::db::json::{
     self, AgentRole, ChapterContent, CompletionKind, MessageKind, MessageRole, Phase, Protocol,
@@ -28,7 +28,7 @@ use crate::prompts::PromptSet;
 use crate::prompts::context::{
     BookContext, CastEntryContext, ChapterContext, CharacterContext, DraftContext, FeedbackContext,
     FeedbackIssueContext, GranularityContext, MemoryContext, MemoryCountsContext, ParagraphContext,
-    PreviousTailContext, ProtagonistStateContext, ScopeContext, SettingsContext, TrackContext,
+    ScopeContext, SettingsContext, TrackContext,
 };
 use crate::text;
 
@@ -470,57 +470,9 @@ async fn memory_context(
     else {
         return Ok(empty_memory_context());
     };
+    // The whole tiered snapshot of spec/06 §4, rendered by `services/memory.rs`.
     let snapshot = crate::services::memory::snapshot(conn, prompts, &track, &chapter).await?;
-    Ok(MemoryContext {
-        is_first: snapshot.is_first,
-        window_mid: snapshot.window_mid,
-        recent_summaries: snapshot
-            .recent_summaries
-            .into_iter()
-            .map(|item| crate::prompts::context::ChapterSummaryContext {
-                label: item.label,
-                title: item.title,
-                summary: item.summary,
-            })
-            .collect(),
-        previous_tail: snapshot.previous_tail.map(|tail| PreviousTailContext {
-            label: tail.label,
-            text: tail.text,
-        }),
-        protagonist: snapshot.protagonist.map(|item| ProtagonistStateContext {
-            id: item.id,
-            name: item.name,
-            status: item.status,
-            status_label: item.status_label,
-            state: item.state,
-            after_anchor: item.after_anchor,
-            attributes: item
-                .attributes
-                .into_iter()
-                .map(|(key, value)| crate::prompts::context::AttributeContext { key, value })
-                .collect(),
-        }),
-        // The mid-term evidence (spec/06 §4.3) and the long-term index (spec/06 §4.4) read canon
-        // tables that arrive with M5; until then the rendered empty states are what the model
-        // would see for a book with no canon records yet.
-        recent_changes: Vec::new(),
-        appearances: Vec::new(),
-        absent_important: Vec::new(),
-        key_notes: Vec::new(),
-        open_foreshadowing: Vec::new(),
-        cast: Vec::new(),
-        counts: MemoryCountsContext {
-            character: 0,
-            organization: 0,
-            location: 0,
-            item: 0,
-            other: 0,
-            event: 0,
-            fact: 0,
-            world_rule: 0,
-            foreshadowing_open: 0,
-        },
-    })
+    Ok(crate::services::memory::memory_context(&snapshot))
 }
 
 /// The chapter view `block.memory` renders: label and title only, and the outline only when the
@@ -1015,7 +967,40 @@ async fn demo_hints(
         step_in_phase: counters.steps.max(0) as u32,
         language,
         tools: frozen_tool_names(session),
+        protagonist: protagonist_name(conn, session).await?,
     })
+}
+
+/// The protagonist's stored name, when the session's book has one (spec/04 §7.2).
+///
+/// The Demo provider looks the protagonist up in its first planning step, which is what the
+/// manual check of M5 exercises (`get_entity` on a real canon row).
+async fn protagonist_name(
+    conn: &impl ConnectionTrait,
+    session: &agent_sessions::Model,
+) -> Result<Option<String>, AppError> {
+    let Some(book_id) = session.book_id else {
+        return Ok(None);
+    };
+    // A side track's focus character is its protagonist (spec/06 §4.2).
+    let focus = match session.track_id {
+        Some(track_id) => tracks::Entity::find_by_id(track_id)
+            .one(conn)
+            .await?
+            .and_then(|track| track.focus_entity_id),
+        None => None,
+    };
+    let row = match focus {
+        Some(entity_id) => entities::Entity::find_by_id(entity_id).one(conn).await?,
+        None => {
+            entities::Entity::find()
+                .filter(entities::Column::BookId.eq(book_id))
+                .filter(entities::Column::IsProtagonist.eq(1))
+                .one(conn)
+                .await?
+        }
+    };
+    Ok(row.map(|row| row.name))
 }
 
 /// Converts the stored replay payload into the neutral one.
