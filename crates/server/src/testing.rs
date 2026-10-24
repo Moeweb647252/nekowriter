@@ -61,6 +61,17 @@ impl TestApp {
         &self.events
     }
 
+    /// The temporary data directory that holds `test.db`, so a test can reopen the same database
+    /// and drive the production startup sequence over it (spec/01 §5 steps 7–8).
+    pub fn data_dir(&self) -> &std::path::Path {
+        self._dir.path()
+    }
+
+    /// The config the app was built with (its `data_dir` points at [`Self::data_dir`]).
+    pub fn config(&self) -> &Config {
+        self.state.config()
+    }
+
     pub fn app(&self) -> Router {
         crate::api::build_app(self.state.clone())
     }

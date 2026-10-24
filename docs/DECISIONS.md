@@ -545,6 +545,28 @@ technical decisions.
   the text", "keeps Enter inside the text as a line break", "deletes the paragraph on Backspace in
   an empty one", "ignores every key while an IME composition is active").
 
+### D-076 Tools never write `counters`; they return deferred counter flags on `ToolOutcome`
+- **Context**: `finalize_inner` (spec/03 §5.2) writes the session's `counters` column wholesale
+  from a `SessionCounters` snapshot taken from the session row **as it was loaded before
+  `execute` ran** (`step_tool` clones that row into the tool transaction). A tool that wrote
+  `counters` directly inside `execute` — through the transaction it is handed — would have its
+  write silently discarded by the finalize write in the same transaction, with no error and no
+  log line. This is a shape bug, not a tool bug: it is invisible to the tool author and it gets
+  more likely as counters are added.
+- **Decision**: tools never write `agent_sessions.counters`. A tool that must advance a counter
+  reports it on the outcome (`ToolOutcome.finish_warned`, spec/03 §8's one-shot short-completion
+  flag), and `finalize_inner` merges the flag into the snapshot it is about to write with `|=`,
+  so a previously set flag is never cleared. The single write of the counters column stays in
+  `finalize_inner`, which owns the transaction.
+- **Consequences**: `counters` has exactly one writer, so the read-modify-write is not racy and a
+  new counter only needs a field on `ToolOutcome` plus one merge line. The `|=` (rather than `=`)
+  matters because `finish_warned` is monotonic by spec/03 §8: once a completion has been withheld
+  it must stay withheld for the rest of the session. Precedent and implementation: the M4 writer
+  tools' short-completion path (`crates/server/src/agent/tools/writer.rs`,
+  `counters.finish_warned |= outcome.finish_warned` in `agent/runner.rs`). The alternative — a
+  per-column `UPDATE` inside `finalize_inner` — was rejected because it would keep the hazard for
+  every future counter that touches a column this function also writes.
+
 ## Open items (questions for the author)
 1. Confirm the reading of "this time it cannot be delegated to a lower-level review agent" as
    "the author judges the reviewer's report; no further delegation" (PROJECT §10.9).

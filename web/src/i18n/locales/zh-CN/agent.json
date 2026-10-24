@@ -259,6 +259,9 @@
     "ask_user": {
       "summary": "提了 {{count}} 个问题"
     },
+    "request_review": {
+      "summary": "请作者审阅设定材料"
+    },
     "web_search": {
       "summary": "搜索了网络（{{count}} 条结果）",
       "summary_query": "搜索了“{{query}}” · {{count}} 条结果"

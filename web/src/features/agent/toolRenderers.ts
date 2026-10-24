@@ -322,7 +322,7 @@ const REGISTRY: Record<string, ToolRenderer> = {
   },
   request_review: {
     icon: Sparkles,
-    summary: () => "",
+    summary: (_ui, t) => t("agent:tools.request_review.summary"),
   },
   web_search: {
     icon: Search,

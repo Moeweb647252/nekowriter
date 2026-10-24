@@ -51,8 +51,8 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     // Load and validate the embedded prompt pack; a failure is a build defect (spec/01 §5).
     crate::prompts::PromptRegistry::embedded().context("the embedded prompt pack is invalid")?;
 
-    let state = AppState::new(db, config.clone(), vec_version);
-    let app = api::build_app(state);
+    let state = prepare_state(db, config.clone(), vec_version).await?;
+    let app = api::build_app(state.clone());
 
     let listener = tokio::net::TcpListener::bind(config.bind)
         .await
@@ -60,13 +60,49 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     tracing::info!(addr = %config.bind, "listening on http://{}/", config.bind);
 
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(shutdown_signal(state))
         .await
         .context("server error")
 }
 
-/// Resolves after Ctrl+C or SIGTERM.
-async fn shutdown_signal() {
+/// Builds the application state and recovers the sessions the previous process left behind
+/// (spec/01 §5 steps 7–8).
+///
+/// This is the production sequence between opening the database and serving: **state first,
+/// then recovery, before any request is accepted**. It is a separate function so a test can drive
+/// it end to end — a test that calls [`crate::agent::recover`] directly would pass even if `run()`
+/// never called it, which is exactly the defect this factoring prevents.
+pub async fn prepare_state(
+    db: crate::db::Db,
+    config: Config,
+    vec_version: String,
+) -> anyhow::Result<AppState> {
+    let state = AppState::new(db, config, vec_version);
+    // spec/01 §5 step 8: every session left `running` becomes `interrupted` and every tool call
+    // left `executing` becomes `pending`. A session the previous process left running has no
+    // runner, and the control API refuses to continue anything but stopped/failed/interrupted, so
+    // skipping this strands it beyond Abandon.
+    let report = crate::agent::recover(&state)
+        .await
+        .context("session recovery failed")?;
+    if report.interrupted_sessions > 0 || report.reset_calls > 0 {
+        tracing::info!(
+            interrupted_sessions = report.interrupted_sessions,
+            reset_calls = report.reset_calls,
+            session_ids = ?report.session_ids(),
+            "recovered sessions left running by the previous process"
+        );
+    }
+    Ok(state)
+}
+
+/// Resolves after Ctrl+C or SIGTERM, then cancels every runner with the `shutdown` reason and
+/// waits up to [`SHUTDOWN_RUNNER_TIMEOUT`] for them to exit (spec/01 §5 graceful shutdown).
+///
+/// The runners transition their sessions to `interrupted` themselves — the same status startup
+/// recovery produces — and `axum::serve` returns only after this future completes, so the pool
+/// closes after the runners' last write rather than during it.
+async fn shutdown_signal(state: AppState) {
     let ctrl_c = async {
         if let Err(err) = tokio::signal::ctrl_c().await {
             tracing::error!(error = %err, "cannot listen for Ctrl+C");
@@ -94,6 +130,25 @@ async fn shutdown_signal() {
         _ = terminate => {},
     }
     tracing::info!("shutdown signal received");
+    shutdown_runners(&state).await;
+}
+
+/// How long graceful shutdown waits for the runners to finish their last write (spec/01 §5).
+pub const SHUTDOWN_RUNNER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Cancels every runner with the `shutdown` reason and waits for them (spec/01 §5).
+///
+/// Runners transition their sessions to `interrupted`, so a restart sees the same state recovery
+/// would have produced from a crash. Returns how many runners were cancelled.
+pub async fn shutdown_runners(state: &AppState) -> usize {
+    let cancelled = state.manager().shutdown(SHUTDOWN_RUNNER_TIMEOUT).await;
+    if cancelled > 0 {
+        tracing::info!(
+            runners = cancelled,
+            "cancelled running sessions for shutdown"
+        );
+    }
+    cancelled
 }
 
 /// Initializes `tracing` with `RUST_LOG` (default `info,nekowriter=debug`). Pretty output on

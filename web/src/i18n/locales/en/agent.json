@@ -259,6 +259,9 @@
     "ask_user": {
       "summary": "Asked {{count}} questions"
     },
+    "request_review": {
+      "summary": "Asked the author to review the setting materials"
+    },
     "web_search": {
       "summary": "Searched the web ({{count}} results)",
       "summary_query": "Searched the web for “{{query}}” · {{count}} results"
