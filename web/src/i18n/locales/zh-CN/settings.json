@@ -1,0 +1,15 @@
+{
+  "title": "设置",
+  "providers": "服务商",
+  "models": "模型",
+  "roles": "智能体角色",
+  "appearance": "外观",
+  "appearance_theme": "主题",
+  "appearance_editor_font": "编辑器字体",
+  "appearance_editor_size": "编辑器字号",
+  "font_serif": "衬线",
+  "font_sans": "无衬线",
+  "size_s": "小",
+  "size_m": "中",
+  "size_l": "大"
+}

@@ -1,0 +1,85 @@
+[package]
+name = "nekowriter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "nekowriter"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nekowriter"
+path = "src/main.rs"
+
+[features]
+default = []
+# Embed `web/dist` into the release binary (spec/01 §12).
+embed-web = ["dep:rust-embed"]
+# Expose the test helpers (`src/testing.rs`) to integration tests.
+testing = []
+
+[dependencies]
+nekowriter-llm.workspace = true
+nekowriter-embed.workspace = true
+nekowriter-migration.workspace = true
+
+tokio.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+futures.workspace = true
+tokio-util.workspace = true
+tokio-stream.workspace = true
+
+sea-orm.workspace = true
+sqlite-vec.workspace = true
+
+reqwest.workspace = true
+eventsource-stream.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+minijinja.workspace = true
+ts-rs.workspace = true
+chrono.workspace = true
+
+fastembed.workspace = true
+
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+directories.workspace = true
+dotenvy.workspace = true
+rust-embed = { workspace = true, optional = true }
+
+jieba-rs.workspace = true
+unicode-segmentation.workspace = true
+similar.workspace = true
+jsonschema.workspace = true
+async-trait.workspace = true
+blake3.workspace = true
+dom_smoothie.workspace = true
+htmd.workspace = true
+encoding_rs.workspace = true
+url.workspace = true
+ipnet.workspace = true
+
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+libsqlite3-sys = { version = "0.37", default-features = false }
+
+[dev-dependencies]
+nekowriter = { path = ".", features = ["testing"] }
+tempfile.workspace = true
+insta.workspace = true
+pretty_assertions.workspace = true
+wiremock.workspace = true
+tokio.workspace = true
+
+[[test]]
+name = "api_health"
+path = "tests/api_health.rs"

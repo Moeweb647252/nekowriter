@@ -1,0 +1,17 @@
+{
+  "title": "Library",
+  "subtitle": "Your books",
+  "new_book": "New book",
+  "empty_title": "No books yet",
+  "empty_body": "Create your first book to start writing.",
+  "archived": "Archived",
+  "no_books_filtered": "No books match this filter",
+  "recent_activity": "Edited {{when}}",
+  "book_title": "Title",
+  "book_idea": "Idea",
+  "book_genre": "Genre",
+  "book_language": "Writing language",
+  "start_conception": "Start with the conception agent",
+  "create_book": "Create book",
+  "chapters_count": "{{count}} chapters"
+}

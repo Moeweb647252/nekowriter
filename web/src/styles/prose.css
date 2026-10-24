@@ -1,0 +1,35 @@
+/* The reading column (spec/11 §5.2, §7). */
+
+.prose-cjk {
+  font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
+  text-indent: 2em;
+  margin: 0;
+  line-height: 1.9;
+}
+
+.prose-latin {
+  font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
+  margin-bottom: 0.8em;
+  line-height: 1.75;
+}
+
+.prose-editor-s {
+  font-size: 0.95rem;
+}
+
+.prose-editor-m {
+  font-size: 1.05rem;
+}
+
+.prose-editor-l {
+  font-size: 1.2rem;
+}
+
+.prose-editor-sans {
+  font-family:
+    "Geist Variable", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+}
+
+.prose-editor-serif {
+  font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
+}

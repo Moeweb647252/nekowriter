@@ -1,0 +1,17 @@
+{
+  "title": "书架",
+  "subtitle": "你的作品",
+  "new_book": "新建作品",
+  "empty_title": "还没有作品",
+  "empty_body": "创建第一部作品，开始写作。",
+  "archived": "已归档",
+  "no_books_filtered": "没有符合筛选条件的作品",
+  "recent_activity": "{{when}}编辑",
+  "book_title": "书名",
+  "book_idea": "想法",
+  "book_genre": "类型",
+  "book_language": "写作语言",
+  "start_conception": "先由构思智能体帮忙设定",
+  "create_book": "创建作品",
+  "chapters_count": "{{count}} 章"
+}

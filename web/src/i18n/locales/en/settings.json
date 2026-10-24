@@ -1,0 +1,15 @@
+{
+  "title": "Settings",
+  "providers": "Providers",
+  "models": "Models",
+  "roles": "Agent roles",
+  "appearance": "Appearance",
+  "appearance_theme": "Theme",
+  "appearance_editor_font": "Editor font",
+  "appearance_editor_size": "Editor size",
+  "font_serif": "Serif",
+  "font_sans": "Sans",
+  "size_s": "Small",
+  "size_m": "Medium",
+  "size_l": "Large"
+}

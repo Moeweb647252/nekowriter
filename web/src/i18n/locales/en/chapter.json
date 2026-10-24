@@ -1,0 +1,16 @@
+{
+  "label": "Chapter {{number}}",
+  "side_label": "{{track}} · Chapter {{number}}",
+  "empty_text": "This chapter is empty. Write it yourself or start the writer agent.",
+  "title_placeholder": "Untitled chapter",
+  "write": "Write",
+  "submit": "Submit for review",
+  "approve": "Approve",
+  "send_back": "Send back",
+  "maintain": "Update canon",
+  "resync": "Re-sync canon",
+  "tab_text": "Text",
+  "tab_outline": "Outline",
+  "tab_review": "Review",
+  "tab_history": "History"
+}

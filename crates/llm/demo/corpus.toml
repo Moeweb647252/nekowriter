@@ -1,0 +1,316 @@
+# Demo provider corpus (data file; non-English text is data, per AGENTS.md §2 and
+# DECISIONS D-041). `demo_hints.language` picks `zh` or `en`.
+
+[zh]
+sentences = [
+  "风从山谷里吹来，带着湿润的草木气息。",
+  "他握紧了手中的旧剑，剑鞘上的裂痕像一道陈年的伤。",
+  "远处的钟声敲了七下，惊起一群灰雀。",
+  "她抬头看向城楼，那里有一个身影正缓缓转身。",
+  "石板路上的积水映着天光，碎成一片一片的银色。",
+  "“你终于来了。”老人说，声音低得几乎被风吹散。",
+  "他没有回答，只是把信放在了桌上。",
+  "夜色像墨一样漫上来，灯火一盏接一盏地亮起。",
+  "剑锋擦过石壁，发出细微而尖锐的声响。",
+  "那一刻，他忽然明白了师父临终前没有说完的话。",
+  "雨下了三天三夜，官道上的车辙积满了泥水。",
+  "她笑了，笑意却没有到眼底。",
+]
+paragraphs = [
+  "风从山谷里吹来，带着湿润的草木气息。他握紧了手中的旧剑，剑鞘上的裂痕像一道陈年的伤。远处的钟声敲了七下，惊起一群灰雀，灰雀掠过檐角，散入渐暗的天色里。",
+  "她抬头看向城楼，那里有一个身影正缓缓转身。石板路上的积水映着天光，碎成一片一片的银色。她忽然想起很多年前的那个黄昏，也是这样的雨，也是这样一盏一盏亮起来的灯。",
+  "“你终于来了。”老人说，声音低得几乎被风吹散。他没有回答，只是把信放在了桌上。信纸的边缘已经磨损，火漆上压着一个模糊的印记。",
+  "夜色像墨一样漫上来，灯火一盏接一盏地亮起。剑锋擦过石壁，发出细微而尖锐的声响。那一刻，他忽然明白了师父临终前没有说完的话。",
+  "雨下了三天三夜，官道上的车辙积满了泥水。她笑了，笑意却没有到眼底，只是把斗笠压得更低了些。身后的人没有再说话，马蹄声在雨里显得格外清晰。",
+  "城外的老树在风中摇晃，枝桠的影子落在墙上，像一只只伸出的手。他停下脚步，听着自己的呼吸。多年以后他仍会记得这个夜晚，记得空气里那股淡淡的铁锈味。",
+  "破晓之前，营火已经熄了。她翻开册子，借着最后一点微光辨认上面的字迹。每一行都写得很轻，像是怕惊醒什么。",
+  "他走进院子的时候，檐下的风铃响了一声。没有人出来迎他。桌上的茶还温着，杯沿留着一道浅浅的唇印。",
+]
+outline = """# 第三章：旧信
+
+## 一、城门口的雨
+- 主角抵达城下，雨中与守门人交涉。
+- 引出旧信与火漆印。
+- 埋下伏笔：守门人多看了一眼信纸。
+
+## 二、城楼上的身影
+- 主角登上城楼，见到多年未见的故人。
+- 对话中透露两条势力的旧怨。
+- 故人提起师父的死因，语焉不详。
+
+## 三、明灯初上
+- 主角决定留下，接下委托。
+- 夜色降临，灯火亮起。
+- 结尾留一个悬念：门外有人送来第二封信。
+"""
+
+[zh.setting_docs]
+outline = """# 全书大纲
+
+一个失去师门的剑客，带着一封未拆的旧信，走进了一座正在易主的边城。
+
+## 第一卷：入城
+1. 城门口的雨
+2. 城楼上的身影
+3. 明灯初上
+
+## 主线
+寻找师父之死的真相，并在两股势力之间做出选择。
+"""
+world = """# 世界观
+
+## 地理
+- **云岭**：横贯南北的山脉，山口有一座边城「望川」。
+- **望川城**：三面环山，一面临水，是商路的咽喉。
+
+## 势力
+- **执剑司**：守卫商路的官方武力，近年在城中势力渐弱。
+- **青渠会**：以水路为生的行会，行事隐秘。
+
+## 规则
+- 剑气可斩断寻常兵刃，但每次使用都会折损人的心脉。
+"""
+protagonist = """# 主角
+
+**姓名**：沈砚
+**身份**：游侠，师门在十年前的一场火中覆灭。
+**性格**：寡言，习惯先观察再出手；对旧物有近乎固执的珍惜。
+**目标**：拆开师父留下的旧信。
+**弱点**：不愿相信他人，因此常常错过真相。
+"""
+
+[[zh.characters]]
+name = "沈砚"
+role_label = "主角"
+summary = "带着旧信入城的游侠，寡言而敏锐。"
+profile = """# 沈砚
+
+- 二十七岁，师门覆灭后独自游历。
+- 佩剑「承影」，剑鞘有裂痕。
+- 口头禅是「先看看」。
+"""
+
+[[zh.characters]]
+name = "柳照"
+role_label = "女主"
+summary = "望川城楼上的旧识，执剑司的副使。"
+profile = """# 柳照
+
+- 二十五岁，执剑司最年轻的副使。
+- 与沈砚有旧怨，也有旧情。
+- 擅长在对话里藏话。
+"""
+
+[[zh.research_topics]]
+topic = "古代边城的城防与城门规制"
+requirements = "想要一些真实可感的细节：城门的结构、守卫的轮值、雨天行人的规矩。"
+scope = "背景设定"
+
+[[zh.research_topics]]
+topic = "传统剑器的形制与养护"
+requirements = "剑鞘、剑锋、缠绳的细节，以及日常养护的方法。"
+scope = "器物考"
+
+[[zh.knowledge_entries]]
+title = "望川城的城门规制"
+content = """# 望川城的城门规制
+
+边城的城门通常分内外两重：外门厚重，用于抵御冲撞；内门较窄，便于盘查。
+
+- 日出开启，日落关闭；雨雪天照旧，但只开一侧小门。
+- 守卫按「一更一轮」换值，轮值者腰系铜牌。
+- 行人入城需报姓名与来处，商队另验货引。
+"""
+
+[[zh.knowledge_entries]]
+title = "剑器的日常养护"
+content = """# 剑器的日常养护
+
+1. 每次用后以布拭去汗渍与雨水，尤其注意剑鞘内侧。
+2. 剑锋薄涂一层油，避免锈蚀。
+3. 缠绳若松脱，应在阴处晾干后重新缠紧。
+"""
+
+[[zh.questions]]
+question = "这本书的主角，你更希望是哪种气质？"
+options = ["寡言内敛", "锋芒毕露", "温和倔强"]
+
+[[zh.questions]]
+question = "故事的情感基调更偏向哪一边？"
+options = ["克制而余韵悠长", "激烈而步步紧逼"]
+
+closing_message = "设定已经整理好了。你可以先看看文档，需要我调整哪一部分，直接告诉我。"
+review_summary = "整体节奏稳，人物动机清楚，但中段的场景转换略显突兀，个别句子可以更克制。"
+review_issue = "中段场景从城楼转到街市时缺少过渡，读者会一时找不到位置。"
+revision_plan = """## 修订计划
+
+1. 在城楼段末尾补一句街市的声音，作为场景过渡。
+2. 把重复出现的「仿佛」削减一半。
+3. 加强故人回避师父死因时的小动作描写。
+"""
+revision_edit = "城楼下忽然传来一阵叫卖声，混着雨丝，把两人的沉默冲散了些。"
+summary_template = "沈砚带着旧信进入望川城，在城楼上遇见柳照，得知师父之死另有隐情，决定留下查清真相。"
+entity_state = "刚从城门入城，身上带着一封未拆的旧信，对柳照心存戒备。"
+timeline_title = "沈砚入望川城"
+proposal_text = """
+## 夜禁
+
+望川城入夜后实行夜禁，街面只留巡夜人与持铜牌者行走。
+"""
+
+[en]
+sentences = [
+  "Wind came down the valley, carrying the smell of wet grass.",
+  "He tightened his grip on the old sword, whose scabbard bore a crack like an old wound.",
+  "Somewhere beyond the wall a bell struck seven, scattering a flock of grey finches.",
+  "She looked up at the gate tower, where a figure was slowly turning.",
+  "Rainwater pooled in the flagstones and broke the daylight into silver pieces.",
+  "You came after all, the old man said, his voice almost lost in the wind.",
+  "He did not answer. He only set the letter down on the table.",
+  "Night poured in like ink, and the lamps came on one by one.",
+  "The blade scraped the stone wall with a thin, sharp note.",
+  "In that moment he understood what his master had left unsaid.",
+  "The rain fell for three days, and the cart ruts filled with mud.",
+  "She smiled, but the smile did not reach her eyes.",
+]
+paragraphs = [
+  "Wind came down the valley, carrying the smell of wet grass. He tightened his grip on the old sword, whose scabbard bore a crack like an old wound. Beyond the wall a bell struck seven and scattered a flock of grey finches into the failing light.",
+  "She looked up at the gate tower, where a figure was slowly turning. Rainwater pooled in the flagstones and broke the daylight into silver pieces. She remembered another dusk, years ago, with the same rain and the same lamps coming on one by one.",
+  "You came after all, the old man said, his voice almost lost in the wind. He did not answer. He only set the letter down on the table. The paper was worn at the edges and the wax seal bore a blurred mark.",
+  "Night poured in like ink, and the lamps came on one by one. The blade scraped the stone wall with a thin, sharp note. In that moment he understood what his master had left unsaid.",
+  "The rain fell for three days, and the cart ruts filled with mud. She smiled, but the smile did not reach her eyes; she only pulled her hat lower. Behind her no one spoke, and the hooves sounded very clear in the rain.",
+  "The old tree outside the town swayed in the wind, its shadow crawling across the wall like so many reaching hands. He stopped and listened to his own breathing. Years later he would still remember this night, and the faint smell of iron in the air.",
+  "Before dawn the campfire had gone out. She opened the ledger and read by the last of the light. Every line was written lightly, as if to avoid waking something.",
+  "When he stepped into the courtyard the wind chime under the eaves sounded once. No one came to meet him. The tea on the table was still warm, and the rim carried a faint print of lips.",
+]
+outline = """# Chapter Three: The Old Letter
+
+## 1. Rain at the gate
+- The protagonist reaches the wall and bargains with the gatekeeper.
+- The old letter and its wax seal come up.
+- Plant: the gatekeeper looks twice at the letter.
+
+## 2. The figure on the tower
+- The protagonist climbs the tower and meets an old acquaintance.
+- The conversation hints at an old feud between two factions.
+- The acquaintance speaks of the master's death without saying much.
+
+## 3. Lamps come on
+- The protagonist decides to stay and takes the job.
+- Night falls; the lamps are lit.
+- End on a hook: a second letter arrives at the door.
+"""
+
+[en.setting_docs]
+outline = """# Book outline
+
+A swordsman without a school walks into a border town that is changing hands, carrying an unopened letter.
+
+## Volume one: Into the town
+1. Rain at the gate
+2. The figure on the tower
+3. Lamps come on
+
+## Throughline
+Find out how the master died, and choose between two factions.
+"""
+world = """# World
+
+## Geography
+- **Cloud Ridge**: a mountain range running north to south, with a border town called **Wangchuan** in its pass.
+- **Wangchuan**: mountains on three sides, water on the fourth, the throat of the trade road.
+
+## Factions
+- **The Sword Office**: the official force guarding the road, lately weaker in town.
+- **The Green Canal Society**: a guild living off the waterway, secretive in its dealings.
+
+## Rules
+- Sword aura can cut ordinary steel, but every use costs the wielder's heart meridian.
+"""
+protagonist = """# Protagonist
+
+**Name**: Shen Yan
+**Role**: A wanderer whose school burned ten years ago.
+**Character**: Quiet, watches before acting, almost stubbornly careful with old things.
+**Goal**: Open the letter his master left.
+**Weakness**: He does not trust people, and so keeps missing the truth.
+"""
+
+[[en.characters]]
+name = "Shen Yan"
+role_label = "Protagonist"
+summary = "A quiet, watchful wanderer who arrives with an old letter."
+profile = """# Shen Yan
+
+- Twenty-seven; has travelled alone since his school burned.
+- Carries a sword called Chengying; the scabbard is cracked.
+- His habit of speech: "Let me look first."
+"""
+
+[[en.characters]]
+name = "Liu Zhao"
+role_label = "Female lead"
+summary = "An old friend on the tower, now deputy of the Sword Office."
+profile = """# Liu Zhao
+
+- Twenty-five, the youngest deputy the Sword Office has had.
+- She and Shen Yan share an old quarrel and an older affection.
+- She is good at hiding things inside conversation.
+"""
+
+[[en.research_topics]]
+topic = "Gate rules and defenses of a historical border town"
+requirements = "Concrete details: gate construction, guard rotation, rules for travelers in rain."
+scope = "Background"
+
+[[en.research_topics]]
+topic = "Construction and care of traditional swords"
+requirements = "Details of scabbard, blade and wrapping, plus everyday maintenance."
+scope = "Material culture"
+
+[[en.knowledge_entries]]
+title = "Gate rules of Wangchuan"
+content = """# Gate rules of Wangchuan
+
+A border gate usually has two layers: a heavy outer gate against rams and a narrow inner gate for inspection.
+
+- Open at sunrise, closed at sunset; in rain or snow only one small side door stays open.
+- Guards change every watch and carry a bronze tally.
+- Travelers give name and origin; caravans also show a goods permit.
+"""
+
+[[en.knowledge_entries]]
+title = "Everyday sword care"
+content = """# Everyday sword care
+
+1. Wipe sweat and rain off after every use, especially inside the scabbard.
+2. Oil the blade thinly to prevent rust.
+3. If the wrapping loosens, dry it in shade and rewrap it tightly.
+"""
+
+[[en.questions]]
+question = "What temperament do you want for the protagonist?"
+options = ["Quiet and reserved", "Sharp and forward", "Gentle but stubborn"]
+
+[[en.questions]]
+question = "Which emotional register should the story lean toward?"
+options = ["Restrained, with a long echo", "Intense, closing in step by step"]
+
+closing_message = "The setting materials are ready. Read them over, and tell me what to change."
+review_summary = "The pacing holds and the motives are clear, but the middle scene change is abrupt and a few sentences could be leaner."
+review_issue = "The move from the tower to the market has no transition, so the reader loses their place."
+revision_plan = """## Revision plan
+
+1. Add a line of market noise at the end of the tower scene as a transition.
+2. Cut half of the repeated "as if".
+3. Sharpen the small gestures when the acquaintance dodges the question of the master's death.
+"""
+revision_edit = "A peddler's call rose from the street below, tangled with the rain, and broke the silence between them."
+summary_template = "Shen Yan enters Wangchuan with the old letter, meets Liu Zhao on the tower, learns the master's death was not what it seemed, and decides to stay."
+entity_state = "Newly arrived through the gate, carrying an unopened letter, wary of Liu Zhao."
+timeline_title = "Shen Yan enters Wangchuan"
+proposal_text = """
+## Curfew
+
+After nightfall Wangchuan keeps a curfew; only night watchmen and tally holders walk the streets.
+"""

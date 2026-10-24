@@ -1,0 +1,23 @@
+# Supported embedding models (data file: one query prefix is Chinese, so it must not live in
+# code; AGENTS.md §2, DECISIONS D-002 / D-041).
+
+[[models]]
+key = "multilingual-e5-small"
+variant = "MultilingualE5Small"
+dimension = 384
+query_prefix = "query: "
+passage_prefix = "passage: "
+
+[[models]]
+key = "bge-small-zh-v1.5"
+variant = "BGESmallZHV15"
+dimension = 512
+query_prefix = "为这个句子生成表示以用于检索相关文章："
+passage_prefix = ""
+
+[[models]]
+key = "embeddinggemma-300m-q"
+variant = "EmbeddingGemma300MQ"
+dimension = 768
+query_prefix = "task: search result | query: "
+passage_prefix = "title: none | text: "

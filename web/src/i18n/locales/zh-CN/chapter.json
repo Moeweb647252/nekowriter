@@ -1,0 +1,16 @@
+{
+  "label": "第 {{number}} 章",
+  "side_label": "{{track}} · 第 {{number}} 章",
+  "empty_text": "这一章还是空的。可以自己写，也可以让写作智能体开始写。",
+  "title_placeholder": "未命名章节",
+  "write": "开始写作",
+  "submit": "提交审阅",
+  "approve": "定稿",
+  "send_back": "退回修改",
+  "maintain": "更新正典",
+  "resync": "重新同步正典",
+  "tab_text": "正文",
+  "tab_outline": "大纲",
+  "tab_review": "审阅",
+  "tab_history": "历史"
+}
