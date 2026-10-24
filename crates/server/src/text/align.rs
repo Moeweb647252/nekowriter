@@ -11,7 +11,7 @@ use similar::{Algorithm, ChangeTag, TextDiff, capture_diff_slices};
 use crate::api::dto::ContentOp;
 use crate::db::json::{ChapterContent, Paragraph};
 
-use super::content::{allocate_pid, content_word_count, repair_next_pid};
+use super::content::{allocate_pid, content_word_count, repair_next_pid, transform_ops};
 
 /// The result of a full-text save.
 #[derive(Debug, Clone, PartialEq)]
@@ -64,51 +64,31 @@ pub fn set_full_text(content: &mut ChapterContent, text: &str) -> AlignedContent
     let alignment = align_paragraphs(&old_paragraphs, &new_texts);
 
     let mut paragraphs = Vec::with_capacity(new_texts.len());
-    let mut ops = Vec::new();
     let mut kept_pids = 0usize;
-    let mut after: Option<String> = None;
     for slot in alignment {
         match slot {
             Slot::Keep { old_index, text } => {
-                let pid = old_paragraphs[old_index].pid.clone();
-                if old_paragraphs[old_index].text != text {
-                    ops.push(ContentOp::Update {
-                        pid: pid.clone(),
-                        text: text.clone(),
-                    });
-                }
                 kept_pids += 1;
-                after = Some(pid.clone());
-                paragraphs.push(Paragraph { pid, text });
+                paragraphs.push(Paragraph {
+                    pid: old_paragraphs[old_index].pid.clone(),
+                    text,
+                });
             }
             Slot::Insert { text } => {
                 let pid = allocate_pid(content);
-                ops.push(ContentOp::Insert {
-                    after: after.clone(),
-                    pid: pid.clone(),
-                    text: text.clone(),
-                });
-                after = Some(pid.clone());
                 paragraphs.push(Paragraph { pid, text });
             }
         }
     }
 
-    // Deleted paragraphs are reported after the inserts that replaced them, so a client applying
-    // the ops in order never references a pid that is already gone.
-    for old in &old_paragraphs {
-        if !paragraphs.iter().any(|paragraph| paragraph.pid == old.pid) {
-            ops.push(ContentOp::Delete {
-                pid: old.pid.clone(),
-            });
-        }
-    }
-    let tail_changed = content.tail_open;
+    // The ops must reconstruct the stored document on a client that replays them (spec/10 §3).
+    // Alignment can keep a pid while changing its position relative to the other kept ones — a
+    // swap of two lightly edited paragraphs does exactly that — so build the ops from the before
+    // and after documents instead of from the alignment walk.
+    let tail_before = content.tail_open;
+    let ops = transform_ops(&old_paragraphs, &paragraphs, tail_before, false);
     content.paragraphs = paragraphs;
     content.tail_open = false;
-    if tail_changed {
-        ops.push(ContentOp::Tail { open: false });
-    }
 
     AlignedContent {
         ops,
@@ -422,6 +402,82 @@ mod tests {
                 },
             ]
         );
+    }
+
+    /// Replaying the emitted ops on the old document must produce the stored document
+    /// (spec/10 §3: a client applies the ops when `version = local + 1`).
+    fn assert_ops_reproduce(old: &ChapterContent, new: &ChapterContent, ops: &[ContentOp]) {
+        let mut replay = old.clone();
+        super::super::content::apply_ops(&mut replay, ops).expect("ops replay");
+        assert_eq!(
+            replay, *new,
+            "ops {ops:?} must reconstruct the stored document"
+        );
+    }
+
+    #[test]
+    fn swapping_two_edited_paragraphs_emits_ops_that_reproduce_the_order() {
+        // Both paragraphs are lightly edited, so alignment keeps their pids but wants them in the
+        // opposite order. A bare `update` per paragraph would leave the client with the old order.
+        let mut content = doc(&[
+            ("p1", "The wind blew through the old valley."),
+            ("p2", "A quiet morning over the far hills."),
+        ]);
+        let old = content.clone();
+        let aligned = set_full_text(
+            &mut content,
+            "A quiet morning over the far hills, seen from above.\n\nThe wind blew through the old valley, then died.",
+        );
+        assert_eq!(
+            content
+                .paragraphs
+                .iter()
+                .map(|p| p.pid.as_str())
+                .collect::<Vec<_>>(),
+            vec!["p2", "p1"],
+            "the save reorders the kept paragraphs"
+        );
+        assert_ops_reproduce(&old, &content, &aligned.ops);
+    }
+
+    #[test]
+    fn moving_a_paragraph_emits_ops_that_reproduce_the_order() {
+        let mut content = doc(&[("p1", "alpha"), ("p2", "beta"), ("p3", "gamma")]);
+        let old = content.clone();
+        let aligned = set_full_text(&mut content, "alpha\n\ngamma\n\nbeta");
+        let texts: Vec<&str> = content.paragraphs.iter().map(|p| p.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            vec!["alpha", "gamma", "beta"],
+            "the tail of the document reordered"
+        );
+        assert_ops_reproduce(&old, &content, &aligned.ops);
+    }
+
+    #[test]
+    fn every_full_text_save_replays_to_the_stored_document() {
+        let documents: &[&[(&str, &str)]] = &[
+            &[("p1", "one"), ("p2", "two"), ("p3", "three")],
+            &[("p1", "The wind blew."), ("p2", "Two.")],
+            &[("p1", "第一段。"), ("p2", "第二段。"), ("p3", "第三段。")],
+            &[],
+        ];
+        let texts: &[&str] = &[
+            "one\n\ntwo\n\nthree",
+            "three\n\ntwo\n\none",
+            "two\n\nbrand new\n\none",
+            "",
+            "only one paragraph now",
+            "one\n\ntwo, slightly edited\n\nthree\n\nfour",
+        ];
+        for paragraphs in documents {
+            for text in texts {
+                let mut content = doc(paragraphs);
+                let old = content.clone();
+                let aligned = set_full_text(&mut content, text);
+                assert_ops_reproduce(&old, &content, &aligned.ops);
+            }
+        }
     }
 
     #[test]

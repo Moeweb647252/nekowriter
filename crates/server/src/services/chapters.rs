@@ -799,53 +799,21 @@ pub async fn restore_inner(
     ))
 }
 
-/// The ops that take a client from `current` to `restored` (update + insert + delete).
+/// The ops that take a client from `current` to `restored` (spec/10 §3).
+///
+/// A restored version is an arbitrary earlier document, so it can reorder paragraphs; the shared
+/// builder emits a delete plus an insert for a moved pid, which is the only form `ContentOp` has
+/// that reproduces the order on a replaying client.
 fn restore_ops(
     current: &ChapterContent,
     restored: &ChapterContent,
 ) -> Vec<crate::api::dto::ContentOp> {
-    use crate::api::dto::ContentOp;
-    let mut ops = Vec::new();
-    let mut after: Option<String> = None;
-    for paragraph in &restored.paragraphs {
-        match current
-            .paragraphs
-            .iter()
-            .find(|existing| existing.pid == paragraph.pid)
-        {
-            Some(existing) => {
-                if existing.text != paragraph.text {
-                    ops.push(ContentOp::Update {
-                        pid: paragraph.pid.clone(),
-                        text: paragraph.text.clone(),
-                    });
-                }
-            }
-            None => ops.push(ContentOp::Insert {
-                after: after.clone(),
-                pid: paragraph.pid.clone(),
-                text: paragraph.text.clone(),
-            }),
-        }
-        after = Some(paragraph.pid.clone());
-    }
-    for paragraph in &current.paragraphs {
-        if !restored
-            .paragraphs
-            .iter()
-            .any(|kept| kept.pid == paragraph.pid)
-        {
-            ops.push(ContentOp::Delete {
-                pid: paragraph.pid.clone(),
-            });
-        }
-    }
-    if current.tail_open != restored.tail_open {
-        ops.push(ContentOp::Tail {
-            open: restored.tail_open,
-        });
-    }
-    ops
+    crate::text::transform_ops(
+        &current.paragraphs,
+        &restored.paragraphs,
+        current.tail_open,
+        restored.tail_open,
+    )
 }
 
 /// A JSON snapshot of a chapter summary change (spec/02 §4 `SnapshotChapterSummary`).
@@ -1070,4 +1038,75 @@ pub async fn version_content(
 ) -> Result<ChapterContent, AppError> {
     let row = super::versions::load(conn, version_id).await?;
     parse_json("chapter_versions.content", &row.content)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::db::json::{ChapterContent, Paragraph};
+
+    use super::restore_ops;
+
+    fn doc(paragraphs: &[(&str, &str)], tail_open: bool) -> ChapterContent {
+        ChapterContent {
+            paragraphs: paragraphs
+                .iter()
+                .map(|(pid, text)| Paragraph {
+                    pid: (*pid).to_owned(),
+                    text: (*text).to_owned(),
+                })
+                .collect(),
+            next_pid: paragraphs.len() as i32 + 1,
+            tail_open,
+        }
+    }
+
+    /// Replaying the emitted ops on the current document must produce the restored one
+    /// (spec/10 §3: the client applies the ops when `version = local + 1`).
+    fn assert_replays(current: &ChapterContent, restored: &ChapterContent) {
+        let ops = restore_ops(current, restored);
+        let mut replay = current.clone();
+        crate::text::apply_ops(&mut replay, &ops).expect("ops replay");
+        // `next_pid` is a server-side counter the ops do not carry; the visible state is the
+        // paragraph list and the tail.
+        assert_eq!(
+            replay.paragraphs, restored.paragraphs,
+            "ops {ops:?} must reconstruct the version's paragraphs"
+        );
+        assert_eq!(replay.tail_open, restored.tail_open, "ops {ops:?}: tail");
+    }
+
+    #[test]
+    fn restore_reproduces_a_reordered_version() {
+        // Restoring an earlier version can put the paragraphs back in another order; a bare
+        // `update` per paragraph would leave the client with the current order.
+        let current = doc(&[("p1", "one, edited"), ("p2", "two, edited")], false);
+        let restored = doc(&[("p2", "two"), ("p1", "one")], false);
+        assert_replays(&current, &restored);
+    }
+
+    #[test]
+    fn restore_ops_replay_for_every_shape() {
+        let documents = [
+            doc(&[("p1", "alpha"), ("p2", "beta"), ("p3", "gamma")], false),
+            doc(&[("p2", "beta"), ("p3", "gamma"), ("p1", "alpha")], false),
+            doc(&[("p3", "gamma"), ("p1", "alpha")], false),
+            doc(&[("p4", "brand new")], true),
+            doc(&[], false),
+        ];
+        for current in &documents {
+            for restored in &documents {
+                assert_replays(current, restored);
+            }
+        }
+    }
+
+    #[test]
+    fn restore_reports_a_tail_change() {
+        let ops = restore_ops(&doc(&[("p1", "one")], true), &doc(&[("p1", "one")], false));
+        assert_eq!(
+            ops,
+            vec![crate::api::dto::ContentOp::Tail { open: false }],
+            "a tail-only change is still reported"
+        );
+    }
 }

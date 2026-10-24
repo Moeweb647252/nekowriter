@@ -649,3 +649,109 @@ async fn content_edits_are_rejected_while_the_writer_is_running() {
         .await;
     assert_eq!(status, StatusCode::OK);
 }
+
+/// Applies the `ContentOp`s of a content response to a starting document, the way the web
+/// client and the server's own `apply_ops` do (spec/10 §3).
+fn replay_ops(
+    mut paragraphs: Vec<(String, String)>,
+    ops: &[serde_json::Value],
+) -> Vec<(String, String)> {
+    for op in ops {
+        match op["op"].as_str().expect("op kind") {
+            "insert" => {
+                let index = match op["after"].as_str() {
+                    None => 0,
+                    Some(after) => {
+                        paragraphs
+                            .iter()
+                            .position(|(pid, _)| pid == after)
+                            .expect("insert anchor exists")
+                            + 1
+                    }
+                };
+                paragraphs.insert(
+                    index,
+                    (
+                        op["pid"].as_str().expect("pid").to_owned(),
+                        op["text"].as_str().expect("text").to_owned(),
+                    ),
+                );
+            }
+            "update" => {
+                let pid = op["pid"].as_str().expect("pid");
+                let paragraph = paragraphs
+                    .iter_mut()
+                    .find(|(candidate, _)| candidate == pid)
+                    .expect("updated pid exists");
+                paragraph.1 = op["text"].as_str().expect("text").to_owned();
+            }
+            "delete" => {
+                let pid = op["pid"].as_str().expect("pid");
+                paragraphs.retain(|(candidate, _)| candidate != pid);
+            }
+            "tail" => {}
+            other => panic!("unknown op {other}"),
+        }
+    }
+    paragraphs
+}
+
+#[tokio::test]
+async fn a_full_text_save_that_reorders_paragraphs_emits_ops_that_reproduce_the_order() {
+    // Alignment keeps both pids (each is only lightly edited) but wants them swapped. `ContentOp`
+    // has no move form, so reporting two updates would leave every other tab on the old order —
+    // spec/10 §3 says the client applies the ops when `version = local + 1`.
+    let app = TestApp::new().await;
+    let (_book_id, track_id) = book_with_track(&app).await;
+    let chapter = app.create_chapter(track_id, "ch").await;
+    let chapter_id = chapter["id"].as_i64().expect("chapter id") as i32;
+    app.put_text(
+        chapter_id,
+        0,
+        "The wind blew through the old valley.\n\nA quiet morning over the far hills.",
+    )
+    .await;
+    let (_, before) = app.get(&format!("/api/chapters/{chapter_id}")).await;
+    let starting: Vec<(String, String)> = before["content"]["paragraphs"]
+        .as_array()
+        .expect("paragraphs")
+        .iter()
+        .map(|paragraph| {
+            (
+                paragraph["pid"].as_str().expect("pid").to_owned(),
+                paragraph["text"].as_str().expect("text").to_owned(),
+            )
+        })
+        .collect();
+
+    let (status, result) = app
+        .put(
+            &format!("/api/chapters/{chapter_id}/content/text"),
+            json!({
+                "base_version": before["content_version"],
+                "text": "A quiet morning over the far hills, seen from above.\n\nThe wind blew through the old valley, then died.",
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    let ops = result["ops"].as_array().expect("ops").clone();
+
+    let (_, after) = app.get(&format!("/api/chapters/{chapter_id}")).await;
+    let stored: Vec<(String, String)> = after["content"]["paragraphs"]
+        .as_array()
+        .expect("paragraphs")
+        .iter()
+        .map(|paragraph| {
+            (
+                paragraph["pid"].as_str().expect("pid").to_owned(),
+                paragraph["text"].as_str().expect("text").to_owned(),
+            )
+        })
+        .collect();
+
+    assert_eq!(
+        replay_ops(starting, &ops),
+        stored,
+        "replaying {ops:?} must produce the stored document"
+    );
+}

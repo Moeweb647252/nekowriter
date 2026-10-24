@@ -73,6 +73,117 @@ pub fn content_word_count(content: &ChapterContent) -> i32 {
     })
 }
 
+/// The ops that take a client from `before` to `after`, replayable by [`apply_ops`].
+///
+/// Used by the full-text save and by version restore, both of which can move paragraphs around.
+/// `ContentOp` can only express "insert after a pid", so a paragraph that moved is reported as a
+/// delete plus an insert at its new position: replaying the result reproduces `after` exactly,
+/// which is what spec/10 §3 requires of `chapter.content` ("apply the ops if version = local + 1").
+/// Emitting a bare `update` for a paragraph whose position changed would leave every other tab
+/// with the client's old order.
+pub fn transform_ops(
+    before: &[Paragraph],
+    after: &[Paragraph],
+    tail_before: bool,
+    tail_after: bool,
+) -> Vec<ContentOp> {
+    let before_index: std::collections::HashMap<&str, usize> = before
+        .iter()
+        .enumerate()
+        .map(|(index, paragraph)| (paragraph.pid.as_str(), index))
+        .collect();
+
+    // A pid can stay where it is when it is present in both documents and its old position takes
+    // part in a longest increasing subsequence of the surviving pids. Everything outside that
+    // subsequence moved, so the client needs it re-inserted at its new place.
+    let surviving: Vec<(usize, usize)> = after
+        .iter()
+        .enumerate()
+        .filter_map(|(new_index, paragraph)| {
+            before_index
+                .get(paragraph.pid.as_str())
+                .map(|old_index| (new_index, *old_index))
+        })
+        .collect();
+    let anchored = increasing_run(&surviving);
+    let moved: std::collections::HashSet<usize> = surviving
+        .iter()
+        .map(|(new_index, _)| *new_index)
+        .filter(|new_index| !anchored.contains(new_index))
+        .collect();
+
+    let mut ops = Vec::new();
+    let mut after_pid: Option<String> = None;
+    for (new_index, paragraph) in after.iter().enumerate() {
+        match before_index.get(paragraph.pid.as_str()) {
+            Some(old_index) if !moved.contains(&new_index) => {
+                if before[*old_index].text != paragraph.text {
+                    ops.push(ContentOp::Update {
+                        pid: paragraph.pid.clone(),
+                        text: paragraph.text.clone(),
+                    });
+                }
+            }
+            Some(_) => {
+                // Survived but moved: drop it where it was and re-add it here. `ContentOp` has no
+                // move form and an `update` would leave the client's order unchanged (spec/10 §3).
+                ops.push(ContentOp::Delete {
+                    pid: paragraph.pid.clone(),
+                });
+                ops.push(ContentOp::Insert {
+                    after: after_pid.clone(),
+                    pid: paragraph.pid.clone(),
+                    text: paragraph.text.clone(),
+                });
+            }
+            None => ops.push(ContentOp::Insert {
+                after: after_pid.clone(),
+                pid: paragraph.pid.clone(),
+                text: paragraph.text.clone(),
+            }),
+        }
+        after_pid = Some(paragraph.pid.clone());
+    }
+    // Deleted paragraphs go last, so no insert above references a pid that is already gone.
+    for paragraph in before {
+        if !after.iter().any(|kept| kept.pid == paragraph.pid) {
+            ops.push(ContentOp::Delete {
+                pid: paragraph.pid.clone(),
+            });
+        }
+    }
+    if tail_before != tail_after {
+        ops.push(ContentOp::Tail { open: tail_after });
+    }
+    ops
+}
+
+/// The new-index positions that form a longest increasing subsequence of the old positions.
+///
+/// O(n log n): `tails` holds, for each run length, the smallest old index that can end it.
+fn increasing_run(surviving: &[(usize, usize)]) -> std::collections::HashSet<usize> {
+    let mut tails: Vec<usize> = Vec::new(); // indices into `surviving`
+    let mut previous: Vec<Option<usize>> = vec![None; surviving.len()];
+    for (slot, (_, old_index)) in surviving.iter().enumerate() {
+        let position = tails.partition_point(|tail| surviving[*tail].1 < *old_index);
+        if position > 0 {
+            previous[slot] = Some(tails[position - 1]);
+        }
+        if position == tails.len() {
+            tails.push(slot);
+        } else {
+            tails[position] = slot;
+        }
+    }
+    let mut anchored = std::collections::HashSet::new();
+    let mut cursor = tails.last().copied();
+    while let Some(slot) = cursor {
+        anchored.insert(surviving[slot].0);
+        cursor = previous[slot];
+    }
+    anchored
+}
+
 /// Applies the author's operations in order, allocating pids for inserts (spec/10 §3).
 ///
 /// A single operation may carry several paragraphs (line breaks separate them); each becomes its
