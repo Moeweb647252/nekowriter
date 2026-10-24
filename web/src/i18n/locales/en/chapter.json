@@ -58,12 +58,13 @@
   "write_dialog.pause_after_outline": "Pause after the outline",
   "write_dialog.start": "Start writing",
   "write_dialog.not_ready_title": "The previous chapter is not ready",
-  "write_dialog.not_ready_body": "Chapter {{number}} is {{status}} and its canon is {{canon}}. Writing anyway may leave this chapter inconsistent with it.",
   "write_dialog.write_anyway": "Write anyway",
   "locked_banner": "The writer is working — pause to edit.",
   "hold.outline_label": "Paused after this outline",
   "hold.text_label": "Paused after this change",
   "hold.text_label_pids": "Paused after this change ({{pids}})",
   "hold.approve_outline": "Approve outline",
-  "hold.request_changes": "Request changes"
+  "hold.request_changes": "Request changes",
+  "write_dialog.not_ready_canon": "Chapter {{number}} is official, but its canon has not been synced yet. Writing anyway may leave this chapter inconsistent with it.",
+  "write_dialog.not_ready_status": "Chapter {{number}} is not official yet. Writing anyway may leave this chapter inconsistent with it."
 }

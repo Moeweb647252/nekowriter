@@ -31,11 +31,16 @@ import { ApiError } from "@/api/client"
 
 const GRANULARITIES: Granularity[] = ["sentence", "paragraph", "free", "chapter"]
 
-/** The previous chapter's state the API reported in `409 chapter.previous_not_ready`. */
+/**
+ * The previous chapter's state the API reported in `409 chapter.previous_not_ready`
+ * (spec/10 §3: `details.chapter_id`, `details.reason`).
+ *
+ * `reason` is a code (`not_official` | `canon_not_synced`), so the dialog words the explanation
+ * itself instead of printing raw enum values.
+ */
 type NotReady = {
   chapterNumber?: number
-  status?: string
-  canonStatus?: string
+  reason?: string
 }
 
 export type WriteDialogProps = {
@@ -87,8 +92,7 @@ export function WriteDialog({
           setNotReady({
             chapterNumber:
               typeof details.chapter_number === "number" ? details.chapter_number : undefined,
-            status: typeof details.status === "string" ? details.status : undefined,
-            canonStatus: typeof details.canon_status === "string" ? details.canon_status : undefined,
+            reason: typeof details.reason === "string" ? details.reason : undefined,
           })
           return
         }
@@ -109,11 +113,13 @@ export function WriteDialog({
           <div className="space-y-2 rounded-md border border-status-waiting/40 bg-status-waiting/10 p-3 text-sm">
             <p className="font-medium">{t("chapter:write_dialog.not_ready_title")}</p>
             <p className="text-muted-foreground">
-              {t("chapter:write_dialog.not_ready_body", {
-                number: notReady.chapterNumber ?? 0,
-                status: notReady.status ?? "",
-                canon: notReady.canonStatus ?? "",
-              })}
+              {notReady.reason === "canon_not_synced"
+                ? t("chapter:write_dialog.not_ready_canon", {
+                    number: notReady.chapterNumber ?? 0,
+                  })
+                : t("chapter:write_dialog.not_ready_status", {
+                    number: notReady.chapterNumber ?? 0,
+                  })}
             </p>
           </div>
         )}

@@ -587,20 +587,8 @@ pub async fn write(
             reason,
         ));
     }
-    // The guidance is stored before the session reads it into its kickoff.
-    if let Some(guidance) = input.guidance.as_deref()
-        && guidance != chapter.guidance
-    {
-        use sea_orm::ActiveModelTrait;
-        chapters::ActiveModel {
-            id: Set(chapter_id),
-            guidance: Set(guidance.to_owned()),
-            updated_at: Set(now()),
-            ..Default::default()
-        }
-        .update(state.db().conn())
-        .await?;
-    }
+    // The guidance travels into the creation transaction, so the kickoff reads it and a request
+    // that fails stores nothing (spec/08 §1.1).
     let (session_id, warnings) = super::sessions::create(
         state,
         super::sessions::CreateSession {
@@ -612,6 +600,7 @@ pub async fn write(
             auto_pause: input.auto_pause,
             pause_after_outline: input.pause_after_outline,
             redraft: false,
+            guidance: input.guidance,
             kickoff_extra: None,
         },
     )
@@ -638,14 +627,17 @@ async fn previous_chapter_blocker(
         // The first chapter of the track has no predecessor.
         return Ok(None);
     };
-    let ready = previous.status == ChapterStatus::Official.as_str()
-        && previous.canon_status == crate::db::json::CanonStatus::Synced.as_str();
-    if ready {
+    let official = previous.status == ChapterStatus::Official.as_str();
+    let synced = previous.canon_status == crate::db::json::CanonStatus::Synced.as_str();
+    if official && synced {
         return Ok(None);
     }
     Ok(Some(serde_json::json!({
+        // spec/10 §3: `details.chapter_id` and `details.reason`. The reason is a code the Write
+        // dialog words itself, so it can explain *why* and still offer "Write anyway".
         "chapter_id": previous.id,
         "chapter_number": previous.ord,
+        "reason": if official { "canon_not_synced" } else { "not_official" },
         "status": previous.status,
         "canon_status": previous.canon_status,
     })))

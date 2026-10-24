@@ -267,3 +267,63 @@ async fn write_without_a_writer_model_is_a_missing_role_error() {
     assert_error(&body, "model.missing_role");
     assert_eq!(body["error"]["details"]["role"], "writer");
 }
+
+/// A rejected write stores nothing: the guidance is part of the operation, not a side effect.
+///
+/// The guidance is written before the session is created so the kickoff can read it (spec/08 §1.1),
+/// but the two must commit together — otherwise a `409 model.missing_role` leaves the chapter with
+/// guidance from a request that never started anything.
+#[tokio::test]
+async fn a_rejected_write_does_not_store_the_guidance() {
+    let app = TestApp::new().await;
+    let (_book_id, _track_id, chapter_id) = book_and_chapter(&app).await;
+    let (status, body) = app
+        .post(
+            &format!("/api/chapters/{chapter_id}/write"),
+            json!({ "guidance": "Write it in the rain." }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_error(&body, "model.missing_role");
+    let (_, chapter) = app.get(&format!("/api/chapters/{chapter_id}")).await;
+    assert_eq!(
+        chapter["guidance"], "",
+        "a failed write must not store guidance: {chapter}"
+    );
+}
+
+/// spec/10 §3 names `details.chapter_id` and `details.reason` for `chapter.previous_not_ready`.
+///
+/// The reason is a code worded by the Write dialog, not a sentence written by the server, so the
+/// dialog can say *why* the previous chapter blocks the write (not official yet, or official but
+/// its canon is not synced) and offer "Write anyway" with an accurate explanation.
+#[tokio::test]
+async fn previous_not_ready_reports_a_reason_code() {
+    let app = TestApp::new().await;
+    assign_models(&app).await;
+    let (_book_id, track_id, first_id) = book_and_chapter(&app).await;
+    let second = app.create_chapter(track_id, "Chapter Two").await;
+    let second_id = second["id"].as_i64().expect("chapter id") as i32;
+
+    // Not official yet.
+    let (status, body) = app
+        .post(&format!("/api/chapters/{second_id}/write"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_error(&body, "chapter.previous_not_ready");
+    assert_eq!(
+        body["error"]["details"]["reason"], "not_official",
+        "the reason names the failing condition: {body}"
+    );
+
+    // Official, but its canon is not synced.
+    app.set_chapter_status(first_id, "official").await;
+    let (status, body) = app
+        .post(&format!("/api/chapters/{second_id}/write"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(
+        body["error"]["details"]["reason"], "canon_not_synced",
+        "the reason distinguishes the canon state: {body}"
+    );
+}

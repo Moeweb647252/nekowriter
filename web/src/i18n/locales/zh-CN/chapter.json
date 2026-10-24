@@ -58,12 +58,13 @@
   "write_dialog.pause_after_outline": "章纲写完后暂停",
   "write_dialog.start": "开始写作",
   "write_dialog.not_ready_title": "上一章还没有准备好",
-  "write_dialog.not_ready_body": "第 {{number}} 章目前是「{{status}}」，档案状态为「{{canon}}」。强行写作可能让本章与前文不一致。",
   "write_dialog.write_anyway": "仍然写作",
   "locked_banner": "写手正在写作，暂停后才能修改。",
   "hold.outline_label": "暂停于这份章纲",
   "hold.text_label": "暂停于这次修改",
   "hold.text_label_pids": "暂停于这次修改（{{pids}}）",
   "hold.approve_outline": "通过章纲",
-  "hold.request_changes": "提出修改"
+  "hold.request_changes": "提出修改",
+  "write_dialog.not_ready_canon": "第 {{number}} 章已定稿，但档案尚未同步完成。强行写作可能让本章与前文不一致。",
+  "write_dialog.not_ready_status": "第 {{number}} 章还没有定稿。强行写作可能让本章与前文不一致。"
 }

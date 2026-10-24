@@ -51,6 +51,7 @@ impl Default for CreateSession {
             auto_pause: None,
             pause_after_outline: None,
             redraft: false,
+            guidance: None,
             kickoff_extra: None,
         }
     }
@@ -69,6 +70,9 @@ pub struct CreateSession {
     pub pause_after_outline: Option<bool>,
     /// The redraft kickoff carries the author's feedback (spec/03 §1.1).
     pub redraft: bool,
+    /// A `chapter_write` request's guidance, stored in the same transaction as the session so the
+    /// kickoff reads it and a rejected request stores nothing (spec/08 §1.1).
+    pub guidance: Option<String>,
     /// Pre-rendered extra kickoff state (task blocks that depend on the caller's flow).
     pub kickoff_extra: Option<serde_json::Value>,
 }
@@ -157,9 +161,23 @@ async fn create_inner(
         (None, false, false)
     };
 
-    // Domain side effects of creation happen in this same transaction (spec/03 §4).
+    // Domain side effects of creation happen in this same transaction (spec/03 §4). The guidance
+    // is one of them: it must be visible to the kickoff below, and a request that fails after this
+    // point must not leave it behind (spec/08 §1.1).
     let track = match input.chapter_id {
-        Some(_chapter_id) => Some(apply_creation_side_effects(tx, &input).await?),
+        Some(chapter_id) => {
+            if let Some(guidance) = input.guidance.as_deref() {
+                chapters::ActiveModel {
+                    id: Set(chapter_id),
+                    guidance: Set(guidance.to_owned()),
+                    updated_at: Set(chrono::Utc::now()),
+                    ..Default::default()
+                }
+                .update(tx)
+                .await?;
+            }
+            Some(apply_creation_side_effects(tx, &input).await?)
+        }
         None => None,
     };
     let track_id = track.as_ref().map(|track| track.id);
