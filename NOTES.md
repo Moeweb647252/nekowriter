@@ -90,5 +90,10 @@ not delete other agents' temp directories.
 - Commit only your own task's files (`git add <paths>`, never `git add -A`), with Conventional
   Commits. Another agent may have uncommitted work in the tree.
 - Re-read a file before editing it; the filesystem may have changed under you.
+- A compile error in a file you do not own is usually another agent's half-written save, not a
+  defect. Re-run `cargo check -p nekowriter` after a short wait before reporting it, and report it
+  to the Lead rather than editing the file or messaging the other agent.
+- The shared tree may be transiently broken at any moment. Never conclude "the milestone is
+  broken" from a single failed command; confirm it reproduces.
 - If the spec is ambiguous, choose the simplest option consistent with it and append a
   `docs/DECISIONS.md` entry. Never rewrite existing entries.
