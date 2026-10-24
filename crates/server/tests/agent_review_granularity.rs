@@ -950,3 +950,76 @@ async fn revising_ignores_the_implied_chapter_end_of_chapter_mode() {
         "the implied chapter_end of `chapter` mode is ignored and the hint says so: {text}"
     );
 }
+
+// ───────────────────────── short completion ─────────────────────────
+
+/// spec/03 §8: a completion below 60% of `target_words_min` is withheld **once**; the next one goes
+/// through even though the chapter is still short, and the withheld text is kept.
+///
+/// The threshold is a ratio of the minimum, so 60% exactly is not short and 59% is.
+#[tokio::test]
+async fn a_short_completion_is_withheld_once_at_the_sixtieth_percentile() {
+    // The harness book's target is 3,000–4,000, so 60% is 1,800 words.
+    let just_under = "字".repeat(1_799);
+    let at_threshold = "字".repeat(1_800);
+    let first = runtime(vec![
+        outline_step(),
+        // 1,799 characters: below the threshold, so the `chapter_end` is withheld.
+        insert(&just_under, json!({ "chapter_end": true })),
+        // The retry goes through even though the chapter is still short.
+        ScriptStep::new().tool("finish_draft", json!({})),
+    ])
+    .await;
+    let session_id = start_writer(&first, Granularity::Free, false, false).await;
+    first
+        .wait_status(session_id, SessionStatus::Completed)
+        .await;
+
+    let inserts = inserts_of(&first, session_id).await;
+    let withheld = text_of(&inserts[0]);
+    assert!(
+        withheld.contains("字数明显少于目标下限"),
+        "1,799 of 3,000 is below 60%: {withheld}"
+    );
+    let content = chapter_content(&first, first.chapter_id).await;
+    assert_eq!(
+        content.paragraphs.len(),
+        1,
+        "the withheld text is kept, not rolled back"
+    );
+    assert_eq!(content.paragraphs[0].text, just_under);
+    let row = first.session_row(session_id).await;
+    assert!(
+        row.counters().finish_warned,
+        "counters.finish_warned records the one warning"
+    );
+    // The completion still happened on the second attempt.
+    let (status, _, _) = chapter_row(&first, first.chapter_id).await;
+    assert_eq!(status, "in_review");
+
+    // At exactly 60% the completion is not short at all, so the first `chapter_end` completes.
+    let exact = runtime(vec![
+        outline_step(),
+        insert(&at_threshold, json!({ "chapter_end": true })),
+    ])
+    .await;
+    let exact_session = start_writer(&exact, Granularity::Free, false, false).await;
+    exact
+        .wait_status(exact_session, SessionStatus::Completed)
+        .await;
+    let inserts = inserts_of(&exact, exact_session).await;
+    let completed = text_of(&inserts[0]);
+    assert!(
+        !completed.contains("字数明显少于目标下限"),
+        "1,800 of 3,000 is exactly 60%, which is not short: {completed}"
+    );
+    assert!(
+        completed.contains("已标记本章完成"),
+        "the first completion goes through: {completed}"
+    );
+    let row = exact.session_row(exact_session).await;
+    assert!(
+        !row.counters().finish_warned,
+        "nothing was withheld, so the counter stays clear"
+    );
+}

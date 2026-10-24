@@ -235,12 +235,14 @@ async fn free_granularity_lets_paragraph_edits_write_several_paragraphs() {
 /// `request_meta`, never the session's current value.
 #[tokio::test]
 async fn a_call_generated_under_paragraph_is_validated_against_paragraph_after_a_switch() {
+    // The distinguishing cell: 500 characters is a valid `paragraph` (≤ 3,000) and an invalid
+    // `sentence` (≤ 400). Anything shorter would pass under either mode and prove nothing.
+    let in_flight = "字".repeat(500);
     // Step 2's arguments stream slowly, so the PATCH lands while the call is being generated but
     // before it executes. Its `request_meta` is already `paragraph`.
     let runtime = runtime(with_finish(vec![
         outline_step(),
-        insert_step("这一段按逐段粒度写入，是可接受的一个段落。", json!({}))
-            .delay_per_event(Duration::from_millis(50)),
+        insert_step(&in_flight, json!({})).delay_per_event(Duration::from_millis(50)),
         ScriptStep::new().tool("insert_text", json!({ "text": "后续一句。" })),
     ]))
     .await;
@@ -275,11 +277,21 @@ async fn a_call_generated_under_paragraph_is_validated_against_paragraph_after_a
     assert_eq!(inserts.len(), 2);
     assert!(
         !inserts[0].is_error,
-        "the call generated under `paragraph` is still validated as one paragraph: {}",
+        "500 characters is valid under the `paragraph` the call was generated under, even though \
+         the session is now `sentence` (≤ 400): {}",
         inserts[0].raw_result_text.clone().unwrap_or_default()
     );
     let content = chapter_content(&runtime, runtime.chapter_id).await;
-    assert!(content.paragraphs[0].text.contains("逐段粒度"));
+    assert_eq!(
+        content.paragraphs[0].text, in_flight,
+        "the in-flight call's text was applied in full"
+    );
+    // The call generated *after* the switch does use the new mode: 500 characters is too long.
+    let after = inserts[1].raw_result_text.clone().unwrap_or_default();
+    assert!(
+        !inserts[1].is_error,
+        "the following call's short text is valid under `sentence` too: {after}"
+    );
     // The switch notice is queued when the PATCH commits and delivered with the next sealing
     // (spec/03 §8 "switching"). Which batch seals first depends on where the runner was when the
     // PATCH committed — it may still be waiting for this call to execute, or already sealing the
