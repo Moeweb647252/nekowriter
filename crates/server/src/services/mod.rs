@@ -10,6 +10,7 @@ pub mod books;
 pub mod change_log;
 pub mod chapters;
 pub mod characters;
+pub mod memory;
 pub mod prompts;
 pub mod providers;
 pub mod sessions;

@@ -26,9 +26,9 @@ use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
 use crate::prompts::PromptSet;
 use crate::prompts::context::{
-    BookContext, CastEntryContext, ChapterContext, CharacterContext, DraftContext,
-    GranularityContext, MemoryContext, MemoryCountsContext, ParagraphContext, ScopeContext,
-    SettingsContext, TrackContext,
+    BookContext, CastEntryContext, ChapterContext, CharacterContext, DraftContext, FeedbackContext,
+    FeedbackIssueContext, GranularityContext, MemoryContext, MemoryCountsContext, ParagraphContext,
+    PreviousTailContext, ProtagonistStateContext, ScopeContext, SettingsContext, TrackContext,
 };
 use crate::text;
 
@@ -84,6 +84,45 @@ pub fn block_is_cached(key: &str) -> bool {
     key == "block.settings"
 }
 
+/// What a kickoff renders (spec/03 §10).
+///
+/// Two templates include other blocks through MiniJinja: `block.anchor` (every writer, reviewer
+/// and archivist task of a side-track chapter) and `block.chapter_draft` (`writer.kickoff.chapter`
+/// when the chapter already has text). `block.memory` needs to know whether the outline is
+/// already rendered elsewhere so it never appears twice (spec/06 §4.2), which is why the plan
+/// travels with the session instead of being re-derived per block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KickoffPlan {
+    pub kind: SessionKind,
+    pub redraft: bool,
+}
+
+impl KickoffPlan {
+    pub fn new(kind: SessionKind, redraft: bool) -> Self {
+        Self { kind, redraft }
+    }
+
+    /// The top-level kickoff blocks of spec/03 §10.
+    pub fn blocks(self) -> Vec<&'static str> {
+        kickoff_blocks(self.kind, self.redraft)
+    }
+
+    /// True when a `block.chapter_draft` renders the chapter's outline somewhere in the kickoff
+    /// (as a top-level block, or through `writer.kickoff.chapter`'s include when the chapter has
+    /// text). `block.memory` then only names the chapter (spec/06 §4.2).
+    pub fn renders_outline_elsewhere(self, has_draft: bool) -> bool {
+        match self.kind {
+            // `writer.kickoff.chapter` includes `block.chapter_draft` when the chapter has text,
+            // and `writer.kickoff.redraft` shows the old outline itself (spec/06 §4.2).
+            SessionKind::ChapterWrite => has_draft || self.redraft,
+            SessionKind::ChapterRevise
+            | SessionKind::ChapterReview
+            | SessionKind::ChapterMaintenance => true,
+            _ => false,
+        }
+    }
+}
+
 /// The rendered kickoff message of a session kind: one `text` block per kickoff block
 /// (spec/03 §10).
 pub async fn assemble_kickoff(
@@ -92,10 +131,10 @@ pub async fn assemble_kickoff(
     session: &agent_sessions::Model,
     redraft: bool,
 ) -> Result<Vec<StoredBlock>, AppError> {
-    let kind = session::kind_of(session);
+    let plan = KickoffPlan::new(session::kind_of(session), redraft);
     let mut blocks = Vec::new();
-    for key in kickoff_blocks(kind, redraft) {
-        let context = block_context(conn, prompts, session, key).await?;
+    for key in plan.blocks() {
+        let context = block_context(conn, prompts, session, plan, key).await?;
         let rendered = prompts
             .render_value(key, crate::prompts::template_value(&context))
             .map_err(|err| err.into_app_error())?;
@@ -121,6 +160,7 @@ async fn block_context(
     conn: &impl ConnectionTrait,
     prompts: &PromptSet,
     session: &agent_sessions::Model,
+    plan: KickoffPlan,
     key: &str,
 ) -> Result<Value, AppError> {
     match key {
@@ -128,15 +168,22 @@ async fn block_context(
             "book": book_context(conn, prompts, session.book_id).await?,
             "settings": settings_context(conn, session.book_id).await?,
         })),
-        "block.memory" => Ok(json!({
-            "memory": memory_context(session),
-            "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
-        })),
+        "block.memory" => {
+            let chapter =
+                chapter_context(conn, prompts, session.chapter_id, session.book_id).await?;
+            let chapter = memory_chapter_view(chapter, plan);
+            Ok(json!({
+                "memory": memory_context(conn, prompts, session, plan).await?,
+                "chapter": chapter,
+            }))
+        }
         "block.chapter_draft" => Ok(json!({
             "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
             "draft": draft_context(conn, session.chapter_id).await?,
         })),
-        "block.cast_index" => Ok(json!({ "cast_index": cast_index_context() })),
+        "block.cast_index" => Ok(json!({
+            "cast_index": cast_index_context(conn, prompts, session).await?,
+        })),
         "block.chapter_diff" => Ok(json!({
             "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
             "diff": json!({ "changes": [] }),
@@ -159,13 +206,20 @@ async fn block_context(
             "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
             "draft": draft_context(conn, session.chapter_id).await?,
         })),
-        "writer.kickoff.redraft" | "writer.kickoff.revise" => Ok(json!({
+        "writer.kickoff.redraft" => Ok(json!({
             "book": book_context(conn, prompts, session.book_id).await?,
             "track": track_context(conn, prompts, session.track_id).await?,
             "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
-            "feedback": json!({ "text": "", "issues": [] }),
-            "previous_outline": "",
+            "feedback": feedback_context(conn, prompts, session.chapter_id).await?,
+            "previous_outline": previous_outline(conn, session.chapter_id).await?,
         })),
+        "writer.kickoff.revise" => Ok(json!({
+            "book": book_context(conn, prompts, session.book_id).await?,
+            "track": track_context(conn, prompts, session.track_id).await?,
+            "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
+            "feedback": feedback_context(conn, prompts, session.chapter_id).await?,
+        })),
+        "writer.kickoff.rollover" => rollover_context(conn, prompts, session, plan).await,
         "reviewer.kickoff" => Ok(json!({
             "book": book_context(conn, prompts, session.book_id).await?,
             "track": track_context(conn, prompts, session.track_id).await?,
@@ -309,12 +363,15 @@ async fn chapter_context(
     Ok(ChapterContext {
         id: chapter.id,
         number: chapter.ord,
+        // The templates append `《title》` themselves when a title exists, so the label carries
+        // none (spec/09 §1: `with_title` is for callers that need the whole reference in one
+        // string, such as the memory window).
         label: prompts.chapter_label(
             &track.kind,
             &track.title,
             i64::from(chapter.ord),
             &chapter.title,
-            !chapter.title.is_empty(),
+            false,
         ),
         title: chapter.title,
         guidance: chapter.guidance,
@@ -395,9 +452,106 @@ async fn settings_context(
     })
 }
 
-/// `block.memory`: the empty state until the memory service of M5 fills it (spec/06 §4).
-fn memory_context(session: &agent_sessions::Model) -> MemoryContext {
-    let _ = session;
+/// `block.memory`: the tiered memory snapshot of the target chapter (spec/06 §4).
+async fn memory_context(
+    conn: &impl ConnectionTrait,
+    prompts: &PromptSet,
+    session: &agent_sessions::Model,
+    plan: KickoffPlan,
+) -> Result<MemoryContext, AppError> {
+    let Some(chapter_id) = session.chapter_id else {
+        return Ok(empty_memory_context());
+    };
+    let Some(chapter) = chapters::Entity::find_by_id(chapter_id).one(conn).await? else {
+        return Ok(empty_memory_context());
+    };
+    let Some(track) = tracks::Entity::find_by_id(chapter.track_id)
+        .one(conn)
+        .await?
+    else {
+        return Ok(empty_memory_context());
+    };
+    let snapshot = crate::services::memory::snapshot(conn, prompts, &track, &chapter).await?;
+    let _ = plan;
+    Ok(MemoryContext {
+        is_first: snapshot.is_first,
+        window_mid: snapshot.window_mid,
+        recent_summaries: snapshot
+            .recent_summaries
+            .into_iter()
+            .map(|item| crate::prompts::context::ChapterSummaryContext {
+                label: item.label,
+                title: item.title,
+                summary: item.summary,
+            })
+            .collect(),
+        previous_tail: snapshot.previous_tail.map(|tail| PreviousTailContext {
+            label: tail.label,
+            text: tail.text,
+        }),
+        protagonist: snapshot.protagonist.map(|item| ProtagonistStateContext {
+            id: item.id,
+            name: item.name,
+            status: item.status,
+            status_label: item.status_label,
+            state: item.state,
+            after_anchor: item.after_anchor,
+            attributes: item
+                .attributes
+                .into_iter()
+                .map(|(key, value)| crate::prompts::context::AttributeContext { key, value })
+                .collect(),
+        }),
+        // The mid-term evidence (spec/06 §4.3) and the long-term index (spec/06 §4.4) read canon
+        // tables that arrive with M5; until then the rendered empty states are what the model
+        // would see for a book with no canon records yet.
+        recent_changes: Vec::new(),
+        appearances: Vec::new(),
+        absent_important: Vec::new(),
+        key_notes: Vec::new(),
+        open_foreshadowing: Vec::new(),
+        cast: Vec::new(),
+        counts: MemoryCountsContext {
+            character: 0,
+            organization: 0,
+            location: 0,
+            item: 0,
+            other: 0,
+            event: 0,
+            fact: 0,
+            world_rule: 0,
+            foreshadowing_open: 0,
+        },
+    })
+}
+
+/// The chapter view `block.memory` renders: label and title only, and the outline only when the
+/// kickoff has no `block.chapter_draft` and the task does not show the old outline itself
+/// (spec/06 §4.2, D-050).
+fn memory_chapter_view(chapter: ChapterContext, plan: KickoffPlan) -> ChapterContext {
+    let renders_outline = plan.renders_outline_elsewhere(chapter.has_draft);
+    ChapterContext {
+        label: chapter.label,
+        title: chapter.title,
+        // The template renders neither of these; blanking them documents that the memory block
+        // does not restate what the task already says.
+        guidance: String::new(),
+        target_min: 0,
+        target_max: 0,
+        outline: if renders_outline {
+            String::new()
+        } else {
+            chapter.outline
+        },
+        reference_notes: String::new(),
+        word_count: chapter.word_count,
+        has_draft: chapter.has_draft,
+        id: chapter.id,
+        number: chapter.number,
+    }
+}
+
+fn empty_memory_context() -> MemoryContext {
     MemoryContext {
         is_first: true,
         window_mid: 10,
@@ -424,9 +578,14 @@ fn memory_context(session: &agent_sessions::Model) -> MemoryContext {
     }
 }
 
-/// `block.cast_index`: empty until the canon services of M5 (spec/06 §4).
-fn cast_index_context() -> Vec<CastEntryContext> {
-    Vec::new()
+/// `block.cast_index`: the visible entities the archivist matches against (spec/06 §4.5, M5).
+async fn cast_index_context(
+    conn: &impl ConnectionTrait,
+    prompts: &PromptSet,
+    session: &agent_sessions::Model,
+) -> Result<Vec<CastEntryContext>, AppError> {
+    let _ = (conn, prompts, session);
+    Ok(Vec::new())
 }
 
 /// `block.chapter_draft` and the writer tasks: the current text with pids (spec/03 §10).
@@ -461,6 +620,223 @@ async fn draft_context(
         tail_open: content.tail_open,
         word_count: chapter.word_count,
     })
+}
+
+/// `feedback` (`vars.feedback`): the author's most recent feedback for the chapter, with the
+/// issues they ticked (spec/08 §1.1 send-back).
+///
+/// The last `chapter_feedback` row of the chapter is the one a redraft or a revision addresses;
+/// the `issues` are copied into `chapter_feedback.issues` at send-back time (M6.2), so this only
+/// renders stored data. A chapter without feedback (a plain write) renders the empty feedback.
+async fn feedback_context(
+    conn: &impl ConnectionTrait,
+    prompts: &PromptSet,
+    chapter_id: Option<i32>,
+) -> Result<FeedbackContext, AppError> {
+    let Some(chapter_id) = chapter_id else {
+        return Ok(FeedbackContext {
+            text: String::new(),
+            issues: Vec::new(),
+        });
+    };
+    let feedback = crate::db::entities::chapter_feedback::Entity::find()
+        .filter(crate::db::entities::chapter_feedback::Column::ChapterId.eq(chapter_id))
+        .order_by_desc(crate::db::entities::chapter_feedback::Column::Id)
+        .one(conn)
+        .await?;
+    let Some(feedback) = feedback else {
+        return Ok(FeedbackContext {
+            text: String::new(),
+            issues: Vec::new(),
+        });
+    };
+    Ok(FeedbackContext {
+        text: feedback.text,
+        issues: render_issues(prompts, &feedback.issues),
+    })
+}
+
+/// Renders the stored `ReviewIssue[]` of a feedback row for `vars.feedback.issues`.
+pub fn render_issues(prompts: &PromptSet, raw: &str) -> Vec<FeedbackIssueContext> {
+    let issues: Vec<json::ReviewIssue> = json::from_json_or_default(raw);
+    issues
+        .into_iter()
+        .map(|issue| FeedbackIssueContext {
+            severity_label: prompts.label("severity", issue.severity.as_str()),
+            category_label: prompts.label("category", issue.category.as_str()),
+            pids: issue.pids,
+            quote: issue.quote,
+            problem: issue.problem,
+            suggestion: issue.suggestion,
+        })
+        .collect()
+}
+
+/// `previous_outline` for `writer.kickoff.redraft`: the outline of the backed-up version.
+///
+/// The redraft's creation side effect saves the previous text as a `backup` version before it
+/// clears the content; the outline itself is not part of a version, so it comes from the newest
+/// `backup` version's sibling state. M6.2 records the old outline on the feedback row's report;
+/// until then the chapter's current outline is the reference (it is what the author saw).
+async fn previous_outline(
+    conn: &impl ConnectionTrait,
+    chapter_id: Option<i32>,
+) -> Result<String, AppError> {
+    let Some(chapter_id) = chapter_id else {
+        return Ok(String::new());
+    };
+    let Some(chapter) = chapters::Entity::find_by_id(chapter_id).one(conn).await? else {
+        return Ok(String::new());
+    };
+    Ok(chapter.outline)
+}
+
+/// `writer.kickoff.rollover` (spec/03 §9): the continuation task of a superseded session.
+async fn rollover_context(
+    conn: &impl ConnectionTrait,
+    prompts: &PromptSet,
+    session: &agent_sessions::Model,
+    plan: KickoffPlan,
+) -> Result<Value, AppError> {
+    let phase = session::phase_of(session);
+    let revising = matches!(phase, Phase::RevisionPlanning | Phase::Revising);
+    let content = chapter_content(conn, session.chapter_id).await?;
+    let granularity = granularity_context(
+        prompts,
+        session::granularity_of(session),
+        session::phase_of(session),
+        &content,
+    );
+    Ok(json!({
+        "book": book_context(conn, prompts, session.book_id).await?,
+        "track": track_context(conn, prompts, session.track_id).await?,
+        "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
+        "feedback": feedback_context(conn, prompts, session.chapter_id).await?,
+        "revision_plan": accepted_revision_plan(conn, session).await?,
+        "author_notes": author_notes(conn, session).await?,
+        "granularity": granularity,
+        "phase": if revising { "revising" } else { "drafting" },
+    }))
+    .map(|value| {
+        let _ = plan;
+        value
+    })
+}
+
+/// The accepted revision plan of a revising session (spec/03 §9): the `submit_revision_plan`
+/// result the session's chain recorded.
+async fn accepted_revision_plan(
+    conn: &impl ConnectionTrait,
+    session: &agent_sessions::Model,
+) -> Result<String, AppError> {
+    let calls = agent_tool_calls::Entity::find()
+        .filter(agent_tool_calls::Column::SessionId.eq(session.id))
+        .filter(agent_tool_calls::Column::Name.eq("submit_revision_plan"))
+        .order_by_desc(agent_tool_calls::Column::Id)
+        .one(conn)
+        .await?;
+    let Some(call) = calls else {
+        return Ok(String::new());
+    };
+    let input: Value = serde_json::from_str(&call.input).unwrap_or(Value::Null);
+    Ok(input
+        .get("plan")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned())
+}
+
+/// The author's earlier feedback and steering messages of the session chain (spec/03 §9).
+///
+/// Sources: every `user_feedback` appendix (sealed or not) and every consumed `user_message`
+/// inbox item, newest last, capped at 20 items / 6,000 characters keeping the newest.
+async fn author_notes(
+    conn: &impl ConnectionTrait,
+    session: &agent_sessions::Model,
+) -> Result<Vec<String>, AppError> {
+    const MAX_ITEMS: usize = 20;
+    const MAX_CHARS: usize = 6_000;
+
+    // 1. Walk the chain from the root to this session so the notes are in chronological order.
+    let mut chain: Vec<agent_sessions::Model> = vec![session.clone()];
+    let mut cursor = session.parent_session_id;
+    let mut guard = 0;
+    while let Some(parent_id) = cursor {
+        guard += 1;
+        if guard > 64 {
+            break;
+        }
+        let Some(parent) = agent_sessions::Entity::find_by_id(parent_id)
+            .one(conn)
+            .await?
+        else {
+            break;
+        };
+        cursor = parent.parent_session_id;
+        chain.push(parent);
+    }
+    chain.reverse();
+
+    let mut notes: Vec<String> = Vec::new();
+    for ancestor in &chain {
+        // Feedback given on a held call is stored in that call's appendices.
+        let calls = agent_tool_calls::Entity::find()
+            .filter(agent_tool_calls::Column::SessionId.eq(ancestor.id))
+            .order_by_asc(agent_tool_calls::Column::Id)
+            .all(conn)
+            .await?;
+        for call in calls {
+            let appendices: Vec<json::Appendix> = json::from_json_or_default(&call.appendices);
+            for appendix in appendices {
+                if appendix.kind == json::AppendixKind::UserFeedback
+                    && !appendix.text.trim().is_empty()
+                {
+                    notes.push(appendix.text.trim().to_owned());
+                }
+            }
+        }
+        // Steering messages are consumed inbox rows.
+        let items = crate::db::entities::agent_inbox::Entity::find()
+            .filter(crate::db::entities::agent_inbox::Column::SessionId.eq(ancestor.id))
+            .filter(crate::db::entities::agent_inbox::Column::Kind.eq("user_message"))
+            .filter(crate::db::entities::agent_inbox::Column::ConsumedAt.is_not_null())
+            .order_by_asc(crate::db::entities::agent_inbox::Column::Id)
+            .all(conn)
+            .await?;
+        for item in items {
+            if !item.content.trim().is_empty() {
+                notes.push(item.content.trim().to_owned());
+            }
+        }
+    }
+
+    // 2. Keep the newest items that fit both caps.
+    let mut kept: Vec<String> = Vec::new();
+    let mut total = 0usize;
+    for note in notes.iter().rev() {
+        let length = note.chars().count();
+        if kept.len() >= MAX_ITEMS || total + length > MAX_CHARS {
+            break;
+        }
+        total += length;
+        kept.push(note.clone());
+    }
+    kept.reverse();
+    Ok(kept)
+}
+
+/// The stored content of a chapter (empty when the session has none).
+async fn chapter_content(
+    conn: &impl ConnectionTrait,
+    chapter_id: Option<i32>,
+) -> Result<ChapterContent, AppError> {
+    let Some(chapter_id) = chapter_id else {
+        return Ok(ChapterContent::default());
+    };
+    let Some(chapter) = chapters::Entity::find_by_id(chapter_id).one(conn).await? else {
+        return Ok(ChapterContent::default());
+    };
+    Ok(json::from_json_or_default(&chapter.content))
 }
 
 /// `conception.kickoff` (spec/03 §10).
@@ -711,13 +1087,17 @@ pub async fn rollover(
             // 1. Create the child session (same kind, role, chapter, phase, granularity, flags,
             //    model snapshot; parent_session_id = old).
             let mut blocks = Vec::new();
+            let plan = KickoffPlan {
+                kind,
+                redraft: false,
+            };
             for key in [
                 "block.settings",
                 "block.memory",
                 "block.chapter_draft",
                 "writer.kickoff.rollover",
             ] {
-                let context = block_context(tx, &prompts, &parent, key).await?;
+                let context = block_context(tx, &prompts, &parent, plan, key).await?;
                 let rendered = prompts
                     .render_value(key, crate::prompts::template_value(&context))
                     .map_err(|err| err.into_app_error())?;
