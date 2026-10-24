@@ -559,21 +559,21 @@ async fn recent_changes(
         .filter(change_log::Column::Note.ne(""))
         .all(conn)
         .await?;
-    // "Ordered by chapter, then id; at most 40 (the newest are kept)" (spec/06 §4.3).
-    let chapter_ord: HashMap<i32, i32> = {
-        let ids: Vec<i32> = window.to_vec();
-        let rows = chapters::Entity::find()
-            .filter(chapters::Column::Id.is_in(ids))
-            .all(conn)
-            .await?;
-        rows.into_iter().map(|row| (row.id, row.ord)).collect()
-    };
+    // "Ordered by chapter, then id; at most 40 (the newest are kept)" (spec/06 §4.3). The window
+    // is already in story order (P: topped-up main chapters then the track's own), which is the
+    // right order for a side track too — its chapter numbers restart at 1, so sorting by `ord`
+    // alone would put side chapter 1 before the main chapters it follows.
+    let chapter_position: HashMap<i32, usize> = window
+        .iter()
+        .enumerate()
+        .map(|(position, chapter_id)| (*chapter_id, position))
+        .collect();
     let mut ordered: Vec<&change_log::Model> = rows.iter().collect();
     ordered.sort_by_key(|row| {
         (
             row.chapter_id
-                .and_then(|id| chapter_ord.get(&id).copied())
-                .unwrap_or(i32::MAX),
+                .and_then(|id| chapter_position.get(&id).copied())
+                .unwrap_or(usize::MAX),
             row.id,
         )
     });

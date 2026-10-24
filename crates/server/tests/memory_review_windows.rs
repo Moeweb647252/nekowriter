@@ -211,6 +211,131 @@ async fn a_before_start_side_story_gets_no_main_story_fill() {
     assert!(snapshot.previous_tail.is_none(), "{snapshot:?}");
 }
 
+/// Mid-term changes are ordered by the chapter's position in the window, which is P's story order
+/// (topped-up main chapters, then the track's own), not by `ord` alone: a side track's numbers
+/// restart at 1, so `ord` would put side chapter 1 before the main chapters it follows
+/// (spec/06 §4.1, §4.3).
+#[tokio::test]
+async fn midterm_changes_follow_the_story_order_across_tracks() {
+    use nekowriter::api::dto::canon::EntityInput;
+    use nekowriter::db::json::EntityKind;
+    use nekowriter::services::canon::{self, CanonWrite, Visibility, entity};
+
+    let fixture = fixture().await;
+    // A side story anchored after main chapter 3, with its first chapter official.
+    fixture
+        .app
+        .execute(&format!(
+            "INSERT INTO tracks(book_id, kind, title, synopsis, canon_mode, anchor_kind, \
+             anchor_chapter_id, ord, created_at, updated_at) VALUES ({}, 'side', 'Side', '', \
+             'isolated', 'after_chapter', {}, 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            fixture.book_id, fixture.chapters[2]
+        ))
+        .await;
+    let side_track = scalar_i64(
+        &fixture.app,
+        &format!(
+            "SELECT max(id) AS value FROM tracks WHERE book_id = {}",
+            fixture.book_id
+        ),
+    )
+    .await as i32;
+    let side_first = fixture.app.create_chapter(side_track, "Side one").await["id"]
+        .as_i64()
+        .expect("side chapter") as i32;
+    fixture.app.set_chapter_status(side_first, "official").await;
+    let side_target = fixture.app.create_chapter(side_track, "Side two").await["id"]
+        .as_i64()
+        .expect("side chapter") as i32;
+
+    // A shared change on main chapter 2 …
+    let shared = fixture.entity("Shared One", "character", 4).await;
+    let (status, _) = fixture
+        .app
+        .patch(
+            &format!("/api/entities/{shared}"),
+            json!({ "state": "main change", "note": "main change" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    fixture
+        .app
+        .execute(&format!(
+            "UPDATE change_log SET chapter_id = {} WHERE target_type = 'entity' AND \
+             target_id = {shared} AND note = 'main change'",
+            fixture.chapters[1]
+        ))
+        .await;
+    // … and a private change on the side story's first chapter.
+    let write =
+        CanonWrite::author().with_visibility(Visibility::isolated(fixture.book_id, side_track));
+    let (private, _) = canon::write(fixture.app.db(), move |tx| {
+        Box::pin(async move {
+            let input = EntityInput {
+                kind: EntityKind::Character,
+                name: "Private One".to_owned(),
+                ..EntityInput::default()
+            };
+            entity::create_inner(tx, &write, fixture.book_id, input).await
+        })
+    })
+    .await
+    .expect("private entity");
+    let (status, _) = fixture
+        .app
+        .patch(
+            &format!("/api/entities/{}", private.id),
+            json!({ "state": "side change", "note": "side change" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    fixture
+        .app
+        .execute(&format!(
+            "UPDATE change_log SET chapter_id = {side_first} WHERE target_type = 'entity' AND \
+             target_id = {} AND note = 'side change'",
+            private.id
+        ))
+        .await;
+
+    // Snapshot at the side story's second chapter: P is main 1..3 then side 1.
+    let snapshot = {
+        let state = fixture.app.state();
+        let prompts = state
+            .prompts()
+            .for_book(state.db(), Some(fixture.book_id))
+            .await
+            .expect("prompts");
+        let conn = state.db().conn();
+        let track = nekowriter::db::entities::tracks::Entity::find_by_id(side_track)
+            .one(conn)
+            .await
+            .expect("query")
+            .expect("track");
+        let chapter = nekowriter::db::entities::chapters::Entity::find_by_id(side_target)
+            .one(conn)
+            .await
+            .expect("query")
+            .expect("chapter");
+        memory::snapshot(conn, &prompts, &track, &chapter)
+            .await
+            .expect("snapshot")
+    };
+    let notes: Vec<&str> = snapshot
+        .recent_changes
+        .iter()
+        .map(|change| change.note.as_str())
+        .collect();
+    let main_position = notes.iter().position(|note| *note == "main change");
+    let side_position = notes.iter().position(|note| *note == "side change");
+    let main_position = main_position.unwrap_or_else(|| panic!("the main note is in W: {notes:?}"));
+    let side_position = side_position.unwrap_or_else(|| panic!("the side note is in W: {notes:?}"));
+    assert!(
+        main_position < side_position,
+        "main chapter 2 precedes side chapter 1 in P: {notes:?}"
+    );
+}
+
 /// `GET /books/:id/memory?chapter_id=` derives the target track from the chapter when `track_id`
 /// is omitted; otherwise the side chapter is labelled and windowed as a main-track chapter
 /// (spec/10 §2.4).
