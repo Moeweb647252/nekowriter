@@ -45,4 +45,24 @@ describe("countWords", () => {
   it("mixes scripts", () => {
     expect(countWords("他说 hello world 了")).toBe(5)
   })
+
+  // The classes below used to disagree with the server's UAX #29 count (spec/11 §8). The same
+  // cases are in the shared vector file, so both sides stay pinned to one number.
+  it("counts the ideographic number zero as an ideograph", () => {
+    expect(countWords("一九〇〇年")).toBe(5)
+  })
+
+  it("treats halfwidth katakana as one Katakana run", () => {
+    expect(countWords("ｱｲｳｴｵ")).toBe(1)
+    expect(countWords("iPhoneｱﾌﾟﾘ")).toBe(2)
+  })
+
+  it("joins letter runs across an underscore", () => {
+    expect(countWords("snake_case_name")).toBe(1)
+  })
+
+  it("does not glue latin letters to a CJK run", () => {
+    expect(countWords("你好world")).toBe(3)
+    expect(countWords("第12章")).toBe(3)
+  })
 })

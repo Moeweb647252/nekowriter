@@ -30,14 +30,16 @@ const KATAKANA = [
 const RUN_CONNECTORS = new Set(["_"])
 
 /** Chars that keep a run of letters together when they sit between two letters. */
-const LETTER_MID = new Set(["'", "\u2019", ".", ":", "\u00b7"])
+const LETTER_MID = new Set(["'", "\u2019", ".", ":", "\u00b7", "\u05f4", "\u0387", "\u066b"])
 
 /** Chars that keep a run of digits together when they sit between two digits. */
-const DIGIT_MID = new Set([".", ",", ";"])
+const DIGIT_MID = new Set([".", ",", ";", "\u066c"])
 
 const LETTER = /^\p{L}$/u
 const MARK = /^\p{M}$/u
 const DECIMAL = /^\p{Nd}$/u
+/** `No`: superscripts, subscripts and fractions. UAX #29 words them separately. */
+const OTHER_NUMBER = /^\p{No}$/u
 
 function inRange(code: number, ranges: number[][]): boolean {
   return ranges.some(([start, end]) => code >= start && code <= end)
@@ -50,6 +52,7 @@ const isKatakana = (char: string): boolean =>
 const isLetter = (char: string): boolean => LETTER.test(char)
 const isMark = (char: string): boolean => MARK.test(char)
 const isDigit = (char: string): boolean => DECIMAL.test(char)
+const isOtherNumber = (char: string): boolean => OTHER_NUMBER.test(char)
 
 /** Counts words as described in spec/11 §8. */
 export function countWords(text: string): number {
@@ -71,6 +74,12 @@ export function countWords(text: string): number {
         index += 1
       }
       count += 1
+      continue
+    }
+    if (isOtherNumber(char)) {
+      // A superscript or a fraction is a word of its own ("x²" is two, "H₂O" three).
+      count += 1
+      index += 1
       continue
     }
     if (!isLetter(char) && !isDigit(char)) {

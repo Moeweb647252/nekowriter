@@ -157,6 +157,45 @@ mod tests {
         }
     }
 
+    /// The classes where the client's approximation and the server's UAX #29 count used to
+    /// disagree (spec/11 §8). Each case also lives in the shared vector file, so both sides are
+    /// pinned to the same number.
+    #[test]
+    fn script_edge_cases_table() {
+        let cases: &[(&str, i32)] = &[
+            // Ideographic number zero is an ideograph, not a splitter.
+            ("一九〇〇年", 5),
+            ("二〇二五年三月", 7),
+            // Halfwidth Katakana is Katakana: one run, not one word per character.
+            ("ｱｲｳｴｵ", 1),
+            ("ﾃﾞｰﾀ", 1),
+            ("iPhoneｱﾌﾟﾘ", 2),
+            // ExtendNumLet joins letter runs.
+            ("snake_case_name", 1),
+            ("port_name_2", 1),
+            // Latin words must not swallow an adjacent CJK paragraph character.
+            ("你好world", 3),
+            ("第12章", 3),
+        ];
+        for (text, words) in cases {
+            assert_eq!(count_words(text), *words, "text {text:?}");
+        }
+    }
+
+    #[test]
+    fn ideographic_zero_is_han() {
+        assert!(is_han('〇'));
+        assert!(is_han('一'));
+    }
+
+    #[test]
+    fn halfwidth_katakana_is_katakana() {
+        for ch in ['ｱ', 'ﾟ', 'ｰ'] {
+            assert!(is_katakana(ch), "{ch} should count as Katakana");
+            assert!(!is_han(ch));
+        }
+    }
+
     #[test]
     fn script_ranges_are_disjoint() {
         for code in [0x4e00_u32, 0x3042, 0x30ab, 0x30fc] {
