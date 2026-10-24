@@ -1,2 +1,6 @@
 [env]
+# ts-rs writes the generated TypeScript bindings here (spec/01 §3).
 TS_RS_EXPORT_DIR = { value = "web/src/api/gen", relative = true }
+# Tests create temp databases and fixtures; keep them inside the repository instead of /tmp, so a
+# small or full tmpfs cannot break the suite (and test artifacts stay with the build).
+TMPDIR = { value = "target/tmp", relative = true }

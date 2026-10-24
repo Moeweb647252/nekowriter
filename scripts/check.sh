@@ -4,6 +4,11 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# Tests use temporary databases and fixtures; keep them inside the repository (the cargo config
+# sets TMPDIR for cargo-run processes, and this covers the pnpm steps too).
+mkdir -p target/tmp
+export TMPDIR="$PWD/target/tmp"
+
 step() {
     printf '\n\033[1m==> %s\033[0m\n' "$1"
 }

@@ -19,6 +19,12 @@ Working notes on the conventions and shared foundation of this repository. `AGEN
 `scripts/check.sh` runs all of these in the order fixed by `docs/spec/01-architecture.md` §12.
 Never bypass a failing step.
 
+**Temp files go to `target/tmp`, never `/tmp`.** `.cargo/config.toml` sets `TMPDIR` for every
+cargo-run process and `scripts/check.sh` exports it for the pnpm steps, so `tempfile::tempdir()`
+and friends already land in the repository. `/tmp` is a small tmpfs here, and a full one makes
+`tempdir()` fail with an opaque `SQLite: disk I/O error`. Do not create files in `/tmp`, and do
+not delete other agents' temp directories.
+
 ## Shared Rust foundation (already in place)
 
 - `crates/server/src/config.rs` — `Config` (clap + env + `.env` in debug builds).
