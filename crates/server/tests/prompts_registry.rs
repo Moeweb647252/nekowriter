@@ -1,0 +1,826 @@
+//! Prompt registry tests (PLAN M2.3, spec/09 §2–§4, spec/01 §11).
+//!
+//! Two layers: unit-level tests of the registry (resolution order, rendering, validation) and
+//! API tests of `GET/PUT/DELETE /api/prompts` through the real router.
+
+use nekowriter::api::build_app;
+use nekowriter::db::Db;
+use nekowriter::prompts::{PromptRegistry, PromptSource};
+use nekowriter::state::AppState;
+use nekowriter::testing::{TestApp, assert_error};
+use sea_orm::ConnectionTrait;
+use serde_json::{Value, json};
+use tower::ServiceExt;
+
+// ───────────────────────────── pack coverage ─────────────────────────────
+
+#[test]
+fn every_key_renders_with_every_sample() {
+    let registry = PromptRegistry::embedded().expect("the embedded pack must be valid");
+    let set = registry.defaults_only();
+    let mut rendered_keys = 0usize;
+    for entry in registry.pack().entries() {
+        let samples = registry.sample_contexts(&entry.key);
+        assert!(
+            !samples.is_empty(),
+            "{} has no sample context; add one to samples.json",
+            entry.key
+        );
+        for (index, sample) in samples.iter().enumerate() {
+            let output = set
+                .render_value(&entry.key, nekowriter::prompts::template_value(sample))
+                .unwrap_or_else(|err| panic!("{} sample {index}: {err}", entry.key));
+            assert!(
+                !output.text.is_empty(),
+                "{} sample {index} rendered nothing",
+                entry.key
+            );
+            assert!(
+                !output.text.contains("{{") && !output.text.contains("{%"),
+                "{} sample {index} left template syntax in the output:\n{}",
+                entry.key,
+                output.text
+            );
+        }
+        rendered_keys += 1;
+    }
+    assert!(rendered_keys > 100, "the pack should be loaded whole");
+}
+
+/// Renders every key with each of its sample contexts and snapshots the output, so any change to
+/// a template, a sample or the renderer shows up as a reviewable diff (spec/09 §2).
+#[test]
+fn every_rendered_key_matches_its_snapshot() {
+    let registry = PromptRegistry::embedded().expect("pack");
+    let set = registry.defaults_only();
+    let mut rendered = String::new();
+    for entry in registry.pack().entries() {
+        for (index, sample) in registry.sample_contexts(&entry.key).iter().enumerate() {
+            let output = set
+                .render_value(&entry.key, nekowriter::prompts::template_value(sample))
+                .unwrap_or_else(|err| panic!("{} sample {index}: {err}", entry.key));
+            rendered.push_str(&format!(
+                "===== {} [{index}] =====\n{}\n\n",
+                entry.key, output.text
+            ));
+        }
+    }
+    insta::assert_snapshot!("rendered_prompt_pack", rendered);
+}
+
+#[test]
+fn every_spec_key_exists_and_every_key_is_documented() {
+    // The key list of spec/09 §2 (the validator checks the same set).
+    let expected = "conception.system researcher.system writer.system reviewer.system archivist.system \
+        conception.kickoff researcher.kickoff writer.kickoff.chapter writer.kickoff.redraft \
+        writer.kickoff.revise writer.kickoff.rollover reviewer.kickoff reviewer.rereview \
+        archivist.kickoff.maintenance archivist.kickoff.seed archivist.kickoff.resync \
+        block.settings block.memory block.chapter_draft block.cast_index block.chapter_diff \
+        block.anchor block.book_brief notice.user_feedback notice.user_message notice.user_edits \
+        notice.setting_edits notice.completion_revoked notice.tool_not_allowed \
+        notice.output_truncated notice.web_content notice.nudge_generic notice.research_budget \
+        writer.notice.outline_accepted writer.notice.outline_rejected \
+        writer.notice.revision_plan_accepted writer.notice.revision_plan_rejected \
+        writer.notice.granularity writer.notice.nudge_planning writer.notice.nudge_drafting \
+        writer.notice.nudge_revision_planning writer.notice.nudge_revising \
+        writer.notice.retrieval_budget writer.rules.granularity result.error result.truncated \
+        result.entity_card result.entity_list result.relations result.timeline \
+        result.foreshadowing_list result.search_hits result.knowledge_entry result.chapter_text \
+        result.draft_text result.draft_edit result.writer_control result.submit_review \
+        result.canon_write result.finish_maintenance result.ask_user result.request_review \
+        result.conception_write result.web_search result.web_fetch result.knowledge_write \
+        result.finish_research shared.label shared.chapter_label";
+    let registry = PromptRegistry::embedded().expect("pack");
+    for key in expected.split_whitespace() {
+        assert!(
+            registry.pack().entry(key).is_some(),
+            "missing prompt key {key}"
+        );
+    }
+    // Every declared variable is provided by the base samples or by one branch of its key, so a
+    // sample context always covers the whole template surface.
+    for entry in registry.pack().entries() {
+        let mut provided = std::collections::BTreeSet::new();
+        for var in &entry.vars {
+            if nekowriter::prompts::sample_base_value(var).is_some() {
+                provided.insert(var.clone());
+            }
+        }
+        for sample in registry.sample_contexts(&entry.key) {
+            if let serde_json::Value::Object(object) = sample {
+                for name in object.keys() {
+                    provided.insert(name.clone());
+                }
+            }
+        }
+        for var in &entry.vars {
+            assert!(
+                provided.contains(var),
+                "{} declares variable {var} that no sample provides",
+                entry.key
+            );
+        }
+    }
+}
+
+/// The typed context structs must serialize to exactly the shape the sample data covers, so a
+/// renamed field is caught here instead of surfacing as a strict-undefined failure at runtime
+/// (spec/09 §2).
+#[test]
+fn context_structs_match_the_sample_shapes() {
+    use nekowriter::prompts::context::*;
+
+    let book = BookContext {
+        title: "t".to_owned(),
+        genre: "g".to_owned(),
+        idea: "i".to_owned(),
+        writing_language: "zh-CN".to_owned(),
+        writing_language_name: "n".to_owned(),
+        unspaced: true,
+    };
+    let track = TrackContext {
+        is_main: true,
+        kind: "main".to_owned(),
+        title: String::new(),
+        synopsis: String::new(),
+        canon_mode: "canon".to_owned(),
+        anchor_kind: "none".to_owned(),
+        anchor_label: String::new(),
+    };
+    let chapter = ChapterContext {
+        id: 1,
+        number: 1,
+        label: "l".to_owned(),
+        title: "t".to_owned(),
+        guidance: "g".to_owned(),
+        outline: "o".to_owned(),
+        reference_notes: "r".to_owned(),
+        target_min: 1,
+        target_max: 2,
+        word_count: 0,
+        has_draft: false,
+    };
+    let draft = DraftContext {
+        paragraphs: vec![ParagraphContext {
+            pid: "p1".to_owned(),
+            text: "x".to_owned(),
+        }],
+        tail_open: false,
+        word_count: 1,
+        paragraph_count: 1,
+    };
+    let granularity = GranularityContext {
+        key: "paragraph".to_owned(),
+        label: "l".to_owned(),
+        revising: false,
+        tail_open: false,
+        last_pid: "p1".to_owned(),
+    };
+
+    // Every struct serializes to an object whose keys the samples also carry.
+    let cases: Vec<(&str, Value)> = vec![
+        ("book", serde_json::to_value(&book).expect("book")),
+        ("track", serde_json::to_value(&track).expect("track")),
+        ("chapter", serde_json::to_value(&chapter).expect("chapter")),
+        ("draft", serde_json::to_value(&draft).expect("draft")),
+        (
+            "granularity",
+            serde_json::to_value(&granularity).expect("granularity"),
+        ),
+        // `counts` is nested under `notice.user_edits`, which carries the sample.
+        (
+            "notice.user_edits",
+            serde_json::to_value(EditCountsContext {
+                modified: 0,
+                deleted: 0,
+                inserted: 0,
+            })
+            .expect("counts"),
+        ),
+    ];
+    let registry = PromptRegistry::embedded().expect("pack");
+    let set = registry.defaults_only();
+    for (name, value) in cases {
+        // The edit counts live inside the `notice.user_edits` variant table.
+        let samples = registry.sample_contexts(name);
+        let sample: Value = if name == "notice.user_edits" {
+            samples.first().expect("a sample")["counts"].clone()
+        } else {
+            nekowriter::prompts::sample_base_value(name)
+                .unwrap_or_else(|| panic!("no sample for {name}"))
+                .clone()
+        };
+        let sample = &sample;
+        let typed = value.as_object().expect("object");
+        let sampled = sample.as_object().expect("sample object");
+        for field in typed.keys() {
+            assert!(
+                sampled.contains_key(field),
+                "{name}.{field} is missing from the sample data"
+            );
+        }
+        for field in sampled.keys() {
+            assert!(
+                typed.contains_key(field),
+                "{name}.{field} exists in the samples but not in the typed context"
+            );
+        }
+    }
+
+    // Rendering with the typed structs works for the templates that take them.
+    let rendered = set
+        .render(
+            "writer.kickoff.chapter",
+            &json!({ "book": book, "track": track, "chapter": chapter, "draft": draft }),
+        )
+        .expect("render");
+    assert!(rendered.text.contains("t"));
+    let rendered = set
+        .render(
+            "block.settings",
+            &json!({ "book": book, "settings": SettingsContext {
+            outline: String::new(), world: String::new(), protagonist: String::new(),
+            characters: vec![], scopes: vec![],
+        } }),
+        )
+        .expect("render settings");
+    assert!(!rendered.text.is_empty());
+    let _ = settings_empty_shape();
+}
+
+/// The empty `block.settings` shape of spec/06: no characters, no scopes.
+fn settings_empty_shape() -> nekowriter::prompts::context::SettingsContext {
+    use nekowriter::prompts::context::SettingsContext;
+    SettingsContext {
+        outline: String::new(),
+        world: String::new(),
+        protagonist: String::new(),
+        characters: Vec::new(),
+        scopes: Vec::new(),
+    }
+}
+
+#[test]
+fn tool_entries_come_with_their_schema() {
+    let registry = PromptRegistry::embedded().expect("pack");
+    let set = registry.defaults_only();
+    let tools = set.tool_definitions().expect("tool definitions");
+    assert!(tools.len() > 40, "the pack defines every role tool");
+    for tool in &tools {
+        assert!(
+            !tool.description.is_empty(),
+            "{} has no description",
+            tool.name
+        );
+        assert!(
+            registry.pack().tool(&tool.name).is_some(),
+            "{} has no schema",
+            tool.name
+        );
+        assert_eq!(tool.input_schema["type"], "object");
+    }
+}
+
+#[test]
+fn labels_are_rendered_by_the_pack_and_unknown_values_fall_back() {
+    let registry = PromptRegistry::embedded().expect("pack");
+    let set = registry.defaults_only();
+    // Known enum values render the model-facing label.
+    let character = set.label("entity_kind", "character");
+    assert!(!character.is_empty());
+    assert_ne!(character, "character", "a known value must be translated");
+    // An unknown value renders the raw value (spec/09 §1).
+    assert_eq!(set.label("entity_kind", "nonsense"), "nonsense");
+    assert_eq!(set.label("no_such_enum", "x"), "x");
+    // Chapter labels follow shared.chapter_label.
+    let main = set.chapter_label("main", "", 12, "", false);
+    assert!(main.contains("12"), "got {main}");
+    let side = set.chapter_label("side", "track title", 2, "chapter title", true);
+    assert!(side.contains('2'), "got {side}");
+    assert!(side.contains("track title"), "got {side}");
+    assert!(side.contains("chapter title"), "got {side}");
+    // The cache is per set: the second call is the same string.
+    assert_eq!(set.label("entity_kind", "character"), character);
+}
+
+// ───────────────────────────── resolution ─────────────────────────────
+
+fn test_state(dir: &std::path::Path, db: Db) -> AppState {
+    let config = nekowriter::config::Config {
+        bind: "127.0.0.1:0".parse().expect("bind"),
+        data_dir: Some(dir.to_path_buf()),
+        web_dir: None,
+        enable_demo_provider: true,
+        allow_remote: false,
+    };
+    AppState::new(db, config, String::from("v0.1.0"))
+}
+
+async fn app_with_db() -> (tempfile::TempDir, Db, AppState) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db = Db::connect(&dir.path().join("prompts.db"))
+        .await
+        .expect("db");
+    nekowriter_migration::up(db.conn()).await.expect("migrate");
+    let state = test_state(dir.path(), db.clone());
+    (dir, db, state)
+}
+
+/// Inserts a book row the prompt overrides can reference.
+async fn insert_book(db: &Db, id: i32) {
+    db.conn()
+        .execute_unprepared(&format!(
+            "INSERT INTO books(id, title, writing_language, status, settings, created_at, updated_at) \
+             VALUES ({id}, 'book{id}', 'zh-CN', 'active', '{{}}', '2026-01-01T00:00:00Z', \
+             '2026-01-01T00:00:00Z')"
+        ))
+        .await
+        .expect("insert book");
+}
+
+#[tokio::test]
+async fn override_resolution_order_is_book_then_global_then_default() {
+    let (_dir, db, state) = app_with_db().await;
+    insert_book(&db, 1).await;
+    insert_book(&db, 2).await;
+    let registry = state.prompts();
+    registry.invalidate_all();
+
+    // 1. Shipped default.
+    let set = registry.for_book(&db, Some(1)).await.expect("set");
+    assert_eq!(set.source("writer.system"), PromptSource::Default);
+    let default_text = set
+        .pack()
+        .entry("writer.system")
+        .expect("entry")
+        .text
+        .trim()
+        .to_owned();
+
+    // 2. Global override wins over the default, for every book.
+    db.conn()
+        .execute_unprepared(
+            "INSERT INTO prompt_overrides(scope, book_id, key, content, updated_at) \
+             VALUES ('global', NULL, 'writer.system', 'GLOBAL OVERRIDE', '2026-01-01T00:00:00Z')",
+        )
+        .await
+        .expect("global override");
+    registry.invalidate_all();
+    let set = registry.for_book(&db, Some(1)).await.expect("set");
+    assert_eq!(set.source("writer.system"), PromptSource::Global);
+    assert_eq!(
+        set.render("writer.system", &json!({}))
+            .expect("render")
+            .text,
+        "GLOBAL OVERRIDE"
+    );
+    let other_book = registry.for_book(&db, Some(2)).await.expect("set");
+    assert_eq!(other_book.source("writer.system"), PromptSource::Global);
+    // A book without overrides keeps the default for other keys.
+    assert_eq!(other_book.source("reviewer.system"), PromptSource::Default);
+    assert_eq!(
+        other_book
+            .render("reviewer.system", &json!({}))
+            .expect("render")
+            .text,
+        other_book
+            .pack()
+            .entry("reviewer.system")
+            .expect("entry")
+            .text
+            .trim()
+    );
+
+    // 3. The book override wins over the global one, only for that book.
+    db.conn()
+        .execute_unprepared(
+            "INSERT INTO prompt_overrides(scope, book_id, key, content, updated_at) \
+             VALUES ('book', 1, 'writer.system', 'BOOK OVERRIDE', '2026-01-01T00:00:00Z')",
+        )
+        .await
+        .expect("book override");
+    registry.invalidate_all();
+    let set = registry.for_book(&db, Some(1)).await.expect("set");
+    assert_eq!(set.source("writer.system"), PromptSource::Book);
+    assert_eq!(
+        set.render("writer.system", &json!({}))
+            .expect("render")
+            .text,
+        "BOOK OVERRIDE"
+    );
+    let other_book = registry.for_book(&db, Some(2)).await.expect("set");
+    assert_eq!(other_book.source("writer.system"), PromptSource::Global);
+    // Without a book the global level applies.
+    let global_only = registry.for_book(&db, None).await.expect("set");
+    assert_eq!(global_only.source("writer.system"), PromptSource::Global);
+    // The default text is never lost: it is still readable from the pack.
+    assert!(!default_text.is_empty());
+}
+
+#[tokio::test]
+async fn includes_resolve_to_the_effective_partial() {
+    let (_dir, db, state) = app_with_db().await;
+    let registry = state.prompts();
+    registry.invalidate_all();
+    // The shipped default includes writer.rules.granularity; overriding that partial must change
+    // the rendering of the including notice (spec/09 §3).
+    let default_set = registry.for_book(&db, None).await.expect("set");
+    let context = json!({
+        "granularity": {
+            "key": "paragraph",
+            "label": "PARAGRAPH-LABEL",
+            "revising": false,
+            "tail_open": false,
+            "last_pid": "p9"
+        }
+    });
+    let shipped = default_set
+        .render("writer.notice.outline_accepted", &context)
+        .expect("render");
+    db.conn()
+        .execute_unprepared(
+            "INSERT INTO prompt_overrides(scope, book_id, key, content, updated_at) \
+             VALUES ('global', NULL, 'writer.rules.granularity', 'GRANULARITY:{{ granularity.label }}', \
+             '2026-01-01T00:00:00Z')",
+        )
+        .await
+        .expect("override");
+    registry.invalidate_all();
+    let overridden = registry
+        .for_book(&db, None)
+        .await
+        .expect("set")
+        .render("writer.notice.outlined_accepted_placeholder", &context);
+    assert!(overridden.is_err(), "an unknown key is rejected");
+    let overridden = registry
+        .for_book(&db, None)
+        .await
+        .expect("set")
+        .render("writer.notice.outline_accepted", &context)
+        .expect("render");
+    assert_ne!(shipped.text, overridden.text);
+    assert!(
+        overridden.text.contains("GRANULARITY:PARAGRAPH-LABEL"),
+        "the include must resolve to the override: {}",
+        overridden.text
+    );
+}
+
+#[tokio::test]
+async fn a_broken_override_falls_back_to_the_default_with_a_warning() {
+    let (_dir, db, state) = app_with_db().await;
+    let registry = state.prompts();
+    registry.invalidate_all();
+    // A template valid for the sample contexts but referencing a variable the real context does
+    // not have: the samples cover `granularity`, so a *different* key's context fails.
+    db.conn()
+        .execute_unprepared(
+            "INSERT INTO prompt_overrides(scope, book_id, key, content, updated_at) \
+             VALUES ('global', NULL, 'reviewer.kickoff', \
+             'fine{% if chapter.nonexistent_field %}boom{% endif %}', '2026-01-01T00:00:00Z')",
+        )
+        .await
+        .expect("override");
+    registry.invalidate_all();
+    let set = registry.for_book(&db, None).await.expect("set");
+    assert_eq!(set.source("reviewer.kickoff"), PromptSource::Global);
+    // Render with a context that lacks the field the override reads.
+    let context = json!({
+        "book": { "title": "T", "genre": "", "idea": "", "writing_language": "zh-CN",
+                  "writing_language_name": "Chinese", "unspaced": true },
+        "track": { "is_main": true, "kind": "main", "title": "", "synopsis": "",
+                   "canon_mode": "canon", "anchor_kind": "none", "anchor_label": "" },
+        "chapter": { "id": 1, "number": 1, "label": "chapter", "title": "", "guidance": "",
+                     "outline": "", "reference_notes": "", "target_min": 3000,
+                     "target_max": 4000, "word_count": 0, "has_draft": false },
+        "prior": null
+    });
+    let rendered = set.render("reviewer.kickoff", &context).expect("render");
+    assert_eq!(
+        rendered.override_failed.as_deref(),
+        Some("reviewer.kickoff")
+    );
+    assert_eq!(
+        rendered.warnings(),
+        vec!["prompt.override_failed".to_owned()]
+    );
+    // The shipped default rendered instead of an error.
+    assert!(!rendered.text.contains("boom"));
+    let default_rendered = registry
+        .defaults_only()
+        .render("reviewer.kickoff", &context)
+        .expect("default render");
+    assert_eq!(rendered.text, default_rendered.text);
+    // A template that uses only covered branches renders the override without a warning.
+    db.conn()
+        .execute_unprepared(
+            "UPDATE prompt_overrides SET content = 'REVIEWER OVERRIDE' \
+             WHERE key = 'reviewer.kickoff'",
+        )
+        .await
+        .expect("update");
+    registry.invalidate_all();
+    let rendered = registry
+        .for_book(&db, None)
+        .await
+        .expect("set")
+        .render("reviewer.kickoff", &context)
+        .expect("render");
+    assert!(rendered.override_failed.is_none());
+    assert_eq!(rendered.text, "REVIEWER OVERRIDE");
+}
+
+#[test]
+fn validate_override_reports_template_syntax_with_line_and_column() {
+    let registry = PromptRegistry::embedded().expect("pack");
+    // Unknown key.
+    let error = registry
+        .validate_override("no.such.key", "x")
+        .expect_err("unknown key");
+    assert!(matches!(
+        error,
+        nekowriter::prompts::PromptError::UnknownKey(_)
+    ));
+    // Syntax error: unclosed block tag on line 2.
+    let error = registry
+        .validate_override("writer.system", "line one\n{% if x %}\nline three")
+        .expect_err("syntax error");
+    let line = error.line().expect("a line number");
+    let column = error.column().expect("a column");
+    assert!(line >= 1, "line {line}");
+    assert!(column >= 1, "column {column}");
+    assert!(
+        matches!(error, nekowriter::prompts::PromptError::Template { .. }),
+        "{error:?}"
+    );
+    // Strict undefined: an unknown variable in any sample context is an error.
+    let error = registry
+        .validate_override("writer.system", "{{ totally_unknown_variable }}")
+        .expect_err("unknown variable");
+    assert!(matches!(
+        error,
+        nekowriter::prompts::PromptError::Template { .. }
+    ));
+    // A valid override passes.
+    registry
+        .validate_override("writer.system", "You are a writer.")
+        .expect("valid override");
+    // Tool descriptions are length-limited (spec/09 §4).
+    let too_long = "x".repeat(nekowriter::prompts::MAX_TOOL_DESCRIPTION_CHARS + 1);
+    assert!(
+        registry
+            .validate_override("tool.insert_text", &too_long)
+            .is_err()
+    );
+    assert!(
+        registry
+            .validate_override("tool.insert_text", "   ")
+            .is_err()
+    );
+    registry
+        .validate_override("tool.insert_text", "Write text.")
+        .expect("valid tool description");
+}
+
+// ───────────────────────────── API ─────────────────────────────
+
+#[tokio::test]
+async fn api_lists_entries_with_metadata_and_docs() {
+    let app = TestApp::new().await;
+    let book = app.create_book("Prompt API").await;
+    let book_id = book["id"].as_i64().expect("book id");
+    let (status, body) = app.get(&format!("/api/prompts?book_id={book_id}")).await;
+    assert_eq!(status, 200, "{body}");
+    let entries = body.as_array().expect("array");
+    assert!(entries.len() > 100, "every key is listed");
+    let writer = entries
+        .iter()
+        .find(|entry| entry["key"] == "writer.system")
+        .expect("writer.system");
+    assert_eq!(writer["kind"], "system");
+    assert_eq!(writer["agent"], "writer");
+    assert_eq!(writer["source"], "default");
+    assert!(writer["global_override"].is_null());
+    assert!(writer["book_override"].is_null());
+    assert!(!writer["default_text"].as_str().expect("text").is_empty());
+    // A variable-carrying key documents its variables.
+    let kickoff = entries
+        .iter()
+        .find(|entry| entry["key"] == "writer.kickoff.chapter")
+        .expect("writer.kickoff.chapter");
+    let vars = kickoff["variables"].as_array().expect("variables");
+    assert_eq!(vars.len(), 4, "book, track, chapter, draft");
+    let names: Vec<&str> = vars
+        .iter()
+        .map(|var| var["name"].as_str().expect("name"))
+        .collect();
+    assert!(names.contains(&"chapter"));
+    let chapter_doc = vars
+        .iter()
+        .find(|var| var["name"] == "chapter")
+        .expect("doc");
+    assert!(!chapter_doc["en"].as_str().expect("en").is_empty());
+    assert!(!chapter_doc["zh"].as_str().expect("zh").is_empty());
+    assert!(
+        chapter_doc["fields"]
+            .as_array()
+            .expect("fields")
+            .iter()
+            .any(|field| field["name"] == "guidance")
+    );
+    // Tool entries are listed too.
+    assert!(
+        entries
+            .iter()
+            .any(|entry| entry["key"] == "tool.insert_text")
+    );
+}
+
+#[tokio::test]
+async fn api_saves_and_resets_global_and_book_overrides() {
+    let app = TestApp::new().await;
+    let book = app.create_book("Overrides").await;
+    let book_id = book["id"].as_i64().expect("book id");
+
+    // Save a global override.
+    let (status, body) = app
+        .put(
+            "/api/prompts/writer.system",
+            json!({ "scope": "global", "content": "Global writer prompt." }),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["source"], "global");
+    assert_eq!(body["global_override"], "Global writer prompt.");
+
+    // Save a book override.
+    let (status, body) = app
+        .put(
+            "/api/prompts/writer.system",
+            json!({ "scope": "book", "book_id": book_id, "content": "Book writer prompt." }),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["source"], "book");
+    assert_eq!(body["book_override"], "Book writer prompt.");
+    assert_eq!(body["global_override"], "Global writer prompt.");
+
+    // Listing for the book shows the book source; for another book, the global one.
+    let (_, listed) = app.get(&format!("/api/prompts?book_id={book_id}")).await;
+    let entry = listed
+        .as_array()
+        .expect("array")
+        .iter()
+        .find(|entry| entry["key"] == "writer.system")
+        .expect("entry");
+    assert_eq!(entry["source"], "book");
+    let other = app.create_book("Other").await;
+    let other_id = other["id"].as_i64().expect("id");
+    let (_, listed) = app.get(&format!("/api/prompts?book_id={other_id}")).await;
+    let entry = listed
+        .as_array()
+        .expect("array")
+        .iter()
+        .find(|entry| entry["key"] == "writer.system")
+        .expect("entry");
+    assert_eq!(entry["source"], "global");
+    assert_eq!(entry["book_override"], Value::Null);
+
+    // Reset the book level → the global one is effective again.
+    let (status, body) = app
+        .delete(&format!(
+            "/api/prompts/writer.system?scope=book&book_id={book_id}"
+        ))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["source"], "global");
+    assert_eq!(body["book_override"], Value::Null);
+
+    // Reset the global level → the shipped default is effective again.
+    let (status, body) = app.delete("/api/prompts/writer.system?scope=global").await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["source"], "default");
+    assert_eq!(body["global_override"], Value::Null);
+    assert!(!body["default_text"].as_str().expect("text").is_empty());
+}
+
+#[tokio::test]
+async fn api_reports_template_errors_with_line_and_column() {
+    let app = TestApp::new().await;
+    let (status, body) = app
+        .put(
+            "/api/prompts/writer.system",
+            json!({ "scope": "global", "content": "first line\n{% if broken %}\nfail" }),
+        )
+        .await;
+    assert_eq!(status, 400, "{body}");
+    assert_error(&body, "prompt.template_invalid");
+    assert!(
+        body["error"]["details"]["line"].as_u64().unwrap_or(0) >= 1,
+        "{body}"
+    );
+    assert!(
+        body["error"]["details"]["column"].as_u64().unwrap_or(0) >= 1,
+        "{body}"
+    );
+    assert!(
+        body["error"]["details"]["message"]
+            .as_str()
+            .expect("message")
+            .contains("writer.system")
+    );
+    // Nothing was stored.
+    let (_, listed) = app.get("/api/prompts").await;
+    let entry = listed
+        .as_array()
+        .expect("array")
+        .iter()
+        .find(|entry| entry["key"] == "writer.system")
+        .expect("entry");
+    assert_eq!(entry["source"], "default");
+
+    // An unknown key is a 404.
+    let (status, body) = app
+        .put(
+            "/api/prompts/no.such.key",
+            json!({ "scope": "global", "content": "x" }),
+        )
+        .await;
+    assert_eq!(status, 404, "{body}");
+    assert_error(&body, "not_found");
+
+    // A book override without book_id is a validation error.
+    let (status, body) = app
+        .put(
+            "/api/prompts/writer.system",
+            json!({ "scope": "book", "content": "x" }),
+        )
+        .await;
+    assert_eq!(status, 400, "{body}");
+    assert_error(&body, "validation.failed");
+}
+
+#[tokio::test]
+async fn saved_changes_apply_to_sets_built_afterwards() {
+    let app = TestApp::new().await;
+    let book = app.create_book("Cache").await;
+    let book_id = book["id"].as_i64().expect("book id") as i32;
+    let state = app.state();
+    // Prime the cache.
+    let before = state
+        .prompts()
+        .for_book(app.db(), Some(book_id))
+        .await
+        .expect("set");
+    assert_eq!(before.source("writer.system"), PromptSource::Default);
+    let (status, _body) = app
+        .put(
+            "/api/prompts/writer.system",
+            json!({ "scope": "global", "content": "changed" }),
+        )
+        .await;
+    assert_eq!(status, 200);
+    // The cache was invalidated by the write, so a new set sees the override.
+    let after = state
+        .prompts()
+        .for_book(app.db(), Some(book_id))
+        .await
+        .expect("set");
+    assert_eq!(after.source("writer.system"), PromptSource::Global);
+    assert_eq!(
+        after
+            .render("writer.system", &json!({}))
+            .expect("render")
+            .text,
+        "changed"
+    );
+    // The set builders return cached instances while nothing changes.
+    let again = state
+        .prompts()
+        .for_book(app.db(), Some(book_id))
+        .await
+        .expect("set");
+    assert!(std::sync::Arc::ptr_eq(&after, &again));
+}
+
+#[tokio::test]
+async fn prompt_writes_go_through_the_host_origin_guard() {
+    let app = TestApp::new().await;
+    // The guard still applies to prompt writes (spec/01 §10.2).
+    let response = build_app(app.state().clone())
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/api/prompts/writer.system")
+                .header("host", "127.0.0.1:7878")
+                .header("origin", "http://evil.com")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({ "scope": "global", "content": "x" }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), 403);
+}

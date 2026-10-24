@@ -7,6 +7,7 @@ pub mod chapters;
 pub mod dto;
 pub mod events;
 pub mod health;
+pub mod prompts;
 pub mod settings_materials;
 pub mod tracks;
 
@@ -112,6 +113,8 @@ pub fn build_app(state: AppState) -> Router {
         .route("/books/{book_id}/changes", get(changes::list))
         .route("/changes/{change_id}", get(changes::get))
         .route("/events", get(events::stream))
+        .route("/prompts", get(prompts::list))
+        .route("/prompts/{key}", put(prompts::save).delete(prompts::reset))
         .with_state(state.clone());
 
     Router::new()

@@ -92,3 +92,7 @@ path = "tests/api_books.rs"
 [[test]]
 name = "api_chapters"
 path = "tests/api_chapters.rs"
+
+[[test]]
+name = "prompts_registry"
+path = "tests/prompts_registry.rs"

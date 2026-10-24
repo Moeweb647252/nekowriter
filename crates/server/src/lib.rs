@@ -5,6 +5,7 @@ pub mod config;
 pub mod db;
 pub mod error;
 pub mod events;
+pub mod prompts;
 pub mod services;
 pub mod state;
 pub mod text;
@@ -41,6 +42,9 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         .await
         .context("sqlite-vec is not available")?;
     tracing::info!(vec_version, "sqlite-vec ready");
+
+    // Load and validate the embedded prompt pack; a failure is a build defect (spec/01 §5).
+    crate::prompts::PromptRegistry::embedded().context("the embedded prompt pack is invalid")?;
 
     let state = AppState::new(db, config.clone(), vec_version);
     let app = api::build_app(state);

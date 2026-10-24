@@ -4,6 +4,7 @@ pub mod books;
 pub mod changes;
 pub mod chapters;
 pub mod content_ops;
+pub mod prompts;
 pub mod settings;
 pub mod settings_materials;
 pub mod tracks;
@@ -18,6 +19,9 @@ pub use chapters::{
     ChapterVersionMetaDto, ManualVersionInput,
 };
 pub use content_ops::{ContentOp, ContentOpInput};
+pub use prompts::{
+    PromptEntryDto, PromptSaveInput, PromptVariableDocDto, PromptVariableFieldDocDto,
+};
 pub use settings::{
     AppSettingsDto, AppSettingsPatch, EmbeddingSettingsDto, SearchProvider, SearchSettingsDto,
     SearchSettingsPatch,

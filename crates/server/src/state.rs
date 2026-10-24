@@ -5,6 +5,7 @@ use std::sync::Arc;
 use crate::config::Config;
 use crate::db::Db;
 use crate::events::EventBus;
+use crate::prompts::PromptRegistry;
 
 /// Shared application state. Cheap to clone; every field is behind an `Arc`.
 #[derive(Clone)]
@@ -19,6 +20,8 @@ pub struct AppStateInner {
     pub vec_version: String,
     /// The process-wide event bus (spec/10 §3).
     pub events: EventBus,
+    /// The embedded prompt pack and the per-book resolved prompt sets (spec/09).
+    pub prompts: Arc<PromptRegistry>,
 }
 
 impl AppState {
@@ -29,6 +32,12 @@ impl AppState {
                 config,
                 vec_version,
                 events: EventBus::new(),
+                // Startup invariant: the embedded pack is validated once per process, and a
+                // failure is a build defect (spec/01 §5 step 6).
+                prompts: Arc::new(
+                    PromptRegistry::embedded()
+                        .unwrap_or_else(|err| panic!("the embedded prompt pack is invalid: {err}")),
+                ),
             }),
         }
     }
@@ -41,6 +50,7 @@ impl AppState {
                 config: self.inner.config.clone(),
                 vec_version: self.inner.vec_version.clone(),
                 events,
+                prompts: self.inner.prompts.clone(),
             }),
         }
     }
@@ -59,5 +69,9 @@ impl AppState {
 
     pub fn events(&self) -> &EventBus {
         &self.inner.events
+    }
+
+    pub fn prompts(&self) -> &Arc<PromptRegistry> {
+        &self.inner.prompts
     }
 }
