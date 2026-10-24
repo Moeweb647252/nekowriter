@@ -12,6 +12,7 @@ const CJK_SINGLE = [
   [0x4e00, 0x9fff], // CJK Unified Ideographs
   [0xf900, 0xfaff], // CJK Compatibility Ideographs
   [0x20000, 0x2fa1f], // CJK Extensions B..F
+  [0x3005, 0x3005], // Ideographic iteration mark
 ]
 
 const KATAKANA = [
@@ -23,8 +24,21 @@ function inRange(code: number, ranges: number[][]): boolean {
   return ranges.some(([start, end]) => code >= start && code <= end)
 }
 
+function isSingleCounted(char: string): boolean {
+  return inRange(char.codePointAt(0) ?? 0, CJK_SINGLE)
+}
+
+function isKatakana(char: string): boolean {
+  return inRange(char.codePointAt(0) ?? 0, KATAKANA) && !isSingleCounted(char)
+}
+
 function isLetterOrDigit(char: string): boolean {
   return /[\p{L}\p{M}\p{N}]/u.test(char)
+}
+
+/** True when `char` continues a run of letters, marks and digits in a spaced script. */
+function isSentenceChar(char: string): boolean {
+  return isLetterOrDigit(char) && !isSingleCounted(char) && !isKatakana(char)
 }
 
 /** Counts words as described in spec/11 §8. */
@@ -34,31 +48,27 @@ export function countWords(text: string): number {
   let index = 0
   while (index < chars.length) {
     const char = chars[index]
-    const code = char.codePointAt(0) ?? 0
 
-    if (inRange(code, CJK_SINGLE)) {
+    if (isSingleCounted(char)) {
       count += 1
       index += 1
       continue
     }
-    if (inRange(code, KATAKANA)) {
+    if (isKatakana(char)) {
       // A run of Katakana (including the long-vowel mark) counts once.
       index += 1
-      while (index < chars.length) {
-        const nextCode = chars[index].codePointAt(0) ?? 0
-        if (!inRange(nextCode, KATAKANA)) {
-          break
-        }
+      while (index < chars.length && isKatakana(chars[index])) {
         index += 1
       }
       count += 1
       continue
     }
-    if (isLetterOrDigit(char)) {
+    if (isSentenceChar(char)) {
       index += 1
       while (index < chars.length) {
         const next = chars[index]
-        if (isLetterOrDigit(next)) {
+        const previous = chars[index - 1]
+        if (isSentenceChar(next)) {
           index += 1
           continue
         }
@@ -69,7 +79,7 @@ export function countWords(text: string): number {
         if (
           after !== undefined &&
           (next === "'" || next === "’" || next === ".") &&
-          /[\p{L}\p{M}]/u.test(chars[index - 1]) &&
+          /[\p{L}\p{M}]/u.test(previous) &&
           /[\p{L}\p{M}]/u.test(after)
         ) {
           index += 1
@@ -78,7 +88,7 @@ export function countWords(text: string): number {
         if (
           after !== undefined &&
           (next === "." || next === ",") &&
-          /\d/.test(chars[index - 1]) &&
+          /\d/.test(previous) &&
           /\d/.test(after)
         ) {
           index += 1

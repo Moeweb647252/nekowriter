@@ -5,6 +5,7 @@ pub mod config;
 pub mod db;
 pub mod error;
 pub mod state;
+pub mod text;
 
 use anyhow::Context;
 use tracing_subscriber::EnvFilter;
