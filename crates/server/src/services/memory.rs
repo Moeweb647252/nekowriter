@@ -125,7 +125,8 @@ async fn official_prior_chapters(
         .await?)
 }
 
-/// The bare chapter reference of a row (`第12章` / `番外《…》第2章`), without the title.
+/// The bare chapter reference of a row (main track or side track, numbering only), without the
+/// title. The rendering comes from `shared.chapter_label`, never from code.
 fn chapter_label(prompts: &PromptSet, track: &tracks::Model, chapter: &chapters::Model) -> String {
     prompts.chapter_label(
         &track.kind,

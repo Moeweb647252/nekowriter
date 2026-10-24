@@ -39,7 +39,8 @@ pub struct CharacterDto {
     /// 1 = most important; contiguous `1..n`.
     pub rank: i32,
     pub name: String,
-    /// Stored text (e.g. 主角, 反派); the one label that is not rendered by the prompt pack.
+    /// Author-written stored text (e.g. a role word); the one label that is not rendered by the
+    /// prompt pack (D-055).
     pub role_label: String,
     pub summary: String,
     pub profile: String,

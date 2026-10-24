@@ -7,7 +7,7 @@
 
 /// Ideographs that count one each. U+3007 (ideographic number zero) is a Han ideograph by
 /// Unicode's script property, so an author counts it like one; leaving it out made the server
-/// split "一九〇〇年" into six words while the client said five.
+/// split a year written with the ideographic zero into six words while the client said five.
 const HAN_RANGES: [(u32, u32); 6] = [
     (0x3400, 0x4dbf),   // CJK Unified Ideographs Extension A
     (0x4e00, 0x9fff),   // CJK Unified Ideographs
