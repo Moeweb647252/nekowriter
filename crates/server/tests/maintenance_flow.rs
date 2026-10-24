@@ -660,6 +660,56 @@ async fn resync_saves_an_official_version_and_shows_the_diff() {
         2,
         "two official versions: {versions:?}"
     );
+
+    // An identical official version is reused (spec/06 §8, D-046): edit the text, restore the
+    // official version (which brings back its exact content, pids included), then re-sync — no
+    // third official version is created.
+    let (_, _, version_now) = runtime.chapter_status().await;
+    runtime
+        .app
+        .put_text(runtime.chapter_id, version_now, "另一段完全不同的正文。")
+        .await;
+    let (status, body) = runtime
+        .app
+        .post(
+            &format!(
+                "/api/chapter-versions/{}/restore",
+                second_official.expect("the second official version")
+            ),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, 200, "restore the official version: {body}");
+    assert_eq!(chapter_state(&runtime).await.1, "stale");
+    let (status, reused) = runtime
+        .app
+        .post(
+            &format!("/api/chapters/{}/resync", runtime.chapter_id),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, 200, "resync with the same content: {reused}");
+    let (_, _, official_after_reuse, _, _) = chapter_state(&runtime).await;
+    assert_eq!(
+        official_after_reuse, second_official,
+        "the identical official version is reused instead of a new one"
+    );
+    assert_eq!(
+        runtime
+            .version_kinds()
+            .await
+            .iter()
+            .filter(|kind| *kind == "official")
+            .count(),
+        2,
+        "still two official versions"
+    );
+    let reuse_session = reused["session_id"].as_i64().expect("session") as i32;
+    let (status, _) = runtime
+        .app
+        .post(&format!("/api/sessions/{reuse_session}/abandon"), json!({}))
+        .await;
+    assert_eq!(status, 200, "abandon the reuse re-sync");
 }
 
 /// Retry after an abandoned re-sync starts `chapter_resync` again, not a maintenance run
@@ -802,4 +852,140 @@ async fn the_cast_index_caps_at_three_hundred_entities_and_includes_aliases() {
         .post(&format!("/api/sessions/{session}/abandon"), json!({}))
         .await;
     assert_eq!(status, 200);
+}
+
+// ───────────────────────────── finish_maintenance validation ─────────────────────────────
+
+/// `finish_maintenance` in `chapter_maintenance` requires recorded appearances and a summary and
+/// names what is missing (spec/05 §6).
+#[tokio::test]
+async fn finish_maintenance_names_the_missing_required_steps() {
+    let runtime = runtime(vec![
+        create_character("林凡", "主角"),
+        // Too early: neither required step ran.
+        step("finish_maintenance", json!({ "report": "done" })),
+        step(
+            "record_appearances",
+            json!({ "appearances": [ { "entity": "林凡", "role": "pov" } ] }),
+        ),
+        step(
+            "set_chapter_summary",
+            json!({ "summary": "林凡进入剑冢。" }),
+        ),
+        step("finish_maintenance", json!({ "report": "done" })),
+    ])
+    .await;
+    runtime.app.put_text(runtime.chapter_id, 0, "正文。").await;
+    review_harness::mark_official(&runtime, runtime.chapter_id).await;
+    let session = start_archivist(
+        &runtime,
+        runtime.chapter_id,
+        SessionKind::ChapterMaintenance,
+    )
+    .await;
+    runtime
+        .wait_status_within(session, SessionStatus::Completed, Duration::from_secs(20))
+        .await;
+
+    let calls = runtime.calls(session).await;
+    let finishes: Vec<_> = calls
+        .iter()
+        .filter(|call| call.name == "finish_maintenance")
+        .collect();
+    assert_eq!(finishes.len(), 2);
+    assert!(finishes[0].is_error, "the first finish is rejected");
+    let text = finishes[0].raw_result_text.clone().unwrap_or_default();
+    assert!(
+        text.contains("出场记录") && text.contains("本章摘要"),
+        "error.maintenance_incomplete names both missing steps: {text:?}"
+    );
+    assert!(!finishes[1].is_error, "the second finish completes");
+    assert_eq!(chapter_state(&runtime).await.1, "synced");
+}
+
+/// If the protagonist appeared and no `update_entity` touched their state, the first
+/// `finish_maintenance` withholds completion once; the next call completes (spec/05 §6, spec/06 §6).
+#[tokio::test]
+async fn finish_maintenance_asks_for_the_protagonist_state_once() {
+    let runtime = runtime(vec![
+        step(
+            "record_appearances",
+            json!({ "appearances": [ { "entity": "林凡", "role": "pov" } ] }),
+        ),
+        step(
+            "set_chapter_summary",
+            json!({ "summary": "林凡进入剑冢。" }),
+        ),
+        step("finish_maintenance", json!({ "report": "done" })),
+        step(
+            "finish_maintenance",
+            json!({ "report": "no state change needed" }),
+        ),
+    ])
+    .await;
+    create_entity(&runtime, "林凡", true).await;
+    runtime.app.put_text(runtime.chapter_id, 0, "正文。").await;
+    review_harness::mark_official(&runtime, runtime.chapter_id).await;
+    let session = start_archivist(
+        &runtime,
+        runtime.chapter_id,
+        SessionKind::ChapterMaintenance,
+    )
+    .await;
+    runtime
+        .wait_status_within(session, SessionStatus::Completed, Duration::from_secs(20))
+        .await;
+
+    let calls = runtime.calls(session).await;
+    let finishes: Vec<_> = calls
+        .iter()
+        .filter(|call| call.name == "finish_maintenance")
+        .collect();
+    assert_eq!(finishes.len(), 2, "the confirmation costs exactly one call");
+    assert!(
+        !finishes[0].is_error,
+        "the withheld completion is a notice, not an error"
+    );
+    let text = finishes[0].raw_result_text.clone().unwrap_or_default();
+    assert!(
+        text.contains("主角") && text.contains("state"),
+        "the notice asks for the protagonist's state: {text:?}"
+    );
+    assert!(!finishes[1].is_error);
+    assert_eq!(
+        chapter_state(&runtime).await.1,
+        "synced",
+        "the second call completed the maintenance"
+    );
+}
+
+/// A failed archivist session leaves the canon `failed` so Retry is possible (spec/06 §6, D-048).
+#[tokio::test]
+async fn a_failed_maintenance_session_marks_canon_failed() {
+    use nekowriter_llm::mock::ScriptedProvider;
+    use nekowriter_llm::retry::LlmError;
+
+    let mut runtime = runtime(Vec::new()).await;
+    let scripted = runtime.app.set_provider(
+        ScriptedProvider::new(vec![create_character("林凡", "主角")])
+            // A non-retryable failure: the session fails on the first attempt.
+            .fail_when_exhausted(LlmError::Auth("boom".to_owned())),
+    );
+    runtime.scripted = scripted;
+    runtime.app.put_text(runtime.chapter_id, 0, "正文。").await;
+    review_harness::mark_official(&runtime, runtime.chapter_id).await;
+    let session = start_archivist(
+        &runtime,
+        runtime.chapter_id,
+        SessionKind::ChapterMaintenance,
+    )
+    .await;
+    runtime
+        .wait_status_within(session, SessionStatus::Failed, Duration::from_secs(40))
+        .await;
+    assert_eq!(
+        chapter_state(&runtime).await.1,
+        "failed",
+        "a failed maintenance fails the canon in the same transition"
+    );
 }
