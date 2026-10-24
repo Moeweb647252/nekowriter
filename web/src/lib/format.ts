@@ -1,5 +1,7 @@
 /** Formatting helpers (spec/11 §6). */
 
+import i18n from "@/i18n"
+
 export function formatNumber(value: number, language = "en"): string {
   return new Intl.NumberFormat(language).format(value)
 }
@@ -41,9 +43,16 @@ export function formatRelativeTime(value: string, language = "en"): string {
   return formatter.format(Math.round(value0), "year")
 }
 
-export function formatWords(count: number, language = "en"): string {
-  const formatted = formatNumber(count, language)
-  return language.startsWith("zh") ? `${formatted} 字` : `${formatted} words`
+/**
+ * `"2,350 words"` / `"2,350 字"` (spec/11 §6). The unit comes from the `common:words` resource,
+ * never from a literal, so a new locale needs only locale data (AGENTS.md: never concatenate
+ * translated fragments). Without an explicit `language` it follows the active i18n language.
+ */
+export function formatWords(count: number, language = i18n.language): string {
+  return i18n.t("common:words", {
+    lng: language,
+    count: formatNumber(count, language),
+  })
 }
 
 /** Truncates a string to `max` characters, appending an ellipsis when shortened. */
