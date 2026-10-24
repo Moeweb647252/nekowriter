@@ -11,6 +11,7 @@ import { useCallback, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { ChevronDown, Loader2 } from "lucide-react"
 
+import { useChapter } from "@/api/hooks/chapters"
 import { useBookSessions, useSession } from "@/api/hooks/sessions"
 import {
   usePatchSession,
@@ -20,6 +21,7 @@ import {
 } from "@/api/hooks/sessions"
 import { useStartDebugSession } from "@/api/hooks/sessions"
 import { debugSessionsEnabled } from "@/api/endpoints/sessions"
+import type { ChapterDto } from "@/api/gen/ChapterDto"
 import type { Granularity } from "@/api/gen/Granularity"
 import type { SessionDto } from "@/api/gen/SessionDto"
 import { Button } from "@/components/ui/button"
@@ -60,10 +62,22 @@ export function pickSession(
   return open ?? sessions[0]
 }
 
-export function AgentPanel({ bookId }: { bookId: number }) {
+/**
+ * The session the panel opens for a chapter (spec/11 §5.3: "the chapter's open session").
+ *
+ * `ChapterDto.open_sessions` (spec/10 §2.8) is authoritative when a chapter is open, because it
+ * holds exactly that chapter's open writer, reviewer and archivist sessions. The book-wide list
+ * is the fallback for views without a chapter (the book overview, the debug entry point).
+ */
+export function chapterOpenSessions(chapter: ChapterDto | undefined): SessionDto[] {
+  return chapter?.open_sessions ?? []
+}
+
+export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: number }) {
   const { t } = useTranslation()
   const reportError = useErrorToast()
   const sessionsQuery = useBookSessions(bookId)
+  const chapterQuery = useChapter(chapterId ?? 0)
   // The panel keeps the chosen session per book in the persisted UI store (spec/11 §4.3, §5.3).
   const pinnedId = useUiStore((state) => state.pinnedSession[bookId] ?? null)
   const setPinnedId = useCallback(
@@ -72,11 +86,20 @@ export function AgentPanel({ bookId }: { bookId: number }) {
   )
 
   const sessions = useMemo(() => sessionsQuery.data ?? [], [sessionsQuery.data])
+  // A chapter's own open sessions win: they are exactly what spec/11 §5.3 means by "the
+  // chapter's open session", and they exclude other chapters' sessions.
+  const chapterSessions = useMemo(
+    () => (chapterId === undefined ? [] : chapterOpenSessions(chapterQuery.data)),
+    [chapterId, chapterQuery.data],
+  )
+  const candidates = chapterSessions.length > 0 ? chapterSessions : sessions
   const pinned = useMemo(
     () => sessions.find((session) => session.id === pinnedId),
     [sessions, pinnedId],
   )
-  const chosen = pickSession(sessions, pinned, pinnedId)
+  const pinnedIsCandidate =
+    pinned !== undefined && candidates.some((session) => session.id === pinned.id)
+  const chosen = pickSession(candidates, pinnedIsCandidate ? pinned : undefined, pinnedIsCandidate ? pinnedId : null)
   const chosenId = chosen?.id ?? null
   const snapshot = useSession(chosenId)
   const session = snapshot.data?.session ?? chosen

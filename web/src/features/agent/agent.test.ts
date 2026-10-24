@@ -9,12 +9,13 @@
 import type { TFunction } from "i18next"
 import { describe, expect, it } from "vitest"
 
+import type { ChapterDto } from "@/api/gen/ChapterDto"
 import type { MessageWithCallsDto } from "@/api/gen/MessageWithCallsDto"
 import type { SessionDto } from "@/api/gen/SessionDto"
 import type { ToolCallDto } from "@/api/gen/ToolCallDto"
 import { buildRows } from "@/features/agent/ActivityStream"
 import { composerMode, disabledReasonKey } from "@/features/agent/Composer"
-import { pickSession } from "@/features/agent/AgentPanel"
+import { chapterOpenSessions, pickSession } from "@/features/agent/AgentPanel"
 import { sessionTitle } from "@/features/agent/SessionHeader"
 import { toolRenderer, registeredTools } from "@/features/agent/toolRenderers"
 import { statusNotification } from "@/features/agent/useSessionToasts"
@@ -235,6 +236,20 @@ describe("session selection", () => {
     expect(open?.id).toBe(2)
     const newest = pickSession([session({ id: 1, status: "completed" })], undefined, null)
     expect(newest?.id).toBe(1)
+  })
+})
+
+describe("chapter open sessions", () => {
+  it("reads the chapter's embedded open sessions", () => {
+    const chapter = {
+      id: 1,
+      open_sessions: [session({ id: 7, status: "held" })],
+    } as unknown as ChapterDto
+    expect(chapterOpenSessions(chapter).map((entry) => entry.id)).toEqual([7])
+  })
+
+  it("is empty without a chapter", () => {
+    expect(chapterOpenSessions(undefined)).toEqual([])
   })
 })
 

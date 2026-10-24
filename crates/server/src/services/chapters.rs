@@ -9,10 +9,10 @@ use crate::api::dto::chapters::{
     ChapterDto, ChapterInput, ChapterListItemDto, ChapterPatch, ChapterReorderInput,
     ChapterVersionMetaDto, ManualVersionInput,
 };
-use crate::db::entities::{chapter_versions, chapters, tracks};
+use crate::db::entities::{agent_sessions, chapter_versions, chapters, tracks};
 use crate::db::json::{
-    CanonStatus, ChangeActor, ChangeOp, ChangeTargetType, ChapterContent, ChapterStatus, Snapshot,
-    TrackKind, VersionKind,
+    AgentRole, CanonStatus, ChangeActor, ChangeOp, ChangeTargetType, ChapterContent, ChapterStatus,
+    SessionStatus, Snapshot, TrackKind, VersionKind,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::{BookOp, ContentActor, ServerEvent};
@@ -37,7 +37,7 @@ pub async fn list(
 /// `GET /api/chapters/:id`.
 pub async fn get(conn: &impl ConnectionTrait, chapter_id: i32) -> Result<ChapterDto, AppError> {
     let row = load(conn, chapter_id).await?;
-    to_dto(&row)
+    to_dto(conn, &row).await
 }
 
 /// `POST /api/tracks/:id/chapters` (spec/08 §1.1): `planned`, `ord` = last + 1, empty content.
@@ -88,7 +88,7 @@ pub async fn create_inner(
         .exec_with_returning(tx)
         .await?;
     super::books::touch(tx, track.book_id, timestamp).await?;
-    let dto = to_dto(&row)?;
+    let dto = to_dto(tx, &row).await?;
     Ok((
         dto.clone(),
         vec![
@@ -165,7 +165,7 @@ pub async fn update_inner(
     sea_orm::ActiveModelTrait::update(active, tx).await?;
 
     let row = load(tx, chapter_id).await?;
-    let dto = to_dto(&row)?;
+    let dto = to_dto(tx, &row).await?;
     Ok((
         dto.clone(),
         vec![ServerEvent::ChapterUpdated {
@@ -603,7 +603,7 @@ pub async fn submit_inner(
     };
     active.update(tx).await?;
     let row = load(tx, chapter_id).await?;
-    let dto = to_dto(&row)?;
+    let dto = to_dto(tx, &row).await?;
     Ok((
         dto.clone(),
         vec![ServerEvent::ChapterUpdated {
@@ -681,7 +681,7 @@ pub async fn approve_inner(
     active.update(tx).await?;
 
     let row = load(tx, chapter_id).await?;
-    let dto = to_dto(&row)?;
+    let dto = to_dto(tx, &row).await?;
     Ok((
         ApproveChapterResponse {
             chapter: dto.clone(),
@@ -814,7 +814,7 @@ pub async fn restore_inner(
     active.update(tx).await?;
 
     let row = load(tx, existing.id).await?;
-    let dto = to_dto(&row)?;
+    let dto = to_dto(tx, &row).await?;
     Ok((
         dto.clone(),
         vec![
@@ -1002,8 +1002,11 @@ fn map_text_error(error: text::TextError) -> AppError {
     }
 }
 
-/// Maps a chapter row to its full DTO.
-pub fn to_dto(row: &chapters::Model) -> Result<ChapterDto, AppError> {
+/// Maps a chapter row to its full DTO, leaving `open_sessions` empty.
+///
+/// Used where the caller builds a DTO for a chapter that cannot have sessions yet (a freshly
+/// created chapter) or has already loaded them itself.
+pub fn to_dto_without_sessions(row: &chapters::Model) -> Result<ChapterDto, AppError> {
     Ok(ChapterDto {
         list_item: ChapterListItemDto::from(row.clone()),
         guidance: row.guidance.clone(),
@@ -1013,7 +1016,60 @@ pub fn to_dto(row: &chapters::Model) -> Result<ChapterDto, AppError> {
         content: parse_json("chapters.content", &row.content)?,
         content_version: row.content_version,
         official_version_id: row.official_version_id,
+        open_sessions: Vec::new(),
     })
+}
+
+/// Maps a chapter row to its full DTO, with the chapter's open sessions (spec/10 §2.8).
+pub async fn to_dto(
+    conn: &impl ConnectionTrait,
+    row: &chapters::Model,
+) -> Result<ChapterDto, AppError> {
+    let mut dto = to_dto_without_sessions(row)?;
+    dto.open_sessions = open_sessions(conn, row.id).await?;
+    Ok(dto)
+}
+
+/// The roles that own a chapter and therefore appear in `ChapterDto.open_sessions`
+/// (spec/10 §2.8). Conception, research and canon-seed sessions are not per-chapter.
+pub const CHAPTER_ROLES: [AgentRole; 3] =
+    [AgentRole::Writer, AgentRole::Reviewer, AgentRole::Archivist];
+
+/// The statuses that are closed (spec/03 §3). A session in one of them is never "open".
+pub const TERMINAL_STATUSES: [SessionStatus; 3] = [
+    SessionStatus::Completed,
+    SessionStatus::Superseded,
+    SessionStatus::Abandoned,
+];
+
+/// The chapter's open writer, reviewer and archivist sessions, oldest first (spec/10 §2.8).
+///
+/// `chapter_revise` sessions carry the writer role, so the role filter already covers them.
+pub async fn open_sessions(
+    conn: &impl ConnectionTrait,
+    chapter_id: i32,
+) -> Result<Vec<crate::api::dto::SessionDto>, AppError> {
+    let roles: Vec<String> = CHAPTER_ROLES
+        .iter()
+        .map(|role| role.as_str().to_owned())
+        .collect();
+    let closed: Vec<String> = TERMINAL_STATUSES
+        .iter()
+        .map(|status| status.as_str().to_owned())
+        .collect();
+    let rows = agent_sessions::Entity::find()
+        .filter(agent_sessions::Column::ChapterId.eq(chapter_id))
+        .filter(agent_sessions::Column::Role.is_in(roles))
+        .filter(agent_sessions::Column::Status.is_not_in(closed))
+        .order_by_asc(agent_sessions::Column::Id)
+        .all(conn)
+        .await?;
+    let mut sessions = Vec::with_capacity(rows.len());
+    for row in &rows {
+        // Warnings are a creation-time property (D-073), so an embedded session has none.
+        sessions.push(crate::agent::session::to_dto(conn, row, Vec::new()).await?);
+    }
+    Ok(sessions)
 }
 
 /// Records a `chapter_summary` change when maintenance writes a summary (M6 calls this).

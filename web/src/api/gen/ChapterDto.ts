@@ -2,11 +2,17 @@
 import type { CanonStatus } from "./CanonStatus";
 import type { ChapterContent } from "./ChapterContent";
 import type { ChapterStatus } from "./ChapterStatus";
+import type { SessionDto } from "./SessionDto";
 
 /**
- * `GET /chapters/:id` (spec/10 §2.8). `open_sessions` stays empty until M3.
+ * `GET /chapters/:id` (spec/10 §2.8).
+ *
+ * `open_sessions` holds the chapter's open writer, reviewer and archivist sessions (spec/03 §3:
+ * open means not `completed`, `superseded` or `abandoned`), oldest first. Conception, research
+ * and canon-seed sessions are not per-chapter and never appear here. The field is always
+ * serialized, so a client can rely on its presence.
  */
-export type ChapterDto = { guidance: string, outline: string, reference_notes: string, summary: string, content: ChapterContent, content_version: number, official_version_id: number | null, id: number, book_id: number, track_id: number, 
+export type ChapterDto = { guidance: string, outline: string, reference_notes: string, summary: string, content: ChapterContent, content_version: number, official_version_id: number | null, open_sessions: Array<SessionDto>, id: number, book_id: number, track_id: number, 
 /**
  * The chapter's number within its track, equal to `ord`.
  */

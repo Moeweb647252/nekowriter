@@ -8,6 +8,19 @@ import type { SessionAnswerInput } from "@/api/gen/SessionAnswerInput"
 import type { SessionMessageInput } from "@/api/gen/SessionMessageInput"
 import type { SessionPatch } from "@/api/gen/SessionPatch"
 
+/** Invalidates the session snapshot, the book list and the chapter that embeds `open_sessions`. */
+function invalidateSession(
+  queryClient: ReturnType<typeof useQueryClient>,
+  bookId: number,
+  chapterId: number | null | undefined,
+): void {
+  void queryClient.invalidateQueries({ queryKey: keys.sessions.list(bookId) })
+  if (chapterId !== null && chapterId !== undefined && chapterId > 0) {
+    // `ChapterDto.open_sessions` (spec/10 §2.8) is what the panel reads for a chapter.
+    void queryClient.invalidateQueries({ queryKey: keys.chapters.detail(chapterId) })
+  }
+}
+
 /** The open session snapshot; the activity stream and controls read it. */
 export function useSession(sessionId: number | null) {
   return useQuery({
@@ -49,7 +62,7 @@ export function useSessionControl(bookId: number) {
         return previous
       })
       void queryClient.invalidateQueries({ queryKey: keys.sessions.detail(session.id) })
-      void queryClient.invalidateQueries({ queryKey: keys.sessions.list(bookId) })
+      invalidateSession(queryClient, bookId, session.chapter_id)
     },
   })
 }
@@ -63,7 +76,7 @@ export function useResumeSession(bookId: number) {
     },
     onSuccess: (session) => {
       void queryClient.invalidateQueries({ queryKey: keys.sessions.detail(session.id) })
-      void queryClient.invalidateQueries({ queryKey: keys.sessions.list(bookId) })
+      invalidateSession(queryClient, bookId, session.chapter_id)
     },
   })
 }
@@ -77,7 +90,7 @@ export function useSendSessionMessage(bookId: number) {
     },
     onSuccess: (session) => {
       void queryClient.invalidateQueries({ queryKey: keys.sessions.detail(session.id) })
-      void queryClient.invalidateQueries({ queryKey: keys.sessions.list(bookId) })
+      invalidateSession(queryClient, bookId, session.chapter_id)
     },
   })
 }
@@ -89,7 +102,7 @@ export function useAnswerSession(bookId: number) {
       endpoints.answerSession(sessionId, input),
     onSuccess: (session) => {
       void queryClient.invalidateQueries({ queryKey: keys.sessions.detail(session.id) })
-      void queryClient.invalidateQueries({ queryKey: keys.sessions.list(bookId) })
+      invalidateSession(queryClient, bookId, session.chapter_id)
     },
   })
 }
@@ -101,7 +114,7 @@ export function usePatchSession(bookId: number) {
       endpoints.patchSession(sessionId, patch),
     onSuccess: (session) => {
       void queryClient.invalidateQueries({ queryKey: keys.sessions.detail(session.id) })
-      void queryClient.invalidateQueries({ queryKey: keys.sessions.list(bookId) })
+      invalidateSession(queryClient, bookId, session.chapter_id)
     },
   })
 }

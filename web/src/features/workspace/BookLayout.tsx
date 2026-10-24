@@ -20,8 +20,10 @@ import { PanelLeft } from "lucide-react"
 const LAYOUT_ID = "book-workspace"
 
 export default function BookLayout() {
-  const { bookId: rawBookId } = useParams()
+  const { bookId: rawBookId, chapterId: rawChapterId } = useParams()
   const bookId = Number(rawBookId)
+  // The agent panel opens the chapter's own session when a chapter is on screen (spec/11 §5.3).
+  const chapterId = rawChapterId === undefined ? undefined : Number(rawChapterId)
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const location = useLocation()
@@ -104,7 +106,7 @@ export default function BookLayout() {
           collapsible
           className="min-h-0"
         >
-          <AgentPanel bookId={bookId} />
+          <AgentPanel bookId={bookId} chapterId={chapterId} />
         </ResizablePanel>
       </ResizablePanelGroup>
     </div>

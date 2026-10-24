@@ -6,6 +6,7 @@ use ts_rs::TS;
 
 use crate::api::dto::ContentOp;
 use crate::api::dto::ContentOpInput;
+use crate::api::dto::SessionDto;
 use crate::db::json::{CanonStatus, ChapterContent, ChapterStatus, VersionKind};
 
 /// A chapter without its content (spec/10 §2.8 `ChapterListItemDto`).
@@ -41,7 +42,12 @@ pub struct ApproveChapterResponse {
     pub warnings: Vec<String>,
 }
 
-/// `GET /chapters/:id` (spec/10 §2.8). `open_sessions` stays empty until M3.
+/// `GET /chapters/:id` (spec/10 §2.8).
+///
+/// `open_sessions` holds the chapter's open writer, reviewer and archivist sessions (spec/03 §3:
+/// open means not `completed`, `superseded` or `abandoned`), oldest first. Conception, research
+/// and canon-seed sessions are not per-chapter and never appear here. The field is always
+/// serialized, so a client can rely on its presence.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct ChapterDto {
@@ -54,6 +60,7 @@ pub struct ChapterDto {
     pub content: ChapterContent,
     pub content_version: i32,
     pub official_version_id: Option<i32>,
+    pub open_sessions: Vec<SessionDto>,
 }
 
 /// `POST /tracks/:id/chapters` body (spec/08 §1.1).
