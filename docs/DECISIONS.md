@@ -613,12 +613,23 @@ technical decisions.
   revert of a `create`, `update` for the revert of an `update`, and `create` for the revert of a
   `delete` — the last with the **new** `target_id` the recreated row got, so the row points at the
   entity that now exists (spec/02 §5.10). `before`/`after` describe that operation like any other
-  change's, so the Changes page diffs a revert exactly as it diffs the original.
+  change's, so the Changes page diffs a revert exactly as it diffs the original. **One revert
+  writes exactly one change row**: the inverse operation's own change row *is* the revert —
+  `CanonWrite::as_revert` stamps it with the `system` actor, the author's revert note and
+  `reverts_id` — rather than the operation writing a row and the revert writing a second one.
 - **Consequences**: `later_change_ids` of `change.not_latest` and the UI's Revert button work on
   one consistent notion of "the target's changes"; a reverted delete's change row points at the
   recreated id, which is what a reader needs to follow the entity. Reverting a revert is refused
   (`400 validation.failed`): the spec's "only the latest change" rule plus `reverts_id` already
-  says the way back is to change the row again.
+  says the way back is to change the row again. Two regression tests pin the one-row rule for the
+  create and delete reverts.
+
+  The delete-revert path also exposed that SQLite reuses the rowid of a deleted maximum row, so a
+  recreated entity could silently get the id of the row it replaced and the change log would then
+  name two different rows with one target id. `canon::fresh_id` therefore allocates the id of
+  every recreated row explicitly — one past the larger of the live table's max id and the change
+  log's highest recorded target id for that type — and the five `recreate_inner` functions use
+  it.
 
 ### D-080 Appearance bounds are recomputed from appearances, never patched
 - **Context**: D-059 requires `first_chapter_id`/`last_chapter_id` to be recomputed whenever a

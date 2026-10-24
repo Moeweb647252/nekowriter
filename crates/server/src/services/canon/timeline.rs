@@ -122,7 +122,10 @@ pub async fn create_inner(
     let track_id = write.new_row_track();
     let position = position_for(tx, book_id, input.after_id, input.before_id, None).await?;
     let timestamp = stamp();
+    // A recreated row takes a NEW id, never the deleted one's reused rowid (spec/02 §5.10).
+    let new_id = super::fresh_id(tx, "timeline_events", ChangeTargetType::TimelineEvent).await?;
     let model = timeline_events::ActiveModel {
+        id: Set(new_id),
         book_id: Set(book_id),
         track_id: Set(track_id),
         position: Set(position),
@@ -133,7 +136,6 @@ pub async fn create_inner(
         importance: Set(input.importance),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),
-        ..Default::default()
     };
     let row = timeline_events::Entity::insert(model)
         .exec_with_returning(tx)
@@ -778,7 +780,10 @@ pub async fn recreate_inner(
         .ok_or_else(|| CanonError::internal("a timeline revert needs a book"))?;
     super::super::books::get(tx, book_id).await?;
     let timestamp = stamp();
+    // A recreated row takes a NEW id, never the deleted one's reused rowid (spec/02 §5.10).
+    let new_id = super::fresh_id(tx, "timeline_events", ChangeTargetType::TimelineEvent).await?;
     let model = timeline_events::ActiveModel {
+        id: Set(new_id),
         book_id: Set(book_id),
         track_id: Set(track_id.or_else(|| write.new_row_track())),
         position: Set(*position),
@@ -789,7 +794,6 @@ pub async fn recreate_inner(
         importance: Set(*importance),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),
-        ..Default::default()
     };
     let row = timeline_events::Entity::insert(model)
         .exec_with_returning(tx)

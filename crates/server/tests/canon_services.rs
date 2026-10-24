@@ -15,7 +15,7 @@
 
 use axum::http::StatusCode;
 use nekowriter::db::entities::{appearances, change_log, entities, relations};
-use nekowriter::db::json::{AppearanceRole, ChangeTargetType, EntityKind, EntityStatus};
+use nekowriter::db::json::{AppearanceRole, ChangeOp, ChangeTargetType, EntityKind, EntityStatus};
 use nekowriter::services::canon::{self, CanonError, CanonWrite, Visibility, appearance, entity};
 use nekowriter::testing::{TestApp, assert_error, assert_error_detail};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
@@ -476,6 +476,70 @@ async fn a_revert_links_the_original_change() {
         Some(revert_id),
         "the original names the revert that superseded it"
     );
+    assert_eq!(
+        after.len(),
+        history.len() + 1,
+        "a revert writes exactly one row: the inverse operation's row IS the revert, so the \
+         history gains one entry rather than the operation plus its revert: {}",
+        after.len()
+    );
+}
+
+/// A revert of a create writes one row, not the delete plus a revert row (D-079).
+#[tokio::test]
+async fn a_revert_of_a_create_writes_no_second_change_row() {
+    let app = TestApp::new().await;
+    let (book_id, _track_id) = book(&app).await;
+    let entity = create_entity(&app, book_id, "item", "Old Letter").await;
+    let entity_id = id_of(&entity);
+    let history = change_log_of(&app, ChangeTargetType::Entity, entity_id).await;
+    assert_eq!(history.len(), 1, "the create is the only change");
+    let (status, body) = app
+        .post(&format!("/api/changes/{}/revert", history[0].id), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let after = change_log_of(&app, ChangeTargetType::Entity, entity_id).await;
+    assert_eq!(
+        after.len(),
+        2,
+        "the delete that the revert performed is the revert row itself: {:?}",
+        after
+            .iter()
+            .map(|row| (row.id, row.op.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// A revert of a delete writes one row too, and it names the new id (D-079, spec/02 §5.10).
+#[tokio::test]
+async fn a_revert_of_a_delete_writes_no_second_change_row() {
+    let app = TestApp::new().await;
+    let (book_id, _track_id) = book(&app).await;
+    // A second row keeps the id allocator from reusing the deleted one, so "new id" is testable.
+    create_entity(&app, book_id, "character", "Zhang San").await;
+    let entity = create_entity(&app, book_id, "character", "Lin Fan").await;
+    let entity_id = id_of(&entity);
+    let (status, _) = app.delete(&format!("/api/entities/{entity_id}")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let history = change_log_of(&app, ChangeTargetType::Entity, entity_id).await;
+    let delete_id = history[0].id;
+    let (status, body) = app
+        .post(&format!("/api/changes/{delete_id}/revert"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let new_id = body["target_id"].as_i64().expect("new id") as i32;
+    assert_ne!(new_id, entity_id, "the recreated entity has a new id");
+
+    let recreated = change_log_of(&app, ChangeTargetType::Entity, new_id).await;
+    assert_eq!(
+        recreated.len(),
+        1,
+        "the recreate is one change row: {:?}",
+        recreated.iter().map(|row| row.id).collect::<Vec<_>>()
+    );
+    assert_eq!(recreated[0].op, ChangeOp::Create.as_str());
+    assert_eq!(recreated[0].reverts_id, Some(delete_id));
 }
 
 /// Reverted changes do not reach mid-term memory (spec/06 §3): the memory snapshot drops them.

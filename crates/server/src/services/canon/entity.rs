@@ -1365,7 +1365,10 @@ pub async fn recreate_inner(
         }
     }
     let timestamp = stamp();
+    // SQLite would hand the recreated row the deleted one's rowid; spec/02 §5.10 wants a NEW id.
+    let new_id = super::fresh_id(tx, "entities", ChangeTargetType::Entity).await?;
     let model = entities::ActiveModel {
+        id: Set(new_id),
         book_id: Set(book_id),
         track_id: Set(*track_id),
         kind: Set(kind.as_str().to_owned()),
@@ -1382,7 +1385,6 @@ pub async fn recreate_inner(
         last_chapter_id: Set(None),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),
-        ..Default::default()
     };
     let row = entities::Entity::insert(model)
         .exec_with_returning(tx)

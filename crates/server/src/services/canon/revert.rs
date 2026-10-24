@@ -65,15 +65,26 @@ pub async fn revert_inner(
         return Err(not_latest(later));
     }
 
-    // 2. Compute the inverse. The revert change describes it the same way any other change does:
+    // 2. Compute the inverse. The inverse operation itself records the revert row (D-079):
     //    `before` is the target's state before the revert, `after` its state afterwards.
     let before = parse_snapshot(original.before.as_deref())?;
     let after = parse_snapshot(original.after.as_deref())?;
-    let write = revert_write(original.book_id, original.track_id);
-    let revert_of_target = match op {
+    let write = revert_write(original.book_id, original.track_id)
+        .with_chapter(original.chapter_id)
+        .as_revert(
+            original.id,
+            input.note.as_deref().unwrap_or_default().trim(),
+        );
+    // The revert is the author's action on an existing history, so the row keeps the original's
+    // session when there was one.
+    let write = CanonWrite {
+        session_id: original.session_id,
+        ..write
+    };
+    match op {
         ChangeOp::Create => {
             // create → delete the target.
-            inverse_delete(tx, &write, target_type, original.target_id, after.as_ref()).await?
+            inverse_delete(tx, &write, target_type, original.target_id).await?
         }
         ChangeOp::Update => {
             let Some(before) = before.as_ref() else {
@@ -102,25 +113,9 @@ pub async fn revert_inner(
         }
     };
 
-    // 3. The revert itself is a new change with `reverts_id`; the original gets `reverted_by_id`.
-    let revert_id = super::change_log_service::record(
-        tx,
-        super::change_log_service::NewChange {
-            book_id: original.book_id,
-            track_id: revert_of_target.track_id,
-            chapter_id: original.chapter_id,
-            session_id: original.session_id,
-            actor: crate::db::json::ChangeActor::System,
-            target_type,
-            target_id: revert_of_target.target_id,
-            op: revert_of_target.op,
-            before: revert_of_target.before.as_ref(),
-            after: revert_of_target.after.as_ref(),
-            note: input.note.as_deref().unwrap_or_default().trim(),
-            reverts_id: Some(original.id),
-        },
-    )
-    .await?;
+    // 3. The inverse operation above wrote the revert row; link the original to it. The only
+    //    permitted mutation of a change row is this `reverted_by_id` (spec/02 §5.9).
+    let revert_id = revert_row_of(tx, original.id).await?;
     super::change_log_service::mark_reverted(tx, original.id, revert_id).await?;
     let dto = super::change_log_service::get(tx, revert_id).await?;
     let events = vec![changed_event(
@@ -133,6 +128,22 @@ pub async fn revert_inner(
     Ok((dto, events))
 }
 
+/// The change row the inverse operation just wrote (`reverts_id = change_id`), inside the
+/// transaction that wrote it.
+async fn revert_row_of(conn: &impl ConnectionTrait, change_id: i32) -> CanonResult<i32> {
+    crate::db::entities::change_log::Entity::find()
+        .filter(crate::db::entities::change_log::Column::RevertsId.eq(change_id))
+        .order_by_desc(crate::db::entities::change_log::Column::Id)
+        .one(conn)
+        .await?
+        .map(|row| row.id)
+        .ok_or_else(|| {
+            CanonError::internal(format!(
+                "the revert of change #{change_id} was not recorded"
+            ))
+        })
+}
+
 /// The writer a revert uses: the original change's book, or its isolated track (spec/06 §2).
 fn revert_write(book_id: i32, track_id: Option<i32>) -> CanonWrite {
     match track_id {
@@ -141,15 +152,6 @@ fn revert_write(book_id: i32, track_id: Option<i32>) -> CanonWrite {
         }
         None => CanonWrite::author().with_visibility(super::Visibility::shared(book_id)),
     }
-}
-
-/// The change row a revert writes.
-struct RevertOfTarget {
-    target_id: i32,
-    op: ChangeOp,
-    before: Option<Snapshot>,
-    after: Option<Snapshot>,
-    track_id: Option<i32>,
 }
 
 /// The later changes of the same target that block a revert, newest first (spec/06 §3).
@@ -213,32 +215,8 @@ async fn inverse_delete(
     write: &CanonWrite,
     target_type: ChangeTargetType,
     target_id: i32,
-    after: Option<&Snapshot>,
-) -> CanonResult<RevertOfTarget> {
-    let track_id = after.and_then(snapshot_track);
-    let before = match target_type {
-        ChangeTargetType::Entity => super::entity::snapshot_now(tx, target_id)
-            .await?
-            .or(after.cloned()),
-        ChangeTargetType::Relation => super::relation::snapshot_now(tx, target_id)
-            .await?
-            .or(after.cloned()),
-        ChangeTargetType::TimelineEvent => super::timeline::snapshot_now(tx, target_id)
-            .await?
-            .or(after.cloned()),
-        ChangeTargetType::MemoryNote => super::note::snapshot_now(tx, target_id)
-            .await?
-            .or(after.cloned()),
-        ChangeTargetType::Foreshadowing => super::foreshadow::snapshot_now(tx, target_id)
-            .await?
-            .or(after.cloned()),
-        ChangeTargetType::AppearanceSet | ChangeTargetType::ChapterSummary => {
-            return Err(not_revertible(target_type));
-        }
-        ChangeTargetType::SettingDoc | ChangeTargetType::CharacterDesign => {
-            return Err(setting_history(target_type));
-        }
-    };
+) -> CanonResult<()> {
+    // The delete itself records the revert row (D-079), with the snapshot it takes as `before`.
     match target_type {
         ChangeTargetType::Entity => super::entity::delete_inner(tx, write, target_id).await?,
         ChangeTargetType::Relation => super::relation::delete_inner(tx, write, target_id).await?,
@@ -249,15 +227,14 @@ async fn inverse_delete(
         ChangeTargetType::Foreshadowing => {
             super::foreshadow::delete_inner(tx, write, target_id).await?
         }
-        _ => Vec::new(),
+        ChangeTargetType::AppearanceSet | ChangeTargetType::ChapterSummary => {
+            return Err(not_revertible(target_type));
+        }
+        ChangeTargetType::SettingDoc | ChangeTargetType::CharacterDesign => {
+            return Err(setting_history(target_type));
+        }
     };
-    Ok(RevertOfTarget {
-        target_id,
-        op: ChangeOp::Delete,
-        before,
-        after: None,
-        track_id,
-    })
+    Ok(())
 }
 
 /// `update` → restore the `before` snapshot.
@@ -268,7 +245,7 @@ async fn inverse_restore(
     target_id: i32,
     before: &Snapshot,
     after: Option<&Snapshot>,
-) -> CanonResult<RevertOfTarget> {
+) -> CanonResult<()> {
     let current = after.cloned();
     let restored = match target_type {
         ChangeTargetType::Entity => {
@@ -300,13 +277,23 @@ async fn inverse_restore(
             return Err(setting_history(target_type));
         }
     };
-    Ok(RevertOfTarget {
-        target_id,
-        op: ChangeOp::Update,
-        before: current,
-        after: Some(restored),
-        track_id: snapshot_track(before),
-    })
+    // `restore_inner` writes the row; the change row is recorded here, and `record_change` turns
+    // it into the revert (D-079). An appearance set goes through `restore_set_inner`, which
+    // records its own change for the same reason.
+    if target_type != ChangeTargetType::AppearanceSet {
+        record_revert(
+            tx,
+            write,
+            target_type,
+            target_id,
+            ChangeOp::Update,
+            current.as_ref(),
+            Some(&restored),
+            snapshot_track(before),
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 /// `delete` → recreate from `before`, with a new id (spec/02 §5.10).
@@ -315,7 +302,7 @@ async fn inverse_recreate(
     write: &CanonWrite,
     target_type: ChangeTargetType,
     before: &Snapshot,
-) -> CanonResult<RevertOfTarget> {
+) -> CanonResult<()> {
     let (new_id, restored) = match target_type {
         ChangeTargetType::Entity => {
             let (id, snapshot) = super::entity::recreate_inner(tx, write, before).await?;
@@ -344,13 +331,53 @@ async fn inverse_recreate(
             return Err(setting_history(target_type));
         }
     };
-    Ok(RevertOfTarget {
-        target_id: new_id,
-        op: ChangeOp::Create,
-        before: None,
-        after: Some(restored),
-        track_id: snapshot_track(before),
-    })
+    record_revert(
+        tx,
+        write,
+        target_type,
+        new_id,
+        ChangeOp::Create,
+        None,
+        Some(&restored),
+        snapshot_track(before),
+    )
+    .await?;
+    Ok(())
+}
+
+/// Records the change row of an inverse operation, which `record_change` stamps as the revert.
+#[allow(clippy::too_many_arguments)]
+async fn record_revert(
+    tx: &impl ConnectionTrait,
+    write: &CanonWrite,
+    target_type: ChangeTargetType,
+    target_id: i32,
+    op: ChangeOp,
+    before: Option<&Snapshot>,
+    after: Option<&Snapshot>,
+    track_id: Option<i32>,
+) -> CanonResult<i32> {
+    let book_id = write
+        .visibility
+        .map(|visibility| visibility.book_id)
+        .ok_or_else(|| CanonError::internal("a revert needs a book"))?;
+    super::record_change(
+        tx,
+        write,
+        super::ChangeWrite {
+            book_id,
+            target_type,
+            target_id,
+            op,
+            before,
+            after,
+            note: "",
+            reverts_id: None,
+            track_id,
+            chapter_id: None,
+        },
+    )
+    .await
 }
 
 /// Appearance sets and chapter summaries can be created only by the chapter lifecycle.

@@ -571,7 +571,10 @@ pub async fn recreate_inner(
     let target = super::load_entity(tx, *target_id).await?;
     let track_id = track_id.or_else(|| write.new_row_track());
     let timestamp = stamp();
+    // A recreated row takes a NEW id, never the deleted one's reused rowid (spec/02 §5.10).
+    let new_id = super::fresh_id(tx, "relations", ChangeTargetType::Relation).await?;
     let model = relations::ActiveModel {
+        id: Set(new_id),
         book_id: Set(source.book_id),
         track_id: Set(track_id),
         source_id: Set(*source_id),
@@ -584,7 +587,6 @@ pub async fn recreate_inner(
         until_chapter_id: Set(*until_chapter_id),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),
-        ..Default::default()
     };
     let row = relations::Entity::insert(model)
         .exec_with_returning(tx)

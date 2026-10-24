@@ -78,7 +78,10 @@ pub async fn create_inner(
     super::validate_importance(input.importance)?;
     ensure_entities_visible(tx, write, book_id, &input.entity_ids).await?;
     let timestamp = stamp();
+    // A recreated row takes a NEW id, never the deleted one's reused rowid (spec/02 §5.10).
+    let new_id = super::fresh_id(tx, "memory_notes", ChangeTargetType::MemoryNote).await?;
     let model = memory_notes::ActiveModel {
+        id: Set(new_id),
         book_id: Set(book_id),
         track_id: Set(write.new_row_track()),
         kind: Set(input.kind.as_str().to_owned()),
@@ -88,7 +91,6 @@ pub async fn create_inner(
         status: Set(NoteStatus::Active.as_str().to_owned()),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),
-        ..Default::default()
     };
     let row = memory_notes::Entity::insert(model)
         .exec_with_returning(tx)
@@ -431,7 +433,10 @@ pub async fn recreate_inner(
         .ok_or_else(|| CanonError::internal("a note revert needs a book"))?;
     super::super::books::get(tx, book_id).await?;
     let timestamp = stamp();
+    // A recreated row takes a NEW id, never the deleted one's reused rowid (spec/02 §5.10).
+    let new_id = super::fresh_id(tx, "memory_notes", ChangeTargetType::MemoryNote).await?;
     let model = memory_notes::ActiveModel {
+        id: Set(new_id),
         book_id: Set(book_id),
         track_id: Set(track_id.or_else(|| write.new_row_track())),
         kind: Set(kind.as_str().to_owned()),
@@ -441,7 +446,6 @@ pub async fn recreate_inner(
         status: Set(status.as_str().to_owned()),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),
-        ..Default::default()
     };
     let row = memory_notes::Entity::insert(model)
         .exec_with_returning(tx)

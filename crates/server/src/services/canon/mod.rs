@@ -226,7 +226,7 @@ impl Visibility {
 }
 
 /// Who is writing canon, and which rows they may change (spec/06 §2, §3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct CanonWrite {
     /// `None` for the author's UI: every row of the book, no track restriction.
     pub visibility: Option<Visibility>,
@@ -235,6 +235,19 @@ pub struct CanonWrite {
     pub session_id: Option<i32>,
     /// The chapter the change belongs to (the agent's session chapter).
     pub chapter_id: Option<i32>,
+    /// Set while a revert performs the inverse operation: the change row the operation writes is
+    /// the revert itself (spec/06 §3, D-079), so `record_change` stamps it with `reverts_id` and
+    /// the `system` actor instead of writing a second row.
+    pub revert: Option<RevertRecord>,
+}
+
+/// A revert in progress.
+#[derive(Debug, Clone)]
+pub struct RevertRecord {
+    /// The change being reverted.
+    pub of_change: i32,
+    /// The author's optional note on the revert.
+    pub note: String,
 }
 
 impl CanonWrite {
@@ -245,6 +258,7 @@ impl CanonWrite {
             actor: ChangeActor::User,
             session_id: None,
             chapter_id: None,
+            revert: None,
         }
     }
 
@@ -255,7 +269,17 @@ impl CanonWrite {
             actor: ChangeActor::Agent,
             session_id: Some(session_id),
             chapter_id,
+            revert: None,
         }
+    }
+
+    /// Marks this write as the inverse of `of_change`: the row it records is the revert.
+    pub fn as_revert(mut self, of_change: i32, note: &str) -> Self {
+        self.revert = Some(RevertRecord {
+            of_change,
+            note: note.to_owned(),
+        });
+        self
     }
 
     pub fn with_chapter(mut self, chapter_id: Option<i32>) -> Self {
@@ -695,6 +719,10 @@ pub async fn record_change(
     write: &CanonWrite,
     change: ChangeWrite<'_>,
 ) -> CanonResult<i32> {
+    // A revert's inverse operation writes the revert row itself: it gets the `system` actor, the
+    // author's revert note and `reverts_id`, so no second row is written for one operation
+    // (D-079).
+    let revert = write.revert.as_ref();
     Ok(change_log_service::record(
         tx,
         change_log_service::NewChange {
@@ -702,17 +730,56 @@ pub async fn record_change(
             track_id: change.track_id,
             chapter_id: change.chapter_id.or(write.chapter_id),
             session_id: write.session_id,
-            actor: write.actor,
+            actor: match revert {
+                Some(_) => ChangeActor::System,
+                None => write.actor,
+            },
             target_type: change.target_type,
             target_id: change.target_id,
             op: change.op,
             before: change.before,
             after: change.after,
-            note: change.note,
-            reverts_id: change.reverts_id,
+            note: match revert {
+                Some(revert) => revert.note.as_str(),
+                None => change.note,
+            },
+            reverts_id: change.reverts_id.or(revert.map(|revert| revert.of_change)),
         },
     )
     .await?)
+}
+
+/// The id a recreated row must take (spec/02 §5.10: a revert of a delete uses a **new** id).
+///
+/// SQLite reuses the rowid of a deleted maximum row, so letting the insert allocate the id can
+/// hand a recreated row the id the deleted one had — and then a target id names two different
+/// rows, which breaks `change.not_latest` and the history pages. The change log is the
+/// high-water mark: every canon row ever written has a `create` change naming its id, so the
+/// next id is one past the larger of the live table's max and the logged max for this target.
+pub async fn fresh_id(
+    conn: &impl ConnectionTrait,
+    table: &str,
+    target_type: ChangeTargetType,
+) -> CanonResult<i32> {
+    // `table` is a compile-time constant at every call site, never user input.
+    let row = conn
+        .query_one_raw(sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Sqlite,
+            format!("SELECT max(id) AS value FROM {table}"),
+        ))
+        .await?;
+    let live = match row {
+        Some(row) => row.try_get::<Option<i64>>("", "value")?.unwrap_or(0),
+        None => 0,
+    };
+    let logged = crate::db::entities::change_log::Entity::find()
+        .filter(crate::db::entities::change_log::Column::TargetType.eq(target_type.as_str()))
+        .order_by_desc(crate::db::entities::change_log::Column::TargetId)
+        .one(conn)
+        .await?
+        .map(|row| row.target_id)
+        .unwrap_or(0);
+    Ok((live.max(i64::from(logged)) + 1) as i32)
 }
 
 /// The `canon.changed` event of one committed change (spec/10 §3).
