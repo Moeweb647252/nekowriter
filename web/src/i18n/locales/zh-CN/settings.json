@@ -40,7 +40,6 @@
   "key_set": "已设置",
   "no_key": "未设置",
   "preset": "预设",
-  "preset_custom": "自定义",
   "extra_headers": "额外请求头",
   "extra_headers_placeholder": "每行一个：请求头: 值",
   "test_connection": "测试连接",

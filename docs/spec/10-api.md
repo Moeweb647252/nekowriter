@@ -242,7 +242,7 @@ type ContentOpInput =                                                    // auth
 | `change.not_latest` | 409 | `details.later_change_ids` |
 | `proposal.invalid_state` | 409 | the proposal's status does not allow the operation (accept: `pending`; reject: `pending` or `conflict`); `details.status` |
 | `prompt.template_invalid` | 400 | `details.line`, `details.column`, `details.message` |
-| `provider.unavailable` · `provider.auth` · `provider.bad_request` | 502 | provider tests and remote models; the web search test maps a rejected key to `provider.auth` and other failures to `provider.unavailable` |
+| `provider.unavailable` · `provider.auth` · `provider.bad_request` | 502 | provider tests and remote models (the connection test reports the same codes inside its 200 `error` field, spec/04 §8); the web search test maps a rejected key to `provider.auth` and other failures to `provider.unavailable` |
 | `embedding.unavailable` | 503 | |
 | `search.not_configured` | 409 | search test without a provider |
 | `internal` | 500 | |

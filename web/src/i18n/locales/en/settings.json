@@ -40,7 +40,6 @@
   "key_set": "Set",
   "no_key": "No key",
   "preset": "Preset",
-  "preset_custom": "Custom",
   "extra_headers": "Extra headers",
   "extra_headers_placeholder": "header: value, one per line",
   "test_connection": "Test connection",

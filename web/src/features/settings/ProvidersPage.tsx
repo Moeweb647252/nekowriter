@@ -277,7 +277,6 @@ function ProviderDialog({
                       {preset.name}
                     </SelectItem>
                   ))}
-                  <SelectItem value="custom">{t("settings:preset_custom")}</SelectItem>
                 </SelectContent>
               </Select>
             </div>

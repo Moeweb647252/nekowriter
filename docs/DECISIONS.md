@@ -429,6 +429,61 @@ technical decisions.
 - **Consequences**: the API matches what the framework emits, and the frontend keeps parsing the
   body as UTF-8 JSON.
 
+### D-067 Prompt contexts and sample coverage come from one data file
+- **Context**: spec/09 §2 asks for a typed context struct per key family and for a
+  `sample_contexts(key)` table with one sample per branch, and `scripts/validate_prompts.py`
+  already models both as Jinja2 dictionaries. Duplicating that table in Rust would make the
+  validator and the server disagree the moment one is edited.
+- **Decision**: `crates/server/src/prompts/samples.json` holds the base sample of every template
+  variable and the per-branch variant table, generated from the validator and embedded at compile
+  time; `samples.rs` turns it into `sample_contexts(key)`. `prompts/context.rs` holds the typed
+  structs, and a test asserts that each struct's serialized field set matches the sample shape, so
+  a renamed field fails the suite instead of failing at render time under strict undefined.
+- **Consequences**: the non-English sample strings stay data (D-041), the validator and the server
+  check the same branches, and a new template variable needs one edit in `samples.json` plus its
+  struct (as AGENTS.md §6 already requires).
+
+### D-068 The prompt registry caches per `AppState`, the pack once per process
+- **Context**: spec/09 §3 wants the environment cached per book and invalidated on override
+  changes. A process-wide cache would be shared by integration tests that each own a database, so
+  a test's override could leak into another test's render.
+- **Decision**: the parsed and validated `PromptPack` is a `OnceLock` (it is compile-time data),
+  while the resolved `PromptSet` cache belongs to the `PromptRegistry` inside one `AppState`. A
+  global override change clears every book's set; a book change clears that book's.
+- **Consequences**: every database has its own view of the overrides, and rule validation still
+  runs exactly once per process.
+
+### D-069 Deleting a provider is allowed; a dangling role default reports a missing model
+- **Context**: `DELETE /api/providers/:id` cascades its model profiles. Refusing the delete when a
+  role default still pointed at one of them was the alternative, but spec/03 and D-048 define what
+  happens instead: a session whose provider row disappeared fails with `model.missing_provider`,
+  and starting one with an unknown profile surfaces `model.missing_role`.
+- **Decision**: the delete succeeds; the stored `roles.defaults` entry keeps its (now dangling) id
+  until the author changes it in Settings › Agent roles, and the settings page shows such a role as
+  "Missing model".
+- **Consequences**: no new error code is needed, and a role assignment is never silently rewritten.
+
+### D-070 Connection-test failures are classified, not raised
+- **Context**: spec/10 §2.1 returns `{ ok, latency_ms, text?, error? }` for
+  `POST /providers/:id/test`, while the sibling `remote-models` call maps provider failures to
+  HTTP 502 with `provider.auth` / `provider.unavailable`.
+- **Decision**: the connection test always answers 200 with `ok: false` and a classified `error`
+  (`provider.auth`, `provider.bad_request` or `provider.unavailable`, spec/10 §4), because a
+  rejected key is expected input for that endpoint and not a server fault. `remote-models` keeps
+  the 502 mapping of spec/10 §4.
+- **Consequences**: the UI can render the result inline without treating a failed test as an error,
+  and the remote-model list still reports a real API failure.
+
+### D-071 Optional DTO fields are optional in the exported TypeScript
+- **Context**: the settings and prompt DTOs keep `Option` fields omittable on the wire
+  (`skip_serializing_if`), but ts-rs exported them as required `| null` properties, so the client
+  had to send `api_key: null` where "unchanged" means "omit the field".
+- **Decision**: those DTOs carry `#[ts(optional_fields = nullable)]`, so the generated types say
+  `api_key?: string | null`. `ModelOptionsDto` and `RoleModels` are patch-shaped for the same
+  reason.
+- **Consequences**: the UI cannot accidentally clear a stored key by round-tripping a masked value,
+  and `edit`/`patch` payloads compile without filler fields.
+
 ## Open items (questions for the author)
 1. Confirm the reading of "this time it cannot be delegated to a lower-level review agent" as
    "the author judges the reviewer's report; no further delegation" (PROJECT §10.9).
