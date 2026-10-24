@@ -1,0 +1,14 @@
+{
+  "title": "知识库",
+  "scopes": "范围",
+  "entries": "条目",
+  "search": "搜索",
+  "search_placeholder": "搜索知识库…",
+  "no_entries": "这个范围里还没有条目",
+  "source.manual": "你手动写的",
+  "source.research": "来自研究",
+  "chunks": "{{count}} 个片段",
+  "embed_state.pending": "尚未向量化",
+  "embed_state.done": "已向量化",
+  "embed_state.failed": "向量化失败"
+}

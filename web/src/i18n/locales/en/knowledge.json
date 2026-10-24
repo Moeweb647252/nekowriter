@@ -1,0 +1,14 @@
+{
+  "title": "Knowledge",
+  "scopes": "Scopes",
+  "entries": "Entries",
+  "search": "Search",
+  "search_placeholder": "Search the knowledge base…",
+  "no_entries": "No entries in this scope yet",
+  "source.manual": "Written by you",
+  "source.research": "From research",
+  "chunks": "{{count}} chunks",
+  "embed_state.pending": "Not embedded yet",
+  "embed_state.done": "Embedded",
+  "embed_state.failed": "Embedding failed"
+}

@@ -3,17 +3,21 @@ import { initReactI18next } from "react-i18next"
 
 import enAgent from "./locales/en/agent.json"
 import enBook from "./locales/en/book.json"
+import enCanon from "./locales/en/canon.json"
 import enChapter from "./locales/en/chapter.json"
 import enCommon from "./locales/en/common.json"
 import enErrors from "./locales/en/errors.json"
+import enKnowledge from "./locales/en/knowledge.json"
 import enLibrary from "./locales/en/library.json"
 import enPrompts from "./locales/en/prompts.json"
 import enSettings from "./locales/en/settings.json"
 import zhAgent from "./locales/zh-CN/agent.json"
 import zhBook from "./locales/zh-CN/book.json"
+import zhCanon from "./locales/zh-CN/canon.json"
 import zhChapter from "./locales/zh-CN/chapter.json"
 import zhCommon from "./locales/zh-CN/common.json"
 import zhErrors from "./locales/zh-CN/errors.json"
+import zhKnowledge from "./locales/zh-CN/knowledge.json"
 import zhLibrary from "./locales/zh-CN/library.json"
 import zhPrompts from "./locales/zh-CN/prompts.json"
 import zhSettings from "./locales/zh-CN/settings.json"
@@ -28,6 +32,8 @@ export const NAMESPACES = [
   "book",
   "chapter",
   "agent",
+  "canon",
+  "knowledge",
   "settings",
   "prompts",
   "errors",
@@ -41,6 +47,8 @@ export const resources = {
     book: enBook,
     chapter: enChapter,
     agent: enAgent,
+    canon: enCanon,
+    knowledge: enKnowledge,
     settings: enSettings,
     prompts: enPrompts,
     errors: enErrors,
@@ -51,6 +59,8 @@ export const resources = {
     book: zhBook,
     chapter: zhChapter,
     agent: zhAgent,
+    canon: zhCanon,
+    knowledge: zhKnowledge,
     settings: zhSettings,
     prompts: zhPrompts,
     errors: zhErrors,
