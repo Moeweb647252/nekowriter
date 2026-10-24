@@ -359,46 +359,76 @@ fn chapter_write_planning(lang: &LangCorpus) -> DemoPlan {
 /// `step_in_phase` counts the steps of the whole session, and drafting begins after the outline
 /// step, so the drafting index is `step_in_phase - 1`. The demo cycles the corpus so a long
 /// chapter keeps producing fresh text.
+///
+/// The chapter is completed once the demo has written [`DRAFTING_STEPS_BEFORE_COMPLETION`] units:
+/// the completing call sets `chapter_end`, or `finish_draft` is used when the granularity's
+/// completion is a separate tool call. A withheld short completion (spec/03 §8, D-029) then costs
+/// one extra `finish_draft`, which the next step provides.
 fn chapter_write_drafting(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
     let index = hints.step_in_phase.saturating_sub(1) as usize;
     let paragraph = index % lang.paragraphs.len().max(1);
     let sentence = index % lang.sentences.len().max(1);
     let target = lang.paragraphs.get(paragraph).cloned().unwrap_or_default();
-    match hints.granularity.as_deref().unwrap_or("paragraph") {
+    let granularity = hints.granularity.as_deref().unwrap_or("paragraph");
+
+    // The last drafting unit asks to complete the chapter (`chapter_end`), and the step after it
+    // confirms with `finish_draft` in case that completion was withheld as short (spec/03 §8,
+    // spec/04 §7.2). `chapter` granularity completes through its own single call, so it never
+    // needs the extra step.
+    let completing_unit = index + 1 == DRAFTING_STEPS_BEFORE_COMPLETION;
+    if index >= DRAFTING_STEPS_BEFORE_COMPLETION && granularity != "chapter" {
+        // The first `finish_draft` may be withheld as short; the next one confirms it.
+        return DemoPlan {
+            text: Some(lang.finish_note.clone()),
+            tools: vec![tool("finish_draft", json!({}))],
+            ..DemoPlan::default()
+        };
+    }
+
+    match granularity {
         "sentence" => {
             // A sentence is its own segment; `paragraph_end` closes it every few sentences so the
             // chapter has several paragraphs rather than one long one.
             let text = lang.sentences.get(sentence).cloned().unwrap_or_default();
             let paragraph_end = index % 3 == 2;
+            let mut arguments = json!({ "text": text, "paragraph_end": paragraph_end });
+            if completing_unit {
+                arguments["chapter_end"] = json!(true);
+            }
             DemoPlan {
-                tools: vec![tool(
-                    "insert_text",
-                    json!({ "text": text, "paragraph_end": paragraph_end }),
-                )],
+                tools: vec![tool("insert_text", arguments)],
                 ..DemoPlan::default()
             }
         }
-        "paragraph" => DemoPlan {
-            tools: vec![tool("insert_text", json!({ "text": target }))],
-            ..DemoPlan::default()
-        },
+        "paragraph" => {
+            let mut arguments = json!({ "text": target });
+            if completing_unit {
+                arguments["chapter_end"] = json!(true);
+            }
+            DemoPlan {
+                tools: vec![tool("insert_text", arguments)],
+                ..DemoPlan::default()
+            }
+        }
         "free" => {
-            // Two or three paragraphs per call, with the tail open so the next call continues it.
+            // Two paragraphs per call, with the tail closed so the next call starts a new one.
             let second = lang
                 .paragraphs
                 .get((paragraph + 1) % lang.paragraphs.len().max(1))
                 .cloned()
                 .unwrap_or_default();
             let text = format!("{target}\n\n{second}");
+            let mut arguments = json!({ "text": text, "paragraph_end": true });
+            if completing_unit {
+                arguments["chapter_end"] = json!(true);
+            }
             DemoPlan {
-                tools: vec![tool(
-                    "insert_text",
-                    json!({ "text": text, "paragraph_end": true }),
-                )],
+                tools: vec![tool("insert_text", arguments)],
                 ..DemoPlan::default()
             }
         }
-        // `chapter`: one call writes the rest of the chapter and completes it.
+        // `chapter`: one call writes the rest of the chapter and completes it (`chapter_end` is
+        // implied by the granularity, spec/03 §8).
         _ => {
             let mut paragraphs: Vec<String> = Vec::new();
             for offset in 0..MIN_CHAPTER_PARAGRAPHS {
@@ -417,6 +447,11 @@ fn chapter_write_drafting(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
         }
     }
 }
+
+/// How many drafting units the demo writes before it completes the chapter, so the manual check
+/// sees a finished chapter instead of an endless stream (spec/04 §7.2 "chapter_end after ~8
+/// paragraphs"). Counted in calls, not paragraphs: `free` writes two paragraphs per call.
+const DRAFTING_STEPS_BEFORE_COMPLETION: usize = 8;
 
 /// How many paragraphs the `chapter` granularity writes in one call (spec/04 §7.2 "~8").
 const MIN_CHAPTER_PARAGRAPHS: usize = 8;

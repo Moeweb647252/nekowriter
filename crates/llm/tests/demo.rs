@@ -233,6 +233,10 @@ fn sentence_steps_obey_the_matrix() {
         h.step_in_phase = step;
         let lang = provider.lang(Some(&h));
         let plan = choose_action(&h, lang);
+        // Past the drafting window the demo completes the chapter with `finish_draft`.
+        if plan.tools[0].1 == "finish_draft" {
+            continue;
+        }
         let text = plan.tools[0].2["text"].as_str().expect("text");
         assert!(text.chars().count() <= 400, "step {step}: {text}");
         assert!(!text.contains('\n'), "step {step}: no line break");
@@ -257,4 +261,57 @@ fn chapter_granularity_writes_several_paragraphs_at_once() {
         text.split("\n\n").count() >= 8,
         "the chapter granularity writes the rest of the chapter: {text}"
     );
+}
+
+/// spec/04 §7.2: the demo completes the chapter after ~8 paragraphs instead of streaming forever
+/// (a `chapter_end` for sentence/paragraph/free, or the `chapter` granularity's own single call).
+#[test]
+fn drafting_completes_the_chapter_after_the_drafting_window() {
+    let provider = DemoProvider::new();
+    for language in ["zh-CN", "en"] {
+        for granularity in ["sentence", "paragraph", "free"] {
+            let mut h = hints("chapter_write", "drafting", language);
+            h.granularity = Some(granularity.to_owned());
+            // Session step 8 is the completing unit; step 9 confirms a withheld completion.
+            h.step_in_phase = 9;
+            let lang = provider.lang(Some(&h));
+            let plan = choose_action(&h, lang);
+            assert_eq!(
+                plan.tools[0].1, "finish_draft",
+                "{language}/{granularity}: the demo completes the chapter"
+            );
+        }
+        // `chapter` granularity completes through its own call: it never needs finish_draft.
+        let mut h = hints("chapter_write", "drafting", language);
+        h.granularity = Some("chapter".to_owned());
+        h.step_in_phase = 9;
+        let lang = provider.lang(Some(&h));
+        let plan = choose_action(&h, lang);
+        assert_eq!(
+            plan.tools[0].1, "insert_text",
+            "{language}/chapter: the chapter call itself completes"
+        );
+    }
+}
+
+/// A short chapter's first `chapter_end` is withheld (spec/03 §8), so the demo's `finish_draft`
+/// step is what confirms it; the demo keeps writing if the chapter is not done yet.
+#[test]
+fn a_witheld_completion_is_followed_by_finish_draft() {
+    let provider = DemoProvider::new();
+    let mut h = hints("chapter_write", "drafting", "en");
+    h.granularity = Some("paragraph".to_owned());
+    // Session step 8 is drafting unit 8, the completing one.
+    h.step_in_phase = 8;
+    let lang = provider.lang(Some(&h));
+    let plan = choose_action(&h, lang);
+    assert_eq!(plan.tools[0].1, "insert_text");
+    assert_eq!(
+        plan.tools[0].2["chapter_end"], true,
+        "the completing unit asks to end the chapter"
+    );
+    // A withheld short completion is confirmed by the next step's `finish_draft`.
+    h.step_in_phase = 9;
+    let plan = choose_action(&h, lang);
+    assert_eq!(plan.tools[0].1, "finish_draft");
 }
