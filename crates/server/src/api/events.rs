@@ -55,7 +55,7 @@ pub async fn stream(
 ///
 /// `chapter.content` and `resync` carry no book id, so they go to every connection; the client
 /// ignores events for resources it does not show. Being conservative here would silently drop
-/// content updates from an open chapter (DECISIONS D-061).
+/// content updates from an open chapter (DECISIONS D-066).
 fn matches_filter(event: &ServerEvent, book_filter: Option<i32>) -> bool {
     let Some(wanted) = book_filter else {
         return true;

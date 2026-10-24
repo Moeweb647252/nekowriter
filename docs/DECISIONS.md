@@ -384,7 +384,7 @@ technical decisions.
   a track-local note and `finish_maintenance` skips the state confirmation. The zh-CN label of
   the Finalize action is “定稿”, the name the conception prompts use (with "Finalize book").
 
-### D-061 Service errors cross `Db::write` as an encoded payload
+### D-064 Service errors cross `Db::write` as an encoded payload
 - **Context**: `Db::write` speaks `sea_orm::DbErr`, but service functions must return
   `AppError` so handlers get the exact spec/10 §4 code and `details` (e.g. `chapter.locked`
   with `session_id`) instead of a generic 500.
@@ -396,7 +396,7 @@ technical decisions.
   only write path (spec/01 §7). Plain-TEXT enum columns are read with `services::enum_of`, while
   JSON columns keep using `parse_json` — mixing the two was the bug this found.
 
-### D-062 M1 defers what later milestones own
+### D-065 M1 defers what later milestones own
 - **Context**: several M1 endpoints have preconditions that only later milestones can produce
   (writer sessions, canon maintenance, side stories, conception).
 - **Decision**: the state rules are implemented and tested against the real rows now, and the
@@ -410,7 +410,7 @@ technical decisions.
 - **Consequences**: no half-built flow is exposed, and the conditions are already enforced the
   moment the later milestone supplies the state.
 
-### D-063 SSE events are pushed for every connection; `chapter.content` carries no book id
+### D-066 SSE events are pushed for every connection; `chapter.content` carries no book id
 - **Context**: spec/10 §3 says `GET /api/events?book_id=` "sends events of that book plus global
   events", but the `chapter.content` payload has no `book_id` field, and `settings.changed` does.
 - **Decision**: the filter drops events whose payload names a different book; events without a
