@@ -346,3 +346,95 @@ async fn send_back_validates_the_chapter_status_feedback_and_issue_indexes() {
     assert!(body["feedback"].as_array().expect("feedback").is_empty());
     assert_eq!(runtime.chapter_status().await.0, "in_review");
 }
+
+// ───────────────────────────── stale reviewer sessions ─────────────────────────────
+
+/// A slow `submit_review` step, so the reviewer is still working when the author decides.
+fn slow_review_step() -> ScriptStep {
+    ScriptStep::new()
+        .tool(
+            "submit_review",
+            json!({
+                "verdict": "revise",
+                "summary": "slow review",
+                "issues": [],
+                "feedback": "slow",
+            }),
+        )
+        .delay(Duration::from_millis(2_000))
+}
+
+/// Send-back abandons an open reviewer session: its verdict is moot once the writer gets the
+/// feedback (spec/08 §1.1).
+#[tokio::test]
+async fn send_back_abandons_the_open_reviewer_session() {
+    let runtime = runtime(vec![slow_review_step()]).await;
+    prepare_in_review(&runtime).await;
+    let (status, started) = runtime
+        .app
+        .post(
+            &format!("/api/chapters/{}/review", runtime.chapter_id),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, 200, "ask the reviewer: {started}");
+    let reviewer = started["session_id"].as_i64().expect("session") as i32;
+    runtime.wait_status(reviewer, SessionStatus::Running).await;
+
+    let (status, body) = runtime
+        .app
+        .post(
+            &format!("/api/chapters/{}/send-back", runtime.chapter_id),
+            json!({ "feedback": "rewrite the middle", "mode": "revise" }),
+        )
+        .await;
+    assert_eq!(status, 200, "send back: {body}");
+    runtime
+        .wait_status_within(reviewer, SessionStatus::Abandoned, Duration::from_secs(10))
+        .await;
+    assert_eq!(
+        runtime.chapter_status().await.0,
+        "revising",
+        "the revision session took over"
+    );
+}
+
+/// Approve abandons an open reviewer session (spec/08 §1.1).
+#[tokio::test]
+async fn approve_abandons_the_open_reviewer_session() {
+    let runtime = runtime(vec![slow_review_step()]).await;
+    prepare_in_review(&runtime).await;
+    let (status, started) = runtime
+        .app
+        .post(
+            &format!("/api/chapters/{}/review", runtime.chapter_id),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, 200, "ask the reviewer: {started}");
+    let reviewer = started["session_id"].as_i64().expect("session") as i32;
+    runtime.wait_status(reviewer, SessionStatus::Running).await;
+
+    let (status, body) = runtime
+        .app
+        .post(
+            &format!("/api/chapters/{}/approve", runtime.chapter_id),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, 200, "approve: {body}");
+    runtime
+        .wait_status_within(reviewer, SessionStatus::Abandoned, Duration::from_secs(10))
+        .await;
+    assert_eq!(body["chapter"]["status"], "official");
+    assert_eq!(body["chapter"]["canon_status"], "pending");
+    // Auto-maintenance starts (the harness has an archivist model); stop it so the test leaves
+    // no runner behind.
+    if let Some(maintenance) = body["maintenance_session_id"].as_i64() {
+        let (status, _) = runtime
+            .app
+            .post(&format!("/api/sessions/{maintenance}/abandon"), json!({}))
+            .await;
+        assert_eq!(status, 200, "abandon the maintenance session");
+    }
+}
