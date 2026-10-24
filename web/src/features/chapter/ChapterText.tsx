@@ -12,6 +12,7 @@ import type { ChapterDto } from "@/api/gen/ChapterDto"
 import type { ContentOpInput } from "@/api/gen/ContentOpInput"
 import { useChapterDoc } from "@/stores/chapterDoc"
 import { isComposing } from "@/lib/hotkeys"
+import { paragraphKeyAction } from "@/lib/paragraphEditing"
 import { countWords } from "@/lib/wordcount"
 import { cn } from "@/lib/utils"
 
@@ -85,16 +86,25 @@ export function ChapterText({
                 key={paragraph.pid}
                 pid={paragraph.pid}
                 text={paragraph.text}
+                onlyParagraph={paragraphs.length === 1}
                 highlight={highlights[paragraph.pid]?.kind}
                 onHighlightEnd={clearHighlight}
                 saving={patch.isPending}
-                onSave={(text, previousPid) => {
+                onSave={(text) => {
                   const ops: ContentOpInput[] = [{ op: "update", pid: paragraph.pid, text }]
-                  patch.mutate(
-                    { base_version: version, ops },
-                    { onError: showError },
-                  )
-                  void previousPid
+                  patch.mutate({ base_version: version, ops }, { onError: showError })
+                }}
+                onInsertAfter={(text) => {
+                  // spec/11 §5.2: Enter at the end starts the next paragraph.
+                  const ops: ContentOpInput[] = [
+                    { op: "insert", after: paragraph.pid, text },
+                  ]
+                  patch.mutate({ base_version: version, ops }, { onError: showError })
+                }}
+                onDelete={() => {
+                  // spec/11 §5.2: Backspace in an empty paragraph removes it.
+                  const ops: ContentOpInput[] = [{ op: "delete", pid: paragraph.pid }]
+                  patch.mutate({ base_version: version, ops }, { onError: showError })
                 }}
               />
             ))}
@@ -108,14 +118,31 @@ export function ChapterText({
 type ParagraphProps = {
   pid: string
   text: string
+  /** The document has exactly one paragraph, which may not be deleted. */
+  onlyParagraph: boolean
   highlight?: "inserted" | "updated"
   saving: boolean
   onHighlightEnd: (pid: string) => void
-  onSave: (text: string, previousPid: string) => void
+  onSave: (text: string) => void
+  onInsertAfter: (text: string) => void
+  onDelete: () => void
 }
 
-/** One paragraph: click to edit in place; Esc cancels; blur or ⌘⏎ saves. */
-function Paragraph({ pid, text, highlight, saving, onHighlightEnd, onSave }: ParagraphProps) {
+/**
+ * One paragraph: click to edit in place; Esc cancels; blur or ⌘⏎ saves; Enter at the end starts
+ * the next paragraph and Backspace in an empty one deletes it (spec/11 §5.2).
+ */
+function Paragraph({
+  pid,
+  text,
+  onlyParagraph,
+  highlight,
+  saving,
+  onHighlightEnd,
+  onSave,
+  onInsertAfter,
+  onDelete,
+}: ParagraphProps) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(text)
 
@@ -132,25 +159,52 @@ function Paragraph({ pid, text, highlight, saving, onHighlightEnd, onSave }: Par
           onBlur={() => {
             setEditing(false)
             if (draft !== text) {
-              onSave(draft, pid)
+              onSave(draft)
             }
           }}
           onKeyDown={(event) => {
-            // IME composition confirms characters with Enter (AGENTS.md §6).
-            if (isComposing(event)) {
+            const caret = event.currentTarget.selectionStart ?? draft.length
+            const action = paragraphKeyAction({
+              key: event.key,
+              composing: isComposing(event),
+              caret,
+              value: draft,
+              primaryModifier: event.metaKey || event.ctrlKey,
+              shiftKey: event.shiftKey,
+            })
+            if (action === "none") {
               return
             }
-            if (event.key === "Escape") {
+            event.preventDefault()
+            if (action === "cancel") {
               setDraft(text)
               setEditing(false)
               return
             }
-            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-              event.preventDefault()
+            if (action === "save") {
               setEditing(false)
               if (draft !== text) {
-                onSave(draft, pid)
+                onSave(draft)
               }
+              return
+            }
+            if (action === "insert-after") {
+              // Store the edited text first, then start the new paragraph after this pid.
+              if (draft !== text) {
+                onSave(draft)
+              }
+              setEditing(false)
+              onInsertAfter("")
+              return
+            }
+            if (action === "delete-paragraph") {
+              // Keep one paragraph: an empty document has no anchor for the author's next click,
+              // and the full-text editor is the way to empty a chapter.
+              if (onlyParagraph) {
+                return
+              }
+              setEditing(false)
+              onDelete()
             }
           }}
         />

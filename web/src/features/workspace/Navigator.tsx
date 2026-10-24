@@ -1,6 +1,6 @@
 /** The workspace navigator (PROJECT §8.4, spec/11 §5.1): overview, tracks with sortable chapter
  * rows, setting materials, canon, knowledge, proposals, prompts and book settings. */
-import { Link, useNavigate, useParams } from "react-router"
+import { Link, NavLink as RouterNavLink, useNavigate, useParams } from "react-router"
 import { useTranslation } from "react-i18next"
 import {
   DndContext,
@@ -20,12 +20,10 @@ import {
 } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
 import {
-  Archive,
   FileText,
   GripVertical,
   Home,
   Library,
-  ListTree,
   MessageSquareCode,
   Plus,
   Settings,
@@ -58,18 +56,27 @@ type NavLinkProps = {
   to: string
   icon: typeof Home
   label: string
-  active: boolean
   badge?: number
+  /** `true` for a row that must match the whole path (the book overview). */
+  end?: boolean
 }
 
-function NavLink({ to, icon: Icon, label, active, badge }: NavLinkProps) {
+/**
+ * One navigator row. React Router computes the active state, so the row for the page being shown
+ * is highlighted (spec/11 §5.1) — passing `active={false}` everywhere left the navigator with no
+ * current-page affordance at all.
+ */
+function NavLink({ to, icon: Icon, label, badge, end }: NavLinkProps) {
   return (
-    <Link
+    <RouterNavLink
       to={to}
-      className={cn(
-        "flex items-center gap-2 rounded-md px-2 py-1 text-[13px] text-muted-foreground hover:bg-accent hover:text-foreground",
-        active && "bg-accent font-medium text-foreground",
-      )}
+      end={end}
+      className={({ isActive }) =>
+        cn(
+          "flex items-center gap-2 rounded-md px-2 py-1 text-[13px] text-muted-foreground hover:bg-accent hover:text-foreground",
+          isActive && "bg-accent font-medium text-foreground",
+        )
+      }
     >
       <Icon className="size-3.5 shrink-0" aria-hidden="true" />
       <span className="truncate">{label}</span>
@@ -78,7 +85,7 @@ function NavLink({ to, icon: Icon, label, active, badge }: NavLinkProps) {
           {badge}
         </span>
       )}
-    </Link>
+    </RouterNavLink>
   )
 }
 
@@ -90,12 +97,7 @@ export function Navigator({ book }: NavigatorProps) {
 
   return (
     <nav className="flex h-full flex-col overflow-y-auto border-r bg-sidebar/40 p-2">
-      <NavLink
-        to={`/books/${book.id}`}
-        icon={Home}
-        label={t("book:overview")}
-        active={false}
-      />
+      <NavLink to={`/books/${book.id}`} icon={Home} label={t("book:overview")} end />
       {mainTrack === undefined ? null : (
         <TrackGroup book={book} track={mainTrack} />
       )}
@@ -104,51 +106,34 @@ export function Navigator({ book }: NavigatorProps) {
         to={`/books/${book.id}/settings/outline`}
         icon={FileText}
         label={t("book:outline")}
-        active={false}
       />
       <NavLink
         to={`/books/${book.id}/settings/world`}
         icon={Library}
         label={t("book:world")}
-        active={false}
       />
       <NavLink
         to={`/books/${book.id}/settings/protagonist`}
         icon={Sparkles}
         label={t("book:protagonist")}
-        active={false}
       />
       <NavLink
         to={`/books/${book.id}/settings/characters`}
         icon={Users}
         label={t("book:characters")}
-        active={false}
       />
-      <SectionTitle>{t("book:canon")}</SectionTitle>
-      <NavLink
-        to={`/books/${book.id}/canon/entities`}
-        icon={ListTree}
-        label={t("book:entities")}
-        active={false}
-      />
-      <NavLink
-        to={`/books/${book.id}/canon/changes`}
-        icon={Archive}
-        label={t("book:changes")}
-        active={false}
-      />
+      {/* The canon pages arrive with M5/M6; linking to a route that does not exist yet would
+          drop the author on the error element (spec/08 §7, PROJECT §8.8). */}
       <SectionTitle>{t("book:book_settings")}</SectionTitle>
       <NavLink
         to={`/books/${book.id}/prompts`}
         icon={MessageSquareCode}
         label={t("book:prompts")}
-        active={false}
       />
       <NavLink
         to={`/books/${book.id}/book-settings`}
         icon={Settings}
         label={t("book:book_settings")}
-        active={false}
       />
     </nav>
   )
