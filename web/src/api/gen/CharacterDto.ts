@@ -9,6 +9,7 @@ export type CharacterDto = { id: number, book_id: number,
  */
 rank: number, name: string, 
 /**
- * Stored text (e.g. 主角, 反派); the one label that is not rendered by the prompt pack.
+ * Author-written stored text (e.g. a role word); the one label that is not rendered by the
+ * prompt pack (D-055).
  */
 role_label: string, summary: string, profile: string, entity_id: number | null, created_at: string, updated_at: string, };
