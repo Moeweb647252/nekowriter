@@ -111,7 +111,7 @@ pub async fn create_inner(
             op: ChangeOp::Create,
             before: None,
             after: Some(&after),
-            note: input.note.trim(),
+            note: input.note.as_deref().unwrap_or_default().trim(),
             reverts_id: None,
             track_id: row.track_id,
             chapter_id: None,
@@ -225,7 +225,7 @@ pub async fn update_inner(
             op: ChangeOp::Update,
             before: Some(&before),
             after: Some(&after),
-            note: patch.note.trim(),
+            note: patch.note.as_deref().unwrap_or_default().trim(),
             reverts_id: None,
             track_id: row.track_id,
             chapter_id: None,
@@ -313,7 +313,7 @@ pub async fn resolve_inner(
         status: Some(status),
         resolution: Some(resolution.to_owned()),
         resolved_chapter_id: Some(write.chapter_id),
-        note: resolution.to_owned(),
+        note: Some(resolution.to_owned()),
         ..ForeshadowingPatch::default()
     };
     update_inner(tx, write, item_id, patch).await

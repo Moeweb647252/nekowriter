@@ -3,4 +3,8 @@
 /**
  * `POST /timeline-events/:id/move` body (spec/10 §2.4).
  */
-export type TimelineMoveInput = { after_id?: number | null, before_id?: number | null, note: string, };
+export type TimelineMoveInput = { after_id?: number | null, before_id?: number | null, 
+/**
+ * The author's change note (spec/06 §3); optional, empty when absent.
+ */
+note?: string | null, };

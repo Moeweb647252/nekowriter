@@ -3,4 +3,8 @@
 /**
  * `POST /books/:id/relations` body (spec/10 §2.4).
  */
-export type RelationInput = { source_id: number, target_id: number, kind: string, inverse_kind: string, description: string, since_chapter_id?: number | null, until_chapter_id?: number | null, note: string, };
+export type RelationInput = { source_id: number, target_id: number, kind: string, inverse_kind: string, description: string, since_chapter_id?: number | null, until_chapter_id?: number | null, 
+/**
+ * The author's change note (spec/06 §3); optional, empty when absent.
+ */
+note?: string | null, };

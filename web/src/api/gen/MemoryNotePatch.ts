@@ -5,4 +5,8 @@ import type { NoteStatus } from "./NoteStatus";
 /**
  * `PATCH /memory-notes/:id` body.
  */
-export type MemoryNotePatch = { kind?: NoteKind | null, content?: string | null, chapter_id?: number | null | null, importance?: number | null, status?: NoteStatus | null, entity_ids?: Array<number> | null, note: string, };
+export type MemoryNotePatch = { kind?: NoteKind | null, content?: string | null, chapter_id?: number | null | null, importance?: number | null, status?: NoteStatus | null, entity_ids?: Array<number> | null, 
+/**
+ * The author's change note (spec/06 §3); optional, empty when absent.
+ */
+note?: string | null, };

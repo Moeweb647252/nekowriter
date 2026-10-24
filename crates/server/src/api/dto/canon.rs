@@ -79,6 +79,7 @@ pub struct DesignLinkDto {
 
 /// `POST /books/:id/entities` body (spec/10 §2.4).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(optional_fields = nullable)]
 #[ts(export)]
 pub struct EntityInput {
     pub kind: EntityKind,
@@ -102,13 +103,14 @@ pub struct EntityInput {
     /// Set only for a private row of an isolated track (spec/06 §2).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub track_id: Option<i32>,
-    /// The author's change note (spec/06 §3); empty by default.
-    #[serde(default)]
-    pub note: String,
+    /// The author's change note (spec/06 §3); optional, empty when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// `PATCH /entities/:id` body: omitted fields are unchanged.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(optional_fields = nullable)]
 #[ts(export)]
 pub struct EntityPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -131,12 +133,14 @@ pub struct EntityPatch {
     pub status: Option<EntityStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_protagonist: Option<bool>,
-    #[serde(default)]
-    pub note: String,
+    /// The author's change note (spec/06 §3); optional, empty when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// `POST /entities/:id/merge` body (spec/06 §9).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(optional_fields = nullable)]
 #[ts(export)]
 pub struct EntityMergeInput {
     pub from_id: i32,
@@ -172,7 +176,7 @@ impl Default for EntityInput {
             status: default_entity_status(),
             is_protagonist: false,
             track_id: None,
-            note: String::new(),
+            note: None,
         }
     }
 }
@@ -208,6 +212,7 @@ pub struct RelationDto {
 
 /// `POST /books/:id/relations` body (spec/10 §2.4).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(optional_fields = nullable)]
 #[ts(export)]
 pub struct RelationInput {
     pub source_id: i32,
@@ -221,12 +226,14 @@ pub struct RelationInput {
     pub since_chapter_id: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub until_chapter_id: Option<i32>,
-    #[serde(default)]
-    pub note: String,
+    /// The author's change note (spec/06 §3); optional, empty when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// `PATCH /relations/:id` body.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(optional_fields = nullable)]
 #[ts(export)]
 pub struct RelationPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -241,8 +248,9 @@ pub struct RelationPatch {
     pub since_chapter_id: Option<Option<i32>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub until_chapter_id: Option<Option<i32>>,
-    #[serde(default)]
-    pub note: String,
+    /// The author's change note (spec/06 §3); optional, empty when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// `GET /books/:id/relations` query.
@@ -268,10 +276,12 @@ pub struct AppearanceDto {
 
 /// One entry of an appearance set (spec/02 §4 `SnapshotAppearanceSet`).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(optional_fields = nullable)]
 #[ts(export)]
 pub struct AppearanceInput {
     pub entity_id: i32,
     pub role: AppearanceRole,
+    /// The appearance's own note (a role remark, not a change note).
     #[serde(default)]
     pub note: String,
 }
@@ -298,6 +308,7 @@ pub struct TimelineEventDto {
 
 /// `POST /books/:id/timeline` body (spec/10 §2.4): `after_id` / `before_id` place the new event.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(optional_fields = nullable)]
 #[ts(export)]
 pub struct TimelineEventInput {
     pub title: String,
@@ -315,12 +326,14 @@ pub struct TimelineEventInput {
     pub after_id: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub before_id: Option<i32>,
-    #[serde(default)]
-    pub note: String,
+    /// The author's change note (spec/06 §3); optional, empty when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// `PATCH /timeline-events/:id` body.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(optional_fields = nullable)]
 #[ts(export)]
 pub struct TimelineEventPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -339,20 +352,23 @@ pub struct TimelineEventPatch {
     pub after_id: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub before_id: Option<i32>,
-    #[serde(default)]
-    pub note: String,
+    /// The author's change note (spec/06 §3); optional, empty when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// `POST /timeline-events/:id/move` body (spec/10 §2.4).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(optional_fields = nullable)]
 #[ts(export)]
 pub struct TimelineMoveInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after_id: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub before_id: Option<i32>,
-    #[serde(default)]
-    pub note: String,
+    /// The author's change note (spec/06 §3); optional, empty when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// `GET /books/:id/timeline` query.
@@ -386,6 +402,7 @@ pub struct MemoryNoteDto {
 
 /// `POST /books/:id/memory-notes` body.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(optional_fields = nullable)]
 #[ts(export)]
 pub struct MemoryNoteInput {
     pub kind: NoteKind,
@@ -396,12 +413,14 @@ pub struct MemoryNoteInput {
     pub importance: i32,
     #[serde(default)]
     pub entity_ids: Vec<i32>,
-    #[serde(default)]
-    pub note: String,
+    /// The author's change note (spec/06 §3); optional, empty when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// `PATCH /memory-notes/:id` body.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(optional_fields = nullable)]
 #[ts(export)]
 pub struct MemoryNotePatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -416,8 +435,9 @@ pub struct MemoryNotePatch {
     pub status: Option<NoteStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entity_ids: Option<Vec<i32>>,
-    #[serde(default)]
-    pub note: String,
+    /// The author's change note (spec/06 §3); optional, empty when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// `GET /books/:id/memory-notes` query.
@@ -454,6 +474,7 @@ pub struct ForeshadowingDto {
 
 /// `POST /books/:id/foreshadowing` body.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(optional_fields = nullable)]
 #[ts(export)]
 pub struct ForeshadowingInput {
     pub title: String,
@@ -467,12 +488,14 @@ pub struct ForeshadowingInput {
     pub importance: i32,
     #[serde(default)]
     pub entity_ids: Vec<i32>,
-    #[serde(default)]
-    pub note: String,
+    /// The author's change note (spec/06 §3); optional, empty when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// `PATCH /foreshadowing/:id` body.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(optional_fields = nullable)]
 #[ts(export)]
 pub struct ForeshadowingPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -493,8 +516,9 @@ pub struct ForeshadowingPatch {
     pub importance: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entity_ids: Option<Vec<i32>>,
-    #[serde(default)]
-    pub note: String,
+    /// The author's change note (spec/06 §3); optional, empty when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// `GET /books/:id/foreshadowing` query.
@@ -696,11 +720,13 @@ pub struct MemoryQuery {
 
 /// `POST /changes/:id/revert` body: the author's optional note on the revert.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(optional_fields = nullable)]
 #[ts(export)]
 pub struct RevertInput {
     /// The revert itself is a system change with an empty note by default (spec/06 §3).
-    #[serde(default)]
-    pub note: String,
+    /// The author's change note (spec/06 §3); optional, empty when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// The actor a canon write records (spec/06 §3).

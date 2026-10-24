@@ -20,13 +20,18 @@ import {
 } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
 import {
+  Brain,
+  FileClock,
   FileText,
   GripVertical,
+  History,
   Home,
   Library,
   MessageSquareCode,
+  NotebookPen,
   Plus,
   Settings,
+  Sparkle,
   Sparkles,
   Users,
 } from "lucide-react"
@@ -122,8 +127,37 @@ export function Navigator({ book }: NavigatorProps) {
         icon={Users}
         label={t("book:characters")}
       />
-      {/* The canon pages arrive with M5/M6; linking to a route that does not exist yet would
-          drop the author on the error element (spec/08 §7, PROJECT §8.8). */}
+      <SectionTitle>{t("book:canon")}</SectionTitle>
+      <NavLink
+        to={`/books/${book.id}/canon/entities`}
+        icon={Users}
+        label={t("book:entities")}
+      />
+      <NavLink
+        to={`/books/${book.id}/canon/timeline`}
+        icon={History}
+        label={t("canon:timeline")}
+      />
+      <NavLink
+        to={`/books/${book.id}/canon/memory`}
+        icon={Brain}
+        label={t("canon:memory")}
+      />
+      <NavLink
+        to={`/books/${book.id}/canon/notes`}
+        icon={NotebookPen}
+        label={t("canon:notes")}
+      />
+      <NavLink
+        to={`/books/${book.id}/canon/foreshadowing`}
+        icon={Sparkle}
+        label={t("canon:foreshadowing")}
+      />
+      <NavLink
+        to={`/books/${book.id}/canon/changes`}
+        icon={FileClock}
+        label={t("book:changes")}
+      />
       <SectionTitle>{t("book:book_settings")}</SectionTitle>
       <NavLink
         to={`/books/${book.id}/prompts`}

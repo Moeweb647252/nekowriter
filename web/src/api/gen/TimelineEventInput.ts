@@ -3,4 +3,8 @@
 /**
  * `POST /books/:id/timeline` body (spec/10 §2.4): `after_id` / `before_id` place the new event.
  */
-export type TimelineEventInput = { title: string, description: string, story_time: string, chapter_id?: number | null, entity_ids: Array<number>, importance: number, after_id?: number | null, before_id?: number | null, note: string, };
+export type TimelineEventInput = { title: string, description: string, story_time: string, chapter_id?: number | null, entity_ids: Array<number>, importance: number, after_id?: number | null, before_id?: number | null, 
+/**
+ * The author's change note (spec/06 §3); optional, empty when absent.
+ */
+note?: string | null, };

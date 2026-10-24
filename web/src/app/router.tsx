@@ -106,6 +106,49 @@ const router = createBrowserRouter([
             },
           },
           {
+            // The canon pages (PROJECT §8.8, spec/10 §2.4).
+            path: "canon/entities/:entityId?",
+            lazy: async () => {
+              const module = await import("@/features/canon/EntitiesPage")
+              return { Component: module.default }
+            },
+          },
+          {
+            path: "canon/timeline",
+            lazy: async () => {
+              const module = await import("@/features/canon/TimelinePage")
+              return { Component: module.default }
+            },
+          },
+          {
+            path: "canon/memory",
+            lazy: async () => {
+              const module = await import("@/features/canon/MemoryPage")
+              return { Component: module.default }
+            },
+          },
+          {
+            path: "canon/notes",
+            lazy: async () => {
+              const module = await import("@/features/canon/NotesPage")
+              return { Component: module.default }
+            },
+          },
+          {
+            path: "canon/foreshadowing",
+            lazy: async () => {
+              const module = await import("@/features/canon/ForeshadowingPage")
+              return { Component: module.default }
+            },
+          },
+          {
+            path: "canon/changes",
+            lazy: async () => {
+              const module = await import("@/features/canon/ChangesPage")
+              return { Component: module.default }
+            },
+          },
+          {
             // The book-level prompt overrides (PROJECT §8.11).
             path: "prompts",
             lazy: async () => {

@@ -5,4 +5,8 @@ import type { EntityStatus } from "./EntityStatus";
 /**
  * `PATCH /entities/:id` body: omitted fields are unchanged.
  */
-export type EntityPatch = { kind?: EntityKind | null, name?: string | null, aliases?: Array<string> | null, summary?: string | null, description?: string | null, state?: string | null, attributes?: { [key in string]: string } | null, importance?: number | null, status?: EntityStatus | null, is_protagonist?: boolean | null, note: string, };
+export type EntityPatch = { kind?: EntityKind | null, name?: string | null, aliases?: Array<string> | null, summary?: string | null, description?: string | null, state?: string | null, attributes?: { [key in string]: string } | null, importance?: number | null, status?: EntityStatus | null, is_protagonist?: boolean | null, 
+/**
+ * The author's change note (spec/06 §3); optional, empty when absent.
+ */
+note?: string | null, };

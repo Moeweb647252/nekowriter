@@ -116,7 +116,7 @@ pub async fn revert_inner(
             op: revert_of_target.op,
             before: revert_of_target.before.as_ref(),
             after: revert_of_target.after.as_ref(),
-            note: input.note.trim(),
+            note: input.note.as_deref().unwrap_or_default().trim(),
             reverts_id: Some(original.id),
         },
     )

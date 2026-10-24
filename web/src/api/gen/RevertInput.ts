@@ -6,5 +6,6 @@
 export type RevertInput = { 
 /**
  * The revert itself is a system change with an empty note by default (spec/06 §3).
+ * The author's change note (spec/06 §3); optional, empty when absent.
  */
-note: string, };
+note?: string | null, };

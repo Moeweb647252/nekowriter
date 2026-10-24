@@ -4,4 +4,8 @@ import type { AppearanceRole } from "./AppearanceRole";
 /**
  * One entry of an appearance set (spec/02 §4 `SnapshotAppearanceSet`).
  */
-export type AppearanceInput = { entity_id: number, role: AppearanceRole, note: string, };
+export type AppearanceInput = { entity_id: number, role: AppearanceRole, 
+/**
+ * The appearance's own note (a role remark, not a change note).
+ */
+note: string, };

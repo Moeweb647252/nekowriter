@@ -106,7 +106,7 @@ pub async fn create_inner(
             op: ChangeOp::Create,
             before: None,
             after: Some(&after),
-            note: input.note.trim(),
+            note: input.note.as_deref().unwrap_or_default().trim(),
             reverts_id: None,
             track_id: row.track_id,
             chapter_id: None,
@@ -204,7 +204,7 @@ pub async fn update_inner(
             op: ChangeOp::Update,
             before: Some(&before),
             after: Some(&after),
-            note: patch.note.trim(),
+            note: patch.note.as_deref().unwrap_or_default().trim(),
             reverts_id: None,
             track_id: row.track_id,
             chapter_id: None,
@@ -288,7 +288,7 @@ pub async fn retire_inner(
     }
     let patch = MemoryNotePatch {
         status: Some(NoteStatus::Retired),
-        note: reason.to_owned(),
+        note: Some(reason.to_owned()),
         ..MemoryNotePatch::default()
     };
     update_inner(tx, write, note_id, patch).await

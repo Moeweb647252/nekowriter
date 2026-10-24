@@ -131,7 +131,7 @@ pub async fn create_inner(
             op: ChangeOp::Create,
             before: None,
             after: Some(&after),
-            note: input.note.trim(),
+            note: input.note.as_deref().unwrap_or_default().trim(),
             reverts_id: None,
             track_id: row.track_id,
             chapter_id: None,
@@ -215,7 +215,7 @@ pub async fn update_inner(
             op: ChangeOp::Update,
             before: Some(&before),
             after: Some(&after),
-            note: patch.note.trim(),
+            note: patch.note.as_deref().unwrap_or_default().trim(),
             reverts_id: None,
             track_id: row.track_id,
             chapter_id: None,
@@ -347,7 +347,7 @@ pub async fn set_relation_inner(
                 } else {
                     Some(description.to_owned())
                 },
-                note: note.to_owned(),
+                note: Some(note.to_owned()),
                 ..RelationPatch::default()
             };
             let (dto, events) = update_inner(tx, write, row.id, patch).await?;
@@ -362,7 +362,7 @@ pub async fn set_relation_inner(
                 description: description.to_owned(),
                 since_chapter_id: write.chapter_id,
                 until_chapter_id: None,
-                note: note.to_owned(),
+                note: Some(note.to_owned()),
             };
             create_inner(tx, write, book_id, input).await
         }
@@ -387,7 +387,7 @@ pub async fn end_relation_inner(
     let patch = RelationPatch {
         status: Some(RelationStatus::Ended),
         until_chapter_id: Some(write.chapter_id),
-        note: note.to_owned(),
+        note: Some(note.to_owned()),
         ..RelationPatch::default()
     };
     update_inner(tx, write, row.id, patch).await

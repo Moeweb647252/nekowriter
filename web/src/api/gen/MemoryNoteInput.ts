@@ -4,4 +4,8 @@ import type { NoteKind } from "./NoteKind";
 /**
  * `POST /books/:id/memory-notes` body.
  */
-export type MemoryNoteInput = { kind: NoteKind, content: string, chapter_id?: number | null, importance: number, entity_ids: Array<number>, note: string, };
+export type MemoryNoteInput = { kind: NoteKind, content: string, chapter_id?: number | null, importance: number, entity_ids: Array<number>, 
+/**
+ * The author's change note (spec/06 §3); optional, empty when absent.
+ */
+note?: string | null, };

@@ -4,4 +4,8 @@ import type { ForeshadowingStatus } from "./ForeshadowingStatus";
 /**
  * `PATCH /foreshadowing/:id` body.
  */
-export type ForeshadowingPatch = { title?: string | null, description?: string | null, planned_payoff?: string | null, status?: ForeshadowingStatus | null, planted_chapter_id?: number | null | null, resolved_chapter_id?: number | null | null, resolution?: string | null, importance?: number | null, entity_ids?: Array<number> | null, note: string, };
+export type ForeshadowingPatch = { title?: string | null, description?: string | null, planned_payoff?: string | null, status?: ForeshadowingStatus | null, planted_chapter_id?: number | null | null, resolved_chapter_id?: number | null | null, resolution?: string | null, importance?: number | null, entity_ids?: Array<number> | null, 
+/**
+ * The author's change note (spec/06 §3); optional, empty when absent.
+ */
+note?: string | null, };

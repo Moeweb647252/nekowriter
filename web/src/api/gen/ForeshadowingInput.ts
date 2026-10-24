@@ -3,4 +3,8 @@
 /**
  * `POST /books/:id/foreshadowing` body.
  */
-export type ForeshadowingInput = { title: string, description: string, planned_payoff: string, planted_chapter_id?: number | null, importance: number, entity_ids: Array<number>, note: string, };
+export type ForeshadowingInput = { title: string, description: string, planned_payoff: string, planted_chapter_id?: number | null, importance: number, entity_ids: Array<number>, 
+/**
+ * The author's change note (spec/06 §3); optional, empty when absent.
+ */
+note?: string | null, };

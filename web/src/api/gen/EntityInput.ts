@@ -11,6 +11,6 @@ export type EntityInput = { kind: EntityKind, name: string, aliases: Array<strin
  */
 track_id?: number | null, 
 /**
- * The author's change note (spec/06 §3); empty by default.
+ * The author's change note (spec/06 §3); optional, empty when absent.
  */
-note: string, };
+note?: string | null, };

@@ -4,4 +4,8 @@ import type { RelationStatus } from "./RelationStatus";
 /**
  * `PATCH /relations/:id` body.
  */
-export type RelationPatch = { kind?: string | null, inverse_kind?: string | null, description?: string | null, status?: RelationStatus | null, since_chapter_id?: number | null | null, until_chapter_id?: number | null | null, note: string, };
+export type RelationPatch = { kind?: string | null, inverse_kind?: string | null, description?: string | null, status?: RelationStatus | null, since_chapter_id?: number | null | null, until_chapter_id?: number | null | null, 
+/**
+ * The author's change note (spec/06 §3); optional, empty when absent.
+ */
+note?: string | null, };

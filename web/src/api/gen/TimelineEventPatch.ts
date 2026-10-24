@@ -3,4 +3,8 @@
 /**
  * `PATCH /timeline-events/:id` body.
  */
-export type TimelineEventPatch = { title?: string | null, description?: string | null, story_time?: string | null, chapter_id?: number | null | null, entity_ids?: Array<number> | null, importance?: number | null, after_id?: number | null, before_id?: number | null, note: string, };
+export type TimelineEventPatch = { title?: string | null, description?: string | null, story_time?: string | null, chapter_id?: number | null | null, entity_ids?: Array<number> | null, importance?: number | null, after_id?: number | null, before_id?: number | null, 
+/**
+ * The author's change note (spec/06 §3); optional, empty when absent.
+ */
+note?: string | null, };

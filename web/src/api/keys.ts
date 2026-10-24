@@ -41,6 +41,21 @@ export const keys = {
     list: (bookId: number, filter?: string) =>
       ["changes", "list", bookId, filter ?? "all"] as const,
   },
+  canon: {
+    entities: (bookId: number, filters?: string) =>
+      ["canon", "entities", bookId, filters ?? "all"] as const,
+    entity: (entityId: number) => ["canon", "entity", entityId] as const,
+    relations: (bookId: number, entityId?: number) =>
+      ["canon", "relations", bookId, entityId ?? "all"] as const,
+    timeline: (bookId: number) => ["canon", "timeline", bookId] as const,
+    notes: (bookId: number, filters?: string) =>
+      ["canon", "notes", bookId, filters ?? "all"] as const,
+    foreshadowing: (bookId: number, status?: string) =>
+      ["canon", "foreshadowing", bookId, status ?? "all"] as const,
+    memory: (bookId: number, position?: string) =>
+      ["canon", "memory", bookId, position ?? "default"] as const,
+    appearances: (chapterId: number) => ["canon", "appearances", chapterId] as const,
+  },
   sessions: {
     list: (bookId: number, filters?: string) =>
       ["sessions", "list", bookId, filters ?? ""] as const,
