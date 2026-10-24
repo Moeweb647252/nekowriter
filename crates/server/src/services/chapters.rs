@@ -602,6 +602,7 @@ pub async fn write(
             redraft: false,
             guidance: input.guidance,
             kickoff_extra: None,
+            pending_comment: None,
         },
     )
     .await?;
@@ -725,15 +726,19 @@ pub async fn submit_inner(
 /// `POST /api/chapters/:id/approve` (spec/08 §1.1): an `official` version, `official_version_id`,
 /// status `official`, canon `pending`.
 pub async fn approve(
-    db: &crate::db::Db,
-    events: &crate::events::EventBus,
+    state: &crate::state::AppState,
     chapter_id: i32,
 ) -> Result<ApproveChapterResponse, AppError> {
-    let (response, published) = super::write(db, move |tx| {
+    // An open reviewer session's verdict is moot once the chapter is approved: its report would
+    // be for the text that just became official (spec/08 §1.1).
+    for reviewer in super::reviews::open_reviewer_sessions(state.db().conn(), chapter_id).await? {
+        super::sessions::abandon(state, reviewer.id).await?;
+    }
+    let (response, published) = super::write(state.db(), move |tx| {
         Box::pin(async move { approve_inner(tx, chapter_id).await })
     })
     .await?;
-    events.publish_all(published);
+    state.events().publish_all(published);
     Ok(response)
 }
 

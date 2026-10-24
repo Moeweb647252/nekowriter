@@ -16,11 +16,11 @@ use serde_json::{Value, json};
 
 use crate::db::entities::{
     agent_messages, agent_sessions, agent_tool_calls, books, chapter_versions, chapters,
-    character_designs, entities, research_tasks, setting_docs, tracks,
+    character_designs, entities, research_tasks, review_reports, setting_docs, tracks,
 };
 use crate::db::json::{
     self, AgentRole, ChapterContent, CompletionKind, MessageKind, MessageRole, Phase, Protocol,
-    RequestMeta, SessionKind, StoredBlock, ToolCallStatus, VersionKind,
+    RequestMeta, ReviewVerdict, SessionKind, StoredBlock, ToolCallStatus, VersionKind,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
@@ -28,7 +28,7 @@ use crate::prompts::PromptSet;
 use crate::prompts::context::{
     BookContext, CastEntryContext, ChapterContext, CharacterContext, DraftContext, FeedbackContext,
     FeedbackIssueContext, GranularityContext, MemoryContext, MemoryCountsContext, ParagraphContext,
-    ScopeContext, SettingsContext, TrackContext,
+    PriorReportContext, ScopeContext, SettingsContext, TrackContext,
 };
 use crate::text;
 
@@ -130,11 +130,12 @@ pub async fn assemble_kickoff(
     prompts: &PromptSet,
     session: &agent_sessions::Model,
     redraft: bool,
+    extra: Option<&Value>,
 ) -> Result<Vec<StoredBlock>, AppError> {
     let plan = KickoffPlan::new(session::kind_of(session), redraft);
     let mut blocks = Vec::new();
     for key in plan.blocks() {
-        let context = block_context(conn, prompts, session, plan, key).await?;
+        let context = block_context(conn, prompts, session, plan, key, extra).await?;
         let rendered = prompts
             .render_value(key, crate::prompts::template_value(&context))
             .map_err(|err| err.into_app_error())?;
@@ -162,6 +163,7 @@ async fn block_context(
     session: &agent_sessions::Model,
     plan: KickoffPlan,
     key: &str,
+    extra: Option<&Value>,
 ) -> Result<Value, AppError> {
     match key {
         "block.settings" => Ok(json!({
@@ -224,9 +226,11 @@ async fn block_context(
             "book": book_context(conn, prompts, session.book_id).await?,
             "track": track_context(conn, prompts, session.track_id).await?,
             "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
-            "prior": Value::Null,
+            "prior": prior_report_context(conn, prompts, session, extra).await?,
         })),
         "archivist.kickoff.maintenance" => Ok(json!({
+            "book": book_context(conn, prompts, session.book_id).await?,
+            "track": track_context(conn, prompts, session.track_id).await?,
             "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
         })),
         "archivist.kickoff.seed" => Ok(json!({
@@ -234,6 +238,8 @@ async fn block_context(
             "settings": settings_context(conn, session.book_id).await?,
         })),
         "archivist.kickoff.resync" => Ok(json!({
+            "book": book_context(conn, prompts, session.book_id).await?,
+            "track": track_context(conn, prompts, session.track_id).await?,
             "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
         })),
         other => Err(AppError::internal(format!(
@@ -606,6 +612,36 @@ async fn feedback_context(
     })
 }
 
+/// `prior` of `reviewer.kickoff` (spec/03 §6): the previous report a new re-review session
+/// replaces, with the author's comment from `pending_comment`.
+async fn prior_report_context(
+    conn: &impl ConnectionTrait,
+    prompts: &PromptSet,
+    session: &agent_sessions::Model,
+    extra: Option<&Value>,
+) -> Result<Value, AppError> {
+    let Some(report_id) = extra
+        .and_then(|value| value.get("prior_report_id"))
+        .and_then(Value::as_i64)
+    else {
+        return Ok(Value::Null);
+    };
+    let Some(report) = review_reports::Entity::find_by_id(report_id as i32)
+        .one(conn)
+        .await?
+    else {
+        return Ok(Value::Null);
+    };
+    let verdict = ReviewVerdict::from_str_opt(&report.verdict).unwrap_or(ReviewVerdict::Revise);
+    Ok(json!(PriorReportContext {
+        attempt: report.attempt,
+        verdict_label: prompts.label("verdict", verdict.as_str()),
+        summary: report.summary,
+        feedback: report.feedback,
+        comment: session.pending_comment.clone().unwrap_or_default(),
+    }))
+}
+
 /// Renders the stored `ReviewIssue[]` of a feedback row for `vars.feedback.issues`.
 pub fn render_issues(prompts: &PromptSet, raw: &str) -> Vec<FeedbackIssueContext> {
     let issues: Vec<json::ReviewIssue> = json::from_json_or_default(raw);
@@ -976,6 +1012,48 @@ async fn demo_hints(
             .unwrap_or_else(|| "en".to_owned()),
         None => "en".to_owned(),
     };
+    // The review attempt about to be written: a re-review carries a previous report, so its
+    // attempt is one more than the chapter's newest report (spec/04 §7.2).
+    let review_attempt = match session.chapter_id {
+        Some(chapter_id) => crate::db::entities::review_reports::Entity::find()
+            .filter(crate::db::entities::review_reports::Column::ChapterId.eq(chapter_id))
+            .order_by_desc(crate::db::entities::review_reports::Column::Attempt)
+            .one(conn)
+            .await?
+            .map(|row| row.attempt + 1)
+            .unwrap_or(1),
+        None => 1,
+    };
+    // The draft paragraphs let the Demo build a `replace_text` whose `old` occurs exactly once
+    // (D-077).
+    let draft = match session.chapter_id {
+        Some(chapter_id) => {
+            let chapter = chapters::Entity::find_by_id(chapter_id).one(conn).await?;
+            match chapter {
+                Some(chapter) => {
+                    let content: ChapterContent = json::from_json_or_default(&chapter.content);
+                    content
+                        .paragraphs
+                        .into_iter()
+                        .map(|paragraph| nekowriter_llm::DemoParagraph {
+                            pid: paragraph.pid,
+                            text: paragraph.text,
+                        })
+                        .collect()
+                }
+                None => Vec::new(),
+            }
+        }
+        None => Vec::new(),
+    };
+    let canon_mode = match session.track_id {
+        Some(track_id) => tracks::Entity::find_by_id(track_id)
+            .one(conn)
+            .await?
+            .map(|track| track.canon_mode)
+            .unwrap_or_else(|| "canon".to_owned()),
+        None => "canon".to_owned(),
+    };
     Ok(nekowriter_llm::DemoHints {
         kind: session.kind.clone(),
         phase: session.phase.clone(),
@@ -984,6 +1062,9 @@ async fn demo_hints(
         language,
         tools: frozen_tool_names(session),
         protagonist: protagonist_name(conn, session).await?,
+        review_attempt: review_attempt.max(1) as u32,
+        canon_mode,
+        draft,
     })
 }
 
@@ -1095,7 +1176,7 @@ pub async fn rollover(
                 "block.chapter_draft",
                 "writer.kickoff.rollover",
             ] {
-                let context = block_context(tx, &prompts, &parent, plan, key).await?;
+                let context = block_context(tx, &prompts, &parent, plan, key, None).await?;
                 let rendered = prompts
                     .render_value(key, crate::prompts::template_value(&context))
                     .map_err(|err| err.into_app_error())?;
@@ -1198,8 +1279,14 @@ pub async fn apply_completion(
                     .extend(super::completion::finish_draft(tx, session, call, chapter_id).await?);
             }
         }
-        // M6.2 owns the revision completion.
-        CompletionKind::Revision => {}
+        // `finish_revision` (M6.2, spec/05 §4): a revision version, then `in_review`.
+        CompletionKind::Revision => {
+            if let Some(chapter_id) = session.chapter_id {
+                events.extend(
+                    super::completion::finish_revision(tx, session, call, chapter_id).await?,
+                );
+            }
+        }
         // M6.1 owns the review report.
         CompletionKind::Review => {}
         // M6.3 owns the canon status.

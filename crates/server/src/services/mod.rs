@@ -14,6 +14,7 @@ pub mod characters;
 pub mod memory;
 pub mod prompts;
 pub mod providers;
+pub mod reviews;
 pub mod sessions;
 pub mod setting_docs;
 pub mod tracks;

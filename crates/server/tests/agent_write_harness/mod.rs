@@ -57,6 +57,7 @@ pub async fn start_writer_on(
             redraft,
             guidance: None,
             kickoff_extra: None,
+            pending_comment: None,
         },
     )
     .await

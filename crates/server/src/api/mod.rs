@@ -12,6 +12,7 @@ pub mod events;
 pub mod health;
 pub mod prompts;
 pub mod providers;
+pub mod reviews;
 pub mod sessions;
 pub mod settings_materials;
 pub mod tracks;
@@ -77,6 +78,13 @@ pub fn build_app(state: AppState) -> Router {
         .route("/chapters/{chapter_id}/write", post(chapters::write))
         .route("/chapters/{chapter_id}/submit", post(chapters::submit))
         .route("/chapters/{chapter_id}/approve", post(chapters::approve))
+        .route("/chapters/{chapter_id}/review", post(reviews::review))
+        .route("/chapters/{chapter_id}/send-back", post(reviews::send_back))
+        .route("/chapters/{chapter_id}/reviews", get(reviews::reports))
+        .route(
+            "/review-reports/{report_id}/rereview",
+            post(reviews::rereview),
+        )
         .route(
             "/chapters/{chapter_id}/versions",
             get(chapters::list_versions).post(chapters::create_version),

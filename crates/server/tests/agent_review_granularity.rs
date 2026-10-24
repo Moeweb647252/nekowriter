@@ -421,6 +421,7 @@ async fn revising_ignores_chapter_end_and_hints_at_finish_revision() {
             redraft: false,
             guidance: None,
             kickoff_extra: None,
+            pending_comment: None,
         },
     )
     .await
@@ -927,6 +928,7 @@ async fn revising_ignores_the_implied_chapter_end_of_chapter_mode() {
             redraft: false,
             guidance: None,
             kickoff_extra: None,
+            pending_comment: None,
         },
     )
     .await

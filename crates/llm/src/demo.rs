@@ -63,6 +63,24 @@ pub struct LangCorpus {
     pub revision_plan: String,
     #[serde(default)]
     pub revision_edit: String,
+    /// The reviewer's issue quote (spec/04 §7.2).
+    #[serde(default)]
+    pub review_quote: String,
+    /// The reviewer's concrete suggestion.
+    #[serde(default)]
+    pub review_suggestion: String,
+    /// The reviewer's consolidated feedback for the writer.
+    #[serde(default)]
+    pub review_feedback: String,
+    /// `update_entity`'s note during maintenance (a human-readable delta).
+    #[serde(default)]
+    pub entity_note: String,
+    #[serde(default)]
+    pub timeline_description: String,
+    #[serde(default)]
+    pub maintenance_report: String,
+    #[serde(default)]
+    pub proposal_rationale: String,
     #[serde(default)]
     pub summary_template: String,
     #[serde(default)]
@@ -297,12 +315,13 @@ pub fn choose_action(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
                 chapter_write_drafting(hints, lang)
             }
         }
-        // M4 writes drafting too; a revision plan and a revision arrive with M6.
+        // M4 writes drafting too; M6 owns the revision step (D-077).
         "chapter_revise" => chapter_revise_plan(hints, lang),
-        // M6: submit_review with one issue on `p2`.
-        "chapter_review" => text_plan(lang),
-        // M6: canon writes, one world-setting proposal, finish_maintenance.
-        "chapter_maintenance" | "chapter_resync" => text_plan(lang),
+        // M6.1: one issue on `p2` on the first attempt, a pass later (spec/04 §7.2).
+        "chapter_review" => chapter_review_plan(hints, lang),
+        // M6.3: canon writes, one world-setting proposal, finish_maintenance.
+        "chapter_maintenance" => maintenance_plan(hints, lang),
+        "chapter_resync" => resync_plan(hints, lang),
         // M9: create_entity per character design, then finish_maintenance.
         "canon_seed" => text_plan(lang),
         // M9 (conception) and M8 (research) arrive with their own milestones.
@@ -466,7 +485,9 @@ const DRAFTING_STEPS_BEFORE_COMPLETION: usize = 8;
 /// How many paragraphs the `chapter` granularity writes in one call (spec/04 §7.2 "~8").
 const MIN_CHAPTER_PARAGRAPHS: usize = 8;
 
-/// Revision planning: submit the plan (spec/04 §7.2 `chapter_revise`).
+/// Revision planning: submit the plan; thus revising: one `replace_text` and then finish
+/// (spec/04 §7.2). The `draft` hint carries the current paragraphs, so the `old` text is the
+/// first paragraph and is guaranteed to occur exactly once (D-077).
 fn chapter_revise_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
     if hints.phase == "revision_planning" {
         return DemoPlan {
@@ -477,16 +498,213 @@ fn chapter_revise_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
             ..DemoPlan::default()
         };
     }
-    // Revising: finish. M6 owns the revise flow end to end, and it is the milestone that can do a
-    // `replace_text` safely: the demo provider has no access to the chapter text, so a made-up
-    // `old` would always be a `text_not_found` error (spec/04 §7.2's "one replace_text on p1"
-    // belongs with the flow that reads the draft first).
+    // The first revising step rewrites one paragraph; every later step finishes. A withheld
+    // completion does not exist for revisions, so one finish is enough.
+    let step = hints.step_in_phase;
+    if step <= 1
+        && let Some(paragraph) = hints.draft.first()
+        && !paragraph.text.is_empty()
+        && !lang.revision_edit.is_empty()
+    {
+        return DemoPlan {
+            tools: vec![tool(
+                "replace_text",
+                json!({ "pid": paragraph.pid, "old": paragraph.text, "new": lang.revision_edit }),
+            )],
+            ..DemoPlan::default()
+        };
+    }
     DemoPlan {
         tools: vec![tool(
             "finish_revision",
             json!({ "summary": lang.revision_plan }),
         )],
         ..DemoPlan::default()
+    }
+}
+
+/// The reviewer: `revise` with one issue on `p2` on the first attempt, `pass` afterwards
+/// (spec/04 §7.2). `p2` may not exist in a short chapter; `submit_review` then drops the pid
+/// from the issue with a note (spec/05 §5).
+fn chapter_review_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
+    let pass = hints.review_attempt > 1;
+    let summary = if lang.review_summary.is_empty() {
+        lang.closing_message.clone()
+    } else {
+        lang.review_summary.clone()
+    };
+    let feedback = if lang.review_feedback.is_empty() {
+        summary.clone()
+    } else {
+        lang.review_feedback.clone()
+    };
+    let issues = if pass {
+        Vec::new()
+    } else {
+        vec![json!({
+            "severity": "minor",
+            "category": "prose",
+            "pids": ["p2"],
+            "quote": lang.review_quote,
+            "problem": lang.review_issue,
+            "suggestion": lang.review_suggestion,
+        })]
+    };
+    DemoPlan {
+        tools: vec![tool(
+            "submit_review",
+            json!({
+                "verdict": if pass { "pass" } else { "revise" },
+                "summary": summary,
+                "issues": issues,
+                "feedback": feedback,
+            }),
+        )],
+        ..DemoPlan::default()
+    }
+}
+
+/// The archivist after approval (spec/04 §7.2, spec/06 §6): appearances → protagonist state →
+/// timeline → summary → one world-setting proposal → `finish_maintenance`.
+///
+/// `step_in_phase` walks the sequence. When the book has no protagonist yet (a book created
+/// without conception and seeding), the archivist first creates the character entity it will
+/// record, so the required steps exist without a key. In an isolated track no setting proposal
+/// is made (spec/06 §6 step 9) and the shared protagonist's changes would be a track-local note;
+/// the demo skips the proposal only.
+fn maintenance_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
+    let target = hints
+        .protagonist
+        .clone()
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| {
+            lang.characters
+                .first()
+                .map(|character| character.name.clone())
+                .unwrap_or_default()
+        });
+    if target.is_empty() {
+        // No corpus character to anchor the canon steps: finish directly.
+        return DemoPlan {
+            tools: vec![tool(
+                "finish_maintenance",
+                json!({ "report": lang.maintenance_report }),
+            )],
+            ..DemoPlan::default()
+        };
+    }
+    let has_protagonist = hints
+        .protagonist
+        .as_deref()
+        .map(|name| !name.is_empty())
+        .unwrap_or(false);
+    let step = hints.step_in_phase as usize;
+    // Step 0 creates the entity when the book has no protagonist yet (no canon_seed in M6).
+    let (offset, create_first) = if has_protagonist {
+        (0, false)
+    } else {
+        (1, true)
+    };
+    if create_first && step == 0 {
+        let first = lang.characters.first().cloned().unwrap_or_default();
+        let mut arguments = json!({
+            "kind": "character",
+            "name": target,
+            "summary": first.summary,
+            "state": lang.entity_state,
+        });
+        if !first.role_label.is_empty() {
+            arguments["attributes"] = json!({ "role": first.role_label });
+        }
+        return DemoPlan {
+            tools: vec![tool("create_entity", arguments)],
+            ..DemoPlan::default()
+        };
+    }
+    if step < offset {
+        return DemoPlan::default();
+    }
+    let stage = step - offset;
+    let report = lang.maintenance_report.clone();
+    let tool_plan = match stage {
+        0 => tool(
+            "record_appearances",
+            json!({ "appearances": [ { "entity": target, "role": "pov" } ] }),
+        ),
+        1 => tool(
+            "update_entity",
+            json!({
+                "entity": target,
+                "state": lang.entity_state,
+                "note": lang.entity_note,
+            }),
+        ),
+        2 => tool(
+            "add_timeline_event",
+            json!({
+                "title": lang.timeline_title,
+                "description": lang.timeline_description,
+            }),
+        ),
+        3 => tool(
+            "set_chapter_summary",
+            json!({ "summary": lang.summary_template }),
+        ),
+        4 if hints.canon_mode != "isolated" => tool(
+            "propose_setting_change",
+            json!({
+                "target": "world",
+                "append": lang.proposal_text,
+                "rationale": lang.proposal_rationale,
+            }),
+        ),
+        _ => tool("finish_maintenance", json!({ "report": report })),
+    };
+    DemoPlan {
+        tools: vec![tool_plan],
+        ..DemoPlan::default()
+    }
+}
+
+/// The archivist after an author edit of official text (spec/06 §8): re-record appearances and
+/// the summary, then finish. The kickoff carries only the diff.
+fn resync_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
+    let target = hints
+        .protagonist
+        .clone()
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| {
+            lang.characters
+                .first()
+                .map(|character| character.name.clone())
+                .unwrap_or_default()
+        });
+    let report = lang.maintenance_report.clone();
+    if target.is_empty() {
+        return DemoPlan {
+            tools: vec![tool("finish_maintenance", json!({ "report": report }))],
+            ..DemoPlan::default()
+        };
+    }
+    match hints.step_in_phase {
+        0 => DemoPlan {
+            tools: vec![tool(
+                "record_appearances",
+                json!({ "appearances": [ { "entity": target, "role": "pov" } ] }),
+            )],
+            ..DemoPlan::default()
+        },
+        1 => DemoPlan {
+            tools: vec![tool(
+                "set_chapter_summary",
+                json!({ "summary": lang.summary_template }),
+            )],
+            ..DemoPlan::default()
+        },
+        _ => DemoPlan {
+            tools: vec![tool("finish_maintenance", json!({ "report": report }))],
+            ..DemoPlan::default()
+        },
     }
 }
 

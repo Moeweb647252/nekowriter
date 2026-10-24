@@ -703,6 +703,14 @@ technical decisions.
   target pid (or a Demo-only hint) could place the paragraph tools' ghosts exactly; that is a
   protocol change, not a UI one, so it is not done here.
 
+**M6 update (the deferral is closed)**: M6 passes the chapter's current paragraphs to the Demo
+provider through `demo_hints.draft` (pid and text, built in `agent/context` next to the other
+demo hints), so the `chapter_revise` revising step emits `replace_text` with one paragraph's
+full text as `old` — a string that by construction occurs exactly once — and `revision_edit` as
+`new`. A chapter with no known paragraph (an empty draft hint) falls back to `finish_revision`
+as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
+`crates/llm/tests/demo.rs` pins it. The original entry above is left as written.
+
 ## Open items (questions for the author)
 1. Confirm the reading of "this time it cannot be delegated to a lower-level review agent" as
    "the author judges the reviewer's report; no further delegation" (PROJECT §10.9).

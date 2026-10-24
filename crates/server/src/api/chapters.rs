@@ -88,9 +88,7 @@ pub async fn approve(
     State(state): State<AppState>,
     Path(chapter_id): Path<i32>,
 ) -> AppResult<Json<ApproveChapterResponse>> {
-    Ok(Json(
-        service::approve(state.db(), state.events(), chapter_id).await?,
-    ))
+    Ok(Json(service::approve(&state, chapter_id).await?))
 }
 
 /// `GET` and `POST /api/chapters/:id/versions`.

@@ -364,6 +364,25 @@ pub struct DemoHints {
     /// planning starts with `get_entity` on the protagonist *if any*).
     #[serde(default)]
     pub protagonist: Option<String>,
+    /// The review attempt the reviewer session is about to write: 1 for a first review, 2+ for a
+    /// re-review (spec/04 §7.2: the Demo revises on the first attempt and passes later).
+    #[serde(default)]
+    pub review_attempt: u32,
+    /// The track's canon mode (`canon` | `isolated`), so the Demo archivist does not propose
+    /// setting changes for an isolated side story (spec/06 §6).
+    #[serde(default)]
+    pub canon_mode: String,
+    /// The chapter's current paragraphs, so the Demo provider can build a `replace_text` whose
+    /// `old` occurs exactly once (spec/04 §7.2, D-077).
+    #[serde(default)]
+    pub draft: Vec<DemoParagraph>,
+}
+
+/// One paragraph of the chapter the Demo provider is working on (D-077).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DemoParagraph {
+    pub pid: String,
+    pub text: String,
 }
 
 /// A model advertised by the provider's model-list endpoint.

@@ -12,6 +12,9 @@ fn hints(kind: &str, phase: &str, language: &str) -> DemoHints {
         language: language.to_owned(),
         tools: Vec::new(),
         protagonist: None,
+        review_attempt: 1,
+        canon_mode: "canon".to_owned(),
+        draft: Vec::new(),
     }
 }
 
@@ -58,8 +61,6 @@ fn planning_submits_an_outline_in_the_book_language() {
 fn other_kinds_reply_with_text_for_now() {
     let provider = DemoProvider::new();
     for (kind, phase) in [
-        ("chapter_review", "none"),
-        ("chapter_maintenance", "none"),
         ("canon_seed", "none"),
         ("conception", "none"),
         ("research", "none"),
@@ -169,7 +170,133 @@ fn corpus_parses_for_both_languages() {
             !corpus.proposal_text.is_empty(),
             "{language}: proposal text"
         );
+        assert!(
+            !corpus.review_feedback.is_empty(),
+            "{language}: review feedback"
+        );
+        assert!(
+            !corpus.review_suggestion.is_empty(),
+            "{language}: review suggestion"
+        );
+        assert!(
+            !corpus.maintenance_report.is_empty(),
+            "{language}: maintenance report"
+        );
+        assert!(
+            !corpus.proposal_rationale.is_empty(),
+            "{language}: proposal rationale"
+        );
     }
+}
+
+/// spec/04 §7.2: the reviewer asks for a revision with one issue on `p2` on the first attempt and
+/// passes afterwards.
+#[test]
+fn reviewer_revises_on_the_first_attempt_and_passes_later() {
+    let provider = DemoProvider::new();
+    for language in ["zh-CN", "en"] {
+        let mut first = hints("chapter_review", "none", language);
+        first.review_attempt = 1;
+        let plan = choose_action(&first, provider.lang(Some(&first)));
+        assert_eq!(plan.tools.len(), 1, "{language}");
+        assert_eq!(plan.tools[0].1, "submit_review");
+        assert_eq!(plan.tools[0].2["verdict"], "revise");
+        assert_eq!(plan.tools[0].2["issues"][0]["pids"][0], "p2");
+
+        let mut second = first.clone();
+        second.review_attempt = 2;
+        let plan = choose_action(&second, provider.lang(Some(&second)));
+        assert_eq!(plan.tools[0].2["verdict"], "pass", "{language}");
+        assert_eq!(plan.tools[0].2["issues"], serde_json::json!([]));
+    }
+}
+
+/// D-077: the revising step rewrites the first draft paragraph by its exact text, so `old`
+/// occurs exactly once; without a draft hint it finishes directly.
+#[test]
+fn revising_rewrites_a_known_paragraph_then_finishes() {
+    use nekowriter_llm::types::DemoParagraph;
+    let provider = DemoProvider::new();
+    let mut revising = hints("chapter_revise", "revising", "zh-CN");
+    revising.step_in_phase = 1;
+    revising.draft = vec![DemoParagraph {
+        pid: "p1".to_owned(),
+        text: "第一段的原文，只出现一次。".to_owned(),
+    }];
+    let lang = provider.lang(Some(&revising));
+    let plan = choose_action(&revising, lang);
+    assert_eq!(plan.tools.len(), 1);
+    assert_eq!(plan.tools[0].1, "replace_text");
+    assert_eq!(plan.tools[0].2["pid"], "p1");
+    assert_eq!(plan.tools[0].2["old"], "第一段的原文，只出现一次。");
+    assert_eq!(plan.tools[0].2["new"], lang.revision_edit);
+
+    let mut finish = revising.clone();
+    finish.step_in_phase = 2;
+    let plan = choose_action(&finish, provider.lang(Some(&finish)));
+    assert_eq!(plan.tools[0].1, "finish_revision");
+
+    revising.draft.clear();
+    revising.step_in_phase = 1;
+    let plan = choose_action(&revising, provider.lang(Some(&revising)));
+    assert_eq!(
+        plan.tools[0].1, "finish_revision",
+        "without a known paragraph the demo never invents a `old` text"
+    );
+}
+
+/// spec/06 §6: the archivist walks appearances → state → timeline → summary → proposal →
+/// finish, and creates the character entity first when the book has no canon yet.
+#[test]
+fn maintenance_walks_the_procedure_and_skips_the_proposal_when_isolated() {
+    let provider = DemoProvider::new();
+    let mut hints = hints("chapter_maintenance", "none", "zh-CN");
+    hints.protagonist = Some("沈砚".to_owned());
+    let lang = provider.lang(Some(&hints));
+    let names: Vec<String> = (0..7)
+        .map(|step| {
+            let mut step_hints = hints.clone();
+            step_hints.step_in_phase = step;
+            choose_action(&step_hints, lang).tools[0].1.clone()
+        })
+        .collect();
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+    assert_eq!(
+        names,
+        vec![
+            "record_appearances",
+            "update_entity",
+            "add_timeline_event",
+            "set_chapter_summary",
+            "propose_setting_change",
+            "finish_maintenance",
+            "finish_maintenance",
+        ]
+    );
+    let update = {
+        let mut step_hints = hints.clone();
+        step_hints.step_in_phase = 1;
+        choose_action(&step_hints, lang).tools[0].2.clone()
+    };
+    assert_eq!(update["entity"], "沈砚");
+    assert!(
+        !update["state"].as_str().unwrap_or_default().is_empty(),
+        "the state update carries the corpus state"
+    );
+
+    // An isolated track never proposes a setting change (spec/06 §6 step 9).
+    let mut isolated = hints.clone();
+    isolated.canon_mode = "isolated".to_owned();
+    isolated.step_in_phase = 4;
+    let plan = choose_action(&isolated, lang);
+    assert_eq!(plan.tools[0].1, "finish_maintenance");
+
+    // Without a protagonist the demo creates the entity it will record first.
+    let mut no_protagonist = hints.clone();
+    no_protagonist.protagonist = None;
+    no_protagonist.step_in_phase = 0;
+    let plan = choose_action(&no_protagonist, lang);
+    assert_eq!(plan.tools[0].1, "create_entity");
 }
 
 /// spec/04 §7.2: planning looks the protagonist up first (when there is one), then submits a

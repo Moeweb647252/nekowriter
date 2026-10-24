@@ -53,6 +53,7 @@ impl Default for CreateSession {
             redraft: false,
             guidance: None,
             kickoff_extra: None,
+            pending_comment: None,
         }
     }
 }
@@ -75,6 +76,9 @@ pub struct CreateSession {
     pub guidance: Option<String>,
     /// Pre-rendered extra kickoff state (task blocks that depend on the caller's flow).
     pub kickoff_extra: Option<serde_json::Value>,
+    /// The author's re-review comment: `submit_review` copies it into the report's
+    /// `user_comment` and clears it (spec/03 §6, spec/05 §5).
+    pub pending_comment: Option<String>,
 }
 
 /// Creates a session (spec/03 §4) and spawns its runner. Returns the session id and any
@@ -95,7 +99,7 @@ pub async fn create(
 }
 
 /// The in-transaction part of [`create`].
-async fn create_inner(
+pub(crate) async fn create_inner(
     state: &AppState,
     tx: &sea_orm::DatabaseTransaction,
     input: CreateSession,
@@ -214,7 +218,7 @@ async fn create_inner(
         pause_requested: Set(0),
         held_tool_call_id: Set(None),
         base_content_version: Set(base_content_version),
-        pending_comment: Set(None),
+        pending_comment: Set(input.pending_comment.clone()),
         view_snapshot: Set(None),
         counters: Set(crate::db::json::to_json(&SessionCounters::default())
             .map_err(|err| AppError::internal(err.to_string()))?),
@@ -230,8 +234,14 @@ async fn create_inner(
     .await?;
 
     // 4. Kickoff: the block list of the kind, persisted as `seq 0`, kind `kickoff`.
-    let blocks =
-        crate::agent::context::assemble_kickoff(tx, &prompts, &session, input.redraft).await?;
+    let blocks = crate::agent::context::assemble_kickoff(
+        tx,
+        &prompts,
+        &session,
+        input.redraft,
+        input.kickoff_extra.as_ref(),
+    )
+    .await?;
     let kickoff = runner::insert_kickoff(tx, session.id, blocks).await?;
     events_for_new_session(&mut warnings, &session, &kickoff);
 

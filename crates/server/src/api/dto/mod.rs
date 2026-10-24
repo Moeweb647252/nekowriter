@@ -7,6 +7,7 @@ pub mod chapters;
 pub mod content_ops;
 pub mod prompts;
 pub mod providers;
+pub mod reviews;
 pub mod sessions;
 pub mod settings;
 pub mod settings_materials;
@@ -25,6 +26,10 @@ pub use chapters::{
 pub use content_ops::{ContentOp, ContentOpInput};
 pub use prompts::{
     PromptEntryDto, PromptSaveInput, PromptVariableDocDto, PromptVariableFieldDocDto,
+};
+pub use reviews::{
+    ChapterFeedbackDto, RereviewInput, ReviewReportDto, ReviewSessionResponse, ReviewsResponse,
+    SendBackInput,
 };
 pub use sessions::{
     DebugEchoDto, DebugEchoInput, MessageBlockDto, MessageDto, MessagePageDto, MessageWithCallsDto,
