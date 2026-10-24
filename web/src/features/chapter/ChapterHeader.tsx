@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next"
 import { useQueryClient } from "@tanstack/react-query"
 
 import { useApproveChapter, useSubmitChapter } from "@/api/hooks/chapters"
+import { WriteDialog } from "@/features/chapter/WriteDialog"
 import { useErrorToast, useWarningToasts } from "@/components/common/ErrorToast"
 import { StatusBadge } from "@/components/common/StatusBadge"
 import { WordCount } from "@/components/common/WordCount"
@@ -19,10 +20,18 @@ export type ChapterHeaderProps = {
   settings: BookSettings
   language: string
   onRename: (title: string) => void
+  /** Called with the new session id after the writer started (the panel focuses it). */
+  onWriterStarted?: (sessionId: number) => void
 }
 
 /** Name/status/actions of one chapter. */
-export function ChapterHeader({ chapter, settings, language, onRename }: ChapterHeaderProps) {
+export function ChapterHeader({
+  chapter,
+  settings,
+  language,
+  onRename,
+  onWriterStarted,
+}: ChapterHeaderProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const showError = useErrorToast()
@@ -31,6 +40,7 @@ export function ChapterHeader({ chapter, settings, language, onRename }: Chapter
   const approve = useApproveChapter(chapter.id, chapter.book_id)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(chapter.title)
+  const [writeOpen, setWriteOpen] = useState(false)
 
   const save = () => {
     setEditing(false)
@@ -97,6 +107,11 @@ export function ChapterHeader({ chapter, settings, language, onRename }: Chapter
         />
       </div>
       <div className="flex flex-wrap items-center gap-2">
+        {chapter.status === "planned" ? (
+          <Button size="sm" disabled={writeOpen} onClick={() => setWriteOpen(true)}>
+            {t("chapter:write")}
+          </Button>
+        ) : null}
         {canSubmit ? (
           <Button
             size="sm"
@@ -129,6 +144,15 @@ export function ChapterHeader({ chapter, settings, language, onRename }: Chapter
           </Button>
         ) : null}
       </div>
+      <WriteDialog
+        chapterId={chapter.id}
+        bookId={chapter.book_id}
+        settings={settings}
+        guidance={chapter.guidance}
+        open={writeOpen}
+        onOpenChange={setWriteOpen}
+        onStarted={(sessionId) => onWriterStarted?.(sessionId)}
+      />
     </header>
   )
 }

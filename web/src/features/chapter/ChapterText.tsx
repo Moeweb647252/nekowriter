@@ -4,10 +4,15 @@ import { useTranslation } from "react-i18next"
 import { AnimatePresence, motion } from "motion/react"
 
 import { useContentMutations } from "@/api/hooks/chapters"
+import { useResumeSession } from "@/api/hooks/sessions"
+import { GhostText, HoldBar } from "@/features/chapter/GhostText"
+import { useWriterState } from "@/features/chapter/useWriterState"
 import { useErrorToast } from "@/components/common/ErrorToast"
 import { EmptyState } from "@/components/common/EmptyState"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
+import { Lock } from "lucide-react"
+
 import type { ChapterDto } from "@/api/gen/ChapterDto"
 import type { ContentOpInput } from "@/api/gen/ContentOpInput"
 import { useChapterDoc } from "@/stores/chapterDoc"
@@ -39,6 +44,9 @@ export function ChapterText({
   const highlights = useChapterDoc((state) => state.highlights)
   const clearHighlight = useChapterDoc((state) => state.clearHighlight)
   const { patch, putText } = useContentMutations(chapter.id, bookId)
+  const resume = useResumeSession(bookId)
+  const writer = useWriterState(chapter, undefined)
+  const locked = writer.locked
 
   // The live count while typing; the server value is authoritative (spec/11 §8).
   const liveWords = useMemo(
@@ -68,11 +76,25 @@ export function ChapterText({
 
   return (
     <div className="mx-auto max-w-[42em]">
+      {locked ? (
+        <div
+          className="mb-3 flex items-center gap-2 rounded-md border border-status-running/40 bg-status-running/10 px-3 py-2 text-xs text-muted-foreground"
+          role="status"
+        >
+          <Lock className="size-3.5 shrink-0" aria-hidden="true" />
+          {t("chapter:locked_banner")}
+        </div>
+      ) : null}
       <div className="mb-4 flex items-center justify-between gap-2">
         <p className="text-xs text-muted-foreground">
           {t("chapter:live_words", { words: liveWords })}
         </p>
-        <Button size="sm" variant="outline" onClick={() => onFullTextOpenChange(true)}>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={locked}
+          onClick={() => onFullTextOpenChange(true)}
+        >
           {t("chapter:full_text_edit")}
         </Button>
       </div>
@@ -90,6 +112,7 @@ export function ChapterText({
                 highlight={highlights[paragraph.pid]?.kind}
                 onHighlightEnd={clearHighlight}
                 saving={patch.isPending}
+                locked={locked}
                 onSave={(text) => {
                   const ops: ContentOpInput[] = [{ op: "update", pid: paragraph.pid, text }]
                   patch.mutate({ base_version: version, ops }, { onError: showError })
@@ -109,6 +132,30 @@ export function ChapterText({
               />
             ))}
           </AnimatePresence>
+          <GhostText preview={writer.preview} />
+          {writer.held === undefined ? null : (
+            <HoldBar
+              outline={writer.heldOutline}
+              pids={writer.heldPids}
+              busy={resume.isPending}
+              onContinue={() => {
+                if (writer.session !== undefined) {
+                  resume.mutate(
+                    { sessionId: writer.session.id },
+                    { onError: showError },
+                  )
+                }
+              }}
+              onFeedback={(text) => {
+                if (writer.session !== undefined) {
+                  resume.mutate(
+                    { sessionId: writer.session.id, feedback: text },
+                    { onError: showError },
+                  )
+                }
+              }}
+            />
+          )}
         </div>
       )}
     </div>
@@ -122,6 +169,7 @@ type ParagraphProps = {
   onlyParagraph: boolean
   highlight?: "inserted" | "updated"
   saving: boolean
+  locked: boolean
   onHighlightEnd: (pid: string) => void
   onSave: (text: string) => void
   onInsertAfter: (text: string) => void
@@ -138,6 +186,7 @@ function Paragraph({
   onlyParagraph,
   highlight,
   saving,
+  locked,
   onHighlightEnd,
   onSave,
   onInsertAfter,
@@ -222,6 +271,9 @@ function Paragraph({
       transition={{ duration: 0.18 }}
       title={pid}
       onClick={() => {
+        if (locked) {
+          return
+        }
         setDraft(text)
         setEditing(true)
       }}

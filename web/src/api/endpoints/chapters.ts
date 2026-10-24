@@ -8,6 +8,8 @@ import type { ChapterDto } from "@/api/gen/ChapterDto"
 import type { ChapterPatch } from "@/api/gen/ChapterPatch"
 import type { ChapterVersionDto } from "@/api/gen/ChapterVersionDto"
 import type { ChapterVersionMetaDto } from "@/api/gen/ChapterVersionMetaDto"
+import type { ChapterWriteInput } from "@/api/gen/ChapterWriteInput"
+import type { ChapterWriteResponse } from "@/api/gen/ChapterWriteResponse"
 import type { ManualVersionInput } from "@/api/gen/ManualVersionInput"
 
 export function getChapter(chapterId: number): Promise<ChapterDto> {
@@ -34,6 +36,14 @@ export function putContentText(
   put: ChapterContentTextPut,
 ): Promise<ChapterContentResult> {
   return api.put<ChapterContentResult>(`/chapters/${chapterId}/content/text`, put)
+}
+
+/** `POST /chapters/:id/write` (spec/08 §1.1): start the writer session. */
+export function writeChapter(
+  chapterId: number,
+  input: ChapterWriteInput,
+): Promise<ChapterWriteResponse> {
+  return api.post<ChapterWriteResponse>(`/chapters/${chapterId}/write`, input)
 }
 
 export function submitChapter(chapterId: number): Promise<ChapterDto> {

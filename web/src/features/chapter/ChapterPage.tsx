@@ -1,6 +1,7 @@
 /** The chapter view (PROJECT §8.5, spec/11 §5.2). */
 import { useEffect, useState } from "react"
 import { useParams, useSearchParams } from "react-router"
+import { useQueryClient } from "@tanstack/react-query"
 import { useTranslation } from "react-i18next"
 
 import { useBook } from "@/api/hooks/books"
@@ -12,6 +13,7 @@ import { HistoryTab } from "@/features/chapter/HistoryTab"
 import { EmptyState } from "@/components/common/EmptyState"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { keys } from "@/api/keys"
 import { useChapterDoc } from "@/stores/chapterDoc"
 import { isUnspaced } from "@/lib/language"
 
@@ -23,6 +25,7 @@ export default function ChapterPage() {
   const bookId = Number(rawBookId)
   const chapterId = Number(rawChapterId)
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const book = useBook(bookId)
   const chapter = useChapter(chapterId)
@@ -75,6 +78,10 @@ export default function ChapterPage() {
         settings={book.data.settings}
         language={book.data.writing_language}
         onRename={(title) => patchChapter.mutate({ title })}
+        onWriterStarted={() => {
+          // The agent panel picks the chapter's open session from `open_sessions` (spec/10 §2.8).
+          void queryClient.invalidateQueries({ queryKey: keys.chapters.detail(chapterId) })
+        }}
       />
       <Tabs
         value={tab}
@@ -104,6 +111,7 @@ export default function ChapterPage() {
         <TabsContent value="outline" className="min-h-0 p-6">
           <OutlineTab
             chapter={document}
+            bookId={bookId}
             unspaced={unspaced}
             saving={patchChapter.isPending}
             onSave={(patch) => patchChapter.mutate(patch)}

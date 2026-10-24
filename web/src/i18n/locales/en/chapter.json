@@ -50,5 +50,20 @@
   "granularity.sentence": "Sentence",
   "granularity.paragraph": "Paragraph",
   "granularity.free": "Free",
-  "granularity.chapter": "Chapter"
+  "granularity.chapter": "Chapter",
+  "write_dialog.title": "Write this chapter",
+  "write_dialog.description": "The writer plans first, then drafts. You can pause, edit and give feedback at any point.",
+  "write_dialog.guidance": "What should this chapter do?",
+  "write_dialog.guidance_placeholder": "Optional. The writer reads this before planning.",
+  "write_dialog.pause_after_outline": "Pause after the outline",
+  "write_dialog.start": "Start writing",
+  "write_dialog.not_ready_title": "The previous chapter is not ready",
+  "write_dialog.not_ready_body": "Chapter {{number}} is {{status}} and its canon is {{canon}}. Writing anyway may leave this chapter inconsistent with it.",
+  "write_dialog.write_anyway": "Write anyway",
+  "locked_banner": "The writer is working — pause to edit.",
+  "hold.outline_label": "Paused after this outline",
+  "hold.text_label": "Paused after this change",
+  "hold.text_label_pids": "Paused after this change ({{pids}})",
+  "hold.approve_outline": "Approve outline",
+  "hold.request_changes": "Request changes"
 }

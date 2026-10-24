@@ -50,5 +50,20 @@
   "granularity.sentence": "句子",
   "granularity.paragraph": "段落",
   "granularity.free": "自由",
-  "granularity.chapter": "整章"
+  "granularity.chapter": "整章",
+  "write_dialog.title": "撰写本章",
+  "write_dialog.description": "写手先规划再写正文。你随时可以暂停、修改并给出意见。",
+  "write_dialog.guidance": "这一章要写成什么样？",
+  "write_dialog.guidance_placeholder": "可选。写手会在规划前读到这里。",
+  "write_dialog.pause_after_outline": "章纲写完后暂停",
+  "write_dialog.start": "开始写作",
+  "write_dialog.not_ready_title": "上一章还没有准备好",
+  "write_dialog.not_ready_body": "第 {{number}} 章目前是「{{status}}」，档案状态为「{{canon}}」。强行写作可能让本章与前文不一致。",
+  "write_dialog.write_anyway": "仍然写作",
+  "locked_banner": "写手正在写作，暂停后才能修改。",
+  "hold.outline_label": "暂停于这份章纲",
+  "hold.text_label": "暂停于这次修改",
+  "hold.text_label_pids": "暂停于这次修改（{{pids}}）",
+  "hold.approve_outline": "通过章纲",
+  "hold.request_changes": "提出修改"
 }

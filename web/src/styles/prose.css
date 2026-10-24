@@ -33,3 +33,40 @@
 .prose-editor-serif {
   font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
 }
+
+/* The ghost text of an in-flight `insert_text` (spec/11 §5.2): muted, with a blinking caret. */
+.ghost-text {
+  color: color-mix(in oklch, currentColor 45%, transparent);
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.ghost-caret {
+  display: inline-block;
+  width: 0.5ch;
+  margin-left: 1px;
+  border-left: 1px solid currentColor;
+  animation: ghost-blink 1s steps(2, start) infinite;
+}
+
+@keyframes ghost-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ghost-caret {
+    animation: none;
+  }
+}
+
+/* The hold bar under the paragraphs a held call touched (spec/11 §5.2). */
+.hold-bar {
+  margin-top: 0.75rem;
+  border: 1px solid var(--color-status-waiting);
+  border-radius: 0.5rem;
+  background: color-mix(in oklch, var(--color-status-waiting) 8%, transparent);
+  padding: 0.5rem 0.75rem;
+  text-indent: 0;
+}
