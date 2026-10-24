@@ -610,7 +610,7 @@ async fn recent_changes(
     Ok(items)
 }
 
-/// The stored target label of a change (spec/05 §1.5: entities render as `名字(#id)`).
+/// The stored target label of a change (spec/05 §1.5: entities render as `name(#id)`).
 async fn change_target(
     conn: &impl ConnectionTrait,
     change: &change_log::Model,

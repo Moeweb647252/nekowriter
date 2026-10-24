@@ -1,7 +1,8 @@
 //! Relation service (spec/06 §1.2, §2, §3; spec/05 §6 `set_relation` / `end_relation`).
 //!
-//! Relations are **directed**: `kind` says what the source is to the target ("林凡 是 张三 的 师兄"),
-//! and `inverse_kind` says what the target is to the source ("师弟"). Several relations of
+//! Relations are **directed**: `kind` says what the source is to the target (source Lin Fan,
+//! target Zhang San, kind "senior fellow disciple"), and `inverse_kind` says what the target is to
+//! the source ("junior fellow disciple"). Several relations of
 //! different kinds may exist between one pair, but only one **active** relation per
 //! `(source, target, kind)` in shared canon — and one per isolated track (the partial unique
 //! indexes of `0001_init.sql`). Ending a relation keeps the row (`status = ended`,

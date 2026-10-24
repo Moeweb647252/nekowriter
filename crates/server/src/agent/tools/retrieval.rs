@@ -426,7 +426,8 @@ impl ToolHandler for GetEntityTool {
                         .unwrap_or_default(),
                     entity_ref(&entity),
                     if row.inverse_kind.is_empty() {
-                        // "张三 是 林凡 的 师兄" when no inverse wording exists (spec/06 §1.2).
+                        // The forward kind is the fallback phrasing when no inverse wording
+                        // exists (spec/06 §1.2).
                         row.kind.clone()
                     } else {
                         row.inverse_kind.clone()

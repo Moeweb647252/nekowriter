@@ -61,9 +61,10 @@ export function useChapterIndex(tracks: TrackDto[] | undefined): ChapterIndex {
 export type Translate = (key: string, options?: Record<string, unknown>) => string
 
 /**
- * Renders a chapter id as its label: `第12章` for the main track and `番外《轨道名》第2章` for a
- * side track (spec/06 §2, spec/05 §1.5). A reference whose chapter row is gone falls back to the
- * id, so a change log entry never shows a made-up number.
+ * Renders a chapter id as its label: "chapter 12" for the main track and a side-story label with
+ * the track's title for a side track (spec/06 §2, spec/05 §1.5 — the wording lives in the locale
+ * files). A reference whose chapter row is gone falls back to the id, so a change log entry never
+ * shows a made-up number.
  */
 export function chapterRefLabel(
   t: Translate,
