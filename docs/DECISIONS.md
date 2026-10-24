@@ -589,6 +589,92 @@ technical decisions.
   milestone gives the Demo provider a view of the draft, the deferred step can be added by
   extending `chapter_revise_plan` in `crates/llm/src/demo.rs` without touching any other decision.
 
+### D-078 Canon reads and writes share one visibility helper
+- **Context**: spec/06 §2 states the rule as `track_id IS NULL OR track_id = T`, and M5 has to
+  apply it to seven canon tables from three callers (the author's API, the agent tools, the memory
+  snapshot). Spreading the condition over each query is how one of them eventually forgets the
+  `track_id` clause.
+- **Decision**: `services/canon::Visibility` owns the rule (`visible_condition`, `sees`,
+  `may_modify`, `new_row_track`), and `services/canon::CanonWrite` pairs a visibility with the
+  actor, session and chapter a change belongs to. Every canon read that feeds a model goes through
+  `Visibility`; every canon write goes through `CanonWrite`, which raises
+  `error.isolated_readonly` for a shared row. The author's API uses `CanonWrite::author()`, whose
+  visibility is `None` and therefore unrestricted.
+- **Consequences**: one place to change if spec/06 §2 ever grows another clause, and the isolated
+  rule is unit- and service-tested once instead of per table. `error.isolated_readonly` is a tool
+  error code (spec/09 §2), so the canon services keep it as a distinct
+  `CanonError::IsolatedReadonly` variant that survives the `Db::write` boundary; the HTTP layer
+  maps it to `400 validation.failed`, which the author's UI can never trigger.
+
+### D-079 A revert change carries the inverse operation, not a copy of the original
+- **Context**: spec/06 §3 says a revert is itself a change with `reverts_id` and that the original
+  gets `reverted_by_id`, but it does not say which `op`/`target_id` the revert row carries.
+- **Decision**: the revert row records the operation it performed on the target: `delete` for the
+  revert of a `create`, `update` for the revert of an `update`, and `create` for the revert of a
+  `delete` — the last with the **new** `target_id` the recreated row got, so the row points at the
+  entity that now exists (spec/02 §5.10). `before`/`after` describe that operation like any other
+  change's, so the Changes page diffs a revert exactly as it diffs the original.
+- **Consequences**: `later_change_ids` of `change.not_latest` and the UI's Revert button work on
+  one consistent notion of "the target's changes"; a reverted delete's change row points at the
+  recreated id, which is what a reader needs to follow the entity. Reverting a revert is refused
+  (`400 validation.failed`): the spec's "only the latest change" rule plus `reverts_id` already
+  says the way back is to change the row again.
+
+### D-080 Appearance bounds are recomputed from appearances, never patched
+- **Context**: D-059 requires `first_chapter_id`/`last_chapter_id` to be recomputed whenever a
+  chapter's appearance set changes (including reverts, merges and chapter deletes), and a shared
+  entity counts only shared-canon chapters.
+- **Decision**: one function, `canon::entity::recompute_bounds(book, entity_ids)`, reads every
+  appearance of the affected entities and rewrites both columns from (track `ord`, chapter `ord`),
+  skipping non-shared chapters for a shared entity. Callers pass the union of the old and new
+  appearance sets, so an entity that *left* a chapter loses its bound too. Chapter delete reads the
+  chapter's entity ids before the cascade and calls it; a merge calls it for the surviving entity.
+- **Consequences**: bounds are always derivable from the appearances table, so a hand-edited
+  database or a partial failure cannot leave a stale bound behind. The cost is one query per
+  affected entity per appearance-set write, which is bounded by the chapter's cast (tens of rows).
+
+### D-081 The memory snapshot's caps and the "important" threshold
+- **Context**: spec/06 §4 gives explicit caps for most lists (40 changes, 30 appearance rows, 20
+  open items, 15 key notes, 40 cast rows) but not for `absent_important`, and it says "important"
+  without a number.
+- **Decision**: `IMPORTANT = 4` (spec/06 §1.1's "major" and above) gates `absent_important`,
+  `key_notes` and `open_foreshadowing`; `absent_important` is capped at 10. `key_notes` keeps only
+  `fact` and `world_rule` rows (never `other`), as §4.4 names those two kinds, and it keeps the
+  highest importance first. `open_foreshadowing` lists every open item regardless of importance
+  (the spec's own wording is "unresolved foreshadowing", and §4.4 gives the ordering, not a
+  threshold).
+- **Consequences**: the caps are constants in `services/memory.rs` with the spec section in their
+  doc comments, so a reviewer can check them against §4.3–§4.4 in one place; a test asserts each
+  one at its boundary. If the author wants `other` notes in the key-notes list, it is one `is_in`
+  clause.
+
+### D-082 The Memory page renders every part, so its block.memory always shows the outline
+- **Context**: spec/06 §4.2 says `block.memory` leaves the chapter outline out when the kickoff
+  already shows it, and spec/10 §2.4 makes `GET /books/:id/memory` return the exact `block.memory`
+  text. The Memory page has no `block.chapter_draft` beside it, so nothing else would render the
+  outline there.
+- **Decision**: the endpoint renders `block.memory` with the chapter's outline included; only a
+  real kickoff blanks it, through `KickoffPlan::renders_outline_elsewhere`. `GET
+  /books/:id/memory` is therefore "what the block would say for this position", not "what some
+  particular session's kickoff says".
+- **Consequences**: the Memory page shows the author the whole context, including the outline the
+  writer will receive from its own task block. A test asserts both branches: a review kickoff (which
+  has `block.chapter_draft`) does not repeat the outline, and a write kickoff of a chapter with no
+  draft carries it.
+
+### D-083 Retrieval tools read canon through the services, and the anchor marker is shared code
+- **Context**: spec/05 §3's six retrieval tools could query the tables directly, and the
+  "after the anchor" marker of spec/06 §2 is needed by four of them while `block.anchor` itself
+  arrives with M10.
+- **Decision**: every tool resolves entities through `EntityResolver` (spec/05 §1.7) and reads
+  through `services/canon`, so the visibility rule is the same one the writer's memory uses. The
+  anchor marker is one helper in `agent/tools/retrieval.rs` (`is_after_anchor`), computed from the
+  session track's `anchor_kind`/`anchor_chapter_id` and a chapter's (track, ord).
+- **Consequences**: a change to the visibility or label rules reaches the tools automatically, and
+  the marker is ready for M10 to reuse from `block.anchor` by moving the helper rather than
+  rewriting it. `list_entities` sorts in Rust after the query (the spec's "importance desc, last
+  appearance desc" order) because SQLite's NULL ordering would put never-seen entities first.
+
 ## Open items (questions for the author)
 1. Confirm the reading of "this time it cannot be delegated to a lower-level review agent" as
    "the author judges the reviewer's report; no further delegation" (PROJECT §10.9).
