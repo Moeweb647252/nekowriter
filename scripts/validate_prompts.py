@@ -336,7 +336,7 @@ error_cases = [
   dict(code="seed_only", tool="create_entity", field="is_protagonist"), dict(code="exactly_one", fields=["edits", "append", "character"]),
   dict(code="mutually_exclusive", fields=["content", "edits"]), dict(code="mutually_exclusive", fields=["move_after", "move_before"]),
   dict(code="tool_not_allowed", tool="get_entity", phase_label="正文阶段", allowed=["insert_text"]), dict(code="output_truncated"),
-  dict(code="after_completion"), dict(code="internal"),
+  dict(code="after_completion"), dict(code="refusal"), dict(code="internal"),
 ]
 variants["result.error"] = error_cases
 

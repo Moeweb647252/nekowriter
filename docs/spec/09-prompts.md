@@ -81,7 +81,9 @@ escaping.
 `search_not_configured`, `search_failed`, `fetch_failed`, `unsupported_content_type`,
 `character_not_found`, `character_exists`, `reorder_mismatch`, `relation_not_found`,
 `seed_only`, `exactly_one`, `mutually_exclusive`, `tool_not_allowed`, `output_truncated`,
-`after_completion`, and anything else → the internal-error text. The fields per code are in
+`after_completion`, `refusal`, and anything else → the internal-error text. `refusal` is not a
+tool failure: it is the provider refusing the turn, so the calls of that response are finished
+unexecuted and the text says so; a model may retry the same call after revising its input. The fields per code are in
 the sample contexts of `scripts/validate_prompts.py` and must match the Rust `ToolErrorKind`
 enum (one variant per code).
 

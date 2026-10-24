@@ -858,7 +858,7 @@ async fn refuse_batch(
                 return Ok(events);
             };
             // The refusal text is the model-facing explanation of *why* the call was not run.
-            let text = ToolOutcome::error(&prompts, &ToolError::new(ToolErrorKind::Internal)).text;
+            let text = ToolOutcome::error(&prompts, &ToolError::new(ToolErrorKind::Refusal)).text;
             for call in calls_of(tx, last.id).await? {
                 if !matches!(
                     ToolCallStatus::from_str_opt(&call.status),

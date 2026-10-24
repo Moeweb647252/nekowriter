@@ -90,6 +90,8 @@ pub enum ToolErrorKind {
     ToolNotAllowed,
     OutputTruncated,
     AfterCompletion,
+    /// The provider refused the turn; its calls are finished unexecuted (spec/03 §5.5).
+    Refusal,
     /// Anything else: `result.error` falls back to its internal-error text.
     Internal,
 }
@@ -131,6 +133,7 @@ impl ToolErrorKind {
             ToolErrorKind::ToolNotAllowed => "tool_not_allowed",
             ToolErrorKind::OutputTruncated => "output_truncated",
             ToolErrorKind::AfterCompletion => "after_completion",
+            ToolErrorKind::Refusal => "refusal",
             ToolErrorKind::Internal => "internal",
         }
     }
@@ -408,6 +411,7 @@ mod tests {
             ToolErrorKind::ToolNotAllowed,
             ToolErrorKind::OutputTruncated,
             ToolErrorKind::AfterCompletion,
+            ToolErrorKind::Refusal,
             ToolErrorKind::Internal,
         ]
         .iter()
