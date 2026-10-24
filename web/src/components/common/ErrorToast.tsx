@@ -20,6 +20,20 @@ export function useErrorToast() {
   }
 }
 
+/**
+ * Reports mutation `warnings` (codes, spec/10 §1) as localized toasts: the operation succeeded,
+ * so this is a warning rather than an error — e.g. a chapter approves but canon stays `pending`
+ * because no archivist model is configured.
+ */
+export function useWarningToasts() {
+  const { t } = useTranslation()
+  return (warnings: string[]) => {
+    for (const code of warnings) {
+      toast.warning(t(`errors:${code}`, { defaultValue: code }))
+    }
+  }
+}
+
 /** Localizes one error code. */
 export function errorMessage(t: (key: string, options?: unknown) => string, error: ApiError): string {
   return t(`errors:${error.code}`, { defaultValue: error.message })

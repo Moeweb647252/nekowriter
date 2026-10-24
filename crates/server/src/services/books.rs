@@ -1,6 +1,7 @@
 //! Book service: create (with the main track and the three setting documents), read, patch
 //! (archive), delete, and the overview (spec/08 §1.3, §5, §7; spec/02 §5 invariants 1–2).
 
+use super::field_error;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder,
     QuerySelect, Set,
@@ -47,11 +48,14 @@ pub async fn create_inner(
 ) -> Result<(CreateBookResponse, Vec<ServerEvent>), AppError> {
     let title = input.title.trim();
     if title.is_empty() {
-        return Err(AppError::validation("a book needs a title"));
+        return Err(field_error("title", "a book needs a title"));
     }
     let language = input.writing_language.trim();
     if language.is_empty() {
-        return Err(AppError::validation("a writing language is required"));
+        return Err(field_error(
+            "writing_language",
+            "a writing language is required",
+        ));
     }
     validate_language(language)?;
 
@@ -463,9 +467,10 @@ pub fn validate_language(language: &str) -> Result<(), AppError> {
     if valid {
         Ok(())
     } else {
-        Err(AppError::validation(format!(
-            "writing_language must be a BCP-47 tag such as zh-CN or en, got {language:?}"
-        )))
+        Err(field_error(
+            "writing_language",
+            format!("writing_language must be a BCP-47 tag such as zh-CN or en, got {language:?}"),
+        ))
     }
 }
 

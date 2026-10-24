@@ -80,6 +80,17 @@ pub(crate) fn conflict(code: ErrorCode, message: impl Into<String>, details: Val
     AppError::new(code, message).with_details(details)
 }
 
+/// Builds a `validation.failed` error naming the offending field (spec/10 §4 `details.fields`).
+///
+/// The UI localizes the code and uses the field name to point at the control, so every input
+/// validation in the services goes through this helper.
+pub(crate) fn field_error(field: &str, message: impl Into<String>) -> AppError {
+    AppError::invalid_fields(serde_json::Map::from_iter([(
+        field.to_owned(),
+        Value::String(message.into()),
+    )]))
+}
+
 /// The id of a running writer session for a chapter, if any (spec/08 §1.4 locking).
 pub(crate) async fn running_writer_session(
     conn: &impl ConnectionTrait,

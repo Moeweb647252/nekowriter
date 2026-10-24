@@ -5,8 +5,8 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 
 use crate::api::dto::chapters::{
-    ChapterContentPatch, ChapterContentResult, ChapterContentTextPut, ChapterDto, ChapterPatch,
-    ChapterVersionDto, ChapterVersionMetaDto, ManualVersionInput,
+    ApproveChapterResponse, ChapterContentPatch, ChapterContentResult, ChapterContentTextPut,
+    ChapterDto, ChapterPatch, ChapterVersionDto, ChapterVersionMetaDto, ManualVersionInput,
 };
 use crate::db::json::ChangeActor;
 use crate::error::AppResult;
@@ -72,11 +72,11 @@ pub async fn submit(
     ))
 }
 
-/// `POST /api/chapters/:id/approve`.
+/// `POST /api/chapters/:id/approve` (spec/10 §2.2).
 pub async fn approve(
     State(state): State<AppState>,
     Path(chapter_id): Path<i32>,
-) -> AppResult<Json<ChapterDto>> {
+) -> AppResult<Json<ApproveChapterResponse>> {
     Ok(Json(
         service::approve(state.db(), state.events(), chapter_id).await?,
     ))

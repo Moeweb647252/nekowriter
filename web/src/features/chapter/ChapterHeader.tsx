@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next"
 import { useQueryClient } from "@tanstack/react-query"
 
 import { useApproveChapter, useSubmitChapter } from "@/api/hooks/chapters"
-import { useErrorToast } from "@/components/common/ErrorToast"
+import { useErrorToast, useWarningToasts } from "@/components/common/ErrorToast"
 import { StatusBadge } from "@/components/common/StatusBadge"
 import { WordCount } from "@/components/common/WordCount"
 import { Button } from "@/components/ui/button"
@@ -26,6 +26,7 @@ export function ChapterHeader({ chapter, settings, language, onRename }: Chapter
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const showError = useErrorToast()
+  const showWarnings = useWarningToasts()
   const submit = useSubmitChapter(chapter.id, chapter.book_id)
   const approve = useApproveChapter(chapter.id, chapter.book_id)
   const [editing, setEditing] = useState(false)
@@ -117,7 +118,12 @@ export function ChapterHeader({ chapter, settings, language, onRename }: Chapter
           <Button
             size="sm"
             disabled={approve.isPending}
-            onClick={() => approve.mutate(undefined, { onError: showError })}
+            onClick={() =>
+              approve.mutate(undefined, {
+                onSuccess: ({ warnings }) => showWarnings(warnings),
+                onError: showError,
+              })
+            }
           >
             {t("chapter:approve")}
           </Button>

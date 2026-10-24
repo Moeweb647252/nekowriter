@@ -197,13 +197,16 @@ async fn ensure_no_main(conn: &impl ConnectionTrait, book_id: i32) -> Result<(),
     let existing = tracks::Entity::find()
         .filter(tracks::Column::BookId.eq(book_id))
         .filter(tracks::Column::Kind.eq(TrackKind::Main.as_str()))
-        .count(conn)
+        .one(conn)
         .await?;
-    if existing > 0 {
+    if let Some(row) = existing {
+        // `conflict.exists` documents `details.id` (spec/10 §4): the id of the row that holds the
+        // name, so the UI can link to it instead of guessing.
         return Err(AppError::conflict(
             crate::error::ErrorCode::ConflictExists,
             "the book already has a main track",
-        ));
+        )
+        .with_details(serde_json::json!({ "id": row.id })));
     }
     Ok(())
 }

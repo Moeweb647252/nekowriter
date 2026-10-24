@@ -3,6 +3,7 @@ import { api } from "@/api/client"
 import type { ChapterContentPatch } from "@/api/gen/ChapterContentPatch"
 import type { ChapterContentResult } from "@/api/gen/ChapterContentResult"
 import type { ChapterContentTextPut } from "@/api/gen/ChapterContentTextPut"
+import type { ApproveChapterResponse } from "@/api/gen/ApproveChapterResponse"
 import type { ChapterDto } from "@/api/gen/ChapterDto"
 import type { ChapterPatch } from "@/api/gen/ChapterPatch"
 import type { ChapterVersionDto } from "@/api/gen/ChapterVersionDto"
@@ -39,8 +40,8 @@ export function submitChapter(chapterId: number): Promise<ChapterDto> {
   return api.post<ChapterDto>(`/chapters/${chapterId}/submit`)
 }
 
-export function approveChapter(chapterId: number): Promise<ChapterDto> {
-  return api.post<ChapterDto>(`/chapters/${chapterId}/approve`)
+export function approveChapter(chapterId: number): Promise<ApproveChapterResponse> {
+  return api.post<ApproveChapterResponse>(`/chapters/${chapterId}/approve`)
 }
 
 export function listVersions(chapterId: number): Promise<ChapterVersionMetaDto[]> {

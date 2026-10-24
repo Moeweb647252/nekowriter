@@ -5,9 +5,9 @@ use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder
 use std::collections::HashSet;
 
 use crate::api::dto::chapters::{
-    ChapterContentPatch, ChapterContentResult, ChapterContentTextPut, ChapterDto, ChapterInput,
-    ChapterListItemDto, ChapterPatch, ChapterReorderInput, ChapterVersionMetaDto,
-    ManualVersionInput,
+    ApproveChapterResponse, ChapterContentPatch, ChapterContentResult, ChapterContentTextPut,
+    ChapterDto, ChapterInput, ChapterListItemDto, ChapterPatch, ChapterReorderInput,
+    ChapterVersionMetaDto, ManualVersionInput,
 };
 use crate::db::entities::{chapter_versions, chapters, tracks};
 use crate::db::json::{
@@ -314,10 +314,21 @@ pub async fn reorder_inner(
         .map(|(index, _)| index)
         .collect();
     if remaining_official_positions != new_official_positions {
+        // `chapter.invalid_state` documents `details.status` (spec/10 §4); the ids of the
+        // chapters that may not move are the actionable part, so send both.
+        let status = if by_id
+            .values()
+            .any(|row| row.status == ChapterStatus::Official.as_str())
+        {
+            ChapterStatus::Official
+        } else {
+            ChapterStatus::Planned
+        };
         return Err(super::conflict(
             ErrorCode::ChapterInvalidState,
             "official chapters may not move, and no chapter may move before an official one",
             serde_json::json!({
+                "status": status.as_str(),
                 "official_chapter_ids": input
                     .ids
                     .iter()
@@ -439,6 +450,11 @@ pub async fn put_content_text_inner(
 }
 
 /// Persists a new content state: version + 1, word count, canon staleness and the SSE event.
+///
+/// A save that changes nothing is not a change: it must not bump `content_version` (that would
+/// invalidate every other tab's `base_version` and emit a pointless `chapter.content`), must not
+/// mark synced canon stale, and must not clear `tail_open`. The response echoes the unchanged
+/// state so the caller's optimistic-concurrency loop stays correct.
 async fn write_content(
     tx: &impl ConnectionTrait,
     existing: &chapters::Model,
@@ -448,6 +464,19 @@ async fn write_content(
     actor: ContentActor,
 ) -> Result<(ChapterContentResult, Vec<ServerEvent>), AppError> {
     use sea_orm::ActiveModelTrait;
+
+    let stored: ChapterContent = parse_json("chapters.content", &existing.content)?;
+    let unchanged = ops.is_empty() && stored == content;
+    if unchanged {
+        return Ok((
+            ChapterContentResult {
+                version: existing.content_version,
+                ops: Vec::new(),
+                word_count: existing.word_count,
+            },
+            Vec::new(),
+        ));
+    }
 
     let version = existing.content_version + 1;
     let timestamp = now();
@@ -590,19 +619,19 @@ pub async fn approve(
     db: &crate::db::Db,
     events: &crate::events::EventBus,
     chapter_id: i32,
-) -> Result<ChapterDto, AppError> {
-    let (dto, published) = super::write(db, move |tx| {
+) -> Result<ApproveChapterResponse, AppError> {
+    let (response, published) = super::write(db, move |tx| {
         Box::pin(async move { approve_inner(tx, chapter_id).await })
     })
     .await?;
     events.publish_all(published);
-    Ok(dto)
+    Ok(response)
 }
 
 pub async fn approve_inner(
     tx: &impl ConnectionTrait,
     chapter_id: i32,
-) -> Result<(ChapterDto, Vec<ServerEvent>), AppError> {
+) -> Result<(ApproveChapterResponse, Vec<ServerEvent>), AppError> {
     use sea_orm::ActiveModelTrait;
 
     let existing = load(tx, chapter_id).await?;
@@ -654,7 +683,13 @@ pub async fn approve_inner(
     let row = load(tx, chapter_id).await?;
     let dto = to_dto(&row)?;
     Ok((
-        dto.clone(),
+        ApproveChapterResponse {
+            chapter: dto.clone(),
+            maintenance_session_id: None,
+            // `auto_maintenance` starts a maintenance session in M3+; until then the canon simply
+            // stays `pending` and the author maintains it by hand.
+            warnings: Vec::new(),
+        },
         vec![
             ServerEvent::ChapterUpdated {
                 chapter: dto.list_item,

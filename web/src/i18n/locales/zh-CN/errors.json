@@ -25,5 +25,8 @@
   "provider.auth": "服务商拒绝了 API Key。",
   "provider.bad_request": "服务商拒绝了这次请求。",
   "prompt.template_invalid": "模板不合法。",
-  "research.invalid_state": "研究任务当前状态不允许这个操作。"
+  "research.invalid_state": "研究任务当前状态不允许这个操作。",
+  "conception.unavailable": "还没有配置构思模型，因此这本书没有启动构思。",
+  "context.large_kickoff": "这一章很长，智能体可能会超出上下文。",
+  "prompt.override_failed": "提示词覆盖没能生效，已改用默认提示词。"
 }

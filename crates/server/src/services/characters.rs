@@ -4,6 +4,7 @@
 //! important) and is renumbered on every create, delete and reorder. Every change writes a
 //! `change_log` row with `actor: user`.
 
+use super::field_error;
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, Set};
 use std::collections::HashSet;
 
@@ -51,7 +52,7 @@ pub async fn create_inner(
     super::setting_docs::ensure_editable(tx, book_id).await?;
     let name = input.name.trim();
     if name.is_empty() {
-        return Err(AppError::validation("a character needs a name"));
+        return Err(field_error("name", "a character needs a name"));
     }
     if let Some(existing) = find_by_name(tx, book_id, name).await? {
         return Err(super::conflict(
@@ -141,7 +142,7 @@ pub async fn update_inner(
     if let Some(name) = &patch.name {
         let name = name.trim();
         if name.is_empty() {
-            return Err(AppError::validation("a character needs a name"));
+            return Err(field_error("name", "a character needs a name"));
         }
         if name != existing.name
             && let Some(other) = find_by_name(tx, existing.book_id, name).await?
@@ -169,6 +170,12 @@ pub async fn update_inner(
     sea_orm::ActiveModelTrait::update(active, tx).await?;
     let row = load(tx, character_id).await?;
     let after = super::change_log::character_snapshot(&row);
+    // A patch that stores the same character is not a change: spec/06 §3 records one row per real
+    // change ("Every create, update, or delete"), so a no-op save writes neither a row nor an
+    // event. The DTO still comes back so the form can settle.
+    if before == after {
+        return Ok((to_dto(&row)?, Vec::new()));
+    }
     super::change_log::record(
         tx,
         super::change_log::NewChange {

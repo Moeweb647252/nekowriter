@@ -183,6 +183,12 @@ impl AppError {
         self
     }
 
+    /// Replaces the (English, log-facing) message the fallback display shows.
+    pub fn with_message(mut self, message: impl Into<String>) -> Self {
+        self.message = message.into();
+        self
+    }
+
     pub fn validation(message: impl Into<String>) -> Self {
         Self::new(ErrorCode::ValidationFailed, message)
     }
@@ -220,6 +226,11 @@ pub struct ErrorPayload {
     pub details: Option<Value>,
 }
 
+/// Set on responses built from an [`AppError`], so a later middleware can tell the documented
+/// envelope apart from an extractor's bare rejection (see `api::rewrite_extractor_rejection`).
+#[derive(Debug, Clone, Copy)]
+pub struct ErrorEnvelope;
+
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let status = self.code.status();
@@ -235,7 +246,9 @@ impl IntoResponse for AppError {
                 details: self.details,
             },
         };
-        (status, Json(body)).into_response()
+        let mut response = (status, Json(body)).into_response();
+        response.extensions_mut().insert(ErrorEnvelope);
+        response
     }
 }
 

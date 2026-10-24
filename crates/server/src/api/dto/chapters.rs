@@ -26,6 +26,21 @@ pub struct ChapterListItemDto {
     pub updated_at: DateTime<Utc>,
 }
 
+/// `POST /chapters/:id/approve` response (spec/10 §2.2).
+///
+/// `warnings` carries codes the UI localizes (spec/10 §1); with `auto_maintenance` on and no
+/// archivist model configured the chapter still becomes official, stays `canon_status = pending`
+/// and the response says `["model.missing_role"]` (spec/08 §1.1). `maintenance_session_id` is
+/// present once approval starts the maintenance session (M3+).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ApproveChapterResponse {
+    pub chapter: ChapterDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maintenance_session_id: Option<i32>,
+    pub warnings: Vec<String>,
+}
+
 /// `GET /chapters/:id` (spec/10 §2.8). `open_sessions` stays empty until M3.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]

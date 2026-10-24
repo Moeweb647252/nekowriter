@@ -167,6 +167,11 @@ pub fn build_app(state: AppState) -> Router {
     #[cfg(debug_assertions)]
     let api = api.route("/debug/sessions/echo", post(debug::echo));
 
+    // `Json<T>`'s own rejection produces a bare 422 with a plain-text body, which breaks the
+    // envelope contract of spec/10 §1/§4 (and the frontend's `ApiError`, spec/11 §4.1). Route the
+    // extractor rejections of the API subtree through `AppError` instead.
+    let api = api.layer(middleware::map_response(rewrite_extractor_rejection));
+
     Router::new()
         .nest("/api", api)
         .route("/", get(root_hint))
@@ -222,6 +227,51 @@ async fn host_origin_guard(request: Request, next: Next) -> Result<Response, App
     }
 
     Ok(next.run(request).await)
+}
+
+/// Turns an extractor rejection into the documented error envelope.
+///
+/// axum answers a missing/invalid JSON body or a malformed path parameter itself, with
+/// `422`/`400` and an empty body. spec/10 §1 fixes the shape of every error response to
+/// `{ error: { code, message, details } }`, so rewrite those responses in place: a body problem
+/// becomes `validation.failed` (400) with `details.fields`, matching the codes services raise.
+async fn rewrite_extractor_rejection(response: Response) -> Response {
+    if response.status().is_success() || response.status().is_redirection() {
+        return response;
+    }
+    if response
+        .extensions()
+        .get::<crate::error::ErrorEnvelope>()
+        .is_some()
+    {
+        return response;
+    }
+    let status = response.status();
+    if status != axum::http::StatusCode::UNPROCESSABLE_ENTITY
+        && status != axum::http::StatusCode::BAD_REQUEST
+        && status != axum::http::StatusCode::UNSUPPORTED_MEDIA_TYPE
+    {
+        return response;
+    }
+    let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .unwrap_or_default();
+    let detail = String::from_utf8_lossy(&body).trim().to_owned();
+    let message = match status {
+        axum::http::StatusCode::UNPROCESSABLE_ENTITY => "the request body is not valid JSON",
+        axum::http::StatusCode::UNSUPPORTED_MEDIA_TYPE => {
+            "the request body must be application/json"
+        }
+        _ => "the request is not valid",
+    };
+    let fields = if detail.is_empty() {
+        serde_json::Map::new()
+    } else {
+        serde_json::Map::from_iter([("body".to_owned(), serde_json::Value::String(detail))])
+    };
+    AppError::invalid_fields(fields)
+        .with_message(message)
+        .into_response()
 }
 
 /// A `Host` header value is allowed when its host part is loopback (any port).

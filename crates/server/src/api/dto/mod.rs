@@ -16,9 +16,9 @@ pub use books::{
     ChapterPointerDto, CreateBookResponse, StatusCountDto, TrackProgressDto,
 };
 pub use chapters::{
-    ChapterContentPatch, ChapterContentResult, ChapterContentTextPut, ChapterDto, ChapterInput,
-    ChapterListItemDto, ChapterPatch, ChapterReorderInput, ChapterVersionDto,
-    ChapterVersionMetaDto, ManualVersionInput,
+    ApproveChapterResponse, ChapterContentPatch, ChapterContentResult, ChapterContentTextPut,
+    ChapterDto, ChapterInput, ChapterListItemDto, ChapterPatch, ChapterReorderInput,
+    ChapterVersionDto, ChapterVersionMetaDto, ManualVersionInput,
 };
 pub use content_ops::{ContentOp, ContentOpInput};
 pub use prompts::{

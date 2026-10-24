@@ -352,9 +352,21 @@ async fn approve_creates_the_official_version_and_pends_canon() {
         .post(&format!("/api/chapters/{chapter_id}/approve"), json!({}))
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["status"], "official");
-    assert_eq!(body["canon_status"], "pending");
-    let official_version_id = body["official_version_id"]
+    // spec/10 §2.2: `{ chapter, maintenance_session_id?, warnings }`. A bare `ChapterDto` would
+    // lose the warnings the UI localizes.
+    let approved = body["chapter"].clone();
+    assert_eq!(approved["status"], "official");
+    assert_eq!(approved["canon_status"], "pending");
+    assert_eq!(
+        body["warnings"],
+        json!([]),
+        "M1 starts no maintenance session"
+    );
+    assert!(
+        body.get("maintenance_session_id").is_none(),
+        "the field is omitted until a maintenance session starts"
+    );
+    let official_version_id = approved["official_version_id"]
         .as_i64()
         .expect("official_version_id");
 
@@ -753,5 +765,281 @@ async fn a_full_text_save_that_reorders_paragraphs_emits_ops_that_reproduce_the_
         replay_ops(starting, &ops),
         stored,
         "replaying {ops:?} must produce the stored document"
+    );
+}
+
+#[tokio::test]
+async fn a_malformed_body_returns_the_documented_error_envelope() {
+    // spec/10 §1 fixes the shape of every error response to
+    // `{ error: { code, message, details } }`, and spec/11 §4.1 has the client parse exactly
+    // that envelope. A bare axum 422 with a plain-text body gives the UI no code to localize.
+    let app = TestApp::new().await;
+    let (_book_id, track_id) = book_with_track(&app).await;
+    let chapter = app.create_chapter(track_id, "ch").await;
+    let chapter_id = chapter["id"].as_i64().expect("chapter id") as i32;
+
+    let patch_path = format!("/api/chapters/{chapter_id}/content");
+    let put_path = format!("/api/chapters/{chapter_id}/content/text");
+    let cases = [
+        ("PATCH", &patch_path, json!({ "base_version": 0 })),
+        (
+            "PATCH",
+            &patch_path,
+            json!({ "base_version": 0, "ops": [{ "op": "bogus", "pid": "p1" }] }),
+        ),
+        ("PUT", &put_path, json!({ "base_version": 0, "text": 42 })),
+        (
+            "PATCH",
+            &patch_path,
+            json!({ "base_version": "not a number", "ops": [] }),
+        ),
+        (
+            "POST",
+            &format!("/api/chapters/{chapter_id}/submit"),
+            json!("not an object"),
+        ),
+    ];
+    for (method, path, body) in cases {
+        let (status, response) = if method == "PUT" {
+            app.put(path, body.clone()).await
+        } else if method == "POST" {
+            app.post(path, body.clone()).await
+        } else {
+            app.patch(path, body.clone()).await
+        };
+        if status.is_success() || status == StatusCode::CONFLICT {
+            // Rejected by the service instead of the extractor: already enveloped, and covered
+            // by the error-code tests above.
+            continue;
+        }
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "{body} should be a 400 with the error envelope, got {status}: {response}"
+        );
+        assert_error(&response, "validation.failed");
+        assert!(
+            response["error"]["details"]["fields"].is_object(),
+            "{body} needs details.fields (spec/10 §4), got {response}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn validation_errors_name_the_offending_field() {
+    // spec/10 §4 documents `details.fields` for `validation.failed`; without it the UI can only
+    // show a generic message instead of pointing at the control.
+    let app = TestApp::new().await;
+    let (status, body) = app
+        .post(
+            "/api/books",
+            json!({ "title": "   ", "writing_language": "en" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_error_detail(&body, "validation.failed", "fields");
+    assert!(
+        body["error"]["details"]["fields"]["title"].is_string(),
+        "the empty title is the offending field: {body}"
+    );
+
+    let (status, body) = app
+        .post(
+            "/api/books",
+            json!({ "title": "Book", "writing_language": "not a language" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_error_detail(&body, "validation.failed", "fields");
+    assert!(
+        body["error"]["details"]["fields"]["writing_language"].is_string(),
+        "the bad BCP-47 tag is the offending field: {body}"
+    );
+
+    let book = app.create_book("Book").await;
+    let book_id = book["id"].as_i64().expect("book id");
+    let (status, body) = app
+        .post(
+            &format!("/api/books/{book_id}/characters"),
+            json!({ "name": "  " }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_error_detail(&body, "validation.failed", "fields");
+    assert!(
+        body["error"]["details"]["fields"]["name"].is_string(),
+        "the empty name is the offending field: {body}"
+    );
+}
+
+#[tokio::test]
+async fn a_second_main_track_reports_the_existing_track_id() {
+    // spec/10 §4: `conflict.exists` carries `details.id`.
+    let app = TestApp::new().await;
+    let (book_id, track_id) = book_with_track(&app).await;
+    let (status, body) = app
+        .post(
+            &format!("/api/books/{book_id}/tracks"),
+            json!({ "kind": "main", "title": "Another" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_error_detail(&body, "conflict.exists", "id");
+    assert_eq!(
+        body["error"]["details"]["id"].as_i64(),
+        Some(i64::from(track_id)),
+        "the id points at the existing main track"
+    );
+}
+
+#[tokio::test]
+async fn a_rejected_reorder_reports_the_chapter_status() {
+    // spec/10 §4: `chapter.invalid_state` carries `details.status`.
+    let app = TestApp::new().await;
+    let (_book_id, track_id) = book_with_track(&app).await;
+    let first = app.create_chapter(track_id, "one").await;
+    let second = app.create_chapter(track_id, "two").await;
+    let first_id = first["id"].as_i64().expect("first id") as i32;
+    let second_id = second["id"].as_i64().expect("second id") as i32;
+    app.put_text(first_id, 0, "第一段。").await;
+    app.post(&format!("/api/chapters/{first_id}/submit"), json!({}))
+        .await;
+    app.post(&format!("/api/chapters/{first_id}/approve"), json!({}))
+        .await;
+
+    let (status, body) = app
+        .post(
+            &format!("/api/tracks/{track_id}/chapters/reorder"),
+            json!({ "ids": [second_id, first_id] }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_error_detail(&body, "chapter.invalid_state", "status");
+    assert_eq!(body["error"]["details"]["status"], "official");
+    assert_error_detail(&body, "chapter.invalid_state", "official_chapter_ids");
+}
+
+#[tokio::test]
+async fn a_no_op_content_save_changes_nothing() {
+    // A save that stores the same document is not a change: bumping `content_version` would
+    // invalidate every other tab's `base_version`, emit a pointless `chapter.content`, and — on
+    // an official chapter with synced canon — wrongly mark the canon stale (spec/08 §1.1).
+    let app = TestApp::new().await;
+    let (_book_id, track_id) = book_with_track(&app).await;
+    let chapter = app.create_chapter(track_id, "ch").await;
+    let chapter_id = chapter["id"].as_i64().expect("chapter id") as i32;
+    let (_, initial) = app
+        .put(
+            &format!("/api/chapters/{chapter_id}/content/text"),
+            json!({ "base_version": 0, "text": "one\n\ntwo" }),
+        )
+        .await;
+    let version = initial["version"].as_i64().expect("version");
+
+    // Identical full text.
+    let (status, result) = app
+        .put(
+            &format!("/api/chapters/{chapter_id}/content/text"),
+            json!({ "base_version": version, "text": "one\n\ntwo" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(result["version"], version, "the version must not move");
+    assert_eq!(result["ops"], json!([]));
+    assert_eq!(result["word_count"], 2);
+
+    // Empty op batch.
+    let (status, result) = app
+        .patch(
+            &format!("/api/chapters/{chapter_id}/content"),
+            json!({ "base_version": version, "ops": [] }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(result["version"], version, "the version must not move");
+    assert_eq!(result["ops"], json!([]));
+
+    let (_, after) = app.get(&format!("/api/chapters/{chapter_id}")).await;
+    assert_eq!(after["content_version"], version);
+
+    // On a synced official chapter a no-op save must not mark the canon stale.
+    app.post(&format!("/api/chapters/{chapter_id}/submit"), json!({}))
+        .await;
+    app.post(&format!("/api/chapters/{chapter_id}/approve"), json!({}))
+        .await;
+    app.mark_canon_synced(chapter_id).await;
+    let (_, official) = app.get(&format!("/api/chapters/{chapter_id}")).await;
+    assert_eq!(official["canon_status"], "synced");
+    let (status, _) = app
+        .put(
+            &format!("/api/chapters/{chapter_id}/content/text"),
+            json!({ "base_version": official["content_version"], "text": "one\n\ntwo" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, after) = app.get(&format!("/api/chapters/{chapter_id}")).await;
+    assert_eq!(after["canon_status"], "synced", "a no-op is not an edit");
+    assert_eq!(after["content_version"], official["content_version"]);
+}
+
+#[tokio::test]
+async fn a_no_op_character_save_writes_no_change_row() {
+    // spec/06 §3 records one `change_log` row per real change. A form that saves unchanged values
+    // is not a change, so it must write no row and emit no `settings.changed`.
+    let app = TestApp::new().await;
+    let book = app.create_book("Book").await;
+    let book_id = book["id"].as_i64().expect("book id");
+    let (_, character) = app
+        .post(
+            &format!("/api/books/{book_id}/characters"),
+            json!({ "name": "Alice", "summary": "The protagonist." }),
+        )
+        .await;
+    let character_id = character["id"].as_i64().expect("character id");
+    let (_, before) = app
+        .get(&format!(
+            "/api/books/{book_id}/changes?target_type=character_design"
+        ))
+        .await;
+    let rows_before = before["items"].as_array().expect("items").len();
+
+    // Re-send the same values (the form sends the whole patch).
+    let (status, body) = app
+        .patch(
+            &format!("/api/characters/{character_id}"),
+            json!({ "name": "Alice", "summary": "The protagonist.", "note": "no change" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["name"], "Alice");
+
+    let (_, after) = app
+        .get(&format!(
+            "/api/books/{book_id}/changes?target_type=character_design"
+        ))
+        .await;
+    assert_eq!(
+        after["items"].as_array().expect("items").len(),
+        rows_before,
+        "an unchanged save must not add a change row: {after}"
+    );
+
+    // A real change still records one.
+    let (status, _) = app
+        .patch(
+            &format!("/api/characters/{character_id}"),
+            json!({ "summary": "The narrator." }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, changed) = app
+        .get(&format!(
+            "/api/books/{book_id}/changes?target_type=character_design"
+        ))
+        .await;
+    assert_eq!(
+        changed["items"].as_array().expect("items").len(),
+        rows_before + 1,
+        "a real change records a row"
     );
 }

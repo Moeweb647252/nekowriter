@@ -47,7 +47,7 @@ export function useApproveChapter(chapterId: number, bookId: number) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: () => endpoints.approveChapter(chapterId),
-    onSuccess: (chapter) => {
+    onSuccess: ({ chapter }) => {
       queryClient.setQueryData(keys.chapters.detail(chapterId), chapter)
       void queryClient.invalidateQueries({ queryKey: keys.tracks.chapters(chapter.track_id) })
       void queryClient.invalidateQueries({ queryKey: keys.books.overview(bookId) })

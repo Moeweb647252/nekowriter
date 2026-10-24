@@ -25,5 +25,8 @@
   "provider.auth": "The provider rejected the API key.",
   "provider.bad_request": "The provider rejected the request.",
   "prompt.template_invalid": "The template is not valid.",
-  "research.invalid_state": "The research task is not in a state that allows this."
+  "research.invalid_state": "The research task is not in a state that allows this.",
+  "conception.unavailable": "No conception model is configured, so the book was created without it.",
+  "context.large_kickoff": "The chapter is long; the agent may run out of context.",
+  "prompt.override_failed": "A prompt override could not be used and the default was used instead."
 }
