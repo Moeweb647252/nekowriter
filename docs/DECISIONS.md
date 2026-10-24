@@ -675,6 +675,23 @@ technical decisions.
   rewriting it. `list_entities` sorts in Rust after the query (the spec's "importance desc, last
   appearance desc" order) because SQLite's NULL ordering would put never-seen entities first.
 
+### D-084 A preview ghost is placed by tool, not by target pid
+- **Context**: spec/11 §5.2 asks for an `insert_text` preview "appended to the open tail paragraph
+  or as a new paragraph", and for `insert_paragraphs` / `rewrite_paragraph` previews "under their
+  target pid" (spec/03 §12). The `session.tool_preview` event carries only
+  `{session_id, seq, call_index, name, field, delta}` (spec/10 §3): the target pid is an argument
+  the model is still generating, and the only place it becomes trustworthy is the persisted call,
+  which by definition exists after the preview is over.
+- **Decision**: the ghost is placed by tool. `insert_text` streams into the open tail paragraph when
+  the document's tail is open and as a new block otherwise, which matches where the call will
+  actually write (spec/05 §4). `insert_paragraphs` and `rewrite_paragraph` render as a block of
+  their own, and their tool card names the target pid, which is the same place the author reads
+  the result a moment later.
+- **Consequences**: no preview ever shows prose at a position the finished call does not write to,
+  and the ghost needs no state beyond the preview buffer. A future preview event that carried a
+  target pid (or a Demo-only hint) could place the paragraph tools' ghosts exactly; that is a
+  protocol change, not a UI one, so it is not done here.
+
 ## Open items (questions for the author)
 1. Confirm the reading of "this time it cannot be delegated to a lower-level review agent" as
    "the author judges the reviewer's report; no further delegation" (PROJECT §10.9).
