@@ -333,16 +333,12 @@ pub async fn create(state: &AppState, input: &ProviderInput) -> Result<ProviderD
         let validated = validated.clone();
         move |tx| {
             Box::pin(async move {
-                let exists = providers::Entity::find()
+                let existing = providers::Entity::find()
                     .filter(providers::Column::Name.eq(validated.name.clone()))
                     .one(tx)
-                    .await?
-                    .is_some();
-                if exists {
-                    return Err(AppError::new(
-                        ErrorCode::ConflictExists,
-                        format!("a provider named {} already exists", validated.name),
-                    ));
+                    .await?;
+                if let Some(existing) = existing {
+                    return Err(duplicate_provider_error(&validated.name, existing.id));
                 }
                 let now = chrono::Utc::now();
                 let active = providers::ActiveModel {
@@ -382,13 +378,9 @@ pub async fn update(
                     .filter(providers::Column::Name.eq(validated.name.clone()))
                     .filter(providers::Column::Id.ne(id))
                     .one(tx)
-                    .await?
-                    .is_some();
-                if duplicate {
-                    return Err(AppError::new(
-                        ErrorCode::ConflictExists,
-                        format!("a provider named {} already exists", validated.name),
-                    ));
+                    .await?;
+                if let Some(duplicate) = duplicate {
+                    return Err(duplicate_provider_error(&validated.name, duplicate.id));
                 }
                 let mut active: providers::ActiveModel = row.clone().into();
                 active.name = Set(validated.name.clone());
@@ -411,6 +403,16 @@ pub async fn update(
     })
     .await?;
     get(state.db().conn(), id).await
+}
+
+/// `409 conflict.exists` for a duplicate provider name (spec/10 §4: the code carries
+/// `details.id` of the row that holds the name, so the UI can point at it).
+fn duplicate_provider_error(name: &str, id: i32) -> AppError {
+    AppError::new(
+        ErrorCode::ConflictExists,
+        format!("a provider named {name} already exists"),
+    )
+    .with_details(serde_json::json!({ "id": id }))
 }
 
 /// `DELETE /api/providers/:id`. Model profiles cascade with the provider row (spec/02 §2).

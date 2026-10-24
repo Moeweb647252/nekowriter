@@ -157,6 +157,8 @@ export default function ModelsPage() {
                 <TableCell>
                   <Badge variant="secondary">{providerName(model.provider_id)}</Badge>
                 </TableCell>
+                {/* Grouping only: both supported locales format these the same, so this
+                    matches `formatNumber`; revisit when a locale is added (spec/11 §6). */}
                 <TableCell>{model.context_window.toLocaleString()}</TableCell>
                 <TableCell>{model.max_output_tokens.toLocaleString()}</TableCell>
                 <TableCell>

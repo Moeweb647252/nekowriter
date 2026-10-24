@@ -144,6 +144,60 @@ async fn demo_preset_is_hidden_when_the_demo_provider_is_disabled() {
 
 // ───────────────────────────── provider CRUD ─────────────────────────────
 
+/// `conflict.exists` carries `details.id` (spec/10 §4), so the UI can point at the row that
+/// already holds the name. Provider names were the one place that answered `details: null`.
+#[tokio::test]
+async fn a_duplicate_provider_name_reports_the_existing_id() {
+    let app = TestApp::new().await;
+    let first = create_demo_provider(&app).await;
+    let first_id = first["id"].as_i64().expect("id");
+
+    let (status, body) = app
+        .post(
+            "/api/providers",
+            json!({
+                "name": "Demo",
+                "protocol": "mock",
+                "base_url": "mock://demo",
+                "extra_headers": {},
+            }),
+        )
+        .await;
+    assert_eq!(status, 409, "{body}");
+    assert_error(&body, "conflict.exists");
+    assert_eq!(body["error"]["details"]["id"], first_id, "{body}");
+
+    // PATCH has the same rule, and must not count the row against itself.
+    let other = create_openai_provider(&app, "https://example.invalid/v1", "sk-test").await;
+    let other_id = other["id"].as_i64().expect("id");
+    let (status, body) = app
+        .patch(
+            &format!("/api/providers/{other_id}"),
+            json!({
+                "name": "Demo",
+                "protocol": "openai",
+                "base_url": "https://example.invalid/v1",
+                "extra_headers": {},
+            }),
+        )
+        .await;
+    assert_eq!(status, 409, "{body}");
+    assert_error(&body, "conflict.exists");
+    assert_eq!(body["error"]["details"]["id"], first_id, "{body}");
+    let (status, body) = app
+        .patch(
+            &format!("/api/providers/{other_id}"),
+            json!({
+                "name": "Test OpenAI",
+                "protocol": "openai",
+                "base_url": "https://example.invalid/v1",
+                "extra_headers": {},
+            }),
+        )
+        .await;
+    assert_eq!(status, 200, "a provider keeps its own name: {body}");
+}
+
 #[tokio::test]
 async fn provider_crud_masks_the_key_and_never_returns_it() {
     let app = TestApp::new().await;
@@ -449,6 +503,48 @@ async fn model_profile_crud_and_validation() {
             "options {options} must name the options field: {body}"
         );
     }
+
+    // Valid options survive a round trip unchanged, so the check above rejects only what the
+    // adapters cannot read and never normalizes a value the author set (spec/04 §5).
+    let full_options = json!({
+        "reasoning_replay": "always",
+        "reasoning_effort": "medium",
+        "max_tokens_field": "max_completion_tokens",
+        "send_parallel_tool_calls": false,
+        "stream_usage": false,
+        "temperature": 0.7,
+        "extra_body": { "top_k": 40 },
+        "effort": "xhigh",
+        "thinking_display": "omitted",
+        "cache_ttl": "1h",
+        "refusal_fallback": true,
+        "eager_input_streaming": false,
+    });
+    let (status, round_tripped) = app
+        .post(
+            "/api/model-profiles",
+            json!({
+                "provider_id": provider_id,
+                "display_name": "Every option",
+                "model": "demo-model",
+                "context_window": 1000,
+                "max_output_tokens": 100,
+                "options": full_options,
+            }),
+        )
+        .await;
+    assert_eq!(status, 201, "{round_tripped}");
+    assert_eq!(
+        round_tripped["options"], full_options,
+        "options must round-trip"
+    );
+    let (status, _body) = app
+        .delete(&format!(
+            "/api/model-profiles/{}",
+            round_tripped["id"].as_i64().expect("id")
+        ))
+        .await;
+    assert_eq!(status, 204);
 
     // Duplicate display name on the same provider.
     let (status, body) = app
