@@ -336,6 +336,88 @@ async fn midterm_changes_follow_the_story_order_across_tracks() {
     );
 }
 
+/// A `before_start` side story flags the protagonist's state when its newest change comes from
+/// the main story: every main chapter happens after that anchor, so the state may not apply yet
+/// (spec/06 §4.2) — and `get_entity` marks the same flag with the same rule.
+#[tokio::test]
+async fn a_before_start_side_story_flags_post_anchor_protagonist_state() {
+    let fixture = fixture().await;
+    fixture
+        .app
+        .execute(&format!(
+            "INSERT INTO tracks(book_id, kind, title, synopsis, canon_mode, anchor_kind, ord, \
+             created_at, updated_at) VALUES ({}, 'side', 'Past', '', 'isolated', 'before_start', \
+             1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            fixture.book_id
+        ))
+        .await;
+    let side_track = scalar_i64(
+        &fixture.app,
+        &format!(
+            "SELECT max(id) AS value FROM tracks WHERE book_id = {}",
+            fixture.book_id
+        ),
+    )
+    .await as i32;
+    let side_chapter = fixture.app.create_chapter(side_track, "Side one").await["id"]
+        .as_i64()
+        .expect("side chapter") as i32;
+
+    let protagonist = fixture.entity("Shen Yan", "character", 5).await;
+    let (status, _) = fixture
+        .app
+        .post(
+            &format!("/api/entities/{protagonist}/protagonist"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = fixture
+        .app
+        .patch(
+            &format!("/api/entities/{protagonist}"),
+            json!({ "state": "later in the main story", "note": "after the side story starts" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    fixture
+        .app
+        .execute(&format!(
+            "UPDATE change_log SET chapter_id = {} WHERE target_type = 'entity' AND \
+             target_id = {protagonist} AND note = 'after the side story starts'",
+            fixture.chapters[2]
+        ))
+        .await;
+
+    let snapshot = {
+        let state = fixture.app.state();
+        let prompts = state
+            .prompts()
+            .for_book(state.db(), Some(fixture.book_id))
+            .await
+            .expect("prompts");
+        let conn = state.db().conn();
+        let track = nekowriter::db::entities::tracks::Entity::find_by_id(side_track)
+            .one(conn)
+            .await
+            .expect("query")
+            .expect("track");
+        let chapter = nekowriter::db::entities::chapters::Entity::find_by_id(side_chapter)
+            .one(conn)
+            .await
+            .expect("query")
+            .expect("chapter");
+        memory::snapshot(conn, &prompts, &track, &chapter)
+            .await
+            .expect("snapshot")
+    };
+    let protagonist = snapshot.protagonist.expect("the shared protagonist");
+    assert!(
+        protagonist.after_anchor,
+        "a main-story state change is after a before_start anchor: {protagonist:?}"
+    );
+}
+
 /// `GET /books/:id/memory?chapter_id=` derives the target track from the chapter when `track_id`
 /// is omitted; otherwise the side chapter is labelled and windowed as a main-track chapter
 /// (spec/10 §2.4).

@@ -502,21 +502,17 @@ async fn protagonist(
 }
 
 /// True when the newest change of an entity came from a main-track chapter after the anchor
-/// (spec/06 §4.2, D-038).
+/// (spec/06 §4.2, D-038): after the anchor chapter for `after_chapter`, and after the story's
+/// start — i.e. from any main-track chapter — for `before_start`. `after_end` and an anchorless
+/// side track never flag.
 pub async fn state_after_anchor(
     conn: &impl ConnectionTrait,
     track: &tracks::Model,
     entity_id: i32,
 ) -> Result<bool, AppError> {
-    if track.kind != "side" || track.anchor_kind != "after_chapter" {
+    if track.kind != "side" {
         return Ok(false);
     }
-    let Some(anchor_id) = track.anchor_chapter_id else {
-        return Ok(false);
-    };
-    let Some(anchor) = chapters::Entity::find_by_id(anchor_id).one(conn).await? else {
-        return Ok(false);
-    };
     let last = change_log::Entity::find()
         .filter(change_log::Column::TargetType.eq("entity"))
         .filter(change_log::Column::TargetId.eq(entity_id))
@@ -533,7 +529,24 @@ pub async fn state_after_anchor(
     let Some(chapter) = chapters::Entity::find_by_id(chapter_id).one(conn).await? else {
         return Ok(false);
     };
-    Ok(chapter.track_id == anchor.track_id && chapter.ord > anchor.ord)
+    match track.anchor_kind.as_str() {
+        "after_chapter" => {
+            let Some(anchor_id) = track.anchor_chapter_id else {
+                return Ok(false);
+            };
+            let Some(anchor) = chapters::Entity::find_by_id(anchor_id).one(conn).await? else {
+                return Ok(false);
+            };
+            Ok(chapter.track_id == anchor.track_id && chapter.ord > anchor.ord)
+        }
+        "before_start" => {
+            let Some(main) = main_track(conn, track.book_id).await? else {
+                return Ok(false);
+            };
+            Ok(chapter.track_id == main.id)
+        }
+        _ => Ok(false),
+    }
 }
 
 // ───────────────────────────── §4.3 mid-term ─────────────────────────────
