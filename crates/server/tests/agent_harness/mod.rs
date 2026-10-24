@@ -221,6 +221,21 @@ impl Runtime {
         }
     }
 
+    /// Waits until the session leaves `running` (any non-running status).
+    pub async fn wait_any_status(&self, session_id: i32) -> SessionRow {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let row = self.session_row(session_id).await;
+            if row.status != "running" {
+                return row;
+            }
+            if Instant::now() > deadline {
+                panic!("session {session_id} stayed running");
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
     /// Waits until no runner is active for the session.
     pub async fn wait_idle(&self, session_id: i32) {
         let deadline = Instant::now() + Duration::from_secs(10);

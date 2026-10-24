@@ -59,6 +59,7 @@ async fn test_04_a_pause_request_at_a_boundary_pauses_before_the_next_request() 
         nekowriter_llm::mock::ScriptStep::new()
             .text("a slow prose reply that has no tool call")
             .delay_per_event(Duration::from_millis(40)),
+        // The queue repeats its last step, so whichever request resumes first completes.
         finish_step(),
     ])
     .await;
@@ -99,7 +100,7 @@ async fn test_04_a_pause_request_at_a_boundary_pauses_before_the_next_request() 
     );
     let calls = runtime.calls(session_id).await;
     assert!(calls.is_empty(), "no tool call ran: {calls:?}");
-    // Resume (not Continue: a paused session resumes, spec/03 §6) finishes the session.
+    // Resume (not Continue: a paused session resumes, spec/03 §6) and finish the session.
     let (status, body) = runtime
         .app
         .post(&format!("/api/sessions/{session_id}/resume"), json!({}))

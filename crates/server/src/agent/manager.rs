@@ -149,24 +149,30 @@ impl SessionManager {
         !self.is_running(session_id)
     }
 
-    /// Waits for a cancelled runner to finish its last write, so an operation that changes the
-    /// status right after cancelling cannot race it. Returns true when no runner remains.
+    /// Waits for a **cancelled** runner to finish its last write, so an operation that changes the
+    /// status right after cancelling cannot race it.
+    ///
+    /// It returns at once when the session has no runner or when the live runner was not
+    /// cancelled: a healthy runner keeps working and must not be waited for. Returns true when no
+    /// cancelled runner remains.
     pub async fn wait_cancelled(&self, session_id: i32, timeout: Duration) -> bool {
         let deadline = tokio::time::Instant::now() + timeout;
-        while tokio::time::Instant::now() < deadline {
-            let done = {
+        loop {
+            let (cancelled, finished) = {
                 let runners = lock(&self.runners);
                 match runners.get(&session_id) {
-                    Some(handle) => handle.task.is_finished(),
-                    None => true,
+                    Some(handle) => (handle.cancel.is_cancelled(), handle.task.is_finished()),
+                    None => return true,
                 }
             };
-            if done {
+            if !cancelled || finished {
                 return true;
+            }
+            if tokio::time::Instant::now() > deadline {
+                return false;
             }
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
-        false
     }
 
     /// Cancels every runner with the `shutdown` reason and waits up to `timeout` for them
