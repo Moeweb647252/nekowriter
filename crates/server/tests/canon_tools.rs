@@ -943,6 +943,7 @@ async fn a_side_track_marks_items_after_its_anchor() {
             book_id: Some(book_id),
             chapter_id: Some(side_chapter_id),
             granularity: Some(nekowriter::db::json::Granularity::Paragraph),
+            guidance: None,
             ..nekowriter::services::sessions::CreateSession::default()
         },
     )

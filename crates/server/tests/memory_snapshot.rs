@@ -644,11 +644,7 @@ async fn the_cast_is_sorted_and_capped() {
     let fixture = fixture().await;
     for index in 0..45 {
         fixture
-            .entity(
-                &format!("Entity {index:02}"),
-                "character",
-                (index % 5) + 1,
-            )
+            .entity(&format!("Entity {index:02}"), "character", (index % 5) + 1)
             .await;
     }
     let snapshot = fixture.snapshot().await;
