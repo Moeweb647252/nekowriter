@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+use crate::agent::SessionManager;
+use crate::agent::tools::{ToolRegistry, spec::ToolSpecs};
 use crate::config::Config;
 use crate::db::Db;
 use crate::events::EventBus;
@@ -22,10 +24,27 @@ pub struct AppStateInner {
     pub events: EventBus,
     /// The embedded prompt pack and the per-book resolved prompt sets (spec/09).
     pub prompts: Arc<PromptRegistry>,
+    /// The tool contracts of `prompts/tools.toml`, compiled once (spec/05 §1.3).
+    pub tool_specs: Arc<ToolSpecs>,
+    /// The tool handlers of this build (spec/05 §1.2).
+    pub tools: Arc<ToolRegistry>,
+    /// One runner per running session (spec/03 §14).
+    pub manager: SessionManager,
+    /// A provider override for tests: when set, the runner uses this client instead of building
+    /// one from the session's snapshot. Integration tests inject a `ScriptedProvider` here so no
+    /// network is touched (spec/04 §7.1, AGENTS.md §5).
+    #[cfg(any(test, feature = "testing"))]
+    pub provider_override: Option<nekowriter_llm::ProviderClient>,
 }
 
 impl AppState {
     pub fn new(db: Db, config: Config, vec_version: String) -> Self {
+        // The prompt pack and the tool contracts are startup invariants (spec/01 §5 step 6).
+        let pack = PromptRegistry::embedded()
+            .unwrap_or_else(|err| panic!("the embedded prompt pack is invalid: {err}"));
+        let tool_specs = ToolSpecs::from_pack(pack.pack());
+        // The debug session's test-only tools have schemas but no place in the shipped pack.
+        let tool_specs = tool_specs.with_debug_tools();
         Self {
             inner: Arc::new(AppStateInner {
                 db,
@@ -34,10 +53,12 @@ impl AppState {
                 events: EventBus::new(),
                 // Startup invariant: the embedded pack is validated once per process, and a
                 // failure is a build defect (spec/01 §5 step 6).
-                prompts: Arc::new(
-                    PromptRegistry::embedded()
-                        .unwrap_or_else(|err| panic!("the embedded prompt pack is invalid: {err}")),
-                ),
+                prompts: Arc::new(pack),
+                tool_specs: Arc::new(tool_specs),
+                tools: Arc::new(ToolRegistry::new()),
+                manager: SessionManager::new(),
+                #[cfg(any(test, feature = "testing"))]
+                provider_override: None,
             }),
         }
     }
@@ -51,12 +72,46 @@ impl AppState {
                 vec_version: self.inner.vec_version.clone(),
                 events,
                 prompts: self.inner.prompts.clone(),
+                tool_specs: self.inner.tool_specs.clone(),
+                tools: self.inner.tools.clone(),
+                manager: self.inner.manager.clone(),
+                #[cfg(any(test, feature = "testing"))]
+                provider_override: self.inner.provider_override.clone(),
             }),
         }
     }
 
+    /// Replaces the provider client used by every runner (tests inject `ScriptedProvider`).
+    #[cfg(any(test, feature = "testing"))]
+    pub fn with_provider(self, provider: nekowriter_llm::ProviderClient) -> Self {
+        Self {
+            inner: Arc::new(AppStateInner {
+                db: self.inner.db.clone(),
+                config: self.inner.config.clone(),
+                vec_version: self.inner.vec_version.clone(),
+                events: self.inner.events.clone(),
+                prompts: self.inner.prompts.clone(),
+                tool_specs: self.inner.tool_specs.clone(),
+                tools: self.inner.tools.clone(),
+                manager: self.inner.manager.clone(),
+                provider_override: Some(provider),
+            }),
+        }
+    }
+
+    /// The injected test provider, when there is one.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn provider_override(&self) -> Option<&nekowriter_llm::ProviderClient> {
+        self.inner.provider_override.as_ref()
+    }
+
     pub fn db(&self) -> &Db {
         &self.inner.db
+    }
+
+    /// The pooled connection, for read-only queries (spec/01 §7).
+    pub fn db_conn(&self) -> &sea_orm::DatabaseConnection {
+        self.inner.db.conn()
     }
 
     pub fn config(&self) -> &Config {
@@ -73,5 +128,20 @@ impl AppState {
 
     pub fn prompts(&self) -> &Arc<PromptRegistry> {
         &self.inner.prompts
+    }
+
+    /// The tool contracts of the embedded pack (spec/05 §1.3).
+    pub fn tool_specs(&self) -> &Arc<ToolSpecs> {
+        &self.inner.tool_specs
+    }
+
+    /// The registered tool handlers (spec/05 §1.2).
+    pub fn tool_registry(&self) -> &Arc<ToolRegistry> {
+        &self.inner.tools
+    }
+
+    /// The runner manager (spec/03 §14).
+    pub fn manager(&self) -> &SessionManager {
+        &self.inner.manager
     }
 }

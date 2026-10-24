@@ -65,6 +65,20 @@ impl TestApp {
         crate::api::build_app(self.state.clone())
     }
 
+    /// Replaces the provider client of every runner with a scripted one (spec/04 §7.1) so runtime
+    /// tests touch no network. The returned handle shares the queue and the request log.
+    pub fn set_provider(
+        &mut self,
+        provider: nekowriter_llm::mock::ScriptedProvider,
+    ) -> nekowriter_llm::mock::ScriptedProvider {
+        let handle = provider.handle();
+        let state = self.state.clone();
+        self.state = state.with_provider(nekowriter_llm::ProviderClient::Scripted(
+            std::sync::Arc::new(provider),
+        ));
+        handle
+    }
+
     /// Sends one JSON request and returns the status and the parsed body.
     pub async fn request(
         &self,
@@ -202,6 +216,47 @@ impl TestApp {
              FROM chapters WHERE id = {chapter_id}"
         ))
         .await;
+    }
+
+    /// Forces a session's status (crash-recovery fixtures, spec/01 §5 step 8).
+    pub async fn set_session_status(&self, session_id: i32, status: &str) {
+        self.execute(&format!(
+            "UPDATE agent_sessions SET status = '{status}' WHERE id = {session_id}"
+        ))
+        .await;
+    }
+
+    /// Inserts a tool call in `executing` with no result (a crash fixture, spec/03 §5.4).
+    pub async fn insert_executing_call(
+        &self,
+        session_id: i32,
+        name: &str,
+        arguments: Value,
+    ) -> i32 {
+        // A message row is required by the foreign key.
+        self.execute(&format!(
+            "INSERT INTO agent_messages(session_id, seq, role, kind, content, created_at)              SELECT {session_id}, coalesce(max(seq), 0) + 1, 'assistant', 'assistant', '[]',              '2026-01-01T00:00:00Z' FROM agent_messages WHERE session_id = {session_id}"
+        ))
+        .await;
+        let input = serde_json::to_string(&arguments).expect("arguments");
+        self.execute(&format!(
+            "INSERT INTO agent_tool_calls(session_id, message_id, call_index, provider_call_id,              name, input, status, created_at)              SELECT {session_id}, max(id), 0, 'call_recovered', '{name}', '{input}', 'executing',              '2026-01-01T00:00:00Z' FROM agent_messages WHERE session_id = {session_id}"
+        ))
+        .await;
+        let row = {
+            use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+            self.db
+                .conn()
+                .query_one_raw(Statement::from_sql_and_values(
+                    DatabaseBackend::Sqlite,
+                    "SELECT max(id) AS value FROM agent_tool_calls WHERE session_id = ?",
+                    vec![session_id.into()],
+                ))
+                .await
+                .expect("query call id")
+                .expect("row")
+        };
+        row.try_get::<i32>("", "value").expect("call id")
     }
 
     /// Removes every session row (fixture cleanup).

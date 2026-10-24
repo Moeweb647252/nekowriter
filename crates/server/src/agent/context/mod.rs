@@ -1,0 +1,908 @@
+//! Context assembly and request building (spec/03 §10–§11).
+//!
+//! Ordering principle: **stable first**. System prompt (static per role) → setting materials
+//! (stable per book revision) → memory (changes per chapter) → task (changes per session).
+//!
+//! The kickoff is a list of blocks per session kind (§10 table); each block is one `text` block of
+//! the kickoff user message. `build_request` then turns the persisted session into a
+//! [`nekowriter_llm::ChatRequest`] **from persisted state only**, so building it twice yields the
+//! same bytes (spec/03 §15 test 14: append-only history proves a previous step's request is a
+//! byte-identical prefix of the current one).
+
+use std::collections::BTreeMap;
+
+use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder};
+use serde_json::{Value, json};
+
+use crate::db::entities::{
+    agent_messages, agent_sessions, agent_tool_calls, books, chapter_versions, chapters,
+    character_designs, research_tasks, setting_docs, tracks,
+};
+use crate::db::json::{
+    self, AgentRole, ChapterContent, CompletionKind, MessageKind, MessageRole, Phase, Protocol,
+    RequestMeta, SessionKind, StoredBlock, ToolCallStatus, VersionKind,
+};
+use crate::error::{AppError, ErrorCode};
+use crate::events::ServerEvent;
+use crate::prompts::PromptSet;
+use crate::prompts::context::{
+    BookContext, CastEntryContext, ChapterContext, CharacterContext, DraftContext,
+    GranularityContext, MemoryContext, MemoryCountsContext, ParagraphContext, ScopeContext,
+    SettingsContext, TrackContext,
+};
+use crate::text;
+
+use super::session;
+
+/// The kickoff blocks of every session kind, in order (spec/03 §10 table).
+///
+/// `block.settings` carries a cache breakpoint (`cache: true`).
+pub fn kickoff_blocks(kind: SessionKind, redraft: bool) -> Vec<&'static str> {
+    match kind {
+        SessionKind::Conception => vec!["conception.kickoff"],
+        SessionKind::Research => vec!["block.book_brief", "researcher.kickoff"],
+        SessionKind::ChapterWrite => {
+            if redraft {
+                vec!["block.settings", "block.memory", "writer.kickoff.redraft"]
+            } else {
+                vec!["block.settings", "block.memory", "writer.kickoff.chapter"]
+            }
+        }
+        SessionKind::ChapterRevise => vec![
+            "block.settings",
+            "block.memory",
+            "block.chapter_draft",
+            "writer.kickoff.revise",
+        ],
+        SessionKind::ChapterReview => vec![
+            "block.settings",
+            "block.memory",
+            "block.chapter_draft",
+            "reviewer.kickoff",
+        ],
+        SessionKind::ChapterMaintenance => vec![
+            "block.settings",
+            "block.memory",
+            "block.cast_index",
+            "block.chapter_draft",
+            "archivist.kickoff.maintenance",
+        ],
+        SessionKind::CanonSeed => vec!["block.settings", "archivist.kickoff.seed"],
+        SessionKind::ChapterResync => vec![
+            "block.settings",
+            "block.memory",
+            "block.cast_index",
+            "block.chapter_diff",
+            "archivist.kickoff.resync",
+        ],
+    }
+}
+
+/// True when the kickoff block of that key carries a cache breakpoint (spec/03 §10: the settings
+/// block, shared by every session of the book).
+pub fn block_is_cached(key: &str) -> bool {
+    key == "block.settings"
+}
+
+/// The rendered kickoff message of a session kind: one `text` block per kickoff block
+/// (spec/03 §10).
+pub async fn assemble_kickoff(
+    conn: &impl ConnectionTrait,
+    prompts: &PromptSet,
+    session: &agent_sessions::Model,
+    redraft: bool,
+) -> Result<Vec<StoredBlock>, AppError> {
+    let kind = session::kind_of(session);
+    let mut blocks = Vec::new();
+    for key in kickoff_blocks(kind, redraft) {
+        let context = block_context(conn, prompts, session, key).await?;
+        let rendered = prompts
+            .render_value(key, crate::prompts::template_value(&context))
+            .map_err(|err| err.into_app_error())?;
+        if rendered.text.trim().is_empty() {
+            continue;
+        }
+        blocks.push(StoredBlock::Text {
+            text: rendered.text,
+            cache: Some(block_is_cached(key)),
+        });
+    }
+    Ok(blocks)
+}
+
+/// The template context of one kickoff block (spec/03 §10, spec/09 §2).
+async fn block_context(
+    conn: &impl ConnectionTrait,
+    prompts: &PromptSet,
+    session: &agent_sessions::Model,
+    key: &str,
+) -> Result<Value, AppError> {
+    match key {
+        "block.settings" => Ok(json!({
+            "book": book_context(conn, prompts, session.book_id).await?,
+            "settings": settings_context(conn, session.book_id).await?,
+        })),
+        "block.memory" => Ok(json!({
+            "memory": memory_context(session),
+            "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
+        })),
+        "block.chapter_draft" => Ok(json!({
+            "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
+            "draft": draft_context(conn, session.chapter_id).await?,
+        })),
+        "block.cast_index" => Ok(json!({ "cast_index": cast_index_context() })),
+        "block.chapter_diff" => Ok(json!({
+            "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
+            "diff": json!({ "changes": [] }),
+        })),
+        "block.anchor" => Ok(json!({
+            "track": track_context(conn, prompts, session.track_id).await?,
+        })),
+        "block.book_brief" => Ok(json!({
+            "book": book_context(conn, prompts, session.book_id).await?,
+        })),
+        "conception.kickoff" => Ok(json!({
+            "conception": conception_context(conn, prompts, session.book_id).await?,
+        })),
+        "researcher.kickoff" => Ok(json!({
+            "research": research_context(conn, prompts, session.research_task_id).await?,
+        })),
+        "writer.kickoff.chapter" => Ok(json!({
+            "book": book_context(conn, prompts, session.book_id).await?,
+            "track": track_context(conn, prompts, session.track_id).await?,
+            "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
+            "draft": draft_context(conn, session.chapter_id).await?,
+        })),
+        "writer.kickoff.redraft" | "writer.kickoff.revise" => Ok(json!({
+            "book": book_context(conn, prompts, session.book_id).await?,
+            "track": track_context(conn, prompts, session.track_id).await?,
+            "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
+            "feedback": json!({ "text": "", "issues": [] }),
+            "previous_outline": "",
+        })),
+        "reviewer.kickoff" => Ok(json!({
+            "book": book_context(conn, prompts, session.book_id).await?,
+            "track": track_context(conn, prompts, session.track_id).await?,
+            "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
+            "prior": Value::Null,
+        })),
+        "archivist.kickoff.maintenance" => Ok(json!({
+            "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
+        })),
+        "archivist.kickoff.seed" => Ok(json!({
+            "book": book_context(conn, prompts, session.book_id).await?,
+            "settings": settings_context(conn, session.book_id).await?,
+        })),
+        "archivist.kickoff.resync" => Ok(json!({
+            "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
+        })),
+        other => Err(AppError::internal(format!(
+            "no kickoff context builder for {other}"
+        ))),
+    }
+}
+
+/// `block.book_brief` and every task: the book (spec/09 §2 `vars.book`).
+async fn book_context(
+    conn: &impl ConnectionTrait,
+    prompts: &PromptSet,
+    book_id: Option<i32>,
+) -> Result<BookContext, AppError> {
+    let Some(book_id) = book_id else {
+        return Ok(BookContext {
+            title: String::new(),
+            genre: String::new(),
+            idea: String::new(),
+            writing_language: "en".to_owned(),
+            writing_language_name: prompts.label("language", "en"),
+            unspaced: false,
+        });
+    };
+    let book = books::Entity::find_by_id(book_id)
+        .one(conn)
+        .await?
+        .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
+    Ok(BookContext {
+        title: book.title,
+        genre: book.genre,
+        idea: book.idea,
+        writing_language_name: prompts.label("language", &book.writing_language),
+        unspaced: text::is_unspaced(&book.writing_language),
+        writing_language: book.writing_language,
+    })
+}
+
+/// `block.anchor` and the kickoffs: the track (spec/09 §2 `vars.track`).
+async fn track_context(
+    conn: &impl ConnectionTrait,
+    prompts: &PromptSet,
+    track_id: Option<i32>,
+) -> Result<TrackContext, AppError> {
+    let Some(track_id) = track_id else {
+        return Ok(empty_track_context());
+    };
+    let track = tracks::Entity::find_by_id(track_id)
+        .one(conn)
+        .await?
+        .ok_or_else(|| AppError::not_found(format!("track {track_id}")))?;
+    let anchor_label = match track.anchor_chapter_id {
+        Some(chapter_id) => {
+            let chapter = chapters::Entity::find_by_id(chapter_id)
+                .one(conn)
+                .await?
+                .ok_or_else(|| AppError::not_found(format!("chapter {chapter_id}")))?;
+            prompts.chapter_label(
+                &track.kind,
+                &track.title,
+                i64::from(chapter.ord),
+                &chapter.title,
+                !chapter.title.is_empty(),
+            )
+        }
+        None => String::new(),
+    };
+    Ok(TrackContext {
+        is_main: track.kind == "main",
+        title: if track.kind == "main" {
+            String::new()
+        } else {
+            track.title.clone()
+        },
+        kind: track.kind,
+        synopsis: track.synopsis,
+        canon_mode: track.canon_mode,
+        anchor_kind: track.anchor_kind,
+        anchor_label,
+    })
+}
+
+fn empty_track_context() -> TrackContext {
+    TrackContext {
+        is_main: true,
+        kind: "main".to_owned(),
+        title: String::new(),
+        synopsis: String::new(),
+        canon_mode: "canon".to_owned(),
+        anchor_kind: "none".to_owned(),
+        anchor_label: String::new(),
+    }
+}
+
+/// The chapter of a task (spec/09 §2 `vars.chapter`).
+async fn chapter_context(
+    conn: &impl ConnectionTrait,
+    prompts: &PromptSet,
+    chapter_id: Option<i32>,
+    book_id: Option<i32>,
+) -> Result<ChapterContext, AppError> {
+    let Some(chapter_id) = chapter_id else {
+        return Ok(ChapterContext {
+            id: 0,
+            number: 0,
+            label: String::new(),
+            title: String::new(),
+            guidance: String::new(),
+            outline: String::new(),
+            reference_notes: String::new(),
+            target_min: 0,
+            target_max: 0,
+            word_count: 0,
+            has_draft: false,
+        });
+    };
+    let chapter = chapters::Entity::find_by_id(chapter_id)
+        .one(conn)
+        .await?
+        .ok_or_else(|| AppError::not_found(format!("chapter {chapter_id}")))?;
+    let track = tracks::Entity::find_by_id(chapter.track_id)
+        .one(conn)
+        .await?
+        .ok_or_else(|| AppError::not_found(format!("track {}", chapter.track_id)))?;
+    let settings = book_settings(conn, book_id.or(Some(chapter.book_id))).await?;
+    let content: ChapterContent = json::from_json_or_default(&chapter.content);
+    Ok(ChapterContext {
+        id: chapter.id,
+        number: chapter.ord,
+        label: prompts.chapter_label(
+            &track.kind,
+            &track.title,
+            i64::from(chapter.ord),
+            &chapter.title,
+            !chapter.title.is_empty(),
+        ),
+        title: chapter.title,
+        guidance: chapter.guidance,
+        outline: chapter.outline,
+        reference_notes: chapter.reference_notes,
+        target_min: settings.target_words_min,
+        target_max: settings.target_words_max,
+        word_count: chapter.word_count,
+        has_draft: !content.paragraphs.is_empty(),
+    })
+}
+
+/// The book's settings (defaults when there is no book).
+async fn book_settings(
+    conn: &impl ConnectionTrait,
+    book_id: Option<i32>,
+) -> Result<json::BookSettings, AppError> {
+    let Some(book_id) = book_id else {
+        return Ok(json::BookSettings::default());
+    };
+    let book = books::Entity::find_by_id(book_id)
+        .one(conn)
+        .await?
+        .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
+    Ok(json::from_json_or_default(&book.settings))
+}
+
+/// `block.settings`: the three documents, the character designs and the attached scopes.
+async fn settings_context(
+    conn: &impl ConnectionTrait,
+    book_id: Option<i32>,
+) -> Result<SettingsContext, AppError> {
+    let Some(book_id) = book_id else {
+        return Ok(SettingsContext {
+            outline: String::new(),
+            world: String::new(),
+            protagonist: String::new(),
+            characters: Vec::new(),
+            scopes: Vec::new(),
+        });
+    };
+    let docs = setting_docs::Entity::find()
+        .filter(setting_docs::Column::BookId.eq(book_id))
+        .all(conn)
+        .await?;
+    let mut outline = String::new();
+    let mut world = String::new();
+    let mut protagonist = String::new();
+    for doc in docs {
+        match doc.kind.as_str() {
+            "outline" => outline = doc.content,
+            "world" => world = doc.content,
+            "protagonist" => protagonist = doc.content,
+            _ => {}
+        }
+    }
+    let characters = character_designs::Entity::find()
+        .filter(character_designs::Column::BookId.eq(book_id))
+        .order_by_asc(character_designs::Column::Rank)
+        .all(conn)
+        .await?
+        .into_iter()
+        .map(|row| CharacterContext {
+            rank: row.rank,
+            name: row.name,
+            role_label: row.role_label,
+            summary: row.summary,
+            profile: row.profile,
+        })
+        .collect();
+    Ok(SettingsContext {
+        outline,
+        world,
+        protagonist,
+        characters,
+        // The knowledge scopes of a book arrive with M7 (spec/07 §1).
+        scopes: Vec::<ScopeContext>::new(),
+    })
+}
+
+/// `block.memory`: the empty state until the memory service of M5 fills it (spec/06 §4).
+fn memory_context(session: &agent_sessions::Model) -> MemoryContext {
+    let _ = session;
+    MemoryContext {
+        is_first: true,
+        window_mid: 10,
+        recent_summaries: Vec::new(),
+        previous_tail: None,
+        protagonist: None,
+        recent_changes: Vec::new(),
+        appearances: Vec::new(),
+        absent_important: Vec::new(),
+        key_notes: Vec::new(),
+        open_foreshadowing: Vec::new(),
+        cast: Vec::new(),
+        counts: MemoryCountsContext {
+            character: 0,
+            organization: 0,
+            location: 0,
+            item: 0,
+            other: 0,
+            event: 0,
+            fact: 0,
+            world_rule: 0,
+            foreshadowing_open: 0,
+        },
+    }
+}
+
+/// `block.cast_index`: empty until the canon services of M5 (spec/06 §4).
+fn cast_index_context() -> Vec<CastEntryContext> {
+    Vec::new()
+}
+
+/// `block.chapter_draft` and the writer tasks: the current text with pids (spec/03 §10).
+async fn draft_context(
+    conn: &impl ConnectionTrait,
+    chapter_id: Option<i32>,
+) -> Result<DraftContext, AppError> {
+    let Some(chapter_id) = chapter_id else {
+        return Ok(DraftContext {
+            paragraphs: Vec::new(),
+            tail_open: false,
+            word_count: 0,
+            paragraph_count: 0,
+        });
+    };
+    let chapter = chapters::Entity::find_by_id(chapter_id)
+        .one(conn)
+        .await?
+        .ok_or_else(|| AppError::not_found(format!("chapter {chapter_id}")))?;
+    let content: ChapterContent = json::from_json_or_default(&chapter.content);
+    let paragraphs: Vec<ParagraphContext> = content
+        .paragraphs
+        .iter()
+        .map(|paragraph| ParagraphContext {
+            pid: paragraph.pid.clone(),
+            text: paragraph.text.clone(),
+        })
+        .collect();
+    Ok(DraftContext {
+        paragraph_count: paragraphs.len() as i32,
+        paragraphs,
+        tail_open: content.tail_open,
+        word_count: chapter.word_count,
+    })
+}
+
+/// `conception.kickoff` (spec/03 §10).
+async fn conception_context(
+    conn: &impl ConnectionTrait,
+    prompts: &PromptSet,
+    book_id: Option<i32>,
+) -> Result<Value, AppError> {
+    let Some(book_id) = book_id else {
+        return Ok(json!({
+            "title": "",
+            "idea": "",
+            "genre": "",
+            "writing_language_name": prompts.label("language", "en"),
+        }));
+    };
+    let book = books::Entity::find_by_id(book_id)
+        .one(conn)
+        .await?
+        .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
+    Ok(json!({
+        "title": book.title,
+        "idea": book.idea,
+        "genre": book.genre,
+        "writing_language_name": prompts.label("language", &book.writing_language),
+    }))
+}
+
+/// `researcher.kickoff` (spec/07 §8).
+async fn research_context(
+    conn: &impl ConnectionTrait,
+    prompts: &PromptSet,
+    research_task_id: Option<i32>,
+) -> Result<Value, AppError> {
+    // The language label comes from the registry when the task has one.
+    if research_task_id.is_none() {
+        let _ = prompts;
+    }
+    let Some(task_id) = research_task_id else {
+        return Ok(json!({
+            "topic": "",
+            "requirements": "",
+            "scope_name": "",
+            "scope_description": "",
+            "language_name": prompts.label("language", "en"),
+            "existing_titles": [],
+            "max_tool_calls": 40,
+            "max_entries": 25,
+        }));
+    };
+    let task = research_tasks::Entity::find_by_id(task_id)
+        .one(conn)
+        .await?
+        .ok_or_else(|| AppError::not_found(format!("research task {task_id}")))?;
+    Ok(json!({
+        "topic": task.topic,
+        "requirements": task.requirements,
+        "scope_name": task.scope_name,
+        "scope_description": "",
+        "language_name": prompts.label("language", &task.language),
+        "existing_titles": [],
+        "max_tool_calls": 40,
+        "max_entries": 25,
+    }))
+}
+
+// ───────────────────────────── request building ─────────────────────────────
+
+/// Builds the provider request of one session **from persisted state only** (spec/03 §11).
+///
+/// Invariant checked before sending: every tool call of every assistant message has a sealed
+/// result. A violation is an internal defect, never a user error.
+pub async fn build_request(
+    conn: &impl ConnectionTrait,
+    session: &agent_sessions::Model,
+    _prompts: &PromptSet,
+) -> Result<nekowriter_llm::ChatRequest, AppError> {
+    let snapshot: json::ModelSnapshot = match json::from_json(&session.model_snapshot) {
+        Ok(snapshot) => snapshot,
+        Err(err) => return Err(AppError::internal(format!("corrupt model_snapshot: {err}"))),
+    };
+    let options: nekowriter_llm::ModelOptions =
+        serde_json::from_value(snapshot.options.clone()).unwrap_or_default();
+    let tools: Vec<nekowriter_llm::ToolDef> = json::from_json_or_default(&session.tools);
+    let role = session::role_of(session);
+
+    let mut messages = Vec::new();
+    for message in super::runner::messages_of(conn, session.id).await? {
+        if message.role == MessageRole::User.as_str() {
+            let blocks: Vec<StoredBlock> = json::from_json_or_default(&message.content);
+            let blocks = blocks
+                .into_iter()
+                .filter_map(|block| match block {
+                    StoredBlock::Text { text, cache } => Some(nekowriter_llm::TextBlock {
+                        text,
+                        cache: cache.unwrap_or(false),
+                    }),
+                    _ => None,
+                })
+                .collect();
+            messages.push(nekowriter_llm::Message::User { blocks });
+            continue;
+        }
+        let payload: json::ProviderPayload = message
+            .provider_payload
+            .as_deref()
+            .and_then(|raw| json::from_json::<json::ProviderPayload>(raw).ok())
+            .unwrap_or(json::ProviderPayload::Mock {
+                content: Value::Null,
+            });
+        messages.push(nekowriter_llm::Message::Assistant {
+            payload: to_llm_payload(payload),
+        });
+        let calls = super::runner::calls_of(conn, message.id).await?;
+        if calls.is_empty() {
+            continue;
+        }
+        let mut results = Vec::new();
+        for call in calls {
+            let Some(content) = call.result_text.clone() else {
+                return Err(AppError::internal(format!(
+                    "tool call {} has no sealed result; refusing to send an invalid history",
+                    call.id
+                )));
+            };
+            results.push(nekowriter_llm::ToolResult {
+                call_id: call.provider_call_id.clone(),
+                content,
+                is_error: call.is_error != 0,
+            });
+        }
+        messages.push(nekowriter_llm::Message::ToolResults { results });
+    }
+
+    let cache_ttl = match options.cache_ttl {
+        nekowriter_llm::CacheTtlOption::OneHour => nekowriter_llm::CacheTtl::OneHour,
+        _ => nekowriter_llm::CacheTtl::FiveMinutes,
+    };
+    Ok(nekowriter_llm::ChatRequest {
+        model: snapshot.model.clone(),
+        system: session.system_prompt.clone(),
+        messages,
+        tools,
+        max_output_tokens: u32::try_from(snapshot.max_output_tokens).unwrap_or(4096),
+        // Writer sessions make one call per round (spec/03 §11, D-022).
+        parallel_tool_calls: role != AgentRole::Writer,
+        cache: nekowriter_llm::CacheHints { ttl: cache_ttl },
+        options: options.clone(),
+        demo_hints: if snapshot.protocol == Protocol::Mock {
+            Some(demo_hints(session))
+        } else {
+            None
+        },
+    })
+}
+
+/// The demo-provider hints of the current step (spec/03 §11, spec/04 §7.2).
+fn demo_hints(session: &agent_sessions::Model) -> nekowriter_llm::DemoHints {
+    let counters = session::counters_of(session);
+    let language = session.book_id.map(|_| String::new()).unwrap_or_default();
+    let _ = language;
+    nekowriter_llm::DemoHints {
+        kind: session.kind.clone(),
+        phase: session.phase.clone(),
+        granularity: session.granularity.clone(),
+        step_in_phase: counters.steps.max(0) as u32,
+        language: String::new(),
+    }
+}
+
+/// Converts the stored replay payload into the neutral one.
+fn to_llm_payload(payload: json::ProviderPayload) -> nekowriter_llm::ProviderPayload {
+    match payload {
+        json::ProviderPayload::Openai {
+            content,
+            reasoning_content,
+            tool_calls,
+        } => nekowriter_llm::ProviderPayload::Openai {
+            content,
+            reasoning_content,
+            tool_calls,
+        },
+        json::ProviderPayload::Anthropic { content } => {
+            nekowriter_llm::ProviderPayload::Anthropic { content }
+        }
+        json::ProviderPayload::Mock { content } => {
+            nekowriter_llm::ProviderPayload::Mock { content }
+        }
+    }
+}
+
+/// The `granularity` context of a session, for the notices and the writer rules (spec/03 §8).
+pub fn granularity_context(
+    prompts: &PromptSet,
+    granularity: Option<json::Granularity>,
+    phase: Phase,
+    content: &ChapterContent,
+) -> GranularityContext {
+    let key = granularity
+        .map(|value| value.as_str())
+        .unwrap_or(json::Granularity::Paragraph.as_str())
+        .to_owned();
+    GranularityContext {
+        label: prompts.label("granularity", &key),
+        key,
+        revising: matches!(phase, Phase::RevisionPlanning | Phase::Revising),
+        tail_open: content.tail_open,
+        last_pid: content
+            .paragraphs
+            .last()
+            .map(|paragraph| paragraph.pid.clone())
+            .unwrap_or_default(),
+    }
+}
+
+// ───────────────────────────── rollover ─────────────────────────────
+
+/// Creates the child session of a rollover and supersedes the parent (spec/03 §9).
+///
+/// The mechanics belong to M3 (session creation, inbox move, supersession); the child's kickoff
+/// uses the `rollover` block list, whose `author_notes`/draft content is filled by the writer
+/// milestones.
+pub async fn rollover(
+    state: &crate::state::AppState,
+    parent: &agent_sessions::Model,
+) -> Result<(), AppError> {
+    let parent = parent.clone();
+    let state_clone = state.clone();
+    let (child_id, events) = crate::services::write(state.db(), move |tx| {
+        let state = state_clone.clone();
+        Box::pin(async move {
+            let kind = session::kind_of(&parent);
+            let prompts = state.prompts().for_book(state.db(), parent.book_id).await?;
+            // 1. Create the child session (same kind, role, chapter, phase, granularity, flags,
+            //    model snapshot; parent_session_id = old).
+            let mut blocks = Vec::new();
+            for key in [
+                "block.settings",
+                "block.memory",
+                "block.chapter_draft",
+                "writer.kickoff.rollover",
+            ] {
+                let context = block_context(tx, &prompts, &parent, key).await?;
+                let rendered = prompts
+                    .render_value(key, crate::prompts::template_value(&context))
+                    .map_err(|err| err.into_app_error())?;
+                if !rendered.text.trim().is_empty() {
+                    blocks.push(StoredBlock::Text {
+                        text: rendered.text,
+                        cache: Some(block_is_cached(key)),
+                    });
+                }
+            }
+            let now = chrono::Utc::now();
+            let child = agent_sessions::ActiveModel {
+                book_id: sea_orm::Set(parent.book_id),
+                role: sea_orm::Set(parent.role.clone()),
+                kind: sea_orm::Set(kind.as_str().to_owned()),
+                chapter_id: sea_orm::Set(parent.chapter_id),
+                track_id: sea_orm::Set(parent.track_id),
+                research_task_id: sea_orm::Set(None),
+                model_profile_id: sea_orm::Set(parent.model_profile_id),
+                model_snapshot: sea_orm::Set(parent.model_snapshot.clone()),
+                system_prompt: sea_orm::Set(parent.system_prompt.clone()),
+                tools: sea_orm::Set(parent.tools.clone()),
+                status: sea_orm::Set(json::SessionStatus::Running.as_str().to_owned()),
+                phase: sea_orm::Set(parent.phase.clone()),
+                granularity: sea_orm::Set(parent.granularity.clone()),
+                auto_pause: sea_orm::Set(parent.auto_pause),
+                pause_after_outline: sea_orm::Set(parent.pause_after_outline),
+                pause_requested: sea_orm::Set(0),
+                held_tool_call_id: sea_orm::Set(None),
+                base_content_version: sea_orm::Set(parent.base_content_version),
+                pending_comment: sea_orm::Set(parent.pending_comment.clone()),
+                view_snapshot: sea_orm::Set(None),
+                counters: sea_orm::Set("{}".to_owned()),
+                usage: sea_orm::Set("{}".to_owned()),
+                error: sea_orm::Set(None),
+                parent_session_id: sea_orm::Set(Some(parent.id)),
+                created_at: sea_orm::Set(now),
+                updated_at: sea_orm::Set(now),
+                finished_at: sea_orm::Set(None),
+                ..Default::default()
+            };
+            let child = sea_orm::ActiveModelTrait::insert(child, tx).await?;
+            super::runner::insert_kickoff(tx, child.id, blocks).await?;
+            // 2. Move the unconsumed inbox items to the child (spec/03 §9 step 2).
+            let pending = super::runner::pending_inbox_rows(tx, parent.id).await?;
+            for item in pending {
+                sea_orm::ActiveModelTrait::update(
+                    crate::db::entities::agent_inbox::ActiveModel {
+                        id: sea_orm::Set(item.id),
+                        session_id: sea_orm::Set(child.id),
+                        ..Default::default()
+                    },
+                    tx,
+                )
+                .await?;
+            }
+            // 3. The parent is superseded; the child runs.
+            let events = session::transition(
+                tx,
+                &parent,
+                json::SessionStatus::Superseded,
+                session::TransitionCause::Rollover,
+            )
+            .await?;
+            Ok((child.id, events))
+        })
+    })
+    .await?;
+    state.events().publish_all(events);
+    state.manager().spawn(state.clone(), child_id);
+    Ok(())
+}
+
+// ───────────────────────────── completion ─────────────────────────────
+
+/// Domain effects of a completing call (spec/03 §5.4, spec/08).
+///
+/// M3 provides the framework and the session-level effects. The per-kind handlers (a `draft`
+/// version and `in_review`, a review report row, `canon_status` synced/stale, a research task
+/// done) arrive with their milestones, which own the tools that complete those sessions.
+pub async fn apply_completion(
+    tx: &sea_orm::DatabaseTransaction,
+    session: &agent_sessions::Model,
+    call: &agent_tool_calls::Model,
+    completion: CompletionKind,
+) -> Result<Vec<ServerEvent>, AppError> {
+    let _ = call;
+    let mut events = Vec::new();
+    match completion {
+        // `finish_draft` / a chapter-completing `insert_text` (M4.2).
+        CompletionKind::Draft => {
+            if let Some(chapter_id) = session.chapter_id {
+                events.extend(super::completion::finish_draft(tx, session, chapter_id).await?);
+            }
+        }
+        // M6.2 owns the revision completion.
+        CompletionKind::Revision => {}
+        // M6.1 owns the review report.
+        CompletionKind::Review => {}
+        // M6.3 owns the canon status.
+        CompletionKind::Maintenance => {}
+        // M8.3 owns the research task.
+        CompletionKind::Research => {}
+    }
+    Ok(events)
+}
+
+/// The version kinds the completion handlers save (re-exported for the milestones).
+pub fn completion_version_kind(completion: CompletionKind) -> Option<VersionKind> {
+    match completion {
+        CompletionKind::Draft => Some(VersionKind::Draft),
+        CompletionKind::Revision => Some(VersionKind::Revision),
+        _ => None,
+    }
+}
+
+/// Stored `request_meta` of a message, when present.
+pub fn request_meta(message: &agent_messages::Model) -> Option<RequestMeta> {
+    message
+        .request_meta
+        .as_deref()
+        .and_then(|raw| json::from_json::<RequestMeta>(raw).ok())
+}
+
+/// Reads the frozen tool names of a session (spec/03 §1.3).
+pub fn frozen_tool_names(session: &agent_sessions::Model) -> Vec<String> {
+    let tools: Vec<nekowriter_llm::ToolDef> = json::from_json_or_default(&session.tools);
+    tools.into_iter().map(|tool| tool.name).collect()
+}
+
+/// True when the session's frozen tool list contains the tool (spec/03 §1.2).
+pub fn freezes_tool(session: &agent_sessions::Model, name: &str) -> bool {
+    frozen_tool_names(session).iter().any(|tool| tool == name)
+}
+
+/// The completion kinds that produce a version (spec/08 §1.1).
+pub fn version_kind_label(kind: VersionKind) -> &'static str {
+    kind.as_str()
+}
+
+/// A chapter version row's content, for the completion handlers.
+pub async fn latest_version_kind(
+    conn: &impl ConnectionTrait,
+    chapter_id: i32,
+) -> Result<Option<VersionKind>, AppError> {
+    let row = chapter_versions::Entity::find()
+        .filter(chapter_versions::Column::ChapterId.eq(chapter_id))
+        .order_by_desc(chapter_versions::Column::Id)
+        .one(conn)
+        .await?;
+    Ok(row.and_then(|row| VersionKind::from_str_opt(&row.kind)))
+}
+
+/// The calls of a message that are still unresolved (used by tests and the debug endpoint).
+pub async fn unresolved_calls(
+    conn: &impl ConnectionTrait,
+    message_id: i32,
+) -> Result<Vec<agent_tool_calls::Model>, AppError> {
+    Ok(agent_tool_calls::Entity::find()
+        .filter(agent_tool_calls::Column::MessageId.eq(message_id))
+        .filter(agent_tool_calls::Column::Status.is_in([
+            ToolCallStatus::Pending.as_str(),
+            ToolCallStatus::Executing.as_str(),
+            ToolCallStatus::Held.as_str(),
+            ToolCallStatus::AwaitingInput.as_str(),
+        ]))
+        .all(conn)
+        .await?)
+}
+
+/// The number of pending inbox rows of a session (spec/10 §2.7 `inbox_pending`).
+pub async fn inbox_pending(conn: &impl ConnectionTrait, session_id: i32) -> Result<i64, AppError> {
+    use sea_orm::PaginatorTrait;
+    Ok(crate::db::entities::agent_inbox::Entity::find()
+        .filter(crate::db::entities::agent_inbox::Column::SessionId.eq(session_id))
+        .filter(crate::db::entities::agent_inbox::Column::ConsumedAt.is_null())
+        .count(conn)
+        .await? as i64)
+}
+
+/// The message kinds that count as an author message (spec/03 §5.3).
+pub fn is_author_kind(kind: &str) -> bool {
+    kind == MessageKind::User.as_str() || kind == MessageKind::Kickoff.as_str()
+}
+
+/// A `BTreeMap` of the book's setting docs, keyed by kind (used by tests).
+pub async fn setting_docs_map(
+    conn: &impl ConnectionTrait,
+    book_id: i32,
+) -> Result<BTreeMap<String, String>, AppError> {
+    let docs = setting_docs::Entity::find()
+        .filter(setting_docs::Column::BookId.eq(book_id))
+        .all(conn)
+        .await?;
+    Ok(docs
+        .into_iter()
+        .map(|doc| (doc.kind, doc.content))
+        .collect())
+}
+
+/// Error code helper for a missing model role (spec/03 §4 step 1).
+pub fn missing_role(role: AgentRole) -> AppError {
+    AppError::new(
+        ErrorCode::ModelMissingRole,
+        format!("no model is configured for the {} role", role.as_str()),
+    )
+    .with_details(json!({ "role": role.as_str() }))
+}

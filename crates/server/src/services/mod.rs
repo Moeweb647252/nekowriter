@@ -12,6 +12,7 @@ pub mod chapters;
 pub mod characters;
 pub mod prompts;
 pub mod providers;
+pub mod sessions;
 pub mod setting_docs;
 pub mod tracks;
 pub mod versions;

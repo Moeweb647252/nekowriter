@@ -6,6 +6,7 @@ pub mod chapters;
 pub mod content_ops;
 pub mod prompts;
 pub mod providers;
+pub mod sessions;
 pub mod settings;
 pub mod settings_materials;
 pub mod tracks;
@@ -22,6 +23,11 @@ pub use chapters::{
 pub use content_ops::{ContentOp, ContentOpInput};
 pub use prompts::{
     PromptEntryDto, PromptSaveInput, PromptVariableDocDto, PromptVariableFieldDocDto,
+};
+pub use sessions::{
+    DebugEchoDto, DebugEchoInput, MessageBlockDto, MessageDto, MessagePageDto, MessageWithCallsDto,
+    ResumeInput, RetryingDto, SessionAnswerInput, SessionDto, SessionMessageInput, SessionPatch,
+    SessionSnapshotDto, ToolCallDto,
 };
 pub use settings::{
     AppSettingsDto, AppSettingsPatch, EmbeddingSettingsDto, SearchProvider, SearchSettingsDto,

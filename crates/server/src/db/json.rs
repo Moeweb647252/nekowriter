@@ -633,6 +633,21 @@ pub struct ModelSnapshot {
     pub options: Value,
 }
 
+impl Default for ModelSnapshot {
+    fn default() -> Self {
+        Self {
+            provider_id: 0,
+            protocol: Protocol::Mock,
+            base_url: String::new(),
+            extra_headers: BTreeMap::new(),
+            model: String::new(),
+            context_window: 0,
+            max_output_tokens: 0,
+            options: Value::Null,
+        }
+    }
+}
+
 /// `agent_sessions.counters` (spec/02 §4).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
 #[serde(default, rename_all = "snake_case")]

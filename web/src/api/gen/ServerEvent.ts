@@ -3,12 +3,24 @@ import type { BookOp } from "./BookOp";
 import type { ChapterListItemDto } from "./ChapterListItemDto";
 import type { ContentActor } from "./ContentActor";
 import type { ContentOp } from "./ContentOp";
+import type { DeltaKind } from "./DeltaKind";
+import type { MessageDto } from "./MessageDto";
+import type { SessionDto } from "./SessionDto";
 import type { SettingDocKind } from "./SettingDocKind";
 import type { SettingsKind } from "./SettingsKind";
+import type { ToolCallDto } from "./ToolCallDto";
 
 /**
  * A server event (spec/10 §3). Variants arrive with the milestone that produces them; M1 emits
- * `book.updated`, `chapter.updated`, `chapter.content` and `settings.changed`, plus `resync` for
- * lagging subscribers.
+ * `book.updated`, `chapter.updated`, `chapter.content` and `settings.changed`, M3 adds the
+ * session events, and any lagging subscriber receives `resync`.
  */
-export type ServerEvent = { "type": "book.updated", book_id: number, op: BookOp, } | { "type": "chapter.updated", chapter: ChapterListItemDto, outline_changed: boolean, } | { "type": "chapter.content", chapter_id: number, version: number, ops: Array<ContentOp>, word_count: number, tail_open: boolean, actor: ContentActor, } | { "type": "settings.changed", book_id: number, kind: SettingsKind, doc_kind?: SettingDocKind | null, revision?: number | null, } | { "type": "resync" };
+export type ServerEvent = { "type": "session.updated", session: SessionDto, 
+/**
+ * Codes the UI localizes (spec/10 §1), e.g. `context.large_kickoff`.
+ */
+warnings?: Array<string>, } | { "type": "session.message", session_id: number, message: MessageDto, } | { "type": "session.delta", session_id: number, seq: number, kind: DeltaKind, index: number, text: string, } | { "type": "session.tool_call", session_id: number, tool_call: ToolCallDto, } | { "type": "session.tool_preview", session_id: number, 
+/**
+ * The `seq` of the assistant message being generated.
+ */
+seq: number, call_index: number, name: string, field: string, delta: string, } | { "type": "book.updated", book_id: number, op: BookOp, } | { "type": "chapter.updated", chapter: ChapterListItemDto, outline_changed: boolean, } | { "type": "chapter.content", chapter_id: number, version: number, ops: Array<ContentOp>, word_count: number, tail_open: boolean, actor: ContentActor, } | { "type": "settings.changed", book_id: number, kind: SettingsKind, doc_kind?: SettingDocKind | null, revision?: number | null, } | { "type": "resync" };

@@ -126,6 +126,14 @@ impl ScriptedProvider {
         self
     }
 
+    /// A second handle to the same queue and request log, so a test can inject one clone into the
+    /// runtime and inspect what it received through the other.
+    pub fn handle(&self) -> Self {
+        Self {
+            state: self.state.clone(),
+        }
+    }
+
     /// Every request the provider received, in order.
     pub fn requests(&self) -> Vec<ChatRequest> {
         self.state

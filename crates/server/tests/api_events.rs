@@ -105,6 +105,11 @@ async fn content_patch_emits_chapter_updated_and_chapter_content() {
             ServerEvent::ChapterUpdated { .. } => "chapter.updated",
             ServerEvent::BookUpdated { .. } => "book.updated",
             ServerEvent::SettingsChanged { .. } => "settings.changed",
+            ServerEvent::SessionUpdated { .. } => "session.updated",
+            ServerEvent::SessionMessage { .. } => "session.message",
+            ServerEvent::SessionDelta { .. } => "session.delta",
+            ServerEvent::SessionToolCall { .. } => "session.tool_call",
+            ServerEvent::SessionToolPreview { .. } => "session.tool_preview",
             ServerEvent::Resync => "resync",
         })
         .collect();

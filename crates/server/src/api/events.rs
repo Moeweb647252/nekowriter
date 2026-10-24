@@ -72,8 +72,14 @@ fn event_book(event: &ServerEvent) -> Option<i32> {
         ServerEvent::BookUpdated { book_id, .. } => Some(*book_id),
         ServerEvent::ChapterUpdated { chapter, .. } => Some(chapter.book_id),
         ServerEvent::SettingsChanged { book_id, .. } => Some(*book_id),
+        ServerEvent::SessionUpdated { session, .. } => session.book_id,
         // No book id in the payload (spec/10 §3).
-        ServerEvent::ChapterContentChanged { .. } | ServerEvent::Resync => None,
+        ServerEvent::ChapterContentChanged { .. }
+        | ServerEvent::SessionMessage { .. }
+        | ServerEvent::SessionDelta { .. }
+        | ServerEvent::SessionToolCall { .. }
+        | ServerEvent::SessionToolPreview { .. }
+        | ServerEvent::Resync => None,
     }
 }
 
@@ -145,6 +151,11 @@ pub fn event_type(event: &ServerEvent) -> &'static str {
         ServerEvent::ChapterUpdated { .. } => "chapter.updated",
         ServerEvent::ChapterContentChanged { .. } => "chapter.content",
         ServerEvent::SettingsChanged { .. } => "settings.changed",
+        ServerEvent::SessionUpdated { .. } => "session.updated",
+        ServerEvent::SessionMessage { .. } => "session.message",
+        ServerEvent::SessionDelta { .. } => "session.delta",
+        ServerEvent::SessionToolCall { .. } => "session.tool_call",
+        ServerEvent::SessionToolPreview { .. } => "session.tool_preview",
         ServerEvent::Resync => "resync",
     }
 }

@@ -1,5 +1,6 @@
 //! `nekowriter` library: configuration, state, database, API and (from M3) the agent runtime.
 
+pub mod agent;
 pub mod api;
 pub mod config;
 pub mod db;

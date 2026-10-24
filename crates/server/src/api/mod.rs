@@ -4,11 +4,14 @@ pub mod app_settings;
 pub mod books;
 pub mod changes;
 pub mod chapters;
+#[cfg(debug_assertions)]
+pub mod debug;
 pub mod dto;
 pub mod events;
 pub mod health;
 pub mod prompts;
 pub mod providers;
+pub mod sessions;
 pub mod settings_materials;
 pub mod tracks;
 
@@ -139,7 +142,30 @@ pub fn build_app(state: AppState) -> Router {
         )
         .route("/prompts", get(prompts::list))
         .route("/prompts/{key}", put(prompts::save).delete(prompts::reset))
+        .route("/books/{book_id}/sessions", get(sessions::list))
+        .route(
+            "/sessions/{session_id}",
+            get(sessions::get).patch(sessions::patch),
+        )
+        .route("/sessions/{session_id}/messages", get(sessions::messages))
+        .route("/sessions/{session_id}/pause", post(sessions::pause))
+        .route("/sessions/{session_id}/resume", post(sessions::resume))
+        .route("/sessions/{session_id}/stop", post(sessions::stop))
+        .route(
+            "/sessions/{session_id}/continue",
+            post(sessions::continue_session),
+        )
+        .route("/sessions/{session_id}/abandon", post(sessions::abandon))
+        .route(
+            "/sessions/{session_id}/message",
+            post(sessions::send_message),
+        )
+        .route("/sessions/{session_id}/answer", post(sessions::answer))
         .with_state(state.clone());
+
+    // The debug endpoints exist only in debug builds (spec/10 §2.7).
+    #[cfg(debug_assertions)]
+    let api = api.route("/debug/sessions/echo", post(debug::echo));
 
     Router::new()
         .nest("/api", api)
