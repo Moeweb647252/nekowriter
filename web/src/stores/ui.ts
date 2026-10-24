@@ -2,6 +2,8 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
 
+import { initialLanguage, type Language } from "@/i18n"
+
 export type EditorFont = "serif" | "sans"
 export type EditorSize = "s" | "m" | "l"
 
@@ -11,13 +13,14 @@ type UiState = {
   navigatorCollapsed: boolean
   agentPanelCollapsed: boolean
   pinnedSession: Record<number, number | null>
-  language: string
+  /** The UI language; persisted here and the source `i18n` restores at boot (spec/11 §4.3, §6). */
+  language: Language
   setEditorFont: (font: EditorFont) => void
   setEditorSize: (size: EditorSize) => void
   setNavigatorCollapsed: (collapsed: boolean) => void
   setAgentPanelCollapsed: (collapsed: boolean) => void
   setPinnedSession: (bookId: number, sessionId: number | null) => void
-  setLanguage: (language: string) => void
+  setLanguage: (language: Language) => void
 }
 
 export const useUiStore = create<UiState>()(
@@ -28,7 +31,7 @@ export const useUiStore = create<UiState>()(
       navigatorCollapsed: false,
       agentPanelCollapsed: false,
       pinnedSession: {},
-      language: "en",
+      language: initialLanguage(),
       setEditorFont: (editorFont) => set({ editorFont }),
       setEditorSize: (editorSize) => set({ editorSize }),
       setNavigatorCollapsed: (navigatorCollapsed) => set({ navigatorCollapsed }),

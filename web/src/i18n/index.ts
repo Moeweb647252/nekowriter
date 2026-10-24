@@ -1,6 +1,8 @@
 import i18n from "i18next"
 import { initReactI18next } from "react-i18next"
 
+import { useUiStore } from "@/stores/ui"
+
 import enAgent from "./locales/en/agent.json"
 import enBook from "./locales/en/book.json"
 import enCanon from "./locales/en/canon.json"
@@ -67,13 +69,13 @@ export const resources = {
   },
 } as const
 
-/** The language to start with: the persisted choice, else the browser, else English. */
+/**
+ * The language to start with: the persisted choice, else the browser, else English
+ * (spec/11 §6). The choice itself lives in the `ui` store (spec/11 §4.3), which is what persists
+ * it; this only decides the value on a first run.
+ */
 export function initialLanguage(): Language {
-  const stored = localStorage.getItem("nw.language")
-  if (stored === "en" || stored === "zh-CN") {
-    return stored
-  }
-  if (navigator.language.toLowerCase().startsWith("zh")) {
+  if (typeof navigator !== "undefined" && navigator.language.toLowerCase().startsWith("zh")) {
     return "zh-CN"
   }
   return "en"
@@ -83,9 +85,22 @@ export function applyDocumentLanguage(language: Language) {
   document.documentElement.lang = language
 }
 
+/**
+ * The persisted choice from the `ui` store, else the browser language, else English
+ * (spec/11 §6). The store rehydrates synchronously from localStorage before this runs, because
+ * `i18n` imports it and the module is evaluated during startup.
+ */
+export function resolveLanguage(): Language {
+  const stored = useUiStore.getState().language
+  if (stored === "en" || stored === "zh-CN") {
+    return stored
+  }
+  return initialLanguage()
+}
+
 i18n.use(initReactI18next).init({
   resources,
-  lng: initialLanguage(),
+  lng: resolveLanguage(),
   fallbackLng: "en",
   supportedLngs: [...SUPPORTED_LANGUAGES],
   ns: [...NAMESPACES],
@@ -95,11 +110,14 @@ i18n.use(initReactI18next).init({
 
 applyDocumentLanguage(i18n.language as Language)
 
-/** Changes the language and remembers it. */
+/**
+ * Changes the language and remembers it. `ui.language` is the persisted value (spec/11 §4.3),
+ * so this writes it to the store as well as switching i18next (spec/11 §6).
+ */
 export async function setLanguage(language: Language) {
   await i18n.changeLanguage(language)
-  localStorage.setItem("nw.language", language)
   applyDocumentLanguage(language)
+  useUiStore.getState().setLanguage(language)
 }
 
 export default i18n
