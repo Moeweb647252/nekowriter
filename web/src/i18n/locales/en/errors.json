@@ -27,6 +27,6 @@
   "prompt.template_invalid": "The template is not valid.",
   "research.invalid_state": "The research task is not in a state that allows this.",
   "conception.unavailable": "No conception model is configured, so the book was created without it.",
-  "context.large_kickoff": "The chapter is long; the agent may run out of context.",
+  "context.large_kickoff": "This chapter's context is more than half the model's window; the agent may run out of room. Shorten the outline or split the chapter.",
   "prompt.override_failed": "A prompt override could not be used and the default was used instead."
 }

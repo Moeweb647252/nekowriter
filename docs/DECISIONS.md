@@ -529,6 +529,22 @@ technical decisions.
   are already memoized by `useMemo` on the message list, and the virtualizer owns the scroll
   behaviour. A reviewer sees exactly one lint warning, documented here.
 
+### D-075 Backspace in the last remaining empty paragraph is a no-op
+- **Context**: spec/11 §5.2 specifies "Backspace in an empty paragraph deletes it." Read
+  literally, a chapter with one empty paragraph would lose its last paragraph and the author would
+  be left in the paragraph view with no editable target at all. The full-text editor already
+  exists as the way to replace a chapter's whole text, including emptying it.
+- **Decision**: Backspace in an empty paragraph deletes it, except when it is the only paragraph
+  of the chapter, where it does nothing. Enter at the end of a paragraph inserts a new one after
+  it, as specified. Both keys are ignored while an IME composition is active, because Enter and
+  Backspace belong to the composition then (AGENTS.md §6).
+- **Consequences**: an author never reaches a paragraph view with nothing to click; to empty a
+  chapter they use the full-text editor, which stores an empty document in one step. The rule is a
+  pure function, `paragraphKeyAction` in `web/src/lib/paragraphEditing.ts`, pinned by
+  `web/src/lib/paragraphEditing.test.ts` ("inserts a paragraph when Enter is pressed at the end of
+  the text", "keeps Enter inside the text as a line break", "deletes the paragraph on Backspace in
+  an empty one", "ignores every key while an IME composition is active").
+
 ## Open items (questions for the author)
 1. Confirm the reading of "this time it cannot be delegated to a lower-level review agent" as
    "the author judges the reviewer's report; no further delegation" (PROJECT §10.9).

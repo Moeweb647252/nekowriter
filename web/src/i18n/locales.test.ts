@@ -2,6 +2,7 @@
  *
  * `check-i18n` can only see literal keys, so the codes that arrive as data are asserted here. */
 import { describe, expect, it } from "vitest"
+import i18n from "i18next"
 
 import type { ErrorCode } from "@/api/gen/ErrorCode"
 import { NAMESPACES, SUPPORTED_LANGUAGES, resources } from "@/i18n"
@@ -40,6 +41,17 @@ const ALL_ERROR_CODES: ErrorCode[] = [
   "internal",
 ]
 
+/**
+ * Warning codes the API may return in `warnings` (spec/10 §1). They arrive as data, so
+ * `check-i18n` cannot see them and they are asserted here (spec/11 §9).
+ */
+const ALL_WARNING_CODES = [
+  "model.missing_role",
+  "context.large_kickoff",
+  "prompt.override_failed",
+  "conception.unavailable",
+]
+
 const CHAPTER_STATUSES = ["planned", "drafting", "in_review", "revising", "official"]
 const CANON_STATUSES = ["none", "pending", "syncing", "synced", "stale", "failed"]
 
@@ -50,6 +62,27 @@ describe("locale coverage", () => {
     for (const code of ALL_ERROR_CODES) {
       expect(en[code], `en errors:${code}`).toBeTypeOf("string")
       expect(zh[code], `zh-CN errors:${code}`).toBeTypeOf("string")
+    }
+  })
+
+  it("has an errors key for every warning code", () => {
+    const en = enErrors as Record<string, string>
+    const zh = zhErrors as Record<string, string>
+    for (const code of ALL_WARNING_CODES) {
+      expect(en[code], `en errors:${code}`).toBeTypeOf("string")
+      expect(zh[code], `zh-CN errors:${code}`).toBeTypeOf("string")
+    }
+  })
+
+  it("localizes every warning code through the real i18n instance", () => {
+    // The toast helper resolves codes with t("errors:<code>"); a missing key would render the raw
+    // code at the author, so assert the resolution, not just the JSON tables.
+    for (const language of SUPPORTED_LANGUAGES) {
+      for (const code of ALL_WARNING_CODES) {
+        const text = i18n.getFixedT(language)?.("errors:" + code, { defaultValue: code })
+        expect(text, `${language} errors:${code}`).not.toBe(code)
+        expect(text, `${language} errors:${code}`).toBeTruthy()
+      }
     }
   })
 
