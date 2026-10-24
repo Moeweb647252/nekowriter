@@ -103,6 +103,10 @@ describe("ForeshadowingPage", () => {
     ).not.toHaveBeenCalled()
     const input = screen.getByPlaceholderText("How was it paid off?")
     await user.type(input, "The blade returns.")
+    await user.selectOptions(
+      screen.getByLabelText("Paid off in chapter"),
+      screen.getByRole("option", { name: "Chapter 1" }),
+    )
     await user.click(screen.getByRole("button", { name: "Save" }))
     expect(patchMutate).toHaveBeenCalledTimes(1)
     const [variables] = patchMutate.mock.calls[0] as [
@@ -112,6 +116,7 @@ describe("ForeshadowingPage", () => {
     expect(variables.patch).toEqual({
       status: "resolved",
       resolution: "The blade returns.",
+      resolved_chapter_id: 3,
     })
   })
 })

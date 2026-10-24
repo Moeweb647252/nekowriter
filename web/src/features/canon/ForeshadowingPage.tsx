@@ -112,11 +112,15 @@ export default function ForeshadowingPage() {
                     bookId={bookId}
                     item={item}
                     chapterIndex={chapterIndex}
-                    onResolve={(resolution) =>
+                    onResolve={(resolution, resolvedChapterId) =>
                       patch.mutate(
                         {
                           id: item.id,
-                          patch: { status: "resolved", resolution },
+                          patch: {
+                            status: "resolved",
+                            resolution,
+                            resolved_chapter_id: resolvedChapterId ?? null,
+                          },
                         },
                         { onError: showError },
                       )
@@ -151,7 +155,7 @@ function ForeshadowingRow({
   bookId: number
   item: ForeshadowingDto
   chapterIndex: ChapterIndex
-  onResolve: (resolution: string) => void
+  onResolve: (resolution: string, resolvedChapterId?: number) => void
   onAbandon: () => void
   onDelete: () => void
 }) {
@@ -160,6 +164,10 @@ function ForeshadowingRow({
   // the UI asks for it instead of inserting a localized phrase into canon.
   const [resolving, setResolving] = useState(false)
   const [resolution, setResolution] = useState("")
+  const [resolvedChapterId, setResolvedChapterId] = useState<number | undefined>(undefined)
+  const chapters = [...chapterIndex.values()].sort(
+    (a, b) => a.trackId - b.trackId || a.number - b.number,
+  )
   return (
     <li className="flex items-start gap-2 rounded-md border p-2">
       <div className="min-w-0 flex-1">
@@ -209,9 +217,10 @@ function ForeshadowingRow({
           onSubmit={(event) => {
             event.preventDefault()
             if (resolution.trim() !== "") {
-              onResolve(resolution.trim())
+              onResolve(resolution.trim(), resolvedChapterId)
               setResolving(false)
               setResolution("")
+              setResolvedChapterId(undefined)
             }
           }}
         >
@@ -222,6 +231,23 @@ function ForeshadowingRow({
             placeholder={t("canon:resolve_prompt")}
             className="h-7 w-56 text-xs"
           />
+          <select
+            value={resolvedChapterId ?? ""}
+            onChange={(event) =>
+              setResolvedChapterId(
+                event.target.value === "" ? undefined : Number(event.target.value),
+              )
+            }
+            className="h-7 rounded-md border bg-background px-2 text-xs"
+            aria-label={t("canon:resolve_chapter")}
+          >
+            <option value="">{t("canon:no_chapter")}</option>
+            {chapters.map((chapter) => (
+              <option key={chapter.id} value={chapter.id}>
+                {chapterRefLabel(t, chapterIndex, chapter.id)}
+              </option>
+            ))}
+          </select>
           <Button size="sm" type="submit" disabled={resolution.trim() === ""}>
             {t("common:save")}
           </Button>
@@ -232,6 +258,7 @@ function ForeshadowingRow({
             onClick={() => {
               setResolving(false)
               setResolution("")
+              setResolvedChapterId(undefined)
             }}
           >
             {t("common:cancel")}

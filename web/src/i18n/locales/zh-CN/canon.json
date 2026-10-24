@@ -121,6 +121,8 @@
   "resolved_at": "回收于{{label}}",
   "planned_payoff": "计划回收：{{text}}",
   "resolve_prompt": "伏笔是如何回收的？",
+  "resolve_chapter": "回收于章节",
+  "no_chapter": "不指定章节",
   "resolve": "回收",
   "abandon": "放弃",
   "changes_hint": "每一次档案与设定修改，都带有前后对比和「撤销」。",

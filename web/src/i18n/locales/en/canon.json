@@ -121,6 +121,8 @@
   "resolved_at": "resolved in {{label}}",
   "planned_payoff": "planned payoff: {{text}}",
   "resolve_prompt": "How was it paid off?",
+  "resolve_chapter": "Paid off in chapter",
+  "no_chapter": "No chapter",
   "resolve": "Resolve",
   "abandon": "Abandon",
   "changes_hint": "Every canon and setting change, with its before/after and Revert.",
