@@ -5,6 +5,7 @@ pub mod changes;
 pub mod chapters;
 pub mod content_ops;
 pub mod prompts;
+pub mod providers;
 pub mod settings;
 pub mod settings_materials;
 pub mod tracks;

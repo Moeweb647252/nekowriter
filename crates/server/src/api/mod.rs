@@ -8,6 +8,7 @@ pub mod dto;
 pub mod events;
 pub mod health;
 pub mod prompts;
+pub mod providers;
 pub mod settings_materials;
 pub mod tracks;
 
@@ -113,6 +114,29 @@ pub fn build_app(state: AppState) -> Router {
         .route("/books/{book_id}/changes", get(changes::list))
         .route("/changes/{change_id}", get(changes::get))
         .route("/events", get(events::stream))
+        .route("/providers", get(providers::list).post(providers::create))
+        .route("/provider-presets", get(providers::presets))
+        .route(
+            "/providers/{provider_id}",
+            get(providers::get)
+                .patch(providers::patch)
+                .delete(providers::delete),
+        )
+        .route("/providers/{provider_id}/test", post(providers::test))
+        .route(
+            "/providers/{provider_id}/remote-models",
+            get(providers::remote_models),
+        )
+        .route(
+            "/model-profiles",
+            get(providers::list_models).post(providers::create_model),
+        )
+        .route(
+            "/model-profiles/{model_profile_id}",
+            get(providers::get_model)
+                .patch(providers::patch_model)
+                .delete(providers::delete_model),
+        )
         .route("/prompts", get(prompts::list))
         .route("/prompts/{key}", put(prompts::save).delete(prompts::reset))
         .with_state(state.clone());

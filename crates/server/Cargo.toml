@@ -96,3 +96,7 @@ path = "tests/api_chapters.rs"
 [[test]]
 name = "prompts_registry"
 path = "tests/prompts_registry.rs"
+
+[[test]]
+name = "providers_api"
+path = "tests/providers_api.rs"
