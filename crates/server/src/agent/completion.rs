@@ -9,7 +9,7 @@
 use chrono::Utc;
 use sea_orm::{ActiveModelTrait, ConnectionTrait, EntityTrait, Set};
 
-use crate::db::entities::{agent_sessions, chapter_versions, chapters};
+use crate::db::entities::{agent_sessions, agent_tool_calls, chapter_versions, chapters};
 use crate::db::json::{ChapterContent, ChapterStatus, VersionKind};
 use crate::error::AppError;
 use crate::events::{ContentActor, ServerEvent};
@@ -25,6 +25,7 @@ use super::session;
 pub async fn finish_draft(
     tx: &sea_orm::DatabaseTransaction,
     session: &agent_sessions::Model,
+    call: &agent_tool_calls::Model,
     chapter_id: i32,
 ) -> Result<Vec<ServerEvent>, AppError> {
     let Some(chapter) = chapters::Entity::find_by_id(chapter_id).one(tx).await? else {
@@ -43,7 +44,7 @@ pub async fn finish_draft(
         content: Set(crate::db::json::to_json(&content)
             .map_err(|err| AppError::internal(err.to_string()))?),
         word_count: Set(word_count),
-        note: Set(String::new()),
+        note: Set(completion_note(call)),
         session_id: Set(Some(session.id)),
         created_at: Set(Utc::now()),
         ..Default::default()
@@ -84,6 +85,26 @@ pub async fn finish_draft(
             actor: ContentActor::Agent,
         },
     ])
+}
+
+/// The `note` of the version a completing call saves (spec/08 §1.1).
+///
+/// `finish_draft` carries the writer's own summary of the chapter in `note` (spec/05 §4); a
+/// chapter-completing `insert_text` has no such field, so its version note stays empty. A revision
+/// will read `finish_revision`'s `summary` here once M6.2 owns that handler.
+fn completion_note(call: &agent_tool_calls::Model) -> String {
+    if call.name != "finish_draft" {
+        return String::new();
+    }
+    let Ok(input) = crate::db::json::from_json::<serde_json::Value>(&call.input) else {
+        return String::new();
+    };
+    input
+        .get("note")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_owned()
 }
 
 /// The next `version_no` of a chapter (unique per chapter, spec/02 §2).

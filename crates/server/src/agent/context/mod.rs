@@ -1181,13 +1181,13 @@ pub async fn apply_completion(
     call: &agent_tool_calls::Model,
     completion: CompletionKind,
 ) -> Result<Vec<ServerEvent>, AppError> {
-    let _ = call;
     let mut events = Vec::new();
     match completion {
         // `finish_draft` / a chapter-completing `insert_text` (M4.2).
         CompletionKind::Draft => {
             if let Some(chapter_id) = session.chapter_id {
-                events.extend(super::completion::finish_draft(tx, session, chapter_id).await?);
+                events
+                    .extend(super::completion::finish_draft(tx, session, call, chapter_id).await?);
             }
         }
         // M6.2 owns the revision completion.

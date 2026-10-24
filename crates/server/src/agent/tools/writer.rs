@@ -1114,7 +1114,8 @@ impl ToolHandler for FinishDraftTool {
             )
             .map_err(|_| ToolError::new(ToolErrorKind::Internal))?
             .text;
-        // The completion handler stores the note on the `draft` version (spec/08 §1.1).
+        // The note travels in the call's input; the completion handler reads it from there when it
+        // writes the `draft` version (spec/08 §1.1), because a `ToolOutcome` has no note channel.
         let mut outcome = ToolOutcome::text(text)
             .with_ui(json!({ "word_count": word_count, "confirm_needed": confirm_needed }));
         if confirm_needed {
@@ -1125,8 +1126,7 @@ impl ToolHandler for FinishDraftTool {
                 ..ToolEffects::default()
             });
         }
-        let _ = input.note;
-        let _ = (target_min, target_max);
+        let _ = (input.note, target_min, target_max);
         Ok(outcome)
     }
 }

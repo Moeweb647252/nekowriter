@@ -686,3 +686,57 @@ async fn a_write_call_holds_under_auto_pause_and_its_content_is_committed() {
     assert!(!insert.sealed, "a held call is not sealed yet");
     assert_eq!(phase_of(&runtime, session_id).await, Phase::Drafting);
 }
+
+/// spec/08 §1.1: the `draft` version's note is the `finish_draft` note.
+///
+/// The note is what the author reads next to a version in the history list, and it is the only
+/// place the writer's own summary of the chapter survives: the call's result is
+/// `result.writer_control`, which does not repeat it (spec/05 §4).
+#[tokio::test]
+async fn finish_draft_stores_its_note_on_the_draft_version() {
+    let runtime = runtime(vec![
+        outline_step(),
+        insert_step("第一段。", json!({})),
+        ScriptStep::new().tool(
+            "finish_draft",
+            json!({ "note": "本章写了城门口的一场对峙。" }),
+        ),
+        ScriptStep::new().tool(
+            "finish_draft",
+            json!({ "note": "本章写了城门口的一场对峙。" }),
+        ),
+    ])
+    .await;
+    let session_id = start_writer(&runtime, Granularity::Paragraph, false, false).await;
+    runtime
+        .wait_status(session_id, SessionStatus::Completed)
+        .await;
+    let notes = draft_version_notes(&runtime, runtime.chapter_id).await;
+    assert_eq!(
+        notes,
+        vec!["本章写了城门口的一场对峙。".to_owned()],
+        "the draft version carries the finish_draft note"
+    );
+}
+
+/// The `note` of every `draft` version of a chapter, oldest first.
+async fn draft_version_notes(
+    runtime: &agent_write_harness::Runtime,
+    chapter_id: i32,
+) -> Vec<String> {
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+    runtime
+        .app
+        .db()
+        .conn()
+        .query_all_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT note FROM chapter_versions WHERE chapter_id = ? AND kind = 'draft' ORDER BY id",
+            vec![chapter_id.into()],
+        ))
+        .await
+        .expect("query versions")
+        .into_iter()
+        .map(|row| row.try_get::<String>("", "note").expect("note"))
+        .collect()
+}
