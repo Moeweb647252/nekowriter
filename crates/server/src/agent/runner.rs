@@ -1163,7 +1163,7 @@ async fn finalize_inner(
         && let Some(notice_key) = phase_notice(&call.name)
         && outcome.effects.phase_to.is_some()
     {
-        let granularity = granularity_value(session, outcome, prompts);
+        let granularity = granularity_value(tx, session, outcome, prompts).await?;
         if let Ok(rendered) = prompts.render(notice_key, &json!({ "granularity": granularity })) {
             appendices.push(Appendix {
                 kind: AppendixKind::EffectNotice,
@@ -1410,31 +1410,57 @@ pub fn phase_notice(tool: &str) -> Option<&'static str> {
 }
 
 /// The `granularity` template context of the session entering its new phase (spec/03 §8).
-fn granularity_value(
+async fn granularity_value(
+    tx: &impl ConnectionTrait,
     session: &agent_sessions::Model,
     outcome: &ToolOutcome,
     prompts: &PromptSet,
-) -> Value {
+) -> Result<Value, AppError> {
     let phase = outcome
         .effects
         .phase_to
         .unwrap_or_else(|| session::phase_of(session));
-    let (tail_open, last_pid) = tail_state_of(session);
+    let (tail_open, last_pid) = tail_state(tx, session).await?;
     let key = session::granularity_of(session)
         .map(|value| value.as_str())
         .unwrap_or(json::Granularity::Paragraph.as_str())
         .to_owned();
-    json!({
+    Ok(json!({
         "key": key.clone(),
         "label": prompts.label("granularity", &key),
         "revising": matches!(phase, Phase::RevisionPlanning | Phase::Revising),
         "tail_open": tail_open,
         "last_pid": last_pid,
-    })
+    }))
 }
 
-/// The tail state and last pid of the session's chapter (from its view snapshot, best effort).
-fn tail_state_of(session: &agent_sessions::Model) -> (bool, String) {
+/// The tail state and last pid of the session's chapter (spec/03 §8 "open tail").
+///
+/// The chapter's current content is authoritative. `view_snapshot` is only written when a session
+/// *leaves* `running` (spec/03 §3), so reading it here — while the notice is rendered inside the
+/// transaction that finalizes a call — would always see `NULL` and silently drop the open-tail hint
+/// from every notice on the running path. The snapshot stays as the fallback for a session whose
+/// chapter row is gone.
+async fn tail_state(
+    tx: &impl ConnectionTrait,
+    session: &agent_sessions::Model,
+) -> Result<(bool, String), AppError> {
+    if let Some(chapter) = lookup_chapter(tx, session).await? {
+        let content: json::ChapterContent = json::from_json_or_default(&chapter.content);
+        return Ok((
+            content.tail_open,
+            content
+                .paragraphs
+                .last()
+                .map(|paragraph| paragraph.pid.clone())
+                .unwrap_or_default(),
+        ));
+    }
+    Ok(snapshot_tail_state(session))
+}
+
+/// The tail state recorded in the session's view snapshot, when it has one.
+fn snapshot_tail_state(session: &agent_sessions::Model) -> (bool, String) {
     let Some(raw) = session.view_snapshot.as_deref() else {
         return (false, String::new());
     };
@@ -1859,7 +1885,7 @@ pub async fn text_only_inner(
             if counters.consecutive_nudges < NUDGE_LIMIT {
                 counters.consecutive_nudges += 1;
                 let key = nudge_key(kind, session::phase_of(session));
-                let (tail_open, last_pid) = tail_state_of(session);
+                let (tail_open, last_pid) = tail_state(tx, session).await?;
                 let granularity_key = session::granularity_of(session)
                     .map(|value| value.as_str())
                     .unwrap_or(json::Granularity::Paragraph.as_str())
