@@ -417,9 +417,10 @@ mod tests {
         .iter()
         .map(|kind| kind.code())
         .collect();
-        assert_eq!(codes.len(), 34);
+        assert_eq!(codes.len(), 35);
         let unique: std::collections::BTreeSet<&str> = codes.iter().copied().collect();
         assert_eq!(unique.len(), codes.len(), "codes must be unique");
         assert!(codes.contains(&"after_completion"));
+        assert!(codes.contains(&"refusal"));
     }
 }
