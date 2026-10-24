@@ -128,13 +128,6 @@ const router = createBrowserRouter([
             },
           },
           {
-            path: "canon/notes",
-            lazy: async () => {
-              const module = await import("@/features/canon/NotesPage")
-              return { Component: module.default }
-            },
-          },
-          {
             path: "canon/foreshadowing",
             lazy: async () => {
               const module = await import("@/features/canon/ForeshadowingPage")

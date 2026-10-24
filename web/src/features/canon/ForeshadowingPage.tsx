@@ -1,7 +1,7 @@
 /** The foreshadowing page: three tabs (Open, Resolved, Abandoned) with planted and resolved
  * chapter links and the planned payoff (PROJECT §8.8, spec/10 §2.4). */
 import { useState } from "react"
-import { useParams } from "react-router"
+import { Link, useParams } from "react-router"
 import { useTranslation } from "react-i18next"
 import { Plus, Trash2 } from "lucide-react"
 
@@ -13,6 +13,12 @@ import {
   useForeshadowing,
   usePatchForeshadowing,
 } from "@/api/hooks/useCanon"
+import { useTracks } from "@/api/hooks/tracks"
+import {
+  chapterRefLabel,
+  useChapterIndex,
+  type ChapterIndex,
+} from "@/features/canon/chapterIndex"
 import { useErrorToast } from "@/components/common/ErrorToast"
 import { EmptyState } from "@/components/common/EmptyState"
 import { Button } from "@/components/ui/button"
@@ -28,6 +34,8 @@ export default function ForeshadowingPage() {
   const bookId = Number(rawBookId)
   const [status, setStatus] = useState<ForeshadowingStatus>("open")
   const items = useForeshadowing(bookId, status)
+  const tracks = useTracks(bookId)
+  const chapterIndex = useChapterIndex(tracks.data)
   const create = useCreateForeshadowing(bookId)
   const patch = usePatchForeshadowing(bookId)
   const remove = useDeleteForeshadowing(bookId)
@@ -101,15 +109,14 @@ export default function ForeshadowingPage() {
                 {rows.map((item) => (
                   <ForeshadowingRow
                     key={item.id}
+                    bookId={bookId}
                     item={item}
-                    onResolve={() =>
+                    chapterIndex={chapterIndex}
+                    onResolve={(resolution) =>
                       patch.mutate(
                         {
                           id: item.id,
-                          patch: {
-                            status: "resolved",
-                            resolution: t("canon:resolved_by_author"),
-                          },
+                          patch: { status: "resolved", resolution },
                         },
                         { onError: showError },
                       )
@@ -134,17 +141,25 @@ export default function ForeshadowingPage() {
 
 /** One foreshadowing item. */
 function ForeshadowingRow({
+  bookId,
   item,
+  chapterIndex,
   onResolve,
   onAbandon,
   onDelete,
 }: {
+  bookId: number
   item: ForeshadowingDto
-  onResolve: () => void
+  chapterIndex: ChapterIndex
+  onResolve: (resolution: string) => void
   onAbandon: () => void
   onDelete: () => void
 }) {
   const { t } = useTranslation()
+  // Resolving stores the author's own words (spec/06 §1.5): the resolution is written text, so
+  // the UI asks for it instead of inserting a localized phrase into canon.
+  const [resolving, setResolving] = useState(false)
+  const [resolution, setResolution] = useState("")
   return (
     <li className="flex items-start gap-2 rounded-md border p-2">
       <div className="min-w-0 flex-1">
@@ -153,30 +168,85 @@ function ForeshadowingRow({
           <p className="text-xs text-muted-foreground">{item.description}</p>
         )}
         <p className="mt-0.5 text-xs text-muted-foreground">
-          {item.planted_chapter_id === null
-            ? t("canon:not_planted")
-            : t("canon:planted_at", { number: item.planted_chapter_id })}
+          {item.planted_chapter_id === null ? (
+            t("canon:not_planted")
+          ) : (
+            <Link
+              to={`/books/${bookId}/chapters/${item.planted_chapter_id}`}
+              className="underline-offset-2 hover:underline"
+            >
+              {t("canon:planted_at", {
+                label: chapterRefLabel(t, chapterIndex, item.planted_chapter_id),
+              })}
+            </Link>
+          )}
           {item.planned_payoff === ""
             ? ""
             : ` · ${t("canon:planned_payoff", { text: item.planned_payoff })}`}
-          {item.resolved_chapter_id === null
-            ? ""
-            : ` · ${t("canon:resolved_at", { number: item.resolved_chapter_id })}`}
+          {item.resolved_chapter_id === null ? (
+            ""
+          ) : (
+            <>
+              {" · "}
+              <Link
+                to={`/books/${bookId}/chapters/${item.resolved_chapter_id}`}
+                className="underline-offset-2 hover:underline"
+              >
+                {t("canon:resolved_at", {
+                  label: chapterRefLabel(t, chapterIndex, item.resolved_chapter_id),
+                })}
+              </Link>
+            </>
+          )}
         </p>
         {item.resolution === "" ? null : (
           <p className="text-xs text-muted-foreground">{item.resolution}</p>
         )}
       </div>
-      {item.status === "open" ? (
+      {item.status !== "open" ? null : resolving ? (
+        <form
+          className="flex items-center gap-1"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (resolution.trim() !== "") {
+              onResolve(resolution.trim())
+              setResolving(false)
+              setResolution("")
+            }
+          }}
+        >
+          <Input
+            autoFocus
+            value={resolution}
+            onChange={(event) => setResolution(event.target.value)}
+            placeholder={t("canon:resolve_prompt")}
+            className="h-7 w-56 text-xs"
+          />
+          <Button size="sm" type="submit" disabled={resolution.trim() === ""}>
+            {t("common:save")}
+          </Button>
+          <Button
+            size="sm"
+            type="button"
+            variant="ghost"
+            onClick={() => {
+              setResolving(false)
+              setResolution("")
+            }}
+          >
+            {t("common:cancel")}
+          </Button>
+        </form>
+      ) : (
         <div className="flex gap-1">
-          <Button size="sm" variant="outline" onClick={onResolve}>
+          <Button size="sm" variant="outline" onClick={() => setResolving(true)}>
             {t("canon:resolve")}
           </Button>
           <Button size="sm" variant="ghost" onClick={onAbandon}>
             {t("canon:abandon")}
           </Button>
         </div>
-      ) : null}
+      )}
       <Button size="sm" variant="ghost" aria-label={t("common:delete")} onClick={onDelete}>
         <Trash2 className="size-3" aria-hidden="true" />
       </Button>

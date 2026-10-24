@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next"
 
 import { useChapters, useTracks } from "@/api/hooks/tracks"
 import { useMemory } from "@/api/hooks/useCanon"
+import { NotesTable } from "@/features/canon/NotesPage"
 import { EmptyState } from "@/components/common/EmptyState"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
@@ -213,6 +214,12 @@ export default function MemoryPage() {
           </p>
         </MemoryColumn>
       </div>
+
+      <section>
+        <h2 className="mb-1 text-sm font-medium">{t("canon:notes")}</h2>
+        <p className="mb-2 text-xs text-muted-foreground">{t("canon:notes_hint")}</p>
+        <NotesTable bookId={bookId} />
+      </section>
 
       <section>
         <h2 className="mb-2 text-sm font-medium">{t("canon:memory_rendered")}</h2>

@@ -1,7 +1,7 @@
 /** The canon timeline: a vertical rail with drag-and-drop reorder and "+ Add" between rows
  * (PROJECT §8.8, spec/10 §2.4). */
 import { useState } from "react"
-import { useParams } from "react-router"
+import { Link, useParams } from "react-router"
 import { useTranslation } from "react-i18next"
 import {
   DndContext,
@@ -25,9 +25,16 @@ import type { TimelineEventDto } from "@/api/gen/TimelineEventDto"
 import {
   useCreateTimelineEvent,
   useDeleteTimelineEvent,
+  useEntities,
   useMoveTimelineEvent,
   useTimeline,
 } from "@/api/hooks/useCanon"
+import { useTracks } from "@/api/hooks/tracks"
+import {
+  chapterRefLabel,
+  useChapterIndex,
+  type ChapterIndex,
+} from "@/features/canon/chapterIndex"
 import { useErrorToast } from "@/components/common/ErrorToast"
 import { EmptyState } from "@/components/common/EmptyState"
 import { Button } from "@/components/ui/button"
@@ -41,6 +48,12 @@ export default function TimelinePage() {
   const { bookId: rawBookId } = useParams()
   const bookId = Number(rawBookId)
   const timeline = useTimeline(bookId)
+  const entities = useEntities(bookId)
+  const tracks = useTracks(bookId)
+  const chapterIndex = useChapterIndex(tracks.data)
+  const entityNames = new Map(
+    (entities.data ?? []).map((entity) => [entity.id, entity.name]),
+  )
   const move = useMoveTimelineEvent(bookId)
   const create = useCreateTimelineEvent(bookId)
   const showError = useErrorToast()
@@ -123,7 +136,12 @@ export default function TimelinePage() {
                       )
                     }
                   />
-                  <TimelineRow bookId={bookId} event={row} />
+                  <TimelineRow
+                    bookId={bookId}
+                    event={row}
+                    chapterIndex={chapterIndex}
+                    entityNames={entityNames}
+                  />
                 </li>
               ))}
               {insertAt === rows.length ? (
@@ -160,7 +178,17 @@ export default function TimelinePage() {
 }
 
 /** One draggable timeline row. */
-function TimelineRow({ bookId, event }: { bookId: number; event: TimelineEventDto }) {
+function TimelineRow({
+  bookId,
+  event,
+  chapterIndex,
+  entityNames,
+}: {
+  bookId: number
+  event: TimelineEventDto
+  chapterIndex: ChapterIndex
+  entityNames: Map<number, string>
+}) {
   const { t } = useTranslation()
   const showError = useErrorToast()
   const remove = useDeleteTimelineEvent(bookId)
@@ -192,13 +220,28 @@ function TimelineRow({ bookId, event }: { bookId: number; event: TimelineEventDt
             <span className="shrink-0 text-xs text-muted-foreground">{event.story_time}</span>
           )}
           {event.chapter_id === null ? null : (
-            <span className="shrink-0 text-xs text-muted-foreground">
-              {t("canon:chapter_number", { number: event.chapter_id })}
-            </span>
+            <Link
+              to={`/books/${bookId}/chapters/${event.chapter_id}`}
+              className="shrink-0 text-xs text-muted-foreground underline-offset-2 hover:underline"
+            >
+              {chapterRefLabel(t, chapterIndex, event.chapter_id)}
+            </Link>
           )}
         </div>
         {event.description === "" ? null : (
           <p className="text-xs text-muted-foreground">{event.description}</p>
+        )}
+        {event.entity_ids.length === 0 ? null : (
+          <div className="mt-1 flex flex-wrap gap-1">
+            {event.entity_ids.map((id) => (
+              <span
+                key={id}
+                className="rounded-full bg-muted px-1.5 py-0.5 text-[0.65rem] text-muted-foreground"
+              >
+                {entityNames.get(id) ?? t("canon:entity_ref", { id })}
+              </span>
+            ))}
+          </div>
         )}
       </div>
       <Button

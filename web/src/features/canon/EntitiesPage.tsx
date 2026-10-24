@@ -11,6 +11,11 @@ import type { EntityStatus } from "@/api/gen/EntityStatus"
 import { useEntities, useSetProtagonist } from "@/api/hooks/useCanon"
 import { useTracks } from "@/api/hooks/tracks"
 import { EntityDetail } from "@/features/canon/EntityDetail"
+import {
+  chapterRefLabel,
+  useChapterIndex,
+  type ChapterIndex,
+} from "@/features/canon/chapterIndex"
 import { EmptyState } from "@/components/common/EmptyState"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -40,6 +45,7 @@ export default function EntitiesPage() {
 
   const entities = useEntities(bookId, { kind, status, q: query, trackId })
   const tracks = useTracks(bookId)
+  const chapterIndex = useChapterIndex(tracks.data)
   const setProtagonist = useSetProtagonist(bookId)
 
   if (entities.isPending) {
@@ -137,6 +143,7 @@ export default function EntitiesPage() {
                     bookId={bookId}
                     entity={row}
                     selected={row.id === selectedId}
+                    chapterIndex={chapterIndex}
                     onProtagonist={() => setProtagonist.mutate(row.id)}
                   />
                 ))}
@@ -192,11 +199,13 @@ function EntityRow({
   bookId,
   entity,
   selected,
+  chapterIndex,
   onProtagonist,
 }: {
   bookId: number
   entity: EntityListItemDto
   selected: boolean
+  chapterIndex: ChapterIndex
   onProtagonist: () => void
 }) {
   const { t } = useTranslation()
@@ -234,7 +243,7 @@ function EntityRow({
       <td className="px-3 py-1.5 text-xs text-muted-foreground">
         {entity.last_chapter_id === null
           ? t("canon:never_seen")
-          : t("canon:chapter_number", { number: entity.last_chapter_id })}
+          : chapterRefLabel(t, chapterIndex, entity.last_chapter_id)}
       </td>
       <td className="px-3 py-1.5 text-right">
         {entity.is_protagonist ? (

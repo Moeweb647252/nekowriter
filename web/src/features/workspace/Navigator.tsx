@@ -28,7 +28,6 @@ import {
   Home,
   Library,
   MessageSquareCode,
-  NotebookPen,
   Plus,
   Settings,
   Sparkle,
@@ -142,11 +141,6 @@ export function Navigator({ book }: NavigatorProps) {
         to={`/books/${book.id}/canon/memory`}
         icon={Brain}
         label={t("canon:memory")}
-      />
-      <NavLink
-        to={`/books/${book.id}/canon/notes`}
-        icon={NotebookPen}
-        label={t("canon:notes")}
       />
       <NavLink
         to={`/books/${book.id}/canon/foreshadowing`}

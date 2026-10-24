@@ -18,8 +18,14 @@ import {
   useDeleteRelation,
   useSetProtagonist,
 } from "@/api/hooks/useCanon"
+import { useTracks } from "@/api/hooks/tracks"
 import { useErrorToast } from "@/components/common/ErrorToast"
 import { ChangeList } from "@/features/canon/ChangeList"
+import {
+  chapterRefLabel,
+  useChapterIndex,
+  type ChapterIndex,
+} from "@/features/canon/chapterIndex"
 import { Importance } from "@/features/canon/EntitiesPage"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -37,6 +43,8 @@ export function EntityDetail({ bookId, entityId }: EntityDetailProps) {
   const { t } = useTranslation()
   const showError = useErrorToast()
   const entity = useEntity(entityId)
+  const tracks = useTracks(bookId)
+  const chapterIndex = useChapterIndex(tracks.data)
   const patch = usePatchEntity(bookId)
   const remove = useDeleteEntity(bookId)
   const protagonist = useSetProtagonist(bookId)
@@ -141,7 +149,7 @@ export function EntityDetail({ bookId, entityId }: EntityDetailProps) {
       />
 
       <RelationsEditor bookId={bookId} entity={data} />
-      <Appearances entity={data} />
+      <Appearances entity={data} chapterIndex={chapterIndex} />
 
       <section>
         <h3 className="mb-1 text-xs font-medium text-muted-foreground">
@@ -217,8 +225,12 @@ function EditableField({
   )
 }
 
-/** The key/value attribute grid (PROJECT §8.8). */
-function AttributesEditor({
+/** The key/value attribute grid (PROJECT §8.8).
+ *
+ * Edits are kept locally and saved on blur or Enter: every save is a change-log row (spec/06
+ * §3), so a patch per keystroke would fill the entity's history with half-typed values.
+ */
+export function AttributesEditor({
   attributes,
   onChange,
 }: {
@@ -228,7 +240,22 @@ function AttributesEditor({
   const { t } = useTranslation()
   const [key, setKey] = useState("")
   const [value, setValue] = useState("")
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
   const entries = Object.entries(attributes)
+  const commit = (name: string) => {
+    const draft = drafts[name]
+    if (draft === undefined) {
+      return
+    }
+    setDrafts((current) => {
+      const next = { ...current }
+      delete next[name]
+      return next
+    })
+    if (draft !== attributes[name]) {
+      onChange({ ...attributes, [name]: draft })
+    }
+  }
   return (
     <section>
       <h3 className="mb-1 text-xs font-medium text-muted-foreground">
@@ -241,8 +268,19 @@ function AttributesEditor({
               {entryKey}
             </span>
             <Input
-              value={entryValue}
-              onChange={(event) => onChange({ ...attributes, [entryKey]: event.target.value })}
+              value={drafts[entryKey] ?? entryValue}
+              onChange={(event) =>
+                setDrafts((current) => ({ ...current, [entryKey]: event.target.value }))
+              }
+              onBlur={() => commit(entryKey)}
+              onKeyDown={(event) => {
+                if (isComposing(event)) {
+                  return
+                }
+                if (event.key === "Enter") {
+                  commit(entryKey)
+                }
+              }}
               className="h-7 text-sm"
             />
             <Button
@@ -252,6 +290,11 @@ function AttributesEditor({
               onClick={() => {
                 const next = { ...attributes }
                 delete next[entryKey]
+                setDrafts((current) => {
+                  const rest = { ...current }
+                  delete rest[entryKey]
+                  return rest
+                })
                 onChange(next)
               }}
             >
@@ -415,7 +458,13 @@ function RelationRow({
 }
 
 /** The appearances as chapter chips (PROJECT §8.8). */
-function Appearances({ entity }: { entity: EntityDto }) {
+function Appearances({
+  entity,
+  chapterIndex,
+}: {
+  entity: EntityDto
+  chapterIndex: ChapterIndex
+}) {
   const { t } = useTranslation()
   if (entity.appearances.length === 0) {
     return (
@@ -438,7 +487,7 @@ function Appearances({ entity }: { entity: EntityDto }) {
             key={appearance.id}
             className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground"
           >
-            {t("canon:chapter_number", { number: appearance.chapter_id })} ·{" "}
+            {chapterRefLabel(t, chapterIndex, appearance.chapter_id)} ·{" "}
             {t(`canon:appearance_role.${appearance.role}`)}
           </span>
         ))}

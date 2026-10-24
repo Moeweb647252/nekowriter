@@ -1,7 +1,5 @@
-/** The memory notes page: the facts and world rules table with kind and status filters
- * (PROJECT §8.8, spec/10 §2.4). */
+/** The facts and world rules table below the Memory columns (PROJECT §8.8, spec/10 §2.4). */
 import { useState } from "react"
-import { useParams } from "react-router"
 import { useTranslation } from "react-i18next"
 import { Plus, Trash2 } from "lucide-react"
 
@@ -22,10 +20,8 @@ import { cn } from "@/lib/utils"
 
 const KINDS: NoteKind[] = ["fact", "world_rule", "other"]
 
-export default function NotesPage() {
+export function NotesTable({ bookId }: { bookId: number }) {
   const { t } = useTranslation()
-  const { bookId: rawBookId } = useParams()
-  const bookId = Number(rawBookId)
   const [kind, setKind] = useState<NoteKind | undefined>(undefined)
   const [status, setStatus] = useState<"active" | "retired" | undefined>("active")
   const notes = useMemoryNotes(bookId, { kind, status })
@@ -42,12 +38,8 @@ export default function NotesPage() {
   const rows = notes.data ?? []
 
   return (
-    <div className="mx-auto max-w-4xl p-6">
-      <header className="mb-3 flex flex-wrap items-end justify-between gap-2">
-        <div>
-          <h1 className="text-xl font-semibold">{t("canon:notes")}</h1>
-          <p className="text-xs text-muted-foreground">{t("canon:notes_hint")}</p>
-        </div>
+    <div className="space-y-2">
+      <header className="flex flex-wrap items-center justify-end gap-2">
         <div className="flex flex-wrap gap-1">
           <Chip
             active={kind === undefined}
@@ -129,7 +121,7 @@ export default function NotesPage() {
                 note={note}
                 onRetire={() =>
                   patch.mutate(
-                    { id: note.id, patch: { status: "retired", note: t("canon:retire_reason") } },
+                    { id: note.id, patch: { status: "retired" } },
                     { onError: showError },
                   )
                 }

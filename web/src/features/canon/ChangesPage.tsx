@@ -7,7 +7,9 @@ import { useTranslation } from "react-i18next"
 import type { ChangeActor } from "@/api/gen/ChangeActor"
 import type { ChangeTargetType } from "@/api/gen/ChangeTargetType"
 import { useChanges } from "@/api/hooks/useCanon"
+import { useBookSessions } from "@/api/hooks/sessions"
 import { useChapters, useTracks } from "@/api/hooks/tracks"
+import { sessionTitle } from "@/features/agent/SessionHeader"
 import { ChangeList } from "@/features/canon/ChangeList"
 import { EmptyState } from "@/components/common/EmptyState"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -30,10 +32,12 @@ export default function ChangesPage() {
   const { bookId: rawBookId } = useParams()
   const bookId = Number(rawBookId)
   const [chapterId, setChapterId] = useState<number | undefined>(undefined)
+  const [sessionId, setSessionId] = useState<number | undefined>(undefined)
   const [targetType, setTargetType] = useState<ChangeTargetType | undefined>(undefined)
   const [actor, setActor] = useState<ChangeActor | undefined>(undefined)
-  const changes = useChanges(bookId, { chapterId, targetType, actor })
+  const changes = useChanges(bookId, { chapterId, sessionId, targetType, actor })
 
+  const sessions = useBookSessions(bookId)
   const tracks = useTracks(bookId)
   const main = tracks.data?.find((track) => track.kind === "main")
   const chapters = useChapters(main?.id ?? 0)
@@ -64,6 +68,21 @@ export default function ChangesPage() {
                 number: chapter.number,
                 title: chapter.title,
               })}
+            </option>
+          ))}
+        </select>
+        <select
+          value={sessionId ?? ""}
+          onChange={(event) =>
+            setSessionId(event.target.value === "" ? undefined : Number(event.target.value))
+          }
+          className="h-8 rounded-md border bg-background px-2 text-xs"
+          aria-label={t("canon:filter_session")}
+        >
+          <option value="">{t("canon:all_sessions")}</option>
+          {(sessions.data ?? []).map((session) => (
+            <option key={session.id} value={session.id}>
+              {sessionTitle(session, t)}
             </option>
           ))}
         </select>

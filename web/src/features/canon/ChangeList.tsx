@@ -3,10 +3,12 @@
  *
  * The labels are derived in the UI from `actor`, `op`, `target_type` and `reverts_id`: the server
  * sends data only, because `note` holds written text (D-032, D-054). */
+import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { RotateCcw } from "lucide-react"
 
 import type { ChangeDto } from "@/api/gen/ChangeDto"
+import { isApiError } from "@/api/hooks/errors"
 import { useRevertChange } from "@/api/hooks/useCanon"
 import { useErrorToast } from "@/components/common/ErrorToast"
 import { DiffView } from "@/components/common/DiffView"
@@ -17,7 +19,7 @@ import { formatDateTime } from "@/lib/format"
 export type ChangeListProps = {
   bookId: number
   changes: ChangeDto[]
-  /** Compact mode (the entity pane) hides the actor column. */
+  /** Compact mode (the entity pane) uses tighter spacing; the actor still shows (spec/06 §3). */
   compact?: boolean
 }
 
@@ -26,6 +28,9 @@ export function ChangeList({ bookId, changes, compact = false }: ChangeListProps
   const { t, i18n } = useTranslation()
   const showError = useErrorToast()
   const revert = useRevertChange(bookId)
+  // `change.not_latest` names the changes that must be reverted first; the row says so and links
+  // them instead of only showing a toast (spec/06 §3.1).
+  const [later, setLater] = useState<Record<number, number[]>>({})
 
   if (changes.length === 0) {
     return <EmptyState title={t("book:no_changes")} />
@@ -34,17 +39,19 @@ export function ChangeList({ bookId, changes, compact = false }: ChangeListProps
   return (
     <ul className="space-y-2">
       {changes.map((change) => (
-        <li key={change.id} className="rounded-md border p-2 text-sm">
+        <li
+          key={change.id}
+          id={`change-${change.id}`}
+          className={compact ? "rounded-md border p-1.5 text-sm" : "rounded-md border p-2 text-sm"}
+        >
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium">{changeLabel(t, change)}</span>
             <span className="text-xs text-muted-foreground">
               {t(`book:change_target.${change.target_type}`)} #{change.target_id}
             </span>
-            {compact ? null : (
-              <span className="text-xs text-muted-foreground">
-                {t(`canon:change_actor.${change.actor}`)}
-              </span>
-            )}
+            <span className="text-xs text-muted-foreground">
+              {t(`canon:change_actor.${change.actor}`)}
+            </span>
             <span className="ml-auto text-xs text-muted-foreground">
               {formatDateTime(change.created_at, i18n.language)}
             </span>
@@ -64,7 +71,17 @@ export function ChangeList({ bookId, changes, compact = false }: ChangeListProps
                 disabled={revert.isPending}
                 onClick={() =>
                   revert.mutate(change.id, {
-                    onError: (error) => showError(error),
+                    onError: (error) => {
+                      const blocking = laterChangeIds(error)
+                      if (blocking.length === 0) {
+                        showError(error)
+                        return
+                      }
+                      setLater((current) => ({
+                        ...current,
+                        [change.id]: blocking,
+                      }))
+                    },
                   })
                 }
               >
@@ -76,11 +93,36 @@ export function ChangeList({ bookId, changes, compact = false }: ChangeListProps
           {change.note === "" ? null : (
             <p className="mt-1 text-xs text-muted-foreground">{change.note}</p>
           )}
+          {later[change.id] === undefined ? null : (
+            <p className="mt-1 flex flex-wrap items-center gap-1 text-xs text-amber-600">
+              {t("canon:revert_later_changes")}
+              {later[change.id].map((id) => (
+                <a key={id} href={`#change-${id}`} className="underline">
+                  {t("canon:change_ref", { id })}
+                </a>
+              ))}
+            </p>
+          )}
           <SnapshotDiff change={change} />
         </li>
       ))}
     </ul>
   )
+}
+
+/**
+ * The change ids that block a revert of this row (`change.not_latest`,
+ * `details.later_change_ids`, spec/10 §4).
+ */
+export function laterChangeIds(error: unknown): number[] {
+  if (!isApiError(error) || error.code !== "change.not_latest") {
+    return []
+  }
+  const raw = error.details?.["later_change_ids"]
+  if (!Array.isArray(raw)) {
+    return []
+  }
+  return raw.filter((id): id is number => typeof id === "number")
 }
 
 /** A localized label for a change (D-032: the server never writes UI wording). */
