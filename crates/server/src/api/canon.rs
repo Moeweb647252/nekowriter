@@ -12,8 +12,7 @@ use crate::api::dto::canon::{
     EntityPatch, EntityQuery, ForeshadowingDto, ForeshadowingInput, ForeshadowingPatch,
     ForeshadowingQuery, MemoryNoteDto, MemoryNoteInput, MemoryNotePatch, MemoryNoteQuery,
     MemoryQuery, MemoryViewDto, RelationDto, RelationInput, RelationPatch, RelationQuery,
-    RevertInput, TimelineEventDto, TimelineEventInput, TimelineEventPatch, TimelineMoveInput,
-    TimelineQuery,
+    TimelineEventDto, TimelineEventInput, TimelineEventPatch, TimelineMoveInput, TimelineQuery,
 };
 use crate::api::dto::changes::ChangeDto;
 use crate::error::AppResult;
@@ -370,13 +369,12 @@ pub async fn memory_snapshot(
 
 // ───────────────────────────── revert (spec/06 §3) ─────────────────────────────
 
-/// `POST /api/changes/:id/revert`.
+/// `POST /api/changes/:id/revert` (the body carries nothing; spec/06 §3, spec/10 §2.4).
 pub async fn revert_change(
     State(state): State<AppState>,
     Path(change_id): Path<i32>,
-    Json(input): Json<RevertInput>,
 ) -> AppResult<Json<ChangeDto>> {
     Ok(Json(
-        canon::revert::revert(state.db(), state.events(), change_id, input).await?,
+        canon::revert::revert(state.db(), state.events(), change_id).await?,
     ))
 }

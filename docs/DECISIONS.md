@@ -711,6 +711,31 @@ full text as `old` — a string that by construction occurs exactly once — and
 as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
 `crates/llm/tests/demo.rs` pins it. The original entry above is left as written.
 
+### D-085 M5 review refinements: revert notes, list defaults, private relations
+- **Context**: the M5 review found places where the implementation read the spec more loosely
+  than written. The earlier entries stay as written; this one records the resolutions.
+- **Revert notes**: spec/06 §3 lists reverts under "other system changes: empty", while D-079
+  mentioned "the author's revert note" and `RevertInput` accepted one. A revert now always
+  records an empty note and the endpoint takes no note. The Changes page's localized label
+  already came from `op`/`reverts_id`, not from `note`.
+- **D-081's first sentence**: it said `IMPORTANT = 4` gates `open_foreshadowing`; the rest of the
+  entry and spec/06 §4.4 say every open item is listed, ordered by importance — no threshold.
+  The service lists every open item (unchanged behavior; the entry's contradiction is resolved
+  in favour of the spec).
+- **Private relations**: spec/06 §2's write rule is about the row a write creates, not about the
+  endpoints it reads. An isolated track may create a **private** relation between shared entities
+  (`track_id = T`); requiring the endpoints to be writable rejected every track-local relation
+  about the main cast, and the per-track unique indexes of spec/06 §1.2 exist for exactly that
+  case. Conversely a shared relation may only link shared entities, so the author's API (which
+  has no track context) rejects a private endpoint.
+- **List defaults**: spec/06 §2's "the UI's canon pages show shared rows by default" applies to
+  the timeline, relations, notes and foreshadowing lists too, not only to entities; they now
+  filter `track_id IS NULL`, and an entity's detail filters its relations to the entity's own
+  canon. The M10 track filter adds one isolated track's private rows to these lists; until then
+  the author reaches a private row by id (detail endpoints are unrestricted, D-078).
+- **Consequences**: one visibility rule for every author-facing list and one write rule for
+  relations, with less chance of an M10 track filter having to re-audit each service.
+
 ## Open items (questions for the author)
 1. Confirm the reading of "this time it cannot be delegated to a lower-level review agent" as
    "the author judges the reviewer's report; no further delegation" (PROJECT §10.9).

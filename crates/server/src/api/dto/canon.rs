@@ -718,16 +718,11 @@ pub struct MemoryQuery {
 
 // ───────────────────────────── revert ─────────────────────────────
 
-/// `POST /changes/:id/revert` body: the author's optional note on the revert.
+/// `POST /changes/:id/revert` body. A revert is a system change whose note is empty
+/// (spec/06 §3), so there is nothing to send.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
-#[ts(optional_fields = nullable)]
 #[ts(export)]
-pub struct RevertInput {
-    /// The revert itself is a system change with an empty note by default (spec/06 §3).
-    /// The author's change note (spec/06 §3); optional, empty when absent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub note: Option<String>,
-}
+pub struct RevertInput {}
 
 /// The actor a canon write records (spec/06 §3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -23,7 +23,8 @@ use crate::db::json::{ChangeOp, ChangeTargetType};
 use crate::events::ServerEvent;
 
 use super::{
-    CanonError, CanonResult, CanonWrite, ChangeWrite, changed_event, stamp, timeline_snapshot,
+    CanonError, CanonResult, CanonWrite, ChangeWrite, Visibility, changed_event, stamp,
+    timeline_snapshot,
 };
 
 /// The spacing a renormalized timeline uses (spec/02 §1: multiples of 1024).
@@ -57,24 +58,25 @@ pub async fn list(
 }
 
 /// Every timeline event of a book in story order, optionally narrowed to one track.
+///
+/// The author's timeline page shows shared events by default; the track filter adds one isolated
+/// track's private events (spec/06 §2).
 pub async fn ordered(
     conn: &impl ConnectionTrait,
     book_id: i32,
     track_id: Option<i32>,
 ) -> CanonResult<Vec<timeline_events::Model>> {
-    let mut statement = timeline_events::Entity::find()
+    let visibility = match track_id {
+        Some(track_id) => Visibility::isolated(book_id, track_id),
+        None => Visibility::shared(book_id),
+    };
+    Ok(timeline_events::Entity::find()
         .filter(timeline_events::Column::BookId.eq(book_id))
+        .filter(visibility.visible_condition(timeline_events::Column::TrackId))
         .order_by_asc(timeline_events::Column::Position)
-        .order_by_asc(timeline_events::Column::Id);
-    if let Some(track_id) = track_id {
-        // A track's view is its own events plus the shared ones (spec/06 §2).
-        statement = statement.filter(
-            sea_orm::Condition::any()
-                .add(timeline_events::Column::TrackId.is_null())
-                .add(timeline_events::Column::TrackId.eq(track_id)),
-        );
-    }
-    Ok(statement.all(conn).await?)
+        .order_by_asc(timeline_events::Column::Id)
+        .all(conn)
+        .await?)
 }
 
 /// `GET /api/timeline-events/:id`.

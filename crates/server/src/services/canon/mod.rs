@@ -242,12 +242,10 @@ pub struct CanonWrite {
 }
 
 /// A revert in progress.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct RevertRecord {
     /// The change being reverted.
     pub of_change: i32,
-    /// The author's optional note on the revert.
-    pub note: String,
 }
 
 impl CanonWrite {
@@ -274,11 +272,11 @@ impl CanonWrite {
     }
 
     /// Marks this write as the inverse of `of_change`: the row it records is the revert.
-    pub fn as_revert(mut self, of_change: i32, note: &str) -> Self {
-        self.revert = Some(RevertRecord {
-            of_change,
-            note: note.to_owned(),
-        });
+    ///
+    /// A revert is a system change and its note is empty (spec/06 §3: "reverts, reorders, and
+    /// other system changes: empty"), so unlike an ordinary write it carries no note.
+    pub fn as_revert(mut self, of_change: i32) -> Self {
+        self.revert = Some(RevertRecord { of_change });
         self
     }
 
@@ -740,7 +738,7 @@ pub async fn record_change(
             before: change.before,
             after: change.after,
             note: match revert {
-                Some(revert) => revert.note.as_str(),
+                Some(_) => "",
                 None => change.note,
             },
             reverts_id: change.reverts_id.or(revert.map(|revert| revert.of_change)),

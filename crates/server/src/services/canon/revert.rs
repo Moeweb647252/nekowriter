@@ -14,7 +14,6 @@
 
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder};
 
-use crate::api::dto::canon::RevertInput;
 use crate::api::dto::changes::ChangeDto;
 use crate::db::entities::change_log;
 use crate::db::json::{ChangeOp, ChangeTargetType, Snapshot};
@@ -28,10 +27,9 @@ pub async fn revert(
     db: &crate::db::Db,
     events: &crate::events::EventBus,
     change_id: i32,
-    input: RevertInput,
 ) -> CanonResult<ChangeDto> {
     let (dto, published) = super::write(db, move |tx| {
-        Box::pin(async move { revert_inner(tx, change_id, input).await })
+        Box::pin(async move { revert_inner(tx, change_id).await })
     })
     .await?;
     events.publish_all(published);
@@ -41,7 +39,6 @@ pub async fn revert(
 pub async fn revert_inner(
     tx: &impl ConnectionTrait,
     change_id: i32,
-    input: RevertInput,
 ) -> CanonResult<(ChangeDto, Vec<ServerEvent>)> {
     let original = change_log::Entity::find_by_id(change_id)
         .one(tx)
@@ -71,10 +68,7 @@ pub async fn revert_inner(
     let after = parse_snapshot(original.after.as_deref())?;
     let write = revert_write(original.book_id, original.track_id)
         .with_chapter(original.chapter_id)
-        .as_revert(
-            original.id,
-            input.note.as_deref().unwrap_or_default().trim(),
-        );
+        .as_revert(original.id);
     // The revert is the author's action on an existing history, so the row keeps the original's
     // session when there was one.
     let write = CanonWrite {

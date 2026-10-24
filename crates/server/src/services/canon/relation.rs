@@ -18,7 +18,8 @@ use crate::db::json::{ChangeOp, ChangeTargetType, RelationStatus};
 use crate::events::ServerEvent;
 
 use super::{
-    CanonError, CanonResult, CanonWrite, ChangeWrite, changed_event, relation_snapshot, stamp,
+    CanonError, CanonResult, CanonWrite, ChangeWrite, Visibility, changed_event, relation_snapshot,
+    stamp,
 };
 
 /// `GET /api/books/:id/relations?entity_id=` (spec/10 §2.4). Whole lists, sorted client-side.
@@ -28,8 +29,11 @@ pub async fn list(
     query: &RelationQuery,
 ) -> CanonResult<Vec<RelationDto>> {
     super::super::books::get(conn, book_id).await?;
+    // The canon pages show shared rows by default (spec/06 §2); a private relation belongs to
+    // its isolated track and is read through that track's own views.
     let mut statement = relations::Entity::find()
         .filter(relations::Column::BookId.eq(book_id))
+        .filter(Visibility::shared(book_id).visible_condition(relations::Column::TrackId))
         .order_by_asc(relations::Column::Id);
     if let Some(entity_id) = query.entity_id {
         statement = statement.filter(
@@ -87,18 +91,19 @@ pub async fn create_inner(
         ));
     }
     let track_id = write.new_row_track();
-    // Both endpoints of a private relation must be visible to the same track (spec/06 §2).
+    // A relation is one row, and only that row is written; the endpoints are read. An isolated
+    // track therefore records a **private** relation over shared entities (`track_id = T`,
+    // spec/06 §2) without modifying them — the per-track unique indexes exist exactly for that
+    // case (spec/06 §1.2).
     if let Some(visibility) = write.visibility {
         visibility.ensure_visible(source.track_id)?;
         visibility.ensure_visible(target.track_id)?;
-        visibility.ensure_writable(
-            source.track_id,
-            &super::entity::entity_label(&source.name, source.id),
-        )?;
-        visibility.ensure_writable(
-            target.track_id,
-            &super::entity::entity_label(&target.name, target.id),
-        )?;
+    } else if source.track_id.is_some() || target.track_id.is_some() {
+        // The author's API has no track context, so it writes shared canon; a shared relation
+        // must not reach an isolated track's private entity (spec/06 §2).
+        return Err(CanonError::validation(
+            "a shared relation can only link shared entities",
+        ));
     }
     ensure_no_active_duplicate(tx, source.book_id, track_id, &input).await?;
     let timestamp = stamp();

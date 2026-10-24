@@ -18,7 +18,8 @@ use crate::db::json::{ChangeOp, ChangeTargetType, ForeshadowingStatus};
 use crate::events::ServerEvent;
 
 use super::{
-    CanonError, CanonResult, CanonWrite, ChangeWrite, changed_event, foreshadowing_snapshot, stamp,
+    CanonError, CanonResult, CanonWrite, ChangeWrite, Visibility, changed_event,
+    foreshadowing_snapshot, stamp,
 };
 
 /// `GET /api/books/:id/foreshadowing?status` (spec/10 §2.4).
@@ -28,8 +29,11 @@ pub async fn list(
     query: &ForeshadowingQuery,
 ) -> CanonResult<Vec<ForeshadowingDto>> {
     super::super::books::get(conn, book_id).await?;
+    // Shared rows by default (spec/06 §2); an isolated track's private hooks are read through
+    // the track's own views.
     let mut statement = foreshadowing::Entity::find()
         .filter(foreshadowing::Column::BookId.eq(book_id))
+        .filter(Visibility::shared(book_id).visible_condition(foreshadowing::Column::TrackId))
         .order_by_asc(foreshadowing::Column::Id);
     if let Some(status) = query.status {
         statement = statement.filter(foreshadowing::Column::Status.eq(status.as_str()));

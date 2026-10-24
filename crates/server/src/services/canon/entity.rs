@@ -101,8 +101,16 @@ pub async fn detail(
     history_limit: usize,
 ) -> CanonResult<EntityDto> {
     let row = super::load_entity(conn, entity_id).await?;
+    // The detail shows the relations of the entity's own canon (spec/06 §2): a shared entity
+    // never lists another isolated track's private relation, while a private entity may list the
+    // shared relations its track reads plus its own.
+    let relation_visibility = match row.track_id {
+        Some(track_id) => Visibility::isolated(row.book_id, track_id),
+        None => Visibility::shared(row.book_id),
+    };
     let relation_rows = relations::Entity::find()
         .filter(relations::Column::BookId.eq(row.book_id))
+        .filter(relation_visibility.visible_condition(relations::Column::TrackId))
         .filter(
             Condition::any()
                 .add(relations::Column::SourceId.eq(entity_id))
@@ -226,7 +234,7 @@ pub async fn create_inner(
     validate_importance(input.importance)?;
     ensure_name_free(tx, write, book_id, track_id, name, &aliases, None).await?;
     if input.is_protagonist {
-        ensure_protagonist_free(tx, book_id, track_id, None).await?;
+        ensure_protagonist_free(tx, book_id, None).await?;
     }
     let (first_chapter_id, last_chapter_id) = initial_bounds(tx, write, book_id, track_id).await?;
     let timestamp = stamp();
@@ -397,7 +405,7 @@ pub async fn update_inner(
         && is_protagonist
         && existing.is_protagonist == 0
     {
-        ensure_protagonist_free(tx, existing.book_id, existing.track_id, Some(entity_id)).await?;
+        ensure_protagonist_free(tx, existing.book_id, Some(entity_id)).await?;
     }
 
     let mut active = entities::ActiveModel {
@@ -697,10 +705,18 @@ async fn move_relations(
         )
         .all(tx)
         .await?;
-    // The active relations A already has (with anyone but B): a moved one may not duplicate them.
+    // The active relations A already has (with anyone but B), in **both** directions: a moved
+    // relation that lands on one of them is dropped (spec/06 §9). A relation `X → B` becomes
+    // `X → A`, so A as the *target* counts too — checking only A as the source let that shape
+    // reach the unique index and abort the merge.
     let existing = relations::Entity::find()
         .filter(relations::Column::BookId.eq(target.book_id))
-        .filter(relations::Column::SourceId.eq(target.id))
+        .filter(
+            Condition::any()
+                .add(relations::Column::SourceId.eq(target.id))
+                .add(relations::Column::TargetId.eq(target.id)),
+        )
+        .filter(relations::Column::SourceId.ne(source.id))
         .filter(relations::Column::TargetId.ne(source.id))
         .filter(relations::Column::Status.eq(RelationStatus::Active.as_str()))
         .all(tx)
@@ -731,9 +747,10 @@ async fn move_relations(
             relations::Entity::delete_by_id(row.id).exec(tx).await?;
             continue;
         }
+        // One end is A after the rewrite, so `taken` holds exactly the shapes that could
+        // duplicate an active relation of A; a duplicate is dropped, a new shape is recorded.
         if row.status == RelationStatus::Active.as_str()
             && !taken.insert((source_id, target_id, row.kind.clone(), row.track_id))
-            && (source_id == target.id || target_id == target.id)
         {
             relations::Entity::delete_by_id(row.id).exec(tx).await?;
             continue;
@@ -998,20 +1015,17 @@ pub async fn set_protagonist_inner(
     Ok((detail(tx, entity_id, DETAIL_CHANGE_LIMIT).await?, events))
 }
 
-/// At most one protagonist per book (spec/02 §5 (7)); an isolated track keeps its own.
+/// At most one protagonist per book (spec/02 §5 (7)): the partial unique index is book-wide, so
+/// a private row cannot carry a second one either. A side story's protagonist is its track's
+/// `focus_entity_id` (D-043), not a second `is_protagonist`.
 async fn ensure_protagonist_free(
     tx: &impl ConnectionTrait,
     book_id: i32,
-    track_id: Option<i32>,
     except_id: Option<i32>,
 ) -> CanonResult<()> {
     let mut statement = entities::Entity::find()
         .filter(entities::Column::BookId.eq(book_id))
         .filter(entities::Column::IsProtagonist.eq(1));
-    statement = match track_id {
-        Some(track_id) => statement.filter(entities::Column::TrackId.eq(track_id)),
-        None => statement.filter(entities::Column::TrackId.is_null()),
-    };
     if let Some(except_id) = except_id {
         statement = statement.filter(entities::Column::Id.ne(except_id));
     }

@@ -14,7 +14,7 @@
 //! anchor" marker (spec/06 §2, spec/08 §6). The marker helper lives here because these tools need
 //! it; `block.anchor` itself is M10.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 use serde::Deserialize;
@@ -237,6 +237,13 @@ async fn anchor_of(ctx: &ToolCtx<'_>) -> Anchor {
         main_ord: None,
         main_track: None,
     };
+    if kind == AnchorKindState::None {
+        return anchor;
+    }
+    // Every marker compares a chapter with the **main** track (spec/06 §2: "a main-track chapter
+    // with ord > anchor.ord"), so the main track id is needed for `before_start` too — not only
+    // for the `after_chapter` position.
+    anchor.main_track = main_track_id(ctx).await;
     if kind == AnchorKindState::AfterChapter
         && let Some(chapter_id) = track.anchor_chapter_id
         && let Ok(Some(chapter)) = chapters::Entity::find_by_id(chapter_id).one(ctx.tx).await
@@ -366,12 +373,16 @@ impl ToolHandler for GetEntityTool {
     ) -> Result<ToolOutcome, ToolError> {
         let input: GetEntityInput = decode(input)?;
         let entity = resolve_entity(ctx, &input.entity).await?;
+        let visibility = visibility_of(ctx);
         let anchor = anchor_of(ctx).await;
         let mut labels = BTreeMap::new();
 
-        // Relations in both directions, phrased from this entity's perspective (spec/06 §1.2).
+        // Relations in both directions, phrased from this entity's perspective (spec/06 §1.2),
+        // and only the ones this session may see: a shared entity never leaks another isolated
+        // track's private relation (spec/06 §2).
         let relation_rows = relations::Entity::find()
             .filter(relations::Column::BookId.eq(entity.book_id))
+            .filter(visibility.visible_condition(relations::Column::TrackId))
             .filter(
                 sea_orm::Condition::any()
                     .add(relations::Column::SourceId.eq(entity.id))
@@ -440,6 +451,7 @@ impl ToolHandler for GetEntityTool {
         let change_rows = change_log::Entity::find()
             .filter(change_log::Column::TargetType.eq(ChangeTargetType::Entity.as_str()))
             .filter(change_log::Column::TargetId.eq(entity.id))
+            .filter(visibility.visible_condition(change_log::Column::TrackId))
             .filter(change_log::Column::RevertedById.is_null())
             .filter(change_log::Column::Note.ne(""))
             .order_by_desc(change_log::Column::Id)
@@ -491,8 +503,22 @@ impl ToolHandler for GetEntityTool {
                 )
                 .midterm_window
             })
-            .unwrap_or(10);
-        let window_chapters = window_chapter_ids(ctx).await?;
+            .unwrap_or(10)
+            .max(0);
+        // The mid-term window of the target position, shared with `block.memory` (spec/06 §4.1):
+        // the last M chapters of P before the session chapter, topped up from the main story for
+        // a side track. The session chapter itself is not part of it.
+        let window_chapters = match (ctx.track, ctx.chapter) {
+            (Some(track), Some(chapter)) => crate::services::memory::midterm_window_chapter_ids(
+                ctx.tx,
+                ctx.prompts,
+                track,
+                chapter,
+            )
+            .await
+            .map_err(|error| map_app_error(ctx, &error))?,
+            _ => Vec::new(),
+        };
         let window_count = appearance_rows
             .iter()
             .filter(|row| window_chapters.contains(&row.chapter_id))
@@ -553,35 +579,6 @@ impl ToolHandler for GetEntityTool {
             "kind": kind_of(&entity),
         })))
     }
-}
-
-/// The chapter ids of the session's mid-term window: the last M official chapters before the
-/// session chapter, plus (for a side track) the session chapter itself when it is official.
-async fn window_chapter_ids(ctx: &ToolCtx<'_>) -> Result<BTreeSet<i32>, ToolError> {
-    let Some(chapter) = ctx.chapter else {
-        return Ok(BTreeSet::new());
-    };
-    let window_mid = ctx
-        .book
-        .map(|book| {
-            crate::db::json::from_json_or_default::<crate::db::json::BookSettings>(&book.settings)
-                .midterm_window
-        })
-        .unwrap_or(10)
-        .max(0) as usize;
-    let mut rows = chapters::Entity::find()
-        .filter(chapters::Column::TrackId.eq(chapter.track_id))
-        .filter(chapters::Column::Ord.lt(chapter.ord))
-        .filter(chapters::Column::Status.eq(crate::db::json::ChapterStatus::Official.as_str()))
-        .order_by_desc(chapters::Column::Ord)
-        .limit(window_mid as u64)
-        .all(ctx.tx)
-        .await
-        .map_err(|error| canon_error(ctx, canon::CanonError::from(error)))?;
-    if chapter.status == crate::db::json::ChapterStatus::Official.as_str() {
-        rows.push(chapter.clone());
-    }
-    Ok(rows.into_iter().map(|row| row.id).collect())
 }
 
 // ───────────────────────────── list_entities ─────────────────────────────
@@ -722,8 +719,10 @@ impl ToolHandler for GetRelationsTool {
             None => None,
         };
         let include_ended = input.include_ended.unwrap_or(false);
+        let visibility = visibility_of(ctx);
         let rows = relations::Entity::find()
             .filter(relations::Column::BookId.eq(entity.book_id))
+            .filter(visibility.visible_condition(relations::Column::TrackId))
             .filter(
                 sea_orm::Condition::any()
                     .add(relations::Column::SourceId.eq(entity.id))

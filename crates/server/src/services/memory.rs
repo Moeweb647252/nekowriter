@@ -330,15 +330,24 @@ async fn prior_chapters(
     if track.kind != "side" || entries.len() >= wanted {
         return Ok(entries);
     }
+    // "Main-track official chapters up to the anchor are added in front" (spec/06 §4.1): an
+    // `after_chapter` anchor fills from the anchor chapter and everything before it, `after_end`
+    // from the whole main story, and `before_start` from nothing (the side story starts before
+    // the main story). A side track without an anchor has no position to fill from.
+    if !matches!(track.anchor_kind.as_str(), "after_chapter" | "after_end") {
+        return Ok(entries);
+    }
     let Some(main) = main_track(conn, track.book_id).await? else {
         return Ok(entries);
     };
-    let up_to = anchor_ord(conn, track).await?;
     let mut statement = chapters::Entity::find()
         .filter(chapters::Column::TrackId.eq(main.id))
         .filter(chapters::Column::Status.eq(ChapterStatus::Official.as_str()))
         .order_by_asc(chapters::Column::Ord);
-    if let Some(up_to) = up_to {
+    if track.anchor_kind == "after_chapter" {
+        let Some(up_to) = anchor_ord(conn, track).await? else {
+            return Ok(entries);
+        };
         statement = statement.filter(chapters::Column::Ord.lte(up_to));
     }
     let mut main_rows = statement.all(conn).await?;
@@ -354,6 +363,26 @@ async fn prior_chapters(
         .collect();
     topped.extend(entries);
     Ok(topped)
+}
+
+/// The chapter ids of the mid-term window W of a target position (spec/06 §4.1, §4.3): the last
+/// M chapters of P, topped up from the main story for a side track. The retrieval tools use it
+/// too, so `get_entity`'s "count in the mid-term window" means the window the memory block shows.
+pub async fn midterm_window_chapter_ids(
+    conn: &impl ConnectionTrait,
+    prompts: &PromptSet,
+    track: &tracks::Model,
+    chapter: &chapters::Model,
+) -> Result<Vec<i32>, AppError> {
+    let settings = book_settings(conn, chapter.book_id).await?;
+    let prior = prior_chapters(conn, prompts, track, chapter, &settings).await?;
+    let mid_start = prior
+        .len()
+        .saturating_sub(settings.midterm_window.max(0) as usize);
+    Ok(prior[mid_start..]
+        .iter()
+        .map(|entry| entry.chapter.id)
+        .collect())
 }
 
 /// The official chapters of a track with a smaller `ord`, oldest first.
@@ -984,29 +1013,56 @@ pub async fn view(
 }
 
 /// The `(track, chapter)` a memory target position names (spec/10 §2.4).
+///
+/// A `chapter_id` names a position, so its own track is the target track; `track_id` is only
+/// needed for "the next chapter of this track". Both together must agree.
 async fn target_position(
     conn: &impl ConnectionTrait,
     book_id: i32,
     query: &crate::api::dto::canon::MemoryQuery,
 ) -> Result<(tracks::Model, chapters::Model), AppError> {
-    let track = match query.track_id {
-        Some(track_id) => tracks::Entity::find_by_id(track_id)
+    let chapter = match query.chapter_id {
+        Some(chapter_id) => Some(
+            chapters::Entity::find_by_id(chapter_id)
+                .filter(chapters::Column::BookId.eq(book_id))
+                .one(conn)
+                .await?
+                .ok_or_else(|| AppError::not_found(format!("chapter #{chapter_id}")))?,
+        ),
+        None => None,
+    };
+    let track = match (query.track_id, &chapter) {
+        (Some(track_id), Some(chapter)) => {
+            let track = tracks::Entity::find_by_id(track_id)
+                .filter(tracks::Column::BookId.eq(book_id))
+                .one(conn)
+                .await?
+                .ok_or_else(|| AppError::not_found(format!("track #{track_id}")))?;
+            if chapter.track_id != track.id {
+                return Err(AppError::validation(format!(
+                    "chapter #{} is not in track #{track_id}",
+                    chapter.id
+                )));
+            }
+            track
+        }
+        (Some(track_id), None) => tracks::Entity::find_by_id(track_id)
             .filter(tracks::Column::BookId.eq(book_id))
             .one(conn)
             .await?
             .ok_or_else(|| AppError::not_found(format!("track #{track_id}")))?,
-        None => main_track(conn, book_id)
+        (None, Some(chapter)) => tracks::Entity::find_by_id(chapter.track_id)
+            .one(conn)
+            .await?
+            .ok_or_else(|| AppError::not_found(format!("track #{}", chapter.track_id)))?,
+        (None, None) => main_track(conn, book_id)
             .await?
             .ok_or_else(|| AppError::not_found(format!("the main track of book #{book_id}")))?,
     };
-    let chapter = match query.chapter_id {
-        Some(chapter_id) => chapters::Entity::find_by_id(chapter_id)
-            .filter(chapters::Column::BookId.eq(book_id))
-            .one(conn)
-            .await?
-            .ok_or_else(|| AppError::not_found(format!("chapter #{chapter_id}")))?,
-        // "The next chapter" of the track: the last one, so the page shows what writing it would
-        // see (and a book with no chapters renders the empty states).
+    // "The next chapter" of the track: the last one, so the page shows what writing it would see
+    // (and a book with no chapters renders the empty states).
+    let chapter = match chapter {
+        Some(chapter) => chapter,
         None => next_chapter(conn, book_id, &track).await?,
     };
     Ok((track, chapter))
