@@ -8,6 +8,7 @@ import { useDefaultLayout, usePanelRef } from "react-resizable-panels"
 import { useBook } from "@/api/hooks/books"
 import { connectEvents, disconnectEvents } from "@/api/events"
 import { keys } from "@/api/keys"
+import { AgentPanel } from "@/features/agent/AgentPanel"
 import { BookBreadcrumb } from "@/features/workspace/BookBreadcrumb"
 import { Navigator } from "@/features/workspace/Navigator"
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
@@ -103,24 +104,9 @@ export default function BookLayout() {
           collapsible
           className="min-h-0"
         >
-          <AgentPanelPlaceholder />
+          <AgentPanel bookId={bookId} />
         </ResizablePanel>
       </ResizablePanelGroup>
-    </div>
-  )
-}
-
-/** The agent panel arrives in M3; until then the third panel says what it will hold. */
-function AgentPanelPlaceholder() {
-  const { t } = useTranslation()
-  return (
-    <div className="flex h-full flex-col border-l bg-sidebar/40">
-      <div className="flex h-9 items-center border-b px-3 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-        {t("agent:panel_title")}
-      </div>
-      <div className="flex flex-1 items-center justify-center p-6 text-center text-xs text-muted-foreground">
-        {t("agent:empty")}
-      </div>
     </div>
   )
 }

@@ -356,6 +356,10 @@ pub struct DemoHints {
     pub granularity: Option<String>,
     pub step_in_phase: u32,
     pub language: String,
+    /// The tools the session froze, so the Demo provider can drive the test-only tools of the
+    /// debug session (spec/04 §7.2, spec/10 §2.7).
+    #[serde(default)]
+    pub tools: Vec<String>,
 }
 
 /// A model advertised by the provider's model-list endpoint.

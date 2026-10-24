@@ -610,7 +610,7 @@ pub async fn build_request(
         cache: nekowriter_llm::CacheHints { ttl: cache_ttl },
         options: options.clone(),
         demo_hints: if snapshot.protocol == Protocol::Mock {
-            Some(demo_hints(session))
+            Some(demo_hints(session, conn).await?)
         } else {
             None
         },
@@ -618,17 +618,31 @@ pub async fn build_request(
 }
 
 /// The demo-provider hints of the current step (spec/03 §11, spec/04 §7.2).
-fn demo_hints(session: &agent_sessions::Model) -> nekowriter_llm::DemoHints {
+///
+/// `language` is the book's writing language so the Demo provider picks the corpus variant, and
+/// `tools` are the session's frozen tool names so it can drive the test-only tools of the debug
+/// session (spec/10 §2.7).
+async fn demo_hints(
+    session: &agent_sessions::Model,
+    conn: &impl ConnectionTrait,
+) -> Result<nekowriter_llm::DemoHints, AppError> {
     let counters = session::counters_of(session);
-    let language = session.book_id.map(|_| String::new()).unwrap_or_default();
-    let _ = language;
-    nekowriter_llm::DemoHints {
+    let language = match session.book_id {
+        Some(book_id) => books::Entity::find_by_id(book_id)
+            .one(conn)
+            .await?
+            .map(|book| book.writing_language)
+            .unwrap_or_else(|| "en".to_owned()),
+        None => "en".to_owned(),
+    };
+    Ok(nekowriter_llm::DemoHints {
         kind: session.kind.clone(),
         phase: session.phase.clone(),
         granularity: session.granularity.clone(),
         step_in_phase: counters.steps.max(0) as u32,
-        language: String::new(),
-    }
+        language,
+        tools: frozen_tool_names(session),
+    })
 }
 
 /// Converts the stored replay payload into the neutral one.

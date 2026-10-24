@@ -68,6 +68,30 @@ not delete other agents' temp directories.
 - `web/src/lib/format.ts` (`formatNumber`, `formatDateTime`, `formatRelativeTime`,
   `formatWords`), `lib/wordcount.ts`, `styles/prose.css`.
 
+## The agent runtime (M3, spec/03)
+
+- `crates/server/src/agent/session.rs` — row reads, the DTOs, and **`transition()`**, the only
+  function that changes a status. It writes the status, `finished_at` for terminal statuses, clears
+  `pause_requested` when leaving `running`, and stores `view_snapshot` (oldest unreported wins) in
+  one transaction and returns the event to publish **after** the commit. Never write a session's
+  status directly.
+- Every session update made while the runner owns the row is column-wise and guarded by the
+  expected status (`session::guard_columns`). The API writes only `pause_requested`, the writer
+  switches, inbox rows and the §6 status changes; a `stop` just cancels the token (D-034).
+- `agent/runner.rs` — `drive`. A tool call executes and finalizes in **one** transaction (D-033);
+  `prepare` runs outside any transaction and is cancellable (D-024). Persisted messages and sealed
+  tool results are never modified: `seal` composes `result_text` once, in the canonical appendix
+  order, then sets `sealed = 1`.
+- `agent/manager.rs` — one runner per session, generation-guarded handles, `recover()` for startup
+  (`running` → `interrupted`, `executing` → `pending`) and `shutdown()`.
+- `agent/tools/` — `ToolHandler` (`prepare`/`execute`), the frozen-role-list registry with the
+  phase matrix, JSON Schema validation of `prompts/tools.toml`, and the test-only tools of the
+  debug session (`echo`, `test_write`, `test_finish`, `test_slow`).
+- Integration tests use `agent_harness/mod.rs`: it builds a migrated temp DB, a Demo provider and
+  model, and starts sessions whose frozen tools are the test-only ones, so the runtime is exercised
+  without the writer tools of later milestones. `TestApp::set_provider` injects a
+  `ScriptedProvider` and returns a handle sharing its request log.
+
 ## Conventions that bite
 
 - **English everywhere except**: `prompts/` (model-facing), `web/src/i18n/locales/*` (UI),

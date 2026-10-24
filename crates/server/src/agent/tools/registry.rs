@@ -167,8 +167,8 @@ pub fn is_permitted(kind: SessionKind, phase: Phase, tool: &str, frozen: &[Strin
         return false;
     }
     // The test-only tools of the debug session have no phase rules: they exist so the runtime
-    // paths can be driven without a real tool (spec/10 §2.7, PLAN M3.1).
-    #[cfg(any(test, feature = "testing"))]
+    // paths can be driven without a real tool (spec/10 §2.7, PLAN M3.1). The debug session is the
+    // only one that freezes them, so this cannot widen a real session (D-072).
     if DEBUG_TOOLS.contains(&tool) {
         return true;
     }

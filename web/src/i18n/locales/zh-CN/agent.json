@@ -1,4 +1,315 @@
 {
   "panel_title": "智能体",
-  "empty": "还没有会话。在章节操作里开始一个。"
+  "empty": "还没有会话。在章节操作里开始一个。",
+  "debug": {
+    "start": "开始测试会话"
+  },
+  "session_title": {
+    "conception": "构思",
+    "research": "资料收集",
+    "chapter_write": "写作",
+    "chapter_revise": "修订",
+    "chapter_review": "审阅",
+    "chapter_maintenance": "档案维护",
+    "canon_seed": "建立档案",
+    "chapter_resync": "档案同步"
+  },
+  "chapter_number": "第{{number}}章",
+  "session_info": "会话信息",
+  "session_info_prompt": "系统提示词（本会话开始时的快照）",
+  "session_info_tools": "工具（本会话开始时的快照）",
+  "session_switch": "切换会话",
+  "status": {
+    "idle": "等待回复",
+    "running": "进行中",
+    "held": "等待你的审阅",
+    "awaiting_input": "等待你的回答",
+    "paused": "已暂停",
+    "completed": "已完成",
+    "stopped": "已停止",
+    "failed": "已失败",
+    "interrupted": "已中断",
+    "superseded": "已在新会话中继续",
+    "abandoned": "已放弃",
+    "pausing": "正在暂停…",
+    "stopping": "正在停止…"
+  },
+  "controls": {
+    "pause": "暂停",
+    "pause_hint": "在当前步骤结束后暂停，而不是立刻停下。",
+    "pausing": "正在暂停…",
+    "stop": "停止",
+    "continue": "继续",
+    "feedback": "反馈…",
+    "abandon": "放弃",
+    "more": "更多"
+  },
+  "feedback": {
+    "title": "反馈",
+    "description": "你的反馈会附在智能体刚完成的步骤之后，然后它继续工作。",
+    "placeholder": "需要改什么？",
+    "submit": "发送并继续"
+  },
+  "writer": {
+    "granularity": "写作粒度",
+    "granularity_hint": "粒度越细，模型调用次数越多，但你对正文的掌控越强。",
+    "auto_pause": "每步自动暂停",
+    "auto_pause_hint": "每次修改正文后都暂停，等你审阅。"
+  },
+  "granularity": {
+    "sentence": "逐句",
+    "paragraph": "逐段",
+    "free": "自由",
+    "chapter": "整章"
+  },
+  "stream": {
+    "empty": "还没有发生任何事情。",
+    "author": "你",
+    "agent": "智能体",
+    "thinking": "思考中…",
+    "typing": "正在输入…",
+    "load_older": "加载更早的消息"
+  },
+  "message_kind": {
+    "kickoff": "任务",
+    "user": "你的消息",
+    "notice": "通知",
+    "nudge": "提醒",
+    "assistant": "智能体"
+  },
+  "appendix": {
+    "effect_notice": "通知",
+    "edit_report": "你的修改",
+    "user_feedback": "你的反馈",
+    "inbox": "你的消息"
+  },
+  "tool": {
+    "input": "输入",
+    "result": "结果",
+    "preview": "正在生成…",
+    "appendices": "附在这次结果之后",
+    "held": "等待你的审阅",
+    "awaiting_input": "等待你的回答"
+  },
+  "composer": {
+    "steer": "给智能体留言",
+    "feedback": "反馈并继续",
+    "reply": "回复",
+    "send": "发送",
+    "disabled": "现在没有可执行的操作。",
+    "disabled_form": "请先回答上面的问题。",
+    "disabled_continue": "继续会话后才能写入。",
+    "disabled_done": "这个会话已经结束。"
+  },
+  "usage": {
+    "input": "输入 {{tokens}}",
+    "cached": "缓存命中 {{tokens}}",
+    "output": "输出 {{tokens}}",
+    "requests": "调用 {{count}} 次",
+    "estimated": "估算值"
+  },
+  "footer": {
+    "hint": "点击工具卡片可以查看输入和结果。",
+    "hint_detail": "工具结果属于对话的一部分，之后不会再改变。"
+  },
+  "toast": {
+    "held": "智能体在等你的审阅。",
+    "awaiting_input": "智能体有一个问题要问你。",
+    "failed": "会话失败了，可以继续。",
+    "completed": "会话已完成。"
+  },
+  "docs": {
+    "outline": "故事大纲",
+    "world": "世界观",
+    "protagonist": "主角设定"
+  },
+  "tools": {
+    "unknown": "调用了工具",
+    "unknown_with": "调用了工具（{{count}} 个字段）",
+    "get_entity": {
+      "summary": "查阅了实体档案",
+      "summary_named": "查阅了 {{name}}"
+    },
+    "list_entities": {
+      "summary": "列出了 {{count}} 个实体"
+    },
+    "get_relations": {
+      "summary": "查看了 {{count}} 条关系"
+    },
+    "query_timeline": {
+      "summary": "查看了 {{count}} 个时间线事件"
+    },
+    "list_foreshadowing": {
+      "summary": "列出了 {{count}} 条伏笔"
+    },
+    "search_canon": {
+      "summary": "检索了档案（{{count}} 条）",
+      "summary_query": "在档案中检索“{{query}}” · {{count}} 条"
+    },
+    "search_knowledge": {
+      "summary": "检索了知识库（{{count}} 条）",
+      "summary_query": "在知识库中检索“{{query}}” · {{count}} 条"
+    },
+    "read_knowledge_entry": {
+      "summary": "阅读了一条知识",
+      "summary_title": "阅读了《{{title}}》"
+    },
+    "search_chapters": {
+      "summary": "检索了正文（{{count}} 条）"
+    },
+    "read_chapter": {
+      "summary": "阅读了一章",
+      "summary_chapter": "阅读了第{{number}}章"
+    },
+    "submit_outline": {
+      "summary": "提交了章纲（{{outline}} 字）与参考要点（{{notes}} 字）"
+    },
+    "submit_revision_plan": {
+      "summary": "提交了修订计划（{{chars}} 字）"
+    },
+    "read_draft": {
+      "summary": "阅读了草稿（{{count}} 段）"
+    },
+    "insert_text": {
+      "summary": "写入了正文",
+      "summary_appended": "接在 {{pid}} 之后写入",
+      "summary_appended_open": "接在 {{pid}} 之后写入（本段未结束）",
+      "summary_inserted": "写入了 {{pids}}",
+      "summary_inserted_open": "写入了 {{pids}}（本段未结束）"
+    },
+    "insert_paragraphs": {
+      "summary": "插入了 {{pids}}"
+    },
+    "replace_text": {
+      "summary": "修改了正文",
+      "summary_deleted": "清空并删除了 {{pid}}"
+    },
+    "rewrite_paragraph": {
+      "summary": "重写了一段",
+      "summary_pid": "重写了 {{pid}}"
+    },
+    "delete_paragraphs": {
+      "summary": "删除了 {{pids}}"
+    },
+    "finish_draft": {
+      "summary": "完成了初稿（{{words}} 字）",
+      "summary_needs_confirmation": "请求在 {{words}} 字时完成"
+    },
+    "finish_revision": {
+      "summary": "完成了修订（{{words}} 字）"
+    },
+    "submit_review": {
+      "summary_pass": "审阅通过（{{issues}} 个问题）",
+      "summary_revise": "要求修改（{{issues}} 个问题）"
+    },
+    "create_entity": {
+      "summary": "创建了实体（{{count}} 个字段）",
+      "summary_target": "创建了 {{target}}"
+    },
+    "update_entity": {
+      "summary": "更新了实体（{{count}} 个字段）",
+      "summary_target": "更新了 {{target}}"
+    },
+    "set_relation": {
+      "summary": "记录了一条关系",
+      "summary_target": "记录了与 {{target}} 的关系"
+    },
+    "end_relation": {
+      "summary": "结束了一条关系",
+      "summary_target": "结束了与 {{target}} 的关系"
+    },
+    "record_appearances": {
+      "summary": "记录了 {{count}} 条出场"
+    },
+    "add_timeline_event": {
+      "summary": "加入了一个时间线事件",
+      "summary_target": "把“{{target}}”加入了时间线"
+    },
+    "update_timeline_event": {
+      "summary": "更新了一个时间线事件",
+      "summary_target": "更新了“{{target}}”"
+    },
+    "add_memory_note": {
+      "summary": "记录了一条笔记",
+      "summary_target": "记录了：{{target}}"
+    },
+    "retire_memory_note": {
+      "summary": "撤销了一条笔记",
+      "summary_target": "撤销了：{{target}}"
+    },
+    "add_foreshadowing": {
+      "summary": "埋下了一条伏笔",
+      "summary_target": "埋下了“{{target}}”"
+    },
+    "resolve_foreshadowing": {
+      "summary": "更新了一条伏笔",
+      "summary_target": "更新了“{{target}}”"
+    },
+    "set_chapter_summary": {
+      "summary": "保存了本章摘要",
+      "summary_target": "保存了{{target}}的摘要"
+    },
+    "propose_setting_change": {
+      "summary": "提交了一条设定修改建议",
+      "summary_target": "建议修改{{target}}"
+    },
+    "finish_maintenance": {
+      "summary": "完成了档案维护（{{changes}} 项更新，{{proposals}} 条建议）"
+    },
+    "ask_user": {
+      "summary": "提了 {{count}} 个问题"
+    },
+    "web_search": {
+      "summary": "搜索了网络（{{count}} 条结果）",
+      "summary_query": "搜索了“{{query}}” · {{count}} 条结果"
+    },
+    "web_fetch": {
+      "summary": "读取了 {{url}}",
+      "summary_title": "读取了{{title}}"
+    },
+    "write_setting_doc": {
+      "summary": "写入了 {{chars}} 字",
+      "summary_doc": "写入了{{doc}}（{{chars}} 字）"
+    },
+    "edit_setting_doc": {
+      "summary": "修改了一份设定文档",
+      "summary_doc": "修改了{{doc}}"
+    },
+    "upsert_character": {
+      "summary": "更新了{{name}}（第 {{rank}} 位）"
+    },
+    "remove_character": {
+      "summary": "删除了一位人物",
+      "summary_name": "删除了{{name}}"
+    },
+    "reorder_characters": {
+      "summary": "调整了人物排序：{{order}}"
+    },
+    "set_research_topics": {
+      "summary": "设置了 {{count}} 个资料收集主题"
+    },
+    "save_knowledge_entry": {
+      "summary": "保存了一条知识",
+      "summary_title": "保存了《{{title}}》"
+    },
+    "update_knowledge_entry": {
+      "summary": "更新了一条知识",
+      "summary_title": "更新了《{{title}}》"
+    },
+    "finish_research": {
+      "summary": "完成了资料收集（{{entries}} 个条目）"
+    },
+    "echo": {
+      "summary": "回显了 {{chars}} 个字符"
+    },
+    "test_write": {
+      "summary": "测试写入（{{chars}} 个字符）"
+    },
+    "test_finish": {
+      "summary": "测试完成"
+    },
+    "test_slow": {
+      "summary": "慢速测试调用（{{chars}} 个字符）"
+    }
+  }
 }

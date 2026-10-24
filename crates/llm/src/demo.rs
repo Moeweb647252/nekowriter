@@ -265,6 +265,12 @@ fn tool(name: &str, arguments: serde_json::Value) -> (String, String, serde_json
 /// a later milestone are marked with that milestone and fall back to a short text reply for
 /// now.
 pub fn choose_action(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
+    // The debug session of spec/10 §2.7 freezes the test-only tools. The Demo provider drives
+    // them so the agent panel can be exercised end to end without any real tool: one write, one
+    // echo, then the completing call.
+    if hints.tools.iter().any(|tool| tool == "test_finish") {
+        return debug_plan(hints, lang);
+    }
     match hints.kind.as_str() {
         "chapter_write" => {
             if hints.phase == "planning" {
@@ -285,6 +291,32 @@ pub fn choose_action(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
         // M9 (conception) and M8 (research) arrive with their own milestones.
         "conception" | "research" => text_plan(lang),
         _ => text_plan(lang),
+    }
+}
+
+/// The debug session's behavior: echo, one test write, then finish (spec/10 §2.7).
+///
+/// The steps are driven by `step_in_phase` so the same session walks the whole runtime path:
+/// a plain call, a write call (which holds under `auto_pause`), and the completing call.
+fn debug_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
+    let sentence = lang
+        .sentences
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "The first sentence.".to_owned());
+    match hints.step_in_phase % 4 {
+        0 => DemoPlan {
+            text: Some(lang.closing_message.clone()),
+            tools: vec![tool("echo", json!({ "text": sentence }))],
+        },
+        1 => DemoPlan {
+            text: None,
+            tools: vec![tool("test_write", json!({ "text": sentence }))],
+        },
+        _ => DemoPlan {
+            text: None,
+            tools: vec![tool("test_finish", json!({ "text": lang.closing_message }))],
+        },
     }
 }
 

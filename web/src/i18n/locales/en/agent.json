@@ -1,4 +1,315 @@
 {
   "panel_title": "Agent",
-  "empty": "No session yet. Start one from a chapter action."
+  "empty": "No session yet. Start one from a chapter action.",
+  "debug": {
+    "start": "Start a test session"
+  },
+  "session_title": {
+    "conception": "Conception",
+    "research": "Research",
+    "chapter_write": "Writing",
+    "chapter_revise": "Revising",
+    "chapter_review": "Reviewing",
+    "chapter_maintenance": "Maintenance",
+    "canon_seed": "Seeding canon",
+    "chapter_resync": "Re-syncing canon"
+  },
+  "chapter_number": "Chapter {{number}}",
+  "session_info": "Session info",
+  "session_info_prompt": "System prompt (frozen for this session)",
+  "session_info_tools": "Tools (frozen for this session)",
+  "session_switch": "Switch session",
+  "status": {
+    "idle": "Idle",
+    "running": "Running",
+    "held": "Held for you",
+    "awaiting_input": "Waiting for an answer",
+    "paused": "Paused",
+    "completed": "Completed",
+    "stopped": "Stopped",
+    "failed": "Failed",
+    "interrupted": "Interrupted",
+    "superseded": "Continued in a new session",
+    "abandoned": "Abandoned",
+    "pausing": "Pausing…",
+    "stopping": "Stopping…"
+  },
+  "controls": {
+    "pause": "Pause",
+    "pause_hint": "Pause after the current step rather than immediately.",
+    "pausing": "Pausing…",
+    "stop": "Stop",
+    "continue": "Continue",
+    "feedback": "Feedback…",
+    "abandon": "Abandon",
+    "more": "More"
+  },
+  "feedback": {
+    "title": "Feedback",
+    "description": "Your feedback is attached to the step the agent just finished, then it continues.",
+    "placeholder": "What should change?",
+    "submit": "Send and continue"
+  },
+  "writer": {
+    "granularity": "Granularity",
+    "granularity_hint": "Smaller steps cost more model calls but give you more control over the text.",
+    "auto_pause": "Auto-pause",
+    "auto_pause_hint": "Hold the session after every text change so you can review it."
+  },
+  "granularity": {
+    "sentence": "Sentence",
+    "paragraph": "Paragraph",
+    "free": "Free",
+    "chapter": "Chapter"
+  },
+  "stream": {
+    "empty": "Nothing has happened yet.",
+    "author": "You",
+    "agent": "Agent",
+    "thinking": "Thinking…",
+    "typing": "Writing…",
+    "load_older": "Load older messages"
+  },
+  "message_kind": {
+    "kickoff": "Task",
+    "user": "Your message",
+    "notice": "Notice",
+    "nudge": "Reminder",
+    "assistant": "Agent"
+  },
+  "appendix": {
+    "effect_notice": "Notice",
+    "edit_report": "Your edits",
+    "user_feedback": "Your feedback",
+    "inbox": "Your message"
+  },
+  "tool": {
+    "input": "Input",
+    "result": "Result",
+    "preview": "Streaming…",
+    "appendices": "Attached to this result",
+    "held": "Held for you",
+    "awaiting_input": "Waiting for your answer"
+  },
+  "composer": {
+    "steer": "Steer the agent",
+    "feedback": "Feedback & continue",
+    "reply": "Reply",
+    "send": "Send",
+    "disabled": "Nothing to do right now.",
+    "disabled_form": "Answer the form above first.",
+    "disabled_continue": "Continue the session to write again.",
+    "disabled_done": "This session is finished."
+  },
+  "usage": {
+    "input": "Input {{tokens}}",
+    "cached": "Cached {{tokens}}",
+    "output": "Output {{tokens}}",
+    "requests": "Requests {{count}}",
+    "estimated": "estimated"
+  },
+  "footer": {
+    "hint": "Click a tool card to see its input and result.",
+    "hint_detail": "Tool results are part of the conversation and never change afterwards."
+  },
+  "toast": {
+    "held": "The agent is waiting for your review.",
+    "awaiting_input": "The agent has a question for you.",
+    "failed": "The session failed. You can continue it.",
+    "completed": "The session finished."
+  },
+  "docs": {
+    "outline": "outline",
+    "world": "world setting",
+    "protagonist": "protagonist"
+  },
+  "tools": {
+    "unknown": "Called a tool",
+    "unknown_with": "Called a tool ({{count}} fields)",
+    "get_entity": {
+      "summary": "Looked up an entity",
+      "summary_named": "Looked up {{name}}"
+    },
+    "list_entities": {
+      "summary": "Listed {{count}} entities"
+    },
+    "get_relations": {
+      "summary": "Read {{count}} relations"
+    },
+    "query_timeline": {
+      "summary": "Read {{count}} timeline events"
+    },
+    "list_foreshadowing": {
+      "summary": "Listed {{count}} foreshadowing threads"
+    },
+    "search_canon": {
+      "summary": "Searched the canon ({{count}} hits)",
+      "summary_query": "Searched the canon for “{{query}}” · {{count}} hits"
+    },
+    "search_knowledge": {
+      "summary": "Searched the knowledge base ({{count}} hits)",
+      "summary_query": "Searched knowledge for “{{query}}” · {{count}} hits"
+    },
+    "read_knowledge_entry": {
+      "summary": "Read a knowledge entry",
+      "summary_title": "Read 《{{title}}》"
+    },
+    "search_chapters": {
+      "summary": "Searched the chapters ({{count}} hits)"
+    },
+    "read_chapter": {
+      "summary": "Read a chapter",
+      "summary_chapter": "Read chapter {{number}}"
+    },
+    "submit_outline": {
+      "summary": "Submitted an outline ({{outline}} chars) and notes ({{notes}} chars)"
+    },
+    "submit_revision_plan": {
+      "summary": "Submitted a revision plan ({{chars}} chars)"
+    },
+    "read_draft": {
+      "summary": "Read the draft ({{count}} paragraphs)"
+    },
+    "insert_text": {
+      "summary": "Inserted text",
+      "summary_appended": "Appended after {{pid}}",
+      "summary_appended_open": "Appended to {{pid}} (paragraph open)",
+      "summary_inserted": "Inserted {{pids}}",
+      "summary_inserted_open": "Inserted {{pids}} (paragraph open)"
+    },
+    "insert_paragraphs": {
+      "summary": "Inserted {{pids}}"
+    },
+    "replace_text": {
+      "summary": "Replaced text",
+      "summary_deleted": "Emptied and removed {{pid}}"
+    },
+    "rewrite_paragraph": {
+      "summary": "Rewrote a paragraph",
+      "summary_pid": "Rewrote {{pid}}"
+    },
+    "delete_paragraphs": {
+      "summary": "Deleted {{pids}}"
+    },
+    "finish_draft": {
+      "summary": "Finished the draft ({{words}} words)",
+      "summary_needs_confirmation": "Asked to finish at {{words}} words"
+    },
+    "finish_revision": {
+      "summary": "Finished the revision ({{words}} words)"
+    },
+    "submit_review": {
+      "summary_pass": "Passed the review ({{issues}} issues)",
+      "summary_revise": "Requested revision ({{issues}} issues)"
+    },
+    "create_entity": {
+      "summary": "Created an entity ({{count}} fields)",
+      "summary_target": "Created {{target}}"
+    },
+    "update_entity": {
+      "summary": "Updated an entity ({{count}} fields)",
+      "summary_target": "Updated {{target}}"
+    },
+    "set_relation": {
+      "summary": "Recorded a relation",
+      "summary_target": "Recorded a relation with {{target}}"
+    },
+    "end_relation": {
+      "summary": "Ended a relation",
+      "summary_target": "Ended the relation with {{target}}"
+    },
+    "record_appearances": {
+      "summary": "Recorded {{count}} appearances"
+    },
+    "add_timeline_event": {
+      "summary": "Added a timeline event",
+      "summary_target": "Added “{{target}}” to the timeline"
+    },
+    "update_timeline_event": {
+      "summary": "Updated a timeline event",
+      "summary_target": "Updated “{{target}}”"
+    },
+    "add_memory_note": {
+      "summary": "Recorded a memory note",
+      "summary_target": "Recorded: {{target}}"
+    },
+    "retire_memory_note": {
+      "summary": "Retired a memory note",
+      "summary_target": "Retired: {{target}}"
+    },
+    "add_foreshadowing": {
+      "summary": "Planted foreshadowing",
+      "summary_target": "Planted “{{target}}”"
+    },
+    "resolve_foreshadowing": {
+      "summary": "Updated foreshadowing",
+      "summary_target": "Updated “{{target}}”"
+    },
+    "set_chapter_summary": {
+      "summary": "Saved the chapter summary",
+      "summary_target": "Saved the summary of {{target}}"
+    },
+    "propose_setting_change": {
+      "summary": "Proposed a setting change",
+      "summary_target": "Proposed a change to {{target}}"
+    },
+    "finish_maintenance": {
+      "summary": "Finished maintenance ({{changes}} changes, {{proposals}} proposals)"
+    },
+    "ask_user": {
+      "summary": "Asked {{count}} questions"
+    },
+    "web_search": {
+      "summary": "Searched the web ({{count}} results)",
+      "summary_query": "Searched the web for “{{query}}” · {{count}} results"
+    },
+    "web_fetch": {
+      "summary": "Fetched {{url}}",
+      "summary_title": "Read {{title}}"
+    },
+    "write_setting_doc": {
+      "summary": "Wrote {{chars}} chars",
+      "summary_doc": "Wrote the {{doc}} ({{chars}} chars)"
+    },
+    "edit_setting_doc": {
+      "summary": "Edited a setting document",
+      "summary_doc": "Edited the {{doc}}"
+    },
+    "upsert_character": {
+      "summary": "Updated {{name}} (rank {{rank}})"
+    },
+    "remove_character": {
+      "summary": "Removed a character",
+      "summary_name": "Removed {{name}}"
+    },
+    "reorder_characters": {
+      "summary": "Reordered the cast: {{order}}"
+    },
+    "set_research_topics": {
+      "summary": "Set {{count}} research topics"
+    },
+    "save_knowledge_entry": {
+      "summary": "Saved a knowledge entry",
+      "summary_title": "Saved 《{{title}}》"
+    },
+    "update_knowledge_entry": {
+      "summary": "Updated a knowledge entry",
+      "summary_title": "Updated 《{{title}}》"
+    },
+    "finish_research": {
+      "summary": "Finished the research ({{entries}} entries)"
+    },
+    "echo": {
+      "summary": "Echoed {{chars}} chars"
+    },
+    "test_write": {
+      "summary": "Test write ({{chars}} chars)"
+    },
+    "test_finish": {
+      "summary": "Test completion"
+    },
+    "test_slow": {
+      "summary": "Slow test call ({{chars}} chars)"
+    }
+  }
 }

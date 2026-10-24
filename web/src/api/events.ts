@@ -236,6 +236,79 @@ export function applyServerEvent(
       void queryClient.invalidateQueries({ queryKey: keys.books.overview(bookId) })
       return
     }
+    case "session.delta": {
+      if (data === null) {
+        return
+      }
+      const sessionId = data.session_id
+      const seq = data.seq
+      const kind = data.kind
+      const index = data.index
+      const text = data.text
+      if (
+        typeof sessionId !== "number" ||
+        typeof seq !== "number" ||
+        typeof index !== "number" ||
+        typeof text !== "string" ||
+        (kind !== "text" && kind !== "reasoning")
+      ) {
+        return
+      }
+      useLiveStore.getState().applyDelta(sessionId, seq, kind, index, text)
+      return
+    }
+    case "session.tool_preview": {
+      if (data === null) {
+        return
+      }
+      const sessionId = data.session_id
+      const seq = data.seq
+      const callIndex = data.call_index
+      const name = data.name
+      const field = data.field
+      const delta = data.delta
+      if (
+        typeof sessionId !== "number" ||
+        typeof seq !== "number" ||
+        typeof callIndex !== "number" ||
+        typeof name !== "string" ||
+        typeof field !== "string" ||
+        typeof delta !== "string"
+      ) {
+        return
+      }
+      useLiveStore.getState().applyPreview(sessionId, seq, callIndex, name, field, delta)
+      return
+    }
+    case "session.message": {
+      if (data === null) {
+        return
+      }
+      const sessionId = data.session_id
+      const message = payloadRecord(data.message)
+      if (typeof sessionId !== "number" || message === null) {
+        return
+      }
+      // The persisted message supersedes the live buffers of its sequence (spec/11 §4.3).
+      const seq = message.seq
+      if (typeof seq === "number") {
+        useLiveStore.getState().clearSeq(sessionId, seq)
+      }
+      void queryClient.invalidateQueries({ queryKey: keys.sessions.detail(sessionId) })
+      return
+    }
+    case "session.updated":
+    case "session.tool_call": {
+      if (data === null) {
+        return
+      }
+      const sessionId = data.session_id ?? payloadRecord(data.session)?.id
+      if (typeof sessionId !== "number") {
+        return
+      }
+      void queryClient.invalidateQueries({ queryKey: keys.sessions.detail(sessionId) })
+      return
+    }
     case "resync": {
       void queryClient.invalidateQueries()
       return

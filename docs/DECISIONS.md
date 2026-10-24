@@ -484,6 +484,51 @@ technical decisions.
 - **Consequences**: the UI cannot accidentally clear a stored key by round-tripping a masked value,
   and `edit`/`patch` payloads compile without filler fields.
 
+### D-072 The frozen tool list is the outer bound of what a session may run
+- **Context**: spec/03 §1.2 freezes each role's ordered tool list into `agent_sessions.tools` and
+  says phases "restrict which tools may run". The phase matrix of spec/05 §2 was the only gate in
+  the first M3 implementation, which let a tool run whenever the *phase* allowed it even if the
+  session had never frozen that tool. That is observable today with the test-only tools of the
+  debug session (spec/10 §2.7), which are not part of any role list, and it would be observable
+  later whenever a milestone adds a tool to a role's list.
+- **Decision**: `is_permitted(kind, phase, tool, frozen)` short-circuits on the session's frozen
+  list before applying the phase matrix; a tool absent from `agent_sessions.tools` cannot run in
+  that session, whatever the phase or kind says. The phase matrix is a second, narrower gate
+  inside the frozen list.
+- **Consequences**: the frozen list is the outer bound, so a tool that M4–M10 later adds to a
+  role's list cannot retroactively become runnable in a session created before the change — the
+  session keeps exactly the tool set it started with, which is what makes the provider's cached
+  prefix (tools → system → messages) stay valid. The test-only tools of the debug session are
+  exempt from the phase matrix (they have no phase meaning) but still only run in a session that
+  froze them, so this cannot widen a real session.
+
+### D-073 Session warnings are events, not stored columns
+- **Context**: spec/10 §1 says mutation responses and `SessionDto.warnings` "may include
+  `warnings` (`model.missing_role`, `context.large_kickoff`, `prompt.override_failed`)", but
+  `agent_sessions` (spec/02 §2) has no warnings column, and spec/02 and spec/03 win over the other
+  documents (AGENTS.md §8).
+- **Decision**: warnings are computed where they are known — at session creation, from the
+  resolved prompts and the kickoff size — and travel on **both** the creation response's
+  `SessionDto.warnings` and the `session.updated` event published for the just-created session, so
+  a client that missed the HTTP response still receives them on the event stream. They are not
+  persisted: a later `GET /api/sessions/:id` returns `[]`.
+- **Consequences**: re-deriving a kickoff-size warning after the fact would be a lie about what
+  happened at creation (the kickoff and the context window are not both available), and
+  `prompt.override_failed` describes one render, not a property of the session. The UI therefore
+  toasts on the event, and the schema stays exactly as spec/02 defines it.
+
+### D-074 The agent panel's stream uses `@tanstack/react-virtual`, whose hook trips the React Compiler lint
+- **Context**: spec/11 §5.3 requires the activity stream to be virtualized "with
+  `@tanstack/react-virtual`". ESLint's React Compiler rule reports
+  `react-hooks/incompatible-library` for `useVirtualizer()` because the API returns functions that
+  the compiler cannot memoize safely.
+- **Decision**: keep the library the spec mandates; the warning is the expected result of the two
+  requirements meeting, not a defect. It is a `warning`, so `pnpm lint` still exits 0, and the rule
+  cannot be silenced for this call without also hiding a real future finding.
+- **Consequences**: the activity stream component is not memoized by the React Compiler; its rows
+  are already memoized by `useMemo` on the message list, and the virtualizer owns the scroll
+  behaviour. A reviewer sees exactly one lint warning, documented here.
+
 ## Open items (questions for the author)
 1. Confirm the reading of "this time it cannot be delegated to a lower-level review agent" as
    "the author judges the reviewer's report; no further delegation" (PROJECT §10.9).

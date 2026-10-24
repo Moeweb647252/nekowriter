@@ -10,6 +10,7 @@ fn hints(kind: &str, phase: &str, language: &str) -> DemoHints {
         granularity: Some("paragraph".to_owned()),
         step_in_phase: 0,
         language: language.to_owned(),
+        tools: Vec::new(),
     }
 }
 
