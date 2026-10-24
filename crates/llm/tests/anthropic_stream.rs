@@ -246,6 +246,65 @@ fn cache_control_uses_one_ttl() {
 }
 
 #[test]
+fn cache_control_marks_only_the_cache_blocks_and_the_top_level() {
+    // Three breakpoints at most (spec/04 §3): the system block, every user block with
+    // `cache: true`, and the top-level automatic marker.
+    let mut req = request();
+    req.messages = vec![Message::User {
+        blocks: vec![
+            TextBlock {
+                text: "settings".to_owned(),
+                cache: true,
+            },
+            TextBlock {
+                text: "task".to_owned(),
+                cache: false,
+            },
+            TextBlock {
+                text: "another".to_owned(),
+                cache: true,
+            },
+        ],
+    }];
+    let body = build_body(&req, &ModelOptions::default());
+    let content = body["messages"][0]["content"].as_array().expect("content");
+    assert_eq!(content.len(), 3);
+    // Cached blocks carry the marker...
+    assert!(content[0].get("cache_control").is_some(), "{content:?}");
+    assert!(content[2].get("cache_control").is_some(), "{content:?}");
+    // ...and an uncached one does not.
+    assert!(content[1].get("cache_control").is_none(), "{content:?}");
+    // The system block and the top-level automatic marker are always present.
+    assert_eq!(body["system"][0]["cache_control"]["type"], "ephemeral");
+    assert_eq!(body["cache_control"]["type"], "ephemeral");
+    // Every breakpoint uses the same TTL, which the API requires (spec/04 §3).
+    let ttl = |value: &serde_json::Value| {
+        value
+            .get("ttl")
+            .and_then(|ttl| ttl.as_str())
+            .unwrap_or("5m")
+            .to_owned()
+    };
+    let request_ttl = ttl(&body["cache_control"]);
+    assert_eq!(ttl(&body["system"][0]["cache_control"]), request_ttl);
+    assert_eq!(ttl(&content[0]["cache_control"]), request_ttl);
+    assert_eq!(ttl(&content[2]["cache_control"]), request_ttl);
+
+    // With one hour, every marker says so.
+    let mut req = request();
+    req.cache = CacheHints {
+        ttl: CacheTtl::OneHour,
+    };
+    let body = build_body(&req, &ModelOptions::default());
+    assert_eq!(body["system"][0]["cache_control"]["ttl"], "1h");
+    assert_eq!(body["cache_control"]["ttl"], "1h");
+    assert_eq!(
+        body["messages"][0]["content"][0]["cache_control"]["ttl"],
+        "1h"
+    );
+}
+
+#[test]
 fn thinking_display_and_effort_options() {
     let options = ModelOptions {
         effort: Some(Effort::Low),
