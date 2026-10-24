@@ -1023,3 +1023,39 @@ async fn a_short_completion_is_withheld_once_at_the_sixtieth_percentile() {
         "nothing was withheld, so the counter stays clear"
     );
 }
+
+/// spec/05 §4: "Inserting after an open tail closes it first."
+///
+/// A complete paragraph cannot be followed by a still-open one: `tail_open` names the last
+/// paragraph, and after the insert the last paragraph is the new, complete one.
+#[tokio::test]
+async fn inserting_after_the_open_tail_closes_it() {
+    // `free` honours `paragraph_end`, so the fixture can leave a real open tail.
+    let runtime = runtime(vec![
+        outline_step(),
+        // One segment: p1 complete, p2 open (the last paragraph is the open tail).
+        insert(
+            "第一段。\n\n第二段还没有写完",
+            json!({ "paragraph_end": false }),
+        ),
+        // Insert after p2, the open tail.
+        ScriptStep::new().tool(
+            "insert_paragraphs",
+            json!({ "after": "p2", "text": "插在最后面。" }),
+        ),
+        finish_pair()[0].clone(),
+        finish_pair()[1].clone(),
+    ])
+    .await;
+    let session_id = start_writer(&runtime, Granularity::Free, true, false).await;
+    agent_write_harness::resume_until_done(&runtime, session_id, None).await;
+    let content = chapter_content(&runtime, runtime.chapter_id).await;
+    assert_eq!(content.paragraphs.len(), 3, "{:?}", content.paragraphs);
+    assert_eq!(content.paragraphs[1].text, "第二段还没有写完");
+    assert_eq!(content.paragraphs[2].text, "插在最后面。");
+    assert!(
+        !content.tail_open,
+        "the last paragraph is the complete inserted one, so the tail is closed: {:?}",
+        content.paragraphs
+    );
+}
