@@ -7,6 +7,7 @@
 
 pub mod app_settings;
 pub mod books;
+pub mod canon;
 pub mod change_log;
 pub mod chapters;
 pub mod characters;

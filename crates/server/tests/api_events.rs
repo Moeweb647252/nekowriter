@@ -104,6 +104,7 @@ async fn content_patch_emits_chapter_updated_and_chapter_content() {
             ServerEvent::ChapterContentChanged { .. } => "chapter.content",
             ServerEvent::ChapterUpdated { .. } => "chapter.updated",
             ServerEvent::BookUpdated { .. } => "book.updated",
+            ServerEvent::CanonChanged { .. } => "canon.changed",
             ServerEvent::SettingsChanged { .. } => "settings.changed",
             ServerEvent::SessionUpdated { .. } => "session.updated",
             ServerEvent::SessionMessage { .. } => "session.message",

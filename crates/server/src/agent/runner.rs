@@ -1055,7 +1055,9 @@ async fn step_tool(
                         book: book.as_ref(),
                         chapter: chapter.as_ref(),
                         track: track.as_ref(),
-                        visibility: Visibility::Shared,
+                        // The session's track decides which canon rows it sees and writes
+                        // (spec/06 §2, D-014).
+                        visibility: Visibility::of(&session, track.as_ref()),
                         request_meta: meta,
                         prompts: &prompts,
                         state: &state,

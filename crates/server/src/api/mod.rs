@@ -2,6 +2,7 @@
 
 pub mod app_settings;
 pub mod books;
+pub mod canon;
 pub mod changes;
 pub mod chapters;
 #[cfg(debug_assertions)]
@@ -117,6 +118,73 @@ pub fn build_app(state: AppState) -> Router {
         )
         .route("/books/{book_id}/changes", get(changes::list))
         .route("/changes/{change_id}", get(changes::get))
+        .route("/changes/{change_id}/revert", post(canon::revert_change))
+        // Canon (spec/10 §2.4).
+        .route(
+            "/books/{book_id}/entities",
+            get(canon::list_entities).post(canon::create_entity),
+        )
+        .route(
+            "/entities/{entity_id}",
+            get(canon::get_entity)
+                .patch(canon::patch_entity)
+                .delete(canon::delete_entity),
+        )
+        .route("/entities/{entity_id}/merge", post(canon::merge_entity))
+        .route(
+            "/entities/{entity_id}/protagonist",
+            post(canon::set_protagonist),
+        )
+        .route("/entities/{entity_id}/history", get(canon::entity_history))
+        .route(
+            "/books/{book_id}/relations",
+            get(canon::list_relations).post(canon::create_relation),
+        )
+        .route(
+            "/relations/{relation_id}",
+            get(canon::get_relation)
+                .patch(canon::patch_relation)
+                .delete(canon::delete_relation),
+        )
+        .route(
+            "/chapters/{chapter_id}/appearances",
+            get(canon::chapter_appearances).put(canon::put_appearances),
+        )
+        .route(
+            "/books/{book_id}/timeline",
+            get(canon::list_timeline).post(canon::create_timeline_event),
+        )
+        .route(
+            "/timeline-events/{event_id}",
+            get(canon::get_timeline_event)
+                .patch(canon::patch_timeline_event)
+                .delete(canon::delete_timeline_event),
+        )
+        .route(
+            "/timeline-events/{event_id}/move",
+            post(canon::move_timeline_event),
+        )
+        .route(
+            "/books/{book_id}/memory-notes",
+            get(canon::list_memory_notes).post(canon::create_memory_note),
+        )
+        .route(
+            "/memory-notes/{note_id}",
+            get(canon::get_memory_note)
+                .patch(canon::patch_memory_note)
+                .delete(canon::delete_memory_note),
+        )
+        .route(
+            "/books/{book_id}/foreshadowing",
+            get(canon::list_foreshadowing).post(canon::create_foreshadowing),
+        )
+        .route(
+            "/foreshadowing/{item_id}",
+            get(canon::get_foreshadowing)
+                .patch(canon::patch_foreshadowing)
+                .delete(canon::delete_foreshadowing),
+        )
+        .route("/books/{book_id}/memory", get(canon::memory_snapshot))
         .route("/events", get(events::stream))
         .route("/providers", get(providers::list).post(providers::create))
         .route("/provider-presets", get(providers::presets))

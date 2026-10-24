@@ -123,6 +123,16 @@ pub enum ServerEvent {
         tail_open: bool,
         actor: ContentActor,
     },
+    /// A canon row changed (spec/06 §3, spec/10 §3): an entity, relation, appearance set, timeline
+    /// event, memory note, foreshadowing item or chapter summary.
+    #[serde(rename = "canon.changed")]
+    CanonChanged {
+        book_id: i32,
+        target_type: crate::db::json::ChangeTargetType,
+        target_id: i32,
+        op: crate::db::json::ChangeOp,
+        change_id: i32,
+    },
     /// Setting materials changed (the book's `settings` column emits `book.updated`).
     #[serde(rename = "settings.changed")]
     SettingsChanged {

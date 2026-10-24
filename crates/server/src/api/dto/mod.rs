@@ -1,6 +1,7 @@
 //! Request and response DTOs (spec/01 §4: separate from entities, exported with ts-rs).
 
 pub mod books;
+pub mod canon;
 pub mod changes;
 pub mod chapters;
 pub mod content_ops;

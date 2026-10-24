@@ -11,7 +11,7 @@ use crate::api::dto::chapters::{
     ChapterDto, ChapterInput, ChapterListItemDto, ChapterPatch, ChapterReorderInput,
     ChapterVersionMetaDto, ManualVersionInput,
 };
-use crate::db::entities::{agent_sessions, chapter_versions, chapters, tracks};
+use crate::db::entities::{agent_sessions, appearances, chapter_versions, chapters, tracks};
 use crate::db::json::{
     AgentRole, CanonStatus, ChangeActor, ChangeOp, ChangeTargetType, ChapterContent, ChapterStatus,
     SessionStatus, Snapshot, TrackKind, VersionKind,
@@ -215,7 +215,20 @@ pub async fn delete_inner(
         ));
     }
 
+    // The appearance rows cascade with the chapter; the entities that appeared in it lose a
+    // bound, so their `first_chapter_id` / `last_chapter_id` are recomputed (spec/08 §1.1,
+    // D-059). The entity ids are read before the cascade removes the rows.
+    let appeared: Vec<i32> = appearances::Entity::find()
+        .filter(appearances::Column::ChapterId.eq(chapter_id))
+        .all(tx)
+        .await?
+        .into_iter()
+        .map(|row| row.entity_id)
+        .collect();
     chapters::Entity::delete_by_id(chapter_id).exec(tx).await?;
+    super::canon::entity::recompute_bounds(tx, existing.book_id, &appeared)
+        .await
+        .map_err(AppError::from)?;
     renumber_subsequent(tx, existing.track_id, existing.ord).await?;
 
     // Repair the chapter's own track and book timestamps.
