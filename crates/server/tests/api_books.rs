@@ -516,13 +516,22 @@ async fn overview_reports_progress_per_track() {
     assert_eq!(track["kind"], "main");
     assert_eq!(track["chapters"], 1);
     assert_eq!(track["words"], 8);
+    // A manual edit moves `planned` into `drafting` (the lifecycle diagram of spec/08 §1), so the
+    // chapter counts under `drafting` here and `planned` stays at 0.
+    let drafting = track["by_status"]
+        .as_array()
+        .expect("by_status")
+        .iter()
+        .find(|entry| entry["status"] == "drafting")
+        .expect("drafting entry");
+    assert_eq!(drafting["count"], 1);
     let planned = track["by_status"]
         .as_array()
         .expect("by_status")
         .iter()
         .find(|entry| entry["status"] == "planned")
         .expect("planned entry");
-    assert_eq!(planned["count"], 1);
+    assert_eq!(planned["count"], 0);
     assert_eq!(overview["usage"]["requests"], 0);
 }
 

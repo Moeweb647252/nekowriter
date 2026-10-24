@@ -1,0 +1,242 @@
+/** The reading column with in-place paragraph editing and a full-text editor (PROJECT §8.5). */
+import { useMemo, useState } from "react"
+import { useTranslation } from "react-i18next"
+import { AnimatePresence, motion } from "motion/react"
+
+import { useContentMutations } from "@/api/hooks/chapters"
+import { useErrorToast } from "@/components/common/ErrorToast"
+import { EmptyState } from "@/components/common/EmptyState"
+import { Button } from "@/components/ui/button"
+import { Textarea } from "@/components/ui/textarea"
+import type { ChapterDto } from "@/api/gen/ChapterDto"
+import type { ContentOpInput } from "@/api/gen/ContentOpInput"
+import { useChapterDoc } from "@/stores/chapterDoc"
+import { isComposing } from "@/lib/hotkeys"
+import { countWords } from "@/lib/wordcount"
+import { cn } from "@/lib/utils"
+
+export type ChapterTextProps = {
+  chapter: ChapterDto
+  bookId: number
+  unspaced: boolean
+  fullTextOpen: boolean
+  onFullTextOpenChange: (open: boolean) => void
+}
+
+/** Renders the open document; a click edits one paragraph, the toolbar switches to full text. */
+export function ChapterText({
+  chapter,
+  bookId,
+  unspaced,
+  fullTextOpen,
+  onFullTextOpenChange,
+}: ChapterTextProps) {
+  const { t } = useTranslation()
+  const showError = useErrorToast()
+  const paragraphs = useChapterDoc((state) => state.paragraphs)
+  const version = useChapterDoc((state) => state.version)
+  const highlights = useChapterDoc((state) => state.highlights)
+  const clearHighlight = useChapterDoc((state) => state.clearHighlight)
+  const { patch, putText } = useContentMutations(chapter.id, bookId)
+
+  // The live count while typing; the server value is authoritative (spec/11 §8).
+  const liveWords = useMemo(
+    () => paragraphs.reduce((total, paragraph) => total + countWords(paragraph.text), 0),
+    [paragraphs],
+  )
+
+  if (fullTextOpen) {
+    return (
+      <FullTextEditor
+        chapter={chapter}
+        version={version}
+        saving={putText.isPending}
+        onCancel={() => onFullTextOpenChange(false)}
+        onSave={(text) => {
+          putText.mutate(
+            { base_version: version, text },
+            {
+              onSuccess: () => onFullTextOpenChange(false),
+              onError: showError,
+            },
+          )
+        }}
+      />
+    )
+  }
+
+  return (
+    <div className="mx-auto max-w-[42em]">
+      <div className="mb-4 flex items-center justify-between gap-2">
+        <p className="text-xs text-muted-foreground">
+          {t("chapter:live_words", { words: liveWords })}
+        </p>
+        <Button size="sm" variant="outline" onClick={() => onFullTextOpenChange(true)}>
+          {t("chapter:full_text_edit")}
+        </Button>
+      </div>
+      {paragraphs.length === 0 ? (
+        <EmptyState title={t("chapter:empty_title")} description={t("chapter:empty_text")} />
+      ) : (
+        <div className={unspaced ? "prose-cjk" : "prose-latin"}>
+          <AnimatePresence initial={false}>
+            {paragraphs.map((paragraph) => (
+              <Paragraph
+                key={paragraph.pid}
+                pid={paragraph.pid}
+                text={paragraph.text}
+                highlight={highlights[paragraph.pid]?.kind}
+                onHighlightEnd={clearHighlight}
+                saving={patch.isPending}
+                onSave={(text, previousPid) => {
+                  const ops: ContentOpInput[] = [{ op: "update", pid: paragraph.pid, text }]
+                  patch.mutate(
+                    { base_version: version, ops },
+                    { onError: showError },
+                  )
+                  void previousPid
+                }}
+              />
+            ))}
+          </AnimatePresence>
+        </div>
+      )}
+    </div>
+  )
+}
+
+type ParagraphProps = {
+  pid: string
+  text: string
+  highlight?: "inserted" | "updated"
+  saving: boolean
+  onHighlightEnd: (pid: string) => void
+  onSave: (text: string, previousPid: string) => void
+}
+
+/** One paragraph: click to edit in place; Esc cancels; blur or ⌘⏎ saves. */
+function Paragraph({ pid, text, highlight, saving, onHighlightEnd, onSave }: ParagraphProps) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(text)
+
+  if (editing) {
+    return (
+      <motion.div layout className="my-1">
+        <Textarea
+          value={draft}
+          autoFocus
+          rows={Math.max(2, Math.ceil(draft.length / 40))}
+          disabled={saving}
+          className="resize-none"
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={() => {
+            setEditing(false)
+            if (draft !== text) {
+              onSave(draft, pid)
+            }
+          }}
+          onKeyDown={(event) => {
+            // IME composition confirms characters with Enter (AGENTS.md §6).
+            if (isComposing(event)) {
+              return
+            }
+            if (event.key === "Escape") {
+              setDraft(text)
+              setEditing(false)
+              return
+            }
+            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+              event.preventDefault()
+              setEditing(false)
+              if (draft !== text) {
+                onSave(draft, pid)
+              }
+            }
+          }}
+        />
+      </motion.div>
+    )
+  }
+
+  return (
+    <motion.p
+      layout
+      data-pid={pid}
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, height: 0 }}
+      transition={{ duration: 0.18 }}
+      title={pid}
+      onClick={() => {
+        setDraft(text)
+        setEditing(true)
+      }}
+      onAnimationComplete={() => {
+        if (highlight !== undefined) {
+          onHighlightEnd(pid)
+        }
+      }}
+      className={cn(
+        "cursor-text rounded-sm",
+        highlight === "inserted" && "bg-status-done/10",
+        highlight === "updated" && "bg-status-running/10",
+      )}
+    >
+      {text}
+    </motion.p>
+  )
+}
+
+type FullTextEditorProps = {
+  chapter: ChapterDto
+  version: number
+  saving: boolean
+  onCancel: () => void
+  onSave: (text: string) => void
+}
+
+/** One textarea; paragraphs are separated by blank lines (spec/11 §5.2). */
+function FullTextEditor({ chapter, version, saving, onCancel, onSave }: FullTextEditorProps) {
+  const { t } = useTranslation()
+  const [text, setText] = useState(() => paragraphTextOf(chapter))
+  return (
+    <div className="mx-auto max-w-[42em] space-y-3">
+      <p className="text-xs text-muted-foreground">{t("chapter:full_text_hint")}</p>
+      <Textarea
+        value={text}
+        rows={28}
+        autoFocus
+        className="font-serif text-[1.05rem] leading-relaxed"
+        onChange={(event) => setText(event.target.value)}
+        onKeyDown={(event) => {
+          if (isComposing(event)) {
+            return
+          }
+          if (event.key === "Escape") {
+            onCancel()
+          }
+          if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+            event.preventDefault()
+            onSave(text)
+          }
+        }}
+      />
+      <div className="flex items-center gap-2">
+        <Button size="sm" disabled={saving} onClick={() => onSave(text)}>
+          {saving ? t("common:saving") : t("common:save")}
+        </Button>
+        <Button size="sm" variant="ghost" disabled={saving} onClick={onCancel}>
+          {t("common:cancel")}
+        </Button>
+        <span className="ml-auto text-xs text-muted-foreground">
+          {t("chapter:base_version", { version })}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+/** The stored text of a chapter as one blank-line separated document. */
+function paragraphTextOf(chapter: ChapterDto): string {
+  return chapter.content.paragraphs.map((paragraph) => paragraph.text).join("\n\n")
+}

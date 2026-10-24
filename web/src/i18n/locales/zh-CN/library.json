@@ -13,5 +13,20 @@
   "book_language": "写作语言",
   "start_conception": "先由构思智能体帮忙设定",
   "create_book": "创建作品",
-  "chapters_count": "{{count}} 章"
+  "chapters_count": "{{count}} 章",
+  "show_archived": "显示已归档",
+  "book_menu": "作品操作",
+  "open": "打开",
+  "rename": "重命名",
+  "archive": "归档",
+  "unarchive": "取消归档",
+  "chapters_words": "{{chapters}} 章 · {{words}}",
+  "no_chapters": "还没有章节",
+  "untitled": "未命名章节",
+  "delete_title": "删除《{{title}}》？",
+  "delete_body": "作品、它的章节以及全部正史记录都会被删除，且无法撤销。",
+  "delete_confirm": "删除作品",
+  "new_book_description": "只需书名和写作语言即可开始；设定资料也可以手写。",
+  "switch_book": "切换作品",
+  "no_other_books": "没有其他作品"
 }

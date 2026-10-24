@@ -265,6 +265,28 @@ async fn full_text_save_aligns_pids() {
 }
 
 #[tokio::test]
+async fn an_author_edit_moves_a_planned_chapter_into_drafting() {
+    let app = TestApp::new().await;
+    let (_book_id, track_id) = book_with_track(&app).await;
+    let chapter = app.create_chapter(track_id, "ch").await;
+    let chapter_id = chapter["id"].as_i64().expect("chapter id") as i32;
+    assert_eq!(chapter["status"], "planned");
+
+    // `planned ── manual edit ──► drafting` (the lifecycle diagram of spec/08 §1).
+    let result = app.put_text(chapter_id, 0, "第一段。").await;
+    assert_eq!(result["version"], 1);
+    let (_, chapter) = app.get(&format!("/api/chapters/{chapter_id}")).await;
+    assert_eq!(chapter["status"], "drafting");
+
+    // An empty save does not move the chapter.
+    let other = app.create_chapter(track_id, "other").await;
+    let other_id = other["id"].as_i64().expect("chapter id") as i32;
+    app.put_text(other_id, 0, "   \n\n  ").await;
+    let (_, other) = app.get(&format!("/api/chapters/{other_id}")).await;
+    assert_eq!(other["status"], "planned", "an empty save changes no text");
+}
+
+#[tokio::test]
 async fn submit_requires_drafting_and_creates_a_version() {
     let app = TestApp::new().await;
     let (_book_id, track_id) = book_with_track(&app).await;
@@ -278,16 +300,10 @@ async fn submit_requires_drafting_and_creates_a_version() {
     assert_eq!(status, StatusCode::CONFLICT);
     assert_error_detail(&body, "chapter.invalid_state", "status");
 
-    // Move it to drafting by setting the status directly (the write endpoint arrives in M4).
-    app.set_chapter_status(chapter_id, "drafting").await;
-    // An empty chapter cannot be submitted either.
-    let (status, body) = app
-        .post(&format!("/api/chapters/{chapter_id}/submit"), json!({}))
-        .await;
-    assert_eq!(status, StatusCode::CONFLICT);
-    assert_error(&body, "chapter.invalid_state");
-
+    // A manual edit moves the chapter into drafting (spec/08 §1 lifecycle).
     app.put_text(chapter_id, 0, "第一段。\n\n第二段。").await;
+    let (_, chapter) = app.get(&format!("/api/chapters/{chapter_id}")).await;
+    assert_eq!(chapter["status"], "drafting");
     let (status, body) = app
         .post(&format!("/api/chapters/{chapter_id}/submit"), json!({}))
         .await;
@@ -326,7 +342,6 @@ async fn approve_creates_the_official_version_and_pends_canon() {
     assert_eq!(status, StatusCode::CONFLICT);
     assert_error(&body, "chapter.invalid_state");
 
-    app.set_chapter_status(chapter_id, "drafting").await;
     app.put_text(chapter_id, 0, "第一段。").await;
     let (status, _) = app
         .post(&format!("/api/chapters/{chapter_id}/submit"), json!({}))
@@ -368,7 +383,6 @@ async fn author_edits_of_a_synced_official_chapter_make_canon_stale() {
     let (_book_id, track_id) = book_with_track(&app).await;
     let chapter = app.create_chapter(track_id, "ch").await;
     let chapter_id = chapter["id"].as_i64().expect("chapter id") as i32;
-    app.set_chapter_status(chapter_id, "drafting").await;
     app.put_text(chapter_id, 0, "第一段。").await;
     app.post(&format!("/api/chapters/{chapter_id}/submit"), json!({}))
         .await;

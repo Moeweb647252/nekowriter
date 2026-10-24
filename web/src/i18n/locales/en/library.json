@@ -13,5 +13,20 @@
   "book_language": "Writing language",
   "start_conception": "Start with the conception agent",
   "create_book": "Create book",
-  "chapters_count": "{{count}} chapters"
+  "chapters_count": "{{count}} chapters",
+  "show_archived": "Show archived",
+  "book_menu": "Book actions",
+  "open": "Open",
+  "rename": "Rename",
+  "archive": "Archive",
+  "unarchive": "Unarchive",
+  "chapters_words": "{{chapters}} ch · {{words}}",
+  "no_chapters": "No chapters yet",
+  "untitled": "Untitled chapter",
+  "delete_title": "Delete “{{title}}”?",
+  "delete_body": "The book, its chapters and all its canon rows are deleted. This cannot be undone.",
+  "delete_confirm": "Delete book",
+  "new_book_description": "A title and a writing language are enough to start. Setting materials can be written by hand.",
+  "switch_book": "Switch book",
+  "no_other_books": "No other books"
 }

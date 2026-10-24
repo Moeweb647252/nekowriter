@@ -6,6 +6,10 @@
  */
 import type { QueryClient } from "@tanstack/react-query"
 
+import type { ChapterDto } from "@/api/gen/ChapterDto"
+import type { ContentOp } from "@/api/gen/ContentOp"
+import { keys } from "@/api/keys"
+import { useChapterDoc } from "@/stores/chapterDoc"
 import { useLiveStore } from "@/stores/live"
 
 type ServerEvent = {
@@ -87,6 +91,7 @@ export function connectEvents(bookId: number | null, queryClient: QueryClient) {
       } catch {
         data = null
       }
+      applyServerEvent(queryClient, type, data)
       dispatch({ type, data })
     })
   }
@@ -104,5 +109,138 @@ export function disconnectEvents() {
 function dispatch(event: ServerEvent) {
   for (const handler of handlers) {
     handler(event)
+  }
+}
+
+/** The parsed payload of an SSE frame. */
+export type EventPayload = unknown
+
+/** Narrow a parsed payload to a record, or `null`. */
+function payloadRecord(payload: unknown): Record<string, unknown> | null {
+  return typeof payload === "object" && payload !== null ? (payload as Record<string, unknown>) : null
+}
+
+/**
+ * The dispatch table (spec/11 §4.2): update stores and caches where the payload is complete,
+ * invalidate where the event is only a signal.
+ */
+export function applyServerEvent(
+  queryClient: QueryClient,
+  type: string,
+  payload: unknown,
+): void {
+  const data = payloadRecord(payload)
+  switch (type) {
+    case "chapter.content": {
+      if (data === null) {
+        return
+      }
+      const chapterId = data.chapter_id
+      const version = data.version
+      const ops = data.ops
+      const actor = data.actor
+      if (typeof chapterId !== "number" || typeof version !== "number" || !Array.isArray(ops)) {
+        return
+      }
+      const state = useChapterDoc.getState()
+      if (state.chapterId !== chapterId) {
+        // The document belongs to another chapter: only the caches need refreshing.
+        void queryClient.invalidateQueries({ queryKey: keys.chapters.detail(chapterId) })
+        return
+      }
+      const result = state.applyOps(
+        version,
+        ops as ContentOp[],
+        actor === "agent" ? "agent" : "user",
+      )
+      if (result === "gap") {
+        // Missed updates: the only correct recovery is a refetch.
+        void queryClient.invalidateQueries({ queryKey: keys.chapters.detail(chapterId) })
+        return
+      }
+      // Keep the cached chapter in step with the store. The chapter page reloads the store when
+      // the cached document changes, so a cache left one version behind would silently undo the
+      // ops that were just applied.
+      const after = useChapterDoc.getState()
+      const cached = queryClient.getQueryData<ChapterDto>(keys.chapters.detail(chapterId))
+      if (cached !== undefined) {
+        queryClient.setQueryData(keys.chapters.detail(chapterId), {
+          ...cached,
+          content: {
+            ...cached.content,
+            paragraphs: after.paragraphs,
+            tail_open: after.tailOpen,
+          },
+          content_version: version,
+          word_count:
+            typeof data.word_count === "number" ? data.word_count : cached.word_count,
+        })
+      }
+      return
+    }
+    case "chapter.updated": {
+      if (data === null) {
+        return
+      }
+      const chapter = payloadRecord(data.chapter)
+      if (chapter === null) {
+        return
+      }
+      const trackId = chapter.track_id
+      if (typeof trackId === "number") {
+        void queryClient.invalidateQueries({ queryKey: keys.tracks.chapters(trackId) })
+      }
+      const chapterId = chapter.id
+      if (typeof chapterId === "number") {
+        if (data.outline_changed === true) {
+          void queryClient.invalidateQueries({ queryKey: keys.chapters.detail(chapterId) })
+        }
+        const cached = queryClient.getQueryData<ChapterDto>(keys.chapters.detail(chapterId))
+        if (cached !== undefined) {
+          queryClient.setQueryData(keys.chapters.detail(chapterId), {
+            ...cached,
+            ...chapter,
+          })
+        }
+      }
+      return
+    }
+    case "book.updated": {
+      if (data === null) {
+        return
+      }
+      void queryClient.invalidateQueries({ queryKey: keys.books.all })
+      const bookId = data.book_id
+      if (typeof bookId === "number") {
+        void queryClient.invalidateQueries({ queryKey: keys.books.detail(bookId) })
+        void queryClient.invalidateQueries({ queryKey: keys.books.tracks(bookId) })
+        void queryClient.invalidateQueries({ queryKey: keys.books.overview(bookId) })
+      }
+      return
+    }
+    case "settings.changed": {
+      if (data === null) {
+        return
+      }
+      const bookId = data.book_id
+      if (typeof bookId !== "number") {
+        return
+      }
+      const kind = data.kind
+      if (kind === "setting_doc") {
+        void queryClient.invalidateQueries({ queryKey: keys.settings.docs(bookId) })
+        void queryClient.invalidateQueries({ queryKey: keys.changes.all })
+      } else if (kind === "characters") {
+        void queryClient.invalidateQueries({ queryKey: keys.settings.characters(bookId) })
+      }
+      void queryClient.invalidateQueries({ queryKey: keys.books.overview(bookId) })
+      return
+    }
+    case "resync": {
+      void queryClient.invalidateQueries()
+      return
+    }
+    default:
+      return
   }
 }

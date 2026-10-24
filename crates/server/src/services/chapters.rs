@@ -470,6 +470,15 @@ async fn write_content(
         canon_status = CanonStatus::Stale;
         active.canon_status = Set(canon_status.as_str().to_owned());
     }
+    // `planned ── manual edit ──► drafting` (lifecycle diagram of spec/08 §1): a planned chapter
+    // enters drafting as soon as the author writes text into it by hand. An agent's write starts
+    // drafting through the write endpoint of M4 instead.
+    if actor == ContentActor::User
+        && status_of(existing) == ChapterStatus::Planned
+        && !content.paragraphs.is_empty()
+    {
+        active.status = Set(ChapterStatus::Drafting.as_str().to_owned());
+    }
     active.update(tx).await?;
     let row = load(tx, existing.id).await?;
     let list_item = ChapterListItemDto::from(row);
