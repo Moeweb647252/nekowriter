@@ -8,7 +8,7 @@ use serde_json::{Map, Value, json};
 use crate::retry::LlmError;
 use crate::sse;
 use crate::types::{
-    AssistantTurn, CacheTtl, ChatRequest, Message, ModelOptions, ProviderConfig, ProviderPayload,
+    AssistantTurn, ChatRequest, Message, ModelOptions, ProviderConfig, ProviderPayload,
     ReasoningReplay, StopReason, StreamEvent, ToolCallOut, Usage,
 };
 
@@ -17,6 +17,8 @@ use crate::types::{
 pub struct OpenAiClient {
     pub config: ProviderConfig,
     pub http: reqwest::Client,
+    /// Idle gap between stream events before the turn is abandoned (spec/04 §4).
+    pub idle_timeout: Duration,
 }
 
 impl OpenAiClient {
@@ -24,7 +26,14 @@ impl OpenAiClient {
         Ok(Self {
             config,
             http: crate::http_client()?,
+            idle_timeout: IDLE_TIMEOUT,
         })
+    }
+
+    /// Overrides the idle timeout; tests use a short one to exercise the error path.
+    pub fn with_idle_timeout(mut self, idle_timeout: Duration) -> Self {
+        self.idle_timeout = idle_timeout;
+        self
     }
 
     fn endpoint(&self, path: &str) -> String {
@@ -41,7 +50,7 @@ impl OpenAiClient {
         req: &ChatRequest,
         on_event: &mut (dyn FnMut(StreamEvent) + Send),
     ) -> Result<AssistantTurn, LlmError> {
-        let body = build_body(req, &self.config, &req.options);
+        let body = build_body(req, &req.options);
         let mut builder = self
             .http
             .post(self.endpoint("chat/completions"))
@@ -60,14 +69,24 @@ impl OpenAiClient {
         if !status.is_success() {
             let retry_after = sse::retry_after(&response);
             let body = sse::error_body(response).await;
-            return Err(LlmError::from_status(status.as_u16(), &body, retry_after));
+            return Err(LlmError::from_status(status.as_u16(), &body, retry_after)
+                .with_request_id(request_id.as_deref()));
         }
 
         let mut stream = std::pin::pin!(sse::event_stream(response));
         let mut state = StreamState::default();
         let options = &req.options;
 
-        while let Some(item) = stream.next().await {
+        loop {
+            // A provider may be silent for a long time while it reasons; beyond the idle gap
+            // the turn is abandoned as a timeout (spec/04 §4).
+            let next = match tokio::time::timeout(self.idle_timeout, stream.next()).await {
+                Ok(next) => next,
+                Err(_) => return Err(LlmError::Timeout("stream idle")),
+            };
+            let Some(item) = next else {
+                break;
+            };
             let event = item?;
             let data = event.data.trim();
             if data.is_empty() {
@@ -79,12 +98,14 @@ impl OpenAiClient {
             let value: Value = serde_json::from_str(data)
                 .map_err(|err| LlmError::Protocol(format!("invalid JSON chunk: {err}")))?;
             if let Some(error) = value.get("error") {
-                return Err(LlmError::Provider(error.to_string()));
+                return Err(
+                    LlmError::Provider(error.to_string()).with_request_id(request_id.as_deref())
+                );
             }
             state.consume_chunk(&value, options, on_event)?;
         }
 
-        Ok(state.finish(request_id))
+        Ok(state.finish(req, request_id))
     }
 
     /// Lists the provider's models (spec/04 §8).
@@ -144,18 +165,12 @@ fn map_reqwest_error(err: reqwest::Error) -> LlmError {
     if err.is_timeout() {
         return LlmError::Timeout("request");
     }
-    if err.is_connect() {
-        return LlmError::Timeout("connect");
-    }
-    if err.is_request() {
-        return LlmError::Network(err.to_string());
-    }
     LlmError::Network(err.to_string())
 }
 
 /// Builds the request body (spec/04 §2). Public for the body-builder tests and for
 /// byte-identical request comparisons in the runtime tests (spec/04 §7.1).
-pub fn build_body(req: &ChatRequest, config: &ProviderConfig, options: &ModelOptions) -> Value {
+pub fn build_body(req: &ChatRequest, options: &ModelOptions) -> Value {
     let mut messages: Vec<Value> = Vec::with_capacity(req.messages.len() + 1);
     messages.push(json!({ "role": "system", "content": req.system }));
     for message in &req.messages {
@@ -255,8 +270,6 @@ pub fn build_body(req: &ChatRequest, config: &ProviderConfig, options: &ModelOpt
             body.insert(key.clone(), value.clone());
         }
     }
-    let _ = config;
-    let _ = CacheTtl::FiveMinutes;
     Value::Object(body)
 }
 
@@ -345,23 +358,25 @@ impl StreamState {
                     });
                 }
                 let slot = &mut self.tool_calls[index];
-                let mut started = false;
                 if slot.id.is_empty()
                     && let Some(id) = call.get("id").and_then(Value::as_str)
                 {
                     slot.id = id.to_owned();
-                    started = true;
                 }
                 if let Some(function) = call.get("function") {
-                    if let Some(name) = function.get("name").and_then(Value::as_str) {
-                        if slot.name.is_empty() {
-                            slot.name = name.to_owned();
-                            started = true;
-                        } else if slot.name != name {
-                            slot.name = name.to_owned();
-                        }
+                    if let Some(name) = function.get("name").and_then(Value::as_str)
+                        && !name.is_empty()
+                    {
+                        slot.name = name.to_owned();
                     }
-                    if started && !slot.announced {
+                    let arguments = function
+                        .get("arguments")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    // The start event is emitted at the first fragment that identifies the call:
+                    // the one that carries the function name, or the first argument fragment
+                    // when a provider omitted the name (spec/04 §2).
+                    if !slot.announced && (!slot.name.is_empty() || !arguments.is_empty()) {
                         slot.announced = true;
                         let id = if slot.id.is_empty() {
                             format!("call_{index}")
@@ -374,9 +389,7 @@ impl StreamState {
                             name: slot.name.clone(),
                         });
                     }
-                    if let Some(arguments) = function.get("arguments").and_then(Value::as_str)
-                        && !arguments.is_empty()
-                    {
+                    if !arguments.is_empty() {
                         slot.arguments.push_str(arguments);
                         on_event(StreamEvent::ToolCallArgsDelta {
                             call_index: index as u32,
@@ -426,7 +439,7 @@ impl StreamState {
         })
     }
 
-    fn finish(self, request_id: Option<String>) -> AssistantTurn {
+    fn finish(self, request: &ChatRequest, request_id: Option<String>) -> AssistantTurn {
         let tool_calls: Vec<ToolCallOut> = self
             .tool_calls
             .iter()
@@ -444,10 +457,8 @@ impl StreamState {
 
         let replay_calls: Vec<Value> = tool_calls
             .iter()
-            .enumerate()
-            .map(|(index, call)| {
+            .map(|call| {
                 json!({
-                    "index": index,
                     "id": call.id,
                     "type": "function",
                     "function": {
@@ -466,7 +477,7 @@ impl StreamState {
 
         let mut usage = self.usage;
         if !self.saw_usage {
-            usage = estimate_usage(&self.text, &self.reasoning, &tool_calls);
+            usage = estimate_usage(request, &self.text, &self.reasoning, &tool_calls);
         }
 
         AssistantTurn {
@@ -493,21 +504,77 @@ impl StreamState {
     }
 }
 
-/// Estimates usage when the provider reported none (spec/03 §10 heuristic, spec/04 §2).
-pub fn estimate_usage(text: &str, reasoning: &str, tool_calls: &[ToolCallOut]) -> Usage {
-    let mut arguments = 0usize;
-    for call in tool_calls {
-        arguments += call.input_text.chars().count();
+/// Token estimate of one text: CJK characters count one each, other characters a quarter
+/// (the heuristic of spec/03 §10, used when a provider reports no usage; spec/04 §2).
+pub fn estimate_tokens(text: &str) -> i64 {
+    let mut cjk = 0i64;
+    let mut other = 0i64;
+    for ch in text.chars() {
+        if is_cjk(ch) {
+            cjk += 1;
+        } else {
+            other += 1;
+        }
     }
-    let output_chars = text.chars().count() + reasoning.chars().count() + arguments;
+    cjk + (other + 3) / 4
+}
+
+/// Estimates usage when the provider reported none (spec/03 §10, spec/04 §2). The input side
+/// covers the system prompt, the messages and the tool definitions that were sent.
+pub fn estimate_usage(
+    request: &ChatRequest,
+    text: &str,
+    reasoning: &str,
+    tool_calls: &[ToolCallOut],
+) -> Usage {
+    let mut input = estimate_tokens(&request.system);
+    for message in &request.messages {
+        match message {
+            Message::User { blocks } => {
+                for block in blocks {
+                    input += estimate_tokens(&block.text);
+                }
+            }
+            Message::Assistant { .. } => {}
+            Message::ToolResults { results } => {
+                for result in results {
+                    input += estimate_tokens(&result.content);
+                }
+            }
+        }
+    }
+    for tool in &request.tools {
+        input += estimate_tokens(&tool.description);
+        input += estimate_tokens(&tool.input_schema.to_string());
+    }
+    let mut output = estimate_tokens(text) + estimate_tokens(reasoning);
+    for call in tool_calls {
+        output += estimate_tokens(&call.input_text);
+    }
     Usage {
-        input_tokens: 0,
+        input_tokens: input,
         cached_input_tokens: 0,
         cache_write_tokens: 0,
-        output_tokens: (output_chars as i64 + 3) / 4,
+        output_tokens: output,
         reasoning_tokens: 0,
         estimated: true,
     }
+}
+
+/// CJK ranges used by the token estimate (Han, Hiragana, Katakana, Hangul, full-width forms).
+fn is_cjk(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x1100..=0x11FF
+            | 0x2E80..=0x2FFF
+            | 0x3000..=0x30FF
+            | 0x3130..=0x318F
+            | 0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
+            | 0xAC00..=0xD7AF
+            | 0xF900..=0xFAFF
+            | 0xFF00..=0xFFEF
+    )
 }
 
 fn map_finish_reason(reason: &str) -> StopReason {

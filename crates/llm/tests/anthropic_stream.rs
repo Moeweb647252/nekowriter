@@ -1,5 +1,7 @@
 //! Anthropic adapter tests (spec/04 §9).
 
+mod common;
+
 use nekowriter_llm::anthropic::{AnthropicClient, build_body};
 use nekowriter_llm::retry::LlmError;
 use nekowriter_llm::types::{
@@ -334,4 +336,154 @@ fn replay_payload_is_byte_identical() {
         serde_json::to_string(replayed).expect("replayed"),
         "the replay payload must be byte-identical"
     );
+}
+
+#[tokio::test]
+async fn two_tool_use_blocks_get_sequential_ordinals() {
+    let server = serve("anthropic_two_tools.sse").await;
+    let client = AnthropicClient::new(config(&server.uri())).expect("client");
+    let mut events = Vec::new();
+    let turn = client
+        .run(&request(), &mut |event| events.push(event))
+        .await
+        .expect("turn");
+    assert_eq!(turn.tool_calls.len(), 2);
+    assert_eq!(turn.tool_calls[0].id, "toolu_a");
+    assert_eq!(turn.tool_calls[0].name, "get_entity");
+    assert_eq!(turn.tool_calls[1].id, "toolu_b");
+    assert_eq!(turn.tool_calls[1].name, "query_timeline");
+    let starts: Vec<(u32, String)> = events
+        .iter()
+        .filter_map(|event| match event {
+            StreamEvent::ToolCallStart { call_index, id, .. } => Some((*call_index, id.clone())),
+            _ => None,
+        })
+        .collect();
+    // Thinking and text blocks precede both tool_use blocks; ordinals count tool calls only.
+    assert_eq!(
+        starts,
+        vec![(0, "toolu_a".to_owned()), (1, "toolu_b".to_owned())]
+    );
+    // Arguments of each block map back to its own ordinal.
+    let args: Vec<(u32, String)> = events
+        .iter()
+        .filter_map(|event| match event {
+            StreamEvent::ToolCallArgsDelta {
+                call_index,
+                fragment,
+            } => Some((*call_index, fragment.clone())),
+            _ => None,
+        })
+        .collect();
+    assert!(args.contains(&(0, r#"{"entity":"Lin"}"#.to_owned())));
+    assert!(args.contains(&(1, "{}".to_owned())));
+}
+
+#[tokio::test]
+async fn invalid_tool_json_keeps_empty_input_and_the_raw_text() {
+    let server = serve("anthropic_invalid_json.sse").await;
+    let client = AnthropicClient::new(config(&server.uri())).expect("client");
+    let turn = client
+        .run(&request(), &mut |_event| {})
+        .await
+        .expect("turn");
+    assert_eq!(turn.tool_calls.len(), 1);
+    // The runtime reports the malformed arguments; the adapter keeps both raw and parsed forms.
+    assert_eq!(turn.tool_calls[0].input_text, r#"{"text": "unterminated"#);
+    let ProviderPayload::Anthropic { content } = &turn.payload else {
+        panic!("expected anthropic payload");
+    };
+    assert_eq!(content[0]["type"], "tool_use");
+    assert_eq!(content[0]["input"], serde_json::json!({}));
+}
+
+#[tokio::test]
+async fn pause_turn_stop_reason() {
+    let server = serve("anthropic_pause_turn.sse").await;
+    let client = AnthropicClient::new(config(&server.uri())).expect("client");
+    let turn = client
+        .run(&request(), &mut |_event| {})
+        .await
+        .expect("turn");
+    assert_eq!(turn.stop_reason, StopReason::PauseTurn);
+}
+
+#[tokio::test]
+async fn usage_events_merge_the_input_and_output_sides() {
+    let server = serve("anthropic_thinking_tool.sse").await;
+    let client = AnthropicClient::new(config(&server.uri())).expect("client");
+    let mut usages = Vec::new();
+    let turn = client
+        .run(&request(), &mut |event| {
+            if let StreamEvent::Usage(usage) = event {
+                usages.push(usage);
+            }
+        })
+        .await
+        .expect("turn");
+    // Two usage events: message_start (input side) and message_delta (output side).
+    assert_eq!(usages.len(), 2);
+    assert_eq!(usages[0].input_tokens, 120);
+    assert_eq!(usages[0].cached_input_tokens, 80);
+    assert_eq!(usages[0].cache_write_tokens, 10);
+    // The last event reports the merged total, including the output side.
+    assert_eq!(usages[1].input_tokens, 120);
+    assert_eq!(usages[1].output_tokens, 45);
+    assert_eq!(turn.usage.input_tokens, 120);
+    assert_eq!(turn.usage.output_tokens, 45);
+    assert!(!turn.usage.estimated);
+}
+
+#[tokio::test]
+async fn refusal_fallback_adds_the_beta_header() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(header("anthropic-beta", "server-side-fallback-2026-07-01"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(fixture("anthropic_pause_turn.sse")),
+        )
+        .mount(&server)
+        .await;
+    let client = AnthropicClient::new(config(&server.uri())).expect("client");
+    let mut req = request();
+    req.options = ModelOptions {
+        refusal_fallback: Some(true),
+        ..ModelOptions::default()
+    };
+    client
+        .run(&req, &mut |_event| {})
+        .await
+        .expect("the beta header must be sent");
+}
+
+#[tokio::test]
+async fn idle_gap_times_out() {
+    let addr = common::stalling_sse_server(
+        "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":3}}}\n\n",
+    )
+    .await;
+    let client = AnthropicClient::new(config(&format!("http://{addr}")))
+        .expect("client")
+        .with_idle_timeout(std::time::Duration::from_millis(50));
+    let error = client
+        .run(&request(), &mut |_event| {})
+        .await
+        .expect_err("idle timeout");
+    assert!(
+        matches!(error, LlmError::Timeout("stream idle")),
+        "got {error:?}"
+    );
+}
+
+#[tokio::test]
+async fn eager_input_streaming_can_be_disabled() {
+    let options = ModelOptions {
+        eager_input_streaming: Some(false),
+        ..ModelOptions::default()
+    };
+    let body = build_body(&request(), &options);
+    assert_eq!(body["tools"][0]["eager_input_streaming"], false);
 }

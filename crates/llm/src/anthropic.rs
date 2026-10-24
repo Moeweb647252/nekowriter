@@ -19,6 +19,8 @@ pub const FALLBACK_BETA: &str = "server-side-fallback-2026-07-01";
 pub struct AnthropicClient {
     pub config: ProviderConfig,
     pub http: reqwest::Client,
+    /// Idle gap between stream events before the turn is abandoned (spec/04 §4).
+    pub idle_timeout: std::time::Duration,
 }
 
 impl AnthropicClient {
@@ -26,7 +28,14 @@ impl AnthropicClient {
         Ok(Self {
             config,
             http: crate::http_client()?,
+            idle_timeout: crate::openai::IDLE_TIMEOUT,
         })
+    }
+
+    /// Overrides the idle timeout; tests use a short one to exercise the error path.
+    pub fn with_idle_timeout(mut self, idle_timeout: std::time::Duration) -> Self {
+        self.idle_timeout = idle_timeout;
+        self
     }
 
     fn endpoint(&self, path: &str) -> String {
@@ -65,18 +74,28 @@ impl AnthropicClient {
         if !status.is_success() {
             let retry_after = sse::retry_after(&response);
             let body = sse::error_body(response).await;
-            return Err(LlmError::from_status(status.as_u16(), &body, retry_after));
+            return Err(LlmError::from_status(status.as_u16(), &body, retry_after)
+                .with_request_id(request_id.as_deref()));
         }
 
         let mut stream = std::pin::pin!(sse::event_stream(response));
         let mut state = StreamState::default();
-        while let Some(item) = stream.next_event().await? {
+        loop {
+            // Anthropic sends `ping` events while a turn is quiet; beyond the idle gap the
+            // turn is abandoned as a timeout (spec/04 §4).
+            let next = match tokio::time::timeout(self.idle_timeout, stream.next_event()).await {
+                Ok(next) => next?,
+                Err(_) => return Err(LlmError::Timeout("stream idle")),
+            };
+            let Some(item) = next else {
+                break;
+            };
             state.consume_event(&item, &req.options, on_event)?;
             if state.done {
                 break;
             }
         }
-        Ok(state.finish(request_id))
+        Ok(state.finish(req, request_id))
     }
 
     pub async fn list_models(&self) -> Result<Vec<crate::types::RemoteModel>, LlmError> {
@@ -146,9 +165,6 @@ fn map_reqwest_error(err: reqwest::Error) -> LlmError {
     if err.is_timeout() {
         return LlmError::Timeout("request");
     }
-    if err.is_connect() {
-        return LlmError::Timeout("connect");
-    }
     LlmError::Network(err.to_string())
 }
 
@@ -171,7 +187,7 @@ pub fn build_body(req: &ChatRequest, options: &ModelOptions) -> Value {
                         object.insert("type".to_owned(), json!("text"));
                         object.insert("text".to_owned(), json!(block.text));
                         if block.cache {
-                            object.insert("cache_control".to_owned(), cache_control(ttl, true));
+                            object.insert("cache_control".to_owned(), cache_control(ttl));
                         }
                         Value::Object(object)
                     })
@@ -209,7 +225,7 @@ pub fn build_body(req: &ChatRequest, options: &ModelOptions) -> Value {
                             object.insert("type".to_owned(), json!("text"));
                             object.insert("text".to_owned(), json!(block.text));
                             if block.cache {
-                                object.insert("cache_control".to_owned(), cache_control(ttl, true));
+                                object.insert("cache_control".to_owned(), cache_control(ttl));
                             }
                             content.push(Value::Object(object));
                         }
@@ -247,7 +263,7 @@ pub fn build_body(req: &ChatRequest, options: &ModelOptions) -> Value {
         json!([{
             "type": "text",
             "text": req.system,
-            "cache_control": cache_control(ttl, true),
+            "cache_control": cache_control(ttl),
         }]),
     );
     if !req.tools.is_empty() {
@@ -289,7 +305,7 @@ pub fn build_body(req: &ChatRequest, options: &ModelOptions) -> Value {
             "effort": options.effort.unwrap_or(Effort::High).as_str(),
         }),
     );
-    body.insert("cache_control".to_owned(), cache_control(ttl, true));
+    body.insert("cache_control".to_owned(), cache_control(ttl));
     body.insert("messages".to_owned(), Value::Array(messages));
     if options.refusal_fallback.unwrap_or(false) {
         body.insert("fallbacks".to_owned(), json!("default"));
@@ -297,18 +313,13 @@ pub fn build_body(req: &ChatRequest, options: &ModelOptions) -> Value {
     Value::Object(body)
 }
 
-/// `cache_control` with the one TTL the request uses. The top-level marker omits the TTL for
-/// 5 minutes, matching the API's "last block" rule (spec/04 §3).
-fn cache_control(ttl: crate::types::CacheTtl, include_ttl: bool) -> Value {
+/// `cache_control` with the one TTL the request uses (spec/04 §3). The API rejects an explicit
+/// marker whose TTL differs from the top-level one, so every breakpoint shares it; the 5m
+/// default is expressed by omitting `ttl`.
+fn cache_control(ttl: crate::types::CacheTtl) -> Value {
     match ttl {
         crate::types::CacheTtl::FiveMinutes => json!({ "type": "ephemeral" }),
-        crate::types::CacheTtl::OneHour => {
-            if include_ttl {
-                json!({ "type": "ephemeral", "ttl": "1h" })
-            } else {
-                json!({ "type": "ephemeral" })
-            }
-        }
+        crate::types::CacheTtl::OneHour => json!({ "type": "ephemeral", "ttl": "1h" }),
     }
 }
 
@@ -450,7 +461,7 @@ impl StreamState {
                             .unwrap_or_default()
                             .to_owned();
                         if let Some(slot) = self.blocks.get_mut(index as usize) {
-                            set_field(slot, "signature", &signature);
+                            append_field(slot, "signature", &signature);
                         }
                     }
                     Some("input_json_delta") => {
@@ -540,12 +551,14 @@ impl StreamState {
     }
 
     /// Anthropic splits usage across two events: `message_start` carries the input side and
-    /// `message_delta` the output side.
+    /// `message_delta` the output side. Every field is read independently so a provider that
+    /// reports both sides at once still merges correctly.
     fn read_usage(&self, usage: &Value, base: Option<&Usage>) -> Usage {
         let mut result = base.copied().unwrap_or_default();
         if let Some(value) = usage.get("input_tokens").and_then(Value::as_i64) {
             result.input_tokens = value;
-        } else if let Some(value) = usage.get("output_tokens").and_then(Value::as_i64) {
+        }
+        if let Some(value) = usage.get("output_tokens").and_then(Value::as_i64) {
             result.output_tokens = value;
         }
         if let Some(value) = usage.get("cache_read_input_tokens").and_then(Value::as_i64) {
@@ -561,7 +574,7 @@ impl StreamState {
         result
     }
 
-    fn finish(self, request_id: Option<String>) -> AssistantTurn {
+    fn finish(self, request: &ChatRequest, request_id: Option<String>) -> AssistantTurn {
         let tool_calls: Vec<ToolCallOut> = self
             .calls
             .iter()
@@ -573,7 +586,8 @@ impl StreamState {
             .collect();
         let mut usage = self.usage;
         if !self.saw_usage {
-            usage = crate::openai::estimate_usage(&self.text, &self.reasoning, &tool_calls);
+            usage =
+                crate::openai::estimate_usage(request, &self.text, &self.reasoning, &tool_calls);
         }
         AssistantTurn {
             text: self.text,
@@ -607,12 +621,6 @@ fn append_field(block: &mut Value, field: &str, value: &str) {
 fn set_json_field(block: &mut Value, field: &str, value: Value) {
     if let Some(object) = block.as_object_mut() {
         object.insert(field.to_owned(), value);
-    }
-}
-
-fn set_field(block: &mut Value, field: &str, value: &str) {
-    if let Some(object) = block.as_object_mut() {
-        object.insert(field.to_owned(), json!(value));
     }
 }
 

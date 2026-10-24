@@ -1,5 +1,7 @@
 //! OpenAI-compatible adapter tests (spec/04 §9).
 
+mod common;
+
 use std::time::Duration;
 
 use nekowriter_llm::openai::{OpenAiClient, build_body};
@@ -190,11 +192,7 @@ async fn deepseek_reasoning_and_cache_hit_usage() {
         reasoning_replay: ReasoningReplay::Always,
         ..ModelOptions::default()
     };
-    let body = build_body(
-        &request_with_payload(&turn.payload),
-        &config("http://x"),
-        &options,
-    );
+    let body = build_body(&request_with_payload(&turn.payload), &options);
     let assistant = &body["messages"][2];
     assert_eq!(
         assistant["reasoning_content"],
@@ -204,7 +202,6 @@ async fn deepseek_reasoning_and_cache_hit_usage() {
     // ... and omits it by default.
     let body = build_body(
         &request_with_payload(&turn.payload),
-        &config("http://x"),
         &ModelOptions::default(),
     );
     assert!(body["messages"][2].get("reasoning_content").is_none());
@@ -293,7 +290,7 @@ async fn list_models_maps_openai_shape() {
 
 #[test]
 fn body_has_no_temperature_unless_configured() {
-    let body = build_body(&request(), &config("http://x"), &ModelOptions::default());
+    let body = build_body(&request(), &ModelOptions::default());
     assert!(body.get("temperature").is_none());
     assert_eq!(body["stream"], true);
     assert_eq!(body["stream_options"]["include_usage"], true);
@@ -316,7 +313,7 @@ fn body_respects_max_tokens_field_and_parallel_flag() {
     options.send_parallel_tool_calls = Some(false);
     let mut req = request();
     req.parallel_tool_calls = true;
-    let body = build_body(&req, &config("http://x"), &options);
+    let body = build_body(&req, &options);
     assert_eq!(body["max_completion_tokens"], 1024);
     assert!(body.get("max_tokens").is_none());
     // Sending is disabled, so the flag is absent even though the request asks for parallel.
@@ -328,7 +325,7 @@ fn body_respects_max_tokens_field_and_parallel_flag() {
         max_tokens_field: nekowriter_llm::types::MaxTokensField::MaxTokens,
         ..ModelOptions::default()
     };
-    let body = build_body(&req, &config("http://x"), &options);
+    let body = build_body(&req, &options);
     assert_eq!(body["parallel_tool_calls"], true);
 }
 
@@ -341,7 +338,7 @@ fn body_merges_extra_body_last() {
         extra_body: Some(extra),
         ..ModelOptions::default()
     };
-    let body = build_body(&request(), &config("http://x"), &options);
+    let body = build_body(&request(), &options);
     assert_eq!(body["top_k"], 10);
     assert_eq!(body["max_tokens"], 99, "extra_body wins");
 }
@@ -357,7 +354,7 @@ fn tool_results_become_tool_messages() {
         })],
     };
     let req = request_with_payload(&payload);
-    let body = build_body(&req, &config("http://x"), &ModelOptions::default());
+    let body = build_body(&req, &ModelOptions::default());
     let messages = body["messages"].as_array().expect("messages");
     assert_eq!(messages.len(), 4);
     assert_eq!(messages[2]["role"], "assistant");
@@ -382,7 +379,7 @@ fn user_blocks_join_with_blank_lines() {
             },
         ],
     }];
-    let body = build_body(&req, &config("http://x"), &ModelOptions::default());
+    let body = build_body(&req, &ModelOptions::default());
     assert_eq!(body["messages"][1]["content"], "first\n\nsecond");
 }
 
@@ -390,7 +387,7 @@ fn user_blocks_join_with_blank_lines() {
 fn no_tools_means_no_tools_field() {
     let mut req = request();
     req.tools.clear();
-    let body = build_body(&req, &config("http://x"), &ModelOptions::default());
+    let body = build_body(&req, &ModelOptions::default());
     assert!(body.get("tools").is_none());
     assert!(body.get("tool_choice").is_none());
 }
@@ -408,4 +405,62 @@ fn usage_helper_merges() {
     });
     assert_eq!(usage.input_tokens, 10);
     assert_eq!(usage.output_tokens, 5);
+}
+
+#[tokio::test]
+async fn content_filter_finish_reason_is_a_refusal() {
+    let (turn, _events, _server) =
+        run_fixture("openai_content_filter.sse", ModelOptions::default()).await;
+    assert!(matches!(turn.stop_reason, StopReason::Refusal { .. }));
+    // Usage still arrives in the trailing chunk.
+    assert_eq!(turn.usage.input_tokens, 10);
+    assert_eq!(turn.usage.output_tokens, 2);
+}
+
+#[tokio::test]
+async fn idle_gap_times_out() {
+    let addr = common::stalling_sse_server(
+        "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":null}]}\n\n",
+    )
+    .await;
+    let client = OpenAiClient::new(config(&format!("http://{addr}")))
+        .expect("client")
+        .with_idle_timeout(Duration::from_millis(50));
+    let mut events = Vec::new();
+    let error = client
+        .run(&request(), &mut |event| events.push(event))
+        .await
+        .expect_err("idle timeout");
+    assert!(
+        matches!(error, LlmError::Timeout("stream idle")),
+        "got {error:?}"
+    );
+    assert!(error.retryable());
+    // The chunk that did arrive was delivered before the stream went quiet.
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, StreamEvent::TextDelta { text, .. } if text == "hi"))
+    );
+}
+
+#[tokio::test]
+async fn http_errors_carry_the_request_id() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(500)
+                .insert_header("request-id", "req-500")
+                .set_body_string("boom"),
+        )
+        .mount(&server)
+        .await;
+    let client = OpenAiClient::new(config(&server.uri())).expect("client");
+    let error = client
+        .run(&request(), &mut |_event| {})
+        .await
+        .expect_err("server error");
+    assert!(matches!(error, LlmError::Server(500, _)), "got {error:?}");
+    assert!(error.to_string().contains("req-500"), "got {error}");
 }

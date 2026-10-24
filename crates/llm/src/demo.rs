@@ -158,9 +158,9 @@ impl DemoProvider {
 
         // Stream like a real provider so ghost text and previews are visible (spec/04 §7.2).
         if !text.is_empty() {
-            for (ordinal, chunk) in crate::mock::chunk_text(&text, 30).into_iter().enumerate() {
+            for chunk in crate::mock::chunk_text(&text, 30) {
                 on_event(StreamEvent::TextDelta {
-                    index: ordinal as u32,
+                    index: 0,
                     text: chunk,
                 });
                 tokio::time::sleep(std::time::Duration::from_millis(30)).await;
@@ -260,30 +260,52 @@ fn tool(name: &str, arguments: serde_json::Value) -> (String, String, serde_json
 
 /// Decides the next step from `demo_hints` (spec/04 §7.2).
 ///
-/// Only the planning path exists so far; the remaining behaviors arrive with their milestones.
+/// The dispatch is one arm per session kind with the phase nested inside, so later milestones
+/// only add (or replace) an arm body of their own kind. Behaviors that need tools introduced by
+/// a later milestone are marked with that milestone and fall back to a short text reply for
+/// now.
 pub fn choose_action(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
-    let mut plan = DemoPlan::default();
     match hints.kind.as_str() {
-        "chapter_write" if hints.phase == "planning" => {
-            let outline = if lang.outline.is_empty() {
-                String::new()
+        "chapter_write" => {
+            if hints.phase == "planning" {
+                chapter_write_planning(lang)
             } else {
-                lang.outline.clone()
-            };
-            plan.tools.push(tool(
-                "submit_outline",
-                json!({ "outline": outline, "reference_notes": "" }),
-            ));
-        }
-        _ => {
-            if lang.closing_message.is_empty() {
-                plan.text = Some(String::new());
-            } else {
-                plan.text = Some(lang.closing_message.clone());
+                // Drafting, revision planning and revising arrive with M4 (writer tools).
+                text_plan(lang)
             }
         }
+        // M4: submit_revision_plan → replace_text → finish_revision.
+        "chapter_revise" => text_plan(lang),
+        // M6: submit_review with one issue on `p2`.
+        "chapter_review" => text_plan(lang),
+        // M6: canon writes, one world-setting proposal, finish_maintenance.
+        "chapter_maintenance" | "chapter_resync" => text_plan(lang),
+        // M9: create_entity per character design, then finish_maintenance.
+        "canon_seed" => text_plan(lang),
+        // M9 (conception) and M8 (research) arrive with their own milestones.
+        "conception" | "research" => text_plan(lang),
+        _ => text_plan(lang),
     }
-    plan
+}
+
+/// Planning step: submit a three-scene outline. M5 adds the leading `get_entity` call for the
+/// protagonist.
+fn chapter_write_planning(lang: &LangCorpus) -> DemoPlan {
+    DemoPlan {
+        tools: vec![tool(
+            "submit_outline",
+            json!({ "outline": lang.outline, "reference_notes": "" }),
+        )],
+        ..DemoPlan::default()
+    }
+}
+
+/// A plain text reply: the demo's closing message in the book's language.
+fn text_plan(lang: &LangCorpus) -> DemoPlan {
+    DemoPlan {
+        text: Some(lang.closing_message.clone()),
+        ..DemoPlan::default()
+    }
 }
 
 /// Rough token estimate for usage accounting (CJK characters × 1.0 + other characters ÷ 4).

@@ -1,0 +1,7 @@
+data: {"choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{},"finish_reason":"content_filter"}]}
+
+data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2}}
+
+data: [DONE]

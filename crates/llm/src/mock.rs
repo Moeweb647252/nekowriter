@@ -150,16 +150,7 @@ impl ScriptedProvider {
         request: &ChatRequest,
         on_event: &mut (dyn FnMut(StreamEvent) + Send),
     ) -> Result<AssistantTurn, LlmError> {
-        let body = crate::openai::build_body(
-            request,
-            &crate::types::ProviderConfig {
-                protocol: crate::types::Protocol::Mock,
-                base_url: "mock://scripted".to_owned(),
-                api_key: None,
-                extra_headers: Default::default(),
-            },
-            &request.options,
-        );
+        let body = crate::openai::build_body(request, &request.options);
 
         let failure = {
             let mut state = self.state.lock().expect("scripted state lock");

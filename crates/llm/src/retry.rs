@@ -45,6 +45,26 @@ impl LlmError {
         )
     }
 
+    /// Attaches the provider request id to the message-bearing variants, so error reports and
+    /// logs carry it (spec/04 §4).
+    pub fn with_request_id(self, request_id: Option<&str>) -> Self {
+        let Some(request_id) = request_id else {
+            return self;
+        };
+        let suffix = format!(" [request-id: {request_id}]");
+        match self {
+            LlmError::Network(message) => LlmError::Network(message + &suffix),
+            LlmError::Server(status, message) => LlmError::Server(status, message + &suffix),
+            LlmError::Auth(message) => LlmError::Auth(message + &suffix),
+            LlmError::BadRequest(message) => LlmError::BadRequest(message + &suffix),
+            LlmError::NotFound(message) => LlmError::NotFound(message + &suffix),
+            LlmError::ContextOverflow(message) => LlmError::ContextOverflow(message + &suffix),
+            LlmError::Provider(message) => LlmError::Provider(message + &suffix),
+            LlmError::Protocol(message) => LlmError::Protocol(message + &suffix),
+            other => other,
+        }
+    }
+
     /// Maps an HTTP status plus the response body to an `LlmError` (spec/04 §4).
     pub fn from_status(status: u16, body: &str, retry_after: Option<Duration>) -> Self {
         match status {

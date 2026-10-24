@@ -44,6 +44,25 @@ outline = """# 第三章：旧信
 - 结尾留一个悬念：门外有人送来第二封信。
 """
 
+closing_message = "设定已经整理好了。你可以先看看文档，需要我调整哪一部分，直接告诉我。"
+review_summary = "整体节奏稳，人物动机清楚，但中段的场景转换略显突兀，个别句子可以更克制。"
+review_issue = "中段场景从城楼转到街市时缺少过渡，读者会一时找不到位置。"
+revision_plan = """## 修订计划
+
+1. 在城楼段末尾补一句街市的声音，作为场景过渡。
+2. 把重复出现的「仿佛」削减一半。
+3. 加强故人回避师父死因时的小动作描写。
+"""
+revision_edit = "城楼下忽然传来一阵叫卖声，混着雨丝，把两人的沉默冲散了些。"
+summary_template = "沈砚带着旧信进入望川城，在城楼上遇见柳照，得知师父之死另有隐情，决定留下查清真相。"
+entity_state = "刚从城门入城，身上带着一封未拆的旧信，对柳照心存戒备。"
+timeline_title = "沈砚入望川城"
+proposal_text = """
+## 夜禁
+
+望川城入夜后实行夜禁，街面只留巡夜人与持铜牌者行走。
+"""
+
 [zh.setting_docs]
 outline = """# 全书大纲
 
@@ -139,25 +158,6 @@ options = ["寡言内敛", "锋芒毕露", "温和倔强"]
 question = "故事的情感基调更偏向哪一边？"
 options = ["克制而余韵悠长", "激烈而步步紧逼"]
 
-closing_message = "设定已经整理好了。你可以先看看文档，需要我调整哪一部分，直接告诉我。"
-review_summary = "整体节奏稳，人物动机清楚，但中段的场景转换略显突兀，个别句子可以更克制。"
-review_issue = "中段场景从城楼转到街市时缺少过渡，读者会一时找不到位置。"
-revision_plan = """## 修订计划
-
-1. 在城楼段末尾补一句街市的声音，作为场景过渡。
-2. 把重复出现的「仿佛」削减一半。
-3. 加强故人回避师父死因时的小动作描写。
-"""
-revision_edit = "城楼下忽然传来一阵叫卖声，混着雨丝，把两人的沉默冲散了些。"
-summary_template = "沈砚带着旧信进入望川城，在城楼上遇见柳照，得知师父之死另有隐情，决定留下查清真相。"
-entity_state = "刚从城门入城，身上带着一封未拆的旧信，对柳照心存戒备。"
-timeline_title = "沈砚入望川城"
-proposal_text = """
-## 夜禁
-
-望川城入夜后实行夜禁，街面只留巡夜人与持铜牌者行走。
-"""
-
 [en]
 sentences = [
   "Wind came down the valley, carrying the smell of wet grass.",
@@ -201,6 +201,24 @@ outline = """# Chapter Three: The Old Letter
 - End on a hook: a second letter arrives at the door.
 """
 
+closing_message = "The setting materials are ready. Read them over, and tell me what to change."
+review_summary = "The pacing holds and the motives are clear, but the middle scene change is abrupt and a few sentences could be leaner."
+review_issue = "The move from the tower to the market has no transition, so the reader loses their place."
+revision_plan = """## Revision plan
+
+1. Add a line of market noise at the end of the tower scene as a transition.
+2. Cut half of the repeated "as if".
+3. Sharpen the small gestures when the acquaintance dodges the question of the master's death.
+"""
+revision_edit = "A peddler's call rose from the street below, tangled with the rain, and broke the silence between them."
+summary_template = "Shen Yan enters Wangchuan with the old letter, meets Liu Zhao on the tower, learns the master's death was not what it seemed, and decides to stay."
+entity_state = "Newly arrived through the gate, carrying an unopened letter, wary of Liu Zhao."
+timeline_title = "Shen Yan enters Wangchuan"
+proposal_text = """
+## Curfew
+
+After nightfall Wangchuan keeps a curfew; only night watchmen and tally holders walk the streets.
+"""
 [en.setting_docs]
 outline = """# Book outline
 
@@ -296,21 +314,3 @@ options = ["Quiet and reserved", "Sharp and forward", "Gentle but stubborn"]
 question = "Which emotional register should the story lean toward?"
 options = ["Restrained, with a long echo", "Intense, closing in step by step"]
 
-closing_message = "The setting materials are ready. Read them over, and tell me what to change."
-review_summary = "The pacing holds and the motives are clear, but the middle scene change is abrupt and a few sentences could be leaner."
-review_issue = "The move from the tower to the market has no transition, so the reader loses their place."
-revision_plan = """## Revision plan
-
-1. Add a line of market noise at the end of the tower scene as a transition.
-2. Cut half of the repeated "as if".
-3. Sharpen the small gestures when the acquaintance dodges the question of the master's death.
-"""
-revision_edit = "A peddler's call rose from the street below, tangled with the rain, and broke the silence between them."
-summary_template = "Shen Yan enters Wangchuan with the old letter, meets Liu Zhao on the tower, learns the master's death was not what it seemed, and decides to stay."
-entity_state = "Newly arrived through the gate, carrying an unopened letter, wary of Liu Zhao."
-timeline_title = "Shen Yan enters Wangchuan"
-proposal_text = """
-## Curfew
-
-After nightfall Wangchuan keeps a curfew; only night watchmen and tally holders walk the streets.
-"""
