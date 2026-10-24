@@ -419,6 +419,37 @@ async fn model_profile_crud_and_validation() {
     assert_eq!(status, 400, "{body}");
     assert!(body["error"]["details"]["fields"]["max_output_tokens"].is_string());
 
+    // The options must round-trip through `ModelOptions` (spec/04 §5). An unknown value used to
+    // be stored verbatim; deserializing it at session creation then failed and reset *every*
+    // option to its default, silently dropping `reasoning_replay` (and with it the DeepSeek/Kimi
+    // thinking-mode replay of spec/04 §2).
+    for options in [
+        json!({ "reasoning_replay": "sometimes" }),
+        json!({ "effort": "ultra" }),
+        json!({ "max_tokens_field": "nonsense" }),
+        json!({ "thinking_display": "verbose" }),
+        json!({ "cache_ttl": "2h" }),
+    ] {
+        let (status, body) = app
+            .post(
+                "/api/model-profiles",
+                json!({
+                    "provider_id": provider_id,
+                    "display_name": format!("Bad options {options}"),
+                    "model": "demo-model",
+                    "context_window": 1000,
+                    "max_output_tokens": 100,
+                    "options": options,
+                }),
+            )
+            .await;
+        assert_eq!(status, 400, "options {options}: {body}");
+        assert!(
+            body["error"]["details"]["fields"]["options"].is_string(),
+            "options {options} must name the options field: {body}"
+        );
+    }
+
     // Duplicate display name on the same provider.
     let (status, body) = app
         .post(

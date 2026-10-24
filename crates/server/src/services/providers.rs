@@ -683,6 +683,15 @@ fn validate_model_input(input: &ModelProfileInput) -> Result<(), AppError> {
             "the maximum output cannot exceed the context window",
         ));
     }
+    // The options blob has to survive a round trip through `ModelOptions` (spec/04 §5): the type
+    // is the closed set the adapters switch on, so an unknown value such as `effort: "ultra"`
+    // must be rejected here. Storing it would make the session-side deserialization fail and
+    // silently reset *every* option of the profile, losing `reasoning_replay` and with it the
+    // DeepSeek/Kimi thinking-mode replay (spec/04 §2).
+    let options = serde_json::to_value(&input.options)
+        .map_err(|err| field_error("options", format!("the model options are not valid: {err}")))?;
+    serde_json::from_value::<nekowriter_llm::ModelOptions>(options)
+        .map_err(|err| field_error("options", format!("the model options are not valid: {err}")))?;
     Ok(())
 }
 
@@ -734,7 +743,7 @@ pub async fn test_connection(
         Some(model) if !model.trim().is_empty() => model.trim().to_owned(),
         _ => default_test_model(state, id).await?,
     };
-    let client = client_for(&provider)?;
+    let client = client_for(&provider, state.config().demo_provider_enabled())?;
     let request = nekowriter_llm::ChatRequest::ping(model_id, "");
     let started = std::time::Instant::now();
     let mut text = String::new();
@@ -787,7 +796,7 @@ async fn default_test_model(state: &AppState, provider_id: i32) -> Result<String
 /// `GET /api/providers/:id/remote-models` (spec/04 §8).
 pub async fn remote_models(state: &AppState, id: i32) -> Result<Vec<RemoteModelDto>, AppError> {
     let provider = find_provider(state.db().conn(), id).await?;
-    let client = client_for(&provider)?;
+    let client = client_for(&provider, state.config().demo_provider_enabled())?;
     let models = client.list_models().await.map_err(|error| {
         // The API status mapping of spec/10 §4: a rejected key is `provider.auth`, other
         // failures are `provider.unavailable`.
@@ -826,7 +835,16 @@ fn provider_error(error: nekowriter_llm::LlmError) -> ProviderTestErrorDto {
 }
 
 /// Builds the provider client from a row, resolving an `env:NAME` key (spec/04 §1).
-pub fn client_for(provider: &providers::Model) -> Result<nekowriter_llm::ProviderClient, AppError> {
+///
+/// This is the funnel every *use* of a stored connection goes through (connection test, remote
+/// models), so the demo gate lives here: with `--enable-demo-provider` off, a stored `mock` row
+/// must not be usable either, exactly like creating one (spec/01 §6). Reading and deleting the row
+/// stay allowed, so the flag never locks the author out of data a debug build created.
+pub fn client_for(
+    provider: &providers::Model,
+    demo_enabled: bool,
+) -> Result<nekowriter_llm::ProviderClient, AppError> {
+    check_protocol_row_allowed(provider, demo_enabled)?;
     let config = provider_config(provider)?;
     nekowriter_llm::ProviderClient::from_config(config)
         .map_err(|error| AppError::internal(error.to_string()))
