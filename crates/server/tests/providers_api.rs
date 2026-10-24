@@ -969,8 +969,7 @@ fn a_stored_demo_provider_is_only_usable_when_the_demo_provider_is_enabled() {
         updated_at: chrono::Utc::now(),
     };
     let error = nekowriter::services::providers::client_for(&row, false)
-        .err()
-        .expect("the demo gate must reject a stored mock row when the flag is off");
+        .expect_err("the demo gate must reject a stored mock row when the flag is off");
     assert!(
         matches!(error.code, nekowriter::error::ErrorCode::ValidationFailed),
         "unexpected code: {:?}",
