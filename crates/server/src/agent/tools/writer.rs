@@ -661,7 +661,11 @@ impl ToolHandler for InsertTextTool {
         // `chapter_end` completes only outside the revision phases (spec/03 §8); `chapter` mode
         // implies it.
         let chapter_end_requested = input.chapter_end.unwrap_or(false);
-        let ignored_chapter_end = chapter_end_requested && rules.revising;
+        // `chapter` mode implies `chapter_end` (spec/03 §8), so the implied completion is ignored
+        // in `revising` exactly like an explicit one — and says so, or the model is left waiting
+        // for a completion the session will never reach.
+        let ignored_chapter_end =
+            (chapter_end_requested || rules.completes_on_insert()) && rules.revising;
         let completes = (chapter_end_requested || rules.completes_on_insert()) && !rules.revising;
         // A short completion is withheld once (spec/03 §8, D-029).
         let withheld = completes && !finish_warned(ctx) && is_short_completion(ctx, word_count);

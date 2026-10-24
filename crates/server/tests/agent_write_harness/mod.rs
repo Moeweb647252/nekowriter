@@ -55,6 +55,7 @@ pub async fn start_writer_on(
             auto_pause: Some(auto_pause),
             pause_after_outline: Some(pause_after_outline),
             redraft,
+            guidance: None,
             kickoff_extra: None,
         },
     )

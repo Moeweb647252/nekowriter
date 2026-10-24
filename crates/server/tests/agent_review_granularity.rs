@@ -419,6 +419,7 @@ async fn revising_ignores_chapter_end_and_hints_at_finish_revision() {
             auto_pause: Some(false),
             pause_after_outline: Some(false),
             redraft: false,
+            guidance: None,
             kickoff_extra: None,
         },
     )
@@ -887,5 +888,65 @@ async fn the_outline_accepted_notice_names_an_open_tail() {
     assert!(
         notice.contains(&pid),
         "and names the open pid {pid}: {notice}"
+    );
+}
+
+/// spec/03 §8: "In `revising`, `chapter_end` is ignored, and the result appends a hint to call
+/// `finish_revision`."
+///
+/// `chapter` mode implies `chapter_end`, so the implied completion is ignored there too — the hint
+/// must appear even though the model never passed the flag explicitly.
+#[tokio::test]
+async fn revising_ignores_the_implied_chapter_end_of_chapter_mode() {
+    let runtime = runtime(vec![
+        ScriptStep::new().tool(
+            "submit_revision_plan",
+            json!({ "plan": "把开头改得更冷一些。" }),
+        ),
+        // `chapter` mode would complete the chapter in a drafting session; in `revising` it must
+        // not, and the result has to say why.
+        insert("整章重写的正文。", json!({})),
+        ScriptStep::new().tool("finish_revision", json!({ "summary": "改好了。" })),
+    ])
+    .await;
+    // A revise session needs existing text.
+    runtime
+        .app
+        .put_text(runtime.chapter_id, 0, "第一段正文。\n\n第二段正文。")
+        .await;
+    let (session_id, _warnings) = sessions::create(
+        runtime.app.state(),
+        CreateSession {
+            kind: nekowriter::db::json::SessionKind::ChapterRevise,
+            book_id: Some(runtime.book_id),
+            chapter_id: Some(runtime.chapter_id),
+            research_task_id: None,
+            granularity: Some(Granularity::Chapter),
+            auto_pause: Some(false),
+            pause_after_outline: Some(false),
+            redraft: false,
+            guidance: None,
+            kickoff_extra: None,
+        },
+    )
+    .await
+    .expect("create the revise session");
+    runtime
+        .wait_status(session_id, SessionStatus::Completed)
+        .await;
+    let insert = inserts_of(&runtime, session_id)
+        .await
+        .into_iter()
+        .next()
+        .expect("the insert ran");
+    assert!(
+        !insert.is_error,
+        "the insert itself is valid: {}",
+        text_of(&insert)
+    );
+    let text = text_of(&insert);
+    assert!(
+        text.contains("finish_revision"),
+        "the implied chapter_end of `chapter` mode is ignored and the hint says so: {text}"
     );
 }
