@@ -233,3 +233,133 @@ async fn one_context_overflow_creates_exactly_one_child() {
     let messages = app.messages(child_id).await;
     assert_eq!(messages[0].kind, "kickoff");
 }
+
+/// spec/03 §10 marks `block.settings` with `cache: true`; the other blocks store no cache flag at
+/// all (`StoredBlock::cache` stays absent), because only the settings block places a breakpoint.
+///
+/// The rollover kickoff wrote `cache: Some(block_is_cached(key))` for every block, so the three
+/// non-settings blocks stored `cache: false` — a flag that says "no breakpoint here" instead of
+/// saying nothing, and that a reader of the stored kickoff cannot distinguish from a deliberate
+/// one.
+#[tokio::test]
+async fn only_the_settings_block_of_a_rollover_kickoff_carries_a_cache_flag() {
+    let runtime = runtime(vec![
+        outline_step(),
+        insert_step("第一章开头的一段。"),
+        insert_step("暂停前写入的一段。"),
+        ScriptStep::new().tool("finish_draft", json!({})),
+        ScriptStep::new().tool("finish_draft", json!({})),
+    ])
+    .await;
+    let session_id = start_writer(&runtime, Granularity::Paragraph, true, false).await;
+    let first = agent_write_harness::wait_for_status(&runtime, session_id, "held").await;
+    let first_id = first.held_tool_call_id.expect("held id");
+    let (status, body) = agent_write_harness::resume_raw(&runtime, session_id, None).await;
+    assert_eq!(status, 200, "{body}");
+    agent_write_harness::wait_for_new_hold(&runtime, session_id, first_id).await;
+    push_usage_near_the_limit(&runtime, session_id).await;
+    let (status, body) = agent_write_harness::resume_raw(&runtime, session_id, None).await;
+    assert_eq!(status, 200, "{body}");
+    runtime
+        .wait_status(session_id, SessionStatus::Superseded)
+        .await;
+    let parent = agent_write_harness::session_dto(&runtime, session_id).await;
+    let child_id = parent["child_session_id"].as_i64().expect("a child") as i32;
+
+    let messages = runtime.messages(child_id).await;
+    let flags: Vec<Option<bool>> = messages[0]
+        .blocks()
+        .into_iter()
+        .map(|block| match block {
+            nekowriter::db::json::StoredBlock::Text { cache, .. } => cache,
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        flags,
+        vec![Some(true), None, None, None],
+        "only `block.settings` carries a cache flag: {flags:?}"
+    );
+}
+
+/// spec/03 §9: `author_notes` holds "the author's earlier feedback and steering messages from the
+/// parent chain **in order** (`author_notes`: `user_feedback` appendices, sealed or not, and
+/// consumed `user_message` inbox items; newest last)".
+///
+/// The two sources interleave chronologically: the author can steer, then give feedback on the
+/// next hold, then steer again. Collecting every feedback appendix of an ancestor before every
+/// steering message of that ancestor reorders them, so the model reads the author's requests in an
+/// order the author never wrote them in.
+#[tokio::test]
+async fn author_notes_keep_the_order_the_author_wrote_them_in() {
+    let runtime = runtime(vec![
+        outline_step(),
+        insert_step("第一段。"),
+        insert_step("第二段。"),
+        insert_step("第三段。"),
+        insert_step("第四段。"),
+        ScriptStep::new().tool("finish_draft", json!({})),
+        ScriptStep::new().tool("finish_draft", json!({})),
+    ])
+    .await;
+    let session_id = start_writer(&runtime, Granularity::Paragraph, true, false).await;
+
+    // 1. Steering while the first insert is held; the resume's sealing consumes it.
+    let first = agent_write_harness::wait_for_status(&runtime, session_id, "held").await;
+    let mut held_id = first.held_tool_call_id.expect("held id");
+    let (status, body) = runtime
+        .app
+        .post(
+            &format!("/api/sessions/{session_id}/message"),
+            json!({ "text": "第一条指令：多写雨。" }),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let (status, body) = agent_write_harness::resume_raw(&runtime, session_id, None).await;
+    assert_eq!(status, 200, "{body}");
+
+    // 2. Feedback on the second hold: stored in that call's appendices.
+    let second = agent_write_harness::wait_for_new_hold(&runtime, session_id, held_id).await;
+    held_id = second.held_tool_call_id.expect("held id");
+    let (status, body) =
+        agent_write_harness::resume_raw(&runtime, session_id, Some("第二条意见：少写风。")).await;
+    assert_eq!(status, 200, "{body}");
+
+    // 3. Steering again on the third hold, consumed by that resume's sealing.
+    let third = agent_write_harness::wait_for_new_hold(&runtime, session_id, held_id).await;
+    held_id = third.held_tool_call_id.expect("held id");
+    let (status, body) = runtime
+        .app
+        .post(
+            &format!("/api/sessions/{session_id}/message"),
+            json!({ "text": "第三条指令：写城楼。" }),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let (status, body) = agent_write_harness::resume_raw(&runtime, session_id, None).await;
+    assert_eq!(status, 200, "{body}");
+
+    // 4. Push the session near the limit and let the next boundary roll over.
+    agent_write_harness::wait_for_new_hold(&runtime, session_id, held_id).await;
+    push_usage_near_the_limit(&runtime, session_id).await;
+    let (status, body) = agent_write_harness::resume_raw(&runtime, session_id, None).await;
+    assert_eq!(status, 200, "{body}");
+    runtime
+        .wait_status(session_id, SessionStatus::Superseded)
+        .await;
+    let parent = agent_write_harness::session_dto(&runtime, session_id).await;
+    let child_id = parent["child_session_id"].as_i64().expect("a child") as i32;
+
+    let kickoff = runtime.messages(child_id).await[0].text();
+    let first_at = kickoff.find("第一条指令：多写雨。");
+    let second_at = kickoff.find("第二条意见：少写风。");
+    let third_at = kickoff.find("第三条指令：写城楼。");
+    let (Some(first_at), Some(second_at), Some(third_at)) = (first_at, second_at, third_at) else {
+        panic!("all three notes are present: {kickoff}");
+    };
+    assert!(
+        first_at < second_at && second_at < third_at,
+        "author_notes keep the author's order (first {first_at}, second {second_at}, \
+         third {third_at}): {kickoff}"
+    );
+}

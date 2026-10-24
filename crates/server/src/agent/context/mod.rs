@@ -726,9 +726,17 @@ async fn author_notes(
     }
     chain.reverse();
 
-    let mut notes: Vec<String> = Vec::new();
-    for ancestor in &chain {
-        // Feedback given on a held call is stored in that call's appendices.
+    // Every note is stamped with the instant it was written, because the two sources are
+    // interleaved in the author's history: they can steer, then give feedback on the next hold,
+    // then steer again. Collecting each source separately per ancestor would group them and tell
+    // the model an order the author never wrote (spec/03 §9 "in order ... newest last").
+    //
+    // The chain runs root → this session, so an ancestor's index orders the ancestors while the
+    // timestamp orders the notes inside one ancestor.
+    let mut notes: Vec<(usize, chrono::DateTime<chrono::Utc>, i32, String)> = Vec::new();
+    for (ancestor_index, ancestor) in chain.iter().enumerate() {
+        // Feedback given on a held call is stored in that call's appendices; the call's
+        // `finished_at` is when the author wrote it (the resume that sealed it).
         let calls = agent_tool_calls::Entity::find()
             .filter(agent_tool_calls::Column::SessionId.eq(ancestor.id))
             .order_by_asc(agent_tool_calls::Column::Id)
@@ -740,11 +748,12 @@ async fn author_notes(
                 if appendix.kind == json::AppendixKind::UserFeedback
                     && !appendix.text.trim().is_empty()
                 {
-                    notes.push(appendix.text.trim().to_owned());
+                    let at = call.finished_at.unwrap_or(call.created_at);
+                    notes.push((ancestor_index, at, call.id, appendix.text.trim().to_owned()));
                 }
             }
         }
-        // Steering messages are consumed inbox rows.
+        // Steering messages are consumed inbox rows, stamped when the author sent them.
         let items = crate::db::entities::agent_inbox::Entity::find()
             .filter(crate::db::entities::agent_inbox::Column::SessionId.eq(ancestor.id))
             .filter(crate::db::entities::agent_inbox::Column::Kind.eq("user_message"))
@@ -754,10 +763,17 @@ async fn author_notes(
             .await?;
         for item in items {
             if !item.content.trim().is_empty() {
-                notes.push(item.content.trim().to_owned());
+                notes.push((
+                    ancestor_index,
+                    item.created_at,
+                    item.id,
+                    item.content.trim().to_owned(),
+                ));
             }
         }
     }
+    notes.sort_by_key(|(ancestor_index, at, id, _)| (*ancestor_index, *at, *id));
+    let notes: Vec<String> = notes.into_iter().map(|(_, _, _, text)| text).collect();
 
     // 2. Keep the newest items that fit both caps.
     let mut kept: Vec<String> = Vec::new();
@@ -1084,9 +1100,16 @@ pub async fn rollover(
                     .render_value(key, crate::prompts::template_value(&context))
                     .map_err(|err| err.into_app_error())?;
                 if !rendered.text.trim().is_empty() {
+                    // Only the settings block places a cache breakpoint (spec/03 §10); the others
+                    // store no flag, so `StoredBlock::cache` stays absent. Writing `Some(false)`
+                    // here would claim a decision the spec does not make.
                     blocks.push(StoredBlock::Text {
                         text: rendered.text,
-                        cache: Some(block_is_cached(key)),
+                        cache: if block_is_cached(key) {
+                            Some(true)
+                        } else {
+                            None
+                        },
                     });
                 }
             }
