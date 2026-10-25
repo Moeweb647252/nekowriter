@@ -11,6 +11,7 @@ pub mod canon;
 pub mod change_log;
 pub mod chapters;
 pub mod characters;
+pub mod indexer;
 pub mod maintenance;
 pub mod memory;
 pub mod prompts;
@@ -201,6 +202,10 @@ where
     })
     .await
     .map_err(decode_db_error)
+    .inspect(|_| {
+        // Signal the indexer only after the commit succeeded (spec/07 §4).
+        crate::search::index::wake();
+    })
 }
 
 /// Recovers an `AppError` encoded by [`write`], or converts a genuine database error.

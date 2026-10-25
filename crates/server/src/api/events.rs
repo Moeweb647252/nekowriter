@@ -75,8 +75,11 @@ fn event_book(event: &ServerEvent) -> Option<i32> {
         ServerEvent::CanonChanged { book_id, .. } => Some(*book_id),
         ServerEvent::ProposalChanged { book_id, .. } => Some(*book_id),
         ServerEvent::SessionUpdated { session, .. } => session.book_id,
-        // No book id in the payload (spec/10 §3).
+        // No book id in the payload (spec/10 §3): `knowledge.changed` names a scope, not a book,
+        // and `index.status` is global.
         ServerEvent::ChapterContentChanged { .. }
+        | ServerEvent::KnowledgeChanged { .. }
+        | ServerEvent::IndexStatus { .. }
         | ServerEvent::SessionMessage { .. }
         | ServerEvent::SessionDelta { .. }
         | ServerEvent::SessionToolCall { .. }
@@ -160,6 +163,8 @@ pub fn event_type(event: &ServerEvent) -> &'static str {
         ServerEvent::SessionDelta { .. } => "session.delta",
         ServerEvent::SessionToolCall { .. } => "session.tool_call",
         ServerEvent::SessionToolPreview { .. } => "session.tool_preview",
+        ServerEvent::KnowledgeChanged { .. } => "knowledge.changed",
+        ServerEvent::IndexStatus { .. } => "index.status",
         ServerEvent::Resync => "resync",
     }
 }

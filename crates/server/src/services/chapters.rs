@@ -165,6 +165,12 @@ pub async fn update_inner(
         active.summary = Set(summary.clone());
     }
     sea_orm::ActiveModelTrait::update(active, tx).await?;
+    if patch.title.is_some() || patch.summary.is_some() {
+        // A title or summary change updates the chapter's index rows in this transaction
+        // (spec/07 §2); a non-official chapter has none and the helper is a no-op.
+        crate::search::maintenance::sync_chapter(tx, chapter_id).await?;
+        crate::search::index::wake();
+    }
 
     let row = load(tx, chapter_id).await?;
     let dto = to_dto(tx, &row).await?;
@@ -524,6 +530,12 @@ async fn write_content(
         active.status = Set(ChapterStatus::Drafting.as_str().to_owned());
     }
     active.update(tx).await?;
+    if existing.status == ChapterStatus::Official.as_str() {
+        // The official text changed: its passage documents are rebuilt in this transaction, and
+        // unchanged passages keep their vectors (spec/07 §2, D-039).
+        crate::search::maintenance::sync_passages(tx, existing.id).await?;
+        crate::search::index::wake();
+    }
     let row = load(tx, existing.id).await?;
     let list_item = ChapterListItemDto::from(row);
     Ok((
@@ -798,6 +810,10 @@ pub async fn approve_inner(
         ..Default::default()
     };
     active.update(tx).await?;
+    // The chapter just became official: index its summary and passages in this transaction
+    // (spec/07 §2). The archivist fills the summary later; that recomputes the summary document.
+    crate::search::maintenance::sync_chapter(tx, chapter_id).await?;
+    crate::search::index::wake();
 
     let row = load(tx, chapter_id).await?;
     let dto = to_dto(tx, &row).await?;
@@ -943,6 +959,10 @@ pub async fn restore_inner(
         ..Default::default()
     };
     active.update(tx).await?;
+    if existing.status == ChapterStatus::Official.as_str() {
+        crate::search::maintenance::sync_passages(tx, existing.id).await?;
+        crate::search::index::wake();
+    }
 
     let row = load(tx, existing.id).await?;
     let dto = to_dto(tx, &row).await?;
@@ -1235,6 +1255,8 @@ pub async fn record_summary_change(
         },
     )
     .await?;
+    crate::search::maintenance::sync_chapter_summary(tx, chapter.id).await?;
+    crate::search::index::wake();
     Ok(())
 }
 

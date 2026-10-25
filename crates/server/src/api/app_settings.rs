@@ -18,6 +18,7 @@ pub async fn patch(
     State(state): State<AppState>,
     Json(patch): Json<AppSettingsPatch>,
 ) -> AppResult<Json<AppSettingsDto>> {
+    let before = service::get(state.db().conn()).await?.embedding.model;
     let dto = crate::services::write(state.db(), move |tx| {
         Box::pin(async move { service::update(tx, &patch).await })
     })
@@ -27,5 +28,10 @@ pub async fn patch(
         message: error.message,
         details: error.details,
     })?;
+    if before != dto.embedding.model {
+        // A model change recreates the vec tables for the new dimension and marks every document
+        // pending (spec/07 §3).
+        crate::search::switch_model(&state, &dto.embedding.model).await?;
+    }
     Ok(Json(dto))
 }

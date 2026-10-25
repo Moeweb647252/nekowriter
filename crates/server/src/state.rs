@@ -8,6 +8,7 @@ use crate::config::Config;
 use crate::db::Db;
 use crate::events::EventBus;
 use crate::prompts::PromptRegistry;
+use crate::search::SearchService;
 
 /// Shared application state. Cheap to clone; every field is behind an `Arc`.
 #[derive(Clone)]
@@ -30,6 +31,8 @@ pub struct AppStateInner {
     pub tools: Arc<ToolRegistry>,
     /// One runner per running session (spec/03 §14).
     pub manager: SessionManager,
+    /// The embedding model state, the runtime vec tables and the hybrid query (spec/07 §3–§5).
+    pub search: Arc<SearchService>,
     /// A provider override for tests: when set, the runner uses this client instead of building
     /// one from the session's snapshot. Integration tests inject a `ScriptedProvider` here so no
     /// network is touched (spec/04 §7.1, AGENTS.md §5).
@@ -45,18 +48,35 @@ impl AppState {
         let tool_specs = ToolSpecs::from_pack(pack.pack());
         // The debug session's test-only tools have schemas but no place in the shipped pack.
         let tool_specs = tool_specs.with_debug_tools();
+        let events = EventBus::new();
+        let cache_dir = config
+            .data_dir
+            .as_ref()
+            .map(|dir| dir.join("models"))
+            .unwrap_or_else(|| std::path::PathBuf::from("models"));
+        let search = SearchService::new(db.clone(), cache_dir, events.clone());
+        // Tests embed offline with the deterministic fake (spec/07 §4); the binary installs the
+        // fastembed model in `prepare_state`.
+        #[cfg(any(test, feature = "testing"))]
+        {
+            let dimension = nekowriter_embed::default_model().dimension;
+            search.install(Arc::new(nekowriter_embed::FakeEmbedder::with_dimension(
+                dimension,
+            )));
+        }
         Self {
             inner: Arc::new(AppStateInner {
                 db,
                 config,
                 vec_version,
-                events: EventBus::new(),
+                events,
                 // Startup invariant: the embedded pack is validated once per process, and a
                 // failure is a build defect (spec/01 §5 step 6).
                 prompts: Arc::new(pack),
                 tool_specs: Arc::new(tool_specs),
                 tools: Arc::new(ToolRegistry::new()),
                 manager: SessionManager::new(),
+                search: Arc::new(search),
                 #[cfg(any(test, feature = "testing"))]
                 provider_override: None,
             }),
@@ -65,6 +85,7 @@ impl AppState {
 
     /// Replaces the event bus (tests subscribe before the app is built).
     pub fn with_events(self, events: EventBus) -> Self {
+        let search = Arc::new(self.inner.search.with_events(events.clone()));
         Self {
             inner: Arc::new(AppStateInner {
                 db: self.inner.db.clone(),
@@ -75,6 +96,7 @@ impl AppState {
                 tool_specs: self.inner.tool_specs.clone(),
                 tools: self.inner.tools.clone(),
                 manager: self.inner.manager.clone(),
+                search,
                 #[cfg(any(test, feature = "testing"))]
                 provider_override: self.inner.provider_override.clone(),
             }),
@@ -94,7 +116,27 @@ impl AppState {
                 tool_specs: self.inner.tool_specs.clone(),
                 tools: self.inner.tools.clone(),
                 manager: self.inner.manager.clone(),
+                search: self.inner.search.clone(),
                 provider_override: Some(provider),
+            }),
+        }
+    }
+
+    /// Replaces the search service (tests run with or without an embedder, spec/07 §5).
+    #[cfg(any(test, feature = "testing"))]
+    pub fn with_search(self, search: SearchService) -> Self {
+        Self {
+            inner: Arc::new(AppStateInner {
+                db: self.inner.db.clone(),
+                config: self.inner.config.clone(),
+                vec_version: self.inner.vec_version.clone(),
+                events: self.inner.events.clone(),
+                prompts: self.inner.prompts.clone(),
+                tool_specs: self.inner.tool_specs.clone(),
+                tools: self.inner.tools.clone(),
+                manager: self.inner.manager.clone(),
+                search: Arc::new(search),
+                provider_override: self.inner.provider_override.clone(),
             }),
         }
     }
@@ -143,5 +185,10 @@ impl AppState {
     /// The runner manager (spec/03 §14).
     pub fn manager(&self) -> &SessionManager {
         &self.inner.manager
+    }
+
+    /// The embedding/index state and hybrid query (spec/07 §3–§5).
+    pub fn search(&self) -> &SearchService {
+        &self.inner.search
     }
 }

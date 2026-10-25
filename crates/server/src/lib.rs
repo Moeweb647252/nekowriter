@@ -7,6 +7,7 @@ pub mod db;
 pub mod error;
 pub mod events;
 pub mod prompts;
+pub mod search;
 pub mod services;
 pub mod state;
 pub mod text;
@@ -78,6 +79,11 @@ pub async fn prepare_state(
     vec_version: String,
 ) -> anyhow::Result<AppState> {
     let state = AppState::new(db, config, vec_version);
+    // The search subsystem: install the configured embedding model and create the runtime vec
+    // tables for its dimension before any request can search (spec/07 §3).
+    crate::search::initialize(&state)
+        .await
+        .context("search index initialization failed")?;
     // spec/01 §5 step 8: every session left `running` becomes `interrupted` and every tool call
     // left `executing` becomes `pending`. A session the previous process left running has no
     // runner, and the control API refuses to continue anything but stopped/failed/interrupted, so

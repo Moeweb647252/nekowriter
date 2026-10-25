@@ -56,14 +56,7 @@ pub async fn health(State(state): State<AppState>) -> Json<HealthDto> {
         ok: true,
         version: env!("CARGO_PKG_VERSION").to_owned(),
         vec_version: state.vec_version().to_owned(),
-        embedding: IndexStatusDto {
-            model: String::new(),
-            state: IndexState::NotLoaded,
-            message: None,
-            pending: 0,
-            failed: 0,
-            done: 0,
-        },
+        embedding: state.search().status_dto().await,
     })
 }
 

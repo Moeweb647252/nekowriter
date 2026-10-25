@@ -150,6 +150,24 @@ pub enum ServerEvent {
         proposal_id: i32,
         status: crate::db::json::ProposalStatus,
     },
+    /// A knowledge scope entry changed (spec/07 §1, spec/10 §3).
+    #[serde(rename = "knowledge.changed")]
+    KnowledgeChanged {
+        scope_id: i32,
+        entry_id: i32,
+        op: crate::db::json::ChangeOp,
+    },
+    /// The embedding model state changed; the payload is `IndexStatusDto` (spec/10 §3).
+    #[serde(rename = "index.status")]
+    IndexStatus {
+        model: String,
+        state: crate::api::health::IndexState,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+        pending: i64,
+        failed: i64,
+        done: i64,
+    },
     /// A lagging subscriber missed events; refetch everything visible.
     #[serde(rename = "resync")]
     Resync,

@@ -125,3 +125,7 @@ path = "tests/agent_creation.rs"
 [[test]]
 name = "api_chapter_sessions"
 path = "tests/api_chapter_sessions.rs"
+
+[[test]]
+name = "search_index"
+path = "tests/search_index.rs"

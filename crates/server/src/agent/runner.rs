@@ -1075,6 +1075,10 @@ async fn step_tool(
             };
             let finalization = finalize_inner(tx, &session, &call, &mut outcome, &prompts).await?;
             domain_events.extend(finalization.events);
+            // Canon writes by tools keep `search_docs`/`fts_book` in step inside this same
+            // transaction (spec/07 §2); the agent path does not go through `canon::write`.
+            crate::search::maintenance::sync_events(tx, &domain_events).await?;
+            crate::search::index::wake();
             Ok(domain_events)
         })
     })

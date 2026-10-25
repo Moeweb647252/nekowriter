@@ -41,6 +41,11 @@ impl TestApp {
         };
         let events = EventBus::new();
         let state = AppState::new(db.clone(), config, vec_version).with_events(events.clone());
+        // Build the runtime vec schema at the test embedder's dimension and load the fake model
+        // (spec/07 §3). Integration tests drive the indexer with `services::indexer::run_once`.
+        crate::search::initialize(&state)
+            .await
+            .expect("search initialization");
         Self {
             _dir: dir,
             db,
@@ -88,6 +93,13 @@ impl TestApp {
             std::sync::Arc::new(provider),
         ));
         handle
+    }
+
+    /// Removes the embedding model: search must fall back to keywords (spec/07 §5).
+    pub fn without_embedder(&mut self) {
+        let search = self.state.search().with_events(self.events.clone());
+        search.uninstall_embedder();
+        self.state = self.state.clone().with_search(search);
     }
 
     /// Sends one JSON request and returns the status and the parsed body.

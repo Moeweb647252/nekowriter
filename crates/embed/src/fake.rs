@@ -20,6 +20,12 @@ pub trait Embedder: Send + Sync {
     /// The vector dimension.
     fn dimension(&self) -> usize;
 
+    /// Ensures the model can embed. The fake is ready at once; fastembed loads (and on the first
+    /// run downloads) lazily (spec/07 §4).
+    async fn ensure_loaded(&self) -> Result<(), EmbedError> {
+        Ok(())
+    }
+
     /// Embeds a batch of texts. The order of the result matches the input order.
     async fn embed(&self, texts: Vec<String>, kind: EmbedKind)
     -> Result<Vec<Vec<f32>>, EmbedError>;

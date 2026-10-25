@@ -131,7 +131,7 @@ impl FastEmbedder {
 
     /// Loads the model if needed. Safe to call from a background warm-up task.
     pub async fn warm_up(&self) -> Result<(), EmbedError> {
-        self.ensure_loaded().await
+        self.load_model_once().await
     }
 
     /// Sets an observable failure state. Only used by the test that drives the transition table
@@ -149,7 +149,7 @@ impl FastEmbedder {
         }
     }
 
-    async fn ensure_loaded(&self) -> Result<(), EmbedError> {
+    async fn load_model_once(&self) -> Result<(), EmbedError> {
         if self
             .session
             .lock()
@@ -216,6 +216,10 @@ impl FastEmbedder {
 
 #[async_trait::async_trait]
 impl Embedder for FastEmbedder {
+    async fn ensure_loaded(&self) -> Result<(), EmbedError> {
+        self.load_model_once().await
+    }
+
     fn model(&self) -> &ModelEntry {
         self.entry
     }
@@ -229,7 +233,7 @@ impl Embedder for FastEmbedder {
         texts: Vec<String>,
         kind: EmbedKind,
     ) -> Result<Vec<Vec<f32>>, EmbedError> {
-        self.ensure_loaded().await?;
+        self.load_model_once().await?;
         let prefixed: Vec<String> = texts
             .into_iter()
             .map(|text| match kind {

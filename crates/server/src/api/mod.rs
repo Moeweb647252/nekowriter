@@ -8,6 +8,7 @@ pub mod chapters;
 #[cfg(debug_assertions)]
 pub mod debug;
 pub mod dto;
+pub mod embedding;
 pub mod events;
 pub mod health;
 pub mod prompts;
@@ -199,6 +200,8 @@ pub fn build_app(state: AppState) -> Router {
                 .delete(canon::delete_foreshadowing),
         )
         .route("/books/{book_id}/memory", get(canon::memory_snapshot))
+        .route("/embedding/status", get(embedding::status))
+        .route("/embedding/rebuild", post(embedding::rebuild))
         .route("/events", get(events::stream))
         .route("/providers", get(providers::list).post(providers::create))
         .route("/provider-presets", get(providers::presets))

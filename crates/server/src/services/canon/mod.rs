@@ -924,22 +924,41 @@ where
 {
     db.write(|tx| {
         Box::pin(async move {
-            f(tx).await.map_err(|error| {
-                let wire = match error {
-                    CanonError::App(error) => WireError::App {
-                        code: error.code,
-                        message: error.message,
-                        details: error.details,
-                    },
-                    CanonError::IsolatedReadonly { target } => {
-                        WireError::IsolatedReadonly { target }
-                    }
-                };
-                match serde_json::to_string(&wire) {
-                    Ok(json) => sea_orm::DbErr::Custom(format!("{ERROR_MARKER}{json}")),
-                    Err(_) => sea_orm::DbErr::Custom("canon write failed".to_owned()),
+            let result = f(tx).await;
+            let (value, events) = match result {
+                Ok(value) => value,
+                Err(error) => {
+                    let wire = match error {
+                        CanonError::App(error) => WireError::App {
+                            code: error.code,
+                            message: error.message,
+                            details: error.details,
+                        },
+                        CanonError::IsolatedReadonly { target } => {
+                            WireError::IsolatedReadonly { target }
+                        }
+                    };
+                    return match serde_json::to_string(&wire) {
+                        Ok(json) => Err(sea_orm::DbErr::Custom(format!("{ERROR_MARKER}{json}"))),
+                        Err(_) => Err(sea_orm::DbErr::Custom("canon write failed".to_owned())),
+                    };
                 }
-            })
+            };
+            // Keep `search_docs`/`fts_book` in step inside the same transaction as the canon
+            // change (spec/07 §2), then let the indexer know vectors are pending (spec/07 §4).
+            if let Err(error) = crate::search::maintenance::sync_events(tx, &events).await {
+                let wire = WireError::App {
+                    code: error.code,
+                    message: error.message,
+                    details: error.details,
+                };
+                return match serde_json::to_string(&wire) {
+                    Ok(json) => Err(sea_orm::DbErr::Custom(format!("{ERROR_MARKER}{json}"))),
+                    Err(_) => Err(sea_orm::DbErr::Custom("canon write failed".to_owned())),
+                };
+            }
+            crate::search::index::wake();
+            Ok((value, events))
         })
     })
     .await
