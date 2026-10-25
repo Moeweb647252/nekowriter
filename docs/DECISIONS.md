@@ -1021,3 +1021,87 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   pages that show canon can be filtered by its track (D-101). Tests:
   `web/src/features/workspace/sideStoryPage.test.tsx` (the dialog's default anchor and submitted
   input, the canon-mode lock hint, the dynamic anchor/canon-mode locale keys in both locales).
+
+### D-103 The answer and held paths apply the full recorded `ToolEffects`
+- **Context**: the M3 runtime review found that the transactions finalizing a deferred call
+  applied only part of its recorded `ToolEffects`: `answer_inner` applied `effects.complete`
+  alone, so an awaiting call's `phase_to` and the completion's sibling/seal/transition half were
+  dropped. Nothing could observe it before M9 because no tool set `await_input`; `ask_user` and
+  `request_review` are the first ones, so the gap became live exactly here (and the M9.1 tests
+  found the mirror bug: `ask_user`/`request_review` set the effect but not
+  `ToolOutcome.await_input`, so the calls finalized as `done` and the session ran through).
+- **Decision**: both API paths that finalize a deferred call (`answer`, `resume`) run the same
+  sequence a tool's own finalize does (spec/03 §5.4 has no exception for them): the phase change
+  with its acceptance appendix first, then the call row, then `run_completion_handler` — domain
+  effects, `error.after_completion` on the remaining pending calls, sealing, and the transition
+  to `completed` — instead of reopening a session that already finished. `assert`-free
+  regression tests drive the path through two test-only fixtures (`test_ask`, and
+  `test_write(complete: true)`), which only a debug session can freeze (D-072).
+- **Consequences**: a deferred call's effects are applied exactly once, the appendix order stays
+  canonical (effect notice → edit report → feedback → inbox), and a completed session is never
+  left `running`. `crates/server/tests/conception_effects.rs` proves both paths, including the
+  awaiting call's own `status = awaiting_input` and its recorded `await_input` effect.
+
+### D-104 The setting-material services gain agent paths that skip the author lock
+- **Context**: `setting_docs::ensure_editable` rejects a write with `settings.locked` while the
+  book's conception session is running (spec/08 §1.4). The conception agent *is* that session, so
+  routing its own `upsert_character`/`remove_character` writes through the author-facing service
+  functions would make every character write fail with 423.
+- **Decision**: the character service grows `create_from_agent` / `update_from_agent` /
+  `delete_from_agent`, sharing the body with the author path but recording `actor: agent` and the
+  session id; the document service already had `write_from_agent` for the same reason. The lock
+  check remains exactly the author's, as spec/08 §1.4 words it.
+- **Consequences**: the agent's writes work while it runs, the change log distinguishes them, and
+  the author's direct edits stay blocked until the session stops running.
+
+### D-105 Conception revision counters make an approval go stale
+- **Context**: `ConceptionState` has `characters_revision`/`topics_revision` and their
+  `*_approved_revision` counterparts, but spec/02 §4 only defines their shape, not who bumps them.
+  The studio must warn before finalizing when an approved item changed since (PROJECT §8.7 step 6),
+  and the agent must not rewrite a document the author approved at its current revision.
+- **Decision**: every agent write to the characters (create/update/remove/reorder) bumps
+  `characters_revision`; `set_research_topics` bumps `topics_revision`; a `request_review` answer
+  records the current counter as `*_approved_revision`. Documents use their own
+  `setting_docs.approved_revision`/`revision` pair, which the same write path bumps. Finalize does
+  not block on unapproved items — it lists them to the author, who confirms (spec/08 §5).
+- **Consequences**: approval is a revision reference, so a later write makes it stale without a
+  second flag; the studio's Finalize button warns exactly while a revision is unapproved, and the
+  Demo provider revises only the documents whose revision is not approved
+  (`demo_hints.approved_docs`).
+
+### D-106 The Demo provider needs the book's materials, so `DemoHints` carries them
+- **Context**: spec/04 §7.2 asks the Demo to seed one entity per character design (rank-1 as the
+  protagonist) and, in conception, to revise exactly the documents that were not approved. The
+  Demo receives only `demo_hints` and the conversation history; the history carries the rendered
+  review text (Chinese, model-facing) but not the designs, and parsing prompt-pack text in the
+  provider would put model wording into code.
+- **Decision**: `DemoHints` gains `characters` (`{name, role_label, summary, profile}`, rank order)
+  and `approved_docs` (the setting-document kinds whose `revision` equals `approved_revision`),
+  both filled by the server's `demo_hints()`. They are data-only fields, like the existing
+  `protagonist`, `review_attempt` and `draft` hints.
+- **Consequences**: the Demo behavior stays deterministic without reading rendered prompts, and
+  the fields exist only for the mock protocol (`demo_hints` is `None` for real providers).
+
+### D-100 `Continue` waits for the previous runner to exit; a test-only gate pins the dying-runner window
+- **Context**: `SessionManager::spawn` is a no-op while a live handle exists (one runner per
+  session, spec/03 §14). A runner that fails commits its terminal status and then keeps running
+  briefly (publishing its events, removing its own handle). A `Continue` that lands in that window
+  set the row back to `running` and was swallowed by `spawn`: the dying runner looked active, so
+  no runner was started and the session stayed `running` with nothing to drive it. This surfaced
+  as a rare `agent_write_holds` failure ("session did not finish; it is running") under parallel
+  load, and the same sequence is reachable from the UI (click Continue while a failed runner is
+  still exiting).
+- **Decision**: `continue_session` waits (bounded, 10 s) for the previous runner to be gone,
+  whatever ended it — not only for a **cancelled** one. Continue only admits `stopped`, `failed`
+  and `interrupted`, and in all three the runner is exiting or already gone, so it never waits on
+  a parked runner (`held`/`paused` are `resume`'s statuses, whose `wait_cancelled` is unchanged).
+  A test-only gate, `SessionManager::test_hold_next_runner_exit` (compiled only for tests and the
+  `testing` feature), holds the next exiting runner between its final write and its handle
+  removal, so `m8_review_continue_race.rs` lands in that window deterministically instead of
+  relying on scheduler luck.
+- **Consequences**: the invariant "after `Continue`, either a runner is registered or the session
+  is no longer `running`" is pinned by a regression test that fails without the fix. The more
+  general shape is recorded for M11: `spawn` could instead chain onto a live, non-cancelled
+  runner (await it, re-read the row, drive only if it is still `running`; safe because `drive`
+  returns at once for a non-running row), which would also close the same window for `resume`
+  from `failed`/`interrupted`.

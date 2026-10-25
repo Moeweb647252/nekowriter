@@ -158,6 +158,57 @@ async fn canon_seed_creates_links_and_names_the_protagonist() {
     );
 }
 
+/// The seed completion links a design to an entity that carries its name as an **alias**
+/// (spec/06 §7: "at completion the service links any remaining designs by exact name or alias").
+#[tokio::test]
+async fn the_seed_completion_links_designs_by_alias() {
+    let runtime = runtime(vec![
+        tool_step(
+            "create_entity",
+            json!({
+                "kind": "character",
+                "name": "剑客",
+                "aliases": ["沈砚"],
+                "summary": "游侠",
+                "is_protagonist": true,
+            }),
+        ),
+        tool_step(
+            "finish_maintenance",
+            json!({ "report": "初始档案建立完成。" }),
+        ),
+    ])
+    .await;
+    let (book_id, seed_session) = finalized_book(&runtime).await;
+    let row = runtime
+        .wait_status(seed_session, nekowriter::db::json::SessionStatus::Completed)
+        .await;
+    assert!(
+        row.error().is_none(),
+        "the seed completed: {:?}",
+        row.error()
+    );
+
+    // The design named 沈砚 is linked to the entity whose alias is 沈砚.
+    let (_, characters) = runtime
+        .app
+        .get(&format!("/api/books/{book_id}/characters"))
+        .await;
+    let shen = characters
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["name"] == "沈砚"))
+        .cloned()
+        .expect("the 沈砚 design");
+    assert!(
+        shen["entity_id"].is_number(),
+        "the alias link is recorded: {shen}"
+    );
+    let entity_id = shen["entity_id"].as_i64().expect("entity id") as i32;
+    let (_, entity) = runtime.app.get(&format!("/api/entities/{entity_id}")).await;
+    assert_eq!(entity["name"], "剑客");
+    assert_eq!(entity["is_protagonist"], true);
+}
+
 /// The `canon_seed` tool restrictions (spec/05 §2): `record_appearances`, `set_chapter_summary`
 /// and `read_chapter` are not permitted, so a seed session never calls them. The permission
 /// matrix is covered by the registry's own tests; this proves the session's frozen list obeys it

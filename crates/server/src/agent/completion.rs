@@ -160,6 +160,72 @@ pub async fn finish_maintenance(
     }])
 }
 
+/// The `canon_seed` completion (spec/06 §7): link every remaining character design to the entity
+/// that carries its exact name or one of its aliases.
+///
+/// `create_entity` already links a shared character whose name matches an unlinked design as it is
+/// created (spec/05 §6); this pass catches the rest — a design the archivist named differently, or
+/// created only after the design existed. The rank-1 design's entity is not forced here: setting
+/// `is_protagonist` is the archivist's `create_entity(is_protagonist: true)`, which only the seed
+/// session may ask for (spec/05 §6, spec/06 §7).
+pub async fn finish_seed(
+    tx: &sea_orm::DatabaseTransaction,
+    session: &agent_sessions::Model,
+) -> Result<Vec<ServerEvent>, AppError> {
+    use crate::db::entities::{character_designs, entities};
+    use crate::db::json::EntityKind;
+    use sea_orm::{ColumnTrait, QueryFilter, QueryOrder};
+
+    let Some(book_id) = session.book_id else {
+        return Ok(Vec::new());
+    };
+    let designs = character_designs::Entity::find()
+        .filter(character_designs::Column::BookId.eq(book_id))
+        .filter(character_designs::Column::EntityId.is_null())
+        .order_by_asc(character_designs::Column::Rank)
+        .all(tx)
+        .await?;
+    if designs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let candidates = entities::Entity::find()
+        .filter(entities::Column::BookId.eq(book_id))
+        .filter(entities::Column::Kind.eq(EntityKind::Character.as_str()))
+        .filter(entities::Column::TrackId.is_null())
+        .all(tx)
+        .await?;
+    let mut linked = false;
+    for design in designs {
+        let found = candidates.iter().find(|entity| {
+            entity.name == design.name
+                || crate::db::json::from_json_or_default::<Vec<String>>(&entity.aliases)
+                    .iter()
+                    .any(|alias| alias == &design.name)
+        });
+        let Some(entity) = found else {
+            continue;
+        };
+        character_designs::ActiveModel {
+            id: Set(design.id),
+            entity_id: Set(Some(entity.id)),
+            updated_at: Set(Utc::now()),
+            ..Default::default()
+        }
+        .update(tx)
+        .await?;
+        linked = true;
+    }
+    if !linked {
+        return Ok(Vec::new());
+    }
+    Ok(vec![ServerEvent::SettingsChanged {
+        book_id,
+        kind: crate::events::SettingsKind::Characters,
+        doc_kind: None,
+        revision: None,
+    }])
+}
+
 /// The `note` of the version a completing call saves (spec/08 §1.1).
 ///
 /// `finish_draft` carries the writer's own summary of the chapter in `note` (spec/05 §4); a

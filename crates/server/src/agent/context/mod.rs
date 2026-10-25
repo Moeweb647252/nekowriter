@@ -1227,6 +1227,36 @@ async fn demo_hints(
             .max(0) as u32,
         None => 0,
     };
+    // The character designs, for the Demo's `canon_seed` plan (spec/04 §7.2, spec/06 §7).
+    let characters = match session.book_id {
+        Some(book_id) => character_designs::Entity::find()
+            .filter(character_designs::Column::BookId.eq(book_id))
+            .order_by_asc(character_designs::Column::Rank)
+            .all(conn)
+            .await?
+            .into_iter()
+            .map(|row| nekowriter_llm::DemoCharacter {
+                name: row.name,
+                role_label: row.role_label,
+                summary: row.summary,
+                profile: row.profile,
+            })
+            .collect(),
+        None => Vec::new(),
+    };
+    // Which setting documents the author approved at their current revision, so the Demo's
+    // conception plan revises only the rejected ones (spec/04 §7.2, spec/05 §7).
+    let approved_docs = match session.book_id {
+        Some(book_id) => setting_docs::Entity::find()
+            .filter(setting_docs::Column::BookId.eq(book_id))
+            .all(conn)
+            .await?
+            .into_iter()
+            .filter(|doc| doc.approved_revision == Some(doc.revision))
+            .map(|doc| doc.kind)
+            .collect(),
+        None => Vec::new(),
+    };
     Ok(nekowriter_llm::DemoHints {
         kind: session.kind.clone(),
         phase: session.phase.clone(),
@@ -1239,6 +1269,8 @@ async fn demo_hints(
         canon_mode,
         draft,
         saved_entries,
+        characters,
+        approved_docs,
     })
 }
 
@@ -1464,12 +1496,15 @@ pub async fn apply_completion(
         // M6.1 owns the review report.
         CompletionKind::Review => {}
         // `finish_maintenance` (M6.3, spec/06 §6): `synced`, or `stale` when the author edited
-        // the text during maintenance (D-026).
+        // the text during maintenance (D-026). A `canon_seed` session has no chapter: its
+        // completion links the remaining character designs (spec/06 §7).
         CompletionKind::Maintenance => {
             if let Some(chapter_id) = session.chapter_id {
                 events.extend(
                     super::completion::finish_maintenance(tx, session, call, chapter_id).await?,
                 );
+            } else if super::session::kind_of(session) == SessionKind::CanonSeed {
+                events.extend(super::completion::finish_seed(tx, session).await?);
             }
         }
         // `finish_research` (M8.3, spec/07 §8 step 5): the task is `done`, with its report and the
