@@ -239,7 +239,14 @@ async fn mark_syncing(state: &AppState, chapter_id: i32) -> Result<(), AppError>
     .await
 }
 
-/// An `official` version whose content equals `content`, newest first (spec/06 §8).
+/// An `official` version whose text equals `content`, newest first (spec/06 §8: "an existing
+/// official version with identical content is reused").
+///
+/// The comparison is over the **text**, not the whole `ChapterContent`: `next_pid` is a monotonically
+/// growing allocation counter (spec/02 §5 invariant 3), not part of the prose, so restoring text
+/// that is byte-identical paragraph for paragraph must reuse its official version even though the
+/// chapter's counter has moved on since (D-123). Comparing the counter too made every re-sync after
+/// a restore create a second official version with the same text.
 async fn official_version_with_content(
     conn: &impl ConnectionTrait,
     chapter_id: i32,
@@ -253,7 +260,8 @@ async fn official_version_with_content(
         .await?;
     for row in rows {
         if let Ok(stored) = crate::db::json::from_json::<ChapterContent>(&row.content)
-            && &stored == content
+            && stored.paragraphs == content.paragraphs
+            && stored.tail_open == content.tail_open
         {
             return Ok(Some(row.id));
         }
