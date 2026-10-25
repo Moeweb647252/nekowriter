@@ -813,10 +813,18 @@ impl PageCache {
         })
     }
 
-    /// Stores a page, evicting the least recently used entry beyond [`CACHE_PAGES`].
-    pub fn put(&self, document: FetchedDocument) {
+    /// Stores a page under the URL the caller **requested**, evicting the least recently used
+    /// entry beyond [`CACHE_PAGES`].
+    ///
+    /// The key is the requested URL, not [`FetchedDocument::url`]: the latter is the final URL
+    /// after redirects, and keying on it would make a redirected page unreachable from the URL the
+    /// tool will ask for again, so every `offset` read would refetch and re-follow the redirect
+    /// chain (spec/07 §7 step 7). Two requested URLs that redirect to the same final URL get one
+    /// entry each, which is safe: a page slice is always computed from the extracted Markdown and
+    /// never depends on how the document was reached.
+    pub fn put(&self, requested_url: &str, document: FetchedDocument) {
         let mut inner = self.lock();
-        let url = document.url.clone();
+        let url = requested_url.to_owned();
         inner.entries.insert(
             url.clone(),
             CacheEntry {
@@ -866,7 +874,9 @@ pub async fn fetch(
         return Ok(hit);
     }
     let document = fetcher.fetch(url).await?;
-    cache.put(document.clone());
+    // Keyed by the requested URL so the next `offset` read of the same tool call is a cache hit
+    // even when the page redirected (spec/07 §7 step 7).
+    cache.put(url, document.clone());
     Ok(document)
 }
 
@@ -1088,15 +1098,45 @@ mod tests {
     }
 
     #[test]
+    fn the_cache_is_keyed_by_the_requested_url_not_the_final_one() {
+        // A redirected page is stored under the URL the caller asked for, so the next read of
+        // that URL is a hit even though the document reports its post-redirect URL (spec/07 §7
+        // step 7).
+        let cache = PageCache::new();
+        let requested = "https://example.com/old";
+        let final_url = "https://example.com/new";
+        cache.put(
+            requested,
+            FetchedDocument {
+                url: final_url.to_owned(),
+                title: "T".to_owned(),
+                markdown: "body".to_owned(),
+                cached: false,
+            },
+        );
+        let hit = cache.get(requested).expect("the requested URL is the key");
+        assert!(hit.cached);
+        assert_eq!(hit.url, final_url, "the document keeps its final URL");
+        assert!(
+            cache.get(final_url).is_none(),
+            "the final URL was never asked for"
+        );
+    }
+
+    #[test]
     fn the_cache_evicts_the_least_recently_used_page() {
         let cache = PageCache::new();
         for index in 0..CACHE_PAGES + 4 {
-            cache.put(FetchedDocument {
-                url: format!("https://example.com/{index}"),
-                title: String::new(),
-                markdown: "x".to_owned(),
-                cached: false,
-            });
+            let url = format!("https://example.com/{index}");
+            cache.put(
+                &url,
+                FetchedDocument {
+                    url: url.clone(),
+                    title: String::new(),
+                    markdown: "x".to_owned(),
+                    cached: false,
+                },
+            );
         }
         assert_eq!(cache.len(), CACHE_PAGES);
         assert!(cache.get("https://example.com/0").is_none());
@@ -1104,12 +1144,15 @@ mod tests {
         assert!(cache.get("https://example.com/4").is_some());
         // Reading a page counts as use, so it survives the next eviction.
         let _ = cache.get("https://example.com/4");
-        cache.put(FetchedDocument {
-            url: "https://example.com/new".to_owned(),
-            title: String::new(),
-            markdown: "x".to_owned(),
-            cached: false,
-        });
+        cache.put(
+            "https://example.com/new",
+            FetchedDocument {
+                url: "https://example.com/new".to_owned(),
+                title: String::new(),
+                markdown: "x".to_owned(),
+                cached: false,
+            },
+        );
         assert!(cache.get("https://example.com/4").is_some());
         assert!(cache.get("https://example.com/5").is_none());
     }
