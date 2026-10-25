@@ -150,9 +150,14 @@ fn change_ids(events: &[ServerEvent]) -> Vec<i32> {
         .collect()
 }
 
-/// Renders `result.canon_write` and builds the structured `ui` payload (spec/05 §1.6).
+/// Renders `result.canon_write`, publishes the canon writes' events and builds the structured
+/// `ui` payload (spec/05 §1.6).
+///
+/// The canon services hand back the `canon.changed` event of every write (spec/06 §3); a tool must
+/// forward it so the UI invalidates its canon queries — and, since M7, so the search index follows
+/// the same transaction (spec/07 §2). An event dropped here is invisible to both.
 fn canon_outcome(
-    ctx: &ToolCtx<'_>,
+    ctx: &mut ToolCtx<'_>,
     action: &str,
     target: String,
     events: &[ServerEvent],
@@ -174,7 +179,7 @@ fn canon_outcome(
 
 #[allow(clippy::too_many_arguments)]
 fn canon_outcome_with(
-    ctx: &ToolCtx<'_>,
+    ctx: &mut ToolCtx<'_>,
     action: &str,
     target: String,
     events: &[ServerEvent],
@@ -183,6 +188,9 @@ fn canon_outcome_with(
     name: &str,
     extra: Value,
 ) -> Result<ToolOutcome, ToolError> {
+    for event in events {
+        ctx.emit(event.clone());
+    }
     // Every variable of `result.canon_write` is provided: the template tests `moved` and the
     // position fields for every action, and strict-undefined rendering rejects a missing one.
     let mut fields = json!({
