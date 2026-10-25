@@ -444,27 +444,77 @@ async fn test_15_stop_is_only_valid_while_running() {
     assert_eq!(body["error"]["details"]["status"], "held");
     assert_eq!(body["error"]["details"]["operation"], "stop");
 
-    // Resume, pause it again, and check the paused state rejects stop too.
+    // Resume: the held call finalizes and the session continues.
     let (status, _) = runtime
         .app
         .post(&format!("/api/sessions/{session_id}/resume"), json!({}))
         .await;
     assert_eq!(status, StatusCode::OK);
-
-    // Pause with a text-only reply: the third scripted step is a text reply, so after the second
-    // call the session pauses at the next boundary.
     runtime
         .wait_status(session_id, SessionStatus::Completed)
         .await;
 }
 
-/// A paused session rejects `stop` as well (spec/03 §15 test 15, second half).
+/// spec/03 §15 test 15, the `awaiting_input` half: `stop` is invalid there too, because the call is
+/// waiting for the author's form and there is no request in flight (spec/03 §3 "Stop exists only for
+/// `running` sessions"). [`test_15_stop_is_only_valid_while_running`] covers `held`;
+/// [`control_operations_on_a_completed_session_are_invalid_state`] covers `completed`.
 #[tokio::test]
-async fn stop_on_a_paused_session_is_invalid_state() {
+async fn test_15_stop_is_invalid_on_an_awaiting_input_session() {
+    // `test_ask` sets `await_input`, so the call waits for the author's answer (spec/05 §7).
+    let runtime = runtime(vec![
+        tool_step("test_ask", json!({ "text": "Which way?" })),
+        finish_step(),
+    ])
+    .await;
+    let session_id = runtime.start_debug().await;
+    runtime
+        .wait_status(session_id, SessionStatus::AwaitingInput)
+        .await;
+
+    let (status, body) = runtime
+        .app
+        .post(&format!("/api/sessions/{session_id}/stop"), json!({}))
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "stop on an awaiting_input session: {body}"
+    );
+    assert_error(&body, "session.invalid_state");
+    assert_eq!(body["error"]["details"]["status"], "awaiting_input");
+    assert_eq!(body["error"]["details"]["operation"], "stop");
+
+    // `pause` is running-only as well, and `message` is rejected while a form is open
+    // (spec/03 §5.2 "Rejected while awaiting_input (the form must be answered)").
+    for operation in ["pause", "continue"] {
+        let (status, body) = runtime
+            .app
+            .post(
+                &format!("/api/sessions/{session_id}/{operation}"),
+                json!({}),
+            )
+            .await;
+        assert_eq!(
+            status,
+            StatusCode::CONFLICT,
+            "{operation} on an awaiting_input session: {body}"
+        );
+        assert_error(&body, "session.invalid_state");
+    }
+}
+
+/// A **completed** session is terminal, so every control operation is `409 session.invalid_state`.
+///
+/// This used to be named `stop_on_a_paused_session_is_invalid_state` and claimed to cover spec/03
+/// §15 test 15's paused half, while its own comment admitted "nothing pauses here": the paused case
+/// is [`stop_on_a_circuit_breaker_pause_is_invalid_and_resume_clears_the_error`] below, and
+/// [`test_15_stop_is_only_valid_while_running`] covers `held`, `awaiting_input` and `idle`. The name
+/// now says what the body proves.
+#[tokio::test]
+async fn control_operations_on_a_completed_session_are_invalid_state() {
     let runtime = runtime(vec![tool_step("echo", json!({})), finish_step()]).await;
     let session_id = runtime.start_debug().await;
-    // The text-only reply produces a nudge, then the echo runs; nothing pauses here, so drive the
-    // pause path explicitly through a session that is paused by the circuit breaker instead.
     runtime
         .wait_status(session_id, SessionStatus::Completed)
         .await;

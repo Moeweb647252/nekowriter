@@ -75,8 +75,9 @@ to delete for a fresh start; it holds everything the app knows.
 4. **Settings › Embeddings**: keyword search works immediately; vectors need the local embedding
    model (downloaded on first use, then cached in `models/`). The page shows the model, the
    cache path and the index state.
-5. **Settings › Web search**: optional; a Tavily or SearXNG endpoint enables `web_search` and
-   `web_fetch` for the conception and research agents.
+5. **Settings › Web search**: optional. A Tavily or SearXNG endpoint enables `web_search` for the
+   conception and research agents; `web_fetch` needs no configuration, because it fetches the URL
+   the agent names (behind the SSRF guard of spec/07 §7).
 
 Environment variables include `NW_BIND`, `NW_DATA_DIR`, `NW_WEB_DIR`, `NW_ENABLE_DEMO_PROVIDER`
 (force the Demo provider in a release build), `HF_HOME` and `RUST_LOG`.

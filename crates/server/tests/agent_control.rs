@@ -521,10 +521,12 @@ async fn test_21_two_concurrent_continues_start_one_runner_and_the_second_confli
     assert_error(&loser.1, "session.invalid_state");
     assert_eq!(loser.1["error"]["details"]["operation"], "continue");
 
-    // One runner only.
+    // One runner only. `<= 1` would also pass with **no** runner, which is the failure mode the
+    // race produced (a `running` row with nothing driving it), so assert that the winner's runner
+    // is actually registered. The session was `stopped` and the winning continue respawned it.
     assert!(
-        runtime.app.state().manager().active_count() <= 1,
-        "at most one runner per session"
+        runtime.app.state().manager().is_running(session_id),
+        "the winning continue must have a runner registered for session {session_id}"
     );
     runtime
         .wait_status(session_id, SessionStatus::Completed)

@@ -177,6 +177,9 @@ fn canon_outcome(
     )
 }
 
+// The shared renderer of every `result.canon_write` outcome: the 8 arguments are the template's
+// variables (action, target, target type/id, name and the event list), which the prompt pack reads
+// by name; a struct would obscure that the template is the contract (spec/09 §2).
 #[allow(clippy::too_many_arguments)]
 fn canon_outcome_with(
     ctx: &mut ToolCtx<'_>,

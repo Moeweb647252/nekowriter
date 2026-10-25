@@ -12,16 +12,22 @@ use serde_json::json;
 use tokio::sync::broadcast::error::TryRecvError;
 
 /// Reads server events from the bus while an API call runs (the router publishes after commit).
+///
+/// The publish happens before the HTTP response is returned, so by the time this runs the events
+/// are already buffered: drain until the channel reports empty rather than sleeping for a fixed
+/// window. A fixed loop both wasted its budget on every call and could stop before a slow publish
+/// landed, which is a load-dependent pass rather than a proof (the same pattern the project
+/// replaced in `m6_review_events` and `m11_creation_events`).
 async fn drain(receiver: &mut tokio::sync::broadcast::Receiver<EventEnvelope>) -> Vec<ServerEvent> {
     let mut events = Vec::new();
-    // The publish happens before the HTTP response is returned, so a short yield loop suffices.
-    for _ in 0..50 {
+    // One yield first, so a publish racing the collect is not missed.
+    tokio::task::yield_now().await;
+    loop {
         match receiver.try_recv() {
             Ok(envelope) => events.push(envelope.event),
-            Err(TryRecvError::Empty) => {
-                tokio::task::yield_now().await;
-                tokio::time::sleep(std::time::Duration::from_millis(2)).await;
-            }
+            // Empty means nothing is left *right now*; the call that published has already
+            // returned by the time a test calls this, so this is the end of the batch.
+            Err(TryRecvError::Empty) => break,
             Err(TryRecvError::Lagged(_)) => continue,
             Err(TryRecvError::Closed) => break,
         }
@@ -199,10 +205,10 @@ async fn the_sse_stream_serves_frames_with_the_spec_framing() {
     );
     let mut body = response.into_body().into_data_stream();
 
-    // The handler subscribes inside the response future; publishing after a short yield is
-    // published after the subscription, so it must reach the stream (this is what the
-    // "subscribe before the first poll" design buys).
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    // The handler subscribes inside the response future, before the first poll (api/events.rs
+    // `stream`), so the subscription already exists here. One yield lets that future make its
+    // first poll; the assertion below is what proves it, so no fixed sleep is needed.
+    tokio::task::yield_now().await;
     app.events().publish(ServerEvent::SettingsChanged {
         book_id,
         kind: nekowriter::events::SettingsKind::Characters,
@@ -211,16 +217,19 @@ async fn the_sse_stream_serves_frames_with_the_spec_framing() {
     });
 
     let mut collected = String::new();
-    for _ in 0..20 {
-        let Some(chunk) = body.next().await else {
+    // A deadline, not a chunk count: a slow machine must not fail a correct stream, and a stuck
+    // one must still fail rather than hang.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !collected.contains("settings.changed") {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let chunk = tokio::time::timeout(remaining, body.next())
+            .await
+            .expect("the SSE stream should deliver a frame before the deadline");
+        let Some(chunk) = chunk else {
             break;
         };
         let bytes = chunk.expect("chunk");
         collected.push_str(&String::from_utf8_lossy(bytes.as_ref()));
-        if collected.contains("settings.changed") {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     assert!(
         collected.contains("event: settings.changed"),
@@ -259,7 +268,8 @@ async fn the_book_filter_keeps_book_events_and_drops_others() {
         .expect("response");
     assert_eq!(response.status(), StatusCode::OK);
     let mut body = response.into_body().into_data_stream();
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    // The subscription is created before the first poll, so a single yield is enough here too.
+    tokio::task::yield_now().await;
 
     app.events().publish(ServerEvent::BookUpdated {
         book_id: second_id,
@@ -272,16 +282,17 @@ async fn the_book_filter_keeps_book_events_and_drops_others() {
     app.events().publish(ServerEvent::Resync);
 
     let mut collected = String::new();
-    for _ in 0..20 {
-        let Some(chunk) = body.next().await else {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !collected.contains("resync") {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let chunk = tokio::time::timeout(remaining, body.next())
+            .await
+            .expect("the SSE stream should deliver a frame before the deadline");
+        let Some(chunk) = chunk else {
             break;
         };
         let bytes = chunk.expect("chunk");
         collected.push_str(&String::from_utf8_lossy(bytes.as_ref()));
-        if collected.contains("resync") {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     let book_frames: Vec<&str> = collected
         .split("event: ")

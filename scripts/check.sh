@@ -25,6 +25,11 @@ cargo clippy --workspace --all-targets -- -D warnings
 step "cargo test"
 cargo test --workspace
 
+# PLAN 0.4: the committed TS bindings must be what the DTOs produce. The export tests rewrite
+# `web/src/api/gen/`, so this has to run after `cargo test` and before the web steps typecheck it.
+step "generated bindings"
+scripts/check-bindings.sh
+
 step "web typecheck"
 pnpm --dir web typecheck
 

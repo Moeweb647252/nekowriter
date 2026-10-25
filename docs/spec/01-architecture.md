@@ -370,8 +370,13 @@ with `features = ["testing"]`, so `cargo test --workspace` builds the integratio
 `scripts/check.sh` runs, in order, and fails fast:
 `python3 -I scripts/validate_prompts.py .` → `cargo fmt --all --check` →
 `cargo clippy --workspace --all-targets -- -D warnings` →
-`cargo test --workspace` → `pnpm --dir web typecheck` → `pnpm --dir web lint` →
-`pnpm --dir web test --run` → `pnpm --dir web i18n:check` → `pnpm --dir web build`.
+`cargo test --workspace` → `scripts/check-bindings.sh` → `pnpm --dir web typecheck` →
+`pnpm --dir web lint` → `pnpm --dir web test --run` → `pnpm --dir web i18n:check` →
+`pnpm --dir web build`.
+
+`scripts/check-bindings.sh` runs the `export_bindings` tests and fails if they changed anything
+under `web/src/api/gen/`: the generated types are committed (PLAN 0.4), and a DTO that changed
+without a regenerated binding would leave the frontend compiling against a stale shape.
 
 With the `embed-web` feature, the binary embeds `web/dist` via rust-embed and serves it with SPA
 fallback (unknown non-`/api` paths → `index.html`). Without it, `--web-dir` serves from disk, and

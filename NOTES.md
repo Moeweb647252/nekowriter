@@ -43,8 +43,12 @@ not delete other agents' temp directories.
 - `crates/server/src/api/mod.rs` — `build_app(state)` (what tests call), the Host/Origin guard,
   `security_headers`.
 - `crates/server/src/api/dto/` — DTOs. `ContentOp` / `ContentOpInput` already exist.
-- `crates/migration/` — `nekowriter_migration::up(&conn)` applies the schema. `0001_init.sql` may
-  still be edited; dev databases are recreated.
+- `crates/migration/` — `nekowriter_migration::up(&conn)` applies the schema. `sea_orm_migration`
+  records applied migrations in `seaql_migrations` and only runs *pending* ones, so editing an
+  already-applied file does nothing to an existing database: a schema change is a new `NNNN_*.sql`
+  plus its `m0001_init.rs`-style module in `crates/migration/src/lib.rs`. (The MVP shipped before
+  the first tagged release, so `0001_init.sql` was edited in place while every dev database was
+  recreated by hand — that window is closed now.)
 - `crates/llm/` — neutral types, OpenAI-compatible adapter, Anthropic adapter, error/retry
   classification, `ScriptedProvider`, `DemoProvider` with `demo/corpus.toml`.
 - `crates/embed/` — `Embedder` trait, `FakeEmbedder`, `FastEmbedder`, `models.toml`.
@@ -56,7 +60,10 @@ not delete other agents' temp directories.
   directories.** `scripts/check-i18n.ts` fails when key sets differ.
 - `web/src/api/client.ts` — `api.get/post/patch/put/delete`, `ApiError {status, code, message,
   details}`.
-- `web/src/api/keys.ts` — the only place query keys are built.
+- `web/src/api/keys.ts` — the query-key factory. Every key goes through it; the two prefixes it
+  exposes (`keys.canon.all`, `keys.sessions.detail`) are the only literals elsewhere, and
+  `useCanon.ts`'s entity-history key is the one documented exception (a derived key built from a
+  factory prefix).
 - `web/src/api/events.ts` — the SSE client (`subscribe`, `connectEvents`, `disconnectEvents`).
   Add new event types to its `types` array and to the dispatch table.
 - `web/src/api/gen/` — ts-rs output. Generated; never edited by hand; committed.
@@ -86,7 +93,8 @@ not delete other agents' temp directories.
   (`running` → `interrupted`, `executing` → `pending`) and `shutdown()`.
 - `agent/tools/` — `ToolHandler` (`prepare`/`execute`), the frozen-role-list registry with the
   phase matrix, JSON Schema validation of `prompts/tools.toml`, and the test-only tools of the
-  debug session (`echo`, `test_write`, `test_finish`, `test_slow`).
+  debug session (`DEBUG_TOOLS` in `tools/registry.rs`: `echo`, `test_write`, `test_finish`,
+  `test_slow`, `test_ask`).
 - Integration tests use `agent_harness/mod.rs`: it builds a migrated temp DB, a Demo provider and
   model, and starts sessions whose frozen tools are the test-only ones, so the runtime is exercised
   without the writer tools of later milestones. `TestApp::set_provider` injects a

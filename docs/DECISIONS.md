@@ -1514,3 +1514,46 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   `web/src/i18n/language.test.ts` (the title follows the locale) and
   `web/src/app/router.test.tsx` (the boundary renders zh-CN text and not the English literal; the
   file is `.tsx` because it now renders JSX). Each was verified to fail with its fix reverted.
+
+### D-125 The review loop's closing batch: a prompt-freeze regression test, a bindings gate, honest docs
+- **Context**: the final review's second pass re-read the whole tree against the whole spec and found
+  a set of gaps that no single milestone review could see, because each is a claim the project makes
+  about itself rather than a defect in one feature.
+  (a) PLAN 2.3 and M11.5 smoke step 8 claim "the next session uses the override; sessions created
+  before the change keep the old prompt", and **nothing tested the second half**: `prompt_overrides`
+  appeared in `prompts_registry.rs` (rendering only) and `agent_runtime.rs` asserted only that
+  `system_prompt` is non-empty, which a frozen prompt and a live one both satisfy.
+  (b) PLAN 0.4 says "running the test twice yields no diff"; there was no such check. `export_bindings`
+  is ts-rs's generated test name, so the *name* existed while the property did not, and nothing
+  compared the committed `web/src/api/gen/` to what the DTOs produce.
+  (c) spec/03 §15 test 15's `awaiting_input` half was asserted nowhere, its doc comment claimed all
+  three non-running statuses while the body exercised only `held`, and a sibling test named
+  `stop_on_a_paused_session_is_invalid_state` admitted in its own comment that "nothing pauses here".
+  (d) `api_events.rs` still drained events with a fixed 50 × 2 ms loop and slept 50 ms before
+  publishing, which is load-dependent — the pattern the project had already replaced in
+  `m6_review_events` and `m11_creation_events`.
+  (e) `agent_control`'s "one runner only" assertion was `active_count() <= 1`, which zero also
+  satisfies — exactly the failure the D-107 race produced.
+  (f) README said the search endpoint enables `web_fetch` (it does not; only `web_search` reads
+  `app_settings["search"]`), NOTES.md's debug-tool list omitted `test_ask`, called `keys.ts` the only
+  place a query key is built, and still told readers `0001_init.sql` "may still be edited" — true
+  while dev databases were recreated by hand, false and silently ineffective now that
+  `sea_orm_migration` only runs pending migrations.
+- **Decision**: (a) `crates/server/tests/m11_prompt_freeze.rs` — a session started under one
+  `writer.system` override, the override then replaced by a second, and the session's **next request**
+  must still carry the first (verified on the wire body, so it distinguishes frozen from live);
+  plus the before/after API assertion that a saved override never rewrites an existing session.
+  (b) `scripts/check-bindings.sh` runs the export tests and fails when the tracked output changed;
+  `scripts/check.sh` runs it after `cargo test` and spec/01 §12 lists it. (c) `test_15` now covers
+  `held` only in its own test, a new `test_15_stop_is_invalid_on_an_awaiting_input_session` covers
+  `awaiting_input` (and `pause`/`continue` on it), the completed-session test is renamed
+  `control_operations_on_a_completed_session_are_invalid_state`. (d) `drain` drains to empty after
+  one yield, and the two subscribe-then-publish tests use a bounded 10 s deadline instead of fixed
+  sleeps. (e) the assertion is now `manager().is_running(session_id)`. (f) the three documents are
+  corrected.
+- **Consequences**: every M11.5 smoke claim and every PLAN acceptance line that names a test now has
+  a test that fails without the behaviour, and the one gate that guards the generated types is part of
+  `scripts/check.sh` instead of a convention. Verified fail-before for (a) by mutating
+  `build_request` to return a fixed string (the wire assertion fails) and for (b) by hand-editing a
+  generated file (the script exits 1); (c)–(e) are assertion strengthenings over code paths that
+  already behaved correctly.

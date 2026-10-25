@@ -13,6 +13,9 @@ pub mod chapter_feedback;
 pub mod chapter_versions;
 pub mod chapters;
 pub mod character_designs;
+// `entities::entities` is the conventional SeaORM module name for the `entities` table, and it
+// matches the file-per-table layout of this directory. Renaming either side to satisfy
+// `module_inception` would make the entity module the odd one out (spec/02 §2 names the table).
 #[allow(clippy::module_inception)]
 pub mod entities;
 

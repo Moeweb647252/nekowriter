@@ -340,6 +340,9 @@ async fn inverse_recreate(
 }
 
 /// Records the change row of an inverse operation, which `record_change` stamps as the revert.
+// Eight parameters is what the inverse operation needs (target, snapshots, actor and the revert's
+// own identity); grouping them into a struct would only move the same fields one level down, and
+// this is a private helper with one caller per target type.
 #[allow(clippy::too_many_arguments)]
 async fn record_revert(
     tx: &impl ConnectionTrait,
