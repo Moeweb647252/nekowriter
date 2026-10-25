@@ -486,3 +486,99 @@ async fn setting_materials_lock_only_while_running() {
         .await;
     assert_eq!(status, 200, "never locked after finalize: {body}");
 }
+
+/// Finalize stops a **running** conception session first and awaits its runner, then completes it
+/// (spec/08 §5 step 2); a pending form is simply left unanswered.
+#[tokio::test]
+async fn finalize_stops_a_running_session_and_leaves_a_pending_form() {
+    // The second turn is slow, so the session is provably `running` when finalize arrives.
+    let slow = nekowriter_llm::mock::ScriptStep::new().tool(
+        "write_setting_doc",
+        json!({ "doc": "world", "content": "# 世界观（慢写）" }),
+    );
+    let slow = nekowriter_llm::mock::ScriptStep {
+        delay: std::time::Duration::from_millis(1500),
+        ..slow
+    };
+    let runtime = runtime(vec![
+        tool_step("test_write", json!({ "text": "a" })),
+        slow,
+        text_step("done"),
+    ])
+    .await;
+    let book = create_conceiving_book(&runtime, "Running Finalize").await;
+    let book_id = book["book"]["id"].as_i64().expect("book id") as i32;
+    let session_id = book["session_id"].as_i64().expect("session") as i32;
+    // Let the first turn settle, then complete the materials while it is idle.
+    let _ = runtime.wait_any_status(session_id).await;
+    complete_materials(&runtime, book_id).await;
+
+    // The author replies: the session starts another turn and is `running` while it runs.
+    let (status, body) = runtime
+        .app
+        .post(
+            &format!("/api/sessions/{session_id}/message"),
+            json!({ "text": "继续" }),
+        )
+        .await;
+    assert_eq!(status, 200, "message: {body}");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        if runtime.session_row(session_id).await.status == "running" {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the session never ran"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+
+    // Finalize while it runs: the runner is stopped and awaited, then the session completes.
+    let (status, body) = runtime
+        .app
+        .post(
+            &format!("/api/books/{book_id}/conception/finalize"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, 200, "finalize a running session: {body}");
+    let row = runtime.session_row(session_id).await;
+    assert_eq!(row.status, "completed", "the stopped session completes");
+    assert_eq!(row.phase, "none");
+    assert_eq!(book_status(&runtime, book_id).await, "active");
+}
+
+/// A pending `ask_user`/`request_review` form does not block finalize: the session completes and
+/// the call stays unanswered (spec/08 §5 step 2).
+#[tokio::test]
+async fn finalize_leaves_a_pending_form_unanswered() {
+    let runtime = runtime(vec![ask_step(), text_step("done")]).await;
+    let book = create_conceiving_book(&runtime, "Pending Form").await;
+    let book_id = book["book"]["id"].as_i64().expect("book id") as i32;
+    let session_id = book["session_id"].as_i64().expect("session") as i32;
+
+    // The session asks; the form waits. Materials cannot be edited while it runs, but it is
+    // awaiting the author here, so the author may fill them in directly (spec/08 §1.4).
+    let call_id = wait_for_form(&runtime, session_id).await;
+    complete_materials(&runtime, book_id).await;
+
+    let (status, body) = runtime
+        .app
+        .post(
+            &format!("/api/books/{book_id}/conception/finalize"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, 200, "finalize with a pending form: {body}");
+    let row = runtime.session_row(session_id).await;
+    assert_eq!(row.status, "completed");
+    let call = runtime.call_by_id(call_id).await;
+    assert_eq!(
+        call.status, "awaiting_input",
+        "the unanswered form stays as it was"
+    );
+    // Answering it afterwards is refused: the session is finished (spec/03 §6).
+    let (status, body) = answer(&runtime, session_id, call_id, ask_answer()).await;
+    assert_eq!(status, 409, "a completed session takes no answer: {body}");
+}

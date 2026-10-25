@@ -109,6 +109,23 @@ pub(crate) async fn create_inner(
         .ok_or_else(|| AppError::internal(format!("unknown role {role}")))?;
     let mut warnings = Vec::new();
 
+    // One open session per book for the kinds that model a book-wide task (spec/02 §5 invariant
+    // 5). `conception/start` and `canon/seed` return the open session instead of creating one
+    // (D-047); this is the guard for the concurrent path, where both requests could miss it.
+    if matches!(input.kind, SessionKind::Conception | SessionKind::CanonSeed)
+        && let Some(book_id) = input.book_id
+        && let Some(open) = open_book_session(tx, book_id, input.kind).await?
+    {
+        return Err(AppError::new(
+            ErrorCode::SessionInvalidState,
+            format!(
+                "book {book_id} already has an open {} session",
+                input.kind.as_str()
+            ),
+        )
+        .with_details(json!({ "session_id": open })));
+    }
+
     // 1. Resolve the model: book.model_overrides[role] → app_settings["roles.defaults"][role].
     let book = match input.book_id {
         Some(book_id) => Some(
@@ -1679,6 +1696,31 @@ async fn debug_echo_inner(
 }
 
 // ───────────────────────────── helpers ─────────────────────────────
+
+/// The book's open session of one kind, when there is one (spec/02 §5 invariant 5).
+pub async fn open_book_session(
+    conn: &impl ConnectionTrait,
+    book_id: i32,
+    kind: SessionKind,
+) -> Result<Option<i32>, AppError> {
+    let row = agent_sessions::Entity::find()
+        .filter(agent_sessions::Column::BookId.eq(book_id))
+        .filter(agent_sessions::Column::Kind.eq(kind.as_str()))
+        .filter(agent_sessions::Column::Status.is_in([
+            SessionStatus::Idle.as_str(),
+            SessionStatus::Running.as_str(),
+            SessionStatus::Held.as_str(),
+            SessionStatus::AwaitingInput.as_str(),
+            SessionStatus::Paused.as_str(),
+            SessionStatus::Stopped.as_str(),
+            SessionStatus::Failed.as_str(),
+            SessionStatus::Interrupted.as_str(),
+        ]))
+        .order_by_desc(agent_sessions::Column::Id)
+        .one(conn)
+        .await?;
+    Ok(row.map(|row| row.id))
+}
 
 /// Sets a session's status from an operation that is not the runner, clearing `pause_requested`
 /// when it enters `running` (spec/03 §3).

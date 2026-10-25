@@ -822,6 +822,217 @@ mod tests {
         assert_eq!(lines[1]["text"], "c");
     }
 
+    // ───────────────────────────── conception (spec/03 §7) ─────────────────────────────
+
+    fn prompts() -> crate::prompts::PromptSet {
+        crate::prompts::PromptRegistry::embedded()
+            .expect("the embedded pack")
+            .defaults_only()
+    }
+
+    fn conception_snapshot(
+        docs: &[(&str, i32, &str)],
+        characters: &[CurrentCharacter],
+        topics: &[CurrentTopic],
+    ) -> ViewSnapshot {
+        ViewSnapshot::Conception {
+            docs: docs
+                .iter()
+                .map(|(kind, revision, content)| {
+                    (
+                        (*kind).to_owned(),
+                        ConceptionDocSnapshot {
+                            revision: *revision,
+                            content: (*content).to_owned(),
+                        },
+                    )
+                })
+                .collect(),
+            characters: characters
+                .iter()
+                .map(|character| crate::db::json::ConceptionCharacterSnapshot {
+                    id: character.id,
+                    rank: character.rank,
+                    name: character.name.clone(),
+                    role_label: character.role_label.clone(),
+                    summary: character.summary.clone(),
+                    profile: character.profile.clone(),
+                })
+                .collect(),
+            topics: topics
+                .iter()
+                .map(|topic| crate::db::json::ConceptionTopicSnapshot {
+                    topic: topic.topic.clone(),
+                    requirements: topic.requirements.clone(),
+                    scope: topic.scope.clone(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn a_conception_report_renders_a_small_document_edit_as_a_line_diff() {
+        let before = conception_snapshot(&[("outline", 1, "a\nb\n")], &[], &[]);
+        let mut current = ConceptionState::default();
+        current.docs.insert(
+            "outline".to_owned(),
+            ConceptionDocSnapshot {
+                revision: 2,
+                content: "a\nc\n".to_owned(),
+            },
+        );
+        let report = conception_report(&before, &current, &prompts());
+        assert_eq!(report.items.len(), 1);
+        let item = &report.items[0];
+        assert_eq!(item["kind"], json!("doc"));
+        assert_eq!(item["full_text"], json!(""), "a small edit stays a diff");
+        let lines = item["lines"].as_array().cloned().unwrap_or_default();
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert_eq!(lines[0]["op"], json!("-"));
+        assert_eq!(lines[0]["text"], json!("b"));
+        assert_eq!(lines[1]["op"], json!("+"));
+        assert_eq!(lines[1]["text"], json!("c"));
+        // The label is the prompt pack's, never an English literal.
+        assert_eq!(
+            item["doc_label"].as_str(),
+            Some(prompts().label("setting_doc", "outline").as_str())
+        );
+    }
+
+    #[test]
+    fn a_conception_report_shows_the_full_text_above_forty_changed_lines() {
+        let before_text: String = (0..MAX_DIFF_LINES + 5)
+            .map(|index| format!("old line {index}\n"))
+            .collect();
+        let after_text: String = (0..MAX_DIFF_LINES + 5)
+            .map(|index| format!("new line {index}\n"))
+            .collect();
+        let before = conception_snapshot(&[("world", 1, &before_text)], &[], &[]);
+        let mut current = ConceptionState::default();
+        current.docs.insert(
+            "world".to_owned(),
+            ConceptionDocSnapshot {
+                revision: 2,
+                content: after_text.clone(),
+            },
+        );
+        let report = conception_report(&before, &current, &prompts());
+        let item = &report.items[0];
+        assert_eq!(
+            item["full_text"].as_str(),
+            Some(after_text.as_str()),
+            "above the limit the agent gets the whole current text"
+        );
+        assert_eq!(item["lines"], json!([]));
+    }
+
+    #[test]
+    fn a_conception_report_lists_the_cast_and_only_changed_profiles() {
+        let before = conception_snapshot(
+            &[],
+            &[
+                CurrentCharacter {
+                    id: 1,
+                    rank: 1,
+                    name: "沈砚".to_owned(),
+                    role_label: "主角".to_owned(),
+                    summary: "游侠".to_owned(),
+                    profile: "old".to_owned(),
+                },
+                CurrentCharacter {
+                    id: 2,
+                    rank: 2,
+                    name: "柳照".to_owned(),
+                    role_label: "女主".to_owned(),
+                    summary: "副使".to_owned(),
+                    profile: "same".to_owned(),
+                },
+            ],
+            &[],
+        );
+        let current = ConceptionState {
+            characters: vec![
+                CurrentCharacter {
+                    id: 2,
+                    rank: 1,
+                    name: "柳照".to_owned(),
+                    role_label: "女主".to_owned(),
+                    summary: "副使".to_owned(),
+                    profile: "same".to_owned(),
+                },
+                CurrentCharacter {
+                    id: 1,
+                    rank: 2,
+                    name: "沈砚".to_owned(),
+                    role_label: "主角".to_owned(),
+                    summary: "游侠".to_owned(),
+                    profile: "new profile".to_owned(),
+                },
+            ],
+            ..ConceptionState::default()
+        };
+        let report = conception_report(&before, &current, &prompts());
+        let item = report
+            .items
+            .iter()
+            .find(|item| item["kind"] == json!("characters"))
+            .expect("a characters item");
+        let characters = item["characters"].as_array().cloned().unwrap_or_default();
+        assert_eq!(characters.len(), 2, "the whole ranked list");
+        assert_eq!(characters[0]["name"], "柳照");
+        assert_eq!(characters[0]["rank"], 1, "the new ranking");
+        assert_eq!(
+            characters[0]["changed_profile"], "",
+            "an unchanged profile is not repeated"
+        );
+        assert_eq!(characters[1]["changed_profile"], "new profile");
+    }
+
+    #[test]
+    fn a_conception_report_lists_the_current_topics() {
+        let before = conception_snapshot(
+            &[],
+            &[],
+            &[CurrentTopic {
+                topic: "旧主题".to_owned(),
+                requirements: "".to_owned(),
+                scope: "背景".to_owned(),
+            }],
+        );
+        let current = ConceptionState {
+            topics: vec![CurrentTopic {
+                topic: "城门规制".to_owned(),
+                requirements: "细节".to_owned(),
+                scope: "背景设定".to_owned(),
+            }],
+            ..ConceptionState::default()
+        };
+        let report = conception_report(&before, &current, &prompts());
+        let item = report
+            .items
+            .iter()
+            .find(|item| item["kind"] == json!("topics"))
+            .expect("a topics item");
+        let topics = item["topics"].as_array().cloned().unwrap_or_default();
+        assert_eq!(topics.len(), 1);
+        assert_eq!(topics[0]["topic"], "城门规制");
+        assert_eq!(topics[0]["scope"], "背景设定");
+    }
+
+    #[test]
+    fn an_unchanged_conception_state_reports_nothing() {
+        let snapshot = conception_snapshot(&[("outline", 1, "same")], &[], &[]);
+        let mut current = ConceptionState::default();
+        current.docs.insert(
+            "outline".to_owned(),
+            ConceptionDocSnapshot {
+                revision: 1,
+                content: "same".to_owned(),
+            },
+        );
+        assert!(conception_report(&snapshot, &current, &prompts()).is_empty());
+    }
+
     #[test]
     fn truncate_keeps_short_text_and_cuts_long_text() {
         assert_eq!(truncate("abc", 10), "abc");

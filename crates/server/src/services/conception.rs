@@ -144,23 +144,7 @@ pub async fn open_session(
     conn: &impl ConnectionTrait,
     book_id: i32,
 ) -> Result<Option<i32>, AppError> {
-    let row = agent_sessions::Entity::find()
-        .filter(agent_sessions::Column::BookId.eq(book_id))
-        .filter(agent_sessions::Column::Kind.eq(SessionKind::Conception.as_str()))
-        .filter(agent_sessions::Column::Status.is_in([
-            SessionStatus::Idle.as_str(),
-            SessionStatus::Running.as_str(),
-            SessionStatus::Held.as_str(),
-            SessionStatus::AwaitingInput.as_str(),
-            SessionStatus::Paused.as_str(),
-            SessionStatus::Stopped.as_str(),
-            SessionStatus::Failed.as_str(),
-            SessionStatus::Interrupted.as_str(),
-        ]))
-        .order_by_desc(agent_sessions::Column::Id)
-        .one(conn)
-        .await?;
-    Ok(row.map(|row| row.id))
+    sessions::open_book_session(conn, book_id, SessionKind::Conception).await
 }
 
 /// The book's open `canon_seed` session, when there is one (spec/08 §5, D-047).
@@ -168,23 +152,7 @@ pub async fn open_seed_session(
     conn: &impl ConnectionTrait,
     book_id: i32,
 ) -> Result<Option<i32>, AppError> {
-    let row = agent_sessions::Entity::find()
-        .filter(agent_sessions::Column::BookId.eq(book_id))
-        .filter(agent_sessions::Column::Kind.eq(SessionKind::CanonSeed.as_str()))
-        .filter(agent_sessions::Column::Status.is_in([
-            SessionStatus::Idle.as_str(),
-            SessionStatus::Running.as_str(),
-            SessionStatus::Held.as_str(),
-            SessionStatus::AwaitingInput.as_str(),
-            SessionStatus::Paused.as_str(),
-            SessionStatus::Stopped.as_str(),
-            SessionStatus::Failed.as_str(),
-            SessionStatus::Interrupted.as_str(),
-        ]))
-        .order_by_desc(agent_sessions::Column::Id)
-        .one(conn)
-        .await?;
-    Ok(row.map(|row| row.id))
+    sessions::open_book_session(conn, book_id, SessionKind::CanonSeed).await
 }
 
 /// The configured model profile of a role for a book, without failing when there is none
