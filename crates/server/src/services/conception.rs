@@ -249,13 +249,7 @@ pub async fn finalize(state: &AppState, book_id: i32) -> Result<FinalizeResponse
 }
 
 /// The finalize response (spec/10 §2.2).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct FinalizeResponse {
-    pub book: BookDto,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub seed_session_id: Option<i32>,
-    pub warnings: Vec<String>,
-}
+pub type FinalizeResponse = crate::api::dto::books::ConceptionFinalizeResponse;
 
 /// The id of the book's running conception session, when there is one.
 async fn running_conception_session(

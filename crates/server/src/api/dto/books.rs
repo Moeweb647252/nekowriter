@@ -129,6 +129,28 @@ impl Default for CreateBookResponse {
     }
 }
 
+/// `POST /books/:id/conception/finalize` response (spec/10 §2.2, spec/08 §5).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(default)]
+pub struct ConceptionFinalizeResponse {
+    pub book: BookDto,
+    /// The `canon_seed` session finalize started, when an archivist model is configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seed_session_id: Option<i32>,
+    pub warnings: Vec<String>,
+}
+
+impl Default for ConceptionFinalizeResponse {
+    fn default() -> Self {
+        Self {
+            book: CreateBookResponse::default().book,
+            seed_session_id: None,
+            warnings: Vec::new(),
+        }
+    }
+}
+
 /// `GET /books/:id/overview` (spec/08 §7). M1 fills `progress` and `recent_changes`; the next
 /// action, the attention list and usage arrive with later milestones.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

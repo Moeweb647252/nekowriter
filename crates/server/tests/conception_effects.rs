@@ -50,11 +50,23 @@ async fn answering_applies_every_recorded_effect() {
     };
     let call = runtime.call_by_id(call_id).await;
     assert_eq!(call.name, "test_ask");
+    // The call itself is `awaiting_input`, not `done`: the effect and the outcome's
+    // `await_input` must agree, or the session runs straight through (the M9.1 bug).
+    assert_eq!(call.status, "awaiting_input");
+    assert!(
+        !call.sealed,
+        "an awaiting call is not sealed until it is answered"
+    );
     let effects = call.effects();
     assert_eq!(effects.phase_to, Some(Phase::Drafting));
     assert_eq!(
         effects.complete,
         Some(nekowriter::db::json::CompletionKind::Draft)
+    );
+    assert_eq!(
+        effects.await_input,
+        Some(nekowriter::db::json::AwaitInputKind::AskUser),
+        "the recorded effect names the input it waits for"
     );
 
     // Answer it: this transaction finalizes the call and must apply the full recorded effects.

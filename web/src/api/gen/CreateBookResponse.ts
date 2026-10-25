@@ -2,6 +2,8 @@
 import type { BookDto } from "./BookDto";
 
 /**
- * `POST /books` response (spec/10 §2.2). `session_id` arrives with the conception studio (M9).
+ * `POST /books` response (spec/10 §2.2). `session_id` is the conception session a
+ * `start_conception` book started (absent when no conception model was configured, in which
+ * case `warnings` carries `model.missing_role`).
  */
-export type CreateBookResponse = { book: BookDto, warnings: Array<string>, };
+export type CreateBookResponse = { book: BookDto, session_id: number | null, warnings: Array<string>, };

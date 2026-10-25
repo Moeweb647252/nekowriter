@@ -62,6 +62,10 @@ async fn conception_flow_ask_answer_write_review_revise() {
     let call_id = wait_for_form(&runtime, session_id).await;
     let ask = runtime.call_by_id(call_id).await;
     assert_eq!(ask.name, "ask_user");
+    // The call is `awaiting_input` (not `done`): `ask_user` sets both the effect and the
+    // outcome's `await_input`, and the latter is what defers the call (spec/05 §7).
+    assert_eq!(ask.status, "awaiting_input");
+    assert!(!ask.sealed, "the answer is what seals it");
     let ui = call_ui(&runtime, call_id).await;
     let questions = ui["questions"].as_array().cloned().unwrap_or_default();
     assert_eq!(
@@ -128,6 +132,7 @@ async fn conception_flow_ask_answer_write_review_revise() {
     // Step 2 already awaited: request_review carries its message for the form.
     let review = runtime.call_by_id(review_call).await;
     assert_eq!(review.name, "request_review");
+    assert_eq!(review.status, "awaiting_input");
     assert!(
         review.input.contains("请审阅这一版设定"),
         "the message is recorded for the form: {}",
