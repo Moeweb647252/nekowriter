@@ -32,12 +32,6 @@ use super::{conflict, now};
 /// The session needs the book's own transaction to have committed (its kickoff reads the book),
 /// so creation and the session start are two transactions; a book whose model appears later gets
 /// its session from `conception/start`.
-/// `POST /api/books` with `start_conception: true` (spec/08 §5 step 1): the book is created
-/// `conceiving` and its conception session starts when a conception model is configured.
-///
-/// The session needs the book's own transaction to have committed (its kickoff reads the book),
-/// so creation and the session start are two transactions; a book whose model appears later gets
-/// its session from `conception/start`.
 pub async fn start_for_new_book(
     state: &AppState,
     book_id: i32,
@@ -90,7 +84,19 @@ pub async fn start(state: &AppState, book_id: i32) -> Result<(i32, Vec<String>),
     if let Some(open) = open_session(state.db().conn(), book_id).await? {
         return Ok((open, Vec::new()));
     }
-    start_session(state, book_id).await
+    match start_session(state, book_id).await {
+        Ok(started) => Ok(started),
+        // A concurrent `conception/start` won the creation race. Its session *is* the open one
+        // spec/08 §5 tells this endpoint to return, so the loser answers with it instead of
+        // surfacing a 409 for what the author experienced as one click (D-047).
+        Err(error) if error.code == ErrorCode::SessionInvalidState => {
+            match open_session(state.db().conn(), book_id).await? {
+                Some(open) => Ok((open, Vec::new())),
+                None => Err(error),
+            }
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Starts the book's conception session and records it in `ConceptionState.session_id`.
@@ -187,11 +193,10 @@ pub async fn finalize(state: &AppState, book_id: i32) -> Result<FinalizeResponse
     }
 
     let warnings_state = state.clone();
-    let (book_dto, draft_ids, events) = {
-        let state_owned = state.clone();
+    let (book_dto, events) = {
         let db = state.db().clone();
         super::write(&db, move |tx| {
-            Box::pin(async move { finalize_inner(tx, &state_owned, book_id).await })
+            Box::pin(async move { finalize_inner(tx, book_id).await })
         })
         .await?
     };
@@ -208,7 +213,6 @@ pub async fn finalize(state: &AppState, book_id: i32) -> Result<FinalizeResponse
         }
         None => warnings.push("model.missing_role".to_owned()),
     }
-    let _ = draft_ids;
     Ok(FinalizeResponse {
         book: book_dto,
         seed_session_id,
@@ -237,9 +241,8 @@ async fn running_conception_session(
 /// The in-transaction part of finalize (spec/08 §5 steps 1–4).
 async fn finalize_inner(
     tx: &impl ConnectionTrait,
-    state: &AppState,
     book_id: i32,
-) -> Result<(BookDto, Vec<i32>, Vec<ServerEvent>), AppError> {
+) -> Result<(BookDto, Vec<ServerEvent>), AppError> {
     let book = books::Entity::find_by_id(book_id)
         .one(tx)
         .await?
@@ -341,13 +344,12 @@ async fn finalize_inner(
         let scope_id = match scope_by_name.get(&task.scope_name) {
             Some(id) => *id,
             None => {
-                let id =
-                    find_or_create_scope(tx, state, book_id, &task.scope_name, &drafts).await?;
+                let id = find_or_create_scope(tx, book_id, &task.scope_name, &drafts).await?;
                 scope_by_name.insert(task.scope_name.clone(), id);
                 id
             }
         };
-        research_tasks::ActiveModel {
+        let ready = research_tasks::ActiveModel {
             id: Set(task.id),
             status: Set("ready".to_owned()),
             scope_id: Set(Some(scope_id)),
@@ -356,19 +358,20 @@ async fn finalize_inner(
         }
         .update(tx)
         .await?;
+        // The event carries the task as it is after the update (spec/10 §3: the payload is the
+        // current `ResearchTaskDto` and the client upserts it), not the `draft` row it replaced.
         events.push(ServerEvent::ResearchUpdated {
-            task: super::research::to_dto(task.clone()),
+            task: super::research::to_dto(ready),
         });
     }
 
     let book_dto = super::books::to_dto(&updated)?;
-    Ok((book_dto, Vec::new(), events))
+    Ok((book_dto, events))
 }
 
 /// Finds a scope by name or creates it attached to the book (spec/08 §5 step 4).
 async fn find_or_create_scope(
     tx: &impl ConnectionTrait,
-    _state: &AppState,
     book_id: i32,
     name: &str,
     drafts: &[research_tasks::Model],
@@ -450,8 +453,17 @@ pub async fn seed(state: &AppState, book_id: i32) -> Result<i32, AppError> {
     if let Some(open) = open_seed_session(state.db().conn(), book_id).await? {
         return Ok(open);
     }
-    let (session_id, _) = seed_session(state, book_id).await?;
-    Ok(session_id)
+    match seed_session(state, book_id).await {
+        Ok((session_id, _warnings)) => Ok(session_id),
+        // Same creation race as `conception/start`: the open seed session is the answer (D-047).
+        Err(error) if error.code == ErrorCode::SessionInvalidState => {
+            match open_seed_session(state.db().conn(), book_id).await? {
+                Some(open) => Ok(open),
+                None => Err(error),
+            }
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Starts the book's `canon_seed` session (spec/06 §7).
