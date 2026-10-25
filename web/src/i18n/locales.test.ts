@@ -209,18 +209,80 @@ describe("locale coverage", () => {
     // shape: a renderer that returns "" (which is how `request_review` hid its missing key) or a
     // key that does not resolve both surface here. The debug session's test-only tools and `echo`
     // are excluded: they never reach a real session of a role list (spec/10 §2.7).
+    //
+    // The check is `not.toBe(name)`-style on the *resolved* string, never on a prefix: a key built
+    // without its `agent:` namespace resolves to the bare key (`tools.x.summary`), which a
+    // `not.toContain("agent:tools.")` assertion happily accepts. The archivist tools shipped that
+    // way until the final review found it, so the assertion below compares against both shapes an
+    // unresolved key can take, and it exercises the `_target` branch of the shared shape too.
+    /** True when the locale table declares a `_target` sibling for that tool's summary. */
+function hasTargetVariant(name: string): boolean {
+  // The tools whose renderer is the shared archivist shape (`archivistSummary`), i.e. the ones the
+  // `summary_target` variant is defined for. `propose_setting_change` has the key too but reads a
+  // different payload field, so it is asserted through its own renderer above.
+  const archivistTools = new Set([
+    "create_entity",
+    "update_entity",
+    "set_relation",
+    "end_relation",
+    "add_timeline_event",
+    "update_timeline_event",
+    "add_memory_note",
+    "retire_memory_note",
+    "add_foreshadowing",
+    "resolve_foreshadowing",
+    "set_chapter_summary",
+  ])
+  const tools = (enAgent as unknown as { tools?: Record<string, Record<string, string>> }).tools ?? {}
+  return archivistTools.has(name) && Object.hasOwn(tools[name] ?? {}, "summary_target")
+}
     const debugTools = new Set(["echo", "test_write", "test_finish", "test_slow"])
+    // An unresolved key comes back verbatim, with or without the namespace it was looked up under,
+    // so neither shape may survive a render.
+    const isUnresolved = (summary: string) => /^(agent:)?tools\./.test(summary)
     for (const name of registeredTools()) {
       if (debugTools.has(name)) {
         continue
       }
       for (const language of SUPPORTED_LANGUAGES) {
         const t = i18n.getFixedT(language)
-        // An empty `ui` payload exercises the renderer's no-data branch, which must still be a
-        // translated string and not the raw key or an empty summary.
-        const summary = toolRenderer(name).summary({}, t)
-        expect(summary, `${language} agent:tools.${name}`).not.toBe("")
-        expect(summary, `${language} agent:tools.${name}`).not.toContain("agent:tools.")
+        const renderer = toolRenderer(name)
+        // Both branches of the renderers' shapes: the no-data branch, and the branch where a `ui`
+        // payload carries a name/target (which is what the archivist tools' `_target` keys are
+        // for). A payload with only a target and no name must not fall through to the bare key.
+        const summaries = [
+          renderer.summary({}, t),
+          renderer.summary({ name: "Probe", target: "Probe", count: 2 }, t),
+          renderer.summary({ target: "Probe", count: 2 }, t),
+        ]
+        for (const summary of summaries) {
+          expect(summary, `${language} agent:tools.${name}`).not.toBe("")
+          expect(summary, `${language} agent:tools.${name}`).not.toSatisfy(isUnresolved)
+        }
+        // The archivist shape has a `_target` sibling: it must resolve to the variant text, not
+        // fall back to the bare summary and not to the key. (`propose_setting_change` also has a
+        // `summary_target` key but reads a different field, so the check is limited to the archivist
+        // tools whose renderer is the shared one.)
+        if (hasTargetVariant(name)) {
+          const withTarget = renderer.summary({ name: "Probe", count: 1 }, t)
+          const bare = renderer.summary({}, t)
+          expect(withTarget, `${language} agent:tools.${name}_target`).not.toBe(bare)
+          expect(withTarget, `${language} agent:tools.${name}_target`).not.toSatisfy(isUnresolved)
+          const targetOnly = renderer.summary({ target: "Probe" }, t)
+          expect(targetOnly, `${language} agent:tools.${name}_target (target only)`).not.toSatisfy(
+            isUnresolved,
+          )
+          // The variant and the bare summary are the two distinct strings the locale table holds;
+          // comparing against the table itself catches a renderer that resolves *a* key but not
+          // the one for its branch (the shared archivist shape resolves both only when the
+          // namespace prefix is there).
+          const table = (language === "en" ? enAgent : zhAgent) as unknown as {
+            tools: Record<string, Record<string, string>>
+          }
+          expect(withTarget).toBe(
+            (table.tools[name]?.summary_target ?? "").replace("{{target}}", "Probe"),
+          )
+        }
       }
     }
   })

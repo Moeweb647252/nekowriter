@@ -1481,3 +1481,36 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   `crates/server/tests/m11_next_pid_invariant.rs::restoring_an_older_version_does_not_lower_the_pid_counter`
   and `...::a_redraft_keeps_the_pid_counter`; both integration tests fail with the helper call
   reverted.
+
+### D-124 Archivist tool cards resolve their summaries; the tab title and the error boundary are localized
+- **Context**: the final review found three user-visible strings that bypassed the i18n contract, and
+  the test that should have caught the first one could not fail.
+  (a) `archivistSummary` in `features/agent/toolRenderers.ts` built its key with `summaryKey(name)` —
+  `tools.<name>.summary` — and passed it to the component's `t`, whose default namespace is `common`.
+  The `agent:` namespace was missing, so i18next resolved nothing and all twelve archivist tool
+  cards rendered the literal key: a maintenance session showed `tools.create_entity.summary` instead
+  of "Created an entity (1 field)". Reproduced against the real en resources before fixing.
+  (b) `i18n/locales.test.ts` guarded that renderer with `expect(summary).not.toContain("agent:tools.")`
+  — and a key *without* the prefix renders as `tools.x.summary`, which that assertion accepts. It
+  also passed `ui = {}`, so the `_target` branch was never exercised. A canonical "a test that
+  proves nothing", in the same family the project already found twice.
+  (c) The router's `RouteError` — the app's only `errorElement`, hence the one screen a failed lazy
+  load can show — hardcoded "Something went wrong" and "Reload" while `common:error_title` and
+  `common:retry` already existed, and `index.html` shipped the scaffold title `vite-app` with
+  nothing ever setting `document.title`.
+- **Decision**: (a) the archivist renderer qualifies both keys with `agent:` and falls back to the
+  bare summary when a tool of the shape has no `summary_target` sibling (`record_appearances`
+  reports a count, not a target), so the shared renderer is total over its inputs. (b) the
+  assertion now compares the *resolved* string against the locale table itself
+  (`t` and the table's `summary_target` with `{{target}}` substituted), renders both branches of
+  every registered tool, and rejects any unresolved `(agent:)?tools.*` shape — it fails on the
+  exact bug (`expected 'Created an entity (1 fields)' to be 'Created Probe'`). (c) `RouteError`
+  renders `common:error_title`, `common:error_body` and `common:retry` through `t()`;
+  `index.html` carries the product name as the pre-boot fallback, and `applyDocumentLanguage` sets
+  `document.title` from `common:app_name` whenever the language changes.
+- **Consequences**: no tool card and no error screen can show a raw key or unlocalized English, and
+  the locale test now fails before the renderer does. Tests:
+  `web/src/i18n/locales.test.ts` (both branches, resolved text compared to the table),
+  `web/src/i18n/language.test.ts` (the title follows the locale) and
+  `web/src/app/router.test.tsx` (the boundary renders zh-CN text and not the English literal; the
+  file is `.tsx` because it now renders JSX). Each was verified to fail with its fix reverted.

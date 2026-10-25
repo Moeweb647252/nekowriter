@@ -1,5 +1,6 @@
 import { createBrowserRouter, type RouteObject } from "react-router"
 import { RouterProvider } from "react-router/dom"
+import { useTranslation } from "react-i18next"
 
 import { AppShell } from "@/app/shell/AppShell"
 
@@ -251,17 +252,24 @@ export const routes: RouteObject[] = [
 
 const router = createBrowserRouter(routes)
 
-function RouteError() {
+/**
+ * The router's single error boundary (spec/11 §3). It is the fallback for a failed lazy-route
+ * load, so it renders before any page component exists: it must go through `t()` like every other
+ * user-visible string, or the one screen an author sees on a broken load is English in zh-CN.
+ */
+export function RouteError() {
+  const { t } = useTranslation()
   return (
     <div className="flex min-h-svh items-center justify-center p-6">
       <div className="text-center">
-        <h1 className="text-lg font-medium">Something went wrong</h1>
+        <h1 className="text-lg font-medium">{t("common:error_title")}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">{t("common:error_body")}</p>
         <button
           type="button"
           className="mt-3 text-sm underline"
           onClick={() => window.location.reload()}
         >
-          Reload
+          {t("common:retry")}
         </button>
       </div>
     </div>

@@ -9,10 +9,14 @@ describe("language persistence", () => {
     await setLanguage("en")
   })
 
-  it("setLanguage switches i18next, the document language and the store", async () => {
+  it("setLanguage switches i18next, the document language, the title and the store", async () => {
     await setLanguage("zh-CN")
     expect(i18n.language).toBe("zh-CN")
     expect(document.documentElement.lang).toBe("zh-CN")
+    // The tab title is user-visible text and follows the locale (spec/11 §6), so a scaffold value
+    // like `vite-app` cannot reach an author.
+    expect(document.title).toBe(i18n.t("common:app_name"))
+    expect(document.title).not.toBe("")
     expect(useUiStore.getState().language).toBe("zh-CN")
   })
 

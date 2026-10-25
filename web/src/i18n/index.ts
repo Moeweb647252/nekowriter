@@ -83,6 +83,10 @@ export function initialLanguage(): Language {
 
 export function applyDocumentLanguage(language: Language) {
   document.documentElement.lang = language
+  // The tab title is user-visible text, so it comes from the locale data like every other string.
+  // `index.html` carries the product name as the pre-boot fallback for the moment before React
+  // mounts (spec/11 §6).
+  document.title = i18n.t("common:app_name", { lng: language })
 }
 
 /**

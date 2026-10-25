@@ -58,9 +58,21 @@ function payload(ui: unknown): UiPayload {
   return typeof ui === "object" && ui !== null ? (ui as UiPayload) : {}
 }
 
-/** The i18n key of a tool's summary (`agent:tools.<name>.summary`, spec/11 §5.3). */
+/**
+ * The i18n key of a tool's summary (`tools.<name>.summary`).
+ *
+ * The key is namespace-relative: every call site passes it through the renderer's `t`, which is a
+ * component `t()` with `common` as its default namespace, so the lookup needs the explicit
+ * `agent:` prefix. Exported without it for the callers that build a sibling key from it, so
+ * [`summaryKey`] and its `_target` sibling stay in one place.
+ */
 export function summaryKey(name: string): string {
   return `tools.${name}.summary`
+}
+
+/** The namespace-qualified key a summary is looked up with. */
+function summaryI18nKey(name: string): string {
+  return `agent:${summaryKey(name)}`
 }
 
 const DEFAULT: ToolRenderer = {
@@ -441,14 +453,27 @@ const REGISTRY: Record<string, ToolRenderer> = {
   },
 }
 
-/** The archivist tools share one summary shape: the action's verb plus the target's name. */
+/**
+ * The archivist tools share one summary shape: the action's verb plus the target's name.
+ *
+ * Both keys need their `agent:` namespace: `t` here is the component's `t()`, whose default
+ * namespace is `common`, so without the prefix i18next resolves nothing and the card shows the
+ * literal key. Not every tool of the shape has a `summary_target` sibling
+ * (`record_appearances` reports a count, not a target), so the target variant is only used where
+ * the locale table declares one — `t` reports a missing key by returning it unchanged.
+ */
 function archivistSummary(name: string, ui: unknown, t: TFunction): string {
   const data = payload(ui)
   const target = str(data, "name") ?? str(data, "target") ?? ""
   const count = num(data, "count") ?? 0
-  return target === ""
-    ? t(summaryKey(name), { count })
-    : t(`${summaryKey(name)}_target`, { target, count })
+  if (target !== "") {
+    const variant = t(`agent:${summaryKey(name)}_target`, { target, count })
+    // A tool without a target variant renders the bare summary instead of the unresolved key.
+    if (!variant.startsWith("agent:tools.") && !variant.startsWith("tools.")) {
+      return variant
+    }
+  }
+  return t(summaryI18nKey(name), { count })
 }
 
 /** The renderer of a tool, or the generic fallback. */
