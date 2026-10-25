@@ -6,4 +6,9 @@ import type { BookDto } from "./BookDto";
  * `start_conception` book started (absent when no conception model was configured, in which
  * case `warnings` carries `model.missing_role`).
  */
-export type CreateBookResponse = { book: BookDto, session_id: number | null, warnings: Array<string>, };
+export type CreateBookResponse = { book: BookDto, 
+/**
+ * Always present (`null` when no session started): the generated TypeScript type declares
+ * `number | null`, and the New book dialog's landing decision tests it against `null`.
+ */
+session_id: number | null, warnings: Array<string>, };

@@ -6,6 +6,7 @@ import type { BookDto } from "./BookDto";
  */
 export type ConceptionFinalizeResponse = { book: BookDto, 
 /**
- * The `canon_seed` session finalize started, when an archivist model is configured.
+ * The `canon_seed` session finalize started, when an archivist model is configured; present
+ * as `null` otherwise, matching the generated `number | null` type.
  */
 seed_session_id: number | null, warnings: Array<string>, };
