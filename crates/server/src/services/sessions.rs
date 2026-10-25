@@ -963,11 +963,16 @@ pub async fn continue_session(
     state: &AppState,
     session_id: i32,
 ) -> Result<crate::api::dto::SessionDto, AppError> {
-    // A stop is a cancellation: let the cancelled runner finish its last write before the
-    // status change, so the two cannot interleave (spec/03 §6, D-034).
+    // Wait for the previous runner to be **gone**, whatever ended it. A stopped runner is
+    // cancelled and must finish its last write (spec/03 §6, D-034); a failed or interrupted
+    // runner is exiting on its own after committing the terminal status, and `spawn` treats any
+    // live handle as an active runner (its no-op guard). Without this wait, a Continue that lands
+    // between the terminal commit and the runner's exit loses its spawn and leaves the session
+    // `running` with no runner (spec/03 §14, D-100). Continue only admits `stopped`, `failed` and
+    // `interrupted`, so there is no parked-runner case (held/paused are `resume`'s statuses).
     state
         .manager()
-        .wait_cancelled(session_id, std::time::Duration::from_secs(10))
+        .wait_for(session_id, std::time::Duration::from_secs(10))
         .await;
     let db = state.db().clone();
     let (events, dto) = services::write(&db, move |tx| {

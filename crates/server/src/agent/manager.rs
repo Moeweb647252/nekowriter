@@ -45,11 +45,43 @@ struct RunnerHandle {
 pub struct SessionManager {
     runners: Arc<Mutex<HashMap<i32, RunnerHandle>>>,
     generation: Arc<std::sync::atomic::AtomicU64>,
+    /// Test-only: holds one exiting runner between `drive` returning and its handle being
+    /// removed, so a test can deterministically land `continue` inside the dying-runner window.
+    #[cfg(any(test, feature = "testing"))]
+    exit_gate: Arc<Mutex<Option<Arc<TestExitGate>>>>,
 }
+
+/// Test-only synchronization for the window between a runner's final transition and the removal
+/// of its handle (D-100). Production builds do not contain it.
+#[cfg(any(test, feature = "testing"))]
+#[derive(Default)]
+pub struct TestExitGate {
+    /// Notified once when the held runner reaches the gate, so the test knows the row's committed
+    /// status and the runner's exit are still separated.
+    pub entered: tokio::sync::Notify,
+    /// Notified when the runner is released; a test may release it early instead of waiting for
+    /// the hold to expire.
+    pub release: tokio::sync::Notify,
+    /// Notified after the held runner's handle was removed, so the session is genuinely idle.
+    pub exited: tokio::sync::Notify,
+}
+
+/// How long a gated runner waits before releasing itself, so a forgotten gate cannot hang a test.
+#[cfg(any(test, feature = "testing"))]
+const TEST_EXIT_HOLD: Duration = Duration::from_secs(2);
 
 impl SessionManager {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Test-only: arms a deterministic gate that holds the **next** runner to exit in the window
+    /// between its final write and the removal of its handle (D-100).
+    #[cfg(any(test, feature = "testing"))]
+    pub fn test_hold_next_runner_exit(&self) -> Arc<TestExitGate> {
+        let gate = Arc::new(TestExitGate::default());
+        *lock(&self.exit_gate) = Some(gate.clone());
+        gate
     }
 
     /// Spawns a runner unless a live one is already active for this session (spec/03 §14).
@@ -76,6 +108,8 @@ impl SessionManager {
             .generation
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             + 1;
+        #[cfg(any(test, feature = "testing"))]
+        let exit_gate_for_task = self.exit_gate.clone();
         let task = tokio::spawn(async move {
             // The shared cell, not its current value: `cancel` writes the reason after this task
             // started, so a value captured here would always be `None` and every cancellation
@@ -89,6 +123,18 @@ impl SessionManager {
             if let Err(error) = runner::drive(ctx).await {
                 tracing::error!(session_id, error = %error, "session runner failed");
             }
+            // Test-only window (D-100): hold this dying runner after its final transition and
+            // before its handle disappears, so a test can prove that Continue cannot lose the
+            // spawn. A production build has neither the gate nor the wait.
+            #[cfg(any(test, feature = "testing"))]
+            let gate = {
+                let held = lock(&exit_gate_for_task).take();
+                if let Some(gate) = &held {
+                    gate.entered.notify_one();
+                    let _ = tokio::time::timeout(TEST_EXIT_HOLD, gate.release.notified()).await;
+                }
+                held
+            };
             // Remove the entry only when it is still this runner's own handle: a cancelled
             // runner that is exiting must not delete the handle of the runner that replaced it.
             let mut runners = lock(&runners_for_task);
@@ -97,6 +143,11 @@ impl SessionManager {
                 .is_some_and(|handle| handle.generation == generation)
             {
                 runners.remove(&session_id);
+            }
+            drop(runners);
+            #[cfg(any(test, feature = "testing"))]
+            if let Some(gate) = gate {
+                gate.exited.notify_one();
             }
         });
         runners.insert(
