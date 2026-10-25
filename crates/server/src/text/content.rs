@@ -66,6 +66,22 @@ pub fn repair_next_pid(content: &mut ChapterContent) {
     }
 }
 
+/// Keeps `next_pid` at least as high as it was, when a write replaces the whole document with one
+/// that carries fewer paragraphs.
+///
+/// Pids are never reused (spec/02 §5 invariant 3: "`next_pid` only grows"), but a whole-document
+/// replacement can carry fewer pids than the state it replaces: a redraft clears the text, and a
+/// restore puts back an older version. Without this the counter went *backwards* — after a redraft
+/// of a three-paragraph chapter it was 1 again, so the writer's next `insert_text` handed out the
+/// pid `p1` that the archived text still used and that the old version still holds. `previous` is
+/// the document being replaced; its own counter was already repaired when it was stored.
+pub fn keep_next_pid(content: &mut ChapterContent, previous: &ChapterContent) {
+    repair_next_pid(content);
+    if content.next_pid < previous.next_pid {
+        content.next_pid = previous.next_pid;
+    }
+}
+
 /// The content's total word count.
 pub fn content_word_count(content: &ChapterContent) -> i32 {
     content.paragraphs.iter().fold(0i32, |total, paragraph| {
@@ -405,6 +421,31 @@ mod tests {
         let mut content = doc(&[("p1", "text")], 7, false);
         repair_next_pid(&mut content);
         assert_eq!(content.next_pid, 7);
+    }
+
+    #[test]
+    fn keep_next_pid_survives_a_whole_document_replacement() {
+        // A redraft: the replacement is empty, and the counter must not restart at 1.
+        let previous = doc(&[("p1", "a"), ("p2", "b"), ("p3", "c")], 4, false);
+        let mut cleared = ChapterContent::default();
+        keep_next_pid(&mut cleared, &previous);
+        assert_eq!(cleared.next_pid, 4);
+        assert_eq!(allocate_pid(&mut cleared), "p4");
+
+        // A restore: the older document's own counter is lower than the current one.
+        let current = doc(
+            &[("p1", "a"), ("p2", "b"), ("p3", "c"), ("p4", "d")],
+            5,
+            false,
+        );
+        let mut restored = doc(&[("p1", "a"), ("p2", "b")], 3, false);
+        keep_next_pid(&mut restored, &current);
+        assert_eq!(restored.next_pid, 5);
+
+        // A document whose own pids are above its counter is repaired first, then kept monotonic.
+        let mut repaired = doc(&[("p9", "a")], 1, false);
+        keep_next_pid(&mut repaired, &previous);
+        assert_eq!(repaired.next_pid, 10);
     }
 
     #[test]

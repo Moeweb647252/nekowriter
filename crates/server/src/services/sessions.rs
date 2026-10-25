@@ -604,12 +604,14 @@ async fn apply_creation_side_effects(
                     },
                 )
                 .await?;
+                // The text is cleared, but the pid counter keeps growing: a redraft must not
+                // hand the writer a pid the archived text already used (spec/02 §5 invariant 3).
+                let mut cleared_content = crate::db::json::ChapterContent::default();
+                crate::text::keep_next_pid(&mut cleared_content, &content);
                 chapters::ActiveModel {
                     id: Set(chapter_id),
-                    content: Set(crate::db::json::to_json(
-                        &crate::db::json::ChapterContent::default(),
-                    )
-                    .map_err(|err| AppError::internal(err.to_string()))?),
+                    content: Set(crate::db::json::to_json(&cleared_content)
+                        .map_err(|err| AppError::internal(err.to_string()))?),
                     content_version: Set(chapter.content_version + 1),
                     word_count: Set(0),
                     status: Set(ChapterStatus::Drafting.as_str().to_owned()),

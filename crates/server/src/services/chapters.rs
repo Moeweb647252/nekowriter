@@ -1015,7 +1015,10 @@ pub async fn restore_inner(
     )
     .await?;
 
-    let restored: ChapterContent = parse_json("chapter_versions.content", &version.content)?;
+    let mut restored: ChapterContent = parse_json("chapter_versions.content", &version.content)?;
+    // A restored version is older than the text it replaces, so its own counter can be lower.
+    // Pids are never reused (spec/02 §5 invariant 3), so the counter keeps the current value.
+    text::keep_next_pid(&mut restored, &current);
     let word_count = text::content_word_count(&restored);
     let version_no = existing.content_version + 1;
     let timestamp = now();

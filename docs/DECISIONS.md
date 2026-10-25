@@ -1456,3 +1456,28 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   reverting the stub: 2 of 6 full runs failed again with the same error, and with the stub 10 of 10
   consecutive full runs passed (188/188). A future component that mounts a Radix popup in a test
   needs no per-file stub.
+
+### D-123 A whole-document replacement keeps `next_pid` monotonic
+- **Context**: spec/02 §5 invariant 3 says "pids are unique within a chapter and never reused
+  (`next_pid` only grows)". Two operations replace the whole document with one that can carry
+  *fewer* pids than the state it replaces, and both stored that document's own counter unchanged:
+  a redraft clears the text (`ChapterContent::default()`, counter 1) and a version restore writes
+  back an older, shorter document with its original counter. The final review measured it — a
+  three-paragraph chapter whose counter was 4 went back to **1** after a redraft, and a restore put
+  a counter of 6 back to 5. The next `insert_text` then handed out `p1` while the backup version
+  and the archived text still held that pid, which is exactly what invariant 3 forbids, and it
+  breaks the "a version is a snapshot of a chapter's text" assumption the History tab and the
+  redraft's "ticked issues are listed by their quotes, because their pids belong to the archived
+  text" rule (spec/08 §3.6) rest on.
+- **Decision**: one helper, `text::keep_next_pid(content, previous)`, repairs the replacement's
+  counter against its own pids and then raises it to the previous document's counter when that is
+  higher. The redraft path (`sessions::apply_creation_side_effects`) and the restore path
+  (`chapters::restore_inner`) call it. `repair_next_pid` keeps its meaning — "at least one above
+  every pid present" — and stays the first step.
+- **Consequences**: the counter is monotonic across every whole-document write, so a redraft's
+  first paragraph never reuses an archived pid and a restored version cannot hand one out either.
+  Tests: `text::content::tests::keep_next_pid_survives_a_whole_document_replacement` (redraft,
+  restore and a hand-edited under-counted row),
+  `crates/server/tests/m11_next_pid_invariant.rs::restoring_an_older_version_does_not_lower_the_pid_counter`
+  and `...::a_redraft_keeps_the_pid_counter`; both integration tests fail with the helper call
+  reverted.
