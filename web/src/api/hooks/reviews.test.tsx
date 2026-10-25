@@ -33,7 +33,9 @@ function wrapperFor(client: QueryClient) {
 
 describe("useSendBack", () => {
   it("invalidates the chapter's track list, not a key built from the chapter id", async () => {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
     const chapterId = 5
     const trackId = 2
     const bookId = 1
@@ -47,14 +49,22 @@ describe("useSendBack", () => {
       wrapper: wrapperFor(client),
     })
     await act(async () => {
-      await result.current.mutateAsync({ feedback: "fix it", mode: "revise" })
+      await result.current.mutateAsync({
+        feedback: "fix it",
+        mode: "revise",
+        issue_indexes: [],
+      })
     })
 
     await waitFor(() => {
-      const track = client.getQueryCache().find({ queryKey: keys.tracks.chapters(trackId) })
+      const track = client
+        .getQueryCache()
+        .find({ queryKey: keys.tracks.chapters(trackId) })
       expect(track?.state.isInvalidated).toBe(true)
     })
-    const wrongKey = client.getQueryCache().find({ queryKey: keys.tracks.chapters(chapterId) })
+    const wrongKey = client
+      .getQueryCache()
+      .find({ queryKey: keys.tracks.chapters(chapterId) })
     expect(wrongKey?.state.isInvalidated).toBe(false)
   })
 })
