@@ -16,6 +16,8 @@ fn hints(kind: &str, phase: &str, language: &str) -> DemoHints {
         canon_mode: "canon".to_owned(),
         draft: Vec::new(),
         saved_entries: 0,
+        characters: Vec::new(),
+        approved_docs: Vec::new(),
     }
 }
 
@@ -60,23 +62,18 @@ fn planning_submits_an_outline_in_the_book_language() {
 /// panel shows something and the runtime's nudge path is exercised.
 #[test]
 fn other_kinds_reply_with_text_for_now() {
-    // `research` is no longer in this list: M8 gives it a real plan (see
-    // `the_researcher_saves_entries_then_finishes` below).
+    // `research` (M8) and `canon_seed`/`conception` (M9) are no longer in this list: they have
+    // real plans (see the tests below).
     let provider = DemoProvider::new();
-    for (kind, phase) in [
-        ("canon_seed", "none"),
-        ("conception", "none"),
-        ("unknown_kind", "none"),
-    ] {
-        let hints = hints(kind, phase, "en");
-        let plan = choose_action(&hints, provider.lang(Some(&hints)));
-        assert!(plan.tools.is_empty(), "{kind}/{phase}: no tools yet");
-        assert_eq!(
-            plan.text.as_deref(),
-            Some(provider.lang(Some(&hints)).closing_message.as_str()),
-            "{kind}/{phase}"
-        );
-    }
+    let (kind, phase) = ("unknown_kind", "none");
+    let hints = hints(kind, phase, "en");
+    let plan = choose_action(&hints, provider.lang(Some(&hints)));
+    assert!(plan.tools.is_empty(), "{kind}/{phase}: no tools yet");
+    assert_eq!(
+        plan.text.as_deref(),
+        Some(provider.lang(Some(&hints)).closing_message.as_str()),
+        "{kind}/{phase}"
+    );
 }
 
 #[tokio::test]
@@ -514,4 +511,128 @@ fn the_researcher_saves_entries_then_finishes() {
     assert_eq!(plan.tools[0].1, "finish_research");
     assert_eq!(plan.tools[0].2["report"], lang.research_report);
     assert!(!lang.research_report.is_empty());
+}
+
+/// The conception plan (spec/04 §7.2): ask two questions, then the materials, then a review, then
+/// a revision of exactly the unapproved documents, then the closing message.
+#[test]
+fn the_conception_flow_asks_writes_reviews_and_revises() {
+    let provider = DemoProvider::new();
+    let mut hints = hints("conception", "none", "en");
+    let lang = provider.lang(Some(&hints));
+
+    // Step 0: two questions, no text.
+    let plan = choose_action(&hints, lang);
+    assert_eq!(plan.tools.len(), 1);
+    assert_eq!(plan.tools[0].1, "ask_user");
+    let questions = plan.tools[0].2["questions"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(questions.len(), 2, "the demo asks two questions");
+    assert!(
+        questions[0]["options"]
+            .as_array()
+            .is_some_and(|o| !o.is_empty())
+    );
+
+    // Step 1: three documents, two characters and the topics.
+    hints.step_in_phase = 1;
+    let plan = choose_action(&hints, lang);
+    let names: Vec<&str> = plan.tools.iter().map(|call| call.1.as_str()).collect();
+    assert_eq!(
+        names,
+        vec![
+            "write_setting_doc",
+            "write_setting_doc",
+            "write_setting_doc",
+            "upsert_character",
+            "upsert_character",
+            "set_research_topics",
+        ]
+    );
+    assert_eq!(plan.tools[0].2["doc"], "outline");
+    assert_eq!(plan.tools[1].2["doc"], "world");
+    assert_eq!(plan.tools[2].2["doc"], "protagonist");
+
+    // Step 2: request_review with a non-empty message.
+    hints.step_in_phase = 2;
+    let plan = choose_action(&hints, lang);
+    assert_eq!(plan.tools[0].1, "request_review");
+    assert!(
+        plan.tools[0].2["message"]
+            .as_str()
+            .is_some_and(|text| !text.is_empty()),
+        "the review message is corpus text"
+    );
+
+    // Step 3: only the unapproved documents are rewritten; the world one is the rejected one.
+    hints.step_in_phase = 3;
+    hints.approved_docs = vec!["outline".to_owned(), "protagonist".to_owned()];
+    let plan = choose_action(&hints, lang);
+    let docs: Vec<&str> = plan
+        .tools
+        .iter()
+        .filter_map(|call| call.2["doc"].as_str())
+        .collect();
+    assert_eq!(docs, vec!["world"], "only the rejected document is revised");
+
+    // Step 3 with everything approved: the closing message straight away.
+    hints.approved_docs = vec![
+        "outline".to_owned(),
+        "world".to_owned(),
+        "protagonist".to_owned(),
+    ];
+    let plan = choose_action(&hints, lang);
+    assert!(plan.tools.is_empty());
+    assert_eq!(plan.text.as_deref(), Some(lang.closing_message.as_str()));
+
+    // Step 4 always closes.
+    hints.step_in_phase = 4;
+    hints.approved_docs = Vec::new();
+    let plan = choose_action(&hints, lang);
+    assert!(plan.tools.is_empty());
+    assert_eq!(plan.text.as_deref(), Some(lang.closing_message.as_str()));
+}
+
+/// The canon-seed plan (spec/04 §7.2, spec/06 §7): one entity per design, the rank-1 one the
+/// protagonist, then `finish_maintenance`.
+#[test]
+fn the_seed_plan_creates_one_entity_per_design() {
+    let provider = DemoProvider::new();
+    let mut hints = hints("canon_seed", "none", "en");
+    hints.characters = vec![
+        nekowriter_llm::types::DemoCharacter {
+            name: "Shen Yan".to_owned(),
+            role_label: "Protagonist".to_owned(),
+            summary: "A wanderer".to_owned(),
+            profile: "Quiet.".to_owned(),
+        },
+        nekowriter_llm::types::DemoCharacter {
+            name: "Liu Zhao".to_owned(),
+            role_label: "Female lead".to_owned(),
+            summary: "A deputy".to_owned(),
+            profile: "Watchful.".to_owned(),
+        },
+    ];
+    let lang = provider.lang(Some(&hints));
+    let first = choose_action(&hints, lang);
+    assert_eq!(first.tools[0].1, "create_entity");
+    assert_eq!(first.tools[0].2["name"], "Shen Yan");
+    assert_eq!(
+        first.tools[0].2["is_protagonist"], true,
+        "the rank-1 design is the protagonist"
+    );
+
+    hints.step_in_phase = 1;
+    let second = choose_action(&hints, lang);
+    assert_eq!(second.tools[0].2["name"], "Liu Zhao");
+    assert!(
+        second.tools[0].2.get("is_protagonist").is_none(),
+        "only the rank-1 design is the protagonist"
+    );
+
+    hints.step_in_phase = 2;
+    let finish = choose_action(&hints, lang);
+    assert_eq!(finish.tools[0].1, "finish_maintenance");
 }

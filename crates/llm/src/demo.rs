@@ -91,6 +91,12 @@ pub struct LangCorpus {
     pub timeline_title: String,
     #[serde(default)]
     pub proposal_text: String,
+    /// The `request_review` message of the conception flow (spec/04 §7.2).
+    #[serde(default)]
+    pub review_request: String,
+    /// The note appended to a document the author asked to revise (spec/04 §7.2).
+    #[serde(default)]
+    pub doc_revision: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -326,13 +332,15 @@ pub fn choose_action(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
         // M6.3: canon writes, one world-setting proposal, finish_maintenance.
         "chapter_maintenance" => maintenance_plan(hints, lang),
         "chapter_resync" => resync_plan(hints, lang),
-        // M9: create_entity per character design, then finish_maintenance.
-        "canon_seed" => text_plan(lang),
+        // M9: create_entity per character design (the rank-1 one as the protagonist), then
+        // finish_maintenance (spec/04 §7.2, spec/06 §7).
+        "canon_seed" => seed_plan(hints, lang),
         // M8: two knowledge entries saved from the corpus, then `finish_research` (spec/04 §7.2 —
         // no network: the demo researcher works from its own material).
         "research" => research_plan(hints, lang),
-        // M9 (conception) arrives with its milestone.
-        "conception" => text_plan(lang),
+        // M9: ask (2 questions) → the documents, the cast and the topics → request_review →
+        // revise what was not approved → a closing message (spec/04 §7.2).
+        "conception" => conception_plan(hints, lang),
         _ => text_plan(lang),
     }
 }
@@ -745,6 +753,149 @@ fn resync_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
             tools: vec![tool("finish_maintenance", json!({ "report": report }))],
             ..DemoPlan::default()
         },
+    }
+}
+
+/// The conception behavior of spec/04 §7.2, driven by `step_in_phase` and the approvals.
+///
+/// 0. `ask_user` with two corpus questions (the answers arrive through the answer API);
+/// 1. the three setting documents, two character designs and the research topics — one assistant
+///    turn with six calls, so a manual check sees the studio fill up at once;
+/// 2. `request_review`;
+/// 3. and later: revise every document whose revision is not approved (rewrite it with the corpus text and
+///    the corpus's revision note), then send one closing text message. When everything was
+///    approved the closing message comes immediately.
+fn conception_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
+    match hints.step_in_phase {
+        0 => DemoPlan {
+            tools: vec![tool(
+                "ask_user",
+                json!({
+                    "questions": lang.questions.iter().enumerate().map(|(index, question)| {
+                        json!({
+                            "id": format!("q{}", index + 1),
+                            "question": question.question,
+                            "options": question.options.iter().map(|option| json!({ "label": option })).collect::<Vec<_>>(),
+                        })
+                    }).collect::<Vec<_>>(),
+                }),
+            )],
+            ..DemoPlan::default()
+        },
+        1 => DemoPlan {
+            tools: vec![
+                tool(
+                    "write_setting_doc",
+                    json!({ "doc": "outline", "content": lang.setting_docs.outline }),
+                ),
+                tool(
+                    "write_setting_doc",
+                    json!({ "doc": "world", "content": lang.setting_docs.world }),
+                ),
+                tool(
+                    "write_setting_doc",
+                    json!({ "doc": "protagonist", "content": lang.setting_docs.protagonist }),
+                ),
+                tool("upsert_character", character_argument(lang, 0, 1)),
+                tool("upsert_character", character_argument(lang, 1, 2)),
+                tool(
+                    "set_research_topics",
+                    json!({
+                        "topics": lang.research_topics.iter().map(|topic| json!({
+                            "topic": topic.topic,
+                            "requirements": topic.requirements,
+                            "scope": topic.scope,
+                        })).collect::<Vec<_>>(),
+                    }),
+                ),
+            ],
+            ..DemoPlan::default()
+        },
+        2 => DemoPlan {
+            text: Some(lang.review_request.clone()),
+            tools: vec![tool(
+                "request_review",
+                json!({ "message": lang.review_request }),
+            )],
+        },
+        _ => {
+            // Revise the documents the author did not approve (one rewrite each, carrying the
+            // corpus's revision note); otherwise the closing message.
+            let unapproved: Vec<&str> = ["outline", "world", "protagonist"]
+                .into_iter()
+                .filter(|kind| !hints.approved_docs.iter().any(|approved| approved == kind))
+                .collect();
+            if hints.step_in_phase >= 4 || unapproved.is_empty() {
+                return text_plan(lang);
+            }
+            let mut tools = Vec::new();
+            for kind in unapproved {
+                let base = match kind {
+                    "world" => &lang.setting_docs.world,
+                    "protagonist" => &lang.setting_docs.protagonist,
+                    _ => &lang.setting_docs.outline,
+                };
+                tools.push(tool(
+                    "write_setting_doc",
+                    json!({
+                        "doc": kind,
+                        "content": format!("{base}\n\n{}", lang.doc_revision),
+                    }),
+                ));
+            }
+            DemoPlan {
+                tools,
+                ..DemoPlan::default()
+            }
+        }
+    }
+}
+
+/// One `upsert_character` call from the corpus (the designs the book needs).
+fn character_argument(lang: &LangCorpus, index: usize, rank: i32) -> serde_json::Value {
+    let character = lang.characters.get(index).cloned().unwrap_or_default();
+    json!({
+        "name": character.name,
+        "role_label": character.role_label,
+        "summary": character.summary,
+        "profile": character.profile,
+        "rank": rank,
+    })
+}
+
+/// The canon-seed behavior of spec/04 §7.2: one `create_entity` per character design (the rank-1
+/// design with `is_protagonist`), then `finish_maintenance`.
+///
+/// The character designs travel in `demo_hints.characters`; `step_in_phase` walks them.
+fn seed_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
+    let step = hints.step_in_phase as usize;
+    if step < hints.characters.len() {
+        let character = &hints.characters[step];
+        let mut arguments = json!({
+            "kind": "character",
+            "name": character.name,
+            "summary": character.summary,
+            "description": character.profile,
+        });
+        if step == 0 {
+            arguments["is_protagonist"] = json!(true);
+            // Rank 1 is the most important (spec/06 §7: importance from rank).
+            arguments["importance"] = json!(5);
+        }
+        if !character.role_label.is_empty() {
+            arguments["attributes"] = json!({ "role": character.role_label });
+        }
+        return DemoPlan {
+            tools: vec![tool("create_entity", arguments)],
+            ..DemoPlan::default()
+        };
+    }
+    DemoPlan {
+        tools: vec![tool(
+            "finish_maintenance",
+            json!({ "report": lang.maintenance_report }),
+        )],
+        ..DemoPlan::default()
     }
 }
 

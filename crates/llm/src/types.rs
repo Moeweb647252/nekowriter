@@ -380,6 +380,23 @@ pub struct DemoHints {
     /// corpus's remaining entries instead of duplicating them (spec/04 §7.2).
     #[serde(default)]
     pub saved_entries: u32,
+    /// The book's character designs, so the Demo's `canon_seed` plan can create one entity per
+    /// design with the rank-1 one as the protagonist (spec/04 §7.2, spec/06 §7).
+    #[serde(default)]
+    pub characters: Vec<DemoCharacter>,
+    /// The setting-document kinds whose current revision is approved, so the Demo's conception
+    /// plan revises exactly the documents the author asked to change (spec/04 §7.2).
+    #[serde(default)]
+    pub approved_docs: Vec<String>,
+}
+
+/// One character design the Demo provider seeds canon from (spec/04 §7.2).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DemoCharacter {
+    pub name: String,
+    pub role_label: String,
+    pub summary: String,
+    pub profile: String,
 }
 
 /// One paragraph of the chapter the Demo provider is working on (D-077).

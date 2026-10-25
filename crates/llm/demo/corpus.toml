@@ -78,6 +78,10 @@ proposal_text = """
 
 望川城入夜后实行夜禁，街面只留巡夜人与持铜牌者行走。
 """
+review_request = "大纲、世界观、主角设定与人物都已经写完，资料主题也列好了。请重点看看世界观是否够具体、主角的动机是否成立。"
+doc_revision = """## 修订说明
+
+根据你的意见，收紧了叙述，补上具体的场景细节，并让主角的动机更直接。"""
 
 [zh.setting_docs]
 outline = """# 全书大纲
@@ -253,6 +257,10 @@ proposal_text = """
 
 After nightfall Wangchuan keeps a curfew; only night watchmen and tally holders walk the streets.
 """
+review_request = "The outline, world, protagonist and cast are drafted, and the research topics are listed. Look especially at whether the world is concrete enough and the protagonist's motive holds."
+doc_revision = """## Revision note
+
+Tightened the prose, added concrete scene detail, and made the protagonist's motive more direct, as you asked."""
 [en.setting_docs]
 outline = """# Book outline
 
