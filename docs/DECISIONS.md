@@ -1438,3 +1438,21 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   `chapter.session_exists` naming it; concurrent reviewer requests → one session; a direct second
   create refused; the guard is per role, so a reviewer session starts beside an open writer session
   and a second writer session is still refused). All four fail with the guard reverted.
+
+### D-122 The web test setup provides a ResizeObserver, so the gate stops flaking
+- **Context**: `scripts/check.sh` is the project's single gate, and its `web test` step failed
+  intermittently with `ReferenceError: ResizeObserver is not defined`, attributed to
+  `features/conception/conceptionStudio.test.tsx` ("offers Pause and Stop while the conception
+  session runs") and reported as an unhandled error. The final review measured it: **3 of 8** full
+  `pnpm --dir web test --run` runs were red, and none failed in isolation. jsdom implements no
+  `ResizeObserver` (verified directly against the installed copy), while the Radix primitives behind
+  shadcn's `Tooltip` and `DropdownMenu` construct one as soon as their content mounts. The throw
+  therefore lands in a layout effect *after* the clicking test's own assertions, which is why the
+  failure both moved between runs and named the wrong test.
+- **Decision**: `web/src/test/setup.ts` installs a no-op `ResizeObserver` when the environment has
+  none. It is test infrastructure only — no production code changes, and no assertion depends on
+  measured sizes; the tests assert on rendered output, and browsers provide the real object.
+- **Consequences**: the gate is deterministic for the tests that mount a tooltip. Verified by
+  reverting the stub: 2 of 6 full runs failed again with the same error, and with the stub 10 of 10
+  consecutive full runs passed (188/188). A future component that mounts a Radix popup in a test
+  needs no per-file stub.
