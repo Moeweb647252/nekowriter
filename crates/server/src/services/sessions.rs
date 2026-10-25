@@ -233,15 +233,17 @@ pub(crate) async fn create_inner(
     .insert(tx)
     .await?;
 
-    // A research session points its task at itself, so `run` can refuse a second one and the task
-    // list can deep-link into the agent panel (spec/07 §8 step 1). The status half of this is set
-    // by the creation side effects above; the link needs the session id, so it happens here.
+    // A research session points its task at itself and makes it `running`, so `run`, PATCH and
+    // DELETE can refuse a second session and the task list can deep-link into the agent panel
+    // (spec/07 §8 steps 1 and 5, spec/10 §2.5). Both columns land in this transaction: a research
+    // session has no chapter, so this is the creation side effect that must not be gated on one.
     if input.kind == SessionKind::Research
         && let Some(task_id) = input.research_task_id
     {
         research_tasks::ActiveModel {
             id: Set(task_id),
             session_id: Set(Some(session.id)),
+            status: Set("running".to_owned()),
             updated_at: Set(now),
             ..Default::default()
         }
@@ -438,8 +440,7 @@ fn frozen_tools(
 
 /// Domain side effects on creation (spec/03 §4): `chapter_write` sets the chapter to `drafting`
 /// (a redraft saves a `backup` version first and clears the text); `chapter_revise` sets
-/// `revising` and saves a `backup`; maintenance/re-sync set `canon_status` to `syncing`; a
-/// research session sets its task to `running`.
+/// `revising` and saves a `backup`; maintenance/re-sync set `canon_status` to `syncing`.
 async fn apply_creation_side_effects(
     tx: &sea_orm::DatabaseTransaction,
     input: &CreateSession,
@@ -543,18 +544,6 @@ async fn apply_creation_side_effects(
         _ => {}
     }
 
-    if input.kind == SessionKind::Research
-        && let Some(task_id) = input.research_task_id
-    {
-        research_tasks::ActiveModel {
-            id: Set(task_id),
-            status: Set("running".to_owned()),
-            updated_at: Set(now),
-            ..Default::default()
-        }
-        .update(tx)
-        .await?;
-    }
     Ok(track)
 }
 
@@ -824,53 +813,36 @@ async fn resume_inner(
             // Apply the kept effects (a phase change) when no feedback revoked them. This is the
             // transaction that finalizes the call, so the acceptance notice is appended here
             // (spec/03 §5.3 slot 1, §5.4).
-            if !revoke {
-                if let Some(phase) = effects.phase_to {
-                    if let Some(notice_key) = phase_notice(&held.name) {
-                        let content: crate::db::json::ChapterContent =
-                            crate::db::json::from_json_or_default(
-                                &chapters::Entity::find_by_id(
-                                    session.chapter_id.unwrap_or_default(),
-                                )
-                                .one(tx)
-                                .await?
-                                .map(|chapter| chapter.content)
-                                .unwrap_or_else(|| "{}".to_owned()),
-                            );
-                        let granularity = crate::agent::context::granularity_context(
-                            &prompts,
-                            session::granularity_of(&session),
-                            phase,
-                            &content,
-                        );
-                        let rendered = prompts
-                            .render_value(
-                                notice_key,
-                                crate::prompts::template_value(&json!({
-                                    "granularity": granularity,
-                                })),
-                            )
-                            .map_err(|err| err.into_app_error())?;
-                        appendices.push(crate::db::json::Appendix {
-                            kind: crate::db::json::AppendixKind::EffectNotice,
-                            text: rendered.text,
-                            inbox_id: None,
-                        });
-                    }
-                    agent_sessions::ActiveModel {
-                        id: Set(session_id),
-                        phase: Set(phase.as_str().to_owned()),
-                        ..Default::default()
-                    }
-                    .update(tx)
-                    .await?;
+            if !revoke && let Some(phase) = effects.phase_to {
+                if let Some(notice_key) = phase_notice(&held.name) {
+                    let content = chapter_content_of(tx, session.chapter_id).await?;
+                    let granularity = crate::agent::context::granularity_context(
+                        &prompts,
+                        session::granularity_of(&session),
+                        phase,
+                        &content,
+                    );
+                    let rendered = prompts
+                        .render_value(
+                            notice_key,
+                            crate::prompts::template_value(&json!({
+                                "granularity": granularity,
+                            })),
+                        )
+                        .map_err(|err| err.into_app_error())?;
+                    appendices.push(crate::db::json::Appendix {
+                        kind: crate::db::json::AppendixKind::EffectNotice,
+                        text: rendered.text,
+                        inbox_id: None,
+                    });
                 }
-                if let Some(completion) = effects.complete {
-                    let mut completion_events =
-                        crate::agent::context::apply_completion(tx, &session, &held, completion)
-                            .await?;
-                    events.append(&mut completion_events);
+                agent_sessions::ActiveModel {
+                    id: Set(session_id),
+                    phase: Set(phase.as_str().to_owned()),
+                    ..Default::default()
                 }
+                .update(tx)
+                .await?;
             }
             agent_tool_calls::ActiveModel {
                 id: Set(held.id),
@@ -890,14 +862,29 @@ async fn resume_inner(
             }
             .update(tx)
             .await?;
+            // The completion half of the kept effects runs **after** the call row holds its final
+            // appendices, so sealing composes the right text; it also ends the siblings and
+            // transitions to `completed` (spec/03 §5.4), so the status must not be reopened.
+            let mut completed = false;
+            if !revoke && let Some(completion) = effects.complete {
+                let mut completion_events =
+                    runner::run_completion_handler(tx, &session, &held, Some(completion), &prompts)
+                        .await?;
+                events.append(&mut completion_events);
+                completed = true;
+            }
             held = runner::load_call(tx, held.id).await?;
             events.push(ServerEvent::SessionToolCall {
                 session_id,
                 tool_call: session::tool_call_dto(&held)?,
             });
-            let running = set_status(tx, &session, SessionStatus::Running, true).await?;
+            let updated = if completed {
+                session::load(tx, session_id).await?
+            } else {
+                set_status(tx, &session, SessionStatus::Running, true).await?
+            };
             events.push(ServerEvent::SessionUpdated {
-                session: session::to_dto(tx, &running, Vec::new()).await?,
+                session: session::to_dto(tx, &updated, Vec::new()).await?,
                 warnings: Vec::new(),
             });
         }
@@ -1208,9 +1195,13 @@ async fn answer_inner(
     .update(tx)
     .await?;
     let mut events = Vec::new();
+    // A completion effect runs the same handler finalize uses — domain effects, the siblings as
+    // `error.after_completion`, sealing, and the transition to `completed` (spec/03 §5.4). The
+    // call row above already holds its final appendices, so sealing composes the right text.
+    let completed = effects.complete.is_some();
     if let Some(completion) = effects.complete {
         let mut completion_events =
-            crate::agent::context::apply_completion(tx, &session, &call, completion).await?;
+            runner::run_completion_handler(tx, &session, &call, Some(completion), &prompts).await?;
         events.append(&mut completion_events);
     }
     let call = runner::load_call(tx, call.id).await?;
@@ -1218,8 +1209,13 @@ async fn answer_inner(
         session_id,
         tool_call: session::tool_call_dto(&call)?,
     });
-    let running = set_status(tx, &session, SessionStatus::Running, true).await?;
-    let dto = session::to_dto(tx, &running, Vec::new()).await?;
+    let dto = if completed {
+        // The completion handler left the session `completed`; do not reopen it.
+        session::to_dto(tx, &session::load(tx, session_id).await?, Vec::new()).await?
+    } else {
+        let running = set_status(tx, &session, SessionStatus::Running, true).await?;
+        session::to_dto(tx, &running, Vec::new()).await?
+    };
     events.push(ServerEvent::SessionUpdated {
         session: dto.clone(),
         warnings: Vec::new(),
@@ -1281,6 +1277,10 @@ async fn render_answer(
                 .map(|rendered| rendered.text)
                 .map_err(|err| err.into_app_error())
         }
+        // The debug session's awaiting tool (D-072: only a debug session can freeze it). It
+        // exists so the runtime tests can drive the answer path's effect application.
+        #[cfg(any(test, feature = "testing"))]
+        "test_ask" => Ok("answered".to_owned()),
         other => Err(AppError::validation(format!(
             "{other} does not accept an answer"
         ))),
