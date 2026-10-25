@@ -404,6 +404,25 @@ impl Fetcher {
                 url: raw_url.to_owned(),
             });
         }
+        // Every followable redirect hop was re-validated by the policy (spec/07 §7 step 2). A 3xx
+        // that reaches this point was *not* followed: reqwest only hands back a redirect response
+        // when it cannot represent the Location as an HTTP URI at all (`file:`, `mailto:`,
+        // `javascript:`, …) or when the header is missing — the policy never sees those. Returning
+        // it as a page would tell the model the page was empty, so report a failure instead. A
+        // non-http target is a refused redirect (step 2); a header-less 3xx is a malformed
+        // response, which step 9 classes as `network`.
+        if status.is_redirection() {
+            let has_location = response.headers().contains_key(reqwest::header::LOCATION);
+            return Err(FetchError::Failed {
+                reason: if has_location {
+                    FetchFailure::Blocked
+                } else {
+                    FetchFailure::Network
+                },
+                status: None,
+                url: raw_url.to_owned(),
+            });
+        }
         let final_url = response.url().to_string();
         let content_type = response
             .headers()
