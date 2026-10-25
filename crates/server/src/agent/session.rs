@@ -165,6 +165,11 @@ pub async fn transition(
     if terminal {
         sets.push("finished_at = ?");
         values.push(now.into());
+    } else {
+        // `finished_at` describes a terminal status only (spec/03 §3). A re-review re-opens a
+        // completed reviewer session (spec/03 §6), so leaving the terminal set must clear the old
+        // completion time instead of reporting a running session as finished.
+        sets.push("finished_at = NULL");
     }
     if from_running {
         sets.push("pause_requested = 0");
