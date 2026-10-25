@@ -254,3 +254,106 @@ fn passages_cover_consecutive_paragraphs_without_overlap() {
     unique.dedup();
     assert_eq!(unique, vec!["p1", "p2", "p3", "p4", "p5"], "{all:?}");
 }
+
+/// Repeated identical chunks are matched one to one (spec/07 §1.1 item 4): deleting one of two
+/// identical sections must keep exactly one row, not two or none.
+#[tokio::test]
+async fn duplicate_identical_chunks_are_matched_one_to_one() {
+    let app = TestApp::new().await;
+    let scope_id = scope(&app, "History").await;
+    let entry_id = entry(
+        &app,
+        scope_id,
+        "Dress",
+        "# Alpha\n\nalpha text\n\n# Alpha\n\nalpha text\n\n# Beta\n\nbeta text",
+    )
+    .await;
+    let before = chunks(&app, entry_id).await;
+    assert_eq!(before.len(), 3, "{before:?}");
+    let alpha_ids: Vec<i32> = before
+        .iter()
+        .filter(|row| row.text.contains("alpha text"))
+        .map(|row| row.id)
+        .collect();
+    assert_eq!(alpha_ids.len(), 2, "two identical chunks: {before:?}");
+
+    // Remove one of the two identical sections: exactly one alpha row must survive.
+    let (status, body) = app
+        .patch(
+            &format!("/api/knowledge/entries/{entry_id}"),
+            json!({ "content": "# Alpha\n\nalpha text\n\n# Beta\n\nbeta text" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let after = chunks(&app, entry_id).await;
+    assert_eq!(after.len(), 2, "{after:?}");
+    let survivors: Vec<i32> = after
+        .iter()
+        .filter(|row| row.text.contains("alpha text"))
+        .map(|row| row.id)
+        .collect();
+    assert_eq!(
+        survivors.len(),
+        1,
+        "one identical chunk is kept, one is deleted: {after:?}"
+    );
+    assert!(
+        alpha_ids.contains(&survivors[0]),
+        "the survivor is one of the original rows"
+    );
+}
+
+/// Missing vec tables at startup are recreated (spec/07 §3: "or the vec tables are missing").
+#[tokio::test]
+async fn a_startup_with_missing_vec_tables_recreates_them() {
+    let app = TestApp::new().await;
+    let scope_id = scope(&app, "History").await;
+    entry(&app, scope_id, "Tea", "# Tea\n\nSong tea houses.").await;
+    indexer::run_once(app.state()).await.expect("indexer");
+
+    app.execute(
+        "DROP TRIGGER IF EXISTS search_docs_vec_ad; \
+         DROP TRIGGER IF EXISTS knowledge_chunks_vec_ad; \
+         DROP TABLE vec_book; \
+         DROP TABLE vec_knowledge",
+    )
+    .await;
+    nekowriter::search::initialize(app.state())
+        .await
+        .expect("initialize");
+    let tables: i64 = {
+        use sea_orm::ConnectionTrait;
+        let row = app
+            .db()
+            .conn()
+            .query_one_raw(sea_orm::Statement::from_string(
+                sea_orm::DatabaseBackend::Sqlite,
+                "SELECT count(*) AS c FROM sqlite_master WHERE type = 'table' \
+                 AND name IN ('vec_book','vec_knowledge')",
+            ))
+            .await
+            .expect("query")
+            .expect("row");
+        row.try_get::<i64>("", "c").expect("count")
+    };
+    assert_eq!(tables, 2, "both vec tables are recreated");
+    let triggers: i64 = {
+        use sea_orm::ConnectionTrait;
+        let row = app
+            .db()
+            .conn()
+            .query_one_raw(sea_orm::Statement::from_string(
+                sea_orm::DatabaseBackend::Sqlite,
+                "SELECT count(*) AS c FROM sqlite_master WHERE type = 'trigger' \
+                 AND name IN ('search_docs_vec_ad','knowledge_chunks_vec_ad')",
+            ))
+            .await
+            .expect("query")
+            .expect("row");
+        row.try_get::<i64>("", "c").expect("count")
+    };
+    assert_eq!(triggers, 2, "their delete triggers come back too");
+    // The document is pending again and the next batch rebuilds the vector.
+    let report = indexer::run_once(app.state()).await.expect("indexer");
+    assert_eq!(report.stored, 1, "{report:?}");
+}
