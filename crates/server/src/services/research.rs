@@ -137,6 +137,9 @@ async fn create_inner(
             .one(tx)
             .await?
             .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
+        // Setting materials include the draft research topics, which the conception agent owns
+        // (`set_research_topics` replaces them): they are locked while it runs (spec/08 §1.4).
+        super::setting_docs::ensure_editable(tx, book_id).await?;
         language = Some(book.writing_language);
     } else if language.is_none() {
         fields.insert(
@@ -205,6 +208,7 @@ async fn patch_inner(
     if is_open(&existing) {
         return Err(open_session_error(&existing));
     }
+    ensure_topics_editable(tx, &existing).await?;
     let mut active = research_tasks::ActiveModel {
         id: Set(task_id),
         updated_at: Set(now()),
@@ -272,6 +276,7 @@ async fn delete_inner(
     if is_open(&existing) {
         return Err(open_session_error(&existing));
     }
+    ensure_topics_editable(tx, &existing).await?;
     research_tasks::Entity::delete_by_id(task_id)
         .exec(tx)
         .await?;
@@ -404,6 +409,19 @@ async fn attach_scope(
 /// True while the task has a session that has not finished (spec/07 §8 step 1).
 pub fn is_open(task: &research_tasks::Model) -> bool {
     matches!(task.status.as_str(), "running" | "failed") && task.session_id.is_some()
+}
+
+/// Rejects an author write to a draft research topic while the book's conception session runs
+/// (spec/08 §1.4: the draft topics are setting materials and are locked then, like the documents
+/// and the cast). A task without a book has no conception session to race.
+async fn ensure_topics_editable(
+    tx: &impl ConnectionTrait,
+    task: &research_tasks::Model,
+) -> Result<(), AppError> {
+    match task.book_id {
+        Some(book_id) => super::setting_docs::ensure_editable(tx, book_id).await,
+        None => Ok(()),
+    }
 }
 
 /// The `409 research.invalid_state` a blocked operation reports (spec/10 §2.5).
