@@ -43,6 +43,9 @@
     "continue": "继续",
     "feedback": "反馈…",
     "abandon": "放弃",
+    "abandon_title": "放弃这个会话？",
+    "abandon_body": "智能体会停止，未完成的工具调用会被关闭。已经写入的消息会保留在历史里，但会话将无法继续。",
+    "abandon_confirm": "放弃会话",
     "more": "更多"
   },
   "feedback": {

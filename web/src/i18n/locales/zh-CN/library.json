@@ -24,7 +24,7 @@
   "no_chapters": "还没有章节",
   "untitled": "未命名章节",
   "delete_title": "删除《{{title}}》？",
-  "delete_body": "作品、它的章节以及全部正史记录都会被删除，且无法撤销。",
+  "delete_body": "作品、它的章节以及全部正史记录都会被删除；未结束的智能体会话会先停止。此操作无法撤销。",
   "delete_confirm": "删除作品",
   "new_book_description": "只需书名和写作语言即可开始；设定资料也可以手写。",
   "switch_book": "切换作品",

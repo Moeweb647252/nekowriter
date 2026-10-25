@@ -24,7 +24,7 @@
   "no_chapters": "No chapters yet",
   "untitled": "Untitled chapter",
   "delete_title": "Delete “{{title}}”?",
-  "delete_body": "The book, its chapters and all its canon rows are deleted. This cannot be undone.",
+  "delete_body": "The book, its chapters and all its canon rows are deleted, and any open agent session is stopped first. This cannot be undone.",
   "delete_confirm": "Delete book",
   "new_book_description": "A title and a writing language are enough to start. Setting materials can be written by hand.",
   "switch_book": "Switch book",

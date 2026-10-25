@@ -22,6 +22,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { ConfirmDialog } from "@/components/common/ConfirmDialog"
 import { FeedbackDialog } from "@/features/agent/FeedbackDialog"
 
 type ControlsProps = {
@@ -45,6 +46,9 @@ export function SessionControls({
 }: ControlsProps) {
   const { t } = useTranslation()
   const [feedbackOpen, setFeedbackOpen] = useState(false)
+  // Abandoning ends the session for good, so it is confirmed like every destructive action
+  // (PROJECT §8.13).
+  const [confirmAbandon, setConfirmAbandon] = useState(false)
   const status = session.status
 
   const canPause = status === "running"
@@ -110,7 +114,10 @@ export function SessionControls({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={onAbandon} className="text-destructive">
+            <DropdownMenuItem
+              onSelect={() => setConfirmAbandon(true)}
+              className="text-destructive"
+            >
               <Ban aria-hidden="true" />
               {t("agent:controls.abandon")}
             </DropdownMenuItem>
@@ -124,6 +131,18 @@ export function SessionControls({
         onSubmit={(feedback) => {
           setFeedbackOpen(false)
           onFeedback(feedback)
+        }}
+      />
+      <ConfirmDialog
+        open={confirmAbandon}
+        onOpenChange={setConfirmAbandon}
+        title={t("agent:controls.abandon_title")}
+        description={t("agent:controls.abandon_body")}
+        confirmLabel={t("agent:controls.abandon_confirm")}
+        pending={busy}
+        onConfirm={() => {
+          setConfirmAbandon(false)
+          onAbandon()
         }}
       />
     </div>

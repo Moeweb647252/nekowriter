@@ -43,6 +43,9 @@
     "continue": "Continue",
     "feedback": "Feedback…",
     "abandon": "Abandon",
+    "abandon_title": "Abandon this session?",
+    "abandon_body": "The agent stops and its open tool call is closed. The messages already written stay in the history, but the session cannot continue.",
+    "abandon_confirm": "Abandon session",
     "more": "More"
   },
   "feedback": {
