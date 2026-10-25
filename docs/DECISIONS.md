@@ -1166,3 +1166,41 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   `db::tests::write_transactions_take_the_write_lock_immediately` (a second connection cannot take
   the write lock while a `Db::write` transaction is open before its first write; fails with a
   deferred BEGIN). Each was verified to fail with the fix reverted before being committed.
+
+### D-110 Book delete tears down its sessions exactly like a track delete
+- **Context**: spec/08 §1.3 says a book delete (like a track delete) stops the book's open
+  sessions, awaits their runners and abandons them before the cascade, "so no runner writes to
+  deleted rows. The confirmation dialog says so." The track delete implemented that rule; the book
+  delete cascaded the rows directly and only the UI's own refetch hid the consequence. It was not
+  reproducible as a user-visible bug (a runner writing into a cascade-deleted book fails and stops
+  on its own), but the rule is explicit and the window is real.
+- **Decision**: the open-session query moves to the session service
+  (`sessions::open_ids_for_book` / `open_ids_for_track`, one status filter), and
+  `books::delete` abandons every open session through `sessions::abandon` — which cancels a
+  running session's token and waits for its runner — before its own delete transaction, mirroring
+  `tracks::delete`. `sessions::abandon`'s `session.invalid_state` is tolerated: another caller
+  finalizing the same session first is the state the loop wants. The Library's delete dialog now
+  says an open agent session is stopped first (both locales), which is the sentence spec/08 §1.3
+  requires the dialog to carry.
+- **Consequences**: no transaction is held across the abandons, and the API shape is unchanged
+  (`DELETE /api/books/:id` → 204). Test: `m11_book_delete_sessions.rs` deletes a book while a
+  writer runner is inside a delayed model call and asserts the runner is gone when the delete
+  returns and the cascaded session is a 404; it fails without the teardown loop (verified by
+  reverting it).
+
+### D-111 The conception studio reuses the agent panel's controls, and Abandon is confirmed there
+- **Context**: spec/11 §5.4 places the author's work with the conception agent in the studio, but
+  the studio rendered only the conversation, the documents and the composer: Pause, Stop,
+  Continue, Feedback and Abandon were reachable only from the book workspace's agent panel.
+  Separately, PROJECT §8.13 lists "abandoning sessions" among the actions that need a
+  confirmation, and the shared `SessionControls` opened Abandon directly.
+- **Decision**: the studio renders the existing `SessionControls` (no second implementation) with
+  the same operation mapping the agent panel uses: Pause/Stop while running, Continue (resume for
+  held/paused, continue for stopped/failed/interrupted), Feedback through `resume`, Abandon. The
+  confirmation moves **into** `SessionControls`, so every route that uses it — agent panel and
+  studio — asks before abandoning, and the new strings live in the `agent` namespace
+  (`controls.abandon_title` / `_body` / `_confirm`) in both locales.
+- **Consequences**: one control surface for every session route, and the destructive action asks
+  once everywhere. Tests: `features/conception/conceptionStudio.test.tsx` (controls appear for a
+  running/held conception session and call the right operation) and
+  `features/agent/SessionControls.test.tsx` (Abandon asks first; cancelling does nothing).

@@ -21,7 +21,7 @@ use sea_orm::{
 };
 
 use crate::api::dto::tracks::{TrackDto, TrackInput, TrackPatch};
-use crate::db::entities::{agent_sessions, appearances, chapters, entities, tracks};
+use crate::db::entities::{appearances, chapters, entities, tracks};
 use crate::db::json::{AnchorKind, CanonMode, ChapterStatus, EntityKind, TrackKind};
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
@@ -309,7 +309,7 @@ pub async fn delete(state: &crate::state::AppState, track_id: i32) -> Result<(),
     }
     // No runner may write into the cascade: stop and abandon every open session of the track
     // before the delete transaction (spec/08 §1.3).
-    for session_id in open_sessions(state.db().conn(), track_id).await? {
+    for session_id in super::sessions::open_ids_for_track(state.db().conn(), track_id).await? {
         match super::sessions::abandon(state, session_id).await {
             Ok(_) => {}
             // Another caller finalized it between the query and the call, which is the state this
@@ -542,22 +542,6 @@ async fn next_ord(conn: &impl ConnectionTrait, book_id: i32) -> Result<i32, AppE
 }
 
 /// The open sessions of a track's chapters (status not terminal).
-async fn open_sessions(conn: &impl ConnectionTrait, track_id: i32) -> Result<Vec<i32>, AppError> {
-    Ok(agent_sessions::Entity::find()
-        .filter(agent_sessions::Column::TrackId.eq(track_id))
-        .filter(agent_sessions::Column::Status.is_not_in([
-            crate::db::json::SessionStatus::Completed.as_str(),
-            crate::db::json::SessionStatus::Superseded.as_str(),
-            crate::db::json::SessionStatus::Abandoned.as_str(),
-        ]))
-        .order_by_asc(agent_sessions::Column::Id)
-        .all(conn)
-        .await?
-        .into_iter()
-        .map(|row| row.id)
-        .collect())
-}
-
 async fn ensure_no_main(conn: &impl ConnectionTrait, book_id: i32) -> Result<(), AppError> {
     let existing = tracks::Entity::find()
         .filter(tracks::Column::BookId.eq(book_id))

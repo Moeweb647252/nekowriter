@@ -714,6 +714,45 @@ async fn publish(state: &AppState, events: Vec<ServerEvent>) {
     state.events().publish_all(events);
 }
 
+/// The ids of a book's open sessions, oldest first.
+///
+/// A book delete abandons them before the cascade so no runner writes into rows that are about to
+/// vanish (spec/08 §1.3). Open means every status except the three terminal ones the runtime
+/// never reopens.
+pub async fn open_ids_for_book(
+    conn: &impl ConnectionTrait,
+    book_id: i32,
+) -> Result<Vec<i32>, AppError> {
+    open_ids(conn, agent_sessions::Column::BookId.eq(book_id)).await
+}
+
+/// The ids of a track's open sessions, oldest first (spec/08 §1.3, used by the track delete).
+pub async fn open_ids_for_track(
+    conn: &impl ConnectionTrait,
+    track_id: i32,
+) -> Result<Vec<i32>, AppError> {
+    open_ids(conn, agent_sessions::Column::TrackId.eq(track_id)).await
+}
+
+async fn open_ids(
+    conn: &impl ConnectionTrait,
+    filter: sea_orm::sea_query::SimpleExpr,
+) -> Result<Vec<i32>, AppError> {
+    Ok(agent_sessions::Entity::find()
+        .filter(filter)
+        .filter(agent_sessions::Column::Status.is_not_in([
+            SessionStatus::Completed.as_str(),
+            SessionStatus::Superseded.as_str(),
+            SessionStatus::Abandoned.as_str(),
+        ]))
+        .order_by_asc(agent_sessions::Column::Id)
+        .all(conn)
+        .await?
+        .into_iter()
+        .map(|row| row.id)
+        .collect())
+}
+
 /// `POST /api/sessions/:id/pause` (spec/03 §6): `pause_requested ← 1`, running only.
 pub async fn pause(
     state: &AppState,

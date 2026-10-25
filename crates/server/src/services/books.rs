@@ -262,16 +262,25 @@ pub async fn update_inner(
 }
 
 /// `DELETE /api/books/:id`: cascades to tracks, chapters, setting materials and canon.
-pub async fn delete(
-    db: &crate::db::Db,
-    events: &crate::events::EventBus,
-    book_id: i32,
-) -> Result<(), AppError> {
-    let published = super::write(db, move |tx| {
+pub async fn delete(state: &crate::state::AppState, book_id: i32) -> Result<(), AppError> {
+    // spec/08 §1.3: the book's open sessions are stopped, their runners awaited, and the sessions
+    // abandoned before the cascade, so no runner writes to deleted rows. This mirrors the track
+    // delete (`tracks::delete`), which has the same rule.
+    for session_id in super::sessions::open_ids_for_book(state.db().conn(), book_id).await? {
+        match super::sessions::abandon(state, session_id).await {
+            Ok(_) => {}
+            // Another caller finalized it between the query and the call, which is the state this
+            // loop wants anyway.
+            Err(error) if error.code == ErrorCode::SessionInvalidState => {}
+            Err(error) => return Err(error),
+        }
+    }
+    let db = state.db().clone();
+    let published = super::write(&db, move |tx| {
         Box::pin(async move { delete_inner(tx, book_id).await })
     })
     .await?;
-    events.publish_all(published);
+    state.events().publish_all(published);
     Ok(())
 }
 
