@@ -52,11 +52,8 @@ impl AppState {
         // The debug session's test-only tools have schemas but no place in the shipped pack.
         let tool_specs = tool_specs.with_debug_tools();
         let events = EventBus::new();
-        let cache_dir = config
-            .data_dir
-            .as_ref()
-            .map(|dir| dir.join("models"))
-            .unwrap_or_else(|| std::path::PathBuf::from("models"));
+        // `$HF_HOME` overrides `<data_dir>/models` for the fastembed cache (spec/01 §6).
+        let cache_dir = config.model_cache_dir(std::env::var_os("HF_HOME").as_deref());
         let search = SearchService::new(db.clone(), cache_dir, events.clone());
         // Tests embed offline with the deterministic fake (spec/07 §4); the binary installs the
         // fastembed model in `prepare_state`.

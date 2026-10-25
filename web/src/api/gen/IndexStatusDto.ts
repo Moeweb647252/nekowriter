@@ -4,7 +4,12 @@ import type { IndexState } from "./IndexState";
 /**
  * Embedding/index state (spec/10 §3 `index.status`). Filled in from M7 onwards.
  */
-export type IndexStatusDto = { model: string, state: IndexState, 
+export type IndexStatusDto = { model: string, 
+/**
+ * The resolved fastembed cache directory (`$HF_HOME` or `<data_dir>/models`, spec/01 §6).
+ * Settings › Embeddings shows it read-only (PROJECT §8.12); spec/10 §3 documents the field.
+ */
+model_cache_dir: string, state: IndexState, 
 /**
  * Explains a `failed` state (spec/07 §4).
  */

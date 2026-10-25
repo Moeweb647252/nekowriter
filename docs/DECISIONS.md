@@ -890,3 +890,25 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
    "the author judges the reviewer's report; no further delegation" (PROJECT §10.9).
 2. Confirm the defaults: pause after outline **on**; auto-pause **off**; granularity
    **paragraph**; auto-maintenance **on**; isolated mode for new side stories.
+
+### D-097 `index.status` carries the resolved model cache path
+- **Context**: PROJECT §8.12 lists "the model cache path" among the Settings › Embeddings fields,
+  while spec/10 §3 fixes `IndexStatusDto` field by field (`model, state, message?, pending, failed,
+  done`) and spec/01 §6 says the cache is `<data_dir>/models` unless `HF_HOME` is set. The M7 review
+  found that the page showed neither the path nor anything the frontend could derive it from: the
+  DTO is the only payload `/api/embedding/status`, `/api/health` and the `index.status` event carry.
+  (The review first filed this as a spec conflict and deferred it; the Lead ruled that the conflict
+  must be resolved rather than left unimplemented.)
+- **Decision**: add `model_cache_dir: String` to `IndexStatusDto` (and therefore to the
+  `index.status` event payload) holding the directory the embedder actually uses: `$HF_HOME` when
+  set and non-empty, otherwise `<data_dir>/models`. The value is resolved once at startup in
+  `AppState::new` through `Config::model_cache_dir` (a pure function of `data_dir` and `HF_HOME`,
+  so it is testable without mutating the process environment) and only ever read afterwards.
+  Settings › Embeddings shows it read-only; it is not editable, because changing it means a
+  different fastembed cache and a model download. spec/10 §3's `index.status` row was updated in
+  the same commit.
+- **Consequences**: the DTO the settings page, the health badge and the startup log describe is
+  now complete; `HF_HOME` is honoured by the server as spec/01 §6 promised (it previously built
+  `<data_dir>/models` unconditionally, so the documented override did nothing). Tests:
+  `Config::model_cache_dir` covers both branches, and `m7_review_index.rs` proves the DTO and the
+  `index.status` event carry the resolved path.

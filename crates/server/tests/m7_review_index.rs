@@ -269,3 +269,42 @@ async fn a_model_change_touches_no_fts_row_and_recreates_both_vec_tables() {
     assert_eq!(report.stored, 1, "{report:?}");
     assert_eq!(count(&app, "SELECT count(*) AS c FROM vec_book").await, 1);
 }
+
+/// spec/01 §6 + PROJECT §8.12: `index.status` carries the resolved model cache path (D-097).
+#[tokio::test]
+async fn the_index_status_reports_the_model_cache_dir() {
+    let app = TestApp::new().await;
+    let expected = app
+        .config()
+        .model_cache_dir(std::env::var_os("HF_HOME").as_deref())
+        .display()
+        .to_string();
+    assert!(!expected.is_empty(), "the resolved path is never empty");
+
+    // Both endpoints that carry `IndexStatusDto` report the same path.
+    let (status, body) = app.get("/api/embedding/status").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["model_cache_dir"], serde_json::json!(expected));
+
+    let (status, health) = app.get("/api/health").await;
+    assert_eq!(status, StatusCode::OK, "{health}");
+    assert_eq!(
+        health["embedding"]["model_cache_dir"],
+        serde_json::json!(expected)
+    );
+
+    // The `index.status` event payload carries it too (spec/10 §3).
+    let mut receiver = app.events().subscribe();
+    app.state().search().publish_status().await;
+    let mut seen: Option<serde_json::Value> = None;
+    while let Ok(envelope) = receiver.try_recv() {
+        if matches!(
+            envelope.event,
+            nekowriter::events::ServerEvent::IndexStatus { .. }
+        ) {
+            seen = Some(serde_json::to_value(&envelope.event).expect("serialize event"));
+        }
+    }
+    let payload = seen.expect("an index.status event");
+    assert_eq!(payload["model_cache_dir"], serde_json::json!(expected));
+}

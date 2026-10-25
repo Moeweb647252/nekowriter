@@ -22,6 +22,9 @@ pub struct HealthDto {
 #[ts(export)]
 pub struct IndexStatusDto {
     pub model: String,
+    /// The resolved fastembed cache directory (`$HF_HOME` or `<data_dir>/models`, spec/01 §6).
+    /// Settings › Embeddings shows it read-only (PROJECT §8.12); spec/10 §3 documents the field.
+    pub model_cache_dir: String,
     pub state: IndexState,
     /// Explains a `failed` state (spec/07 §4).
     pub message: Option<String>,
@@ -87,6 +90,7 @@ mod tests {
     fn failed_state_serializes_with_a_message() {
         let dto = IndexStatusDto {
             model: "multilingual-e5-small".to_owned(),
+            model_cache_dir: "/data/models".to_owned(),
             state: IndexState::Failed,
             message: Some("download failed".to_owned()),
             pending: 0,

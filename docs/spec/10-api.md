@@ -203,7 +203,7 @@ Without `book_id` it sends everything.
 | `proposal.changed` | `{ book_id, proposal_id, status }` | invalidate proposals and the overview |
 | `knowledge.changed` | `{ scope_id, entry_id, op }` | invalidate knowledge queries |
 | `research.updated` | `{ task: ResearchTaskDto }` | upsert |
-| `index.status` | `IndexStatusDto { model, state, message?, pending, failed, done }` | settings page, health badge |
+| `index.status` | `IndexStatusDto { model, model_cache_dir, state, message?, pending, failed, done }` (`model_cache_dir` is the resolved fastembed cache: `$HF_HOME` or `<data_dir>/models`, spec/01 §6; PROJECT §8.12 shows it read-only) | settings page, health badge |
 | `resync` | `{}` | invalidate everything visible |
 
 ```ts

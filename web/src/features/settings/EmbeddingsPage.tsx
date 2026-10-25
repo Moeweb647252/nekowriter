@@ -88,6 +88,16 @@ export default function EmbeddingsPage() {
         {status.data?.message === null ? null : (
           <p className="mt-2 text-xs text-destructive">{status.data?.message}</p>
         )}
+        {/* PROJECT §8.12: the model cache path, read-only (spec/01 §6: $HF_HOME or <data_dir>/models). */}
+        <div className="mt-3 space-y-1">
+          <span className="text-xs font-medium">{t("settings:model_cache")}</span>
+          <p
+            className="font-mono text-[0.7rem] break-all text-muted-foreground"
+            data-testid="model-cache-dir"
+          >
+            {status.data?.model_cache_dir ?? ""}
+          </p>
+        </div>
         <div className="mt-3 flex gap-4 text-xs text-muted-foreground">
           <span>
             {t("settings:index_pending")}: {status.data?.pending ?? 0}

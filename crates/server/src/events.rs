@@ -157,10 +157,17 @@ pub enum ServerEvent {
         entry_id: i32,
         op: crate::db::json::ChangeOp,
     },
+    /// A research task was created, edited, started or finished (spec/10 §3).
+    #[serde(rename = "research.updated")]
+    ResearchUpdated {
+        task: crate::api::dto::ResearchTaskDto,
+    },
     /// The embedding model state changed; the payload is `IndexStatusDto` (spec/10 §3).
     #[serde(rename = "index.status")]
     IndexStatus {
         model: String,
+        /// The resolved fastembed cache directory (spec/01 §6).
+        model_cache_dir: String,
         state: crate::api::health::IndexState,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<String>,

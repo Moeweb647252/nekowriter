@@ -63,6 +63,23 @@ impl Config {
         Ok(dir)
     }
 
+    /// The fastembed model cache directory (spec/01 §6): `$HF_HOME` when set, otherwise
+    /// `<data_dir>/models`. Settings › Embeddings shows the resolved path.
+    ///
+    /// Kept as a pure function of the two inputs so the resolution is testable without mutating
+    /// the process environment (which a parallel test run shares).
+    pub fn model_cache_dir(&self, hf_home: Option<&std::ffi::OsStr>) -> PathBuf {
+        match hf_home.filter(|value| !value.is_empty()) {
+            Some(hf_home) => PathBuf::from(hf_home),
+            None => match &self.data_dir {
+                Some(dir) => dir.join("models"),
+                None => default_data_dir()
+                    .map(|dir| dir.join("models"))
+                    .unwrap_or_else(|_| PathBuf::from("models")),
+            },
+        }
+    }
+
     /// True when the demo provider should be available: the flag is set, or this is a debug
     /// build (spec/01 §6).
     pub fn demo_provider_enabled(&self) -> bool {
@@ -143,5 +160,25 @@ mod tests {
     fn demo_provider_defaults_on_in_debug_builds() {
         let config = config_with_bind("127.0.0.1:7878", false);
         assert_eq!(config.demo_provider_enabled(), cfg!(debug_assertions));
+    }
+
+    /// spec/01 §6: `$HF_HOME` replaces `<data_dir>/models` when set (D-097).
+    #[test]
+    fn the_model_cache_dir_honours_hf_home_and_the_data_dir() {
+        let mut config = config_with_bind("127.0.0.1:7878", false);
+        config.data_dir = Some(std::path::PathBuf::from("/var/lib/nekowriter"));
+        assert_eq!(
+            config.model_cache_dir(None),
+            std::path::PathBuf::from("/var/lib/nekowriter/models")
+        );
+        // An empty value counts as unset (the same convention as the rest of the config).
+        assert_eq!(
+            config.model_cache_dir(Some(std::ffi::OsStr::new(""))),
+            std::path::PathBuf::from("/var/lib/nekowriter/models")
+        );
+        assert_eq!(
+            config.model_cache_dir(Some(std::ffi::OsStr::new("/cache/hf"))),
+            std::path::PathBuf::from("/cache/hf")
+        );
     }
 }

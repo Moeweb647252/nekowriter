@@ -383,6 +383,11 @@ impl SearchService {
         }
     }
 
+    /// The resolved fastembed cache directory (spec/01 §6), for `index.status` and the settings page.
+    pub fn cache_dir(&self) -> &std::path::Path {
+        &self.inner.cache_dir
+    }
+
     /// The installed embedder, when there is one.
     pub fn embedder(&self) -> Option<Arc<dyn Embedder>> {
         self.inner
@@ -534,6 +539,7 @@ impl SearchService {
         let message = self.message();
         IndexStatusDto {
             model: self.model_key(),
+            model_cache_dir: self.inner.cache_dir.display().to_string(),
             state,
             message,
             pending: counts.0,
@@ -547,6 +553,7 @@ impl SearchService {
         let dto = self.status_dto().await;
         self.inner.events.publish(ServerEvent::IndexStatus {
             model: dto.model,
+            model_cache_dir: dto.model_cache_dir,
             state: dto.state,
             message: dto.message,
             pending: dto.pending,
