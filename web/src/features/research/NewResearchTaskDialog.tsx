@@ -144,8 +144,8 @@ export function NewResearchTaskDialog({
           </div>
           <p className="text-xs text-muted-foreground">
             {book === "none"
-              ? `${t("knowledge:research.language_hint")} ${i18n.language}`
-              : t("knowledge:research.language_hint")}
+              ? t("knowledge:research.language_hint", { language: i18n.language })
+              : t("knowledge:research.language_book_hint")}
           </p>
           {error === null ? null : <p className="text-xs text-destructive">{error}</p>}
         </div>

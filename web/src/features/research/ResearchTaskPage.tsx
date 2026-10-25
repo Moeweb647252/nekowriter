@@ -169,6 +169,30 @@ export default function ResearchTaskPage() {
           <p className="whitespace-pre-wrap rounded-md border p-3 text-sm">{task.data.report}</p>
         )}
       </div>
+
+      {task.data.status === "done" && task.data.entries.length > 0 ? (
+        <div className="space-y-1">
+          <h3 className="text-sm font-medium">{t("knowledge:research.created_entries")}</h3>
+          <ul className="space-y-1 rounded-md border p-3 text-sm">
+            {task.data.entries.map((entry) => (
+              <li key={entry.id} className="truncate">
+                <Link
+                  // Entries are shown inside the knowledge pages, which open the scope's entry
+                  // list; the research task has no per-entry route of its own.
+                  to={
+                    task.data.book_id !== undefined
+                      ? `/books/${task.data.book_id}/knowledge`
+                      : "/knowledge"
+                  }
+                  className="text-primary underline-offset-2 hover:underline"
+                >
+                  {entry.title}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </div>
   )
 }

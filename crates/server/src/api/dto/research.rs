@@ -6,6 +6,15 @@ use ts_rs::TS;
 
 use crate::db::json::ResearchTaskStatus;
 
+/// One entry a research task created (spec/10 §2.5: the task carries "the created entries when
+/// done", which the task page lists).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ResearchTaskEntryDto {
+    pub id: i32,
+    pub title: String,
+}
+
 /// A research task row (spec/10 §2.5).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -24,6 +33,11 @@ pub struct ResearchTaskDto {
     pub session_id: Option<i32>,
     pub report: String,
     pub entries_created: i32,
+    /// The entries this task created, in id order; filled by the single-task endpoints when the
+    /// task is `done` (spec/10 §2.5). Events and the list leave it empty to stay cheap: the UI
+    /// refetches the task on `research.updated`.
+    #[serde(default)]
+    pub entries: Vec<ResearchTaskEntryDto>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

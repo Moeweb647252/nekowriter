@@ -62,7 +62,6 @@
     "scope_name": "存入范围",
     "scope_name_placeholder": "例如：市井生活",
     "language": "撰写语言",
-    "language_hint": "仅用于不属于任何书的任务；属于某本书的任务使用该书的语言。",
     "book": "书籍",
     "book_none": "不属于任何书",
     "create": "创建",
@@ -85,6 +84,9 @@
     "updated": "更新于",
     "topic_required": "请填写主题。",
     "scope_required": "请填写范围名称。",
-    "language_required": "不属于任何书的任务需要填写语言。"
+    "language_required": "不属于任何书的任务需要填写语言。",
+    "created_entries": "本任务创建的条目",
+    "language_hint": "新条目将使用 {{language}} 撰写。",
+    "language_book_hint": "任务使用该书的语言。"
   }
 }

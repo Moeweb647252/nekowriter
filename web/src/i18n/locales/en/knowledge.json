@@ -62,7 +62,6 @@
     "scope_name": "Save into scope",
     "scope_name_placeholder": "e.g. daily life",
     "language": "Writing language",
-    "language_hint": "Only used for a task that belongs to no book; a book's task uses the book's language.",
     "book": "Book",
     "book_none": "No book",
     "create": "Create",
@@ -85,6 +84,9 @@
     "updated": "Updated",
     "topic_required": "A topic is required.",
     "scope_required": "A scope name is required.",
-    "language_required": "A language is required for a task without a book."
+    "language_required": "A language is required for a task without a book.",
+    "created_entries": "Entries this task created",
+    "language_hint": "New entries will be written in {{language}}.",
+    "language_book_hint": "The task uses the book's language."
   }
 }

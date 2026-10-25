@@ -11,7 +11,7 @@ use sea_orm::{
 };
 
 use crate::api::dto::research::{
-    ResearchTaskCreate, ResearchTaskDto, ResearchTaskPatch, ResearchTaskQuery,
+    ResearchTaskCreate, ResearchTaskDto, ResearchTaskEntryDto, ResearchTaskPatch, ResearchTaskQuery,
 };
 use crate::db::entities::{
     book_scopes, books, knowledge_entries, knowledge_scopes, research_tasks,
@@ -52,7 +52,31 @@ pub async fn list(
 
 /// `GET /api/research-tasks/:id` (spec/10 §2.5).
 pub async fn get(conn: &impl ConnectionTrait, task_id: i32) -> Result<ResearchTaskDto, AppError> {
-    Ok(to_dto(load(conn, task_id).await?))
+    with_entries(conn, load(conn, task_id).await?).await
+}
+
+/// The task with the entries it created, once it is `done` (spec/10 §2.5: "with the report and
+/// the created entries when done"). The list and the events stay cheap and leave the field empty;
+/// the task page reads this endpoint.
+async fn with_entries(
+    conn: &impl ConnectionTrait,
+    row: research_tasks::Model,
+) -> Result<ResearchTaskDto, AppError> {
+    let mut dto = to_dto(row);
+    if dto.status == ResearchTaskStatus::Done {
+        dto.entries = knowledge_entries::Entity::find()
+            .filter(knowledge_entries::Column::ResearchTaskId.eq(dto.id))
+            .order_by_asc(knowledge_entries::Column::Id)
+            .all(conn)
+            .await?
+            .into_iter()
+            .map(|entry| ResearchTaskEntryDto {
+                id: entry.id,
+                title: entry.title,
+            })
+            .collect();
+    }
+    Ok(dto)
 }
 
 async fn load(
@@ -226,7 +250,7 @@ async fn patch_inner(
     let events = vec![ServerEvent::ResearchUpdated {
         task: to_dto(row.clone()),
     }];
-    Ok((to_dto(row), events))
+    Ok((with_entries(tx, row).await?, events))
 }
 
 /// `DELETE /api/research-tasks/:id` (spec/10 §2.5).
@@ -495,7 +519,8 @@ pub async fn entry_count(conn: &impl ConnectionTrait, task_id: i32) -> Result<i3
 
 // ───────────────────────────── mapping ─────────────────────────────
 
-/// The DTO of a row.
+/// The DTO of a row, without the created entries (events and the list do not need them; the
+/// single-task endpoints fill them through [`with_entries`]).
 pub fn to_dto(row: research_tasks::Model) -> ResearchTaskDto {
     ResearchTaskDto {
         id: row.id,
@@ -509,6 +534,7 @@ pub fn to_dto(row: research_tasks::Model) -> ResearchTaskDto {
         session_id: row.session_id,
         report: row.report,
         entries_created: row.entries_created,
+        entries: Vec::new(),
         created_at: row.created_at,
         updated_at: row.updated_at,
     }
