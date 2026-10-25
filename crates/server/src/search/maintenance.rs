@@ -543,12 +543,10 @@ async fn sync_chunk_rows(conn: &impl ConnectionTrait, rows: SyncRows<'_>) -> Res
         pool.entry(row.content_hash.clone()).or_default().push(row);
     }
     let mut kept: Vec<(i32, bool, usize)> = Vec::new();
-    let mut new_entries: Vec<(usize, &SyncEntry)> = Vec::new();
     for (index, entry) in rows.entries.iter().enumerate() {
         let hash = doc_hash(&entry.text);
-        match pool.get_mut(&hash).and_then(|rows| rows.pop()) {
-            Some(row) => kept.push((row.id, row.ref_part != index as i32, index)),
-            None => new_entries.push((index, entry)),
+        if let Some(row) = pool.get_mut(&hash).and_then(|rows| rows.pop()) {
+            kept.push((row.id, row.ref_part != index as i32, index));
         }
     }
     let stale: Vec<i32> = pool.into_values().flatten().map(|row| row.id).collect();
