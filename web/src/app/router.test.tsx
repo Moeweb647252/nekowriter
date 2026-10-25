@@ -38,20 +38,22 @@ describe("the router error boundary", () => {
     // The boundary is the only `errorElement` in the app, so a failed lazy-route load is the one
     // screen an author can hit before any page component mounts. A hardcoded English string here
     // showed up in zh-CN, which no other route could compensate for.
+    //
+    // The language is switched **before** mounting and switched back **after** unmounting: a
+    // `changeLanguage` while the component is mounted makes it re-render outside `act()`, which is
+    // a warning that hides real ones.
     const previous = i18n.language
     await i18n.changeLanguage("zh-CN")
-    try {
-      render(
-        <I18nextProvider i18n={i18n}>
-          <RouteError />
-        </I18nextProvider>,
-      )
-      const zh = i18n.getFixedT("zh-CN")
-      expect(document.body.textContent).toContain(zh("common:error_title"))
-      expect(document.body.textContent).toContain(zh("common:retry"))
-      expect(document.body.textContent).not.toContain("Something went wrong")
-    } finally {
-      await i18n.changeLanguage(previous)
-    }
+    const { unmount } = render(
+      <I18nextProvider i18n={i18n}>
+        <RouteError />
+      </I18nextProvider>,
+    )
+    const zh = i18n.getFixedT("zh-CN")
+    expect(document.body.textContent).toContain(zh("common:error_title"))
+    expect(document.body.textContent).toContain(zh("common:retry"))
+    expect(document.body.textContent).not.toContain("Something went wrong")
+    unmount()
+    await i18n.changeLanguage(previous)
   })
 })
