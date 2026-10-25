@@ -241,7 +241,9 @@ hand-written to match it. Schema sync (`schema-sync` feature) is **not** used.
    status `executing` → `pending`. This is safe because tool effects are transactional (spec/03 §5.4).
 9. Start background workers: the indexer (spec/07 §4) and the embedder warm-up.
 10. Serve on `--bind` / `NW_BIND` (default `127.0.0.1:7878`). Refuse to bind to non-loopback
-    addresses unless `--allow-remote` is passed, and print a warning when it is.
+    addresses unless `--allow-remote` is passed, and print a warning when it is. The flag also
+    covers the guard (§10.2): with it, requests addressed to an **IP literal** are accepted, so a
+    browser on another machine can use the server. Hostnames stay rejected even then (D-126).
 
 **Graceful shutdown** (Ctrl+C / SIGTERM): stop accepting requests, cancel every runner with the
 reason `shutdown` (runners then transition to `interrupted`, not `stopped`, exactly as startup
@@ -255,7 +257,7 @@ recovery would), wait up to 10 s for them to exit, close SSE streams, and close 
 | `--data-dir` | `NW_DATA_DIR` | OS data dir | database, models, logs |
 | `--web-dir` | `NW_WEB_DIR` | unset | serve SPA files from a directory (instead of embedded) |
 | `--enable-demo-provider` | `NW_ENABLE_DEMO_PROVIDER` | false (true in debug builds) | allow the `mock` protocol for providers |
-| `--allow-remote` | — | false | allow non-loopback bind |
+| `--allow-remote` | — | false | allow a non-loopback bind **and** accept requests addressed to an IP literal (the guard still rejects hostnames) |
 | — | `HF_ENDPOINT` | unset | Hugging Face mirror for model downloads (read by fastembed) |
 | — | `HF_HOME` | unset | when set, fastembed caches models there instead of `<data_dir>/models` (Settings › Embeddings shows the path) |
 
@@ -324,6 +326,17 @@ Data directory layout:
    `localhost`, `127.0.0.1` or `[::1]` (any port) with 403. For non-GET methods, an `Origin`
    header, when present, must have one of those hosts. This blocks malicious websites from
    driving the local API.
+   **Remote case (`--allow-remote` on, §5 step 10):** the loopback names stay allowed, and a
+   `Host` whose host part is an **IP literal** (`10.2.0.7:8789`, `[2001:db8::1]:8789`) is allowed
+   too. Hostnames stay forbidden, because DNS rebinding *requires* a hostname — the attacker's
+   page at `evil.com` has its DNS rebound to the victim's address and the browser then sends
+   `Host: evil.com`, so rejecting every hostname preserves the defense. For non-GET methods the
+   same flag additionally allows an `http`/`https` `Origin` whose authority (host:port) is
+   **exactly the request's `Host`**; this is what lets the page served by the server drive its own
+   API, while a page served from a *different* LAN address still cannot drive it cross-origin
+   (that is the CSRF hole the check exists to close). An IP-literal origin that differs from
+   `Host` is therefore not enough. `Origin: null` is rejected in both cases, and the flag's
+   default behaviour is unchanged (D-126).
 3. **Secrets**: API keys are stored in SQLite. The `env:NAME` form reads the key from the
    environment at call time, so users can avoid storing it. Keys are never returned by the API in
    clear text (masked `sk-…abcd`) and never logged.

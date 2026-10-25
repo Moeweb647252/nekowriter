@@ -1557,3 +1557,46 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   `build_request` to return a fixed string (the wire assertion fails) and for (b) by hand-editing a
   generated file (the script exits 1); (c)–(e) are assertion strengthenings over code paths that
   already behaved correctly.
+
+### D-126 `--allow-remote` reaches the Host/Origin guard instead of being defeated by it
+- **Context**: spec/01 §5 step 10 said to "refuse to bind to non-loopback addresses unless
+  `--allow-remote` is passed" and §10.2 said the middleware rejects every `Host` that is not
+  `localhost`, `127.0.0.1` or `[::1]`. Both were implemented literally and therefore contradicted
+  each other: `--allow-remote` opened the bind to `0.0.0.0`, and the guard then rejected every
+  request arriving on the non-loopback interface. The author observed it on the release binary:
+  `target/release/nekowriter --bind 0.0.0.0:8789 --allow-remote`, then `GET
+  http://10.2.0.7:8789/` → `403 {"error":{"code":"host.forbidden","message":"host
+  10.2.0.7:8789 is not allowed"}}`. The flag thus produced a server nothing could talk to, while
+  `Config::check_bind_allowed` happily warned about the remote bind. The guard had no access to
+  the config at all (`ALLOWED_HOSTS` was a fixed three-element array).
+- **Decision**: make the flag's meaning coherent across both rules; it now means "allow a
+  non-loopback bind **and** accept requests addressed to an IP literal". (a) The three loopback
+  names stay always allowed. (b) With `allow_remote`, a `Host` whose host part parses as an IP
+  literal (`IpAddr::from_str`) is allowed too — `10.2.0.7:8789` and, brackets stripped,
+  `[2001:db8::1]:8789`. Hostnames stay forbidden in the remote case as well. (c) The guard takes
+  `State(state): State<AppState>` (it was already registered with `from_fn_with_state`) and reads
+  `state.config().allow_remote`. (d) For non-GET requests, the same flag additionally allows an
+  `http`/`https` `Origin` whose authority is **exactly** the request's `Host`; a loopback `Origin`
+  keeps being allowed without that equality because the Vite dev server legitimately sends
+  `Origin: http://localhost:5173` to a `127.0.0.1` Host. `Origin: null` stays rejected in both
+  modes, and with the flag off nothing changes at all.
+- **Why not "allow any IP-literal origin"**: a page served from a *different* LAN address could
+  then drive the API cross-origin, which is exactly the CSRF hole §10.2 exists to close. Requiring
+  `Origin` authority == `Host` lets the server's own page mutate its API and nothing else.
+- **Consequences**: remote access works over the network address (`http://10.2.0.7:8789`), which is
+  what the flag was for. Hostname-based remote access does not work and would need an explicit
+  hostname allowlist flag if it were ever wanted (deferred; it would reintroduce the rebinding
+  surface, so it needs its own decision). The anti-rebinding property is untouched because a
+  rebinding attack requires a hostname and hostnames remain forbidden. The API still has no
+  authentication, so `--allow-remote` keeps warning (unchanged). §5 step 10, §6's `--allow-remote`
+  row and §10.2 now state the remote case. Tests (verified to fail before the fix:
+  `remote_ip_literal_hosts_are_accepted_with_allow_remote` and
+  `remote_origin_matching_the_host_is_accepted_with_allow_remote` both got 403):
+  `crates/server/src/api/mod.rs` › `guard_tests` —
+  `remote_ip_literal_hosts_are_accepted_with_allow_remote`,
+  `hostnames_stay_forbidden_with_allow_remote`,
+  `ip_literal_hosts_are_forbidden_without_allow_remote` (the regression guard for the flag's
+  default), `remote_origin_matching_the_host_is_accepted_with_allow_remote`,
+  `a_foreign_lan_origin_is_forbidden_even_with_allow_remote`, `null_origin_stays_forbidden_with_allow_remote`
+  and `remote_origin_is_forbidden_without_allow_remote`. End-to-end on the release binary:
+  `Host: 10.2.0.7:8789` → 200, `Host: evil.com` → 403.

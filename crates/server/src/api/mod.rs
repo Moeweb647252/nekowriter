@@ -23,9 +23,12 @@ pub mod settings_materials;
 pub mod spa;
 pub mod tracks;
 
+use std::net::IpAddr;
+use std::str::FromStr;
+
 use axum::Router;
 use axum::body::Body;
-use axum::extract::Request;
+use axum::extract::{Request, State};
 use axum::http::{HeaderValue, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -34,7 +37,7 @@ use axum::routing::{get, patch, post, put};
 use crate::error::{AppError, ErrorCode};
 use crate::state::AppState;
 
-/// Hosts accepted by the guard: the API is loopback-only (spec/01 §10).
+/// Hosts accepted by the guard: the API is loopback-only (spec/01 §10.2).
 const ALLOWED_HOSTS: [&str; 3] = ["localhost", "127.0.0.1", "[::1]"];
 
 /// Builds the whole application router. Tests call this directly.
@@ -327,14 +330,20 @@ pub fn build_app(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// Rejects requests whose `Host` is not a loopback name, and non-GET requests whose `Origin` is
-/// not a loopback origin (DNS-rebinding and CSRF guard, spec/01 §10.2).
-async fn host_origin_guard(request: Request, next: Next) -> Result<Response, AppError> {
+/// Rejects requests whose `Host` is not a loopback name — or, with `--allow-remote`, not an IP
+/// literal — and non-GET requests whose `Origin` is neither a loopback origin nor, with
+/// `--allow-remote`, the request's own host (DNS-rebinding and CSRF guard, spec/01 §10.2, D-126).
+async fn host_origin_guard(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Result<Response, AppError> {
     let headers = request.headers();
     let method = request.method().clone();
+    let remote = state.config().allow_remote;
 
     match headers.get(header::HOST) {
-        Some(host) if host_allowed(host) => {}
+        Some(host) if host_allowed(host) || (remote && remote_host_allowed(host)) => {}
         Some(host) => {
             return Err(AppError::new(
                 ErrorCode::HostForbidden,
@@ -358,6 +367,7 @@ async fn host_origin_guard(request: Request, next: Next) -> Result<Response, App
     if method != axum::http::Method::GET
         && let Some(origin) = headers.get(header::ORIGIN)
         && !origin_allowed(origin)
+        && !(remote && origin_matches_host(origin, headers.get(header::HOST)))
     {
         return Err(AppError::new(
             ErrorCode::HostForbidden,
@@ -424,6 +434,32 @@ fn host_allowed(value: &HeaderValue) -> bool {
     ALLOWED_HOSTS.contains(&strip_port(text))
 }
 
+/// A `Host` header value is allowed in the `--allow-remote` case when its host part is an **IP
+/// literal** (`10.2.0.7:8789`, `[2001:db8::1]:8789`, or either without a port).
+///
+/// Hostnames are deliberately not accepted here: DNS rebinding needs a hostname to point at the
+/// server, so keeping every hostname forbidden preserves the guard's purpose (spec/01 §10.2,
+/// D-126).
+fn remote_host_allowed(value: &HeaderValue) -> bool {
+    let Ok(text) = value.to_str() else {
+        return false;
+    };
+    host_is_ip_literal(strip_port(text))
+}
+
+/// True when `host` (a host, not an authority) is a bare IP literal; `[v6]` brackets are
+/// accepted and removed first.
+fn host_is_ip_literal(host: &str) -> bool {
+    let host = match host.strip_prefix('[') {
+        Some(rest) => match rest.strip_suffix(']') {
+            Some(inner) => inner,
+            None => return false,
+        },
+        None => host,
+    };
+    IpAddr::from_str(host).is_ok()
+}
+
 /// An `Origin` value is allowed when it is `http(s)://<loopback>[:port]`.
 fn origin_allowed(value: &HeaderValue) -> bool {
     let Ok(text) = value.to_str() else {
@@ -437,6 +473,28 @@ fn origin_allowed(value: &HeaderValue) -> bool {
         return false;
     }
     ALLOWED_HOSTS.contains(&strip_port(rest))
+}
+
+/// An `Origin` is allowed in the `--allow-remote` case when it is `http(s)` and its authority is
+/// **exactly** the request's `Host` header — the page that serves the SPA is the only one allowed
+/// to drive the API.
+///
+/// Deliberately *not* "any IP-literal origin": a page on a different LAN address could otherwise
+/// drive this API cross-origin (spec/01 §10.2, D-126).
+fn origin_matches_host(origin: &HeaderValue, host: Option<&HeaderValue>) -> bool {
+    let (Ok(origin), Some(Ok(host))) = (origin.to_str(), host.map(HeaderValue::to_str)) else {
+        return false;
+    };
+    let Some((scheme, rest)) = origin.split_once("://") else {
+        // `Origin: null` has no scheme and therefore never matches (spec/01 §10.2).
+        return false;
+    };
+    if scheme != "http" && scheme != "https" {
+        return false;
+    }
+    // Case-insensitive, because DNS names and the scheme are compared case-insensitively by the
+    // browser; the host parts here are IP literals, so this cannot mask a real difference.
+    rest.eq_ignore_ascii_case(host)
 }
 
 /// Strips a trailing `:port` from a host, keeping IPv6 bracket notation intact.
@@ -561,15 +619,36 @@ mod guard_tests {
         }
     }
 
-    async fn test_app() -> (tempfile::TempDir, Router) {
+    /// The `--allow-remote` variant: the same config with the flag on (spec/01 §5 step 10, D-126).
+    fn test_config_allow_remote(data_dir: &std::path::Path) -> crate::config::Config {
+        crate::config::Config {
+            allow_remote: true,
+            ..test_config(data_dir)
+        }
+    }
+
+    /// Builds an app over a fresh migrated database with `config`.
+    async fn test_app_with_config(
+        config: impl FnOnce(&std::path::Path) -> crate::config::Config,
+    ) -> (tempfile::TempDir, Router) {
         let dir = tempfile::tempdir().expect("temp dir");
         let db = crate::db::Db::connect(&dir.path().join("test.db"))
             .await
             .expect("db");
         nekowriter_migration::up(db.conn()).await.expect("migrate");
         let vec_version = db.vec_version().await.expect("vec");
-        let state = AppState::new(db, test_config(dir.path()), vec_version);
+        let state = AppState::new(db, config(dir.path()), vec_version);
         (dir, build_app(state))
+    }
+
+    /// The default app: loopback only, `--allow-remote` off.
+    async fn test_app() -> (tempfile::TempDir, Router) {
+        test_app_with_config(test_config).await
+    }
+
+    /// The `--allow-remote` app (spec/01 §5 step 10).
+    async fn test_app_allow_remote() -> (tempfile::TempDir, Router) {
+        test_app_with_config(test_config_allow_remote).await
     }
 
     /// Sends one request through the app and returns its status and headers.
@@ -579,10 +658,21 @@ mod guard_tests {
         path: &str,
         origin: Option<&str>,
     ) -> (axum::http::StatusCode, axum::http::HeaderMap) {
+        send_with_host(app, method, path, "127.0.0.1:7878", origin).await
+    }
+
+    /// Sends one request with an explicit `Host` header.
+    async fn send_with_host(
+        app: Router,
+        method: axum::http::Method,
+        path: &str,
+        host: &str,
+        origin: Option<&str>,
+    ) -> (axum::http::StatusCode, axum::http::HeaderMap) {
         let mut request = Request::builder()
             .method(method)
             .uri(path)
-            .header(header::HOST, "127.0.0.1:7878");
+            .header(header::HOST, host);
         if let Some(origin) = origin {
             request = request.header(header::ORIGIN, origin);
         }
@@ -660,6 +750,149 @@ mod guard_tests {
         )
         .await;
         assert_ne!(status, axum::http::StatusCode::FORBIDDEN);
+    }
+
+    /// D-126: `--allow-remote` opens the bind to `0.0.0.0`, so a browser on another machine
+    /// addresses the server by an **IP literal**. The guard must accept that Host, or the flag is
+    /// useless (the reported bug: `Host: 10.2.0.7:8789` → 403 `host.forbidden`).
+    #[tokio::test]
+    async fn remote_ip_literal_hosts_are_accepted_with_allow_remote() {
+        for host in [
+            "10.2.0.7:8789",
+            "[2001:db8::1]:8789",
+            "10.2.0.7",
+            "[2001:db8::1]",
+            // The loopback names keep working while the flag is on.
+            "localhost:8789",
+            "127.0.0.1:8789",
+            "[::1]:8789",
+        ] {
+            let (_dir, app) = test_app_allow_remote().await;
+            let (status, _) =
+                send_with_host(app, axum::http::Method::GET, "/api/health", host, None).await;
+            assert_eq!(
+                status,
+                axum::http::StatusCode::OK,
+                "Host {host} must be accepted with --allow-remote (D-126)"
+            );
+        }
+    }
+
+    /// D-126: the guard exists to stop DNS rebinding, and a rebinding attack **needs a hostname**
+    /// (the browser sends `Host: evil.com`). Hostnames therefore stay forbidden even with the flag
+    /// on, and the whole check is off for the flag's default.
+    #[tokio::test]
+    async fn hostnames_stay_forbidden_with_allow_remote() {
+        for host in [
+            "evil.com",
+            "evil.com:8789",
+            "localhost.evil.com",
+            "10.2.0.7.nip.io",
+        ] {
+            let (_dir, app) = test_app_allow_remote().await;
+            let (status, _) =
+                send_with_host(app, axum::http::Method::GET, "/api/health", host, None).await;
+            assert_eq!(
+                status,
+                axum::http::StatusCode::FORBIDDEN,
+                "Host {host} must stay forbidden: a rebinding attack needs a hostname (D-126)"
+            );
+        }
+    }
+
+    /// The regression guard: without `--allow-remote` nothing changes — an IP-literal Host is
+    /// still rejected exactly as before the fix (spec/01 §10.2, D-126).
+    #[tokio::test]
+    async fn ip_literal_hosts_are_forbidden_without_allow_remote() {
+        for host in ["10.2.0.7:8789", "[2001:db8::1]:8789", "10.2.0.7"] {
+            let (_dir, app) = test_app().await;
+            let (status, _) =
+                send_with_host(app, axum::http::Method::GET, "/api/health", host, None).await;
+            assert_eq!(
+                status,
+                axum::http::StatusCode::FORBIDDEN,
+                "Host {host} must stay forbidden by default (the flag is off)"
+            );
+        }
+    }
+
+    /// D-126: with `--allow-remote` a remote page's own origin is legitimate — its authority is
+    /// exactly the request's `Host`. (A loopback origin is already accepted, so the Vite dev case
+    /// is covered by `loopback_origin_on_a_mutation_is_accepted`.)
+    #[tokio::test]
+    async fn remote_origin_matching_the_host_is_accepted_with_allow_remote() {
+        for (host, origin) in [
+            ("10.2.0.7:8789", "http://10.2.0.7:8789"),
+            ("10.2.0.7:8789", "https://10.2.0.7:8789"),
+            ("[2001:db8::1]:8789", "http://[2001:db8::1]:8789"),
+        ] {
+            let (_dir, app) = test_app_allow_remote().await;
+            let (status, _) = send_with_host(
+                app,
+                axum::http::Method::POST,
+                "/api/health",
+                host,
+                Some(origin),
+            )
+            .await;
+            assert_ne!(
+                status,
+                axum::http::StatusCode::FORBIDDEN,
+                "Origin {origin} matching Host {host} must be accepted (D-126)"
+            );
+        }
+    }
+
+    /// D-126: the origin must equal the request's `Host`, not merely be an IP literal. A page
+    /// served from another LAN address could otherwise drive this API cross-origin — that is the
+    /// CSRF hole the Origin check exists to close.
+    #[tokio::test]
+    async fn a_foreign_lan_origin_is_forbidden_even_with_allow_remote() {
+        let (_dir, app) = test_app_allow_remote().await;
+        let (status, _) = send_with_host(
+            app,
+            axum::http::Method::POST,
+            "/api/health",
+            "10.2.0.7:8789",
+            Some("http://192.168.1.99:8789"),
+        )
+        .await;
+        assert_eq!(
+            status,
+            axum::http::StatusCode::FORBIDDEN,
+            "an Origin from a different LAN address must not drive the API (D-126)"
+        );
+    }
+
+    /// D-126: `Origin: null` (sandboxed iframe, local file) is never allowed, flag or not.
+    #[tokio::test]
+    async fn null_origin_stays_forbidden_with_allow_remote() {
+        let (_dir, app) = test_app_allow_remote().await;
+        let (status, _) = send_with_host(
+            app,
+            axum::http::Method::POST,
+            "/api/health",
+            "10.2.0.7:8789",
+            Some("null"),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
+    }
+
+    /// The same non-GET request without `--allow-remote` keeps the pre-fix behaviour: the IP Host
+    /// is rejected before `Origin` is even considered.
+    #[tokio::test]
+    async fn remote_origin_is_forbidden_without_allow_remote() {
+        let (_dir, app) = test_app().await;
+        let (status, _) = send_with_host(
+            app,
+            axum::http::Method::POST,
+            "/api/health",
+            "10.2.0.7:8789",
+            Some("http://10.2.0.7:8789"),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
     }
 
     /// spec/01 §10.6: static files are served with `X-Content-Type-Options: nosniff` and a CSP
