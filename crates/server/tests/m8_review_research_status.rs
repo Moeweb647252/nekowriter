@@ -15,7 +15,7 @@ use serde_json::json;
 #[path = "agent_harness/mod.rs"]
 mod agent_harness;
 
-use agent_harness::{runtime, tool_step};
+use agent_harness::{refusal_step, runtime, tool_step};
 
 /// A research task linked to the harness book; `run` resolves its scope.
 async fn book_task(runtime: &agent_harness::Runtime, scope_name: &str) -> i32 {
@@ -107,6 +107,71 @@ async fn a_task_is_running_while_its_session_is_open() {
         .post(&format!("/api/sessions/{session_id}/abandon"), json!({}))
         .await;
     assert_eq!(status, StatusCode::OK, "abandon");
+    let (_, task) = app.get(&format!("/api/research-tasks/{task_id}")).await;
+    assert_eq!(task["status"], "cancelled", "{task}");
+}
+
+// ───────────────────── F9: a failed session fails the task and keeps it open ─────────────────────
+
+/// spec/07 §8 step 5: a failed task keeps its session ("Continue sets it back to `running`"), and
+/// spec/10 §2.5 still refuses PATCH/DELETE while that session is open. The task must therefore
+/// read `failed`, not stay `running`.
+#[tokio::test]
+async fn a_failed_research_session_fails_the_task_and_keeps_it_open() {
+    let runtime = runtime(vec![refusal_step("the model refused the turn")]).await;
+    let app = &runtime.app;
+    let task_id = book_task(&runtime, "Failure scope").await;
+
+    let (status, body) = app
+        .post(&format!("/api/research-tasks/{task_id}/run"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "run: {body}");
+    let session_id = body["session_id"].as_i64().expect("session id") as i32;
+
+    // Wait for the session to fail (a refusal is not retryable, spec/03 §5.5).
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let (_, snapshot) = app.get(&format!("/api/sessions/{session_id}")).await;
+        let status = snapshot["session"]["status"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        if status == "failed" {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the session did not fail; it is {status}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    let (status, task) = app.get(&format!("/api/research-tasks/{task_id}")).await;
+    assert_eq!(status, StatusCode::OK, "{task}");
+    assert_eq!(task["status"], "failed", "{task}");
+    assert_eq!(task["session_id"], session_id);
+
+    // The failed session is still open: run, PATCH and DELETE are refused (spec/10 §2.5).
+    let (status, body) = app
+        .post(&format!("/api/research-tasks/{task_id}/run"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["details"]["session_id"], session_id);
+    let (status, body) = app
+        .patch(
+            &format!("/api/research-tasks/{task_id}"),
+            json!({ "topic": "x" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    let (status, _) = app.delete(&format!("/api/research-tasks/{task_id}")).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    // Abandoning the failed session cancels the task (spec/07 §8 step 5).
+    let (status, body) = app
+        .post(&format!("/api/sessions/{session_id}/abandon"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::OK, "abandon: {body}");
     let (_, task) = app.get(&format!("/api/research-tasks/{task_id}")).await;
     assert_eq!(task["status"], "cancelled", "{task}");
 }
