@@ -102,7 +102,8 @@ pub struct BookPatch {
 #[serde(default)]
 pub struct CreateBookResponse {
     pub book: BookDto,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Always present (`null` when no session started): the generated TypeScript type declares
+    /// `number | null`, and the New book dialog's landing decision tests it against `null`.
     pub session_id: Option<i32>,
     pub warnings: Vec<String>,
 }
@@ -135,8 +136,8 @@ impl Default for CreateBookResponse {
 #[serde(default)]
 pub struct ConceptionFinalizeResponse {
     pub book: BookDto,
-    /// The `canon_seed` session finalize started, when an archivist model is configured.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `canon_seed` session finalize started, when an archivist model is configured; present
+    /// as `null` otherwise, matching the generated `number | null` type.
     pub seed_session_id: Option<i32>,
     pub warnings: Vec<String>,
 }
