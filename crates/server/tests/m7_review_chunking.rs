@@ -154,7 +154,7 @@ fn a_split_prefers_the_last_sentence_end_and_keeps_the_closing_quote() {
     // A terminator at 700, then 300 filler chars, then more: the cut lands after 「。」
     let mut text = String::new();
     text.push_str(&"字".repeat(699));
-    text.push_str("。"); // char 700 (1-based)
+    text.push('。'); // char 700 (1-based)
     text.push_str(&"字".repeat(400));
     text.push('。');
     text.push_str(&"字".repeat(100));
@@ -170,7 +170,7 @@ fn a_split_prefers_the_last_sentence_end_and_keeps_the_closing_quote() {
     // A closing quote right after the terminator is included in the cut.
     let mut quoted = String::new();
     quoted.push_str(&"字".repeat(698));
-    quoted.push_str("。”"); // terminator + closing quote at 699–700
+    quoted.push_str("。”"); // terminator + closing quote
     quoted.push_str(&"字".repeat(400));
     let chunks = chunk_markdown(&quoted);
     assert!(chunks[0].text.ends_with("。”"), "{:?}", chunks[0].text);

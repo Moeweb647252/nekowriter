@@ -3,7 +3,6 @@
 use nekowriter::search::{BookCorpus, BookSearch, hybrid_book};
 use nekowriter::testing::TestApp;
 use sea_orm::ConnectionTrait;
-use serde_json::json;
 
 async fn count(app: &TestApp, sql: &str) -> i64 {
     let row = app
