@@ -83,6 +83,7 @@
   "search_provider_none": "None",
   "search_api_key": "API key",
   "search_api_key_placeholder": "tvly-…",
+  "search_api_key_placeholder_deepseek": "sk-…",
   "search_api_key_hint": "A literal key, or env:NAME to read it from the environment at call time.",
   "search_base_url": "Base URL",
   "search_base_url_hint": "The SearXNG instance's address; JSON output must be enabled on it.",

@@ -33,8 +33,9 @@ pub async fn stored(conn: &impl ConnectionTrait) -> Result<SearchSettingsDto, Ap
 pub async fn config(state: &crate::state::AppState) -> Result<SearchConfig, AppError> {
     let settings = stored(state.db_conn()).await?;
     let mut config = to_config(&settings)?;
-    // The Tavily host is fixed by spec/07 §6; only a test build overrides it.
+    // The provider hosts are fixed by spec/07 §6; only a test build overrides them.
     config.tavily_base_url = state.web().tavily_base_url().to_owned();
+    config.deepseek_base_url = state.web().deepseek_base_url().to_owned();
     Ok(config)
 }
 
@@ -43,29 +44,17 @@ pub fn to_config(settings: &SearchSettingsDto) -> Result<SearchConfig, AppError>
     let provider = match settings.provider {
         SearchProvider::None => SearchProviderKind::None,
         SearchProvider::Tavily => SearchProviderKind::Tavily,
+        SearchProvider::Deepseek => SearchProviderKind::Deepseek,
         SearchProvider::Searxng => SearchProviderKind::Searxng,
     };
-    let tavily_api_key = match settings.tavily_api_key.as_deref() {
-        Some(key) if key.starts_with("env:") => {
-            let name = &key["env:".len()..];
-            match std::env::var(name) {
-                Ok(value) if !value.is_empty() => Some(value),
-                _ => {
-                    return Err(AppError::new(
-                        ErrorCode::ProviderAuth,
-                        format!("environment variable {name} is not set"),
-                    )
-                    .with_details(serde_json::json!({ "env": name })));
-                }
-            }
-        }
-        Some(key) if !key.is_empty() => Some(key.to_owned()),
-        _ => None,
-    };
+    let tavily_api_key = resolve_secret(settings.tavily_api_key.as_deref())?;
+    let deepseek_api_key = resolve_secret(settings.deepseek_api_key.as_deref())?;
     Ok(SearchConfig {
         provider,
         tavily_api_key,
         tavily_base_url: search::TAVILY_BASE_URL.to_owned(),
+        deepseek_api_key,
+        deepseek_base_url: search::DEEPSEEK_BASE_URL.to_owned(),
         searxng_base_url: settings
             .searxng_base_url
             .as_deref()
@@ -76,6 +65,26 @@ pub fn to_config(settings: &SearchSettingsDto) -> Result<SearchConfig, AppError>
             .unwrap_or(DEFAULT_RESULTS)
             .clamp(1, MAX_RESULTS_CAP),
     })
+}
+
+/// Resolves one stored secret: a literal is used as it is and `env:NAME` is read at call time
+/// (spec/01 §10.3). A missing environment variable is `provider.auth` naming the variable.
+fn resolve_secret(value: Option<&str>) -> Result<Option<String>, AppError> {
+    match value {
+        Some(key) if key.starts_with("env:") => {
+            let name = &key["env:".len()..];
+            match std::env::var(name) {
+                Ok(value) if !value.is_empty() => Ok(Some(value)),
+                _ => Err(AppError::new(
+                    ErrorCode::ProviderAuth,
+                    format!("environment variable {name} is not set"),
+                )
+                .with_details(serde_json::json!({ "env": name }))),
+            }
+        }
+        Some(key) if !key.is_empty() => Ok(Some(key.to_owned())),
+        _ => Ok(None),
+    }
 }
 
 /// Validates the search section of a settings patch (spec/02 §4.1, spec/05 §7).
@@ -99,6 +108,11 @@ pub fn validate(settings: &SearchSettingsDto) -> Result<(), AppError> {
     if settings.provider == SearchProvider::Tavily && settings.tavily_api_key.is_none() {
         return Err(AppError::validation(
             "tavily needs an API key when it is the selected provider",
+        ));
+    }
+    if settings.provider == SearchProvider::Deepseek && settings.deepseek_api_key.is_none() {
+        return Err(AppError::validation(
+            "deepseek needs an API key when it is the selected provider",
         ));
     }
     Ok(())
@@ -188,6 +202,11 @@ mod tests {
             ..SearchSettingsDto::default()
         };
         assert!(validate(&tavily).is_err());
+        let deepseek = SearchSettingsDto {
+            provider: SearchProvider::Deepseek,
+            ..SearchSettingsDto::default()
+        };
+        assert!(validate(&deepseek).is_err());
     }
 
     #[test]
@@ -205,6 +224,20 @@ mod tests {
             Some("https://searx.example/")
         );
         assert_eq!(config.result_count(None), 4);
+    }
+
+    #[test]
+    fn the_deepseek_key_maps_onto_the_provider_config() {
+        let settings = SearchSettingsDto {
+            provider: SearchProvider::Deepseek,
+            deepseek_api_key: Some("sk-deepseek-test".to_owned()),
+            ..SearchSettingsDto::default()
+        };
+        let config = to_config(&settings).expect("config");
+        assert_eq!(config.provider, SearchProviderKind::Deepseek);
+        assert_eq!(config.deepseek_api_key.as_deref(), Some("sk-deepseek-test"));
+        assert_eq!(config.deepseek_base_url, search::DEEPSEEK_BASE_URL);
+        assert!(search::is_configured(&config));
     }
 
     #[test]

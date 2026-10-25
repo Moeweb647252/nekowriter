@@ -42,7 +42,7 @@ pub async fn get(conn: &impl ConnectionTrait) -> Result<AppSettingsDto, AppError
             other => tracing::debug!(key = other, "ignoring an unknown app_settings key"),
         }
     }
-    dto.search.tavily_api_key = dto.search.tavily_api_key.as_deref().map(mask_secret);
+    mask_search_secrets(&mut dto.search);
     Ok(dto)
 }
 
@@ -69,21 +69,16 @@ pub async fn update(
         }
         None => current.book_defaults.clone(),
     };
-    let mut search = current.search.clone();
+    // `get` masks secrets, so merging a patch over it would persist the mask and destroy the
+    // stored key. Read the raw section instead; both search secrets depend on this (D-127).
+    let mut search = super::search_settings::stored(tx).await?;
     if let Some(patch_search) = &patch.search {
         if let Some(provider) = patch_search.provider {
             search.provider = provider;
         }
-        if let Some(key) = &patch_search.tavily_api_key {
-            // A masked value means "unchanged": the UI round-trips what it received.
-            if !is_masked(key) {
-                search.tavily_api_key = if key.is_empty() {
-                    None
-                } else {
-                    Some(key.clone())
-                };
-            }
-        }
+        // A masked value means "unchanged": the UI round-trips what it received.
+        apply_secret(&patch_search.tavily_api_key, &mut search.tavily_api_key);
+        apply_secret(&patch_search.deepseek_api_key, &mut search.deepseek_api_key);
         if let Some(base_url) = &patch_search.searxng_base_url {
             search.searxng_base_url = if base_url.is_empty() {
                 None
@@ -123,7 +118,7 @@ pub async fn update(
         search,
         embedding,
     };
-    response.search.tavily_api_key = response.search.tavily_api_key.as_deref().map(mask_secret);
+    mask_search_secrets(&mut response.search);
     Ok(response)
 }
 
@@ -169,6 +164,27 @@ async fn upsert(tx: &impl ConnectionTrait, key: &str, value: &str) -> Result<(),
         .exec(tx)
         .await?;
     Ok(())
+}
+
+/// Applies the secret fields of a patch: a masked value means "unchanged" and an empty value
+/// clears the secret (spec/10 §2.1). Writing a round-tripped mask back verbatim would destroy the
+/// stored key, which is why both secrets go through here (D-127).
+fn apply_secret(patch: &Option<String>, current: &mut Option<String>) {
+    if let Some(key) = patch
+        && !is_masked(key)
+    {
+        *current = if key.is_empty() {
+            None
+        } else {
+            Some(key.clone())
+        };
+    }
+}
+
+/// Masks every secret of the search settings on the way out (spec/01 §10.3).
+fn mask_search_secrets(search: &mut SearchSettingsDto) {
+    search.tavily_api_key = search.tavily_api_key.as_deref().map(mask_secret);
+    search.deepseek_api_key = search.deepseek_api_key.as_deref().map(mask_secret);
 }
 
 /// Masks a stored secret as `…abcd` (spec/01 §10.3). Short secrets are fully masked.

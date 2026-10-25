@@ -1600,3 +1600,53 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   `a_foreign_lan_origin_is_forbidden_even_with_allow_remote`, `null_origin_stays_forbidden_with_allow_remote`
   and `remote_origin_is_forbidden_without_allow_remote`. End-to-end on the release binary:
   `Host: 10.2.0.7:8789` → 200, `Host: evil.com` → 403.
+
+### D-127 DeepSeek becomes a `web_search` provider, keyed separately from Tavily
+- **Context**: the author asked to add DeepSeek to the web-search providers ("联网搜索提供商补上
+  deepseek"). DeepSeek exposes a raw JSON Search API (`POST /v1/tools/search`, bearer auth with the
+  same API key as its chat endpoint) whose response is a natural fit for the existing
+  `SearchProviderKind`/`SearchHit` abstraction. Its results carry **two** prose fields per hit:
+  `snippet` (~100–200 characters, documented "适用于前端展现" — for front-end display) and `summary`
+  (~600–800 characters, documented "适用于给模型阅读" — for a model to read).
+- **Decision**: add `SearchProviderKind::Deepseek` / `SearchProvider::Deepseek` (wire value
+  `"deepseek"`), a `deepseek_api_key` field, and a test-only `deepseek_base_url` seam exactly like
+  Tavily's. The provider sends `{"query", "count": n, "need_content": false}` to
+  `{base}/v1/tools/search` and maps `title` → `title`, `url` → `url`, **`summary` → `snippet`**, and
+  `date` → `published` (an absent or empty date stays absent). Failure classification is the shared
+  `checked_body`/`classify_request_error` path, so 401/403 become `auth`, other statuses become
+  `status` with the number (402 insufficient balance and 429 rate limiting therefore reach the model
+  as numbers), a timeout is `timeout`, and everything else is `network`. No retry logic is added.
+- **Why `summary`, not `snippet`**: `SearchHit.snippet` is not display text in this project — it is
+  rendered into the model prompt by `result.web_search` (`prompts/results.toml`). DeepSeek documents
+  `summary` as the field intended for a model to read and `snippet` as one for a front-end. Mapping
+  the display field into a prompt would silently degrade every DeepSeek search, so the semantic field
+  wins. `need_content` stays `false` because we never read `content`, and a body we would discard
+  must not be paid for. This is a deliberate mapping and should not be "corrected" to `snippet`
+  without changing what `SearchHit.snippet` means.
+- **Why a separate secret**: the DeepSeek key is a DeepSeek API key, not a Tavily key, so overloading
+  `tavily_api_key` would force the author to retype/relabel secrets when switching providers. The new
+  `deepseek_api_key` therefore gets full parity: literal or `env:NAME` resolved at call time, masked
+  in responses, and a masked patch value means "unchanged". Fixing that parity exposed a real
+  pre-existing defect: `app_settings::update` merged a patch over `app_settings::get`, which returns
+  **masked** secrets, so any later settings save persisted the mask and destroyed the stored Tavily
+  key as well. `update` now reads the raw `search` section through
+  `search_settings::stored`, and both secrets share one `apply_secret`/`mask_search_secrets` path.
+- **Scope**: search only. `web_fetch` is unchanged: the direct fetcher already implements the SSRF
+  guard, Readability extraction and paging cache that spec/07 §7 requires, and DeepSeek's Fetch
+  endpoint would be a second, billed extraction path. (The author subsequently requested that path
+  too; it is D-128, which supersedes this scope note but not the search design above.)
+- **Consequences**: the settings shape, validation (`deepseek` without a key is a 400
+  `validation.failed`), the UI provider select, both locales, and the specs are extended. The
+  DeepSeek base URL is overridable only under `cfg(any(test, feature = "testing"))`; production has
+  no setting, environment variable or API field that can change it, and
+  `the_deepseek_base_url_seam_is_test_only` pins the default. Tests: `web_search_providers.rs` —
+  `deepseek_sends_the_documented_request_and_maps_its_results`,
+  `a_rejected_deepseek_key_is_provider_auth`, `other_deepseek_failures_are_provider_unavailable`,
+  `a_rejected_deepseek_request_is_status_402_and_429`, `deepseek_is_not_configured_without_a_key`,
+  `a_deepseek_key_from_the_environment_is_read_at_call_time`,
+  `deepseek_api_key_is_masked_and_a_round_tripped_mask_keeps_it`,
+  `a_deepseek_provider_without_a_key_is_rejected`, `the_deepseek_base_url_seam_is_test_only`;
+  `search_settings.rs` unit tests; `webSearchPage.test.tsx` for the option and its key field.
+  Fail-before was real: before the implementation the provider tests did not compile (13 errors for
+  the missing variant, config fields, constant and seam) and the Vitest case failed on a missing
+  `option` named DeepSeek (Radix also needed jsdom pointer-capture stubs).

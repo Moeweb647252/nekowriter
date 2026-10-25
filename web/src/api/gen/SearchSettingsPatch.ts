@@ -2,10 +2,15 @@
 import type { SearchProvider } from "./SearchProvider";
 
 /**
- * The patchable part of `app_settings["search"]`. `tavily_api_key: null` clears the key.
+ * The patchable part of `app_settings["search"]`. An empty key string clears it; a masked value
+ * means "unchanged" (spec/10 §2.1).
  */
 export type SearchSettingsPatch = { provider?: SearchProvider | null, 
 /**
  * Masked values are detected and ignored, so a round-tripped masked key cannot erase it.
  */
-tavily_api_key?: string | null, searxng_base_url?: string | null, max_results?: number | null, };
+tavily_api_key?: string | null, 
+/**
+ * The DeepSeek key, masked and kept exactly like `tavily_api_key` (D-127).
+ */
+deepseek_api_key?: string | null, searxng_base_url?: string | null, max_results?: number | null, };

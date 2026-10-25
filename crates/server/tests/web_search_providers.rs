@@ -1,9 +1,9 @@
-//! `web_search` provider tests (PLAN 8.1, spec/07 §6, spec/10 §2.1, D-058).
+//! `web_search` provider tests (PLAN 8.1, spec/07 §6, spec/10 §2.1, D-058, D-127).
 //!
-//! Both providers run against `wiremock`: the Tavily host is overridden through
-//! `WebService::with_tavily_base_url` (the production address is fixed by the spec), and SearXNG
-//! takes an author-supplied base URL, which is the `wiremock` server itself. No real host is
-//! contacted.
+//! Every provider runs against `wiremock`: the Tavily and DeepSeek hosts are overridden through
+//! the test-only `WebService::with_*_base_url` seams (both production addresses are fixed by the
+//! spec), and SearXNG takes an author-supplied base URL, which is the `wiremock` server itself. No
+//! real host is contacted.
 //!
 //! The harness is local because `TestApp` has no seam for replacing the web service, and adding one
 //! would edit a file another task owns.
@@ -32,6 +32,15 @@ struct Harness {
 impl Harness {
     /// A fresh app whose Tavily provider calls `tavily_base` when given.
     async fn new(tavily_base: Option<String>) -> Self {
+        Self::build(tavily_base, None).await
+    }
+
+    /// A fresh app whose DeepSeek provider calls `deepseek_base` when given.
+    async fn with_deepseek(deepseek_base: Option<String>) -> Self {
+        Self::build(None, deepseek_base).await
+    }
+
+    async fn build(tavily_base: Option<String>, deepseek_base: Option<String>) -> Self {
         let dir = tempfile::tempdir().expect("temp dir");
         let db = Db::connect(&dir.path().join("test.db"))
             .await
@@ -49,6 +58,9 @@ impl Harness {
         let mut web = WebService::new();
         if let Some(base) = tavily_base {
             web = web.with_tavily_base_url(base);
+        }
+        if let Some(base) = deepseek_base {
+            web = web.with_deepseek_base_url(base);
         }
         let state = AppState::new(db, config, vec_version)
             .with_events(events)
@@ -133,6 +145,22 @@ fn config(server: &MockServer) -> SearchConfig {
     }
 }
 
+/// A harness whose DeepSeek provider calls `server`.
+async fn app_with_deepseek(server: &MockServer) -> Harness {
+    Harness::with_deepseek(Some(server.uri())).await
+}
+
+/// Saves a DeepSeek configuration.
+async fn configure_deepseek(app: &Harness, key: &str) {
+    let (status, body) = app
+        .patch(
+            "/api/app-settings",
+            json!({ "search": { "provider": "deepseek", "deepseek_api_key": key } }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "configure deepseek: {body}");
+}
+
 fn tavily_response() -> Value {
     json!({
         "query": "song dynasty tea house",
@@ -167,6 +195,45 @@ fn searx_response() -> Value {
                 "url": "https://example.org/markets",
                 "content": "Night markets were common.",
                 "publishedDate": null,
+            },
+        ],
+    })
+}
+
+/// DeepSeek's response carries both a short `snippet` (for a front-end) and a long `summary` (for
+/// a model); the provider must feed the latter into the prompt (spec/07 §6, D-127).
+const DEEPSEEK_SUMMARY_FIRST: &str = "Tea houses were social hubs where the Song literati \
+     gathered; the summary is the field DeepSeek documents for a model to read.";
+const DEEPSEEK_SNIPPET_FIRST: &str = "Tea houses as social hubs";
+const DEEPSEEK_SUMMARY_SECOND: &str =
+    "Kaifeng's night market ran past the curfew and shaped the capital's consumer culture.";
+
+fn deepseek_response() -> Value {
+    json!({
+        "results": [
+            {
+                "rerank_score": 2.1,
+                "title": "Tea houses of the Song dynasty",
+                "url": "https://example.com/deepseek-tea",
+                "snippet": DEEPSEEK_SNIPPET_FIRST,
+                "summary": DEEPSEEK_SUMMARY_FIRST,
+                "content": "",
+                "site_name": "Example",
+                "site_icon": null,
+                "date": "2021-07-09T00:00:00Z",
+                "authority": 3,
+            },
+            {
+                "rerank_score": 1.4,
+                "title": "City life in Kaifeng",
+                "url": "https://example.com/deepseek-kaifeng",
+                "snippet": "Kaifeng night market",
+                "summary": DEEPSEEK_SUMMARY_SECOND,
+                "content": "",
+                "site_name": null,
+                "site_icon": null,
+                "date": null,
+                "authority": -1,
             },
         ],
     })
@@ -261,6 +328,263 @@ async fn other_tavily_failures_are_provider_unavailable() {
         assert_eq!(status, StatusCode::BAD_GATEWAY, "{code}: {body}");
         assert_error(&body, "provider.unavailable");
     }
+}
+
+// ───────────────────────────── DeepSeek ─────────────────────────────
+
+/// The provider configuration for the direct DeepSeek provider tests.
+fn deepseek_config(server: &MockServer) -> SearchConfig {
+    SearchConfig {
+        provider: SearchProviderKind::Deepseek,
+        deepseek_api_key: Some("sk-deepseek-test".to_owned()),
+        deepseek_base_url: server.uri(),
+        ..SearchConfig::default()
+    }
+}
+
+#[tokio::test]
+async fn deepseek_sends_the_documented_request_and_maps_its_results() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/tools/search"))
+        .and(bearer_token("sk-deepseek-test"))
+        .and(body_string_contains("\"need_content\":false"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(deepseek_response()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let app = app_with_deepseek(&server).await;
+    configure_deepseek(&app, "sk-deepseek-test").await;
+
+    let (status, body) = app
+        .post(
+            "/api/app-settings/search/test",
+            json!({ "query": "song tea house" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "search test: {body}");
+    let hits = body["hits"].as_array().expect("hits");
+    assert_eq!(hits.len(), 2, "{body}");
+    assert_eq!(hits[0]["title"], "Tea houses of the Song dynasty");
+    assert_eq!(hits[0]["url"], "https://example.com/deepseek-tea");
+    // `SearchHit.snippet` is rendered into the model prompt, so it must carry DeepSeek's
+    // `summary` (documented for a model), never its `snippet` (documented for a front-end).
+    assert_eq!(hits[0]["snippet"], DEEPSEEK_SUMMARY_FIRST);
+    assert_ne!(hits[0]["snippet"], DEEPSEEK_SNIPPET_FIRST);
+    assert_eq!(hits[0]["published"], "2021-07-09T00:00:00Z");
+    assert_eq!(hits[1]["snippet"], DEEPSEEK_SUMMARY_SECOND);
+    // A null `date` maps to an absent field, not the string "null".
+    assert!(hits[1].get("published").is_none(), "{body}");
+
+    let requests = server.received_requests().await.expect("requests");
+    assert_eq!(requests[0].url.path(), "/v1/tools/search");
+    let sent: Value = serde_json::from_slice(&requests[0].body).expect("json body");
+    assert_eq!(sent["query"], "song tea house");
+    assert_eq!(sent["count"], 6, "the settings default");
+    assert_eq!(sent["need_content"], false);
+}
+
+#[tokio::test]
+async fn a_rejected_deepseek_key_is_provider_auth() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/tools/search"))
+        .respond_with(ResponseTemplate::new(401).set_body_string("{\"error\":\"invalid key\"}"))
+        .mount(&server)
+        .await;
+
+    let app = app_with_deepseek(&server).await;
+    configure_deepseek(&app, "sk-deepseek-wrong-key").await;
+    let (status, body) = app
+        .post(
+            "/api/app-settings/search/test",
+            json!({ "query": "anything" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    assert_error(&body, "provider.auth");
+}
+
+#[tokio::test]
+async fn other_deepseek_failures_are_provider_unavailable() {
+    for code in [500u16, 429, 402] {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/tools/search"))
+            .respond_with(ResponseTemplate::new(code).set_body_string("boom"))
+            .mount(&server)
+            .await;
+
+        let app = app_with_deepseek(&server).await;
+        configure_deepseek(&app, "sk-deepseek-test").await;
+        let (status, body) = app
+            .post(
+                "/api/app-settings/search/test",
+                json!({ "query": "anything" }),
+            )
+            .await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY, "{code}: {body}");
+        assert_error(&body, "provider.unavailable");
+    }
+}
+
+#[tokio::test]
+async fn a_rejected_deepseek_request_is_status_402_and_429() {
+    let client = search::client().expect("client");
+    for code in [402u16, 429] {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/tools/search"))
+            .respond_with(ResponseTemplate::new(code).set_body_string("rejected"))
+            .mount(&server)
+            .await;
+        let error = search::search(&client, &deepseek_config(&server), "q", 5)
+            .await
+            .expect_err("the request is rejected");
+        // The failure is a `status` failure that carries the number, not `auth` or `network`.
+        assert_eq!(error.reason, SearchFailure::Status, "{code}");
+        assert_eq!(error.status, Some(code), "{code}");
+    }
+}
+
+#[test]
+fn deepseek_is_not_configured_without_a_key() {
+    let keyless = SearchConfig {
+        provider: SearchProviderKind::Deepseek,
+        ..SearchConfig::default()
+    };
+    assert!(!search::is_configured(&keyless));
+    let empty = SearchConfig {
+        deepseek_api_key: Some(String::new()),
+        ..keyless.clone()
+    };
+    assert!(!search::is_configured(&empty));
+    let keyed = SearchConfig {
+        deepseek_api_key: Some("sk-deepseek-test".to_owned()),
+        ..keyless
+    };
+    assert!(search::is_configured(&keyed));
+}
+
+#[tokio::test]
+async fn a_deepseek_key_from_the_environment_is_read_at_call_time() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/tools/search"))
+        .and(bearer_token("sk-deepseek-from-env"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "results": [] })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    // Safety: the variable name is unique to this test, so no other test reads it.
+    unsafe {
+        std::env::set_var("NEKOWRITER_M8_DEEPSEEK_KEY", "sk-deepseek-from-env");
+    }
+    let app = app_with_deepseek(&server).await;
+    let (status, body) = app
+        .patch(
+            "/api/app-settings",
+            json!({ "search": {
+                "provider": "deepseek",
+                "deepseek_api_key": "env:NEKOWRITER_M8_DEEPSEEK_KEY",
+            } }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "configure: {body}");
+    // `env:NAME` is not a secret, so the DTO keeps it readable (spec/01 §10.3).
+    assert_eq!(
+        body["search"]["deepseek_api_key"],
+        "env:NEKOWRITER_M8_DEEPSEEK_KEY"
+    );
+
+    let (status, body) = app
+        .post("/api/app-settings/search/test", json!({ "query": "tea" }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "search test: {body}");
+    unsafe {
+        std::env::remove_var("NEKOWRITER_M8_DEEPSEEK_KEY");
+    }
+}
+
+#[tokio::test]
+async fn deepseek_api_key_is_masked_and_a_round_tripped_mask_keeps_it() {
+    const SECRET: &str = "sk-deepseek-secret-abcd";
+    let server = MockServer::start().await;
+    // The stored key survives the masked write-back only if the provider still sends it.
+    Mock::given(method("POST"))
+        .and(path("/v1/tools/search"))
+        .and(bearer_token(SECRET))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "results": [] })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let app = app_with_deepseek(&server).await;
+    configure_deepseek(&app, SECRET).await;
+
+    let (status, body) = app.get("/api/app-settings").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["search"]["deepseek_api_key"], "…abcd");
+    assert!(!body.to_string().contains(SECRET));
+
+    // The UI round-trips the masked value: it must mean "unchanged", not a new key.
+    let (status, body) = app
+        .patch(
+            "/api/app-settings",
+            json!({ "search": { "deepseek_api_key": "…abcd", "max_results": 8 } }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["search"]["deepseek_api_key"], "…abcd");
+    assert_eq!(body["search"]["provider"], "deepseek");
+    assert_eq!(body["search"]["max_results"], 8);
+    assert!(!body.to_string().contains(SECRET));
+
+    // A search test now succeeds only because the stored secret was kept.
+    let (status, body) = app
+        .post("/api/app-settings/search/test", json!({ "query": "tea" }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "search test: {body}");
+}
+
+#[tokio::test]
+async fn a_deepseek_provider_without_a_key_is_rejected() {
+    let app = Harness::with_deepseek(None).await;
+    let (status, body) = app
+        .patch(
+            "/api/app-settings",
+            json!({ "search": { "provider": "deepseek" } }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_error(&body, "validation.failed");
+    assert!(body["error"].is_object(), "{body}");
+    // Nothing was stored: an unset provider remains the selected one.
+    let (_, settings) = app.get("/api/app-settings").await;
+    assert_eq!(settings["search"]["provider"], "none");
+}
+
+#[test]
+fn the_deepseek_base_url_seam_is_test_only() {
+    // Production `WebService::new()` always calls the documented host: the field, the builder and
+    // the getter's override arm exist only under `cfg(any(test, feature = "testing"))`, so a
+    // production build has no setting, environment variable or API field that can change it.
+    assert_eq!(
+        WebService::new().deepseek_base_url(),
+        search::DEEPSEEK_BASE_URL
+    );
+    assert_eq!(
+        WebService::new().deepseek_base_url(),
+        "https://api.deepseek.com"
+    );
+    let overridden = WebService::new().with_deepseek_base_url("http://wiremock.invalid");
+    assert_eq!(overridden.deepseek_base_url(), "http://wiremock.invalid");
+    assert_eq!(
+        SearchConfig::default().deepseek_base_url,
+        search::DEEPSEEK_BASE_URL
+    );
 }
 
 // ───────────────────────────── SearXNG ─────────────────────────────

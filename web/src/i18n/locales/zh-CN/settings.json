@@ -83,6 +83,7 @@
   "search_provider_none": "不使用",
   "search_api_key": "API 密钥",
   "search_api_key_placeholder": "tvly-…",
+  "search_api_key_placeholder_deepseek": "sk-…",
   "search_api_key_hint": "直接填写密钥，或填 env:名称 在调用时从环境变量读取。",
   "search_base_url": "服务地址",
   "search_base_url_hint": "SearXNG 实例的地址；需要在该实例上启用 JSON 输出。",

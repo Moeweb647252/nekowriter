@@ -8,4 +8,9 @@ export type SearchSettingsDto = { provider: SearchProvider,
 /**
  * Masked in responses; an absent field keeps the stored key (spec/10 §2.1).
  */
-tavily_api_key: string | null, searxng_base_url: string | null, max_results: number, };
+tavily_api_key: string | null, 
+/**
+ * The DeepSeek API key, a separate secret from `tavily_api_key` (D-127). Masked in responses;
+ * an absent field keeps the stored key (spec/10 §2.1).
+ */
+deepseek_api_key: string | null, searxng_base_url: string | null, max_results: number, };

@@ -146,8 +146,14 @@ pub struct SearchHit { pub title: String, pub url: String, pub snippet: String, 
 | Provider | Request | Mapping |
 |---|---|---|
 | Tavily | `POST https://api.tavily.com/search`, header `Authorization: Bearer <key>`, body `{"query", "max_results": n, "search_depth": "basic", "include_answer": false}` | `results[]` → `{title, url, snippet: content, published: published_date}` |
+| DeepSeek | `POST {base}/v1/tools/search` (base `https://api.deepseek.com`), header `Authorization: Bearer <key>`, body `{"query", "count": n, "need_content": false}` | `results[]` → `{title, url, snippet: summary, published: date}` |
 | SearXNG | `GET {base}/search?q=<q>&format=json&safesearch=0` (the instance must enable the JSON format) | `results[]` → `{title, url, snippet: content, published: publishedDate}` |
 
+- DeepSeek returns both a short `snippet` (~100–200 characters, documented for front-end display)
+  and a longer `summary` (~600–800 characters, documented for a model to read). `SearchHit.snippet`
+  is rendered into the **model prompt** by `result.web_search`, so the provider maps `summary` and
+  leaves `snippet`/`content` unused; `need_content: false` keeps the discarded body out of the
+  response. `date` is already RFC 3339 UTC and stays absent when null or empty (D-127).
 - No provider configured → `error.search_not_configured` (the conception and research prompts
   tell the agent to continue with what it knows and say so in its report).
 - A failed request → `error.search_failed` with a `reason` code: `timeout`, `auth` (HTTP 401 or

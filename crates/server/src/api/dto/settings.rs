@@ -26,6 +26,10 @@ pub struct SearchSettingsDto {
     /// Masked in responses; an absent field keeps the stored key (spec/10 §2.1).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tavily_api_key: Option<String>,
+    /// The DeepSeek API key, a separate secret from `tavily_api_key` (D-127). Masked in responses;
+    /// an absent field keeps the stored key (spec/10 §2.1).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deepseek_api_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub searxng_base_url: Option<String>,
     pub max_results: i32,
@@ -36,6 +40,7 @@ impl Default for SearchSettingsDto {
         Self {
             provider: SearchProvider::None,
             tavily_api_key: None,
+            deepseek_api_key: None,
             searxng_base_url: None,
             max_results: 6,
         }
@@ -50,6 +55,7 @@ pub enum SearchProvider {
     #[default]
     None,
     Tavily,
+    Deepseek,
     Searxng,
 }
 
@@ -85,7 +91,8 @@ pub struct AppSettingsPatch {
     pub embedding: Option<EmbeddingSettingsDto>,
 }
 
-/// The patchable part of `app_settings["search"]`. `tavily_api_key: null` clears the key.
+/// The patchable part of `app_settings["search"]`. An empty key string clears it; a masked value
+/// means "unchanged" (spec/10 §2.1).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[ts(optional_fields = nullable)]
@@ -95,6 +102,9 @@ pub struct SearchSettingsPatch {
     /// Masked values are detected and ignored, so a round-tripped masked key cannot erase it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tavily_api_key: Option<String>,
+    /// The DeepSeek key, masked and kept exactly like `tavily_api_key` (D-127).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deepseek_api_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub searxng_base_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

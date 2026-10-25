@@ -3,4 +3,4 @@
 /**
  * Web search providers (spec/02 §4.1, spec/07 §6).
  */
-export type SearchProvider = "none" | "tavily" | "searxng";
+export type SearchProvider = "none" | "tavily" | "deepseek" | "searxng";

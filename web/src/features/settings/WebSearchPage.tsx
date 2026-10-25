@@ -36,6 +36,7 @@ export default function WebSearchPage() {
   // The author edits a local draft; Save writes it and Test runs the saved configuration.
   const [provider, setProvider] = useState<SearchProvider | null>(null)
   const [tavilyKey, setTavilyKey] = useState<string | null>(null)
+  const [deepseekKey, setDeepseekKey] = useState<string | null>(null)
   const [searxngUrl, setSearxngUrl] = useState<string | null>(null)
   const [maxResults, setMaxResults] = useState<number | null>(null)
   const [query, setQuery] = useState("")
@@ -46,12 +47,22 @@ export default function WebSearchPage() {
 
   const saved = settings.data.search
   const current: SearchProvider = provider ?? saved.provider
-  const key = tavilyKey ?? saved.tavily_api_key ?? ""
+  // Each secret keeps its own draft: switching providers must not move one key into the other
+  // provider's field or send it to the wrong backend.
+  const key =
+    current === "deepseek"
+      ? (deepseekKey ?? saved.deepseek_api_key ?? "")
+      : (tavilyKey ?? saved.tavily_api_key ?? "")
+  const keyPlaceholder =
+    current === "deepseek"
+      ? t("settings:search_api_key_placeholder_deepseek")
+      : t("settings:search_api_key_placeholder")
   const baseUrl = searxngUrl ?? saved.searxng_base_url ?? ""
   const results = maxResults ?? saved.max_results
   const dirty =
     current !== saved.provider ||
     (tavilyKey !== null && tavilyKey !== (saved.tavily_api_key ?? "")) ||
+    (deepseekKey !== null && deepseekKey !== (saved.deepseek_api_key ?? "")) ||
     (searxngUrl !== null && searxngUrl !== (saved.searxng_base_url ?? "")) ||
     results !== saved.max_results
 
@@ -63,6 +74,10 @@ export default function WebSearchPage() {
           // An untouched masked key is sent back as stored: the server treats a mask as "keep"
           // (spec/10 §2.1), so the author can change the provider without retyping a secret.
           tavily_api_key: current === "tavily" ? key : undefined,
+          deepseek_api_key:
+            current === "deepseek"
+              ? (deepseekKey ?? saved.deepseek_api_key ?? "")
+              : undefined,
           searxng_base_url: current === "searxng" ? baseUrl : undefined,
           max_results: results,
         },
@@ -70,6 +85,7 @@ export default function WebSearchPage() {
       {
         onSuccess: () => {
           setTavilyKey(null)
+          setDeepseekKey(null)
           setSearxngUrl(null)
           setMaxResults(null)
           setProvider(null)
@@ -100,12 +116,13 @@ export default function WebSearchPage() {
           <SelectContent>
             <SelectItem value="none">{t("settings:search_provider_none")}</SelectItem>
             <SelectItem value="tavily">Tavily</SelectItem>
+            <SelectItem value="deepseek">DeepSeek</SelectItem>
             <SelectItem value="searxng">SearXNG</SelectItem>
           </SelectContent>
         </Select>
       </div>
 
-      {current === "tavily" ? (
+      {current === "tavily" || current === "deepseek" ? (
         <div className="flex items-start gap-3">
           <Label htmlFor="search-key" className="mt-1.5 w-40 shrink-0">
             {t("settings:search_api_key")}
@@ -115,8 +132,14 @@ export default function WebSearchPage() {
               id="search-key"
               type="password"
               value={key}
-              placeholder={t("settings:search_api_key_placeholder")}
-              onChange={(event) => setTavilyKey(event.target.value)}
+              placeholder={keyPlaceholder}
+              onChange={(event) => {
+                if (current === "deepseek") {
+                  setDeepseekKey(event.target.value)
+                } else {
+                  setTavilyKey(event.target.value)
+                }
+              }}
             />
             <p className="text-xs text-muted-foreground">{t("settings:search_api_key_hint")}</p>
           </div>

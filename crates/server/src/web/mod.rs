@@ -27,6 +27,10 @@ pub struct WebService {
     /// author; only the tests of this crate override it.
     #[cfg(any(test, feature = "testing"))]
     tavily_base_url: Option<String>,
+    /// Test-only: replaces the fixed DeepSeek host, for the same reason as `tavily_base_url`. The
+    /// production address is `https://api.deepseek.com` (spec/07 §6).
+    #[cfg(any(test, feature = "testing"))]
+    deepseek_base_url: Option<String>,
 }
 
 impl WebService {
@@ -43,6 +47,8 @@ impl WebService {
             cache: PageCache::new(),
             #[cfg(any(test, feature = "testing"))]
             tavily_base_url: None,
+            #[cfg(any(test, feature = "testing"))]
+            deepseek_base_url: None,
         }
     }
 
@@ -53,6 +59,7 @@ impl WebService {
             fetcher: Some(fetcher),
             cache: PageCache::new(),
             tavily_base_url: None,
+            deepseek_base_url: None,
         }
     }
 
@@ -63,6 +70,13 @@ impl WebService {
         self
     }
 
+    /// Points the DeepSeek provider at another host (tests only).
+    #[cfg(any(test, feature = "testing"))]
+    pub fn with_deepseek_base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.deepseek_base_url = Some(base_url.into());
+        self
+    }
+
     /// The Tavily host this process actually calls.
     pub fn tavily_base_url(&self) -> &str {
         #[cfg(any(test, feature = "testing"))]
@@ -70,6 +84,15 @@ impl WebService {
             return base;
         }
         search::TAVILY_BASE_URL
+    }
+
+    /// The DeepSeek host this process actually calls.
+    pub fn deepseek_base_url(&self) -> &str {
+        #[cfg(any(test, feature = "testing"))]
+        if let Some(base) = &self.deepseek_base_url {
+            return base;
+        }
+        search::DEEPSEEK_BASE_URL
     }
 
     /// The guarded client, when it could be built.
