@@ -25,6 +25,7 @@ import {
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import { useUiStore } from "@/stores/ui"
+import { WRITING_LANGUAGES } from "@/lib/languages"
 
 /** The dialog's own state; `bookId` presets the book inside a book workspace. */
 export function NewResearchTaskDialog({
@@ -36,18 +37,20 @@ export function NewResearchTaskDialog({
   onOpenChange: (open: boolean) => void
   bookId?: number
 }) {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const showError = useErrorToast()
   const create = useCreateResearchTask()
   const books = useBooks()
-  // A standalone task has no book to take a language from, so the UI language is the default
-  // (PROJECT §8.10); the author can change it on the task page.
+  // The UI language is the default for a standalone task (PROJECT §8.10).
   const language = useUiStore((state) => state.language)
 
   const [topic, setTopic] = useState("")
   const [requirements, setRequirements] = useState("")
   const [scopeName, setScopeName] = useState("")
   const [book, setBook] = useState<string>(bookId === undefined ? "none" : String(bookId))
+  // PROJECT §8.10: a task without a book chooses the entry language, defaulting to the UI
+  // language; with a book the book's writing language wins (the field is ignored).
+  const [entryLanguage, setEntryLanguage] = useState<string>(language)
   const [error, setError] = useState<string | null>(null)
 
   const reset = () => {
@@ -55,6 +58,7 @@ export function NewResearchTaskDialog({
     setRequirements("")
     setScopeName("")
     setBook(bookId === undefined ? "none" : String(bookId))
+    setEntryLanguage(language)
     setError(null)
   }
 
@@ -77,9 +81,9 @@ export function NewResearchTaskDialog({
         requirements: requirements.trim(),
         scope_name: trimmedScope,
         book_id: linkedBook,
-        // The UI language is the default for a standalone task (PROJECT §8.10); with a book the
-        // field is ignored (spec/10 §2.5).
-        language: linkedBook === undefined ? language : undefined,
+        // The chosen entry language for a standalone task (default: the UI language); with a
+        // book the field is ignored (spec/10 §2.5).
+        language: linkedBook === undefined ? entryLanguage : undefined,
       },
       {
         onSuccess: () => {
@@ -142,11 +146,29 @@ export function NewResearchTaskDialog({
               </SelectContent>
             </Select>
           </div>
-          <p className="text-xs text-muted-foreground">
-            {book === "none"
-              ? t("knowledge:research.language_hint", { language: i18n.language })
-              : t("knowledge:research.language_book_hint")}
-          </p>
+          {book === "none" ? (
+            <div className="space-y-1">
+              <Label htmlFor="new-research-language">
+                {t("knowledge:research.language")}
+              </Label>
+              <Select value={entryLanguage} onValueChange={setEntryLanguage}>
+                <SelectTrigger id="new-research-language">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {WRITING_LANGUAGES.map((code) => (
+                    <SelectItem key={code} value={code}>
+                      {t(`common:language_code.${code}`, { defaultValue: code })}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              {t("knowledge:research.language_book_hint")}
+            </p>
+          )}
           {error === null ? null : <p className="text-xs text-destructive">{error}</p>}
         </div>
         <DialogFooter>

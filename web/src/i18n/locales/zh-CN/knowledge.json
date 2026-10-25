@@ -86,7 +86,6 @@
     "scope_required": "请填写范围名称。",
     "language_required": "不属于任何书的任务需要填写语言。",
     "created_entries": "本任务创建的条目",
-    "language_hint": "新条目将使用 {{language}} 撰写。",
     "language_book_hint": "任务使用该书的语言。",
     "abandon_confirm": "放弃这次资料收集？任务会标记为已取消，已保存的条目会保留在范围里。"
   }

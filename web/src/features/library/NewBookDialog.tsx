@@ -30,9 +30,7 @@ import {
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
-
-/** Writing languages offered by the dialog; the API accepts any BCP-47 tag. */
-const LANGUAGES = ["zh-CN", "en", "ja", "ko", "fr", "de", "es", "ru"] as const
+import { WRITING_LANGUAGES } from "@/lib/languages"
 
 export type NewBookDialogProps = {
   open: boolean
@@ -114,7 +112,7 @@ export function NewBookDialog({ open, onOpenChange }: NewBookDialogProps) {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {LANGUAGES.map((code) => (
+                  {WRITING_LANGUAGES.map((code) => (
                     <SelectItem key={code} value={code}>
                       {t(`common:language_code.${code}`, { defaultValue: code })}
                     </SelectItem>

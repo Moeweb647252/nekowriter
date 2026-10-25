@@ -86,7 +86,6 @@
     "scope_required": "A scope name is required.",
     "language_required": "A language is required for a task without a book.",
     "created_entries": "Entries this task created",
-    "language_hint": "New entries will be written in {{language}}.",
     "language_book_hint": "The task uses the book's language.",
     "abandon_confirm": "Abandon this research run? The task is cancelled; saved entries stay in the scope."
   }
