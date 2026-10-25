@@ -17,7 +17,14 @@ import { useNavigate, useParams } from "react-router"
 import { useTranslation } from "react-i18next"
 import { Loader2 } from "lucide-react"
 
-import { useAnswerSession, useBookSessions, useSendSessionMessage, useSession } from "@/api/hooks/sessions"
+import {
+  useAnswerSession,
+  useBookSessions,
+  useResumeSession,
+  useSendSessionMessage,
+  useSession,
+  useSessionControl,
+} from "@/api/hooks/sessions"
 import { useCharacters, useDeleteCharacter, usePatchCharacter, useReorderCharacters, useSettingDocs, usePutSettingDoc } from "@/api/hooks/settings-materials"
 import {
   useCreateResearchTask,
@@ -26,7 +33,7 @@ import {
   useResearchTasks,
 } from "@/api/hooks/research"
 import { useBook } from "@/api/hooks/books"
-import { useFinalizeConception } from "@/api/hooks/conception"
+import { useFinalizeConception, useStartConception } from "@/api/hooks/conception"
 import { useErrorToast } from "@/components/common/ErrorToast"
 import { ConfirmDialog } from "@/components/common/ConfirmDialog"
 import { Button } from "@/components/ui/button"
@@ -35,6 +42,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { ActivityStream } from "@/features/agent/ActivityStream"
 import { Composer } from "@/features/agent/Composer"
+import { SessionControls } from "@/features/agent/SessionControls"
 import { AskUserForm, readQuestions } from "@/features/conception/AskUserForm"
 import { CharacterRankList } from "@/features/conception/CharacterRankList"
 import { ResearchTopicsEditor } from "@/features/conception/ResearchTopicsEditor"
@@ -114,7 +122,12 @@ export default function ConceptionStudio() {
 
   const answer = useAnswerSession(bookId)
   const send = useSendSessionMessage(bookId)
+  // The studio is where the conception session is used, so it needs the same Pause/Stop/
+  // Continue/Feedback/Abandon controls as the agent panel (PROJECT §8.6, §8.7).
+  const control = useSessionControl(bookId)
+  const resume = useResumeSession(bookId)
   const finalize = useFinalizeConception(bookId)
+  const start = useStartConception(bookId)
   // One document hook per kind (the endpoint is per kind); `saveDoc` picks the right one.
   const putOutline = usePutSettingDoc(bookId, "outline")
   const putWorld = usePutSettingDoc(bookId, "world")
@@ -180,6 +193,8 @@ export default function ConceptionStudio() {
   const busy =
     answer.isPending ||
     send.isPending ||
+    control.isPending ||
+    resume.isPending ||
     finalize.isPending ||
     reorder.isPending ||
     patchCharacter.isPending ||
@@ -207,13 +222,57 @@ export default function ConceptionStudio() {
               </span>
             ) : null}
           </header>
+          {session === undefined ? null : (
+            <SessionControls
+              session={session}
+              busy={busy}
+              onPause={() =>
+                control.mutate({ sessionId: session.id, operation: "pause" }, { onError: showError })
+              }
+              onStop={() =>
+                control.mutate({ sessionId: session.id, operation: "stop" }, { onError: showError })
+              }
+              onContinue={() => {
+                // Held/paused sessions resume; stopped/failed/interrupted ones continue
+                // (spec/03 §3).
+                if (session.status === "held" || session.status === "paused") {
+                  resume.mutate({ sessionId: session.id }, { onError: showError })
+                } else {
+                  control.mutate(
+                    { sessionId: session.id, operation: "continue" },
+                    { onError: showError },
+                  )
+                }
+              }}
+              onFeedback={(feedback) =>
+                resume.mutate({ sessionId: session.id, feedback }, { onError: showError })
+              }
+              onAbandon={() =>
+                control.mutate(
+                  { sessionId: session.id, operation: "abandon" },
+                  { onError: showError },
+                )
+              }
+            />
+          )}
           {snapshot.isPending && sessionId !== null ? (
             <div className="flex flex-1 items-center justify-center">
               <Loader2 aria-hidden="true" className="size-4 animate-spin text-muted-foreground" />
             </div>
           ) : session === undefined ? (
-            <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
-              {t("book:conception.no_session")}
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-sm text-muted-foreground">
+              <p>{t("book:conception.no_session")}</p>
+              {book.data.status === "conceiving" ? (
+                // spec/08 §5: a conceiving book whose session was abandoned (or that was created
+                // while no conception model was configured) starts one with this endpoint.
+                <Button
+                  size="sm"
+                  disabled={start.isPending}
+                  onClick={() => start.mutate(undefined, { onError: showError })}
+                >
+                  {start.isPending ? t("common:saving") : t("book:conception.start")}
+                </Button>
+              ) : null}
             </div>
           ) : (
             <ActivityStream session={session} messages={messages} />
