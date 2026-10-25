@@ -1,5 +1,5 @@
 /** Knowledge queries and mutations (spec/11 §4.1, spec/10 §2.5). */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 import * as endpoints from "@/api/endpoints/knowledge"
 import { keys } from "@/api/keys"
@@ -48,10 +48,18 @@ export function useDeleteScope() {
   })
 }
 
+/**
+ * One scope's entries, paged forward with the response's `next_cursor` (D-092: "the UI pages
+ * forward and sorts/filters client-side"; spec/10 §1 caps a page at 500, and a research-heavy
+ * scope easily passes 100 entries, which used to be unreachable).
+ */
 export function useEntries(scopeId: number | undefined, q: string) {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: keys.knowledge.entries(scopeId ?? 0, q),
-    queryFn: () => endpoints.listEntries(scopeId ?? 0, { q, limit: 100 }),
+    queryFn: ({ pageParam }) =>
+      endpoints.listEntries(scopeId ?? 0, { q, limit: 100, cursor: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (page) => page.next_cursor ?? undefined,
     enabled: scopeId !== undefined && scopeId > 0,
   })
 }

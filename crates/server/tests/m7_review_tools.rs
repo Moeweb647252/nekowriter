@@ -59,11 +59,11 @@ async fn entry(app: &TestApp, scope_id: i32, title: &str, content: &str) -> i32 
     body["id"].as_i64().expect("entry id") as i32
 }
 
-/// `read_knowledge_entry` with an unknown id is `error.not_found` with the `target_type` label of
-/// `knowledge_entry` as `what_label`, and an entry of a scope the book cannot see is
-/// `error.scope_not_found` (spec/05 §1.5, §3).
+/// `read_knowledge_entry` with an unknown id **or** an id whose scope the book cannot see is
+/// `error.not_found` with the `target_type` label of `knowledge_entry` as `what_label`
+/// (spec/05 §1.5, §3).
 #[tokio::test]
-async fn read_knowledge_entry_reports_not_found_and_scope_not_found() {
+async fn read_knowledge_entry_reports_invisible_entries_as_not_found() {
     let runtime = runtime(vec![
         ScriptStep::new().tool("read_knowledge_entry", json!({ "entry_id": 9999 })),
         // The hidden entry sits in a scope the book cannot see; seeding it first makes id 1 the
@@ -101,15 +101,17 @@ async fn read_knowledge_entry_reports_not_found_and_scope_not_found() {
     let (_, invisible, _, invisible_error) = reads[1];
     assert!(
         invisible_error,
-        "an invisible scope is an error: {invisible}"
+        "an invisible entry is an error: {invisible}"
+    );
+    // spec/05 §1.5: an invisible `entry_id` is `error.not_found` with the `target_type` label —
+    // never a scope error, which would also name a scope the session may not know about.
+    assert!(
+        invisible.contains("找不到知识条目 #1"),
+        "error.not_found with the target_type label: {invisible}"
     );
     assert!(
-        invisible.contains("没有名为「Hidden lore」的可检索知识范围"),
-        "error.scope_not_found names the scope: {invisible}"
-    );
-    assert!(
-        invisible.contains("Song life"),
-        "and lists the visible names: {invisible}"
+        !invisible.contains("Hidden lore"),
+        "the invisible scope's name must not be disclosed: {invisible}"
     );
 }
 

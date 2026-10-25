@@ -40,6 +40,11 @@ const ENTRY = {
 }
 
 const noopMutation = { mutate: vi.fn(), isPending: false }
+const deleteScope = vi.hoisted(() => vi.fn())
+const entriesState = vi.hoisted(() => ({
+  hasNextPage: false,
+  fetchNextPage: vi.fn(),
+}))
 
 vi.mock("@/api/hooks/knowledge", () => ({
   useScopes: () => ({
@@ -48,19 +53,27 @@ vi.mock("@/api/hooks/knowledge", () => ({
   }),
   useEntries: () => ({
     isPending: false,
+    isFetchingNextPage: false,
+    hasNextPage: entriesState.hasNextPage,
+    fetchNextPage: entriesState.fetchNextPage,
     data: {
-      items: [
-        { id: 7, title: "Tea houses", source: "manual", tags: ["song"], updated_at: "2026-01-03T00:00:00Z" },
-        { id: 8, title: "Sword tomb", source: "research", tags: [], updated_at: "2026-01-02T00:00:00Z" },
+      pages: [
+        {
+          items: [
+            { id: 7, title: "Tea houses", source: "manual", tags: ["song"], updated_at: "2026-01-03T00:00:00Z" },
+            { id: 8, title: "Sword tomb", source: "research", tags: [], updated_at: "2026-01-02T00:00:00Z" },
+          ],
+          next_cursor: null,
+        },
       ],
-      next_cursor: null,
+      pageParams: [undefined],
     },
   }),
   useEntry: () => ({ isPending: false, data: ENTRY }),
   useKnowledgeSearch: () => ({ isPending: false, data: [] }),
   useCreateScope: () => noopMutation,
   usePatchScope: () => noopMutation,
-  useDeleteScope: () => noopMutation,
+  useDeleteScope: () => ({ mutate: deleteScope, isPending: false }),
   useCreateEntry: () => noopMutation,
   usePatchEntry: () => noopMutation,
   useDeleteEntry: () => noopMutation,
@@ -137,5 +150,33 @@ describe("sortEntries (PROJECT §8.10 entries search+sort)", () => {
     const copy = [...items]
     sortEntries(items, "title")
     expect(items).toEqual(copy)
+  })
+})
+
+describe("KnowledgePage scope deletion (spec/07 §1: typed confirmation)", () => {
+  it("only deletes when the scope's name is typed", async () => {
+    deleteScope.mockClear()
+    render(<KnowledgePage />)
+    await userEvent.click(await screen.findByRole("button", { name: "Delete scope" }))
+
+    // A plain click is not enough: the confirm button stays disabled until the name matches.
+    const confirm = await screen.findByRole("button", { name: "Delete" })
+    expect(confirm).toBeDisabled()
+    expect(deleteScope).not.toHaveBeenCalled()
+
+    await userEvent.type(screen.getByLabelText(/Type .* to confirm/), "Song life")
+    expect(confirm).toBeEnabled()
+    await userEvent.click(confirm)
+    expect(deleteScope).toHaveBeenCalledWith(1, expect.anything())
+  })
+})
+
+describe("KnowledgePage entries paging (D-092: the UI pages forward)", () => {
+  it("offers the next page when the response has a cursor", async () => {
+    entriesState.hasNextPage = true
+    render(<KnowledgePage />)
+    const more = await screen.findByRole("button", { name: "Load more" })
+    await userEvent.click(more)
+    expect(entriesState.fetchNextPage).toHaveBeenCalledTimes(1)
   })
 })

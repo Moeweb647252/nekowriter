@@ -22,6 +22,7 @@ import {
   useScopes,
 } from "@/api/hooks/knowledge"
 import { useErrorToast } from "@/components/common/ErrorToast"
+import { ConfirmDialog } from "@/components/common/ConfirmDialog"
 import { EmptyState } from "@/components/common/EmptyState"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -131,6 +132,10 @@ export default function KnowledgePage() {
   const [scopeDialog, setScopeDialog] = useState<
     { mode: "create" } | { mode: "edit"; scope: ScopeDto } | null
   >(null)
+  // Deleting a scope deletes its entries, so spec/07 §1 asks for a **typed** confirmation: the
+  // author types the scope's name (the same pattern as deleting a book, PROJECT §8.3).
+  const [deleteTarget, setDeleteTarget] = useState<ScopeDto | null>(null)
+  const [typedName, setTypedName] = useState("")
   const [entryDialog, setEntryDialog] = useState(false)
   // PROJECT §8.10 asks the entries column to sort; the API pages by ascending id (D-092), so the
   // order the author picks is applied here ("the UI pages forward and sorts/filters client-side").
@@ -145,10 +150,12 @@ export default function KnowledgePage() {
     [scopes.data, activeScopeId],
   )
 
-  const sortedEntries = useMemo(
-    () => sortEntries(entries.data?.items ?? [], entrySort),
-    [entries.data, entrySort],
+  // Every loaded page, flattened; the sort runs across all of them (D-092).
+  const allEntries = useMemo(
+    () => (entries.data?.pages ?? []).flatMap((page) => page.items),
+    [entries.data],
   )
+  const sortedEntries = useMemo(() => sortEntries(allEntries, entrySort), [allEntries, entrySort])
 
   const onScopeClick = (scope: ScopeDto) => {
     setScopeId(scope.id)
@@ -215,17 +222,8 @@ export default function KnowledgePage() {
                 className="size-6 opacity-0 group-hover:opacity-100"
                 aria-label={t("knowledge:delete_scope")}
                 onClick={() => {
-                  if (window.confirm(t("knowledge:delete_scope_confirm", { name: scope.name }))) {
-                    deleteScope.mutate(scope.id, {
-                      onSuccess: () => {
-                        if (scope.id === activeScopeId) {
-                          setScopeId(undefined)
-                          setEntryId(undefined)
-                        }
-                      },
-                      onError: showError,
-                    })
-                  }
+                  setTypedName("")
+                  setDeleteTarget(scope)
                 }}
               >
                 <Trash2 className="size-3" />
@@ -330,7 +328,7 @@ export default function KnowledgePage() {
             )
           ) : entries.isPending ? (
             <Skeleton className="h-24" />
-          ) : entries.data?.items.length === 0 ? (
+          ) : allEntries.length === 0 ? (
             <EmptyState
               title={t("knowledge:no_entries")}
               description={t("knowledge:no_entries_hint")}
@@ -359,6 +357,17 @@ export default function KnowledgePage() {
               </button>
             ))
           )}
+          {entries.hasNextPage ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-full"
+              disabled={entries.isFetchingNextPage}
+              onClick={() => void entries.fetchNextPage()}
+            >
+              {t("knowledge:load_more")}
+            </Button>
+          ) : null}
         </div>
       </section>
 
@@ -423,6 +432,43 @@ export default function KnowledgePage() {
           }}
         />
       )}
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTarget(null)
+            setTypedName("")
+          }
+        }}
+        title={t("knowledge:delete_scope")}
+        description={t("knowledge:delete_scope_typed_confirm", {
+          name: deleteTarget?.name ?? "",
+          n: deleteTarget?.entry_count ?? 0,
+        })}
+        confirmLabel={t("common:delete")}
+        confirmText={deleteTarget?.name ?? ""}
+        typed={typedName}
+        onTypedChange={setTypedName}
+        pending={deleteScope.isPending}
+        onConfirm={() => {
+          if (deleteTarget === null) {
+            return
+          }
+          const target = deleteTarget
+          deleteScope.mutate(target.id, {
+            onSuccess: () => {
+              setDeleteTarget(null)
+              setTypedName("")
+              if (target.id === activeScopeId) {
+                setScopeId(undefined)
+                setEntryId(undefined)
+              }
+            },
+            onError: showError,
+          })
+        }}
+      />
 
       {entryDialog && activeScopeId !== undefined ? (
         <EntryDialog

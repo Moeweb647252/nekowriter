@@ -325,7 +325,6 @@ impl ToolHandler for ReadKnowledgeEntryTool {
         let input: ReadKnowledgeEntryInput = decode(input)?;
         let offset = input.offset.unwrap_or(0).max(0) as usize;
         let visible = visible_scopes(ctx).await?;
-        let available: Vec<String> = visible.iter().map(|scope| scope.name.clone()).collect();
         let entry = knowledge_entries::Entity::find_by_id(input.entry_id)
             .one(ctx.tx)
             .await
@@ -338,16 +337,16 @@ impl ToolHandler for ReadKnowledgeEntryTool {
                     )
                     .with("id", input.entry_id)
             })?;
+        // An entry whose scope is not visible is **invisible** to this session: spec/05 §1.5 says an
+        // invisible `entry_id` is `error.not_found` with the `target_type` label, never
+        // `error.scope_not_found` (which would also name a scope the session may not know about).
         let Some(scope) = visible.iter().find(|scope| scope.id == entry.scope_id) else {
-            let scope_name = knowledge_scopes::Entity::find_by_id(entry.scope_id)
-                .one(ctx.tx)
-                .await
-                .map_err(|_| internal())?
-                .map(|row| row.name)
-                .unwrap_or_default();
-            return Err(ToolError::new(ToolErrorKind::ScopeNotFound)
-                .with("name", scope_name)
-                .with("available", available));
+            return Err(ToolError::new(ToolErrorKind::NotFound)
+                .with(
+                    "what_label",
+                    ctx.prompts.label("target_type", "knowledge_entry"),
+                )
+                .with("id", input.entry_id));
         };
         let total = entry.content.chars().count();
         let start = offset.min(total);
