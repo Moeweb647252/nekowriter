@@ -61,5 +61,19 @@
   "fetch_models": "获取模型列表",
   "fetch_failed": "服务商没有返回模型列表，请直接填写模型 ID。",
   "delete_model_title": "删除“{{name}}”？",
-  "delete_model_body": "模型会从设置中移除，已有的会话不受影响。"
+  "delete_model_body": "模型会从设置中移除，已有的会话不受影响。",
+  "embeddings": "向量模型",
+  "embeddings_hint": "用于语义检索的本地向量模型。没有它，关键词检索仍然可用。",
+  "embedding_model": "模型",
+  "embedding_model_hint": "切换模型会重建向量索引；关键词检索不受影响。",
+  "index_status": "索引",
+  "index_pending": "待处理",
+  "index_done": "已向量化",
+  "index_failed": "失败",
+  "rebuild_index": "重建索引",
+  "rebuild_hint": "重新向量化全部文档，并重试失败的条目。",
+  "embedding_state.not_loaded": "未加载",
+  "embedding_state.loading": "加载中（首次运行会下载）",
+  "embedding_state.ready": "就绪",
+  "embedding_state.failed": "加载失败"
 }

@@ -17,6 +17,14 @@ const router = createBrowserRouter([
         },
       },
       {
+        // The global knowledge base (PROJECT §8.10, spec/10 §2.5).
+        path: "knowledge",
+        lazy: async () => {
+          const module = await import("@/features/knowledge/KnowledgePage")
+          return { Component: module.default }
+        },
+      },
+      {
         // The global prompt pack (PROJECT §8.11, spec/11 §3).
         path: "prompts",
         lazy: async () => {
@@ -64,6 +72,14 @@ const router = createBrowserRouter([
             path: "appearance",
             lazy: async () => {
               const module = await import("@/features/settings/AppearancePage")
+              return { Component: module.default }
+            },
+          },
+          {
+            // The embedding model and the index state (spec/07 §4).
+            path: "embeddings",
+            lazy: async () => {
+              const module = await import("@/features/settings/EmbeddingsPage")
               return { Component: module.default }
             },
           },
@@ -146,6 +162,14 @@ const router = createBrowserRouter([
             path: "proposals",
             lazy: async () => {
               const module = await import("@/features/proposals/ProposalsPage")
+              return { Component: module.default }
+            },
+          },
+          {
+            // The scopes this book's agents may search (PROJECT §8.10).
+            path: "knowledge",
+            lazy: async () => {
+              const module = await import("@/features/knowledge/BookKnowledgePage")
               return { Component: module.default }
             },
           },

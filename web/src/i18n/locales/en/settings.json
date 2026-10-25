@@ -61,5 +61,19 @@
   "fetch_models": "Fetch models",
   "fetch_failed": "The provider did not list its models; type the model id instead.",
   "delete_model_title": "Delete “{{name}}”?",
-  "delete_model_body": "The model is removed from the settings. Existing sessions are not affected."
+  "delete_model_body": "The model is removed from the settings. Existing sessions are not affected.",
+  "embeddings": "Embeddings",
+  "embeddings_hint": "The local embedding model used for semantic search. Keyword search works without it.",
+  "embedding_model": "Model",
+  "embedding_model_hint": "Changing the model rebuilds the vector index; keyword search is unaffected.",
+  "index_status": "Index",
+  "index_pending": "Pending",
+  "index_done": "Embedded",
+  "index_failed": "Failed",
+  "rebuild_index": "Rebuild index",
+  "rebuild_hint": "Re-embeds every document and retries failed items.",
+  "embedding_state.not_loaded": "Not loaded",
+  "embedding_state.loading": "Loading (the first run downloads)",
+  "embedding_state.ready": "Ready",
+  "embedding_state.failed": "Failed"
 }

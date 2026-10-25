@@ -23,6 +23,9 @@ export function AppShell() {
             <NavLink to="/" end className={navClass}>
               {t("common:library")}
             </NavLink>
+            <NavLink to="/knowledge" className={navClass}>
+              {t("common:knowledge")}
+            </NavLink>
             <NavLink to="/prompts" className={navClass}>
               {t("common:prompts")}
             </NavLink>

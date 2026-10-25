@@ -20,6 +20,7 @@ import {
 } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
 import {
+  BookOpen,
   Brain,
   ClipboardCheck,
   FileClock,
@@ -161,6 +162,12 @@ export function Navigator({ book }: NavigatorProps) {
         icon={ClipboardCheck}
         label={t("book:proposals")}
         badge={pendingProposals}
+      />
+      <SectionTitle>{t("knowledge:title")}</SectionTitle>
+      <NavLink
+        to={`/books/${book.id}/knowledge`}
+        icon={BookOpen}
+        label={t("knowledge:book_scopes_title")}
       />
       <SectionTitle>{t("book:book_settings")}</SectionTitle>
       <NavLink

@@ -42,5 +42,6 @@
   "language_code.ru": "Русский",
   "prompts": "提示词",
   "settings": "设置",
-  "library": "书库"
+  "library": "书库",
+  "knowledge": "知识库"
 }

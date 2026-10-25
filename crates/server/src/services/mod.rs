@@ -12,6 +12,7 @@ pub mod change_log;
 pub mod chapters;
 pub mod characters;
 pub mod indexer;
+pub mod knowledge;
 pub mod maintenance;
 pub mod memory;
 pub mod prompts;

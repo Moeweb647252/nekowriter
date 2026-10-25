@@ -5,6 +5,7 @@ pub mod canon;
 pub mod changes;
 pub mod chapters;
 pub mod content_ops;
+pub mod knowledge;
 pub mod prompts;
 pub mod proposals;
 pub mod providers;

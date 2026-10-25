@@ -378,6 +378,16 @@ export function applyServerEvent(
       })
       return
     }
+    case "knowledge.changed": {
+      // A scope or entry change: the knowledge pages and the hybrid search refetch (spec/10 §3).
+      void queryClient.invalidateQueries({ queryKey: keys.knowledge.all })
+      return
+    }
+    case "index.status": {
+      // The settings page and the health badge show the embedder state (spec/10 §3).
+      void queryClient.invalidateQueries({ queryKey: keys.embedding.status })
+      return
+    }
     case "resync": {
       void queryClient.invalidateQueries()
       return

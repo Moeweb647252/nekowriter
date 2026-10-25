@@ -11,6 +11,7 @@ pub mod dto;
 pub mod embedding;
 pub mod events;
 pub mod health;
+pub mod knowledge;
 pub mod prompts;
 pub mod proposals;
 pub mod providers;
@@ -202,6 +203,32 @@ pub fn build_app(state: AppState) -> Router {
         .route("/books/{book_id}/memory", get(canon::memory_snapshot))
         .route("/embedding/status", get(embedding::status))
         .route("/embedding/rebuild", post(embedding::rebuild))
+        // Knowledge base (spec/10 §2.5).
+        .route(
+            "/knowledge/scopes",
+            get(knowledge::list_scopes).post(knowledge::create_scope),
+        )
+        .route(
+            "/knowledge/scopes/{scope_id}",
+            get(knowledge::get_scope)
+                .patch(knowledge::patch_scope)
+                .delete(knowledge::delete_scope),
+        )
+        .route(
+            "/knowledge/scopes/{scope_id}/entries",
+            get(knowledge::list_entries).post(knowledge::create_entry),
+        )
+        .route(
+            "/knowledge/entries/{entry_id}",
+            get(knowledge::get_entry)
+                .patch(knowledge::patch_entry)
+                .delete(knowledge::delete_entry),
+        )
+        .route("/knowledge/search", get(knowledge::search))
+        .route(
+            "/books/{book_id}/scopes",
+            get(knowledge::list_book_scopes).put(knowledge::put_book_scopes),
+        )
         .route("/events", get(events::stream))
         .route("/providers", get(providers::list).post(providers::create))
         .route("/provider-presets", get(providers::presets))

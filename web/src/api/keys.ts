@@ -59,6 +59,19 @@ export const keys = {
     appearances: (chapterId: number) =>
       ["canon", "appearances", chapterId] as const,
   },
+  knowledge: {
+    all: ["knowledge"] as const,
+    scopes: () => ["knowledge", "scopes"] as const,
+    entries: (scopeId: number, q?: string) =>
+      ["knowledge", "entries", scopeId, q ?? ""] as const,
+    entry: (entryId: number) => ["knowledge", "entry", entryId] as const,
+    search: (q: string, scopeIds: number[]) =>
+      ["knowledge", "search", q, scopeIds.join(",")] as const,
+    bookScopes: (bookId: number) => ["knowledge", "book-scopes", bookId] as const,
+  },
+  embedding: {
+    status: ["embedding", "status"] as const,
+  },
   proposals: {
     /** Every proposal list, for `proposal.changed` (spec/10 §3). */
     all: ["proposals"] as const,
