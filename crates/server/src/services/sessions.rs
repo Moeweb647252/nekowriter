@@ -208,7 +208,7 @@ pub(crate) async fn create_inner(
     // Domain side effects of creation happen in this same transaction (spec/03 §4). The guidance
     // is one of them: it must be visible to the kickoff below, and a request that fails after this
     // point must not leave it behind (spec/08 §1.1).
-    let track = match input.chapter_id {
+    let (track, chapter_events) = match input.chapter_id {
         Some(chapter_id) => {
             if let Some(guidance) = input.guidance.as_deref() {
                 chapters::ActiveModel {
@@ -220,9 +220,10 @@ pub(crate) async fn create_inner(
                 .update(tx)
                 .await?;
             }
-            Some(apply_creation_side_effects(tx, &input).await?)
+            let (track, events) = apply_creation_side_effects(tx, &input).await?;
+            (Some(track), events)
         }
-        None => None,
+        None => (None, None),
     };
     let track_id = track.as_ref().map(|track| track.id);
 
@@ -290,6 +291,20 @@ pub(crate) async fn create_inner(
         .update(tx)
         .await?;
     }
+    // The task's new `running` status reaches the research pages through `research.updated`
+    // (spec/10 §3), published with the creation events after this transaction commits (D-115).
+    let research_event = if input.kind == SessionKind::Research
+        && let Some(task_id) = input.research_task_id
+    {
+        research_tasks::Entity::find_by_id(task_id)
+            .one(tx)
+            .await?
+            .map(|task| ServerEvent::ResearchUpdated {
+                task: crate::services::research::to_dto(task),
+            })
+    } else {
+        None
+    };
 
     // 4. Kickoff: the block list of the kind, persisted as `seq 0`, kind `kickoff`.
     let blocks = crate::agent::context::assemble_kickoff(
@@ -309,7 +324,28 @@ pub(crate) async fn create_inner(
     }
     let _ = input.kickoff_extra;
 
+    // The creation's domain side effects are broadcast with it, after the commit (D-115): a client
+    // that relies on SSE for chapter freshness would otherwise show the pre-creation status until
+    // its next refetch.
     let mut events = Vec::new();
+    if let Some(chapter_events) = chapter_events {
+        let chapter_id = chapter_events.chapter.id;
+        events.push(ServerEvent::ChapterUpdated {
+            chapter: chapter_events.chapter,
+            outline_changed: false,
+        });
+        if let Some((version, ops, word_count, tail_open)) = chapter_events.cleared {
+            events.push(ServerEvent::ChapterContentChanged {
+                chapter_id,
+                version,
+                ops,
+                word_count,
+                tail_open,
+                actor: crate::events::ContentActor::Agent,
+            });
+        }
+    }
+    events.extend(research_event);
     events.push(ServerEvent::SessionMessage {
         session_id: session.id,
         message: session::message_dto(&kickoff)?,
@@ -478,13 +514,22 @@ fn frozen_tools(
     Ok(tools)
 }
 
+/// What a chapter session's creation changed on its chapter, for the events published after the
+/// commit (D-115). The chapter row is read after the updates, so a client receives the committed
+/// status; a redraft also carries the ops that clear the old text.
+struct ChapterCreation {
+    chapter: crate::api::dto::ChapterListItemDto,
+    /// `(new content version, delete ops for the old paragraphs + closed tail, word count, tail)`
+    cleared: Option<(i32, Vec<crate::api::dto::ContentOp>, i32, bool)>,
+}
+
 /// Domain side effects on creation (spec/03 §4): `chapter_write` sets the chapter to `drafting`
 /// (a redraft saves a `backup` version first and clears the text); `chapter_revise` sets
 /// `revising` and saves a `backup`; maintenance/re-sync set `canon_status` to `syncing`.
 async fn apply_creation_side_effects(
     tx: &sea_orm::DatabaseTransaction,
     input: &CreateSession,
-) -> Result<tracks::Model, AppError> {
+) -> Result<(tracks::Model, Option<ChapterCreation>), AppError> {
     use crate::db::json::ChapterStatus;
     use crate::services::versions::{self, NewVersion};
 
@@ -500,6 +545,7 @@ async fn apply_creation_side_effects(
         .await?
         .ok_or_else(|| AppError::not_found(format!("track {}", chapter.track_id)))?;
     let now = chrono::Utc::now();
+    let mut cleared: Option<(i32, Vec<crate::api::dto::ContentOp>, i32, bool)> = None;
 
     match input.kind {
         SessionKind::ChapterWrite => {
@@ -507,6 +553,24 @@ async fn apply_creation_side_effects(
                 let content: crate::db::json::ChapterContent =
                     crate::db::json::from_json_or_default(&chapter.content);
                 let word_count = crate::text::content_word_count(&content);
+                // The text is cleared in this transaction; the event after the commit tells a
+                // client which paragraphs vanished instead of leaving it with stale prose
+                // (spec/10 §3 `chapter.content` carries ops, D-115).
+                cleared = Some((
+                    chapter.content_version + 1,
+                    content
+                        .paragraphs
+                        .iter()
+                        .map(|paragraph| crate::api::dto::ContentOp::Delete {
+                            pid: paragraph.pid.clone(),
+                        })
+                        .chain(std::iter::once(crate::api::dto::ContentOp::Tail {
+                            open: false,
+                        }))
+                        .collect(),
+                    0,
+                    false,
+                ));
                 versions::create_version(
                     tx,
                     NewVersion {
@@ -584,7 +648,18 @@ async fn apply_creation_side_effects(
         _ => {}
     }
 
-    Ok(track)
+    // Re-read the row so the event describes the committed status.
+    let updated = chapters::Entity::find_by_id(chapter_id)
+        .one(tx)
+        .await?
+        .ok_or_else(|| AppError::internal("the chapter vanished during session creation"))?;
+    Ok((
+        track,
+        Some(ChapterCreation {
+            chapter: crate::api::dto::ChapterListItemDto::from(updated),
+            cleared,
+        }),
+    ))
 }
 
 // ───────────────────────────── reads ─────────────────────────────

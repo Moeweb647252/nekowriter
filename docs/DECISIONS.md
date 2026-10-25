@@ -1271,3 +1271,28 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
 - **Consequences**: a rejected item can never be carried by an older review into finalize, and the
   studio's "unapproved items" warning covers rejections too.
   `crates/server/tests/m9_review_answers.rs::a_rejected_item_loses_its_approval` pins it.
+
+### D-115 Session creation broadcasts its domain side effects
+- **Context**: creating a session changes domain rows in the same transaction (spec/03 §4): a
+  writer session moves its chapter to `drafting`/`revising`, a redraft saves a backup and clears
+  the text, maintenance/re-sync set `canon_status = syncing`, and a research session makes its task
+  `running`. Only the `session.updated`/`session.message` events were published, so a client that
+  relies on SSE for chapter freshness could show a stale chapter or navigator row until it
+  refetched (the M6 review raised this as a consistency gap; the callers' own cache invalidation
+  hid it).
+- **Decision**: the creation transaction returns the events its side effects imply and
+  `sessions::create_inner` includes them in the list published after the commit, so every caller of
+  the shared plumbing (write, send-back, redraft, maintenance, re-sync, research run,
+  `conception/start`, `canon/seed`) emits them. Concretely: a chapter status or canon-status change
+  emits `chapter.updated` with the re-read row and `outline_changed: false` (the outline never
+  changes at creation); a redraft additionally emits `chapter.content` with the new version, a
+  `delete` op for every paragraph of the text it cleared and a closed `tail`, because
+  `chapter.content` carries `ops` and a client applying them must remove the paragraphs it shows;
+  a research task emits `research.updated` with the task read back in the transaction (`running`,
+  with its session id).
+- **Consequences**: a client never needs a refetch to learn what a creation changed, and the event
+  list stays exactly the set spec/10 §3 defines (no new event types). Tests:
+  `crates/server/tests/m11_creation_events.rs` drives each kind through `sessions::create` (and
+  `research::run`) against a subscribed event bus and asserts the event kind, the committed status,
+  and for the redraft the exact delete-op list and version; a conception session (no chapter)
+  publishes no chapter event.
