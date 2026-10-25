@@ -846,6 +846,24 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
 - **Consequences**: rendering matches the prompt templates' variables exactly (`after_anchor` is
   always present), and the M10 anchor work only needs to extend the canon-side marking.
 
+### D-095 A manual submit ends the chapter's open writer session
+- **Context**: spec/08 §1.1's Submit row says "an open, non-running one is abandoned after the UI
+  confirms", but nothing abandoned it: the backend only enforced the `running` block, and D-065
+  deferred the rest to the caller while the chapter UI has no session-abandon call. A chapter
+  submitted from a held/paused/stopped writer session could never be approved (`approve` refuses
+  an open writer session) — a dead end only the agent panel could resolve.
+- **Decision**: `submit` abandons the chapter's writer sessions that are open and quiescent
+  (`idle`, `held`, `awaiting_input`, `paused`, `stopped`, `failed`, `interrupted`) in its own
+  transaction and publishes their `session.updated` events; a `running` writer still answers
+  `409 chapter.session_exists` because ending one needs its runner cancelled and awaited
+  (spec/03 §6). This implements spec/08 §1.1 as written and supersedes D-065's ruling that an
+  open non-running session "must be abandoned by the caller", which the caller never did. The
+  chapter header confirms before such a submit.
+- **Consequences**: submit→approve works after any writer pause/hold/stop, for manual drafts and
+  for the redraft and revision paths (both start writer-role sessions); the spec text needed no
+  change. `crates/server/tests/submit_session.rs` proves the abandonment and the surviving
+  `running` block; `web/src/features/chapter/submitConfirm.test.tsx` proves the confirmation.
+
 ## Open items (questions for the author)
 1. Confirm the reading of "this time it cannot be delegated to a lower-level review agent" as
    "the author judges the reviewer's report; no further delegation" (PROJECT §10.9).
