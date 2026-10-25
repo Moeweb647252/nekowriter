@@ -433,13 +433,16 @@ impl ToolHandler for FinishResearchTool {
         }
         // The task's own scope must exist before a task can be reported done (spec/05 §1.4).
         let (scope_id, _scope_name) = target_scope(ctx, "finish_research").await?;
-        // The entries this task created in its scope (spec/05 §8: the completion reports this
-        // session's count; the task's stored total accumulates across runs, see
-        // `services::research::finish`).
+        // The entries **this session** saved or updated (spec/05 §8). An entry counts when the
+        // task owns it and its `updated_at` is not older than this session: saves create it inside
+        // the session and updates touch it, while entries left over from an earlier run are older
+        // than the session and are not claimed by it. The task's stored `entries_created` still
+        // accumulates across every run (spec/07 §8 step 5, `services::research::finish`).
         let entries = match ctx.session.research_task_id {
             Some(task_id) => knowledge_entries::Entity::find()
                 .filter(knowledge_entries::Column::ResearchTaskId.eq(task_id))
                 .filter(knowledge_entries::Column::ScopeId.eq(scope_id))
+                .filter(knowledge_entries::Column::UpdatedAt.gte(ctx.session.created_at))
                 .count(ctx.tx)
                 .await
                 .map_err(|_| internal())?,

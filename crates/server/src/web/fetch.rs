@@ -606,7 +606,10 @@ fn extract_meta_charset(tag: &str) -> Option<String> {
 /// Extracts the title and the Markdown of a decoded body (spec/07 §7 step 6).
 pub fn extract(html: &str, kind: ContentKind, url: &str) -> (String, String) {
     match kind {
-        ContentKind::PlainText => (String::new(), collapse_blank_lines(html)),
+        // Step 4 says `text/plain` and `text/markdown` pass through **as is**, so the whitespace
+        // rules of the HTML→Markdown pipeline (step 6) must not touch them: a Markdown hard break
+        // is two trailing spaces, and a fenced block may legitimately contain blank runs.
+        ContentKind::PlainText => (String::new(), html.to_owned()),
         ContentKind::Unsupported { .. } => (String::new(), String::new()),
         ContentKind::Html => {
             let (title, content_html) = readable_article(html, url);
@@ -1090,10 +1093,12 @@ mod tests {
             Some("GBK")
         );
         let http_equiv = br#"<meta http-equiv="Content-Type" content="text/html; charset=big5">"#;
-        // The attribute form `content="…charset=big5"` is not a `charset=` attribute; the
-        // declaration is found through the same value scan only when split at whitespace.
-        assert!(
-            sniff_meta_charset(http_equiv).is_some() || sniff_meta_charset(http_equiv).is_none()
+        // The `http-equiv` form declares the charset *inside* another attribute's quoted value.
+        // The whitespace split happens to separate `charset=big5` from the surrounding
+        // `content="…;`, so the same scan finds it — asserted, not merely "some or none".
+        assert_eq!(
+            sniff_meta_charset(http_equiv).map(|encoding| encoding.name()),
+            Some("Big5")
         );
     }
 

@@ -461,17 +461,17 @@ async fn a_pdf_is_an_unsupported_content_type() {
 #[tokio::test]
 async fn a_plain_text_page_comes_back_as_is() {
     let site = Site::new().await;
-    site.mount(
-        ResponseTemplate::new(200)
-            .set_body_raw("line one\n\n\n\nline two  \n", "text/plain; charset=utf-8"),
-    )
-    .await;
+    // spec/07 §7 step 4: plain text is "as is", so the HTML pipeline's whitespace collapse (step
+    // 6) must not touch it — including a Markdown hard break's two trailing spaces.
+    let body = "line one  \n\n\n\nline two  \n";
+    site.mount(ResponseTemplate::new(200).set_body_raw(body, "text/plain; charset=utf-8"))
+        .await;
     let document = site
         .fetcher
         .fetch(&site.url("/notes.txt"))
         .await
         .expect("plain text");
-    assert_eq!(document.markdown, "line one\n\nline two");
+    assert_eq!(document.markdown, body);
     assert_eq!(document.title, "");
 }
 
