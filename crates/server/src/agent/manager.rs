@@ -52,7 +52,7 @@ pub struct SessionManager {
 }
 
 /// Test-only synchronization for the window between a runner's final transition and the removal
-/// of its handle (D-101). Production builds do not contain it.
+/// of its handle (D-107). Production builds do not contain it.
 #[cfg(any(test, feature = "testing"))]
 #[derive(Default)]
 pub struct TestExitGate {
@@ -76,7 +76,7 @@ impl SessionManager {
     }
 
     /// Test-only: arms a deterministic gate that holds the **next** runner to exit in the window
-    /// between its final write and the removal of its handle (D-101).
+    /// between its final write and the removal of its handle (D-107).
     #[cfg(any(test, feature = "testing"))]
     pub fn test_hold_next_runner_exit(&self) -> Arc<TestExitGate> {
         let gate = Arc::new(TestExitGate::default());
@@ -123,7 +123,7 @@ impl SessionManager {
             if let Err(error) = runner::drive(ctx).await {
                 tracing::error!(session_id, error = %error, "session runner failed");
             }
-            // Test-only window (D-101): hold this dying runner after its final transition and
+            // Test-only window (D-107): hold this dying runner after its final transition and
             // before its handle disappears, so a test can prove that Continue cannot lose the
             // spawn. A production build has neither the gate nor the wait.
             #[cfg(any(test, feature = "testing"))]

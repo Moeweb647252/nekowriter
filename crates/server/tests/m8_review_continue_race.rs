@@ -6,7 +6,7 @@
 //! guard treats any live handle as an active runner. The row stayed `running` forever, which is
 //! exactly the reported `agent_write_holds` flake ("session did not finish; it is running").
 //!
-//! The test uses the manager's test-only exit gate (D-101), so it lands in that window
+//! The test uses the manager's test-only exit gate (D-107), so it lands in that window
 //! deterministically instead of relying on scheduler luck. It fails without the fix.
 
 use std::time::Duration;
