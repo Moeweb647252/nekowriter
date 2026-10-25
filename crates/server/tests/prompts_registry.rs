@@ -8,7 +8,6 @@ use nekowriter::db::Db;
 use nekowriter::prompts::{PromptRegistry, PromptSource};
 use nekowriter::state::AppState;
 use nekowriter::testing::{TestApp, assert_error};
-use sea_orm::ConnectionTrait;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -328,14 +327,13 @@ async fn app_with_db() -> (tempfile::TempDir, Db, AppState) {
 
 /// Inserts a book row the prompt overrides can reference.
 async fn insert_book(db: &Db, id: i32) {
-    db.conn()
-        .execute_unprepared(&format!(
-            "INSERT INTO books(id, title, writing_language, status, settings, created_at, updated_at) \
+    db.write_unprepared(&format!(
+        "INSERT INTO books(id, title, writing_language, status, settings, created_at, updated_at) \
              VALUES ({id}, 'book{id}', 'zh-CN', 'active', '{{}}', '2026-01-01T00:00:00Z', \
              '2026-01-01T00:00:00Z')"
-        ))
-        .await
-        .expect("insert book");
+    ))
+    .await
+    .expect("insert book");
 }
 
 #[tokio::test]
@@ -358,13 +356,12 @@ async fn override_resolution_order_is_book_then_global_then_default() {
         .to_owned();
 
     // 2. Global override wins over the default, for every book.
-    db.conn()
-        .execute_unprepared(
-            "INSERT INTO prompt_overrides(scope, book_id, key, content, updated_at) \
+    db.write_unprepared(
+        "INSERT INTO prompt_overrides(scope, book_id, key, content, updated_at) \
              VALUES ('global', NULL, 'writer.system', 'GLOBAL OVERRIDE', '2026-01-01T00:00:00Z')",
-        )
-        .await
-        .expect("global override");
+    )
+    .await
+    .expect("global override");
     registry.invalidate_all();
     let set = registry.for_book(&db, Some(1)).await.expect("set");
     assert_eq!(set.source("writer.system"), PromptSource::Global);
@@ -392,13 +389,12 @@ async fn override_resolution_order_is_book_then_global_then_default() {
     );
 
     // 3. The book override wins over the global one, only for that book.
-    db.conn()
-        .execute_unprepared(
-            "INSERT INTO prompt_overrides(scope, book_id, key, content, updated_at) \
+    db.write_unprepared(
+        "INSERT INTO prompt_overrides(scope, book_id, key, content, updated_at) \
              VALUES ('book', 1, 'writer.system', 'BOOK OVERRIDE', '2026-01-01T00:00:00Z')",
-        )
-        .await
-        .expect("book override");
+    )
+    .await
+    .expect("book override");
     registry.invalidate_all();
     let set = registry.for_book(&db, Some(1)).await.expect("set");
     assert_eq!(set.source("writer.system"), PromptSource::Book);
@@ -437,8 +433,7 @@ async fn includes_resolve_to_the_effective_partial() {
     let shipped = default_set
         .render("writer.notice.outline_accepted", &context)
         .expect("render");
-    db.conn()
-        .execute_unprepared(
+    db.write_unprepared(
             "INSERT INTO prompt_overrides(scope, book_id, key, content, updated_at) \
              VALUES ('global', NULL, 'writer.rules.granularity', 'GRANULARITY:{{ granularity.label }}', \
              '2026-01-01T00:00:00Z')",
@@ -473,14 +468,13 @@ async fn a_broken_override_falls_back_to_the_default_with_a_warning() {
     registry.invalidate_all();
     // A template valid for the sample contexts but referencing a variable the real context does
     // not have: the samples cover `granularity`, so a *different* key's context fails.
-    db.conn()
-        .execute_unprepared(
-            "INSERT INTO prompt_overrides(scope, book_id, key, content, updated_at) \
+    db.write_unprepared(
+        "INSERT INTO prompt_overrides(scope, book_id, key, content, updated_at) \
              VALUES ('global', NULL, 'reviewer.kickoff', \
              'fine{% if chapter.nonexistent_field %}boom{% endif %}', '2026-01-01T00:00:00Z')",
-        )
-        .await
-        .expect("override");
+    )
+    .await
+    .expect("override");
     registry.invalidate_all();
     let set = registry.for_book(&db, None).await.expect("set");
     assert_eq!(set.source("reviewer.kickoff"), PromptSource::Global);
@@ -512,13 +506,12 @@ async fn a_broken_override_falls_back_to_the_default_with_a_warning() {
         .expect("default render");
     assert_eq!(rendered.text, default_rendered.text);
     // A template that uses only covered branches renders the override without a warning.
-    db.conn()
-        .execute_unprepared(
-            "UPDATE prompt_overrides SET content = 'REVIEWER OVERRIDE' \
+    db.write_unprepared(
+        "UPDATE prompt_overrides SET content = 'REVIEWER OVERRIDE' \
              WHERE key = 'reviewer.kickoff'",
-        )
-        .await
-        .expect("update");
+    )
+    .await
+    .expect("update");
     registry.invalidate_all();
     let rendered = registry
         .for_book(&db, None)

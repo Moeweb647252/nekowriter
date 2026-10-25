@@ -1129,3 +1129,40 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   refusal, MIME and cache headers, `/api` envelope, hint page, and the feature-gated embedded
   shell), plus a manual release-binary run with no `--web-dir` against `/` and
   `/books/1/chapters/2` (reported with the M11 smoke results).
+
+### D-109 Runner spawns chain instead of being swallowed; one open researcher session per task
+- **Context**: M8's `Continue` fix (D-107) waited for the previous runner per caller. The
+  general shape of the hazard is that `SessionManager::spawn` treats any live handle as an active
+  runner, while a runner that committed a non-running status (held, paused, completed, failed,
+  interrupted) is still alive for a moment afterwards. `resume` had the same window (`held` and
+  `paused` runners exit exactly like that, and `wait_cancelled` returns at once for them), and
+  every future control operation would have had to remember its own wait. Two more structural
+  races were open: `research::run` checked "no open session" in a separate transaction from session
+  creation (two concurrent `POST /run` could create two researcher sessions), and the test
+  fixtures wrote rows through `Db::conn()` instead of the process-wide write lock.
+- **Decision**: (a) `spawn` now **chains**: if a live, non-cancelled runner exists it subscribes to
+  a per-handle `watch` channel, waits (bounded at 10 s) for that runner to leave the handle map,
+  re-reads the row, and starts a runner only if the session is still `running`. Continue, Resume
+  and any future control op are covered in one place; the per-caller waits stay as defence in
+  depth. (b) Session creation re-checks a research task's open session inside the creation
+  transaction, so the losing concurrent run gets the documented `409 research.invalid_state` with
+  `details.session_id` (`research::run`'s own check can race; this one cannot, because the write
+  lock serializes the create transactions). (c) `Db::write` opens with `BEGIN IMMEDIATE`, and the
+  test filesystem grows `Db::write_unprepared`, which every `TestApp` fixture helper now uses.
+  (d) The harness's default status waits scale with `available_parallelism` (`wait_budget()`)
+  instead of a fixed 10 s, because a full parallel suite can schedule a runner late; explicit
+  per-call timeouts are unchanged.
+- **Evidence for (c)**: the failure mode was measured with two WAL connections: a deferred
+  read-then-write transaction that loses the commit race fails with extended result code **517**
+  (`SQLITE_BUSY_SNAPSHOT`) — `busy_timeout` does not help — while a writer that meets a held
+  `BEGIN IMMEDIATE` waits and then fails with code **5** (`SQLITE_BUSY`), which the timeout
+  retries. The 5 s `busy_timeout` is therefore kept (no 30 s+ values); the fix is the immediate
+  BEGIN plus the one write path, not a longer timeout.
+- **Consequences**: the invariant "after Resume/Continue, either a runner is registered or the
+  session is no longer `running`" holds in both windows; tests: `m11_runner_resume_race.rs` (the
+  exit gate from D-107 lands a Resume inside the dying-runner window; fails without the chaining),
+  `m11_research_race.rs` (a second create is refused deterministically, concurrent runs produce one
+  201 and one 409, one session row), and
+  `db::tests::write_transactions_take_the_write_lock_immediately` (a second connection cannot take
+  the write lock while a `Db::write` transaction is open before its first write; fails with a
+  deferred BEGIN). Each was verified to fail with the fix reverted before being committed.

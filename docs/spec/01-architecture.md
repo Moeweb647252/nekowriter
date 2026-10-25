@@ -275,10 +275,16 @@ Data directory layout:
   `Mutex<HashMap<SessionId, RunnerHandle>>` (cancel token and join handle), which ensures at
   most one runner per session.
 - **SQLite writes**: SQLite allows one writer at a time, and a deferred transaction that reads
-  first and then writes fails at once with `SQLITE_BUSY` (no `busy_timeout` wait) when another
-  connection committed in between. Therefore every write transaction goes through one helper,
-  `Db::write(|tx| …)`, which holds a process-wide `tokio::sync::Mutex` for the transaction's
-  duration; read-only queries use the pool directly and run concurrently (WAL). Keep
+  first and then writes fails at once with `SQLITE_BUSY_SNAPSHOT` (extended result code 517, which
+  no `busy_timeout` retries) when another connection committed in between. Therefore every write
+  transaction goes through one helper, `Db::write(|tx| …)`, which holds a process-wide
+  `tokio::sync::Mutex` for the transaction's duration and opens the transaction with
+  `BEGIN IMMEDIATE`, so SQLite's write lock is taken before the closure runs its first statement;
+  read-only queries use the pool directly and run concurrently (WAL). A write that bypassed the
+  helper would wait for that reserved lock and then be serialized behind it (an ordinary
+  `SQLITE_BUSY`, code 5, retried by the 5 s timeout) instead of colliding at commit time. The
+  integration-test fixtures that write rows directly use a test-only `Db::write_unprepared`, which
+  takes the same lock, so the tests run under the production discipline (D-109). Keep
   transactions short: tool effects plus their result rows. Never hold a transaction across an LLM
   call, a web request, or an embedding; tools do such work in their `prepare` phase
   (spec/05 §1.2), so the write lock is never held while waiting on I/O. The lock is not

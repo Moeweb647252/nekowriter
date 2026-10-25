@@ -38,6 +38,9 @@ struct RunnerHandle {
     cancel: CancellationToken,
     reason: Arc<Mutex<Option<CancelReason>>>,
     task: tokio::task::JoinHandle<()>,
+    /// Set when this runner has left the map. A `spawn` that arrives while the runner is still
+    /// alive chains onto it through this channel instead of being swallowed (D-107, D-109).
+    exited: Arc<tokio::sync::watch::Sender<bool>>,
 }
 
 /// Owns the running sessions of one process.
@@ -70,6 +73,11 @@ pub struct TestExitGate {
 #[cfg(any(test, feature = "testing"))]
 const TEST_EXIT_HOLD: Duration = Duration::from_secs(2);
 
+/// How long a chained spawn waits for the previous runner to leave its handle map. The runner
+/// signals its exit on the way out, so this only expires when a runner is wedged; the chained
+/// spawn then gives up rather than starting a second runner (spec/03 §14).
+const RUNNER_CHAIN_TIMEOUT: Duration = Duration::from_secs(10);
+
 impl SessionManager {
     pub fn new() -> Self {
         Self::default()
@@ -92,15 +100,45 @@ impl SessionManager {
     /// drop the new handle.
     pub fn spawn(&self, state: AppState, session_id: i32) {
         let mut runners = lock(&self.runners);
-        if let Some(existing) = runners.get(&session_id)
-            && !existing.task.is_finished()
-            && !existing.cancel.is_cancelled()
-        {
-            tracing::debug!(session_id, "a runner is already active; spawn is a no-op");
+        let mut chain_after = None;
+        if let Some(existing) = runners.get(&session_id) {
+            if !existing.task.is_finished() && !existing.cancel.is_cancelled() {
+                // The runner is alive: it may be about to exit after committing a terminal, held
+                // or paused status — the window in which this request used to be swallowed
+                // (D-107). Chain a runner behind it instead, which covers Continue, Resume and
+                // any future control operation in one place (D-109).
+                chain_after = Some(existing.exited.subscribe());
+            } else {
+                // A finished or cancelled runner is on its way out; replace its handle. Its own
+                // cleanup removes the entry only when it still owns the generation.
+                runners.remove(&session_id);
+            }
+        }
+        if let Some(exited) = chain_after {
+            drop(runners);
+            let manager = self.clone();
+            tokio::spawn(async move {
+                if !wait_for_runner_exit(exited).await {
+                    return;
+                }
+                // Only a session that is still `running` needs a runner. A chained waiter whose
+                // sibling already drove the session does nothing (and `runner::drive` would
+                // return at once for a non-running row).
+                let still_running = matches!(
+                    session::load(state.db().conn(), session_id).await,
+                    Ok(row) if row.status == SessionStatus::Running.as_str()
+                );
+                if still_running {
+                    manager.spawn(state.clone(), session_id);
+                }
+            });
             return;
         }
         let cancel = CancellationToken::new();
         let reason = Arc::new(Mutex::new(None));
+        let (exited, _) = tokio::sync::watch::channel(false);
+        let exited = Arc::new(exited);
+        let exited_for_task = exited.clone();
         let cancel_for_task = cancel.clone();
         let reason_for_task = reason.clone();
         let runners_for_task = self.runners.clone();
@@ -149,6 +187,9 @@ impl SessionManager {
             if let Some(gate) = gate {
                 gate.exited.notify_one();
             }
+            // Wake a chained spawn. Sending after the handle removal is what lets the chained
+            // task call `spawn` again and find the map empty.
+            let _ = exited_for_task.send(true);
         });
         runners.insert(
             session_id,
@@ -157,6 +198,7 @@ impl SessionManager {
                 cancel,
                 reason,
                 task,
+                exited,
             },
         );
     }
@@ -359,6 +401,29 @@ pub async fn clear_session_error(
     error: &SessionError,
 ) -> Result<(), AppError> {
     session::store_error(conn, session_id, error).await
+}
+
+/// Waits until the runner that owned `exited` has left the handle map. Returns false when it did
+/// not (a wedged runner), so the caller does not start a second runner for one session.
+async fn wait_for_runner_exit(mut exited: tokio::sync::watch::Receiver<bool>) -> bool {
+    let wait = async {
+        while !*exited.borrow_and_update() {
+            if exited.changed().await.is_err() {
+                // All senders are gone, so the runner's task has ended.
+                return;
+            }
+        }
+    };
+    if tokio::time::timeout(RUNNER_CHAIN_TIMEOUT, wait)
+        .await
+        .is_err()
+    {
+        tracing::error!(
+            "a runner did not leave its handle within {RUNNER_CHAIN_TIMEOUT:?}; the chained spawn is abandoned"
+        );
+        return false;
+    }
+    true
 }
 
 pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {

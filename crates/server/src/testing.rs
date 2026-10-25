@@ -203,11 +203,13 @@ impl TestApp {
 
 impl TestApp {
     /// Runs one raw SQL statement (fixtures for state later milestones create).
+    ///
+    /// It goes through [`Db::write_unprepared`], so a fixture obeys the same process-wide write
+    /// lock as production writes: a spawned runner's transaction and this statement can never
+    /// overlap (spec/01 §7).
     pub async fn execute(&self, sql: &str) {
-        use sea_orm::ConnectionTrait;
         self.db
-            .conn()
-            .execute_unprepared(sql)
+            .write_unprepared(sql)
             .await
             .unwrap_or_else(|err| panic!("fixture SQL failed: {err}\n{sql}"));
     }

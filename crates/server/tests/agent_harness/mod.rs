@@ -18,6 +18,21 @@ use nekowriter_llm::StopReason;
 use nekowriter_llm::mock::{ScriptStep, ScriptedProvider};
 use serde_json::{Value, json};
 
+/// The wait budget of one status change.
+///
+/// A fixed 10 s was exceeded when the whole suite ran under load (PLAN M11 hardening): with
+/// dozens of test binaries and tokio runtimes on one machine a runner can be scheduled late, and
+/// a deadline that assumes an idle box turns that delay into a flake. The budget scales with the
+/// machine's parallelism and is bounded, so a real hang still fails the test instead of hanging
+/// the run. Callers may still pass a larger explicit timeout to `wait_status_within`.
+pub fn wait_budget() -> Duration {
+    let parallelism = std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(1)
+        .min(32) as u64;
+    Duration::from_secs(10 + parallelism)
+}
+
 /// A harness: the app, its scripted provider and the ids of the fixtures.
 pub struct Runtime {
     pub app: TestApp,
@@ -192,9 +207,9 @@ impl Runtime {
         }
     }
 
-    /// Waits until the session reaches `status`, or panics after `timeout`.
+    /// Waits until the session reaches `status`, or panics after [`wait_budget`].
     pub async fn wait_status(&self, session_id: i32, status: SessionStatus) -> SessionRow {
-        self.wait_status_within(session_id, status, Duration::from_secs(10))
+        self.wait_status_within(session_id, status, wait_budget())
             .await
     }
 
@@ -223,7 +238,7 @@ impl Runtime {
 
     /// Waits until the session leaves `running` (any non-running status).
     pub async fn wait_any_status(&self, session_id: i32) -> SessionRow {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + wait_budget();
         loop {
             let row = self.session_row(session_id).await;
             if row.status != "running" {
@@ -238,7 +253,7 @@ impl Runtime {
 
     /// Waits until no runner is active for the session.
     pub async fn wait_idle(&self, session_id: i32) {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + wait_budget();
         while self.app.state().manager().is_running(session_id) {
             if Instant::now() > deadline {
                 panic!("the runner of session {session_id} did not exit");

@@ -126,6 +126,29 @@ pub(crate) async fn create_inner(
         .with_details(json!({ "session_id": open })));
     }
 
+    // A research task has at most one open session (spec/07 §8 step 1, spec/10 §2.5). `run`
+    // checks this in a transaction of its own before creating the session, so two concurrent
+    // `POST /run` calls could both pass that check and create two researcher sessions for one
+    // task. Re-checking here — inside the creation transaction, under the write lock — makes the
+    // second one lose with the documented 409 instead (D-109).
+    if input.kind == SessionKind::Research
+        && let Some(task_id) = input.research_task_id
+    {
+        let task = research_tasks::Entity::find_by_id(task_id)
+            .one(tx)
+            .await?
+            .ok_or_else(|| AppError::not_found(format!("research task {task_id}")))?;
+        if crate::services::research::is_open(&task) {
+            // Same body as `research::open_session_error`; kept local so this guard does not
+            // depend on a helper that only the research service exposes.
+            return Err(AppError::new(
+                ErrorCode::ResearchInvalidState,
+                "the research task has an open session",
+            )
+            .with_details(json!({ "session_id": task.session_id })));
+        }
+    }
+
     // 1. Resolve the model: book.model_overrides[role] → app_settings["roles.defaults"][role].
     let book = match input.book_id {
         Some(book_id) => Some(

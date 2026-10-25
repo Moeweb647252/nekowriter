@@ -8,7 +8,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use sea_orm::sqlx::sqlite::SqliteJournalMode;
-use sea_orm::{ConnectOptions, Database, DatabaseConnection, DbErr, TransactionTrait};
+use sea_orm::{
+    ConnectOptions, Database, DatabaseConnection, DbErr, SqliteTransactionMode, TransactionOptions,
+    TransactionTrait,
+};
 use tokio::sync::Mutex;
 
 /// Pool size (spec/01 §5 step 4).
@@ -101,7 +104,19 @@ impl Db {
         ) -> futures::future::BoxFuture<'c, Result<T, DbErr>>,
     {
         let _guard = self.write_lock.lock().await;
-        let tx = self.conn.begin().await?;
+        // `BEGIN IMMEDIATE` takes SQLite's write lock before the closure runs any statement.
+        // With the process-wide mutex this is behaviourally identical for the application, but a
+        // write that bypassed the lock would then *wait* for the reserved lock and be serialized
+        // behind it, instead of failing at once with `SQLITE_BUSY`/`SQLITE_BUSY_SNAPSHOT`
+        // (extended result code 517, which no `busy_timeout` can retry) when it read before
+        // another connection committed (spec/01 §7, D-109).
+        let tx = self
+            .conn
+            .begin_with_options(TransactionOptions {
+                sqlite_transaction_mode: Some(SqliteTransactionMode::Immediate),
+                ..Default::default()
+            })
+            .await?;
         match f(&tx).await {
             Ok(value) => {
                 tx.commit().await?;
@@ -114,6 +129,24 @@ impl Db {
                 Err(err)
             }
         }
+    }
+
+    /// Runs one raw SQL statement through [`Db::write`], i.e. under the process-wide write lock.
+    ///
+    /// Test-only, for the integration fixtures that mutate rows directly (a crash state, a
+    /// status later milestones create). Routing them through the lock keeps the tests on the
+    /// production discipline: a spawned runner's transaction and a fixture write can no longer
+    /// overlap in one process (spec/01 §7, §11; PLAN M11 hardening).
+    #[cfg(any(test, feature = "testing"))]
+    pub async fn write_unprepared(&self, sql: &str) -> Result<(), DbErr> {
+        let sql = sql.to_owned();
+        self.write(move |tx| {
+            Box::pin(async move {
+                sea_orm::ConnectionTrait::execute_unprepared(tx, &sql).await?;
+                Ok(())
+            })
+        })
+        .await
     }
 
     /// Checks the sqlite-vec extension and returns its version string (spec/01 §5 step 4).
@@ -302,6 +335,61 @@ mod tests {
             .expect("row");
         let value: i64 = row.try_get("", "value").expect("value");
         assert_eq!(value, 50, "no lost updates without SQLITE_BUSY");
+    }
+
+    /// `Db::write` begins with `BEGIN IMMEDIATE`: the transaction takes SQLite's write lock from
+    /// its first statement instead of lazily on the first write, so a second connection cannot
+    /// slip a write in between (the failure `SQLITE_BUSY_SNAPSHOT`, extended result code 517, that
+    /// no busy timeout can retry; D-109).
+    #[tokio::test]
+    async fn write_transactions_take_the_write_lock_immediately() {
+        let (_dir, db) = temp_db().await;
+        db.conn()
+            .execute_unprepared(
+                "CREATE TABLE counter (id INTEGER PRIMARY KEY, value INTEGER NOT NULL)",
+            )
+            .await
+            .expect("create table");
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let holder = {
+            let db = db.clone();
+            tokio::spawn(async move {
+                db.write(move |tx| {
+                    Box::pin(async move {
+                        let _ = entered_tx.send(());
+                        let _ = release_rx.await;
+                        sea_orm::ConnectionTrait::execute_unprepared(
+                            tx,
+                            "INSERT INTO counter(id, value) VALUES (1, 1)",
+                        )
+                        .await?;
+                        Ok(())
+                    })
+                })
+                .await
+            })
+        };
+        entered_rx.await.expect("the write transaction began");
+
+        // A second connection with no busy wait must fail to take the write lock, even though the
+        // open transaction has not written anything yet. With a deferred `BEGIN` the lock would
+        // still be free here and this statement would succeed.
+        let error = db
+            .conn()
+            .execute_unprepared("PRAGMA busy_timeout = 0; BEGIN IMMEDIATE")
+            .await
+            .expect_err("the open transaction already holds the write lock");
+        assert!(
+            format!("{error}").to_lowercase().contains("locked"),
+            "unexpected error: {error}"
+        );
+
+        let _ = release_tx.send(());
+        holder
+            .await
+            .expect("join the holder")
+            .expect("the holder commits");
     }
 
     async fn migrated_db() -> (tempfile::TempDir, Db) {
