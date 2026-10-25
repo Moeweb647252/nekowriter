@@ -34,7 +34,7 @@ pub struct AppStateInner {
     pub manager: SessionManager,
     /// The embedding model state, the runtime vec tables and the hybrid query (spec/07 §3–§5).
     pub search: Arc<SearchService>,
-    /// The web-search configuration seam (spec/07 §6).
+    /// The guarded `web_fetch` client and the converted-page cache (spec/07 §7).
     pub web: Arc<WebService>,
     /// A provider override for tests: when set, the runner uses this client instead of building
     /// one from the session's snapshot. Integration tests inject a `ScriptedProvider` here so no
@@ -199,12 +199,12 @@ impl AppState {
         &self.inner.search
     }
 
-    /// The web-search seam (spec/07 §6).
+    /// The guarded fetch client and the page cache (spec/07 §7).
     pub fn web(&self) -> &WebService {
         &self.inner.web
     }
 
-    /// Replaces the web service (tests point the Tavily host at `wiremock`).
+    /// Replaces the web service (tests point a host at `wiremock`).
     #[cfg(any(test, feature = "testing"))]
     pub fn with_web(self, web: WebService) -> Self {
         let web = Arc::new(web);

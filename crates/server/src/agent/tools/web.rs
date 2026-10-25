@@ -12,10 +12,12 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::web::WebError;
+use crate::web::fetch::{self, DEFAULT_MAX_CHARS, MAX_CHARS, MIN_MAX_CHARS};
 use crate::web::search;
 
 use super::{
-    PrepareCtx, Prepared, ToolCtx, ToolError, ToolErrorKind, ToolHandler, ToolKind, ToolOutcome,
+    FetchedPage, PrepareCtx, Prepared, ToolCtx, ToolError, ToolErrorKind, ToolHandler, ToolKind,
+    ToolOutcome,
 };
 
 // ───────────────────────────── shared helpers ─────────────────────────────
@@ -55,6 +57,24 @@ fn web_error(error: &WebError) -> ToolError {
                 Some(status) => tool_error.with("status", i64::from(*status)),
                 None => tool_error,
             }
+        }
+        WebError::Fetch {
+            reason,
+            status,
+            url,
+        } => {
+            let tool_error = ToolError::new(ToolErrorKind::FetchFailed)
+                .with("reason", reason.as_str())
+                .with("url", url.clone());
+            match status {
+                Some(status) => tool_error.with("status", i64::from(*status)),
+                None => tool_error,
+            }
+        }
+        WebError::UnsupportedContentType { content_type, url } => {
+            ToolError::new(ToolErrorKind::UnsupportedContentType)
+                .with("content_type", content_type.clone())
+                .with("url", url.clone())
         }
     }
 }
@@ -176,16 +196,133 @@ impl ToolHandler for WebSearchTool {
     }
 }
 
+// ───────────────────────────── web_fetch ─────────────────────────────
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WebFetchInput {
+    url: String,
+    #[serde(default)]
+    offset: Option<i64>,
+    #[serde(default)]
+    max_chars: Option<i64>,
+}
+
+/// `web_fetch` (spec/05 §7, spec/07 §7).
+pub struct WebFetchTool;
+
+#[async_trait::async_trait]
+impl ToolHandler for WebFetchTool {
+    fn name(&self) -> &'static str {
+        "web_fetch"
+    }
+
+    fn kind(&self) -> ToolKind {
+        ToolKind::Web
+    }
+
+    async fn prepare(&self, ctx: &PrepareCtx<'_>, input: &Value) -> Result<Prepared, ToolError> {
+        let input: WebFetchInput = decode(input.clone())?;
+        let url = input.url.trim().to_owned();
+        if url.is_empty() {
+            return Err(ToolError::new(ToolErrorKind::Validation)
+                .with("errors", vec!["url must not be empty".to_owned()]));
+        }
+        // A cached page needs no request (spec/07 §7 step 7).
+        let web = ctx.state.web();
+        let Some(fetcher) = web.fetcher() else {
+            return Err(fetch_error(fetch::FetchError::Failed {
+                reason: fetch::FetchFailure::Network,
+                status: None,
+                url,
+            }));
+        };
+        let document = fetch::fetch(fetcher, web.cache(), &url)
+            .await
+            .map_err(fetch_error)?;
+        Ok(Prepared::WebPage(Box::new(FetchedPage {
+            url: document.url,
+            title: document.title,
+            markdown: document.markdown,
+            cached: document.cached,
+        })))
+    }
+
+    async fn execute(
+        &self,
+        ctx: &mut ToolCtx<'_>,
+        input: Value,
+        prepared: Prepared,
+    ) -> Result<ToolOutcome, ToolError> {
+        let input: WebFetchInput = decode(input)?;
+        let Prepared::WebPage(page) = prepared else {
+            return Err(internal());
+        };
+        let offset = usize::try_from(input.offset.unwrap_or(0)).unwrap_or(0);
+        let max_chars = input
+            .max_chars
+            .and_then(|value| usize::try_from(value).ok())
+            .unwrap_or(DEFAULT_MAX_CHARS)
+            .clamp(MIN_MAX_CHARS, MAX_CHARS);
+        let sliced = fetch::slice_page(&page.markdown, offset, max_chars);
+        let text = ctx
+            .prompts
+            .render_value(
+                "result.web_fetch",
+                crate::prompts::template_value(&json!({
+                    "url": page.url,
+                    "title": page.title,
+                    "offset": sliced.offset,
+                    "end": sliced.end,
+                    "total": sliced.total,
+                    "next_offset": sliced.next_offset,
+                    "body": sliced.text,
+                })),
+            )
+            .map_err(|_| internal())?
+            .text;
+        let wrapped = wrap_untrusted(ctx, &text);
+        Ok(ToolOutcome::text(wrapped).with_ui(json!({
+            "url": page.url,
+            "title": page.title,
+            "chars": sliced.end.saturating_sub(sliced.offset),
+            "total_chars": sliced.total,
+        })))
+    }
+}
+
+/// The tool error of a failed fetch (spec/07 §7 step 9).
+fn fetch_error(error: fetch::FetchError) -> ToolError {
+    match error {
+        fetch::FetchError::Unsupported { content_type, url } => {
+            web_error(&WebError::UnsupportedContentType { content_type, url })
+        }
+        fetch::FetchError::Failed {
+            reason,
+            status,
+            url,
+        } => web_error(&WebError::Fetch {
+            reason,
+            status,
+            url,
+        }),
+    }
+}
+
 // ───────────────────────────── registration ─────────────────────────────
 
-/// The web tools registered so far (spec/05 §7).
+/// The web tools of this milestone (spec/05 §7–§8).
 pub fn all() -> Vec<std::sync::Arc<dyn ToolHandler>> {
-    vec![std::sync::Arc::new(WebSearchTool)]
+    vec![
+        std::sync::Arc::new(WebSearchTool),
+        std::sync::Arc::new(WebFetchTool),
+    ]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::web::fetch::FetchFailure;
     use crate::web::search::SearchFailure;
 
     fn error_code(error: &ToolError) -> &'static str {
@@ -223,6 +360,44 @@ mod tests {
     }
 
     #[test]
+    fn fetch_failures_carry_the_reason_the_url_and_any_status() {
+        let error = web_error(&WebError::Fetch {
+            reason: FetchFailure::Blocked,
+            status: None,
+            url: "http://127.0.0.1/".to_owned(),
+        });
+        assert_eq!(error_code(&error), "fetch_failed");
+        assert_eq!(error.fields["reason"], "blocked");
+        assert_eq!(error.fields["url"], "http://127.0.0.1/");
+
+        let too_large = web_error(&WebError::Fetch {
+            reason: FetchFailure::TooLarge,
+            status: None,
+            url: "https://example.com/big".to_owned(),
+        });
+        assert_eq!(too_large.fields["reason"], "too_large");
+
+        let status = web_error(&WebError::Fetch {
+            reason: FetchFailure::Status,
+            status: Some(404),
+            url: "https://example.com/missing".to_owned(),
+        });
+        assert_eq!(status.fields["reason"], "status");
+        assert_eq!(status.fields["status"], 404);
+    }
+
+    #[test]
+    fn an_unsupported_content_type_has_its_own_code() {
+        let error = web_error(&WebError::UnsupportedContentType {
+            content_type: "application/pdf".to_owned(),
+            url: "https://example.com/a.pdf".to_owned(),
+        });
+        assert_eq!(error_code(&error), "unsupported_content_type");
+        assert_eq!(error.fields["content_type"], "application/pdf");
+        assert_eq!(error.fields["url"], "https://example.com/a.pdf");
+    }
+
+    #[test]
     fn every_web_error_renders_through_the_prompt_template() {
         // The code and its fields are what `result.error` switches on (spec/09 §2), so a rendered
         // error must never fall back to the internal text.
@@ -238,6 +413,15 @@ mod tests {
             web_error(&WebError::Search {
                 reason: SearchFailure::Status,
                 status: Some(500),
+            }),
+            web_error(&WebError::Fetch {
+                reason: FetchFailure::Blocked,
+                status: None,
+                url: "http://10.0.0.1/".to_owned(),
+            }),
+            web_error(&WebError::UnsupportedContentType {
+                content_type: "image/png".to_owned(),
+                url: "https://example.com/a.png".to_owned(),
             }),
         ];
         for case in cases {

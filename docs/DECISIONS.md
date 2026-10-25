@@ -864,6 +864,27 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   change. `crates/server/tests/submit_session.rs` proves the abandonment and the surviving
   `running` block; `web/src/features/chapter/submitConfirm.test.tsx` proves the confirmation.
 
+### D-096 The `web_fetch` DNS override exists only for tests and is compiled out of production
+- **Context**: spec/07 §7 steps 2–3 require the fetch client to refuse loopback, private,
+  link-local, CGNAT, multicast and documentation addresses, resolved on every redirect hop. A
+  `wiremock` server listens on loopback, so every positive `web_fetch` test (extraction, decoding,
+  paging, the cap) would be refused by the guard. There has to be a seam that lets a local server
+  stand in for a public host, and such a seam is exactly the shape of thing that becomes a
+  production bypass by accident.
+- **Decision**: `Fetcher::with_host_overrides(Vec<(name, SocketAddr)>)` replaces the DNS answer for
+  **only the exact names passed in**; it is behind `#[cfg(any(test, feature = "testing"))]`, so no
+  release build can call it, and it is used only by `crates/server/tests/`. Nothing else about the
+  client changes: the guard, the redirect policy, the 20 s timeout, the 5 MB cap and the extractor
+  are the production ones. This is a test seam, **not** a supported feature — there is no setting,
+  environment variable or API that reaches it.
+- **Consequences**: the guard itself stays the only path to a socket in production, and the
+  override cannot be widened by configuration. Two regression tests exist specifically to prove the
+  seam is not a bypass: `the_host_override_does_not_permit_any_other_name` (a non-overridden name
+  and every literal private IP are still refused) and
+  `a_redirect_to_a_second_host_is_re_resolved_and_refused` (a hop to a different name is resolved
+  again by the production resolver and the test asserts the redirect target was never requested, so
+  the refusal precedes any connection). Reviewed by the M8 reviewer as a security-relevant seam.
+
 ## Open items (questions for the author)
 1. Confirm the reading of "this time it cannot be delegated to a lower-level review agent" as
    "the author judges the reviewer's report; no further delegation" (PROJECT §10.9).
