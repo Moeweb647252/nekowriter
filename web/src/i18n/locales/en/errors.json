@@ -28,5 +28,10 @@
   "research.invalid_state": "The research task is not in a state that allows this.",
   "conception.unavailable": "No conception model is configured, so the book was created without it.",
   "context.large_kickoff": "This chapter's context is more than half the model's window; the agent may run out of room. Shorten the outline or split the chapter.",
+  "provider.context_overflow": "This conversation grew past the model's context window. The history is kept — continue in a new session or from a shorter point.",
+  "provider.refusal": "The model declined this request. Change the instruction rather than sending the same one again.",
+  "agent.tool_error_streak": "The agent failed to use its tools several times in a row and the session paused. Clear up the instruction, then continue.",
+  "agent.no_tool_call": "The agent replied with text where a tool call was required, so the session paused. Continue with a clearer instruction.",
+  "model.missing_provider": "The model's provider was deleted. Choose another model in Settings › Agent roles, then continue.",
   "prompt.override_failed": "A prompt override could not be used and the default was used instead."
 }

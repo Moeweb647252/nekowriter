@@ -28,5 +28,10 @@
   "research.invalid_state": "研究任务当前状态不允许这个操作。",
   "conception.unavailable": "还没有配置构思模型，因此这本书没有启动构思。",
   "context.large_kickoff": "这一章的上下文已超过模型窗口的一半，智能体可能会没有足够空间。可以精简大纲或拆分章节。",
+  "provider.context_overflow": "这段对话已经超出模型的上下文窗口。历史记录仍在：可以新开会话，或从更短的位置继续。",
+  "provider.refusal": "模型拒绝了这次请求。请调整指令，而不是重复发送同一条。",
+  "agent.tool_error_streak": "智能体连续多次没能正确调用工具，会话已暂停。把指令说明白后再继续。",
+  "agent.no_tool_call": "智能体应当调用工具，却只回复了文字，会话已暂停。请给出更明确的指令后继续。",
+  "model.missing_provider": "这个模型的服务商已被删除。请在“设置 › 智能体角色”里改选其他模型，然后继续。",
   "prompt.override_failed": "提示词覆盖没能生效，已改用默认提示词。"
 }

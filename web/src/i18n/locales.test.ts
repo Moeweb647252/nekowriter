@@ -55,6 +55,23 @@ const ALL_WARNING_CODES = [
   "conception.unavailable",
 ]
 
+/**
+ * Session error codes: `SessionDto.error.code` (spec/10 §4's second list), not HTTP codes. Four of
+ * them overlap `ErrorCode` and are covered above; the rest reach the UI only through a session
+ * row, so they need the same `errors:` keys and the same assertion.
+ */
+const ALL_SESSION_ERROR_CODES = [
+  "provider.unavailable",
+  "provider.auth",
+  "provider.bad_request",
+  "provider.context_overflow",
+  "provider.refusal",
+  "agent.tool_error_streak",
+  "agent.no_tool_call",
+  "model.missing_provider",
+  "internal",
+]
+
 const CHAPTER_STATUSES = ["planned", "drafting", "in_review", "revising", "official"]
 const CANON_STATUSES = ["none", "pending", "syncing", "synced", "stale", "failed"]
 
@@ -85,6 +102,24 @@ describe("locale coverage", () => {
         const text = i18n.getFixedT(language)?.("errors:" + code, { defaultValue: code })
         expect(text, `${language} errors:${code}`).not.toBe(code)
         expect(text, `${language} errors:${code}`).toBeTruthy()
+      }
+    }
+  })
+
+  it("has an errors key for every session error code", () => {
+    // spec/11 §9: every session error code needs an `errors:` key in both locales. They are
+    // stored as data in `agent_sessions.error` and rendered by `SessionErrorNotice`, so
+    // `check-i18n` cannot see them.
+    const en = enErrors as Record<string, string>
+    const zh = zhErrors as Record<string, string>
+    for (const code of ALL_SESSION_ERROR_CODES) {
+      expect(en[code], `en errors:${code}`).toBeTypeOf("string")
+      expect(zh[code], `zh-CN errors:${code}`).toBeTypeOf("string")
+    }
+    for (const language of SUPPORTED_LANGUAGES) {
+      for (const code of ALL_SESSION_ERROR_CODES) {
+        const text = i18n.getFixedT(language)?.("errors:" + code, { defaultValue: code })
+        expect(text, `${language} errors:${code}`).not.toBe(code)
       }
     }
   })

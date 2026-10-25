@@ -30,6 +30,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { ActivityStream } from "@/features/agent/ActivityStream"
 import { Composer } from "@/features/agent/Composer"
 import { SessionControls } from "@/features/agent/SessionControls"
+import { SessionErrorNotice } from "@/features/agent/SessionErrorNotice"
 import { SessionHeader } from "@/features/agent/SessionHeader"
 import { UsageFooter } from "@/features/agent/UsageFooter"
 import { AutoPauseSwitch, GranularityControl } from "@/features/agent/WriterControls"
@@ -198,6 +199,7 @@ export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: 
         onFeedback={submitFeedback}
         onAbandon={() => runControl("abandon")}
       />
+      <SessionErrorNotice error={session.error ?? null} />
       {isWriter ? (
         <>
           <GranularityControl

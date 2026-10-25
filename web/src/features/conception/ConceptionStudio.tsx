@@ -43,6 +43,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { ActivityStream } from "@/features/agent/ActivityStream"
 import { Composer } from "@/features/agent/Composer"
 import { SessionControls } from "@/features/agent/SessionControls"
+import { SessionErrorNotice } from "@/features/agent/SessionErrorNotice"
 import { AskUserForm, readQuestions } from "@/features/conception/AskUserForm"
 import { CharacterRankList } from "@/features/conception/CharacterRankList"
 import { ResearchTopicsEditor } from "@/features/conception/ResearchTopicsEditor"
@@ -255,6 +256,7 @@ export default function ConceptionStudio() {
               }
             />
           )}
+          {session === undefined ? null : <SessionErrorNotice error={session.error ?? null} />}
           {snapshot.isPending && sessionId !== null ? (
             <div className="flex flex-1 items-center justify-center">
               <Loader2 aria-hidden="true" className="size-4 animate-spin text-muted-foreground" />
