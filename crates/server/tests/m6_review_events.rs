@@ -61,15 +61,32 @@ async fn archivist_canon_writes_publish_canon_changed_events() {
     runtime
         .wait_status_within(session, SessionStatus::Completed, Duration::from_secs(20))
         .await;
-    // Let the publishing task drain the bus (events are published right after the commit).
-    tokio::time::sleep(Duration::from_millis(200)).await;
-
+    // The events are published right after each commit, so drain until every expected kind has
+    // arrived. A fixed settle sleep would be a load-sensitive wait, not a synchronization.
     let mut canon: Vec<serde_json::Value> = Vec::new();
-    while let Ok(envelope) = events.try_recv() {
-        if let ServerEvent::CanonChanged { .. } = &envelope.event {
-            canon.push(serde_json::to_value(&envelope.event).expect("event json"));
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let seen = |canon: &Vec<serde_json::Value>, target: &str| {
+        canon.iter().any(|event| event["target_type"] == target)
+    };
+    loop {
+        while let Ok(envelope) = events.try_recv() {
+            if let ServerEvent::CanonChanged { .. } = &envelope.event {
+                canon.push(serde_json::to_value(&envelope.event).expect("event json"));
+            }
         }
+        if ["entity", "appearance_set", "chapter_summary"]
+            .iter()
+            .all(|target| seen(&canon, target))
+        {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the maintenance session did not publish every canon event: {canon:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
+    canon.sort_by_key(|event| event["change_id"].as_i64().unwrap_or(0));
     let targets: Vec<&str> = canon
         .iter()
         .filter_map(|event| event["target_type"].as_str())
