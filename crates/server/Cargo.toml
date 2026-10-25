@@ -137,3 +137,7 @@ path = "tests/search_ranking.rs"
 [[test]]
 name = "knowledge_api"
 path = "tests/knowledge_api.rs"
+
+[[test]]
+name = "search_tools"
+path = "tests/search_tools.rs"

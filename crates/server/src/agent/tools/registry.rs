@@ -266,6 +266,10 @@ impl ToolRegistry {
         for handler in super::retrieval::all() {
             handlers.insert(handler.name().to_owned(), handler);
         }
+        // The four search tools of M7 (spec/05 §3).
+        for handler in super::search::all() {
+            handlers.insert(handler.name().to_owned(), handler);
+        }
         // The reviewer tool of M6.1 (spec/05 §5).
         for handler in super::reviewer::all() {
             handlers.insert(handler.name().to_owned(), handler);

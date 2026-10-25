@@ -112,23 +112,36 @@ pub async fn delete_ref_docs(
     Ok(())
 }
 
-/// Replaces one FTS row (its delete trigger only fires from `search_docs`).
+/// Writes one FTS row, skipped when the segmented columns already match (D-039: an unchanged
+/// chunk keeps its FTS row; its delete trigger only fires from `search_docs`).
 async fn replace_fts(
     conn: &impl ConnectionTrait,
     id: i32,
     title: &str,
     body: &str,
 ) -> Result<(), AppError> {
+    let title_tokens = fts::segment(title);
+    let body_tokens = fts::segment(body);
+    if let Some(row) = conn
+        .query_one_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT title, body FROM fts_book WHERE rowid = ?",
+            vec![(id as i64).into()],
+        ))
+        .await?
+    {
+        let current_title: String = row.try_get("", "title")?;
+        let current_body: String = row.try_get("", "body")?;
+        if current_title == title_tokens && current_body == body_tokens {
+            return Ok(());
+        }
+    }
     conn.execute_unprepared(&format!("DELETE FROM fts_book WHERE rowid = {id}"))
         .await?;
     conn.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Sqlite,
         "INSERT INTO fts_book(rowid, title, body) VALUES (?, ?, ?)",
-        vec![
-            (id as i64).into(),
-            fts::segment(title).into(),
-            fts::segment(body).into(),
-        ],
+        vec![(id as i64).into(), title_tokens.into(), body_tokens.into()],
     ))
     .await?;
     Ok(())
@@ -608,16 +621,28 @@ async fn replace_knowledge_fts(
     title: &str,
     body: &str,
 ) -> Result<(), AppError> {
+    let title_tokens = fts::segment(title);
+    let body_tokens = fts::segment(body);
+    if let Some(row) = conn
+        .query_one_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT title, body FROM fts_knowledge WHERE rowid = ?",
+            vec![(id as i64).into()],
+        ))
+        .await?
+    {
+        let current_title: String = row.try_get("", "title")?;
+        let current_body: String = row.try_get("", "body")?;
+        if current_title == title_tokens && current_body == body_tokens {
+            return Ok(());
+        }
+    }
     conn.execute_unprepared(&format!("DELETE FROM fts_knowledge WHERE rowid = {id}"))
         .await?;
     conn.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Sqlite,
         "INSERT INTO fts_knowledge(rowid, title, body) VALUES (?, ?, ?)",
-        vec![
-            (id as i64).into(),
-            fts::segment(title).into(),
-            fts::segment(body).into(),
-        ],
+        vec![(id as i64).into(), title_tokens.into(), body_tokens.into()],
     ))
     .await?;
     Ok(())

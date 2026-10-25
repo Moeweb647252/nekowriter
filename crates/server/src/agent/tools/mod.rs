@@ -12,6 +12,7 @@ pub mod registry;
 pub mod resolve;
 pub mod retrieval;
 pub mod reviewer;
+pub mod search;
 pub mod spec;
 pub mod test_tools;
 pub mod writer;

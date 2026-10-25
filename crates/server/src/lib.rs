@@ -25,12 +25,14 @@ use crate::config::Config;
 use crate::state::AppState;
 
 /// Starts the server (spec/01 §5). Called from the binary.
-pub async fn run(config: Config) -> anyhow::Result<()> {
+pub async fn run(mut config: Config) -> anyhow::Result<()> {
     // The data directory is resolved before tracing so the log file can live inside it
     // (spec/01 §5 steps 1-2, §9).
     let data_dir = config.resolve_data_dir()?;
     let _log_guard = init_tracing(&data_dir);
     config.check_bind_allowed()?;
+    // The embedding model cache lives under `<data_dir>/models` (spec/01 §5, spec/07 §4).
+    config.data_dir = Some(data_dir.clone());
 
     tracing::info!(data_dir = %data_dir.display(), "starting NekoWriter");
 

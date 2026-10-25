@@ -798,6 +798,54 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
 - **Consequences**: the M6.5 manual loop runs on a fresh book, and the extra `create_entity` step
   disappears on its own once the book has a protagonist (after M9 seeding).
 
+### D-091 Search documents hash and embed their body; the title rides along as context
+- **Context**: spec/07 §2 defines the indexed fields of `search_docs` but not the content hash or
+  the embedding input, and §1.1's chunk hash explicitly covers only `heading + text` while the
+  embedding input substitutes the title for an empty heading.
+- **Decision**: a `search_docs` row's `content_hash` is `blake3(body)` and its embedding input is
+  `title + "\n" + body`, mirroring the knowledge-chunk rule: a rename updates the FTS title and the
+  snippet context without re-embedding unchanged text, while a body change resets
+  `embed_state = pending`. A knowledge chunk's FTS body holds the heading path plus the text, so a
+  section name is findable by keyword as well as by vector. An entry with empty text is marked
+  `done` without a vector (nothing to embed); an official chapter's summary document exists only
+  when its summary is non-empty (a stub summary has nothing to find).
+- **Consequences**: one hash rule for both corpora and D-039's "unchanged rows keep their vector"
+  holds across renames; the FTS title and the vector context can drift after a rename until the
+  next body change, which no test or ranking path depends on.
+
+### D-092 Scope-level knowledge changes reuse `knowledge.changed`; entry pages are oldest first
+- **Context**: spec/10 §3 gives `knowledge.changed` the payload `{scope_id, entry_id, op}` but
+  scopes also change (create, rename, delete), and spec/10 §1 does not fix the entry page order.
+- **Decision**: a scope change emits `knowledge.changed` with `entry_id = 0`; entry pages are
+  ordered by ascending id with an id cursor (the UI pages forward and sorts/filters client-side).
+- **Consequences**: one event invalidates the knowledge pages for both scopes and entries; the
+  `entry_id = 0` sentinel is documented here rather than growing a second event type.
+
+### D-093 The indexer's empty-text items and failed loads
+- **Context**: spec/07 §4 says failed items retry on a model reload or Rebuild, and that the worker
+  waits while the embedder is not ready; it does not say what a document with no text does.
+- **Decision**: the worker marks an item with an empty embedding input `done` without storing a
+  vector (an empty entity or note is searchable by title through FTS only). A failed model load is
+  not retried by the 5-second poll: the worker waits, and `POST /embedding/rebuild` (or a model
+  change) reloads it, so a broken download cannot hammer the network. In the test build the worker
+  is driven batch by batch ([`services::indexer::run_once`]) and only the production build spawns
+  the loop; `AppState::new` installs the deterministic fake embedder at the model table's dimension.
+- **Consequences**: deterministic integration tests without timing assumptions; the production
+  startup spawns the loop after `search::initialize` created the runtime schema.
+
+### D-094 The search tools label hits with `search_kind` and cap knowledge snippets
+- **Context**: spec/05 §3 renders `search_canon` hits as `【类型】标题(#ref)`, and the `ui` payloads
+  are `{query, count}`; `prompts/shared.toml` offers both `entity_kind` (人物) and `search_kind`
+  (实体) labels.
+- **Decision**: the bracket label is the `search_kind` label of the document kind (实体/笔记/伏笔/
+  事件/章节摘要), because the model is looking at the archive kind, not the entity kind.
+  Knowledge snippets are cut to 400 characters (§3's wording); a `search_chapters` hit carries the
+  `shared.chapter_label` with its title and its covered pids from `meta.pids`. Main-story chapters
+  after a side story's anchor are marked in `search_chapters` (the same anchor helper as the
+  retrieval tools); `search_canon` items carry no anchor mark.
+- **Consequences**: rendering matches the prompt templates' variables exactly (`after_anchor` is
+  always present), and the M10 anchor work only needs to extend the canon-side marking.
+
 ## Open items (questions for the author)
 1. Confirm the reading of "this time it cannot be delegated to a lower-level review agent" as
    "the author judges the reviewer's report; no further delegation" (PROJECT §10.9).
