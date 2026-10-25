@@ -1,4 +1,4 @@
-//! API router assembly, the host/origin guard and the root hint page (spec/01 §10).
+//! API router assembly, the host/origin guard and the SPA fallback (spec/01 §10, §12).
 
 pub mod app_settings;
 pub mod books;
@@ -20,6 +20,7 @@ pub mod reviews;
 pub mod search_settings;
 pub mod sessions;
 pub mod settings_materials;
+pub mod spa;
 pub mod tracks;
 
 use axum::Router;
@@ -27,7 +28,7 @@ use axum::body::Body;
 use axum::extract::Request;
 use axum::http::{HeaderValue, header};
 use axum::middleware::{self, Next};
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post, put};
 
 use crate::error::{AppError, ErrorCode};
@@ -297,6 +298,9 @@ pub fn build_app(state: AppState) -> Router {
             post(sessions::send_message),
         )
         .route("/sessions/{session_id}/answer", post(sessions::answer))
+        // An unknown `/api` path must answer with the documented error envelope (spec/10 §1), not
+        // with axum's empty-body 404 — and it must never fall through to the SPA's `index.html`.
+        .fallback(api_not_found)
         .with_state(state.clone());
 
     // The debug endpoints exist only in debug builds (spec/10 §2.7).
@@ -310,7 +314,9 @@ pub fn build_app(state: AppState) -> Router {
 
     Router::new()
         .nest("/api", api)
-        .route("/", get(root_hint))
+        // Everything else is the SPA: the embedded assets, `--web-dir`, or the hint page
+        // (spec/01 §12). The fallback also covers `GET /`.
+        .fallback(spa::serve)
         .layer(middleware::from_fn_with_state(
             state.clone(),
             host_origin_guard,
@@ -449,20 +455,9 @@ fn strip_port(host: &str) -> &str {
     }
 }
 
-/// `GET /` when no SPA assets are configured: a plain page telling the reader to start Vite
-/// (spec/01 §12).
-async fn root_hint() -> Response {
-    Html(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
-         <title>NekoWriter</title></head><body style=\"font-family: sans-serif; margin: 3rem\">\
-         <h1>NekoWriter API is running</h1>\
-         <p>Run the Vite dev server to use the studio:</p>\
-         <pre>pnpm --dir web dev</pre>\
-         <p>Then open <a href=\"http://localhost:5173\">http://localhost:5173</a>.</p>\
-         <p>Health: <a href=\"/api/health\">/api/health</a></p>\
-         </body></html>",
-    )
-    .into_response()
+/// The fallback for an unknown `/api` path: the standard error envelope (spec/10 §1, §4).
+async fn api_not_found() -> AppError {
+    AppError::new(ErrorCode::NotFound, "no such endpoint")
 }
 
 /// Adds the static-file security headers from spec/01 §10.6 to every response.
@@ -688,6 +683,190 @@ mod guard_tests {
             assert!(
                 csp.contains("default-src 'self'"),
                 "{path} is missing the CSP (got {csp:?})"
+            );
+        }
+    }
+
+    /// Sends one GET and returns the status, headers and body text.
+    async fn get(
+        app: Router,
+        path: &str,
+    ) -> (axum::http::StatusCode, axum::http::HeaderMap, String) {
+        let request = Request::builder()
+            .method(axum::http::Method::GET)
+            .uri(path)
+            .header(header::HOST, "127.0.0.1:7878");
+        let response = app
+            .oneshot(request.body(Body::empty()).expect("request"))
+            .await
+            .expect("response");
+        let status = response.status();
+        let headers = response.headers().clone();
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("body");
+        (status, headers, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    /// Builds an app whose `--web-dir` points at a temporary directory holding `files`.
+    async fn test_app_with_web_dir(
+        files: &[(&str, &str)],
+    ) -> (tempfile::TempDir, tempfile::TempDir, Router) {
+        let assets = tempfile::tempdir().expect("assets dir");
+        for (path, body) in files {
+            let full = assets.path().join(path);
+            if let Some(parent) = full.parent() {
+                std::fs::create_dir_all(parent).expect("asset dir");
+            }
+            std::fs::write(full, body).expect("write asset");
+        }
+        let data = tempfile::tempdir().expect("data dir");
+        let db = crate::db::Db::connect(&data.path().join("test.db"))
+            .await
+            .expect("db");
+        nekowriter_migration::up(db.conn()).await.expect("migrate");
+        let vec_version = db.vec_version().await.expect("vec");
+        let mut config = test_config(data.path());
+        config.web_dir = Some(assets.path().to_path_buf());
+        let state = AppState::new(db, config, vec_version);
+        (data, assets, build_app(state))
+    }
+
+    const SHELL: &str = "<!doctype html><html><body><div id=\"root\"></div></body></html>";
+
+    /// spec/01 §12: `--web-dir` serves the built SPA, unknown non-`/api` paths fall back to
+    /// `index.html` (so a deep link reloads), and `/api` paths are never rewritten.
+    #[tokio::test]
+    async fn web_dir_serves_the_spa_with_fallback() {
+        let (_data, _assets, app) = test_app_with_web_dir(&[
+            ("index.html", SHELL),
+            ("assets/app-abc123.js", "console.log(1)"),
+            ("assets/app-abc123.css", "body{color:red}"),
+        ])
+        .await;
+
+        let (status, headers, body) = get(app.clone(), "/").await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(body, SHELL);
+        assert_eq!(
+            headers
+                .get(header::CONTENT_TYPE)
+                .map(|value| value.to_str().expect("header")),
+            Some("text/html; charset=utf-8")
+        );
+        assert_eq!(
+            headers
+                .get(header::CACHE_CONTROL)
+                .map(|value| value.to_str().expect("header")),
+            Some("no-cache"),
+            "the shell must revalidate so a rebuild is picked up"
+        );
+
+        // A deep link (the React Router route) has no file of its own.
+        let (status, _, body) = get(app.clone(), "/books/1/chapters/2").await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(body, SHELL);
+
+        // A hashed asset is served as itself, with its type and an immutable cache policy.
+        let (status, headers, body) = get(app.clone(), "/assets/app-abc123.js").await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(body, "console.log(1)");
+        assert_eq!(
+            headers
+                .get(header::CONTENT_TYPE)
+                .map(|value| value.to_str().expect("header")),
+            Some("text/javascript; charset=utf-8")
+        );
+        assert!(
+            headers
+                .get(header::CACHE_CONTROL)
+                .map(|value| value.to_str().expect("header"))
+                .unwrap_or_default()
+                .contains("immutable")
+        );
+
+        let (status, headers, _) = get(app.clone(), "/assets/app-abc123.css").await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(
+            headers
+                .get(header::CONTENT_TYPE)
+                .map(|value| value.to_str().expect("header")),
+            Some("text/css; charset=utf-8")
+        );
+
+        // The security headers cover static files too (spec/01 §10.6).
+        let (_, headers, _) = get(app.clone(), "/assets/app-abc123.js").await;
+        assert_eq!(
+            headers
+                .get(header::X_CONTENT_TYPE_OPTIONS)
+                .map(|value| value.to_str().expect("header")),
+            Some("nosniff")
+        );
+
+        // Traversal cannot escape the asset directory: the path is rejected and the request gets
+        // the ordinary SPA fallback rather than a file outside the web dir.
+        let (status, _, body) = get(app.clone(), "/../Cargo.toml").await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(body, SHELL);
+        assert!(!body.contains("[package]"));
+
+        // An unknown `/api` path keeps the JSON error contract and is not turned into the shell.
+        let (status, headers, body) = get(app.clone(), "/api/definitely-not-a-route").await;
+        assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+        assert_eq!(
+            headers
+                .get(header::CONTENT_TYPE)
+                .map(|value| value.to_str().expect("header")),
+            Some("application/json")
+        );
+        let envelope: serde_json::Value = serde_json::from_str(&body).expect("error envelope");
+        assert_eq!(envelope["error"]["code"], "not_found");
+
+        // A non-GET request to a page path is not a page request.
+        let (status, _) = send(app, axum::http::Method::POST, "/books/1/chapters/2", None).await;
+        assert_eq!(status, axum::http::StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    /// Without `--web-dir` and without the `embed-web` feature, `/` is the hint page and other
+    /// paths are 404s (spec/01 §12).
+    #[cfg(not(feature = "embed-web"))]
+    #[tokio::test]
+    async fn without_assets_the_root_is_a_hint_page() {
+        let (_dir, app) = test_app().await;
+        let (status, headers, body) = get(app.clone(), "/").await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert!(
+            body.contains("pnpm --dir web dev"),
+            "the hint page must tell the reader how to start Vite"
+        );
+        assert_eq!(
+            headers
+                .get(header::CONTENT_TYPE)
+                .map(|value| value.to_str().expect("header")),
+            Some("text/html; charset=utf-8")
+        );
+        let (status, _, _) = get(app, "/books/1").await;
+        assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+    }
+
+    /// The release binary embeds `web/dist` and serves it with the SPA fallback (spec/01 §12).
+    #[cfg(feature = "embed-web")]
+    #[tokio::test]
+    async fn embedded_assets_serve_the_shell_and_deep_links() {
+        let (_dir, app) = test_app().await;
+        for path in ["/", "/books/1/chapters/2"] {
+            let (status, headers, body) = get(app.clone(), path).await;
+            assert_eq!(status, axum::http::StatusCode::OK, "{path}");
+            assert_eq!(
+                headers
+                    .get(header::CONTENT_TYPE)
+                    .map(|value| value.to_str().expect("header")),
+                Some("text/html; charset=utf-8"),
+                "{path}"
+            );
+            assert!(
+                body.contains("<div id=\"root\""),
+                "{path} is not the SPA shell"
             );
         }
     }

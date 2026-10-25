@@ -1105,3 +1105,27 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   runner (await it, re-read the row, drive only if it is still `running`; safe because `drive`
   returns at once for a non-running row), which would also close the same window for `resume`
   from `failed`/`interrupted`.
+
+### D-108 The single binary embeds `web/dist`; `--web-dir` wins when set
+- **Context**: PLAN 11.4 and spec/01 §12 ask for a release build in which one binary serves the
+  SPA: `rust-embed` of `web/dist` when the `embed-web` feature is on, `--web-dir` from disk
+  otherwise, and a plain hint page when neither is configured. The cloud of small choices around
+  that (header details, which requests may fall back, which MIME map) was undecided.
+- **Decision**: (a) `--web-dir` takes precedence over the embedded copy when both exist, so a
+  release binary can still be pointed at a fresh build during QA. (b) The SPA fallback answers
+  `GET`/`HEAD` only for paths outside `/api`; a non-GET page request is `405` rather than the
+  shell, and `/api` never reaches the fallback. (c) Unknown `/api` paths answer the standard
+  error envelope with `not_found` (spec/10 §1) now that a catch-all sits on the API router.
+  (d) The content type comes from an explicit extension table instead of rust-embed's optional
+  `mime-guess` feature, so both the disk and embedded paths share one map and no build feature
+  affects the headers. (e) Hashed `assets/*` get `Cache-Control: public, max-age=31536000,
+  immutable`; everything else revalidates. The `X-Content-Type-Options`/CSP layer still covers
+  every response, static files and the guard's 403 included (spec/01 §10.6).
+- **Consequences**: `pnpm --dir web build` is a prerequisite of
+  `cargo build --release --features embed-web` (rust-embed needs the folder at compile time,
+  exactly as spec/01 §12's release command already ordered), while `cargo test --workspace` and
+  the `embed-web`-gated unit test need no assets in the default build. Tests:
+  `crates/server/src/api/mod.rs::guard_tests` (disk serving, deep-link fallback, traversal
+  refusal, MIME and cache headers, `/api` envelope, hint page, and the feature-gated embedded
+  shell), plus a manual release-binary run with no `--web-dir` against `/` and
+  `/books/1/chapters/2` (reported with the M11 smoke results).
