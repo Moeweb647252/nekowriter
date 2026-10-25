@@ -116,6 +116,14 @@ const router = createBrowserRouter([
             },
           },
           {
+            // The conception studio (PROJECT §8.7, spec/11 §5.4).
+            path: "conception",
+            lazy: async () => {
+              const module = await import("@/features/conception/ConceptionStudio")
+              return { Component: module.default }
+            },
+          },
+          {
             path: "chapters/:chapterId",
             lazy: async () => {
               const module = await import("@/features/chapter/ChapterPage")
@@ -193,6 +201,15 @@ const router = createBrowserRouter([
             path: "prompts",
             lazy: async () => {
               const module = await import("@/features/prompts/BookPromptsPage")
+              return { Component: module.default }
+            },
+          },
+          {
+            // A side story's premise, canon mode, anchor and chapters (PROJECT §8.4,
+            // spec/11 §3 `tracks/:trackId`).
+            path: "tracks/:trackId",
+            lazy: async () => {
+              const module = await import("@/features/workspace/SideStoryPage")
               return { Component: module.default }
             },
           },

@@ -1002,3 +1002,22 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   `crates/server/tests/side_story_isolated.rs` (isolated maintenance, the author's track filter,
   `get_entity`'s and `search_chapters`' post-anchor markers over API-created tracks) and
   `web/src/features/canon/memoryPage.test.tsx`.
+
+### D-102 The side-story UI: one navigator group, a dialog and a track page
+- **Context**: PROJECT §8.4/F9 and spec/11 §3 name a "Side stories" navigator group, a New side
+  story dialog and a `tracks/:trackId` page; M1's navigator rendered only the main track.
+- **Decision**: (a) the navigator shows a collapsible **Side stories** group under the main track
+  with the count, a "+" that opens the dialog, and one chapter group per side track whose title
+  links to the track page. (b) The dialog collects the spec/08 §6 fields and derives the spec
+  defaults from the loaded chapter list (`isolated`; `after_chapter` on the latest official main
+  chapter, `before_start` when there is none) without copying them into state by an effect, so a
+  dialog opened while the lists load still settles on the right default and an explicit choice
+  wins. (c) The track page edits the metadata (title, premise, canon mode, anchor, focus
+  character), disables the canon mode once the track has an official chapter, lists the side
+  track's chapters with a **Next chapter** action, and deletes the track only after a typed
+  confirmation (the deletion cascades its chapters, spec/08 §1.3). The dialog and page strings live
+  in the `book` namespace, whose key set stays inside spec/11 §2's closed namespace list.
+- **Consequences**: a side story can be created, edited and deleted entirely from the UI, and the
+  pages that show canon can be filtered by its track (D-101). Tests:
+  `web/src/features/workspace/sideStoryPage.test.tsx` (the dialog's default anchor and submitted
+  input, the canon-mode lock hint, the dynamic anchor/canon-mode locale keys in both locales).

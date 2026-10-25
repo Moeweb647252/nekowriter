@@ -1,5 +1,6 @@
 /** The workspace navigator (PROJECT §8.4, spec/11 §5.1): overview, tracks with sortable chapter
  * rows, setting materials, canon, knowledge, proposals, prompts and book settings. */
+import { useState } from "react"
 import { Link, NavLink as RouterNavLink, useNavigate, useParams } from "react-router"
 import { useTranslation } from "react-i18next"
 import {
@@ -22,6 +23,7 @@ import { CSS } from "@dnd-kit/utilities"
 import {
   BookOpen,
   Brain,
+  ChevronRight,
   ClipboardCheck,
   FileClock,
   FileText,
@@ -44,6 +46,12 @@ import type { ChapterListItemDto } from "@/api/gen/ChapterListItemDto"
 import type { TrackDto } from "@/api/gen/TrackDto"
 import { StatusBadge } from "@/components/common/StatusBadge"
 import { Button } from "@/components/ui/button"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
+import { NewSideStoryDialog } from "@/features/workspace/NewSideStoryDialog"
 import { cn } from "@/lib/utils"
 
 export type NavigatorProps = {
@@ -101,8 +109,10 @@ export function Navigator({ book }: NavigatorProps) {
   const { t } = useTranslation()
   const tracks = useTracks(book.id)
   const mainTrack = tracks.data?.find((track) => track.kind === "main")
+  const sideTracks = (tracks.data ?? []).filter((track) => track.kind === "side")
   // The pending proposal count is the navigator badge (PROJECT §8.5, spec/06 §5).
   const pendingProposals = useProposals(book.id, "pending").data?.length ?? 0
+  const [newSideStoryOpen, setNewSideStoryOpen] = useState(false)
 
   return (
     <nav className="flex h-full flex-col overflow-y-auto border-r bg-sidebar/40 p-2">
@@ -110,6 +120,44 @@ export function Navigator({ book }: NavigatorProps) {
       {mainTrack === undefined ? null : (
         <TrackGroup book={book} track={mainTrack} />
       )}
+      <Collapsible defaultOpen>
+        <div className="flex items-center gap-1 px-2 pt-3 pb-1">
+          <CollapsibleTrigger className="group flex min-w-0 flex-1 items-center gap-1 text-[0.68rem] font-medium tracking-wide text-muted-foreground uppercase hover:text-foreground">
+            <ChevronRight className="size-3 transition-transform group-data-[state=open]:rotate-90" aria-hidden="true" />
+            <span className="truncate">{t("book:side_stories")}</span>
+            {sideTracks.length === 0 ? null : (
+              <span className="rounded-full bg-muted px-1 text-[0.6rem] normal-case">
+                {sideTracks.length}
+              </span>
+            )}
+          </CollapsibleTrigger>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="size-5"
+            aria-label={t("book:new_side_story")}
+            onClick={() => setNewSideStoryOpen(true)}
+          >
+            <Plus className="size-3.5" aria-hidden="true" />
+          </Button>
+        </div>
+        <CollapsibleContent>
+          {sideTracks.length === 0 ? (
+            <p className="px-2 pb-1 text-[0.7rem] text-muted-foreground">
+              {t("book:no_side_stories")}
+            </p>
+          ) : (
+            sideTracks.map((track) => (
+              <TrackGroup key={track.id} book={book} track={track} />
+            ))
+          )}
+        </CollapsibleContent>
+      </Collapsible>
+      <NewSideStoryDialog
+        bookId={book.id}
+        open={newSideStoryOpen}
+        onOpenChange={setNewSideStoryOpen}
+      />
       <SectionTitle>{t("book:settings_materials")}</SectionTitle>
       <NavLink
         to={`/books/${book.id}/settings/outline`}
@@ -223,7 +271,24 @@ function TrackGroup({ book, track }: { book: BookDto; track: TrackDto }) {
 
   return (
     <div>
-      <SectionTitle>{track.kind === "main" ? t("book:main_story") : track.title}</SectionTitle>
+      {track.kind === "main" ? (
+        <SectionTitle>{t("book:main_story")}</SectionTitle>
+      ) : (
+        <RouterNavLink
+          to={`/books/${book.id}/tracks/${track.id}`}
+          className={({ isActive }) =>
+            cn(
+              "flex items-center gap-1 rounded-md px-2 py-1 text-[13px] text-muted-foreground hover:bg-accent hover:text-foreground",
+              isActive && "bg-accent font-medium text-foreground",
+            )
+          }
+        >
+          <span className="truncate">{track.title}</span>
+          <span className="ml-auto shrink-0 rounded bg-muted px-1 text-[0.6rem] text-muted-foreground">
+            {t(`book:canon_mode.${track.canon_mode}`)}
+          </span>
+        </RouterNavLink>
+      )}
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
         <SortableContext
           items={list.map((chapter) => chapter.id)}

@@ -4,14 +4,28 @@ import type { ChapterDto } from "@/api/gen/ChapterDto"
 import type { ChapterInput } from "@/api/gen/ChapterInput"
 import type { ChapterListItemDto } from "@/api/gen/ChapterListItemDto"
 import type { TrackDto } from "@/api/gen/TrackDto"
+import type { TrackInput } from "@/api/gen/TrackInput"
 import type { TrackPatch } from "@/api/gen/TrackPatch"
 
 export function listTracks(bookId: number): Promise<TrackDto[]> {
   return api.get<TrackDto[]>(`/books/${bookId}/tracks`)
 }
 
+/** `POST /books/:id/tracks` creates a side story (spec/08 §6). */
+export function createTrack(bookId: number, input: TrackInput): Promise<TrackDto> {
+  return api.post<TrackDto>(`/books/${bookId}/tracks`, input)
+}
+
+export function getTrack(trackId: number): Promise<TrackDto> {
+  return api.get<TrackDto>(`/tracks/${trackId}`)
+}
+
 export function patchTrack(trackId: number, patch: TrackPatch): Promise<TrackDto> {
   return api.patch<TrackDto>(`/tracks/${trackId}`, patch)
+}
+
+export function deleteTrack(trackId: number): Promise<void> {
+  return api.delete<void>(`/tracks/${trackId}`)
 }
 
 export function listChapters(trackId: number): Promise<ChapterListItemDto[]> {
