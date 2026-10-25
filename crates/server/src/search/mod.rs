@@ -9,8 +9,12 @@ pub mod chunk;
 pub mod fts;
 pub mod index;
 pub mod maintenance;
+pub mod query;
 
 pub use index::{
     IndexState, SearchService, ensure_schema, initialize, knn_book, knn_knowledge, switch_model,
 };
 pub use maintenance::sync_events;
+pub use query::{
+    BookCorpus, BookHit, BookSearch, HybridHits, KnowledgeHit, hybrid_book, hybrid_knowledge,
+};

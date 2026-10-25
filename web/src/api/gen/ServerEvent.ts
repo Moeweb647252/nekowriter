@@ -6,6 +6,7 @@ import type { ChapterListItemDto } from "./ChapterListItemDto";
 import type { ContentActor } from "./ContentActor";
 import type { ContentOp } from "./ContentOp";
 import type { DeltaKind } from "./DeltaKind";
+import type { IndexState } from "./IndexState";
 import type { MessageDto } from "./MessageDto";
 import type { ProposalStatus } from "./ProposalStatus";
 import type { SessionDto } from "./SessionDto";
@@ -26,4 +27,4 @@ warnings?: Array<string>, } | { "type": "session.message", session_id: number, m
 /**
  * The `seq` of the assistant message being generated.
  */
-seq: number, call_index: number, name: string, field: string, delta: string, } | { "type": "book.updated", book_id: number, op: BookOp, } | { "type": "chapter.updated", chapter: ChapterListItemDto, outline_changed: boolean, } | { "type": "chapter.content", chapter_id: number, version: number, ops: Array<ContentOp>, word_count: number, tail_open: boolean, actor: ContentActor, } | { "type": "canon.changed", book_id: number, target_type: ChangeTargetType, target_id: number, op: ChangeOp, change_id: number, } | { "type": "settings.changed", book_id: number, kind: SettingsKind, doc_kind?: SettingDocKind | null, revision?: number | null, } | { "type": "proposal.changed", book_id: number, proposal_id: number, status: ProposalStatus, } | { "type": "resync" };
+seq: number, call_index: number, name: string, field: string, delta: string, } | { "type": "book.updated", book_id: number, op: BookOp, } | { "type": "chapter.updated", chapter: ChapterListItemDto, outline_changed: boolean, } | { "type": "chapter.content", chapter_id: number, version: number, ops: Array<ContentOp>, word_count: number, tail_open: boolean, actor: ContentActor, } | { "type": "canon.changed", book_id: number, target_type: ChangeTargetType, target_id: number, op: ChangeOp, change_id: number, } | { "type": "settings.changed", book_id: number, kind: SettingsKind, doc_kind?: SettingDocKind | null, revision?: number | null, } | { "type": "proposal.changed", book_id: number, proposal_id: number, status: ProposalStatus, } | { "type": "knowledge.changed", scope_id: number, entry_id: number, op: ChangeOp, } | { "type": "index.status", model: string, state: IndexState, message?: string | null, pending: bigint, failed: bigint, done: bigint, } | { "type": "resync" };
