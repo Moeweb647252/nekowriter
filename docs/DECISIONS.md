@@ -1082,7 +1082,7 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
 - **Consequences**: the Demo behavior stays deterministic without reading rendered prompts, and
   the fields exist only for the mock protocol (`demo_hints` is `None` for real providers).
 
-### D-101 `Continue` waits for the previous runner to exit; a test-only gate pins the dying-runner window
+### D-107 `Continue` waits for the previous runner to exit; a test-only gate pins the dying-runner window
 - **Context**: `SessionManager::spawn` is a no-op while a live handle exists (one runner per
   session, spec/03 §14). A runner that fails commits its terminal status and then keeps running
   briefly (publishing its events, removing its own handle). A `Continue` that lands in that window
