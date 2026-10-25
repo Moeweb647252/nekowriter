@@ -11,7 +11,9 @@ import { beforeAll, describe, expect, it, vi } from "vitest"
 
 import enKnowledge from "@/i18n/locales/en/knowledge.json"
 
-import KnowledgePage from "./KnowledgePage"
+import type { EntrySummaryDto } from "@/api/gen/EntrySummaryDto"
+
+import KnowledgePage, { sortEntries } from "./KnowledgePage"
 
 // The shared test setup registers the namespaces the M0-M6 pages use. This page also needs
 // `knowledge`, and registering it here keeps the shared file untouched.
@@ -46,7 +48,13 @@ vi.mock("@/api/hooks/knowledge", () => ({
   }),
   useEntries: () => ({
     isPending: false,
-    data: { items: [{ id: 7, title: "Tea houses", source: "manual", tags: ["song"] }], next_cursor: null },
+    data: {
+      items: [
+        { id: 7, title: "Tea houses", source: "manual", tags: ["song"], updated_at: "2026-01-03T00:00:00Z" },
+        { id: 8, title: "Sword tomb", source: "research", tags: [], updated_at: "2026-01-02T00:00:00Z" },
+      ],
+      next_cursor: null,
+    },
   }),
   useEntry: () => ({ isPending: false, data: ENTRY }),
   useKnowledgeSearch: () => ({ isPending: false, data: [] }),
@@ -90,5 +98,44 @@ describe("KnowledgePage entry column", () => {
     expect(
       screen.getByRole("link", { name: "https://example.com/song-tea" }),
     ).toBeInTheDocument()
+  })
+})
+
+describe("sortEntries (PROJECT §8.10 entries search+sort)", () => {
+  const items = [
+    {
+      id: 8,
+      scope_id: 1,
+      title: "Sword tomb",
+      source: "research",
+      tags: [],
+      updated_at: "2026-01-02T00:00:00Z",
+    },
+    {
+      id: 7,
+      scope_id: 1,
+      title: "Tea houses",
+      source: "manual",
+      tags: ["song"],
+      updated_at: "2026-01-03T00:00:00Z",
+    },
+  ] as EntrySummaryDto[]
+
+  it("orders by the newest edit by default", () => {
+    expect(sortEntries(items, "updated").map((item) => item.id)).toEqual([7, 8])
+  })
+
+  it("orders by title and by creation", () => {
+    expect(sortEntries(items, "title").map((item) => item.title)).toEqual([
+      "Sword tomb",
+      "Tea houses",
+    ])
+    expect(sortEntries(items, "created").map((item) => item.id)).toEqual([7, 8])
+  })
+
+  it("does not mutate the input", () => {
+    const copy = [...items]
+    sortEntries(items, "title")
+    expect(items).toEqual(copy)
   })
 })

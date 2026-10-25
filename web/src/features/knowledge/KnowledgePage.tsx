@@ -7,6 +7,7 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
 import type { EntryDto } from "@/api/gen/EntryDto"
+import type { EntrySummaryDto } from "@/api/gen/EntrySummaryDto"
 import type { ScopeDto } from "@/api/gen/ScopeDto"
 import {
   useCreateEntry,
@@ -34,6 +35,13 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
@@ -47,6 +55,29 @@ type EntryDraft = {
 }
 
 const EMPTY_DRAFT: EntryDraft = { title: "", content: "", sources: "", tags: "" }
+
+/** The entries column's sort orders (PROJECT §8.10 "entries (search, sort)"). */
+export type EntrySort = "updated" | "title" | "created"
+
+/**
+ * The entries column order (PROJECT §8.10). The API pages by ascending id (D-092: "the UI pages
+ * forward and sorts/filters client-side"), so the chosen order is applied here: newest edit
+ * first is the default an author wants after a research run.
+ */
+export function sortEntries(items: EntrySummaryDto[], sort: EntrySort): EntrySummaryDto[] {
+  const sorted = [...items]
+  switch (sort) {
+    case "title":
+      sorted.sort((left, right) => left.title.localeCompare(right.title))
+      break
+    case "created":
+      sorted.sort((left, right) => left.id - right.id)
+      break
+    default:
+      sorted.sort((left, right) => right.updated_at.localeCompare(left.updated_at))
+  }
+  return sorted
+}
 
 /** Splits a comma/newline separated field into trimmed items. */
 function splitList(value: string): string[] {
@@ -101,6 +132,9 @@ export default function KnowledgePage() {
     { mode: "create" } | { mode: "edit"; scope: ScopeDto } | null
   >(null)
   const [entryDialog, setEntryDialog] = useState(false)
+  // PROJECT §8.10 asks the entries column to sort; the API pages by ascending id (D-092), so the
+  // order the author picks is applied here ("the UI pages forward and sorts/filters client-side").
+  const [entrySort, setEntrySort] = useState<EntrySort>("updated")
   const [searchQuery, setSearchQuery] = useState("")
   const [searchScopeIds, setSearchScopeIds] = useState<number[]>([])
   const hits = useKnowledgeSearch(searchQuery, searchScopeIds)
@@ -109,6 +143,11 @@ export default function KnowledgePage() {
   const selectedScope = useMemo(
     () => scopes.data?.find((scope) => scope.id === activeScopeId),
     [scopes.data, activeScopeId],
+  )
+
+  const sortedEntries = useMemo(
+    () => sortEntries(entries.data?.items ?? [], entrySort),
+    [entries.data, entrySort],
   )
 
   const onScopeClick = (scope: ScopeDto) => {
@@ -239,6 +278,19 @@ export default function KnowledgePage() {
                 placeholder={t("knowledge:filter_entries")}
                 onChange={(event) => setEntryFilter(event.target.value)}
               />
+              <Select
+                value={entrySort}
+                onValueChange={(value) => setEntrySort(value as EntrySort)}
+              >
+                <SelectTrigger className="w-28 shrink-0" aria-label={t("knowledge:sort_entries")}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="updated">{t("knowledge:sort_updated")}</SelectItem>
+                  <SelectItem value="title">{t("knowledge:sort_title")}</SelectItem>
+                  <SelectItem value="created">{t("knowledge:sort_created")}</SelectItem>
+                </SelectContent>
+              </Select>
               <Button
                 size="sm"
                 disabled={selectedScope === undefined}
@@ -284,7 +336,7 @@ export default function KnowledgePage() {
               description={t("knowledge:no_entries_hint")}
             />
           ) : (
-            entries.data?.items.map((item) => (
+            sortedEntries.map((item) => (
               <button
                 key={item.id}
                 type="button"
@@ -294,7 +346,12 @@ export default function KnowledgePage() {
                 )}
                 onClick={() => setEntryId(item.id)}
               >
-                <span className="block truncate text-[13px] font-medium">{item.title}</span>
+                <span
+                  data-testid="knowledge-entry-title"
+                  className="block truncate text-[13px] font-medium"
+                >
+                  {item.title}
+                </span>
                 <span className="block text-[0.7rem] text-muted-foreground">
                   {t(`knowledge:source.${item.source}`)}
                   {item.tags.length > 0 ? ` · ${item.tags.join(", ")}` : ""}
