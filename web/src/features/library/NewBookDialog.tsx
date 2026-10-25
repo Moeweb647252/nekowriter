@@ -1,4 +1,9 @@
-/** The New book dialog (PROJECT §8.3; conception joins in M9). */
+/**
+ * The New book dialog (PROJECT §8.3, F2 step 1): title, rough idea, genre, writing language, and
+ * "Start with the conception agent" (on by default). With conception the book is created
+ * `conceiving`, its session starts through the create response, and the studio opens (PROJECT
+ * §8.7); without it the book starts active with empty materials.
+ */
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { useNavigate } from "react-router"
@@ -24,6 +29,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { Checkbox } from "@/components/ui/checkbox"
 
 /** Writing languages offered by the dialog; the API accepts any BCP-47 tag. */
 const LANGUAGES = ["zh-CN", "en", "ja", "ko", "fr", "de", "es", "ru"] as const
@@ -42,6 +48,8 @@ export function NewBookDialog({ open, onOpenChange }: NewBookDialogProps) {
   const [idea, setIdea] = useState("")
   const [genre, setGenre] = useState("")
   const [language, setLanguage] = useState<string>(i18n.language.startsWith("zh") ? "zh-CN" : "en")
+  // Conception is on by default (PROJECT §8.3 / F2 step 1).
+  const [startConception, setStartConception] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const reset = () => {
@@ -49,6 +57,7 @@ export function NewBookDialog({ open, onOpenChange }: NewBookDialogProps) {
     setIdea("")
     setGenre("")
     setError(null)
+    setStartConception(true)
   }
 
   return (
@@ -64,7 +73,11 @@ export function NewBookDialog({ open, onOpenChange }: NewBookDialogProps) {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{t("library:new_book")}</DialogTitle>
-          <DialogDescription>{t("library:new_book_description")}</DialogDescription>
+          <DialogDescription>
+            {startConception
+              ? t("library:new_book_conception_description")
+              : t("library:new_book_description")}
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div className="space-y-1.5">
@@ -110,6 +123,16 @@ export function NewBookDialog({ open, onOpenChange }: NewBookDialogProps) {
               </Select>
             </div>
           </div>
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="book-conception"
+              checked={startConception}
+              onCheckedChange={(checked) => setStartConception(checked === true)}
+            />
+            <Label htmlFor="book-conception" className="text-sm font-normal">
+              {t("library:start_conception")}
+            </Label>
+          </div>
           {error === null ? null : <p className="text-sm text-status-failed">{error}</p>}
         </div>
         <DialogFooter>
@@ -126,13 +149,19 @@ export function NewBookDialog({ open, onOpenChange }: NewBookDialogProps) {
                   idea,
                   genre,
                   writing_language: language,
-                  start_conception: false,
+                  start_conception: startConception,
                 },
                 {
                   onSuccess: (response) => {
                     onOpenChange(false)
                     reset()
-                    void navigate(`/books/${response.book.id}`)
+                    // A book created with conception opens the studio; without it (or when no
+                    // conception model is configured) the overview is the right landing page.
+                    const target =
+                      response.session_id === null
+                        ? `/books/${response.book.id}`
+                        : `/books/${response.book.id}/conception`
+                    void navigate(target)
                   },
                   onError: (cause) => {
                     setError(t("common:error_body"))

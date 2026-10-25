@@ -28,5 +28,6 @@
   "delete_confirm": "删除作品",
   "new_book_description": "只需书名和写作语言即可开始；设定资料也可以手写。",
   "switch_book": "切换作品",
-  "no_other_books": "没有其他作品"
+  "no_other_books": "没有其他作品",
+  "new_book_conception_description": "构思智能体会先问几个问题，起草设定资料与资料主题，你在定稿后即可开始写作。"
 }

@@ -1,5 +1,5 @@
 /** The book overview: progress only in M1 (spec/08 §7 fills the rest in M11). */
-import { useParams } from "react-router"
+import { Link, useParams } from "react-router"
 import { useTranslation } from "react-i18next"
 
 import { useOverview } from "@/api/hooks/books"
@@ -8,6 +8,7 @@ import { StatusBadge } from "@/components/common/StatusBadge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Button } from "@/components/ui/button"
 import { formatNumber } from "@/lib/format"
 
 export default function OverviewPage() {
@@ -39,11 +40,20 @@ export default function OverviewPage() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-6">
-      <header>
-        <h1 className="text-xl font-semibold">{book.title}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {[book.genre, book.writing_language].filter(Boolean).join(" · ")}
-        </p>
+      <header className="flex items-end justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-semibold">{book.title}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {[book.genre, book.writing_language].filter(Boolean).join(" · ")}
+          </p>
+        </div>
+        {book.status === "conceiving" ? (
+          // A conceiving book's next step is the studio (PROJECT §8.7), and the sidebar link is
+          // easy to miss before the first chapter exists.
+          <Button asChild size="sm">
+            <Link to={`/books/${book.id}/conception`}>{t("book:conception.continue")}</Link>
+          </Button>
+        ) : null}
       </header>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">

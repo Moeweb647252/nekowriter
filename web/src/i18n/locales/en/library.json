@@ -28,5 +28,6 @@
   "delete_confirm": "Delete book",
   "new_book_description": "A title and a writing language are enough to start. Setting materials can be written by hand.",
   "switch_book": "Switch book",
-  "no_other_books": "No other books"
+  "no_other_books": "No other books",
+  "new_book_conception_description": "The conception agent asks a few questions, drafts the setting materials and research topics, and hands the book over on Finalize."
 }

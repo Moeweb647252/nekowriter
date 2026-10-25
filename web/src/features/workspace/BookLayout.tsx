@@ -28,6 +28,9 @@ export default function BookLayout() {
   const queryClient = useQueryClient()
   const location = useLocation()
   const book = useBook(bookId)
+  // The conception studio is full width: the agent panel is collapsed by default there, because
+  // the studio's own conversation pane is the agent panel (PROJECT §8.7, spec/11 §5.4).
+  const isConception = location.pathname.endsWith("/conception")
 
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
     id: LAYOUT_ID,
@@ -98,16 +101,20 @@ export default function BookLayout() {
             <Outlet context={{ book: book.data }} />
           </div>
         </ResizablePanel>
-        <ResizableHandle withHandle />
-        <ResizablePanel
-          id="agent"
-          defaultSize="380px"
-          minSize="320px"
-          collapsible
-          className="min-h-0"
-        >
-          <AgentPanel bookId={bookId} chapterId={chapterId} />
-        </ResizablePanel>
+        {isConception ? null : (
+          <>
+            <ResizableHandle withHandle />
+            <ResizablePanel
+              id="agent"
+              defaultSize="380px"
+              minSize="320px"
+              collapsible
+              className="min-h-0"
+            >
+              <AgentPanel bookId={bookId} chapterId={chapterId} />
+            </ResizablePanel>
+          </>
+        )}
       </ResizablePanelGroup>
     </div>
   )

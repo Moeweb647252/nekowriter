@@ -1,0 +1,406 @@
+/**
+ * The conception studio (PROJECT §8.7, spec/11 §5.4): conversation on the left, the live setting
+ * materials on the right.
+ *
+ * - The conversation reuses the agent panel's `ActivityStream`, `Composer` and tool cards, so the
+ *   tool cards, live deltas and appendices are the same components as everywhere else.
+ * - A waiting form (`ask_user` / `request_review`) is answered with `POST /sessions/:id/answer`;
+ *   it is the reply at that moment (PROJECT §8.7 step 5), so the composer is disabled then.
+ * - The documents are the three setting docs, the character designs and the draft research topics.
+ *   They are editable whenever the conception session is not running (spec/08 §1.4); a direct
+ *   edit is reported to the agent at its next turn (spec/03 §7).
+ * - "Finalize book" (zh-CN 定稿, D-060) is enabled once all four documents are non-empty; when an
+ *   item was never approved, the author confirms first (PROJECT §8.7 step 6).
+ */
+import { useMemo, useState } from "react"
+import { useNavigate, useParams } from "react-router"
+import { useTranslation } from "react-i18next"
+import { Loader2 } from "lucide-react"
+
+import { useAnswerSession, useBookSessions, useSendSessionMessage, useSession } from "@/api/hooks/sessions"
+import { useCharacters, useDeleteCharacter, usePatchCharacter, useReorderCharacters, useSettingDocs, usePutSettingDoc } from "@/api/hooks/settings-materials"
+import {
+  useCreateResearchTask,
+  useDeleteResearchTask,
+  usePatchResearchTask,
+  useResearchTasks,
+} from "@/api/hooks/research"
+import { useBook } from "@/api/hooks/books"
+import { useFinalizeConception } from "@/api/hooks/conception"
+import { useErrorToast } from "@/components/common/ErrorToast"
+import { ConfirmDialog } from "@/components/common/ConfirmDialog"
+import { Button } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Textarea } from "@/components/ui/textarea"
+import { ActivityStream } from "@/features/agent/ActivityStream"
+import { Composer } from "@/features/agent/Composer"
+import { AskUserForm, readQuestions } from "@/features/conception/AskUserForm"
+import { CharacterRankList } from "@/features/conception/CharacterRankList"
+import { ResearchTopicsEditor } from "@/features/conception/ResearchTopicsEditor"
+import {
+  REVIEW_ITEMS,
+  ReviewRequestForm,
+  type ReviewItem,
+} from "@/features/conception/ReviewRequestForm"
+import type { MessageWithCallsDto } from "@/api/gen/MessageWithCallsDto"
+import type { SessionAnswerInput } from "@/api/gen/SessionAnswerInput"
+import type { SessionDto } from "@/api/gen/SessionDto"
+import type { ToolCallDto } from "@/api/gen/ToolCallDto"
+import type { SettingDocKind } from "@/api/gen/SettingDocKind"
+
+/** The session statuses that allow the author to edit the materials (spec/08 §1.4). */
+const EDITABLE_STATUSES = new Set([
+  "idle",
+  "held",
+  "awaiting_input",
+  "paused",
+  "stopped",
+  "failed",
+  "interrupted",
+])
+
+/** The awaiting call of a session snapshot, when there is one. */
+export function awaitingCall(session: SessionDto, messages: MessageWithCallsDto[]): ToolCallDto | null {
+  if (session.status !== "awaiting_input") {
+    return null
+  }
+  for (const item of messages) {
+    for (const call of item.tool_calls) {
+      if (call.status === "awaiting_input") {
+        return call
+      }
+    }
+  }
+  return null
+}
+
+/** True when every required material is non-empty (PROJECT §8.7 step 6). */
+export function materialsComplete(input: {
+  docs: { kind: string; content: string }[]
+  characters: { id: number }[]
+}): boolean {
+  const filled = (kind: string) =>
+    input.docs.find((doc) => doc.kind === kind)?.content.trim() !== "" &&
+    input.docs.some((doc) => doc.kind === kind)
+  return filled("outline") && filled("world") && filled("protagonist") && input.characters.length > 0
+}
+
+export default function ConceptionStudio() {
+  const { bookId: rawBookId } = useParams()
+  const bookId = Number(rawBookId)
+  const { t } = useTranslation()
+  const navigate = useNavigate()
+  const showError = useErrorToast()
+
+  const book = useBook(bookId)
+  const sessions = useBookSessions(bookId)
+  const docs = useSettingDocs(bookId)
+  const characters = useCharacters(bookId)
+  const topics = useResearchTasks({ bookId })
+
+  // The book's open conception session: the newest one that is not finished (spec/02 §5).
+  const conception = useMemo<SessionDto | undefined>(
+    () =>
+      (sessions.data ?? []).find(
+        (session) => session.kind === "conception" && session.status !== "abandoned" && session.status !== "superseded",
+      ),
+    [sessions.data],
+  )
+  const sessionId = conception?.id ?? null
+  const snapshot = useSession(sessionId)
+  const session = snapshot.data?.session ?? conception
+  const messages = snapshot.data?.messages ?? []
+
+  const answer = useAnswerSession(bookId)
+  const send = useSendSessionMessage(bookId)
+  const finalize = useFinalizeConception(bookId)
+  // One document hook per kind (the endpoint is per kind); `saveDoc` picks the right one.
+  const putOutline = usePutSettingDoc(bookId, "outline")
+  const putWorld = usePutSettingDoc(bookId, "world")
+  const putProtagonist = usePutSettingDoc(bookId, "protagonist")
+  const reorder = useReorderCharacters(bookId)
+  const patchCharacter = usePatchCharacter(bookId)
+  const deleteCharacter = useDeleteCharacter(bookId)
+  const createTopic = useCreateResearchTask()
+  const patchTopic = usePatchResearchTask()
+  const deleteTopic = useDeleteResearchTask()
+
+  const [confirmFinalize, setConfirmFinalize] = useState(false)
+  const [activeTab, setActiveTab] = useState<string>("outline")
+  const [docDraft, setDocDraft] = useState<{ kind: string; revision: number; content: string } | null>(
+    null,
+  )
+
+  if (book.isPending || sessions.isPending || docs.isPending || characters.isPending) {
+    return <Skeleton className="m-6 h-64" />
+  }
+  if (book.data === undefined) {
+    return <p className="p-6 text-sm text-muted-foreground">{t("common:error_body")}</p>
+  }
+
+  const running = session?.status === "running"
+  const editable = !running && (session === undefined || EDITABLE_STATUSES.has(session.status))
+  const docList = docs.data ?? []
+  const characterList = characters.data ?? []
+  const topicList = (topics.data ?? []).filter((topic) => topic.status === "draft")
+  const complete = materialsComplete({ docs: docList, characters: characterList })
+
+  /** The review items the book actually has (the three docs are always present). */
+  const reviewItems: ReviewItem[] = REVIEW_ITEMS.filter((item) =>
+    item === "characters" ? characterList.length > 0 : item === "research_topics" ? topicList.length > 0 : true,
+  )
+
+  const anyUnapproved =
+    docList.some((doc) => doc.approved_revision !== doc.revision) ||
+    (characterList.length > 0 && book.data.conception.characters_approved_revision !== book.data.conception.characters_revision) ||
+    (topicList.length > 0 && book.data.conception.topics_approved_revision !== book.data.conception.topics_revision)
+
+  const doFinalize = () =>
+    finalize.mutate(undefined, {
+      onSuccess: (response) => {
+        setConfirmFinalize(false)
+        void navigate(`/books/${response.book.id}`)
+      },
+      onError: showError,
+    })
+
+  const awaitCall =
+    session === undefined ? null : awaitingCall(session, messages)
+
+  const submitAnswer = (payload: SessionAnswerInput["payload"]) => {
+    if (session === undefined || awaitCall === null) {
+      return
+    }
+    answer.mutate(
+      { sessionId: session.id, input: { tool_call_id: awaitCall.id, payload } },
+      { onError: showError },
+    )
+  }
+  const busy =
+    answer.isPending ||
+    send.isPending ||
+    finalize.isPending ||
+    reorder.isPending ||
+    patchCharacter.isPending ||
+    deleteCharacter.isPending ||
+    createTopic.isPending ||
+    patchTopic.isPending ||
+    deleteTopic.isPending
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex min-h-0 flex-1 flex-col gap-0 lg:flex-row">
+        {/* Conversation */}
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col border-r">
+          <header className="flex items-center justify-between gap-2 border-b px-3 py-2">
+            <div className="min-w-0">
+              <h1 className="truncate text-sm font-semibold">{t("book:conception.title")}</h1>
+              <p className="truncate text-xs text-muted-foreground">
+                {t("book:conception.subtitle")}
+              </p>
+            </div>
+            {running ? (
+              <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                <Loader2 className="size-3 animate-spin" />
+                {t("book:conception.working")}
+              </span>
+            ) : null}
+          </header>
+          {snapshot.isPending && sessionId !== null ? (
+            <div className="flex flex-1 items-center justify-center">
+              <Loader2 aria-hidden="true" className="size-4 animate-spin text-muted-foreground" />
+            </div>
+          ) : session === undefined ? (
+            <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
+              {t("book:conception.no_session")}
+            </div>
+          ) : (
+            <ActivityStream session={session} messages={messages} />
+          )}
+          {awaitCall === null ? null : awaitCall.name === "ask_user" ? (
+            <div className="border-t p-3">
+              <AskUserForm
+                questions={readQuestions(awaitCall.ui)}
+                pending={answer.isPending}
+                onSubmit={submitAnswer}
+              />
+            </div>
+          ) : (
+            <div className="border-t p-3">
+              <ReviewRequestForm
+                message={
+                  typeof awaitCall.ui === "object" && awaitCall.ui !== null
+                    ? String((awaitCall.ui as { message?: unknown }).message ?? "")
+                    : ""
+                }
+                items={reviewItems}
+                pending={answer.isPending}
+                onSubmit={submitAnswer}
+              />
+            </div>
+          )}
+          {session === undefined ? null : (
+            <Composer
+              session={session}
+              busy={busy}
+              onSend={(text) =>
+                send.mutate({ sessionId: session.id, text }, { onError: showError })
+              }
+              onFeedback={() => undefined}
+            />
+          )}
+        </section>
+
+        {/* Documents */}
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="flex min-h-0 flex-1 flex-col">
+            <TabsList className="mx-3 mt-2 w-fit">
+              <TabsTrigger value="outline">{t("book:conception.tab.outline")}</TabsTrigger>
+              <TabsTrigger value="characters">{t("book:conception.tab.characters")}</TabsTrigger>
+              <TabsTrigger value="world">{t("book:conception.tab.world")}</TabsTrigger>
+              <TabsTrigger value="protagonist">
+                {t("book:conception.tab.protagonist")}
+              </TabsTrigger>
+              <TabsTrigger value="research_topics">
+                {t("book:conception.tab.research_topics")}
+              </TabsTrigger>
+            </TabsList>
+            <div className="min-h-0 flex-1 overflow-y-auto p-3">
+              {(["outline", "world", "protagonist"] as const).map((kind) => (
+                <TabsContent key={kind} value={kind} className="mt-0">
+                  <DocumentEditor
+                    kind={kind}
+                    document={docList.find((doc) => doc.kind === kind)}
+                    editable={editable}
+                    busy={putOutline.isPending || putWorld.isPending || putProtagonist.isPending}
+                    draft={docDraft?.kind === kind ? docDraft : null}
+                    onDraft={(content, revision) => setDocDraft({ kind, revision, content })}
+                    onSave={(content, revision) => {
+                      const target =
+                        kind === "outline"
+                          ? putOutline
+                          : kind === "world"
+                            ? putWorld
+                            : putProtagonist
+                      target.mutate(
+                        { content, base_revision: revision, note: "" },
+                        { onSuccess: () => setDocDraft(null), onError: showError },
+                      )
+                    }}
+                  />
+                </TabsContent>
+              ))}
+              <TabsContent value="characters" className="mt-0">
+                <CharacterRankList
+                  characters={characterList}
+                  editable={editable}
+                  busy={busy}
+                  onReorder={(ids) =>
+                    reorder.mutate(ids, { onError: showError })
+                  }
+                  onPatch={(id, patch) =>
+                    patchCharacter.mutate(
+                      { id, patch: { ...patch, note: "" } },
+                      { onError: showError },
+                    )
+                  }
+                  onDelete={(id) => deleteCharacter.mutate(id, { onError: showError })}
+                />
+              </TabsContent>
+              <TabsContent value="research_topics" className="mt-0">
+                <ResearchTopicsEditor
+                  topics={topicList}
+                  editable={editable}
+                  busy={busy}
+                  onCreate={(input) =>
+                    createTopic.mutate({ ...input, book_id: bookId }, { onError: showError })
+                  }
+                  onPatch={(id, patch) => patchTopic.mutate({ taskId: id, patch }, { onError: showError })}
+                  onDelete={(id) => deleteTopic.mutate(id, { onError: showError })}
+                />
+              </TabsContent>
+            </div>
+            <footer className="flex items-center justify-end gap-2 border-t px-3 py-2">
+              <Button
+                size="sm"
+                disabled={!complete || busy || book.data.status !== "conceiving"}
+                onClick={() => {
+                  if (anyUnapproved) {
+                    setConfirmFinalize(true)
+                  } else {
+                    doFinalize()
+                  }
+                }}
+              >
+                {t("book:conception.finalize")}
+              </Button>
+            </footer>
+          </Tabs>
+        </section>
+      </div>
+      <ConfirmDialog
+        open={confirmFinalize}
+        onOpenChange={setConfirmFinalize}
+        title={t("book:conception.finalize_unapproved_title")}
+        description={t("book:conception.finalize_unapproved_body")}
+        pending={finalize.isPending}
+        onConfirm={doFinalize}
+      />
+    </div>
+  )
+}
+
+/** One document tab: a textarea plus save, editable whenever the session is not running. */
+function DocumentEditor({
+  kind,
+  document,
+  editable,
+  busy,
+  draft,
+  onDraft,
+  onSave,
+}: {
+  kind: SettingDocKind
+  document: { content: string; revision: number } | undefined
+  editable: boolean
+  busy: boolean
+  draft: { revision: number; content: string } | null
+  onDraft: (content: string, revision: number) => void
+  onSave: (content: string, revision: number) => void
+}) {
+  const { t } = useTranslation()
+  const content =
+    document === undefined
+      ? ""
+      : draft !== null && draft.revision === document.revision
+        ? draft.content
+        : document.content
+  return (
+    <div className="flex min-h-full flex-col gap-2">
+      <Textarea
+        value={content}
+        rows={18}
+        disabled={!editable}
+        className="min-h-[18rem] flex-1 font-mono text-xs"
+        placeholder={t(`book:conception.doc_placeholder.${kind}`)}
+        onChange={(event) => onDraft(event.target.value, document?.revision ?? 0)}
+      />
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs text-muted-foreground">
+          {document === undefined
+            ? ""
+            : t("book:conception.revision", { revision: document.revision })}
+        </span>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!editable || busy || document === undefined || content === document.content}
+          onClick={() => onSave(content, document?.revision ?? 0)}
+        >
+          {busy ? t("common:saving") : t("common:save")}
+        </Button>
+      </div>
+    </div>
+  )
+}
