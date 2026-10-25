@@ -24,6 +24,7 @@
   "new_entry": "新建条目",
   "no_entries_hint": "写下第一个条目，或让资料收集任务填充这个范围。",
   "entry_title": "标题",
+  "edit_entry": "编辑条目",
   "entry_content": "内容",
   "entry_sources": "来源",
   "entry_sources_hint": "每行一个网址",

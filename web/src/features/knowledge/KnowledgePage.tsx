@@ -3,6 +3,8 @@
 import { useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { BookOpen, Pencil, Plus, Search, Trash2 } from "lucide-react"
+import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 
 import type { EntryDto } from "@/api/gen/EntryDto"
 import type { ScopeDto } from "@/api/gen/ScopeDto"
@@ -31,6 +33,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
@@ -309,7 +312,7 @@ export default function KnowledgePage() {
             description={t("knowledge:select_entry_hint")}
           />
         ) : (
-          <EntryEditor
+          <EntryView
             key={entry.data.id}
             entry={entry.data}
             pending={patchEntry.isPending}
@@ -391,9 +394,14 @@ export default function KnowledgePage() {
   )
 }
 
-/** The entry editor: its state is initialized from the loaded row and keyed by the entry id, so
- * selecting another entry remounts it (no state-syncing effect). */
-function EntryEditor({
+/**
+ * The entry column (PROJECT §8.10: "the entry (view or edit; sources as links; tags)").
+ *
+ * Reading mode is the default, because a knowledge entry is reference material the author mostly
+ * reads; the pencil switches to the editor. The draft state lives here and is keyed by the entry
+ * id through the caller's `key`, so selecting another entry remounts it (no syncing effect).
+ */
+function EntryView({
   entry,
   pending,
   onSave,
@@ -405,12 +413,74 @@ function EntryEditor({
   onDelete: () => void
 }) {
   const { t } = useTranslation()
+  const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState<EntryDraft>({
     title: entry.title,
     content: entry.content,
     sources: entry.source_urls.join("\n"),
     tags: entry.tags.join(", "),
   })
+
+  if (!editing) {
+    const sources = splitList(draft.sources)
+    const tags = splitList(draft.tags)
+    return (
+      <div className="mx-auto max-w-3xl space-y-3">
+        <div className="flex items-start gap-2">
+          <h2 className="min-w-0 flex-1 text-lg font-semibold break-words">{entry.title}</h2>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={t("knowledge:edit_entry")}
+            onClick={() => setEditing(true)}
+          >
+            <Pencil className="size-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={t("knowledge:delete_entry")}
+            onClick={onDelete}
+          >
+            <Trash2 className="size-4" />
+          </Button>
+        </div>
+        {tags.length > 0 ? (
+          <div className="flex flex-wrap gap-1">
+            {tags.map((tag) => (
+              <Badge key={tag} variant="secondary">
+                {tag}
+              </Badge>
+            ))}
+          </div>
+        ) : null}
+        {sources.length > 0 ? (
+          <div className="space-y-1">
+            <Label>{t("knowledge:entry_sources")}</Label>
+            <ul className="space-y-0.5">
+              {sources.map((source) => (
+                <li key={source} className="truncate text-xs">
+                  <a
+                    href={source}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-primary underline-offset-2 hover:underline"
+                  >
+                    {source}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        <div className="prose-sm max-w-none">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{entry.content}</ReactMarkdown>
+        </div>
+        <p className="text-[0.7rem] text-muted-foreground">{t("knowledge:markdown_hint")}</p>
+      </div>
+    )
+  }
+
   return (
     <div className="mx-auto max-w-3xl space-y-3">
       <div className="flex items-center gap-2">
@@ -419,8 +489,17 @@ function EntryEditor({
           aria-label={t("knowledge:entry_title")}
           onChange={(event) => setDraft({ ...draft, title: event.target.value })}
         />
-        <Button disabled={pending} onClick={() => onSave(draft)}>
+        <Button
+          disabled={pending}
+          onClick={() => {
+            onSave(draft)
+            setEditing(false)
+          }}
+        >
           {t("common:save")}
+        </Button>
+        <Button variant="ghost" onClick={() => setEditing(false)}>
+          {t("common:cancel")}
         </Button>
         <Button
           variant="ghost"
@@ -433,8 +512,9 @@ function EntryEditor({
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1">
-          <Label>{t("knowledge:entry_sources")}</Label>
+          <Label htmlFor="entry-sources">{t("knowledge:entry_sources")}</Label>
           <Textarea
+            id="entry-sources"
             rows={2}
             value={draft.sources}
             placeholder={t("knowledge:entry_sources_hint")}
@@ -442,8 +522,9 @@ function EntryEditor({
           />
         </div>
         <div className="space-y-1">
-          <Label>{t("knowledge:entry_tags")}</Label>
+          <Label htmlFor="entry-tags">{t("knowledge:entry_tags")}</Label>
           <Input
+            id="entry-tags"
             value={draft.tags}
             placeholder={t("knowledge:entry_tags_hint")}
             onChange={(event) => setDraft({ ...draft, tags: event.target.value })}
@@ -451,8 +532,9 @@ function EntryEditor({
         </div>
       </div>
       <div className="space-y-1">
-        <Label>{t("knowledge:entry_content")}</Label>
+        <Label htmlFor="entry-content">{t("knowledge:entry_content")}</Label>
         <Textarea
+          id="entry-content"
           rows={18}
           className="font-mono text-[13px]"
           value={draft.content}

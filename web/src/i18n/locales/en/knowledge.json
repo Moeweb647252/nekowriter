@@ -24,6 +24,7 @@
   "new_entry": "New entry",
   "no_entries_hint": "Write the first entry, or let a research task fill this scope.",
   "entry_title": "Title",
+  "edit_entry": "Edit entry",
   "entry_content": "Content",
   "entry_sources": "Sources",
   "entry_sources_hint": "One URL per line",
