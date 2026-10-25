@@ -187,7 +187,8 @@ async fn attention_lists_sessions_reviews_canon_proposals_and_research() {
         .map(|item| item["kind"].as_str().expect("kind"))
         .collect();
     assert!(
-        kinds.contains(&"open_session") && kinds.iter().filter(|k| **k == "open_session").count() == 2,
+        kinds.contains(&"open_session")
+            && kinds.iter().filter(|k| **k == "open_session").count() == 2,
         "both open sessions are listed: {body}"
     );
     assert!(kinds.contains(&"chapter_in_review"), "{body}");

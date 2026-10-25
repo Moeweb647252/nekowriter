@@ -148,7 +148,7 @@ pub async fn drive(ctx: RunnerCtx) -> Result<(), AppError> {
                 CancelledTransition::Exit => return Ok(()),
                 CancelledTransition::Transition(status, cause) => {
                     let events =
-                        session::transition(ctx.state.db().conn(), &session, status, cause).await?;
+                        transition_in_write(&ctx.state, ctx.session_id, status, cause).await?;
                     ctx.state.events().publish_all(events);
                 }
             }
@@ -163,9 +163,9 @@ pub async fn drive(ctx: RunnerCtx) -> Result<(), AppError> {
         match classify_tail(ctx.state.db().conn(), ctx.session_id).await? {
             Tail::NeedsModel => {
                 if session.pause_requested != 0 {
-                    let events = session::transition(
-                        ctx.state.db().conn(),
-                        &session,
+                    let events = transition_in_write(
+                        &ctx.state,
+                        ctx.session_id,
                         SessionStatus::Paused,
                         TransitionCause::PauseBeforeRequest,
                     )
@@ -465,6 +465,51 @@ enum StepStop {
     Failed(Box<SessionError>),
 }
 
+/// Runs one status change inside the process-wide write transaction (spec/01 §7).
+///
+/// `session::transition` writes the session status **and** its domain consequence (an archivist
+/// session's chapter `canon_status = 'failed'`, a research task's status). On a pool connection
+/// those are separate auto-commits, so a reader could see the session `failed` while the chapter
+/// still says `syncing` — the transient state the M9 review caught as a flake. Every status change
+/// the runner makes goes through here (D-113).
+async fn transition_in_write(
+    state: &AppState,
+    session_id: i32,
+    to: SessionStatus,
+    cause: TransitionCause,
+) -> Result<Vec<ServerEvent>, AppError> {
+    crate::services::write(state.db(), move |tx| {
+        Box::pin(async move {
+            let session = session::load(tx, session_id).await?;
+            session::transition(tx, &session, to, cause).await
+        })
+    })
+    .await
+}
+
+/// Stores the error and performs the failing transition in **one** transaction (spec/01 §7,
+/// spec/03 §5.5): a failed session never becomes visible without its error, and the chapter or
+/// research consequence commits with it.
+async fn fail_in_write(
+    state: &AppState,
+    session_id: i32,
+    error: SessionError,
+    cause: TransitionCause,
+) -> Result<Vec<ServerEvent>, AppError> {
+    crate::services::write(state.db(), move |tx| {
+        Box::pin(async move {
+            let session = session::load(tx, session_id).await?;
+            if session.status != SessionStatus::Running.as_str() {
+                return Ok(Vec::new());
+            }
+            session::set_error_running(tx, session_id, &error).await?;
+            let reloaded = session::load(tx, session_id).await?;
+            session::transition(tx, &reloaded, SessionStatus::Failed, cause).await
+        })
+    })
+    .await
+}
+
 /// Builds and runs the model request of one step (spec/03 §5.5).
 async fn step_model(ctx: &RunnerCtx, session: &agent_sessions::Model) -> Result<(), AppError> {
     let state = &ctx.state;
@@ -496,7 +541,7 @@ async fn step_model(ctx: &RunnerCtx, session: &agent_sessions::Model) -> Result<
                     Some(CancelledTransition::Exit) => return Ok(()),
                     None => (SessionStatus::Stopped, TransitionCause::Stop),
                 };
-                let events = session::transition(state.db().conn(), &fresh, status, cause).await?;
+                let events = transition_in_write(state, session.id, status, cause).await?;
                 state.events().publish_all(events);
             }
             Ok(())
@@ -516,15 +561,9 @@ async fn step_model(ctx: &RunnerCtx, session: &agent_sessions::Model) -> Result<
             }
             let mut events = Vec::new();
             if fresh.status == SessionStatus::Running.as_str() {
-                session::set_error_running(state.db().conn(), session.id, &error).await?;
-                let reloaded = session::load(state.db().conn(), session.id).await?;
-                events = session::transition(
-                    state.db().conn(),
-                    &reloaded,
-                    SessionStatus::Failed,
-                    TransitionCause::Failed,
-                )
-                .await?;
+                events =
+                    fail_in_write(state, session.id, (*error).clone(), TransitionCause::Failed)
+                        .await?;
             }
             state.events().publish_all(events);
             Ok(())
@@ -830,15 +869,8 @@ async fn persist_assistant(
         if fresh.status == SessionStatus::Running.as_str() {
             let mut resolved = refuse_batch(state, &fresh, &prompts).await?;
             events.append(&mut resolved);
-            session::set_error_running(state.db().conn(), session.id, &error).await?;
-            let reloaded = session::load(state.db().conn(), session.id).await?;
-            let mut transition = session::transition(
-                state.db().conn(),
-                &reloaded,
-                SessionStatus::Failed,
-                TransitionCause::Failed,
-            )
-            .await?;
+            let mut transition =
+                fail_in_write(state, session.id, error.clone(), TransitionCause::Failed).await?;
             events.append(&mut transition);
         }
     }
@@ -2105,15 +2137,7 @@ async fn provider_client(
         };
         let fresh = session::load(state.db().conn(), session.id).await?;
         if fresh.status == SessionStatus::Running.as_str() {
-            session::set_error_running(state.db().conn(), session.id, &error).await?;
-            let reloaded = session::load(state.db().conn(), session.id).await?;
-            let events = session::transition(
-                state.db().conn(),
-                &reloaded,
-                SessionStatus::Failed,
-                TransitionCause::Failed,
-            )
-            .await?;
+            let events = fail_in_write(state, session.id, error, TransitionCause::Failed).await?;
             state.events().publish_all(events);
         }
         return Err(AppError::new(

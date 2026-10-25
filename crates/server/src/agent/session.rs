@@ -26,6 +26,13 @@ use crate::db::json::{
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
 
+/// Test-only pause (milliseconds) between `transition`'s status write and its domain consequence
+/// (D-113). Zero in production; a test sets it to widen the window and prove the two writes are one
+/// transaction.
+#[cfg(any(test, feature = "testing"))]
+pub static TEST_TRANSITION_PAUSE_MS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 /// Terminal statuses (spec/03 §3): a session is **open** in every other status.
 pub fn is_terminal(status: SessionStatus) -> bool {
     matches!(
@@ -228,6 +235,18 @@ pub async fn transition(
         cause = cause.as_str(),
         "session transition"
     );
+
+    // Test-only seam (D-113): pause between the status write and the domain consequence so a test
+    // can prove they commit atomically. A plain pool connection would auto-commit the status here
+    // and expose the inconsistent pair to readers; inside `Db::write` the pause holds the
+    // transaction and readers keep seeing the previous state. Production builds have no pause.
+    #[cfg(any(test, feature = "testing"))]
+    {
+        let millis = TEST_TRANSITION_PAUSE_MS.load(std::sync::atomic::Ordering::Relaxed);
+        if millis > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(millis)).await;
+        }
+    }
 
     // An archivist session that fails or is abandoned leaves the chapter's canon `failed`, so the
     // chapter never stays `syncing` without a session and Retry works (spec/06 §6, D-048). This

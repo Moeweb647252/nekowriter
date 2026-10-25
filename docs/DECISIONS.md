@@ -1231,3 +1231,43 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   `useHotkey` hook in `lib/hotkeys.ts` ignores IME composition for every shortcut it registers
   (Alt+P in the agent panel included); `lib/hotkeys.test.tsx` pins both the matching and the IME
   guard.
+
+### D-113 Every write the agent runner makes goes through `Db::write`
+- **Context**: `session::transition` writes more than one row: the session status, and an archivist
+  session's chapter consequence (`chapters.canon_status = 'failed'`), plus a research task's
+  status. Most callers passed a transaction, but the runner's failure, refusal, cancel and pause
+  paths passed `state.db().conn()`, so each UPDATE auto-committed on its own. A reader could
+  therefore observe the session `failed` while the chapter still said `syncing` — exactly the
+  transient state the M9 review caught as a flake (session `failed`, `canon_status` not yet
+  `failed`) — and it violated spec/01 §7 ("every write transaction goes through `Db::write`") and
+  `transition`'s own contract that its writes are one transaction. The M9 review found it by
+  reading the code after the flake; it did not reproduce again in 19 runs.
+- **Decision**: the runner has two helpers, `transition_in_write` (load + transition inside
+  `services::write`) and `fail_in_write` (store the error **and** perform the failing transition in
+  one transaction), and every runner status change on a plain connection was replaced with them
+  (drive's cancel and pause transitions, the cancelled-stream transition, the failed-step path, the
+  refusal path and the deleted-provider path). A test-only pause
+  (`agent::session::TEST_TRANSITION_PAUSE_MS`, zero in production) sits between the status write
+  and the domain consequence: inside the transaction it changes nothing for readers, while with a
+  plain connection it exposes the inconsistent pair immediately.
+- **Consequences**: a session and its chapter/research consequence become visible together, so
+  Retry and the UI never act on a half-applied transition. Test:
+  `crates/server/tests/m11_transition_atomicity.rs` runs a failing maintenance session with the
+  pause at 150 ms while a second connection polls both rows, and asserts the pair never disagrees
+  (verified: it fails with the old plain-connection writes and passes with the transaction).
+
+### D-114 A rejected review item loses its approval; the rejection is recorded on the item
+- **Context**: D-105 says every agent write bumps `revision`/`*_revision` so an earlier approval
+  becomes stale, but an explicit **rejection** in a review does not write to the item: the item is
+  unchanged, so its `approved_revision`/`*_approved_revision` stayed at the earlier value and a
+  second review of the same text treated the rejected item as approved. The M9 review found this
+  in the `request_review` answer path.
+- **Decision**: answering a `request_review` with a rejection clears that item's approval:
+  `setting_docs.approved_revision` for a document, and `conception.characters_approved_revision` /
+  `conception.topics_approved_revision` for the character designs and the research topics. Approving
+  an item records the current revision (unchanged). Do not amend D-105: its "a later write makes
+  approval stale" rule still holds for writes; this entry covers the explicit-rejection case, which
+  is not a write to the item.
+- **Consequences**: a rejected item can never be carried by an older review into finalize, and the
+  studio's "unapproved items" warning covers rejections too.
+  `crates/server/tests/m9_review_answers.rs::a_rejected_item_loses_its_approval` pins it.
