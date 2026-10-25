@@ -431,19 +431,22 @@ async fn sync_knowledge_chunk_rows(
     for row in existing {
         pool.entry(row.content_hash.clone()).or_default().push(row);
     }
-    let mut kept: Vec<(i32, bool)> = Vec::with_capacity(chunks.len());
+    // `kept` records each matched old row **with the new chunk index it matched**, because a chunk
+    // that has no old row takes no entry here: only the chunk's own index may select its row, or
+    // inserting chunks in front of unchanged ones would re-label the wrong rows (spec/07 §1.1).
+    let mut kept: Vec<(i32, bool, usize)> = Vec::with_capacity(chunks.len());
     for (index, chunk) in chunks.iter().enumerate() {
         let hash = chunk::content_hash(&chunk.heading, &chunk.text);
         if let Some(row) = pool.get_mut(&hash).and_then(|rows| rows.pop()) {
             // The chunk is identical: `ord` is the only column that may change.
-            kept.push((row.id, row.ord != index as i32));
+            kept.push((row.id, row.ord != index as i32, index));
         }
     }
     let stale: Vec<i32> = pool.into_values().flatten().map(|row| row.id).collect();
 
     // Two-phase renumbering: park every kept row on a unique negative `ord` so no intermediate
     // value collides with a live one (spec/02 §1, like chapter `ord`).
-    for (position, (id, changed)) in kept.iter().enumerate() {
+    for (position, (id, changed, _)) in kept.iter().enumerate() {
         if *changed {
             conn.execute_unprepared(&format!(
                 "UPDATE knowledge_chunks SET ord = {} WHERE id = {id}",
@@ -458,11 +461,8 @@ async fn sync_knowledge_chunk_rows(
             .await?;
     }
     // Write the final positions: reuse the kept rows where they match and insert the new chunks.
-    let kept_ids: std::collections::HashMap<usize, i32> = kept
-        .iter()
-        .enumerate()
-        .map(|(position, (id, _))| (position, *id))
-        .collect();
+    let kept_ids: std::collections::HashMap<usize, i32> =
+        kept.iter().map(|(id, _, index)| (*index, *id)).collect();
     for (index, chunk) in chunks.iter().enumerate() {
         let hash = chunk::content_hash(&chunk.heading, &chunk.text);
         match kept_ids.get(&index) {
@@ -500,7 +500,7 @@ async fn sync_knowledge_chunk_rows(
         }
     }
     // The FTS title column carries the entry title for every chunk; a rename updates all rows.
-    for (id, _) in kept.iter() {
+    for (id, _, _) in kept.iter() {
         let Some(row) = knowledge_chunks::Entity::find_by_id(*id).one(conn).await? else {
             continue;
         };

@@ -221,9 +221,14 @@ async fn fts_book_ids(
             values.push(kind.clone().into());
         }
     }
-    if let Some(track_id) = search.isolated_track {
-        sql.push_str(" AND (d.track_id IS NULL OR d.track_id = ?)");
-        values.push((track_id as i64).into());
+    // Track visibility must be applied *before* the rank limit, or another isolated track's private
+    // documents take slots a shared session may not even see (spec/06 §2, spec/07 §5).
+    match search.isolated_track {
+        Some(track_id) => {
+            sql.push_str(" AND (d.track_id IS NULL OR d.track_id = ?)");
+            values.push((track_id as i64).into());
+        }
+        None => sql.push_str(" AND d.track_id IS NULL"),
     }
     sql.push_str(&format!(" ORDER BY bm25(fts_book) LIMIT {FTS_LIMIT}"));
     let rows = conn
