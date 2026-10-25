@@ -47,9 +47,15 @@ export default function TimelinePage() {
   const { t } = useTranslation()
   const { bookId: rawBookId } = useParams()
   const bookId = Number(rawBookId)
-  const timeline = useTimeline(bookId)
+  // The canon pages show shared canon by default; the track filter adds an isolated side
+  // track's private rows, badged (spec/06 §2). A chapter is only visible through its own track.
+  const [trackId, setTrackId] = useState<number | undefined>(undefined)
+  const timeline = useTimeline(bookId, trackId)
   const entities = useEntities(bookId)
   const tracks = useTracks(bookId)
+  const isolatedTracks = (tracks.data ?? []).filter(
+    (track) => track.kind === "side" && track.canon_mode === "isolated",
+  )
   const chapterIndex = useChapterIndex(tracks.data)
   const entityNames = new Map(
     (entities.data ?? []).map((entity) => [entity.id, entity.name]),
@@ -97,10 +103,31 @@ export default function TimelinePage() {
           <h1 className="text-xl font-semibold">{t("canon:timeline")}</h1>
           <p className="text-xs text-muted-foreground">{t("canon:timeline_hint")}</p>
         </div>
-        <Button size="sm" onClick={() => setInsertAt(rows.length)}>
-          <Plus className="size-3.5" aria-hidden="true" />
-          {t("canon:add_event")}
-        </Button>
+        <div className="flex items-center gap-2">
+          {isolatedTracks.length === 0 ? null : (
+            <select
+              value={trackId ?? ""}
+              onChange={(event) =>
+                setTrackId(
+                  event.target.value === "" ? undefined : Number(event.target.value),
+                )
+              }
+              className="h-8 rounded-md border bg-background px-2 text-xs"
+              aria-label={t("canon:filter_track")}
+            >
+              <option value="">{t("canon:track_shared")}</option>
+              {isolatedTracks.map((track) => (
+                <option key={track.id} value={track.id}>
+                  {track.title}
+                </option>
+              ))}
+            </select>
+          )}
+          <Button size="sm" onClick={() => setInsertAt(rows.length)}>
+            <Plus className="size-3.5" aria-hidden="true" />
+            {t("canon:add_event")}
+          </Button>
+        </div>
       </header>
 
       {rows.length === 0 && insertAt === null ? (
@@ -216,6 +243,11 @@ function TimelineRow({
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
           <span className="truncate text-sm font-medium">{event.title}</span>
+          {event.track_id === null ? null : (
+            <span className="shrink-0 rounded bg-muted px-1 text-[0.65rem] text-muted-foreground">
+              {t("canon:private_badge")}
+            </span>
+          )}
           {event.story_time === "" ? null : (
             <span className="shrink-0 text-xs text-muted-foreground">{event.story_time}</span>
           )}

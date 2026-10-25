@@ -140,10 +140,10 @@ export function useDeleteRelation(bookId: number) {
 
 // ───────────────────────────── timeline ─────────────────────────────
 
-export function useTimeline(bookId: number) {
+export function useTimeline(bookId: number, trackId?: number) {
   return useQuery({
-    queryKey: keys.canon.timeline(bookId),
-    queryFn: () => endpoints.listTimeline(bookId),
+    queryKey: keys.canon.timeline(bookId, trackId),
+    queryFn: () => endpoints.listTimeline(bookId, trackId),
     enabled: Number.isFinite(bookId) && bookId > 0,
   })
 }

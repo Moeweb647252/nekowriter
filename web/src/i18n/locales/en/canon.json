@@ -149,5 +149,11 @@
   "reverted_badge": "Reverted",
   "show_diff": "Show diff",
   "diff_before": "Before",
-  "diff_after": "After"
+  "diff_after": "After",
+  "memory_track": "Track",
+  "anchor_notice.after_chapter": "Anchor: after {{label}}. Main-story events after it have not happened yet for this side story's characters.",
+  "anchor_notice.before_start": "Anchor: before the story starts. No main-story event has happened yet.",
+  "anchor_notice.after_end": "Anchor: after the story ends.",
+  "anchor_notice.none": "No time anchor.",
+  "after_anchor": "after the anchor"
 }

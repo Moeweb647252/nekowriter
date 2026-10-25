@@ -17,11 +17,15 @@ export default function MemoryPage() {
   const bookId = Number(rawBookId)
   const tracks = useTracks(bookId)
   const main = tracks.data?.find((track) => track.kind === "main")
-  const chapters = useChapters(main?.id ?? 0)
+  // The position selector: the main story by default, or a side story. A side track's memory is
+  // built from its own chapters topped up from the main story up to its anchor (spec/06 §4.1).
+  const [trackId, setTrackId] = useState<number | undefined>(undefined)
+  const sideTracks = (tracks.data ?? []).filter((track) => track.kind === "side")
+  const chapters = useChapters(trackId ?? main?.id ?? 0)
 
-  // "Next chapter of: Main story" or a specific chapter (PROJECT §8.8).
+  // "Next chapter of …" or a specific chapter (PROJECT §8.8).
   const [chapterId, setChapterId] = useState<number | undefined>(undefined)
-  const memory = useMemory(bookId, { chapterId })
+  const memory = useMemory(bookId, { trackId, chapterId })
 
   if (memory.isPending) {
     return <Skeleton className="m-6 h-64" />
@@ -42,27 +46,58 @@ export default function MemoryPage() {
           <h1 className="text-xl font-semibold">{t("canon:memory")}</h1>
           <p className="text-xs text-muted-foreground">{t("canon:memory_hint")}</p>
         </div>
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          {t("canon:memory_context")}
-          <select
-            value={chapterId ?? ""}
-            onChange={(event) =>
-              setChapterId(event.target.value === "" ? undefined : Number(event.target.value))
-            }
-            className="h-8 rounded-md border bg-background px-2 text-xs text-foreground"
-          >
-            <option value="">{t("canon:memory_next_chapter")}</option>
-            {(chapters.data ?? []).map((chapter) => (
-              <option key={chapter.id} value={chapter.id}>
-                {t("canon:chapter_number_title", {
-                  number: chapter.number,
-                  title: chapter.title,
-                })}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <label className="flex items-center gap-2">
+            {t("canon:memory_track")}
+            <select
+              value={trackId ?? ""}
+              onChange={(event) => {
+                setTrackId(
+                  event.target.value === "" ? undefined : Number(event.target.value),
+                )
+                // The chapter belongs to the track; a stale id would 400.
+                setChapterId(undefined)
+              }}
+              className="h-8 rounded-md border bg-background px-2 text-xs text-foreground"
+            >
+              <option value="">{t("book:main_story")}</option>
+              {sideTracks.map((track) => (
+                <option key={track.id} value={track.id}>
+                  {track.title}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center gap-2">
+            {t("canon:memory_context")}
+            <select
+              value={chapterId ?? ""}
+              onChange={(event) =>
+                setChapterId(event.target.value === "" ? undefined : Number(event.target.value))
+              }
+              className="h-8 rounded-md border bg-background px-2 text-xs text-foreground"
+            >
+              <option value="">{t("canon:memory_next_chapter")}</option>
+              {(chapters.data ?? []).map((chapter) => (
+                <option key={chapter.id} value={chapter.id}>
+                  {t("canon:chapter_number_title", {
+                    number: chapter.number,
+                    title: chapter.title,
+                  })}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
       </header>
+
+      {snapshot.anchor === null ? null : (
+        <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+          {t(`canon:anchor_notice.${snapshot.anchor.kind}`, {
+            label: snapshot.anchor.label,
+          })}
+        </p>
+      )}
 
       <div className="grid gap-3 md:grid-cols-3">
         <MemoryColumn title={t("canon:memory_short_term")}>
@@ -98,6 +133,11 @@ export default function MemoryPage() {
                     {snapshot.protagonist.status === "active"
                       ? ""
                       : ` · ${t(`canon:status.${snapshot.protagonist.status}`)}`}
+                    {snapshot.protagonist.after_anchor ? (
+                      <span className="ml-1 rounded bg-muted px-1 text-[0.6rem] font-normal text-muted-foreground">
+                        {t("canon:after_anchor")}
+                      </span>
+                    ) : null}
                   </p>
                   <p className="text-xs whitespace-pre-wrap">{snapshot.protagonist.state}</p>
                   {Object.entries(snapshot.protagonist.attributes).length === 0 ? null : (

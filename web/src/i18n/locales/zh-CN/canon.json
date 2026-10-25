@@ -149,5 +149,11 @@
   "reverted_badge": "已撤销",
   "show_diff": "查看前后对比",
   "diff_before": "修改前",
-  "diff_after": "修改后"
+  "diff_after": "修改后",
+  "memory_track": "轨道",
+  "anchor_notice.after_chapter": "时间锚点：{{label}}之后。锚点之后的正文事件对本番外中的角色而言尚未发生。",
+  "anchor_notice.before_start": "时间锚点：正文开始之前，正文中的所有事件都尚未发生。",
+  "anchor_notice.after_end": "时间锚点：正文完结之后。",
+  "anchor_notice.none": "没有时间锚点。",
+  "after_anchor": "锚点之后"
 }

@@ -980,3 +980,25 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   `crates/server/tests/side_story_tracks.rs` (defaults and `ord`, every validation, the mode lock,
   anchor editing, deletion incl. an anchor-pinned chapter and an open session, the first-chapter
   write rule, `block.anchor` in writer/reviewer/archivist kickoffs, and the §4.1 memory window).
+
+### D-101 Isolated writes are proven end to end, and the canon pages' track filter is scoped
+- **Context**: spec/06 §2's visibility rules (an isolated side track reads shared canon and writes
+  only private rows; its UI view adds the private rows, badged) were implemented with M5's canon
+  services but exercised only through SQL fixtures: the tracks API could not create a side track
+  before M10. spec/10 §2.4 gives only three canon list endpoints a `track_id` filter (entities,
+  timeline, memory), while memory notes, foreshadowing and the change log have none.
+- **Decision**: (a) the M10.2 runtime test creates the track through the real API and drives a real
+  `chapter_maintenance` session in it, proving `error.isolated_readonly` on a shared row, a private
+  entity/relation with `track_id = T`, a shared entity whose bounds do not move although the
+  isolated chapter records its appearance, and the chapter ending `synced`. (b) The canon pages'
+  track filter is offered on **Entities**, **Timeline** and **Memory** — the pages whose endpoint
+  has a `track_id` filter — and only for isolated side tracks (a canon-mode side track writes shared
+  rows, so it has no private rows to add, spec/08 §6). Private rows carry the existing
+  `canon:private_badge`. Memory additionally selects a side track as the memory position (its
+  snapshot is the §4.1 topped-up window) and renders the snapshot's anchor and an `after_anchor`
+  badge for the protagonist, so the page agrees with `block.memory` (D-082).
+- **Consequences**: notes, foreshadowing and the change log keep showing shared rows only, matching
+  their API; no new endpoint parameters were invented beyond spec/10 §2.4. Tests:
+  `crates/server/tests/side_story_isolated.rs` (isolated maintenance, the author's track filter,
+  `get_entity`'s and `search_chapters`' post-anchor markers over API-created tracks) and
+  `web/src/features/canon/memoryPage.test.tsx`.

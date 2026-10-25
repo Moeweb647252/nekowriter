@@ -110,8 +110,12 @@ export function putAppearances(
 
 // ───────────────────────────── timeline ─────────────────────────────
 
-export function listTimeline(bookId: number): Promise<TimelineEventDto[]> {
-  return api.get<TimelineEventDto[]>(`/books/${bookId}/timeline`)
+export function listTimeline(
+  bookId: number,
+  trackId?: number,
+): Promise<TimelineEventDto[]> {
+  const suffix = trackId === undefined ? "" : `?track_id=${trackId}`
+  return api.get<TimelineEventDto[]>(`/books/${bookId}/timeline${suffix}`)
 }
 
 export function createTimelineEvent(

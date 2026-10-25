@@ -49,7 +49,8 @@ export const keys = {
     entity: (entityId: number) => ["canon", "entity", entityId] as const,
     relations: (bookId: number, entityId?: number) =>
       ["canon", "relations", bookId, entityId ?? "all"] as const,
-    timeline: (bookId: number) => ["canon", "timeline", bookId] as const,
+    timeline: (bookId: number, trackId?: number) =>
+      ["canon", "timeline", bookId, trackId ?? "all"] as const,
     notes: (bookId: number, filters?: string) =>
       ["canon", "notes", bookId, filters ?? "all"] as const,
     foreshadowing: (bookId: number, status?: string) =>
