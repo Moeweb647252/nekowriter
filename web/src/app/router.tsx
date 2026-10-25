@@ -1,9 +1,9 @@
-import { createBrowserRouter } from "react-router"
+import { createBrowserRouter, type RouteObject } from "react-router"
 import { RouterProvider } from "react-router/dom"
 
 import { AppShell } from "@/app/shell/AppShell"
 
-const router = createBrowserRouter([
+export const routes: RouteObject[] = [
   {
     path: "/",
     element: <AppShell />,
@@ -95,6 +95,14 @@ const router = createBrowserRouter([
             path: "embeddings",
             lazy: async () => {
               const module = await import("@/features/settings/EmbeddingsPage")
+              return { Component: module.default }
+            },
+          },
+          {
+            // The web search provider and its Test (spec/07 §6, spec/10 §2.1).
+            path: "search",
+            lazy: async () => {
+              const module = await import("@/features/settings/WebSearchPage")
               return { Component: module.default }
             },
           },
@@ -224,7 +232,9 @@ const router = createBrowserRouter([
       },
     ],
   },
-])
+]
+
+const router = createBrowserRouter(routes)
 
 function RouteError() {
   return (

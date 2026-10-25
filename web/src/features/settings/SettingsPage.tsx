@@ -5,25 +5,55 @@ import { Cpu, Database, Globe, Languages, Server, UsersRound } from "lucide-reac
 
 import { cn } from "@/lib/utils"
 
+/**
+ * The sidebar sections, in order. The route table must have one child route per key (a test in
+ * `app/router.test.ts` enforces it): a nav item without a route renders an empty settings page.
+ */
+export const SETTINGS_SECTION_KEYS = [
+  "providers",
+  "models",
+  "roles",
+  "appearance",
+  "embeddings",
+  "search",
+] as const
+
+type SectionKey = (typeof SETTINGS_SECTION_KEYS)[number]
+
 /** One settings section of the sidebar. */
 type Section = {
-  key: string
+  key: SectionKey
   icon: typeof Server
   label: string
+}
+
+const SECTION_ICONS: Record<SectionKey, typeof Server> = {
+  providers: Server,
+  models: Cpu,
+  roles: UsersRound,
+  appearance: Languages,
+  embeddings: Database,
+  search: Globe,
+}
+
+const SECTION_LABELS: Record<SectionKey, string> = {
+  providers: "settings:providers",
+  models: "settings:models",
+  roles: "settings:roles",
+  appearance: "settings:appearance",
+  embeddings: "settings:embeddings",
+  search: "settings:search",
 }
 
 export default function SettingsPage() {
   const { t } = useTranslation()
   const params = useParams()
   const location = useLocation()
-  const sections: Section[] = [
-    { key: "providers", icon: Server, label: t("settings:providers") },
-    { key: "models", icon: Cpu, label: t("settings:models") },
-    { key: "roles", icon: UsersRound, label: t("settings:roles") },
-    { key: "appearance", icon: Languages, label: t("settings:appearance") },
-    { key: "embeddings", icon: Database, label: t("settings:embeddings") },
-    { key: "search", icon: Globe, label: t("settings:search") },
-  ]
+  const sections: Section[] = SETTINGS_SECTION_KEYS.map((key) => ({
+    key,
+    icon: SECTION_ICONS[key],
+    label: t(SECTION_LABELS[key]),
+  }))
   const current = params.section ?? "providers"
 
   return (
