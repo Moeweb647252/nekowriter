@@ -325,9 +325,14 @@ async fn mark_chunk_done(conn: &impl ConnectionTrait, id: i32, hash: &str) -> Re
 
 /// The worker loop: wait for a wake signal or 5 s, then process one batch (spec/07 §4).
 pub fn spawn(state: AppState) {
+    tracing::info!("starting the indexer worker");
     tokio::spawn(async move {
         // The first load (a download on the first run) happens here, off the request path.
         state.search().ensure_ready().await;
+        tracing::info!(
+            ready = state.search().is_ready(),
+            "the indexer worker is ready"
+        );
         state.search().publish_status().await;
         loop {
             index::wait_for_work().await;

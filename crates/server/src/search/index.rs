@@ -631,6 +631,12 @@ pub async fn initialize(state: &crate::state::AppState) -> Result<(), AppError> 
         Box::pin(async move { ensure_schema(tx, &model_key, dimension).await })
     })
     .await?;
+    tracing::info!(
+        model = %search.model_key(),
+        dimension = search.dimension(),
+        embedder = search.embedder().is_some(),
+        "search subsystem initialized"
+    );
     #[cfg(not(any(test, feature = "testing")))]
     crate::services::indexer::spawn(state.clone());
     Ok(())
