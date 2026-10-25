@@ -15,8 +15,9 @@ use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder
 use serde_json::{Value, json};
 
 use crate::db::entities::{
-    agent_messages, agent_sessions, agent_tool_calls, books, chapter_versions, chapters,
-    character_designs, entities, research_tasks, review_reports, setting_docs, tracks,
+    agent_messages, agent_sessions, agent_tool_calls, book_scopes, books, chapter_versions,
+    chapters, character_designs, entities, knowledge_scopes, research_tasks, review_reports,
+    setting_docs, tracks,
 };
 use crate::db::json::{
     self, AgentRole, ChapterContent, CompletionKind, MessageKind, MessageRole, Phase, Protocol,
@@ -449,13 +450,38 @@ async fn settings_context(
             profile: row.profile,
         })
         .collect();
+    // The scopes the book's writer and reviewer may search (spec/07 §1: "the settings block lists
+    // them (name + description)"); the attached set is exactly what `visible_scope_ids` gates the
+    // tools with, so the model never learns a scope it cannot search.
+    let scope_ids: Vec<i32> = book_scopes::Entity::find()
+        .filter(book_scopes::Column::BookId.eq(book_id))
+        .order_by_asc(book_scopes::Column::ScopeId)
+        .all(conn)
+        .await?
+        .into_iter()
+        .map(|row| row.scope_id)
+        .collect();
+    let scopes = if scope_ids.is_empty() {
+        Vec::new()
+    } else {
+        knowledge_scopes::Entity::find()
+            .filter(knowledge_scopes::Column::Id.is_in(scope_ids))
+            .order_by_asc(knowledge_scopes::Column::Name)
+            .all(conn)
+            .await?
+            .into_iter()
+            .map(|row| ScopeContext {
+                name: row.name,
+                description: row.description,
+            })
+            .collect()
+    };
     Ok(SettingsContext {
         outline,
         world,
         protagonist,
         characters,
-        // The knowledge scopes of a book arrive with M7 (spec/07 §1).
-        scopes: Vec::<ScopeContext>::new(),
+        scopes,
     })
 }
 
