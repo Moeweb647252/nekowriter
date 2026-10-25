@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 import * as endpoints from "@/api/endpoints/reviews"
 import { keys } from "@/api/keys"
+import type { ChapterDto } from "@/api/gen/ChapterDto"
 import type { SendBackInput } from "@/api/gen/SendBackInput"
 
 /** The chapter's reports and send-backs (spec/10 §2.2). */
@@ -18,11 +19,18 @@ export function useReviews(chapterId: number) {
 function useReviewSettle(chapterId: number, bookId: number) {
   const queryClient = useQueryClient()
   return () => {
+    // The navigator's chapter rows are keyed by their *track*, not by the chapter: passing the
+    // chapter id invalidated a key that does not exist. Send-back also changes the chapter's
+    // status without a `chapter.updated` event (the session-creation side effect), so this
+    // invalidation is what refreshes the navigator.
+    const chapter = queryClient.getQueryData<ChapterDto>(keys.chapters.detail(chapterId))
     void queryClient.invalidateQueries({ queryKey: keys.chapters.detail(chapterId) })
     void queryClient.invalidateQueries({ queryKey: keys.chapters.reviews(chapterId) })
     void queryClient.invalidateQueries({ queryKey: keys.sessions.list(bookId) })
     void queryClient.invalidateQueries({ queryKey: keys.books.overview(bookId) })
-    void queryClient.invalidateQueries({ queryKey: keys.tracks.chapters(chapterId) })
+    if (chapter !== undefined) {
+      void queryClient.invalidateQueries({ queryKey: keys.tracks.chapters(chapter.track_id) })
+    }
   }
 }
 
