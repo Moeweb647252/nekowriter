@@ -1296,3 +1296,92 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   `research::run`) against a subscribed event bus and asserts the event kind, the committed status,
   and for the redraft the exact delete-op list and version; a conception session (no chapter)
   publishes no chapter event.
+
+### D-116 A failed session shows its stored error, and every session error code is localized
+- **Context**: spec/11 §9 requires an `errors:` key for every value of `ErrorCode`, every session
+  error code and every warning code, in both locales, because those keys are built from data and
+  `check-i18n` cannot see them. The M11 audit found the five session-only codes
+  (`provider.context_overflow`, `provider.refusal`, `agent.tool_error_streak`, `agent.no_tool_call`,
+  `model.missing_provider`) had no keys, and that nothing rendered `SessionDto.error` at all: a
+  failed session only raised "the session failed", so the author never read why.
+- **Decision**: the five codes get author-actionable strings in both locales (what happened and
+  what to do instead of restating the code), and a shared `SessionErrorNotice` renders
+  `errors:<code>` under the session controls in both the agent panel and the studio, falling back
+  to the stored English message for a code a newer server might send. `i18n/locales.test.ts` now
+  asserts the session-code list in both raw tables and through the real i18n resolver;
+  `SessionErrorNotice.test.tsx` pins the fallback.
+- **Consequences**: the dynamic-key contract of spec/11 §9 is complete, and a failure's cause is
+  visible where the author is (D-111 put the same controls in the studio).
+
+### D-117 Streaming deltas are coalesced per animation frame; paragraphs are memoized
+- **Context**: PLAN 11.3 asks a 300-paragraph chapter to stay smooth while the writer streams.
+  The SSE client applied every `session.delta`/`session.tool_preview` frame as its own store
+  write (one React render per fragment), and the doc comment already claimed requestAnimationFrame
+  coalescing that did not exist. The reading column rendered every paragraph on every render and
+  rebuilt its edit callbacks inline, so memoizing the paragraph alone would have changed nothing.
+- **Decision**: (a) `api/events.ts` buffers deltas and previews and flushes them once per
+  animation frame, merging the fragments of one buffer (session, seq, kind, index) or preview into
+  one store write; `flushLiveDeltas()` is exported for teardown and tests, the stream disconnect
+  and a persisted `session.message` flush/drop the buffer (a message supersedes its sequence).
+  (b) `Paragraph` is a `memo` component whose edit callbacks take the pid and are `useCallback`ed
+  with a stable `patch.mutate`, and `useErrorToast` returns a `useCallback` identity, so the
+  memo actually holds; the streaming tail paragraph's `ghost` prop still changes per delta, which
+  is exactly the one paragraph that must re-render.
+- **Consequences**: a streaming turn costs at most one render per frame regardless of token rate,
+  and only the tail paragraph re-renders while it streams. Tests:
+  `api/events.test.ts` (two deltas before a flush leave the store empty, then merge into one
+  write; a persisted message drops the buffer) and
+  `features/chapter/chapterParagraph.test.tsx` (the component is a memo component and saves with
+  its pid). Manual check: the smoke run streamed a held chapter through this path with the 465 MB
+  real embedding model loaded and the UI remained responsive (no browser profiling available in
+  this environment).
+
+### D-118 The knowledge scope and entry are URL state; a deleted target says so
+- **Context**: spec/11 §3 names `/knowledge/scopes/:scopeId` and
+  `/knowledge/scopes/:scopeId/entries/:entryId`, but M7 kept the selection in `useState` only, so
+  a scope or entry could not be linked to, bookmarked or restored on reload (the M7 review
+  deferred this to M11). A deep link to a deleted scope silently showed the first scope.
+- **Decision**: the page reads `scopeId`/`entryId` from the router params; selecting a scope,
+  an entry, a search hit, or creating/deleting one navigates, so the URL is the single source of
+  truth. A URL naming a scope that is not in the scope list, or an entry whose fetch failed,
+  renders a not-found empty state (`knowledge:scope_not_found` / `entry_not_found`) instead of
+  falling back. The three route shapes (`/knowledge`, `.../scopes/:scopeId`,
+  `.../entries/:entryId`) all render the same page.
+- **Consequences**: browser back/forward moves between scopes and entries, and reloading a deep
+  link restores the same three-column view. Tests:
+  `features/knowledge/knowledgeRoutes.test.tsx` (scope from the URL, scope+entry, both not-found
+  states, and the entry click navigating to its URL); `knowledgeEntry.test.tsx` keeps its
+  no-selection rendering under a router mock.
+
+### D-119 The M11 smoke run: what the checklist exercised, and what this environment cannot
+- **Context**: PLAN M11.5 is a real end-to-end run of all nine steps with the Demo provider
+  (`mock://demo`), recording what was done and observed. It was driven over the HTTP API against
+  a `target/debug/nekowriter` server (the SPA has no browser-automation harness in this
+  environment), with the web-side behaviour of each step checked wherever it is observable
+  through the API (statuses, events, report text, prompt snapshots).
+- **Observed** (all nine steps; see the milestone report for the step-by-step log): conception
+  with an answered question form and a review that requested one change, finalize and canon
+  seeding; a research run whose two entries were found by keyword immediately and by a
+  cross-lingual semantic query after indexing; paragraph drafting that held at the outline, took
+  an edited outline, held mid-draft after a pause, took an edited paragraph, and showed the edit
+  report in the resumed turn; reviewer report → discussion comment (re-review) → send-back with
+  edited feedback → revision → approval → maintenance → revert of a canon change → accepted
+  proposal; sentence drafting with three auto-pauses and a switch to free granularity; stop
+  mid-stream → server restart → continue, and a held session surviving a restart; an isolated side
+  story that wrote, approved and maintained a chapter while the shared canon stayed byte-identical
+  and its private entities appeared only with the track filter; a book-level `writer.system`
+  override that the next session froze while an earlier session kept its own prompt.
+- **Environment findings recorded rather than hidden**: the Demo provider is the only provider
+  that can be exercised (no real LLM key is available), and UI-only interactions (the step 9
+  language/theme switch) are covered by the resource contract (`i18n:check`, `locales.test.ts`)
+  rather than a browser. Contrary to the task brief, the real `multilingual-e5-small` model did
+  download into the data directory (465 MB) and the vector path was therefore exercised for
+  real, including a cross-lingual query that only the vectors could match.
+- **Product behaviour the run confirmed as correct, not a defect**: `chapter.previous_not_ready`
+  refuses to write a chapter whose predecessor is still in review (the run used the documented
+  `force`/Write anyway path for the throwaway later chapters), auto-pause is an independent switch
+  from granularity (switching to free keeps the holds until the author turns auto-pause off or
+  keeps continuing), and the Demo's text-only conception reply leaves the session `idle` (it waits
+  for the author, then finalize). No new product defect surfaced beyond the four already fixed in
+  M11 (task-21 creation events, task-24 races and write discipline, the book-delete teardown and
+  the studio controls).

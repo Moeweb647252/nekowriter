@@ -9,7 +9,8 @@ export type BookInput = { title: string, idea: string, genre: string,
  */
 writing_language: string, 
 /**
- * Starts the conception studio. Milestone M9 implements it; for now the book is created
- * active with empty setting materials.
+ * Starts the conception studio with the book in `conceiving` (spec/08 §5). The response
+ * carries the conception session's id when a conception model is configured; otherwise the
+ * book is still created and `warnings` reports `model.missing_role` (D-069).
  */
 start_conception: boolean, };
