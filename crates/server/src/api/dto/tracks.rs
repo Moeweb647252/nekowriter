@@ -24,41 +24,40 @@ pub struct TrackDto {
     pub updated_at: DateTime<Utc>,
 }
 
-/// `POST /books/:id/tracks` body (spec/08 §6). Side stories arrive in M10; M1 only restores a
-/// missing main track, so the field defaults describe a main track.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+/// `POST /books/:id/tracks` body (spec/08 §6).
+///
+/// Without `kind` the endpoint creates a **side track** (spec/08 §6: the body is a side story);
+/// `kind: "main"` restores a missing main track (M1, spec/10 §2.2) and takes no side-story
+/// settings. The side-track defaults are applied by the service because they depend on the
+/// book's chapters: `canon_mode = isolated`, and an `after_chapter` anchor on the latest official
+/// main chapter (`before_start` when there is none).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(optional_fields = nullable)]
 #[ts(export)]
 pub struct TrackInput {
-    #[serde(default = "main_kind")]
-    pub kind: TrackKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<TrackKind>,
     #[serde(default)]
     pub title: String,
     #[serde(default)]
     pub synopsis: String,
-    #[serde(default = "canon_mode")]
-    pub canon_mode: CanonMode,
-    #[serde(default = "anchor_none")]
-    pub anchor_kind: AnchorKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canon_mode: Option<CanonMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor_kind: Option<AnchorKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anchor_chapter_id: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub focus_entity_id: Option<i32>,
 }
 
-fn main_kind() -> TrackKind {
-    TrackKind::Main
-}
-
-fn canon_mode() -> CanonMode {
-    CanonMode::Canon
-}
-
-fn anchor_none() -> AnchorKind {
-    AnchorKind::None
-}
-
-/// `PATCH /tracks/:id` body. The main track accepts only its synopsis.
+/// `PATCH /tracks/:id` body. The main track accepts only its synopsis (D-037).
+///
+/// The focus character is set with `focus_entity_id` and removed with `clear_focus_entity`:
+/// `Option<Option<i32>>` would need a serde extension to tell "absent" from "null", and the
+/// explicit flag keeps the wire type plain.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(optional_fields = nullable)]
 #[ts(export)]
 pub struct TrackPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -73,4 +72,7 @@ pub struct TrackPatch {
     pub anchor_chapter_id: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub focus_entity_id: Option<i32>,
+    /// Removes the focus character; `focus_entity_id` must be absent then.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub clear_focus_entity: bool,
 }

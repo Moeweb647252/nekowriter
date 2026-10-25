@@ -3,6 +3,14 @@ import type { AnchorKind } from "./AnchorKind";
 import type { CanonMode } from "./CanonMode";
 
 /**
- * `PATCH /tracks/:id` body. The main track accepts only its synopsis.
+ * `PATCH /tracks/:id` body. The main track accepts only its synopsis (D-037).
+ *
+ * The focus character is set with `focus_entity_id` and removed with `clear_focus_entity`:
+ * `Option<Option<i32>>` would need a serde extension to tell "absent" from "null", and the
+ * explicit flag keeps the wire type plain.
  */
-export type TrackPatch = { title?: string | null, synopsis?: string | null, canon_mode?: CanonMode | null, anchor_kind?: AnchorKind | null, anchor_chapter_id?: number | null, focus_entity_id?: number | null, };
+export type TrackPatch = { title?: string | null, synopsis?: string | null, canon_mode?: CanonMode | null, anchor_kind?: AnchorKind | null, anchor_chapter_id?: number | null, focus_entity_id?: number | null, 
+/**
+ * Removes the focus character; `focus_entity_id` must be absent then.
+ */
+clear_focus_entity: boolean, };

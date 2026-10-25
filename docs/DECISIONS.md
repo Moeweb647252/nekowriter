@@ -949,3 +949,34 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   `<data_dir>/models` unconditionally, so the documented override did nothing). Tests:
   `Config::model_cache_dir` covers both branches, and `m7_review_index.rs` proves the DTO and the
   `index.status` event carry the resolved path.
+
+### D-100 Side stories become a real track endpoint (M10 replaces D-065's deferral)
+- **Context**: D-065 deferred side-track creation to M10, where `POST /books/:id/tracks` answered
+  `validation.failed`. spec/08 §6 now defines the real body (`title, synopsis, canon_mode,
+  anchor_kind, anchor_chapter_id?, focus_entity_id?`), its defaults and its two validation rules,
+  and the chapter, memory and context rules of a side track (spec/08 §6, spec/06 §2/§4.1,
+  spec/03 §10) must be reachable through it rather than through fixtures.
+- **Decision**: (a) a `POST /books/:id/tracks` without `kind` creates a **side track** — that is the
+  body spec/08 §6 describes — while an explicit `kind: "main"` still restores a missing main track
+  (the M1 path, unchanged). (b) The spec defaults are applied server-side because they depend on
+  the book: `canon_mode = isolated` and an `after_chapter` anchor on the latest official main
+  chapter, or `before_start` when none is official. (c) A side story needs a non-empty title
+  (`details.fields`), an `after_chapter` anchor must be a main-track chapter of the same book, and a
+  focus entity must be a visible character — shared, or one of the isolated track's own private
+  characters when patching. (d) `canon_mode` changes are refused with `track.mode_locked` once the
+  track has an official chapter; the anchor may change at any time and only affects sessions created
+  afterwards. (e) `PATCH /tracks/:id` clears the focus character with an explicit
+  `clear_focus_entity` flag: `Option<Option<i32>>` cannot distinguish "absent" from `null` under
+  plain serde without an extension, and ts-rs warns about a custom `deserialize_with`, which the
+  team's `-D warnings` lint would turn into a build failure. (f) Deleting a side track stops and
+  abandons its open sessions before the cascade (spec/08 §1.3); the shared entities that appeared in
+  its chapters get their `first_chapter_id`/`last_chapter_id` recomputed (D-059, D-080), and the
+  existing anchor guard keeps an anchor chapter undeletable (`chapter.is_anchor`,
+  `details.track_ids`).
+- **Consequences**: the M1 test that asserted the deferral now asserts the created side track. The
+  first chapter of an `after_chapter` side story treats the anchor chapter as its "previous chapter"
+  in the write precondition (spec/08 §1.1, §6), and the write details name it with `"anchor": true`
+  so the dialog can explain which chapter is not ready. Tests:
+  `crates/server/tests/side_story_tracks.rs` (defaults and `ord`, every validation, the mode lock,
+  anchor editing, deletion incl. an anchor-pinned chapter and an open session, the first-chapter
+  write rule, `block.anchor` in writer/reviewer/archivist kickoffs, and the §4.1 memory window).

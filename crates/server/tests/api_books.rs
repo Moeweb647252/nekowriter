@@ -277,15 +277,17 @@ async fn main_track_cannot_be_deleted_and_only_its_synopsis_is_editable() {
     assert_eq!(status, StatusCode::CONFLICT);
     assert_error(&body, "conflict.exists");
 
-    // Side tracks arrive in M10.
+    // A side track is created by the same endpoint (spec/08 §6; M10 replaced the M1 deferral
+    // that answered `validation.failed` here).
     let (status, body) = app
         .post(
             &format!("/api/books/{book_id}/tracks"),
-            json!({ "kind": "side", "title": "Side" }),
+            json!({ "title": "Side" }),
         )
         .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_error(&body, "validation.failed");
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["kind"], "side");
+    assert_eq!(body["title"], "Side");
 
     // The main track's title is localized by the UI (DECISIONS D-037): only a synopsis is legal.
     let (status, body) = app

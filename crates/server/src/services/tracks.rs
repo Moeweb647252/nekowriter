@@ -1,19 +1,32 @@
-//! Track service: list, read, patch and delete (spec/10 §2.2, spec/08 §1.3, §6).
+//! Track service: list, read, create, patch and delete (spec/10 §2.2, spec/08 §1.3, §6).
 //!
-//! M1 implements the main track. Side stories arrive in M10; creating one here returns
-//! `validation.failed` so the API surface matches the spec without half-implemented behavior.
+//! The book is created with its main track (spec/02 §5 invariant 1); this service creates the
+//! side tracks of spec/08 §6. A side track is a first-class track with its own chapters, but it
+//! carries a canon mode (`canon` or `isolated`), an optional story-time anchor and an optional
+//! focus character (its protagonist for short-term memory, spec/06 §4.2).
+//!
+//! Rules implemented here:
+//! - defaults per spec/08 §6: `isolated`, `after_chapter` = the latest official main chapter
+//!   (`before_start` when there is none);
+//! - an `after_chapter` anchor must be a main-track chapter of the book, and a focus entity must
+//!   be a character visible in the track (`validation.failed` otherwise);
+//! - `canon_mode` cannot change once the track has an official chapter (`track.mode_locked`);
+//!   the anchor may change at any time and affects only new sessions;
+//! - the main track cannot be deleted; side tracks can, and their open sessions are abandoned
+//!   before the cascade (spec/08 §1.3).
 
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
+    ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
+    QuerySelect, QueryTrait, Set,
 };
 
 use crate::api::dto::tracks::{TrackDto, TrackInput, TrackPatch};
-use crate::db::entities::{chapters, tracks};
-use crate::db::json::{AnchorKind, CanonMode, ChapterStatus, TrackKind};
-use crate::error::AppError;
+use crate::db::entities::{agent_sessions, appearances, chapters, entities, tracks};
+use crate::db::json::{AnchorKind, CanonMode, ChapterStatus, EntityKind, TrackKind};
+use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
 
-use super::now;
+use super::{field_error, now};
 
 /// `GET /api/books/:id/tracks`, main track first.
 pub async fn list(conn: &impl ConnectionTrait, book_id: i32) -> Result<Vec<TrackDto>, AppError> {
@@ -32,7 +45,7 @@ pub async fn get(conn: &impl ConnectionTrait, track_id: i32) -> Result<TrackDto,
     to_dto(&row)
 }
 
-/// `POST /api/books/:id/tracks`. Only the main track exists in M1 (spec/10 §2.2).
+/// `POST /api/books/:id/tracks` (spec/08 §6).
 pub async fn create(
     db: &crate::db::Db,
     events: &crate::events::EventBus,
@@ -53,31 +66,62 @@ pub async fn create_inner(
     input: TrackInput,
 ) -> Result<(TrackDto, Vec<ServerEvent>), AppError> {
     super::books::get(tx, book_id).await?;
-    if input.kind != TrackKind::Main {
-        // Side stories are M10 (spec/08 §6).
-        return Err(AppError::validation(
-            "side tracks are not available yet; only the main track can be created",
-        ));
-    }
-    ensure_no_main(tx, book_id).await?;
+    let kind = input.kind.unwrap_or(TrackKind::Side);
     let timestamp = now();
-    let model = tracks::ActiveModel {
+    let (canon_mode, anchor_kind, anchor_chapter_id, focus_entity_id, ord) = match kind {
+        TrackKind::Main => {
+            // Restoring a missing main track (M1, spec/10 §2.2): it has no side-story
+            // settings, and its title is localized by the UI (D-037).
+            if input.canon_mode.is_some()
+                || input.anchor_kind.is_some()
+                || input.anchor_chapter_id.is_some()
+                || input.focus_entity_id.is_some()
+            {
+                return Err(AppError::validation(
+                    "the main track has no canon mode, anchor or focus entity",
+                ));
+            }
+            ensure_no_main(tx, book_id).await?;
+            (CanonMode::Canon, AnchorKind::None, None, None, 0)
+        }
+        TrackKind::Side => {
+            if input.title.trim().is_empty() {
+                return Err(field_error("title", "a side story needs a title"));
+            }
+            let canon_mode = input.canon_mode.unwrap_or(CanonMode::Isolated);
+            let (anchor_kind, anchor_chapter_id) =
+                resolve_anchor(tx, book_id, input.anchor_kind, input.anchor_chapter_id).await?;
+            if let Some(focus_entity_id) = input.focus_entity_id {
+                validate_focus_entity(tx, book_id, None, focus_entity_id).await?;
+            }
+            (
+                canon_mode,
+                anchor_kind,
+                anchor_chapter_id,
+                input.focus_entity_id,
+                next_ord(tx, book_id).await?,
+            )
+        }
+    };
+    let row = tracks::ActiveModel {
         book_id: Set(book_id),
-        kind: Set(TrackKind::Main.as_str().to_owned()),
-        title: Set(String::new()),
+        kind: Set(kind.as_str().to_owned()),
+        title: Set(if kind == TrackKind::Main {
+            String::new()
+        } else {
+            input.title.trim().to_owned()
+        }),
         synopsis: Set(input.synopsis.trim().to_owned()),
-        canon_mode: Set(CanonMode::Canon.as_str().to_owned()),
-        anchor_kind: Set(AnchorKind::None.as_str().to_owned()),
-        anchor_chapter_id: Set(None),
-        focus_entity_id: Set(None),
-        ord: Set(0),
+        canon_mode: Set(canon_mode.as_str().to_owned()),
+        anchor_kind: Set(anchor_kind.as_str().to_owned()),
+        anchor_chapter_id: Set(anchor_chapter_id),
+        focus_entity_id: Set(focus_entity_id),
+        ord: Set(ord),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),
         ..Default::default()
     };
-    let row = tracks::Entity::insert(model)
-        .exec_with_returning(tx)
-        .await?;
+    let row = tracks::Entity::insert(row).exec_with_returning(tx).await?;
     Ok((
         to_dto(&row)?,
         vec![ServerEvent::BookUpdated {
@@ -87,7 +131,11 @@ pub async fn create_inner(
     ))
 }
 
-/// `PATCH /api/tracks/:id`. The main track only carries a synopsis (spec/08 §6, D-037).
+/// `PATCH /api/tracks/:id` (spec/08 §6).
+///
+/// The main track only carries a synopsis (D-037). A side track's title, synopsis, canon mode,
+/// anchor and focus character are editable; the canon mode is locked once the track has an
+/// official chapter, and the other fields only affect sessions created afterwards.
 pub async fn update(
     db: &crate::db::Db,
     events: &crate::events::EventBus,
@@ -109,28 +157,135 @@ pub async fn update_inner(
 ) -> Result<(TrackDto, Vec<ServerEvent>), AppError> {
     let existing = load(tx, track_id).await?;
     let kind: TrackKind = super::enum_of("tracks.kind", &existing.kind)?;
-    if kind == TrackKind::Main
-        && (patch.title.is_some()
+    if kind == TrackKind::Main {
+        if patch.title.is_some()
             || patch.canon_mode.is_some()
             || patch.anchor_kind.is_some()
             || patch.anchor_chapter_id.is_some()
-            || patch.focus_entity_id.is_some())
-    {
-        // D-037: the main track's title is empty and localized by the UI; it has no anchor and
-        // no canon mode of its own.
-        return Err(AppError::validation(
-            "the main track only has an editable synopsis",
-        ));
+            || patch.focus_entity_id.is_some()
+            || patch.clear_focus_entity
+        {
+            // D-037: the main track's title is empty and localized by the UI; it has no anchor
+            // and no canon mode of its own.
+            return Err(AppError::validation(
+                "the main track only has an editable synopsis",
+            ));
+        }
+        let mut active = tracks::ActiveModel {
+            id: Set(track_id),
+            updated_at: Set(now()),
+            ..Default::default()
+        };
+        if let Some(synopsis) = patch.synopsis {
+            active.synopsis = Set(synopsis.trim().to_owned());
+        }
+        sea_orm::ActiveModelTrait::update(active, tx).await?;
+        return finish_update(tx, track_id).await;
     }
+
     let mut active = tracks::ActiveModel {
         id: Set(track_id),
         updated_at: Set(now()),
         ..Default::default()
     };
-    if let Some(synopsis) = patch.synopsis {
+    if let Some(ref title) = patch.title {
+        let title = title.trim();
+        if title.is_empty() {
+            return Err(field_error("title", "a side story needs a title"));
+        }
+        active.title = Set(title.to_owned());
+    }
+    if let Some(ref synopsis) = patch.synopsis {
         active.synopsis = Set(synopsis.trim().to_owned());
     }
+    if let Some(ref canon_mode) = patch.canon_mode {
+        let current: CanonMode = super::enum_of("tracks.canon_mode", &existing.canon_mode)?;
+        if *canon_mode != current {
+            // A track with an official chapter is already in the canon it chose (spec/08 §6).
+            if has_official_chapter(tx, track_id).await? {
+                return Err(super::conflict(
+                    ErrorCode::TrackModeLocked,
+                    "the track has an official chapter; its canon mode cannot change",
+                    serde_json::json!({ "canon_mode": current.as_str() }),
+                ));
+            }
+            active.canon_mode = Set(canon_mode.as_str().to_owned());
+        }
+    }
+    apply_anchor_patch(tx, &existing, &patch, &mut active).await?;
+    if patch.clear_focus_entity {
+        if patch.focus_entity_id.is_some() {
+            return Err(field_error(
+                "focus_entity_id",
+                "set or clear the focus character, not both",
+            ));
+        }
+        active.focus_entity_id = Set(None);
+    } else if let Some(entity_id) = patch.focus_entity_id {
+        validate_focus_entity(tx, existing.book_id, Some(&existing), entity_id).await?;
+        active.focus_entity_id = Set(Some(entity_id));
+    }
     sea_orm::ActiveModelTrait::update(active, tx).await?;
+    finish_update(tx, track_id).await
+}
+
+/// Resolves the anchor fields of a side-track PATCH into the active model (spec/08 §6).
+///
+/// `anchor_kind` chooses the mode; `after_chapter` needs a chapter, and changing the chapter of an
+/// existing `after_chapter` anchor only sends `anchor_chapter_id`. A kind that names no chapter
+/// clears the stored one, so the CHECK of spec/02 never fires.
+async fn apply_anchor_patch(
+    tx: &impl ConnectionTrait,
+    existing: &tracks::Model,
+    patch: &TrackPatch,
+    active: &mut tracks::ActiveModel,
+) -> Result<(), AppError> {
+    let current_kind: AnchorKind = super::enum_of("tracks.anchor_kind", &existing.anchor_kind)?;
+    match (patch.anchor_kind, patch.anchor_chapter_id) {
+        (Some(AnchorKind::AfterChapter), Some(chapter_id)) => {
+            validate_anchor_chapter(tx, existing.book_id, chapter_id).await?;
+            active.anchor_kind = Set(AnchorKind::AfterChapter.as_str().to_owned());
+            active.anchor_chapter_id = Set(Some(chapter_id));
+        }
+        (Some(AnchorKind::AfterChapter), None) => {
+            // Keeping the current anchor is fine; switching to `after_chapter` needs a chapter.
+            if current_kind != AnchorKind::AfterChapter || existing.anchor_chapter_id.is_none() {
+                return Err(field_error(
+                    "anchor_chapter_id",
+                    "an after_chapter anchor needs the anchor chapter",
+                ));
+            }
+        }
+        (Some(_), Some(_)) => {
+            return Err(field_error(
+                "anchor_chapter_id",
+                "only an after_chapter anchor names a chapter",
+            ));
+        }
+        (Some(other), None) => {
+            active.anchor_kind = Set(other.as_str().to_owned());
+            active.anchor_chapter_id = Set(None);
+        }
+        (None, Some(chapter_id)) => {
+            if current_kind != AnchorKind::AfterChapter {
+                return Err(field_error(
+                    "anchor_kind",
+                    "choose an after_chapter anchor before naming its chapter",
+                ));
+            }
+            validate_anchor_chapter(tx, existing.book_id, chapter_id).await?;
+            active.anchor_chapter_id = Set(Some(chapter_id));
+        }
+        (None, None) => {}
+    }
+    Ok(())
+}
+
+/// Reads the updated track and returns its DTO with the `book.updated` event.
+async fn finish_update(
+    tx: &impl ConnectionTrait,
+    track_id: i32,
+) -> Result<(TrackDto, Vec<ServerEvent>), AppError> {
     let row = load(tx, track_id).await?;
     Ok((
         to_dto(&row)?,
@@ -141,18 +296,34 @@ pub async fn update_inner(
     ))
 }
 
-/// `DELETE /api/tracks/:id`. The main track can never be deleted (`validation.failed`, spec/08
-/// §1.3); side tracks leave with their chapters in M10.
-pub async fn delete(
-    db: &crate::db::Db,
-    events: &crate::events::EventBus,
-    track_id: i32,
-) -> Result<(), AppError> {
-    let published = super::write(db, move |tx| {
+/// `DELETE /api/tracks/:id`.
+///
+/// The main track can never be deleted (`validation.failed`, spec/08 §1.3). A side track can be
+/// deleted at any time: its open sessions are stopped and abandoned first, then the cascade
+/// removes its chapters, its private canon rows and its change rows (spec/08 §1.3, D-043).
+pub async fn delete(state: &crate::state::AppState, track_id: i32) -> Result<(), AppError> {
+    let existing = load(state.db().conn(), track_id).await?;
+    let kind: TrackKind = super::enum_of("tracks.kind", &existing.kind)?;
+    if kind == TrackKind::Main {
+        return Err(AppError::validation("the main track cannot be deleted"));
+    }
+    // No runner may write into the cascade: stop and abandon every open session of the track
+    // before the delete transaction (spec/08 §1.3).
+    for session_id in open_sessions(state.db().conn(), track_id).await? {
+        match super::sessions::abandon(state, session_id).await {
+            Ok(_) => {}
+            // Another caller finalized it between the query and the call, which is the state this
+            // loop wants anyway.
+            Err(error) if error.code == ErrorCode::SessionInvalidState => {}
+            Err(error) => return Err(error),
+        }
+    }
+    let db = state.db().clone();
+    let published = super::write(&db, move |tx| {
         Box::pin(async move { delete_inner(tx, track_id).await })
     })
     .await?;
-    events.publish_all(published);
+    state.events().publish_all(published);
     Ok(())
 }
 
@@ -165,7 +336,27 @@ pub async fn delete_inner(
     if kind == TrackKind::Main {
         return Err(AppError::validation("the main track cannot be deleted"));
     }
+    // Shared entities that appeared only in this track's chapters get their bounds recomputed
+    // after the cascade (spec/06 §1.1, D-059, D-080). The ids are read before the rows vanish.
+    let appeared: Vec<i32> = appearances::Entity::find()
+        .filter(
+            appearances::Column::ChapterId.in_subquery(
+                chapters::Entity::find()
+                    .select_only()
+                    .column(chapters::Column::Id)
+                    .filter(chapters::Column::TrackId.eq(track_id))
+                    .into_query(),
+            ),
+        )
+        .all(tx)
+        .await?
+        .into_iter()
+        .map(|row| row.entity_id)
+        .collect();
     tracks::Entity::delete_by_id(track_id).exec(tx).await?;
+    super::canon::entity::recompute_bounds(tx, existing.book_id, &appeared)
+        .await
+        .map_err(AppError::from)?;
     Ok(vec![ServerEvent::BookUpdated {
         book_id: existing.book_id,
         op: crate::events::BookOp::Update,
@@ -193,6 +384,180 @@ pub async fn has_official_chapter(
     Ok(count > 0)
 }
 
+/// True when the track is a side track in isolated canon mode (spec/06 §2).
+pub fn is_isolated(row: &tracks::Model) -> bool {
+    row.kind == TrackKind::Side.as_str() && row.canon_mode == CanonMode::Isolated.as_str()
+}
+
+/// The main track of a book, when it exists (a book always has one, spec/02 §5).
+pub async fn main_track(
+    conn: &impl ConnectionTrait,
+    book_id: i32,
+) -> Result<Option<tracks::Model>, AppError> {
+    Ok(tracks::Entity::find()
+        .filter(tracks::Column::BookId.eq(book_id))
+        .filter(tracks::Column::Kind.eq(TrackKind::Main.as_str()))
+        .one(conn)
+        .await?)
+}
+
+/// Resolves the anchor of a new side track (spec/08 §6).
+///
+/// Default: `after_chapter` on the latest official main chapter, or `before_start` when no main
+/// chapter is official yet. An explicit `anchor_kind = after_chapter` must name its chapter; a
+/// chapter without a kind means `after_chapter`. A kind that names no chapter must not carry one.
+async fn resolve_anchor(
+    conn: &impl ConnectionTrait,
+    book_id: i32,
+    kind: Option<AnchorKind>,
+    chapter_id: Option<i32>,
+) -> Result<(AnchorKind, Option<i32>), AppError> {
+    let Some(kind) = kind else {
+        if let Some(chapter_id) = chapter_id {
+            validate_anchor_chapter(conn, book_id, chapter_id).await?;
+            return Ok((AnchorKind::AfterChapter, Some(chapter_id)));
+        }
+        return Ok(match latest_official_main_chapter(conn, book_id).await? {
+            Some(chapter) => (AnchorKind::AfterChapter, Some(chapter.id)),
+            None => (AnchorKind::BeforeStart, None),
+        });
+    };
+    match kind {
+        AnchorKind::AfterChapter => {
+            let Some(chapter_id) = chapter_id else {
+                return Err(field_error(
+                    "anchor_chapter_id",
+                    "an after_chapter anchor needs the anchor chapter",
+                ));
+            };
+            validate_anchor_chapter(conn, book_id, chapter_id).await?;
+            Ok((AnchorKind::AfterChapter, Some(chapter_id)))
+        }
+        other => {
+            if chapter_id.is_some() {
+                return Err(field_error(
+                    "anchor_chapter_id",
+                    "only an after_chapter anchor names a chapter",
+                ));
+            }
+            Ok((other, None))
+        }
+    }
+}
+
+/// The latest official main-track chapter of the book (the default `after_chapter` anchor).
+async fn latest_official_main_chapter(
+    conn: &impl ConnectionTrait,
+    book_id: i32,
+) -> Result<Option<chapters::Model>, AppError> {
+    let Some(main) = main_track(conn, book_id).await? else {
+        return Ok(None);
+    };
+    Ok(chapters::Entity::find()
+        .filter(chapters::Column::TrackId.eq(main.id))
+        .filter(chapters::Column::Status.eq(ChapterStatus::Official.as_str()))
+        .order_by_desc(chapters::Column::Ord)
+        .one(conn)
+        .await?)
+}
+
+/// An `after_chapter` anchor must be a main-track chapter of this book (spec/08 §6).
+async fn validate_anchor_chapter(
+    conn: &impl ConnectionTrait,
+    book_id: i32,
+    chapter_id: i32,
+) -> Result<(), AppError> {
+    let chapter = chapters::Entity::find_by_id(chapter_id)
+        .one(conn)
+        .await?
+        .ok_or_else(|| field_error("anchor_chapter_id", "the anchor chapter does not exist"))?;
+    let track = tracks::Entity::find_by_id(chapter.track_id)
+        .one(conn)
+        .await?
+        .ok_or_else(|| field_error("anchor_chapter_id", "the anchor chapter has no track"))?;
+    if track.book_id != book_id || track.kind != TrackKind::Main.as_str() {
+        return Err(field_error(
+            "anchor_chapter_id",
+            "the anchor must be a main-track chapter of this book",
+        ));
+    }
+    Ok(())
+}
+
+/// The focus character must be a character visible in the track (spec/08 §6).
+///
+/// A shared character is always visible; an isolated track may also focus one of its own private
+/// characters. A `track` of `None` is a track being created, which has no private rows yet.
+async fn validate_focus_entity(
+    conn: &impl ConnectionTrait,
+    book_id: i32,
+    track: Option<&tracks::Model>,
+    entity_id: i32,
+) -> Result<(), AppError> {
+    let Some(row) = entities::Entity::find_by_id(entity_id).one(conn).await? else {
+        return Err(field_error(
+            "focus_entity_id",
+            "the focus character does not exist",
+        ));
+    };
+    if row.book_id != book_id {
+        return Err(field_error(
+            "focus_entity_id",
+            "the focus character belongs to another book",
+        ));
+    }
+    if row.kind != EntityKind::Character.as_str() {
+        return Err(field_error(
+            "focus_entity_id",
+            "the focus entity must be a character",
+        ));
+    }
+    if let Some(private_track) = row.track_id {
+        let visible = track.is_some_and(|track| {
+            track.id == private_track
+                && track.kind == TrackKind::Side.as_str()
+                && track.canon_mode == CanonMode::Isolated.as_str()
+        });
+        if !visible {
+            return Err(field_error(
+                "focus_entity_id",
+                "the focus character is not visible in this track",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The `ord` of a new side track: the next free number after the existing tracks (§ `ord` = 1,
+/// 2, … in creation order; the main track is 0).
+async fn next_ord(conn: &impl ConnectionTrait, book_id: i32) -> Result<i32, AppError> {
+    let max = super::query_i64(
+        conn,
+        "SELECT COALESCE(MAX(ord), 0) AS value FROM tracks WHERE book_id = ?",
+        vec![book_id.into()],
+    )
+    .await?
+    .unwrap_or(0);
+    i32::try_from(max + 1).map_err(|_| AppError::internal("track ord overflow"))
+}
+
+/// The open sessions of a track's chapters (status not terminal).
+async fn open_sessions(conn: &impl ConnectionTrait, track_id: i32) -> Result<Vec<i32>, AppError> {
+    Ok(agent_sessions::Entity::find()
+        .filter(agent_sessions::Column::TrackId.eq(track_id))
+        .filter(agent_sessions::Column::Status.is_not_in([
+            crate::db::json::SessionStatus::Completed.as_str(),
+            crate::db::json::SessionStatus::Superseded.as_str(),
+            crate::db::json::SessionStatus::Abandoned.as_str(),
+        ]))
+        .order_by_asc(agent_sessions::Column::Id)
+        .all(conn)
+        .await?
+        .into_iter()
+        .map(|row| row.id)
+        .collect())
+}
+
 async fn ensure_no_main(conn: &impl ConnectionTrait, book_id: i32) -> Result<(), AppError> {
     let existing = tracks::Entity::find()
         .filter(tracks::Column::BookId.eq(book_id))
@@ -203,7 +568,7 @@ async fn ensure_no_main(conn: &impl ConnectionTrait, book_id: i32) -> Result<(),
         // `conflict.exists` documents `details.id` (spec/10 §4): the id of the row that holds the
         // name, so the UI can link to it instead of guessing.
         return Err(AppError::conflict(
-            crate::error::ErrorCode::ConflictExists,
+            ErrorCode::ConflictExists,
             "the book already has a main track",
         )
         .with_details(serde_json::json!({ "id": row.id })));

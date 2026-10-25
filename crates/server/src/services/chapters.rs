@@ -565,9 +565,10 @@ async fn write_content(
 ///
 /// Preconditions: the chapter is `planned` or `drafting`, it has no open writer session, and the
 /// previous chapter of the track is `official` with `canon_status = synced` — unless `force`, which
-/// the Write dialog sends after explaining why the check failed. The side-track anchor chapter's
-/// readiness (the first chapter of a side story) arrives with M10, which adds the anchor rule to
-/// the same check.
+/// the Write dialog sends after explaining why the check failed. The first chapter of a side story
+/// has no predecessor in its track: its "previous chapter" is the anchor chapter
+/// (`after_chapter`) or nothing at all (`before_start`, `after_end`, and an anchorless side
+/// track) (spec/08 §6).
 pub async fn write(
     state: &crate::state::AppState,
     chapter_id: i32,
@@ -637,8 +638,9 @@ async fn previous_chapter_blocker(
         .one(conn)
         .await?;
     let Some(previous) = previous else {
-        // The first chapter of the track has no predecessor.
-        return Ok(None);
+        // The first chapter of a side story takes its "previous chapter" from the anchor
+        // (spec/08 §6): the anchor chapter for `after_chapter`, nothing otherwise.
+        return first_side_chapter_blocker(conn, chapter).await;
     };
     let official = previous.status == ChapterStatus::Official.as_str();
     let synced = previous.canon_status == crate::db::json::CanonStatus::Synced.as_str();
@@ -653,6 +655,42 @@ async fn previous_chapter_blocker(
         "reason": if official { "canon_not_synced" } else { "not_official" },
         "status": previous.status,
         "canon_status": previous.canon_status,
+    })))
+}
+
+/// The write precondition of a side track's first chapter (spec/08 §1.1, §6).
+///
+/// `after_chapter` behaves like a predecessor: the anchor chapter must be `official` with synced
+/// canon. `before_start`, `after_end` and an anchorless side track have nothing before them, so
+/// the first chapter is always writable. The main track's first chapter has no anchor and no
+/// predecessor either.
+async fn first_side_chapter_blocker(
+    conn: &impl ConnectionTrait,
+    chapter: &chapters::Model,
+) -> Result<Option<serde_json::Value>, AppError> {
+    let track = super::tracks::load(conn, chapter.track_id).await?;
+    if track.kind != TrackKind::Side.as_str() || track.anchor_kind != "after_chapter" {
+        return Ok(None);
+    }
+    let Some(anchor_id) = track.anchor_chapter_id else {
+        return Ok(None);
+    };
+    let anchor = chapters::Entity::find_by_id(anchor_id)
+        .one(conn)
+        .await?
+        .ok_or_else(|| AppError::not_found(format!("chapter #{anchor_id}")))?;
+    let official = anchor.status == ChapterStatus::Official.as_str();
+    let synced = anchor.canon_status == crate::db::json::CanonStatus::Synced.as_str();
+    if official && synced {
+        return Ok(None);
+    }
+    Ok(Some(serde_json::json!({
+        "chapter_id": anchor.id,
+        "chapter_number": anchor.ord,
+        "reason": if official { "canon_not_synced" } else { "not_official" },
+        "status": anchor.status,
+        "canon_status": anchor.canon_status,
+        "anchor": true,
     })))
 }
 

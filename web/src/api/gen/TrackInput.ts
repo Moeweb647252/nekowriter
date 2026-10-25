@@ -4,7 +4,12 @@ import type { CanonMode } from "./CanonMode";
 import type { TrackKind } from "./TrackKind";
 
 /**
- * `POST /books/:id/tracks` body (spec/08 §6). Side stories arrive in M10; M1 only restores a
- * missing main track, so the field defaults describe a main track.
+ * `POST /books/:id/tracks` body (spec/08 §6).
+ *
+ * Without `kind` the endpoint creates a **side track** (spec/08 §6: the body is a side story);
+ * `kind: "main"` restores a missing main track (M1, spec/10 §2.2) and takes no side-story
+ * settings. The side-track defaults are applied by the service because they depend on the
+ * book's chapters: `canon_mode = isolated`, and an `after_chapter` anchor on the latest official
+ * main chapter (`before_start` when there is none).
  */
-export type TrackInput = { kind: TrackKind, title: string, synopsis: string, canon_mode: CanonMode, anchor_kind: AnchorKind, anchor_chapter_id?: number | null, focus_entity_id?: number | null, };
+export type TrackInput = { kind?: TrackKind | null, title: string, synopsis: string, canon_mode?: CanonMode | null, anchor_kind?: AnchorKind | null, anchor_chapter_id?: number | null, focus_entity_id?: number | null, };

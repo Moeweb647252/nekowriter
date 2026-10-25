@@ -52,7 +52,7 @@ pub async fn delete(
     State(state): State<AppState>,
     Path(track_id): Path<i32>,
 ) -> AppResult<StatusCode> {
-    service::delete(state.db(), state.events(), track_id).await?;
+    service::delete(&state, track_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
