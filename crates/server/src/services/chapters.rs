@@ -684,7 +684,8 @@ pub async fn submit_inner(
             status,
         ));
     }
-    // An open, non-running writer session is abandoned by the UI first; a running one blocks.
+    // A running writer session blocks the manual submit (spec/08 §1.1); an open, non-running one
+    // is abandoned below, after the UI has warned the author.
     if let Some(session_id) = super::running_writer_session(tx, chapter_id).await? {
         return Err(super::conflict(
             ErrorCode::ChapterSessionExists,
@@ -696,6 +697,10 @@ pub async fn submit_inner(
     if content.paragraphs.is_empty() {
         return Err(invalid_state("the chapter is empty", status));
     }
+    // "an open, non-running one is abandoned after the UI confirms" (spec/08 §1.1): the UI warns
+    // the author before it calls this, and `approve` refuses a chapter that still has an open
+    // writer session, so the submit must end the quiescent session instead of leaving a dead end.
+    let mut events = abandon_open_writer_sessions(tx, chapter_id).await?;
     let kind = if status == ChapterStatus::Revising {
         VersionKind::Revision
     } else {
@@ -726,13 +731,51 @@ pub async fn submit_inner(
     active.update(tx).await?;
     let row = load(tx, chapter_id).await?;
     let dto = to_dto(tx, &row).await?;
-    Ok((
-        dto.clone(),
-        vec![ServerEvent::ChapterUpdated {
-            chapter: dto.list_item,
-            outline_changed: false,
-        }],
-    ))
+    events.push(ServerEvent::ChapterUpdated {
+        chapter: dto.list_item.clone(),
+        outline_changed: false,
+    });
+    Ok((dto, events))
+}
+
+/// Abandons the chapter's open, non-running writer sessions inside the caller's transaction
+/// (spec/08 §1.1: a manual submit ends the session the UI warned about).
+///
+/// Only quiescent sessions are eligible: a `running` writer is the caller's
+/// `409 chapter.session_exists`, and ending one needs its runner cancelled and awaited first
+/// (spec/03 §6, D-034), which cannot happen inside this transaction.
+async fn abandon_open_writer_sessions(
+    tx: &impl ConnectionTrait,
+    chapter_id: i32,
+) -> Result<Vec<ServerEvent>, AppError> {
+    let rows = agent_sessions::Entity::find()
+        .filter(agent_sessions::Column::ChapterId.eq(chapter_id))
+        .filter(agent_sessions::Column::Role.eq(AgentRole::Writer.as_str()))
+        .filter(agent_sessions::Column::Status.is_in([
+            SessionStatus::Idle.as_str(),
+            SessionStatus::Held.as_str(),
+            SessionStatus::AwaitingInput.as_str(),
+            SessionStatus::Paused.as_str(),
+            SessionStatus::Stopped.as_str(),
+            SessionStatus::Failed.as_str(),
+            SessionStatus::Interrupted.as_str(),
+        ]))
+        .order_by_asc(agent_sessions::Column::Id)
+        .all(tx)
+        .await?;
+    let mut events = Vec::new();
+    for row in rows {
+        events.extend(
+            crate::agent::session::transition(
+                tx,
+                &row,
+                SessionStatus::Abandoned,
+                crate::agent::session::TransitionCause::Stop,
+            )
+            .await?,
+        );
+    }
+    Ok(events)
 }
 
 /// `POST /api/chapters/:id/approve` (spec/08 §1.1): an `official` version, `official_version_id`,

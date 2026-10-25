@@ -12,6 +12,7 @@ import {
 } from "@/api/hooks/reviews"
 import { WriteDialog } from "@/features/chapter/WriteDialog"
 import { SendBackDialog } from "@/features/chapter/SendBackDialog"
+import { ConfirmDialog } from "@/components/common/ConfirmDialog"
 import { useErrorToast, useWarningToasts } from "@/components/common/ErrorToast"
 import { StatusBadge } from "@/components/common/StatusBadge"
 import { WordCount } from "@/components/common/WordCount"
@@ -53,6 +54,7 @@ export function ChapterHeader({
   const [draft, setDraft] = useState(chapter.title)
   const [writeOpen, setWriteOpen] = useState(false)
   const [sendBackOpen, setSendBackOpen] = useState(false)
+  const [submitConfirmOpen, setSubmitConfirmOpen] = useState(false)
 
   const save = () => {
     setEditing(false)
@@ -70,6 +72,31 @@ export function ChapterHeader({
     chapter.status === "official" &&
     (chapter.canon_status === "pending" || chapter.canon_status === "failed")
   const canResync = chapter.status === "official" && chapter.canon_status === "stale"
+  // spec/08 §1.1: a manual submit ends the chapter's open, non-running writer session, so the
+  // author is warned first. A `running` session is left to the endpoint's 409: stopping it is a
+  // separate action on the session.
+  const openWriterSession = chapter.open_sessions.find(
+    (session) => session.role === "writer" && session.status !== "running",
+  )
+  const runSubmit = () => {
+    submit.mutate(undefined, {
+      onSuccess: () => {
+        setSubmitConfirmOpen(false)
+        void queryClient.invalidateQueries({ queryKey: keys.chapters.reviews(chapter.id) })
+      },
+      onError: (error) => {
+        setSubmitConfirmOpen(false)
+        showError(error)
+      },
+    })
+  }
+  const requestSubmit = () => {
+    if (openWriterSession === undefined) {
+      runSubmit()
+    } else {
+      setSubmitConfirmOpen(true)
+    }
+  }
 
   return (
     <header className="space-y-2 border-b px-6 py-4">
@@ -134,14 +161,7 @@ export function ChapterHeader({
             size="sm"
             variant="outline"
             disabled={submit.isPending || chapter.content.paragraphs.length === 0}
-            onClick={() =>
-              submit.mutate(undefined, {
-                onSuccess: () => {
-                  void queryClient.invalidateQueries({ queryKey: keys.chapters.reviews(chapter.id) })
-                },
-                onError: showError,
-              })
-            }
+            onClick={requestSubmit}
           >
             {t("chapter:submit")}
           </Button>
@@ -237,6 +257,16 @@ export function ChapterHeader({
         open={writeOpen}
         onOpenChange={setWriteOpen}
         onStarted={(sessionId) => onSessionStarted?.(sessionId)}
+      />
+      <ConfirmDialog
+        open={submitConfirmOpen}
+        onOpenChange={setSubmitConfirmOpen}
+        title={t("chapter:submit_confirm.title")}
+        description={t("chapter:submit_confirm.description")}
+        confirmLabel={t("chapter:submit_confirm.confirm")}
+        destructive={false}
+        pending={submit.isPending}
+        onConfirm={runSubmit}
       />
     </header>
   )

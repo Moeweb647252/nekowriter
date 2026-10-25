@@ -115,5 +115,8 @@
   "discuss_dialog.title": "与审稿讨论",
   "discuss_dialog.description": "你的意见会重新开启审阅；正文未修改时沿用同一个会话。",
   "discuss_dialog.placeholder": "审稿哪里看错了，或漏掉了什么？",
-  "discuss_dialog.send": "发送意见"
+  "discuss_dialog.send": "发送意见",
+  "submit_confirm.title": "结束未关闭的写手会话？",
+  "submit_confirm.description": "提交审阅会结束本章仍未关闭的写手会话，之后无法继续该会话。",
+  "submit_confirm.confirm": "提交并结束会话"
 }

@@ -115,5 +115,8 @@
   "discuss_dialog.title": "Discuss with the reviewer",
   "discuss_dialog.description": "Your comment reopens the review; unchanged text continues the same session.",
   "discuss_dialog.placeholder": "What did the reviewer get wrong or miss?",
-  "discuss_dialog.send": "Send comment"
+  "discuss_dialog.send": "Send comment",
+  "submit_confirm.title": "End the open writer session?",
+  "submit_confirm.description": "Submitting for review ends the writer session that is still open on this chapter. It will not resume.",
+  "submit_confirm.confirm": "Submit and end the session"
 }
