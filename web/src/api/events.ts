@@ -104,6 +104,7 @@ export function disconnectEvents() {
     source = null
   }
   currentBookId = null
+  flushLiveDeltas()
 }
 
 function dispatch(event: ServerEvent) {
@@ -122,8 +123,122 @@ function payloadRecord(payload: unknown): Record<string, unknown> | null {
     : null
 }
 
-/**
- * The dispatch table (spec/11 §4.2): update stores and caches where the payload is complete,
+// ───────────────────────── delta coalescing (spec/11 §4.2) ─────────────────────────
+//
+// A streaming turn produces dozens of `session.delta`/`session.tool_preview` frames per second.
+// Applying each one as its own store write re-renders the chapter (ghost text) and the activity
+// stream once per byte; batching them into one animation frame keeps a 300-paragraph chapter
+// smooth while it streams (PLAN 11.3). The buffers are flushed on the next frame, and a test or a
+// teardown can flush them synchronously with `flushLiveDeltas`.
+
+type PendingDelta = {
+  sessionId: number
+  seq: number
+  kind: "text" | "reasoning"
+  index: number
+  text: string
+}
+
+type PendingPreview = {
+  sessionId: number
+  seq: number
+  callIndex: number
+  name: string
+  field: string
+  text: string
+}
+
+let pendingDeltas: PendingDelta[] = []
+let pendingPreviews: PendingPreview[] = []
+let frameHandle: number | null = null
+let timerHandle: ReturnType<typeof setTimeout> | null = null
+
+/** Applies everything buffered in the current frame immediately. */
+export function flushLiveDeltas(): void {
+  if (frameHandle !== null && typeof cancelAnimationFrame === "function") {
+    cancelAnimationFrame(frameHandle)
+  }
+  frameHandle = null
+  if (timerHandle !== null) {
+    clearTimeout(timerHandle)
+  }
+  timerHandle = null
+
+  const deltas = pendingDeltas
+  pendingDeltas = []
+  if (deltas.length > 0) {
+    const merged = new Map<string, PendingDelta>()
+    for (const delta of deltas) {
+      const key = `${delta.sessionId}:${delta.seq}:${delta.kind}:${delta.index}`
+      const current = merged.get(key)
+      if (current === undefined) {
+        merged.set(key, { ...delta })
+      } else {
+        current.text += delta.text
+      }
+    }
+    const store = useLiveStore.getState()
+    for (const delta of merged.values()) {
+      store.applyDelta(delta.sessionId, delta.seq, delta.kind, delta.index, delta.text)
+    }
+  }
+
+  const previews = pendingPreviews
+  pendingPreviews = []
+  if (previews.length > 0) {
+    const merged = new Map<string, PendingPreview>()
+    for (const preview of previews) {
+      const key = `${preview.sessionId}:${preview.seq}:${preview.callIndex}:${preview.field}`
+      const current = merged.get(key)
+      if (current === undefined) {
+        merged.set(key, { ...preview })
+      } else {
+        current.text += preview.text
+      }
+    }
+    const store = useLiveStore.getState()
+    for (const preview of merged.values()) {
+      store.applyPreview(
+        preview.sessionId,
+        preview.seq,
+        preview.callIndex,
+        preview.name,
+        preview.field,
+        preview.text,
+      )
+    }
+  }
+}
+
+/** Drops the buffers of one sequence (its persisted message supersedes them). */
+function dropPending(sessionId: number, seq: number): void {
+  pendingDeltas = pendingDeltas.filter(
+    (delta) => !(delta.sessionId === sessionId && delta.seq === seq),
+  )
+  pendingPreviews = pendingPreviews.filter(
+    (preview) => !(preview.sessionId === sessionId && preview.seq === seq),
+  )
+}
+
+function scheduleFlush(): void {
+  if (frameHandle !== null || timerHandle !== null) {
+    return
+  }
+  if (typeof requestAnimationFrame === "function") {
+    frameHandle = requestAnimationFrame(() => {
+      frameHandle = null
+      flushLiveDeltas()
+    })
+  } else {
+    // Node/jsdom without the frame API: one tick is the closest equivalent.
+    timerHandle = setTimeout(() => {
+      timerHandle = null
+      flushLiveDeltas()
+    }, 16)
+  }
+}
+
+/** The dispatch table (spec/11 §4.2): update stores and caches where the payload is complete,
  * invalidate where the event is only a signal.
  */
 export function applyServerEvent(
@@ -317,7 +432,8 @@ export function applyServerEvent(
       ) {
         return
       }
-      useLiveStore.getState().applyDelta(sessionId, seq, kind, index, text)
+      pendingDeltas.push({ sessionId, seq, kind, index, text })
+      scheduleFlush()
       return
     }
     case "session.tool_preview": {
@@ -340,9 +456,8 @@ export function applyServerEvent(
       ) {
         return
       }
-      useLiveStore
-        .getState()
-        .applyPreview(sessionId, seq, callIndex, name, field, delta)
+      pendingPreviews.push({ sessionId, seq, callIndex, name, field, text: delta })
+      scheduleFlush()
       return
     }
     case "session.message": {
@@ -357,6 +472,7 @@ export function applyServerEvent(
       // The persisted message supersedes the live buffers of its sequence (spec/11 §4.3).
       const seq = message.seq
       if (typeof seq === "number") {
+        dropPending(sessionId, seq)
         useLiveStore.getState().clearSeq(sessionId, seq)
       }
       void queryClient.invalidateQueries({

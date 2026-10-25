@@ -8,8 +8,9 @@
 import { QueryClient } from "@tanstack/react-query"
 import { describe, expect, it } from "vitest"
 
-import { applyServerEvent } from "@/api/events"
+import { applyServerEvent, flushLiveDeltas } from "@/api/events"
 import { keys } from "@/api/keys"
+import { useLiveStore } from "@/stores/live"
 
 function isInvalidated(
   client: QueryClient,
@@ -60,5 +61,49 @@ describe("applyServerEvent", () => {
     expect(isInvalidated(client, keys.proposals.list(1, undefined))).toBe(true)
     expect(isInvalidated(client, keys.books.overview(1))).toBe(true)
     expect(isInvalidated(client, keys.chapters.detail(9))).toBe(false)
+  })
+})
+
+describe("delta coalescing", () => {
+  it("batches deltas into one frame and merges the same stream", () => {
+    useLiveStore.setState({ streams: {}, previews: {} })
+    const client = new QueryClient()
+    applyServerEvent(client, "session.delta", {
+      session_id: 1,
+      seq: 3,
+      kind: "text",
+      index: 0,
+      text: "Hel",
+    })
+    applyServerEvent(client, "session.delta", {
+      session_id: 1,
+      seq: 3,
+      kind: "text",
+      index: 0,
+      text: "lo",
+    })
+    // Nothing reaches the store before the frame: a streaming turn does not re-render per byte.
+    expect(useLiveStore.getState().streams[1]).toBeUndefined()
+    flushLiveDeltas()
+    expect(useLiveStore.getState().streams[1]?.text[0]).toBe("Hello")
+    useLiveStore.setState({ streams: {}, previews: {} })
+  })
+
+  it("drops buffered deltas when the persisted message arrives", () => {
+    useLiveStore.setState({ streams: {}, previews: {} })
+    const client = new QueryClient()
+    applyServerEvent(client, "session.delta", {
+      session_id: 1,
+      seq: 3,
+      kind: "text",
+      index: 0,
+      text: "stale",
+    })
+    applyServerEvent(client, "session.message", {
+      session_id: 1,
+      message: { id: 9, seq: 3 },
+    })
+    flushLiveDeltas()
+    expect(useLiveStore.getState().streams[1]).toBeUndefined()
   })
 })

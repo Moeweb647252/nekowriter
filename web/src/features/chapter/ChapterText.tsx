@@ -1,5 +1,5 @@
 /** The reading column with in-place paragraph editing and a full-text editor (PROJECT §8.5). */
-import { useEffect, useMemo, useState } from "react"
+import { memo, useCallback, useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { AnimatePresence, motion } from "motion/react"
 
@@ -51,6 +51,31 @@ export function ChapterText({
   const resume = useResumeSession(bookId)
   const writer = useWriterState(chapter, undefined)
   const locked = writer.locked
+
+  // Stable per-render callbacks: each `Paragraph` is memoized on its own props (spec/11 §5.2), so
+  // a streaming tail paragraph must not re-render the other hundreds.
+  const patchMutate = patch.mutate
+  const saveParagraph = useCallback(
+    (pid: string, text: string) => {
+      const ops: ContentOpInput[] = [{ op: "update", pid, text }]
+      patchMutate({ base_version: version, ops }, { onError: showError })
+    },
+    [patchMutate, version, showError],
+  )
+  const insertParagraphAfter = useCallback(
+    (pid: string, text: string) => {
+      const ops: ContentOpInput[] = [{ op: "insert", after: pid, text }]
+      patchMutate({ base_version: version, ops }, { onError: showError })
+    },
+    [patchMutate, version, showError],
+  )
+  const deleteParagraph = useCallback(
+    (pid: string) => {
+      const ops: ContentOpInput[] = [{ op: "delete", pid }]
+      patchMutate({ base_version: version, ops }, { onError: showError })
+    },
+    [patchMutate, version, showError],
+  )
 
   // The live count while typing; the server value is authoritative (spec/11 §8).
   const liveWords = useMemo(
@@ -126,22 +151,9 @@ export function ChapterText({
                 onHighlightEnd={clearHighlight}
                 saving={patch.isPending}
                 locked={locked}
-                onSave={(text) => {
-                  const ops: ContentOpInput[] = [{ op: "update", pid: paragraph.pid, text }]
-                  patch.mutate({ base_version: version, ops }, { onError: showError })
-                }}
-                onInsertAfter={(text) => {
-                  // spec/11 §5.2: Enter at the end starts the next paragraph.
-                  const ops: ContentOpInput[] = [
-                    { op: "insert", after: paragraph.pid, text },
-                  ]
-                  patch.mutate({ base_version: version, ops }, { onError: showError })
-                }}
-                onDelete={() => {
-                  // spec/11 §5.2: Backspace in an empty paragraph removes it.
-                  const ops: ContentOpInput[] = [{ op: "delete", pid: paragraph.pid }]
-                  patch.mutate({ base_version: version, ops }, { onError: showError })
-                }}
+                onSave={saveParagraph}
+                onInsertAfter={insertParagraphAfter}
+                onDelete={deleteParagraph}
               />
             ))}
           </AnimatePresence>
@@ -189,16 +201,16 @@ type ParagraphProps = {
   saving: boolean
   locked: boolean
   onHighlightEnd: (pid: string) => void
-  onSave: (text: string) => void
-  onInsertAfter: (text: string) => void
-  onDelete: () => void
+  onSave: (pid: string, text: string) => void
+  onInsertAfter: (pid: string, text: string) => void
+  onDelete: (pid: string) => void
 }
 
 /**
  * One paragraph: click to edit in place; Esc cancels; blur or ⌘⏎ saves; Enter at the end starts
  * the next paragraph and Backspace in an empty one deletes it (spec/11 §5.2).
  */
-function Paragraph({
+export const Paragraph = memo(function Paragraph({
   pid,
   text,
   ghost,
@@ -234,7 +246,7 @@ function Paragraph({
           onBlur={() => {
             setEditing(false)
             if (draft !== text) {
-              onSave(draft)
+              onSave(pid, draft)
             }
           }}
           onKeyDown={(event) => {
@@ -259,17 +271,17 @@ function Paragraph({
             if (action === "save") {
               setEditing(false)
               if (draft !== text) {
-                onSave(draft)
+                onSave(pid, draft)
               }
               return
             }
             if (action === "insert-after") {
               // Store the edited text first, then start the new paragraph after this pid.
               if (draft !== text) {
-                onSave(draft)
+                onSave(pid, draft)
               }
               setEditing(false)
-              onInsertAfter("")
+              onInsertAfter(pid, "")
               return
             }
             if (action === "delete-paragraph") {
@@ -279,7 +291,7 @@ function Paragraph({
                 return
               }
               setEditing(false)
-              onDelete()
+              onDelete(pid)
             }
           }}
         />
@@ -324,7 +336,7 @@ function Paragraph({
       )}
     </motion.p>
   )
-}
+})
 
 type FullTextEditorProps = {
   chapter: ChapterDto
