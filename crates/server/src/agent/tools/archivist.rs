@@ -283,10 +283,9 @@ impl ToolHandler for CreateEntityTool {
         _prepared: Prepared,
     ) -> Result<ToolOutcome, ToolError> {
         let input: CreateEntityInput = decode(input)?;
-        // `is_protagonist` exists only for the initial seed (spec/05 §6).
-        if input.is_protagonist == Some(true)
-            && ctx.kind() != crate::db::json::SessionKind::CanonSeed
-        {
+        // `is_protagonist` exists only for the initial seed (spec/05 §6: "canon_seed only,
+        // otherwise error.seed_only"). Passing it at all is the violation, `false` included.
+        if input.is_protagonist.is_some() && ctx.kind() != crate::db::json::SessionKind::CanonSeed {
             return Err(ToolError::new(ToolErrorKind::SeedOnly)
                 .with("tool", "create_entity")
                 .with("field", "is_protagonist"));
