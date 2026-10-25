@@ -10,6 +10,9 @@ import {
   useResearchTask,
   useRunResearchTask,
 } from "@/api/hooks/research"
+import { useResumeSession, useSession, useSessionControl } from "@/api/hooks/sessions"
+import { ActivityStream } from "@/features/agent/ActivityStream"
+import { SessionControls } from "@/features/agent/SessionControls"
 import { StatusBadge } from "@/components/common/StatusBadge"
 import { useErrorToast } from "@/components/common/ErrorToast"
 import { Button } from "@/components/ui/button"
@@ -31,6 +34,17 @@ export default function ResearchTaskPage() {
   // The author edits a local draft; Save writes it (advancing the draft to ready is separate).
   const [topic, setTopic] = useState<string | null>(null)
   const [requirements, setRequirements] = useState<string | null>(null)
+  // PROJECT §8.10: the research view carries the live agent stream and its controls, so a
+  // book-less task (which has no agent panel) can still be watched and stopped. The control hooks
+  // only invalidate session query keys; a book-less task passes 0, which matches no cached key.
+  const sessionId =
+    task.data?.session_id !== undefined &&
+    ["running", "failed"].includes(task.data?.status ?? "")
+      ? (task.data.session_id ?? null)
+      : null
+  const snapshot = useSession(sessionId)
+  const control = useSessionControl(task.data?.book_id ?? 0)
+  const resume = useResumeSession(task.data?.book_id ?? 0)
 
   if (task.isPending || task.data === undefined) {
     return <Skeleton className="m-6 h-64" />
@@ -58,14 +72,15 @@ export default function ResearchTaskPage() {
             {task.data.scope_id === undefined ? ` (${t("knowledge:research.scope_not_resolved")})` : ""}
           </p>
         </div>
-        {open && task.data.book_id !== undefined ? (
-          // The researcher's stream lives in the book's agent panel, which is where the author
-          // watches and controls a session (spec/11 §5.3).
-          <Button asChild size="sm" variant="outline">
-            <Link to={`/books/${task.data.book_id}/knowledge`}>
-              {t("knowledge:research.open_session")}
-            </Link>
-          </Button>
+        {open ? (
+          task.data.book_id !== undefined ? (
+            // The same session also lives in the book's agent panel, which has the full stream.
+            <Button asChild size="sm" variant="outline">
+              <Link to={`/books/${task.data.book_id}/knowledge`}>
+                {t("knowledge:research.open_session")}
+              </Link>
+            </Button>
+          ) : null
         ) : (
           <Button
             size="sm"
@@ -79,6 +94,32 @@ export default function ResearchTaskPage() {
           </Button>
         )}
       </div>
+
+      {open && sessionId !== null && snapshot.data !== undefined ? (
+        <div className="flex h-[24rem] flex-col overflow-hidden rounded-md border">
+          <SessionControls
+            session={snapshot.data.session}
+            busy={control.isPending || resume.isPending}
+            onPause={() =>
+              control.mutate({ sessionId, operation: "pause" }, { onError: showError })
+            }
+            onStop={() =>
+              control.mutate({ sessionId, operation: "stop" }, { onError: showError })
+            }
+            onContinue={() =>
+              control.mutate({ sessionId, operation: "continue" }, { onError: showError })
+            }
+            onFeedback={(feedback) =>
+              resume.mutate({ sessionId, feedback }, { onError: showError })
+            }
+            onAbandon={() => {
+              if (!window.confirm(t("knowledge:research.abandon_confirm"))) return
+              control.mutate({ sessionId, operation: "abandon" }, { onError: showError })
+            }}
+          />
+          <ActivityStream session={snapshot.data.session} messages={snapshot.data.messages} />
+        </div>
+      ) : null}
 
       {open ? (
         <p className="rounded-md border border-dashed p-2 text-xs text-muted-foreground">
