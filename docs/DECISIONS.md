@@ -1385,3 +1385,21 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   for the author, then finalize). No new product defect surfaced beyond the four already fixed in
   M11 (task-21 creation events, task-24 races and write discipline, the book-delete teardown and
   the studio controls).
+
+### D-120 The web tools are exercised through a real session, and wait budgets are floors
+- **Context**: the M8 review recorded two gaps in the M11 hardening list: `web_fetch`'s
+  `prepare`/`execute` split was only tested through the tool object, never through a runner that
+  freezes the tool list and seals the result; and `agent_harness::wait_status_within`'s deadline
+  was a fixed ceiling that a caller could not raise (`wait_budget()` only covered the default
+  waits), so a full parallel suite could still fail for scheduling load rather than for a defect.
+- **Decision**: (a) `TestApp::set_web` exposes the D-096 fetcher seam to integration tests, and
+  `m11_web_tool_session.rs` drives a real researcher session with a `ScriptedProvider` against a
+  `wiremock` stand-in host: the guard, the fetch, the extraction, the prompt template and the
+  sealing all run as in production, and the test asserts the sealed `web_fetch` call (status,
+  `is_error`, `sealed`, the extracted body and title in `result_text`) and the task ending `done`.
+  (b) `wait_status_within` treats its explicit timeout as a floor (`timeout.max(wait_budget())`), so
+  every existing per-test deadline scales with the machine instead of assuming an idle one; a
+  genuinely stuck session still fails at the budget.
+- **Consequences**: the coverage gap is closed rather than deferred, and no test can be made green
+  by scheduling luck alone. Test: `crates/server/tests/m11_web_tool_session.rs`. The three
+  consecutive full-suite runs recorded for D-109's acceptance exercise the raised budgets.

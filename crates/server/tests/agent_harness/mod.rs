@@ -219,6 +219,10 @@ impl Runtime {
         status: SessionStatus,
         timeout: Duration,
     ) -> SessionRow {
+        // A caller's explicit timeout is a floor, not a ceiling: under a full parallel suite a
+        // runner can be scheduled late, and a fixed 10 s then fails for load rather than for a
+        // defect (PLAN M11 hardening). A genuinely stuck session still fails at the budget.
+        let timeout = timeout.max(wait_budget());
         let deadline = Instant::now() + timeout;
         loop {
             let row = self.session_row(session_id).await;

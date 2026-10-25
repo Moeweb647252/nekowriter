@@ -95,6 +95,12 @@ impl TestApp {
         handle
     }
 
+    /// Replaces the web service, so a test can point the guarded fetcher at a local stand-in
+    /// host (spec/07 §7, D-096).
+    pub fn set_web(&mut self, web: crate::web::WebService) {
+        self.state = self.state.clone().with_web(web);
+    }
+
     /// Removes the embedding model: search must fall back to keywords (spec/07 §5).
     pub fn without_embedder(&mut self) {
         let search = self.state.search().with_events(self.events.clone());
