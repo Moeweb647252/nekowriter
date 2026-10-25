@@ -1,0 +1,524 @@
+//! Conception service (spec/08 §5): the book's conception lifecycle.
+//!
+//! Creating a book with `start_conception` makes it `conceiving` and starts the session;
+//! `conception/start` returns the open session when there is one (D-047) and otherwise starts
+//! one; `conception/finalize` completes the session, activates the book, readies the draft
+//! research tasks, creates and attaches their scopes, and starts the `canon_seed` session when
+//! an archivist model exists; `canon/seed` is the idempotent entry point the overview offers
+//! later.
+
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, Set,
+};
+use serde_json::json;
+
+use crate::api::dto::books::BookDto;
+use crate::db::entities::{
+    agent_sessions, book_scopes, books, knowledge_scopes, research_tasks, setting_docs, tracks,
+};
+use crate::db::json::{
+    AgentRole, BookStatus, ConceptionState, SessionKind, SessionStatus, SettingDocKind,
+};
+use crate::error::{AppError, ErrorCode};
+use crate::events::{BookOp, ServerEvent};
+use crate::state::AppState;
+
+use super::sessions::{self, CreateSession};
+use super::{conflict, now};
+
+/// `POST /api/books` with `start_conception: true` (spec/08 §5 step 1): the book is created
+/// `conceiving` and its conception session starts when a conception model is configured.
+///
+/// The session needs the book's own transaction to have committed (its kickoff reads the book),
+/// so creation and the session start are two transactions; a book whose model appears later gets
+/// its session from `conception/start`.
+/// `POST /api/books` with `start_conception: true` (spec/08 §5 step 1): the book is created
+/// `conceiving` and its conception session starts when a conception model is configured.
+///
+/// The session needs the book's own transaction to have committed (its kickoff reads the book),
+/// so creation and the session start are two transactions; a book whose model appears later gets
+/// its session from `conception/start`.
+pub async fn start_for_new_book(
+    state: &AppState,
+    book_id: i32,
+) -> Result<(Option<i32>, Vec<String>), AppError> {
+    let mut warnings = Vec::new();
+    let conn = state.db().conn();
+    let book = books::Entity::find_by_id(book_id)
+        .one(conn)
+        .await?
+        .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
+    let session_id =
+        match super::sessions::try_resolve_model(conn, Some(&book), AgentRole::Conception).await? {
+            Some(_) => {
+                let (session_id, session_warnings) = start_session(state, book_id).await?;
+                warnings.extend(session_warnings);
+                Some(session_id)
+            }
+            None => {
+                // The book still exists and can be written by hand; the warning names the gap
+                // (D-046: creating a book without a conception model still succeeds).
+                warnings.push("model.missing_role".to_owned());
+                None
+            }
+        };
+    Ok((session_id, warnings))
+}
+
+/// `POST /api/books/:id/conception/start` (spec/08 §5): the open session, or a new one.
+pub async fn start(state: &AppState, book_id: i32) -> Result<(i32, Vec<String>), AppError> {
+    {
+        let db = state.db().clone();
+        super::write(&db, move |tx| {
+            Box::pin(async move {
+                let book = books::Entity::find_by_id(book_id)
+                    .one(tx)
+                    .await?
+                    .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
+                if book.status != BookStatus::Conceiving.as_str() {
+                    return Err(conflict(
+                        ErrorCode::BookInvalidState,
+                        "only a conceiving book can start conception",
+                        json!({ "status": book.status }),
+                    ));
+                }
+                Ok(())
+            })
+        })
+        .await?;
+    }
+    if let Some(open) = open_session(state.db().conn(), book_id).await? {
+        return Ok((open, Vec::new()));
+    }
+    start_session(state, book_id).await
+}
+
+/// Starts the book's conception session and records it in `ConceptionState.session_id`.
+async fn start_session(state: &AppState, book_id: i32) -> Result<(i32, Vec<String>), AppError> {
+    let (session_id, warnings) = sessions::create(
+        state,
+        CreateSession {
+            kind: SessionKind::Conception,
+            book_id: Some(book_id),
+            chapter_id: None,
+            research_task_id: None,
+            granularity: None,
+            auto_pause: None,
+            pause_after_outline: None,
+            redraft: false,
+            guidance: None,
+            kickoff_extra: None,
+            pending_comment: None,
+        },
+    )
+    .await?;
+    let db = state.db().clone();
+    let events = super::write(&db, move |tx| {
+        Box::pin(async move {
+            let book = books::Entity::find_by_id(book_id)
+                .one(tx)
+                .await?
+                .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
+            let mut conception: ConceptionState =
+                crate::db::json::from_json_or_default(&book.conception);
+            conception.session_id = Some(session_id);
+            books::ActiveModel {
+                id: Set(book_id),
+                conception: Set(crate::db::json::to_json(&conception)
+                    .map_err(|err| AppError::internal(err.to_string()))?),
+                updated_at: Set(now()),
+                ..Default::default()
+            }
+            .update(tx)
+            .await?;
+            Ok(Vec::<ServerEvent>::new())
+        })
+    })
+    .await?;
+    state.events().publish_all(events);
+    Ok((session_id, warnings))
+}
+
+/// The book's open conception session, when there is one (spec/02 §5 invariant 5).
+pub async fn open_session(
+    conn: &impl ConnectionTrait,
+    book_id: i32,
+) -> Result<Option<i32>, AppError> {
+    let row = agent_sessions::Entity::find()
+        .filter(agent_sessions::Column::BookId.eq(book_id))
+        .filter(agent_sessions::Column::Kind.eq(SessionKind::Conception.as_str()))
+        .filter(agent_sessions::Column::Status.is_in([
+            SessionStatus::Idle.as_str(),
+            SessionStatus::Running.as_str(),
+            SessionStatus::Held.as_str(),
+            SessionStatus::AwaitingInput.as_str(),
+            SessionStatus::Paused.as_str(),
+            SessionStatus::Stopped.as_str(),
+            SessionStatus::Failed.as_str(),
+            SessionStatus::Interrupted.as_str(),
+        ]))
+        .order_by_desc(agent_sessions::Column::Id)
+        .one(conn)
+        .await?;
+    Ok(row.map(|row| row.id))
+}
+
+/// The book's open `canon_seed` session, when there is one (spec/08 §5, D-047).
+pub async fn open_seed_session(
+    conn: &impl ConnectionTrait,
+    book_id: i32,
+) -> Result<Option<i32>, AppError> {
+    let row = agent_sessions::Entity::find()
+        .filter(agent_sessions::Column::BookId.eq(book_id))
+        .filter(agent_sessions::Column::Kind.eq(SessionKind::CanonSeed.as_str()))
+        .filter(agent_sessions::Column::Status.is_in([
+            SessionStatus::Idle.as_str(),
+            SessionStatus::Running.as_str(),
+            SessionStatus::Held.as_str(),
+            SessionStatus::AwaitingInput.as_str(),
+            SessionStatus::Paused.as_str(),
+            SessionStatus::Stopped.as_str(),
+            SessionStatus::Failed.as_str(),
+            SessionStatus::Interrupted.as_str(),
+        ]))
+        .order_by_desc(agent_sessions::Column::Id)
+        .one(conn)
+        .await?;
+    Ok(row.map(|row| row.id))
+}
+
+/// The configured model profile of a role for a book, without failing when there is none
+/// (`book.model_overrides[role]` → `app_settings["roles.defaults"][role]`, spec/03 §4 step 1).
+async fn resolve_role_model(
+    state: &AppState,
+    book_id: i32,
+    role: AgentRole,
+) -> Result<Option<i32>, AppError> {
+    let conn = state.db().conn();
+    let book = books::Entity::find_by_id(book_id)
+        .one(conn)
+        .await?
+        .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
+    super::sessions::try_resolve_model(conn, Some(&book), role).await
+}
+
+/// `POST /api/books/:id/conception/finalize` (spec/08 §5): one transaction plus a session start.
+pub async fn finalize(state: &AppState, book_id: i32) -> Result<FinalizeResponse, AppError> {
+    // 1. Preconditions need the materials as they are now; a running session is stopped first
+    //    (spec/08 §5 step 2), which needs its runner cancelled and awaited outside any
+    //    transaction (spec/03 §6).
+    let running = running_conception_session(state.db().conn(), book_id).await?;
+    if let Some(session_id) = running {
+        state
+            .manager()
+            .cancel(session_id, crate::agent::CancelReason::Stop);
+        state
+            .manager()
+            .wait_for(session_id, std::time::Duration::from_secs(10))
+            .await;
+    }
+
+    let warnings_state = state.clone();
+    let (book_dto, draft_ids, events) = {
+        let state_owned = state.clone();
+        let db = state.db().clone();
+        super::write(&db, move |tx| {
+            Box::pin(async move { finalize_inner(tx, &state_owned, book_id).await })
+        })
+        .await?
+    };
+    state.events().publish_all(events);
+
+    // 2. The seed session starts only when everything committed (its kickoff reads the finalized
+    //    book); the missing archivist is a warning, not a failure (D-046).
+    let mut warnings = Vec::new();
+    let mut seed_session_id = None;
+    match resolve_role_model(&warnings_state, book_id, AgentRole::Archivist).await? {
+        Some(_) => {
+            let (session_id, _) = seed_session(&warnings_state, book_id).await?;
+            seed_session_id = Some(session_id);
+        }
+        None => warnings.push("model.missing_role".to_owned()),
+    }
+    let _ = draft_ids;
+    Ok(FinalizeResponse {
+        book: book_dto,
+        seed_session_id,
+        warnings,
+    })
+}
+
+/// The finalize response (spec/10 §2.2).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct FinalizeResponse {
+    pub book: BookDto,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seed_session_id: Option<i32>,
+    pub warnings: Vec<String>,
+}
+
+/// The id of the book's running conception session, when there is one.
+async fn running_conception_session(
+    conn: &impl ConnectionTrait,
+    book_id: i32,
+) -> Result<Option<i32>, AppError> {
+    let row = agent_sessions::Entity::find()
+        .filter(agent_sessions::Column::BookId.eq(book_id))
+        .filter(agent_sessions::Column::Kind.eq(SessionKind::Conception.as_str()))
+        .filter(agent_sessions::Column::Status.eq(SessionStatus::Running.as_str()))
+        .order_by_desc(agent_sessions::Column::Id)
+        .one(conn)
+        .await?;
+    Ok(row.map(|row| row.id))
+}
+
+/// The in-transaction part of finalize (spec/08 §5 steps 1–4).
+async fn finalize_inner(
+    tx: &impl ConnectionTrait,
+    state: &AppState,
+    book_id: i32,
+) -> Result<(BookDto, Vec<i32>, Vec<ServerEvent>), AppError> {
+    let book = books::Entity::find_by_id(book_id)
+        .one(tx)
+        .await?
+        .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
+    if book.status != BookStatus::Conceiving.as_str() {
+        return Err(conflict(
+            ErrorCode::BookInvalidState,
+            "only a conceiving book can be finalized",
+            json!({ "status": book.status }),
+        ));
+    }
+
+    // `outline`, `world`, `protagonist` non-empty and ≥1 character design, else
+    // `conception.incomplete` with what is missing (spec/08 §5 step 1). Unapproved items are
+    // allowed: the UI confirms.
+    let docs = setting_docs::Entity::find()
+        .filter(setting_docs::Column::BookId.eq(book_id))
+        .all(tx)
+        .await?;
+    let empty_doc = |kind: SettingDocKind| {
+        docs.iter()
+            .find(|doc| doc.kind == kind.as_str())
+            .is_none_or(|doc| doc.content.trim().is_empty())
+    };
+    let characters = crate::db::entities::character_designs::Entity::find()
+        .filter(crate::db::entities::character_designs::Column::BookId.eq(book_id))
+        .one(tx)
+        .await?;
+    let mut missing = Vec::new();
+    for kind in [
+        SettingDocKind::Outline,
+        SettingDocKind::World,
+        SettingDocKind::Protagonist,
+    ] {
+        if empty_doc(kind) {
+            missing.push(kind.as_str().to_owned());
+        }
+    }
+    if characters.is_none() {
+        missing.push("characters".to_owned());
+    }
+    if !missing.is_empty() {
+        return Err(conflict(
+            ErrorCode::ConceptionIncomplete,
+            "the setting materials are not complete",
+            json!({ "missing": missing }),
+        ));
+    }
+
+    // The open conception session completes; a pending form is simply left unanswered
+    // (spec/08 §5 step 2).
+    let mut events = Vec::new();
+    let open = open_session(tx, book_id).await?;
+    if let Some(session_id) = open {
+        let row = agent_sessions::Entity::find_by_id(session_id)
+            .one(tx)
+            .await?
+            .ok_or_else(|| AppError::not_found(format!("session {session_id}")))?;
+        let mut transition = crate::agent::session::transition(
+            tx,
+            &row,
+            SessionStatus::Completed,
+            crate::agent::session::TransitionCause::Completed,
+        )
+        .await?;
+        events.append(&mut transition);
+    }
+
+    // The book activates and records the finalization (step 3).
+    let mut conception: ConceptionState = crate::db::json::from_json_or_default(&book.conception);
+    conception.finalized_at = Some(now());
+    conception.session_id = None;
+    let updated = books::ActiveModel {
+        id: Set(book_id),
+        status: Set(BookStatus::Active.as_str().to_owned()),
+        conception: Set(crate::db::json::to_json(&conception)
+            .map_err(|err| AppError::internal(err.to_string()))?),
+        updated_at: Set(now()),
+        ..Default::default()
+    }
+    .update(tx)
+    .await?;
+    events.push(ServerEvent::BookUpdated {
+        book_id,
+        op: BookOp::Update,
+    });
+
+    // Draft research tasks become ready; each distinct scope is found-or-created and attached
+    // (step 4). A new scope's description is its topics joined with ` / ` — model-written text
+    // and a language-neutral separator, so no wording is generated in code (D-054).
+    let drafts = research_tasks::Entity::find()
+        .filter(research_tasks::Column::BookId.eq(book_id))
+        .filter(research_tasks::Column::Status.eq("draft"))
+        .order_by_asc(research_tasks::Column::Id)
+        .all(tx)
+        .await?;
+    let mut scope_by_name = std::collections::BTreeMap::new();
+    for task in &drafts {
+        let scope_id = match scope_by_name.get(&task.scope_name) {
+            Some(id) => *id,
+            None => {
+                let id =
+                    find_or_create_scope(tx, state, book_id, &task.scope_name, &drafts).await?;
+                scope_by_name.insert(task.scope_name.clone(), id);
+                id
+            }
+        };
+        research_tasks::ActiveModel {
+            id: Set(task.id),
+            status: Set("ready".to_owned()),
+            scope_id: Set(Some(scope_id)),
+            updated_at: Set(now()),
+            ..Default::default()
+        }
+        .update(tx)
+        .await?;
+        events.push(ServerEvent::ResearchUpdated {
+            task: super::research::to_dto(task.clone()),
+        });
+    }
+
+    let book_dto = super::books::to_dto(&updated)?;
+    Ok((book_dto, Vec::new(), events))
+}
+
+/// Finds a scope by name or creates it attached to the book (spec/08 §5 step 4).
+async fn find_or_create_scope(
+    tx: &impl ConnectionTrait,
+    _state: &AppState,
+    book_id: i32,
+    name: &str,
+    drafts: &[research_tasks::Model],
+) -> Result<i32, AppError> {
+    if let Some(row) = knowledge_scopes::Entity::find()
+        .filter(knowledge_scopes::Column::Name.eq(name))
+        .one(tx)
+        .await?
+    {
+        attach_scope(tx, book_id, row.id).await?;
+        return Ok(row.id);
+    }
+    let topics: Vec<&str> = drafts
+        .iter()
+        .filter(|task| task.scope_name == name)
+        .map(|task| task.topic.as_str())
+        .collect();
+    let timestamp = now();
+    let created = knowledge_scopes::ActiveModel {
+        name: Set(name.to_owned()),
+        description: Set(topics.join(" / ")),
+        created_at: Set(timestamp),
+        updated_at: Set(timestamp),
+        ..Default::default()
+    }
+    .insert(tx)
+    .await
+    .map_err(AppError::from)?;
+    attach_scope(tx, book_id, created.id).await?;
+    Ok(created.id)
+}
+
+/// Adds the book ↔ scope link when it is missing (spec/07 §1).
+async fn attach_scope(
+    tx: &impl ConnectionTrait,
+    book_id: i32,
+    scope_id: i32,
+) -> Result<(), AppError> {
+    let exists = book_scopes::Entity::find()
+        .filter(book_scopes::Column::BookId.eq(book_id))
+        .filter(book_scopes::Column::ScopeId.eq(scope_id))
+        .one(tx)
+        .await?;
+    if exists.is_some() {
+        return Ok(());
+    }
+    book_scopes::ActiveModel {
+        book_id: Set(book_id),
+        scope_id: Set(scope_id),
+    }
+    .insert(tx)
+    .await
+    .map_err(AppError::from)?;
+    Ok(())
+}
+
+/// `POST /api/books/:id/canon/seed` (spec/08 §5): the open seed session, or a new one.
+pub async fn seed(state: &AppState, book_id: i32) -> Result<i32, AppError> {
+    {
+        let db = state.db().clone();
+        super::write(&db, move |tx| {
+            Box::pin(async move {
+                let book = books::Entity::find_by_id(book_id)
+                    .one(tx)
+                    .await?
+                    .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
+                if book.status != BookStatus::Active.as_str() {
+                    return Err(conflict(
+                        ErrorCode::BookInvalidState,
+                        "only an active book can seed canon",
+                        json!({ "status": book.status }),
+                    ));
+                }
+                Ok(())
+            })
+        })
+        .await?;
+    }
+    if let Some(open) = open_seed_session(state.db().conn(), book_id).await? {
+        return Ok(open);
+    }
+    let (session_id, _) = seed_session(state, book_id).await?;
+    Ok(session_id)
+}
+
+/// Starts the book's `canon_seed` session (spec/06 §7).
+async fn seed_session(state: &AppState, book_id: i32) -> Result<(i32, Vec<String>), AppError> {
+    sessions::create(
+        state,
+        CreateSession {
+            kind: SessionKind::CanonSeed,
+            book_id: Some(book_id),
+            chapter_id: None,
+            research_task_id: None,
+            granularity: None,
+            auto_pause: None,
+            pause_after_outline: None,
+            redraft: false,
+            guidance: None,
+            kickoff_extra: None,
+            pending_comment: None,
+        },
+    )
+    .await
+}
+
+/// True when a book still has a main track (used by the API layer's guards).
+pub async fn has_main_track(conn: &impl ConnectionTrait, book_id: i32) -> Result<bool, AppError> {
+    Ok(tracks::Entity::find()
+        .filter(tracks::Column::BookId.eq(book_id))
+        .filter(tracks::Column::Kind.eq("main"))
+        .one(conn)
+        .await?
+        .is_some())
+}

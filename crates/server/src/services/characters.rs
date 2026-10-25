@@ -50,6 +50,29 @@ pub async fn create_inner(
 ) -> Result<(CharacterDto, Vec<ServerEvent>), AppError> {
     super::books::get(tx, book_id).await?;
     super::setting_docs::ensure_editable(tx, book_id).await?;
+    create_unlocked(tx, book_id, ChangeActor::User, None, input).await
+}
+
+/// The agent path of [`create_inner`]: the conception session holds the lock while it writes, so
+/// the lock check is the author's only (spec/08 §1.4) and the change row says `actor: agent`.
+pub async fn create_from_agent(
+    tx: &impl ConnectionTrait,
+    book_id: i32,
+    session_id: i32,
+    input: CharacterInput,
+) -> Result<(CharacterDto, Vec<ServerEvent>), AppError> {
+    super::books::get(tx, book_id).await?;
+    create_unlocked(tx, book_id, ChangeActor::Agent, Some(session_id), input).await
+}
+
+/// The create body without the lock check, so the author and agent paths share it.
+async fn create_unlocked(
+    tx: &impl ConnectionTrait,
+    book_id: i32,
+    actor: ChangeActor,
+    session_id: Option<i32>,
+    input: CharacterInput,
+) -> Result<(CharacterDto, Vec<ServerEvent>), AppError> {
     let name = input.name.trim();
     if name.is_empty() {
         return Err(field_error("name", "a character needs a name"));
@@ -85,8 +108,8 @@ pub async fn create_inner(
             book_id,
             track_id: None,
             chapter_id: None,
-            session_id: None,
-            actor: ChangeActor::User,
+            session_id,
+            actor,
             target_type: ChangeTargetType::CharacterDesign,
             target_id: row.id,
             op: ChangeOp::Create,
@@ -132,6 +155,36 @@ pub async fn update_inner(
 ) -> Result<(CharacterDto, Vec<ServerEvent>), AppError> {
     let existing = load(tx, character_id).await?;
     super::setting_docs::ensure_editable(tx, existing.book_id).await?;
+    update_unlocked(tx, character_id, ChangeActor::User, None, patch).await
+}
+
+/// The agent path of [`update_inner`] (spec/08 §1.4: the running conception session holds the
+/// lock; its own writes must pass).
+pub async fn update_from_agent(
+    tx: &impl ConnectionTrait,
+    character_id: i32,
+    session_id: i32,
+    patch: CharacterPatch,
+) -> Result<(CharacterDto, Vec<ServerEvent>), AppError> {
+    update_unlocked(
+        tx,
+        character_id,
+        ChangeActor::Agent,
+        Some(session_id),
+        patch,
+    )
+    .await
+}
+
+/// The update body without the lock check, so the author and agent paths share it.
+async fn update_unlocked(
+    tx: &impl ConnectionTrait,
+    character_id: i32,
+    actor: ChangeActor,
+    session_id: Option<i32>,
+    patch: CharacterPatch,
+) -> Result<(CharacterDto, Vec<ServerEvent>), AppError> {
+    let existing = load(tx, character_id).await?;
     let before = super::change_log::character_snapshot(&existing);
 
     let mut active = character_designs::ActiveModel {
@@ -182,8 +235,8 @@ pub async fn update_inner(
             book_id: row.book_id,
             track_id: None,
             chapter_id: None,
-            session_id: None,
-            actor: ChangeActor::User,
+            session_id,
+            actor,
             target_type: ChangeTargetType::CharacterDesign,
             target_id: row.id,
             op: ChangeOp::Update,
@@ -226,6 +279,26 @@ pub async fn delete_inner(
 ) -> Result<Vec<ServerEvent>, AppError> {
     let existing = load(tx, character_id).await?;
     super::setting_docs::ensure_editable(tx, existing.book_id).await?;
+    delete_unlocked(tx, character_id, ChangeActor::User, None).await
+}
+
+/// The agent path of [`delete_inner`] (spec/08 §1.4).
+pub async fn delete_from_agent(
+    tx: &impl ConnectionTrait,
+    character_id: i32,
+    session_id: i32,
+) -> Result<Vec<ServerEvent>, AppError> {
+    delete_unlocked(tx, character_id, ChangeActor::Agent, Some(session_id)).await
+}
+
+/// The delete body without the lock check, so the author and agent paths share it.
+async fn delete_unlocked(
+    tx: &impl ConnectionTrait,
+    character_id: i32,
+    actor: ChangeActor,
+    session_id: Option<i32>,
+) -> Result<Vec<ServerEvent>, AppError> {
+    let existing = load(tx, character_id).await?;
     character_designs::Entity::delete_by_id(character_id)
         .exec(tx)
         .await?;
@@ -236,8 +309,8 @@ pub async fn delete_inner(
             book_id: existing.book_id,
             track_id: None,
             chapter_id: None,
-            session_id: None,
-            actor: ChangeActor::User,
+            session_id,
+            actor,
             target_type: ChangeTargetType::CharacterDesign,
             target_id: existing.id,
             op: ChangeOp::Delete,

@@ -94,12 +94,39 @@ pub struct BookPatch {
     pub status: Option<BookStatus>,
 }
 
-/// `POST /books` response (spec/10 §2.2). `session_id` arrives with the conception studio (M9).
+/// `POST /books` response (spec/10 §2.2). `session_id` is the conception session a
+/// `start_conception` book started (absent when no conception model was configured, in which
+/// case `warnings` carries `model.missing_role`).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
+#[serde(default)]
 pub struct CreateBookResponse {
     pub book: BookDto,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<i32>,
     pub warnings: Vec<String>,
+}
+
+impl Default for CreateBookResponse {
+    fn default() -> Self {
+        Self {
+            book: BookDto {
+                id: 0,
+                title: String::new(),
+                idea: String::new(),
+                genre: String::new(),
+                writing_language: String::new(),
+                status: BookStatus::Active,
+                settings: BookSettings::default(),
+                model_overrides: RoleModels::default(),
+                conception: ConceptionState::default(),
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            },
+            session_id: None,
+            warnings: Vec::new(),
+        }
+    }
 }
 
 /// `GET /books/:id/overview` (spec/08 §7). M1 fills `progress` and `recent_changes`; the next

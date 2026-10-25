@@ -3,7 +3,7 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::api::dto::books::{
     BookDto, BookInput, BookOverviewDto, BookPatch, BookSummaryDto, CreateBookResponse,
@@ -37,7 +37,7 @@ pub async fn create(
     State(state): State<AppState>,
     Json(input): Json<BookInput>,
 ) -> AppResult<(StatusCode, Json<CreateBookResponse>)> {
-    let response = service::create(state.db(), state.events(), input).await?;
+    let response = service::create(&state, input).await?;
     Ok((StatusCode::CREATED, Json(response)))
 }
 
@@ -73,4 +73,56 @@ pub async fn overview(
     Path(book_id): Path<i32>,
 ) -> AppResult<Json<BookOverviewDto>> {
     Ok(Json(service::overview(state.db().conn(), book_id).await?))
+}
+
+/// `POST /api/books/:id/conception/start` (spec/08 §5, spec/10 §2.2): the open session or a new
+/// one.
+pub async fn conception_start(
+    State(state): State<AppState>,
+    Path(book_id): Path<i32>,
+) -> AppResult<Json<ConceptionStartResponse>> {
+    let (session_id, warnings) = crate::services::conception::start(&state, book_id).await?;
+    Ok(Json(ConceptionStartResponse {
+        session_id,
+        warnings,
+    }))
+}
+
+/// `POST /api/books/:id/conception/finalize` (spec/08 §5, spec/10 §2.2).
+pub async fn conception_finalize(
+    State(state): State<AppState>,
+    Path(book_id): Path<i32>,
+) -> AppResult<Json<crate::services::conception::FinalizeResponse>> {
+    Ok(Json(
+        crate::services::conception::finalize(&state, book_id).await?,
+    ))
+}
+
+/// `POST /api/books/:id/canon/seed` (spec/08 §5, spec/10 §2.2): the open seed session or a new
+/// one.
+pub async fn canon_seed(
+    State(state): State<AppState>,
+    Path(book_id): Path<i32>,
+) -> AppResult<Json<CanonSeedResponse>> {
+    let session_id = crate::services::conception::seed(&state, book_id).await?;
+    Ok(Json(CanonSeedResponse {
+        session_id,
+        warnings: Vec::new(),
+    }))
+}
+
+/// `POST /books/:id/conception/start` response (spec/10 §2.2).
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export)]
+pub struct ConceptionStartResponse {
+    pub session_id: i32,
+    pub warnings: Vec<String>,
+}
+
+/// `POST /books/:id/canon/seed` response (spec/10 §2.2).
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export)]
+pub struct CanonSeedResponse {
+    pub session_id: i32,
+    pub warnings: Vec<String>,
 }

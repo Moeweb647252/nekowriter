@@ -233,6 +233,22 @@ pub(crate) async fn create_inner(
     .insert(tx)
     .await?;
 
+    // A research session points its task at itself, so `run` can refuse a second one and the task
+    // list can deep-link into the agent panel (spec/07 §8 step 1). The status half of this is set
+    // by the creation side effects above; the link needs the session id, so it happens here.
+    if input.kind == SessionKind::Research
+        && let Some(task_id) = input.research_task_id
+    {
+        research_tasks::ActiveModel {
+            id: Set(task_id),
+            session_id: Set(Some(session.id)),
+            updated_at: Set(now),
+            ..Default::default()
+        }
+        .update(tx)
+        .await?;
+    }
+
     // 4. Kickoff: the block list of the kind, persisted as `seq 0`, kind `kickoff`.
     let blocks = crate::agent::context::assemble_kickoff(
         tx,
@@ -299,6 +315,23 @@ fn kickoff_too_large(session: &agent_sessions::Model, kickoff: &agent_messages::
 
 fn is_cjk(ch: char) -> bool {
     matches!(ch as u32, 0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF)
+}
+
+/// `book.model_overrides[role]` → `app_settings["roles.defaults"][role]` (spec/03 §4 step 1),
+/// without failing when no model is configured (the conception flow probes this to decide
+/// between starting a session and warning instead, D-046).
+pub async fn try_resolve_model(
+    conn: &impl ConnectionTrait,
+    book: Option<&books::Model>,
+    role: AgentRole,
+) -> Result<Option<i32>, AppError> {
+    if let Some(book) = book {
+        let overrides: RoleModels = crate::db::json::from_json_or_default(&book.model_overrides);
+        if let Some(profile_id) = overrides.get(role) {
+            return Ok(Some(profile_id));
+        }
+    }
+    read_role_default(conn, role).await
 }
 
 /// `book.model_overrides[role]` → `app_settings["roles.defaults"][role]` (spec/03 §4 step 1).
@@ -1121,13 +1154,50 @@ async fn answer_inner(
     let prompts = state_prompts(state, &session).await?;
     // The answer becomes the call's result (spec/03 §6). `ask_user` and `request_review`
     // validate their payload in their handlers; M3 validates the envelope here.
-    let rendered = render_answer(&prompts, &call.name, &input.payload)?;
+    let rendered = render_answer(tx, &prompts, &session, &call, &input.payload).await?;
     let effects: crate::db::json::ToolEffects =
         crate::db::json::from_json_or_default(call.effects.as_deref().unwrap_or("{}"));
+    // This is the transaction that finalizes the call, so the full recorded `ToolEffects` apply
+    // here — the phase change with its acceptance notice, and the completion with its handler
+    // (spec/03 §5.4 has no exception for the answer path). The appendix order stays canonical:
+    // effect notice → edit report → feedback → inbox.
+    let mut answer_appendices: Vec<crate::db::json::Appendix> =
+        crate::db::json::from_json_or_default(&call.appendices);
+    if let (Some(phase), Some(notice_key)) = (effects.phase_to, phase_notice(&call.name)) {
+        let granularity = crate::agent::context::granularity_context(
+            &prompts,
+            session::granularity_of(&session),
+            phase,
+            &chapter_content_of(tx, session.chapter_id).await?,
+        );
+        if let Ok(rendered_notice) = prompts.render_value(
+            notice_key,
+            crate::prompts::template_value(&json!({
+                "granularity": granularity,
+            })),
+        ) {
+            answer_appendices.push(crate::db::json::Appendix {
+                kind: crate::db::json::AppendixKind::EffectNotice,
+                text: rendered_notice.text,
+                inbox_id: None,
+            });
+        }
+        if let Some(phase) = effects.phase_to {
+            agent_sessions::ActiveModel {
+                id: Set(session_id),
+                phase: Set(phase.as_str().to_owned()),
+                ..Default::default()
+            }
+            .update(tx)
+            .await?;
+        }
+    }
     agent_tool_calls::ActiveModel {
         id: Set(call.id),
         status: Set(ToolCallStatus::Done.as_str().to_owned()),
         raw_result_text: Set(Some(rendered)),
+        appendices: Set(crate::db::json::to_json(&answer_appendices)
+            .map_err(|err| AppError::internal(err.to_string()))?),
         effects: Set(Some(
             crate::db::json::to_json(&crate::db::json::ToolEffects::default())
                 .map_err(|err| AppError::internal(err.to_string()))?,
@@ -1157,30 +1227,82 @@ async fn answer_inner(
     Ok((events, dto))
 }
 
-/// Renders the answered call's result (spec/05 §7 templates).
-fn render_answer(
+/// Renders the answered call's result (spec/05 §7 templates), validating the payload against
+/// what the call recorded and applying the review bookkeeping first (spec/05 §7: approvals are
+/// recorded in `approved_revision` / `ConceptionState`).
+async fn render_answer(
+    tx: &sea_orm::DatabaseTransaction,
     prompts: &PromptSet,
-    tool: &str,
+    session: &agent_sessions::Model,
+    call: &agent_tool_calls::Model,
     payload: &serde_json::Value,
 ) -> Result<String, AppError> {
-    let key = match tool {
-        "ask_user" => "result.ask_user",
-        "request_review" => "result.request_review",
-        other => {
-            return Err(AppError::validation(format!(
-                "{other} does not accept an answer"
-            )));
+    match call.name.as_str() {
+        "ask_user" => {
+            let answers =
+                crate::agent::tools::conception::validate_ask_user_answer(&call.input, payload)
+                    .map_err(tool_answer_error)?;
+            prompts
+                .render_value(
+                    "result.ask_user",
+                    crate::prompts::template_value(&json!({ "answers": answers })),
+                )
+                .map(|rendered| rendered.text)
+                .map_err(|err| err.into_app_error())
         }
-    };
-    let mut context = payload.clone();
-    if let serde_json::Value::Object(map) = &mut context {
-        map.entry("general").or_insert(json!(""));
-        map.entry("all_approved").or_insert(json!(true));
+        "request_review" => {
+            let book_id = session
+                .book_id
+                .ok_or_else(|| AppError::internal("a conception session needs a book"))?;
+            let (items, general, all_approved) =
+                crate::agent::tools::conception::apply_request_review_answer(
+                    tx, prompts, book_id, payload,
+                )
+                .await?;
+            let items: Vec<serde_json::Value> = items
+                .iter()
+                .map(|item| {
+                    json!({
+                        "doc_label": item.doc_label,
+                        "approved": item.approved,
+                        "feedback": item.feedback,
+                    })
+                })
+                .collect();
+            prompts
+                .render_value(
+                    "result.request_review",
+                    crate::prompts::template_value(&json!({
+                        "items": items,
+                        "general": general,
+                        "all_approved": all_approved,
+                    })),
+                )
+                .map(|rendered| rendered.text)
+                .map_err(|err| err.into_app_error())
+        }
+        other => Err(AppError::validation(format!(
+            "{other} does not accept an answer"
+        ))),
     }
-    prompts
-        .render_value(key, crate::prompts::template_value(&context))
-        .map(|rendered| rendered.text)
-        .map_err(|err| err.into_app_error())
+}
+
+/// Maps an answer-validation [`ToolError`](crate::agent::tools::ToolError) to a `validation`
+/// HTTP error whose `details.errors` carries the same lines the model would have seen.
+fn tool_answer_error(error: crate::agent::tools::ToolError) -> AppError {
+    let errors: Vec<String> = error
+        .fields
+        .get("errors")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    AppError::validation("the answer does not match what the call asked")
+        .with_details(json!({ "errors": errors }))
 }
 
 /// `PATCH /api/sessions/:id` (spec/03 §6, §8): the writer switches.
@@ -1597,6 +1719,20 @@ async fn insert_inbox(
     }
     .insert(tx)
     .await?)
+}
+
+/// The chapter's stored content of a session, empty without one (for the granularity contexts).
+async fn chapter_content_of(
+    conn: &impl sea_orm::ConnectionTrait,
+    chapter_id: Option<i32>,
+) -> Result<crate::db::json::ChapterContent, AppError> {
+    let Some(chapter_id) = chapter_id else {
+        return Ok(crate::db::json::ChapterContent::default());
+    };
+    let Some(chapter) = chapters::Entity::find_by_id(chapter_id).one(conn).await? else {
+        return Ok(crate::db::json::ChapterContent::default());
+    };
+    Ok(crate::db::json::from_json_or_default(&chapter.content))
 }
 
 /// The tail state and last pid of a session's chapter, for the granularity contexts

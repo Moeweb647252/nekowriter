@@ -15,6 +15,7 @@ pub mod knowledge;
 pub mod prompts;
 pub mod proposals;
 pub mod providers;
+pub mod research;
 pub mod reviews;
 pub mod search_settings;
 pub mod sessions;
@@ -50,6 +51,15 @@ pub fn build_app(state: AppState) -> Router {
             get(books::get).patch(books::patch).delete(books::delete),
         )
         .route("/books/{book_id}/overview", get(books::overview))
+        .route(
+            "/books/{book_id}/conception/start",
+            post(books::conception_start),
+        )
+        .route(
+            "/books/{book_id}/conception/finalize",
+            post(books::conception_finalize),
+        )
+        .route("/books/{book_id}/canon/seed", post(books::canon_seed))
         .route(
             "/books/{book_id}/tracks",
             get(tracks::list).post(tracks::create),
@@ -227,6 +237,17 @@ pub fn build_app(state: AppState) -> Router {
                 .delete(knowledge::delete_entry),
         )
         .route("/knowledge/search", get(knowledge::search))
+        .route(
+            "/research-tasks",
+            get(research::list).post(research::create),
+        )
+        .route(
+            "/research-tasks/{task_id}",
+            get(research::get)
+                .patch(research::patch)
+                .delete(research::delete),
+        )
+        .route("/research-tasks/{task_id}/run", post(research::run))
         .route(
             "/books/{book_id}/scopes",
             get(knowledge::list_book_scopes).put(knowledge::put_book_scopes),

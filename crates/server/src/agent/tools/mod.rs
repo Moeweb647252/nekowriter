@@ -7,8 +7,10 @@
 //! rendered from `prompts/results.toml` — code never writes model-facing text.
 
 pub mod archivist;
+pub mod conception;
 pub mod proposals;
 pub mod registry;
+pub mod research;
 pub mod resolve;
 pub mod retrieval;
 pub mod reviewer;
@@ -490,6 +492,127 @@ mod tests {
         assert_eq!(unique.len(), codes.len(), "codes must be unique");
         assert!(codes.contains(&"after_completion"));
         assert!(codes.contains(&"refusal"));
+    }
+
+    /// Every `ToolErrorKind` must render a **non-empty** model-facing text.
+    ///
+    /// The renderer is strict (`UndefinedBehavior::Strict`): a branch that reaches a variable its
+    /// fields do not carry throws, and [`ToolOutcome::error`] then returns `String::new()` — an
+    /// error the model cannot read, with `is_error = true` and no explanation. This test would have
+    /// caught that class (a tool passing `entry_id` where the branch reads `title`), so it renders
+    /// every kind with representative fields and asserts the branch's own wording appears.
+    #[test]
+    fn every_tool_error_renders_a_non_empty_text() {
+        let prompts = prompts();
+        // One representative error per kind, with the fields that kind's branch reads.
+        let cases: Vec<ToolError> = vec![
+            ToolError::new(ToolErrorKind::InvalidJson).with("raw", "{\"title\": "),
+            ToolError::new(ToolErrorKind::Validation)
+                .with("errors", vec!["title must not be empty".to_owned()]),
+            ToolError::new(ToolErrorKind::EntityNotFound)
+                .with("query", "林昭")
+                .with("suggestions", Vec::<Value>::new()),
+            ToolError::new(ToolErrorKind::EntityAmbiguous)
+                .with("query", "林")
+                .with("candidates", Vec::<Value>::new()),
+            // `entity_exists` reads name + id (the branch does not use `query`).
+            ToolError::new(ToolErrorKind::EntityExists)
+                .with("name", "林昭")
+                .with("id", 1),
+            // `pid_not_found` branches on `tool` to word its hint.
+            ToolError::new(ToolErrorKind::PidNotFound)
+                .with("pids", vec!["p1".to_owned()])
+                .with("tool", "read_draft"),
+            ToolError::new(ToolErrorKind::TextNotFound)
+                .with("pid", "p1")
+                .with("text", "abc"),
+            ToolError::new(ToolErrorKind::TextAmbiguous)
+                .with("pid", "p1")
+                .with("count", 2),
+            // `granularity` reads mode_label, mode, reason, tool, length and limit.
+            ToolError::new(ToolErrorKind::Granularity)
+                .with("mode_label", "段落")
+                .with("mode", "paragraph")
+                .with("reason", "too_long")
+                .with("tool", "insert_text")
+                .with("length", 500)
+                .with("limit", 300),
+            ToolError::new(ToolErrorKind::DraftEmpty),
+            ToolError::new(ToolErrorKind::IsolatedReadonly).with("target", "林昭"),
+            ToolError::new(ToolErrorKind::ChapterNotFound).with("query", "12"),
+            ToolError::new(ToolErrorKind::ChapterNotOfficial).with("label", "第12章"),
+            ToolError::new(ToolErrorKind::NoKnowledgeScope),
+            ToolError::new(ToolErrorKind::ScopeNotFound)
+                .with("name", "宋代社会")
+                .with("available", vec!["背景设定".to_owned()]),
+            ToolError::new(ToolErrorKind::NotFound)
+                .with("what_label", "知识条目")
+                .with("id", 7),
+            ToolError::new(ToolErrorKind::EntryExists)
+                .with("title", "宋代茶馆")
+                .with("id", 7),
+            ToolError::new(ToolErrorKind::FindFailed)
+                .with("doc_label", "知识条目")
+                .with("find", "约三百家")
+                .with("count", 2),
+            ToolError::new(ToolErrorKind::MaintenanceIncomplete)
+                .with("missing", vec!["summary".to_owned()]),
+            ToolError::new(ToolErrorKind::SearchNotConfigured),
+            ToolError::new(ToolErrorKind::SearchFailed).with("reason", "timeout"),
+            ToolError::new(ToolErrorKind::FetchFailed)
+                .with("reason", "blocked")
+                .with("url", "http://127.0.0.1/"),
+            ToolError::new(ToolErrorKind::UnsupportedContentType)
+                .with("content_type", "application/pdf")
+                .with("url", "https://example.com/a.pdf"),
+            ToolError::new(ToolErrorKind::CharacterNotFound).with("name", "林昭"),
+            ToolError::new(ToolErrorKind::CharacterExists).with("name", "林昭"),
+            ToolError::new(ToolErrorKind::ReorderMismatch)
+                .with("expected", vec!["林昭".to_owned(), "沈砚".to_owned()]),
+            ToolError::new(ToolErrorKind::RelationNotFound)
+                .with("source", "甲")
+                .with("target", "乙")
+                .with("kind", "ally"),
+            ToolError::new(ToolErrorKind::SeedOnly)
+                .with("tool", "update_entity")
+                .with("field", "summary"),
+            ToolError::new(ToolErrorKind::ExactlyOne).with("fields", vec!["name", "id"]),
+            ToolError::new(ToolErrorKind::MutuallyExclusive)
+                .with("fields", vec!["content", "edits"]),
+            ToolError::tool_not_allowed(
+                "write_chapter",
+                "正文阶段".to_owned(),
+                vec!["read_chapter".to_owned()],
+            ),
+            ToolError::new(ToolErrorKind::OutputTruncated),
+            ToolError::new(ToolErrorKind::AfterCompletion),
+            ToolError::new(ToolErrorKind::Refusal),
+            ToolError::new(ToolErrorKind::Internal),
+        ];
+        for case in cases {
+            let outcome = ToolOutcome::error(&prompts, &case);
+            assert!(outcome.is_error, "{} must be an error", case.kind.code());
+            assert!(
+                !outcome.text.trim().is_empty(),
+                "{} rendered an EMPTY text: its fields do not match the result.error branch",
+                case.kind.code()
+            );
+            assert!(
+                !outcome.text.contains("{{"),
+                "{} left a template placeholder: {}",
+                case.kind.code(),
+                outcome.text
+            );
+            // The fallback text is the internal-error branch's; only `internal` may use it.
+            if case.kind != ToolErrorKind::Internal {
+                assert!(
+                    !outcome.text.contains("内部错误"),
+                    "{} fell through to the internal-error text: {}",
+                    case.kind.code(),
+                    outcome.text
+                );
+            }
+        }
     }
 
     fn prompts() -> PromptSet {

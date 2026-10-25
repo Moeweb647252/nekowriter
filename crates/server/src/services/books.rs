@@ -26,18 +26,26 @@ use super::{conflict, json, now, parse_json};
 /// The three setting documents every book has (spec/02 §5 invariant 2).
 pub const SETTING_DOC_KINDS: [&str; 3] = ["outline", "world", "protagonist"];
 
-/// `POST /api/books` (spec/08 §5). The book starts `active`; the conception studio arrives in M9,
-/// so `start_conception` currently only produces a warning.
+/// `POST /api/books` (spec/08 §5). `start_conception` makes the book `conceiving` and starts
+/// its conception session (when a conception model is configured; the response's `session_id`
+/// and any `model.missing_role` warning come from the conception service, which needs this
+/// transaction committed first).
 pub async fn create(
-    db: &crate::db::Db,
-    events: &crate::events::EventBus,
+    state: &crate::state::AppState,
     input: crate::api::dto::books::BookInput,
 ) -> Result<CreateBookResponse, AppError> {
-    let (response, published) = super::write(db, move |tx| {
+    let db = state.db().clone();
+    let (mut response, published) = super::write(&db, move |tx| {
         Box::pin(async move { create_inner(tx, input).await })
     })
     .await?;
-    events.publish_all(published);
+    state.events().publish_all(published);
+    if response.book.status == BookStatus::Conceiving {
+        let (session_id, warnings) =
+            super::conception::start_for_new_book(state, response.book.id).await?;
+        response.session_id = session_id;
+        response.warnings.extend(warnings);
+    }
     Ok(response)
 }
 
@@ -61,13 +69,17 @@ pub async fn create_inner(
 
     let settings = app_settings::book_defaults(tx).await?;
     let timestamp = now();
+    let status = if input.start_conception {
+        BookStatus::Conceiving
+    } else {
+        BookStatus::Active
+    };
     let model = books::ActiveModel {
         title: Set(title.to_owned()),
         idea: Set(input.idea.trim().to_owned()),
         genre: Set(input.genre.trim().to_owned()),
         writing_language: Set(language.to_owned()),
-        // M9 turns `start_conception` into a conceiving book plus a session.
-        status: Set(BookStatus::Active.as_str().to_owned()),
+        status: Set(status.as_str().to_owned()),
         settings: Set(json(&settings)?),
         model_overrides: Set(json(&RoleModels::default())?),
         conception: Set(json(&ConceptionState::default())?),
@@ -108,16 +120,15 @@ pub async fn create_inner(
         setting_docs::Entity::insert(doc).exec(tx).await?;
     }
 
+    // A book with conception starts `conceiving` and gets its session after this transaction
+    // commits; without it, the book starts `active` with empty materials the author writes
+    // (spec/08 §5).
     let dto = to_dto(&book)?;
-    let mut warnings = Vec::new();
-    if input.start_conception {
-        // M9 implements the studio; the book exists and can be written by hand meanwhile.
-        warnings.push("conception.unavailable".to_owned());
-    }
     Ok((
         CreateBookResponse {
             book: dto,
-            warnings,
+            session_id: None,
+            warnings: Vec::new(),
         },
         vec![ServerEvent::BookUpdated {
             book_id: book.id,

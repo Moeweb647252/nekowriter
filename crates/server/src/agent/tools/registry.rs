@@ -285,6 +285,14 @@ impl ToolRegistry {
         for handler in super::web::all() {
             handlers.insert(handler.name().to_owned(), handler);
         }
+        // The researcher's write tools (spec/05 §8): target-scope only.
+        for handler in super::research::all() {
+            handlers.insert(handler.name().to_owned(), handler);
+        }
+        // The conception tools of M9 (spec/05 §7).
+        for handler in super::conception::all() {
+            handlers.insert(handler.name().to_owned(), handler);
+        }
         for handler in super::test_tools::all() {
             handlers.insert(handler.name().to_owned(), handler);
         }
