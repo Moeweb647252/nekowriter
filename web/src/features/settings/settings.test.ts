@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest"
 
 import { parseHeaders } from "@/features/settings/ProvidersPage"
+import { SETTINGS_SECTION_KEYS, settingsSection } from "@/features/settings/SettingsPage"
 import { groupPrompts } from "@/features/prompts/PromptEditor"
 import enPrompts from "@/i18n/locales/en/prompts.json"
 import zhPrompts from "@/i18n/locales/zh-CN/prompts.json"
@@ -40,6 +41,44 @@ describe("provider form", () => {
   it("rejects a line without a name or a colon", () => {
     expect(parseHeaders("nocolon")).toBeNull()
     expect(parseHeaders(": value")).toBeNull()
+  })
+})
+
+describe("settings section from the URL", () => {
+  // The highlight used to come from `useParams()`, but the settings children are static paths
+  // (`app/router.tsx`), so there is no `:section` param: the sidebar stayed on Providers while the
+  // body changed. The active section is derived from the pathname instead.
+  it("maps every section the sidebar lists to its own URL", () => {
+    for (const key of SETTINGS_SECTION_KEYS) {
+      expect(settingsSection(`/settings/${key}`), `/settings/${key}`).toBe(key)
+    }
+  })
+
+  it("agrees with the index route: /settings renders providers", () => {
+    expect(settingsSection("/settings")).toBe("providers")
+    expect(settingsSection("/settings/")).toBe("providers")
+  })
+
+  it("falls back to providers for a segment no route declares", () => {
+    expect(settingsSection("/settings/nope")).toBe("providers")
+    // The function is total: a path outside `/settings` never names a section, even when its
+    // second segment happens to look like one.
+    expect(settingsSection("/elsewhere/models")).toBe("providers")
+  })
+
+  it("ignores a trailing slash", () => {
+    expect(settingsSection("/settings/models/")).toBe("models")
+  })
+
+  it("keeps the first known segment of a deeper path", () => {
+    expect(settingsSection("/settings/models/extra")).toBe("models")
+  })
+
+  it("handles every key in SETTINGS_SECTION_KEYS", () => {
+    // A section added to the sidebar without a mapping must fail here instead of silently
+    // highlighting Providers (the original bug).
+    const handled = SETTINGS_SECTION_KEYS.every((key) => settingsSection(`/settings/${key}`) === key)
+    expect(handled).toBe(true)
   })
 })
 
