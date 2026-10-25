@@ -968,7 +968,7 @@ pub async fn continue_session(
     // runner is exiting on its own after committing the terminal status, and `spawn` treats any
     // live handle as an active runner (its no-op guard). Without this wait, a Continue that lands
     // between the terminal commit and the runner's exit loses its spawn and leaves the session
-    // `running` with no runner (spec/03 §14, D-100). Continue only admits `stopped`, `failed` and
+    // `running` with no runner (spec/03 §14, D-101). Continue only admits `stopped`, `failed` and
     // `interrupted`, so there is no parked-runner case (held/paused are `resume`'s statuses).
     state
         .manager()
