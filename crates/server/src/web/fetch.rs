@@ -433,6 +433,11 @@ impl Fetcher {
     }
 
     /// Reads the body up to [`BODY_CAP`] and aborts beyond it (spec/07 §7 step 3).
+    ///
+    /// The cap is applied to the **stream**, chunk by chunk, before a chunk is retained: the body is
+    /// never buffered in full and then measured, which would make a 5 MB "cap" no cap at all
+    /// against a server that sends more. The first chunk that would cross the limit ends the read
+    /// and drops the connection, so at most [`BODY_CAP`] bytes are ever held in memory.
     async fn read_body(
         &self,
         response: reqwest::Response,
@@ -442,13 +447,23 @@ impl Fetcher {
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|error| FetchError::failed(classify(&error), raw_url))?;
-            if body.len() + chunk.len() > BODY_CAP {
-                return Err(FetchError::failed(FetchFailure::TooLarge, raw_url));
-            }
+            check_cap(body.len(), chunk.len())
+                .map_err(|reason| FetchError::failed(reason, raw_url))?;
             body.extend_from_slice(&chunk);
         }
         Ok(body)
     }
+}
+
+/// Decides whether a chunk may be retained (spec/07 §7 step 3).
+///
+/// Pure so the streaming invariant can be tested without a socket: `retained + incoming` must stay
+/// within [`BODY_CAP`], so the buffer never grows past the cap.
+fn check_cap(retained: usize, incoming: usize) -> Result<(), FetchFailure> {
+    if retained.saturating_add(incoming) > BODY_CAP {
+        return Err(FetchFailure::TooLarge);
+    }
+    Ok(())
 }
 
 /// A failed `web_fetch` (spec/07 §7 steps 4 and 9).
@@ -1023,6 +1038,30 @@ mod tests {
     fn blank_lines_collapse_and_trailing_spaces_go() {
         let text = "a  \n\n\n\nb\n\n\n";
         assert_eq!(collapse_blank_lines(text), "a\n\nb");
+    }
+
+    #[test]
+    fn the_body_cap_is_enforced_per_streamed_chunk() {
+        // The cap is checked before a chunk is retained, so a server that streams more than the cap
+        // is cut off mid-stream: the retained size never exceeds the limit.
+        let chunk = 64 * 1024;
+        let mut retained = 0usize;
+        let mut chunks = 0usize;
+        while check_cap(retained, chunk).is_ok() {
+            retained += chunk;
+            chunks += 1;
+            assert!(chunks < BODY_CAP, "the cap must stop the read");
+        }
+        assert!(retained <= BODY_CAP, "the buffer never exceeds the cap");
+        assert_eq!(retained, BODY_CAP / chunk * chunk);
+        // Exactly at the cap is still allowed; one byte more is not.
+        assert_eq!(check_cap(BODY_CAP, 0), Ok(()));
+        assert_eq!(check_cap(BODY_CAP - 1, 1), Ok(()));
+        assert_eq!(check_cap(BODY_CAP, 1), Err(FetchFailure::TooLarge));
+        // A single chunk larger than the cap is refused without ever being retained.
+        assert_eq!(check_cap(0, BODY_CAP + 1), Err(FetchFailure::TooLarge));
+        // The arithmetic saturates instead of overflowing on a hostile length.
+        assert_eq!(check_cap(usize::MAX, 1), Err(FetchFailure::TooLarge));
     }
 
     #[test]

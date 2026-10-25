@@ -390,6 +390,22 @@ async fn up_to_five_redirects_are_followed() {
 // ───────────────────────────── limits and content types ─────────────────────────────
 
 #[tokio::test]
+async fn a_body_exactly_at_the_cap_is_accepted() {
+    // The boundary, on the real streamed read: exactly 5 MB passes, one byte more does not (the
+    // next test). This is what proves the cap is applied while reading rather than after the fact
+    // with an off-by-one.
+    let site = Site::new().await;
+    site.mount(ResponseTemplate::new(200).set_body_raw("y".repeat(BODY_CAP), "text/plain"))
+        .await;
+    let document = site
+        .fetcher
+        .fetch(&site.url("/at-cap"))
+        .await
+        .expect("exactly the cap is allowed");
+    assert_eq!(document.markdown.chars().count(), BODY_CAP);
+}
+
+#[tokio::test]
 async fn a_body_over_five_megabytes_is_refused() {
     let site = Site::new().await;
     let chunk = "x".repeat(BODY_CAP + 1024);
