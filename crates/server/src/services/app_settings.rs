@@ -86,6 +86,9 @@ pub async fn update(
                 Some(base_url.clone())
             };
         }
+        if let Some(fetch_via) = patch_search.fetch_via {
+            search.fetch_via = fetch_via;
+        }
         if let Some(max_results) = patch_search.max_results {
             search.max_results = max_results;
         }

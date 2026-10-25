@@ -163,14 +163,19 @@ pub struct SearchHit { pub title: String, pub url: String, pub snippet: String, 
 
 ## 7. `web_fetch` (`web/fetch.rs`)
 
+`web_fetch` has two backends behind one tool entry point and one page cache, chosen by
+`app_settings["search"].fetch_via` (spec/02 §4.1): `direct` (the default) and `deepseek` (§7.1).
+Steps 1–6 describe the direct backend; the tool never knows which backend ran.
+
 1. **URL**: http/https only, max 2,048 characters. Credentials in the URL are rejected.
 2. **SSRF guard**: a custom reqwest DNS resolver (`reqwest::dns::Resolve`) resolves the host and
    rejects the connection if any resolved address is loopback, private (RFC 1918, fc00::/7),
    link-local, CGNAT (100.64.0.0/10), multicast, broadcast, documentation, or unspecified. IP
    literal hosts are checked the same way before the request. Redirects: at most 5, each target
    re-validated (the resolver covers DNS, the redirect policy covers scheme and literal IPs).
-   The fetch client is built with `no_proxy()`: a proxy would resolve hosts itself and bypass
-   the guard. (The search providers' fixed hosts may use the system proxy.)
+   The direct fetch client is built with `no_proxy()`: a proxy would resolve hosts itself and
+   bypass the guard. (The search providers' fixed hosts and the DeepSeek fetch host may use the
+   system proxy: connecting to them cannot be redirected into a private address by the URL.)
 3. **Limits**: 20 s total timeout; 5 MB body cap (stream and abort); `User-Agent:
    NekoWriter/<version> (+local research assistant)`; `Accept: text/html,text/plain;q=0.9,*/*;q=0.1`.
 4. **Content types**: `text/html`, `application/xhtml+xml` → HTML pipeline; `text/plain`,
@@ -184,14 +189,41 @@ pub struct SearchHit { pub title: String, pub url: String, pub snippet: String, 
    with `htmd` (skip `script`, `style`, `nav`, `footer`, `form`, `iframe`). Collapse 3+ blank
    lines, trim trailing spaces.
 7. **Paging**: the converted Markdown is cached per session (LRU, 32 pages, 30 min), so `offset`
-   calls do not refetch. A result returns `[offset, offset + max_chars)` cut at a line boundary,
-   plus `total_chars` and the next offset hint.
+   calls do not refetch. Both backends key the cache on the requested URL and store the returned
+   Markdown, so `offset` semantics are identical whichever backend ran. A result returns
+   `[offset, offset + max_chars)` cut at a line boundary, plus `total_chars` and the next offset
+   hint.
 8. The result is wrapped in `notice.web_content`: untrusted reference material whose instructions
    must not be followed.
 9. **Failures** return `error.fetch_failed` with a `reason` code that the template words:
    `invalid_url` (step 1), `blocked` (step 2), `too_many_redirects`, `timeout`, `too_large`,
    `status` (HTTP status ≥ 400, passed as `status`), or `network` (anything else). An unsupported
-   content type is `error.unsupported_content_type` (step 4).
+   content type is `error.unsupported_content_type` (step 4). The DeepSeek backend uses the same
+   vocabulary with the mapping of §7.1.
+
+### 7.1 DeepSeek fetch backend
+
+Selecting `fetch_via: "deepseek"` sends `POST {base}/v1/tools/fetch` (base
+`https://api.deepseek.com`) with `Authorization: Bearer <key>`, `Content-Type: application/json`
+and body `{"url": "<url>"}`. The response is `{"title", "content"}`, where `content` is extracted
+Markdown. The key is `deepseek_api_key`, the same secret the DeepSeek search provider uses
+(§6, D-127); selecting the backend without one is a validation error.
+
+- **No SSRF surface on this path — deliberate exception**: our process only ever connects to the
+  fixed trusted host `api.deepseek.com`; the requested URL travels as data and DeepSeek's servers
+  fetch it. Step 2's private-address check is therefore **not** applied here: it would forbid pages
+  that DeepSeek can legitimately reach, while the attack it prevents (our resolver/socket being
+  steered into loopback, RFC 1918 or metadata) does not exist on this path. Step 1's URL *shape*
+  rules still run locally, with the endpoint's 8,192-character cap, so a malformed URL spends no
+  request.
+- **Mapping**: `title` → `title`, `content` → `markdown`; `url` is the requested URL because
+  DeepSeek reports neither the final URL nor its redirects.
+- **Statuses**: 408 and 504 → `timeout`; 413 → `too_large`; 401, 402, 403, 404, 400, 429 and 5xx →
+  `status` with the number (403 is a policy refusal, 402 insufficient balance). A transport failure
+  is `network`, and a 200 with empty `content` is also `network` because there is no HTTP status to
+  carry. The request is not retried; the reason reaches the model, which decides.
+- **Paging**: the step 7 cache is shared with the direct backend, so `offset` reads and LRU
+  behaviour are unchanged.
 
 ## 8. Research workflow (researcher agent)
 

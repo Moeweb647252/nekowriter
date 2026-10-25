@@ -32,6 +32,9 @@ pub struct SearchSettingsDto {
     pub deepseek_api_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub searxng_base_url: Option<String>,
+    /// Which backend `web_fetch` uses; `direct` unless the author selects DeepSeek.
+    #[serde(default)]
+    pub fetch_via: FetchVia,
     pub max_results: i32,
 }
 
@@ -42,6 +45,7 @@ impl Default for SearchSettingsDto {
             tavily_api_key: None,
             deepseek_api_key: None,
             searxng_base_url: None,
+            fetch_via: FetchVia::Direct,
             max_results: 6,
         }
     }
@@ -57,6 +61,19 @@ pub enum SearchProvider {
     Tavily,
     Deepseek,
     Searxng,
+}
+
+/// The `web_fetch` backend (spec/02 §4.1, spec/07 §7, D-128).
+///
+/// Separate from [`SearchProvider`]: the search and fetch backends are independent choices, so a
+/// user may search with Tavily and fetch with DeepSeek.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum FetchVia {
+    #[default]
+    Direct,
+    Deepseek,
 }
 
 /// `app_settings["embedding"]` (spec/02 §4.1).
@@ -107,6 +124,8 @@ pub struct SearchSettingsPatch {
     pub deepseek_api_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub searxng_base_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fetch_via: Option<FetchVia>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_results: Option<i32>,
 }

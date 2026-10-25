@@ -1650,3 +1650,59 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   Fail-before was real: before the implementation the provider tests did not compile (13 errors for
   the missing variant, config fields, constant and seam) and the Vitest case failed on a missing
   `option` named DeepSeek (Radix also needed jsdom pointer-capture stubs).
+
+### D-128 `web_fetch` gains a DeepSeek backend; the guarded direct fetcher stays the default
+- **Context**: after D-127 shipped DeepSeek search, the author explicitly asked for DeepSeek Fetch
+  too. D-127's scope note ("search only") therefore no longer describes the product and is
+  superseded here, while its search design stands. The direct fetcher (spec/07 §7) is free, local,
+  and produces our own Readability+htmd extraction, but it cannot extract every page; a remote
+  extractor is a useful fallback for those.
+- **Corrected SSRF analysis**: an earlier review statement said routing fetch through DeepSeek
+  "would remove the SSRF guards". That was imprecise and is not the reason for any choice here.
+  With DeepSeek Fetch our server only ever opens a connection to the **fixed trusted host
+  `api.deepseek.com`**; the target URL is a JSON field fetched by DeepSeek's network. The SSRF
+  attack surface — our resolver/socket being steered into loopback, RFC 1918, link-local or cloud
+  metadata — **does not exist on that path**, because our process never resolves or connects to the
+  user-supplied host. The private-address check is therefore deliberately **not** applied to the
+  DeepSeek backend: applying it would only forbid pages DeepSeek can legitimately reach. The
+  exception is scoped by construction (only `DeepseekFetcher` skips it); the direct `Fetcher` keeps
+  every step-2 check unchanged, and
+  `the_private_address_exception_is_scoped_to_the_deepseek_backend` pins both halves — the direct
+  backend still refuses `http://127.0.0.1/` while the DeepSeek backend sends that URL as data.
+- **What is actually traded**: extraction control (their extractor instead of Readability+htmd),
+  the fetch vantage point (their network location, not ours), and money (5 CNY per 1,000
+  successful fetches; Search and Fetch are billed separately). URL *shape* validation is still
+  ours: http/https, a host, no userinfo, and ≤8,192 characters — checked locally so a malformed URL
+  spends no request. The endpoint's lowercase/uppercase request is the only traffic on this path.
+- **Decision**: `app_settings["search"]` gains `fetch_via: "direct" | "deepseek"` (default
+  `"direct"`), **separate from `provider`** because search and fetch are independent choices (a user
+  may search with Tavily and fetch with DeepSeek). `fetch_via: "deepseek"` requires
+  `deepseek_api_key` (the D-127 secret) and is otherwise rejected with a 400 field error naming
+  `search.fetch_via`. Internally `FetchBackend` selects between the existing `Fetcher` and a new
+  `DeepseekFetcher`; `WebService::fetch_document` is the single entry point and applies the shared
+  `PageCache`, so the tool never branches on the backend.
+- **DeepSeek fetch mapping**: `POST {base}/v1/tools/fetch`, bearer key, body `{"url"}`; response
+  `{title, content}` → `FetchedDocument { title, markdown: content }`. `url` is the **requested**
+  URL: DeepSeek reports neither the final URL nor redirects. Status mapping: 408/504 → `timeout`,
+  413 → `too_large`, 401/402/403/404/400/429/5xx → `status` with the number (so 403 = policy refusal
+  and 402 = insufficient balance are visible to the author), transport failure → `network`, and a
+  200 with empty `content` → `network` (a successful answer with nothing usable; there is no status
+  to carry). No retry logic: the reason reaches the model, which decides.
+- **Why `direct` stays the default**: it is free, needs no key, makes no third-party request, and
+  gives us known extraction output; DeepSeek is opt-in for pages our extractor cannot read. The
+  cache is keyed by the requested URL and shared by both backends, so `offset` reads never
+  re-request and paging behaves identically after switching.
+- **Consequences**: the `search` settings shape, validation, Settings › Web search UI, both
+  locales and spec/07 §7 (which now names both backends) are updated. The UI offers the backend
+  Select and shows the DeepSeek key field whenever either independent choice needs it (search
+  provider `deepseek` **or** `fetch_via: "deepseek"`), so the Tavily-search + DeepSeek-fetch
+  combination is configurable without detouring through another provider. Tests:
+  `crates/server/tests/web_fetch_backends.rs` —
+  `deepseek_fetch_sends_the_documented_request_and_maps_the_page`, `deepseek_fetch_error_mapping`,
+  `deepseek_fetch_validates_the_url_shape_before_sending`,
+  `fetching_through_deepseek_still_pages_and_caches`, `the_direct_fetcher_remains_the_default`,
+  `the_private_address_exception_is_scoped_to_the_deepseek_backend`, `fetch_via_defaults_to_direct`,
+  `fetch_via_deepseek_requires_a_key`; `webSearchPage.test.tsx` for the fetch-backend select.
+  Fail-before was real: before the implementation the backend tests did not compile (missing
+  `FetchBackend`, `FetchConfig`, `WebService::fetch_document` and `SearchConfig::fetch_via`; 11
+  errors) and the Vitest case could not find a combobox named "Page fetching".

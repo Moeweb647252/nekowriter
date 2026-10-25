@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
+import type { FetchVia } from "@/api/gen/FetchVia"
 import type { SearchProvider } from "@/api/gen/SearchProvider"
 
 /** The most results `web_search` can ever return (spec/05 §7). */
@@ -38,6 +39,7 @@ export default function WebSearchPage() {
   const [tavilyKey, setTavilyKey] = useState<string | null>(null)
   const [deepseekKey, setDeepseekKey] = useState<string | null>(null)
   const [searxngUrl, setSearxngUrl] = useState<string | null>(null)
+  const [fetchVia, setFetchVia] = useState<FetchVia | null>(null)
   const [maxResults, setMaxResults] = useState<number | null>(null)
   const [query, setQuery] = useState("")
 
@@ -58,9 +60,11 @@ export default function WebSearchPage() {
       ? t("settings:search_api_key_placeholder_deepseek")
       : t("settings:search_api_key_placeholder")
   const baseUrl = searxngUrl ?? saved.searxng_base_url ?? ""
+  const currentFetch: FetchVia = fetchVia ?? saved.fetch_via
   const results = maxResults ?? saved.max_results
   const dirty =
     current !== saved.provider ||
+    (fetchVia !== null && fetchVia !== saved.fetch_via) ||
     (tavilyKey !== null && tavilyKey !== (saved.tavily_api_key ?? "")) ||
     (deepseekKey !== null && deepseekKey !== (saved.deepseek_api_key ?? "")) ||
     (searxngUrl !== null && searxngUrl !== (saved.searxng_base_url ?? "")) ||
@@ -74,11 +78,14 @@ export default function WebSearchPage() {
           // An untouched masked key is sent back as stored: the server treats a mask as "keep"
           // (spec/10 §2.1), so the author can change the provider without retyping a secret.
           tavily_api_key: current === "tavily" ? key : undefined,
+          // The key is needed when DeepSeek is either the search provider or the fetch backend;
+          // the two choices are independent (D-128).
           deepseek_api_key:
-            current === "deepseek"
+            current === "deepseek" || currentFetch === "deepseek"
               ? (deepseekKey ?? saved.deepseek_api_key ?? "")
               : undefined,
           searxng_base_url: current === "searxng" ? baseUrl : undefined,
+          fetch_via: currentFetch,
           max_results: results,
         },
       },
@@ -87,6 +94,7 @@ export default function WebSearchPage() {
           setTavilyKey(null)
           setDeepseekKey(null)
           setSearxngUrl(null)
+          setFetchVia(null)
           setMaxResults(null)
           setProvider(null)
         },
@@ -121,6 +129,48 @@ export default function WebSearchPage() {
           </SelectContent>
         </Select>
       </div>
+
+      <div className="flex items-center gap-3">
+        <Label htmlFor="search-fetch-via" className="w-40 shrink-0">
+          {t("settings:search_fetch_via")}
+        </Label>
+        <div className="flex-1 space-y-1">
+          <Select
+            value={currentFetch}
+            onValueChange={(value) => setFetchVia(value as FetchVia)}
+          >
+            <SelectTrigger id="search-fetch-via" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="direct">{t("settings:search_fetch_via_direct")}</SelectItem>
+              <SelectItem value="deepseek">
+                {t("settings:search_fetch_via_deepseek")}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">{t("settings:search_fetch_via_hint")}</p>
+        </div>
+      </div>
+
+      {/* DeepSeek fetch with another search provider still needs the DeepSeek key (D-128). */}
+      {currentFetch === "deepseek" && current !== "deepseek" ? (
+        <div className="flex items-start gap-3">
+          <Label htmlFor="search-deepseek-key" className="mt-1.5 w-40 shrink-0">
+            {t("settings:search_deepseek_key")}
+          </Label>
+          <div className="flex-1 space-y-1">
+            <Input
+              id="search-deepseek-key"
+              type="password"
+              value={deepseekKey ?? saved.deepseek_api_key ?? ""}
+              placeholder={t("settings:search_api_key_placeholder_deepseek")}
+              onChange={(event) => setDeepseekKey(event.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">{t("settings:search_api_key_hint")}</p>
+          </div>
+        </div>
+      ) : null}
 
       {current === "tavily" || current === "deepseek" ? (
         <div className="flex items-start gap-3">

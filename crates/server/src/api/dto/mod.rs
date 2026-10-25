@@ -46,8 +46,8 @@ pub use sessions::{
     SessionSnapshotDto, ToolCallDto,
 };
 pub use settings::{
-    AppSettingsDto, AppSettingsPatch, EmbeddingSettingsDto, SearchProvider, SearchSettingsDto,
-    SearchSettingsPatch,
+    AppSettingsDto, AppSettingsPatch, EmbeddingSettingsDto, FetchVia, SearchProvider,
+    SearchSettingsDto, SearchSettingsPatch,
 };
 pub use settings_materials::{
     CharacterDto, CharacterInput, CharacterPatch, CharacterReorderInput, SettingDocDto,

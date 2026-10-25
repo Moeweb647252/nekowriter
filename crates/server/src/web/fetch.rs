@@ -507,8 +507,16 @@ impl FetchError {
         }
     }
 
+    /// The HTTP status of a status failure, when it has one.
+    pub fn status(&self) -> Option<u16> {
+        match self {
+            FetchError::Failed { status, .. } => *status,
+            FetchError::Unsupported { .. } => None,
+        }
+    }
+
     /// A generic failure with no HTTP status.
-    fn failed(reason: FetchFailure, url: &str) -> Self {
+    pub(crate) fn failed(reason: FetchFailure, url: &str) -> Self {
         FetchError::Failed {
             reason,
             status: None,

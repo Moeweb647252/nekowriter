@@ -228,16 +228,26 @@ impl ToolHandler for WebFetchTool {
             return Err(ToolError::new(ToolErrorKind::Validation)
                 .with("errors", vec!["url must not be empty".to_owned()]));
         }
-        // A cached page needs no request (spec/07 §7 step 7).
-        let web = ctx.state.web();
-        let Some(fetcher) = web.fetcher() else {
-            return Err(fetch_error(fetch::FetchError::Failed {
-                reason: fetch::FetchFailure::Network,
-                status: None,
-                url,
-            }));
-        };
-        let document = fetch::fetch(fetcher, web.cache(), &url)
+        // `app_settings["search"].fetch_via` picks the backend (spec/07 §7, D-128); the tool has
+        // one entry point and does not know which backend ran. The shared cache is applied inside.
+        let config = crate::services::search_settings::fetch_config(ctx.state)
+            .await
+            .map_err(|error| {
+                if error.code == crate::error::ErrorCode::ProviderAuth {
+                    // An unset `env:` key behaves like a network failure the model can report.
+                    fetch_error(fetch::FetchError::Failed {
+                        reason: fetch::FetchFailure::Network,
+                        status: None,
+                        url: url.clone(),
+                    })
+                } else {
+                    internal()
+                }
+            })?;
+        let document = ctx
+            .state
+            .web()
+            .fetch_document(&config, &url)
             .await
             .map_err(fetch_error)?;
         Ok(Prepared::WebPage(Box::new(FetchedPage {

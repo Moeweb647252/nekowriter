@@ -4,13 +4,47 @@
 //! are the only doors, and both return [`WebError`]s whose `reason` codes the prompt templates
 //! word for the model (D-058).
 
+pub mod deepseek_fetch;
 pub mod fetch;
 pub mod search;
 
 use std::time::Duration;
 
+use fetch::FetchError;
+
 pub use fetch::{FetchFailure, FetchedDocument, Fetcher, PageCache, fetch};
 pub use search::{SearchFailure, SearchProviderKind, search};
+
+/// Which `web_fetch` backend a call runs on (spec/07 §7, spec/02 §4.1, D-128).
+///
+/// `Direct` is the default: it is free, local, and produces our own Readability output. `Deepseek`
+/// sends the URL as data to the fixed DeepSeek host, which fetches and extracts the page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FetchBackend {
+    #[default]
+    Direct,
+    Deepseek,
+}
+
+/// One resolved `web_fetch` configuration (spec/07 §7, spec/02 §4.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FetchConfig {
+    pub backend: FetchBackend,
+    /// Resolved only for the DeepSeek backend, so an unset `env:` key of an unused provider
+    /// cannot break the direct fetcher.
+    pub deepseek_api_key: Option<String>,
+    pub deepseek_base_url: String,
+}
+
+impl Default for FetchConfig {
+    fn default() -> Self {
+        Self {
+            backend: FetchBackend::Direct,
+            deepseek_api_key: None,
+            deepseek_base_url: search::DEEPSEEK_BASE_URL.to_owned(),
+        }
+    }
+}
 
 /// The web tooling of one process: the guarded fetch client and the converted-page cache
 /// (spec/07 §7).
@@ -93,6 +127,58 @@ impl WebService {
             return base;
         }
         search::DEEPSEEK_BASE_URL
+    }
+
+    /// Fetches and extracts one page through the configured backend (spec/07 §7).
+    ///
+    /// Both backends go through the same [`PageCache`], so `offset` reads and LRU behaviour are
+    /// identical whichever backend ran (D-128). The tool calls this one entry point and does not
+    /// know which backend served the page.
+    pub async fn fetch_document(
+        &self,
+        config: &FetchConfig,
+        url: &str,
+    ) -> Result<FetchedDocument, FetchError> {
+        if let Some(hit) = self.cache.get(url) {
+            return Ok(hit);
+        }
+        let document = match config.backend {
+            FetchBackend::Direct => self.fetch_direct(url).await?,
+            FetchBackend::Deepseek => self.fetch_deepseek(config, url).await?,
+        };
+        // Keyed by the requested URL, exactly like the free function (spec/07 §7 step 7).
+        self.cache.put(url, document.clone());
+        Ok(document)
+    }
+
+    /// The direct backend: the guarded client of spec/07 §7 steps 1–6.
+    async fn fetch_direct(&self, url: &str) -> Result<FetchedDocument, FetchError> {
+        let Some(fetcher) = &self.fetcher else {
+            return Err(FetchError::failed(FetchFailure::Network, url));
+        };
+        fetcher.fetch(url).await
+    }
+
+    /// The DeepSeek backend: `POST {base}/v1/tools/fetch` on the fixed host.
+    async fn fetch_deepseek(
+        &self,
+        config: &FetchConfig,
+        url: &str,
+    ) -> Result<FetchedDocument, FetchError> {
+        let Some(key) = config
+            .deepseek_api_key
+            .as_deref()
+            .filter(|key| !key.is_empty())
+        else {
+            // Validation refuses to save `fetch_via: deepseek` without a key, so this is a
+            // defensive network reason rather than an internal error.
+            return Err(FetchError::failed(FetchFailure::Network, url));
+        };
+        let client =
+            search::shared_client().map_err(|_| FetchError::failed(FetchFailure::Network, url))?;
+        deepseek_fetch::DeepseekFetcher::new(client, &config.deepseek_base_url, key)
+            .fetch(url)
+            .await
     }
 
     /// The guarded client, when it could be built.
@@ -187,10 +273,26 @@ impl WebError {
     }
 }
 
+/// The URL cap of the direct fetcher (spec/07 §7 step 1).
+const MAX_URL_CHARS: usize = 2_048;
+
+/// The URL cap of the DeepSeek Fetch endpoint (spec/07 §7, D-128).
+const DEEPSEEK_MAX_URL_CHARS: usize = 8_192;
+
 /// True when the URL uses http or https and carries no credentials (spec/07 §7 step 1).
 pub fn check_url(raw: &str) -> Result<url::Url, FetchFailure> {
-    const MAX_URL_CHARS: usize = 2_048;
-    if raw.chars().count() > MAX_URL_CHARS {
+    check_url_capped(raw, MAX_URL_CHARS)
+}
+
+/// The shapes check of the DeepSeek backend: the same rules as [`check_url`] with the endpoint's
+/// larger cap. It deliberately does **not** check the address class: our process never resolves or
+/// connects to this URL, so a loopback target is not reachable from here (D-128).
+pub fn check_deepseek_url(raw: &str) -> Result<url::Url, FetchFailure> {
+    check_url_capped(raw, DEEPSEEK_MAX_URL_CHARS)
+}
+
+fn check_url_capped(raw: &str, max_chars: usize) -> Result<url::Url, FetchFailure> {
+    if raw.chars().count() > max_chars {
         return Err(FetchFailure::InvalidUrl);
     }
     let parsed = url::Url::parse(raw).map_err(|_| FetchFailure::InvalidUrl)?;

@@ -727,7 +727,7 @@ type SnapshotCharacterDesign = { rank, name, role_label, summary, profile, entit
 |---|---|
 | `roles.defaults` | `RoleModels` |
 | `book_defaults` | `BookSettings` used for new books |
-| `search` | `{ provider: "none" \| "tavily" \| "deepseek" \| "searxng"; tavily_api_key?: string /* literal or env:NAME, like provider keys */; deepseek_api_key?: string /* separate secret, same literal-or-env:NAME rule */; searxng_base_url?: string; max_results: number /* default 6 */ }` |
+| `search` | `{ provider: "none" \| "tavily" \| "deepseek" \| "searxng"; tavily_api_key?: string /* literal or env:NAME, like provider keys */; deepseek_api_key?: string /* separate secret, same literal-or-env:NAME rule */; searxng_base_url?: string; fetch_via?: "direct" \| "deepseek" /* default "direct"; "deepseek" needs deepseek_api_key */; max_results: number /* default 6 */ }` |
 | `embedding` | `{ model: "multilingual-e5-small" \| "bge-small-zh-v1.5" \| "embeddinggemma-300m-q" }` (default `multilingual-e5-small`) |
 
 ## 5. Invariants (enforced by services; covered by tests)

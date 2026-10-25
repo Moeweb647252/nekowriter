@@ -10,7 +10,7 @@ use std::time::Duration;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::{DEFAULT_RESULTS, MAX_RESULTS_CAP, SearchHit, WEB_TIMEOUT};
+use super::{DEFAULT_RESULTS, FetchBackend, MAX_RESULTS_CAP, SearchHit, WEB_TIMEOUT};
 
 /// The Tavily endpoint of spec/07 §6.
 pub const TAVILY_BASE_URL: &str = "https://api.tavily.com";
@@ -85,6 +85,9 @@ pub struct SearchConfig {
     pub deepseek_api_key: Option<String>,
     pub deepseek_base_url: String,
     pub searxng_base_url: Option<String>,
+    /// The `web_fetch` backend choice carried alongside the search settings (spec/02 §4.1). The
+    /// search providers ignore it; the fetch tool reads it through `search_settings::fetch_config`.
+    pub fetch_via: FetchBackend,
     pub max_results: usize,
 }
 
@@ -97,6 +100,7 @@ impl Default for SearchConfig {
             deepseek_api_key: None,
             deepseek_base_url: DEEPSEEK_BASE_URL.to_owned(),
             searxng_base_url: None,
+            fetch_via: FetchBackend::Direct,
             max_results: DEFAULT_RESULTS,
         }
     }

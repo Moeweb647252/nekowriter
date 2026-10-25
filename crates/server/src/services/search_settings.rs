@@ -7,11 +7,11 @@
 use sea_orm::{ConnectionTrait, EntityTrait};
 
 use crate::api::dto::search::{SearchHitDto, SearchTestResponse};
-use crate::api::dto::settings::{SearchProvider, SearchSettingsDto};
+use crate::api::dto::settings::{FetchVia, SearchProvider, SearchSettingsDto};
 use crate::db::entities::app_settings;
 use crate::error::{AppError, ErrorCode};
 use crate::web::search::{self, SearchConfig, SearchFailure, SearchProviderKind};
-use crate::web::{DEFAULT_RESULTS, MAX_RESULTS_CAP};
+use crate::web::{DEFAULT_RESULTS, FetchBackend, FetchConfig, MAX_RESULTS_CAP};
 
 /// The `app_settings` key of the search configuration (spec/02 §4.1).
 const KEY_SEARCH: &str = "search";
@@ -39,6 +39,27 @@ pub async fn config(state: &crate::state::AppState) -> Result<SearchConfig, AppE
     Ok(config)
 }
 
+/// The `web_fetch` configuration of the stored settings (spec/07 §7, spec/02 §4.1).
+///
+/// Only the selected backend's key is resolved, so a stale `env:` on the unused backend cannot
+/// break fetching, and the direct fetcher needs no key at all (D-128).
+pub async fn fetch_config(state: &crate::state::AppState) -> Result<FetchConfig, AppError> {
+    let settings = stored(state.db_conn()).await?;
+    let backend = match settings.fetch_via {
+        FetchVia::Direct => FetchBackend::Direct,
+        FetchVia::Deepseek => FetchBackend::Deepseek,
+    };
+    let deepseek_api_key = match backend {
+        FetchBackend::Deepseek => resolve_secret(settings.deepseek_api_key.as_deref())?,
+        FetchBackend::Direct => None,
+    };
+    Ok(FetchConfig {
+        backend,
+        deepseek_api_key,
+        deepseek_base_url: state.web().deepseek_base_url().to_owned(),
+    })
+}
+
 /// Resolves `env:NAME` and maps the DTO onto [`SearchConfig`].
 pub fn to_config(settings: &SearchSettingsDto) -> Result<SearchConfig, AppError> {
     let provider = match settings.provider {
@@ -55,6 +76,10 @@ pub fn to_config(settings: &SearchSettingsDto) -> Result<SearchConfig, AppError>
         tavily_base_url: search::TAVILY_BASE_URL.to_owned(),
         deepseek_api_key,
         deepseek_base_url: search::DEEPSEEK_BASE_URL.to_owned(),
+        fetch_via: match settings.fetch_via {
+            FetchVia::Direct => FetchBackend::Direct,
+            FetchVia::Deepseek => FetchBackend::Deepseek,
+        },
         searxng_base_url: settings
             .searxng_base_url
             .as_deref()
@@ -114,6 +139,12 @@ pub fn validate(settings: &SearchSettingsDto) -> Result<(), AppError> {
         return Err(AppError::validation(
             "deepseek needs an API key when it is the selected provider",
         ));
+    }
+    if settings.fetch_via == FetchVia::Deepseek && settings.deepseek_api_key.is_none() {
+        return Err(AppError::invalid_fields(serde_json::Map::from_iter([(
+            "search.fetch_via".to_owned(),
+            serde_json::Value::String("fetch_via \"deepseek\" needs a DeepSeek API key".to_owned()),
+        )])));
     }
     Ok(())
 }
@@ -224,6 +255,23 @@ mod tests {
             Some("https://searx.example/")
         );
         assert_eq!(config.result_count(None), 4);
+    }
+
+    #[test]
+    fn a_deepseek_fetch_backend_demands_its_key() {
+        let keyless = SearchSettingsDto {
+            fetch_via: FetchVia::Deepseek,
+            ..SearchSettingsDto::default()
+        };
+        let error = validate(&keyless).expect_err("no key");
+        assert_eq!(error.code, ErrorCode::ValidationFailed);
+        let with_key = SearchSettingsDto {
+            deepseek_api_key: Some("sk-deepseek-test".to_owned()),
+            ..keyless
+        };
+        assert!(validate(&with_key).is_ok());
+        let config = to_config(&with_key).expect("config");
+        assert_eq!(config.fetch_via, FetchBackend::Deepseek);
     }
 
     #[test]

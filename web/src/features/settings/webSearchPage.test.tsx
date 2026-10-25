@@ -16,6 +16,8 @@ import enSettings from "@/i18n/locales/en/settings.json"
 
 import WebSearchPage from "./WebSearchPage"
 
+const { patchMutate } = vi.hoisted(() => ({ patchMutate: vi.fn() }))
+
 beforeAll(() => {
   // The shared test setup only ships a subset of the namespaces; this page is in `settings:`.
   if (!i18n.hasResourceBundle("en", "settings")) {
@@ -35,9 +37,9 @@ beforeAll(() => {
 vi.mock("@/api/hooks/app-settings", () => ({
   useAppSettings: () => ({
     isPending: false,
-    data: { search: { provider: "none", max_results: 6 } },
+    data: { search: { provider: "none", fetch_via: "direct", max_results: 6 } },
   }),
-  usePatchAppSettings: () => ({ mutate: vi.fn(), isPending: false }),
+  usePatchAppSettings: () => ({ mutate: patchMutate, isPending: false }),
   useTestSearch: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
@@ -56,5 +58,44 @@ describe("WebSearchPage", () => {
 
     const key = await screen.findByLabelText("API key")
     expect(key).toHaveAttribute("placeholder", "sk-…")
+  })
+
+  it("shows the DeepSeek key field when DeepSeek is only the fetch backend", async () => {
+    const user = userEvent.setup()
+    render(<WebSearchPage />)
+
+    await user.click(screen.getByRole("combobox", { name: "Provider" }))
+    await user.click(await screen.findByRole("option", { name: "Tavily" }))
+    await user.click(screen.getByRole("combobox", { name: "Page fetching" }))
+    await user.click(await screen.findByRole("option", { name: "DeepSeek" }))
+
+    // Tavily search + DeepSeek fetch is a supported combination, so both key fields are offered.
+    expect(await screen.findByLabelText("DeepSeek API key")).toHaveAttribute(
+      "placeholder",
+      "sk-…",
+    )
+    expect(screen.getByLabelText("API key")).toBeInTheDocument()
+  })
+
+  it("offers both fetch backends and persists the selected one", async () => {
+    const user = userEvent.setup()
+    render(<WebSearchPage />)
+
+    // The direct fetcher is the default, so the select starts there.
+    const select = screen.getByRole("combobox", { name: "Page fetching" })
+    expect(select).toHaveTextContent("Direct (built-in)")
+
+    await user.click(select)
+    await user.click(await screen.findByRole("option", { name: "DeepSeek" }))
+    expect(select).toHaveTextContent("DeepSeek")
+
+    // Saving sends the new backend; the server validates that DeepSeek has a key.
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    expect(patchMutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        search: expect.objectContaining({ fetch_via: "deepseek" }),
+      }),
+      expect.anything(),
+    )
   })
 })
