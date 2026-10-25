@@ -260,9 +260,9 @@ history:
 |---|---|
 | chapter_write / planning | `get_entity` on the protagonist (if any), then `submit_outline` with a three-scene outline |
 | chapter_write / drafting | `insert_text` with text from a small built-in Chinese and English corpus, matching the granularity (sentence, paragraph, free chunk, or chapter); `chapter_end` after ~8 paragraphs, and `finish_draft` when that completion is withheld as short |
-| chapter_revise | `submit_revision_plan`, then one `replace_text` on `p1`, then `finish_revision` |
+| chapter_revise | `submit_revision_plan`, then one `replace_text` on the first current paragraph (the pid and the exact `old` text come from the draft the request carries, D-077), then `finish_revision` |
 | chapter_review | `submit_review` (verdict `revise` on attempt 1, `pass` on later attempts) with one issue on `p2` |
-| maintenance / resync | `record_appearances` (protagonist), `update_entity` of the protagonist's state with a change note (an isolated track refuses it for a shared protagonist, and the demo moves on), `add_timeline_event`, `set_chapter_summary`, in maintenance (not resync) one `propose_setting_change` (an `append` to the world setting; isolated tracks refuse it, and the demo moves on), `finish_maintenance` (again if it asks for confirmation) |
+| maintenance / resync | `record_appearances` (protagonist), `update_entity` of the protagonist's state with a change note (an isolated track refuses it for a shared protagonist, and the demo moves on), `add_timeline_event`, `set_chapter_summary`, in maintenance (not resync) one `propose_setting_change` (an `append` to the world setting; isolated tracks refuse it, and the demo moves on), `finish_maintenance` (again if it asks for confirmation). A book with no protagonist entity yet (no canon seed) gets one `create_entity` first, so the required steps exist without an API key (D-090) |
 | seed | `create_entity` per character design (the rank-1 one with `is_protagonist`), then `finish_maintenance` |
 | conception | `ask_user` (2 questions) → after the answers: `write_setting_doc` ×3, `upsert_character` ×2, `set_research_topics` → `request_review` → revises any document that was not approved → a closing text message |
 | research | `save_knowledge_entry` ×2 (no network) → `finish_research` |
