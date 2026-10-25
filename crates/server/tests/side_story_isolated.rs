@@ -312,6 +312,7 @@ async fn the_track_filter_adds_private_rows_to_the_shared_view() {
 async fn the_retrieval_tools_mark_items_after_the_anchor() {
     let runtime = runtime(vec![
         ScriptStep::new().tool("get_entity", json!({ "entity": "林凡" })),
+        ScriptStep::new().tool("query_timeline", json!({})),
     ])
     .await;
     let app = &runtime.app;
@@ -357,6 +358,20 @@ async fn the_retrieval_tools_mark_items_after_the_anchor() {
     let chapter = app.create_chapter(track_id, "番外一").await;
     let chapter_id = chapter["id"].as_i64().expect("id") as i32;
 
+    // A timeline event narrated in the chapter after the anchor.
+    let (status, body) = app
+        .post(
+            &format!("/api/books/{book_id}/timeline"),
+            json!({ "title": "After the anchor event" }),
+        )
+        .await;
+    assert_eq!(status, 201, "{body}");
+    app.execute(&format!(
+        "UPDATE timeline_events SET chapter_id = {second} WHERE book_id = {book_id} \
+         AND title = 'After the anchor event'"
+    ))
+    .await;
+
     let (session_id, _) = nekowriter::services::sessions::create(
         app.state(),
         nekowriter::services::sessions::CreateSession {
@@ -377,6 +392,10 @@ async fn the_retrieval_tools_mark_items_after_the_anchor() {
         .expect("the get_entity call");
     assert!(!is_error, "{text}");
     assert!(
+        text.contains("当前状态（锚点之后）"),
+        "a state changed after the anchor is marked (spec/06 §4.2): {text}"
+    );
+    assert!(
         text.contains("（锚点之后）"),
         "changes after the anchor are marked: {text}"
     );
@@ -392,6 +411,26 @@ async fn the_retrieval_tools_mark_items_after_the_anchor() {
     assert!(
         note_line("第二章后").contains("（锚点之后）"),
         "the change after the anchor is marked: {text}"
+    );
+
+    // `query_timeline` marks events narrated after the anchor too (spec/05 §3).
+    let (_, timeline_text, timeline_error) = rows
+        .iter()
+        .find(|(name, _, _)| name == "query_timeline")
+        .unwrap_or_else(|| {
+            panic!(
+                "the query_timeline call is missing; calls: {:?}",
+                rows.iter().map(|row| &row.0).collect::<Vec<_>>()
+            )
+        });
+    assert!(!timeline_error, "{timeline_text}");
+    let event_line = timeline_text
+        .lines()
+        .find(|line| line.contains("After the anchor event"))
+        .unwrap_or_else(|| panic!("the timeline event is missing: {timeline_text}"));
+    assert!(
+        event_line.contains("（锚点之后）"),
+        "the event after the anchor is marked: {timeline_text}"
     );
 }
 
