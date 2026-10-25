@@ -450,15 +450,3 @@ fn invalid_state(row: &setting_proposals::Model, operation: &str) -> AppError {
         "operation": operation,
     }))
 }
-
-/// The label the accept form points at, for a validation error (`details.fields`).
-pub fn target_label(row: &setting_proposals::Model) -> String {
-    match target_type_of(row) {
-        ProposalTargetType::SettingDoc => row.target_kind.clone().unwrap_or_default(),
-        ProposalTargetType::CharacterDesign => row
-            .target_id
-            .map(|id| format!("character design #{id}"))
-            .unwrap_or_default(),
-        ProposalTargetType::NewCharacter => "new character".to_owned(),
-    }
-}
