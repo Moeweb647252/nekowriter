@@ -15,6 +15,7 @@ fn hints(kind: &str, phase: &str, language: &str) -> DemoHints {
         review_attempt: 1,
         canon_mode: "canon".to_owned(),
         draft: Vec::new(),
+        saved_entries: 0,
     }
 }
 
@@ -59,11 +60,12 @@ fn planning_submits_an_outline_in_the_book_language() {
 /// panel shows something and the runtime's nudge path is exercised.
 #[test]
 fn other_kinds_reply_with_text_for_now() {
+    // `research` is no longer in this list: M8 gives it a real plan (see
+    // `the_researcher_saves_entries_then_finishes` below).
     let provider = DemoProvider::new();
     for (kind, phase) in [
         ("canon_seed", "none"),
         ("conception", "none"),
-        ("research", "none"),
         ("unknown_kind", "none"),
     ] {
         let hints = hints(kind, phase, "en");
@@ -473,4 +475,43 @@ fn a_witheld_completion_is_followed_by_finish_draft() {
     h.step_in_phase = 9;
     let plan = choose_action(&h, lang);
     assert_eq!(plan.tools[0].1, "finish_draft");
+}
+
+/// The Demo researcher's plan (spec/04 §7.2): save the corpus entries one step at a time, then
+/// report; a task that already has its entries finishes immediately.
+#[test]
+fn the_researcher_saves_entries_then_finishes() {
+    let provider = DemoProvider::new();
+    let lang = provider.lang(Some(&hints("research", "none", "zh-CN")));
+    assert!(
+        !lang.knowledge_entries.is_empty(),
+        "the corpus carries knowledge entries for the researcher"
+    );
+
+    // Nothing saved yet: the first step saves the first corpus entry, with its citation.
+    let mut hints = hints("research", "none", "zh-CN");
+    hints.saved_entries = 0;
+    let plan = choose_action(&hints, provider.lang(Some(&hints)));
+    assert_eq!(plan.tools.len(), 1);
+    assert_eq!(plan.tools[0].1, "save_knowledge_entry");
+    assert_eq!(plan.tools[0].2["title"], lang.knowledge_entries[0].title);
+    assert!(
+        plan.tools[0].2["source_urls"]
+            .as_array()
+            .is_some_and(|urls| !urls.is_empty()),
+        "the saved entry carries a citation"
+    );
+
+    // One saved: the second entry.
+    hints.saved_entries = 1;
+    let plan = choose_action(&hints, provider.lang(Some(&hints)));
+    assert_eq!(plan.tools[0].2["title"], lang.knowledge_entries[1].title);
+
+    // Two saved: finish with the corpus report.
+    hints.saved_entries = 2;
+    let plan = choose_action(&hints, provider.lang(Some(&hints)));
+    assert_eq!(plan.tools.len(), 1);
+    assert_eq!(plan.tools[0].1, "finish_research");
+    assert_eq!(plan.tools[0].2["report"], lang.research_report);
+    assert!(!lang.research_report.is_empty());
 }

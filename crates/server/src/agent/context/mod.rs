@@ -14,6 +14,9 @@ use std::collections::BTreeMap;
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder};
 use serde_json::{Value, json};
 
+use crate::agent::tools::research::{
+    MAX_ENTRIES as MAX_RESEARCH_ENTRIES, MAX_TOOL_CALLS as MAX_RESEARCH_TOOL_CALLS,
+};
 use crate::db::entities::{
     agent_messages, agent_sessions, agent_tool_calls, book_scopes, books, chapter_versions,
     chapters, character_designs, entities, knowledge_scopes, research_tasks, review_reports,
@@ -137,6 +140,16 @@ pub async fn assemble_kickoff(
     let plan = KickoffPlan::new(session::kind_of(session), redraft);
     let mut blocks = Vec::new();
     for key in plan.blocks() {
+        // spec/07 §8 step 2: the researcher's kickoff carries the linked book's brief **only when
+        // the task belongs to one**. A standalone research task has no book, and an empty brief
+        // block would read as a blank book rather than "no book".
+        if key == "block.book_brief"
+            && session::kind_of(session) == SessionKind::Research
+            && session.book_id.is_none()
+            && session.research_task_id.is_some()
+        {
+            continue;
+        }
         let context = block_context(conn, prompts, session, plan, key, extra).await?;
         let rendered = prompts
             .render_value(key, crate::prompts::template_value(&context))
@@ -1011,10 +1024,6 @@ async fn research_context(
     prompts: &PromptSet,
     research_task_id: Option<i32>,
 ) -> Result<Value, AppError> {
-    // The language label comes from the registry when the task has one.
-    if research_task_id.is_none() {
-        let _ = prompts;
-    }
     let Some(task_id) = research_task_id else {
         return Ok(json!({
             "topic": "",
@@ -1023,23 +1032,40 @@ async fn research_context(
             "scope_description": "",
             "language_name": prompts.label("language", "en"),
             "existing_titles": [],
-            "max_tool_calls": 40,
-            "max_entries": 25,
+            "max_tool_calls": MAX_RESEARCH_TOOL_CALLS,
+            "max_entries": MAX_RESEARCH_ENTRIES,
         }));
     };
     let task = research_tasks::Entity::find_by_id(task_id)
         .one(conn)
         .await?
         .ok_or_else(|| AppError::not_found(format!("research task {task_id}")))?;
+    // spec/07 §8 step 2: the kickoff carries the scope's name **and description** plus the titles
+    // of the entries already in it (at most 200), so the researcher extends existing material
+    // instead of duplicating it. `run` resolves the scope before the session starts, so a real
+    // researcher session always has `scope_id`; a task without one is a shape no session reaches
+    // (asserted in `crates/server/tests/research_tasks.rs`), and it falls back to the task's
+    // requested name with an empty description and no titles.
+    let (scope_name, scope_description, existing_titles) = match task.scope_id {
+        Some(scope_id) => {
+            let scope = knowledge_scopes::Entity::find_by_id(scope_id)
+                .one(conn)
+                .await?
+                .ok_or_else(|| AppError::not_found(format!("knowledge scope {scope_id}")))?;
+            let titles = crate::services::research::existing_titles(conn, scope_id).await?;
+            (scope.name, scope.description, titles)
+        }
+        None => (task.scope_name.clone(), String::new(), Vec::new()),
+    };
     Ok(json!({
         "topic": task.topic,
         "requirements": task.requirements,
-        "scope_name": task.scope_name,
-        "scope_description": "",
+        "scope_name": scope_name,
+        "scope_description": scope_description,
         "language_name": prompts.label("language", &task.language),
-        "existing_titles": [],
-        "max_tool_calls": 40,
-        "max_entries": 25,
+        "existing_titles": existing_titles,
+        "max_tool_calls": MAX_RESEARCH_TOOL_CALLS,
+        "max_entries": MAX_RESEARCH_ENTRIES,
     }))
 }
 
@@ -1193,6 +1219,14 @@ async fn demo_hints(
             .unwrap_or_else(|| "canon".to_owned()),
         None => "canon".to_owned(),
     };
+    // The entries the research task already has, so the demo researcher continues instead of
+    // duplicating (spec/04 §7.2).
+    let saved_entries = match session.research_task_id {
+        Some(task_id) => crate::services::research::entry_count(conn, task_id)
+            .await?
+            .max(0) as u32,
+        None => 0,
+    };
     Ok(nekowriter_llm::DemoHints {
         kind: session.kind.clone(),
         phase: session.phase.clone(),
@@ -1204,6 +1238,7 @@ async fn demo_hints(
         review_attempt: review_attempt.max(1) as u32,
         canon_mode,
         draft,
+        saved_entries,
     })
 }
 
@@ -1437,8 +1472,21 @@ pub async fn apply_completion(
                 );
             }
         }
-        // M8.3 owns the research task.
-        CompletionKind::Research => {}
+        // `finish_research` (M8.3, spec/07 §8 step 5): the task is `done`, with its report and the
+        // count of the entries every run of it created.
+        CompletionKind::Research => {
+            let report = Some(call.input.as_str())
+                .filter(|raw| !raw.is_empty())
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+                .and_then(|value| {
+                    value
+                        .get("report")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned)
+                })
+                .unwrap_or_default();
+            events.extend(crate::services::research::finish(tx, session, &report).await?);
+        }
     }
     Ok(events)
 }

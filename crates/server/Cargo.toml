@@ -153,3 +153,11 @@ path = "tests/web_search_providers.rs"
 [[test]]
 name = "web_fetch_guard"
 path = "tests/web_fetch_guard.rs"
+
+[[test]]
+name = "research_tools"
+path = "tests/research_tools.rs"
+
+[[test]]
+name = "research_tasks"
+path = "tests/research_tasks.rs"

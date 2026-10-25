@@ -80,6 +80,8 @@ pub struct LangCorpus {
     #[serde(default)]
     pub maintenance_report: String,
     #[serde(default)]
+    pub research_report: String,
+    #[serde(default)]
     pub proposal_rationale: String,
     #[serde(default)]
     pub summary_template: String,
@@ -138,6 +140,8 @@ pub struct KnowledgeSample {
     pub title: String,
     #[serde(default)]
     pub content: String,
+    #[serde(default)]
+    pub source_urls: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -324,8 +328,11 @@ pub fn choose_action(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
         "chapter_resync" => resync_plan(hints, lang),
         // M9: create_entity per character design, then finish_maintenance.
         "canon_seed" => text_plan(lang),
-        // M9 (conception) and M8 (research) arrive with their own milestones.
-        "conception" | "research" => text_plan(lang),
+        // M8: two knowledge entries saved from the corpus, then `finish_research` (spec/04 §7.2 —
+        // no network: the demo researcher works from its own material).
+        "research" => research_plan(hints, lang),
+        // M9 (conception) arrives with its milestone.
+        "conception" => text_plan(lang),
         _ => text_plan(lang),
     }
 }
@@ -572,6 +579,39 @@ fn chapter_review_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
 /// record, so the required steps exist without a key. In an isolated track no setting proposal
 /// is made (spec/06 §6 step 9) and the shared protagonist's changes would be a track-local note;
 /// the demo skips the proposal only.
+/// The demo researcher (spec/04 §7.2): save the corpus's two knowledge entries, then report.
+///
+/// The corpus entries carry `source_urls`, so `save_knowledge_entry`'s citation rule is exercised
+/// without touching the network; a run with a task that already has entries skips straight to the
+/// report, so a resumed session finishes instead of duplicating work.
+fn research_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
+    let saved = hints.saved_entries as usize;
+    let entries: Vec<&KnowledgeSample> = lang
+        .knowledge_entries
+        .iter()
+        .skip(saved)
+        .take(2 - saved.min(2))
+        .collect();
+    if let Some(entry) = entries.first() {
+        let arguments = json!({
+            "title": entry.title,
+            "content": entry.content,
+            "source_urls": entry.source_urls,
+        });
+        return DemoPlan {
+            tools: vec![tool("save_knowledge_entry", arguments)],
+            ..DemoPlan::default()
+        };
+    }
+    DemoPlan {
+        tools: vec![tool(
+            "finish_research",
+            json!({ "report": lang.research_report }),
+        )],
+        ..DemoPlan::default()
+    }
+}
+
 fn maintenance_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
     let target = hints
         .protagonist

@@ -72,6 +72,12 @@ export const keys = {
   embedding: {
     status: ["embedding", "status"] as const,
   },
+  research: {
+    /** The whole research family, for `research.updated` (spec/10 §3). */
+    all: ["research"] as const,
+    list: (bookId?: number) => ["research", "list", bookId ?? "all"] as const,
+    detail: (taskId: number) => ["research", "detail", taskId] as const,
+  },
   proposals: {
     /** Every proposal list, for `proposal.changed` (spec/10 §3). */
     all: ["proposals"] as const,

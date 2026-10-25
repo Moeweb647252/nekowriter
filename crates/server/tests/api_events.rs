@@ -113,6 +113,7 @@ async fn content_patch_emits_chapter_updated_and_chapter_content() {
             ServerEvent::SessionToolCall { .. } => "session.tool_call",
             ServerEvent::SessionToolPreview { .. } => "session.tool_preview",
             ServerEvent::KnowledgeChanged { .. } => "knowledge.changed",
+            ServerEvent::ResearchUpdated { .. } => "research.updated",
             ServerEvent::IndexStatus { .. } => "index.status",
             ServerEvent::Resync => "resync",
         })

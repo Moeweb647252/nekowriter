@@ -1,0 +1,522 @@
+//! Research tasks (spec/07 §8, spec/10 §2.5).
+//!
+//! A research task is the author's request to gather material into a knowledge scope. It is
+//! created as a `draft` while the linked book is still `conceiving` (so the author can shape it
+//! before the book exists on paper) and `ready` otherwise; `run` starts a researcher session with
+//! a frozen snapshot, exactly like every other role.
+
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter,
+    QueryOrder, QuerySelect, Set,
+};
+
+use crate::api::dto::research::{
+    ResearchTaskCreate, ResearchTaskDto, ResearchTaskPatch, ResearchTaskQuery,
+};
+use crate::db::entities::{
+    book_scopes, books, knowledge_entries, knowledge_scopes, research_tasks,
+};
+use crate::db::json::{BookStatus, ResearchTaskStatus, SessionKind};
+use crate::error::{AppError, ErrorCode};
+use crate::events::ServerEvent;
+use crate::state::AppState;
+
+use super::{now, sessions};
+
+/// The number of existing titles a researcher kickoff carries (spec/07 §8 step 2: ≤ 200).
+pub const MAX_EXISTING_TITLES: usize = 200;
+
+// ───────────────────────────── reads ─────────────────────────────
+
+/// `GET /api/research-tasks` (spec/10 §2.5).
+pub async fn list(
+    conn: &impl ConnectionTrait,
+    query: ResearchTaskQuery,
+) -> Result<Vec<ResearchTaskDto>, AppError> {
+    let mut find = research_tasks::Entity::find();
+    if let Some(book_id) = query.book_id {
+        find = find.filter(research_tasks::Column::BookId.eq(book_id));
+    }
+    if let Some(status) = query.status {
+        find = find.filter(research_tasks::Column::Status.eq(status.as_str()));
+    }
+    Ok(find
+        .order_by_desc(research_tasks::Column::CreatedAt)
+        .order_by_desc(research_tasks::Column::Id)
+        .all(conn)
+        .await?
+        .into_iter()
+        .map(to_dto)
+        .collect())
+}
+
+/// `GET /api/research-tasks/:id` (spec/10 §2.5).
+pub async fn get(conn: &impl ConnectionTrait, task_id: i32) -> Result<ResearchTaskDto, AppError> {
+    Ok(to_dto(load(conn, task_id).await?))
+}
+
+async fn load(
+    conn: &impl ConnectionTrait,
+    task_id: i32,
+) -> Result<research_tasks::Model, AppError> {
+    research_tasks::Entity::find_by_id(task_id)
+        .one(conn)
+        .await?
+        .ok_or_else(|| AppError::not_found(format!("research task {task_id}")))
+}
+
+// ───────────────────────────── writes ─────────────────────────────
+
+/// `POST /api/research-tasks` (spec/10 §2.5).
+pub async fn create(
+    state: &AppState,
+    input: ResearchTaskCreate,
+) -> Result<(ResearchTaskDto, Vec<String>), AppError> {
+    let db = state.db().clone();
+    let (dto, events, warnings) = super::write(&db, move |tx| {
+        Box::pin(async move { create_inner(tx, input).await })
+    })
+    .await?;
+    state.events().publish_all(events);
+    Ok((dto, warnings))
+}
+
+async fn create_inner(
+    tx: &impl ConnectionTrait,
+    input: ResearchTaskCreate,
+) -> Result<(ResearchTaskDto, Vec<ServerEvent>, Vec<String>), AppError> {
+    let scope_name = input.scope_name.trim().to_owned();
+    let topic = input.topic.trim().to_owned();
+    let mut fields = serde_json::Map::new();
+    if scope_name.is_empty() {
+        fields.insert(
+            "scope_name".to_owned(),
+            serde_json::Value::String("a research task needs a scope name".to_owned()),
+        );
+    }
+    if topic.is_empty() {
+        fields.insert(
+            "topic".to_owned(),
+            serde_json::Value::String("a research task needs a topic".to_owned()),
+        );
+    }
+    // The language rule of spec/10 §2.5: required without a book, ignored with one (a book has a
+    // writing language, and the researcher writes in the book's).
+    let mut language = input
+        .language
+        .as_deref()
+        .map(str::trim)
+        .filter(|language| !language.is_empty())
+        .map(str::to_owned);
+    if let Some(book_id) = input.book_id {
+        let book = books::Entity::find_by_id(book_id)
+            .one(tx)
+            .await?
+            .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
+        language = Some(book.writing_language);
+    } else if language.is_none() {
+        fields.insert(
+            "language".to_owned(),
+            serde_json::Value::String("a task without a book needs a language".to_owned()),
+        );
+    }
+    if !fields.is_empty() {
+        return Err(AppError::invalid_fields(fields));
+    }
+    let language = language.unwrap_or_else(|| "en".to_owned());
+
+    // A draft while the book is still being conceived, `ready` otherwise (spec/10 §2.5).
+    let status = match input.book_id {
+        Some(book_id) => match books::Entity::find_by_id(book_id).one(tx).await? {
+            Some(book) if book.status == BookStatus::Conceiving.as_str() => {
+                ResearchTaskStatus::Draft
+            }
+            _ => ResearchTaskStatus::Ready,
+        },
+        None => ResearchTaskStatus::Ready,
+    };
+    let timestamp = now();
+    let row = research_tasks::Entity::insert(research_tasks::ActiveModel {
+        book_id: Set(input.book_id),
+        scope_name: Set(scope_name),
+        topic: Set(topic),
+        requirements: Set(input.requirements.trim().to_owned()),
+        language: Set(language),
+        status: Set(status.as_str().to_owned()),
+        created_at: Set(timestamp),
+        updated_at: Set(timestamp),
+        ..Default::default()
+    })
+    .exec_with_returning(tx)
+    .await?;
+    let events = vec![ServerEvent::ResearchUpdated {
+        task: to_dto(row.clone()),
+    }];
+    Ok((to_dto(row), events, Vec::new()))
+}
+
+/// `PATCH /api/research-tasks/:id` (spec/10 §2.5).
+pub async fn patch(
+    state: &AppState,
+    task_id: i32,
+    input: ResearchTaskPatch,
+) -> Result<ResearchTaskDto, AppError> {
+    let db = state.db().clone();
+    let (dto, events) = super::write(&db, move |tx| {
+        Box::pin(async move { patch_inner(tx, task_id, input).await })
+    })
+    .await?;
+    state.events().publish_all(events);
+    Ok(dto)
+}
+
+async fn patch_inner(
+    tx: &impl ConnectionTrait,
+    task_id: i32,
+    input: ResearchTaskPatch,
+) -> Result<(ResearchTaskDto, Vec<ServerEvent>), AppError> {
+    let existing = load(tx, task_id).await?;
+    // A task with an open session is being edited by the researcher; the author's edits wait
+    // (spec/10 §2.5).
+    if is_open(&existing) {
+        return Err(open_session_error(&existing));
+    }
+    let mut active = research_tasks::ActiveModel {
+        id: Set(task_id),
+        updated_at: Set(now()),
+        ..Default::default()
+    };
+    if let Some(topic) = input.topic {
+        let topic = topic.trim().to_owned();
+        if topic.is_empty() {
+            return Err(field_error("topic", "a research task needs a topic"));
+        }
+        active.topic = Set(topic);
+    }
+    if let Some(requirements) = input.requirements {
+        active.requirements = Set(requirements.trim().to_owned());
+    }
+    if let Some(scope_name) = input.scope_name {
+        let scope_name = scope_name.trim().to_owned();
+        if scope_name.is_empty() {
+            return Err(field_error(
+                "scope_name",
+                "a research task needs a scope name",
+            ));
+        }
+        active.scope_name = Set(scope_name);
+    }
+    if let Some(status) = input.status {
+        // The only status the author may set is `ready`, which confirms a draft (spec/10 §2.5).
+        if status != ResearchTaskStatus::Ready {
+            return Err(field_error(
+                "status",
+                "only `ready` can be set; the researcher and the runtime own the other statuses",
+            ));
+        }
+        if existing.status != ResearchTaskStatus::Draft.as_str() {
+            return Err(field_error(
+                "status",
+                "only a draft can be confirmed as ready",
+            ));
+        }
+        active.status = Set(ResearchTaskStatus::Ready.as_str().to_owned());
+    }
+    let row = active.update(tx).await?;
+    let events = vec![ServerEvent::ResearchUpdated {
+        task: to_dto(row.clone()),
+    }];
+    Ok((to_dto(row), events))
+}
+
+/// `DELETE /api/research-tasks/:id` (spec/10 §2.5).
+pub async fn delete(state: &AppState, task_id: i32) -> Result<(), AppError> {
+    let db = state.db().clone();
+    let events = super::write(&db, move |tx| {
+        Box::pin(async move { delete_inner(tx, task_id).await })
+    })
+    .await?;
+    state.events().publish_all(events);
+    Ok(())
+}
+
+async fn delete_inner(
+    tx: &impl ConnectionTrait,
+    task_id: i32,
+) -> Result<Vec<ServerEvent>, AppError> {
+    let existing = load(tx, task_id).await?;
+    if is_open(&existing) {
+        return Err(open_session_error(&existing));
+    }
+    research_tasks::Entity::delete_by_id(task_id)
+        .exec(tx)
+        .await?;
+    Ok(vec![ServerEvent::ResearchUpdated {
+        task: to_dto(existing),
+    }])
+}
+
+/// `POST /api/research-tasks/:id/run` (spec/07 §8, spec/10 §2.5).
+pub async fn run(state: &AppState, task_id: i32) -> Result<i32, AppError> {
+    // The scope is resolved (or created) and attached to the linked book **before** the session
+    // starts, in its own short transaction: the kickoff then reads a real scope, and no
+    // transaction is open across session creation's own write (spec/07 §8 step 2).
+    // The book (if any) is read before the session starts: the session carries it so the book's
+    // agent panel lists the researcher and events reach that book's stream (spec/10 §3).
+    let book_id = get(state.db_conn(), task_id).await?.book_id;
+    let scope_id = {
+        let db = state.db().clone();
+        super::write(&db, move |tx| {
+            Box::pin(async move { prepare_scope(tx, task_id).await })
+        })
+        .await?
+    };
+    let (session_id, _warnings) = sessions::create(
+        state,
+        sessions::CreateSession {
+            kind: SessionKind::Research,
+            book_id,
+            chapter_id: None,
+            research_task_id: Some(task_id),
+            granularity: None,
+            auto_pause: None,
+            pause_after_outline: None,
+            redraft: false,
+            guidance: None,
+            kickoff_extra: Some(serde_json::json!({ "scope_id": scope_id })),
+            pending_comment: None,
+        },
+    )
+    .await?;
+    Ok(session_id)
+}
+
+/// The scope of a run: the existing one by name, or a new one attached to the linked book
+/// (spec/07 §8 step 2).
+async fn prepare_scope(tx: &impl ConnectionTrait, task_id: i32) -> Result<i32, AppError> {
+    let task = load(tx, task_id).await?;
+    // Running is refused while a session is open (spec/07 §8 step 1).
+    if is_open(&task) {
+        return Err(open_session_error(&task));
+    }
+    if !matches!(
+        task.status.as_str(),
+        "draft" | "ready" | "done" | "cancelled"
+    ) {
+        return Err(AppError::new(
+            ErrorCode::ResearchInvalidState,
+            format!("a {} research task cannot be run", task.status),
+        ));
+    }
+    let scope_id = match task.scope_id {
+        Some(scope_id) => scope_id,
+        None => {
+            let scope = resolve_scope(tx, &task.scope_name).await?;
+            research_tasks::ActiveModel {
+                id: Set(task_id),
+                scope_id: Set(Some(scope)),
+                updated_at: Set(now()),
+                ..Default::default()
+            }
+            .update(tx)
+            .await?;
+            scope
+        }
+    };
+    // The linked book must be able to search the scope the researcher writes into (spec/07 §8).
+    if let Some(book_id) = task.book_id {
+        attach_scope(tx, book_id, scope_id).await?;
+    }
+    Ok(scope_id)
+}
+
+/// Finds a scope by name, or creates it (spec/07 §8 step 2).
+async fn resolve_scope(tx: &impl ConnectionTrait, name: &str) -> Result<i32, AppError> {
+    let name = name.trim();
+    if let Some(row) = knowledge_scopes::Entity::find()
+        .filter(knowledge_scopes::Column::Name.eq(name))
+        .one(tx)
+        .await?
+    {
+        return Ok(row.id);
+    }
+    let timestamp = now();
+    let row = knowledge_scopes::Entity::insert(knowledge_scopes::ActiveModel {
+        name: Set(name.to_owned()),
+        description: Set(String::new()),
+        created_at: Set(timestamp),
+        updated_at: Set(timestamp),
+        ..Default::default()
+    })
+    .exec_with_returning(tx)
+    .await?;
+    Ok(row.id)
+}
+
+/// Adds the book ↔ scope link when it is missing (spec/07 §1).
+async fn attach_scope(
+    tx: &impl ConnectionTrait,
+    book_id: i32,
+    scope_id: i32,
+) -> Result<(), AppError> {
+    let exists = book_scopes::Entity::find()
+        .filter(book_scopes::Column::BookId.eq(book_id))
+        .filter(book_scopes::Column::ScopeId.eq(scope_id))
+        .count(tx)
+        .await?;
+    if exists == 0 {
+        book_scopes::Entity::insert(book_scopes::ActiveModel {
+            book_id: Set(book_id),
+            scope_id: Set(scope_id),
+        })
+        .exec(tx)
+        .await?;
+    }
+    Ok(())
+}
+
+// ───────────────────────────── the runtime side ─────────────────────────────
+
+/// True while the task has a session that has not finished (spec/07 §8 step 1).
+pub fn is_open(task: &research_tasks::Model) -> bool {
+    matches!(task.status.as_str(), "running" | "failed") && task.session_id.is_some()
+}
+
+/// The `409 research.invalid_state` a blocked operation reports (spec/10 §2.5).
+fn open_session_error(task: &research_tasks::Model) -> AppError {
+    AppError::new(
+        ErrorCode::ResearchInvalidState,
+        "the research task has an open session",
+    )
+    .with_details(serde_json::json!({ "session_id": task.session_id }))
+}
+
+/// Marks the task `done` and stores the report (`finish_research`, spec/07 §8 step 5).
+///
+/// `entries_created` counts the task's entries across **every** run, not just this one
+/// (spec/07 §8), so a second run of the same task keeps its history.
+pub async fn finish(
+    tx: &sea_orm::DatabaseTransaction,
+    session: &crate::db::entities::agent_sessions::Model,
+    report: &str,
+) -> Result<Vec<ServerEvent>, AppError> {
+    let Some(task_id) = session.research_task_id else {
+        return Ok(Vec::new());
+    };
+    if research_tasks::Entity::find_by_id(task_id)
+        .one(tx)
+        .await?
+        .is_none()
+    {
+        return Ok(Vec::new());
+    }
+    let total = knowledge_entries::Entity::find()
+        .filter(knowledge_entries::Column::ResearchTaskId.eq(task_id))
+        .count(tx)
+        .await?;
+    let row = research_tasks::ActiveModel {
+        id: Set(task_id),
+        status: Set(ResearchTaskStatus::Done.as_str().to_owned()),
+        report: Set(report.trim().to_owned()),
+        entries_created: Set(i32::try_from(total).unwrap_or(i32::MAX)),
+        updated_at: Set(now()),
+        ..Default::default()
+    }
+    .update(tx)
+    .await?;
+    Ok(vec![ServerEvent::ResearchUpdated { task: to_dto(row) }])
+}
+
+/// Keeps the task's status in step with its session (spec/07 §8 step 1, spec/03 §6).
+///
+/// Called by the session writer when a session ends, so a task never claims to be `running`
+/// without a session.
+pub async fn on_session_status(
+    conn: &impl ConnectionTrait,
+    task_id: i32,
+    session_id: i32,
+    status: &str,
+) -> Result<Vec<ServerEvent>, AppError> {
+    let Some(task) = research_tasks::Entity::find_by_id(task_id)
+        .one(conn)
+        .await?
+    else {
+        return Ok(Vec::new());
+    };
+    // Only the task's own live session moves it; an older session's exit must not reopen or fail a
+    // task that has since been resumed.
+    if task.session_id != Some(session_id) {
+        return Ok(Vec::new());
+    }
+    let next = match status {
+        "abandoned" | "cancelled" => ResearchTaskStatus::Cancelled,
+        "failed" | "interrupted" => ResearchTaskStatus::Failed,
+        "running" => ResearchTaskStatus::Running,
+        _ => return Ok(Vec::new()),
+    };
+    if task.status == next.as_str() {
+        return Ok(Vec::new());
+    }
+    let row = research_tasks::ActiveModel {
+        id: Set(task_id),
+        status: Set(next.as_str().to_owned()),
+        updated_at: Set(now()),
+        ..Default::default()
+    }
+    .update(conn)
+    .await?;
+    Ok(vec![ServerEvent::ResearchUpdated { task: to_dto(row) }])
+}
+
+/// The existing titles of a scope, capped (spec/07 §8 step 2: at most 200).
+pub async fn existing_titles(
+    conn: &impl ConnectionTrait,
+    scope_id: i32,
+) -> Result<Vec<String>, AppError> {
+    Ok(knowledge_entries::Entity::find()
+        .filter(knowledge_entries::Column::ScopeId.eq(scope_id))
+        .order_by_asc(knowledge_entries::Column::Title)
+        .limit(MAX_EXISTING_TITLES as u64)
+        .all(conn)
+        .await?
+        .into_iter()
+        .map(|row| row.title)
+        .collect())
+}
+
+/// The number of entries a task has created across every run (spec/07 §8).
+pub async fn entry_count(conn: &impl ConnectionTrait, task_id: i32) -> Result<i32, AppError> {
+    let total = knowledge_entries::Entity::find()
+        .filter(knowledge_entries::Column::ResearchTaskId.eq(task_id))
+        .count(conn)
+        .await?;
+    Ok(i32::try_from(total).unwrap_or(i32::MAX))
+}
+
+// ───────────────────────────── mapping ─────────────────────────────
+
+/// The DTO of a row.
+pub fn to_dto(row: research_tasks::Model) -> ResearchTaskDto {
+    ResearchTaskDto {
+        id: row.id,
+        book_id: row.book_id,
+        scope_id: row.scope_id,
+        scope_name: row.scope_name,
+        topic: row.topic,
+        requirements: row.requirements,
+        language: row.language,
+        status: ResearchTaskStatus::from_str_opt(&row.status).unwrap_or(ResearchTaskStatus::Draft),
+        session_id: row.session_id,
+        report: row.report,
+        entries_created: row.entries_created,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+    }
+}
+
+fn field_error(field: &str, message: &str) -> AppError {
+    AppError::invalid_fields(serde_json::Map::from_iter([(
+        field.to_owned(),
+        serde_json::Value::String(message.to_owned()),
+    )]))
+}

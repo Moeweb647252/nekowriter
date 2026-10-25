@@ -75,6 +75,9 @@ fn event_book(event: &ServerEvent) -> Option<i32> {
         ServerEvent::CanonChanged { book_id, .. } => Some(*book_id),
         ServerEvent::ProposalChanged { book_id, .. } => Some(*book_id),
         ServerEvent::SessionUpdated { session, .. } => session.book_id,
+        // A research task may or may not belong to a book (spec/02 §2: `book_id` is nullable), so
+        // a book-scoped stream must not see a task from another book.
+        ServerEvent::ResearchUpdated { task } => task.book_id,
         // No book id in the payload (spec/10 §3): `knowledge.changed` names a scope, not a book,
         // and `index.status` is global.
         ServerEvent::ChapterContentChanged { .. }
@@ -164,6 +167,7 @@ pub fn event_type(event: &ServerEvent) -> &'static str {
         ServerEvent::SessionToolCall { .. } => "session.tool_call",
         ServerEvent::SessionToolPreview { .. } => "session.tool_preview",
         ServerEvent::KnowledgeChanged { .. } => "knowledge.changed",
+        ServerEvent::ResearchUpdated { .. } => "research.updated",
         ServerEvent::IndexStatus { .. } => "index.status",
         ServerEvent::Resync => "resync",
     }

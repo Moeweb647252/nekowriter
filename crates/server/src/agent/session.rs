@@ -250,11 +250,23 @@ pub async fn transition(
     }
 
     let row = load(conn, session.id).await?;
-    let dto = to_dto(conn, &row, Vec::new()).await?;
-    Ok(vec![ServerEvent::SessionUpdated {
-        session: dto,
+    let mut events = vec![ServerEvent::SessionUpdated {
+        session: to_dto(conn, &row, Vec::new()).await?,
         warnings: Vec::new(),
-    }])
+    }];
+
+    // A research session owns its task's status (spec/07 §8 step 1, spec/03 §6): an abandoned or
+    // cancelled session leaves the task `cancelled`, a failed one leaves it `failed`, and a
+    // resumed session makes it `running` again. The same transaction commits both statuses.
+    if kind_of(session) == SessionKind::Research
+        && let Some(task_id) = session.research_task_id
+    {
+        events.extend(
+            crate::services::research::on_session_status(conn, task_id, session.id, to.as_str())
+                .await?,
+        );
+    }
+    Ok(events)
 }
 
 /// Stores the session's error column (spec/03 §5.5, §5.7) without touching the status.

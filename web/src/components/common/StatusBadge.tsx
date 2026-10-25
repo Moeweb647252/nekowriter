@@ -53,6 +53,8 @@ const STATUS: Record<string, StatusSpec> = {
   ready: { token: "idle", icon: Circle, labelKey: "status.planned" },
   done: { token: "done", icon: CheckCircle2, labelKey: "status.official" },
   cancelled: { token: "idle", icon: Ban, labelKey: "canon_status.none" },
+  // A research task's own `running` (spec/10 §2.5); sessions use `running_session` instead.
+  running: { token: "running", icon: Loader2, labelKey: "status.drafting", spin: true },
 }
 
 const TOKEN_CLASS: Record<Token, string> = {

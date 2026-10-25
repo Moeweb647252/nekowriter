@@ -383,6 +383,12 @@ export function applyServerEvent(
       void queryClient.invalidateQueries({ queryKey: keys.knowledge.all })
       return
     }
+    case "research.updated": {
+      // A research task changed (create, edit, start, finish): refetch the task and its list
+      // (spec/10 §3).
+      void queryClient.invalidateQueries({ queryKey: keys.research.all })
+      return
+    }
     case "index.status": {
       // The settings page and the health badge show the embedder state (spec/10 §3).
       void queryClient.invalidateQueries({ queryKey: keys.embedding.status })

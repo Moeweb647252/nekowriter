@@ -10,6 +10,8 @@ import { EmptyState } from "@/components/common/EmptyState"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Skeleton } from "@/components/ui/skeleton"
+import { NewResearchTaskDialog } from "@/features/research/NewResearchTaskDialog"
+import { ResearchTaskList } from "@/features/research/ResearchTaskList"
 
 export default function BookKnowledgePage() {
   const { t } = useTranslation()
@@ -22,6 +24,7 @@ export default function BookKnowledgePage() {
   // The attached set is the initial selection; a toggle overrides it (derived state).
   const [selection, setSelection] = useState<number[] | null>(null)
   const [saved, setSaved] = useState(false)
+  const [creating, setCreating] = useState(false)
 
   if (scopes.isPending || attached.isPending || attached.data === undefined) {
     return <Skeleton className="m-6 h-64" />
@@ -102,6 +105,14 @@ export default function BookKnowledgePage() {
           </Link>
         </Button>
       </div>
+
+      {/* The book's research tasks (PROJECT §8.10): they collect into the scopes above. */}
+      <ResearchTaskList bookId={bookId} onCreate={() => setCreating(true)} />
+      <NewResearchTaskDialog
+        open={creating}
+        onOpenChange={setCreating}
+        bookId={bookId}
+      />
     </div>
   )
 }

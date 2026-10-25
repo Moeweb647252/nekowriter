@@ -30,6 +30,9 @@ use sea_orm::{
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
+use crate::agent::tools::research::{
+    MAX_ENTRIES as MAX_RESEARCH_ENTRIES, MAX_TOOL_CALLS as MAX_RESEARCH_TOOL_CALLS,
+};
 use crate::db::entities::{
     agent_inbox, agent_messages, agent_sessions, agent_tool_calls, books, chapters, tracks,
 };
@@ -1196,6 +1199,33 @@ async fn finalize_inner(
             });
         }
     }
+    // The researcher's budget notice (spec/05 §8): past 40 tool calls or 25 entries the model is
+    // told to wrap up — a soft limit, never a refusal. Entries are counted from the task's rows,
+    // which accumulate across runs, so a resumed session does not start a second budget from
+    // zero (spec/07 §8).
+    if super::session::kind_of(session) == SessionKind::Research
+        && !outcome.is_error
+        && let Some(task_id) = session.research_task_id
+    {
+        let entries = crate::services::research::entry_count(tx, task_id).await?;
+        if (counters.tool_calls > MAX_RESEARCH_TOOL_CALLS || entries > MAX_RESEARCH_ENTRIES)
+            && let Ok(rendered) = prompts.render(
+                "notice.research_budget",
+                &json!({
+                    "used_calls": counters.tool_calls,
+                    "max_calls": MAX_RESEARCH_TOOL_CALLS,
+                    "entries": entries,
+                    "max_entries": MAX_RESEARCH_ENTRIES,
+                }),
+            )
+        {
+            appendices.push(Appendix {
+                kind: AppendixKind::EffectNotice,
+                text: rendered.text,
+                inbox_id: None,
+            });
+        }
+    }
     if outcome.is_error {
         counters.consecutive_tool_errors += 1;
     } else {
@@ -1345,7 +1375,12 @@ async fn finalize_inner(
 }
 
 /// The completion handler of a finalizing call (spec/03 §5.4, spec/08).
-async fn run_completion_handler(
+///
+/// Public inside the crate because the control operations that finalize a deferred call
+/// (`services::sessions::answer_inner` / `resume_inner`) apply the same full sequence: domain
+/// effects, `error.after_completion` on the siblings, sealing, and the transition to
+/// `completed`. Applying only the domain half would leave a completed session `running`.
+pub(crate) async fn run_completion_handler(
     tx: &sea_orm::DatabaseTransaction,
     session: &agent_sessions::Model,
     call: &agent_tool_calls::Model,

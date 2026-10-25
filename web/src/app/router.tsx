@@ -25,6 +25,21 @@ const router = createBrowserRouter([
         },
       },
       {
+        // The research task list and one task (PROJECT §8.10, spec/11 §5).
+        path: "research",
+        lazy: async () => {
+          const module = await import("@/features/research/ResearchPage")
+          return { Component: module.default }
+        },
+      },
+      {
+        path: "research/:taskId",
+        lazy: async () => {
+          const module = await import("@/features/research/ResearchTaskPage")
+          return { Component: module.default }
+        },
+      },
+      {
         // The global prompt pack (PROJECT §8.11, spec/11 §3).
         path: "prompts",
         lazy: async () => {

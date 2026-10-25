@@ -9,6 +9,7 @@ pub mod knowledge;
 pub mod prompts;
 pub mod proposals;
 pub mod providers;
+pub mod research;
 pub mod reviews;
 pub mod search;
 pub mod sessions;
@@ -31,6 +32,9 @@ pub use prompts::{
     PromptEntryDto, PromptSaveInput, PromptVariableDocDto, PromptVariableFieldDocDto,
 };
 pub use proposals::{ProposalDto, ProposalPreviewDto, ProposalQuery};
+pub use research::{
+    ResearchRunResponse, ResearchTaskCreate, ResearchTaskDto, ResearchTaskPatch, ResearchTaskQuery,
+};
 pub use reviews::{
     ChapterFeedbackDto, RereviewInput, ReviewReportDto, ReviewSessionResponse, ReviewsResponse,
     SendBackInput,

@@ -376,6 +376,10 @@ pub struct DemoHints {
     /// `old` occurs exactly once (spec/04 §7.2, D-077).
     #[serde(default)]
     pub draft: Vec<DemoParagraph>,
+    /// The knowledge entries the research task already has, so the demo researcher saves the
+    /// corpus's remaining entries instead of duplicating them (spec/04 §7.2).
+    #[serde(default)]
+    pub saved_entries: u32,
 }
 
 /// One paragraph of the chapter the Demo provider is working on (D-077).

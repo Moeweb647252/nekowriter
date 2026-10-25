@@ -885,6 +885,43 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   again by the production resolver and the test asserts the redirect target was never requested, so
   the refusal precedes any connection). Reviewed by the M8 reviewer as a security-relevant seam.
 
+### D-098 The research task surface: statuses, the kickoff's scope block and where its UI strings live
+- **Context**: spec/07 §8 and spec/10 §2.5 fix the research-task lifecycle but leave three
+  questions to the implementation: (a) what a task's status is at creation, (b) what the
+  researcher kickoff looks like for a task with no book, and (c) where the research pages' UI
+  strings belong, since spec/11 §2 names a closed set of i18n namespaces and `research` is not one
+  of them.
+- **Decision**: (a) `POST /research-tasks` stores `draft` while the linked book is `conceiving`
+  and `ready` otherwise; `PATCH` accepts only `status: ready` (confirming a draft) because the
+  runtime and the researcher own every other status. (b) `block.book_brief` renders only when the
+  task belongs to a book: a book-less task gets the researcher block alone, because an empty
+  brief would read to the model as a blank book rather than "no book". (c) the research pages' and
+  settings' strings live under `knowledge:research.*` and `settings:*` — the namespace set of
+  spec/11 §2 stays closed, and PROJECT §8.10 already places the research task view on the
+  knowledge pages. The task's scope description and existing titles (≤ 200) come from the resolved
+  `knowledge_scopes` row, so `run` must resolve (or create) the scope **before** the session starts;
+  a task that has no `scope_id` is therefore a shape no researcher session can reach.
+- **Consequences**: the lifecycle is driveable by the UI without a hidden rule (draft → confirm →
+  run → done/cancelled), a standalone research task reads naturally to the model, and the i18n
+  contract of spec/11 §2 is unchanged. Tests: `crates/server/tests/research_tasks.rs` (creation
+  rules, run/scope reuse, the kickoff description and titles, the 200 cap, the book-less shape,
+  `research.invalid_state` with its `session_id`, abandon→cancelled) and
+  `crates/server/tests/research_tools.rs` (the write tools, their error wording, the budget notice
+  and the `knowledge.changed` events).
+
+### D-099 The Demo researcher continues instead of duplicating
+- **Context**: spec/04 §7.2 requires the Demo provider to save two knowledge entries and call
+  `finish_research`, so a research run can be exercised without a provider key. A *second* run of
+  the same task (which spec/07 §8 allows once the first finished) would hit `error.entry_exists`
+  and, without a hint, could never reach `finish_research`.
+- **Decision**: `DemoHints` gains `saved_entries`, the number of entries the task already created;
+  the demo researcher skips that many corpus entries and finishes once both are saved. The corpus
+  entries carry `source_urls`, so `save_knowledge_entry`'s citation rule is exercised offline.
+- **Consequences**: repeated runs terminate and exercise the "continue existing material" path
+  instead of a dead end; the hint is data on the request, so it cannot leak into a real provider.
+  Test: `crates/llm/tests/demo.rs::the_researcher_saves_entries_then_finishes` and
+  `crates/server/tests/research_tasks.rs::a_second_run_does_not_duplicate_the_entries`.
+
 ## Open items (questions for the author)
 1. Confirm the reading of "this time it cannot be delegated to a lower-level review agent" as
    "the author judges the reviewer's report; no further delegation" (PROJECT §10.9).

@@ -1,7 +1,7 @@
 /** Settings shell (PROJECT §8.12, spec/11 §3): providers, models, agent roles and appearance. */
 import { Link, Outlet, useLocation, useParams } from "react-router"
 import { useTranslation } from "react-i18next"
-import { Cpu, Database, Languages, Server, UsersRound } from "lucide-react"
+import { Cpu, Database, Globe, Languages, Server, UsersRound } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
@@ -22,6 +22,7 @@ export default function SettingsPage() {
     { key: "roles", icon: UsersRound, label: t("settings:roles") },
     { key: "appearance", icon: Languages, label: t("settings:appearance") },
     { key: "embeddings", icon: Database, label: t("settings:embeddings") },
+    { key: "search", icon: Globe, label: t("settings:search") },
   ]
   const current = params.section ?? "providers"
 
