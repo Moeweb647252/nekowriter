@@ -17,8 +17,23 @@ export const routes: RouteObject[] = [
         },
       },
       {
-        // The global knowledge base (PROJECT §8.10, spec/10 §2.5).
+        // The global knowledge base (PROJECT §8.10, spec/10 §2.5). The scope and entry selection
+        // is part of the URL (spec/11 §3), so all three shapes render the same page.
         path: "knowledge",
+        lazy: async () => {
+          const module = await import("@/features/knowledge/KnowledgePage")
+          return { Component: module.default }
+        },
+      },
+      {
+        path: "knowledge/scopes/:scopeId",
+        lazy: async () => {
+          const module = await import("@/features/knowledge/KnowledgePage")
+          return { Component: module.default }
+        },
+      },
+      {
+        path: "knowledge/scopes/:scopeId/entries/:entryId",
         lazy: async () => {
           const module = await import("@/features/knowledge/KnowledgePage")
           return { Component: module.default }

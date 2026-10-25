@@ -1,6 +1,7 @@
 /** The knowledge base page (PROJECT §8.10, spec/10 §2.5): scopes, entries and hybrid search in
  * three columns. */
 import { useMemo, useState } from "react"
+import { useNavigate, useParams } from "react-router"
 import { useTranslation } from "react-i18next"
 import { BookOpen, Pencil, Plus, Search, Trash2 } from "lucide-react"
 import ReactMarkdown from "react-markdown"
@@ -113,20 +114,31 @@ function highlight(text: string, query: string): React.ReactNode[] {
 export default function KnowledgePage() {
   const { t } = useTranslation()
   const showError = useErrorToast()
+  const navigate = useNavigate()
+  // The selection lives in the URL (spec/11 §3): `/knowledge/scopes/:scopeId` and
+  // `/knowledge/scopes/:scopeId/entries/:entryId` are deep-linkable, so a scope or entry can be
+  // bookmarked, restored on reload, and reached with the browser's back button.
+  const params = useParams()
+  const urlScopeId = params.scopeId === undefined ? undefined : Number(params.scopeId)
+  const urlEntryId = params.entryId === undefined ? undefined : Number(params.entryId)
   const scopes = useScopes()
-  const [scopeId, setScopeId] = useState<number | undefined>(undefined)
   const [entryFilter, setEntryFilter] = useState("")
-  const [entryId, setEntryId] = useState<number | undefined>(undefined)
   // Without an explicit choice the first scope is shown (no effect: derived state).
-  const activeScopeId = scopeId ?? scopes.data?.[0]?.id
+  const activeScopeId = urlScopeId ?? scopes.data?.[0]?.id
+  // A deep link to a scope that was deleted (or never existed) says so instead of silently
+  // falling back to the first scope.
+  const scopeMissing =
+    urlScopeId !== undefined &&
+    scopes.data !== undefined &&
+    !scopes.data.some((scope) => scope.id === urlScopeId)
 
   const entries = useEntries(activeScopeId, entryFilter)
-  const entry = useEntry(entryId)
+  const entry = useEntry(urlEntryId)
   const createScope = useCreateScope()
   const patchScope = usePatchScope()
   const deleteScope = useDeleteScope()
   const createEntry = useCreateEntry(activeScopeId ?? 0)
-  const patchEntry = usePatchEntry(entryId ?? 0)
+  const patchEntry = usePatchEntry(urlEntryId ?? 0)
   const deleteEntry = useDeleteEntry()
 
   const [scopeDialog, setScopeDialog] = useState<
@@ -158,9 +170,13 @@ export default function KnowledgePage() {
   const sortedEntries = useMemo(() => sortEntries(allEntries, entrySort), [allEntries, entrySort])
 
   const onScopeClick = (scope: ScopeDto) => {
-    setScopeId(scope.id)
-    setEntryId(undefined)
     setEntryFilter("")
+    void navigate(`/knowledge/scopes/${scope.id}`)
+  }
+
+  /** Navigates to one entry, which always also selects its scope (spec/11 §3). */
+  const openEntry = (id: number, scopeId: number) => {
+    void navigate(`/knowledge/scopes/${scopeId}/entries/${id}`)
   }
 
   return (
@@ -300,7 +316,12 @@ export default function KnowledgePage() {
           )}
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-          {searching ? (
+          {scopeMissing ? (
+            <EmptyState
+              title={t("knowledge:scope_not_found")}
+              description={t("knowledge:scope_not_found_hint")}
+            />
+          ) : searching ? (
             hits.isPending ? (
               <Skeleton className="h-24" />
             ) : hits.data?.length === 0 ? (
@@ -311,10 +332,7 @@ export default function KnowledgePage() {
                   key={`${hit.entry_id}-${hit.scope_name}`}
                   type="button"
                   className="mb-1 block w-full rounded-md px-2 py-1.5 text-left hover:bg-accent"
-                  onClick={() => {
-                    setEntryId(hit.entry_id)
-                    setScopeId(hit.scope_id)
-                  }}
+                  onClick={() => openEntry(hit.entry_id, hit.scope_id)}
                 >
                   <span className="block truncate text-[13px] font-medium">{hit.title}</span>
                   <span className="block text-[0.7rem] text-muted-foreground">
@@ -340,9 +358,9 @@ export default function KnowledgePage() {
                 type="button"
                 className={cn(
                   "mb-1 block w-full rounded-md px-2 py-1.5 text-left hover:bg-accent",
-                  item.id === entryId && "bg-accent",
+                  item.id === urlEntryId && "bg-accent",
                 )}
-                onClick={() => setEntryId(item.id)}
+                onClick={() => activeScopeId !== undefined && openEntry(item.id, activeScopeId)}
               >
                 <span
                   data-testid="knowledge-entry-title"
@@ -372,7 +390,12 @@ export default function KnowledgePage() {
       </section>
 
       <section className="min-w-0 flex-1 overflow-y-auto p-4">
-        {entry.data === undefined ? (
+        {entry.isError ? (
+          <EmptyState
+            title={t("knowledge:entry_not_found")}
+            description={t("knowledge:entry_not_found_hint")}
+          />
+        ) : entry.data === undefined ? (
           <EmptyState
             title={t("knowledge:select_entry")}
             description={t("knowledge:select_entry_hint")}
@@ -396,7 +419,12 @@ export default function KnowledgePage() {
             onDelete={() => {
               if (window.confirm(t("knowledge:delete_entry_confirm", { title: entry.data?.title }))) {
                 deleteEntry.mutate(entry.data.id, {
-                  onSuccess: () => setEntryId(undefined),
+                  onSuccess: () =>
+                    void navigate(
+                      activeScopeId === undefined
+                        ? "/knowledge"
+                        : `/knowledge/scopes/${activeScopeId}`,
+                    ),
                   onError: showError,
                 })
               }
@@ -422,8 +450,8 @@ export default function KnowledgePage() {
                 { name, description },
                 {
                   onSuccess: (scope) => {
-                    setScopeId(scope.id)
                     setScopeDialog(null)
+                    void navigate(`/knowledge/scopes/${scope.id}`)
                   },
                   onError,
                 },
@@ -461,8 +489,7 @@ export default function KnowledgePage() {
               setDeleteTarget(null)
               setTypedName("")
               if (target.id === activeScopeId) {
-                setScopeId(undefined)
-                setEntryId(undefined)
+                void navigate("/knowledge")
               }
             },
             onError: showError,
@@ -484,8 +511,8 @@ export default function KnowledgePage() {
               },
               {
                 onSuccess: (created) => {
-                  setEntryId(created.id)
                   setEntryDialog(false)
+                  void navigate(`/knowledge/scopes/${created.scope_id}/entries/${created.id}`)
                 },
                 onError: showError,
               },

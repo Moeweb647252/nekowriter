@@ -39,6 +39,12 @@ const ENTRY = {
   updated_at: "2026-01-01T00:00:00Z",
 }
 
+// The page's selection lives in the URL (spec/11 §3); this test renders it without a selection.
+vi.mock("react-router", () => ({
+  useParams: () => ({}),
+  useNavigate: () => vi.fn(),
+}))
+
 const noopMutation = { mutate: vi.fn(), isPending: false }
 const deleteScope = vi.hoisted(() => vi.fn())
 const entriesState = vi.hoisted(() => ({

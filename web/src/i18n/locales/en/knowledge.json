@@ -88,5 +88,9 @@
     "created_entries": "Entries this task created",
     "language_book_hint": "The task uses the book's language.",
     "abandon_confirm": "Abandon this research run? The task is cancelled; saved entries stay in the scope."
-  }
+  },
+  "scope_not_found": "This scope no longer exists.",
+  "scope_not_found_hint": "Pick another scope on the left, or create a new one.",
+  "entry_not_found": "This entry no longer exists.",
+  "entry_not_found_hint": "It was deleted, or its scope was removed. Pick another entry."
 }
