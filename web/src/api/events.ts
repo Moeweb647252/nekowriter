@@ -117,7 +117,9 @@ export type EventPayload = unknown
 
 /** Narrow a parsed payload to a record, or `null`. */
 function payloadRecord(payload: unknown): Record<string, unknown> | null {
-  return typeof payload === "object" && payload !== null ? (payload as Record<string, unknown>) : null
+  return typeof payload === "object" && payload !== null
+    ? (payload as Record<string, unknown>)
+    : null
 }
 
 /**
@@ -127,7 +129,7 @@ function payloadRecord(payload: unknown): Record<string, unknown> | null {
 export function applyServerEvent(
   queryClient: QueryClient,
   type: string,
-  payload: unknown,
+  payload: unknown
 ): void {
   const data = payloadRecord(payload)
   switch (type) {
@@ -139,30 +141,40 @@ export function applyServerEvent(
       const version = data.version
       const ops = data.ops
       const actor = data.actor
-      if (typeof chapterId !== "number" || typeof version !== "number" || !Array.isArray(ops)) {
+      if (
+        typeof chapterId !== "number" ||
+        typeof version !== "number" ||
+        !Array.isArray(ops)
+      ) {
         return
       }
       const state = useChapterDoc.getState()
       if (state.chapterId !== chapterId) {
         // The document belongs to another chapter: only the caches need refreshing.
-        void queryClient.invalidateQueries({ queryKey: keys.chapters.detail(chapterId) })
+        void queryClient.invalidateQueries({
+          queryKey: keys.chapters.detail(chapterId),
+        })
         return
       }
       const result = state.applyOps(
         version,
         ops as ContentOp[],
-        actor === "agent" ? "agent" : "user",
+        actor === "agent" ? "agent" : "user"
       )
       if (result === "gap") {
         // Missed updates: the only correct recovery is a refetch.
-        void queryClient.invalidateQueries({ queryKey: keys.chapters.detail(chapterId) })
+        void queryClient.invalidateQueries({
+          queryKey: keys.chapters.detail(chapterId),
+        })
         return
       }
       // Keep the cached chapter in step with the store. The chapter page reloads the store when
       // the cached document changes, so a cache left one version behind would silently undo the
       // ops that were just applied.
       const after = useChapterDoc.getState()
-      const cached = queryClient.getQueryData<ChapterDto>(keys.chapters.detail(chapterId))
+      const cached = queryClient.getQueryData<ChapterDto>(
+        keys.chapters.detail(chapterId)
+      )
       if (cached !== undefined) {
         queryClient.setQueryData(keys.chapters.detail(chapterId), {
           ...cached,
@@ -173,7 +185,9 @@ export function applyServerEvent(
           },
           content_version: version,
           word_count:
-            typeof data.word_count === "number" ? data.word_count : cached.word_count,
+            typeof data.word_count === "number"
+              ? data.word_count
+              : cached.word_count,
         })
       }
       return
@@ -188,14 +202,20 @@ export function applyServerEvent(
       }
       const trackId = chapter.track_id
       if (typeof trackId === "number") {
-        void queryClient.invalidateQueries({ queryKey: keys.tracks.chapters(trackId) })
+        void queryClient.invalidateQueries({
+          queryKey: keys.tracks.chapters(trackId),
+        })
       }
       const chapterId = chapter.id
       if (typeof chapterId === "number") {
         if (data.outline_changed === true) {
-          void queryClient.invalidateQueries({ queryKey: keys.chapters.detail(chapterId) })
+          void queryClient.invalidateQueries({
+            queryKey: keys.chapters.detail(chapterId),
+          })
         }
-        const cached = queryClient.getQueryData<ChapterDto>(keys.chapters.detail(chapterId))
+        const cached = queryClient.getQueryData<ChapterDto>(
+          keys.chapters.detail(chapterId)
+        )
         if (cached !== undefined) {
           queryClient.setQueryData(keys.chapters.detail(chapterId), {
             ...cached,
@@ -212,9 +232,46 @@ export function applyServerEvent(
       void queryClient.invalidateQueries({ queryKey: keys.books.all })
       const bookId = data.book_id
       if (typeof bookId === "number") {
-        void queryClient.invalidateQueries({ queryKey: keys.books.detail(bookId) })
-        void queryClient.invalidateQueries({ queryKey: keys.books.tracks(bookId) })
-        void queryClient.invalidateQueries({ queryKey: keys.books.overview(bookId) })
+        void queryClient.invalidateQueries({
+          queryKey: keys.books.detail(bookId),
+        })
+        void queryClient.invalidateQueries({
+          queryKey: keys.books.tracks(bookId),
+        })
+        void queryClient.invalidateQueries({
+          queryKey: keys.books.overview(bookId),
+        })
+      }
+      return
+    }
+    case "canon.changed": {
+      if (data === null) {
+        return
+      }
+      // A canon write changes the canon pages, the memory snapshot and the change log
+      // (spec/10 §3). The event is only a signal, so the caches are invalidated, not patched.
+      void queryClient.invalidateQueries({ queryKey: keys.canon.all })
+      void queryClient.invalidateQueries({ queryKey: keys.changes.all })
+      const bookId = data.book_id
+      if (typeof bookId === "number") {
+        void queryClient.invalidateQueries({
+          queryKey: keys.books.overview(bookId),
+        })
+      }
+      return
+    }
+    case "proposal.changed": {
+      if (data === null) {
+        return
+      }
+      // A maintenance run creates proposals and the author decides them: the proposals page and
+      // the navigator badge must follow (spec/10 §3).
+      void queryClient.invalidateQueries({ queryKey: keys.proposals.all })
+      const bookId = data.book_id
+      if (typeof bookId === "number") {
+        void queryClient.invalidateQueries({
+          queryKey: keys.books.overview(bookId),
+        })
       }
       return
     }
@@ -228,12 +285,18 @@ export function applyServerEvent(
       }
       const kind = data.kind
       if (kind === "setting_doc") {
-        void queryClient.invalidateQueries({ queryKey: keys.settings.docs(bookId) })
+        void queryClient.invalidateQueries({
+          queryKey: keys.settings.docs(bookId),
+        })
         void queryClient.invalidateQueries({ queryKey: keys.changes.all })
       } else if (kind === "characters") {
-        void queryClient.invalidateQueries({ queryKey: keys.settings.characters(bookId) })
+        void queryClient.invalidateQueries({
+          queryKey: keys.settings.characters(bookId),
+        })
       }
-      void queryClient.invalidateQueries({ queryKey: keys.books.overview(bookId) })
+      void queryClient.invalidateQueries({
+        queryKey: keys.books.overview(bookId),
+      })
       return
     }
     case "session.delta": {
@@ -277,7 +340,9 @@ export function applyServerEvent(
       ) {
         return
       }
-      useLiveStore.getState().applyPreview(sessionId, seq, callIndex, name, field, delta)
+      useLiveStore
+        .getState()
+        .applyPreview(sessionId, seq, callIndex, name, field, delta)
       return
     }
     case "session.message": {
@@ -294,7 +359,9 @@ export function applyServerEvent(
       if (typeof seq === "number") {
         useLiveStore.getState().clearSeq(sessionId, seq)
       }
-      void queryClient.invalidateQueries({ queryKey: keys.sessions.detail(sessionId) })
+      void queryClient.invalidateQueries({
+        queryKey: keys.sessions.detail(sessionId),
+      })
       return
     }
     case "session.updated":
@@ -306,7 +373,9 @@ export function applyServerEvent(
       if (typeof sessionId !== "number") {
         return
       }
-      void queryClient.invalidateQueries({ queryKey: keys.sessions.detail(sessionId) })
+      void queryClient.invalidateQueries({
+        queryKey: keys.sessions.detail(sessionId),
+      })
       return
     }
     case "resync": {

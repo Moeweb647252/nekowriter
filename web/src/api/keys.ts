@@ -42,6 +42,8 @@ export const keys = {
       ["changes", "list", bookId, filter ?? "all"] as const,
   },
   canon: {
+    /** The whole canon family, for `canon.changed` (spec/10 §3). */
+    all: ["canon"] as const,
     entities: (bookId: number, filters?: string) =>
       ["canon", "entities", bookId, filters ?? "all"] as const,
     entity: (entityId: number) => ["canon", "entity", entityId] as const,
@@ -54,9 +56,12 @@ export const keys = {
       ["canon", "foreshadowing", bookId, status ?? "all"] as const,
     memory: (bookId: number, position?: string) =>
       ["canon", "memory", bookId, position ?? "default"] as const,
-    appearances: (chapterId: number) => ["canon", "appearances", chapterId] as const,
+    appearances: (chapterId: number) =>
+      ["canon", "appearances", chapterId] as const,
   },
   proposals: {
+    /** Every proposal list, for `proposal.changed` (spec/10 §3). */
+    all: ["proposals"] as const,
     list: (bookId: number, status?: string) =>
       ["proposals", "list", bookId, status ?? "all"] as const,
   },

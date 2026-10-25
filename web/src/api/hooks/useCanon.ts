@@ -19,9 +19,11 @@ import type { TimelineEventPatch } from "@/api/gen/TimelineEventPatch"
 function useCanonInvalidator(bookId: number) {
   const queryClient = useQueryClient()
   return () => {
-    void queryClient.invalidateQueries({ queryKey: ["canon"] })
+    void queryClient.invalidateQueries({ queryKey: keys.canon.all })
     void queryClient.invalidateQueries({ queryKey: keys.changes.all })
-    void queryClient.invalidateQueries({ queryKey: keys.books.overview(bookId) })
+    void queryClient.invalidateQueries({
+      queryKey: keys.books.overview(bookId),
+    })
   }
 }
 
@@ -29,9 +31,11 @@ function useCanonInvalidator(bookId: number) {
 
 export function useEntities(
   bookId: number,
-  params: { kind?: string; status?: string; q?: string; trackId?: number } = {},
+  params: { kind?: string; status?: string; q?: string; trackId?: number } = {}
 ) {
-  const filters = [params.kind, params.status, params.q, params.trackId].join("|")
+  const filters = [params.kind, params.status, params.q, params.trackId].join(
+    "|"
+  )
   return useQuery({
     queryKey: keys.canon.entities(bookId, filters),
     queryFn: () => endpoints.listEntities(bookId, params),
@@ -43,7 +47,8 @@ export function useEntity(entityId: number | undefined) {
   return useQuery({
     queryKey: keys.canon.entity(entityId ?? 0),
     queryFn: () => endpoints.getEntity(entityId ?? 0),
-    enabled: entityId !== undefined && Number.isFinite(entityId) && entityId > 0,
+    enabled:
+      entityId !== undefined && Number.isFinite(entityId) && entityId > 0,
   })
 }
 
@@ -110,7 +115,8 @@ export function useRelations(bookId: number, entityId?: number) {
 export function useCreateRelation(bookId: number) {
   const invalidate = useCanonInvalidator(bookId)
   return useMutation({
-    mutationFn: (input: RelationInput) => endpoints.createRelation(bookId, input),
+    mutationFn: (input: RelationInput) =>
+      endpoints.createRelation(bookId, input),
     onSuccess: invalidate,
   })
 }
@@ -145,7 +151,8 @@ export function useTimeline(bookId: number) {
 export function useCreateTimelineEvent(bookId: number) {
   const invalidate = useCanonInvalidator(bookId)
   return useMutation({
-    mutationFn: (input: TimelineEventInput) => endpoints.createTimelineEvent(bookId, input),
+    mutationFn: (input: TimelineEventInput) =>
+      endpoints.createTimelineEvent(bookId, input),
     onSuccess: invalidate,
   })
 }
@@ -170,8 +177,19 @@ export function useDeleteTimelineEvent(bookId: number) {
 export function useMoveTimelineEvent(bookId: number) {
   const invalidate = useCanonInvalidator(bookId)
   return useMutation({
-    mutationFn: ({ id, afterId, beforeId }: { id: number; afterId?: number; beforeId?: number }) =>
-      endpoints.moveTimelineEvent(id, { after_id: afterId, before_id: beforeId }),
+    mutationFn: ({
+      id,
+      afterId,
+      beforeId,
+    }: {
+      id: number
+      afterId?: number
+      beforeId?: number
+    }) =>
+      endpoints.moveTimelineEvent(id, {
+        after_id: afterId,
+        before_id: beforeId,
+      }),
     onSuccess: invalidate,
   })
 }
@@ -180,7 +198,7 @@ export function useMoveTimelineEvent(bookId: number) {
 
 export function useMemoryNotes(
   bookId: number,
-  params: { kind?: string; status?: string } = {},
+  params: { kind?: string; status?: string } = {}
 ) {
   const filters = [params.kind, params.status].join("|")
   return useQuery({
@@ -193,7 +211,8 @@ export function useMemoryNotes(
 export function useCreateMemoryNote(bookId: number) {
   const invalidate = useCanonInvalidator(bookId)
   return useMutation({
-    mutationFn: (input: MemoryNoteInput) => endpoints.createMemoryNote(bookId, input),
+    mutationFn: (input: MemoryNoteInput) =>
+      endpoints.createMemoryNote(bookId, input),
     onSuccess: invalidate,
   })
 }
@@ -228,7 +247,8 @@ export function useForeshadowing(bookId: number, status?: string) {
 export function useCreateForeshadowing(bookId: number) {
   const invalidate = useCanonInvalidator(bookId)
   return useMutation({
-    mutationFn: (input: ForeshadowingInput) => endpoints.createForeshadowing(bookId, input),
+    mutationFn: (input: ForeshadowingInput) =>
+      endpoints.createForeshadowing(bookId, input),
     onSuccess: invalidate,
   })
 }
@@ -254,7 +274,7 @@ export function useDeleteForeshadowing(bookId: number) {
 
 export function useMemory(
   bookId: number,
-  params: { trackId?: number; chapterId?: number } = {},
+  params: { trackId?: number; chapterId?: number } = {}
 ) {
   const position = `${params.trackId ?? "main"}:${params.chapterId ?? "next"}`
   return useQuery({
@@ -288,7 +308,9 @@ export function useRevertChange(bookId: number) {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: keys.changes.all })
       void queryClient.invalidateQueries({ queryKey: ["canon"] })
-      void queryClient.invalidateQueries({ queryKey: keys.books.overview(bookId) })
+      void queryClient.invalidateQueries({
+        queryKey: keys.books.overview(bookId),
+      })
     },
   })
 }

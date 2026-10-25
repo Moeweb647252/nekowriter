@@ -23,13 +23,23 @@ function useReviewSettle(chapterId: number, bookId: number) {
     // chapter id invalidated a key that does not exist. Send-back also changes the chapter's
     // status without a `chapter.updated` event (the session-creation side effect), so this
     // invalidation is what refreshes the navigator.
-    const chapter = queryClient.getQueryData<ChapterDto>(keys.chapters.detail(chapterId))
-    void queryClient.invalidateQueries({ queryKey: keys.chapters.detail(chapterId) })
-    void queryClient.invalidateQueries({ queryKey: keys.chapters.reviews(chapterId) })
+    const chapter = queryClient.getQueryData<ChapterDto>(
+      keys.chapters.detail(chapterId)
+    )
+    void queryClient.invalidateQueries({
+      queryKey: keys.chapters.detail(chapterId),
+    })
+    void queryClient.invalidateQueries({
+      queryKey: keys.chapters.reviews(chapterId),
+    })
     void queryClient.invalidateQueries({ queryKey: keys.sessions.list(bookId) })
-    void queryClient.invalidateQueries({ queryKey: keys.books.overview(bookId) })
+    void queryClient.invalidateQueries({
+      queryKey: keys.books.overview(bookId),
+    })
     if (chapter !== undefined) {
-      void queryClient.invalidateQueries({ queryKey: keys.tracks.chapters(chapter.track_id) })
+      void queryClient.invalidateQueries({
+        queryKey: keys.tracks.chapters(chapter.track_id),
+      })
     }
   }
 }
@@ -47,8 +57,13 @@ export function useStartReview(chapterId: number, bookId: number) {
 export function useRereview(chapterId: number, bookId: number) {
   const settle = useReviewSettle(chapterId, bookId)
   return useMutation({
-    mutationFn: ({ reportId, comment }: { reportId: number; comment: string }) =>
-      endpoints.rereview(reportId, comment),
+    mutationFn: ({
+      reportId,
+      comment,
+    }: {
+      reportId: number
+      comment: string
+    }) => endpoints.rereview(reportId, comment),
     onSuccess: settle,
   })
 }
@@ -93,11 +108,15 @@ export function useProposals(bookId: number, status?: string) {
 function useProposalSettle(bookId: number) {
   const queryClient = useQueryClient()
   return () => {
-    void queryClient.invalidateQueries({ queryKey: ["proposals"] })
+    void queryClient.invalidateQueries({ queryKey: keys.proposals.all })
     void queryClient.invalidateQueries({ queryKey: keys.settings.docs(bookId) })
-    void queryClient.invalidateQueries({ queryKey: keys.settings.characters(bookId) })
+    void queryClient.invalidateQueries({
+      queryKey: keys.settings.characters(bookId),
+    })
     void queryClient.invalidateQueries({ queryKey: keys.changes.all })
-    void queryClient.invalidateQueries({ queryKey: keys.books.overview(bookId) })
+    void queryClient.invalidateQueries({
+      queryKey: keys.books.overview(bookId),
+    })
   }
 }
 
