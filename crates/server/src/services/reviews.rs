@@ -251,30 +251,31 @@ pub async fn send_back(
         .ok_or_else(|| AppError::not_found(format!("chapter {chapter_id}")))?;
     require_in_review(&chapter)?;
 
-    // The ticked issues come from the report the dialog was built from (spec/08 §3).
+    // The ticked issues come from the report the dialog was built from (spec/08 §3). The report
+    // is validated whenever it is named — not only when issues are ticked: a dangling or foreign
+    // report id would otherwise be stored (and an unknown id even reached the foreign-key
+    // constraint as an internal error).
     let mut issues: Vec<ReviewIssue> = Vec::new();
     match input.review_report_id {
         Some(report_id) => {
-            if !input.issue_indexes.is_empty() {
-                let report = review_reports::Entity::find_by_id(report_id)
-                    .one(conn)
-                    .await?
-                    .ok_or_else(|| AppError::not_found(format!("review report {report_id}")))?;
-                if report.chapter_id != chapter_id {
-                    return Err(AppError::validation(
-                        "the review report belongs to another chapter",
-                    ));
-                }
-                let all: Vec<ReviewIssue> = crate::db::json::from_json_or_default(&report.issues);
-                for index in &input.issue_indexes {
-                    let issue = all.get(*index).ok_or_else(|| {
-                        AppError::invalid_fields(serde_json::Map::from_iter([(
-                            "issue_indexes".to_owned(),
-                            json!(format!("no issue at index {index}")),
-                        )]))
-                    })?;
-                    issues.push(issue.clone());
-                }
+            let report = review_reports::Entity::find_by_id(report_id)
+                .one(conn)
+                .await?
+                .ok_or_else(|| AppError::not_found(format!("review report {report_id}")))?;
+            if report.chapter_id != chapter_id {
+                return Err(AppError::validation(
+                    "the review report belongs to another chapter",
+                ));
+            }
+            let all: Vec<ReviewIssue> = crate::db::json::from_json_or_default(&report.issues);
+            for index in &input.issue_indexes {
+                let issue = all.get(*index).ok_or_else(|| {
+                    AppError::invalid_fields(serde_json::Map::from_iter([(
+                        "issue_indexes".to_owned(),
+                        json!(format!("no issue at index {index}")),
+                    )]))
+                })?;
+                issues.push(issue.clone());
             }
         }
         None if !input.issue_indexes.is_empty() => {
