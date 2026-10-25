@@ -95,10 +95,9 @@ async fn block_memory_of_a_first_chapter_says_there_is_no_earlier_text() {
 async fn the_first_chapter_kickoff_snapshot() {
     let runtime = runtime(Vec::new()).await;
     seed_settings(&runtime).await;
-    let session_id = runtime.start_debug().await;
-    let _ = session_id;
-    // The debug session's frozen tools are the test-only ones; the kickoff under test is the
-    // production writer one, which needs the writer tool list.
+    // No debug session here: it is a writer session on the same chapter, and invariant 5 allows
+    // only one open writer session per chapter (spec/02 §5). The kickoff under test is the
+    // production writer one, which `kickoff_text` renders through the production path.
     let text = kickoff_text(&runtime, runtime.chapter_id).await;
     insta::assert_snapshot!("writer_kickoff_first_chapter", text);
 }

@@ -137,6 +137,14 @@ async fn the_writer_switches_come_from_the_book_settings() {
     let (chapter_status, _, _) = runtime.chapter_status().await;
     assert_eq!(chapter_status, "drafting", "the writer took the chapter");
 
+    // One open writer session per chapter (spec/02 §5 invariant 5), so the first session is
+    // abandoned before the override is exercised — the two are not open at the same time.
+    let (status, body) = runtime
+        .app
+        .post(&format!("/api/sessions/{session_id}/abandon"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::OK, "abandon: {body}");
+
     // The start request can override the switches (spec/03 §4 step 3).
     let (second, _warnings) = nekowriter::services::sessions::create(
         runtime.app.state(),
@@ -156,8 +164,8 @@ async fn the_writer_switches_come_from_the_book_settings() {
     assert_eq!(row.granularity.as_deref(), Some("sentence"));
     assert_eq!(row.auto_pause, 1);
     assert_eq!(row.pause_after_outline, 0);
-    // Neither session can complete without writer tools; abandon them.
-    for id in [session_id, second] {
+    // Neither session can complete without writer tools; abandon the second one too.
+    for id in [second] {
         let _ = runtime
             .app
             .post(&format!("/api/sessions/{id}/abandon"), json!({}))

@@ -89,7 +89,7 @@ pub async fn ask_reviewer(
     for session in open {
         sessions::abandon(state, session.id).await?;
     }
-    let (session_id, _warnings) = sessions::create(
+    let (session_id, _warnings) = match sessions::create(
         state,
         CreateSession {
             kind: SessionKind::ChapterReview,
@@ -98,7 +98,28 @@ pub async fn ask_reviewer(
             ..CreateSession::default()
         },
     )
-    .await?;
+    .await
+    {
+        Ok(created) => created,
+        // A concurrent "ask the reviewer" created the chapter's open reviewer session between the
+        // check above and the insert. Session creation refuses the second one with
+        // `chapter.session_exists` (spec/02 §5 invariant 5, D-121), and the request the author
+        // made — "review this chapter" — is satisfied by the session that won, which is what the
+        // first branch above already returns for a matching `base_content_version`. So return it
+        // instead of surfacing a 409 for a double click.
+        Err(error) if error.code == ErrorCode::ChapterSessionExists => {
+            let open = open_reviewer_sessions(state.db().conn(), chapter_id).await?;
+            match open
+                .iter()
+                .find(|session| session.base_content_version == Some(chapter.content_version))
+                .or_else(|| open.first())
+            {
+                Some(session) => (session.id, Vec::new()),
+                None => return Err(error),
+            }
+        }
+        Err(error) => return Err(error),
+    };
     Ok(ReviewSessionResponse { session_id })
 }
 

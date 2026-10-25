@@ -126,6 +126,26 @@ pub(crate) async fn create_inner(
         .with_details(json!({ "session_id": open })));
     }
 
+    // A chapter has at most one open session per chapter-scoped role — one writer, one reviewer,
+    // one archivist (spec/02 §5 invariant 5). Every caller checks this before creating its session
+    // (`chapters::write`, `reviews::ask_reviewer`, `maintenance::maintain`/`resync`), but each of
+    // those checks is a read in a *different* transaction from the insert, so two concurrent
+    // requests both pass it and two open sessions exist. Re-checking here — inside the creation
+    // transaction, under the process-wide write lock — makes the loser answer the documented
+    // `409 chapter.session_exists` (spec/10 §4) instead of silently creating a second session
+    // (D-121). The three roles are independent: a reviewer and a writer session on one chapter is
+    // exactly what invariant 5 allows.
+    if let Some(chapter_id) = input.chapter_id
+        && let Some(role) = chapter_session_role(input.kind)
+        && let Some(open) = open_chapter_session(tx, chapter_id, role).await?
+    {
+        return Err(AppError::new(
+            ErrorCode::ChapterSessionExists,
+            format!("chapter {chapter_id} already has an open {role} session"),
+        )
+        .with_details(json!({ "session_id": open })));
+    }
+
     // A research task has at most one open session (spec/07 §8 step 1, spec/10 §2.5). `run`
     // checks this in a transaction of its own before creating the session, so two concurrent
     // `POST /run` calls could both pass that check and create two researcher sessions for one
@@ -1843,17 +1863,52 @@ pub async fn open_book_session(
     let row = agent_sessions::Entity::find()
         .filter(agent_sessions::Column::BookId.eq(book_id))
         .filter(agent_sessions::Column::Kind.eq(kind.as_str()))
-        .filter(agent_sessions::Column::Status.is_in([
-            SessionStatus::Idle.as_str(),
-            SessionStatus::Running.as_str(),
-            SessionStatus::Held.as_str(),
-            SessionStatus::AwaitingInput.as_str(),
-            SessionStatus::Paused.as_str(),
-            SessionStatus::Stopped.as_str(),
-            SessionStatus::Failed.as_str(),
-            SessionStatus::Interrupted.as_str(),
-        ]))
+        .filter(agent_sessions::Column::Status.is_in(open_statuses()))
         .order_by_desc(agent_sessions::Column::Id)
+        .one(conn)
+        .await?;
+    Ok(row.map(|row| row.id))
+}
+
+/// Every status but the three terminal ones: a session is **open** in all of these
+/// (spec/03 §3). One list, so a status added later cannot be forgotten by one caller.
+pub fn open_statuses() -> [&'static str; 8] {
+    [
+        SessionStatus::Idle.as_str(),
+        SessionStatus::Running.as_str(),
+        SessionStatus::Held.as_str(),
+        SessionStatus::AwaitingInput.as_str(),
+        SessionStatus::Paused.as_str(),
+        SessionStatus::Stopped.as_str(),
+        SessionStatus::Failed.as_str(),
+        SessionStatus::Interrupted.as_str(),
+    ]
+}
+
+/// The role string invariant 5's chapter-scoped half is about, for a session kind that has one.
+///
+/// `chapter_write` and `chapter_revise` are both writer sessions, so a chapter cannot have an open
+/// write session and an open revise session at once; `canon_seed` has no chapter and no entry.
+fn chapter_session_role(kind: SessionKind) -> Option<&'static str> {
+    match kind {
+        SessionKind::ChapterWrite | SessionKind::ChapterRevise => Some("writer"),
+        SessionKind::ChapterReview => Some("reviewer"),
+        SessionKind::ChapterMaintenance | SessionKind::ChapterResync => Some("archivist"),
+        SessionKind::Conception | SessionKind::Research | SessionKind::CanonSeed => None,
+    }
+}
+
+/// The id of a chapter's first open session of one role (spec/02 §5 invariant 5).
+async fn open_chapter_session(
+    conn: &impl ConnectionTrait,
+    chapter_id: i32,
+    role: &str,
+) -> Result<Option<i32>, AppError> {
+    let row = agent_sessions::Entity::find()
+        .filter(agent_sessions::Column::ChapterId.eq(chapter_id))
+        .filter(agent_sessions::Column::Role.eq(role))
+        .filter(agent_sessions::Column::Status.is_in(open_statuses()))
+        .order_by_asc(agent_sessions::Column::Id)
         .one(conn)
         .await?;
     Ok(row.map(|row| row.id))

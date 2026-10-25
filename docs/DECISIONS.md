@@ -1403,3 +1403,38 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
 - **Consequences**: the coverage gap is closed rather than deferred, and no test can be made green
   by scheduling luck alone. Test: `crates/server/tests/m11_web_tool_session.rs`. The three
   consecutive full-suite runs recorded for D-109's acceptance exercise the raised budgets.
+
+### D-121 Session creation enforces invariant 5's chapter scope; the API half of it was racy
+- **Context**: spec/02 §5 invariant 5 says a chapter has at most one open writer session, one open
+  reviewer session and one open archivist session. Each of the three callers checked it before
+  creating its session (`chapters::write`, `reviews::ask_reviewer`,
+  `maintenance::maintain`/`resync`), but every one of those checks is a read in a transaction of its
+  own. The insert happens later, in session creation, so two concurrent requests both passed the
+  check and left the chapter with two open sessions. The final review reproduced it: ten
+  `POST /chapters/:id/write` pairs with a ready predecessor created **two** writer sessions in
+  10/10 rounds, and one of the ten reviewer pairs created two reviewer sessions. Two writer runners
+  on one chapter write the same text under different `base_content_version`s, and the UI shows only
+  one of them, so the other is unreachable. The same class of defect was fixed for the research task
+  in D-109 and for the book-scoped kinds (`conception`, `canon_seed`) already in M9; the
+  chapter-scoped kinds had been left to their callers.
+- **Decision**: `sessions::create_inner` re-checks the chapter-scoped half of invariant 5 inside the
+  creation transaction, under the process-wide write lock — the only place the check and the insert
+  are atomic. The guard is keyed by **role**, not by chapter (`chapter_write` and `chapter_revise`
+  are both `writer`), because invariant 5 allows one open session per chapter-scoped role: a reviewer
+  and a writer session on one chapter is a supported state (spec/03 §14: reviewer sessions do not
+  lock the chapter). The loser answers the documented `409 chapter.session_exists` with
+  `details.session_id` (spec/10 §4). The three status lists that spelled "open" out by hand are now
+  one `open_statuses()`, so the new guard cannot drift from the callers'. `reviews::ask_reviewer`
+  treats the new 409 as the idempotent case spec/08 §1.1 already describes — a concurrent request
+  created the chapter's session, and "ask the reviewer" is satisfied by it — and returns that
+  session's id instead of surfacing the race to the author.
+- **Consequences**: an open writer session is now unreachable-by-race rather than only
+  unreachable-by-discipline, and a future caller cannot reintroduce the hole by forgetting a check.
+  Two existing tests created a second writer session on one chapter and had only passed because the
+  invariant was unenforced: `agent_runtime::the_writer_switches_come_from_the_book_settings` now
+  abandons the first session before creating the override case, and
+  `agent_write_context::the_first_chapter_kickoff_snapshot` drops a debug session it never used.
+  Tests: `crates/server/tests/m11_open_session_invariant.rs` (concurrent writes → one session and a
+  `chapter.session_exists` naming it; concurrent reviewer requests → one session; a direct second
+  create refused; the guard is per role, so a reviewer session starts beside an open writer session
+  and a second writer session is still refused). All four fail with the guard reverted.
