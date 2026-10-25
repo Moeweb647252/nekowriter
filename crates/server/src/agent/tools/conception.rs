@@ -823,6 +823,42 @@ impl ToolHandler for ReorderCharactersTool {
             .await
             .map_err(|_| internal())?;
         }
+        // Every conception write records `change_log` rows with `actor: agent` (spec/05 §7): a
+        // reorder is an update of each design whose rank moved, so each records its before/after
+        // (the author's drag and drop is reported through `notice.setting_edits` instead).
+        for (position, id) in ids.iter().enumerate() {
+            let Some(before_row) = rows.iter().find(|row| row.id == *id) else {
+                continue;
+            };
+            let rank = position as i32 + 1;
+            if before_row.rank == rank {
+                continue;
+            }
+            let before = crate::services::change_log::character_snapshot(before_row);
+            let mut after = before.clone();
+            if let crate::db::json::Snapshot::CharacterDesign { rank: slot, .. } = &mut after {
+                *slot = rank;
+            }
+            crate::services::change_log::record(
+                ctx.tx,
+                crate::services::change_log::NewChange {
+                    book_id,
+                    track_id: None,
+                    chapter_id: None,
+                    session_id: Some(ctx.session.id),
+                    actor: crate::db::json::ChangeActor::Agent,
+                    target_type: crate::db::json::ChangeTargetType::CharacterDesign,
+                    target_id: *id,
+                    op: crate::db::json::ChangeOp::Update,
+                    before: Some(&before),
+                    after: Some(&after),
+                    note: "",
+                    reverts_id: None,
+                },
+            )
+            .await
+            .map_err(|_| internal())?;
+        }
         ctx.emit(ServerEvent::SettingsChanged {
             book_id,
             kind: crate::events::SettingsKind::Characters,
@@ -1073,16 +1109,17 @@ pub async fn apply_request_review_answer(
         let kind = SettingDocKind::from_str_opt(key)
             .ok_or_else(|| AppError::internal(format!("unknown setting doc {key}")))?;
         let doc = setting_docs_service::load(tx, book_id, kind).await?;
-        if approved {
-            SettingDocActive {
-                id: Set(doc.id),
-                approved_revision: Set(Some(doc.revision)),
-                updated_at: Set(chrono::Utc::now()),
-                ..Default::default()
-            }
-            .update(tx)
-            .await?;
+        // Approval is a revision reference; a rejection clears it, so the rejected revision is
+        // not approved by a *previous* review of the same text (D-105: the studio's Finalize
+        // warning and the Demo's revise plan both read `revision == approved_revision`).
+        SettingDocActive {
+            id: Set(doc.id),
+            approved_revision: Set(approved.then_some(doc.revision)),
+            updated_at: Set(chrono::Utc::now()),
+            ..Default::default()
         }
+        .update(tx)
+        .await?;
         all_approved &= approved;
         items.push(ReviewAnswerItem {
             doc_label: prompts.label("setting_doc", key),
@@ -1091,9 +1128,7 @@ pub async fn apply_request_review_answer(
         });
     }
     if let Some((approved, feedback)) = item_of("characters") {
-        if approved {
-            state.characters_approved_revision = Some(state.characters_revision);
-        }
+        state.characters_approved_revision = approved.then_some(state.characters_revision);
         all_approved &= approved;
         items.push(ReviewAnswerItem {
             doc_label: prompts.label("setting_doc", "characters"),
@@ -1102,9 +1137,7 @@ pub async fn apply_request_review_answer(
         });
     }
     if let Some((approved, feedback)) = item_of("research_topics") {
-        if approved {
-            state.topics_approved_revision = Some(state.topics_revision);
-        }
+        state.topics_approved_revision = approved.then_some(state.topics_revision);
         all_approved &= approved;
         items.push(ReviewAnswerItem {
             doc_label: prompts.label("setting_doc", "research_topics"),
@@ -1113,6 +1146,9 @@ pub async fn apply_request_review_answer(
         });
     }
     store_conception_state(tx, book_id, &state).await?;
+    // "Everything approved" needs something to have been approved: an empty review payload must
+    // not tell the model the author passed the materials (spec/05 §7).
+    let all_approved = all_approved && !items.is_empty();
     Ok((items, general, all_approved))
 }
 
