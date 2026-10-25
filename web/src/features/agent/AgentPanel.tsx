@@ -35,6 +35,7 @@ import { SessionHeader } from "@/features/agent/SessionHeader"
 import { UsageFooter } from "@/features/agent/UsageFooter"
 import { AutoPauseSwitch, GranularityControl } from "@/features/agent/WriterControls"
 import { useSessionToasts } from "@/features/agent/useSessionToasts"
+import { useHotkey } from "@/lib/hotkeys"
 import { useErrorToast } from "@/components/common/ErrorToast"
 import { useUiStore } from "@/stores/ui"
 
@@ -128,6 +129,39 @@ export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: 
     requested?.operation === "stop" &&
     requested.status === session?.status &&
     session?.status === "running"
+
+  // Alt+P pauses the running session and continues a waiting one (PROJECT §8.13). The hook
+  // ignores IME composition, so a Chinese input method never triggers it.
+  useHotkey({ key: "p", alt: true }, () => {
+    if (session === undefined) {
+      return
+    }
+    const operation: "pause" | "resume" | "continue" | null =
+      session.status === "running"
+        ? "pause"
+        : session.status === "held" || session.status === "paused"
+          ? "resume"
+          : session.status === "stopped" ||
+              session.status === "failed" ||
+              session.status === "interrupted"
+            ? "continue"
+            : null
+    if (operation === null) {
+      return
+    }
+    setRequested({ operation, status: session.status })
+    control.mutate(
+      { sessionId: session.id, operation },
+      {
+        onSuccess: (updated) => setPinnedId(updated.id),
+        onError: (error) => {
+          setRequested(null)
+          reportError(error)
+        },
+      },
+    )
+  })
+
 
   if (sessionsQuery.isPending) {
     return <Skeleton className="m-3 h-40" />

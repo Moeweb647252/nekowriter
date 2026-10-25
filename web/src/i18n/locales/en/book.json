@@ -173,5 +173,29 @@
     },
     "continue": "Continue conception",
     "start": "Start conception"
-  }
+  },
+  "next_action_title": "Next step",
+  "next_action": {
+    "continue_conception": "Continue the conception with the agent",
+    "seed_canon": "Build the canon from the character designs",
+    "review_chapter": "Review {{chapter}}",
+    "continue_chapter": "Continue {{chapter}}",
+    "sync_canon": "Re-sync the canon of {{chapter}}",
+    "write_next": "Write the next chapter of {{track}}",
+    "go": "Go"
+  },
+  "attention_title": "Needs you",
+  "attention_empty": "Nothing needs you right now.",
+  "attention": {
+    "open_session": "{{kind}} · {{chapter}} is {{status}}",
+    "chapter_in_review": "{{chapter}} is waiting for your review",
+    "canon_unsynced": "The canon of {{chapter}} is not synced",
+    "pending_proposals_one": "{{count}} pending proposal",
+    "pending_proposals_other": "{{count}} pending proposals",
+    "ready_research_one": "{{count}} research task is ready to run",
+    "ready_research_other": "{{count}} research tasks are ready to run"
+  },
+  "no_chapter": "This book",
+  "usage_title": "Token usage",
+  "usage_summary": "{{requests}} requests · {{input}} input tokens · {{output}} output tokens"
 }

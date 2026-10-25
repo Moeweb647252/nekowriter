@@ -1,4 +1,7 @@
-/** The book overview: progress only in M1 (spec/08 §7 fills the rest in M11). */
+/**
+ * The book overview (spec/08 §7, PROJECT §8.3): what to do next, everything that needs the author,
+ * the progress, the recent canon changes and the book's token usage.
+ */
 import { Link, useParams } from "react-router"
 import { useTranslation } from "react-i18next"
 
@@ -9,6 +12,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
+import { AttentionList } from "@/features/overview/AttentionList"
+import { NextActionCard } from "@/features/overview/NextActionCard"
 import { formatNumber } from "@/lib/format"
 
 export default function OverviewPage() {
@@ -28,7 +33,7 @@ export default function OverviewPage() {
     )
   }
 
-  const { book, progress, recent_changes } = overview.data
+  const { book, next_action, attention, progress, recent_changes, usage } = overview.data
   const target = `${formatNumber(book.settings.target_words_min, i18n.language)}–${formatNumber(
     book.settings.target_words_max,
     i18n.language,
@@ -55,6 +60,11 @@ export default function OverviewPage() {
           </Button>
         ) : null}
       </header>
+
+      {next_action === null || next_action === undefined ? null : (
+        <NextActionCard bookId={bookId} action={next_action} tracks={progress.tracks} />
+      )}
+      <AttentionList bookId={bookId} items={attention} tracks={progress.tracks} />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Card>
@@ -124,6 +134,21 @@ export default function OverviewPage() {
               </ul>
             </div>
           ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm">{t("book:usage_title")}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-xs text-muted-foreground">
+            {t("book:usage_summary", {
+              requests: formatNumber(usage.requests, i18n.language),
+              input: formatNumber(usage.input_tokens, i18n.language),
+              output: formatNumber(usage.output_tokens, i18n.language),
+            })}
+          </p>
         </CardContent>
       </Card>
 

@@ -158,9 +158,76 @@ impl Default for ConceptionFinalizeResponse {
 #[ts(export)]
 pub struct BookOverviewDto {
     pub book: BookDto,
+    /// The single most useful next step (spec/08 §7). Always present for an existing book.
+    pub next_action: Option<NextActionDto>,
+    /// Everything that needs the author, in a stable order (spec/08 §7).
+    pub attention: Vec<AttentionItemDto>,
     pub progress: BookProgressDto,
     pub recent_changes: Vec<super::changes::ChangeDto>,
+    /// Token totals of the book's sessions (spec/08 §7 `usage`).
     pub usage: Usage,
+}
+
+/// The single next action of the overview (spec/08 §7, first match). The label is composed in the
+/// UI from the kind and the data beside it (D-054).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum NextActionKind {
+    ContinueConception,
+    SeedCanon,
+    ReviewChapter,
+    ContinueChapter,
+    SyncCanon,
+    WriteNext,
+}
+
+/// `next_action` (spec/08 §7). `chapter`, `session_id` and `track_id` are the targets the action
+/// names; the DTO carries data only.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct NextActionDto {
+    pub kind: NextActionKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chapter: Option<ChapterPointerDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_id: Option<i32>,
+}
+
+/// One kind of `attention[]` item (spec/08 §7).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum AttentionKind {
+    OpenSession,
+    ChapterInReview,
+    CanonUnsynced,
+    PendingProposals,
+    ReadyResearch,
+}
+
+/// One entry of `attention[]` (spec/08 §7). Sessions, chapters in review and unsynced canon are
+/// listed one per row (`count = 1`, with the target); pending proposals and ready research tasks
+/// are one row carrying their count.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AttentionItemDto {
+    pub kind: AttentionKind,
+    pub count: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<i32>,
+    /// The open session's kind and status, so the UI composes its title and status label from
+    /// data instead of fetching every session (D-054).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_kind: Option<crate::db::json::SessionKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_status: Option<crate::db::json::SessionStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chapter: Option<ChapterPointerDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_id: Option<i32>,
 }
 
 /// Chapter counts and words per track (spec/08 §7).

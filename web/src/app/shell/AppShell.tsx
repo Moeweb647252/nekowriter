@@ -1,13 +1,25 @@
+import { useState } from "react"
 import { Link, NavLink, Outlet } from "react-router"
 import { useTranslation } from "react-i18next"
+import { Search } from "lucide-react"
 
 import { ConnectionDot } from "@/app/shell/ConnectionDot"
 import { LanguageSwitch } from "@/app/shell/LanguageSwitch"
+import { QuickSwitch } from "@/app/shell/QuickSwitch"
 import { ThemeToggle } from "@/app/shell/ThemeToggle"
+import { Button } from "@/components/ui/button"
+import { useHotkey } from "@/lib/hotkeys"
 
 /** The application chrome: a top bar over the routed page (spec/11 §5.1). */
 export function AppShell() {
   const { t } = useTranslation()
+  const [quickSwitchOpen, setQuickSwitchOpen] = useState(false)
+  // ⌘/Ctrl+K opens the quick switch (PROJECT §8.13, spec/11 §7). The hook ignores keystrokes that
+  // belong to an IME composition, so a Chinese input method never triggers it.
+  useHotkey({ key: "k", primary: true }, (event) => {
+    event.preventDefault()
+    setQuickSwitchOpen((open) => !open)
+  })
   const navClass = ({ isActive }: { isActive: boolean }) =>
     isActive
       ? "rounded-md px-2 py-1 text-[13px] font-medium text-foreground"
@@ -36,6 +48,17 @@ export function AppShell() {
           <ConnectionDot />
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2 text-xs text-muted-foreground"
+            aria-label={t("common:quick_switch")}
+            onClick={() => setQuickSwitchOpen(true)}
+          >
+            <Search aria-hidden="true" />
+            <span className="hidden sm:inline">{t("common:quick_switch")}</span>
+            <kbd className="hidden rounded border px-1 font-mono text-[10px] sm:inline">⌘K</kbd>
+          </Button>
           <LanguageSwitch />
           <ThemeToggle />
         </div>
@@ -43,6 +66,7 @@ export function AppShell() {
       <main className="min-h-0 flex-1">
         <Outlet />
       </main>
+      <QuickSwitch open={quickSwitchOpen} onOpenChange={setQuickSwitchOpen} />
     </div>
   )
 }

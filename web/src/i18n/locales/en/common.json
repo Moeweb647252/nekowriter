@@ -43,5 +43,11 @@
   "prompts": "Prompts",
   "settings": "Settings",
   "library": "Library",
-  "knowledge": "Knowledge"
+  "knowledge": "Knowledge",
+  "quick_switch": "Quick switch",
+  "quick_switch_hint": "Search chapters, pages and books…",
+  "quick_switch_empty": "Nothing matches.",
+  "quick_switch_pages": "Pages",
+  "quick_switch_chapters": "Chapters",
+  "quick_switch_books": "Books"
 }

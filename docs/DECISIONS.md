@@ -1204,3 +1204,30 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   once everywhere. Tests: `features/conception/conceptionStudio.test.tsx` (controls appear for a
   running/held conception session and call the right operation) and
   `features/agent/SessionControls.test.tsx` (Abandon asks first; cancelling does nothing).
+
+### D-112 The overview's next action and attention list are data; the UI composes labels
+- **Context**: spec/08 §7 defines `next_action` (a six-way first match) and `attention[]`
+  (open sessions, chapters in review, unsynced canon, pending proposals, ready research) without
+  fixing their wire shapes, and spec/11 §6 requires the UI to compose every chapter label and
+  session title from data (D-054).
+- **Decision**: (a) `NextActionDto { kind, chapter?, session_id?, track_id? }` with the six kinds
+  as a snake_case enum, and `AttentionItemDto { kind, count, session_id?, session_kind?,
+  session_status?, chapter?, track_id? }`. Sessions, chapters and canon are one row per target
+  (`count = 1`) so the UI can list and link each; proposals and ready research are one row carrying
+  their count, because a count is all the author needs to open the page. (b) The next action's
+  `write_next` names its track and `continue_chapter` names the chapter's open writer session, so
+  the card can act without another lookup. (c) `attention_count` on the library card is the same
+  list's counts summed, instead of the in-review chapter count M1 used. (d) `usage` sums the
+  `usage` JSON of every session of the book (requests and token totals, `last_prompt_tokens`
+  recomputed) instead of the zero-filled placeholder.
+- **Consequences**: one server-side definition of "what needs the author" serves the overview and
+  the library badge, and the frontend never has to join sessions or tracks to render the list
+  (`web/src/features/overview/AttentionList.tsx`). Tests:
+  `crates/server/tests/overview_actions.rs` (every next-action branch in order, the seed-not-
+  repeated rule, the attention kinds and their targets, the card's count, the usage sum) and
+  `web/src/features/overview/overview.test.tsx` (localized next-action label and link, side-track
+  chapter label, attention rows, empty state, usage line). The persistent quick-switch entry point
+  (⌘/Ctrl+K, spec/11 §7) lives in `app/shell/AppShell.tsx` + `QuickSwitch.tsx`, and the shared
+  `useHotkey` hook in `lib/hotkeys.ts` ignores IME composition for every shortcut it registers
+  (Alt+P in the agent panel included); `lib/hotkeys.test.tsx` pins both the matching and the IME
+  guard.

@@ -173,5 +173,29 @@
     },
     "continue": "继续构思",
     "start": "开始构思"
-  }
+  },
+  "next_action_title": "下一步",
+  "next_action": {
+    "continue_conception": "和智能体继续构思",
+    "seed_canon": "用角色设定建立正史档案",
+    "review_chapter": "审阅 {{chapter}}",
+    "continue_chapter": "继续 {{chapter}}",
+    "sync_canon": "重新同步 {{chapter}} 的正史档案",
+    "write_next": "继续写{{track}}的下一章",
+    "go": "前往"
+  },
+  "attention_title": "需要你来处理",
+  "attention_empty": "现在没有需要处理的事情。",
+  "attention": {
+    "open_session": "{{kind}} · {{chapter}}处于{{status}}",
+    "chapter_in_review": "{{chapter}}正在等待你的审阅",
+    "canon_unsynced": "{{chapter}}的正史档案还没有同步",
+    "pending_proposals_one": "{{count}} 条待处理的设定提议",
+    "pending_proposals_other": "{{count}} 条待处理的设定提议",
+    "ready_research_one": "{{count}} 个资料任务可以开始",
+    "ready_research_other": "{{count}} 个资料任务可以开始"
+  },
+  "no_chapter": "这本书",
+  "usage_title": "Token 用量",
+  "usage_summary": "{{requests}} 次请求 · {{input}} 输入 token · {{output}} 输出 token"
 }
