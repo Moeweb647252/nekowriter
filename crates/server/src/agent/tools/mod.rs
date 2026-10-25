@@ -15,6 +15,7 @@ pub mod reviewer;
 pub mod search;
 pub mod spec;
 pub mod test_tools;
+pub mod web;
 pub mod writer;
 
 use std::collections::BTreeMap;

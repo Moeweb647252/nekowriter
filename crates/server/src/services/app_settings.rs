@@ -7,7 +7,7 @@
 use sea_orm::{ConnectionTrait, EntityTrait, Set};
 
 use crate::api::dto::settings::{
-    AppSettingsDto, AppSettingsPatch, EmbeddingSettingsDto, SearchProvider, SearchSettingsDto,
+    AppSettingsDto, AppSettingsPatch, EmbeddingSettingsDto, SearchSettingsDto,
 };
 use crate::db::entities::app_settings;
 use crate::db::json::{BookSettings, RoleModels};
@@ -92,22 +92,12 @@ pub async fn update(
             };
         }
         if let Some(max_results) = patch_search.max_results {
-            if !(1..=20).contains(&max_results) {
-                return Err(AppError::validation("max_results must be between 1 and 20"));
-            }
             search.max_results = max_results;
         }
     }
-    if search.provider == SearchProvider::Searxng && search.searxng_base_url.is_none() {
-        return Err(AppError::validation(
-            "searxng needs a base URL when it is the selected provider",
-        ));
-    }
-    if search.provider == SearchProvider::Tavily && search.tavily_api_key.is_none() {
-        return Err(AppError::validation(
-            "tavily needs an API key when it is the selected provider",
-        ));
-    }
+    // `max_results` and the provider configuration follow spec/02 §4.1 and spec/05 §7 (a default
+    // above the tool's cap would be silently clamped).
+    super::search_settings::validate(&search)?;
     let embedding = match &patch.embedding {
         Some(embedding) => {
             // The key must name a supported model (crates/embed/models.toml, spec/07 §4).

@@ -10,6 +10,7 @@ pub mod prompts;
 pub mod proposals;
 pub mod providers;
 pub mod reviews;
+pub mod search;
 pub mod sessions;
 pub mod settings;
 pub mod settings_materials;
@@ -34,6 +35,7 @@ pub use reviews::{
     ChapterFeedbackDto, RereviewInput, ReviewReportDto, ReviewSessionResponse, ReviewsResponse,
     SendBackInput,
 };
+pub use search::{SearchHitDto, SearchTestInput, SearchTestResponse};
 pub use sessions::{
     DebugEchoDto, DebugEchoInput, MessageBlockDto, MessageDto, MessagePageDto, MessageWithCallsDto,
     ResumeInput, RetryingDto, SessionAnswerInput, SessionDto, SessionMessageInput, SessionPatch,

@@ -145,3 +145,7 @@ path = "tests/search_tools.rs"
 [[test]]
 name = "search_end_to_end"
 path = "tests/search_end_to_end.rs"
+
+[[test]]
+name = "web_search_providers"
+path = "tests/web_search_providers.rs"

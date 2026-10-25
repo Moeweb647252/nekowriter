@@ -281,6 +281,10 @@ impl ToolRegistry {
         for handler in super::proposals::all() {
             handlers.insert(handler.name().to_owned(), handler);
         }
+        // The two web tools of M8 (spec/05 §7–§8). They are the only path to the network.
+        for handler in super::web::all() {
+            handlers.insert(handler.name().to_owned(), handler);
+        }
         for handler in super::test_tools::all() {
             handlers.insert(handler.name().to_owned(), handler);
         }

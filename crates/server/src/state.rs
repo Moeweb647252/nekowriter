@@ -9,6 +9,7 @@ use crate::db::Db;
 use crate::events::EventBus;
 use crate::prompts::PromptRegistry;
 use crate::search::SearchService;
+use crate::web::WebService;
 
 /// Shared application state. Cheap to clone; every field is behind an `Arc`.
 #[derive(Clone)]
@@ -33,6 +34,8 @@ pub struct AppStateInner {
     pub manager: SessionManager,
     /// The embedding model state, the runtime vec tables and the hybrid query (spec/07 §3–§5).
     pub search: Arc<SearchService>,
+    /// The web-search configuration seam (spec/07 §6).
+    pub web: Arc<WebService>,
     /// A provider override for tests: when set, the runner uses this client instead of building
     /// one from the session's snapshot. Integration tests inject a `ScriptedProvider` here so no
     /// network is touched (spec/04 §7.1, AGENTS.md §5).
@@ -77,6 +80,7 @@ impl AppState {
                 tools: Arc::new(ToolRegistry::new()),
                 manager: SessionManager::new(),
                 search: Arc::new(search),
+                web: Arc::new(WebService::new()),
                 #[cfg(any(test, feature = "testing"))]
                 provider_override: None,
             }),
@@ -97,6 +101,7 @@ impl AppState {
                 tools: self.inner.tools.clone(),
                 manager: self.inner.manager.clone(),
                 search,
+                web: self.inner.web.clone(),
                 #[cfg(any(test, feature = "testing"))]
                 provider_override: self.inner.provider_override.clone(),
             }),
@@ -117,6 +122,7 @@ impl AppState {
                 tools: self.inner.tools.clone(),
                 manager: self.inner.manager.clone(),
                 search: self.inner.search.clone(),
+                web: self.inner.web.clone(),
                 provider_override: Some(provider),
             }),
         }
@@ -136,6 +142,7 @@ impl AppState {
                 tools: self.inner.tools.clone(),
                 manager: self.inner.manager.clone(),
                 search: Arc::new(search),
+                web: self.inner.web.clone(),
                 provider_override: self.inner.provider_override.clone(),
             }),
         }
@@ -190,5 +197,31 @@ impl AppState {
     /// The embedding/index state and hybrid query (spec/07 §3–§5).
     pub fn search(&self) -> &SearchService {
         &self.inner.search
+    }
+
+    /// The web-search seam (spec/07 §6).
+    pub fn web(&self) -> &WebService {
+        &self.inner.web
+    }
+
+    /// Replaces the web service (tests point the Tavily host at `wiremock`).
+    #[cfg(any(test, feature = "testing"))]
+    pub fn with_web(self, web: WebService) -> Self {
+        let web = Arc::new(web);
+        Self {
+            inner: Arc::new(AppStateInner {
+                db: self.inner.db.clone(),
+                config: self.inner.config.clone(),
+                vec_version: self.inner.vec_version.clone(),
+                events: self.inner.events.clone(),
+                prompts: self.inner.prompts.clone(),
+                tool_specs: self.inner.tool_specs.clone(),
+                tools: self.inner.tools.clone(),
+                manager: self.inner.manager.clone(),
+                search: self.inner.search.clone(),
+                web,
+                provider_override: self.inner.provider_override.clone(),
+            }),
+        }
     }
 }

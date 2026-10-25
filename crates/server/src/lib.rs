@@ -11,6 +11,7 @@ pub mod search;
 pub mod services;
 pub mod state;
 pub mod text;
+pub mod web;
 
 /// Test helpers behind the `testing` feature (spec/01 §11).
 #[cfg(any(test, feature = "testing"))]

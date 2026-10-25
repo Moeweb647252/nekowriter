@@ -19,6 +19,7 @@ pub mod prompts;
 pub mod proposals;
 pub mod providers;
 pub mod reviews;
+pub mod search_settings;
 pub mod sessions;
 pub mod setting_docs;
 pub mod tracks;

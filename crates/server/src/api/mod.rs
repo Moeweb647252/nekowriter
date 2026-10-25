@@ -16,6 +16,7 @@ pub mod prompts;
 pub mod proposals;
 pub mod providers;
 pub mod reviews;
+pub mod search_settings;
 pub mod sessions;
 pub mod settings_materials;
 pub mod tracks;
@@ -42,6 +43,7 @@ pub fn build_app(state: AppState) -> Router {
             "/app-settings",
             get(app_settings::get).patch(app_settings::patch),
         )
+        .route("/app-settings/search/test", post(search_settings::test))
         .route("/books", get(books::list).post(books::create))
         .route(
             "/books/{book_id}",
