@@ -318,6 +318,15 @@ impl ToolOutcome {
         self
     }
 
+    /// Marks the call as needing the author's input before it can finish (spec/05 §1.2, §7).
+    /// Both this field and the effect are set by the tool: the effect is what the transaction
+    /// that finalizes the call stores, the field is what the deferral check reads.
+    pub fn with_await_input(mut self, kind: AwaitInputKind) -> Self {
+        self.await_input = Some(kind);
+        self.effects.await_input = Some(kind);
+        self
+    }
+
     /// The error outcome of a [`ToolError`], rendered through `result.error`.
     pub fn error(prompts: &PromptSet, error: &ToolError) -> Self {
         let mut fields = serde_json::Map::new();

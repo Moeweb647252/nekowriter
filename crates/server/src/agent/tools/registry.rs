@@ -141,7 +141,7 @@ pub const RESEARCHER_TOOLS: [&str; 7] = [
 ];
 
 /// The test-only tools of the debug session (spec/10 §2.7, PLAN M3.5).
-pub const DEBUG_TOOLS: [&str; 4] = ["echo", "test_write", "test_finish", "test_slow"];
+pub const DEBUG_TOOLS: [&str; 5] = ["echo", "test_write", "test_finish", "test_slow", "test_ask"];
 
 /// The frozen tool list of a role, in its fixed order (spec/05 §2).
 pub fn tools_for_role(role: &str) -> &'static [&'static str] {

@@ -23,7 +23,7 @@ use crate::db::entities::{
     agent_sessions, books, character_designs, research_tasks,
     setting_docs::ActiveModel as SettingDocActive,
 };
-use crate::db::json::{AwaitInputKind, ConceptionState, SettingDocKind, ToolEffects};
+use crate::db::json::{AwaitInputKind, ConceptionState, SettingDocKind};
 use crate::error::AppError;
 use crate::events::ServerEvent;
 use crate::services::setting_docs as setting_docs_service;
@@ -180,10 +180,7 @@ impl ToolHandler for AskUserTool {
             .text;
         Ok(ToolOutcome::text(text)
             .with_ui(json!({ "questions": questions }))
-            .with_effects(ToolEffects {
-                await_input: Some(AwaitInputKind::AskUser),
-                ..ToolEffects::default()
-            }))
+            .with_await_input(AwaitInputKind::AskUser))
     }
 }
 
@@ -539,6 +536,9 @@ impl ToolHandler for UpsertCharacterTool {
                 (dto, false)
             }
         };
+        bump_characters_revision(ctx.tx, book_id)
+            .await
+            .map_err(|_| internal())?;
         // A rank moves the design within the ranking (spec/05 §7).
         let dto = match input.rank.filter(|rank| *rank >= 1) {
             Some(rank) if rank != dto.rank => {
@@ -741,6 +741,9 @@ impl ToolHandler for RemoveCharacterTool {
                 .await
                 .map_err(|error| map_character_error(error, name))?;
         forward_settings_events(ctx, &events);
+        bump_characters_revision(ctx.tx, book_id)
+            .await
+            .map_err(|_| internal())?;
         conception_outcome(
             ctx,
             json!({
@@ -826,6 +829,9 @@ impl ToolHandler for ReorderCharactersTool {
             doc_kind: None,
             revision: None,
         });
+        bump_characters_revision(ctx.tx, book_id)
+            .await
+            .map_err(|_| internal())?;
         conception_outcome(
             ctx,
             json!({
@@ -904,12 +910,18 @@ impl ToolHandler for SetResearchTopicsTool {
                 .await
                 .map_err(|_| internal())?;
         }
+        // A task carries the book's writing language (spec/07 §8 step 2).
+        let language = ctx
+            .book
+            .map(|book| book.writing_language.clone())
+            .unwrap_or_else(|| "en".to_owned());
         for topic in &input.topics {
             let row = research_tasks::ActiveModel {
                 book_id: Set(Some(book_id)),
                 scope_name: Set(topic.scope.trim().to_owned()),
                 topic: Set(topic.topic.trim().to_owned()),
                 requirements: Set(topic.requirements.trim().to_owned()),
+                language: Set(language.clone()),
                 // The book is conceiving, so the task starts as a draft (spec/10 §2.5); finalize
                 // turns the drafts `ready`.
                 status: Set("draft".to_owned()),
@@ -930,6 +942,15 @@ impl ToolHandler for SetResearchTopicsTool {
                 task: crate::services::research::to_dto(task.clone()),
             });
         }
+        ctx.emit(ServerEvent::SettingsChanged {
+            book_id,
+            kind: crate::events::SettingsKind::ResearchTopics,
+            doc_kind: None,
+            revision: None,
+        });
+        bump_topics_revision(ctx.tx, book_id)
+            .await
+            .map_err(|_| internal())?;
         conception_outcome(
             ctx,
             json!({
@@ -997,10 +1018,7 @@ impl ToolHandler for RequestReviewTool {
             .text;
         Ok(ToolOutcome::text(text)
             .with_ui(json!({ "message": message }))
-            .with_effects(ToolEffects {
-                await_input: Some(AwaitInputKind::RequestReview),
-                ..ToolEffects::default()
-            }))
+            .with_await_input(AwaitInputKind::RequestReview))
     }
 }
 
@@ -1072,12 +1090,6 @@ pub async fn apply_request_review_answer(
             feedback,
         });
     }
-    let character_rows = character_designs::Entity::find()
-        .filter(character_designs::Column::BookId.eq(book_id))
-        .order_by_asc(character_designs::Column::Rank)
-        .all(tx)
-        .await?;
-    state.characters_revision = character_rows.len() as i32;
     if let Some((approved, feedback)) = item_of("characters") {
         if approved {
             state.characters_approved_revision = Some(state.characters_revision);
@@ -1089,12 +1101,6 @@ pub async fn apply_request_review_answer(
             feedback,
         });
     }
-    let topic_rows = research_tasks::Entity::find()
-        .filter(research_tasks::Column::BookId.eq(book_id))
-        .filter(research_tasks::Column::Status.eq("draft"))
-        .all(tx)
-        .await?;
-    state.topics_revision = topic_rows.len() as i32;
     if let Some((approved, feedback)) = item_of("research_topics") {
         if approved {
             state.topics_approved_revision = Some(state.topics_revision);
@@ -1108,6 +1114,24 @@ pub async fn apply_request_review_answer(
     }
     store_conception_state(tx, book_id, &state).await?;
     Ok((items, general, all_approved))
+}
+
+/// Bumps `ConceptionState.characters_revision` (every character write invalidates an earlier
+/// approval, spec/02 §4).
+pub async fn bump_characters_revision(
+    tx: &impl ConnectionTrait,
+    book_id: i32,
+) -> Result<(), AppError> {
+    let mut state = load_conception_state(tx, book_id).await?;
+    state.characters_revision += 1;
+    store_conception_state(tx, book_id, &state).await
+}
+
+/// Bumps `ConceptionState.topics_revision` (spec/02 §4).
+pub async fn bump_topics_revision(tx: &impl ConnectionTrait, book_id: i32) -> Result<(), AppError> {
+    let mut state = load_conception_state(tx, book_id).await?;
+    state.topics_revision += 1;
+    store_conception_state(tx, book_id, &state).await
 }
 
 /// Reads the book's `ConceptionState`.

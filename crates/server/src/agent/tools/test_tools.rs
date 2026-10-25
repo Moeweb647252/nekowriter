@@ -29,6 +29,12 @@ struct TestInput {
     /// `test_slow` fails its prepare with this error code instead of returning.
     #[serde(default)]
     fail: Option<String>,
+    /// `test_ask` records this phase change in its deferred effects.
+    #[serde(default)]
+    phase: Option<String>,
+    /// `test_ask` records a `complete: draft` effect when true.
+    #[serde(default)]
+    complete: Option<bool>,
 }
 
 /// `echo`: returns the text it was given.
@@ -85,9 +91,18 @@ impl ToolHandler for TestWriteTool {
     ) -> Result<ToolOutcome, ToolError> {
         let input: TestInput = decode(input)?;
         let text = input.text.unwrap_or_default();
-        Ok(ToolOutcome::text(text.clone()).with_ui(json!({
+        let outcome = ToolOutcome::text(text.clone()).with_ui(json!({
             "chars": text.chars().count(),
-        })))
+        }));
+        // A write tool may also request a completion, so the hold/resume path can carry both
+        // halves of the deferred effects (spec/03 §5.4).
+        if input.complete.unwrap_or(false) {
+            return Ok(outcome.with_effects(ToolEffects {
+                complete: Some(CompletionKind::Draft),
+                ..ToolEffects::default()
+            }));
+        }
+        Ok(outcome)
     }
 }
 
@@ -170,6 +185,56 @@ impl ToolHandler for TestSlowTool {
     }
 }
 
+/// `test_ask`: an awaiting call that also records a phase change and/or a completion in its
+/// deferred effects.
+///
+/// The M3 runtime review found that the transactions finalizing an answered/held call applied
+/// only part of the recorded `ToolEffects`. No M3 tool set `await_input`, so nothing could reach
+/// the answer path; this tool makes the path observable without shipping a real one (it is only
+/// frozen into a debug session, D-072).
+pub struct TestAskTool;
+
+#[async_trait::async_trait]
+impl ToolHandler for TestAskTool {
+    fn name(&self) -> &'static str {
+        "test_ask"
+    }
+
+    fn kind(&self) -> ToolKind {
+        ToolKind::Debug
+    }
+
+    async fn execute(
+        &self,
+        _ctx: &mut ToolCtx<'_>,
+        input: Value,
+        _prepared: Prepared,
+    ) -> Result<ToolOutcome, ToolError> {
+        let input: TestInput = decode(input)?;
+        let phase = input.phase.as_deref().and_then(|raw| match raw {
+            "planning" => Some(crate::db::json::Phase::Planning),
+            "drafting" => Some(crate::db::json::Phase::Drafting),
+            "revision_planning" => Some(crate::db::json::Phase::RevisionPlanning),
+            "revising" => Some(crate::db::json::Phase::Revising),
+            _ => None,
+        });
+        let complete = input
+            .complete
+            .unwrap_or(false)
+            .then_some(CompletionKind::Draft);
+        let text = input.text.unwrap_or_else(|| "test_ask".to_owned());
+        // `with_await_input` also records the effect, so the deferred-effects record is complete.
+        let outcome = ToolOutcome::text(text)
+            .with_ui(json!({}))
+            .with_await_input(crate::db::json::AwaitInputKind::AskUser);
+        Ok(outcome.with_effects(ToolEffects {
+            phase_to: phase,
+            complete,
+            await_input: Some(crate::db::json::AwaitInputKind::AskUser),
+        }))
+    }
+}
+
 /// Maps a serde failure into a validation tool error (spec/05 §1.4 step 3).
 fn decode<T: serde::de::DeserializeOwned>(input: Value) -> Result<T, ToolError> {
     serde_json::from_value(input).map_err(|err| {
@@ -188,6 +253,20 @@ pub fn schemas() -> Vec<(&'static str, serde_json::Value)> {
             "text": { "type": "string", "description": "text to echo or write" },
             "sleep_ms": { "type": "integer", "minimum": 0, "description": "prepare delay" },
             "fail": { "type": "string", "description": "fail the prepare with this code" },
+            "complete": { "type": "boolean", "description": "deferred completion" },
+        },
+    });
+    let ask_schema = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "text": { "type": "string", "description": "answer placeholder" },
+            "phase": {
+                "type": "string",
+                "enum": ["planning", "drafting", "revision_planning", "revising"],
+                "description": "deferred phase change",
+            },
+            "complete": { "type": "boolean", "description": "deferred completion" },
         },
     });
     vec![
@@ -195,6 +274,7 @@ pub fn schemas() -> Vec<(&'static str, serde_json::Value)> {
         ("test_write", schema.clone()),
         ("test_finish", schema.clone()),
         ("test_slow", schema),
+        ("test_ask", ask_schema),
     ]
 }
 
@@ -205,5 +285,6 @@ pub fn all() -> Vec<Arc<dyn ToolHandler>> {
         Arc::new(TestWriteTool),
         Arc::new(TestFinishTool),
         Arc::new(TestSlowTool),
+        Arc::new(TestAskTool),
     ]
 }
