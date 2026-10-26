@@ -6,6 +6,7 @@ export const keys = {
   providers: {
     all: ["providers"] as const,
     presets: ["provider-presets"] as const,
+    optionSpecs: ["provider-presets", "options"] as const,
   },
   modelProfiles: {
     all: ["model-profiles"] as const,

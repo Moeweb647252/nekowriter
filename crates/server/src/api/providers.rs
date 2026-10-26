@@ -5,8 +5,8 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 
 use crate::api::dto::providers::{
-    ModelProfileDto, ModelProfileInput, ProviderDto, ProviderInput, ProviderPresetDto,
-    ProviderTestDto, RemoteModelDto,
+    ModelOptionSpecDto, ModelProfileDto, ModelProfileInput, ProviderDto, ProviderInput,
+    ProviderPresetDto, ProviderTestDto, RemoteModelDto,
 };
 use crate::error::AppResult;
 use crate::services::providers as service;
@@ -77,6 +77,11 @@ pub async fn remote_models(
 /// `GET /api/provider-presets` (spec/04 §8; the Demo preset only when enabled).
 pub async fn presets(State(state): State<AppState>) -> Json<Vec<ProviderPresetDto>> {
     Json(service::presets(state.config().demo_provider_enabled()))
+}
+
+/// `GET /api/provider-presets/options` (spec/04 §5): the option → protocol table.
+pub async fn option_specs() -> Json<Vec<ModelOptionSpecDto>> {
+    Json(service::option_specs())
 }
 
 /// `GET /api/model-profiles`.

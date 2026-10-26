@@ -16,8 +16,8 @@ use serde_json::Value;
 use ts_rs::TS;
 
 use crate::api::dto::providers::{
-    ModelOptionsDto, ModelProfileDto, ModelProfileInput, ProviderDto, ProviderInput,
-    ProviderPresetDto, ProviderTestDto, ProviderTestErrorDto, RemoteModelDto,
+    ModelOptionSpecDto, ModelOptionsDto, ModelProfileDto, ModelProfileInput, ProviderDto,
+    ProviderInput, ProviderPresetDto, ProviderTestDto, ProviderTestErrorDto, RemoteModelDto,
 };
 use crate::db::entities::{model_profiles, providers};
 use crate::db::json::Protocol;
@@ -217,6 +217,75 @@ fn preset_definitions() -> Vec<PresetDefinition> {
     ]
 }
 
+/// Stored model profiles whose options their provider's protocol cannot send (D-132).
+///
+/// Returned as `(profile id, profile name, provider name, unreachable option keys)` so the startup
+/// log can name the row the author has to fix. The API reports the same set per profile in
+/// `ModelProfileDto::ignored_options`; this scan exists for the case where the author never opens
+/// Settings, which is how the original mismatch stayed invisible for weeks.
+pub async fn stored_option_mismatches(
+    conn: &DatabaseConnection,
+) -> Result<Vec<(i32, String, String, Vec<String>)>, AppError> {
+    let profiles = model_profiles::Entity::find()
+        .order_by_asc(model_profiles::Column::Id)
+        .all(conn)
+        .await?;
+    let providers = providers::Entity::find().all(conn).await?;
+    let mut mismatches = Vec::new();
+    for profile in profiles {
+        let Some(provider) = providers.iter().find(|row| row.id == profile.provider_id) else {
+            continue;
+        };
+        let protocol = llm_protocol(parse_protocol(&provider.protocol)?);
+        let options: ModelOptionsDto = serde_json::from_str(&profile.options).unwrap_or_default();
+        let unreachable: Vec<String> = options
+            .to_model_options()
+            .map(|model_options| {
+                model_options
+                    .set_keys()
+                    .into_iter()
+                    .filter(|key| !key.reachable_by(protocol))
+                    .map(|key| key.as_str().to_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !unreachable.is_empty() {
+            mismatches.push((
+                profile.id,
+                profile.display_name,
+                provider.name.clone(),
+                unreachable,
+            ));
+        }
+    }
+    Ok(mismatches)
+}
+
+/// `GET /api/provider-presets/options` (spec/04 §5): the option → protocol table, plus how each
+/// option is edited. It is the settings page's only source for both.
+///
+/// `default_value` is the value an unset option behaves as (`reasoning_replay: never`,
+/// `max_tokens_field: max_tokens`, `cache_ttl: auto`), so the UI can label the empty choice with the
+/// effective default — and, just as importantly, can tell that a stored value *equal* to it is not
+/// a deviation worth reporting.
+pub fn option_specs() -> Vec<ModelOptionSpecDto> {
+    use nekowriter_llm::ModelOptionKey;
+    ModelOptionKey::ALL
+        .into_iter()
+        .map(|key| ModelOptionSpecDto {
+            key: key.as_str().to_owned(),
+            protocols: key.protocols().into_iter().map(db_protocol).collect(),
+            kind: key.kind().into(),
+            values: key
+                .values()
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect(),
+            default_value: key.default_value().map(str::to_owned),
+        })
+        .collect()
+}
+
 /// `GET /api/provider-presets` (spec/04 §8). The Demo preset appears only when the mock protocol
 /// is allowed (spec/01 §6).
 pub fn presets(demo_enabled: bool) -> Vec<ProviderPresetDto> {
@@ -274,17 +343,20 @@ async fn provider_dto(
         .await?;
     let extra_headers: BTreeMap<String, String> =
         serde_json::from_str(&row.extra_headers).unwrap_or_default();
+    // Every profile of this provider shares its protocol, which is what decides `ignored_options`.
+    let protocol = parse_protocol(&row.protocol)?;
+    let protocols = BTreeMap::from([(row.id, protocol)]);
     Ok(ProviderDto {
         id: row.id,
         name: row.name,
-        protocol: parse_protocol(&row.protocol)?,
+        protocol,
         base_url: row.base_url,
         api_key_masked: row.api_key.as_deref().map(mask_secret),
         has_api_key: row.api_key.is_some(),
         extra_headers,
         models: models
             .into_iter()
-            .map(|model| model_profile_dto(model).unwrap_or_else(|_| unreachable_dto()))
+            .map(|model| model_profile_dto(model, &protocols).unwrap_or_else(|_| unreachable_dto()))
             .collect(),
         created_at: row.created_at,
         updated_at: row.updated_at,
@@ -302,14 +374,34 @@ fn unreachable_dto() -> ModelProfileDto {
         context_window: 0,
         max_output_tokens: 0,
         options: ModelOptionsDto::default(),
+        ignored_options: Vec::new(),
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
+    }
+}
+
+/// The stored protocol value of an LLM-layer protocol (spec/02 §3).
+fn db_protocol(protocol: nekowriter_llm::Protocol) -> Protocol {
+    match protocol {
+        nekowriter_llm::Protocol::Openai => Protocol::Openai,
+        nekowriter_llm::Protocol::Anthropic => Protocol::Anthropic,
+        nekowriter_llm::Protocol::Mock => Protocol::Mock,
     }
 }
 
 fn parse_protocol(value: &str) -> Result<Protocol, AppError> {
     Protocol::from_str_opt(value)
         .ok_or_else(|| AppError::internal(format!("unknown provider protocol {value}")))
+}
+
+/// The LLM-layer protocol of a stored protocol value (spec/04 §1). One helper, because the option
+/// table in `crates/llm` speaks the LLM enum while the row speaks the DB enum.
+fn llm_protocol(protocol: Protocol) -> nekowriter_llm::Protocol {
+    match protocol {
+        Protocol::Openai => nekowriter_llm::Protocol::Openai,
+        Protocol::Anthropic => nekowriter_llm::Protocol::Anthropic,
+        Protocol::Mock => nekowriter_llm::Protocol::Mock,
+    }
 }
 
 /// `GET /api/providers/:id`.
@@ -525,12 +617,52 @@ pub async fn list_models(conn: &DatabaseConnection) -> Result<Vec<ModelProfileDt
         .order_by_asc(model_profiles::Column::Id)
         .all(conn)
         .await?;
-    rows.into_iter().map(model_profile_dto).collect()
+    let protocols = provider_protocols(conn).await?;
+    rows.into_iter()
+        .map(|row| model_profile_dto(row, &protocols))
+        .collect()
+}
+
+/// `provider id → protocol` for every provider row, so the model-profile DTOs can report options
+/// their protocol cannot send without one query per profile (spec/04 §5).
+async fn provider_protocols(
+    conn: &DatabaseConnection,
+) -> Result<BTreeMap<i32, Protocol>, AppError> {
+    let rows = providers::Entity::find().all(conn).await?;
+    rows.into_iter()
+        .map(|row| Ok((row.id, parse_protocol(&row.protocol)?)))
+        .collect()
 }
 
 /// The DTO of one model profile row.
-fn model_profile_dto(row: model_profiles::Model) -> Result<ModelProfileDto, AppError> {
+///
+/// An option the provider's protocol cannot send is reported in `ignored_options` rather than
+/// failing the read (D-132). The write path refuses such a profile
+/// ([`validate_options_protocol`]), but a row written before that rule existed must stay readable:
+/// failing here would lock the author out of the settings page that has to fix it, and the
+/// mismatch is exactly the state the rule exists to make visible.
+fn model_profile_dto(
+    row: model_profiles::Model,
+    protocols: &BTreeMap<i32, Protocol>,
+) -> Result<ModelProfileDto, AppError> {
     let options: ModelOptionsDto = serde_json::from_str(&row.options).unwrap_or_default();
+    let ignored_options = match protocols.get(&row.provider_id) {
+        Some(protocol) => options
+            .to_model_options()
+            .map(|model_options| {
+                model_options
+                    .set_keys()
+                    .into_iter()
+                    .filter(|key| !key.reachable_by(llm_protocol(*protocol)))
+                    .map(|key| key.as_str().to_owned())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        // A profile whose provider row vanished is unreachable but still listed: the cascade
+        // deletes profiles with their provider, so this is only a transient read. Report nothing
+        // rather than guess a protocol.
+        None => Vec::new(),
+    };
     Ok(ModelProfileDto {
         id: row.id,
         provider_id: row.provider_id,
@@ -539,6 +671,7 @@ fn model_profile_dto(row: model_profiles::Model) -> Result<ModelProfileDto, AppE
         context_window: row.context_window,
         max_output_tokens: row.max_output_tokens,
         options,
+        ignored_options,
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
@@ -550,7 +683,8 @@ pub async fn get_model(conn: &DatabaseConnection, id: i32) -> Result<ModelProfil
         .one(conn)
         .await?
         .ok_or_else(|| AppError::not_found(format!("model profile {id}")))?;
-    model_profile_dto(row)
+    let protocols = provider_protocols(conn).await?;
+    model_profile_dto(row, &protocols)
 }
 
 /// `POST /api/model-profiles`.
@@ -558,7 +692,7 @@ pub async fn create_model(
     state: &AppState,
     input: &ModelProfileInput,
 ) -> Result<ModelProfileDto, AppError> {
-    validate_model_input(input)?;
+    validate_model_fields(input)?;
     let demo_enabled = state.config().demo_provider_enabled();
     let id = crate::services::write(state.db(), {
         let input = input.clone();
@@ -566,6 +700,9 @@ pub async fn create_model(
             Box::pin(async move {
                 let provider = find_provider(tx, input.provider_id).await?;
                 check_protocol_row_allowed(&provider, demo_enabled)?;
+                // The protocol lives on the provider row, so the cross-protocol check belongs
+                // inside the transaction that reads it (spec/04 §5, D-132).
+                validate_options_protocol(&input.options, parse_protocol(&provider.protocol)?)?;
                 ensure_unique_name(tx, input.provider_id, &input.display_name, None).await?;
                 let now = chrono::Utc::now();
                 let active = model_profiles::ActiveModel {
@@ -609,7 +746,7 @@ pub async fn update_model(
     id: i32,
     input: &ModelProfileInput,
 ) -> Result<ModelProfileDto, AppError> {
-    validate_model_input(input)?;
+    validate_model_fields(input)?;
     let demo_enabled = state.config().demo_provider_enabled();
     crate::services::write(state.db(), {
         let input = input.clone();
@@ -617,6 +754,7 @@ pub async fn update_model(
             Box::pin(async move {
                 let provider = find_provider(tx, input.provider_id).await?;
                 check_protocol_row_allowed(&provider, demo_enabled)?;
+                validate_options_protocol(&input.options, parse_protocol(&provider.protocol)?)?;
                 ensure_unique_name(tx, input.provider_id, &input.display_name, Some(id)).await?;
                 let row = model_profiles::Entity::find_by_id(id)
                     .one(tx)
@@ -657,7 +795,7 @@ pub async fn delete_model(state: &AppState, id: i32) -> Result<(), AppError> {
     .await
 }
 
-fn validate_model_input(input: &ModelProfileInput) -> Result<(), AppError> {
+fn validate_model_fields(input: &ModelProfileInput) -> Result<(), AppError> {
     if input.display_name.trim().is_empty() {
         return Err(field_error(
             "display_name",
@@ -695,6 +833,75 @@ fn validate_model_input(input: &ModelProfileInput) -> Result<(), AppError> {
     serde_json::from_value::<nekowriter_llm::ModelOptions>(options)
         .map_err(|err| field_error("options", format!("the model options are not valid: {err}")))?;
     Ok(())
+}
+
+/// Refuses an option the provider's protocol cannot send (spec/04 §5, D-132).
+///
+/// This is the rule the M2 incident only half-taught (see the comment above `ModelOptions`
+/// validation): a stored-but-inert option is not a cosmetic problem. A profile can hold the
+/// Anthropic `effort` while its provider speaks the OpenAI protocol, in which case the request
+/// carries **no reasoning parameter at all** — the turn succeeds and nothing reports the mismatch.
+/// Rejecting the *write* is what makes the state unreachable; reads still report it (see
+/// [`model_profile_dto`]) so an already-mismatched row stays fixable.
+fn validate_options_protocol(
+    options: &ModelOptionsDto,
+    protocol: Protocol,
+) -> Result<(), AppError> {
+    // The blob already round-tripped through `ModelOptions` in `validate_model_fields`, so this
+    // conversion cannot fail on the write path.
+    let Some(model_options) = options.to_model_options() else {
+        return Err(field_error("options", "the model options are not valid"));
+    };
+    let mut fields = serde_json::Map::new();
+    for key in model_options.set_keys() {
+        if key.reachable_by(llm_protocol(protocol)) {
+            continue;
+        }
+        fields.insert(
+            key.as_str().to_owned(),
+            Value::String(format!(
+                "{} cannot be sent by a provider with protocol {}; {}",
+                key.as_str(),
+                protocol,
+                alternative_hint(key, protocol)
+            )),
+        );
+    }
+    if fields.is_empty() {
+        return Ok(());
+    }
+    Err(AppError::invalid_fields(fields))
+}
+
+/// What to use instead of `key` on `protocol`, for the validation message (spec/04 §5).
+///
+/// The cross-protocol pairs are the whole point of the bug report: `effort` (Anthropic) and
+/// `reasoning_effort` (OpenAI-compatible) are the same intent under two names, and saying so in
+/// the error is what turns a cryptic rejection into a fix.
+fn alternative_hint(key: nekowriter_llm::ModelOptionKey, protocol: Protocol) -> String {
+    use nekowriter_llm::ModelOptionKey;
+    match key {
+        // The pair the bug report is about: the same intent under two names.
+        ModelOptionKey::Effort => "use reasoning_effort instead".to_owned(),
+        ModelOptionKey::ReasoningEffort => "use effort instead".to_owned(),
+        // Everything else: name the options this protocol *can* send, so the message is actionable
+        // without a second lookup.
+        _ => {
+            let reachable = ModelOptionKey::reachable(llm_protocol(protocol));
+            if reachable.is_empty() {
+                "this protocol sends no model options at all".to_owned()
+            } else {
+                format!(
+                    "this protocol accepts only {}",
+                    reachable
+                        .into_iter()
+                        .map(ModelOptionKey::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+        }
+    }
 }
 
 async fn ensure_unique_name(
@@ -906,11 +1113,7 @@ pub fn provider_config(
     let extra_headers: BTreeMap<String, String> =
         serde_json::from_str(&provider.extra_headers).unwrap_or_default();
     Ok(nekowriter_llm::ProviderConfig {
-        protocol: match protocol {
-            Protocol::Openai => nekowriter_llm::Protocol::Openai,
-            Protocol::Anthropic => nekowriter_llm::Protocol::Anthropic,
-            Protocol::Mock => nekowriter_llm::Protocol::Mock,
-        },
+        protocol: llm_protocol(protocol),
         base_url: provider.base_url.clone(),
         api_key,
         extra_headers,

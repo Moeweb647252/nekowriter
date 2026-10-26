@@ -8,4 +8,12 @@ export type ModelProfileDto = { id: number, provider_id: number, display_name: s
 /**
  * The provider's model id.
  */
-model: string, context_window: number, max_output_tokens: number, options: ModelOptionsDto, created_at: string, updated_at: string, };
+model: string, context_window: number, max_output_tokens: number, options: ModelOptionsDto, 
+/**
+ * Options this profile sets that its provider's protocol cannot send (spec/04 §5, D-132).
+ *
+ * A **stored** mismatch is reported here instead of failing the read: the author's database
+ * already holds one (an Anthropic `effort` on an OpenAI-protocol provider), and failing the
+ * read would lock them out of the page that has to fix it. Writing such a profile is refused.
+ */
+ignored_options: Array<string>, created_at: string, updated_at: string, };

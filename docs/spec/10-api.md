@@ -33,7 +33,8 @@
 | POST | `/providers/:id/test` | `{ model? }` | `{ ok, latency_ms, text?, error? }` |
 | GET | `/providers/:id/remote-models` | | `RemoteModelDto[]` |
 | GET | `/provider-presets` | | `ProviderPresetDto[]` (spec/04 §8; Demo only when enabled) |
-| GET / POST | `/model-profiles` | `ModelProfileInput` | `ModelProfileDto[]` / `ModelProfileDto` |
+| GET | `/provider-presets/options` | | `ModelOptionSpecDto[]` — the `options` field → protocol table the settings form renders (spec/04 §5, D-132) |
+| GET / POST | `/model-profiles` | `ModelProfileInput`; an option the provider's protocol cannot send is `400 validation.failed` (spec/04 §5) | `ModelProfileDto[]` / `ModelProfileDto`, including `ignored_options` for a stored mismatch (reported, never a failed read) |
 | PATCH / DELETE | `/model-profiles/:id` | | |
 | GET | `/embedding/status` | | `IndexStatusDto` |
 | POST | `/embedding/rebuild` | | 202 |

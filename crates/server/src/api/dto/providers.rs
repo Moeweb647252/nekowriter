@@ -17,9 +17,13 @@ use crate::services::providers::PresetKey;
 #[ts(export)]
 #[ts(optional_fields = nullable)]
 pub struct ModelOptionsDto {
-    // OpenAI-compatible
+    // Read by both adapters (`reasoning_replay` selects the replayed assistant payload,
+    // `cache_ttl` becomes `CacheHints.ttl`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_replay: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_ttl: Option<String>,
+    // OpenAI-compatible only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -32,17 +36,25 @@ pub struct ModelOptionsDto {
     pub temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extra_body: Option<BTreeMap<String, serde_json::Value>>,
-    // Anthropic
+    // Anthropic only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_display: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cache_ttl: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub refusal_fallback: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub eager_input_streaming: Option<bool>,
+}
+
+impl ModelOptionsDto {
+    /// The neutral options these fields describe, or `None` when a value is not one the adapters
+    /// accept (spec/04 §5). The write path rejects such a blob, so `None` only happens for a row
+    /// written before that rule.
+    pub fn to_model_options(&self) -> Option<nekowriter_llm::ModelOptions> {
+        let value = serde_json::to_value(self).ok()?;
+        serde_json::from_value(value).ok()
+    }
 }
 
 /// One provider (spec/10 §2.1). The key is never returned in clear text.
@@ -83,6 +95,7 @@ pub struct ProviderInput {
 /// One model profile (spec/10 §2.1, spec/02 §2).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
+#[ts(optional_fields = nullable)]
 pub struct ModelProfileDto {
     pub id: i32,
     pub provider_id: i32,
@@ -92,6 +105,12 @@ pub struct ModelProfileDto {
     pub context_window: i32,
     pub max_output_tokens: i32,
     pub options: ModelOptionsDto,
+    /// Options this profile sets that its provider's protocol cannot send (spec/04 §5, D-132).
+    ///
+    /// A **stored** mismatch is reported here instead of failing the read: the author's database
+    /// already holds one (an Anthropic `effort` on an OpenAI-protocol provider), and failing the
+    /// read would lock them out of the page that has to fix it. Writing such a profile is refused.
+    pub ignored_options: Vec<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -160,4 +179,50 @@ pub struct RemoteModelDto {
     pub context_window: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<i64>,
+}
+
+/// `GET /api/provider-presets/options` (spec/04 §5, spec/10 §2.1): the option table the settings
+/// page renders.
+///
+/// The classification lives in `crates/llm` next to the adapters and is verified against them by
+/// `crates/llm/tests/model_options.rs`, so the UI cannot drift from what the wire can carry. It is
+/// served instead of hard-coded in TypeScript for exactly that reason: a client-side copy would be
+/// a second source of truth for the rule this bug report is about.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ModelOptionSpecDto {
+    /// The JSON field name in `model_profiles.options`.
+    pub key: String,
+    /// The protocols whose adapter sends this option at all.
+    pub protocols: Vec<Protocol>,
+    pub kind: ModelOptionKindDto,
+    /// The closed set of values, or empty when the option is free-form.
+    pub values: Vec<String>,
+    /// The value an unset option behaves as, when `ModelOptions::default` gives it one; `None` for
+    /// an option that is simply absent unless set (spec/04 §5).
+    pub default_value: Option<String>,
+}
+
+/// How the UI edits an option (spec/04 §5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ModelOptionKindDto {
+    Choice,
+    Boolean,
+    Number,
+    Text,
+    Json,
+}
+
+impl From<nekowriter_llm::ModelOptionKind> for ModelOptionKindDto {
+    fn from(kind: nekowriter_llm::ModelOptionKind) -> Self {
+        match kind {
+            nekowriter_llm::ModelOptionKind::Choice => ModelOptionKindDto::Choice,
+            nekowriter_llm::ModelOptionKind::Boolean => ModelOptionKindDto::Boolean,
+            nekowriter_llm::ModelOptionKind::Number => ModelOptionKindDto::Number,
+            nekowriter_llm::ModelOptionKind::Text => ModelOptionKindDto::Text,
+            nekowriter_llm::ModelOptionKind::Json => ModelOptionKindDto::Json,
+        }
+    }
 }

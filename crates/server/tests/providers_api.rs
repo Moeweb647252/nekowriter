@@ -434,7 +434,9 @@ async fn deleting_a_provider_assigned_to_a_role_leaves_the_role_to_report_a_miss
 #[tokio::test]
 async fn model_profile_crud_and_validation() {
     let app = TestApp::new().await;
-    let provider = create_demo_provider(&app).await;
+    // A real wire protocol: the Demo provider sends no request at all, so it currently accepts no
+    // model option (D-132), and this test is about the options round trip.
+    let provider = create_openai_provider(&app, "https://example.invalid/v1", "sk-test").await;
     let provider_id = provider["id"].as_i64().expect("id");
     let (status, model) = app
         .post(
@@ -445,13 +447,18 @@ async fn model_profile_crud_and_validation() {
                 "model": "demo-model",
                 "context_window": 200000,
                 "max_output_tokens": 16384,
-                "options": { "effort": "high" },
+                "options": { "reasoning_replay": "always" },
             }),
         )
         .await;
     assert_eq!(status, 201, "{model}");
     let model_id = model["id"].as_i64().expect("id");
-    assert_eq!(model["options"]["effort"], "high");
+    assert_eq!(model["options"]["reasoning_replay"], "always");
+    assert_eq!(
+        model["ignored_options"],
+        json!([]),
+        "nothing is inert: {model}"
+    );
     // The provider DTO carries its models.
     let (_, provider_dto) = app.get(&format!("/api/providers/{provider_id}")).await;
     assert_eq!(provider_dto["models"].as_array().expect("models").len(), 1);
@@ -505,8 +512,10 @@ async fn model_profile_crud_and_validation() {
     }
 
     // Valid options survive a round trip unchanged, so the check above rejects only what the
-    // adapters cannot read and never normalizes a value the author set (spec/04 §5).
-    let full_options = json!({
+    // adapters cannot read and never normalizes a value the author set (spec/04 §5). The set is
+    // split by protocol: storing an Anthropic-only field on this mock provider is now refused
+    // (D-132), and the mock protocol answers to the OpenAI column.
+    let openai_options = json!({
         "reasoning_replay": "always",
         "reasoning_effort": "medium",
         "max_tokens_field": "max_completion_tokens",
@@ -514,30 +523,74 @@ async fn model_profile_crud_and_validation() {
         "stream_usage": false,
         "temperature": 0.7,
         "extra_body": { "top_k": 40 },
-        "effort": "xhigh",
-        "thinking_display": "omitted",
         "cache_ttl": "1h",
-        "refusal_fallback": true,
-        "eager_input_streaming": false,
     });
     let (status, round_tripped) = app
         .post(
             "/api/model-profiles",
             json!({
                 "provider_id": provider_id,
-                "display_name": "Every option",
+                "display_name": "Every OpenAI option",
                 "model": "demo-model",
                 "context_window": 1000,
                 "max_output_tokens": 100,
-                "options": full_options,
+                "options": openai_options,
             }),
         )
         .await;
     assert_eq!(status, 201, "{round_tripped}");
     assert_eq!(
-        round_tripped["options"], full_options,
+        round_tripped["options"], openai_options,
         "options must round-trip"
     );
+    let (status, _body) = app
+        .delete(&format!(
+            "/api/model-profiles/{}",
+            round_tripped["id"].as_i64().expect("id")
+        ))
+        .await;
+    assert_eq!(status, 204);
+
+    let anthropic_options = json!({
+        "reasoning_replay": "always",
+        "effort": "xhigh",
+        "thinking_display": "omitted",
+        "cache_ttl": "1h",
+        "refusal_fallback": true,
+        "eager_input_streaming": false,
+    });
+    let (status, anthropic_provider) = app
+        .post(
+            "/api/providers",
+            json!({
+                "name": "Test Anthropic",
+                "protocol": "anthropic",
+                "base_url": "https://api.anthropic.test",
+                "api_key": "sk-ant-test",
+            }),
+        )
+        .await;
+    assert_eq!(status, 201, "{anthropic_provider}");
+    let anthropic_provider_id = anthropic_provider["id"].as_i64().expect("id");
+    let (status, round_tripped) = app
+        .post(
+            "/api/model-profiles",
+            json!({
+                "provider_id": anthropic_provider_id,
+                "display_name": "Every Anthropic option",
+                "model": "claude-test",
+                "context_window": 1000,
+                "max_output_tokens": 100,
+                "options": anthropic_options,
+            }),
+        )
+        .await;
+    assert_eq!(status, 201, "{round_tripped}");
+    assert_eq!(
+        round_tripped["options"], anthropic_options,
+        "options must round-trip"
+    );
+    assert_eq!(round_tripped["ignored_options"], json!([]));
     let (status, _body) = app
         .delete(&format!(
             "/api/model-profiles/{}",
@@ -603,7 +656,10 @@ async fn model_profile_crud_and_validation() {
     let (status, _body) = app.delete(&format!("/api/model-profiles/{model_id}")).await;
     assert_eq!(status, 204);
     let (_, models) = app.get("/api/model-profiles").await;
-    assert!(models.as_array().expect("array").is_empty());
+    assert!(
+        models.as_array().expect("array").is_empty(),
+        "the two round-trip profiles were already deleted: {models}"
+    );
 }
 
 #[tokio::test]
@@ -987,4 +1043,472 @@ fn a_stored_demo_provider_is_only_usable_when_the_demo_provider_is_enabled() {
         ..row
     };
     assert!(nekowriter::services::providers::client_for(&openai, false).is_ok());
+}
+
+// ───────────────────────────── option → protocol validation (D-132) ─────────────────────────────
+
+/// Creates an OpenAI-protocol provider pointing nowhere in particular.
+async fn create_openai_provider_named(app: &TestApp, name: &str) -> i64 {
+    let (status, body) = app
+        .post(
+            "/api/providers",
+            json!({
+                "name": name,
+                "protocol": "openai",
+                "base_url": "https://example.invalid/v1",
+                "api_key": "sk-test",
+            }),
+        )
+        .await;
+    assert_eq!(status, 201, "{body}");
+    body["id"].as_i64().expect("id")
+}
+
+async fn create_anthropic_provider_named(app: &TestApp, name: &str) -> i64 {
+    let (status, body) = app
+        .post(
+            "/api/providers",
+            json!({
+                "name": name,
+                "protocol": "anthropic",
+                "base_url": "https://api.anthropic.test",
+                "api_key": "sk-ant-test",
+            }),
+        )
+        .await;
+    assert_eq!(status, 201, "{body}");
+    body["id"].as_i64().expect("id")
+}
+
+/// The bug report in one test: the author's profile #4 stores the **Anthropic** `effort` on an
+/// **OpenAI**-protocol provider. The OpenAI adapter sends only `reasoning_effort`, so the request
+/// carried no reasoning parameter, the turn succeeded, and nothing reported the mismatch.
+///
+/// Saving such a profile is now a `400 validation.failed` naming the field and the protocol.
+#[tokio::test]
+async fn an_anthropic_option_on_an_openai_provider_is_rejected_on_save() {
+    let app = TestApp::new().await;
+    let provider_id = create_openai_provider_named(&app, "Magpie").await;
+
+    // The exact options blob of the author's profile #4.
+    let (status, body) = app
+        .post(
+            "/api/model-profiles",
+            json!({
+                "provider_id": provider_id,
+                "display_name": "DeepSeek V4 Pro",
+                "model": "deepseek-v4-pro",
+                "context_window": 200000,
+                "max_output_tokens": 16384,
+                "options": {
+                    "reasoning_replay": "always",
+                    "max_tokens_field": "max_tokens",
+                    "effort": "high",
+                    "thinking_display": "omitted",
+                    "cache_ttl": "1h",
+                },
+            }),
+        )
+        .await;
+    assert_eq!(status, 400, "{body}");
+    assert_error(&body, "validation.failed");
+    let fields = &body["error"]["details"]["fields"];
+    for field in ["effort", "thinking_display"] {
+        let message = fields[field]
+            .as_str()
+            .unwrap_or_else(|| panic!("{field} must be named: {body}"));
+        assert!(
+            message.contains("protocol openai"),
+            "the message names the protocol: {message}"
+        );
+    }
+    assert_eq!(
+        fields["effort"].as_str(),
+        Some(
+            "effort cannot be sent by a provider with protocol openai; use reasoning_effort instead"
+        ),
+        "{body}"
+    );
+    // The reachable options are not reported, so the message points only at the defect.
+    assert!(fields.get("reasoning_replay").is_none(), "{body}");
+    assert!(fields.get("cache_ttl").is_none(), "{body}");
+
+    // The same intent under the OpenAI name is accepted.
+    let (status, accepted) = app
+        .post(
+            "/api/model-profiles",
+            json!({
+                "provider_id": provider_id,
+                "display_name": "DeepSeek V4 Pro",
+                "model": "deepseek-v4-pro",
+                "context_window": 200000,
+                "max_output_tokens": 16384,
+                "options": {
+                    "reasoning_replay": "always",
+                    "reasoning_effort": "high",
+                    "cache_ttl": "1h",
+                },
+            }),
+        )
+        .await;
+    assert_eq!(status, 201, "{accepted}");
+    assert_eq!(accepted["options"]["reasoning_effort"], "high");
+    assert_eq!(accepted["ignored_options"], json!([]), "{accepted}");
+}
+
+/// The mirror image: an OpenAI-only option on an Anthropic provider.
+#[tokio::test]
+async fn an_openai_option_on_an_anthropic_provider_is_rejected_on_save() {
+    let app = TestApp::new().await;
+    let provider_id = create_anthropic_provider_named(&app, "Anthropic").await;
+    let (status, body) = app
+        .post(
+            "/api/model-profiles",
+            json!({
+                "provider_id": provider_id,
+                "display_name": "Claude",
+                "model": "claude-test",
+                "context_window": 1000000,
+                "max_output_tokens": 128000,
+                "options": {
+                    "reasoning_effort": "high",
+                    "temperature": 0.5,
+                    "effort": "high",
+                },
+            }),
+        )
+        .await;
+    assert_eq!(status, 400, "{body}");
+    assert_error(&body, "validation.failed");
+    let fields = &body["error"]["details"]["fields"];
+    for field in ["reasoning_effort", "temperature"] {
+        let message = fields[field]
+            .as_str()
+            .unwrap_or_else(|| panic!("{field} must be named: {body}"));
+        assert!(
+            message.contains("protocol anthropic"),
+            "the message names the protocol: {message}"
+        );
+    }
+    assert!(fields.get("effort").is_none(), "{body}");
+
+    // PATCH is subject to the same rule; it is not a create-only check.
+    let (status, profile) = app
+        .post(
+            "/api/model-profiles",
+            json!({
+                "provider_id": provider_id,
+                "display_name": "Claude",
+                "model": "claude-test",
+                "context_window": 1000000,
+                "max_output_tokens": 128000,
+                "options": { "effort": "high" },
+            }),
+        )
+        .await;
+    assert_eq!(status, 201, "{profile}");
+    let profile_id = profile["id"].as_i64().expect("id");
+    let (status, body) = app
+        .patch(
+            &format!("/api/model-profiles/{profile_id}"),
+            json!({
+                "provider_id": provider_id,
+                "display_name": "Claude",
+                "model": "claude-test",
+                "context_window": 1000000,
+                "max_output_tokens": 128000,
+                "options": { "effort": "high", "reasoning_effort": "high" },
+            }),
+        )
+        .await;
+    assert_eq!(status, 400, "{body}");
+    assert!(body["error"]["details"]["fields"]["reasoning_effort"].is_string());
+
+    // Moving the profile to another provider re-validates against the new protocol.
+    let openai_id = create_openai_provider_named(&app, "OpenAI").await;
+    let (status, body) = app
+        .patch(
+            &format!("/api/model-profiles/{profile_id}"),
+            json!({
+                "provider_id": openai_id,
+                "display_name": "Claude",
+                "model": "gpt-test",
+                "context_window": 400000,
+                "max_output_tokens": 128000,
+                "options": { "effort": "high" },
+            }),
+        )
+        .await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(
+        body["error"]["details"]["fields"]["effort"].as_str(),
+        Some(
+            "effort cannot be sent by a provider with protocol openai; use reasoning_effort instead"
+        ),
+        "{body}"
+    );
+    // The stranded field removed and the name fixed, the move is accepted.
+    let (status, moved) = app
+        .patch(
+            &format!("/api/model-profiles/{profile_id}"),
+            json!({
+                "provider_id": openai_id,
+                "display_name": "Claude",
+                "model": "gpt-test",
+                "context_window": 400000,
+                "max_output_tokens": 128000,
+                "options": { "reasoning_effort": "high" },
+            }),
+        )
+        .await;
+    assert_eq!(status, 200, "{moved}");
+    assert_eq!(moved["provider_id"], openai_id);
+    assert_eq!(moved["ignored_options"], json!([]), "{moved}");
+}
+
+/// A row written **before** this rule must stay readable: failing the read would lock the author
+/// out of the settings page that has to fix it. The mismatch is reported instead.
+#[tokio::test]
+async fn an_already_stored_mismatch_is_readable_and_reported() {
+    let app = TestApp::new().await;
+    let provider_id = create_openai_provider_named(&app, "Magpie").await;
+    // Simulate the pre-fix row: the API refuses to write it, so write it the way the old version
+    // did, straight into the table.
+    let now = chrono::Utc::now();
+    let stored = serde_json::json!({
+        "reasoning_replay": "always",
+        "max_tokens_field": "max_tokens",
+        "effort": "high",
+        "thinking_display": "omitted",
+        "cache_ttl": "1h",
+    });
+    use nekowriter::db::entities::model_profiles;
+    use sea_orm::{ActiveModelTrait, Set};
+    let id = model_profiles::ActiveModel {
+        provider_id: Set(i32::try_from(provider_id).expect("provider id")),
+        display_name: Set("DeepSeek V4 Pro".to_owned()),
+        model: Set("deepseek-v4-pro".to_owned()),
+        context_window: Set(200_000),
+        max_output_tokens: Set(16_384),
+        options: Set(stored.to_string()),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    }
+    .insert(app.db().conn())
+    .await
+    .expect("insert the legacy row")
+    .id;
+
+    // The list, the single GET and the provider GET all stay 200 and report the mismatch.
+    for (status, body) in [
+        app.get("/api/model-profiles").await,
+        app.get(&format!("/api/model-profiles/{id}")).await,
+    ] {
+        assert_eq!(status, 200, "{body}");
+        let profile = if body.is_array() {
+            body[0].clone()
+        } else {
+            body.clone()
+        };
+        assert_eq!(
+            profile["ignored_options"],
+            json!(["effort", "thinking_display"]),
+            "the inert options are named: {body}"
+        );
+        // The stored blob is returned untouched: reading never rewrites the author's configuration.
+        assert_eq!(profile["options"], stored, "{body}");
+    }
+    let (status, provider) = app.get(&format!("/api/providers/{provider_id}")).await;
+    assert_eq!(status, 200, "{provider}");
+    assert_eq!(
+        provider["models"][0]["ignored_options"],
+        json!(["effort", "thinking_display"]),
+        "{provider}"
+    );
+
+    // The startup scan finds the same row, so the mismatch is in the log even when Settings is
+    // never opened.
+    let mismatches = nekowriter::services::providers::stored_option_mismatches(app.db().conn())
+        .await
+        .expect("scan");
+    assert_eq!(mismatches.len(), 1, "{mismatches:?}");
+    let (mismatch_id, profile_name, provider_name, options) = &mismatches[0];
+    assert_eq!(*mismatch_id, id);
+    assert_eq!(profile_name, "DeepSeek V4 Pro");
+    assert_eq!(provider_name, "Magpie");
+    assert_eq!(
+        options,
+        &vec!["effort".to_owned(), "thinking_display".to_owned()]
+    );
+
+    // And the fix is one PATCH through the UI: replace `effort` with `reasoning_effort` and drop
+    // the other Anthropic field.
+    let (status, fixed) = app
+        .patch(
+            &format!("/api/model-profiles/{id}"),
+            json!({
+                "provider_id": provider_id,
+                "display_name": "DeepSeek V4 Pro",
+                "model": "deepseek-v4-pro",
+                "context_window": 200000,
+                "max_output_tokens": 16384,
+                "options": {
+                    "reasoning_replay": "always",
+                    "reasoning_effort": "high",
+                    "cache_ttl": "1h",
+                },
+            }),
+        )
+        .await;
+    assert_eq!(status, 200, "{fixed}");
+    assert_eq!(fixed["ignored_options"], json!([]), "{fixed}");
+    assert_eq!(fixed["options"]["reasoning_effort"], "high");
+}
+
+/// The option table the settings page renders comes from the adapters (`crates/llm`), so the UI
+/// cannot drift from what the request body can carry.
+#[tokio::test]
+async fn the_option_specs_endpoint_publishes_the_protocol_table() {
+    let app = TestApp::new().await;
+    let (status, body) = app.get("/api/provider-presets/options").await;
+    assert_eq!(status, 200, "{body}");
+    let specs = body.as_array().expect("array");
+    let spec = |key: &str| {
+        specs
+            .iter()
+            .find(|spec| spec["key"] == key)
+            .unwrap_or_else(|| panic!("missing spec {key}"))
+    };
+
+    // The pair the bug report is about.
+    assert_eq!(spec("effort")["protocols"], json!(["anthropic"]));
+    assert_eq!(
+        spec("effort")["values"],
+        json!(["low", "medium", "high", "xhigh", "max"])
+    );
+    assert_eq!(spec("effort")["kind"], "choice");
+    assert_eq!(spec("reasoning_effort")["protocols"], json!(["openai"]));
+    // Free-form on purpose: gateways accept values OpenAI does not document.
+    assert_eq!(spec("reasoning_effort")["kind"], "text");
+    assert_eq!(spec("reasoning_effort")["values"], json!([]));
+
+    // Read by both adapters (verified in `crates/llm/tests/model_options.rs`).
+    for key in ["reasoning_replay", "cache_ttl"] {
+        assert_eq!(
+            spec(key)["protocols"],
+            json!(["openai", "anthropic"]),
+            "{key} is read by both adapters"
+        );
+    }
+    // The Demo provider sends no request, so no option may be offered for it (D-132).
+    for spec in specs {
+        assert!(
+            !spec["protocols"]
+                .as_array()
+                .expect("protocols")
+                .iter()
+                .any(|protocol| protocol == "mock"),
+            "the mock protocol must carry no option: {spec}"
+        );
+    }
+    for key in [
+        "thinking_display",
+        "refusal_fallback",
+        "eager_input_streaming",
+    ] {
+        assert_eq!(spec(key)["protocols"], json!(["anthropic"]), "{key}");
+    }
+    for key in [
+        "temperature",
+        "send_parallel_tool_calls",
+        "stream_usage",
+        "max_tokens_field",
+        "extra_body",
+    ] {
+        assert_eq!(spec(key)["protocols"], json!(["openai"]), "{key}");
+    }
+    // Every option is described exactly once, so the UI cannot render a duplicate or miss one.
+    let mut keys: Vec<&str> = specs
+        .iter()
+        .map(|spec| spec["key"].as_str().expect("key"))
+        .collect();
+    keys.sort_unstable();
+    let mut expected = vec![
+        "cache_ttl",
+        "eager_input_streaming",
+        "effort",
+        "extra_body",
+        "max_tokens_field",
+        "reasoning_effort",
+        "reasoning_replay",
+        "refusal_fallback",
+        "send_parallel_tool_calls",
+        "stream_usage",
+        "temperature",
+        "thinking_display",
+    ];
+    expected.sort_unstable();
+    assert_eq!(keys, expected);
+}
+
+/// A shipped preset carrying an option its own protocol cannot send would be a default defect, and
+/// worse than the author's instance because every new install would inherit it. Every preset is
+/// pinned against the option table here.
+#[tokio::test]
+async fn every_shipped_preset_only_carries_options_its_protocol_can_send() {
+    let presets = nekowriter::services::providers::presets(true);
+    assert!(!presets.is_empty());
+    let options_of = |preset: &dto::ProviderPresetDto| {
+        let value = serde_json::to_value(&preset.options).expect("options");
+        serde_json::from_value::<serde_json::Map<String, Value>>(value).expect("object")
+    };
+    let protocol_of = |preset: &dto::ProviderPresetDto| match preset.protocol.as_str() {
+        "openai" => nekowriter_llm::Protocol::Openai,
+        "anthropic" => nekowriter_llm::Protocol::Anthropic,
+        other => {
+            assert_eq!(other, "mock");
+            nekowriter_llm::Protocol::Mock
+        }
+    };
+    for preset in &presets {
+        let options = options_of(preset);
+        let protocol = protocol_of(preset);
+        // Only a *set* field can strand; the preset DTO omits unset ones.
+        for key in options.keys() {
+            let known = nekowriter_llm::ModelOptionKey::ALL
+                .into_iter()
+                .find(|candidate| candidate.as_str() == key);
+            let Some(key) = known else {
+                panic!("preset {:?} carries an unknown option {key}", preset.key);
+            };
+            assert!(
+                key.reachable_by(protocol),
+                "preset {:?} is {} but carries {}, which that protocol cannot send",
+                preset.key,
+                preset.protocol,
+                key.as_str()
+            );
+        }
+    }
+
+    // Spot-check the two presets that carry options, so a silently emptied preset fails too.
+    let anthropic = presets
+        .iter()
+        .find(|preset| preset.key == nekowriter::services::providers::PresetKey::Anthropic)
+        .expect("anthropic");
+    assert_eq!(anthropic.options.effort.as_deref(), Some("high"));
+    let openai = presets
+        .iter()
+        .find(|preset| preset.key == nekowriter::services::providers::PresetKey::Openai)
+        .expect("openai");
+    assert_eq!(
+        openai.options.max_tokens_field.as_deref(),
+        Some("max_completion_tokens")
+    );
+    let deepseek = presets
+        .iter()
+        .find(|preset| preset.key == nekowriter::services::providers::PresetKey::Deepseek)
+        .expect("deepseek");
+    assert_eq!(deepseek.options.reasoning_replay.as_deref(), Some("always"));
 }

@@ -1885,3 +1885,55 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   the finalize button or the tab list; the root is bounded), `BookLayout.test.tsx` (both route
   directions) and `Composer.test.tsx` (one hint, stable accessible name, neutral placeholder,
   feedback mode, IME guard).
+
+### D-132 A model option the provider's protocol cannot send is refused on save, reported on read, and absent from the form
+- **Context**: the author reported that book 3's conception session never triggered the model's
+  reasoning. Book 3 resolves to model profile #4 ("DeepSeek V4 Pro"), whose provider "Magpie" is
+  `protocol: "openai"`, but whose `options` held `{"effort":"high","thinking_display":"omitted",
+  "cache_ttl":"1h"}` — **Anthropic** fields. `ModelOptions` has two separate reasoning knobs,
+  `effort` (Anthropic) and `reasoning_effort` (OpenAI-compatible); the OpenAI adapter sends only the
+  latter, so the request carried no reasoning parameter at all. The session ran, the turn
+  succeeded, and nothing anywhere reported the mismatch, which is why the author could not tell
+  what was wrong. Audit of the author's database (copied to `target/tmp`, never touched in place):
+  profiles #2, #3 and #4 all had the same defect, because the settings form offered a **flat list
+  of every option for every model**, including `effort` for OpenAI-protocol profiles — and never
+  offered `reasoning_effort` at all. The same defect class as the M2 incident recorded in
+  `providers.rs` (unvalidated options silently dropped `reasoning_replay: always`), which had never
+  been generalised into a cross-protocol rule.
+- **Decision**: the option → protocol classification is stated once, in `crates/llm`
+  (`ModelOptionKey::reachable_by`), next to the adapters it describes, and **verified against them**
+  by `crates/llm/tests/model_options.rs`: for every option, both request bodies are built and the
+  option must reach the wire exactly for the protocols the table lists. The independent reading of
+  the adapters **corrected two assumptions** the bug report itself carried: `reasoning_replay` is
+  *both* (the Anthropic adapter replays its stored blocks unconditionally, which is `always`), and
+  `extra_body` is **OpenAI-only** (only `openai::build_body` merges it; the Anthropic body has no
+  such hook). `cache_ttl` is also *both*: the server resolves it into `CacheHints.ttl`, which only
+  the Anthropic adapter renders as breakpoints — the OpenAI body has none by design (spec/04 §2).
+  The Demo (`mock`) protocol is classified as sending **nothing**, because its in-process client
+  ignores the request entirely. The rule is then applied in three places: (1) `POST`/`PATCH
+  /model-profiles` returns `400 validation.failed` with one `details.fields.<option>` entry per
+  stranded field, naming the field and the protocol, and pointing at the counterpart
+  (`effort` → `reasoning_effort`) where there is one; (2) reads never fail — `ModelProfileDto`
+  gains `ignored_options`, and startup logs one warning per mismatched profile, because the
+  author's database already contains such rows and a failed read would lock them out of the page
+  that has to fix them; (3) `GET /provider-presets/options` publishes the same table (with `kind`,
+  closed `values` and the effective `default_value`), and Settings › Models renders **only** the
+  options the selected provider's protocol can send, with human labels and a one-line explanation
+  per option in both locales. The option form is protocol-driven: switching a profile to a provider
+  with another protocol removes the now-stranded values *visibly* (an "Options removed" notice),
+  and an already-stored mismatch shows a callout naming the fields with a one-click "Remove the
+  unsupported options" that PATCHes exactly those fields away. A value equal to its option's
+  default is not treated as set, since profiles are stored with every field serialized.
+- **Consequences**: an option that cannot reach the wire is now unreachable through the write API,
+  visible in the UI, and named in the log; the shipped presets were audited and **none was wrong**
+  (Anthropic ships `effort`, DeepSeek/OpenRouter/Moonshot ship `reasoning_replay`, Ollama ships
+  `send_parallel_tool_calls`, the Demo preset ships none), and that audit is now a test over the
+  whole preset table so a future preset cannot regress it. `extra_body` was confirmed on the wire to
+  merge last and win, which makes it the documented escape hatch for a gateway knob with no option.
+  The client-side table is served by the API rather than copied into TypeScript for the same
+  reason the bug happened: a second copy of a protocol rule is a second place to be wrong. The
+  author's own row still needs one manual action (documented in the report): open Settings › Models
+  and either replace `effort: "high"` with `reasoning_effort: "high"` (dropping `thinking_display`
+  and `cache_ttl`, which the OpenAI protocol also cannot send) or click the offered removal. The
+  Demo provider can no longer carry any model option, which is honest — it sends no request — and
+  its shipped preset was already empty.

@@ -1,5 +1,6 @@
 /** Provider, model-profile and preset endpoints (spec/10 §2.1, spec/04 §8). */
 import { api } from "@/api/client"
+import type { ModelOptionSpecDto } from "@/api/gen/ModelOptionSpecDto"
 import type { ModelProfileDto } from "@/api/gen/ModelProfileDto"
 import type { ModelProfileInput } from "@/api/gen/ModelProfileInput"
 import type { ProviderDto } from "@/api/gen/ProviderDto"
@@ -34,6 +35,11 @@ export function remoteModels(id: number): Promise<RemoteModelDto[]> {
 
 export function listProviderPresets(): Promise<ProviderPresetDto[]> {
   return api.get<ProviderPresetDto[]>("/provider-presets")
+}
+
+/** The option → protocol table the models form renders (spec/04 §5, D-132). */
+export function listOptionSpecs(): Promise<ModelOptionSpecDto[]> {
+  return api.get<ModelOptionSpecDto[]>("/provider-presets/options")
 }
 
 export function listModelProfiles(): Promise<ModelProfileDto[]> {

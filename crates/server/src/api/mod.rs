@@ -259,6 +259,7 @@ pub fn build_app(state: AppState) -> Router {
         .route("/events", get(events::stream))
         .route("/providers", get(providers::list).post(providers::create))
         .route("/provider-presets", get(providers::presets))
+        .route("/provider-presets/options", get(providers::option_specs))
         .route(
             "/providers/{provider_id}",
             get(providers::get)

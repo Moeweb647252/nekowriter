@@ -23,6 +23,16 @@ export function useProviderPresets() {
   })
 }
 
+/** The option → protocol table (spec/04 §5). It is derived from the adapters, so it cannot change
+ * while the server runs. */
+export function useOptionSpecs() {
+  return useQuery({
+    queryKey: keys.providers.optionSpecs,
+    queryFn: endpoints.listOptionSpecs,
+    staleTime: Number.POSITIVE_INFINITY,
+  })
+}
+
 export function useCreateProvider() {
   const queryClient = useQueryClient()
   return useMutation({

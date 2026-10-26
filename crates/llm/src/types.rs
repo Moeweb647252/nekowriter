@@ -243,18 +243,19 @@ pub struct ProviderConfig {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ModelOptions {
-    // OpenAI-compatible
+    // Read by both adapters
     pub reasoning_replay: ReasoningReplay,
+    pub cache_ttl: CacheTtlOption,
+    // OpenAI-compatible only
     pub reasoning_effort: Option<String>,
     pub max_tokens_field: MaxTokensField,
     pub send_parallel_tool_calls: Option<bool>,
     pub stream_usage: Option<bool>,
     pub temperature: Option<f64>,
     pub extra_body: Option<BTreeMap<String, Value>>,
-    // Anthropic
+    // Anthropic only
     pub effort: Option<Effort>,
     pub thinking_display: Option<ThinkingDisplay>,
-    pub cache_ttl: CacheTtlOption,
     pub refusal_fallback: Option<bool>,
     pub eager_input_streaming: Option<bool>,
 }
@@ -271,6 +272,285 @@ impl ModelOptions {
     pub fn eager_input_streaming(&self) -> bool {
         self.eager_input_streaming.unwrap_or(true)
     }
+
+    /// The options this value sets (a field is "set" when it is not the default), paired with the
+    /// protocol that can send it (spec/04 §5).
+    ///
+    /// The defaults are deliberately not reported: `ModelOptions` is `Default`-initialized and
+    /// serialized in full into the session snapshot, so reporting every field would flag every
+    /// profile. A field that is set *is* reported, and [`Self::reachable_by`] decides whether the
+    /// configured protocol sends it.
+    pub fn reachability(&self, protocol: Protocol) -> Vec<OptionReachability> {
+        self.set_keys()
+            .into_iter()
+            .map(|key| OptionReachability {
+                key,
+                reachable: key.reachable_by(protocol),
+            })
+            .collect()
+    }
+
+    /// Every option this value sets, without judging whether a protocol can send it.
+    pub fn set_keys(&self) -> Vec<ModelOptionKey> {
+        let mut keys = Vec::new();
+        if self.reasoning_replay != ReasoningReplay::default() {
+            keys.push(ModelOptionKey::ReasoningReplay);
+        }
+        if self.cache_ttl != CacheTtlOption::default() {
+            keys.push(ModelOptionKey::CacheTtl);
+        }
+        if self.reasoning_effort.is_some() {
+            keys.push(ModelOptionKey::ReasoningEffort);
+        }
+        if self.max_tokens_field != MaxTokensField::default() {
+            keys.push(ModelOptionKey::MaxTokensField);
+        }
+        if self.send_parallel_tool_calls.is_some() {
+            keys.push(ModelOptionKey::SendParallelToolCalls);
+        }
+        if self.stream_usage.is_some() {
+            keys.push(ModelOptionKey::StreamUsage);
+        }
+        if self.temperature.is_some() {
+            keys.push(ModelOptionKey::Temperature);
+        }
+        if self
+            .extra_body
+            .as_ref()
+            .is_some_and(|extra| !extra.is_empty())
+        {
+            keys.push(ModelOptionKey::ExtraBody);
+        }
+        if self.effort.is_some() {
+            keys.push(ModelOptionKey::Effort);
+        }
+        if self.thinking_display.is_some() {
+            keys.push(ModelOptionKey::ThinkingDisplay);
+        }
+        if self.refusal_fallback.is_some() {
+            keys.push(ModelOptionKey::RefusalFallback);
+        }
+        if self.eager_input_streaming.is_some() {
+            keys.push(ModelOptionKey::EagerInputStreaming);
+        }
+        keys
+    }
+
+    /// Removes every option the protocol cannot send, and reports what was removed.
+    ///
+    /// Used only where a protocol change makes stored options strand (a model profile whose
+    /// provider switched protocol); the API validates on save, so this is the cleanup that keeps
+    /// an already-stored mismatch from surviving the next edit (spec/04 §5).
+    pub fn clear_unreachable(&mut self, protocol: Protocol) -> Vec<ModelOptionKey> {
+        let unreachable: Vec<ModelOptionKey> = self
+            .set_keys()
+            .into_iter()
+            .filter(|key| !key.reachable_by(protocol))
+            .collect();
+        for key in &unreachable {
+            match key {
+                ModelOptionKey::ReasoningEffort => self.reasoning_effort = None,
+                ModelOptionKey::MaxTokensField => self.max_tokens_field = MaxTokensField::default(),
+                ModelOptionKey::SendParallelToolCalls => self.send_parallel_tool_calls = None,
+                ModelOptionKey::StreamUsage => self.stream_usage = None,
+                ModelOptionKey::Temperature => self.temperature = None,
+                ModelOptionKey::ExtraBody => self.extra_body = None,
+                ModelOptionKey::Effort => self.effort = None,
+                ModelOptionKey::ThinkingDisplay => self.thinking_display = None,
+                ModelOptionKey::RefusalFallback => self.refusal_fallback = None,
+                ModelOptionKey::EagerInputStreaming => self.eager_input_streaming = None,
+                // Read by both adapters, so never unreachable; listed for exhaustiveness.
+                ModelOptionKey::ReasoningReplay | ModelOptionKey::CacheTtl => {}
+            }
+        }
+        unreachable
+    }
+}
+
+/// One entry of `ModelOptions`, so a protocol can be asked about it by name (spec/04 §5).
+///
+/// The classification is *verified against the adapters*, not assumed from the doc comments: a
+/// test in `crates/llm/tests/model_options.rs` builds both request bodies for every key and
+/// asserts that the key reaches the wire exactly for the protocols listed here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelOptionKey {
+    ReasoningReplay,
+    CacheTtl,
+    ReasoningEffort,
+    MaxTokensField,
+    SendParallelToolCalls,
+    StreamUsage,
+    Temperature,
+    ExtraBody,
+    Effort,
+    ThinkingDisplay,
+    RefusalFallback,
+    EagerInputStreaming,
+}
+
+impl ModelOptionKey {
+    /// Every key, in the order of `ModelOptions` (spec/04 §5).
+    pub const ALL: [ModelOptionKey; 12] = [
+        ModelOptionKey::ReasoningReplay,
+        ModelOptionKey::CacheTtl,
+        ModelOptionKey::ReasoningEffort,
+        ModelOptionKey::MaxTokensField,
+        ModelOptionKey::SendParallelToolCalls,
+        ModelOptionKey::StreamUsage,
+        ModelOptionKey::Temperature,
+        ModelOptionKey::ExtraBody,
+        ModelOptionKey::Effort,
+        ModelOptionKey::ThinkingDisplay,
+        ModelOptionKey::RefusalFallback,
+        ModelOptionKey::EagerInputStreaming,
+    ];
+
+    /// The JSON field name in `model_profiles.options` (spec/04 §5).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ModelOptionKey::ReasoningReplay => "reasoning_replay",
+            ModelOptionKey::CacheTtl => "cache_ttl",
+            ModelOptionKey::ReasoningEffort => "reasoning_effort",
+            ModelOptionKey::MaxTokensField => "max_tokens_field",
+            ModelOptionKey::SendParallelToolCalls => "send_parallel_tool_calls",
+            ModelOptionKey::StreamUsage => "stream_usage",
+            ModelOptionKey::Temperature => "temperature",
+            ModelOptionKey::ExtraBody => "extra_body",
+            ModelOptionKey::Effort => "effort",
+            ModelOptionKey::ThinkingDisplay => "thinking_display",
+            ModelOptionKey::RefusalFallback => "refusal_fallback",
+            ModelOptionKey::EagerInputStreaming => "eager_input_streaming",
+        }
+    }
+
+    /// Whether the protocol's adapter sends this option at all.
+    ///
+    /// Verified against the adapters, not against the doc comments: `reasoning_replay` and
+    /// `cache_ttl` are read on both sides — the former selects the replayed assistant payload in
+    /// `openai.rs` and `anthropic.rs`, the latter is resolved into `CacheHints.ttl` by the server
+    /// and consumed by both (the OpenAI body has no explicit breakpoints by design, spec/04 §2).
+    /// Every other field is read by exactly one adapter.
+    ///
+    /// The mock protocol sends **nothing**: its client is the in-process Demo provider, which
+    /// ignores the request it is handed, so every option is inert there. Accepting them would be
+    /// the stored-but-inert defect this table exists to prevent, merely on a dev-only provider.
+    pub fn reachable_by(self, protocol: Protocol) -> bool {
+        match protocol {
+            Protocol::Openai => !matches!(
+                self,
+                ModelOptionKey::Effort
+                    | ModelOptionKey::ThinkingDisplay
+                    | ModelOptionKey::RefusalFallback
+                    | ModelOptionKey::EagerInputStreaming
+            ),
+            Protocol::Anthropic => !matches!(
+                self,
+                ModelOptionKey::ReasoningEffort
+                    | ModelOptionKey::MaxTokensField
+                    | ModelOptionKey::SendParallelToolCalls
+                    | ModelOptionKey::StreamUsage
+                    | ModelOptionKey::Temperature
+                    | ModelOptionKey::ExtraBody
+            ),
+            Protocol::Mock => false,
+        }
+    }
+
+    /// The options a protocol can send, in `ModelOptions` order.
+    pub fn reachable(protocol: Protocol) -> Vec<ModelOptionKey> {
+        ModelOptionKey::ALL
+            .into_iter()
+            .filter(|key| key.reachable_by(protocol))
+            .collect()
+    }
+
+    /// The protocols that can send this option. The mock protocol appears only when it can send
+    /// the option, which it never does (see [`Self::reachable_by`]), so callers see the two real
+    /// adapters.
+    pub fn protocols(self) -> Vec<Protocol> {
+        [Protocol::Openai, Protocol::Anthropic, Protocol::Mock]
+            .into_iter()
+            .filter(|protocol| self.reachable_by(*protocol))
+            .collect()
+    }
+
+    /// The closed set of values this option accepts, or an empty slice when it is free-form
+    /// (spec/04 §5). Mirrors the serde representation of the corresponding enum, which is what
+    /// the adapters send.
+    pub fn values(self) -> &'static [&'static str] {
+        match self {
+            ModelOptionKey::ReasoningReplay => &["never", "always"],
+            ModelOptionKey::MaxTokensField => &["max_tokens", "max_completion_tokens"],
+            ModelOptionKey::Effort => &["low", "medium", "high", "xhigh", "max"],
+            ModelOptionKey::ThinkingDisplay => &["summarized", "omitted"],
+            ModelOptionKey::CacheTtl => &["auto", "5m", "1h"],
+            // Free-form or non-scalar: the UI edits these with the matching widget.
+            ModelOptionKey::ReasoningEffort
+            | ModelOptionKey::SendParallelToolCalls
+            | ModelOptionKey::StreamUsage
+            | ModelOptionKey::Temperature
+            | ModelOptionKey::ExtraBody
+            | ModelOptionKey::RefusalFallback
+            | ModelOptionKey::EagerInputStreaming => &[],
+        }
+    }
+
+    /// The value `ModelOptions::default` uses, as the JSON string it serializes to (spec/04 §5).
+    ///
+    /// A field equal to its default is not "set": `set_keys` does not report it, so neither may a
+    /// client that mirrors this table. Only the three enum-backed options have such a default; the
+    /// rest are absent unless set.
+    pub fn default_value(self) -> Option<&'static str> {
+        match self {
+            ModelOptionKey::ReasoningReplay => Some("never"),
+            ModelOptionKey::MaxTokensField => Some("max_tokens"),
+            ModelOptionKey::CacheTtl => Some("auto"),
+            _ => None,
+        }
+    }
+
+    /// How the settings page edits this option (spec/11 §9).
+    pub fn kind(self) -> ModelOptionKind {
+        match self {
+            ModelOptionKey::ReasoningReplay
+            | ModelOptionKey::MaxTokensField
+            | ModelOptionKey::Effort
+            | ModelOptionKey::ThinkingDisplay
+            | ModelOptionKey::CacheTtl => ModelOptionKind::Choice,
+            ModelOptionKey::SendParallelToolCalls
+            | ModelOptionKey::StreamUsage
+            | ModelOptionKey::RefusalFallback
+            | ModelOptionKey::EagerInputStreaming => ModelOptionKind::Boolean,
+            ModelOptionKey::Temperature => ModelOptionKind::Number,
+            // A free-form string such as OpenAI's `reasoning_effort`: gateways differ, so the UI
+            // must not restrict it to the values OpenAI documents.
+            ModelOptionKey::ReasoningEffort => ModelOptionKind::Text,
+            ModelOptionKey::ExtraBody => ModelOptionKind::Json,
+        }
+    }
+}
+
+/// How a `ModelOptions` entry is edited, and therefore which widget the settings page renders
+/// (spec/04 §5, spec/11 §9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelOptionKind {
+    /// One of [`ModelOptionKey::values`].
+    Choice,
+    Boolean,
+    Number,
+    /// A free-form string.
+    Text,
+    /// A JSON object, edited as text and validated before saving.
+    Json,
+}
+
+/// One option and whether the configured protocol can send it (spec/04 §5, spec/10 §2.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OptionReachability {
+    pub key: ModelOptionKey,
+    pub reachable: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

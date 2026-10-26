@@ -211,24 +211,51 @@ impl LlmError { pub fn retryable(&self) -> bool }   // Network, Timeout, RateLim
 
 ## 5. Model options (`model_profiles.options`)
 
-```ts
-type ModelOptions = {
-  // OpenAI-compatible
-  reasoning_replay?: "never" | "always";          // default "never"
-  reasoning_effort?: string;                       // e.g. "low" | "medium" | "high"
-  max_tokens_field?: "max_tokens" | "max_completion_tokens";   // default "max_tokens"
-  send_parallel_tool_calls?: boolean;              // default true
-  stream_usage?: boolean;                          // default true
-  temperature?: number;                            // OpenAI-compatible only
-  extra_body?: Record<string, unknown>;            // merged into the body
-  // Anthropic
-  effort?: "low" | "medium" | "high" | "xhigh" | "max";   // default "high"
-  thinking_display?: "summarized" | "omitted";     // default "summarized" (the UI shows summaries)
-  cache_ttl?: "5m" | "1h" | "auto";                // default "auto" (§3 Caching)
-  refusal_fallback?: boolean;                      // default false
-  eager_input_streaming?: boolean;                 // default true
-};
-```
+Every field is sent by **exactly one** adapter, or by both in the two cases marked *both* below.
+The classification is not documentation guesswork: `crates/llm/tests/model_options.rs` builds both
+request bodies with each option set and asserts that it reaches the wire exactly for the protocols
+listed here, so a field added to one adapter without updating this table (or the reverse) fails a
+test.
+
+| Option | Protocol(s) that send it | Where it lands | Default |
+|---|---|---|---|
+| `reasoning_replay` | **both** | `openai.rs`: echoes `reasoning_content` on replayed assistant turns when `always`; `anthropic.rs`: replays the stored content blocks verbatim regardless | `never` |
+| `cache_ttl` | **both** | resolved by the server into `CacheHints.ttl`, then used for the Anthropic `cache_control` breakpoints; OpenAI relies on automatic prefix caching and sends nothing for it | `auto` (§3 Caching) |
+| `reasoning_effort` | openai | `reasoning_effort` in the body — free-form string because gateways accept different values | — |
+| `max_tokens_field` | openai | name of the field that carries the output cap: `max_tokens` or `max_completion_tokens` | `max_tokens` |
+| `send_parallel_tool_calls` | openai | whether `parallel_tool_calls` is sent at all | `true` |
+| `stream_usage` | openai | whether `stream_options.include_usage` is sent | `true` |
+| `temperature` | openai | `temperature` in the body. The Anthropic adapter must **never** send it (§3) | — |
+| `extra_body` | openai | raw JSON merged into the body **last (shallow)**, so it wins over every field above (§1) | — |
+| `effort` | anthropic | `output_config.effort` | `high` |
+| `thinking_display` | anthropic | `thinking.display` | `summarized` |
+| `refusal_fallback` | anthropic | the `anthropic-beta` header plus `fallbacks: "default"` | `false` |
+| `eager_input_streaming` | anthropic | `eager_input_streaming` on every tool | `true` |
+
+`reasoning_replay` is listed as *both* on purpose even though only `openai.rs` reads the flag: the
+Anthropic adapter always replays its stored blocks, which is exactly what `always` asks for. The
+option therefore carries a meaning on both sides rather than being inert on one.
+
+The Demo (`mock`) protocol sends **no** model options: its client is the in-process provider, which
+ignores the request it is handed. Every option is inert there, so none is accepted (§8).
+
+**Cross-protocol options are refused on save.** `ModelOptions` is one struct for both protocols, so
+a field belonging to the other protocol deserializes happily and then reaches no request body. That
+is how a profile stored `effort: "high"` on an OpenAI-protocol provider, the OpenAI adapter sent
+only `reasoning_effort`, and the request carried **no reasoning parameter at all** while the turn
+succeeded (D-132). Therefore:
+
+- `POST`/`PATCH /model-profiles` returns `400 validation.failed` with one `details.fields.<option>`
+  entry per stranded field, naming the field and the provider's protocol. Values are validated by
+  round-tripping through `ModelOptions` first, as before.
+- Reads **never fail** on a stored mismatch. `ModelProfileDto.ignored_options` lists the fields the
+  provider's protocol cannot send, and the server logs one warning per mismatched profile at
+  startup, so the author can find and fix the row from Settings › Models.
+- `GET /provider-presets/options` publishes this table (`key`, `protocols`, `kind`, `values`,
+  `default_value`). The settings form renders its option list from that response instead of a
+  TypeScript copy, so the UI cannot offer a field the wire cannot carry.
+- A value equal to the option's default is not "set" and is neither refused nor reported; profiles
+  are stored with every field serialized, so treating defaults as deviations would flag every row.
 
 ## 6. Retry policy (used by the runtime)
 
@@ -290,6 +317,10 @@ language) picks the variant.
 | Custom | openai | (empty) | |
 | Demo (dev only) | mock | `mock://demo` | no key |
 
+Every preset's `options` must be sendable by that preset's own protocol: a preset that shipped a
+field its protocol cannot send would be a default defect, inherited by every install. That is
+pinned by a test over the whole preset table, not by inspection (§5, D-132).
+
 **Fetch models**: OpenAI-compatible `GET {base}/models` → `data[].id`. Anthropic
 `GET {base}/v1/models` → `data[]` with `id`, `display_name`, `max_input_tokens`, `max_tokens`,
 which pre-fill the context window and max output. When a provider does not support listing, the
@@ -313,4 +344,8 @@ provider's message.
   `max_tokens_field` handling (OpenAI); cache_control placement (system block, `cache: true`
   blocks, top-level) and TTL consistency; tool-call ordinals when thinking and text blocks
   precede the `tool_use` blocks.
+- The option table (§5): for every `ModelOptionKey`, set it on a request and build both bodies;
+  assert it reaches the wire exactly for the protocols the table lists. Also: `extra_body` merges
+  last and overrides built-in fields; the OpenAI body never carries `output_config`/`fallbacks`
+  and the Anthropic body never carries `reasoning_effort`/`temperature`.
 - Error classification table tests, including `retry-after` parsing.

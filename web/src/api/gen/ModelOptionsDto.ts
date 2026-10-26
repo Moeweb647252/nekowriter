@@ -5,4 +5,4 @@ import type { JsonValue } from "./serde_json/JsonValue";
  * `model_profiles.options` (spec/04 §5) as the API carries it. Every field is optional so the UI
  * can send only what it changed.
  */
-export type ModelOptionsDto = { reasoning_replay?: string | null, reasoning_effort?: string | null, max_tokens_field?: string | null, send_parallel_tool_calls?: boolean | null, stream_usage?: boolean | null, temperature?: number | null, extra_body?: { [key in string]: JsonValue } | null, effort?: string | null, thinking_display?: string | null, cache_ttl?: string | null, refusal_fallback?: boolean | null, eager_input_streaming?: boolean | null, };
+export type ModelOptionsDto = { reasoning_replay?: string | null, cache_ttl?: string | null, reasoning_effort?: string | null, max_tokens_field?: string | null, send_parallel_tool_calls?: boolean | null, stream_usage?: boolean | null, temperature?: number | null, extra_body?: { [key in string]: JsonValue } | null, effort?: string | null, thinking_display?: string | null, refusal_fallback?: boolean | null, eager_input_streaming?: boolean | null, };
