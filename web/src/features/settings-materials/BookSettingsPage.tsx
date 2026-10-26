@@ -1,12 +1,25 @@
 /** Book settings (PROJECT §8.12): language, genre, granularity, pause rules, target length,
- * memory windows, auto-maintenance and model overrides. */
+ * memory windows, auto-maintenance and the per-book agent-role model overrides (spec/03 §4 step 1:
+ * `book.model_overrides[role]` → `app_settings["roles.defaults"][role]`). The knowledge scopes this
+ * book's agents may read are their own page (`BookKnowledgePage`). */
 import { useState } from "react"
 import { useParams } from "react-router"
 import { useTranslation } from "react-i18next"
+import { Lock, UsersRound } from "lucide-react"
 
 import { useBook, usePatchBook } from "@/api/hooks/books"
+import { useAppSettings } from "@/api/hooks/app-settings"
+import { useModelProfiles, useProviders } from "@/api/hooks/providers"
 import { useErrorToast } from "@/components/common/ErrorToast"
 import { EmptyState } from "@/components/common/EmptyState"
+import { ErrorToastInline } from "@/features/settings/ErrorToastInline"
+import {
+  AGENT_ROLES,
+  formatModelLabel,
+  roleLabelKey,
+  roleSelection,
+  type RoleSelection,
+} from "@/features/settings/roleModels"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -20,9 +33,14 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import type { BookSettings } from "@/api/gen/BookSettings"
+import type { BookStatus } from "@/api/gen/BookStatus"
 import type { Granularity } from "@/api/gen/Granularity"
 
 const GRANULARITIES: Granularity[] = ["sentence", "paragraph", "free", "chapter"]
+
+/** The value of the "use the global default" option. Model profile ids are numbers, so this can
+ * never collide with one; `null` is the wire value it stands for (spec/03 §4 step 1). */
+const GLOBAL_DEFAULT = "global"
 
 /** The editable form of a book, tagged with the row version it was built from. */
 type BookDraft = {
@@ -31,6 +49,8 @@ type BookDraft = {
   genre: string
   language: string
   settings: BookSettings
+  /** One entry per role: `null` means "use the global default" for that role. */
+  overrides: RoleSelection
 }
 const LANGUAGES = ["zh-CN", "en", "ja", "ko", "fr", "de", "es", "ru"] as const
 
@@ -41,6 +61,11 @@ export default function BookSettingsPage() {
   const showError = useErrorToast()
   const book = useBook(bookId)
   const patch = usePatchBook(bookId)
+  // The model profiles and providers the role selects offer, plus the global role defaults each
+  // row compares its override against (spec/10 §2.1 `roles.defaults`).
+  const appSettings = useAppSettings()
+  const models = useModelProfiles()
+  const providers = useProviders()
   // One draft object keyed by the book's `updated_at`, so an SSE refresh of the query never
   // clobbers unsaved input and no effect has to copy the query into state.
   const [draft, setDraft] = useState<BookDraft | null>(null)
@@ -62,6 +87,7 @@ export default function BookSettingsPage() {
     genre: book.data.genre,
     language: book.data.writing_language,
     settings: book.data.settings,
+    overrides: roleSelection(book.data.model_overrides),
   }
   const current = draft !== null && draft.key === saved.key ? draft : saved
   const setTitle = (title: string) => setDraft({ ...current, title })
@@ -69,10 +95,19 @@ export default function BookSettingsPage() {
   const setLanguage = (language: string) => setDraft({ ...current, language })
   const update = (patchSettings: Partial<BookSettings>) =>
     setDraft({ ...current, settings: { ...current.settings, ...patchSettings } })
+  // A role picker only edits the draft: the author reviews the whole form and the one Save button
+  // sends it, so an SSE refresh cannot overwrite an unsaved choice.
+  const setOverride = (role: (typeof AGENT_ROLES)[number], value: string) =>
+    setDraft({
+      ...current,
+      overrides: { ...current.overrides, [role]: value === GLOBAL_DEFAULT ? null : Number(value) },
+    })
   const settings = current.settings
+  const overrides = current.overrides
   const title = current.title
   const genre = current.genre
   const language = current.language
+  const status: BookStatus = book.data.status
 
   const save = () => {
     patch.mutate(
@@ -81,10 +116,28 @@ export default function BookSettingsPage() {
         genre,
         writing_language: language,
         settings,
+        // The whole object every time: a patch that carried only the edited role would silently
+        // clear the siblings, because the server replaces `books.model_overrides` as a unit.
+        model_overrides: overrides,
       },
       { onError: showError },
     )
   }
+
+  const modelList = models.data ?? []
+  const providerList = providers.data ?? []
+  const globalDefaults = roleSelection(appSettings.data?.roles_defaults)
+  const modelsPending = appSettings.isPending || models.isPending || providers.isPending
+  const modelsFailed = appSettings.isError || models.isError || providers.isError
+  // A conceiving or archived book's roles are not the author's to pick here: the conception flow
+  // chooses them until Finalize, and an archived book is not being worked on (spec/08 §5).
+  const rolesLocked = status !== "active"
+  const lockedHint =
+    status === "conceiving"
+      ? t("book:model_overrides_needs_active")
+      : status === "archived"
+        ? t("book:model_overrides_archived")
+        : null
 
   return (
     <div className="mx-auto max-w-2xl space-y-6 p-6">
@@ -225,6 +278,93 @@ export default function BookSettingsPage() {
             />
           </div>
         </div>
+      </section>
+
+      {/* Model overrides per role (PROJECT §8.12): a book may run one or more roles on a different
+          model than the global default; the server resolves the book's choice first. */}
+      <section className="space-y-3">
+        <div className="space-y-1">
+          <h2 className="flex items-center gap-1.5 text-sm font-medium">
+            <UsersRound className="size-3.5" aria-hidden="true" />
+            {t("book:model_overrides")}
+          </h2>
+          <p className="text-sm text-muted-foreground">{t("book:model_overrides_hint")}</p>
+        </div>
+
+        {lockedHint === null ? null : (
+          <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+            <Lock className="size-3.5" aria-hidden="true" />
+            {lockedHint}
+          </p>
+        )}
+
+        {modelsFailed ? (
+          <ErrorToastInline />
+        ) : modelsPending ? (
+          <Skeleton className="h-40" />
+        ) : modelList.length === 0 ? (
+          <EmptyState title={t("settings:no_models")} description={t("settings:no_models_hint")} />
+        ) : (
+          <div className="space-y-3">
+            {AGENT_ROLES.map((role) => {
+              const override = overrides[role]
+              const globalDefault = globalDefaults[role]
+              // An override whose profile was deleted after the pick: it keeps its value (the
+              // server would still resolve it) but says so instead of rendering a blank control.
+              const missing =
+                override !== null && !modelList.some((model) => model.id === override)
+              return (
+                <div
+                  key={role}
+                  data-testid={`model-override-row-${role}`}
+                  className="grid grid-cols-[8rem_1fr] items-center gap-x-3 gap-y-1"
+                >
+                  <Label htmlFor={`book-role-${role}`}>{t(roleLabelKey(role))}</Label>
+                  <Select
+                    value={override === null ? GLOBAL_DEFAULT : String(override)}
+                    onValueChange={(value) => setOverride(role, value)}
+                    disabled={rolesLocked}
+                  >
+                    <SelectTrigger id={`book-role-${role}`} className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={GLOBAL_DEFAULT}>
+                        {t("book:model_use_global_default")}
+                      </SelectItem>
+                      {modelList.map((model) => (
+                        <SelectItem key={model.id} value={String(model.id)}>
+                          {formatModelLabel(t, modelList, providerList, model.id)}
+                        </SelectItem>
+                      ))}
+                      {missing ? (
+                        <SelectItem value={String(override)}>
+                          {t("settings:model_missing")}
+                        </SelectItem>
+                      ) : null}
+                    </SelectContent>
+                  </Select>
+                  <span aria-hidden="true" />
+                  <p className="text-xs text-muted-foreground">
+                    {globalDefault === null
+                      ? t("book:model_global_default_none")
+                      : t("book:model_global_default", {
+                          model: formatModelLabel(t, modelList, providerList, globalDefault),
+                        })}
+                  </p>
+                  {missing ? (
+                    <>
+                      <span aria-hidden="true" />
+                      <p className="text-xs text-destructive">
+                        {t("book:model_override_missing")}
+                      </p>
+                    </>
+                  ) : null}
+                </div>
+              )
+            })}
+          </div>
+        )}
       </section>
     </div>
   )
