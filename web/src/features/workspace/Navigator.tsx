@@ -32,10 +32,12 @@ import {
   Home,
   Library,
   MessageSquareCode,
+  MoreHorizontal,
   Plus,
   Settings,
   Sparkle,
   Sparkles,
+  Trash2,
   Users,
 } from "lucide-react"
 
@@ -51,6 +53,14 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { DeleteChapterDialog } from "@/features/chapter/DeleteChapterDialog"
+import { isComposing } from "@/lib/hotkeys"
 import { NewSideStoryDialog } from "@/features/workspace/NewSideStoryDialog"
 import { cn } from "@/lib/utils"
 
@@ -240,8 +250,21 @@ function TrackGroup({ book, track }: { book: BookDto; track: TrackDto }) {
   const chapters = useChapters(track.id)
   const createChapter = useCreateChapter(track.id)
   const reorder = useReorderChapters(book.id, track.id)
+  // One dialog for the whole track: the rows only choose which chapter it asks about.
+  const [pendingDelete, setPendingDelete] = useState<ChapterListItemDto | null>(null)
 
   const list = chapters.data ?? []
+  // Only an `active` book accepts a new chapter (spec/08 §1.1): a book whose conception is not
+  // finalized has no setting materials or canon for the writer to work from, and an archived book
+  // is meant to stand still. The server refuses both with `409 book.invalid_state`; the button is
+  // disabled as well so the author sees why before trying.
+  const canCreate = book.status === "active"
+  const createReason =
+    book.status === "conceiving"
+      ? t("book:next_chapter_needs_conception")
+      : book.status === "archived"
+        ? t("book:next_chapter_archived")
+        : undefined
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -301,6 +324,7 @@ function TrackGroup({ book, track }: { book: BookDto; track: TrackDto }) {
                 bookId={book.id}
                 chapter={chapter}
                 active={params.chapterId === String(chapter.id)}
+                onDelete={() => setPendingDelete(chapter)}
               />
             ))}
           </ul>
@@ -310,7 +334,8 @@ function TrackGroup({ book, track }: { book: BookDto; track: TrackDto }) {
         variant="ghost"
         size="sm"
         className="mt-1 h-7 w-full justify-start gap-1 px-2 text-xs text-muted-foreground"
-        disabled={createChapter.isPending}
+        disabled={!canCreate || createChapter.isPending}
+        aria-describedby={canCreate ? undefined : `chapter-create-reason-${track.id}`}
         onClick={() => {
           createChapter.mutate(
             { title: "", guidance: "" },
@@ -325,6 +350,42 @@ function TrackGroup({ book, track }: { book: BookDto; track: TrackDto }) {
         <Plus className="size-3.5" />
         {t("book:next_chapter")}
       </Button>
+      {canCreate ? null : (
+        // A disabled button takes no pointer events, so a `title` tooltip would never show; the
+        // reason is written out under the button instead, and names the way forward.
+        <div
+          id={`chapter-create-reason-${track.id}`}
+          className="mt-0.5 space-y-0.5 px-2 text-[0.7rem] text-muted-foreground"
+        >
+          <p>{createReason}</p>
+          {book.status === "conceiving" ? (
+            <Link
+              to={`/books/${book.id}/conception`}
+              className="block text-primary underline"
+            >
+              {t("book:next_chapter_open_conception")}
+            </Link>
+          ) : null}
+        </div>
+      )}
+      <DeleteChapterDialog
+        bookId={book.id}
+        track={track}
+        chapter={pendingDelete}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingDelete(null)
+          }
+        }}
+        onDeleted={(chapter) => {
+          // A deleted chapter cannot stay on screen: when the author was reading it, the overview
+          // is the only page that still makes sense.
+          setPendingDelete(null)
+          if (params.chapterId === String(chapter.id)) {
+            void navigate(`/books/${book.id}`)
+          }
+        }}
+      />
     </div>
   )
 }
@@ -334,10 +395,12 @@ function ChapterRow({
   bookId,
   chapter,
   active,
+  onDelete,
 }: {
   bookId: number
   chapter: ChapterListItemDto
   active: boolean
+  onDelete: () => void
 }) {
   const { t } = useTranslation()
   const fixed = chapter.status === "official"
@@ -382,6 +445,40 @@ function ChapterRow({
           <StatusBadge status={chapter.canon_status} variant="canon" iconOnly />
         ) : null}
       </Link>
+      {/*
+       * The row's actions. The trigger is a sibling of the drag handle and carries none of
+       * `useSortable`'s `listeners`, so pressing it never starts a drag — a menu mounted inside the
+       * sortable activator would swallow its own clicks into a pointer-down drag instead. It stays
+       * in the DOM (and in the tab order) at all times, appearing on hover/focus only visually;
+       * Radix delivers Enter/Space/Arrow to open and Escape to close without touching the row.
+       */}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
+            aria-label={t("book:chapter_actions", { number: chapter.number })}
+            onKeyDown={(event) => {
+              // Radix opens the menu on Enter/Space without checking for an active composition, so
+              // a Chinese IME's confirming Enter would open it mid-word (AGENTS.md §6). Preventing
+              // the default here stops Radix's own handler, which composes with
+              // `checkForDefaultPrevented`.
+              if (isComposing(event)) {
+                event.preventDefault()
+              }
+            }}
+          >
+            <MoreHorizontal className="size-3.5" aria-hidden="true" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-auto min-w-40">
+          <DropdownMenuItem variant="destructive" onSelect={onDelete}>
+            <Trash2 aria-hidden="true" />
+            {t("chapter:delete.action")}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </li>
   )
 }

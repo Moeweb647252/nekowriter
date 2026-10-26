@@ -49,6 +49,36 @@ export function useWriteChapter(chapterId: number, bookId: number) {
   })
 }
 
+/**
+ * Deletes a chapter (spec/08 §1.1). The server cascades, renumbers the rest of the track and
+ * recomputes first/last appearances, so every cache that derives from those rows is dropped:
+ * the track's list, the chapter itself (gone — removed rather than refetched, which would 404),
+ * the book and its overview, the canon family (entity bounds, timeline, memory), the change log,
+ * proposals (their `chapter_id` becomes null) and the session list.
+ *
+ * `409 chapter.session_exists` / `409 chapter.is_anchor` are refused by the server; the caller
+ * renders them (the delete dialog names the session or the anchored side stories).
+ */
+export function useDeleteChapter(bookId: number, trackId: number) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (chapterId: number) => endpoints.deleteChapter(chapterId),
+    onSuccess: (_result, chapterId) => {
+      queryClient.removeQueries({ queryKey: keys.chapters.detail(chapterId) })
+      void queryClient.invalidateQueries({ queryKey: keys.tracks.chapters(trackId) })
+      void queryClient.invalidateQueries({ queryKey: keys.books.all })
+      void queryClient.invalidateQueries({ queryKey: keys.books.detail(bookId) })
+      void queryClient.invalidateQueries({ queryKey: keys.books.overview(bookId) })
+      // A chapter's rows feed the canon: the appearances cascade, so the entities it bounded and
+      // the timeline/memory snapshots that cite it change (spec/06 §1.1, D-059).
+      void queryClient.invalidateQueries({ queryKey: keys.canon.all })
+      void queryClient.invalidateQueries({ queryKey: keys.changes.all })
+      void queryClient.invalidateQueries({ queryKey: keys.proposals.all })
+      void queryClient.invalidateQueries({ queryKey: keys.sessions.list(bookId) })
+    },
+  })
+}
+
 export function useSubmitChapter(chapterId: number, bookId: number) {
   const queryClient = useQueryClient()
   return useMutation({

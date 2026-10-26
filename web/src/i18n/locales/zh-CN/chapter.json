@@ -118,5 +118,17 @@
   "discuss_dialog.send": "发送意见",
   "submit_confirm.title": "结束未关闭的写手会话？",
   "submit_confirm.description": "提交审阅会结束本章仍未关闭的写手会话，之后无法继续该会话。",
-  "submit_confirm.confirm": "提交并结束会话"
+  "submit_confirm.confirm": "提交并结束会话",
+  "delete.action": "删除本章",
+  "delete.title": "删除{{label}}？",
+  "delete.body": "本章会被永久删除，正文、历史版本和审阅记录一并删除。",
+  "delete.renumber": "本卷后续章节会重新编号，出现在本章的实体的首次与最后出场也会重新计算。",
+  "delete.canon_kept": "本章已定稿：正史档案仍会保留，但其中指向本章的引用会变成空值。",
+  "delete.confirm": "删除章节",
+  "delete.session_open": "本章还有未关闭的智能体会话。请先结束该会话，再删除。",
+  "delete.session_open_id": "本章还有未关闭的智能体会话（#{{id}}）。请先结束该会话，再删除。",
+  "delete.session_open_action": "打开本章去结束会话",
+  "delete.is_anchor": "本章是某些番外的时间锚点，暂时无法删除：",
+  "delete.is_anchor_hint": "先把下面的番外改到别的锚点章节，再删除本章。",
+  "delete.side_story_ref": "番外 #{{id}}"
 }

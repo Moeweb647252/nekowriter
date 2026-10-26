@@ -118,5 +118,17 @@
   "discuss_dialog.send": "Send comment",
   "submit_confirm.title": "End the open writer session?",
   "submit_confirm.description": "Submitting for review ends the writer session that is still open on this chapter. It will not resume.",
-  "submit_confirm.confirm": "Submit and end the session"
+  "submit_confirm.confirm": "Submit and end the session",
+  "delete.action": "Delete chapter",
+  "delete.title": "Delete {{label}}?",
+  "delete.body": "The chapter is deleted for good, with its text, versions and review reports.",
+  "delete.renumber": "Later chapters of this track are renumbered, and the first and last appearance of the entities that appeared here are computed again.",
+  "delete.canon_kept": "This chapter is official: canon keeps its records, but the chapter references in them become null.",
+  "delete.confirm": "Delete chapter",
+  "delete.session_open": "An agent session is still open on this chapter. End that session, then delete.",
+  "delete.session_open_id": "Agent session #{{id}} is still open on this chapter. End that session, then delete.",
+  "delete.session_open_action": "Open the chapter to end the session",
+  "delete.is_anchor": "This chapter anchors a side story, so it cannot be deleted yet:",
+  "delete.is_anchor_hint": "Point each side story below at another anchor chapter, then delete this one.",
+  "delete.side_story_ref": "Side story #{{id}}"
 }

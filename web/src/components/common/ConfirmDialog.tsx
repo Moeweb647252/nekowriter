@@ -20,6 +20,12 @@ export type ConfirmDialogProps = {
   onOpenChange: (open: boolean) => void
   title: string
   description: string
+  /**
+   * Extra lines under the description: the consequences of the action, or an inline refusal the
+   * author has to act on (deleting a chapter, spec/08 §1.1). It is a node, not more `description`
+   * text, so a caller never assembles a sentence from separately translated fragments.
+   */
+  details?: React.ReactNode
   /** The label of the confirming button. */
   confirmLabel?: string
   onConfirm: () => void
@@ -37,6 +43,7 @@ export function ConfirmDialog({
   onOpenChange,
   title,
   description,
+  details,
   confirmLabel,
   onConfirm,
   destructive = true,
@@ -67,6 +74,9 @@ export function ConfirmDialog({
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{description}</AlertDialogDescription>
         </AlertDialogHeader>
+        {details === undefined ? null : (
+          <div className="-mt-2 space-y-1 text-sm text-muted-foreground">{details}</div>
+        )}
         {children}
         <AlertDialogFooter>
           <AlertDialogCancel disabled={pending}>{t("common:cancel")}</AlertDialogCancel>
