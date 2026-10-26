@@ -41,7 +41,7 @@
 ### 2.2 Books, tracks, chapters
 | Method | Path | Body / query | Response |
 |---|---|---|---|
-| GET | `/books` | `?status=` | `BookSummaryDto[]` (counts, words, latest activity, attention count) |
+| GET | `/books` | `?status=` — `conceiving`/`active`/`archived` filters exactly; omitted, empty or `all` returns every status | `BookSummaryDto[]` (counts, words, latest activity, attention count). The library calls it unfiltered and hides archived rows itself (D-129) |
 | POST | `/books` | `{ title, idea, genre, writing_language, start_conception }` | `{ book: BookDto, session_id?, warnings }` |
 | GET / PATCH / DELETE | `/books/:id` | PATCH: title, genre, writing_language, settings, model_overrides, status (archive) | `BookDto` |
 | GET | `/books/:id/overview` | | `BookOverviewDto` (spec/08 §7) |

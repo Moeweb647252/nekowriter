@@ -22,6 +22,8 @@
   "unarchive": "Unarchive",
   "chapters_words": "{{chapters}} ch · {{words}}",
   "no_chapters": "No chapters yet",
+  "conceiving": "In conception",
+  "conceiving_hint": "The conception agent is drafting the setting materials. Open the studio to continue.",
   "untitled": "Untitled chapter",
   "delete_title": "Delete “{{title}}”?",
   "delete_body": "The book, its chapters and all its canon rows are deleted, and any open agent session is stopped first. This cannot be undone.",

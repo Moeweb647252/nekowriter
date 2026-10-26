@@ -84,7 +84,7 @@ web/src/
 
 | Path | Module | Notes |
 |---|---|---|
-| `/` | `library/LibraryPage` | |
+| `/` | `library/LibraryPage` | every status: `active` and `conceiving` always, `archived` when "Show archived" is on; a conceiving card opens `books/:bookId/conception`, every other card `books/:bookId` (D-129) |
 | `/knowledge`, `/knowledge/scopes/:scopeId`, `/knowledge/scopes/:scopeId/entries/:entryId` | `knowledge/*` | |
 | `/research/:taskId` | `research/ResearchTaskPage` | |
 | `/prompts` | `prompts/PromptsPage` | global |
@@ -139,6 +139,17 @@ message and a retry.
   The store applies its own mutation responses and ignores duplicate SSE versions.
 
 ## 5. Key components
+
+### 5.0 Library
+- `LibraryPage` fetches `GET /books` **without** a `status` filter and hides `archived` rows in the
+  browser unless "Show archived" is on. The server's filter is exact, so asking for `active` also
+  excluded books still in conception and made them unreachable from the library between creation
+  and finalize (D-129).
+- `BookCard` shows a `conceiving` badge plus a one-line explanation and a "Continue conception"
+  link to `/books/:bookId/conception`. The chapter/word counts and the latest-chapter line stay
+  visible for a conceiving book — it may already own a chapter created before D-130 gated chapter
+  creation on finalize — so the conceiving block is added, not substituted. Clicking its title or
+  its "Open" menu item goes to the same studio; every other status keeps opening the overview.
 
 ### 5.1 Workspace
 - `BookLayout`: `ResizablePanelGroup` (shadcn wrapper over react-resizable-panels v4

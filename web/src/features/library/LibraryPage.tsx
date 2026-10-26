@@ -14,7 +14,11 @@ import { Skeleton } from "@/components/ui/skeleton"
 export default function LibraryPage() {
   const { t } = useTranslation()
   const [showArchived, setShowArchived] = useState(false)
-  const books = useBooks(showArchived ? undefined : "active")
+  // No `status` filter: the server's filter is exact (`?status=conceiving|active|archived`), so
+  // asking for `active` also dropped books still in conception and the author could not reach
+  // them from the library until finalize (D-129). The whole list is small — one author's books —
+  // and the archived ones are hidden in the browser below, which is what "Show archived" means.
+  const books = useBooks()
   const [creating, setCreating] = useState(false)
 
   const list = books.data ?? []

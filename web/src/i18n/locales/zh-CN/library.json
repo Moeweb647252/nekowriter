@@ -22,6 +22,8 @@
   "unarchive": "取消归档",
   "chapters_words": "{{chapters}} 章 · {{words}}",
   "no_chapters": "还没有章节",
+  "conceiving": "构思中",
+  "conceiving_hint": "构思智能体正在起草设定资料，进入构思工作台即可继续。",
   "untitled": "未命名章节",
   "delete_title": "删除《{{title}}》？",
   "delete_body": "作品、它的章节以及全部正史记录都会被删除；未结束的智能体会话会先停止。此操作无法撤销。",
