@@ -2,11 +2,13 @@
  * The overview's next action and attention list (PLAN 11.1, spec/08 §7).
  *
  * The labels are composed from data (D-054), so these tests pin the localized text, the targets,
- * and the empty attention state.
+ * and the empty attention state. "Write the next chapter" is the second create-chapter entry
+ * point, so it is also disabled with a visible reason when the book is not `active`
+ * (spec/08 §1.1, D-130).
  */
 import { render, screen } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router"
-import { describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const overview = vi.fn()
 vi.mock("@/api/hooks/books", () => ({
@@ -19,8 +21,10 @@ vi.mock("@/api/hooks/conception", () => ({
 vi.mock("@/api/hooks/reviews", () => ({
   useResyncChapter: () => ({ mutate: vi.fn(), isPending: false }),
 }))
+
+const createChapter = vi.fn()
 vi.mock("@/api/hooks/tracks", () => ({
-  useCreateChapter: () => ({ mutate: vi.fn(), isPending: false }),
+  useCreateChapter: () => ({ mutate: createChapter, isPending: false }),
 }))
 vi.mock("@/components/common/ErrorToast", () => ({
   useErrorToast: () => vi.fn(),
@@ -91,6 +95,17 @@ function renderOverview() {
     </MemoryRouter>,
   )
 }
+
+/** The overview's `write_next` action on the main track. */
+const WRITE_NEXT = {
+  kind: "write_next",
+  chapter: null,
+  track_id: 10,
+}
+
+beforeEach(() => {
+  createChapter.mockReset()
+})
 
 describe("OverviewPage", () => {
   it("renders the next action as a localized link", () => {
@@ -179,5 +194,33 @@ describe("OverviewPage", () => {
     expect(
       screen.getByText("12 requests · 3,400 input tokens · 900 output tokens"),
     ).toBeInTheDocument()
+  })
+})
+
+describe("writing the next chapter needs an active book (spec/08 §1.1, D-130)", () => {
+  it("disables the button on an archived book and says why in visible text", () => {
+    // `books::next_action` answers `ContinueConception` for a conceiving book before any other
+    // branch, so `archived` is the only non-active status that can reach this button.
+    overview.mockReturnValue(
+      data({ book: { ...BOOK, status: "archived" }, next_action: WRITE_NEXT }),
+    )
+    renderOverview()
+
+    expect(screen.getByText("Write the next chapter of Main story")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /Go/ })).toBeDisabled()
+    // The reason is rendered, not set as a tooltip: a disabled button takes no pointer events.
+    expect(
+      screen.getByText("This book is archived, so no new chapter can be added. Unarchive it first."),
+    ).toBeInTheDocument()
+  })
+
+  it("leaves the button enabled on an active book and explains nothing", () => {
+    overview.mockReturnValue(data({ next_action: WRITE_NEXT }))
+    renderOverview()
+
+    expect(screen.getByRole("button", { name: /Go/ })).toBeEnabled()
+    expect(
+      screen.queryByText("This book is archived, so no new chapter can be added. Unarchive it first."),
+    ).not.toBeInTheDocument()
   })
 })

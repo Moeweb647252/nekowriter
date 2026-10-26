@@ -5,11 +5,12 @@
  * official (spec/08 §6), and the anchor may always move (it only affects sessions created
  * afterwards). Deleting a side story is confirmed and takes its chapters with it (spec/08 §1.3). */
 import { useState } from "react"
-import { Link, useNavigate, useParams } from "react-router"
+import { Link, useNavigate, useOutletContext, useParams } from "react-router"
 import { useTranslation } from "react-i18next"
 import { Plus, Trash2 } from "lucide-react"
 
 import type { AnchorKind } from "@/api/gen/AnchorKind"
+import type { BookDto } from "@/api/gen/BookDto"
 import type { CanonMode } from "@/api/gen/CanonMode"
 import type { TrackDto } from "@/api/gen/TrackDto"
 import { useEntities } from "@/api/hooks/useCanon"
@@ -48,6 +49,9 @@ export default function SideStoryPage() {
   const { bookId: rawBookId, trackId: rawTrackId } = useParams()
   const bookId = Number(rawBookId)
   const trackId = Number(rawTrackId)
+  // `BookLayout` loads the book for the whole workspace and provides it through the outlet
+  // context, so the status costs no extra request here (see below).
+  const { book } = useOutletContext<{ book: BookDto }>()
   const track = useTrack(trackId)
   const tracks = useTracks(bookId)
   const chapters = useChapters(trackId)
@@ -83,6 +87,19 @@ export default function SideStoryPage() {
   const official = (chapters.data ?? []).some(
     (chapter) => chapter.status === "official",
   )
+  // Only an `active` book accepts a new chapter (spec/08 §1.1, D-130): a book whose conception is
+  // not finalized has no setting materials or canon for the writer, and an archived book stands
+  // still. The server refuses both with `409 book.invalid_state`; disabling the button here means
+  // the author never meets that raw refusal. Existing chapters stay listed and openable either
+  // way — only *creating* is gated.
+  const canCreate = book.status === "active"
+  const createReason =
+    book.status === "conceiving"
+      ? t("book:next_chapter_needs_conception")
+      : book.status === "archived"
+        ? t("book:next_chapter_archived")
+        : undefined
+  const createReasonId = "side-story-chapter-create-reason"
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-6">
@@ -117,7 +134,8 @@ export default function SideStoryPage() {
           <Button
             size="sm"
             variant="outline"
-            disabled={createChapter.isPending}
+            disabled={!canCreate || createChapter.isPending}
+            aria-describedby={canCreate ? undefined : createReasonId}
             onClick={() =>
               createChapter.mutate(
                 { title: "", guidance: "" },
@@ -133,6 +151,24 @@ export default function SideStoryPage() {
             {t("book:next_chapter")}
           </Button>
         </div>
+        {canCreate ? null : (
+          // A disabled button takes no pointer events, so a `title` tooltip would never show; the
+          // reason is written out under the header instead, and names the way forward.
+          <div
+            id={createReasonId}
+            className="mb-3 space-y-0.5 text-[0.7rem] text-muted-foreground"
+          >
+            <p>{createReason}</p>
+            {book.status === "conceiving" ? (
+              <Link
+                to={`/books/${bookId}/conception`}
+                className="block text-primary underline"
+              >
+                {t("book:next_chapter_open_conception")}
+              </Link>
+            ) : null}
+          </div>
+        )}
         {(chapters.data ?? []).length === 0 ? (
           <EmptyState
             title={t("book:no_chapters")}

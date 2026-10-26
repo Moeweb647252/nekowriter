@@ -62,7 +62,12 @@ export default function OverviewPage() {
       </header>
 
       {next_action === null || next_action === undefined ? null : (
-        <NextActionCard bookId={bookId} action={next_action} tracks={progress.tracks} />
+        <NextActionCard
+          bookId={bookId}
+          status={book.status}
+          action={next_action}
+          tracks={progress.tracks}
+        />
       )}
       <AttentionList bookId={bookId} items={attention} tracks={progress.tracks} />
 

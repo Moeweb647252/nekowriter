@@ -13,6 +13,7 @@ import { ArrowRight, Loader2 } from "lucide-react"
 import { useSeedCanon } from "@/api/hooks/conception"
 import { useResyncChapter } from "@/api/hooks/reviews"
 import { useCreateChapter } from "@/api/hooks/tracks"
+import type { BookStatus } from "@/api/gen/BookStatus"
 import type { NextActionDto } from "@/api/gen/NextActionDto"
 import type { TrackProgressDto } from "@/api/gen/TrackProgressDto"
 import { useErrorToast } from "@/components/common/ErrorToast"
@@ -22,12 +23,14 @@ import { formatChapterLabel, trackName } from "@/lib/chapterLabel"
 
 type NextActionProps = {
   bookId: number
+  /** The book's status: creation is only allowed while the book is `active` (spec/08 §1.1). */
+  status: BookStatus
   action: NextActionDto
   tracks: TrackProgressDto[]
 }
 
 /** The overview's "what to do next" card. */
-export function NextActionCard({ bookId, action, tracks }: NextActionProps) {
+export function NextActionCard({ bookId, status, action, tracks }: NextActionProps) {
   const { t } = useTranslation()
   const track = tracks.find((entry) => entry.track_id === action.track_id)
   const chapter =
@@ -46,14 +49,22 @@ export function NextActionCard({ bookId, action, tracks }: NextActionProps) {
       </CardHeader>
       <CardContent className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-base font-medium">{label}</p>
-        <ActionButton bookId={bookId} action={action} />
+        <ActionButton bookId={bookId} status={status} action={action} />
       </CardContent>
     </Card>
   )
 }
 
 /** The button (or link) that performs the action. */
-function ActionButton({ bookId, action }: { bookId: number; action: NextActionDto }) {
+function ActionButton({
+  bookId,
+  status,
+  action,
+}: {
+  bookId: number
+  status: BookStatus
+  action: NextActionDto
+}) {
   const { t } = useTranslation()
   const chapterId = action.chapter?.id
   switch (action.kind) {
@@ -84,7 +95,7 @@ function ActionButton({ bookId, action }: { bookId: number; action: NextActionDt
       )
     case "write_next":
       return action.track_id === undefined || action.track_id === null ? null : (
-        <WriteNextButton trackId={action.track_id} bookId={bookId} />
+        <WriteNextButton trackId={action.track_id} bookId={bookId} status={status} />
       )
     default:
       return null
@@ -116,27 +127,50 @@ function ResyncButton({ bookId, chapterId }: { bookId: number; chapterId: number
 }
 
 /** Creates the next chapter of the track and opens it (the navigator's "+ Next chapter"). */
-function WriteNextButton({ bookId, trackId }: { bookId: number; trackId: number }) {
+function WriteNextButton({
+  bookId,
+  trackId,
+  status,
+}: {
+  bookId: number
+  trackId: number
+  status: BookStatus
+}) {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const showError = useErrorToast()
   const create = useCreateChapter(trackId)
+  // A chapter can only be created on an `active` book (spec/08 §1.1, D-130), so the button is a
+  // defensive disable rather than the primary rule. `books::next_action` answers
+  // `ContinueConception` for a conceiving book before any other branch
+  // (`crates/server/src/services/books.rs`), so this button is never rendered for one: `archived`
+  // is the only reachable non-active status here. Should that ever change, the reason below has to
+  // grow the conceiving wording as well.
+  const canCreate = status === "active"
   return (
-    <Button
-      size="sm"
-      disabled={create.isPending}
-      onClick={() =>
-        create.mutate(
-          { title: "", guidance: "" },
-          {
-            onSuccess: (chapter) => void navigate(`/books/${bookId}/chapters/${chapter.id}`),
-            onError: showError,
-          },
-        )
-      }
-    >
-      {create.isPending ? <Loader2 aria-hidden="true" className="animate-spin" /> : null}
-      {t("book:next_action.go")}
-    </Button>
+    <div className="flex flex-col items-end gap-1">
+      <Button
+        size="sm"
+        disabled={!canCreate || create.isPending}
+        onClick={() =>
+          create.mutate(
+            { title: "", guidance: "" },
+            {
+              onSuccess: (chapter) => void navigate(`/books/${bookId}/chapters/${chapter.id}`),
+              onError: showError,
+            },
+          )
+        }
+      >
+        {create.isPending ? <Loader2 aria-hidden="true" className="animate-spin" /> : null}
+        {t("book:next_action.go")}
+      </Button>
+      {canCreate ? null : (
+        // A disabled HTML button takes no pointer events, so a `title` tooltip would never appear;
+        // the reason is visible text instead, worded exactly as in the navigator and the side
+        // story page.
+        <p className="text-xs text-muted-foreground">{t("book:next_chapter_archived")}</p>
+      )}
+    </div>
   )
 }
