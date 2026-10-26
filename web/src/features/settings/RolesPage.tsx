@@ -25,8 +25,17 @@ import {
   roleSelection,
   type RoleSelection,
 } from "@/features/settings/roleModels"
+import { DEFAULT_OPTION_VALUE } from "@/features/settings/modelOptions"
 import type { AgentRole } from "@/api/gen/AgentRole"
 import type { RoleModels } from "@/api/gen/RoleModels"
+
+/** The `Select` value of "no model assigned": the role falls back to the global default.
+ *
+ * A real value, not `""`: Radix's `SelectValue` treats an empty value as "no value" and renders
+ * its placeholder, so "Not set" used to be grey hint text that disappeared rather than the
+ * selected state it actually is (D-133).
+ */
+const ROLE_UNSET = DEFAULT_OPTION_VALUE
 
 export default function RolesPage() {
   const { t } = useTranslation()
@@ -51,7 +60,7 @@ export default function RolesPage() {
   const setRole = (role: AgentRole, value: string) => {
     const next: RoleModels = {
       ...currentRoles,
-      [role]: value === "" ? null : Number(value),
+      [role]: value === ROLE_UNSET ? null : Number(value),
     }
     patch.mutate({ roles_defaults: next }, { onError: showError })
   }
@@ -75,14 +84,14 @@ export default function RolesPage() {
                   {t(roleLabelKey(role))}
                 </Label>
                 <Select
-                  value={current === undefined || current === null ? "" : String(current)}
+                  value={current === undefined || current === null ? ROLE_UNSET : String(current)}
                   onValueChange={(value) => setRole(role, value)}
                 >
                   <SelectTrigger id={`role-${role}`} className="flex-1">
-                    <SelectValue placeholder={t("settings:role_unset")} />
+                    <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">{t("settings:role_unset")}</SelectItem>
+                    <SelectItem value={ROLE_UNSET}>{t("settings:role_unset")}</SelectItem>
                     {modelList.map((model) => (
                       <SelectItem key={model.id} value={String(model.id)}>
                         {formatModelLabel(t, modelList, providerList, model.id)}

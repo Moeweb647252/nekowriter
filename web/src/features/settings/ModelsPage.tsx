@@ -47,14 +47,17 @@ import {
   useRemoteModels,
 } from "@/api/hooks/providers"
 import {
+  DEFAULT_OPTION_VALUE,
   OPTION_KEYS,
   clearUnreachableOptions,
+  fromOptionSelection,
   optionHintKey,
   optionLabelKey,
   optionValueKey,
   optionsForProtocol,
   providerProtocol,
   removeOptionKeys,
+  toOptionSelection,
   unreachableOptionKeys,
   type OptionKey,
 } from "@/features/settings/modelOptions"
@@ -675,6 +678,28 @@ function OptionField({
   const label = t(optionLabelKey(spec.key), { defaultValue: spec.key })
   const hint = t(optionHintKey(spec.key), { defaultValue: "" })
   const id = `model-option-${spec.key}`
+  // The unset choice is a real value, not an empty string: Radix's `SelectValue` treats `""` as
+  // "no value" and renders its (absent) placeholder, which is why these selects were blank (D-133).
+  // A known default is shown as "Default: <value>", so the author can see what an unset option
+  // resolves to without opening the list.
+  const defaultOption = (
+    <SelectItem value={DEFAULT_OPTION_VALUE}>
+      {spec.default_value === null
+        ? t("settings:option_unset")
+        : t("settings:option_default_named", {
+            value: t(optionValueKey(spec.key, spec.default_value), {
+              defaultValue: spec.default_value,
+            }),
+          })}
+    </SelectItem>
+  )
+  // The free-form kinds cannot display a value they do not hold, and an empty input there is
+  // legitimate (it means "omit the field"). A published default is offered as grey placeholder text
+  // so it is visible without being mistaken for a value the form would send (D-133).
+  const defaultPlaceholder =
+    spec.default_value === null
+      ? undefined
+      : t("settings:option_default_named", { value: spec.default_value })
 
   return (
     <div className="space-y-1">
@@ -683,22 +708,14 @@ function OptionField({
       </Label>
       {spec.kind === "choice" ? (
         <Select
-          value={typeof value === "string" ? value : ""}
-          onValueChange={(next) => onChange(next === "" ? undefined : next)}
+          value={toOptionSelection(typeof value === "string" ? value : undefined)}
+          onValueChange={(next) => onChange(fromOptionSelection(next))}
         >
           <SelectTrigger id={id} aria-label={label}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">
-              {spec.default_value === null
-                ? t("settings:option_unset")
-                : t("settings:option_default_named", {
-                    value: t(optionValueKey(spec.key, spec.default_value), {
-                      defaultValue: spec.default_value,
-                    }),
-                  })}
-            </SelectItem>
+            {defaultOption}
             {spec.values.map((option) => (
               <SelectItem key={option} value={option}>
                 {t(optionValueKey(spec.key, option), { defaultValue: option })}
@@ -708,14 +725,19 @@ function OptionField({
         </Select>
       ) : spec.kind === "boolean" ? (
         <Select
-          value={value === true ? "true" : value === false ? "false" : ""}
-          onValueChange={(next) => onChange(next === "" ? undefined : next === "true")}
+          value={
+            value === true ? "true" : value === false ? "false" : DEFAULT_OPTION_VALUE
+          }
+          onValueChange={(next) => {
+            const option = fromOptionSelection(next)
+            onChange(option === undefined ? undefined : option === "true")
+          }}
         >
           <SelectTrigger id={id} aria-label={label}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">{t("settings:option_unset")}</SelectItem>
+            {defaultOption}
             <SelectItem value="true">{t("settings:option_on")}</SelectItem>
             <SelectItem value="false">{t("settings:option_off")}</SelectItem>
           </SelectContent>
@@ -724,6 +746,7 @@ function OptionField({
         <Input
           id={id}
           inputMode="decimal"
+          placeholder={defaultPlaceholder}
           value={value === undefined || value === null ? "" : String(value)}
           onChange={(event) => {
             const text = event.target.value.trim()
@@ -740,6 +763,7 @@ function OptionField({
       ) : spec.kind === "text" ? (
         <Input
           id={id}
+          placeholder={defaultPlaceholder}
           value={value === undefined || value === null ? "" : String(value)}
           onChange={(event) =>
             onChange(event.target.value === "" ? undefined : event.target.value)

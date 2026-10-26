@@ -1937,3 +1937,40 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   and `cache_ttl`, which the OpenAI protocol also cannot send) or click the offered removal. The
   Demo provider can no longer carry any model option, which is honest — it sends no request — and
   its shipped preset was already empty.
+
+### D-133 The "use the default" choice in the models form is a real value, not an empty string
+- **Context**: the author reported 「添加模型的模态框的表单默认值显示是空白的」 — in the Add-model
+  dialog every option `Select` displayed nothing, although the form and the served option table both
+  knew each option's default. The "use the default" choice was `<SelectItem value="">` with a bare
+  `<SelectValue />`. In `@radix-ui/react-select@2.4.1`, `SelectValue` calls
+  `shouldShowPlaceholder(value) { return value === "" || value === undefined }` and renders its
+  `placeholder` branch — and no `placeholder` was passed, so that branch rendered **nothing**. The
+  empty-string item was therefore never a selectable value that displays its own label; Radix
+  treated it as "unset". `RolesPage` had the same `<SelectItem value="">` shape (it passed a
+  `placeholder`, so its control was grey hint text rather than blank, but the "no model" state was
+  still not a real value). The bug shipped with a green suite because every existing assertion asked
+  whether a `Select` **existed**, never what it **displayed**.
+- **Decision**: the unset/default choice gets an explicit sentinel value, `DEFAULT_OPTION_VALUE`
+  (`"__default__"`) in `web/src/features/settings/modelOptions.ts`, with `toOptionSelection` /
+  `fromOptionSelection` mapping it to and from `undefined`; the dialog deletes the key, so the
+  request omits the option and the server applies its own default. The mapping also maps an empty
+  string to unset, so a stored `""` can never recreate a blank trigger. Both Select-backed kinds
+  (`choice` and `boolean`) use it, and `RolesPage` reuses the same constant for "no model assigned",
+  which maps back to `null` (what the settings API expects). **Passing a `placeholder` is
+  deliberately rejected as the fix**: the default is a real, selectable, persistent state that must
+  display its actual text ("Default: High", "Not set"), and a placeholder is greyed hint text that
+  vanishes on selection and is marked `data-placeholder`. The `number`/`text`/`json` inputs keep an
+  empty value, which legitimately means "omit the field"; a published `default_value` is shown there
+  as `option_default_named` placeholder text (none of the served numeric/text/json options has one
+  today, so this is the uniform rule rather than a visible change). The sentinel is a fixed string,
+  so a served value could in principle collide with it: a test asserts it stays outside every
+  published `values` list.
+- **Consequences**: a fresh Add-model dialog shows `Default: Never` / `Default: Automatic` /
+  `Default: max_tokens` for the options that have one and `Not set` for the rest, in both locales;
+  the same text is shown in the closed trigger after choosing the default item, and the trigger is
+  no longer marked `data-placeholder`. The tests that would have caught the original defect are in
+  `modelsPage.test.tsx` — per-option displayed text against the served table, a loop over every
+  option of both protocols that fails on any blank trigger, the sentinel round-trip (the PATCH body
+  omits the key, and never contains `""` or `__default__`), and the `boolean` kind — plus
+  `rolesPage.test.tsx` for the role pickers. Reverting the page to the empty-string item fails seven
+  of those tests, so the guard is verified rather than assumed.

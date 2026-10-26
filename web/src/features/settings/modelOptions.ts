@@ -12,6 +12,37 @@ import type { Protocol } from "@/api/gen/Protocol"
 /** The part of a provider row the option form needs: its protocol decides what it can send. */
 export type ProtocolCarrier = { id: number; protocol: Protocol }
 
+/** The `Select` value that stands for "leave this option unset" (D-133).
+ *
+ * Radix's `SelectValue` renders its **placeholder** branch for an empty-string or `undefined`
+ * value (`shouldShowPlaceholder`), and the models form passes no `placeholder`, so an
+ * empty-string item rendered nothing at all: the Add-model dialog showed blank selects while the
+ * option table knew every default. The unset state is a real, selectable, persistent choice, not a
+ * hint, so it needs a value of its own — {@link fromOptionSelection} maps it back to `undefined`.
+ *
+ * The sentinel must stay outside every served `values` list; a test asserts that, so a future
+ * option value cannot collide with it.
+ */
+export const DEFAULT_OPTION_VALUE = "__default__"
+
+/** The `Select` value of an option: the value itself, or {@link DEFAULT_OPTION_VALUE} when unset.
+ *
+ * Never returns `""`, which Radix treats as "no value" and renders as an empty trigger. A stored
+ * empty string is treated as unset too: it is not one of the option's published values, and
+ * displaying it would recreate exactly the blank control this mapping exists to prevent.
+ */
+export function toOptionSelection(value: string | null | undefined): string {
+  return value === undefined || value === null || value === ""
+    ? DEFAULT_OPTION_VALUE
+    : value
+}
+
+/** The option value a `Select` value stands for: the sentinel (or an empty string) means "unset",
+ * i.e. `undefined`, which the dialog writes by deleting the key. */
+export function fromOptionSelection(selection: string): string | undefined {
+  return selection === DEFAULT_OPTION_VALUE || selection === "" ? undefined : selection
+}
+
 /** The option keys this UI edits, in the order the server publishes them. */
 export const OPTION_KEYS = [
   "reasoning_replay",
