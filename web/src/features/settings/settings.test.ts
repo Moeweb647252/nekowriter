@@ -1,7 +1,15 @@
 /** Pure helpers of the prompts and settings screens (spec/11 §9: unit tests for UI logic). */
 import { describe, expect, it } from "vitest"
 
+import type { TFunction } from "i18next"
+
 import { parseHeaders } from "@/features/settings/ProvidersPage"
+import {
+  AGENT_ROLES,
+  formatModelLabel,
+  roleLabelKey,
+  roleSelection,
+} from "@/features/settings/roleModels"
 import { SETTINGS_SECTION_KEYS, settingsSection } from "@/features/settings/SettingsPage"
 import { groupPrompts } from "@/features/prompts/PromptEditor"
 import enPrompts from "@/i18n/locales/en/prompts.json"
@@ -10,7 +18,9 @@ import enSettings from "@/i18n/locales/en/settings.json"
 import zhSettings from "@/i18n/locales/zh-CN/settings.json"
 import type { PromptEntryDto } from "@/api/gen/PromptEntryDto"
 import type { PromptKind } from "@/api/gen/PromptKind"
+import type { ModelProfileDto } from "@/api/gen/ModelProfileDto"
 import type { Protocol } from "@/api/gen/Protocol"
+import type { ProviderDto } from "@/api/gen/ProviderDto"
 
 /** The prompt groups the editor builds, mirroring `GROUP_ORDER` (spec/09 §2). */
 const GROUPS: Array<{ key: string; kinds: PromptKind[] }> = [
@@ -178,5 +188,68 @@ describe("prompts locale coverage", () => {
         ).toBeTypeOf("string")
       }
     }
+  })
+})
+
+describe("role model labels (PROJECT §8.12)", () => {
+  // The Agent roles page and the per-book overrides in Book settings render model names from this
+  // one helper (`roleModels.ts`). RolesPage used to format them inline; when it was switched over,
+  // these cases were added first so a behaviour drift in the three branches — provider-qualified
+  // name, provider row gone, profile gone — fails here instead of silently changing the page.
+  const t = ((key: string) => `t:${key}`) as unknown as TFunction
+  const providers: ProviderDto[] = [
+    { id: 1, name: "Anthropic" } as ProviderDto,
+    { id: 2, name: "DeepSeek" } as ProviderDto,
+  ]
+  const models: ModelProfileDto[] = [
+    { id: 7, provider_id: 1, display_name: "Writer model" } as ModelProfileDto,
+    { id: 8, provider_id: 9, display_name: "Orphan model" } as ModelProfileDto,
+  ]
+
+  it("qualifies the name with its provider", () => {
+    expect(formatModelLabel(t, models, providers, 7)).toBe("Anthropic · Writer model")
+  })
+
+  it("falls back to the display name when the provider row is gone", () => {
+    // A deleted provider leaves its profiles unreachable; the label must not become "undefined · …".
+    expect(formatModelLabel(t, models, providers, 8)).toBe("Orphan model")
+  })
+
+  it("renders the missing state for a deleted profile", () => {
+    expect(formatModelLabel(t, models, providers, 99)).toBe("t:settings:model_missing")
+  })
+
+  it("normalizes the optional RoleModels into one entry per role", () => {
+    expect(roleSelection({ writer: 7 })).toEqual({
+      conception: null,
+      researcher: null,
+      writer: 7,
+      reviewer: null,
+      archivist: null,
+    })
+    expect(roleSelection(undefined)).toEqual({
+      conception: null,
+      researcher: null,
+      writer: null,
+      reviewer: null,
+      archivist: null,
+    })
+  })
+
+  it("lists the five roles in the settings order", () => {
+    expect(AGENT_ROLES).toEqual([
+      "conception",
+      "researcher",
+      "writer",
+      "reviewer",
+      "archivist",
+    ])
+    expect(AGENT_ROLES.map(roleLabelKey)).toEqual([
+      "settings:role.conception",
+      "settings:role.researcher",
+      "settings:role.writer",
+      "settings:role.reviewer",
+      "settings:role.archivist",
+    ])
   })
 })
