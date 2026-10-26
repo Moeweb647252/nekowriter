@@ -1812,13 +1812,17 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   a reason that points at the studio) is routed separately, since `Navigator.tsx` is owned by the
   chapter-deletion task; until it lands the server refuses and the error toast words
   `book.invalid_state`. Tests: `crates/server/tests/chapter_creation_gate.rs` —
-  `a_conceiving_book_refuses_a_new_chapter` (409 + `details.status`, and the chapter list stays
-  empty, so no `ord` was consumed), `an_archived_book_refuses_a_new_chapter` (409, the existing
-  chapter is untouched, and unarchiving resumes creation at number 2),
+  `a_conceiving_book_refuses_a_new_chapter` (409 + `details.status`; after three refused attempts
+  the chapter table still holds zero rows for the track and `MIN`/`MAX(ord)` are both `NULL`,
+  asserted with SQL rather than inferred from the list DTO, because `ord` is `last + 1` and a
+  consumed number would surface only as a numbering gap after finalize),
+  `an_archived_book_refuses_a_new_chapter` (409, the existing chapter is untouched, and
+  unarchiving resumes creation at number 2),
   `a_conceiving_book_with_an_existing_chapter_refuses_only_the_second_one` (the real-data shape: a
   seeded `planned` chapter stays readable while a second create is refused),
-  `finalize_is_what_makes_chapter_creation_possible` (refused → `conception/finalize` returns
-  `status: active` → created, numbered 1),
+  `finalize_is_what_makes_chapter_creation_possible` (three refusals → `conception/finalize`
+  returns `status: active` → created, numbered 1, with `MIN(ord) = MAX(ord) = 1` and exactly one
+  row, so the refusals cost no number),
   `a_chapter_that_predates_finalize_is_writable_once_the_book_is_active` (finalize refuses before
   the materials exist with `conception.incomplete`, then succeeds; the legacy chapter is unchanged,
   takes a `chapter_write` session, and the next create still numbers 2),

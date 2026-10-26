@@ -8,7 +8,36 @@
 
 use axum::http::StatusCode;
 use nekowriter::testing::{TestApp, assert_error, assert_error_detail};
+use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 use serde_json::{Value, json};
+
+/// The number of chapter rows in a track, with the smallest and largest `ord` (`None` when the
+/// track has no chapters).
+///
+/// Read straight from the columns rather than through the list DTO, because `ord` is `last + 1`:
+/// a refused create that still advanced something would show up as a gap here and nowhere else.
+/// A typed `try_get` is used instead of `TestApp::query_json`, whose `Option<Value>` conversion
+/// cannot decode SQLite integers.
+async fn chapter_ords(app: &TestApp, track_id: i32) -> (i64, Option<i32>, Option<i32>) {
+    let row = app
+        .db()
+        .conn()
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            format!(
+                "SELECT COUNT(*) AS count, MIN(ord) AS min_ord, MAX(ord) AS max_ord \
+                 FROM chapters WHERE track_id = {track_id}"
+            ),
+        ))
+        .await
+        .expect("query chapter ords")
+        .expect("one row");
+    (
+        row.try_get::<i64>("", "count").expect("count"),
+        row.try_get::<Option<i32>>("", "min_ord").expect("min_ord"),
+        row.try_get::<Option<i32>>("", "max_ord").expect("max_ord"),
+    )
+}
 
 /// Creates a book through the API with an explicit `start_conception` and returns its DTO.
 ///
@@ -165,6 +194,20 @@ async fn a_conceiving_book_refuses_a_new_chapter() {
     let (status, list) = app.get(&format!("/api/tracks/{track_id}/chapters")).await;
     assert_eq!(status, StatusCode::OK, "{list}");
     assert_eq!(list.as_array().expect("chapters").len(), 0);
+
+    // Asserted against the column itself, not only through the list DTO: `ord` is `last + 1`, so
+    // a refused attempt that still bumped something would leave a gap once the book is active.
+    for _ in 0..3 {
+        let (status, body) = try_create_chapter(&app, track_id).await;
+        assert_eq!(status, StatusCode::CONFLICT, "repeated refusal: {body}");
+    }
+    let (count, min_ord, max_ord) = chapter_ords(&app, track_id).await;
+    assert_eq!(count, 0, "no chapter row exists");
+    assert_eq!(
+        (min_ord, max_ord),
+        (None, None),
+        "repeated refusals consumed no `ord`"
+    );
 }
 
 /// An archived book refuses a chapter by the same rule (spec/08 §1.3 archives only `active`
@@ -223,6 +266,11 @@ async fn finalize_is_what_makes_chapter_creation_possible() {
     let (status, body) = try_create_chapter(&app, track_id).await;
     assert_eq!(status, StatusCode::CONFLICT, "before finalize: {body}");
     assert_error(&body, "book.invalid_state");
+    // Two more refusals, so the "no consumed number" assertion below is not a single-shot fluke.
+    for _ in 0..2 {
+        let (status, body) = try_create_chapter(&app, track_id).await;
+        assert_eq!(status, StatusCode::CONFLICT, "still conceiving: {body}");
+    }
 
     complete_materials(&app, book_id).await;
     let (status, body) = app
@@ -240,10 +288,16 @@ async fn finalize_is_what_makes_chapter_creation_possible() {
     let (status, chapter) = try_create_chapter(&app, track_id).await;
     assert_eq!(status, StatusCode::CREATED, "after finalize: {chapter}");
     assert_eq!(chapter["status"], "planned");
+    // The numbering starts at 1 even though three creates were refused first: the refusals happen
+    // before `next_ord` can consume anything, so the Navigator shows no gap.
     assert_eq!(
         chapter["number"], 1,
         "the refused attempts consumed no number"
     );
+    let (count, min_ord, max_ord) = chapter_ords(&app, track_id).await;
+    assert_eq!(count, 1, "exactly one chapter");
+    assert_eq!(min_ord, Some(1), "numbering starts at 1");
+    assert_eq!(max_ord, Some(1), "no gap from the refused attempts");
 }
 
 /// The real-world shape the gate has to handle: a `conceiving` book that *already* has a chapter,
