@@ -1774,3 +1774,56 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   `an_active_book_still_accepts_chapters`. Fail-before was real: with the `ensure_book_active` call
   removed, five of the seven fail (four expect `409` and get `201`, and the transition test fails on
   its first refusal); the two controls that assert pre-existing behaviour still pass.
+
+### D-129 Conceiving books are part of the default library view, and their card opens the studio
+- **Context**: the author reported that the library showed two books while their database held
+  three. The third (`带着蓝色大肥鱼穿洪武`) was `conceiving`. `LibraryPage` fetched
+  `?status=active` whenever "Show archived" was off, and `books::list` filters server-side on that
+  exact value, so a book in conception never reached the browser — the page's own
+  `status !== "archived"` filter had nothing to filter because the row was already gone. The
+  book was therefore **invisible in the library from creation until finalize**. That is a
+  reachability bug, not a missing card: a book created with "start with the conception agent" that
+  the author closes the studio on — or whose first turn the provider refuses, which is the state
+  in the author's own session — had no card, no way back in, and no indication it existed. The
+  overview already treats `conceiving` as its own state with a Continue-conception button
+  (`OverviewPage`), so the library was the only screen that disagreed.
+- **Decision**: the library loads `GET /books` **unfiltered** and applies the "Show archived"
+  checkbox in the browser, which is where the archive decision already lived
+  (`list.filter(status !== "archived")`). The server's `?status=` contract is untouched: it stays
+  exact for `conceiving`/`active`/`archived`, with `""`/`all` still meaning no filter, because the
+  book switcher, the breadcrumb and the research dialog use the unfiltered form and other screens
+  may yet want an exact one. The alternative — a new "not archived" value or a status list on the
+  endpoint — was rejected: it adds API surface for a single page, and it would make `?status=`
+  mean two different things depending on its value.
+- **Consequences**: the default view is `conceiving` + `active`; "Show archived" adds `archived`
+  exactly as before, and the checkbox still only changes what is displayed, never what is fetched.
+  The request is now the full list every time, which is one author's books (three rows here) and
+  the same payload the switcher already requested. `BookCard` renders a `conceiving` book
+  differently: a `library:conceiving` badge next to the genre, a waiting-toned ring, and below the
+  usual lines a `library:conceiving_hint` sentence with a "Continue conception" link to
+  `/books/:id/conception`. The title button and the "⋯ → Open" item use the same route for a
+  conceiving book and keep `/books/:id` for every other status, so nothing that worked before
+  changed.
+  **The chapter/word counts and the latest-chapter line stay visible for a conceiving book.** The
+  first version of this card replaced them with the conceiving block, assuming a conceiving book
+  has no chapters. Rendering the author's real data disproved it: book 3 is `conceiving` and owns a
+  chapter already (`chapters` row `(2, track 3, book 3, ord 1, 'planned')`, created before D-130
+  gated chapter creation on finalize), so the replacement would have hidden real data behind a
+  friendly message. The card now always shows the counts and adds the conceiving block, and
+  `libraryPage.test.tsx` has a case for a conceiving book that already has one chapter.
+  New i18n keys (`library:conceiving`, `library:conceiving_hint`) exist in both locales;
+  `i18n:check` covers the parity and `libraryPage.test.tsx` resolves them through the real i18n
+  instance. Tests: `crates/server/tests/library_list.rs` —
+  `the_unfiltered_list_contains_every_book_status` (three statuses in one list) and
+  `the_status_filter_stays_exact` (`?status=active` → active only; `conceiving` and `archived`
+  filter alike; `""`/`all` → all three; an unknown value is still a 400).
+  `web/src/features/library/libraryPage.test.tsx` mocks `useBooks` the way the server behaves (a
+  filter really does remove rows) and asserts the conceiving card renders with "Show archived"
+  off, that its real chapter counts are not hidden, that an archived book stays hidden until the
+  toggle and reappears with it, that the card's link and title route to `/books/3/conception`, and
+  that an active book still opens the overview. Fail-before was real: with the old page, "renders
+  a conceiving book with Show archived off" failed on a missing heading text and "takes a
+  conceiving book straight into its studio" failed with no accessible link named "Continue
+  conception"; the other two cases already passed, which is what pinned the regression to the
+  status filter rather than to the card.
+
