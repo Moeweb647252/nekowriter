@@ -13,8 +13,8 @@ use crate::api::dto::chapters::{
 };
 use crate::db::entities::{agent_sessions, appearances, chapter_versions, chapters, tracks};
 use crate::db::json::{
-    AgentRole, CanonStatus, ChangeActor, ChangeOp, ChangeTargetType, ChapterContent, ChapterStatus,
-    SessionStatus, Snapshot, TrackKind, VersionKind,
+    AgentRole, BookStatus, CanonStatus, ChangeActor, ChangeOp, ChangeTargetType, ChapterContent,
+    ChapterStatus, SessionStatus, Snapshot, TrackKind, VersionKind,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::{BookOp, ContentActor, ServerEvent};
@@ -43,6 +43,10 @@ pub async fn get(conn: &impl ConnectionTrait, chapter_id: i32) -> Result<Chapter
 }
 
 /// `POST /api/tracks/:id/chapters` (spec/08 §1.1): `planned`, `ord` = last + 1, empty content.
+///
+/// Only an `active` book accepts new chapters: `conception/finalize` is what writes the setting
+/// materials and seeds the canon the writer's kickoff renders, so a chapter created before it
+/// would be written against an empty book (D-130).
 pub async fn create(
     db: &crate::db::Db,
     events: &crate::events::EventBus,
@@ -63,6 +67,9 @@ pub async fn create_inner(
     input: ChapterInput,
 ) -> Result<(ChapterDto, Vec<ServerEvent>), AppError> {
     let track = super::tracks::load(tx, track_id).await?;
+    // spec/08 §1.1: a chapter needs an `active` book, checked in this same transaction so the
+    // status cannot flip between the check and the insert.
+    ensure_book_active(tx, track.book_id).await?;
     let ord = next_ord(tx, track_id).await?;
     let content = ChapterContent::default();
     let timestamp = now();
@@ -1191,6 +1198,30 @@ async fn ensure_editable(tx: &impl ConnectionTrait, chapter_id: i32) -> Result<(
         ));
     }
     Ok(())
+}
+
+/// Rejects new chapters on a book that is not `active` (spec/08 §1.1).
+///
+/// `conception/finalize` is the single transition that activates a book (spec/08 §5); it is also
+/// what writes the setting materials and seeds the canon the writer's kickoff renders, so a
+/// chapter created before it would be written against an empty book. `archived` books are refused
+/// by the same rule: they are hidden from the default library view and must not accumulate new
+/// chapters either.
+///
+/// The caller passes its own transaction, so the check and the insert cannot be split.
+pub async fn ensure_book_active(tx: &impl ConnectionTrait, book_id: i32) -> Result<(), AppError> {
+    let book = crate::db::entities::books::Entity::find_by_id(book_id)
+        .one(tx)
+        .await?
+        .ok_or_else(|| AppError::not_found(format!("book #{book_id}")))?;
+    if book.status == BookStatus::Active.as_str() {
+        return Ok(());
+    }
+    Err(super::conflict(
+        ErrorCode::BookInvalidState,
+        "chapters can only be created once the conception is finalized",
+        serde_json::json!({ "status": book.status }),
+    ))
 }
 
 /// Optimistic concurrency: a stale `base_version` is `conflict.version` with the current version.

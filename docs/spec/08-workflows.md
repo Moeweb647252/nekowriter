@@ -16,7 +16,7 @@
 
 | Operation | Endpoint | Preconditions | Effects |
 |---|---|---|---|
-| Create chapter | `POST /api/tracks/:id/chapters {title?, guidance?}` | — | `planned`, `ord` = last + 1, empty content |
+| Create chapter | `POST /api/tracks/:id/chapters {title?, guidance?}` | the book is `active` (otherwise `409 book.invalid_state` with `details.status`). `conception/finalize` is what activates a book and writes the setting materials and canon the writer's kickoff renders, so a chapter created before it would be written against an empty book; an `archived` book is refused by the same rule (D-130) | `planned`, `ord` = last + 1, empty content |
 | Write | `POST /api/chapters/:id/write {guidance?, granularity?, auto_pause?, pause_after_outline?, force?}` | status `planned` or `drafting`; no open writer session; the previous chapter of the track (and, for the first side-story chapter, the anchor chapter) is `official` with `canon_status = synced`, unless `force` (otherwise `409 chapter.previous_not_ready`; the Write dialog shows the reason and offers **Write anyway**, which sends `force`) | stores guidance; `chapter_write` session (planning). If the chapter already has text, the kickoff includes it and asks the writer to plan the rest and continue from its end |
 | Submit for review (manual) | `POST /api/chapters/:id/submit` | `drafting` or `revising`; non-empty; no `running` writer session (an open, non-running one is abandoned after the UI confirms) | version `draft`/`revision`, status `in_review` |
 | Draft complete (agent) | completion handler | — | closes the open tail, version `draft` (note = the `finish_draft` note), status `in_review`, toast event |
@@ -159,8 +159,10 @@ is one, otherwise it starts one.
   (spec/06 §4.2); without one, the book's protagonist is used.
 - `canon_mode` cannot be changed once the track has an official chapter (`409
   track.mode_locked`). The anchor can be changed at any time; it affects only new sessions.
-- **Writing**: identical to the main track. The first chapter's "previous chapter" rule uses the
-  anchor chapter (`after_chapter`) or nothing (`before_start`, `after_end`).
+- **Writing**: identical to the main track, including the create-chapter precondition: a side
+  story of a book that is not `active` gets no chapter either (`409 book.invalid_state`, §1.1).
+  The first chapter's "previous chapter" rule uses the anchor chapter (`after_chapter`) or nothing
+  (`before_start`, `after_end`).
 - **Context**: memory per spec/06 §4.1. The task block includes `block.anchor`
   (prompts/blocks.toml): the premise, the canon mode (an isolated story reads canon but does not
   change it), and the anchor notice (events of main chapters after the anchor have not happened

@@ -1706,3 +1706,121 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   Fail-before was real: before the implementation the backend tests did not compile (missing
   `FetchBackend`, `FetchConfig`, `WebService::fetch_document` and `SearchConfig::fetch_via`; 11
   errors) and the Vitest case could not find a combobox named "Page fetching".
+
+### D-130 Chapter creation is gated on the book being `active`
+- **Context**: the author reported "构思未完成时仍可以创建章节" — chapters could be created while the
+  conception was unfinished. The root cause was in the spec, not only the code: spec/08 §1.1's
+  operation table listed `Create chapter` with `—` in **Preconditions**, so nothing told an
+  implementer to check the book at all. `chapters::create_inner` loaded the track, computed `ord`
+  and inserted with `status: planned`; no path from the endpoint to the insert ever read
+  `books.status`. The UI compounded it: `Navigator`'s per-track "+ Next chapter" called
+  `useCreateChapter(track.id)` unconditionally, even though the same component already receives
+  `book: BookDto` with its `status`, and `SideStoryPage`/`NextActionCard` reproduced the button.
+  The overview, by contrast, already treats `conceiving` as its own state (it shows Continue
+  conception), so the two screens disagreed about what a conceiving book allows.
+- **Why it matters**: `conception/finalize` is not bookkeeping — it is the step that activates the
+  book *and* the step that makes the setting materials and canon exist, which is exactly what the
+  writer's kickoff renders (`writer.kickoff.chapter` injects the settings block and canon). A
+  chapter created before finalize enters a track whose book has no outline, world, protagonist or
+  canon, so the first write session runs against an empty context and produces a chapter unrelated
+  to the book's eventual premise; it also makes a `conceiving` book look started in the navigator
+  and in the overview's progress counts, and it is awkward to undo (chapter deletion did not exist
+  yet). Putting the gate in the UI alone was rejected: the API is the contract, and a UI disable
+  is an addition on top of the rule, not the rule.
+- **Decision**: creating a chapter on a book whose status is not `active` is refused **by the
+  server** with `409 book.invalid_state` and `details.status` naming the current status
+  (`ErrorCode::BookInvalidState`, matching how `conception/finalize` and `books::update` express
+  the same envelope). `archived` is refused by the same rule — it is hidden from the default
+  library view and must not accumulate new chapters either. The check lives *inside* the existing
+  `create_inner` transaction (`chapters::ensure_book_active(tx, book_id)` right after the track is
+  loaded), so no second transaction and no new lock were added, and the status cannot flip between
+  the check and the insert. It is a precondition of the book, not of the track kind: a side track
+  of a conceiving book is refused identically (§6 says side-story writing is the main-track path).
+- **The reverse direction is the point**: `conception/finalize` sets `active`, so after it succeeds
+  creation must work normally — and the test asserts that transition, not just the refusal, because
+  a refusal-only test would let a regression where finalize forgets to activate the book pass
+  silently. Also asserted: the refused attempts consume no chapter number, and a book created with
+  `start_conception: false` (which starts `active`) keeps working with no friction.
+- **Consequences**: conceiving and archived books cannot accumulate chapters; `conception/finalize`
+  is the gate to the writing workflow, which is a product statement spec/08 §1.1 now carries in its
+  Preconditions column instead of `—`. Every existing fixture already created chapters on books
+  made through `TestApp::create_book` (which passes `start_conception: false`, i.e. `active`), so
+  **no fixture had to change** and the whole pre-existing suite still passes unmodified — the
+  guard's unit of work is new-file-only. The UI half (disable the "+ Next chapter" affordances with
+  a reason that points at the studio) is routed separately, since `Navigator.tsx` is owned by the
+  chapter-deletion task; until it lands the server refuses and the error toast words
+  `book.invalid_state`. Tests: `crates/server/tests/chapter_creation_gate.rs` —
+  `a_conceiving_book_refuses_a_new_chapter` (409 + `details.status`, and the chapter list stays
+  empty), `an_archived_book_refuses_a_new_chapter` (409, existing chapters untouched, and
+  unarchiving resumes creation at number 2), `finalize_is_what_makes_chapter_creation_possible`
+  (refused → `conception/finalize` returns `status: active` → created, numbered 1),
+  `a_side_track_of_a_conceiving_book_gets_no_chapter`, and
+  `an_active_book_still_accepts_chapters`.
+
+### D-130 Chapter creation is gated on the book being `active`
+- **Context**: the author reported "构思未完成时仍可以创建章节" — chapters could be created while the
+  conception was unfinished. The root cause was in the spec, not only the code: spec/08 §1.1's
+  operation table listed `Create chapter` with `—` in **Preconditions**, so nothing told an
+  implementer to check the book at all. `chapters::create_inner` loaded the track, computed `ord`
+  and inserted with `status: planned`; no path from the endpoint to the insert ever read
+  `books.status`. The UI compounded it: `Navigator`'s per-track "+ Next chapter" called
+  `useCreateChapter(track.id)` unconditionally, even though the same component already receives
+  `book: BookDto` with its `status`, and `SideStoryPage`/`NextActionCard` reproduced the button.
+  The overview, by contrast, already treats `conceiving` as its own state (it shows Continue
+  conception), so the two screens disagreed about what a conceiving book allows.
+- **Why it matters**: `conception/finalize` is not bookkeeping — it is the step that activates the
+  book *and* the step that makes the setting materials and canon exist, which is exactly what the
+  writer's kickoff renders (`writer.kickoff.chapter` injects the settings block and canon). A
+  chapter created before finalize enters a track whose book has no outline, world, protagonist or
+  canon, so the first write session runs against an empty context and produces a chapter unrelated
+  to the book's eventual premise; it also makes a `conceiving` book look started in the navigator
+  and in the overview's progress counts, and it is awkward to undo (chapter deletion did not exist
+  yet). Putting the gate in the UI alone was rejected: the API is the contract, and a UI disable
+  is an addition on top of the rule, not the rule.
+
+  This is not hypothetical: the author's own database has a `conceiving` book (`带着蓝色大肥鱼穿洪武`)
+  with exactly one `planned`, zero-word chapter, created precisely *because* nothing refused it.
+  So the fix has to handle a book that already has chapters, not only a pristine one: refuse new
+  ones, leave the existing row intact, and let it become fully usable at finalize.
+- **Decision**: creating a chapter on a book whose status is not `active` is refused **by the
+  server** with `409 book.invalid_state` and `details.status` naming the current status
+  (`ErrorCode::BookInvalidState`, matching how `conception/finalize` and `books::update` express
+  the same envelope). `archived` is refused by the same rule — it is hidden from the default
+  library view and must not accumulate new chapters either. The check lives *inside* the existing
+  `create_inner` transaction (`chapters::ensure_book_active(tx, book_id)` right after the track is
+  loaded), so no second transaction and no new lock were added, and the status cannot flip between
+  the check and the insert. It is a precondition of the book, not of the track kind: a side track
+  of a conceiving book is refused identically (§6 says side-story writing is the main-track path).
+- **The reverse direction is the point**: `conception/finalize` sets `active`, so after it succeeds
+  creation must work normally — and the test asserts that transition, not just the refusal, because
+  a refusal-only test would let a regression where finalize forgets to activate the book pass
+  silently. The same test covers the pre-existing chapter: after finalize it must be a first-class
+  chapter, so a `POST /chapters/:id/write` on it starts a `chapter_write` session normally. "The
+  chapter that already existed is stranded after finalize" would be a worse bug than the one being
+  fixed, hence the explicit assertion. Also asserted: the refused attempts consume no chapter
+  number (the chapter list stays empty and the next successful create is numbered 1/2, so the
+  Navigator's numbering has no gap), and a book created with `start_conception: false` (which
+  starts `active`) keeps working with no friction.
+- **Consequences**: conceiving and archived books cannot accumulate chapters; `conception/finalize`
+  is the gate to the writing workflow, which is a product statement spec/08 §1.1 now carries in its
+  Preconditions column instead of `—`. Every existing fixture already created chapters on books
+  made through `TestApp::create_book` (which passes `start_conception: false`, i.e. `active`), so
+  **no fixture had to change** and the whole pre-existing suite still passes unmodified — the
+  guard's unit of work is new-file-only. The UI half (disable the "+ Next chapter" affordances with
+  a reason that points at the studio) is routed separately, since `Navigator.tsx` is owned by the
+  chapter-deletion task; until it lands the server refuses and the error toast words
+  `book.invalid_state`. Tests: `crates/server/tests/chapter_creation_gate.rs` —
+  `a_conceiving_book_refuses_a_new_chapter` (409 + `details.status`, and the chapter list stays
+  empty, so no `ord` was consumed), `an_archived_book_refuses_a_new_chapter` (409, the existing
+  chapter is untouched, and unarchiving resumes creation at number 2),
+  `a_conceiving_book_with_an_existing_chapter_refuses_only_the_second_one` (the real-data shape: a
+  seeded `planned` chapter stays readable while a second create is refused),
+  `finalize_is_what_makes_chapter_creation_possible` (refused → `conception/finalize` returns
+  `status: active` → created, numbered 1),
+  `a_chapter_that_predates_finalize_is_writable_once_the_book_is_active` (finalize refuses before
+  the materials exist with `conception.incomplete`, then succeeds; the legacy chapter is unchanged,
+  takes a `chapter_write` session, and the next create still numbers 2),
+  `a_side_track_of_a_conceiving_book_gets_no_chapter`, and
+  `an_active_book_still_accepts_chapters`. Fail-before was real: with the `ensure_book_active` call
+  removed, five of the seven fail (four expect `409` and get `201`, and the transition test fails on
+  its first refusal); the two controls that assert pre-existing behaviour still pass.
