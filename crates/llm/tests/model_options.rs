@@ -406,22 +406,13 @@ fn set_keys_ignores_defaults_and_reports_set_fields() {
     // `max_tokens_field: max_tokens` is the default and is not reported as set.
     assert!(!keys.contains(&ModelOptionKey::MaxTokensField));
 
-    let unreachable: Vec<ModelOptionKey> = stored
-        .reachability(Protocol::Openai)
-        .into_iter()
-        .filter(|entry| !entry.reachable)
-        .map(|entry| entry.key)
-        .collect();
     assert_eq!(
-        unreachable,
+        stored.unreachable_keys(Protocol::Openai),
         vec![ModelOptionKey::Effort, ModelOptionKey::ThinkingDisplay],
         "the OpenAI protocol cannot send either field"
     );
     assert!(
-        stored
-            .reachability(Protocol::Anthropic)
-            .iter()
-            .all(|entry| entry.reachable),
+        stored.unreachable_keys(Protocol::Anthropic).is_empty(),
         "both are reachable on Anthropic"
     );
 }

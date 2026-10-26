@@ -273,20 +273,16 @@ impl ModelOptions {
         self.eager_input_streaming.unwrap_or(true)
     }
 
-    /// The options this value sets (a field is "set" when it is not the default), paired with the
-    /// protocol that can send it (spec/04 §5).
+    /// The options this value sets that `protocol` cannot send (spec/04 §5).
     ///
-    /// The defaults are deliberately not reported: `ModelOptions` is `Default`-initialized and
-    /// serialized in full into the session snapshot, so reporting every field would flag every
-    /// profile. A field that is set *is* reported, and [`Self::reachable_by`] decides whether the
-    /// configured protocol sends it.
-    pub fn reachability(&self, protocol: Protocol) -> Vec<OptionReachability> {
+    /// This is the one operation save-time validation, the read-time report and the startup scan
+    /// all need, so they cannot disagree about what "stranded" means. Defaults are deliberately not
+    /// reported: `ModelOptions` is `Default`-initialized and stored with every field serialized, so
+    /// treating a default as a deviation would flag every profile.
+    pub fn unreachable_keys(&self, protocol: Protocol) -> Vec<ModelOptionKey> {
         self.set_keys()
             .into_iter()
-            .map(|key| OptionReachability {
-                key,
-                reachable: key.reachable_by(protocol),
-            })
+            .filter(|key| !key.reachable_by(protocol))
             .collect()
     }
 
@@ -342,11 +338,7 @@ impl ModelOptions {
     /// provider switched protocol); the API validates on save, so this is the cleanup that keeps
     /// an already-stored mismatch from surviving the next edit (spec/04 §5).
     pub fn clear_unreachable(&mut self, protocol: Protocol) -> Vec<ModelOptionKey> {
-        let unreachable: Vec<ModelOptionKey> = self
-            .set_keys()
-            .into_iter()
-            .filter(|key| !key.reachable_by(protocol))
-            .collect();
+        let unreachable = self.unreachable_keys(protocol);
         for key in &unreachable {
             match key {
                 ModelOptionKey::ReasoningEffort => self.reasoning_effort = None,
@@ -544,13 +536,6 @@ pub enum ModelOptionKind {
     Text,
     /// A JSON object, edited as text and validated before saving.
     Json,
-}
-
-/// One option and whether the configured protocol can send it (spec/04 §5, spec/10 §2.1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OptionReachability {
-    pub key: ModelOptionKey,
-    pub reachable: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

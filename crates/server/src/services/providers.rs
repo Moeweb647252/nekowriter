@@ -242,9 +242,8 @@ pub async fn stored_option_mismatches(
             .to_model_options()
             .map(|model_options| {
                 model_options
-                    .set_keys()
+                    .unreachable_keys(protocol)
                     .into_iter()
-                    .filter(|key| !key.reachable_by(protocol))
                     .map(|key| key.as_str().to_owned())
                     .collect()
             })
@@ -651,9 +650,8 @@ fn model_profile_dto(
             .to_model_options()
             .map(|model_options| {
                 model_options
-                    .set_keys()
+                    .unreachable_keys(llm_protocol(*protocol))
                     .into_iter()
-                    .filter(|key| !key.reachable_by(llm_protocol(*protocol)))
                     .map(|key| key.as_str().to_owned())
                     .collect()
             })
@@ -853,10 +851,7 @@ fn validate_options_protocol(
         return Err(field_error("options", "the model options are not valid"));
     };
     let mut fields = serde_json::Map::new();
-    for key in model_options.set_keys() {
-        if key.reachable_by(llm_protocol(protocol)) {
-            continue;
-        }
+    for key in model_options.unreachable_keys(llm_protocol(protocol)) {
         fields.insert(
             key.as_str().to_owned(),
             Value::String(format!(
