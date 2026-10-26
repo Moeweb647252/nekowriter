@@ -109,7 +109,15 @@ export function QuickSwitch({ open, onOpenChange }: QuickSwitchProps) {
   }
 
   return (
-    <CommandDialog open={open} onOpenChange={onOpenChange} title={t("common:quick_switch")}>
+    // `description` is the dialog's accessible description (Radix wires it to `aria-describedby`).
+    // `CommandDialog` defaults it to an English literal, which a screen reader would read verbatim
+    // in a zh-CN UI; the search hint says the same thing and is already translated (AGENTS.md §6).
+    <CommandDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title={t("common:quick_switch")}
+      description={t("common:quick_switch_hint")}
+    >
       <CommandInput placeholder={t("common:quick_switch_hint")} />
       <CommandList>
         <CommandEmpty>{t("common:quick_switch_empty")}</CommandEmpty>

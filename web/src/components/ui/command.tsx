@@ -57,7 +57,14 @@ function CommandDialog({
         )}
         showCloseButton={showCloseButton}
       >
-        {children}
+        {/*
+          The cmdk root is not optional: `CommandInput`, `CommandList`, `CommandItem` and
+          `CommandEmpty` read the state and store contexts that `<Command>` provides, through
+          `useSyncExternalStore(ctx.subscribe, …)`. Rendered without it they read `undefined` from
+          `useContext` and throw `TypeError: Cannot read properties of undefined (reading
+          'subscribe')` on the first render — which is exactly what the quick switch did.
+        */}
+        <Command>{children}</Command>
       </DialogContent>
     </Dialog>
   )
