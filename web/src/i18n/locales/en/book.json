@@ -203,7 +203,11 @@
     "continue_chapter": "Continue {{chapter}}",
     "sync_canon": "Re-sync the canon of {{chapter}}",
     "write_next": "Write the next chapter of {{track}}",
-    "go": "Go"
+    "go": "Go",
+    "runs_in_agent_panel": "This run takes place in the agent panel on the right.",
+    "runs_in_agent_panel_collapsed": "This run takes place in the agent panel, which is collapsed.",
+    "show_agent_panel": "Show the agent panel",
+    "started_in_agent_panel": "{{session}} started. Follow it in the agent panel on the right."
   },
   "attention_title": "Needs you",
   "attention_empty": "Nothing needs you right now.",

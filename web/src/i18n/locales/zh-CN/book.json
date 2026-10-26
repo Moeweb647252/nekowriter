@@ -203,7 +203,11 @@
     "continue_chapter": "继续 {{chapter}}",
     "sync_canon": "重新同步 {{chapter}} 的正史档案",
     "write_next": "继续写{{track}}的下一章",
-    "go": "前往"
+    "go": "前往",
+    "runs_in_agent_panel": "这一步在右侧的智能体面板里进行。",
+    "runs_in_agent_panel_collapsed": "这一步在智能体面板里进行，而面板现在是收起的。",
+    "show_agent_panel": "打开智能体面板",
+    "started_in_agent_panel": "{{session}}已开始，请在右侧的智能体面板中查看。"
   },
   "attention_title": "需要你来处理",
   "attention_empty": "现在没有需要处理的事情。",

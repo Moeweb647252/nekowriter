@@ -2015,3 +2015,45 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   click — reverting the initialiser to `approved: true` fails them immediately — plus the
   `conceptionStudio.test.tsx` case that reproduces the reported screen (five unset rows, one click,
   one row changes) and `conception.test.ts` for the pure transitions and payload shapes.
+
+### D-135 The canon actions pin their session in the agent panel and say so
+- **Context**: the author reported 「建立档案只有侧边栏模式」 — that canon seeding exists only in the
+  sidebar mode. PROJECT §8.4 F2 step 6 says the archivist "seeds canon from the settings (live in
+  the agent panel)" and spec/11 §5.3 puts a book's sessions in the panel, so a dedicated route would
+  be unrequested scope and a second studio. The real defect was narrower: `NextActionCard` handles
+  six kinds, and four of them lead somewhere — `continue_conception` is a `Link` to the studio,
+  `review_chapter`/`continue_chapter` are `Link`s to the chapter, `write_next` navigates to the
+  chapter it created. `seed_canon` and `sync_canon` were bare buttons: they called the mutation,
+  spun while pending, and then showed nothing — no toast, no destination, no hint that a
+  multi-minute archivist run had started and where it could be watched. Two of six behaving
+  differently is what read as "seeding only exists in the sidebar".
+- **Decision**: both archivist actions, on success, (a) **pin the returned session** in the
+  persisted UI store (`useUiStore().setPinnedSession(bookId, sessionId)`) — which is exactly what
+  `AgentPanel`'s `pickSession` prefers, so the panel switches to the seeding run without a route,
+  (b) **reopen the agent panel** if the author had collapsed it (the panel is `collapsible`,
+  spec/11 §5.1; a hint pointing at an invisible panel is no better than no hint), (c) raise a
+  success toast and render a `role="status"` line naming the session, and (d) show a **hint before
+  the click** saying the run happens in the agent panel. The hint has a second wording for a
+  collapsed panel plus a **Show the agent panel** button, because the workspace has no other
+  control for that panel (it is reopened only by dragging the handle or pressing Enter on it). The
+  workspace hands `agentPanelCollapsed`/`expandAgentPanel` to routed pages through the outlet
+  context (`features/workspace/shell.ts`); the collapsed flag comes from the panel's own
+  `onResize` (0 px *is* collapsed for a collapsible panel), not from
+  `ui.agentPanelCollapsed`, which nothing has ever written and which would drift from the screen.
+- **Consequences**: the entry point now guides instead of swallowing the click, and the panel stays
+  the location (no spec change; PROJECT §8.4 already says so). The panel is a generic session view —
+  it shows the archivist's tool cards with their canon writes, its pause/stop controls, the usage
+  footer and the session switcher, and it scrolls, so a run with dozens of canon writes is
+  followable; a dedicated seeding surface would duplicate `ActivityStream`/`SessionControls` for one
+  session kind, which is why it is not built. One residual gap stays open and is logged here rather
+  than widened into this change: the overview's **attention list** renders the same open
+  `canon_seed`/`chapter_resync` sessions as rows whose target is the page they are already on
+  (`/books/:bookId` for a session without a chapter), i.e. clicking such a row does nothing
+  visible — the same defect class on a second surface. The fix belongs in the attention list (its
+  session rows should pin like the next action does) and is not part of D-135's scope. Regression
+  guards in `overview.test.tsx`: the pin is asserted on the store for both kinds, the visible
+  `status` line and the toast are asserted, the collapsed-panel wording and the reopen call are
+  asserted, a failure pins nothing, the four hint keys are asserted in both locales, and a
+  table-driven test over all six `NextActionKind`s asserts each one either navigates or calls a
+  mutation whose success is visible. Reverting `seed_canon`'s `onSuccess` to a no-op fails five
+  tests; dropping the pre-click hint fails five; removing the panel reopen fails one.

@@ -1,5 +1,5 @@
 /** The book workspace: three resizable panels with persisted sizes (PROJECT §8.4, spec/11 §5.1). */
-import { useEffect } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { Outlet, useLocation, useParams } from "react-router"
 import { useTranslation } from "react-i18next"
 import { useQueryClient } from "@tanstack/react-query"
@@ -11,6 +11,7 @@ import { keys } from "@/api/keys"
 import { AgentPanel } from "@/features/agent/AgentPanel"
 import { BookBreadcrumb } from "@/features/workspace/BookBreadcrumb"
 import { Navigator } from "@/features/workspace/Navigator"
+import type { BookShell } from "@/features/workspace/shell"
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
@@ -51,6 +52,16 @@ export default function BookLayout() {
     storage: localStorage,
   })
   const navigatorRef = usePanelRef()
+  const agentRef = usePanelRef()
+  // The agent panel is `collapsible` (spec/11 §5.1) and its size is remembered per browser, so an
+  // author can leave it collapsed — and the page that starts a run watched there has to know
+  // (D-135). The panel answers with `onResize` (0 px *is* collapsed for a collapsible panel), so
+  // the hint cannot disagree with what is on screen; the store's `agentPanelCollapsed` field was
+  // never written by anything and would drift. `expandAgentPanel` is the other direction.
+  const [agentPanelCollapsed, setAgentPanelCollapsed] = useState(false)
+  const expandAgentPanel = useCallback(() => {
+    agentRef.current?.expand()
+  }, [agentRef])
 
   // One SSE stream per open book (spec/11 §4.2).
   useEffect(() => {
@@ -66,6 +77,22 @@ export default function BookLayout() {
       void queryClient.invalidateQueries({ queryKey: keys.chapters.detail(0) })
     }
   }, [location.pathname, queryClient])
+
+  // Memoized (above the early returns, so the hook order is stable) because routed pages put the
+  // shell in callback dependencies. `null` only while the book is loading or failed, which is
+  // exactly when no routed page renders.
+  const shell = useMemo<BookShell | null>(
+    () =>
+      book.data === undefined
+        ? null
+        : {
+            book: book.data,
+            // The studio renders no agent panel, so nothing there is collapsed (spec/11 §5.4).
+            agentPanelCollapsed: isConception ? false : agentPanelCollapsed,
+            expandAgentPanel,
+          },
+    [book.data, isConception, agentPanelCollapsed, expandAgentPanel],
+  )
 
   if (book.isPending) {
     return <Skeleton className="m-6 h-64" />
@@ -130,7 +157,7 @@ export default function BookLayout() {
             >
               <PanelLeft />
             </Button>
-            <Outlet context={{ book: book.data }} />
+            <Outlet context={shell} />
           </div>
         </ResizablePanel>
         {isConception ? null : (
@@ -138,10 +165,14 @@ export default function BookLayout() {
             <ResizableHandle withHandle />
             <ResizablePanel
               id="agent"
+              panelRef={agentRef}
               defaultSize="380px"
               minSize="320px"
               collapsible
               className="min-h-0"
+              // 0 px is a collapsible panel's collapsed size (react-resizable-panels defaults
+              // `collapsedSize` to 0), so this is the panel reporting its own state.
+              onResize={(size) => setAgentPanelCollapsed(size.inPixels === 0)}
             >
               <AgentPanel bookId={bookId} chapterId={chapterId} />
             </ResizablePanel>

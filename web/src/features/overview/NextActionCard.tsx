@@ -2,24 +2,32 @@
  * The next action card of the book overview (PROJECT §8.3, spec/08 §7).
  *
  * The API sends the action's kind and the data it names (`chapter`, `session_id`, `track_id`); the
- * label and the destination are composed here (D-054). The two actions that start a session
- * (`seed_canon`, `sync_canon`) and the one that creates a chapter (`write_next`) are buttons; the
- * rest navigate.
+ * label and the destination are composed here (D-054). Four of the six kinds lead somewhere: the
+ * three navigation kinds are `Link`s and `write_next` opens the chapter it created. The two
+ * archivist kinds (`seed_canon`, `sync_canon`) have no page — PROJECT §8.4 puts the seeding "live in
+ * the agent panel", and spec/11 §5.3 puts a book's sessions there — so they pin the session they
+ * started in the panel, expand it if it was collapsed, and name where the run is watched (D-135).
  */
+import { useCallback, useState } from "react"
 import { Link, useNavigate } from "react-router"
 import { useTranslation } from "react-i18next"
-import { ArrowRight, Loader2 } from "lucide-react"
+import type { TFunction } from "i18next"
+import { ArrowRight, Loader2, PanelRightOpen } from "lucide-react"
+import { toast } from "sonner"
 
 import { useSeedCanon } from "@/api/hooks/conception"
 import { useResyncChapter } from "@/api/hooks/reviews"
 import { useCreateChapter } from "@/api/hooks/tracks"
 import type { BookStatus } from "@/api/gen/BookStatus"
 import type { NextActionDto } from "@/api/gen/NextActionDto"
+import type { NextActionKind } from "@/api/gen/NextActionKind"
 import type { TrackProgressDto } from "@/api/gen/TrackProgressDto"
 import { useErrorToast } from "@/components/common/ErrorToast"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { formatChapterLabel, trackName } from "@/lib/chapterLabel"
+import { useBookShell } from "@/features/workspace/shell"
+import { useUiStore } from "@/stores/ui"
 
 type NextActionProps = {
   bookId: number
@@ -29,9 +37,37 @@ type NextActionProps = {
   tracks: TrackProgressDto[]
 }
 
+/**
+ * The kinds whose run happens in the agent panel rather than on a page (spec/08 §7, PROJECT §8.4).
+ * Typed against the generated union, so a new kind has to be classified here or in the `switch`
+ * below before it can render.
+ */
+const ARCHIVIST_KINDS: ReadonlySet<NextActionKind> = new Set<NextActionKind>([
+  "seed_canon",
+  "sync_canon",
+])
+
+/** The title of the session an archivist action starts or continues (composed in the UI, spec/11 §6). */
+function archivistSessionTitle(t: TFunction, kind: NextActionKind): string {
+  return kind === "sync_canon"
+    ? t("agent:session_title.chapter_resync")
+    : t("agent:session_title.canon_seed")
+}
+
 /** The overview's "what to do next" card. */
 export function NextActionCard({ bookId, status, action, tracks }: NextActionProps) {
   const { t } = useTranslation()
+  // The workspace owns the panel's collapsed state (it observes the real panel size), so the hint
+  // and the panel can never disagree (D-135). Outside a workspace (a test page, a future embed)
+  // there is nothing to collapse, so an open panel is the honest assumption.
+  const shell = useBookShell()
+  const panelCollapsed = shell?.agentPanelCollapsed ?? false
+  // Remembered per kind: when the overview answers a different action the guidance is back, so no
+  // effect has to reset it (the same shape `AgentPanel` uses for its "pausing" hints).
+  const [startedKind, setStartedKind] = useState<NextActionKind | null>(null)
+  const started = startedKind === action.kind
+  const archivist = ARCHIVIST_KINDS.has(action.kind)
+
   const track = tracks.find((entry) => entry.track_id === action.track_id)
   const chapter =
     action.chapter === null || action.chapter === undefined
@@ -41,15 +77,64 @@ export function NextActionCard({ bookId, status, action, tracks }: NextActionPro
     chapter: chapter ?? "",
     track: track === undefined ? "" : trackName(t, track),
   })
+  const startedText = t("book:next_action.started_in_agent_panel", {
+    session: archivistSessionTitle(t, action.kind),
+  })
+
+  const onArchivistStarted = useCallback(
+    (sessionId: number) => {
+      // A started archivist run has exactly one window: the agent panel. Pin the session there,
+      // reopen the panel when the author had collapsed it, and say both out loud (D-135).
+      const ui = useUiStore.getState()
+      ui.setPinnedSession(bookId, sessionId)
+      shell?.expandAgentPanel()
+      setStartedKind(action.kind)
+      toast.success(startedText)
+    },
+    [action.kind, bookId, shell, startedText],
+  )
 
   return (
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-sm">{t("book:next_action_title")}</CardTitle>
       </CardHeader>
-      <CardContent className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-base font-medium">{label}</p>
-        <ActionButton bookId={bookId} status={status} action={action} />
+      <CardContent className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-base font-medium">{label}</p>
+          <ActionButton
+            bookId={bookId}
+            status={status}
+            action={action}
+            onArchivistStarted={onArchivistStarted}
+          />
+        </div>
+        {archivist ? (
+          // Where the run happens, in visible text: without it the card's only reaction is a
+          // spinner, which is what made seeding look like it did nothing (D-135). When the author
+          // has collapsed the panel the same line says so and offers to open it, because a hint
+          // that points at something invisible is no better than no hint at all.
+          <div className="space-y-1">
+            <p
+              // The started line is announced (spec/11 §7: session status changes are announced in
+              // a polite live region); the guidance before the click is static text and is not.
+              role={started ? "status" : undefined}
+              className="text-xs text-muted-foreground"
+            >
+              {started
+                ? startedText
+                : panelCollapsed
+                  ? t("book:next_action.runs_in_agent_panel_collapsed")
+                  : t("book:next_action.runs_in_agent_panel")}
+            </p>
+            {panelCollapsed ? (
+              <Button variant="outline" size="sm" onClick={() => shell?.expandAgentPanel()}>
+                <PanelRightOpen aria-hidden="true" />
+                {t("book:next_action.show_agent_panel")}
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   )
@@ -60,10 +145,12 @@ function ActionButton({
   bookId,
   status,
   action,
+  onArchivistStarted,
 }: {
   bookId: number
   status: BookStatus
   action: NextActionDto
+  onArchivistStarted: (sessionId: number) => void
 }) {
   const { t } = useTranslation()
   const chapterId = action.chapter?.id
@@ -78,7 +165,7 @@ function ActionButton({
         </Button>
       )
     case "seed_canon":
-      return <SeedCanonButton bookId={bookId} />
+      return <SeedCanonButton bookId={bookId} onStarted={onArchivistStarted} />
     case "review_chapter":
     case "continue_chapter":
       return chapterId === undefined ? null : (
@@ -91,7 +178,11 @@ function ActionButton({
       )
     case "sync_canon":
       return chapterId === undefined ? null : (
-        <ResyncButton bookId={bookId} chapterId={chapterId} />
+        <ResyncButton
+          bookId={bookId}
+          chapterId={chapterId}
+          onStarted={onArchivistStarted}
+        />
       )
     case "write_next":
       return action.track_id === undefined || action.track_id === null ? null : (
@@ -102,24 +193,60 @@ function ActionButton({
   }
 }
 
-function SeedCanonButton({ bookId }: { bookId: number }) {
+function SeedCanonButton({
+  bookId,
+  onStarted,
+}: {
+  bookId: number
+  onStarted: (sessionId: number) => void
+}) {
   const { t } = useTranslation()
   const showError = useErrorToast()
   const seed = useSeedCanon(bookId)
   return (
-    <Button size="sm" disabled={seed.isPending} onClick={() => seed.mutate(undefined, { onError: showError })}>
+    <Button
+      size="sm"
+      disabled={seed.isPending}
+      onClick={() =>
+        seed.mutate(undefined, {
+          // spec/08 §5: the endpoint answers the open `canon_seed` session or starts one, so the
+          // id is the session the panel has to show either way.
+          onSuccess: (response) => onStarted(response.session_id),
+          onError: showError,
+        })
+      }
+    >
       {seed.isPending ? <Loader2 aria-hidden="true" className="animate-spin" /> : null}
       {t("book:next_action.go")}
     </Button>
   )
 }
 
-function ResyncButton({ bookId, chapterId }: { bookId: number; chapterId: number }) {
+function ResyncButton({
+  bookId,
+  chapterId,
+  onStarted,
+}: {
+  bookId: number
+  chapterId: number
+  onStarted: (sessionId: number) => void
+}) {
   const { t } = useTranslation()
   const showError = useErrorToast()
   const resync = useResyncChapter(chapterId, bookId)
   return (
-    <Button size="sm" disabled={resync.isPending} onClick={() => resync.mutate(undefined, { onError: showError })}>
+    <Button
+      size="sm"
+      disabled={resync.isPending}
+      onClick={() =>
+        resync.mutate(undefined, {
+          // spec/08 §1.1: the re-sync starts a `chapter_resync` session; the panel is where its
+          // progress shows, exactly like the seeding run.
+          onSuccess: (response) => onStarted(response.session_id),
+          onError: showError,
+        })
+      }
+    >
       {resync.isPending ? <Loader2 aria-hidden="true" className="animate-spin" /> : null}
       {t("book:next_action.go")}
     </Button>

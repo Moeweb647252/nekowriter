@@ -12,6 +12,10 @@
  * react-resizable-panels renders each panel as an outer `[data-panel]` box plus an inner wrapper
  * that carries the `className` and `style` props and is the actual `overflow` container. The
  * assertions therefore look at that inner wrapper.
+ *
+ * The last block covers the shell the layout hands its routed pages (D-135): the overview starts
+ * canon seeding from there and has to know whether the agent panel is collapsed, and has to be able
+ * to reopen it.
  */
 import { render, screen } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -19,11 +23,21 @@ import { describe, expect, it, vi } from "vitest"
 
 const state = vi.hoisted(() => ({ pathname: "/books/1/conception" }))
 
+/**
+ * The shell the layout hands its routed pages. It is captured rather than mocked: the overview's
+ * canon actions reopen the agent panel through it (D-135), so what `BookLayout` provides is the
+ * thing under test.
+ */
+const shell = vi.hoisted(() => ({ value: null as unknown }))
+
 vi.mock("react-router", () => ({
   useParams: () => ({ bookId: "1" }),
   useNavigate: () => vi.fn(),
   useLocation: () => ({ pathname: state.pathname }),
-  Outlet: () => <div data-testid="outlet" />,
+  Outlet: (props: { context: unknown }) => {
+    shell.value = props.context
+    return <div data-testid="outlet" />
+  },
 }))
 
 // The three panels' contents have their own tests; here only the panel structure and the wrapper
@@ -54,6 +68,7 @@ vi.mock("@/api/hooks/books", () => ({
 }))
 
 import BookLayout, { isConceptionStudio } from "@/features/workspace/BookLayout"
+import type { BookShell } from "@/features/workspace/shell"
 
 /** The app (and thus every routed page) is wrapped in a QueryClient (spec/11 §4.1). */
 function renderLayout() {
@@ -140,5 +155,39 @@ describe("BookLayout height chain", () => {
     state.pathname = "/books/1/chapters/2"
     renderLayout()
     expect(screen.getByTestId("agent-panel")).toBeInTheDocument()
+  })
+})
+
+describe("the workspace shell handed to routed pages (D-135)", () => {
+  /** The shell the last render provided. */
+  function providedShell(): BookShell {
+    const value = shell.value as BookShell | null
+    if (value === null) {
+      throw new Error("the layout provided no shell")
+    }
+    return value
+  }
+
+  it("exposes the book and a way to reopen the agent panel", () => {
+    state.pathname = "/books/1"
+    renderLayout()
+
+    const provided = providedShell()
+    expect(provided.book.id).toBe(1)
+    expect(provided.book.title).toBe("青云劫")
+    // The overview calls this after starting an archivist run; it must be callable and safe even
+    // when the panel is already open (a no-op, not a throw).
+    expect(() => provided.expandAgentPanel()).not.toThrow()
+  })
+
+  it("reports the panel as open by default, so the seeding hint words itself for a visible panel", () => {
+    state.pathname = "/books/1"
+    const view = renderLayout()
+    const provided = providedShell()
+    // The agent panel is not collapsed by default (`defaultSize="380px"`, `collapsible` only so the
+    // author can collapse it, spec/11 §5.1): if this ever becomes true by default, the overview's
+    // hint would say "collapsed" on a fresh workspace, which is the case the report is about.
+    expect(provided.agentPanelCollapsed).toBe(false)
+    view.unmount()
   })
 })
