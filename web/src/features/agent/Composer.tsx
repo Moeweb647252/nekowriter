@@ -7,9 +7,15 @@
  * - waiting for a form: disabled with a reason.
  * - anything else: disabled with a reason.
  *
+ * The state label is rendered **once**, in the hint line under the textarea, which is the live
+ * region. An earlier version also used it as the textarea's `placeholder`, so a disabled reason
+ * such as `agent:composer.disabled_continue` appeared twice in a row. The textarea keeps a stable
+ * accessible name and points at the hint with `aria-describedby`, so assistive technology reads the
+ * reason once instead of receiving the same sentence as name, placeholder and live-region update.
+ *
  * Every string goes through `t()`; nothing is concatenated from translated fragments.
  */
-import { useState } from "react"
+import { useId, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { SendHorizontal } from "lucide-react"
 
@@ -65,6 +71,7 @@ export function Composer({
 }) {
   const { t } = useTranslation()
   const [text, setText] = useState("")
+  const hintId = useId()
   const mode = composerMode(session)
   const disabled = mode === "disabled" || busy || text.trim() === ""
 
@@ -107,14 +114,21 @@ export function Composer({
             submit()
           }
         }}
-        placeholder={label}
+        // A neutral prompt, and none while the composer is disabled: the reason then lives only in
+        // the hint line below, which is the live region (it used to be repeated here as the
+        // placeholder as well).
+        placeholder={mode === "disabled" ? undefined : t("agent:composer.placeholder")}
         rows={2}
         disabled={mode === "disabled"}
-        aria-label={label}
+        // A stable name, so the state can change without renaming a focused control (a renamed
+        // control is announced by some screen readers on top of the live region). The hint line
+        // keeps its id and is referenced as the description.
+        aria-label={t("agent:composer.label")}
+        aria-describedby={hintId}
         className="resize-none"
       />
       <div className="mt-1 flex items-center justify-between gap-2">
-        <span className="text-xs text-muted-foreground" aria-live="polite">
+        <span id={hintId} className="text-xs text-muted-foreground" aria-live="polite">
           {label}
         </span>
         <Button size="sm" disabled={disabled} onClick={submit}>

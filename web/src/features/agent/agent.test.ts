@@ -13,7 +13,12 @@ import type { ChapterDto } from "@/api/gen/ChapterDto"
 import type { MessageWithCallsDto } from "@/api/gen/MessageWithCallsDto"
 import type { SessionDto } from "@/api/gen/SessionDto"
 import type { ToolCallDto } from "@/api/gen/ToolCallDto"
-import { buildRows } from "@/features/agent/ActivityStream"
+import {
+  buildRows,
+  isNearBottom,
+  tailSignature,
+  type Row,
+} from "@/features/agent/ActivityStream"
 import { composerMode, disabledReasonKey } from "@/features/agent/Composer"
 import { chapterOpenSessions, pickSession } from "@/features/agent/AgentPanel"
 import { sessionTitle } from "@/features/agent/SessionHeader"
@@ -217,6 +222,77 @@ describe("stream rows", () => {
   it("does not add a live row for empty buffers", () => {
     const rows = buildRows([], { seq: 0, text: {}, reasoning: {} }, tPlain)
     expect(rows[0].kind).toBe("divider")
+  })
+})
+
+describe("stick to bottom", () => {
+  it("counts the last pixels of the range as the bottom", () => {
+    // Scroll range 1000 - 400 = 600; the view is at the end.
+    expect(isNearBottom({ scrollHeight: 1000, scrollTop: 600, clientHeight: 400 })).toBe(true)
+    // 79px above the end is still inside the threshold.
+    expect(isNearBottom({ scrollHeight: 1000, scrollTop: 521, clientHeight: 400 })).toBe(true)
+    // One pixel past it is not: the author scrolled up.
+    expect(isNearBottom({ scrollHeight: 1000, scrollTop: 520, clientHeight: 400 })).toBe(false)
+    // A short document that cannot scroll at all is always at the bottom.
+    expect(isNearBottom({ scrollHeight: 120, scrollTop: 0, clientHeight: 400 })).toBe(true)
+  })
+
+  it("changes only when the tail grows or the row count changes", () => {
+    const live = (text: string): Row[] => [{ kind: "live", key: "live-1", text, reasoning: "" }]
+    const first = tailSignature(live("a"))
+    // Same rows, same content: nothing to follow.
+    expect(tailSignature(live("a"))).toBe(first)
+    // The same single row with more streamed text must trigger a follow. This is the bug: the
+    // effect used to depend on `rows.length` alone and stopped following mid-message.
+    expect(tailSignature(live("ab"))).not.toBe(first)
+    // A new row (the live buffer was persisted) triggers it too, even with identical text.
+    const persisted: Row[] = [
+      {
+        kind: "message",
+        key: "m-1",
+        message: {
+          id: 1,
+          seq: 1,
+          role: "assistant",
+          kind: "assistant",
+          blocks: [{ type: "text", text: "ab" }],
+          stop_reason: null,
+          usage: null,
+          created_at: "2026-01-01T00:00:00Z",
+        },
+        calls: [],
+      },
+    ]
+    expect(tailSignature(persisted)).not.toBe(tailSignature(live("ab")))
+    // Thinking-only growth also moves the signature.
+    const reasoning = (value: string): Row[] => [
+      { kind: "live", key: "live-1", text: "", reasoning: value },
+    ]
+    expect(tailSignature(reasoning("hm"))).not.toBe(tailSignature(reasoning("hmm")))
+    // An empty stream has no tail to follow.
+    expect(tailSignature([])).toBe("")
+  })
+
+  it("notices a tool call settling in the last row", () => {
+    const withStatus = (status: ToolCallDto["status"]): Row[] => [
+      {
+        kind: "message",
+        key: "m-2",
+        message: {
+          id: 2,
+          seq: 2,
+          role: "assistant",
+          kind: "assistant",
+          blocks: [],
+          stop_reason: "tool_use",
+          usage: null,
+          created_at: "2026-01-01T00:00:00Z",
+        },
+        calls: [{ ...toolCall({}), status }],
+      },
+    ]
+    // A call whose result streams in grows the row without adding one.
+    expect(tailSignature(withStatus("executing"))).not.toBe(tailSignature(withStatus("done")))
   })
 })
 

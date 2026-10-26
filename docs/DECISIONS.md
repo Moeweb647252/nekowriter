@@ -1830,3 +1830,58 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   `an_active_book_still_accepts_chapters`. Fail-before was real: with the `ensure_book_active` call
   removed, five of the seven fail (four expect `409` and get `201`, and the transition test fails on
   its first refusal); the two controls that assert pre-existing behaviour still pass.
+
+### D-131 The conception studio owns its height; the workspace panel stops scrolling on that route only
+- **Context**: the author reported that the conception studio's middle column had no scrollbar of its
+  own, that new content did not scroll into view, and that it shared one scrollbar with the
+  Outline / Characters / World / Protagonist / Research-topics column. Three separate defects added
+  up to that. (1) `BookLayout`'s main panel is react-resizable-panels' `overflow: auto` wrapper and
+  its child was `min-h-full`, so the studio's `flex h-full min-h-0 flex-col` had no definite height
+  to resolve against: both columns grew with their content, the *panel* scrolled, and the composer —
+  a sibling of the conversation column, not a fixed element — scrolled out of view. (2)
+  `ActivityStream`'s stick effect depended on `rows.length` only. While a reply streams the live row
+  keeps growing and no row is added, so the view followed the first chunk and then stood still until
+  the next message. (3) The composer used its state label as the textarea's `placeholder` **and**
+  rendered it in the `aria-live` hint line, so a disabled reason appeared twice in a row.
+- **Decision**: the height chain is route-aware. `BookLayout` decides by pathname
+  (`isConceptionStudio`, exported and unit-tested): on `/books/:id/conception` the main panel gets
+  an inline `overflow: hidden` and its child `relative h-full`; every other route keeps
+  `min-h-full` and the panel's own scrolling. Only an inline style can win here, because
+  react-resizable-panels writes `overflow: auto` inline on the panel's inner wrapper — a Tailwind
+  class would lose. The studio root is `flex h-full min-h-0 flex-col overflow-hidden` with exactly
+  two scroll containers, `data-scroll-pane="conversation"` (owned by `ActivityStream`, passed in as
+  a new `paneName` prop) and `data-scroll-pane="document"`. Header, session controls, error notice,
+  pending form, composer and the finalize bar are siblings of those containers, so they cannot
+  scroll. A pending `ask_user` / `request_review` form is capped at `max-h-[45%]` with its own
+  scrollbar: with two questions it is ~370px tall and had squeezed the conversation pane to 16px.
+  `ActivityStream` now also keys its follow effect on `tailSignature(rows)` — the last row's key,
+  its text and reasoning lengths, its block lengths and its tool-call states — so a row that grows in
+  place is followed too. The decision is a pure function (`isNearBottom`, 80px) and the scroll is
+  issued one animation frame later via `scrollToEnd()`, which targets the element's own max scroll
+  offset instead of the last item's estimated end. The composer renders its state label once, in the
+  live-region hint; the textarea gets a stable `aria-label` (`agent:composer.label`) and
+  `aria-describedby` pointing at that hint, and a neutral `placeholder`
+  (`agent:composer.placeholder`) only while it accepts input. Both new keys exist in `en` and
+  `zh-CN`.
+- **Consequences**: **the other workspace routes are untouched by construction** — the studio branch
+  is a different `className`/`style` pair selected by the pathname, and `BookLayout.test.tsx`
+  asserts both directions (studio: `h-full` + inline `overflow: hidden`; chapter/overview/canon/
+  settings routes: `min-h-full` + the library's `overflow: auto`), so a regression fails a unit test
+  rather than only a manual check. Verified in the running app: on the studio the panel's
+  `scrollHeight === clientHeight` (no outer scrollbar), the conversation pane scrolls from 983 to 0
+  while the document pane, the page and the panel stay at 0, and appending 1200px to the document
+  column moves it to 400 while the conversation stays at 983. On `/books/1/chapters/3`,
+  `/books/1/canon/entities` and `/books/1` the panel still scrolls the page (`scrollTop` 600 of a
+  2416/2416/2772 range). Streaming evidence from a recorded `requestAnimationFrame` loop while the
+  Demo provider streamed: content grew 1414 → 1462 → 1582 → 1510 and the viewport was out of
+  position for exactly one frame per growth (48px, then 120px), returning to distance 0 both times;
+  with the author scrolled to `scrollTop` 40 the content still grew to 1606 and the viewport did not
+  move at all, and scrolling back to the end re-pinned it. The disabled hint appears once in both
+  locales (one match for the reason string in the rendered page, in a disabled `Message`
+  textarea with no placeholder). Tests: `agent.test.ts` (threshold table and
+  tail-signature cases), `ActivityStream.test.tsx` (a growing live row is followed, a settled tool
+  result is followed, scrolling up stops/no-ops, scrolling back re-pins),
+  `conceptionStudio.test.tsx` (the two scroll panes are distinct and neither contains the composer,
+  the finalize button or the tab list; the root is bounded), `BookLayout.test.tsx` (both route
+  directions) and `Composer.test.tsx` (one hint, stable accessible name, neutral placeholder,
+  feedback mode, IME guard).

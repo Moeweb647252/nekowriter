@@ -20,10 +20,53 @@ import { ToolCallCard } from "@/features/agent/ToolCallCard"
 import { cn } from "@/lib/utils"
 
 /** One rendered row of the stream. */
-type Row =
+export type Row =
   | { kind: "message"; key: string; message: MessageDto; calls: ToolCallDto[] }
   | { kind: "live"; key: string; text: string; reasoning: string }
   | { kind: "divider"; key: string; label: string }
+
+/**
+ * How far from the end (CSS pixels) still counts as "at the bottom". A programmatic scroll lands
+ * exactly at the end, so only the author can move the view out of this band.
+ */
+export const STICK_THRESHOLD_PX = 80
+
+/**
+ * The stick-to-bottom decision for one scroll position: the view follows new content only while
+ * the author is (nearly) at the bottom. Pure so the rule is testable without a layout engine.
+ */
+export function isNearBottom(metrics: {
+  scrollHeight: number
+  scrollTop: number
+  clientHeight: number
+}): boolean {
+  return metrics.scrollHeight - metrics.scrollTop - metrics.clientHeight < STICK_THRESHOLD_PX
+}
+
+/**
+ * What the stick-to-bottom effect has to react to.
+ *
+ * `rows.length` alone misses the streaming case: the last row keeps growing while its text arrives
+ * (`live` buffers, and tool cards whose result streams in), so no new row is added and the view
+ * would stop following until the next message. Including the tail's content makes the effect run
+ * again on every growth, not only on every append.
+ */
+export function tailSignature(rows: Row[]): string {
+  const last = rows.at(-1)
+  if (last === undefined) {
+    return ""
+  }
+  switch (last.kind) {
+    case "live":
+      return `live:${last.key}:${last.text.length}:${last.reasoning.length}`
+    case "message":
+      return `message:${last.key}:${last.message.blocks
+        .map((block) => block.text.length)
+        .join(",")}:${last.calls.map((call) => `${call.id}:${call.status}`).join(",")}`
+    case "divider":
+      return `divider:${last.key}`
+  }
+}
 
 /** The rows of the stream: persisted messages plus the live buffers of the current step. */
 export function buildRows(
@@ -57,16 +100,26 @@ export function ActivityStream({
   session,
   messages,
   pendingPreview,
+  paneName,
 }: {
   session: SessionDto
   messages: MessageWithCallsDto[]
   /** A rendered line for the tool whose arguments are streaming (spec/03 §12). */
   pendingPreview?: string
+  /**
+   * Marks this element as a named scroll pane (`data-scroll-pane`). The conception studio passes
+   * `"conversation"` so the pane can be addressed in tests and by hand: the studio's document
+   * column scrolls on its own, and neither shares this element's scroll position (PROJECT §8.7).
+   */
+  paneName?: string
 }) {
   const { t } = useTranslation()
   const live = useLiveStore((state) => state.streams[session.id])
   const rows = useMemo(() => buildRows(messages, live, t), [messages, live, t])
+  const tail = tailSignature(rows)
   const parentRef = useRef<HTMLDivElement>(null)
+  // The view follows new content until the author scrolls up; it re-pins when they return to the
+  // bottom (PROJECT §8.6: "auto-scroll unless the author scrolled up").
   const stick = useRef(true)
 
   const virtualizer = useVirtualizer({
@@ -76,28 +129,43 @@ export function ActivityStream({
     overscan: 8,
   })
 
-  // Stick to the bottom unless the author scrolled up.
   useEffect(() => {
     const element = parentRef.current
     if (element === null) {
       return
     }
     const onScroll = () => {
-      const distance = element.scrollHeight - element.scrollTop - element.clientHeight
-      stick.current = distance < 80
+      stick.current = isNearBottom(element)
     }
     element.addEventListener("scroll", onScroll, { passive: true })
     return () => element.removeEventListener("scroll", onScroll)
   }, [])
 
+  // Follow the tail. This runs on every row append **and** on every growth of the last row's
+  // content (`tail`), which is what streaming produces: the typing indicator and its growing text
+  // change without a row being added. The write is deferred one frame, so the row already has its
+  // new height in the DOM; `scrollToEnd` targets the element's own max scroll offset (a stale
+  // measurement cannot make it stop short) and its reconcile loop retargets until the layout
+  // settles.
   useEffect(() => {
-    if (stick.current && rows.length > 0) {
-      virtualizer.scrollToIndex(rows.length - 1, { align: "end" })
+    if (!stick.current || rows.length === 0) {
+      return
     }
-  }, [rows.length, virtualizer])
+    const frame = requestAnimationFrame(() => {
+      if (stick.current) {
+        virtualizer.scrollToEnd()
+      }
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [tail, rows.length, virtualizer])
 
   return (
-    <div ref={parentRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
+    <div
+      ref={parentRef}
+      data-testid="stream"
+      data-scroll-pane={paneName}
+      className="min-h-0 flex-1 overflow-y-auto px-3 py-2"
+    >
       <div
         style={{
           height: `${virtualizer.getTotalSize()}px`,

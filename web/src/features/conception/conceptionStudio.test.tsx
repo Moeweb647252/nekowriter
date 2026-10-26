@@ -188,4 +188,83 @@ describe("ConceptionStudio", () => {
       expect.objectContaining({ onError: showError }),
     )
   })
+
+  // PROJECT §8.7: the middle part needs its own scrollbar and must not share one with the
+  // Outline / Characters / World / Protagonist / Research-topics column next to it.
+  describe("scroll panes", () => {
+    /** Long enough that both panes overflow in a real browser. */
+    function longConversation() {
+      const session = conceptionSession({ status: "running" })
+      state.sessions = [session]
+      state.snapshot = {
+        session,
+        messages: Array.from({ length: 40 }, (_, index) => ({
+          message: {
+            id: index + 1,
+            seq: index,
+            role: index % 2 === 0 ? "user" : "assistant",
+            kind: index % 2 === 0 ? "kickoff" : "assistant",
+            blocks: [{ type: "text", text: `message ${index}` }],
+            stop_reason: null,
+            usage: null,
+            created_at: "2026-01-01T00:00:00Z",
+          },
+          tool_calls: [],
+        })),
+        system_prompt: "",
+        tool_names: [],
+      }
+      return session
+    }
+
+    it("gives the conversation and the document column separate scroll containers", () => {
+      longConversation()
+      const { container } = renderStudio()
+
+      const conversation = container.querySelector('[data-scroll-pane="conversation"]')
+      const document = container.querySelector('[data-scroll-pane="document"]')
+      expect(conversation).not.toBeNull()
+      expect(document).not.toBeNull()
+      expect(conversation).not.toBe(document)
+
+      // Neither is an ancestor of the other, so scrolling one cannot move the other.
+      expect(conversation?.contains(document as Node)).toBe(false)
+      expect(document?.contains(conversation as Node)).toBe(false)
+      // The tabs and their toolbar stay outside the document scroller: the tab row must not
+      // scroll away with the text.
+      const tabList = screen.getByRole("tablist")
+      expect(document?.contains(tabList)).toBe(false)
+    })
+
+    it("keeps the composer and the finalize bar out of both scroll containers", () => {
+      longConversation()
+      const { container } = renderStudio()
+      const conversation = container.querySelector('[data-scroll-pane="conversation"]')
+      const document = container.querySelector('[data-scroll-pane="document"]')
+
+      // The composer is pinned under the conversation, not inside its scroll area.
+      const textarea = screen.getByRole("textbox", { name: "Message" })
+      expect(conversation?.contains(textarea)).toBe(false)
+      expect(document?.contains(textarea)).toBe(false)
+      // The same for the finalize button: it is a footer of the document column.
+      const finalize = screen.getByRole("button", { name: "Finalize book" })
+      expect(conversation?.contains(finalize)).toBe(false)
+      expect(document?.contains(finalize)).toBe(false)
+    })
+
+    it("bounds its own height, so the panes can scroll instead of the page", () => {
+      longConversation()
+      const { container } = renderStudio()
+      const studio = container.querySelector('[data-testid="conception-studio"]')
+      // `h-full` resolves against the definite height `BookLayout` gives this route only;
+      // `overflow-hidden` is what keeps the composer inside the viewport.
+      expect(studio?.className).toContain("h-full")
+      expect(studio?.className).toContain("min-h-0")
+      expect(studio?.className).toContain("overflow-hidden")
+      // The scroll panes are `overflow-y-auto`, i.e. they are the ones with a scrollbar.
+      for (const pane of container.querySelectorAll("[data-scroll-pane]")) {
+        expect(pane.className).toContain("overflow-y-auto")
+      }
+    })
+  })
 })

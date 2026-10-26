@@ -205,7 +205,14 @@ export default function ConceptionStudio() {
     deleteTopic.isPending
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    /*
+      The studio is a bounded two-pane workspace, not a page (PROJECT §8.7, spec/11 §5.4): the
+      header, the session controls, any pending form, the composer and the finalize bar stay put
+      while the conversation history and the document editor scroll on their own. `h-full` needs a
+      definite ancestor height, which `BookLayout` gives the studio route only; `overflow-hidden`
+      makes sure nothing can grow past the pane and push the composer out of view.
+    */
+    <div data-testid="conception-studio" className="flex h-full min-h-0 flex-col overflow-hidden">
       <div className="flex min-h-0 flex-1 flex-col gap-0 lg:flex-row">
         {/* Conversation */}
         <section className="flex min-h-0 min-w-0 flex-1 flex-col border-r">
@@ -277,10 +284,17 @@ export default function ConceptionStudio() {
               ) : null}
             </div>
           ) : (
-            <ActivityStream session={session} messages={messages} />
+            <ActivityStream session={session} messages={messages} paneName="conversation" />
           )}
           {awaitCall === null ? null : awaitCall.name === "ask_user" ? (
-            <div className="border-t p-3">
+            /*
+              A pending form is a fixed block above the composer, so an unbounded one eats the
+              stream: with two questions the form is ~370px tall and the conversation pane has no
+              room left at all (its `min-h-0` lets it shrink to nothing). The form gets its own
+              bounded scroll area instead, which keeps the conversation history readable while the
+              author answers.
+            */
+            <div className="max-h-[45%] shrink-0 overflow-y-auto border-t p-3" data-scroll-pane="form">
               <AskUserForm
                 questions={readQuestions(awaitCall.ui)}
                 pending={answer.isPending}
@@ -288,7 +302,7 @@ export default function ConceptionStudio() {
               />
             </div>
           ) : (
-            <div className="border-t p-3">
+            <div className="max-h-[45%] shrink-0 overflow-y-auto border-t p-3" data-scroll-pane="form">
               <ReviewRequestForm
                 message={
                   typeof awaitCall.ui === "object" && awaitCall.ui !== null
@@ -327,7 +341,11 @@ export default function ConceptionStudio() {
                 {t("book:conception.tab.research_topics")}
               </TabsTrigger>
             </TabsList>
-            <div className="min-h-0 flex-1 overflow-y-auto p-3">
+            {/* The document column's own scroll container: independent of the conversation pane. */}
+            <div
+              data-scroll-pane="document"
+              className="min-h-0 flex-1 overflow-y-auto p-3"
+            >
               {(["outline", "world", "protagonist"] as const).map((kind) => (
                 <TabsContent key={kind} value={kind} className="mt-0">
                   <DocumentEditor

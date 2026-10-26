@@ -19,6 +19,20 @@ import { PanelLeft } from "lucide-react"
 /** The persisted layout id (spec/11 §5.1). */
 const LAYOUT_ID = "book-workspace"
 
+/**
+ * True for the conception studio route (PROJECT §8.7, spec/11 §5.4).
+ *
+ * The studio is the **only** workspace route whose content owns its height: it is a two-column
+ * app shell whose conversation pane and document pane each scroll on their own, with a composer
+ * that must never scroll away. Every other route (the chapter page, the overview, the canon and
+ * settings-materials pages) is a long document that relies on this layout's main panel scrolling
+ * the whole page (`ChapterPage` starts with `flex min-h-full flex-col`). The route decides, so the
+ * fixed-height mode can never reach those routes.
+ */
+export function isConceptionStudio(pathname: string): boolean {
+  return pathname.endsWith("/conception")
+}
+
 export default function BookLayout() {
   const { bookId: rawBookId, chapterId: rawChapterId } = useParams()
   const bookId = Number(rawBookId)
@@ -30,7 +44,7 @@ export default function BookLayout() {
   const book = useBook(bookId)
   // The conception studio is full width: the agent panel is collapsed by default there, because
   // the studio's own conversation pane is the agent panel (PROJECT §8.7, spec/11 §5.4).
-  const isConception = location.pathname.endsWith("/conception")
+  const isConception = isConceptionStudio(location.pathname)
 
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
     id: LAYOUT_ID,
@@ -87,8 +101,26 @@ export default function BookLayout() {
           <Navigator book={book.data} />
         </ResizablePanel>
         <ResizableHandle withHandle />
-        <ResizablePanel id="main" minSize="320px" className="min-h-0 overflow-y-auto">
-          <div className="relative min-h-full">
+        {/*
+          Route-aware height chain (PROJECT §8.7, spec/11 §5.4). react-resizable-panels always
+          renders this wrapper as a scroll container (`overflow: auto` inline), so the difference
+          is what the child is told:
+          - every other route is a page: the wrapper keeps `min-h-full` (content height) and the
+            panel scrolls the whole page, which is what `ChapterPage`'s `flex min-h-full flex-col`
+            and the canon/settings-materials pages are built for;
+          - the studio owns its height: the wrapper is exactly the panel's height (`h-full`,
+            `overflow: hidden`) so `ConceptionStudio`'s `flex h-full min-h-0 flex-col` resolves and
+            its conversation pane and document pane become the only two scroll containers.
+        */}
+        <ResizablePanel
+          id="main"
+          minSize="320px"
+          className={isConception ? "min-h-0" : "min-h-0 overflow-y-auto"}
+          // react-resizable-panels sets `overflow: auto` inline on this element, so only an inline
+          // style can take the studio's outer scrollbar away. Other routes keep it.
+          style={isConception ? { overflow: "hidden" } : undefined}
+        >
+          <div className={isConception ? "relative h-full" : "relative min-h-full"}>
             <Button
               variant="ghost"
               size="icon"
