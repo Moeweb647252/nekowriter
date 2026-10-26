@@ -226,6 +226,16 @@ Per PROJECT §8.8–§8.12. Shared pieces: `Markdown` (react-markdown + remark-g
 sensor), `PromptEditor` (monospace textarea, variable docs side panel, "diff vs default" via
 `DiffView`).
 
+**Settings › Models is protocol-driven** (spec/04 §5, D-132). The option form renders its fields
+from `GET /provider-presets/options` (the `ModelOptionSpecDto` table generated from the adapters)
+filtered by the selected provider's `protocol`, so a field the protocol cannot send is never
+offered. Each field is labelled and explained through `settings:option.<key>` /
+`settings:option.<key>_hint` (closed values through `settings:value.<key>.<value>`); no raw field
+identifier is shown as a label. Switching the provider to one with another protocol removes the
+now-stranded values and shows an "Options removed" notice (`settings:option_cleared_*`) instead of
+dropping them silently; a stored mismatch (written before the rule existed) is flagged in the table
+and in the dialog, with a one-click removal that PATCHes exactly those fields away.
+
 ## 6. i18n
 
 - `i18n/index.ts`: i18next with bundled resources (all namespaces imported statically),
