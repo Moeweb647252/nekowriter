@@ -1974,3 +1974,44 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   omits the key, and never contains `""` or `__default__`), and the `boolean` kind — plus
   `rolesPage.test.tsx` for the role pickers. Reverting the page to the empty-string item fails seven
   of those tests, so the guard is verified rather than assumed.
+
+### D-134 A review verdict starts unset, and every click on it is visible
+- **Context**: the author reported 「通过点了没用」 with a screenshot of the conception review form
+  showing all five rows (大纲 / 人物 / 世界观 / 主角 / 资料主题) already dark on 「通过」. The form
+  initialised **every** item to `approved: true` (`ReviewRequestForm.tsx:64-66`) and expressed the
+  verdict only through the button `variant` (`approved ? "default" : "outline"`). It therefore
+  opened pre-answered: clicking 「通过」 on an untouched row produced the same state, the same
+  variant and the same payload, i.e. nothing at all. 「需要修改」 *did* respond (it flipped the
+  variant and revealed the feedback box), and that asymmetry is what made the dead button look like
+  a dead form. The suite was green throughout because every existing review-form test asserted on
+  `buildReviewPayload`'s output, never on what the form rendered or how it changed.
+- **Decision**: the per-item verdict is **tri-state** — `unset` → `approved` / `needs_changes` —
+  and starts `unset`. This is the domain's real shape: the payload's `approved` is a per-item bool
+  the author is being asked to fill in (spec/05 §7), and pre-filling it is the form answering the
+  review on the author's behalf. Each row now shows its verdict three ways: a labelled pill
+  (`待审阅` / `已通过` / `待修改`), the filled variant plus a check/pencil icon on the selected
+  toggle, and `aria-pressed` on both toggles, so the state is legible to a screen reader too. A
+  selected toggle, when clicked again, **releases back to unset** — that is the ARIA toggle-button
+  contract, and it is also the only way to undo `Approve all` per row; without it the second click
+  on an already-selected verdict would be the original no-op again. Submit review is disabled while
+  any present item is unset and a `role="status"` line says how many are left (a silently disabled
+  button is its own usability defect). 「通过全部」 is an explicit control, so approving everything
+  is a choice the author makes rather than one the form made for them; it is disabled once every
+  item is approved, so it cannot become a no-op either. The payload is built from the live state at
+  submit time, so approve → needs changes → approve sends the last click; an unset item is omitted
+  (the payload's items are optional, spec/05 §7 — but the form never produces that state through
+  its own UI); `feedback` is sent only for a rejection, because a draft typed while an item needed
+  changes must not ride along with `approved: true` (the prompt renders an approved item's feedback
+  too). Typed feedback survives a toggle, so a stray click does not destroy the author's text.
+- **Consequences**: the author can no longer submit a review without looking at each item, which is
+  what `request_review` is for; `AskUserForm` was audited for the same pattern and is clean —
+  every radio and checkbox starts unchecked and its controls are native inputs whose checkedness
+  the DOM exposes, so the first click always changes something (a radio group with a *real*
+  pre-selection would also be fine, since the author can see and change it, but this form has none).
+  The old `approved: true` default is gone, so reopening a form on a session that is still awaiting
+  input shows `待审阅` rather than a fabricated approval. Regression guards: the DOM-level tests in
+  `reviewRequestForm.test.tsx` assert the rendered `data-verdict`, both `aria-pressed` values, the
+  button variant, the feedback box's presence and the submit button's enabled state after each
+  click — reverting the initialiser to `approved: true` fails them immediately — plus the
+  `conceptionStudio.test.tsx` case that reproduces the reported screen (five unset rows, one click,
+  one row changes) and `conception.test.ts` for the pure transitions and payload shapes.

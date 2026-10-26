@@ -15,6 +15,7 @@ import type { SessionDto } from "@/api/gen/SessionDto"
 import { TooltipProvider } from "@/components/ui/tooltip"
 
 const startConception = vi.fn()
+const answerSession = vi.fn()
 const showError = vi.fn()
 const sessionControl = vi.fn()
 const resume = vi.fn()
@@ -22,6 +23,9 @@ const resume = vi.fn()
 const state = vi.hoisted(() => ({
   sessions: [] as unknown[],
   snapshot: undefined as unknown,
+  docs: [] as unknown[],
+  characters: [] as unknown[],
+  topics: [] as unknown[],
 }))
 
 vi.mock("react-router", () => ({
@@ -47,15 +51,15 @@ const conceivingBook = {
 vi.mock("@/api/hooks/sessions", () => ({
   useBookSessions: () => ({ data: state.sessions, isPending: false }),
   useSession: () => ({ data: state.snapshot, isPending: false }),
-  useAnswerSession: () => ({ mutate: vi.fn(), isPending: false }),
+  useAnswerSession: () => ({ mutate: answerSession, isPending: false }),
   useSendSessionMessage: () => ({ mutate: vi.fn(), isPending: false }),
   useSessionControl: () => ({ mutate: sessionControl, isPending: false }),
   useResumeSession: () => ({ mutate: resume, isPending: false }),
 }))
 
 vi.mock("@/api/hooks/settings-materials", () => ({
-  useSettingDocs: () => ({ data: [], isPending: false }),
-  useCharacters: () => ({ data: [], isPending: false }),
+  useSettingDocs: () => ({ data: state.docs, isPending: false }),
+  useCharacters: () => ({ data: state.characters, isPending: false }),
   usePutSettingDoc: () => ({ mutate: vi.fn(), isPending: false }),
   usePatchCharacter: () => ({ mutate: vi.fn(), isPending: false }),
   useDeleteCharacter: () => ({ mutate: vi.fn(), isPending: false }),
@@ -63,7 +67,7 @@ vi.mock("@/api/hooks/settings-materials", () => ({
 }))
 
 vi.mock("@/api/hooks/research", () => ({
-  useResearchTasks: () => ({ data: [], isPending: false }),
+  useResearchTasks: () => ({ data: state.topics, isPending: false }),
   useCreateResearchTask: () => ({ mutate: vi.fn(), isPending: false }),
   usePatchResearchTask: () => ({ mutate: vi.fn(), isPending: false }),
   useDeleteResearchTask: () => ({ mutate: vi.fn(), isPending: false }),
@@ -148,8 +152,12 @@ describe("ConceptionStudio", () => {
   beforeEach(() => {
     state.sessions = []
     state.snapshot = undefined
+    state.docs = []
+    state.characters = []
+    state.topics = []
     sessionControl.mockClear()
     resume.mockClear()
+    answerSession.mockClear()
   })
 
   it("offers Start conception for a conceiving book", async () => {
@@ -265,6 +273,140 @@ describe("ConceptionStudio", () => {
       for (const pane of container.querySelectorAll("[data-scroll-pane]")) {
         expect(pane.className).toContain("overflow-y-auto")
       }
+    })
+  })
+
+  // task-41: the author's report. A `request_review` waiting for an answer must not open with every
+  // verdict already chosen — 「通过」 then does nothing on a fresh row, which is what "点了没用" was.
+  describe("request_review form", () => {
+    /** The author's screen: a request_review call waiting, with all five items present. */
+    function awaitingReview() {
+      const session = conceptionSession({ status: "awaiting_input" })
+      state.sessions = [session]
+      state.snapshot = {
+        session,
+        messages: [
+          {
+            message: {
+              id: 1,
+              seq: 0,
+              role: "assistant",
+              kind: "assistant",
+              blocks: [{ type: "text", text: "请审阅" }],
+              stop_reason: null,
+              usage: null,
+              created_at: "2026-01-01T00:00:00Z",
+            },
+            tool_calls: [
+              {
+                id: 3,
+                message_id: 1,
+                seq: 0,
+                call_index: 0,
+                name: "request_review",
+                input: { message: "请重点看冲突" },
+                input_text: "{}",
+                status: "awaiting_input",
+                is_error: false,
+                result_text: null,
+                appendices: [],
+                ui: { message: "请重点看冲突" },
+                sealed: false,
+                created_at: "2026-01-01T00:00:00Z",
+                finished_at: null,
+              },
+            ],
+          },
+        ],
+        system_prompt: "",
+        tool_names: [],
+      }
+      return session
+    }
+
+    /** The five document/topic rows the author's screenshot showed. */
+    function fiveItems() {
+      state.docs = [
+        { kind: "outline", content: "# 大纲", revision: 1, approved_revision: null },
+        { kind: "world", content: "# 世界", revision: 1, approved_revision: null },
+        { kind: "protagonist", content: "# 主角", revision: 1, approved_revision: null },
+      ]
+      state.characters = [{ id: 1, name: "青云" }]
+      state.topics = [{ id: 1, status: "draft", topic: "唐代服饰" }]
+      return ["outline", "characters", "world", "protagonist", "research_topics"] as const
+    }
+
+    it("shows all five rows unset, and only the clicked one becomes approved", async () => {
+      const items = fiveItems()
+      awaitingReview()
+      renderStudio()
+
+      for (const item of items) {
+        const row = document.querySelector(`[data-review-item="${item}"]`)
+        expect(row).not.toBeNull()
+        expect((row as HTMLElement).dataset.verdict).toBe("unset")
+      }
+
+      // The reported click: 「通过」 on the outline row.
+      const outlineRow = document.querySelector('[data-review-item="outline"]') as HTMLElement
+      const approve = Array.from(outlineRow.querySelectorAll("button")).find((button) =>
+        button.textContent?.includes("Approve"),
+      ) as HTMLButtonElement
+      expect(approve.getAttribute("aria-pressed")).toBe("false")
+      await userEvent.click(approve)
+
+      expect(outlineRow.dataset.verdict).toBe("approved")
+      expect(approve.getAttribute("aria-pressed")).toBe("true")
+      expect(approve.dataset.variant).toBe("default")
+      // The other four rows are untouched — the form did not answer for the author.
+      for (const item of items.filter((entry) => entry !== "outline")) {
+        expect(
+          (document.querySelector(`[data-review-item="${item}"]`) as HTMLElement).dataset.verdict,
+        ).toBe("unset")
+      }
+    })
+
+    it("sends the final verdicts through POST answer", async () => {
+      const session = awaitingReview()
+      fiveItems()
+      renderStudio()
+
+      const outlineRow = document.querySelector('[data-review-item="outline"]') as HTMLElement
+      const outlineApprove = Array.from(outlineRow.querySelectorAll("button")).find((button) =>
+        button.textContent?.includes("Approve"),
+      ) as HTMLButtonElement
+      await userEvent.click(outlineApprove)
+      const topicsRow = document.querySelector(
+        '[data-review-item="research_topics"]',
+      ) as HTMLElement
+      const topicsNeeds = Array.from(topicsRow.querySelectorAll("button")).find((button) =>
+        button.textContent?.includes("Needs changes"),
+      ) as HTMLButtonElement
+      await userEvent.click(topicsNeeds)
+
+      // The remaining three are answered with the explicit shortcut.
+      await userEvent.click(screen.getByRole("button", { name: "Approve all" }))
+      // Approve all covers everything, so re-state the rejection the author actually made.
+      await userEvent.click(topicsNeeds)
+
+      await userEvent.click(screen.getByRole("button", { name: "Submit review" }))
+      expect(answerSession).toHaveBeenCalledTimes(1)
+      const [variables] = answerSession.mock.calls[0]
+      expect(variables).toEqual({
+        sessionId: session.id,
+        input: {
+          tool_call_id: 3,
+          payload: {
+            docs: {
+              outline: { approved: true },
+              characters: { approved: true },
+              world: { approved: true },
+              protagonist: { approved: true },
+              research_topics: { approved: false },
+            },
+          },
+        },
+      })
     })
   })
 })

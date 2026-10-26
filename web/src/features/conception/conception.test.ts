@@ -11,7 +11,16 @@ import type { SessionDto } from "@/api/gen/SessionDto"
 import type { ToolCallDto } from "@/api/gen/ToolCallDto"
 import { buildAnswerPayload, readQuestions } from "@/features/conception/AskUserForm"
 import { awaitingCall, materialsComplete } from "@/features/conception/ConceptionStudio"
-import { buildReviewPayload, REVIEW_ITEMS } from "@/features/conception/ReviewRequestForm"
+import {
+  approveAllItems,
+  buildReviewPayload,
+  initialReviewState,
+  REVIEW_ITEMS,
+  toggleVerdict,
+  unreviewedItems,
+  verdictOf,
+  withVerdict,
+} from "@/features/conception/ReviewRequestForm"
 
 const questionsUi = {
   questions: [
@@ -100,6 +109,52 @@ describe("buildReviewPayload", () => {
     expect(payload).toEqual({ docs: { outline: { approved: true } } })
   })
 
+  it("omits an item that was never given a verdict", () => {
+    // `docs`' items are optional (spec/05 §7), so an unset item is left out rather than sent as a
+    // default — the form itself refuses to submit while one is left (D-134).
+    const payload = buildReviewPayload(
+      { outline: { approved: true, feedback: "" }, world: { approved: null, feedback: "" } },
+      "",
+    )
+    expect(payload).toEqual({ docs: { outline: { approved: true } } })
+  })
+
+  it("never carries feedback for an approved item", () => {
+    // Approving hides the feedback box but keeps the draft, so a stray comment typed while the item
+    // needed changes must not be sent as an approval condition (the model renders it either way).
+    const payload = buildReviewPayload(
+      { world: { approved: true, feedback: " 需要更具体 " } },
+      "",
+    )
+    expect(payload).toEqual({ docs: { world: { approved: true } } })
+  })
+
+  it("carries the final verdict after approve → needs changes → approve", () => {
+    // The author may change their mind on one row before submitting; the payload is built once, from
+    // the live state, so it must carry the last click for each item.
+    let state = initialReviewState(["outline", "world"])
+    state = withVerdict(state, "outline", true)
+    state = withVerdict(state, "outline", false)
+    state = { ...state, outline: { ...verdictOf(state, "outline"), feedback: "冲突太薄" } }
+    state = withVerdict(state, "outline", true)
+    state = toggleVerdict(state, "world", false)
+
+    expect(buildReviewPayload(state, "")).toEqual({
+      docs: { outline: { approved: true }, world: { approved: false } },
+    })
+  })
+
+  it("starts every item unset, so the form has not answered the review", () => {
+    const state = initialReviewState(REVIEW_ITEMS)
+    expect(Object.keys(state)).toEqual([...REVIEW_ITEMS])
+    for (const item of REVIEW_ITEMS) {
+      expect(verdictOf(state, item)).toEqual({ approved: null, feedback: "" })
+    }
+    expect(unreviewedItems(state, REVIEW_ITEMS)).toEqual([...REVIEW_ITEMS])
+    // The regression guard in payload terms: a fresh form submits nothing at all.
+    expect(buildReviewPayload(state, "")).toEqual({ docs: {} })
+  })
+
   it("covers every reviewable item the studio exposes", () => {
     expect(REVIEW_ITEMS).toEqual([
       "outline",
@@ -108,6 +163,41 @@ describe("buildReviewPayload", () => {
       "protagonist",
       "research_topics",
     ])
+  })
+})
+
+describe("review verdict transitions", () => {
+  it("keeps a rejection's feedback draft when the verdict is toggled and restored", () => {
+    let state = withVerdict(initialReviewState(["outline"]), "outline", false)
+    state = { ...state, outline: { ...verdictOf(state, "outline"), feedback: "thin" } }
+    state = withVerdict(state, "outline", true)
+    // The text survives the approval (the box is hidden, not destroyed)…
+    expect(verdictOf(state, "outline")).toEqual({ approved: true, feedback: "thin" })
+    // …and is back, unchanged, if the author returns to needs-changes.
+    state = withVerdict(state, "outline", false)
+    expect(verdictOf(state, "outline")).toEqual({ approved: false, feedback: "thin" })
+  })
+
+  it("releases an already-selected verdict back to unset instead of ignoring the click", () => {
+    let state = withVerdict(initialReviewState(["outline"]), "outline", true)
+    expect(verdictOf(state, "outline").approved).toBe(true)
+    state = toggleVerdict(state, "outline", true)
+    expect(verdictOf(state, "outline").approved).toBeNull()
+    // The opposite verdict on a selected row is a normal verdict change, not a release.
+    state = toggleVerdict(state, "outline", true)
+    state = toggleVerdict(state, "outline", false)
+    expect(verdictOf(state, "outline").approved).toBe(false)
+  })
+
+  it("approves every item without dropping a rejection's draft off the other items", () => {
+    let state = withVerdict(initialReviewState(["outline", "world"]), "world", false)
+    state = { ...state, world: { ...verdictOf(state, "world"), feedback: "more factions" } }
+    state = approveAllItems(state, ["outline", "world"])
+    expect(unreviewedItems(state, ["outline", "world"])).toEqual([])
+    expect(verdictOf(state, "outline").approved).toBe(true)
+    // Approve-all is a verdict change, not a state wipe: the draft is still there should the author
+    // go back to needs-changes on that row.
+    expect(verdictOf(state, "world")).toEqual({ approved: true, feedback: "more factions" })
   })
 })
 

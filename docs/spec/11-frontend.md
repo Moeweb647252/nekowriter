@@ -209,8 +209,10 @@ message and a retry.
   summary: (ui, t) => string; Detail?: Component }>`. Each tool has a summary i18n key
   `agent:tools.<name>.summary`. Unknown tools fall back to the name with raw JSON details.
 - Interactive cards: `AskUserForm` (radio or checkbox per question, "Other" text; submit →
-  `answer`), `ReviewRequestForm` (per document: approve toggle and feedback, plus a general
-  comment).
+  `answer`), `ReviewRequestForm` (per document: a tri-state verdict — `unset` / approved / needs
+  changes — with `aria-pressed` toggles and a feedback box that appears only for *needs changes*,
+  plus an "Approve all" shortcut and a general comment; submit is disabled with a visible count
+  while any item is unset, so the form never answers the review on the author's behalf — D-134).
 
 ### 5.4 Conception studio
 Two panes: conversation (the same `ActivityStream` and `Composer` components) and documents

@@ -148,8 +148,17 @@
     "submit_review": "提交审阅",
     "approve": "通过",
     "needs_changes": "需要修改",
+    "approve_all": "全部通过",
+    "review_incomplete_one": "还有 {{count}} 项待判定",
+    "review_incomplete_other": "还有 {{count}} 项待判定",
+    "verdict": {
+      "unset": "待审阅",
+      "approved": "已通过",
+      "needs_changes": "待修改"
+    },
     "general_comment": "总体意见",
     "feedback_placeholder": "希望修改什么？",
+    "feedback_for": "对「{{item}}」的修改要求",
     "other_placeholder": "其他（自由填写）",
     "revision": "第 {{revision}} 版",
     "drag_character": "调整人物顺序",

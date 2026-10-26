@@ -148,8 +148,17 @@
     "submit_review": "Submit review",
     "approve": "Approve",
     "needs_changes": "Needs changes",
+    "approve_all": "Approve all",
+    "review_incomplete_one": "{{count}} item still needs a verdict",
+    "review_incomplete_other": "{{count}} items still need a verdict",
+    "verdict": {
+      "unset": "Not reviewed",
+      "approved": "Approved",
+      "needs_changes": "Changes requested"
+    },
     "general_comment": "General comment",
     "feedback_placeholder": "What should change?",
+    "feedback_for": "Feedback for {{item}}",
     "other_placeholder": "Other (free text)",
     "revision": "Revision {{revision}}",
     "drag_character": "Reorder character",
