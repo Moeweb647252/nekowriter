@@ -438,12 +438,15 @@ function ChapterRow({
           {chapter.number}
         </span>
         <span className="truncate">{chapter.title || t("chapter:title_placeholder")}</span>
-        <span className="ml-auto shrink-0">
+        {/* Both badges share one flex box so they are centred by the same rule. Wrapping only
+            the first in a `<span>` left it aligning on the inline baseline while its sibling used
+            the row's `items-center`, so the two icons sat at different heights. */}
+        <span className="ml-auto flex shrink-0 items-center gap-1">
           <StatusBadge status={chapter.status} iconOnly />
+          {chapter.status === "official" && chapter.canon_status !== "none" ? (
+            <StatusBadge status={chapter.canon_status} variant="canon" iconOnly />
+          ) : null}
         </span>
-        {chapter.status === "official" && chapter.canon_status !== "none" ? (
-          <StatusBadge status={chapter.canon_status} variant="canon" iconOnly />
-        ) : null}
       </Link>
       {/*
        * The row's actions. The trigger is a sibling of the drag handle and carries none of
