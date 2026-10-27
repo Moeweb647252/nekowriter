@@ -26,7 +26,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::db::entities::{agent_sessions, books, chapters, tracks};
-use crate::db::json::{AwaitInputKind, RequestMeta, ToolEffects};
+use crate::db::json::{AwaitInputKind, PendingContent, RequestMeta, ToolEffects};
 use crate::events::ServerEvent;
 use crate::prompts::PromptSet;
 
@@ -313,8 +313,27 @@ impl ToolOutcome {
         self
     }
 
+    /// Replaces the deferred effects, keeping any content already staged for the write.
+    ///
+    /// Staged content is not an effect a tool chooses to set, it is a record of the work the call
+    /// did; dropping it because a later call site replaced the effect set would silently lose the
+    /// write (D-139), so it is carried across.
     pub fn with_effects(mut self, effects: ToolEffects) -> Self {
+        let pending = self.effects.pending_content.take();
         self.effects = effects;
+        if self.effects.pending_content.is_none() {
+            self.effects.pending_content = pending;
+        }
+        self
+    }
+
+    /// Stages a chapter write for the transaction that finalizes this call (spec/03 §5.2, §5.4).
+    ///
+    /// A text-changing tool never writes `chapters.content` itself: it carries the new content on
+    /// the outcome, so the write commits exactly when the call's effects do. That is what makes a
+    /// held call's text invisible until it is approved, and discarded when it is rejected.
+    pub fn with_pending_content(mut self, content: PendingContent) -> Self {
+        self.effects.pending_content = Some(content);
         self
     }
 

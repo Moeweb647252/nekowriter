@@ -197,6 +197,27 @@ domain effects, its result, and its final status (`done`, `error`, `held`, or
 `awaiting_input`) are committed together, so a call found in `executing` after a crash
 provably had no effect.
 
+**Staged chapter writes (D-139).** A text-changing writer call must not write `chapters.content`
+inside `execute`: the hold decision is made *after* `execute` returns, so a write performed there
+would already be committed when the call holds for approval, and approve/reject would change
+nothing about the text. `execute` therefore **stages** the write — it computes the new
+`ChapterContent`, validates granularity and computes `tail_open` as before (a rejected call still
+writes nothing), and returns it on the outcome. The transaction that finalizes the call applies it:
+
+- not deferred (ordinary call, or the resume that approves a held one): the staged content is
+  applied in that transaction, so `chapters.content`, `content_version` + 1, `word_count` and the
+  `chapter.content` event move exactly once, together with the call's status;
+- deferred: the staged content is stored in `tc.effects.pending_content` and the chapter is left
+  byte-identical. Feedback revokes the effects (§5.4), which discards the write; approval applies it.
+
+`pending_content` carries the `content_version` the tool read. The author may edit the chapter
+while the call is held (§7), so the write is applied only while that version still matches; once
+the author has moved the chapter, the staged write is dropped instead of reverting their work, and
+the edit report tells the model what the draft now holds. Because `view_snapshot` records what the
+agent saw, applying an approved write advances the stored snapshot's content past that write (only
+when it still equals the pre-write chapter), so the agent's own accepted text is never reported
+back to it as an author edit.
+
 `hold_condition(s, tc, outcome)`:
 ```text
   s.pause_requested                                                        → true
@@ -268,6 +289,11 @@ Every call therefore has a sealed result even in a completed session, which a re
   transaction (deferred effects are applied by the transaction that finalizes the call). On
   restart, a call left in `executing` had no committed effects and is reset to `pending`
   (spec/01 §5). The prepare phase only reads (web, search, embeddings), so re-execution is safe.
+- **Staged writes**: a text-changing writer call's `chapters.content` update is a deferred effect
+  (§5.2, D-139). It is stored in `tc.effects.pending_content` while the call is deferred and
+  applied — with `content_version` + 1, `word_count` and one `chapter.content` event — by the
+  transaction that finalizes the call. So a held write leaves the chapter byte-identical, approval
+  applies it exactly once, and feedback discards it along with the other revoked effects.
 - **Revoking deferred effects**: when the author gives feedback on a held call whose effects
   include `complete` or `phase_to`, the effects are cleared before finalizing, and the matching
   revoke notice is appended (`writer.notice.outline_rejected` for `submit_outline`,

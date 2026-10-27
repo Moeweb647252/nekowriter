@@ -984,6 +984,15 @@ async fn resume_inner(
             if revoke {
                 effects = crate::db::json::ToolEffects::default();
             }
+            // A held text call's write was staged, not committed, so approving is what puts it in
+            // the chapter (spec/03 §5.2, §5.4, D-139). Feedback cleared `effects` above, which is
+            // exactly what discards the write: a rejected call leaves the chapter byte-identical.
+            // Applying it before the phase notice keeps that notice's granularity reading the
+            // chapter the agent will actually see.
+            if let Some(write) = effects.pending_content.take() {
+                let applied = runner::apply_pending_content(tx, &session, &write).await?;
+                events.extend(applied);
+            }
             // NOTE: the call row is written after the kept effects are resolved, because applying
             // a phase change appends its acceptance notice to `appendices` (spec/03 §5.3 slot 1).
             // Apply the kept effects (a phase change) when no feedback revoked them. This is the
@@ -1331,6 +1340,13 @@ async fn answer_inner(
     // effect notice → edit report → feedback → inbox.
     let mut answer_appendices: Vec<crate::db::json::Appendix> =
         crate::db::json::from_json_or_default(&call.appendices);
+    // An answering call applies any staged write it made, for the same reason a resumed one does:
+    // this is the transaction that finalizes it (spec/03 §5.4). No shipped tool both needs input
+    // and writes text, but the invariant belongs here rather than in the tools.
+    let mut answer_events = Vec::new();
+    if let Some(write) = effects.pending_content.as_ref() {
+        answer_events.extend(runner::apply_pending_content(tx, &session, write).await?);
+    }
     if let (Some(phase), Some(notice_key)) = (effects.phase_to, phase_notice(&call.name)) {
         let granularity = crate::agent::context::granularity_context(
             &prompts,
@@ -1375,7 +1391,7 @@ async fn answer_inner(
     }
     .update(tx)
     .await?;
-    let mut events = Vec::new();
+    let mut events = answer_events;
     // A completion effect runs the same handler finalize uses — domain effects, the siblings as
     // `error.after_completion`, sealing, and the transition to `completed` (spec/03 §5.4). The
     // call row above already holds its final appendices, so sealing composes the right text.
@@ -1540,7 +1556,7 @@ pub async fn patch(
             // segment continues it (spec/03 §8 "open tail").
             if let Some(granularity) = notice {
                 let prompts = state_prompts(&state, &session).await?;
-                let (tail_open, last_pid) = tail_state(tx, session.chapter_id).await?;
+                let (tail_open, last_pid) = tail_state_after_pending(tx, &session).await?;
                 let key = granularity.as_str();
                 let context = json!({
                     "granularity": {
@@ -1978,6 +1994,37 @@ async fn chapter_content_of(
 
 /// The tail state and last pid of a session's chapter, for the granularity contexts
 /// (spec/03 §8: every notice says whether the tail is open).
+/// The tail state the session's next write will actually continue (spec/03 §8).
+///
+/// A held text call has staged its write without applying it (D-139), so the stored chapter is not
+/// what the agent will see next: the notice must describe the tail of the content that approval
+/// commits, or it would name a pid and a tail state that are already stale.
+async fn tail_state_after_pending(
+    conn: &impl sea_orm::ConnectionTrait,
+    session: &agent_sessions::Model,
+) -> Result<(bool, String), AppError> {
+    if let Some(call_id) = session.held_tool_call_id
+        && let Some(call) = agent_tool_calls::Entity::find_by_id(call_id)
+            .one(conn)
+            .await?
+    {
+        let effects: crate::db::json::ToolEffects =
+            crate::db::json::from_json_or_default(call.effects.as_deref().unwrap_or("{}"));
+        if let Some(write) = effects.pending_content {
+            return Ok((
+                write.content.tail_open,
+                write
+                    .content
+                    .paragraphs
+                    .last()
+                    .map(|paragraph| paragraph.pid.clone())
+                    .unwrap_or_default(),
+            ));
+        }
+    }
+    tail_state(conn, session.chapter_id).await
+}
+
 async fn tail_state(
     conn: &impl sea_orm::ConnectionTrait,
     chapter_id: Option<i32>,

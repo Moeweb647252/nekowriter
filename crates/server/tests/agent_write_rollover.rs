@@ -60,8 +60,8 @@ async fn test_13_rollover_carries_the_draft_author_notes_and_the_inbox() {
             .await
             .paragraphs
             .len(),
-        2,
-        "both inserts were written before the second held"
+        1,
+        "the first insert was applied by its approval; the second is still held (D-139)"
     );
 
     // While the second call is held: queue a steering message that stays unconsumed (it must move
@@ -118,8 +118,8 @@ async fn test_13_rollover_carries_the_draft_author_notes_and_the_inbox() {
         "the child kickoff carries the draft: {kickoff_text}"
     );
     assert!(
-        kickoff_text.contains("暂停前写入的一段。"),
-        "all of the draft, not just the tail: {kickoff_text}"
+        !kickoff_text.contains("暂停前写入的一段。"),
+        "the held write was rejected with the feedback, so it is not in the draft: {kickoff_text}"
     );
     assert!(
         kickoff_text.contains("继续写作"),

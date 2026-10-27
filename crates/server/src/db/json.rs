@@ -774,6 +774,32 @@ pub struct ToolEffects {
     pub phase_to: Option<Phase>,
     pub complete: Option<CompletionKind>,
     pub await_input: Option<AwaitInputKind>,
+    /// A text-changing writer call's staged chapter write, applied by the transaction that
+    /// finalizes the call (spec/03 §5.2, §5.4). `None` for every other tool.
+    ///
+    /// This is an effect, not domain state: `chapters.content` stays untouched by `execute`, so a
+    /// held call's text is not in the chapter until the call is approved. Feedback on the held
+    /// call revokes the effects (spec/03 §5.4), which is what discards the write.
+    pub pending_content: Option<PendingContent>,
+}
+
+/// A writer call's staged chapter write (spec/03 §5.2): the content `execute` computed but did not
+/// store, so that only the transaction which finalizes the call can put it in the chapter.
+///
+/// `expected_version` is the `chapters.content_version` the tool read. The author may edit the
+/// chapter freely while a call is held (spec/08 §1.4), so approval compares it against the current
+/// version: while it still matches, the staged content applies exactly; once the author has moved
+/// the chapter, the staged write is dropped rather than reverting the author's work.
+///
+/// The ops and word count that `chapter.content` and `chapters.word_count` need are derived from
+/// the state the content is applied to (`text::transform_ops`, `text::content_word_count`), so they
+/// cannot fall out of sync with it and are not stored here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub struct PendingContent {
+    pub content: ChapterContent,
+    pub expected_version: i32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1218,9 +1244,29 @@ mod tests {
             phase_to: Some(Phase::Drafting),
             complete: Some(CompletionKind::Draft),
             await_input: Some(AwaitInputKind::RequestReview),
+            pending_content: Some(PendingContent {
+                content: ChapterContent {
+                    paragraphs: vec![Paragraph {
+                        pid: "p1".to_owned(),
+                        text: "第一段。".to_owned(),
+                    }],
+                    next_pid: 2,
+                    tail_open: false,
+                },
+                expected_version: 3,
+            }),
         };
         assert_eq!(round_trip(&value), value);
         assert_eq!(round_trip(&ToolEffects::default()), ToolEffects::default());
+    }
+
+    /// A held call's row written before this field existed must still load (spec/02 §4: defaults on
+    /// optional field groups so old rows keep loading).
+    #[test]
+    fn tool_effects_without_pending_content_still_loads() {
+        let raw = r#"{"phase_to":null,"complete":null,"await_input":null}"#;
+        let effects: ToolEffects = serde_json::from_str(raw).expect("old rows decode");
+        assert!(effects.pending_content.is_none());
     }
 
     /// `review_reports.issues`, `chapter_feedback.issues`.

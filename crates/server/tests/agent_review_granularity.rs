@@ -361,9 +361,14 @@ async fn chapter_mode_continues_an_open_tail_and_closes_it() {
     .await;
     let session_id = start_writer(&runtime, Granularity::Free, true, false).await;
     let held = agent_write_harness::wait_for_status(&runtime, session_id, "held").await;
-    let open = chapter_content(&runtime, runtime.chapter_id).await;
-    assert_eq!(open.paragraphs.len(), 1, "{:?}", open.paragraphs);
-    assert!(open.tail_open, "the held write left the paragraph open");
+    // A held write is not in the chapter yet (D-139), so approving is what opens the tail.
+    assert!(
+        chapter_content(&runtime, runtime.chapter_id)
+            .await
+            .paragraphs
+            .is_empty(),
+        "the held write is not applied"
+    );
 
     let (status, body) = runtime
         .app
@@ -376,6 +381,9 @@ async fn chapter_mode_continues_an_open_tail_and_closes_it() {
     let (status, body) = agent_write_harness::resume_raw(&runtime, session_id, None).await;
     assert_eq!(status, 200, "approve the held write: {body}");
     let _ = held;
+    let open = chapter_content(&runtime, runtime.chapter_id).await;
+    assert_eq!(open.paragraphs.len(), 1, "{:?}", open.paragraphs);
+    assert!(open.tail_open, "the held write left the paragraph open");
     // `auto_pause` holds a completing write too (it is a WRITE_TOOL), so drain the holds.
     agent_write_harness::resume_until_done(&runtime, session_id, None).await;
     let content = chapter_content(&runtime, runtime.chapter_id).await;
@@ -545,10 +553,13 @@ async fn the_granularity_notice_mentions_an_open_tail_in_every_unspaced_mode() {
         .await;
         let session_id = start_writer(&runtime, granularity, true, false).await;
         let held = agent_write_harness::wait_for_status(&runtime, session_id, "held").await;
-        let open = chapter_content(&runtime, runtime.chapter_id).await;
+        // A held write is staged, not applied (D-139), so the tail is still closed here.
         assert!(
-            open.tail_open,
-            "{granularity:?}: the held write left it open"
+            chapter_content(&runtime, runtime.chapter_id)
+                .await
+                .paragraphs
+                .is_empty(),
+            "{granularity:?}: the held write is not applied"
         );
 
         let (status, body) = runtime
@@ -561,6 +572,12 @@ async fn the_granularity_notice_mentions_an_open_tail_in_every_unspaced_mode() {
         assert_eq!(status, 200, "{granularity:?}: patch: {body}");
         let (status, body) = agent_write_harness::resume_raw(&runtime, session_id, None).await;
         assert_eq!(status, 200, "{granularity:?}: resume: {body}");
+        // Approving is what applies the write, including the open tail it left behind.
+        let open = chapter_content(&runtime, runtime.chapter_id).await;
+        assert!(
+            open.tail_open,
+            "{granularity:?}: the approved write left it open"
+        );
         agent_write_harness::resume_until_done(&runtime, session_id, None).await;
 
         // The notice is an inbox item sealed into a tool result; find it among the sealed texts.
@@ -864,6 +881,10 @@ async fn the_outline_accepted_notice_names_an_open_tail() {
     // one that honours `paragraph_end` (`paragraph` always closes, spec/03 §8).
     let first = start_writer(&runtime, Granularity::Free, true, false).await;
     agent_write_harness::wait_for_status(&runtime, first, "held").await;
+    // The held write is staged, not applied (D-139), so approving it is what creates the open tail
+    // the fixture needs.
+    let (status, body) = agent_write_harness::resume_raw(&runtime, first, None).await;
+    assert_eq!(status, 200, "approve the first write: {body}");
     let content = chapter_content(&runtime, runtime.chapter_id).await;
     assert!(content.tail_open, "the fixture has an open tail");
     let pid = content

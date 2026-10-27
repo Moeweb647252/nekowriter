@@ -172,6 +172,9 @@ type ToolCallDto = {
   status: ToolCallStatus; is_error: boolean;
   result_text: string | null;       // raw_result_text before sealing, result_text after
   appendices: Appendix[]; ui: unknown | null; sealed: boolean;
+  // The staged chapter write of a deferred text-changing call (spec/03 §5.2, D-139): what
+  // approval will commit. Null once the call is finalized, because the text is then in the chapter.
+  pending_content: { content: ChapterContent; expected_version: number } | null;
   created_at: string; finished_at: string | null;
 };
 type ChapterDto = ChapterListItemDto & {

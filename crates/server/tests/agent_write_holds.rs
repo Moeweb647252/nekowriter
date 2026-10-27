@@ -10,8 +10,10 @@ use agent_write_harness::{
 };
 use axum::http::StatusCode;
 use nekowriter::db::json::{Granularity, Phase, SessionStatus, ToolCallStatus};
+use nekowriter::events::ServerEvent;
 use nekowriter_llm::mock::{ScriptStep, chunk_text};
 use serde_json::json;
+use tokio::sync::broadcast::error::TryRecvError;
 
 /// Two `finish_draft` steps, so a short chapter's withdrawal is followed by a real completion.
 fn finish_pair() -> [ScriptStep; 2] {
@@ -19,6 +21,23 @@ fn finish_pair() -> [ScriptStep; 2] {
         ScriptStep::new().tool("finish_draft", json!({})),
         ScriptStep::new().tool("finish_draft", json!({})),
     ]
+}
+
+/// Every event published since the last drain (the pattern of `api_events.rs`).
+async fn drain(
+    receiver: &mut tokio::sync::broadcast::Receiver<nekowriter::events::EventEnvelope>,
+) -> Vec<ServerEvent> {
+    let mut events = Vec::new();
+    tokio::task::yield_now().await;
+    loop {
+        match receiver.try_recv() {
+            Ok(envelope) => events.push(envelope.event),
+            Err(TryRecvError::Empty) => break,
+            Err(TryRecvError::Lagged(_)) => continue,
+            Err(TryRecvError::Closed) => break,
+        }
+    }
+    events
 }
 
 fn insert_step(text: &str) -> ScriptStep {
@@ -188,16 +207,23 @@ async fn test_03_auto_pause_holds_each_insert_and_feedback_sticks_to_its_call() 
     // First insert: approve with no feedback.
     let (first, _) = held_call(&runtime, session_id).await;
     assert_eq!(first.name, "insert_text");
+    assert!(
+        chapter_content(&runtime, runtime.chapter_id)
+            .await
+            .paragraphs
+            .is_empty(),
+        "a held write is not in the chapter (D-139)"
+    );
+    let (status, body) = resume(&runtime, session_id, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         chapter_content(&runtime, runtime.chapter_id)
             .await
             .paragraphs
             .len(),
         1,
-        "the call executed before it held"
+        "approving the held call applied its write"
     );
-    let (status, body) = resume(&runtime, session_id, None).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
 
     // Second insert: approve WITH feedback; only this call's result carries it.
     let (second, _) = held_call(&runtime, session_id).await;
@@ -207,7 +233,8 @@ async fn test_03_auto_pause_holds_each_insert_and_feedback_sticks_to_its_call() 
             .await
             .paragraphs
             .len(),
-        2
+        1,
+        "the second held write is not applied yet"
     );
     let (status, body) = resume(&runtime, session_id, Some("第二段写得太急。")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -248,6 +275,13 @@ async fn test_06_author_edits_while_held_are_reported_exactly() {
         finish_pair()[1].clone(),
     ])
     .await;
+    // The author already wrote a paragraph, so there is text to edit while the agent's write is
+    // held: a held write is staged and not in the chapter (D-139), so the only paragraphs the
+    // author can touch are the ones that were there before the session started.
+    runtime
+        .app
+        .put_text(runtime.chapter_id, 0, "作者原先写的第一段。")
+        .await;
     // Pause after the first insert so the author can edit the text the agent already saw.
     let session_id = start_writer(&runtime, Granularity::Paragraph, true, false).await;
     let (first, _) = held_call(&runtime, session_id).await;
@@ -289,7 +323,7 @@ async fn test_06_author_edits_while_held_are_reported_exactly() {
         "the modified paragraph: {report}"
     );
     assert!(
-        report.contains("第一段原文。"),
+        report.contains("作者原先写的第一段。"),
         "the old text is quoted: {report}"
     );
     assert!(
@@ -319,6 +353,9 @@ async fn the_edit_report_reports_deletions_and_truncates_old_text() {
         finish_pair()[1].clone(),
     ])
     .await;
+    // The long paragraph pre-exists the session, so it is `p1` and the author can delete it while
+    // the agent's own write is held (D-139: a held write is not in the chapter).
+    runtime.app.put_text(runtime.chapter_id, 0, &long).await;
     let session_id = start_writer(&runtime, Granularity::Paragraph, true, false).await;
     let _first = held_call(&runtime, session_id).await;
     let version = chapter_row(&runtime, runtime.chapter_id).await.2;
@@ -621,9 +658,44 @@ async fn feedback_revokes_a_held_completion_and_keeps_working() {
         "drafting"
     );
 
+    // D-139: the held write is not in the chapter, so rejecting it leaves the chapter untouched.
+    let (version_before, word_count_before, content_before) =
+        chapter_row(&runtime, runtime.chapter_id).await;
+    assert!(
+        chapter_content(&runtime, runtime.chapter_id)
+            .await
+            .paragraphs
+            .is_empty(),
+        "the held write was not applied"
+    );
+
     let (status, body) = resume(&runtime, session_id, Some("结尾再收一点。")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     agent_write_harness::resume_until_done(&runtime, session_id, None).await;
+
+    // The rejected write never reached the chapter: the follow-up paragraph is p1, and nothing of
+    // the 2,000-character rejected text survives.
+    let content = chapter_content(&runtime, runtime.chapter_id).await;
+    assert_eq!(
+        content.paragraphs.len(),
+        1,
+        "only the follow-up write was applied: {:?}",
+        content.paragraphs
+    );
+    assert_eq!(
+        content.paragraphs[0].pid, "p1",
+        "no pid was consumed by the rejected write"
+    );
+    assert_eq!(content.paragraphs[0].text, "作者要求补充的一段。");
+    assert!(
+        !content
+            .paragraphs
+            .iter()
+            .any(|paragraph| paragraph.text.contains('字')),
+        "the rejected text is not in the chapter: {:?}",
+        content.paragraphs
+    );
+    let _ = (version_before, word_count_before, content_before);
 
     let completing = runtime.call_by_id(completing.id).await;
     let text = completing.result_text.clone().unwrap_or_default();
@@ -640,12 +712,6 @@ async fn feedback_revokes_a_held_completion_and_keeps_working() {
     );
     // The completion was revoked, so the chapter kept drafting and finished later.
     assert_eq!(runtime.version_kinds().await, vec!["draft".to_owned()]);
-    let content = chapter_content(&runtime, runtime.chapter_id).await;
-    assert_eq!(
-        content.paragraphs.len(),
-        2,
-        "the author's request was honoured"
-    );
 }
 
 /// spec/03 §5.4: feedback on a held `submit_outline` revokes `phase_to` and keeps the session in
@@ -926,4 +992,151 @@ async fn a_refusal_finishes_its_calls_as_errors_and_never_executes_them() {
         content.paragraphs
     );
     assert_eq!(content.paragraphs[0].text, "恢复后写入的一段。");
+}
+
+// ─────────────────────── staged writes: the D-139 guarantees ───────────────────────
+
+/// The event stream of a held write: no `chapter.content` while held, exactly one on approval.
+#[tokio::test]
+async fn a_held_write_emits_no_content_event_until_it_is_approved() {
+    let runtime = runtime(vec![
+        outline_step(),
+        insert_step("第一段。"),
+        insert_step("第二段。"),
+        finish_pair()[0].clone(),
+        finish_pair()[1].clone(),
+    ])
+    .await;
+    let session_id = start_writer(&runtime, Granularity::Paragraph, true, false).await;
+    let (first, _) = held_call(&runtime, session_id).await;
+
+    // The held call published no `chapter.content`: its text is not in the chapter.
+    let mut receiver = runtime.app.events().subscribe();
+    let held_events = drain(&mut receiver).await;
+    let held_content = held_events
+        .iter()
+        .filter(|event| matches!(event, ServerEvent::ChapterContentChanged { .. }))
+        .count();
+    assert_eq!(held_content, 0, "a held write emits no chapter.content");
+
+    let (status, body) = resume(&runtime, session_id, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // Approving it emits exactly one, naming the agent as the actor.
+    let approval_events = drain(&mut receiver).await;
+    let content: Vec<_> = approval_events
+        .iter()
+        .filter_map(|event| match event {
+            ServerEvent::ChapterContentChanged {
+                version,
+                word_count,
+                actor,
+                ..
+            } => Some((*version, *word_count, *actor)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        content.len(),
+        1,
+        "approving applies the staged write once, with one chapter.content"
+    );
+    assert_eq!(content[0].0, 1, "the applied write is version 1");
+    assert!(content[0].1 > 0, "the word count is computed from the text");
+    assert_eq!(
+        content[0].2,
+        nekowriter::events::ContentActor::Agent,
+        "the event names the agent as the actor"
+    );
+    let _ = first;
+}
+
+/// Approving one held write and then another must not apply the first one twice (the staged write is
+/// cleared from the call's effects when it is applied).
+#[tokio::test]
+async fn approving_two_held_writes_does_not_apply_either_twice() {
+    let runtime = runtime(vec![
+        outline_step(),
+        insert_step("第一段。"),
+        insert_step("第二段。"),
+        finish_pair()[0].clone(),
+        finish_pair()[1].clone(),
+    ])
+    .await;
+    let session_id = start_writer(&runtime, Granularity::Paragraph, true, false).await;
+    let (first, _) = held_call(&runtime, session_id).await;
+    let (status, body) = resume(&runtime, session_id, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let (second, _) = held_call(&runtime, session_id).await;
+    assert_ne!(second.id, first.id, "a second, distinct held call");
+    let (status, body) = resume(&runtime, session_id, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let content = chapter_content(&runtime, runtime.chapter_id).await;
+    assert_eq!(
+        content.paragraphs.len(),
+        2,
+        "each held write was applied exactly once: {:?}",
+        content.paragraphs
+    );
+    assert_eq!(content.paragraphs[0].text, "第一段。");
+    assert_eq!(content.paragraphs[1].text, "第二段。");
+    // One version bump per applied write.
+    let (_, _, version) = chapter_row(&runtime, runtime.chapter_id).await;
+    assert_eq!(version, 2, "two approvals, two content versions");
+
+    // Both calls spent their staged content.
+    for call_id in [first.id, second.id] {
+        let call = runtime.call_by_id(call_id).await;
+        assert_eq!(call.effects().pending_content, None);
+    }
+}
+
+/// The pending text of a held write is reachable by the client through the session snapshot, so a
+/// draft-preview UI can render it without another endpoint.
+#[tokio::test]
+async fn a_held_write_exposes_its_pending_text_in_the_session_snapshot() {
+    let runtime = runtime(vec![
+        outline_step(),
+        insert_step("待确认的一段。"),
+        finish_pair()[0].clone(),
+        finish_pair()[1].clone(),
+    ])
+    .await;
+    let session_id = start_writer(&runtime, Granularity::Paragraph, true, false).await;
+    let (held, _) = held_call(&runtime, session_id).await;
+
+    let (status, body) = runtime
+        .app
+        .get(&format!("/api/sessions/{session_id}"))
+        .await;
+    assert_eq!(status, StatusCode::OK, "session snapshot: {body}");
+    let calls = body["tool_calls"]
+        .as_array()
+        .expect("the snapshot carries the tool calls");
+    let call = calls
+        .iter()
+        .find(|call| call["id"].as_i64() == Some(i64::from(held.id)))
+        .expect("the held call is in the snapshot");
+    let pending = &call["pending_content"];
+    assert!(
+        !pending.is_null(),
+        "the held call exposes its pending content: {call}"
+    );
+    assert_eq!(
+        pending["content"]["paragraphs"][0]["text"], "待确认的一段。",
+        "the pending text is the staged write: {pending}"
+    );
+    assert_eq!(
+        pending["content"]["tail_open"], false,
+        "the staged tail state travels with it"
+    );
+    // Nothing of it is in the chapter yet.
+    assert!(
+        chapter_content(&runtime, runtime.chapter_id)
+            .await
+            .paragraphs
+            .is_empty()
+    );
 }

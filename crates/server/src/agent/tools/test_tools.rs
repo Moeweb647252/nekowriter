@@ -85,17 +85,36 @@ impl ToolHandler for TestWriteTool {
 
     async fn execute(
         &self,
-        _ctx: &mut ToolCtx<'_>,
+        ctx: &mut ToolCtx<'_>,
         input: Value,
         _prepared: Prepared,
     ) -> Result<ToolOutcome, ToolError> {
         let input: TestInput = decode(input)?;
         let text = input.text.unwrap_or_default();
-        let outcome = ToolOutcome::text(text.clone()).with_ui(json!({
+        let mut outcome = ToolOutcome::text(text.clone()).with_ui(json!({
             "chars": text.chars().count(),
         }));
+        // A debug session may have no chapter; then there is nothing to stage.
+        if ctx.chapter.is_some() {
+            // A write tool stages its content like the real ones (D-139), so the hold/resume path
+            // carries a real pending write.
+            let mut content: crate::db::json::ChapterContent =
+                crate::db::json::from_json_or_default(
+                    &ctx.chapter
+                        .map(|chapter| chapter.content.clone())
+                        .unwrap_or_default(),
+                );
+            let paragraph = crate::db::json::Paragraph {
+                pid: crate::text::allocate_pid(&mut content),
+                text: text.clone(),
+            };
+            content.paragraphs.push(paragraph);
+            outcome = outcome
+                .with_pending_content(crate::agent::tools::writer::stage_content(ctx, content)?);
+        }
         // A write tool may also request a completion, so the hold/resume path can carry both
-        // halves of the deferred effects (spec/03 §5.4).
+        // halves of the deferred effects (spec/03 §5.4). `with_effects` replaces the whole set, so
+        // the pending content is attached afterwards.
         if input.complete.unwrap_or(false) {
             return Ok(outcome.with_effects(ToolEffects {
                 complete: Some(CompletionKind::Draft),
@@ -231,6 +250,7 @@ impl ToolHandler for TestAskTool {
             phase_to: phase,
             complete,
             await_input: Some(crate::db::json::AwaitInputKind::AskUser),
+            ..ToolEffects::default()
         }))
     }
 }

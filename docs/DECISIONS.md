@@ -2236,3 +2236,60 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   (deleting the pragma from the script makes it fail with `CHECK constraint failed: lost = 0`).
   `researchDeferred.test.tsx` covers the buttons and the badge; `events.test.ts` covers the
   overview invalidation (removing it fails the test).
+
+### D-139 A held write is staged, not committed: the chapter moves in the transaction that finalizes the call
+
+- **Context**: every draft-writing tool (`insert_text`, `insert_paragraphs`, `replace_text`,
+  `rewrite_paragraph`, `delete_paragraphs`, and `finish_draft` when it closes an open tail) wrote
+  `chapters.content`, `content_version`, `word_count` and the `chapter.content` event **inside
+  `execute`**. The hold decision is made after `execute` returns (spec/03 §5.2), so a call that held
+  for approval had already changed the chapter, and only its *effects* (phase change, completion)
+  were deferred. The data proved it: a chapter sat at `content_version` 1 with 1,823 words and an
+  `updated_at` 5 ms after a `held` `insert_text` started, and the call's `input.text` was
+  byte-identical to the stored paragraphs. Approve and reject changed nothing about the text; a
+  rejected write stayed in the chapter, and the UI showed a word count in the header that the body
+  denied ("本章还没有正文").
+- **Decision**: a text-changing call **stages** its write and the transaction that finalizes the
+  call applies it. `execute` computes the new `ChapterContent` exactly as before — granularity
+  validation and `tail_open` stay there, so a rejected call still writes nothing — and returns it on
+  the outcome. `finalize` applies it when the call is not deferred, so content, `content_version` + 1,
+  `word_count` and one `chapter.content` event move together with the call's status; when the call is
+  deferred the staged write is stored in `tc.effects.pending_content` and the chapter is left
+  byte-identical. Storing it **in `ToolEffects`** rather than in a new column is the load-bearing
+  choice: §5.4's "feedback on a held call revokes its deferred effects" is implemented by resetting
+  `effects` to default, so a rejected write is discarded by the code that already exists, with no
+  second code path to keep in sync, and no migration.
+- **Consequences**: `pending_content` carries the `content_version` the tool read, because the author
+  may edit the chapter while a call is held (spec/08 §1.4). Approval applies the staged content only
+  while that version still matches; once the author has moved the chapter, the staged write is
+  dropped instead of silently reverting their work — the author's text wins and the §7 edit report is
+  what tells the model what the draft actually holds (the same mechanism that already covers every
+  other tool, and the precedent spec/03 §15 test 18 sets for the outline). Applying an approved write
+  also advances the stored `view_snapshot`'s content past it, but only when the snapshot still equals
+  the pre-write chapter; without that, the agent's own accepted text would be reported back to it as
+  an author edit on the next sealing. `answer_inner` applies the same invariant. The staged content is
+  exposed on `ToolCallDto.pending_content` (a `PendingContent` of `content` + `expected_version`), so
+  the session snapshot already carries a held write's text — the draft-preview UI needs no new
+  endpoint. Ops and the word count are derived at apply time (`transform_ops`,
+  `content_word_count`) instead of being stored, so they cannot fall out of sync with the state they
+  are applied to. `submit_outline` deliberately keeps writing `chapters.outline` inside `execute`:
+  spec/03 §7 makes "edit the outline while `submit_outline` is held, then approve it" the common
+  author flow, which requires the outline to be visible and editable while it is held, so it is not
+  the same defect (its phase change is deferred, as before).
+- **Existing data**: no repair was attempted and nothing was written to the author's database. A
+  chapter whose write was held under the old code keeps that text and its bumped `content_version` —
+  it is a legitimate committed write as far as the schema knows. The held call's row still says
+  `held` with no `pending_content`; approving it after the upgrade applies no staged write (there is
+  none), so it finalizes the call and its effects without touching the text again. The author's
+  remedy, if they want the rejected text gone, is to edit the chapter normally — a manual SQL repair
+  is their decision, not this change's.
+- **Regression guards**: `agent_write_tools.rs` proves a held write leaves the chapter empty and
+  `word_count` 0, that approval applies it once with `content_version` + 1, and that a granularity
+  rejection stages nothing; `agent_write_holds.rs` proves no `chapter.content` is published while
+  held and exactly one on approval, that two approvals do not apply either write twice, that the
+  snapshot exposes the pending text, and that feedback on a held completing write leaves the chapter
+  without a single paragraph of the rejected 2,000-character text (its follow-up write is `p1`, so no
+  pid was consumed either); the non-held path keeps one event and one version bump per write. The
+  tests that had encoded the bug ("the call executed before it held", "both inserts were written
+  before the second held") were corrected, and the author-edit-while-held tests now pre-seed the
+  chapter, because a held write is no longer something the author can edit.

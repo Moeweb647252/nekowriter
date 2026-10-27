@@ -13,8 +13,27 @@ use agent_write_harness::{
     start_writer,
 };
 use nekowriter::db::json::{Granularity, Phase, SessionStatus, ToolCallStatus};
+use nekowriter::events::ServerEvent;
 use nekowriter_llm::mock::{ScriptStep, chunk_text};
 use serde_json::json;
+use tokio::sync::broadcast::error::TryRecvError;
+
+/// Every event published since the last drain (the pattern of `api_events.rs`).
+async fn drain(
+    receiver: &mut tokio::sync::broadcast::Receiver<nekowriter::events::EventEnvelope>,
+) -> Vec<ServerEvent> {
+    let mut events = Vec::new();
+    tokio::task::yield_now().await;
+    loop {
+        match receiver.try_recv() {
+            Ok(envelope) => events.push(envelope.event),
+            Err(TryRecvError::Empty) => break,
+            Err(TryRecvError::Lagged(_)) => continue,
+            Err(TryRecvError::Closed) => break,
+        }
+    }
+    events
+}
 
 /// Two `finish_draft` steps: a short chapter's first completion is withheld (spec/03 §8, D-029).
 fn finish_draft_twice() -> [ScriptStep; 2] {
@@ -672,9 +691,13 @@ fn chunking_helper_is_available() {
     );
 }
 
-/// A held call keeps its status across a `held` session, and the tool ran (D-009).
+/// A held write is staged, not committed; approving it commits it exactly once (D-139).
+///
+/// This is the bug the fix removes: the tool used to write the chapter inside `execute`, so a call
+/// that held for approval had already changed the chapter, and approve/reject changed nothing about
+/// the text.
 #[tokio::test]
-async fn a_write_call_holds_under_auto_pause_and_its_content_is_committed() {
+async fn a_write_call_holds_under_auto_pause_and_its_content_is_committed_on_approval() {
     let runtime = runtime(with_finish(vec![
         outline_step(),
         insert_step("自动暂停时写入的一段。", json!({})),
@@ -682,12 +705,6 @@ async fn a_write_call_holds_under_auto_pause_and_its_content_is_committed() {
     .await;
     let session_id = start_writer(&runtime, Granularity::Paragraph, true, false).await;
     let row = runtime.wait_status(session_id, SessionStatus::Held).await;
-    let content = chapter_content(&runtime, runtime.chapter_id).await;
-    assert_eq!(
-        content.paragraphs.len(),
-        1,
-        "the call executed before it held (spec/03 §5.2)"
-    );
     let calls = runtime.calls(session_id).await;
     let insert = calls
         .iter()
@@ -697,6 +714,61 @@ async fn a_write_call_holds_under_auto_pause_and_its_content_is_committed() {
     assert_eq!(row.held_tool_call_id, Some(insert.id));
     assert!(!insert.sealed, "a held call is not sealed yet");
     assert_eq!(phase_of(&runtime, session_id).await, Phase::Drafting);
+
+    // The chapter is untouched while the call is held (spec/03 §5.2, §5.4).
+    let (_, _, version) = chapter_row(&runtime, runtime.chapter_id).await;
+    let word_count = agent_write_harness::query_i64(
+        &runtime,
+        "SELECT word_count AS value FROM chapters WHERE id = ?",
+        vec![runtime.chapter_id.into()],
+    )
+    .await;
+    assert_eq!(word_count, 0, "a held write leaves the word count alone");
+    let held_content = chapter_content(&runtime, runtime.chapter_id).await;
+    assert!(
+        held_content.paragraphs.is_empty(),
+        "the held write is not in the chapter: {:?}",
+        held_content.paragraphs
+    );
+
+    let (status, body) = agent_write_harness::resume_raw(&runtime, session_id, None).await;
+    assert_eq!(status, 200, "approve the held write: {body}");
+    agent_write_harness::resume_until_done(&runtime, session_id, None).await;
+
+    let content = chapter_content(&runtime, runtime.chapter_id).await;
+    assert_eq!(
+        content.paragraphs.len(),
+        1,
+        "approving applied the staged write exactly once: {:?}",
+        content.paragraphs
+    );
+    assert_eq!(content.paragraphs[0].text, "自动暂停时写入的一段。");
+    assert_eq!(content.paragraphs[0].pid, "p1", "the staged pid was kept");
+    let (_, _, after_version) = chapter_row(&runtime, runtime.chapter_id).await;
+    let after_word_count = agent_write_harness::query_i64(
+        &runtime,
+        "SELECT word_count AS value FROM chapters WHERE id = ?",
+        vec![runtime.chapter_id.into()],
+    )
+    .await;
+    assert!(
+        after_word_count > word_count,
+        "the applied content's word count is stored: {after_word_count}"
+    );
+    assert_eq!(
+        after_version,
+        version + 1,
+        "one approval moves content_version exactly once"
+    );
+    assert_ne!(after_word_count, word_count);
+    // The call is finalized and its effects are spent, so nothing is left to apply again.
+    let insert = runtime.call_by_id(insert.id).await;
+    assert_eq!(insert.status_enum(), ToolCallStatus::Done);
+    assert_eq!(
+        insert.effects().pending_content,
+        None,
+        "the applied write is cleared from the call's effects"
+    );
 }
 
 /// spec/08 §1.1: the `draft` version's note is the `finish_draft` note.
@@ -751,4 +823,95 @@ async fn draft_version_notes(
         .into_iter()
         .map(|row| row.try_get::<String>("", "note").expect("note"))
         .collect()
+}
+
+// ─────────────────── D-139: validation still fails without writing ───────────────────
+
+/// A granularity rejection happens in `execute` and must leave the chapter byte-identical: the
+/// validation stayed where it was, only the write moved (spec/03 §5.2, D-139).
+#[tokio::test]
+async fn a_granularity_rejection_leaves_the_chapter_byte_identical() {
+    let runtime = runtime(with_finish(vec![
+        outline_step(),
+        insert_step("第一段。", json!({})),
+        // Rejected: a line break under `paragraph` granularity.
+        insert_step("一段。\n另一段。", json!({})),
+    ]))
+    .await;
+    // `auto_pause` off: the accepted write is applied by its own call, so the rejected one has a
+    // non-empty chapter to leave untouched.
+    let session_id = start_writer(&runtime, Granularity::Paragraph, false, false).await;
+    runtime
+        .wait_status(session_id, SessionStatus::Completed)
+        .await;
+    let (_, _, version) = chapter_row(&runtime, runtime.chapter_id).await;
+    let content = chapter_content(&runtime, runtime.chapter_id).await;
+    assert_eq!(
+        content.paragraphs.len(),
+        1,
+        "only the accepted write is there"
+    );
+    let calls = runtime.calls(session_id).await;
+    let rejected = calls
+        .iter()
+        .filter(|call| call.name == "insert_text")
+        .find(|call| call.is_error)
+        .expect("the rejected insert");
+    assert!(
+        rejected.effects().pending_content.is_none(),
+        "a failed call stages nothing, so a later approval cannot apply its text"
+    );
+    assert_eq!(version, 1, "one accepted write, one version");
+}
+
+/// The non-held path is unchanged: with `auto_pause` off a write applies where it always did, with
+/// one `chapter.content` event and one version bump (spec/03 §5.2, D-139).
+#[tokio::test]
+async fn a_non_held_write_applies_in_its_own_call_with_one_event() {
+    let runtime = runtime(with_finish(vec![
+        outline_step(),
+        insert_step("第一段。", json!({})),
+        insert_step("第二段。", json!({})),
+    ]))
+    .await;
+    let mut receiver = runtime.app.events().subscribe();
+    let session_id = start_writer(&runtime, Granularity::Paragraph, false, false).await;
+    runtime
+        .wait_status(session_id, SessionStatus::Completed)
+        .await;
+
+    let content = chapter_content(&runtime, runtime.chapter_id).await;
+    assert_eq!(content.paragraphs.len(), 2, "both writes applied");
+    let (_, _, version) = chapter_row(&runtime, runtime.chapter_id).await;
+    assert_eq!(version, 2, "one version bump per applied write");
+
+    // Two writes, two version bumps: one `chapter.content` per applied write, in order. The
+    // completion handler's final `chapter.content` re-states the settled version with no ops, so
+    // only the events that carry ops are the writes themselves.
+    let events = drain(&mut receiver).await;
+    let versions: Vec<i32> = events
+        .iter()
+        .filter_map(|event| match event {
+            ServerEvent::ChapterContentChanged {
+                version,
+                ops,
+                actor,
+                ..
+            } if *actor == nekowriter::events::ContentActor::Agent && !ops.is_empty() => {
+                Some(*version)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(versions, vec![1, 2], "one event per write, in order");
+
+    // No call kept a staged write: every one applied in its own transaction.
+    for call in runtime.calls(session_id).await {
+        assert_eq!(
+            call.effects().pending_content,
+            None,
+            "a finalized call holds no pending content: {}",
+            call.name
+        );
+    }
 }

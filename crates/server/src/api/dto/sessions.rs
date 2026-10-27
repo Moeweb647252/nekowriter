@@ -9,8 +9,8 @@ use serde_json::Value;
 use ts_rs::TS;
 
 use crate::db::json::{
-    AgentRole, Appendix, Granularity, MessageKind, Phase, SessionCounters, SessionError,
-    SessionKind, SessionStatus, ToolCallStatus, Usage,
+    AgentRole, Appendix, Granularity, MessageKind, PendingContent, Phase, SessionCounters,
+    SessionError, SessionKind, SessionStatus, ToolCallStatus, Usage,
 };
 
 /// One session row (spec/10 §2.8).
@@ -107,6 +107,12 @@ pub struct ToolCallDto {
     pub appendices: Vec<Appendix>,
     pub ui: Option<Value>,
     pub sealed: bool,
+    /// The chapter text a held text-changing call has staged but not applied (spec/03 §5.2, D-139).
+    ///
+    /// Present only while the call is deferred: it is what approval will commit, so the agent panel
+    /// can preview a held write against the confirmed draft without a second endpoint. `None` once
+    /// the call is finalized, because the text is then in the chapter.
+    pub pending_content: Option<PendingContent>,
     pub created_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
 }

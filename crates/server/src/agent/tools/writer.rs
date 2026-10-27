@@ -5,10 +5,11 @@
 //! model generated the call — not by the session's current value, so switching granularity never
 //! rejects a call that was already being generated.
 //!
-//! Every text-changing tool writes the chapter in the call's transaction: the new content, the
-//! `chapter.content` ops, the word count and `content_version` commit with the call's result
-//! (D-033). Model-facing text is rendered from `prompts/results.toml`; nothing English reaches the
-//! model.
+//! Every text-changing tool **stages** its chapter write instead of performing it: the new content
+//! travels on the outcome and is applied by the transaction that finalizes the call (D-139), so a
+//! held call's text is not in the chapter until the author approves it, and feedback on the held
+//! call discards it. Model-facing text is rendered from `prompts/results.toml`; nothing English
+//! reaches the model.
 
 use sea_orm::{ActiveModelTrait, EntityTrait, Set};
 use serde::Deserialize;
@@ -16,8 +17,10 @@ use serde_json::{Value, json};
 
 use crate::api::dto::ContentOp;
 use crate::db::entities::chapters;
-use crate::db::json::{ChapterContent, CompletionKind, Granularity, Paragraph, ToolEffects};
-use crate::events::{ContentActor, ServerEvent};
+use crate::db::json::{
+    ChapterContent, CompletionKind, Granularity, Paragraph, PendingContent, ToolEffects,
+};
+use crate::events::ServerEvent;
 use crate::text;
 
 use super::{
@@ -262,48 +265,21 @@ fn targets(ctx: &ToolCtx<'_>) -> (i32, i32) {
     (settings.target_words_min, settings.target_words_max)
 }
 
-/// Writes a new content state in the call's transaction (spec/05 §4): `content_version` + 1,
-/// word count, the exact ops, and the `chapter.content` event (spec/10 §3).
-pub async fn write_content(
-    ctx: &mut ToolCtx<'_>,
+/// Stages a new content state for the transaction that finalizes the call (spec/03 §5.2, §5.4).
+///
+/// Nothing is written here. The returned [`PendingContent`] travels on the outcome and the
+/// finalizing transaction applies it, so `chapters.content`, `content_version`, `word_count` and the
+/// `chapter.content` event all move together with the call's status — and only if the write is
+/// accepted. A call that holds for approval therefore leaves the chapter byte-identical (D-139).
+pub fn stage_content(
+    ctx: &ToolCtx<'_>,
     content: ChapterContent,
-    ops: Vec<ContentOp>,
-) -> Result<i32, ToolError> {
-    let chapter = chapter_of(ctx)?.clone();
-    let word_count = text::content_word_count(&content);
-    let version = chapter.content_version + 1;
-    let now = chrono::Utc::now();
-    let stored =
-        crate::db::json::to_json(&content).map_err(|_| ToolError::new(ToolErrorKind::Internal))?;
-    chapters::ActiveModel {
-        id: Set(chapter.id),
-        content: Set(stored),
-        content_version: Set(version),
-        word_count: Set(word_count),
-        updated_at: Set(now),
-        ..Default::default()
-    }
-    .update(ctx.tx)
-    .await
-    .map_err(|_| ToolError::new(ToolErrorKind::Internal))?;
-    let row = chapters::Entity::find_by_id(chapter.id)
-        .one(ctx.tx)
-        .await
-        .map_err(|_| ToolError::new(ToolErrorKind::Internal))?
-        .ok_or_else(|| ToolError::new(ToolErrorKind::Internal))?;
-    ctx.emit(ServerEvent::ChapterContentChanged {
-        chapter_id: chapter.id,
-        version,
-        ops,
-        word_count,
-        tail_open: content.tail_open,
-        actor: ContentActor::Agent,
-    });
-    ctx.emit(ServerEvent::ChapterUpdated {
-        chapter: crate::api::dto::ChapterListItemDto::from(row),
-        outline_changed: false,
-    });
-    Ok(version)
+) -> Result<PendingContent, ToolError> {
+    let chapter = chapter_of(ctx)?;
+    Ok(PendingContent {
+        content,
+        expected_version: chapter.content_version,
+    })
 }
 
 /// True when a completion should be withheld as short (spec/03 §8, D-029).
@@ -671,7 +647,7 @@ impl ToolHandler for InsertTextTool {
         let withheld = completes && !finish_warned(ctx) && is_short_completion(ctx, word_count);
         let chapter_end = completes && !withheld;
 
-        write_content(ctx, content.clone(), ops).await?;
+        let pending = stage_content(ctx, content.clone())?;
 
         let text = ctx
             .prompts
@@ -701,6 +677,7 @@ impl ToolHandler for InsertTextTool {
             ToolEffects::default()
         };
         let mut outcome = ToolOutcome::text(text)
+            .with_pending_content(pending)
             .with_ui(json!({
                 "inserted": parts.inserted,
                 "appended_to": parts.appended_to,
@@ -759,19 +736,16 @@ impl ToolHandler for InsertParagraphsTool {
             Some(pid)
         };
         // Inserting after an open tail closes it first (spec/05 §4).
-        let mut ops = Vec::new();
         if content.tail_open
             && anchor.as_deref() != content.paragraphs.last().map(|p| p.pid.as_str())
         {
             content.tail_open = false;
-            ops.push(ContentOp::Tail { open: false });
         }
         let index = match &anchor {
             None => 0,
             Some(pid) => pid_index(&content, pid)? + 1,
         };
         let mut inserted = Vec::new();
-        let mut after = anchor.clone();
         for (offset, part) in parts_text.iter().enumerate() {
             let pid = text::allocate_pid(&mut content);
             content.paragraphs.insert(
@@ -781,15 +755,9 @@ impl ToolHandler for InsertParagraphsTool {
                     text: part.clone(),
                 },
             );
-            ops.push(ContentOp::Insert {
-                after: after.clone(),
-                pid: pid.clone(),
-                text: part.clone(),
-            });
-            after = Some(pid.clone());
             inserted.push(pid);
         }
-        write_content(ctx, content.clone(), ops).await?;
+        let pending = stage_content(ctx, content.clone())?;
         let text = render_draft_edit(
             ctx,
             &content,
@@ -804,10 +772,12 @@ impl ToolHandler for InsertParagraphsTool {
                 Some(input.after.trim())
             },
         )?;
-        Ok(ToolOutcome::text(text).with_ui(json!({
-            "inserted": inserted,
-            "after": if at_start { Value::Null } else { json!(input.after.trim()) },
-        })))
+        Ok(ToolOutcome::text(text)
+            .with_pending_content(pending)
+            .with_ui(json!({
+                "inserted": inserted,
+                "after": if at_start { Value::Null } else { json!(input.after.trim()) },
+            })))
     }
 }
 
@@ -852,26 +822,17 @@ impl ToolHandler for ReplaceTextTool {
                 .with("count", occurrences));
         }
         let updated = paragraph.replacen(&input.old, &input.new, 1);
-        let mut ops = Vec::new();
         let mut parts = EditParts::default();
         if updated.trim().is_empty() {
             // An empty result deletes the paragraph (spec/05 §4).
             content.paragraphs.remove(index);
-            ops.push(ContentOp::Delete {
-                pid: input.pid.clone(),
-            });
             parts.deleted.push(input.pid.clone());
             // Removing the open last paragraph closes the tail.
             if content.tail_open && index >= content.paragraphs.len() {
                 content.tail_open = false;
-                ops.push(ContentOp::Tail { open: false });
             }
         } else {
             content.paragraphs[index].text = updated;
-            ops.push(ContentOp::Update {
-                pid: input.pid.clone(),
-                text: content.paragraphs[index].text.clone(),
-            });
             parts.appended_to = Some(input.pid.clone());
         }
         let after_text = content
@@ -879,7 +840,7 @@ impl ToolHandler for ReplaceTextTool {
             .get(index)
             .map(|p| p.text.clone())
             .unwrap_or_default();
-        write_content(ctx, content.clone(), ops).await?;
+        let pending = stage_content(ctx, content.clone())?;
         // `replace_text` renders through its own action branch; the pid travels as `pid`.
         let (target_min, target_max) = targets(ctx);
         let text = ctx
@@ -905,11 +866,13 @@ impl ToolHandler for ReplaceTextTool {
             )
             .map_err(|_| ToolError::new(ToolErrorKind::Internal))?
             .text;
-        Ok(ToolOutcome::text(text).with_ui(json!({
-            "pid": input.pid,
-            "before": paragraph,
-            "after": after_text,
-        })))
+        Ok(ToolOutcome::text(text)
+            .with_pending_content(pending)
+            .with_ui(json!({
+                "pid": input.pid,
+                "before": paragraph,
+                "after": after_text,
+            })))
     }
 }
 
@@ -950,13 +913,8 @@ impl ToolHandler for RewriteParagraphTool {
         let mut content = content_of(chapter_of(ctx)?);
         let index = pid_index(&content, &input.pid)?;
         let before = content.paragraphs[index].text.clone();
-        let mut ops = Vec::new();
         // The first part keeps the pid, the rest get new pids after it (spec/05 §4).
         content.paragraphs[index].text = parts_text[0].clone();
-        ops.push(ContentOp::Update {
-            pid: input.pid.clone(),
-            text: parts_text[0].clone(),
-        });
         let mut after = input.pid.clone();
         let mut inserted = Vec::new();
         for part in parts_text.iter().skip(1) {
@@ -969,15 +927,10 @@ impl ToolHandler for RewriteParagraphTool {
                     text: part.clone(),
                 },
             );
-            ops.push(ContentOp::Insert {
-                after: Some(after.clone()),
-                pid: pid.clone(),
-                text: part.clone(),
-            });
             after = pid.clone();
             inserted.push(pid);
         }
-        write_content(ctx, content.clone(), ops).await?;
+        let pending = stage_content(ctx, content.clone())?;
         let text = render_draft_edit(
             ctx,
             &content,
@@ -989,11 +942,13 @@ impl ToolHandler for RewriteParagraphTool {
             },
             None,
         )?;
-        Ok(ToolOutcome::text(text).with_ui(json!({
-            "pid": input.pid,
-            "inserted": inserted,
-            "before": before,
-        })))
+        Ok(ToolOutcome::text(text)
+            .with_pending_content(pending)
+            .with_ui(json!({
+                "pid": input.pid,
+                "inserted": inserted,
+                "before": before,
+            })))
     }
 }
 
@@ -1041,15 +996,7 @@ impl ToolHandler for DeleteParagraphsTool {
         for pid in &input.pids {
             content.paragraphs.retain(|paragraph| &paragraph.pid != pid);
         }
-        let mut ops: Vec<ContentOp> = input
-            .pids
-            .iter()
-            .map(|pid| ContentOp::Delete { pid: pid.clone() })
-            .collect();
-        if open_last.is_some() {
-            ops.push(ContentOp::Tail { open: false });
-        }
-        write_content(ctx, content.clone(), ops).await?;
+        let pending = stage_content(ctx, content.clone())?;
         let text = render_draft_edit(
             ctx,
             &content,
@@ -1060,7 +1007,9 @@ impl ToolHandler for DeleteParagraphsTool {
             },
             None,
         )?;
-        Ok(ToolOutcome::text(text).with_ui(json!({ "deleted": input.pids })))
+        Ok(ToolOutcome::text(text)
+            .with_pending_content(pending)
+            .with_ui(json!({ "deleted": input.pids })))
     }
 }
 
@@ -1090,15 +1039,17 @@ impl ToolHandler for FinishDraftTool {
         if content.paragraphs.is_empty() {
             return Err(ToolError::new(ToolErrorKind::DraftEmpty));
         }
-        // The draft must be non-empty and finishing closes an open tail (spec/05 §4).
-        let mut ops = Vec::new();
+        // The draft must be non-empty and finishing closes an open tail (spec/05 §4). Closing the
+        // tail is a real content change, so it is staged like any other write.
+        let closing_tail = content.tail_open;
         if content.tail_open {
             content.tail_open = false;
-            ops.push(ContentOp::Tail { open: false });
         }
-        if !ops.is_empty() {
-            write_content(ctx, content.clone(), ops).await?;
-        }
+        let pending = if closing_tail {
+            Some(stage_content(ctx, content.clone())?)
+        } else {
+            None
+        };
         let word_count = text::content_word_count(&content);
         let confirm_needed = !finish_warned(ctx) && is_short_completion(ctx, word_count);
         let (target_min, target_max) = targets(ctx);
@@ -1129,6 +1080,10 @@ impl ToolHandler for FinishDraftTool {
                 complete: Some(CompletionKind::Draft),
                 ..ToolEffects::default()
             });
+        }
+        // `with_effects` keeps the staged write, so the order of these two does not matter.
+        if let Some(pending) = pending {
+            outcome = outcome.with_pending_content(pending);
         }
         let _ = input.note;
         Ok(outcome)

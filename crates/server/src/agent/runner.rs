@@ -37,9 +37,9 @@ use crate::db::entities::{
     agent_inbox, agent_messages, agent_sessions, agent_tool_calls, books, chapters, tracks,
 };
 use crate::db::json::{
-    self, Appendix, AppendixKind, CompletionKind, MessageKind, MessageRole, Phase, RequestMeta,
-    SessionError, SessionKind, SessionStatus, StoredBlock, ToolCallStatus, ToolEffects, Usage,
-    ViewSnapshot,
+    self, Appendix, AppendixKind, ChapterContent, CompletionKind, MessageKind, MessageRole, Phase,
+    RequestMeta, SessionError, SessionKind, SessionStatus, StoredBlock, ToolCallStatus,
+    ToolEffects, Usage, ViewSnapshot,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::{DeltaKind, ServerEvent};
@@ -1177,6 +1177,137 @@ struct Finalization {
     events: Vec<ServerEvent>,
 }
 
+/// Applies a staged chapter write in the transaction that finalizes its call (spec/03 §5.2, §5.4).
+///
+/// This is the only place an agent write reaches `chapters.content`. It runs for a call that is not
+/// deferred — an ordinary call, or the resume that approves a held one — so `word_count`,
+/// `content_version` and the `chapter.content` event all move exactly once, together with the
+/// call's status (D-139).
+///
+/// The author may edit the chapter while a call is held (spec/08 §1.4), so the staged content is
+/// applied only while the chapter is still at the version the tool read. Once it has moved, the
+/// stored content is the author's and the staged write is dropped rather than silently reverting
+/// their work; the edit report (spec/03 §7) is what tells the model what the draft now holds.
+pub(crate) async fn apply_pending_content(
+    tx: &sea_orm::DatabaseTransaction,
+    session: &agent_sessions::Model,
+    write: &crate::db::json::PendingContent,
+) -> Result<Vec<ServerEvent>, AppError> {
+    let Some(chapter_id) = session.chapter_id else {
+        return Ok(Vec::new());
+    };
+    let Some(chapter) = chapters::Entity::find_by_id(chapter_id).one(tx).await? else {
+        return Ok(Vec::new());
+    };
+    let before: ChapterContent = json::from_json_or_default(&chapter.content);
+    // An author edit while the call was held wins; the agent's staged text is not applied over it.
+    let stale = chapter.content_version != write.expected_version;
+    if stale && before != write.content {
+        tracing::debug!(
+            session_id = session.id,
+            chapter_id,
+            expected = write.expected_version,
+            current = chapter.content_version,
+            "discarding a staged write: the chapter changed while the call was held"
+        );
+        return Ok(Vec::new());
+    }
+
+    let word_count = crate::text::content_word_count(&write.content);
+    let ops = crate::text::transform_ops(
+        &before.paragraphs,
+        &write.content.paragraphs,
+        before.tail_open,
+        write.content.tail_open,
+    );
+    let version = chapter.content_version + 1;
+    let stored =
+        json::to_json(&write.content).map_err(|err| AppError::internal(err.to_string()))?;
+    let now = Utc::now();
+    chapters::ActiveModel {
+        id: Set(chapter_id),
+        content: Set(stored),
+        content_version: Set(version),
+        word_count: Set(word_count),
+        updated_at: Set(now),
+        ..Default::default()
+    }
+    .update(tx)
+    .await?;
+    let row = chapters::Entity::find_by_id(chapter_id)
+        .one(tx)
+        .await?
+        .ok_or_else(|| AppError::internal("the chapter vanished while applying a write"))?;
+    keep_view_snapshot_in_sync(tx, session, &before, &write.content).await?;
+    Ok(vec![
+        ServerEvent::ChapterContentChanged {
+            chapter_id,
+            version,
+            ops,
+            word_count,
+            tail_open: write.content.tail_open,
+            actor: crate::events::ContentActor::Agent,
+        },
+        ServerEvent::ChapterUpdated {
+            chapter: crate::api::dto::ChapterListItemDto::from(row),
+            outline_changed: false,
+        },
+    ])
+}
+
+/// Advances a stored view snapshot past the agent's own applied write (spec/03 §7).
+///
+/// `view_snapshot` is "what the agent last saw" and is captured when the session stops running. A
+/// held write's snapshot is therefore taken before the write exists, and approving it would leave
+/// the snapshot describing the pre-write chapter — the next edit report would then present the
+/// agent's own text as an author edit. The snapshot's content is advanced only when it still equals
+/// the chapter as it was before the write; anything else means the author got there first, and their
+/// change must stay reportable, so the snapshot is left alone.
+async fn keep_view_snapshot_in_sync(
+    tx: &sea_orm::DatabaseTransaction,
+    session: &agent_sessions::Model,
+    before: &ChapterContent,
+    after: &ChapterContent,
+) -> Result<(), AppError> {
+    let Some(raw) = session.view_snapshot.as_deref() else {
+        return Ok(());
+    };
+    let Ok(ViewSnapshot::Chapter {
+        content,
+        outline,
+        reference_notes,
+    }) = json::from_json::<ViewSnapshot>(raw)
+    else {
+        return Ok(());
+    };
+    if &content != before {
+        return Ok(());
+    }
+    let snapshot = ViewSnapshot::Chapter {
+        content: after.clone(),
+        outline,
+        reference_notes,
+    };
+    let stored = json::to_json(&snapshot)
+        .map_err(|err| AppError::internal(format!("cannot serialize view snapshot: {err}")))?;
+    // Guarded on the status the row actually has: an ordinary call finalizes while the session is
+    // still `running`, and the resume that approves a held call finalizes while it is `held` (the
+    // status change follows in the same transaction).
+    session::guard_columns(
+        tx,
+        session.id,
+        &session.status,
+        "view_snapshot = ?",
+        vec![stored.into()],
+    )
+    .await?;
+    tracing::debug!(
+        session_id = session.id,
+        "advanced the view snapshot past the agent's own write"
+    );
+    Ok(())
+}
+
 /// Applies the call's deferred effects and writes its final status (spec/03 §5.4).
 async fn finalize_inner(
     tx: &sea_orm::DatabaseTransaction,
@@ -1194,6 +1325,14 @@ async fn finalize_inner(
     let hold = hold_condition(session, call, outcome);
     let await_input = outcome.await_input;
     let deferred = hold || await_input.is_some();
+
+    // A text-changing writer call stages its write instead of performing it; the transaction that
+    // finalizes the call applies it, so a held write is not in the chapter (spec/03 §5.2, §5.4,
+    // D-139). The take is unconditional: a deferred call keeps its write in the effects it stores
+    // for the resume, and a non-deferred call applies it here and clears it.
+    if !deferred && let Some(write) = outcome.effects.pending_content.take() {
+        events.extend(apply_pending_content(tx, session, &write).await?);
+    }
 
     // Effect notices are appended by the transaction that finalizes the call (spec/03 §5.3):
     // while the call is held its effects are not applied yet, so its acceptance notice waits for

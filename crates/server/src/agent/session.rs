@@ -603,6 +603,12 @@ pub fn tool_call_dto(row: &agent_tool_calls::Model) -> Result<ToolCallDto, AppEr
             .as_deref()
             .and_then(|raw| serde_json::from_str::<Value>(raw).ok()),
         sealed: row.sealed != 0,
+        // A deferred call stores its staged write in `effects`; a finalized call has already applied
+        // and cleared it, so this is `None` exactly when the text is in the chapter (D-139).
+        pending_content: json::from_json_or_default::<crate::db::json::ToolEffects>(
+            row.effects.as_deref().unwrap_or("{}"),
+        )
+        .pending_content,
         created_at: row.created_at,
         finished_at: row.finished_at,
     })
