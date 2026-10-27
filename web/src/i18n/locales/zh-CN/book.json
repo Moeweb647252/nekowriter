@@ -209,7 +209,9 @@
     "runs_in_agent_panel": "这一步在右侧的智能体面板里进行。",
     "runs_in_agent_panel_collapsed": "这一步在智能体面板里进行，而面板现在是收起的。",
     "show_agent_panel": "打开智能体面板",
-    "started_in_agent_panel": "{{session}}已开始，请在右侧的智能体面板中查看。"
+    "started_in_agent_panel": "{{session}}已开始，请在右侧的智能体面板中查看。",
+    "defer_research": "全部推迟（{{count}}）",
+    "defer_research_hint": "暂时不做：推迟这些任务，先继续写作。之后可以在资料收集列表里恢复。"
   },
   "attention_title": "需要你来处理",
   "attention_empty": "现在没有需要处理的事情。",

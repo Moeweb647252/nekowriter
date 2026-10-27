@@ -13,7 +13,7 @@ import { useCallback, useState } from "react"
 import { Link, useNavigate } from "react-router"
 import { useTranslation } from "react-i18next"
 import type { TFunction } from "i18next"
-import { ArrowRight, Loader2, PanelRightOpen } from "lucide-react"
+import { ArrowRight, CalendarClock, Loader2, PanelRightOpen } from "lucide-react"
 import { toast } from "sonner"
 
 import { useSeedCanon } from "@/api/hooks/conception"
@@ -27,6 +27,11 @@ import { useErrorToast } from "@/components/common/ErrorToast"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { formatChapterLabel, trackName } from "@/lib/chapterLabel"
+import { BulkDeferReport } from "@/features/research/BulkDeferReport"
+import {
+  useDeferReadyResearchTasks,
+  type BulkDeferOutcome,
+} from "@/features/research/useBulkDefer"
 import { useBookShell } from "@/features/workspace/shell"
 import { useUiStore } from "@/stores/ui"
 
@@ -113,6 +118,14 @@ export function NextActionCard({ bookId, status, action, tracks }: NextActionPro
             onArchivistStarted={onArchivistStarted}
           />
         </div>
+        {action.kind === "run_research" ? (
+          // The release valve where the demand appears (D-139): the author is on the overview when
+          // the card insists on research, so postponing it must not require finding the list
+          // first. It is secondary by construction — a ghost button under the primary link, with
+          // the count in its label and the consequence in the hint — and it defers the book's
+          // runnable tasks through the same shared batch the list uses.
+          <DeferResearchSection bookId={bookId} overviewCount={action.ready_research ?? 0} />
+        ) : null}
         {archivist ? (
           // Where the run happens, in visible text: without it the card's only reaction is a
           // spinner, which is what made seeding look like it did nothing (D-135). When the author
@@ -321,6 +334,59 @@ function WriteNextButton({
         // story page.
         <p className="text-xs text-muted-foreground">{t("book:next_chapter_archived")}</p>
       )}
+    </div>
+  )
+}
+
+/**
+ * The secondary "not now" of the `run_research` card (D-139).
+ *
+ * The primary action stays the primary: the "Go" link is the only `default`-variant control in the
+ * card, and this block sits under it in a quieter row (`ghost` button, muted hint). The count comes
+ * from the book's list query rather than from `ready_research` on the action, because that query is
+ * what the shared batch defers and the two must not disagree; the action's own count is used only
+ * until the list has loaded.
+ */
+function DeferResearchSection({
+  bookId,
+  overviewCount,
+}: {
+  bookId: number
+  overviewCount: number
+}) {
+  const { t } = useTranslation()
+  const bulk = useDeferReadyResearchTasks({ bookId })
+  const [outcome, setOutcome] = useState<BulkDeferOutcome | null>(null)
+  // The batch defers the rows of the book's list query, so the count comes from there and not from
+  // `ready_research` on the action — the two must never disagree about what the click will do. The
+  // action's own count bridges only the moment before the list has loaded. Once the batch runs, the
+  // list is empty of `ready` rows and the overview refetches to the next action, so this whole
+  // block goes away with the card (D-138 invalidates that book's overview).
+  const count = bulk.isLoading ? overviewCount : bulk.readyTasks.length
+  if (count === 0) {
+    return null
+  }
+  return (
+    <div className="space-y-1">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-muted-foreground">
+          {t("book:next_action.defer_research_hint")}
+        </p>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={bulk.isLoading || bulk.isPending}
+          onClick={() => void bulk.run().then(setOutcome)}
+        >
+          {bulk.isPending ? (
+            <Loader2 className="animate-spin" aria-hidden="true" />
+          ) : (
+            <CalendarClock aria-hidden="true" />
+          )}
+          {t("book:next_action.defer_research", { count })}
+        </Button>
+      </div>
+      <BulkDeferReport outcome={outcome} />
     </div>
   )
 }

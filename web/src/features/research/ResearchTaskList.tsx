@@ -1,7 +1,8 @@
 /** The research task list (PROJECT §8.10): the tasks of one book, or every task. */
+import { useState } from "react"
 import { Link } from "react-router"
 import { useTranslation } from "react-i18next"
-import { CalendarClock, FlaskConical, Plus, Undo2 } from "lucide-react"
+import { CalendarClock, FlaskConical, Loader2, Plus, Undo2 } from "lucide-react"
 
 import { useDeferResearchTask, useResearchTasks, useResumeResearchTask } from "@/api/hooks/research"
 import { EmptyState } from "@/components/common/EmptyState"
@@ -9,6 +10,8 @@ import { useErrorToast } from "@/components/common/ErrorToast"
 import { StatusBadge } from "@/components/common/StatusBadge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { BulkDeferReport } from "@/features/research/BulkDeferReport"
+import { useDeferReadyResearchTasks, type BulkDeferOutcome } from "@/features/research/useBulkDefer"
 
 /** A compact list of research tasks, used by the book knowledge page and `/research`. */
 export function ResearchTaskList({
@@ -20,7 +23,11 @@ export function ResearchTaskList({
 }) {
   const { t } = useTranslation()
   const tasks = useResearchTasks({ bookId })
-  // Deferring is a per-row action here because the author typically has a handful of runnable
+  // The batch shares this list's book-scoped query, so "Defer all (n)" names exactly the `ready`
+  // rows below and defers nothing else (D-139). Both surfaces use this one hook.
+  const bulk = useDeferReadyResearchTasks({ bookId })
+  const [outcome, setOutcome] = useState<BulkDeferOutcome | null>(null)
+  // Deferring is also a per-row action here because the author typically has a handful of runnable
   // tasks at once and would otherwise open one page per task to postpone them (D-138).
   const defer = useDeferResearchTask()
   const resumeTask = useResumeResearchTask()
@@ -30,18 +37,44 @@ export function ResearchTaskList({
     return <Skeleton className="h-24" />
   }
   const items = tasks.data ?? []
+  const readyCount = bulk.readyTasks.length
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <h3 className="text-sm font-medium">{t("knowledge:research.list_title")}</h3>
-        {onCreate === undefined ? null : (
-          <Button size="sm" variant="outline" onClick={onCreate}>
-            <Plus className="size-3.5" aria-hidden="true" />
-            {t("knowledge:research.new_task")}
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {readyCount === 0 ? null : (
+            // Hidden when nothing is runnable: a disabled "Defer all (0)" would be a control that
+            // can never do anything. The count is in the label, so the scope of the click is
+            // visible before it happens.
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={bulk.isPending}
+              onClick={() => void bulk.run().then(setOutcome)}
+            >
+              {bulk.isPending ? (
+                <Loader2 className="animate-spin" aria-hidden="true" />
+              ) : (
+                <CalendarClock aria-hidden="true" />
+              )}
+              {t("knowledge:research.defer_all", { count: readyCount })}
+            </Button>
+          )}
+          {onCreate === undefined ? null : (
+            <Button size="sm" variant="outline" onClick={onCreate}>
+              <Plus className="size-3.5" aria-hidden="true" />
+              {t("knowledge:research.new_task")}
+            </Button>
+          )}
+        </div>
       </div>
+      {readyCount === 0 ? null : (
+        <p className="text-xs text-muted-foreground">{t("knowledge:research.defer_all_hint")}</p>
+      )}
+      {/* A partial batch stays visible after the toast has gone (D-139). */}
+      <BulkDeferReport outcome={outcome} />
       {items.length === 0 ? (
         <EmptyState title={t("knowledge:research.empty")} description={t("knowledge:research.empty_hint")} />
       ) : (

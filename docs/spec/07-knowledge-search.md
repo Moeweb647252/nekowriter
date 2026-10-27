@@ -271,3 +271,10 @@ Markdown. The key is `deepseek_api_key`, the same secret the DeepSeek search pro
    `409` carries `details.status` (the task's current status) and `details.operation`
    (`defer`/`resume`); the open-session case carries `details.session_id` instead, as it does for
    PATCH, DELETE and run.
+
+   **Bulk defer** (D-140): the list's "Defer all (n)" and the overview's `run_research` card both
+   postpone every `ready` task of the surface's scope — the book for a book page and for the card,
+   every listed task on `/research` — through one client-side loop of the per-task endpoint, one
+   request at a time. There is no batch endpoint: the calls are idempotent, and a loop keeps a
+   mid-way failure attributable to one task. A partial batch is reported (how many moved, which
+   tasks did not), never swallowed; the card's "Go" link stays its primary action.

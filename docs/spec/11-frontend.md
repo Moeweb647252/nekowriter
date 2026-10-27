@@ -247,6 +247,14 @@ Per PROJECT §8.8–§8.12. Shared pieces: `Markdown` (react-markdown + remark-g
 sensor), `PromptEditor` (monospace textarea, variable docs side panel, "diff vs default" via
 `DiffView`).
 
+**Bulk defer of research tasks** (D-140) lives in one shared place,
+`features/research/useBulkDefer.ts` (`useDeferReadyResearchTasks`), used by `ResearchTaskList`
+("Defer all (n)", hidden when nothing is runnable) and by the overview's `run_research` card
+(a secondary `ghost` button under the primary `Go` link, which stays primary). It defers the
+`ready` rows of its book-scoped list query one request at a time, reusing `useDeferResearchTask`,
+and reports a partial batch through `BulkDeferReport` (inline) and a toast: how many moved and
+which topics did not.
+
 **Settings › Models is protocol-driven** (spec/04 §5, D-132). The option form renders its fields
 from `GET /provider-presets/options` (the `ModelOptionSpecDto` table generated from the adapters)
 filtered by the selected provider's `protocol`, so a field the protocol cannot send is never

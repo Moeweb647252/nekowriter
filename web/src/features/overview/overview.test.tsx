@@ -16,7 +16,8 @@
  * The last describe block is a table over every `NextActionKind`, so a kind added without a
  * destination or a visible outcome fails here instead of shipping as a dead button.
  */
-import { act, render, screen } from "@testing-library/react"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { act, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter, Route, Routes } from "react-router"
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
@@ -57,6 +58,27 @@ vi.mock("@/api/hooks/reviews", () => ({
 vi.mock("@/api/hooks/tracks", () => ({
   useCreateChapter: () => ({ mutate: mutations.createChapter, isPending: false }),
 }))
+/**
+ * The research endpoints, for the card's bulk defer (D-139). The card uses the **real** shared
+ * batch hook and the real `useDeferResearchTask`, so the assertions below are on what the click
+ * actually sends, not on a mock standing in for the batch.
+ */
+const researchApi = vi.hoisted(() => ({
+  list: vi.fn(),
+  defer: vi.fn(),
+}))
+
+vi.mock("@/api/endpoints/research", () => ({
+  listResearchTasks: researchApi.list,
+  deferResearchTask: researchApi.defer,
+  resumeResearchTask: vi.fn(),
+  getResearchTask: vi.fn(),
+  createResearchTask: vi.fn(),
+  patchResearchTask: vi.fn(),
+  deleteResearchTask: vi.fn(),
+  runResearchTask: vi.fn(),
+}))
+
 vi.mock("@/components/common/ErrorToast", () => ({
   useErrorToast: () => vi.fn(),
 }))
@@ -73,6 +95,8 @@ vi.mock("@/features/workspace/shell", () => ({
 
 import { toast } from "sonner"
 
+import { keys } from "@/api/keys"
+import type { ResearchTaskDto } from "@/api/gen/ResearchTaskDto"
 import OverviewPage from "@/features/overview/OverviewPage"
 
 const BOOK = {
@@ -138,16 +162,50 @@ function data(overrides: Record<string, unknown>) {
   }
 }
 
+/**
+ * Renders the overview with a real query cache: the card's bulk defer (D-139) uses the shared
+ * batch hook, whose invalidation is one of the things under test.
+ */
 function renderOverview() {
-  return render(
-    <MemoryRouter initialEntries={["/books/1"]}>
-      <Routes>
-        <Route path="/books/:bookId" element={<OverviewPage />} />
-        {/* `write_next` opens the chapter it created, so its outcome is a route change. */}
-        <Route path="/books/:bookId/chapters/:chapterId" element={<p>chapter page</p>} />
-      </Routes>
-    </MemoryRouter>,
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const view = render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={["/books/1"]}>
+        <Routes>
+          <Route path="/books/:bookId" element={<OverviewPage />} />
+          {/* `write_next` opens the chapter it created, so its outcome is a route change. */}
+          <Route path="/books/:bookId/chapters/:chapterId" element={<p>chapter page</p>} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   )
+  return { client, ...view }
+}
+
+/** True once `queryKey` is marked stale in the cache. */
+function isInvalidated(client: QueryClient, queryKey: readonly unknown[]): boolean {
+  return client.getQueryCache().find({ queryKey })?.state.isInvalidated ?? false
+}
+
+/** A research task row; only the fields the batch reads are meaningful. */
+function researchTask(overrides: Partial<ResearchTaskDto> = {}): ResearchTaskDto {
+  return {
+    id: 1,
+    book_id: 1,
+    scope_id: 1,
+    scope_name: "明初历史",
+    topic: "宝钞与财政",
+    requirements: "",
+    language: "zh-CN",
+    status: "ready",
+    session_id: null,
+    report: "",
+    entries_created: 0,
+    entries: [],
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    ...overrides,
+  }
 }
 
 /** The overview's `write_next` action on the main track. */
@@ -226,7 +284,17 @@ beforeEach(() => {
   mutations.seed.mockReset()
   mutations.resync.mockReset()
   mutations.createChapter.mockReset()
+  researchApi.list.mockReset()
+  researchApi.defer.mockReset()
+  // By default the book has no runnable tasks cached, so only the tests about the batch see the
+  // secondary control. Its own describe block sets the rows it needs.
+  researchApi.list.mockResolvedValue([])
+  researchApi.defer.mockImplementation(async (taskId: number) =>
+    researchTask({ id: taskId, status: "deferred" }),
+  )
   vi.mocked(toast.success).mockClear()
+  vi.mocked(toast.warning).mockClear()
+  vi.mocked(toast.error).mockClear()
   shell.value = null
   useUiStore.setState({ pinnedSession: {} })
 })
@@ -567,6 +635,140 @@ describe("the research step leads to the tasks it counts (D-136)", () => {
 })
 
 /**
+ * The card's release valve (D-139). The author was on the overview when the card insisted on
+ * research, and the only way to say "not now" was to find the research list and click eight times.
+ * The primary action stays the primary — it is the only `default`-variant control in the card —
+ * and the defer control is the secondary one under it.
+ */
+describe("the research card can be postponed from the overview (D-139)", () => {
+  it("keeps Go primary and adds the defer control as a secondary, counted action", async () => {
+    researchApi.list.mockResolvedValue([
+      researchTask({ id: 1, topic: "洪武朝大事编年" }),
+      researchTask({ id: 2, topic: "大明宝钞" }),
+      researchTask({ id: 3, status: "deferred" }),
+      researchTask({ id: 4, status: "draft" }),
+      researchTask({ id: 5, topic: "男频连载结构" }),
+    ])
+    overview.mockReturnValue(data({ next_action: RUN_RESEARCH }))
+    renderOverview()
+
+    // The primary is still the link to the page that runs the tasks, and it is the only `default`
+    // button in the card: the defer control cannot be mistaken for "go do the research".
+    const go = screen.getByRole("link", { name: /Go/ })
+    expect(go).toHaveAttribute("href", "/research")
+    const defer = await screen.findByRole("button", { name: "Defer all (3)" })
+    expect(defer).toHaveAttribute("data-variant", "ghost")
+    expect(go.closest("[data-variant]")).toHaveAttribute("data-variant", "default")
+    // The hint says what the click does and that it is reversible.
+    expect(
+      screen.getByText(
+        "Not now: postpone these tasks and keep writing. Resume them from the research list.",
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it("defers exactly this book's ready tasks and leaves the overview asking for the next step", async () => {
+    const user = userEvent.setup()
+    researchApi.list.mockResolvedValue([
+      researchTask({ id: 1, book_id: 1 }),
+      researchTask({ id: 2, book_id: 1 }),
+      // A row of another book: the card's action is book-scoped (D-136), so its defer is too.
+      researchTask({ id: 3, book_id: 9 }),
+      researchTask({ id: 4, book_id: 1, status: "deferred" }),
+    ])
+    overview.mockReturnValue(data({ next_action: RUN_RESEARCH }))
+    const { client } = renderOverview()
+    client.setQueryData(keys.books.overview(1), data({ next_action: RUN_RESEARCH }))
+    client.setQueryData(keys.books.overview(9), {})
+
+    await user.click(await screen.findByRole("button", { name: "Defer all (2)" }))
+
+    await waitFor(() => {
+      expect(researchApi.defer.mock.calls.map((call) => call[0])).toEqual([1, 2])
+    })
+    // The overview refetches, so the card is replaced by the next action (the chapter rule here);
+    // without the invalidation it kept offering `run_research` (D-138, D-139).
+    await waitFor(() => {
+      expect(isInvalidated(client, keys.books.overview(1))).toBe(true)
+    })
+    expect(isInvalidated(client, keys.books.overview(9))).toBe(false)
+    expect(toast.success).toHaveBeenCalledWith("Deferred 2 research tasks")
+  })
+
+  it("reports a partial batch on the card instead of swallowing it", async () => {
+    const user = userEvent.setup()
+    researchApi.list.mockResolvedValue([
+      researchTask({ id: 1, topic: "洪武朝大事编年" }),
+      researchTask({ id: 2, topic: "大明宝钞与明初货币财政" }),
+    ])
+    researchApi.defer.mockImplementation(async (taskId: number) => {
+      if (taskId === 2) {
+        throw new Error("boom")
+      }
+      return researchTask({ id: taskId, status: "deferred" })
+    })
+    overview.mockReturnValue(data({ next_action: RUN_RESEARCH }))
+    renderOverview()
+
+    await user.click(await screen.findByRole("button", { name: "Defer all (2)" }))
+
+    const report = await screen.findByRole("alert")
+    expect(within(report).getByText("Deferred 1 of 2 research tasks")).toBeInTheDocument()
+    expect(
+      within(report).getByText("Not deferred: 大明宝钞与明初货币财政"),
+    ).toBeInTheDocument()
+    expect(toast.warning).toHaveBeenCalledWith("Deferred 1 of 2 research tasks", {
+      description: "Not deferred: 大明宝钞与明初货币财政",
+    })
+  })
+
+  it("still opens the single task's page, and the defer covers that one task", async () => {
+    const user = userEvent.setup()
+    researchApi.list.mockResolvedValue([researchTask({ id: 3 })])
+    overview.mockReturnValue(data({ next_action: RUN_RESEARCH_ONE }))
+    renderOverview()
+
+    // The single-task behaviour is untouched: `research_task_id` still names the destination.
+    expect(screen.getByRole("link", { name: /Go/ })).toHaveAttribute("href", "/research/3")
+    await user.click(await screen.findByRole("button", { name: "Defer all (1)" }))
+    await waitFor(() => {
+      expect(researchApi.defer.mock.calls.map((call) => call[0])).toEqual([3])
+    })
+    expect(toast.success).toHaveBeenCalledWith("Deferred 1 research task")
+  })
+
+  it("offers nothing when the book has no runnable tasks", async () => {
+    researchApi.list.mockResolvedValue([researchTask({ id: 1, status: "deferred" })])
+    overview.mockReturnValue(data({ next_action: RUN_RESEARCH }))
+    renderOverview()
+
+    // The card is still there (the mocked overview says so) but the control is not: there is
+    // nothing to postpone, and a "Defer all (0)" would be a dead button. It goes away as soon as
+    // the book's list query settles, which is what the count and the batch are read from.
+    expect(await screen.findByRole("link", { name: /Go/ })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /Defer all/ })).toBeNull()
+    })
+  })
+
+  it("carries the card's defer strings in both locales", () => {
+    for (const [language, table] of [
+      ["en", enBook],
+      ["zh-CN", zhBook],
+    ] as const) {
+      const section = (table as unknown as { next_action: Record<string, unknown> }).next_action
+      for (const key of ["defer_research", "defer_research_hint"] as const) {
+        const value = section[key]
+        expect(value, `${language} book:next_action.${key}`).toBeTypeOf("string")
+        expect((value as string).length, `${language} book:next_action.${key}`).toBeGreaterThan(0)
+      }
+      // The count is an interpolation, never a concatenated number (AGENTS.md §6).
+      expect(section.defer_research, `${language} defer_research`).toContain("{{count}}")
+    }
+  })
+})
+
+/**
  * The class-level guard (D-135). The defect was not "`seed_canon` is broken" but "two of six kinds
  * were silent", so every kind is listed with the affordance it must have: a destination, or a
  * mutation whose success produces something visible. A new kind has to be added to this table with
@@ -574,12 +776,27 @@ describe("the research step leads to the tasks it counts (D-136)", () => {
  * is how `run_research` (D-136) had to declare `/research` instead of being added silently.
  */
 type Expectation = {
-  /** The action links to this path. */
+  /**
+   * The **primary** affordance: the action links to this path.
+   *
+   * The table describes what the card's main control does, because that is what the six kinds
+   * disagreed about when two of them were silent (D-135). A kind may also carry a **secondary**
+   * affordance — declared separately in `secondary` so the table stays honest about the whole card
+   * rather than describing only the half it started with — and that secondary has its own test in
+   * the `D-139` block above. What the table still guarantees for every kind is unchanged: the
+   * primary affordance exists and does what it says.
+   */
   navigates?: string
-  /** The action calls this mutation. */
+  /** The primary affordance calls this mutation (the archivist kinds and `write_next`). */
   mutation?: "seed" | "resync" | "createChapter"
   /** The action starts a run somewhere else, so it must say where (D-135). */
   hint?: string
+  /**
+   * A second, **non-primary** control the card carries beside the primary one (D-139). Named so the
+   * table enumerates the card's affordances instead of quietly describing fewer than it renders.
+   * The primary remains the one this table's `navigates`/`mutation` describe.
+   */
+  secondary?: "deferResearch"
 }
 
 const KIND_TABLE: {
@@ -628,9 +845,13 @@ const KIND_TABLE: {
   },
   {
     kind: "run_research",
-    // The list, because several tasks leave the choice to the author (D-136).
+    // The list, because several tasks leave the choice to the author (D-136). The card also
+    // carries a secondary "defer all" control (D-139); the primary is still the link, and the
+    // secondary is declared here so this table describes the whole card rather than only the
+    // affordance the table started with. Its behaviour is covered by the D-139 block above, not
+    // by the class-level loops below (which are about the primary).
     action: RUN_RESEARCH,
-    expected: { navigates: "/research" },
+    expected: { navigates: "/research", secondary: "deferResearch" },
   },
 ]
 
@@ -654,6 +875,30 @@ describe("every next action either navigates or shows a visible outcome (D-135)"
         `${entry.kind} has no affordance`,
       ).toBe(true)
     }
+  })
+
+  it("declares a secondary affordance only where the card really renders one", () => {
+    // `secondary` is not decoration: every entry that names one is checked against the rendered
+    // card below, and every entry that does not must not have one (D-139).
+    const withSecondary = KIND_TABLE.filter(
+      (entry) => entry.expected.secondary !== undefined,
+    )
+    expect(withSecondary.map((entry) => entry.kind)).toEqual(["run_research"])
+  })
+
+  it.each(
+    KIND_TABLE.filter((entry) => entry.expected.secondary === "deferResearch"),
+  )("$kind: the secondary affordance renders beside the primary", async ({ action }) => {
+    researchApi.list.mockResolvedValue([researchTask({ id: 1 })])
+    overview.mockReturnValue(data({ next_action: action }))
+    renderOverview()
+
+    // Both are present, and they are distinguishable: the primary is a link with the default
+    // variant, the secondary a ghost button. The card never has two competing primaries.
+    const primary = screen.getByRole("link", { name: /Go/ })
+    expect(primary.closest("[data-variant]")).toHaveAttribute("data-variant", "default")
+    const secondary = await screen.findByRole("button", { name: "Defer all (1)" })
+    expect(secondary).toHaveAttribute("data-variant", "ghost")
   })
 
   it.each(KIND_TABLE)("$kind: the click does what its affordance says", async ({ action, expected }) => {

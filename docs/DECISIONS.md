@@ -2293,3 +2293,64 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   tests that had encoded the bug ("the call executed before it held", "both inserts were written
   before the second held") were corrected, and the author-edit-while-held tests now pre-seed the
   chapter, because a held write is no longer something the author can edit.
+
+### D-140 Bulk defer: one shared batch defers a book's ready tasks from the list and from the overview card
+- **Context**: D-138 added `deferred` and the per-row Defer button, which solved the dead end but
+  left two gaps the author named. (a) Their database has 8 `ready` tasks across 4 scopes, so
+  postponing all of them was eight clicks and the overview insisted on research the whole time.
+  (b) The demand appears on the overview (`next_action.kind === "run_research"`, D-136) but the
+  release valve did not: the author had to leave the card, find the research list and click again.
+  The per-row action is the right grain for one task and the wrong grain for the reported
+  situation, which is "all of it, not now".
+- **Decision**: one batch operation, `useDeferReadyResearchTasks` in
+  `web/src/features/research/useBulkDefer.ts`, used by **both** surfaces. (a) *One place*: the
+  hook owns scoping, sequencing, reporting and invalidation, so `ResearchTaskList` and
+  `NextActionCard` cannot drift; both render the same `BulkDeferReport` for the partial case. It
+  reuses `useDeferResearchTask` rather than adding a code path, so the invalidation D-138 fixed
+  (research queries **and** that book's overview) is the one the batch gets. (b) *Scoping*: the
+  candidates are the rows of the same book-scoped `useResearchTasks({ bookId })` query the list
+  renders, filtered to `status === "ready"` **and** `book_id === bookId`. The second filter is
+  defence in depth — the server already filters by book — so a stale or wrongly shaped cache entry
+  cannot postpone another book's work. The global `/research` page passes no `bookId` and defers
+  every ready task it lists, which is the honest meaning of "all" there. (c) *Sequencing*: strictly
+  one request at a time. Eight requests are microseconds apart on loopback, and bounded concurrency
+  would cost the property that matters — a failure attributable to one task while the rest
+  continue. The targets are snapshotted before the loop, because each success invalidates the list
+  and a live array would shrink underneath it and skip rows. (d) *Partial failure*: the outcome
+  carries `{ deferred: id[], failed: { taskId, topic, error }[] }`, the toast says "Deferred 7 of 8
+  research tasks" with `Not deferred: <topic>` as its description (warning when some moved, error
+  when none did), and `BulkDeferReport` renders the same two lines inline, because a toast is
+  transient and the rows underneath are the evidence. Topics, never ids: ids are not shown to the
+  author anywhere. (e) *No confirmation dialog*: deferring is reversible (Resume, D-138), so a
+  blocking dialog would tax the common case; instead the control names its scope ("Defer all (8)")
+  and the hint says it is postponing, not deleting. (f) *No batch endpoint*: eight idempotent
+  requests from a client loop are the expected shape, the endpoints already name a target status so
+  a retry is safe, and a server batch would add a transaction boundary, an error-reporting shape and
+  a DTO for a call that costs eight round trips on loopback. (g) *Overview card*: the primary stays
+  primary — the "Go" link is the only `default`-variant control and still opens `/research` (or
+  `/research/:id` when `research_task_id` names exactly one task); the defer control is a `ghost`
+  button in a muted row under it, with the consequence in a hint. The card's count comes from the
+  list query the batch defers, falling back to `ready_research` only while that query is loading, so
+  the label and the click cannot disagree. On success the overview refetches to the next action, so
+  the card is replaced rather than left asking. (h) *The class-level guard*: `KIND_TABLE` still
+  describes the **primary** affordance per kind, and now declares the secondary explicitly in an
+  `Expectation.secondary` field (`run_research` → `"deferResearch"`), with a test that the table's
+  declared secondaries match what the card really renders and another that the two are
+  distinguishable (link + `default` vs button + `ghost`). The table no longer quietly describes less
+  than the card does.
+- **Consequences**: the author postpones the whole backlog in one click from either surface and
+  gets straight back to writing; the deferred tasks keep everything (D-138) and Resume restores them
+  one by one. A partial batch is visible twice (toast and inline) and names the tasks that did not
+  move. Because the loop is sequential, a slow or hanging request delays the rest — acceptable at
+  eight rows and preferable to an unattributable parallel failure. The count is per surface scope,
+  so a book page never says "all" about another book's tasks.
+- **Regression guards**: `useBulkDefer.test.tsx` pins the shared operation against a real query
+  cache — exact ids and order, one request in flight at a time (peak concurrency 1), the
+  `book_id` defence filter, the partial and all-failed reports, and that the list refetches while
+  that book's overview is invalidated and another book's is not. `researchBulkDefer.test.tsx` pins
+  the list: the count in the label, exact id set, nothing for `deferred`/`draft`/`done`, absence when
+  nothing is runnable or the list is empty, the inline partial report, and the rows flipping to
+  Deferred. `overview.test.tsx` pins the card: `Go` stays a `default` link and still targets
+  `/research/:id` for the single task, the defer control is `ghost`, the exact ids, the overview
+  invalidation, the partial report, and the `KIND_TABLE` honesty tests. Removing either control
+  fails 9 of those tests; replacing the shared batch with a parallel, swallowing one fails 3 more.
