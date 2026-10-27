@@ -2592,3 +2592,49 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
 - **Spec**: spec/10 §3's reaction for `session.updated` now names the chapter's `open_sessions`
   invalidation and its scope; spec/11 §4.2 records the same rule beside the other event-driven
   invalidations.
+
+### D-145 A book keeps to one or two knowledge scopes
+
+- **Context**: the author asked 「改提示词，一本书一般情况下用一到两个知识库 scope」. The pack's only
+  guidance was 「同类主题使用同一个范围名」 in `conception.system` and `set_research_topics.scope` — a
+  rule about *when to reuse a name*, never *how many names may exist*. A model classifying tidily
+  creates one scope per domain (宋代官制、市井生活、军事、服饰、饮食…). Each scope is a separate
+  vector partition: a `search_knowledge` call without a scope runs one KNN query per visible scope
+  and merges the results (spec/07 §3), so many small scopes fragment retrieval and leave the author
+  choosing among near-duplicate names. The author's database is empty — 2 books, 1 chapter, 0
+  entities, 0 relations, and both `knowledge_scopes` and `research_tasks` have 0 rows — so this is
+  a prophylactic prompt change, not a data repair.
+- **Decision**: a book normally uses **one or two** knowledge scopes in total.
+  - Prefer one broad scope named for the book's subject or era (for example 「宋代社会」); add a
+    second only when the material genuinely splits into two unrelated domains that a writer would
+    search separately (for example a historical setting plus a specialist technical field).
+  - Never one scope per subtopic, chapter, or character; never split by document type.
+  - A topic that does not fit goes into the existing broad scope; a genuinely unrelated domain is the
+    case for the second (and last) scope, not a third.
+  - **Where the budget lives**: `conception.system`'s research-topics item states the countable rule
+    (「一般情况下，一本书总共只使用一到两个范围」, one broad scope preferred, the second only for
+    unrelated domains, no third); `set_research_topics.scope` repeats it as the field contract; the
+    tool's top-level description repeats the short form; its existing single-scope example is kept
+    and a second example shows three topics sharing one scope name.
+  - **No scope-creating tool exists**: there is no `create_knowledge_scope` or
+    `update_knowledge_scope` in the tool pack or the registry (48 tools, none scope-related). Scopes
+    are created implicitly by the `scope` names of `set_research_topics` when conception is finalized
+    (spec/08 §5 step 4) and by a research task's target scope name on run, or by the author through
+    the knowledge API/UI. The model-facing path that creates them is therefore `set_research_topics`
+    alone, and the budget is stated there. No new variable was added; the rule needs none.
+- **Consequences**: future conception runs produce one larger coherent corpus instead of a
+  taxonomy, so a `search_knowledge` call without a scope stays useful and the author has at most two
+  near-duplicate names to choose from; the per-scope KNN cost in spec/07 §3 also stays bounded. This
+  is guidance, not enforcement: `set_research_topics` still accepts any number of distinct scope
+  names, and the author can still create scopes by hand. Existing books are not migrated — there is
+  nothing to migrate in the author's current database (0 scopes), and a migration could not know
+  which of many small scopes the author would want merged.
+- **Regression guards**: `prompts_registry.rs::the_knowledge_scope_budget_is_stated_where_research_topics_are_set`
+  asserts the budget in the rendered `conception.system` prompt (1–2 total, no per-subtopic/chapter/
+  character split, no third) and in the `set_research_topics` scope field description (1–2 total, no
+  per-subtopic split). The rendered-pack snapshot changed in exactly the two places the prompt edits
+  touched (`conception.system`, `tool.set_research_topics`), and it failed first before being
+  updated — proof the text actually landed. `scripts/validate_prompts.py` stays green; the added
+  tool example validates against the schema.
+- **Spec**: spec/07 §1 now states the one-or-two-scope budget as prompt guidance, with the cost of
+  extra scopes (one KNN query per visible scope, one more name in the author's list).

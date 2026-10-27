@@ -3,7 +3,13 @@
 ## 1. Knowledge base
 
 - **Scopes** (`knowledge_scopes`): global spaces with a unique name and a description (the
-  description is shown to agents, so it should say what the scope covers).
+  description is shown to agents, so it should say what the scope covers). **A book normally uses
+  one or two scopes**: one broad scope named for the book's subject or era, and a second only when
+  the material genuinely splits into two unrelated domains a writer would search separately. The
+  shipped conception prompt states this budget (D-145) and forbids one scope per subtopic, chapter,
+  character, or document type; it is prompt guidance, not a schema or API constraint. Fewer, larger
+  scopes keep a `search_knowledge` call without a scope useful — every visible scope is a separate
+  KNN query (§3) and a separate name the author has to choose among.
 - **Entries** (`knowledge_entries`): title, Markdown content, source URLs, tags,
   `source = manual | research`.
 - **Book visibility** (`book_scopes`): the scopes a book's writer and reviewer may search. The

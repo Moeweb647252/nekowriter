@@ -98,6 +98,49 @@ fn the_entity_description_ceiling_is_stated_where_entities_are_written() {
     );
 }
 
+/// The knowledge-scope budget of D-145 is carried by the conception system prompt (where the
+/// research topics are planned) and by the `set_research_topics` scope field (the contract the
+/// model sees at call time). Prompt text is data, so an edit could drop the rule without failing
+/// anything else and bring back one scope per domain, fragmenting retrieval.
+#[test]
+fn the_knowledge_scope_budget_is_stated_where_research_topics_are_set() {
+    let registry = PromptRegistry::embedded().expect("pack");
+    let set = registry.defaults_only();
+
+    let system = set
+        .render("conception.system", &json!({}))
+        .expect("conception.system")
+        .text;
+    assert!(
+        system.contains("一本书总共只使用一到两个范围"),
+        "conception.system must state the one-or-two scope budget (D-145):\n{system}"
+    );
+    assert!(
+        system.contains("不要按子话题、章节或人物拆分范围"),
+        "conception.system must forbid per-subtopic/chapter/character scopes (D-145):\n{system}"
+    );
+    assert!(
+        system.contains("不建第三个"),
+        "conception.system must say the second scope is the last (D-145):\n{system}"
+    );
+
+    let pack = registry.pack();
+    let scope = pack
+        .tool("set_research_topics")
+        .expect("set_research_topics")
+        .input_schema["properties"]["topics"]["items"]["properties"]["scope"]["description"]
+        .as_str()
+        .expect("scope description");
+    assert!(
+        scope.contains("全书只使用一到两个范围"),
+        "set_research_topics.scope must state the one-or-two scope budget (D-145): {scope}"
+    );
+    assert!(
+        scope.contains("不要按子话题拆分范围"),
+        "set_research_topics.scope must forbid per-subtopic scopes (D-145): {scope}"
+    );
+}
+
 #[test]
 fn every_key_renders_with_every_sample() {
     let registry = PromptRegistry::embedded().expect("the embedded pack must be valid");
