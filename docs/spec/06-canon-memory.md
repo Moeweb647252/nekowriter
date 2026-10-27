@@ -39,11 +39,26 @@ archivist cannot ask the author what to cut.
 - Directed. `kind` says what **source** is to **target** ("林凡 是 张三 的 师兄" → source 林凡,
   target 张三, kind 师兄). `inverse_kind` says what target is to source (师弟). Symmetric
   relations use the same word for both (同学 / 同学).
-- Several relations of different kinds may exist between the same pair (师兄 and 情敌). Only one
-  **active** relation per `(source, target, kind)` in shared canon, and one per isolated track.
-- Ending a relation keeps it (status `ended`, `until_chapter_id`), so history stays queryable.
+- `kind` is **data about a bond, not part of its identity.** At most one **active** relation may
+  exist per ordered `(source, target)` pair in shared canon, and one per isolated track. A pair
+  that already has an active relation and is written again with different wording —
+  `师兄` → `同门师兄`, or a note from a new perspective — **edits that row**; it never opens a
+  second active one. A `POST` that would create a second active relation for a pair returns
+  `conflict.exists` with `details.id` naming the existing row, so the caller can edit it instead.
+  Without this rule an archivist that re-words a relationship leaves two active lines that mean
+  the same thing, which is what the author saw (D-143).
+- The pair is **ordered**: `(A, B, 父亲)` and `(B, A, 嫡长子)` are two legitimate rows, because
+  each describes a different direction of the same bond and `inverse_kind` cannot carry both
+  wordings. A relation `A → B` and a relation `B → A` may therefore both be active. Treating the
+  pair as unordered would reject canon this product considers correct.
+- Ending a relation keeps it (status `ended`, `until_chapter_id`), so history stays queryable. An
+  `ended` row never blocks a new active relation for its pair: a bond that lapses and resumes is a
+  new row, and the `ended` ones are the history of that bond.
 - Tool and UI rendering always phrases a relation from the queried entity's perspective, using
   `inverse_kind` when the entity is the target (falling back to "张三 是 林凡 的 师兄").
+- Several relations of different kinds per pair are still not expressible in one row; a pair that
+  genuinely carries two simultaneous bonds (`师兄` and `情敌`) keeps the more important wording in
+  the relation and records the other as a `description` clause or a memory note.
 
 ### 1.3 Appearances
 One row per (chapter, entity) with a role: `pov`, `major`, `minor`, `mentioned`. The archivist

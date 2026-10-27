@@ -730,9 +730,12 @@ async fn move_relations(
         .filter(relations::Column::Status.eq(RelationStatus::Active.as_str()))
         .all(tx)
         .await?;
-    let mut taken: HashSet<(i32, i32, String, Option<i32>)> = existing
+    // The key is the ordered pair alone. `kind` is data on a relation, not part of its identity
+    // (spec/06 §1.2), so a moved row whose wording differs is a second active relation on a pair
+    // A already has and has to go, exactly like an identically-worded one.
+    let mut taken: HashSet<(i32, i32, Option<i32>)> = existing
         .iter()
-        .map(|row| (row.source_id, row.target_id, row.kind.clone(), row.track_id))
+        .map(|row| (row.source_id, row.target_id, row.track_id))
         .collect();
     for row in rows {
         // A relation between A and B would become a self-relation (the table has a CHECK).
@@ -756,10 +759,12 @@ async fn move_relations(
             relations::Entity::delete_by_id(row.id).exec(tx).await?;
             continue;
         }
-        // One end is A after the rewrite, so `taken` holds exactly the shapes that could
-        // duplicate an active relation of A; a duplicate is dropped, a new shape is recorded.
+        // One end is A after the rewrite, so `taken` holds exactly the pairs that already carry an
+        // active relation of A; a collision is dropped, a free pair is recorded. A row with a
+        // *different* kind is still a collision: the pair can only keep one active relation, and
+        // the merge cannot invent a combined wording, so A's existing row wins.
         if row.status == RelationStatus::Active.as_str()
-            && !taken.insert((source_id, target_id, row.kind.clone(), row.track_id))
+            && !taken.insert((source_id, target_id, row.track_id))
         {
             relations::Entity::delete_by_id(row.id).exec(tx).await?;
             continue;

@@ -281,7 +281,7 @@ properties.importance = { type = "integer", minimum = 1, maximum = 5, descriptio
 properties.status = { type = "string", enum = ["active", "inactive", "dead", "destroyed", "missing", "unknown"], description = "新的状态" }
 
 [tools.set_relation]
-description = '''建立或更新两个实体之间的关系。kind 表示 source 是 target 的什么（例如 source=林凡、target=张三、kind=师兄，表示林凡是张三的师兄）。'''
+description = '''建立或更新两个实体之间的关系。kind 表示 source 是 target 的什么（例如 source=林凡、target=张三、kind=师兄，表示林凡是张三的师兄）。一对实体之间同时只保留一条有效关系：如果这对实体已经有关系，只是想换一种说法或补充说明，直接用这个工具再调用一次即可，它会改写已有的那一条，不要另建第二条。方向相反（A 对 B 与 B 对 A，例如 A 是 B 的父亲、B 是 A 的嫡长子）是两条不同的关系，各记一条。'''
 examples = [ { source = "林凡", target = "苏婉", kind = "盟友", inverse_kind = "盟友", description = "剑冢中并肩作战后结盟", note = "初识→盟友" } ]
 [tools.set_relation.input_schema]
 type = "object"

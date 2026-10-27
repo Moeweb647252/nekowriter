@@ -2435,3 +2435,91 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
 - **Consequences**: the existing 8,290 characters are **not** auto-trimmed — no migration, no background job, no repository change (the measured database was only read). Old text stays until the author edits it or until the archivist next updates one of those entities, which is why condensing is written into the same step rather than left to a separate pass. Future chapters stop growing `description` and put their developments in `state`, `add_memory_note` and `add_timeline_event`, which is where the tiered memory reads them from (spec/06 §4). No tool contract changed: `description` is still a free `str` of any length, so old rows and author edits remain valid, and `get_entity` still renders whatever is stored — recommending, not truncating, is the deliberate choice, because a silent cut would hide canon the writer may need. The recommendation for the existing bloat is a manual pass over the 20 entities above the ceiling (the author's own edit forms, with `state`/`attributes` absorbing the chapter-specific sentences), not a script: the sentences that need to go are interleaved with the ones that must stay, and only the author knows which "生平" details are load-bearing.
 - **Regression guards**: `prompts_registry.rs::the_entity_description_ceiling_is_stated_where_entities_are_written` asserts the ceiling text, the "not a chapter log" rule and the rewrite-instead-of-append rule in all three archivist kickoffs, the archivist system prompt, and both entity-write tool schemas — a future prompt edit cannot drop the rule silently. The rendered-pack snapshot (`prompts_registry__rendered_prompt_pack.snap`) changed in exactly the seven places the edits touched (archivist.system, the two maintenance branches, seed, the two resync branches, `tool.create_entity`, `tool.update_entity`), which is the proof the text actually landed. `scripts/validate_prompts.py` stays green; no variable was added (the guidance needs none).
 - **Spec**: spec/06 §1.1 now states the ceiling and the hierarchy in the field table, adds a paragraph on why the ceiling is prompt-level rather than a schema constraint, and §6 step 2 no longer lists "new durable description details" as a routine reason to extend the field.
+
+### D-143 One active relation per ordered pair: `kind` is data, not identity
+- **Context**: the author reported 「关系的 create 应该做 title重复性检查」 with a screenshot of one
+  entity's relation list showing several near-identical lines. Their book (id 3) turned out to hold
+  63 relations of which **5 pairs carried more than one row**, all created by the archivist with
+  drifting wording ("军中下马威者→被说服者" `ended` #36, "军中下马威者（后转为半服气）" `ended` #56,
+  "下马威的军中前辈（后转为半服气）" **active** #58 on one pair; "亦师亦友亦兄弟（东宫属官）"
+  **active** #28 vs "东宫属官（亦师亦友亦兄弟）" `ended` #54 on another). The check the author asked
+  for already existed, for the shape they were not hitting: `ensure_no_active_duplicate` filtered on
+  `(source, target, kind)`, so an exact re-create returned `409` — but **0 pairs carried two `active`
+  relations of the same kind**, because the archivist never repeated the wording; it re-created the
+  pair with the bond re-worded, and `kind` being part of the key made every re-wording a new legal
+  active row. `ended` rows never blocked, so the old wordings piled up as history and the active one
+  drifted. spec/06 §1.2 *licensed* this ("Several relations of different kinds may exist between the
+  same pair (师兄 and 情敌). Only one active relation per `(source, target, kind)`").
+- **Decision**: at most one **active** relation per **ordered `(source, target)` pair** per canon;
+  `kind` becomes data about the bond rather than part of its identity. A pair that is written again
+  with different wording **edits** its existing row.
+  - **The pair is ordered, not unordered.** `(A, B)` and `(B, A)` each keep one active row. The
+    author's canon requires this: `(3,4) 父亲` and `(4,3) 嫡长子`, `(1,3) 诤臣谋士` and `(3,1) 君主`,
+    `(10,1)`/`(1,10) 爱人兼政治盟友` and `(32,10) 父亲`/`(10,32) 次女` are all **legitimately active in
+    both directions** — 3 unordered pairs would collide under a symmetric rule. The direction carries
+    meaning that `inverse_kind` cannot: the reverse of 父亲 is 嫡长子 only for a specific pair, and
+    `inverse_kind` is a label, not a second row. A symmetric guard would reject canon this product
+    considers correct, so it was rejected.
+  - **Two enforcement points, deliberately.** The service returns `conflict.exists` with `details.id`
+    naming the existing row plus its kind in the message (English in code, localised in the UI by
+    code, model-readable through the prompt pack), so the author's `POST` and any future caller get a
+    usable answer. The two partial unique indexes are re-keyed from `(source, target, kind)` to
+    `(source, target)` to catch every path that does not go through the service — a merge, a revert,
+    a hand-written statement.
+  - **The tool upserts, the API conflicts.** This asymmetry is the core of the fix. `set_relation` is
+    the archivist's *only* way to write a relation; making a re-worded kind an error would leave it no
+    way to correct a wording it regrets — it would be forced to `end_relation` and re-create, which
+    loses history and is exactly the process that produced the duplicates. So `set_relation_inner` now
+    looks the pair up by `(source, target)` alone (`find_active_pair`) and patches `kind` on the row
+    it finds, while `create_inner` — the author's `POST` — keeps the conflict. `find_active` (kind-keyed)
+    remains for `end_relation`, whose contract genuinely names the wording being ended: after a
+    re-word, ending the old wording is `relation_not_found` rather than silently ending a bond the
+    caller did not name. That edge case is recoverable — the archivist reads the pair's current
+    wording with `get_relations` — and is preferable to letting `kind` drift back into an identity.
+  - **`ended` history is untouched.** An `ended` row is not active, so it never occupies the slot: a
+    bond that lapses and resumes gets a **new** active row and the old one stays as history, which is
+    how the author's already-resumed pairs look (id 1 `ended` + id 61 active, same kind). The guard
+    only ever looks at `status = 'active'`.
+  - **Track scoping preserved exactly.** The guard's `track_id` match keeps the two canons apart the
+    way the indexes do — `Some(T)` matches only track `T`'s rows, `None` only shared rows — so an
+    isolated track still records its own private relation over a pair that already has a shared one
+    (spec/06 §2), and a shared write never sees a private row. Both directions are tested.
+  - **Reverts cannot resurrect a duplicate.** `restore_inner` (revert of an update) and
+    `recreate_inner` (revert of a delete) bypassed the guard entirely; both now check the pair when
+    the restored snapshot is `active`, excluding the row being written, so reverting a status change
+    on legacy data cannot produce a second active row. `update_inner` gained the same check for
+    `status → active` (reactivating an `ended` row).
+  - **Merges follow the same key.** `entity::move_relations`'s `taken` set dropped `kind` from its
+    tuple, so a moved row that lands on a pair A already has is dropped even when the wording
+    differs — A's existing row survives with A's wording, since a merge cannot invent a combined one.
+- **Existing duplicates are not touched.** The 5 cluttered pairs stay exactly as they are: choosing a
+  survivor and ending the loser rewrites the author's canon, which this project does not do silently
+  (the same stance as D-142's untrimmed descriptions). The migration refuses to pick a survivor and
+  reports the offending ids instead, so the cleanup remains the author's decision.
+- **Consequences**: the archivist can no longer inflate a relation list by re-wording, which is the
+  reported symptom. A pair that genuinely carries two simultaneous bonds (师兄 *and* 情敌) can no
+  longer be expressed as two rows; the more important wording stays in the relation and the other
+  belongs in `description` or a memory note — a real expressiveness loss, accepted because two rows
+  were indistinguishable from the duplication bug in both the UI and `get_relations`. Existing
+  databases are upgraded by `m0003_relation_pair_unique`, which replaces both indexes and **fails with
+  the offending pairs listed** if the database already holds a duplicate; the author's database has 0
+  such pairs (verified against a copy), so it upgrades cleanly. 0001_init.sql carries the new indexes
+  too, so fresh databases and every test fixture are correct without the migration.
+- **Regression guards**: `relation_pair_uniqueness.rs` (9 tests) pins the conflict + `details.id`, the
+  same-kind case, both directions as separate pairs, `ended` never blocking, the revert-of-delete
+  path, the two merge cases (same kind and re-worded), and track scoping both ways
+  (a private relation over a shared pair is legal; the shared canon does not see it).
+  `relation_pair_archivist.rs` (3 tests) drives a **real maintenance session** whose archivist sets one
+  pair twice with different wording and asserts one row survives with the new wording, that both
+  `ui.target_id`s name the same row, and that an explicit second `POST` still conflicts.
+  `relation_pair_migration.rs` (4 tests) proves the fresh index refuses a re-worded duplicate at the
+  SQLite level, that the index is partial on `active`, that the upgrade converts a pre-rule database
+  and is repeatable, and that a database which already holds a duplicate is **refused with its ids
+  named and its rows untouched**. All three were checked to fail before the fix (the pair-uniqueness
+  and archivist suites were run against the old `kind`-keyed guard and index and failed 3/3 and 3/9
+  respectively), and the suite's history/direction/track tests pass in both directions, which is what
+  proves the guard is not over-broad.
+- **Spec**: spec/06 §1.2 now states the pair-level rule, the ordered-pair reading and its reason, the
+  "edit, don't re-create" contract, that `ended` never blocks, and what to do with two simultaneous
+  bonds; spec/05 §6 `set_relation` documents the upsert-by-pair behaviour; spec/02 §2's SQL mirror and
+  spec/10 §4's `conflict.exists` row carry the new key and its meaning.

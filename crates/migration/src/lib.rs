@@ -9,6 +9,7 @@ use sea_orm_migration::sea_orm::ConnectionTrait;
 
 mod m0001_init;
 mod m0002_research_deferred;
+mod m0003_relation_pair_unique;
 
 pub struct Migrator;
 
@@ -18,6 +19,7 @@ impl MigratorTrait for Migrator {
         vec![
             Box::new(m0001_init::Migration),
             Box::new(m0002_research_deferred::Migration),
+            Box::new(m0003_relation_pair_unique::Migration),
         ]
     }
 }

@@ -220,6 +220,14 @@ impl TestApp {
             .unwrap_or_else(|err| panic!("fixture SQL failed: {err}\n{sql}"));
     }
 
+    /// Runs one raw SQL statement, returning the error instead of panicking.
+    ///
+    /// For tests whose **point** is that the schema refuses a statement: a unique index or a CHECK
+    /// constraint can only be asserted by attempting the write and inspecting the failure.
+    pub async fn try_execute(&self, sql: &str) -> Result<(), sea_orm::DbErr> {
+        self.db.write_unprepared(sql).await
+    }
+
     /// Sets a chapter's status directly (M4 turns status changes into workflow operations).
     pub async fn set_chapter_status(&self, chapter_id: i32, status: &str) {
         self.execute(&format!(

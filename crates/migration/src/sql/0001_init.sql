@@ -191,10 +191,11 @@ CREATE TABLE relations (
 );
 CREATE INDEX relations_source ON relations(source_id);
 CREATE INDEX relations_target ON relations(target_id);
--- one active relation per (source, target, kind) in shared canon, and separately per isolated track
-CREATE UNIQUE INDEX relations_active_shared ON relations(source_id, target_id, kind)
+-- one active relation per ordered (source, target) pair in shared canon, and separately per
+-- isolated track; `kind` is data about the bond, not part of its identity (spec/06 §1.2, D-143)
+CREATE UNIQUE INDEX relations_active_shared ON relations(source_id, target_id)
   WHERE status = 'active' AND track_id IS NULL;
-CREATE UNIQUE INDEX relations_active_track ON relations(track_id, source_id, target_id, kind)
+CREATE UNIQUE INDEX relations_active_track ON relations(track_id, source_id, target_id)
   WHERE status = 'active' AND track_id IS NOT NULL;
 
 CREATE TABLE appearances (

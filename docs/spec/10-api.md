@@ -238,7 +238,7 @@ type ContentOpInput =                                                    // auth
 | `not_found` | 404 | |
 | `host.forbidden` | 403 | Host or Origin guard (spec/01 §10) |
 | `conflict.version` | 409 | stale `base_version` / `base_revision` |
-| `conflict.exists` | 409 | a unique name is taken (provider, model profile, scope, character, entity, entry); `details.id` |
+| `conflict.exists` | 409 | a unique name is taken (provider, model profile, scope, character, entity, entry), or a `POST` would create a second **active** relation for an ordered entity pair (`details.id` names the existing relation; edit it instead — spec/06 §1.2); `details.id` |
 | `book.invalid_state` | 409 | e.g. finalize on a book that is not `conceiving`; `details.status` |
 | `research.invalid_state` | 409 | the task already has an open session (`details.session_id`), or the transition is not allowed from its status (`details.status`, `details.operation`) |
 | `settings.locked` | 423 | setting materials while the conception session runs; `details.session_id` |
