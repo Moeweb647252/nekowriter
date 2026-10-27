@@ -342,6 +342,48 @@ function hasTargetVariant(name: string): boolean {
   })
 })
 
+/**
+ * The held-call review block (spec/11 §5.3, D-137). Every wording it can render must exist in both
+ * locales: the block is reached by a *status* the author has to act on, so an unresolved key would
+ * appear exactly where the decision is made. The tool label itself is the registry's
+ * `agent:tools.<name>.summary`, already covered above, so this closure only pins the block's own
+ * keys.
+ */
+describe("held-call review keys", () => {
+  it("has every held-review wording in both locales", () => {
+    const keys = [
+      "outline_title",
+      "revision_plan_title",
+      "generic_title",
+      "approve_outline",
+      "approve_revision_plan",
+      "approve_generic",
+      "request_changes",
+      "request_changes_hint_outline",
+      "request_changes_hint_revision_plan",
+      "request_changes_hint",
+      "feedback_label",
+    ]
+    for (const [locale, table] of [
+      ["en", enAgent as Record<string, unknown>],
+      ["zh-CN", zhAgent as Record<string, unknown>],
+    ] as const) {
+      const held = (table.held ?? {}) as Record<string, string>
+      for (const key of keys) {
+        expect(held[key], `${locale} agent:held.${key}`).toBeTypeOf("string")
+        expect((held[key] ?? "").length, `${locale} agent:held.${key}`).toBeGreaterThan(0)
+        // An unresolved lookup renders the key back; no held-review string may look like one.
+        expect(held[key], `${locale} agent:held.${key}`).not.toContain("agent:")
+      }
+      const composer = (table.composer ?? {}) as Record<string, string>
+      // The composer points at the review block while it owns the decision.
+      expect(composer.disabled_review, `${locale} agent:composer.disabled_review`).toBeTypeOf(
+        "string",
+      )
+    }
+  })
+})
+
 /** PLAN 0.5 requires every namespace from spec/11 §2 to exist in both locales. */
 describe("i18n namespaces", () => {
   const SPEC_NAMESPACES = [

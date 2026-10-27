@@ -2,12 +2,18 @@
  * The session controls (PROJECT §8.6, spec/11 §5.3): abandoning ends a session for good, so it is
  * confirmed like every destructive action (PROJECT §8.13). The dialog lives in this shared
  * component, which is why the studio and the agent panel behave the same.
+ *
+ * The `paused` status is where these cases live now: a `held` session that can name its tool call
+ * hands the approve/request-changes decision to `HeldCallReview`, which `heldCallReview.test.tsx`
+ * covers. What is asserted here is the part that did *not* change — and the degradation that keeps
+ * a held session usable when its call cannot be resolved.
  */
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
 
 import type { SessionDto } from "@/api/gen/SessionDto"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import { SessionControls } from "@/features/agent/SessionControls"
 
 /** A minimal session in the given status. */
@@ -63,17 +69,19 @@ function session(overrides: Partial<SessionDto>): SessionDto {
 
 const noop = () => undefined
 
-function renderControls(onAbandon: () => void) {
+function renderControls(onAbandon: () => void, overrides: Partial<SessionDto> = {}) {
   return render(
-    <SessionControls
-      session={session({})}
-      busy={false}
-      onPause={noop}
-      onStop={noop}
-      onContinue={noop}
-      onFeedback={noop}
-      onAbandon={onAbandon}
-    />,
+    <TooltipProvider>
+      <SessionControls
+        session={session(overrides)}
+        busy={false}
+        onPause={noop}
+        onStop={noop}
+        onContinue={noop}
+        onFeedback={noop}
+        onAbandon={onAbandon}
+      />
+    </TooltipProvider>,
   )
 }
 
@@ -97,5 +105,26 @@ describe("SessionControls", () => {
     await userEvent.click(await screen.findByRole("menuitem", { name: "Abandon" }))
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }))
     expect(onAbandon).not.toHaveBeenCalled()
+  })
+
+  it("keeps Continue and Feedback… for a paused session", () => {
+    renderControls(noop, { status: "paused" })
+    expect(screen.getByRole("button", { name: "Continue" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Feedback…" })).toBeInTheDocument()
+  })
+
+  it("keeps the generic pair for a held session whose call cannot be resolved", () => {
+    // The panel passes no `heldCall` when the id is outside the snapshot window; the session stays
+    // approvable and rejectable instead of showing a review block for an unknown call.
+    renderControls(noop, { status: "held", held_tool_call_id: 999 })
+    expect(screen.getByRole("button", { name: "Continue" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Feedback…" })).toBeInTheDocument()
+    expect(screen.queryByTestId("held-review")).not.toBeInTheDocument()
+  })
+
+  it("offers only Continue for a stopped session, with no feedback path", () => {
+    renderControls(noop, { status: "stopped" })
+    expect(screen.getByRole("button", { name: "Continue" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Feedback…" })).not.toBeInTheDocument()
   })
 })

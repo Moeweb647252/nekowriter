@@ -2111,3 +2111,67 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   both locales, and `run_research` added to `KIND_TABLE`, whose exhaustive-kind assertion fails if
   the table falls behind the union). Fail-before: removing rule 3 fails three server tests and
   dropping the fixture's constant from `KIND_TABLE` fails the coverage test.
+
+### D-137 The agent panel reviews a held call where it is held, in the tool's own words
+- **Context**: the author reported 「章节细纲等待我的审阅，但是侧边栏没有审阅能力」 — the chapter
+  outline is waiting for my review, but the sidebar has no ability to review it. Their database was
+  a literal reproduction: chapter 2 (`drafting`), session 9 (`chapter_write`, `held`,
+  `held_tool_call_id` 282), call 282 `submit_outline` carrying 3,729 characters of outline. Nothing
+  was broken on the server. `resume` with no feedback already *approves* a held call (it finalizes
+  it with its deferred effects); `resume` with feedback already *rejects* it (it clears the effects,
+  appends `writer.notice.outline_rejected` and the feedback, spec/03 §5.4). The gap was that the
+  panel's controls were purely **status** driven, so a held session showed the same generic
+  「继续」(Continue) and 「反馈…」(Feedback…): nothing named the tool, nothing showed what was
+  submitted, and nothing said that Continue means "approve this outline". The spec calls this exact
+  workflow its most common case (spec/03 §7: "The most common case is editing the outline while
+  `submit_outline` is held, then approving it") and it had no affordance at all. This is the fourth
+  report of the same class ("the UI does not let me do the thing"), so the fix had to name the
+  decision, show its object, and keep the two surfaces of this panel coherent.
+- **Decision**: (a) a new `HeldCallReview` block in `features/agent`, rendered by `SessionControls`
+  under the control bar whenever the status is `held` **and** `held_tool_call_id` resolves to a
+  call in the snapshot. It names the held tool through the registry the tool cards already use
+  (`agent:tools.<name>.summary` plus the renderer's icon) — no second naming scheme, no raw
+  identifier; it renders the submitted body inline (the tool's own field: `outline` for
+  `submit_outline`, `plan` for `submit_revision_plan`, the prose field for a held write tool) as
+  bounded scrolling Markdown, plus the reference notes for an outline. (b) The two decisions are
+  labelled in the domain's words: **Approve** / **Request changes** for `submit_outline`
+  (「通过章纲」/「提出修改」, reusing the chapter `HoldBar`'s wording, spec/11 §5.2), **Approve
+  revision plan** / **Request changes** for `submit_revision_plan`, and a generic **Approve and
+  continue** for every other hold (`pause_requested`, `auto_pause`). (c) The payloads are the
+  documented contract and nothing else: approve calls `resume` with `{ sessionId }` and **no**
+  feedback key; request changes calls it with `{ sessionId, feedback }` where `feedback` is exactly
+  the trimmed text. The submit button is disabled while the box is blank or whitespace-only,
+  because the server filters blank feedback to `None` and would then **approve** the call — a
+  silent opposite outcome. (d) The block replaces the generic Continue / Feedback… pair for a
+  resolvable held call instead of sitting beside it, and the composer is disabled there
+  (`agent:composer.disabled_review`), so a held call has exactly one approve path and one reject
+  path. Abandon stays in the overflow menu behind its confirmation in every status. (e) No server
+  endpoint and **no DTO change**: `SessionSnapshotDto` already carries `session.held_tool_call_id`,
+  `tool_calls[]` and each call's full parsed `input` (`ToolCallDto.input`), which is everything the
+  block needs. The snapshot window (200 messages) is the only limit; see the degradation below.
+- **Consequences**: the decision can be made where it is held — the author reads the outline in
+  the panel and approves or rejects it without hunting for a collapsed tool card (the stream is
+  virtualized, so a card scrolled out of view is not even in the DOM, and the card shows raw JSON).
+  The mechanism is untouched: one endpoint, one pair of payloads, so the panel, the chapter
+  `HoldBar` and the studio cannot drift apart in *behaviour*, only in wording — and the wording is
+  now identical where it overlaps (`通过章纲` / `提出修改`). **Degradation, stated**: a `held`
+  session whose call is not in the snapshot window (or whose snapshot is still loading) shows no
+  review block and keeps the status-driven Continue / Feedback… pair; there is nothing to render
+  and guessing would be worse than the old controls. The composer keeps its "Feedback & continue"
+  mode in that case, so the generic reject path is still reachable. **Relationship to the
+  conception studio (the consistency question)**: the studio's `AskUserForm` / `ReviewRequestForm`
+  are the **`awaiting_input`** counterpart — one surface per waiting status, each rendered by the
+  screen that owns the conversation, both above the composer, both disabling the composer while
+  they hold the decision, and both using the same verbs (approve vs. request/needs changes). They
+  are not unified into one component because their payloads differ (`answer` with a form payload
+  vs. `resume` with optional free text) and their content is shaped differently (per-item verdicts
+  vs. one submitted document); the rule that *is* shared is that the surface owning the decision
+  also disables the composer, which the studio already did and the panel now does.
+- **Regression guards**: `heldCallReview.test.tsx` asserts the exact mutation payloads —
+  `{ sessionId: 9 }` for approve, `{ sessionId: 9, feedback: "…" }` for request changes — through
+  the real `AgentPanel` with mocked hooks, plus the generic `auto_pause` case, the unresolved-call
+  degradation, Abandon reachability, and that the rendered text is the outline Markdown rather than
+  the raw input. Fail-before, verified three times: resolving no held call fails four tests,
+  forcing `reviewHeld` to `false` fails four, and wiring approve to `onRequestChanges("")` fails
+  six. `SessionControls.test.tsx` keeps the paused and degraded-held cases; `Composer.test.tsx`
+  pins the review-block mode; `locales.test.ts` requires every new key in both locales.

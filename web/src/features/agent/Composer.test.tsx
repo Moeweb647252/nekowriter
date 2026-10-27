@@ -12,7 +12,7 @@ import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
 
 import type { SessionDto } from "@/api/gen/SessionDto"
-import { Composer } from "@/features/agent/Composer"
+import { Composer, composerMode, disabledReasonKey } from "@/features/agent/Composer"
 
 /** A minimal session of the given status. */
 function session(overrides: Partial<SessionDto>): SessionDto {
@@ -142,5 +142,32 @@ describe("Composer", () => {
     const { fireEvent } = await import("@testing-library/react")
     fireEvent.keyDown(textarea, { key: "Enter", isComposing: true })
     expect(onSend).not.toHaveBeenCalled()
+  })
+
+  it("points at the review block instead of offering a second reject path", () => {
+    // While the panel's held-call review block owns the decision, the composer must not offer
+    // "Feedback & continue" as well: the same call would have two differently-worded reject paths
+    // (spec/11 §5.3, the studio's `awaiting_input` form has the same relationship with this
+    // composer).
+    render(
+      <Composer
+        session={session({ status: "held" })}
+        busy={false}
+        onSend={vi.fn()}
+        onFeedback={vi.fn()}
+        reviewingHeld
+      />,
+    )
+    expect(screen.getByText("Decide on the review above to continue.")).toBeInTheDocument()
+    expect(screen.queryByText("Feedback & continue")).not.toBeInTheDocument()
+    expect(screen.getByRole("textbox", { name: "Message" })).toBeDisabled()
+  })
+
+  it("reports the review-block mode through the pure helpers", () => {
+    expect(composerMode(session({ status: "held" }), true)).toBe("disabled")
+    expect(disabledReasonKey(session({ status: "held" }), true)).toBe("agent:composer.disabled_review")
+    // Any other status is unaffected by the flag: it only ever describes a held session.
+    expect(composerMode(session({ status: "paused" }), true)).toBe("feedback")
+    expect(composerMode(session({ status: "held" }), false)).toBe("feedback")
   })
 })

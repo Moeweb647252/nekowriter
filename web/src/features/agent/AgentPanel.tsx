@@ -29,6 +29,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { ActivityStream } from "@/features/agent/ActivityStream"
 import { Composer } from "@/features/agent/Composer"
+import { findHeldCall } from "@/features/agent/HeldCallReview"
 import { SessionControls } from "@/features/agent/SessionControls"
 import { SessionErrorNotice } from "@/features/agent/SessionErrorNotice"
 import { SessionHeader } from "@/features/agent/SessionHeader"
@@ -210,6 +211,18 @@ export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: 
     resume.mutate({ sessionId: session.id, feedback }, { onError: reportError })
   }
 
+  // A held session is waiting on a specific tool call (spec/03 §5.2). The snapshot carries it, so
+  // the panel can say what is held and offer the two decisions in the tool's own words; a session
+  // whose call is outside the snapshot window falls back to the generic controls (HeldCallReview
+  // documents that degradation).
+  const heldCall = findHeldCall(session, snapshot.data?.tool_calls, snapshot.data?.messages)
+  // Approve = the documented approve path: `resume` with no feedback, which finalizes the held call
+  // with its deferred effects (spec/03 §5.4). Request changes = the same call with the feedback,
+  // which revokes those effects and appends the revoke notice.
+  const approveHeld = () => {
+    resume.mutate({ sessionId: session.id }, { onError: reportError })
+  }
+
   const isWriter = session.kind === "chapter_write" || session.kind === "chapter_revise"
   const canConfigure = !["completed", "superseded", "abandoned"].includes(session.status)
 
@@ -232,6 +245,9 @@ export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: 
         onContinue={() => runControl(session.status === "held" || session.status === "paused" ? "resume" : "continue")}
         onFeedback={submitFeedback}
         onAbandon={() => runControl("abandon")}
+        heldCall={heldCall}
+        onApproveHeld={approveHeld}
+        onRequestChanges={submitFeedback}
       />
       <SessionErrorNotice error={session.error ?? null} />
       {isWriter ? (
@@ -280,6 +296,7 @@ export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: 
           send.mutate({ sessionId: session.id, text }, { onError: reportError })
         }
         onFeedback={submitFeedback}
+        reviewingHeld={heldCall !== undefined && session.status === "held"}
       />
       <UsageFooter session={session} />
       <div className="border-t px-3 py-1">

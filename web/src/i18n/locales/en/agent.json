@@ -54,6 +54,19 @@
     "placeholder": "What should change?",
     "submit": "Send and continue"
   },
+  "held": {
+    "outline_title": "A chapter outline is waiting for your review",
+    "revision_plan_title": "A revision plan is waiting for your review",
+    "generic_title": "The agent is waiting for your approval",
+    "approve_outline": "Approve outline",
+    "approve_revision_plan": "Approve revision plan",
+    "request_changes": "Request changes",
+    "approve_generic": "Approve and continue",
+    "request_changes_hint_outline": "Your feedback goes to the agent, which revises the outline and continues. This outline is not approved.",
+    "request_changes_hint_revision_plan": "Your feedback goes to the agent, which revises the plan and continues. This plan is not approved.",
+    "request_changes_hint": "Your feedback goes to the agent, which revises and continues. This step is not approved.",
+    "feedback_label": "What should change?"
+  },
   "writer": {
     "granularity": "Granularity",
     "granularity_hint": "Smaller steps cost more model calls but give you more control over the text.",
@@ -104,6 +117,7 @@
     "placeholder": "Type a message…",
     "disabled": "Nothing to do right now.",
     "disabled_form": "Answer the form above first.",
+    "disabled_review": "Decide on the review above to continue.",
     "disabled_continue": "Continue the session to write again.",
     "disabled_done": "This session is finished."
   },

@@ -7,6 +7,11 @@
  * - waiting for a form: disabled with a reason.
  * - anything else: disabled with a reason.
  *
+ * One held session is the exception: when the agent panel shows the held-call review block
+ * (`HeldCallReview`), that block owns the decision and the composer is disabled with a reason —
+ * the same relationship the conception studio's `awaiting_input` form has with this composer, so a
+ * `held` session never has two differently-worded ways to reject the same call.
+ *
  * The state label is rendered **once**, in the hint line under the textarea, which is the live
  * region. An earlier version also used it as the textarea's `placeholder`, so a disabled reason
  * such as `agent:composer.disabled_continue` appeared twice in a row. The textarea keeps a stable
@@ -25,8 +30,17 @@ import { Textarea } from "@/components/ui/textarea"
 
 type ComposerMode = "steer" | "feedback" | "reply" | "disabled"
 
-/** Which composer behavior the session's status allows. */
-export function composerMode(session: SessionDto): ComposerMode {
+/**
+ * Which composer behavior the session's status allows.
+ *
+ * `reviewingHeld` is the agent panel's held-call review block: while it is on screen it owns the
+ * approve/request-changes decision (spec/03 §5.4), so the composer must not offer a second,
+ * differently-labelled reject path.
+ */
+export function composerMode(session: SessionDto, reviewingHeld = false): ComposerMode {
+  if (reviewingHeld && session.status === "held") {
+    return "disabled"
+  }
   switch (session.status) {
     case "running":
       return "steer"
@@ -41,7 +55,10 @@ export function composerMode(session: SessionDto): ComposerMode {
 }
 
 /** The i18n key of the disabled reason, when the composer is disabled. */
-export function disabledReasonKey(session: SessionDto): string {
+export function disabledReasonKey(session: SessionDto, reviewingHeld = false): string {
+  if (reviewingHeld && session.status === "held") {
+    return "agent:composer.disabled_review"
+  }
   switch (session.status) {
     case "awaiting_input":
       return "agent:composer.disabled_form"
@@ -63,16 +80,19 @@ export function Composer({
   busy,
   onSend,
   onFeedback,
+  reviewingHeld = false,
 }: {
   session: SessionDto
   busy: boolean
   onSend: (text: string) => void
   onFeedback: (feedback: string) => void
+  /** True while the panel shows the held-call review block, which owns the held decision. */
+  reviewingHeld?: boolean
 }) {
   const { t } = useTranslation()
   const [text, setText] = useState("")
   const hintId = useId()
-  const mode = composerMode(session)
+  const mode = composerMode(session, reviewingHeld)
   const disabled = mode === "disabled" || busy || text.trim() === ""
 
   const label =
@@ -82,7 +102,7 @@ export function Composer({
         ? t("agent:composer.feedback")
         : mode === "reply"
           ? t("agent:composer.reply")
-          : t(disabledReasonKey(session))
+          : t(disabledReasonKey(session, reviewingHeld))
 
   const submit = () => {
     const value = text.trim()

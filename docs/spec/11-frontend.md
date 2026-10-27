@@ -199,11 +199,26 @@ message and a retry.
     status; model; a session switcher dropdown);
   - `SessionControls` (by status, PROJECT §8.6), `GranularityControl`, `AutoPauseSwitch`
     (writer only, PATCH session);
+  - `HeldCallReview` (a `held` session only): resolves `SessionDto.held_tool_call_id` against the
+    snapshot's `tool_calls` and shows **what** is held through the same renderer registry the tool
+    cards use (`agent:tools.<name>.summary`, so there is no second naming scheme and no raw
+    identifier), the submitted text itself (the tool's body field: `outline`, `plan`, or the prose
+    of a held write tool), and the two decisions in the domain's words — **Approve** (`resume` with
+    **no** feedback, which finalizes the call with its deferred effects) and **Request changes**
+    (`resume` with exactly the typed feedback, which revokes them and appends the revoke notice per
+    spec/03 §5.4). `submit_outline` and `submit_revision_plan` get their own wording; every other
+    hold (`pause_requested`, `auto_pause`) gets a generic one. The text is rendered inline and
+    bounded rather than linked to the tool card, because the stream is virtualized, the card is
+    collapsed by default and it shows raw JSON. When the id resolves to no call (the call is
+    outside the snapshot's 200-message window) the block is absent and the status-driven
+    Continue / Feedback… pair remains. `Abandon` stays in the overflow menu in both cases;
   - `ActivityStream` (virtualized with `@tanstack/react-virtual`; sticks to the bottom unless the
     author scrolled up; scrolling to the top loads older messages with `next_cursor`): messages,
     live text and reasoning buffers, tool cards, appendices shown under their tool card as
     `NoticeItem`s;
-  - `Composer` (state-dependent label and endpoint: `message` / `resume` with feedback / disabled);
+  - `Composer` (state-dependent label and endpoint: `message` / `resume` with feedback / disabled;
+    disabled with `agent:composer.disabled_review` while `HeldCallReview` owns the decision, so a
+    held call never has two differently-worded reject paths);
   - `UsageFooter`.
 - `ToolCallCard` uses a renderer registry `toolRenderers: Record<string, { icon: LucideIcon;
   summary: (ui, t) => string; Detail?: Component }>`. Each tool has a summary i18n key
@@ -213,6 +228,10 @@ message and a retry.
   changes — with `aria-pressed` toggles and a feedback box that appears only for *needs changes*,
   plus an "Approve all" shortcut and a general comment; submit is disabled with a visible count
   while any item is unset, so the form never answers the review on the author's behalf — D-134).
+  These are the **`awaiting_input`** counterpart of `HeldCallReview` (D-137): one surface per
+  waiting status, each rendered by the session screen that owns the conversation, both above the
+  composer, and in both the composer steps aside while the form or the review holds the decision.
+  The vocabulary matches too — approve / needs changes there, approve / request changes here.
 
 ### 5.4 Conception studio
 Two panes: conversation (the same `ActivityStream` and `Composer` components) and documents

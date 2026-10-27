@@ -54,6 +54,19 @@
     "placeholder": "需要改什么？",
     "submit": "发送并继续"
   },
+  "held": {
+    "outline_title": "章纲等待你的审阅",
+    "revision_plan_title": "修订计划等待你的审阅",
+    "generic_title": "智能体等待你的确认",
+    "approve_outline": "通过章纲",
+    "approve_revision_plan": "通过修订计划",
+    "request_changes": "提出修改",
+    "approve_generic": "通过并继续",
+    "request_changes_hint_outline": "你的反馈会发给智能体，它会修改这份章纲后继续。这份章纲不会通过。",
+    "request_changes_hint_revision_plan": "你的反馈会发给智能体，它会修改这份修订计划后继续。这份计划不会通过。",
+    "request_changes_hint": "你的反馈会发给智能体，它会修改后继续。这一步不会通过。",
+    "feedback_label": "需要改什么？"
+  },
   "writer": {
     "granularity": "写作粒度",
     "granularity_hint": "粒度越细，模型调用次数越多，但你对正文的掌控越强。",
@@ -104,6 +117,7 @@
     "placeholder": "输入消息…",
     "disabled": "现在没有可执行的操作。",
     "disabled_form": "请先回答上面的问题。",
+    "disabled_review": "请先在上方做出审阅决定。",
     "disabled_continue": "继续会话后才能写入。",
     "disabled_done": "这个会话已经结束。"
   },

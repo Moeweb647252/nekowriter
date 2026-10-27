@@ -579,8 +579,14 @@ version first.
 - **Controls** (by status):
   - running: **Pause** (shows "Pausing…" until held), **Stop** (shows "Stopping…" for the moment
     the runner needs to stop).
-  - held / paused: **Continue**, **Feedback…**, **Abandon** (nothing is in flight, so there is
-    nothing to stop).
+  - held: a **review block** naming what is held (its tool's label and one-line summary from the
+    same registry the tool cards use) with the submitted text readable in it, and two decisions in
+    the domain's words — **Approve** (the outline / the revision plan) and **Request changes**
+    (reveals a feedback box). Approve agrees to the held call; Request changes sends the feedback
+    back so the agent revises. **Abandon** stays in the menu. If the held call cannot be
+    identified, the block is not shown and the status-driven pair below applies.
+  - paused: **Continue**, **Feedback…**, **Abandon** (nothing is in flight, so there is nothing to
+    stop).
   - awaiting input: the form in the stream is highlighted. **Abandon**.
   - idle (conception): the composer replies. **Abandon** in the menu.
   - stopped / failed / interrupted: **Continue**, **Abandon**.
@@ -596,7 +602,8 @@ version first.
   - Interactive cards: **ask_user** forms and **request_review** forms (conception).
 - **Composer**: multiline. Its behavior is labeled by state: "Steer the agent" (running),
   "Feedback & continue" (held or paused), "Reply" (idle conception), disabled with a reason
-  otherwise (for example while a form waits for an answer).
+  otherwise (for example while a form waits for an answer, or while the held review block above
+  owns the decision).
 - **Footer**: cumulative tokens (input, cached input, output) for the session.
 
 ### 8.7 Conception studio
