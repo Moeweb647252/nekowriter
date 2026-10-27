@@ -283,7 +283,9 @@ and in the dialog, with a one-click removal that PATCHes exactly those fields aw
 - **Status tokens** (in `index.css`, both themes): `--status-running`, `--status-waiting`
   (amber), `--status-done` (green), `--status-failed` (red), `--status-idle` (muted). Exposed to
   Tailwind via `@theme inline` as `bg-status-running` etc. `StatusBadge` maps every chapter,
-  canon, session, and research status to a token, a Lucide icon, and an i18n label.
+  canon, session, and research status to a token, a Lucide icon, and an i18n label. The research
+  status `deferred` uses the `idle` token (nothing is running and nothing is waiting on the agent)
+  with its own label, `chapter:status.deferred` (D-138).
 - **Fonts**: UI uses the scaffold's Geist with the fallback `"PingFang SC", "Microsoft YaHei",
   "Noto Sans SC", sans-serif`. Prose serif stack: `"Noto Serif SC", "Source Han Serif SC",
   "Songti SC", "SimSun", serif`. Fonts are not bundled.

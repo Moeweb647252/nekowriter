@@ -2,12 +2,14 @@
 import { useState } from "react"
 import { Link, useParams } from "react-router"
 import { useTranslation } from "react-i18next"
-import { Play, Trash2 } from "lucide-react"
+import { CalendarClock, Play, Trash2, Undo2 } from "lucide-react"
 
 import {
+  useDeferResearchTask,
   useDeleteResearchTask,
   usePatchResearchTask,
   useResearchTask,
+  useResumeResearchTask,
   useRunResearchTask,
 } from "@/api/hooks/research"
 import { useResumeSession, useSession, useSessionControl } from "@/api/hooks/sessions"
@@ -31,6 +33,9 @@ export default function ResearchTaskPage() {
   const patch = usePatchResearchTask()
   const run = useRunResearchTask()
   const remove = useDeleteResearchTask()
+  // The deferred status (D-138): "not now" without running the task or throwing it away.
+  const defer = useDeferResearchTask()
+  const resumeTask = useResumeResearchTask()
   // The author edits a local draft; Save writes it (advancing the draft to ready is separate).
   const [topic, setTopic] = useState<string | null>(null)
   const [requirements, setRequirements] = useState<string | null>(null)
@@ -127,6 +132,12 @@ export default function ResearchTaskPage() {
         </p>
       ) : null}
 
+      {task.data.status === "deferred" && !open ? (
+        <p className="rounded-md border border-dashed p-2 text-xs text-muted-foreground">
+          {t("knowledge:research.deferred_hint")}
+        </p>
+      ) : null}
+
       <div className="space-y-1">
         <Label htmlFor="research-topic">{t("knowledge:research.topic")}</Label>
         <Input
@@ -167,6 +178,44 @@ export default function ResearchTaskPage() {
           {patch.isPending ? <Spinner /> : null}
           {t("common:save")}
         </Button>
+        {task.data.status === "ready" ? (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={defer.isPending || open}
+            onClick={() =>
+              defer.mutate(taskId, {
+                onError: showError,
+              })
+            }
+          >
+            {defer.isPending ? (
+              <Spinner />
+            ) : (
+              <CalendarClock className="size-3.5" aria-hidden="true" />
+            )}
+            {t("knowledge:research.defer")}
+          </Button>
+        ) : null}
+        {task.data.status === "deferred" ? (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={resumeTask.isPending || open}
+            onClick={() =>
+              resumeTask.mutate(taskId, {
+                onError: showError,
+              })
+            }
+          >
+            {resumeTask.isPending ? (
+              <Spinner />
+            ) : (
+              <Undo2 className="size-3.5" aria-hidden="true" />
+            )}
+            {t("knowledge:research.resume")}
+          </Button>
+        ) : null}
         {task.data.status === "draft" ? (
           <Button
             size="sm"

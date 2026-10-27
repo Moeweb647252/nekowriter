@@ -46,9 +46,14 @@ not delete other agents' temp directories.
 - `crates/migration/` — `nekowriter_migration::up(&conn)` applies the schema. `sea_orm_migration`
   records applied migrations in `seaql_migrations` and only runs *pending* ones, so editing an
   already-applied file does nothing to an existing database: a schema change is a new `NNNN_*.sql`
-  plus its `m0001_init.rs`-style module in `crates/migration/src/lib.rs`. (The MVP shipped before
-  the first tagged release, so `0001_init.sql` was edited in place while every dev database was
-  recreated by hand — that window is closed now.)
+  plus its `m0001_init.rs`-style module in `crates/migration/src/lib.rs`. `0002_research_deferred`
+  is the worked example: it rebuilds a table because SQLite cannot alter a CHECK in place, it runs
+  with `use_transaction() = Some(false)` so `PRAGMA foreign_keys = OFF` takes effect around the
+  DROP, and it guards the rebuild against losing child rows. spec/02 §1 still permits editing
+  `0001_init.sql` while no release is tagged (`git tag` is empty), and such an edit is what a fresh
+  database and every test fixture get — but it **cannot** reach an existing database, so a schema
+  change that must reach one is the 0001 edit *plus* the upgrade file, and the upgrade file is what
+  the author's database actually runs.
 - `crates/llm/` — neutral types, OpenAI-compatible adapter, Anthropic adapter, error/retry
   classification, `ScriptedProvider`, `DemoProvider` with `demo/corpus.toml`.
 - `crates/embed/` — `Embedder` trait, `FakeEmbedder`, `FastEmbedder`, `models.toml`.

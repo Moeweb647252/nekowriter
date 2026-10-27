@@ -39,3 +39,16 @@ export function deleteResearchTask(taskId: number): Promise<void> {
 export function runResearchTask(taskId: number): Promise<ResearchRunResponse> {
   return api.post<ResearchRunResponse>(`/research-tasks/${taskId}/run`, {})
 }
+
+/**
+ * Postpones a ready task without running or cancelling it (spec/10 §2.5, D-138). Idempotent: a
+ * second call returns the current row instead of failing, so a double-click is harmless.
+ */
+export function deferResearchTask(taskId: number): Promise<ResearchTaskDto> {
+  return api.post<ResearchTaskDto>(`/research-tasks/${taskId}/defer`, {})
+}
+
+/** Returns a deferred task to `ready`, making it runnable again (spec/10 §2.5, D-138). */
+export function resumeResearchTask(taskId: number): Promise<ResearchTaskDto> {
+  return api.post<ResearchTaskDto>(`/research-tasks/${taskId}/resume`, {})
+}

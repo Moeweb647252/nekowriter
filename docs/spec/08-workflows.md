@@ -181,9 +181,11 @@ is one, otherwise it starts one.
      finalize the overview suggests running the research tasks the conception created, because the
      writer's kickoff and canon maintenance read knowledge (spec/07 §5) and an empty knowledge base
      makes them improvise from canon alone. Only `ready` counts — a `draft` topic is unconfirmed
-     and cannot be run (spec/07 §8). `ready_research` is the number of runnable tasks (the card
-     says "Run 8 research tasks"); `research_task_id` is set only when exactly one is runnable, so
-     the card can open that task's page instead of the list (D-136);
+     and cannot be run, and a `deferred` task was explicitly postponed by the author, which is the
+     release valve that lets the book be written before its research is done (spec/07 §8, D-138).
+     `ready_research` is the number of runnable tasks (the card says "Run 8 research tasks");
+     `research_task_id` is set only when exactly one is runnable, so the card can open that task's
+     page instead of the list (D-136);
   4. a chapter `in_review` → `review_chapter {chapter_id}`;
   5. a chapter `drafting`/`revising` → `continue_chapter {chapter_id, session_id?}`;
   6. latest main chapter official with `canon_status ∈ {pending, failed, stale}` →
@@ -193,10 +195,14 @@ is one, otherwise it starts one.
   Rule 3 sits before every chapter rule, matching PROJECT's sentence order ("Run research tasks"
   before "Write chapter 1"). Consequence: while `ready` tasks remain, the overview keeps suggesting
   research and does not suggest the next chapter — a chapter in review or a drafting chapter waits
-  behind it, and the `attention[]` rows for both keep showing that work (D-136).
+  behind it, and the `attention[]` rows for both keep showing that work (D-136). The way out is
+  `defer` (spec/07 §8): once every runnable task is deferred, rule 3 no longer matches and the
+  overview falls through to the chapter rules, so the author chooses "later" without paying for a
+  run or discarding the task (D-138).
 - `attention[]`: open sessions in `held`, `awaiting_input`, `paused`, `failed`, `interrupted`,
   `stopped`; chapters in review; canon not synced; pending proposals (count); ready research tasks
-  (count, `ready` only — the same set rule 3 counts).
+  (count, `ready` only — the same set rule 3 counts, so a deferred task produces no row: it does
+  not demand action, the author already decided to postpone it).
 - `progress`: chapter counts per status and track, official word count, total word count.
 - `recent_changes`: the latest 10 change log entries.
 - `usage`: the token totals of the book's sessions.

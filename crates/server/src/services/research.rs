@@ -268,6 +268,115 @@ pub async fn delete(state: &AppState, task_id: i32) -> Result<(), AppError> {
     Ok(())
 }
 
+// ───────────────────────────── defer and resume (D-138) ─────────────────────────────
+
+/// `POST /api/research-tasks/:id/defer` and `.../resume` (spec/10 §2.5).
+///
+/// Both endpoints name a **target status** rather than an action on the current one, which is what
+/// makes a repeat call harmless: `defer` on a deferred task and `resume` on a ready one return the
+/// current row unchanged (no write, no event), so a double-click or a retried request cannot fail.
+/// A transition that is not in the table is the documented `409 research.invalid_state` naming the
+/// task's current status (spec/07 §8, D-138).
+pub async fn transition(
+    state: &AppState,
+    task_id: i32,
+    transition: Transition,
+) -> Result<ResearchTaskDto, AppError> {
+    let db = state.db().clone();
+    let (dto, events) = super::write(&db, move |tx| {
+        Box::pin(async move { transition_inner(tx, task_id, transition).await })
+    })
+    .await?;
+    state.events().publish_all(events);
+    Ok(dto)
+}
+
+/// The two author transitions of the deferred status (spec/10 §2.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Transition {
+    /// `ready → deferred`: "I know about this, not now".
+    Defer,
+    /// `deferred → ready`: "I do want to run this after all".
+    Resume,
+}
+
+impl Transition {
+    /// The wire word of the endpoint and of the error detail.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Transition::Defer => "defer",
+            Transition::Resume => "resume",
+        }
+    }
+
+    /// The status this transition moves the task to.
+    fn target(self) -> ResearchTaskStatus {
+        match self {
+            Transition::Defer => ResearchTaskStatus::Deferred,
+            Transition::Resume => ResearchTaskStatus::Ready,
+        }
+    }
+
+    /// The statuses this transition may start from (spec/07 §8 step 1, D-138).
+    ///
+    /// `defer` accepts `ready` only: a `draft` topic is unconfirmed (the author confirms it to
+    /// `ready` or deletes it), and `running`/`done`/`failed`/`cancelled` are not "pending, but not
+    /// now" — deferring them would claim finished work is still ahead or resurrect a dropped
+    /// intent. `resume` accepts `deferred` only; every other status is already resolved.
+    fn sources(self) -> &'static [ResearchTaskStatus] {
+        match self {
+            Transition::Defer => &[ResearchTaskStatus::Ready],
+            Transition::Resume => &[ResearchTaskStatus::Deferred],
+        }
+    }
+}
+
+async fn transition_inner(
+    tx: &impl ConnectionTrait,
+    task_id: i32,
+    transition: Transition,
+) -> Result<(ResearchTaskDto, Vec<ServerEvent>), AppError> {
+    let task = load(tx, task_id).await?;
+    let current =
+        ResearchTaskStatus::from_str_opt(&task.status).unwrap_or(ResearchTaskStatus::Draft);
+    // A task whose session is open is being written by the researcher: the same conflict `run`,
+    // PATCH and DELETE report (spec/07 §8 step 1, spec/10 §2.5).
+    if is_open(&task) {
+        return Err(open_session_error(&task));
+    }
+    let target = transition.target();
+    if current == target {
+        // Already there: the row is the answer, and nothing is written or announced.
+        return Ok((with_entries(tx, task).await?, Vec::new()));
+    }
+    if !transition.sources().contains(&current) {
+        return Err(AppError::new(
+            ErrorCode::ResearchInvalidState,
+            format!(
+                "a {} research task cannot be moved to {}",
+                current.as_str(),
+                target.as_str()
+            ),
+        )
+        .with_details(serde_json::json!({
+            "status": current.as_str(),
+            "operation": transition.as_str(),
+        })));
+    }
+    let row = research_tasks::ActiveModel {
+        id: Set(task_id),
+        status: Set(target.as_str().to_owned()),
+        updated_at: Set(now()),
+        ..Default::default()
+    }
+    .update(tx)
+    .await?;
+    Ok((
+        with_entries(tx, row.clone()).await?,
+        vec![ServerEvent::ResearchUpdated { task: to_dto(row) }],
+    ))
+}
+
 async fn delete_inner(
     tx: &impl ConnectionTrait,
     task_id: i32,
@@ -328,9 +437,13 @@ async fn prepare_scope(tx: &impl ConnectionTrait, task_id: i32) -> Result<i32, A
     if is_open(&task) {
         return Err(open_session_error(&task));
     }
+    // `deferred` is runnable on purpose: the author's "not now" is not a lock, and forcing an
+    // un-defer step before every run would add friction without any safety gain (D-138). The run
+    // starts the session, which moves the task to `running` through its own transition
+    // (spec/07 §8 step 5), so the deferred state never outlives the first run.
     if !matches!(
         task.status.as_str(),
-        "draft" | "ready" | "done" | "cancelled"
+        "draft" | "ready" | "deferred" | "done" | "cancelled"
     ) {
         return Err(AppError::new(
             ErrorCode::ResearchInvalidState,

@@ -8,13 +8,17 @@ use sea_orm_migration::prelude::*;
 use sea_orm_migration::sea_orm::ConnectionTrait;
 
 mod m0001_init;
+mod m0002_research_deferred;
 
 pub struct Migrator;
 
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        vec![Box::new(m0001_init::Migration)]
+        vec![
+            Box::new(m0001_init::Migration),
+            Box::new(m0002_research_deferred::Migration),
+        ]
     }
 }
 

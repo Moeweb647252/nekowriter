@@ -23,8 +23,18 @@
 - **Migrations**: `crates/migration/src/sql/0001_init.sql` holds the full initial schema below.
   Until the first tagged release, 0001 may be edited and dev databases recreated. After that,
   migrations are append-only.
+  An edit to 0001 reaches **only** fresh databases: the migrator records applied files in
+  `seaql_migrations` and runs the pending ones only, and a database created after the first run
+  already records `m0001_init`. A schema change that must reach an existing database therefore
+  needs both — the edit for fresh databases, plus a later file that upgrades the existing ones.
+  `0002_research_deferred.sql` is the first of those: SQLite cannot alter a CHECK constraint in
+  place, so it rebuilds `research_tasks` (create, copy, drop, rename) with `PRAGMA foreign_keys`
+  off, because `Db::connect` turns the pragma on and a `DROP TABLE` would then apply
+  `agent_sessions`' `ON DELETE CASCADE` and `knowledge_entries`' `ON DELETE SET NULL`. Its
+  module declares `use_transaction() = Some(false)`: the pragma is a no-op inside a transaction,
+  so the migrator must not wrap the file, which opens its own.
 
-## 2. Schema (0001_init.sql)
+## 2. Schema (0001_init.sql, upgraded by 0002_research_deferred.sql)
 
 ```sql
 -- ───────────────────────────── App configuration ─────────────────────────────
@@ -344,7 +354,7 @@ CREATE TABLE research_tasks (
   topic            TEXT NOT NULL,
   requirements     TEXT NOT NULL DEFAULT '',
   language         TEXT NOT NULL,                       -- BCP-47 language of the entries (spec/07 §8)
-  status           TEXT NOT NULL CHECK (status IN ('draft','ready','running','done','failed','cancelled')),
+  status           TEXT NOT NULL CHECK (status IN ('draft','ready','deferred','running','done','failed','cancelled')),
   session_id       INTEGER REFERENCES agent_sessions(id) ON DELETE SET NULL,
   report           TEXT NOT NULL DEFAULT '',
   entries_created  INTEGER NOT NULL DEFAULT 0,
@@ -591,7 +601,7 @@ CREATE UNIQUE INDEX prompt_overrides_book   ON prompt_overrides(book_id, key) WH
 | RelationStatus | `active`, `ended` |
 | ChangeTargetType | `entity`, `relation`, `appearance_set`, `timeline_event`, `memory_note`, `foreshadowing`, `chapter_summary`, `setting_doc`, `character_design` |
 | ProposalStatus / ProposalTargetType | `pending`,`accepted`,`rejected`,`conflict` / `setting_doc`,`character_design`,`new_character` |
-| ResearchTaskStatus | `draft`, `ready`, `running`, `done`, `failed`, `cancelled` |
+| ResearchTaskStatus | `draft`, `ready`, `deferred`, `running`, `done`, `failed`, `cancelled` |
 | EntrySource | `manual`, `research` |
 | SearchDocKind / EmbedState | `entity`,`note`,`foreshadowing`,`event`,`summary`,`passage` / `pending`,`done`,`failed` |
 | MessageRole / MessageKind | `user`,`assistant` / `kickoff`,`user`,`notice`,`nudge`,`assistant` |

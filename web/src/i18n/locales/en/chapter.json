@@ -15,6 +15,7 @@
   "tab_history": "History",
   "status.planned": "Planned",
   "status.drafting": "Drafting",
+  "status.deferred": "Deferred",
   "status.in_review": "In review",
   "status.revising": "Revising",
   "status.official": "Official",

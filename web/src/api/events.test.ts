@@ -89,6 +89,33 @@ describe("delta coalescing", () => {
     useLiveStore.setState({ streams: {}, previews: {} })
   })
 
+  it("invalidates the overview on research.updated so a defer unblocks writing", () => {
+    // The overview's `next_action` counts `ready` research tasks (D-136, D-138), so deferring one
+    // changes it. Without this invalidation the card kept offering `run_research` after the author
+    // deferred the last runnable task, and the release valve looked broken until a manual reload.
+    const client = seededClient()
+    client.setQueryData(keys.research.list(1), [])
+    applyServerEvent(client, "research.updated", {
+      task: {
+        id: 3,
+        book_id: 1,
+        scope_name: "明初历史",
+        topic: "宝钞与财政",
+        requirements: "",
+        language: "zh-CN",
+        status: "deferred",
+        report: "",
+        entries_created: 0,
+        entries: [],
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-02T00:00:00Z",
+      },
+    })
+
+    expect(isInvalidated(client, keys.research.list(1))).toBe(true)
+    expect(isInvalidated(client, keys.books.overview(1))).toBe(true)
+  })
+
   it("drops buffered deltas when the persisted message arrives", () => {
     useLiveStore.setState({ streams: {}, previews: {} })
     const client = new QueryClient()

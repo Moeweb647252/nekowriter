@@ -72,7 +72,7 @@ const ALL_SESSION_ERROR_CODES = [
   "internal",
 ]
 
-const CHAPTER_STATUSES = ["planned", "drafting", "in_review", "revising", "official"]
+const CHAPTER_STATUSES = ["planned", "drafting", "deferred", "in_review", "revising", "official"]
 const CANON_STATUSES = ["none", "pending", "syncing", "synced", "stale", "failed"]
 
 describe("locale coverage", () => {

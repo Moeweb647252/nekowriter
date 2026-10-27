@@ -2175,3 +2175,64 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   forcing `reviewHeld` to `false` fails four, and wiring approve to `onRequestChanges("")` fails
   six. `SessionControls.test.tsx` keeps the paused and degraded-held cases; `Composer.test.tsx`
   pins the review-block mode; `locales.test.ts` requires every new key in both locales.
+
+### D-138 A deferred research status is the release valve for the required research step
+- **Context**: D-136 made running research a *required* step of the overview's `next_action`
+  (`run_research` sits between `seed_canon` and the chapter rules), so a book with any `ready`
+  research task is never prompted to write. The author reported the consequence in their own
+  database: book 3 has a `drafting` chapter, 0 knowledge entries, and 8 `ready` research tasks, so
+  the overview keeps asking for research and the chapter cannot be advanced from the card. Without
+  a third option the only ways out were to run a task (a model call and real time, per task) or to
+  cancel it (loses the topic, the requirements and the intent). Deferring is the author's "I know
+  about this, not now".
+- **Decision**: a new `ResearchTaskStatus::Deferred` (wire `deferred`) with two dedicated
+  endpoints, `POST /api/research-tasks/:id/defer` and `.../resume`. (a) *Transitions*: `ready` →
+  `deferred` and `deferred` → `ready`; `run` also accepts a `deferred` task straight to `running`.
+  Refused with `409 research.invalid_state`: `draft` → `deferred` (an unconfirmed topic cannot be
+  postponed, it is confirmed or deleted; it never blocks writing anyway) and
+  `running`/`failed`/`done`/`cancelled` → `deferred` (open sessions must finish or stop first, and
+  settled work stays settled — deferring it would claim completed work is pending or resurrect a
+  dropped intent). `deferred` → `running` is deliberately *not* an author endpoint: it happens
+  through `run`, which already owns session creation. (b) *Idempotency*: each endpoint names a
+  **target status**, not an action, so a repeat call returns the current row with `200`, writes
+  nothing and emits no event; a double-click is harmless. (c) *Dedicated endpoints, not PATCH*: a
+  PATCH of `status` already means "confirm a draft", and these are named state changes with their
+  own rules. (d) *Overview*: `next_action` rule 3 and the `attention[]` count already filtered
+  `ResearchTaskStatus::Ready` only, so `deferred` falls out with no logic change — asserted through
+  the real `/overview` handler, not assumed. (e) *Schema*: `0001_init.sql`'s CHECK is edited **and**
+  `0002_research_deferred.sql` ships. The edit is what a fresh database and every test fixture gets
+  (spec/02 §1 permits it while no release is tagged, and `git tag` is empty). It cannot reach an
+  existing database: `seaql_migrations` already records `m0001_init`, and only pending files run —
+  so the author's own database would have failed every `deferred` write with a CHECK violation.
+  The upgrade rebuilds `research_tasks` (SQLite cannot alter a CHECK in place) with
+  `PRAGMA foreign_keys = OFF` around it: `Db::connect` sets the pragma ON and a `DROP TABLE` then
+  fires `agent_sessions`' `ON DELETE CASCADE` (silently deleting the researcher sessions) and
+  `knowledge_entries`' `ON DELETE SET NULL` (silently unlinking every entry). The pragma is a no-op
+  inside a transaction, so the migration declares `use_transaction() = Some(false)` and opens its
+  own; a row-count guard turns any such loss into a failed migration instead of a quiet one.
+- **Consequences**: the author can postpone everything and get straight back to writing — the
+  deferred tasks keep their topic, requirements, scope and language, and the card's count drops to
+  the runnable ones. Deferral is *not* a lock and not a cancel: `run` accepts a deferred task,
+  `resume` restores the prompt, and the row is otherwise untouched, so the state is recoverable in
+  both directions and appears in the record (`deferred` is a real status, so the list filter and
+  the badge show it). The UI offers Defer on `ready` rows in the list and on the task page, Resume
+  on `deferred` ones, and neither while a session is open (where the server refuses anyway); the
+  badge uses the `idle` token with its own label. One gap had to be closed with the feature: the
+  SSE handler for `research.updated` invalidated only `keys.research.all`, so a defer made in
+  another tab or by an agent left the overview offering `run_research` until a manual reload; it
+  now invalidates that book's overview too, and the research mutations do the same for the same
+  reason. **Relationship to D-136 (the ruling kept)**: D-136's ordering is untouched — research
+  still outranks chapters *while it is runnable*. Deferral is not an escape from the research step;
+  it is the explicit, recorded, reversible decision to do it later, which is what a single-author
+  tool needs when the gate is otherwise absolute.
+- **Regression guards**: `research_deferred.rs` pins the whole matrix in one table (14 edges: every
+  allowed transition succeeds, every refused one is `409 research.invalid_state` naming the current
+  status, every open-session edge names the session), plus idempotency (a repeat call writes
+  nothing and publishes no event), the `research.updated` event, and a deferred task running
+  directly. `overview_actions.rs` proves the flip through the real overview: only-deferred →
+  `write_next`, deferred + `drafting` chapter → `continue_chapter`, one ready among deferred →
+  `run_research` with count 1, resume → `run_research` again. `research_deferred_migration.rs`
+  builds a pre-`deferred` database, upgrades it, and asserts the sessions and entry links survive
+  (deleting the pragma from the script makes it fail with `CHECK constraint failed: lost = 0`).
+  `researchDeferred.test.tsx` covers the buttons and the badge; `events.test.ts` covers the
+  overview invalidation (removing it fails the test).

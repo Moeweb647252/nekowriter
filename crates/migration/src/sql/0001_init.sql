@@ -315,7 +315,7 @@ CREATE TABLE research_tasks (
   topic            TEXT NOT NULL,
   requirements     TEXT NOT NULL DEFAULT '',
   language         TEXT NOT NULL,                       -- BCP-47 language of the entries (spec/07 §8)
-  status           TEXT NOT NULL CHECK (status IN ('draft','ready','running','done','failed','cancelled')),
+  status           TEXT NOT NULL CHECK (status IN ('draft','ready','deferred','running','done','failed','cancelled')),
   session_id       INTEGER REFERENCES agent_sessions(id) ON DELETE SET NULL,
   report           TEXT NOT NULL DEFAULT '',
   entries_created  INTEGER NOT NULL DEFAULT 0,

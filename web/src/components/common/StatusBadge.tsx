@@ -3,6 +3,7 @@
 import {
   AlertTriangle,
   Ban,
+  CalendarClock,
   CheckCircle2,
   Circle,
   CircleDot,
@@ -55,6 +56,9 @@ const STATUS: Record<string, StatusSpec> = {
   cancelled: { token: "idle", icon: Ban, labelKey: "canon_status.none" },
   // A research task's own `running` (spec/10 §2.5); sessions use `running_session` instead.
   running: { token: "running", icon: Loader2, labelKey: "status.drafting", spin: true },
+  // The author's "not now" (D-138): the task is neither running nor finished, so it is not
+  // waiting on the agent — `idle` is the honest token, with its own label.
+  deferred: { token: "idle", icon: CalendarClock, labelKey: "status.deferred" },
 }
 
 const TOKEN_CLASS: Record<Token, string> = {

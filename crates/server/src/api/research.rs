@@ -67,3 +67,30 @@ pub async fn run(
         Json(ResearchRunResponse { session_id }),
     ))
 }
+
+/// `POST /api/research-tasks/:id/defer` (spec/10 §2.5, D-138).
+///
+/// Postpones a `ready` task without running or cancelling it. Idempotent: deferring an already
+/// deferred task returns the current row with `200` and writes nothing, so a double-click is
+/// harmless.
+pub async fn defer(
+    State(state): State<AppState>,
+    Path(task_id): Path<i32>,
+) -> AppResult<Json<ResearchTaskDto>> {
+    Ok(Json(
+        research::transition(&state, task_id, research::Transition::Defer).await?,
+    ))
+}
+
+/// `POST /api/research-tasks/:id/resume` (spec/10 §2.5, D-138).
+///
+/// Returns a deferred task to `ready`, making it runnable — and the overview's `run_research`
+/// action — again. Idempotent in the same way as `defer`.
+pub async fn resume(
+    State(state): State<AppState>,
+    Path(task_id): Path<i32>,
+) -> AppResult<Json<ResearchTaskDto>> {
+    Ok(Json(
+        research::transition(&state, task_id, research::Transition::Resume).await?,
+    ))
+}

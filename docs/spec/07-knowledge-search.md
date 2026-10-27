@@ -230,10 +230,11 @@ Markdown. The key is `deepseek_api_key`, the same secret the DeepSeek search pro
 1. The author creates a task (topic, requirements, target scope name, optional book) or reviews
    one created by conception (`draft` → `ready` when the author confirms it in the UI).
 2. **Run** (`POST /research-tasks/:id/run`): allowed when the task has no open session (status
-   `draft`, which Run confirms, `ready`, `done`, or `cancelled`); a `running` or `failed` task
-   still has its session, which the author continues or abandons first
+   `draft`, which Run confirms, `ready`, `deferred`, `done`, or `cancelled`); a `running` or
+   `failed` task still has its session, which the author continues or abandons first
    (`409 research.invalid_state`). Resolve or create the scope by name (attach it to the linked
-   book). Start a `research` session. Kickoff (`researcher.kickoff`): topic, requirements, scope
+   book). Start a `research` session. A `deferred` task runs directly: "not now" is not a lock,
+   and the run moves it to `running` in step 5, so the state never outlives the first run. Kickoff (`researcher.kickoff`): topic, requirements, scope
    name and description, the titles of existing entries in the scope (≤ 200), the budget, and
    the linked book's brief (`block.book_brief`: title, genre, idea, writing language), so
    research serves the story.
@@ -250,3 +251,23 @@ Markdown. The key is `deepseek_api_key`, the same secret the DeepSeek search pro
 5. Task status follows its session: `running` while the session is open (including held,
    paused, or stopped, which the session badge shows), `failed` while it is failed (Continue
    sets it back to `running`), `done` on completion, `cancelled` when the session is abandoned.
+6. **Defer and resume** (D-138): `POST /research-tasks/:id/defer` postpones a `ready` task and
+   `POST /research-tasks/:id/resume` returns it to `ready`. Deferring is the middle way between
+   running a task (costs a model call and time) and deleting it (loses the intent), and it is
+   what lets a book with pending research be written anyway: `next_action` and `attention` count
+   `ready` tasks only, so a deferred task is skipped until the author resumes it (spec/08 §7).
+   The table is:
+
+   | From | `defer` | `resume` |
+   |---|---|---|
+   | `draft` | `409 research.invalid_state` — unconfirmed topic, confirmed with PATCH to `ready` | same |
+   | `ready` | → `deferred` | no-op, the row is returned |
+   | `deferred` | no-op, the row is returned | → `ready` |
+   | `running`, `failed` | `409` naming the open session (finish or stop it first) | same |
+   | `done`, `cancelled` | `409 research.invalid_state` — settled work stays in the record | same |
+
+   Both endpoints name a **target status**, which makes a repeat call idempotent rather than an
+   error: a double-click returns the current row, writes nothing, and publishes no event. The
+   `409` carries `details.status` (the task's current status) and `details.operation`
+   (`defer`/`resume`); the open-session case carries `details.session_id` instead, as it does for
+   PATCH, DELETE and run.

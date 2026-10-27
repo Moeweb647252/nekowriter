@@ -252,6 +252,10 @@ pub fn build_app(state: AppState) -> Router {
                 .delete(research::delete),
         )
         .route("/research-tasks/{task_id}/run", post(research::run))
+        // The deferred status (spec/10 §2.5, D-138): dedicated transitions, not a generic PATCH,
+        // because each one is a state change with rules of its own.
+        .route("/research-tasks/{task_id}/defer", post(research::defer))
+        .route("/research-tasks/{task_id}/resume", post(research::resume))
         .route(
             "/books/{book_id}/scopes",
             get(knowledge::list_book_scopes).put(knowledge::put_book_scopes),

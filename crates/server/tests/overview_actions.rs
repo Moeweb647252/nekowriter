@@ -426,6 +426,140 @@ async fn research_never_outranks_conception_or_seeding() {
     assert_eq!(body["next_action"]["kind"], "seed_canon", "{body}");
 }
 
+// ───────────────────────────── the deferred status (D-138) ─────────────────────────────
+
+#[tokio::test]
+async fn deferred_research_tasks_do_not_block_writing() {
+    // The release valve (D-138): `next_action` and `attention` count `ResearchTaskStatus::Ready`
+    // only, so a task the author has deferred must drop out of both. Before the status existed the
+    // only ways out of the gate were running the task or cancelling it (D-136).
+    let (app, book_id, track_id, chapter_id) = app_with_book().await;
+    official(&app, chapter_id, "synced").await;
+    research_task(&app, book_id, "deferred", "推迟的主题", "zh-CN").await;
+
+    let body = overview(&app, book_id).await;
+    assert_eq!(
+        body["next_action"]["kind"], "write_next",
+        "a deferred task is not runnable, so writing continues: {body}"
+    );
+    assert_eq!(body["next_action"]["track_id"], track_id);
+    assert_eq!(
+        body["next_action"].get("ready_research"),
+        None,
+        "nothing is runnable, so the card names no count: {body}"
+    );
+    assert_eq!(
+        attention_count(&body, "ready_research"),
+        0,
+        "an attention row demands action, and the author just said 'not now': {body}"
+    );
+}
+
+#[tokio::test]
+async fn only_the_ready_tasks_of_a_mixed_book_are_counted() {
+    // One ready and one deferred: the ready one still gates, and the count is 1 — not 2, which is
+    // what counting the whole list would have produced.
+    let (app, book_id, _, chapter_id) = app_with_book().await;
+    official(&app, chapter_id, "synced").await;
+    let ready_id = research_task(&app, book_id, "ready", "城防", "zh-CN").await;
+    research_task(&app, book_id, "deferred", "宝钞", "zh-CN").await;
+
+    let body = overview(&app, book_id).await;
+    assert_eq!(body["next_action"]["kind"], "run_research", "{body}");
+    assert_eq!(body["next_action"]["ready_research"], 1, "{body}");
+    assert_eq!(
+        body["next_action"]["research_task_id"], ready_id,
+        "exactly one task is runnable, so the card can open it: {body}"
+    );
+    assert_eq!(attention_count(&body, "ready_research"), 1, "{body}");
+}
+
+#[tokio::test]
+async fn deferring_the_last_runnable_task_returns_the_overview_to_writing() {
+    // The whole feature, end to end through the real endpoints: the overview asks for research,
+    // the author defers the task instead of running it, and the same book now asks for the next
+    // chapter. This is the author's own situation (8 ready tasks, a drafting chapter).
+    let (app, book_id, track_id, chapter_id) = app_with_book().await;
+    official(&app, chapter_id, "synced").await;
+    let ids = [
+        research_task(&app, book_id, "ready", "城防", "zh-CN").await,
+        research_task(&app, book_id, "ready", "宝钞", "zh-CN").await,
+    ];
+    let before = overview(&app, book_id).await;
+    assert_eq!(before["next_action"]["kind"], "run_research", "{before}");
+    assert_eq!(before["next_action"]["ready_research"], 2, "{before}");
+
+    for id in ids {
+        let (status, body) = app
+            .post(&format!("/api/research-tasks/{id}/defer"), json!({}))
+            .await;
+        assert_eq!(status, StatusCode::OK, "defer {id}: {body}");
+        assert_eq!(body["status"], "deferred", "{body}");
+    }
+
+    let after = overview(&app, book_id).await;
+    assert_eq!(
+        after["next_action"]["kind"], "write_next",
+        "nothing runnable is left, so the overview prompts writing again: {after}"
+    );
+    assert_eq!(after["next_action"]["track_id"], track_id);
+    assert_eq!(attention_count(&after, "ready_research"), 0, "{after}");
+}
+
+#[tokio::test]
+async fn a_drafting_chapter_wins_back_a_deferred_book() {
+    // The author's book 3 exactly: canon seeded, a chapter `drafting`, 0 knowledge entries and
+    // every research task deferred. The overview must answer `continue_chapter`, not research.
+    let (app, book_id, _, chapter_id) = app_with_book().await;
+    app.execute(&format!(
+        "INSERT INTO agent_sessions(book_id, role, kind, model_snapshot, system_prompt, tools, \
+         status, created_at, updated_at) VALUES ({book_id}, 'archivist', 'canon_seed', '{{}}', '', \
+         '[]', 'completed', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+    ))
+    .await;
+    app.set_chapter_status(chapter_id, "drafting").await;
+    // Four deferred tasks, as many as the conception proposed in the reported database.
+    for topic in [
+        "洪武朝大事编年",
+        "洪武朝人物关系",
+        "人痘接种术",
+        "男频连载结构",
+    ] {
+        research_task(&app, book_id, "deferred", topic, "zh-CN").await;
+    }
+
+    let body = overview(&app, book_id).await;
+    assert_eq!(
+        body["next_action"]["kind"], "continue_chapter",
+        "the drafting chapter is the next step once research is deferred: {body}"
+    );
+    assert_eq!(body["next_action"]["chapter"]["id"], chapter_id);
+    assert_eq!(attention_count(&body, "ready_research"), 0, "{body}");
+}
+
+#[tokio::test]
+async fn a_resumed_task_gates_writing_again() {
+    // Resume is the inverse: the task returns to the runnable set, so the overview asks for
+    // research again. Without this, "defer" would be indistinguishable from "cancel".
+    let (app, book_id, _, chapter_id) = app_with_book().await;
+    official(&app, chapter_id, "synced").await;
+    let task_id = research_task(&app, book_id, "ready", "城防", "zh-CN").await;
+    app.post(&format!("/api/research-tasks/{task_id}/defer"), json!({}))
+        .await;
+    assert_eq!(
+        overview(&app, book_id).await["next_action"]["kind"],
+        "write_next"
+    );
+
+    let (status, body) = app
+        .post(&format!("/api/research-tasks/{task_id}/resume"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let after = overview(&app, book_id).await;
+    assert_eq!(after["next_action"]["kind"], "run_research", "{after}");
+    assert_eq!(after["next_action"]["ready_research"], 1, "{after}");
+}
+
 #[tokio::test]
 async fn another_books_ready_tasks_do_not_leak_into_this_book() {
     let (app, book_id, _, chapter_id) = app_with_book().await;

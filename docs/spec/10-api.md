@@ -117,6 +117,14 @@
 | GET / POST | `/research-tasks` | `?book_id&status` / `{ book_id?, scope_name, topic, requirements, language? }` (created as `draft` while the book is conceiving, otherwise `ready`; `language` is required without a book and ignored with one) | `ResearchTaskDto[]` / `ResearchTaskDto` |
 | GET / PATCH / DELETE | `/research-tasks/:id` | PATCH: topic, requirements, scope_name, `status: ready` (confirms a draft); not while its session is open | `ResearchTaskDto` (with the report and the created entries when done) |
 | POST | `/research-tasks/:id/run` | | `{ session_id }` |
+| POST | `/research-tasks/:id/defer` | `ready` → `deferred`; idempotent, a repeat call returns the current row (spec/07 §8, D-138) | `ResearchTaskDto` |
+| POST | `/research-tasks/:id/resume` | `deferred` → `ready`; idempotent in the same way | `ResearchTaskDto` |
+
+`defer` and `resume` are dedicated transitions rather than a generic PATCH because the author is
+moving a task between named states with rules of its own, and because a PATCH of `status` already
+means "confirm a draft". The refused edges are `409 research.invalid_state`, whose `details`
+carries `{ status, operation }`; a task with an open session reports
+`{ session_id }` instead, like every other write to it (spec/07 §8).
 
 ### 2.6 Prompts
 | Method | Path | Body / query | Response |
@@ -229,7 +237,7 @@ type ContentOpInput =                                                    // auth
 | `conflict.version` | 409 | stale `base_version` / `base_revision` |
 | `conflict.exists` | 409 | a unique name is taken (provider, model profile, scope, character, entity, entry); `details.id` |
 | `book.invalid_state` | 409 | e.g. finalize on a book that is not `conceiving`; `details.status` |
-| `research.invalid_state` | 409 | the task already has an open session; `details.session_id` |
+| `research.invalid_state` | 409 | the task already has an open session (`details.session_id`), or the transition is not allowed from its status (`details.status`, `details.operation`) |
 | `settings.locked` | 423 | setting materials while the conception session runs; `details.session_id` |
 | `chapter.invalid_state` | 409 | operation not allowed in this status; `details.status` |
 | `chapter.session_exists` | 409 | `details.session_id` |

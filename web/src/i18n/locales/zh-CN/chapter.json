@@ -15,6 +15,7 @@
   "tab_history": "历史",
   "status.planned": "待写",
   "status.drafting": "写作中",
+  "status.deferred": "已推迟",
   "status.in_review": "待审",
   "status.revising": "修订中",
   "status.official": "已定稿",

@@ -349,9 +349,18 @@ string_enum! {
 }
 
 string_enum! {
+    /// The lifecycle of a research task (spec/02 §3, spec/07 §8).
+    ///
+    /// `Deferred` (wire `deferred`) is the author's "not now" (D-138): the task keeps its topic,
+    /// requirements and scope but drops out of the runnable set, so it no longer makes
+    /// `run_research` the overview's next action (D-136). It is a state of the task, not of its
+    /// session — deferring never touches the session columns, and `run` accepts a deferred task
+    /// directly. It is entered from `ready` only, and left by `resume` (back to `ready`) or by a
+    /// run (to `running`).
     ResearchTaskStatus {
         Draft => "draft",
         Ready => "ready",
+        Deferred => "deferred",
         Running => "running",
         Done => "done",
         Failed => "failed",

@@ -500,9 +500,22 @@ export function applyServerEvent(
       return
     }
     case "research.updated": {
-      // A research task changed (create, edit, start, finish): refetch the task and its list
-      // (spec/10 §3).
+      // A research task changed (create, edit, start, finish, defer): refetch the task and its
+      // list (spec/10 §3). The overview follows too, because `next_action` and `attention` count
+      // the book's `ready` tasks (D-136) and an agent or a second tab can defer one — without
+      // this the card kept offering `run_research` after the last runnable task was deferred
+      // (D-138).
       void queryClient.invalidateQueries({ queryKey: keys.research.all })
+      const task = data?.task
+      const bookId =
+        typeof task === "object" && task !== null
+          ? (task as Record<string, unknown>).book_id
+          : undefined
+      if (typeof bookId === "number") {
+        void queryClient.invalidateQueries({
+          queryKey: keys.books.overview(bookId),
+        })
+      }
       return
     }
     case "index.status": {
