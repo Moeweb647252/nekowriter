@@ -116,6 +116,46 @@ describe("delta coalescing", () => {
     expect(isInvalidated(client, keys.books.overview(1))).toBe(true)
   })
 
+  it("invalidates the chapter a session.updated names, so an agent-driven hold reaches the dock", () => {
+    // `ChapterDto.open_sessions` is the client's only handle on the chapter's writer session, and
+    // `useWriterState` subscribes to the session snapshot only while that session is `held`. When
+    // the agent holds (`auto_pause`, `pause_after_outline`) no client mutation runs, so the chapter
+    // query has to be refreshed by the event; without it the cached session stayed `running`, the
+    // dock and the merged preview never appeared, and a reload "fixed" it (D-144).
+    const client = seededClient()
+    applyServerEvent(client, "session.updated", {
+      session: {
+        id: 11,
+        book_id: 1,
+        role: "writer",
+        kind: "chapter_write",
+        chapter_id: 9,
+        status: "held",
+        held_tool_call_id: 317,
+      },
+    })
+
+    expect(isInvalidated(client, keys.chapters.detail(9))).toBe(true)
+  })
+
+  it("does not invalidate a chapter for a session.updated without a chapter", () => {
+    // Conception, research and canon-seed sessions are not per-chapter (spec/10 §2.8). Their events
+    // must not invalidate a chapter, or every research step would refetch the open chapter.
+    const client = seededClient()
+    applyServerEvent(client, "session.updated", {
+      session: {
+        id: 7,
+        book_id: 1,
+        role: "conception",
+        kind: "conception",
+        chapter_id: null,
+        status: "running",
+      },
+    })
+
+    expect(isInvalidated(client, keys.chapters.detail(9))).toBe(false)
+  })
+
   it("drops buffered deltas when the persisted message arrives", () => {
     useLiveStore.setState({ streams: {}, previews: {} })
     const client = new QueryClient()

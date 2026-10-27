@@ -120,6 +120,18 @@ message and a retry.
 - Dispatch table by event type (spec/10 §3): update stores, upsert into query caches with
   `queryClient.setQueryData` where the payload is complete (sessions, tool calls, chapter list
   items), and invalidate where it is a signal (canon, settings, knowledge).
+- `session.updated` invalidates the chapter that embeds the session as well as the session itself:
+  `keys.chapters.detail(session.chapter_id)` when the payload's `SessionDto` has a chapter, and no
+  chapter when it does not (conception, research, canon seed). `ChapterDto.open_sessions` is the
+  chapter pane's only handle on its writer session and the chapter query is the only place it comes
+  from, so without this an **agent**-driven hold (`auto_pause`, `pause_after_outline`) left the
+  cached session `running`, `useWriterState` never subscribed to the snapshot (it does so only for a
+  `held` session), and the dock plus the merged preview were missing until a reload — while the
+  agent panel, which resolves the hold from its own snapshot, correctly said to decide in the dock.
+  Author-driven changes already refreshed the chapter (`invalidateSession` in
+  `api/hooks/sessions.ts`); this is the same invalidation for the event path (D-144). The scope is
+  one chapter key: no blanket invalidation, so a research or conception event cannot refetch the
+  open chapter.
 - Deltas and previews are coalesced with `requestAnimationFrame` before they reach the store.
 - After a reconnect (`onopen` following an `onerror`), invalidate all active queries
   (`queryClient.invalidateQueries()`) and reload the open chapter document.

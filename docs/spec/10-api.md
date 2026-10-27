@@ -202,10 +202,10 @@ Without `book_id` it sends everything.
 
 | `type` | Payload | Frontend reaction |
 |---|---|---|
-| `session.updated` | `{ session: SessionDto }` | update the live store; invalidate `["sessions", …]` |
+| `session.updated` | `{ session: SessionDto }` | update the live store; invalidate `["sessions", …]`, and the chapter's detail key (`["chapters", "detail", session.chapter_id]`) when the session has a chapter — `ChapterDto.open_sessions` is what the chapter pane locks on and where it finds a held write (D-144); a session with no chapter (conception, research, canon seed) invalidates no chapter |
 | `session.message` | `{ session_id, message: MessageDto }` | append to the activity stream; drop the stream buffer for that seq |
 | `session.delta` | `{ session_id, seq, kind: "text" \| "reasoning", index, text }` | append to the live buffer |
-| `session.tool_call` | `{ session_id, tool_call: ToolCallDto }` | upsert the card |
+| `session.tool_call` | `{ session_id, tool_call: ToolCallDto }` | upsert the card; no chapter invalidation of its own — `ToolCallDto` carries no chapter, and every tool call is published beside a `session.updated` (D-144) |
 | `session.tool_preview` | `{ session_id, seq, call_index, name, field, delta }` | append to the preview buffer (ghost text) |
 | `book.updated` | `{ book_id, op: "create" \| "update" \| "delete" }` (book row or its tracks: create, edit, finalize, archive) | invalidate the library, the book, and its tracks |
 | `chapter.updated` | `{ chapter: ChapterListItemDto, outline_changed: boolean }` | update lists; invalidate the chapter query when the outline changed |

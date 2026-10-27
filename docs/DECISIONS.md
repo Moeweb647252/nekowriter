@@ -2523,3 +2523,72 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   "edit, don't re-create" contract, that `ended` never blocks, and what to do with two simultaneous
   bonds; spec/05 §6 `set_relation` documents the upsert-by-pair behaviour; spec/02 §2's SQL mirror and
   spec/10 §4's `conflict.exists` row carry the new key and its meaning.
+
+### D-144 A session event refreshes the chapter that embeds the session
+
+- **Context**: the author reported 「dock 栏在哪」 — "where is the dock?" — with a screenshot of a
+  `held` writer session whose agent panel told them to decide in the dock, and no dock on the page.
+  The dock was not broken. Loaded fresh, the chapter page rendered it (measured in a real browser:
+  `getBoundingClientRect()` = `{top: 411, height: 122, bottom: 533}` in a 577 px viewport, with the
+  merged preview). It was **unreachable on the live path**. `ChapterDto.open_sessions` is the
+  client's only handle on a chapter's writer session and is cached under
+  `keys.chapters.detail(chapterId)`; `useWriterState` subscribes to the session snapshot only when
+  that session's `status` is `held` (D-141 needs `pending_content`, which only the snapshot carries).
+  An author-driven change was already covered: `invalidateSession` (`api/hooks/sessions.ts`) drops
+  the chapter key for pause, resume, stop and abandon, with a comment saying why. An **agent-driven**
+  hold — a write tool hitting `auto_pause`, or `pause_after_outline` — has no client mutation, only
+  a `session.updated` event, and that handler invalidated `keys.sessions.detail(sessionId)` alone.
+  So the cached `open_sessions[0].status` stayed `running`, the snapshot was never fetched,
+  `findHeldCall` returned `undefined`, `usePendingDraft().view` was `undefined`, and both the dock
+  and the merged preview stayed absent until something else refetched the chapter. A reload "fixed"
+  it, which is the signature of a stale cache; `pendingWriteDock.test.tsx` passed because it mounts
+  a fixture whose `open_sessions` already says `held`, so the test never walked the live path.
+- **Decision**: the `session.updated` / `session.tool_call` handler in `api/events.ts` now also
+  invalidates `keys.chapters.detail(chapterId)`, derived from the event payload's `session.chapter_id`.
+  The field is real, not invented: `SessionDto` has carried `chapter_id: Option<i32>` all along
+  (`api/dto/sessions.rs`, exported to `web/src/api/gen/SessionDto.ts`), the `session.updated` variant
+  carries the whole `SessionDto`, and every status transition goes through `session::transition`,
+  which returns `SessionUpdated` with that DTO — the hold path included (`runner::finalize_call`
+  pushes the held `SessionToolCall` and then the transition's `SessionUpdated` in the same batch).
+  Confirmed on the wire against a copy of the author's database: the hold of session 12 published
+  `SessionUpdated { ..., chapter_id: Some(3), status: Held, held_tool_call_id: Some(320) }`.
+  The invalidation is **scoped to the chapter the payload names**: a session with no chapter
+  (conception, research, canon seed) invalidates nothing extra, so a research or conception step
+  never refetches the open chapter. The handler no longer returns early when it cannot read a
+  session id, so a payload with a chapter but an unreadable id still refreshes the chapter.
+- **Consequences**: an agent-driven hold now reaches the dock live, which is what makes D-141
+  reachable at all on the user's own path. The cost is one extra chapter refetch per session event
+  for chapter-owned sessions — a `session.updated` is published per step, so a long draft refetches
+  the open chapter once per step while the author has that chapter's page open. That is the same
+  request the author-driven path already made, it is bounded to a single chapter key, and a step
+  is a model round trip, so it does not compete with typing. `session.tool_call` alone carries only
+  `{session_id, tool_call}` and `ToolCallDto` has no `chapter_id`, so its new branch is a no-op; the
+  server publishes a `session.updated` beside every tool call, and that event carries the chapter —
+  the branch exists so the two event types keep one handler rather than silently diverging later.
+- **Sibling audit** (`open_sessions` consumers, all invalidated by this same key): `useWriterState`
+  (lock, held call, dock, merged preview, live preview) — fixed by this entry, and the only one that
+  was visibly broken; `usePendingDraft` and `ChapterPage`'s dock — same chain, fixed with it;
+  `ChapterText` and `OutlineTab` (inline `HoldBar`, outline approval) — they read the same hook, so
+  an agent-driven `submit_outline` hold (the `pause_after_outline` case) was **also** invisible until
+  reload, and is fixed by the same line; `AgentPanel.chapterOpenSessions` had a milder variant: the
+  pinned session comes from `sessions.list` and the snapshot, so the panel showed the hold correctly,
+  which is exactly why the author saw "decide in the dock" next to no dock; `ChapterHeader`'s
+  "end the open writer session" warning is weaker as a result of this fix, because a held session is
+  no longer cached as `running` there — its `status !== "running"` filter now sees the hold, which is
+  the correct reading of spec/08 §1.1. `SideStoryPage` and `Navigator` read no `open_sessions`.
+  No consumer keeps its own `running`-only subscription.
+- **Regression guards**: `api/events.test.ts` pins that a `session.updated` with a chapter id
+  invalidates that chapter's detail key and that one without a chapter id does not; both were
+  checked to fail before the fix (`expected false to be true`). `sessionHoldDock.test.tsx` mounts the
+  real `ChapterPage` over a query client with the chapter endpoint answering `running`, then
+  `held` after the event, and asserts the dock appears **and** the merged preview renders — with the
+  invalidation removed it fails with `Unable to find an element by: [data-testid="pending-write-dock"]`,
+  which is the author's symptom in one line. A real browser run (copy of the author's database, own
+  port, SPA built both ways) reproduced their sequence end to end: page open while the writer was
+  running → agent hold → with the fix the dock and the merged preview appeared **without a reload**
+  (one `navigate` entry, `performance.now()` past 55 s); with the old handler the same sequence left
+  the pane empty under "The writer is working" while the panel said "Decide on the agent's text in
+  the draft pane", and only a reload produced the dock.
+- **Spec**: spec/10 §3's reaction for `session.updated` now names the chapter's `open_sessions`
+  invalidation and its scope; spec/11 §4.2 records the same rule beside the other event-driven
+  invalidations.

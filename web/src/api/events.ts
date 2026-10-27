@@ -485,13 +485,32 @@ export function applyServerEvent(
       if (data === null) {
         return
       }
-      const sessionId = data.session_id ?? payloadRecord(data.session)?.id
-      if (typeof sessionId !== "number") {
-        return
+      const session = payloadRecord(data.session)
+      const sessionId = data.session_id ?? session?.id
+      if (typeof sessionId === "number") {
+        void queryClient.invalidateQueries({
+          queryKey: keys.sessions.detail(sessionId),
+        })
       }
-      void queryClient.invalidateQueries({
-        queryKey: keys.sessions.detail(sessionId),
-      })
+      // `ChapterDto.open_sessions` is this client's only handle on a chapter's writer session, and
+      // it is cached under the chapter's own key (spec/10 §2.8). A session that the *agent* drives
+      // into `held` — `auto_pause`, or `pause_after_outline` — produces no client mutation, so
+      // without this the chapter kept `status: "running"`, `useWriterState` never subscribed to the
+      // snapshot (it does so only for a held session), and the draft pane's dock and merged preview
+      // stayed invisible until a reload (D-144). Author-driven changes were already covered:
+      // `invalidateSession` in `hooks/sessions.ts` invalidates the same chapter key.
+      //
+      // Scoped to the chapter the payload names: conception, research and canon-seed sessions have
+      // no `chapter_id` and must not invalidate a chapter. `session.updated` carries the whole
+      // `SessionDto`; `session.tool_call` carries only `{session_id, tool_call}`, so for it this is a
+      // no-op — the server publishes a `session.updated` in the same batch as every tool call
+      // (spec/10 §3), and that event carries the chapter.
+      const chapterId = session?.chapter_id
+      if (typeof chapterId === "number") {
+        void queryClient.invalidateQueries({
+          queryKey: keys.chapters.detail(chapterId),
+        })
+      }
       return
     }
     case "knowledge.changed": {
