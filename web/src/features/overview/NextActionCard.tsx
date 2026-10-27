@@ -1,12 +1,13 @@
 /**
  * The next action card of the book overview (PROJECT §8.3, spec/08 §7).
  *
- * The API sends the action's kind and the data it names (`chapter`, `session_id`, `track_id`); the
- * label and the destination are composed here (D-054). Four of the six kinds lead somewhere: the
- * three navigation kinds are `Link`s and `write_next` opens the chapter it created. The two
- * archivist kinds (`seed_canon`, `sync_canon`) have no page — PROJECT §8.4 puts the seeding "live in
- * the agent panel", and spec/11 §5.3 puts a book's sessions there — so they pin the session they
- * started in the panel, expand it if it was collapsed, and name where the run is watched (D-135).
+ * The API sends the action's kind and the data it names (`chapter`, `session_id`, `track_id`,
+ * `research_task_id`) plus the runnable research count; the label and the destination are composed
+ * here (D-054). Every kind leads somewhere: the navigation kinds are `Link`s, `write_next` opens the
+ * chapter it created, and `run_research` opens the research page (D-136). The two archivist kinds
+ * (`seed_canon`, `sync_canon`) have no page — PROJECT §8.4 puts the seeding "live in the agent
+ * panel", and spec/11 §5.3 puts a book's sessions there — so they pin the session they started in
+ * the panel, expand it if it was collapsed, and name where the run is watched (D-135).
  */
 import { useCallback, useState } from "react"
 import { Link, useNavigate } from "react-router"
@@ -76,6 +77,9 @@ export function NextActionCard({ bookId, status, action, tracks }: NextActionPro
   const label = t(`book:next_action.${action.kind}`, {
     chapter: chapter ?? "",
     track: track === undefined ? "" : trackName(t, track),
+    // `run_research` is the only plural label: it names how many tasks wait, so the author sees
+    // "Run 8 research tasks" rather than an unspecific "Run research tasks" (D-136).
+    count: action.ready_research ?? 0,
   })
   const startedText = t("book:next_action.started_in_agent_panel", {
     session: archivistSessionTitle(t, action.kind),
@@ -166,6 +170,25 @@ function ActionButton({
       )
     case "seed_canon":
       return <SeedCanonButton bookId={bookId} onStarted={onArchivistStarted} />
+    case "run_research":
+      // The step has a page, so it is a link like the chapter kinds (D-136). A single task has its
+      // own page, whose header carries the Run button, so the author lands where the click is; with
+      // several tasks the author has to choose one, and only the list shows the choice. The count
+      // in the label says how many are waiting either way.
+      return (
+        <Button asChild size="sm">
+          <Link
+            to={
+              action.research_task_id === undefined || action.research_task_id === null
+                ? "/research"
+                : `/research/${action.research_task_id}`
+            }
+          >
+            {t("book:next_action.go")}
+            <ArrowRight aria-hidden="true" />
+          </Link>
+        </Button>
+      )
     case "review_chapter":
     case "continue_chapter":
       return chapterId === undefined ? null : (

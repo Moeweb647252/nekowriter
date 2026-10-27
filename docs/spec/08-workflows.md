@@ -176,14 +176,27 @@ is one, otherwise it starts one.
   1. `conceiving` → `continue_conception`;
   2. no `canon_seed` session has completed (never run, failed, or abandoned), and the book has
      character designs but no entities → `seed_canon`;
-  3. a chapter `in_review` → `review_chapter {chapter_id}`;
-  4. a chapter `drafting`/`revising` → `continue_chapter {chapter_id, session_id?}`;
-  5. latest main chapter official with `canon_status ∈ {pending, failed, stale}` →
+  3. at least one research task of the book is `ready` → `run_research {ready_research,
+     research_task_id?}`. This is the knowledge-accumulation step of PROJECT §8.4 F2 step 6: after
+     finalize the overview suggests running the research tasks the conception created, because the
+     writer's kickoff and canon maintenance read knowledge (spec/07 §5) and an empty knowledge base
+     makes them improvise from canon alone. Only `ready` counts — a `draft` topic is unconfirmed
+     and cannot be run (spec/07 §8). `ready_research` is the number of runnable tasks (the card
+     says "Run 8 research tasks"); `research_task_id` is set only when exactly one is runnable, so
+     the card can open that task's page instead of the list (D-136);
+  4. a chapter `in_review` → `review_chapter {chapter_id}`;
+  5. a chapter `drafting`/`revising` → `continue_chapter {chapter_id, session_id?}`;
+  6. latest main chapter official with `canon_status ∈ {pending, failed, stale}` →
      `sync_canon {chapter_id}`;
-  6. otherwise → `write_next {track_id}`.
+  7. otherwise → `write_next {track_id}`.
+
+  Rule 3 sits before every chapter rule, matching PROJECT's sentence order ("Run research tasks"
+  before "Write chapter 1"). Consequence: while `ready` tasks remain, the overview keeps suggesting
+  research and does not suggest the next chapter — a chapter in review or a drafting chapter waits
+  behind it, and the `attention[]` rows for both keep showing that work (D-136).
 - `attention[]`: open sessions in `held`, `awaiting_input`, `paused`, `failed`, `interrupted`,
   `stopped`; chapters in review; canon not synced; pending proposals (count); ready research tasks
-  (count).
+  (count, `ready` only — the same set rule 3 counts).
 - `progress`: chapter counts per status and track, official word count, total word count.
 - `recent_changes`: the latest 10 change log entries.
 - `usage`: the token totals of the book's sessions.

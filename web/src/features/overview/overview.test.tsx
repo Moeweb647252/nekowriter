@@ -11,8 +11,10 @@
  * is what made the author conclude that canon seeding 「只有侧边栏模式」 (D-135). Those assertions
  * are on what the click *does*: the mutation is called, the returned session is pinned in the UI
  * store (the agent panel reads exactly that pin), a visible confirmation renders, and a collapsed
- * panel is reopened. The last describe block is a table over every `NextActionKind`, so a kind
- * added without a destination or a visible outcome fails here instead of shipping as a dead button.
+ * panel is reopened. `run_research` (D-136) is the knowledge step between the conception and the
+ * chapters, so it is asserted separately: it names its count and opens the page that runs the tasks.
+ * The last describe block is a table over every `NextActionKind`, so a kind added without a
+ * destination or a visible outcome fails here instead of shipping as a dead button.
  */
 import { act, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
@@ -167,6 +169,23 @@ const SYNC_CANON = {
   kind: "sync_canon",
   chapter: { id: 5, number: 1, title: "One", status: "official" },
   track_id: 10,
+}
+
+/** The overview's `run_research` action: confirmed tasks nobody has run yet (D-136). */
+const RUN_RESEARCH = {
+  kind: "run_research",
+  chapter: null,
+  track_id: null,
+  ready_research: 8,
+}
+
+/** The same action when exactly one task is runnable, so the card can open that task. */
+const RUN_RESEARCH_ONE = {
+  kind: "run_research",
+  chapter: null,
+  track_id: null,
+  ready_research: 1,
+  research_task_id: 3,
 }
 
 /** What a mocked `mutate`'s second argument looks like at the call site. */
@@ -480,10 +499,79 @@ describe("the archivist hints exist in both locales", () => {
 })
 
 /**
+ * The knowledge-accumulation step (D-136): the author asked why nothing happened between conception
+ * and drafting, and the answer was that the overview never suggested running the research tasks the
+ * conception had created. The card has to name how many wait and open the page that runs them.
+ */
+describe("the research step leads to the tasks it counts (D-136)", () => {
+  it("names the number of runnable tasks and opens the list when there are several", () => {
+    overview.mockReturnValue(data({ next_action: RUN_RESEARCH }))
+    renderOverview()
+
+    expect(screen.getByText("Run 8 research tasks")).toBeInTheDocument()
+    // Several tasks leave the choice to the author, and only the list offers it.
+    expect(screen.getByRole("link", { name: /Go/ })).toHaveAttribute("href", "/research")
+  })
+
+  it("uses the singular wording for one task", () => {
+    overview.mockReturnValue(data({ next_action: RUN_RESEARCH_ONE }))
+    renderOverview()
+    expect(screen.getByText("Run 1 research task")).toBeInTheDocument()
+  })
+
+  it("opens the single task's page, where its Run button is", () => {
+    overview.mockReturnValue(data({ next_action: RUN_RESEARCH_ONE }))
+    renderOverview()
+    expect(screen.getByRole("link", { name: /Go/ })).toHaveAttribute("href", "/research/3")
+  })
+
+  it("falls back to the list when the server names no single task", () => {
+    // `research_task_id` is optional data, not an invariant of the kind: a client that renders the
+    // card without it must still get a working destination.
+    overview.mockReturnValue(
+      data({ next_action: { ...RUN_RESEARCH, ready_research: 1 } }),
+    )
+    renderOverview()
+    expect(screen.getByRole("link", { name: /Go/ })).toHaveAttribute("href", "/research")
+  })
+
+  it("renders the step in zh-CN too", async () => {
+    const previous = i18n.language
+    await i18n.changeLanguage("zh-CN")
+    overview.mockReturnValue(data({ next_action: RUN_RESEARCH }))
+    const view = renderOverview()
+    try {
+      expect(screen.getByText("开始 8 个资料收集任务")).toBeInTheDocument()
+    } finally {
+      view.unmount()
+      await i18n.changeLanguage(previous)
+    }
+  })
+
+  it("carries both plural forms in both locales", () => {
+    // The label is a `count` interpolation, so a locale that only has `_other` renders nothing for
+    // a single task (spec/11 §6: a key is only done when both locales carry it).
+    for (const [language, table] of [
+      ["en", enBook],
+      ["zh-CN", zhBook],
+    ] as const) {
+      const section = (table as unknown as { next_action: Record<string, unknown> }).next_action
+      for (const key of ["run_research_one", "run_research_other"] as const) {
+        const value = section[key]
+        expect(value, `${language} book:next_action.${key}`).toBeTypeOf("string")
+        expect((value as string).length, `${language} book:next_action.${key}`).toBeGreaterThan(0)
+        expect(value, `${language} book:next_action.${key}`).toContain("{{count}}")
+      }
+    }
+  })
+})
+
+/**
  * The class-level guard (D-135). The defect was not "`seed_canon` is broken" but "two of six kinds
  * were silent", so every kind is listed with the affordance it must have: a destination, or a
  * mutation whose success produces something visible. A new kind has to be added to this table with
- * an affordance, and the coverage test fails if the table falls behind the generated union.
+ * an affordance, and the coverage test fails if the table falls behind the generated union — that
+ * is how `run_research` (D-136) had to declare `/research` instead of being added silently.
  */
 type Expectation = {
   /** The action links to this path. */
@@ -538,6 +626,12 @@ const KIND_TABLE: {
     action: SYNC_CANON,
     expected: { mutation: "resync", hint: RUNS_IN_PANEL },
   },
+  {
+    kind: "run_research",
+    // The list, because several tasks leave the choice to the author (D-136).
+    action: RUN_RESEARCH,
+    expected: { navigates: "/research" },
+  },
 ]
 
 describe("every next action either navigates or shows a visible outcome (D-135)", () => {
@@ -548,6 +642,7 @@ describe("every next action either navigates or shows a visible outcome (D-135)"
       "continue_chapter",
       "continue_conception",
       "review_chapter",
+      "run_research",
       "seed_canon",
       "sync_canon",
       "write_next",

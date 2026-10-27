@@ -2057,3 +2057,57 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   table-driven test over all six `NextActionKind`s asserts each one either navigates or calls a
   mutation whose success is visible. Reverting `seed_canon`'s `onSuccess` to a no-op fails five
   tests; dropping the pre-click hint fails five; removing the panel reopen fails one.
+
+### D-136 Running research tasks is the overview's step between the conception and the chapters
+- **Context**: the author reported 「为什么从构思到正文我没有看到知识积累这个步骤」 — why is there
+  no knowledge-accumulation step between conception and drafting. Their own database confirmed the
+  silent skip: conception completed, `canon_seed` completed with 43 entities, **8 research tasks
+  all `ready`**, **0 `knowledge_entries`**, and chapter 1 already `drafting`. Nothing had told them
+  a step was pending. The cause was two documents disagreeing: PROJECT §8.4 F2 step 6 says the
+  overview after finalize "suggests **'Run research tasks'** and 'Write chapter 1'", but spec/08 §7
+  listed six `next_action` rules with **no research branch**, so `NextActionKind` had no research
+  variant and the implementation followed spec/08 faithfully into the gap. The tasks were surfaced
+  only as a grey `ready_research` row in `attention[]` while the prominent card said "Write the
+  next chapter". AGENTS.md §8 makes the conflict the executor's to resolve and log; PROJECT is the
+  correct behaviour here, because the writer's kickoff and canon maintenance read knowledge
+  (spec/07 §5) and with zero entries both improvise from canon alone. The author chose option (a):
+  research tasks become a **required** step of the overview's next action.
+- **Decision**: (a) new `NextActionKind::RunResearch` (wire `run_research`), inserted **between
+  `seed_canon` and `review_chapter`** — i.e. PROJECT's sentence order, before every chapter rule.
+  (b) It triggers on at least one research task of the book with status **`ready` only**, filtered
+  through the typed `ResearchTaskStatus::Ready` constant. `draft` does not count: the author has
+  not confirmed the topic and Run is refused in that state (spec/07 §8), so offering it would be a
+  dead end; `running` has a session the author is already watching; `done`/`failed`/`cancelled`
+  are not runnable. (c) `NextActionDto` gains `ready_research: Option<i32>` — the count of
+  runnable tasks, so the card says "Run 8 research tasks" instead of an unspecific "Run research
+  tasks" — and `research_task_id: Option<i32>`, set **only when exactly one task is runnable**.
+  Neither field changes the meaning of `chapter`, `session_id` or `track_id`. (d) `NextActionCard`
+  renders the action as a `Link`, not a mute button: to `/research/:taskId` when the server names a
+  single task (that page's header carries its Run button, so the author lands where the click is),
+  otherwise to `/research`, where the author has to choose a task — with several, naming any one of
+  them would be an arbitrary pick, and only the list shows the choice. The count is in the label in
+  both cases, so "several" is never ambiguous. (e) The `ReadyResearch` attention row is **kept**: the
+  attention list is the full picture, `next_action` is the single suggestion. (f) spec/08 §7 is
+  amended in this commit: the new rule is rule 3, the chapter rules renumber to 4–7, and the
+  ordering consequence is written into the section.
+- **Consequences**: research now **gates** writing. A book with any `ready` task keeps answering
+  `run_research` and will **not** be prompted to write its next chapter until those tasks are run,
+  failed, `cancelled` (or, from the follow-up task, deferred) — a chapter `in_review` or `drafting`
+  waits behind it, though its `attention[]` row still shows it and stays clickable, so nothing is
+  hidden. This is the trade-off the author accepted when choosing option (a): without the gate the
+  empty knowledge base was invisible, and the writer improvised from canon alone. The escape
+  hatches are running the tasks from `/research` or cancelling the ones they do not want; a
+  non-destructive "defer" is a separate follow-up rather than part of this change, and the
+  `Ready`-only filter is what lets that status drop out of the trigger without touching this rule.
+  Books without research tasks are unchanged (the no-regression case asserts `write_next`), and
+  so are rules 1 and 2 — a conceiving book still continues its conception and an unseeded book
+  still seeds first, even with runnable tasks. Tests: `crates/server/tests/overview_actions.rs`
+  (ready tasks are the next action with the count and, for one, the task id; three ready tasks name
+  no single target; `draft`/`done`/`failed`/`cancelled` do not trigger it and do not count in
+  attention; a book without tasks still writes; research outranks a chapter in review, with both
+  attention rows intact; conception and seeding still outrank research; another book's tasks do not
+  leak) and `web/src/features/overview/overview.test.tsx` (plural label 8/1, `/research` for several,
+  `/research/:id` for one, list fallback when the id is absent, zh-CN rendering, both plural forms in
+  both locales, and `run_research` added to `KIND_TABLE`, whose exhaustive-kind assertion fails if
+  the table falls behind the union). Fail-before: removing rule 3 fails three server tests and
+  dropping the fixture's constant from `KIND_TABLE` fails the coverage test.

@@ -4,4 +4,4 @@
  * The single next action of the overview (spec/08 §7, first match). The label is composed in the
  * UI from the kind and the data beside it (D-054).
  */
-export type NextActionKind = "continue_conception" | "seed_canon" | "review_chapter" | "continue_chapter" | "sync_canon" | "write_next";
+export type NextActionKind = "continue_conception" | "seed_canon" | "run_research" | "review_chapter" | "continue_chapter" | "sync_canon" | "write_next";

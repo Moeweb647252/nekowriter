@@ -199,6 +199,8 @@
   "next_action": {
     "continue_conception": "和智能体继续构思",
     "seed_canon": "用角色设定建立正史档案",
+    "run_research_one": "开始 {{count}} 个资料收集任务",
+    "run_research_other": "开始 {{count}} 个资料收集任务",
     "review_chapter": "审阅 {{chapter}}",
     "continue_chapter": "继续 {{chapter}}",
     "sync_canon": "重新同步 {{chapter}} 的正史档案",

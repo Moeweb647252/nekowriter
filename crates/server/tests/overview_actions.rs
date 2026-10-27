@@ -239,3 +239,205 @@ async fn usage_sums_the_token_totals_of_the_books_sessions() {
     assert_eq!(body["usage"]["output_tokens"], 30);
     assert_eq!(body["usage"]["last_prompt_tokens"], 300);
 }
+
+/// Inserts a research task in the given status and returns its id, mirroring what conception
+/// leaves behind (PROJECT §8.4 F2 step 6: topics become `ready` tasks at finalize).
+async fn research_task(
+    app: &TestApp,
+    book_id: i32,
+    status: &str,
+    topic: &str,
+    language: &str,
+) -> i32 {
+    app.execute(&format!(
+        "INSERT INTO research_tasks(book_id, scope_name, topic, requirements, language, status, \
+         created_at, updated_at) VALUES ({book_id}, 'scope', '{topic}', '', '{language}', \
+         '{status}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+    ))
+    .await;
+    let (_, body) = app
+        .get(&format!("/api/research-tasks?book_id={book_id}"))
+        .await;
+    match body
+        .as_array()
+        .expect("research task list")
+        .iter()
+        .find(|task| task["topic"] == json!(topic))
+    {
+        Some(task) => task["id"].as_i64().expect("task id") as i32,
+        None => panic!("the inserted task is listed: {body}"),
+    }
+}
+
+/// The count of `attention[]` rows of one kind.
+fn attention_count(body: &Value, kind: &str) -> i32 {
+    body["attention"]
+        .as_array()
+        .expect("attention list")
+        .iter()
+        .filter(|item| item["kind"] == json!(kind))
+        .map(|item| item["count"].as_i64().unwrap_or(0) as i32)
+        .sum()
+}
+
+#[tokio::test]
+async fn ready_research_tasks_are_the_next_action_after_seeding() {
+    // The reported gap: conception → canon seed → drafting with an empty knowledge base, and
+    // nothing asked for research (PROJECT §8.4 F2 step 6, D-136).
+    let (app, book_id, _, chapter_id) = app_with_book().await;
+    let (status, _) = app
+        .post(
+            &format!("/api/books/{book_id}/characters"),
+            json!({ "name": "林凡" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+    // Canon seeded, as the author's book 3 has it (43 entities).
+    app.execute(&format!(
+        "INSERT INTO agent_sessions(book_id, role, kind, model_snapshot, system_prompt, tools, \
+         status, created_at, updated_at) VALUES ({book_id}, 'archivist', 'canon_seed', '{{}}', '', \
+         '[]', 'completed', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+    ))
+    .await;
+    app.set_chapter_status(chapter_id, "drafting").await;
+    // Three confirmed topics, exactly what finalize turns the conception's topics into.
+    for topic in ["城防", "宝钞", "宗室"] {
+        research_task(&app, book_id, "ready", topic, "zh-CN").await;
+    }
+
+    let body = overview(&app, book_id).await;
+    assert_eq!(
+        body["next_action"]["kind"], "run_research",
+        "research outranks writing the next chapter: {body}"
+    );
+    assert_eq!(
+        body["next_action"]["ready_research"], 3,
+        "the card names how many tasks are runnable: {body}"
+    );
+    assert_eq!(
+        body["next_action"].get("research_task_id"),
+        None,
+        "several tasks have no single target; the author chooses on /research: {body}"
+    );
+    // The attention row stays: the list is the full picture, the next action is the suggestion.
+    assert_eq!(attention_count(&body, "ready_research"), 3, "{body}");
+}
+
+#[tokio::test]
+async fn a_single_ready_task_is_named_so_the_card_can_open_it() {
+    let (app, book_id, _, _) = app_with_book().await;
+    let task_id = research_task(&app, book_id, "ready", "边城城防", "zh-CN").await;
+    let body = overview(&app, book_id).await;
+    assert_eq!(body["next_action"]["kind"], "run_research");
+    assert_eq!(body["next_action"]["ready_research"], 1);
+    assert_eq!(body["next_action"]["research_task_id"], task_id);
+}
+
+#[tokio::test]
+async fn draft_research_topics_are_not_runnable_and_do_not_block_writing() {
+    // A `draft` topic is unconfirmed and Run is not allowed on it (spec/07 §8), so offering it as
+    // the next action would be a dead end (D-136).
+    let (app, book_id, track_id, chapter_id) = app_with_book().await;
+    official(&app, chapter_id, "synced").await;
+    research_task(&app, book_id, "draft", "未确认主题", "zh-CN").await;
+
+    let body = overview(&app, book_id).await;
+    assert_eq!(
+        body["next_action"]["kind"], "write_next",
+        "a draft topic never becomes the next action: {body}"
+    );
+    assert_eq!(body["next_action"]["track_id"], track_id);
+    assert_eq!(
+        attention_count(&body, "ready_research"),
+        0,
+        "the attention count is `ready` only as well: {body}"
+    );
+}
+
+#[tokio::test]
+async fn finished_research_tasks_do_not_block_writing() {
+    for status in ["done", "failed", "cancelled"] {
+        let (app, book_id, _, chapter_id) = app_with_book().await;
+        official(&app, chapter_id, "synced").await;
+        research_task(&app, book_id, status, "已结束主题", "zh-CN").await;
+        let body = overview(&app, book_id).await;
+        assert_eq!(
+            body["next_action"]["kind"], "write_next",
+            "a {status} task is not runnable, so writing may continue: {body}"
+        );
+        assert_eq!(attention_count(&body, "ready_research"), 0, "{body}");
+    }
+}
+
+#[tokio::test]
+async fn a_book_without_research_tasks_still_writes_its_next_chapter() {
+    // The no-regression case: books that never collected topics keep the old answer.
+    let (app, book_id, track_id, chapter_id) = app_with_book().await;
+    official(&app, chapter_id, "synced").await;
+    let body = overview(&app, book_id).await;
+    assert_eq!(body["next_action"]["kind"], "write_next");
+    assert_eq!(body["next_action"]["track_id"], track_id);
+    assert_eq!(body["next_action"].get("ready_research"), None, "{body}");
+    assert_eq!(body["next_action"].get("research_task_id"), None, "{body}");
+}
+
+#[tokio::test]
+async fn research_outranks_a_chapter_waiting_for_review() {
+    // The ordering ruling (D-136): `run_research` sits after `seed_canon` and before the chapter
+    // rules, matching PROJECT §8.4 F2's sentence order ("Run research tasks" before "Write
+    // chapter 1"). A chapter already in review therefore waits until the tasks are settled.
+    let (app, book_id, _, chapter_id) = app_with_book().await;
+    app.set_chapter_status(chapter_id, "in_review").await;
+    research_task(&app, book_id, "ready", "城防", "zh-CN").await;
+
+    let body = overview(&app, book_id).await;
+    assert_eq!(
+        body["next_action"]["kind"], "run_research",
+        "research is ordered before the chapter rules: {body}"
+    );
+    // Both surfaces still report the waiting review, so nothing is hidden from the author.
+    assert_eq!(attention_count(&body, "chapter_in_review"), 1, "{body}");
+    assert_eq!(attention_count(&body, "ready_research"), 1, "{body}");
+}
+
+#[tokio::test]
+async fn research_never_outranks_conception_or_seeding() {
+    // Rules 1 and 2 keep priority: research is confirmed topics of a finalized book.
+    let (app, book_id, _, _) = app_with_book().await;
+    research_task(&app, book_id, "ready", "城防", "zh-CN").await;
+    app.execute(&format!(
+        "UPDATE books SET status = 'conceiving' WHERE id = {book_id}"
+    ))
+    .await;
+    let body = overview(&app, book_id).await;
+    assert_eq!(body["next_action"]["kind"], "continue_conception", "{body}");
+
+    // A book that needs seeding still seeds first, even with runnable tasks.
+    let (app, book_id, _, _) = app_with_book().await;
+    let (status, _) = app
+        .post(
+            &format!("/api/books/{book_id}/characters"),
+            json!({ "name": "林凡" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+    research_task(&app, book_id, "ready", "城防", "zh-CN").await;
+    let body = overview(&app, book_id).await;
+    assert_eq!(body["next_action"]["kind"], "seed_canon", "{body}");
+}
+
+#[tokio::test]
+async fn another_books_ready_tasks_do_not_leak_into_this_book() {
+    let (app, book_id, _, chapter_id) = app_with_book().await;
+    official(&app, chapter_id, "synced").await;
+    let other = app.create_book("Other").await;
+    let other_id = other["id"].as_i64().expect("book id") as i32;
+    research_task(&app, other_id, "ready", "别的书", "zh-CN").await;
+
+    let body = overview(&app, book_id).await;
+    assert_eq!(
+        body["next_action"]["kind"], "write_next",
+        "research tasks are scoped to their book: {body}"
+    );
+    assert_eq!(attention_count(&body, "ready_research"), 0, "{body}");
+}

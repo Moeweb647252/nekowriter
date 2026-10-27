@@ -3,7 +3,19 @@ import type { ChapterPointerDto } from "./ChapterPointerDto";
 import type { NextActionKind } from "./NextActionKind";
 
 /**
- * `next_action` (spec/08 §7). `chapter`, `session_id` and `track_id` are the targets the action
- * names; the DTO carries data only.
+ * `next_action` (spec/08 §7). `chapter`, `session_id`, `track_id` and `research_task_id` are the
+ * targets the action names; `ready_research` is the count of runnable research tasks. The DTO
+ * carries data only.
  */
-export type NextActionDto = { kind: NextActionKind, chapter?: ChapterPointerDto | null, session_id?: number | null, track_id?: number | null, };
+export type NextActionDto = { kind: NextActionKind, chapter?: ChapterPointerDto | null, session_id?: number | null, track_id?: number | null, 
+/**
+ * How many research tasks are `ready` to run, set on `run_research` so the card can say "Run 8
+ * research tasks". Named after `ResearchTaskStatus::Ready` (not "pending") because `draft`
+ * tasks are not runnable and must not be counted (spec/07 §8, D-136).
+ */
+ready_research?: number | null, 
+/**
+ * The runnable task's id when there is exactly one, so the card can lead straight to its Run
+ * button instead of the list; absent when there are none or several (D-136).
+ */
+research_task_id?: number | null, };

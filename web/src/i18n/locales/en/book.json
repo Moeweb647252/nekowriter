@@ -199,6 +199,8 @@
   "next_action": {
     "continue_conception": "Continue the conception with the agent",
     "seed_canon": "Build the canon from the character designs",
+    "run_research_one": "Run {{count}} research task",
+    "run_research_other": "Run {{count}} research tasks",
     "review_chapter": "Review {{chapter}}",
     "continue_chapter": "Continue {{chapter}}",
     "sync_canon": "Re-sync the canon of {{chapter}}",

@@ -177,14 +177,18 @@ pub struct BookOverviewDto {
 pub enum NextActionKind {
     ContinueConception,
     SeedCanon,
+    /// Research tasks are confirmed (`ready`) and the knowledge base the writer reads is empty
+    /// (PROJECT §8.4 F2 step 6, spec/08 §7, D-136).
+    RunResearch,
     ReviewChapter,
     ContinueChapter,
     SyncCanon,
     WriteNext,
 }
 
-/// `next_action` (spec/08 §7). `chapter`, `session_id` and `track_id` are the targets the action
-/// names; the DTO carries data only.
+/// `next_action` (spec/08 §7). `chapter`, `session_id`, `track_id` and `research_task_id` are the
+/// targets the action names; `ready_research` is the count of runnable research tasks. The DTO
+/// carries data only.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct NextActionDto {
@@ -195,6 +199,15 @@ pub struct NextActionDto {
     pub session_id: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub track_id: Option<i32>,
+    /// How many research tasks are `ready` to run, set on `run_research` so the card can say "Run 8
+    /// research tasks". Named after `ResearchTaskStatus::Ready` (not "pending") because `draft`
+    /// tasks are not runnable and must not be counted (spec/07 §8, D-136).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ready_research: Option<i32>,
+    /// The runnable task's id when there is exactly one, so the card can lead straight to its Run
+    /// button instead of the list; absent when there are none or several (D-136).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub research_task_id: Option<i32>,
 }
 
 /// One kind of `attention[]` item (spec/08 §7).

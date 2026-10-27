@@ -482,6 +482,8 @@ pub async fn next_action(
         chapter: None,
         session_id: None,
         track_id: None,
+        ready_research: None,
+        research_task_id: None,
     };
     // 1. The book is still being conceived.
     if book.status == BookStatus::Conceiving.as_str() {
@@ -511,7 +513,34 @@ pub async fn next_action(
         }
     }
 
-    // 3. A chapter waits for the author's review.
+    // 3. Confirmed research tasks are waiting to run, and the writer reads what they produce
+    //    (PROJECT §8.4 F2 step 6: after finalize the overview suggests "Run research tasks" and
+    //    "Write chapter 1"; spec/08 §7 rule 3, D-136). `Ready` only: a `draft` topic is not
+    //    confirmed by the author yet and cannot be run (spec/07 §8), so counting it would make the
+    //    step a dead end. The count travels with the action so the card can name it.
+    let research = research_tasks::Entity::find()
+        .filter(research_tasks::Column::BookId.eq(book.id))
+        .filter(research_tasks::Column::Status.eq(ResearchTaskStatus::Ready.as_str()))
+        .all(conn)
+        .await?;
+    if let Some(first) = research.first() {
+        return Ok(Some(NextActionDto {
+            kind: NextActionKind::RunResearch,
+            chapter: None,
+            session_id: None,
+            track_id: None,
+            ready_research: Some(research.len() as i32),
+            // Only a single task gets a direct target: with several, the author has to choose on
+            // the research page, so naming one of them would be an arbitrary pick (D-136).
+            research_task_id: if research.len() == 1 {
+                Some(first.id)
+            } else {
+                None
+            },
+        }));
+    }
+
+    // 4. A chapter waits for the author's review.
     if let Some((track, chapter)) = ordered
         .iter()
         .find(|(_, chapter)| chapter.status == ChapterStatus::InReview.as_str())
@@ -521,10 +550,12 @@ pub async fn next_action(
             chapter: Some(pointer(chapter)),
             session_id: None,
             track_id: Some(track.id),
+            ready_research: None,
+            research_task_id: None,
         }));
     }
 
-    // 4. A chapter is being written or revised.
+    // 5. A chapter is being written or revised.
     if let Some((track, chapter)) = ordered.iter().find(|(_, chapter)| {
         matches!(
             ChapterStatus::from_str_opt(&chapter.status),
@@ -551,10 +582,12 @@ pub async fn next_action(
             chapter: Some(pointer(chapter)),
             session_id,
             track_id: Some(track.id),
+            ready_research: None,
+            research_task_id: None,
         }));
     }
 
-    // 5. The latest official main chapter's canon is not synced.
+    // 6. The latest official main chapter's canon is not synced.
     let main_track = tracks::Entity::find()
         .filter(tracks::Column::BookId.eq(book.id))
         .filter(tracks::Column::Kind.eq(TrackKind::Main.as_str()))
@@ -581,10 +614,12 @@ pub async fn next_action(
             chapter: Some(pointer(chapter)),
             session_id: None,
             track_id: Some(main.id),
+            ready_research: None,
+            research_task_id: None,
         }));
     }
 
-    // 6. Otherwise the main story continues (or the first track, for a book without one).
+    // 7. Otherwise the main story continues (or the first track, for a book without one).
     let track_id = main_track
         .map(|track| track.id)
         .or_else(|| ordered.first().map(|(track, _)| track.id));
@@ -593,6 +628,8 @@ pub async fn next_action(
         chapter: None,
         session_id: None,
         track_id,
+        ready_research: None,
+        research_task_id: None,
     }))
 }
 
