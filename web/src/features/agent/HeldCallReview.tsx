@@ -20,6 +20,15 @@
  * row scrolled out of view is not in the DOM), the card is collapsed by default and shows the raw
  * JSON input, and the decision is made at the controls. The block is bounded and scrolls on its
  * own, so a 4,000-character outline cannot push the stream out of the panel.
+ *
+ * **This block does not decide a held chapter write** (D-141). A write tool's hold is about the
+ * draft itself, so it is decided in the draft pane's dock, next to the merged text it would
+ * produce; the panel's `SessionControls` keeps the generic controls and the panel points at the
+ * dock instead of showing a second, differently-worded decision surface here. Everything else —
+ * including every non-write hold — still comes through this block, unchanged.
+ *
+ * The pure parts (which call is held, what text it carries, which wording it takes, and the two
+ * mutation payloads) live in `heldCall.ts`, because the dock uses the same ones.
  */
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
@@ -28,123 +37,21 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { Check, Pencil } from "lucide-react"
 
-import type { MessageWithCallsDto } from "@/api/gen/MessageWithCallsDto"
-import type { SessionDto } from "@/api/gen/SessionDto"
 import type { ToolCallDto } from "@/api/gen/ToolCallDto"
 import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/textarea"
+import { HeldFeedback } from "@/features/agent/HeldFeedback"
+import { heldBodyText, heldReferenceNotes, heldReviewCase } from "@/features/agent/heldCall"
 import { toolRenderer } from "@/features/agent/toolRenderers"
-import { isComposing } from "@/lib/hotkeys"
 
-/** The three wordings a held call can take. */
-export type HeldReviewCase = "outline" | "revision_plan" | "generic"
-
-/**
- * Which wording a held tool takes.
- *
- * `submit_outline` and `submit_revision_plan` are the holds the runtime designs for review
- * (spec/03 §5.4 names both); every other held call comes from `pause_requested` or `auto_pause`,
- * where the tool name varies and the generic wording is the honest one.
- */
-export function heldReviewCase(name: string): HeldReviewCase {
-  switch (name) {
-    case "submit_outline":
-      return "outline"
-    case "submit_revision_plan":
-      return "revision_plan"
-    default:
-      return "generic"
-  }
-}
-
-/**
- * The input field that carries the text under review, per tool.
- *
- * These mirror the tools' input schemas (spec/05 §4); a tool without an entry falls back to the
- * first non-empty field of [`FALLBACK_FIELDS`].
- */
-const BODY_FIELDS: Record<string, string> = {
-  submit_outline: "outline",
-  submit_revision_plan: "plan",
-  insert_text: "text",
-  insert_paragraphs: "text",
-  rewrite_paragraph: "text",
-  replace_text: "new",
-  web_fetch: "url",
-  web_search: "query",
-}
-
-/** The fields tried when a tool has no entry in [`BODY_FIELDS`]. */
-const FALLBACK_FIELDS = ["text", "plan", "outline", "new"] as const
-
-/** The call's parsed input as a plain object, when it is one. */
-function inputRecord(call: ToolCallDto): Record<string, unknown> | undefined {
-  const input = call.input
-  if (input === null || input === undefined || typeof input !== "object" || Array.isArray(input)) {
-    return undefined
-  }
-  return input as Record<string, unknown>
-}
-
-/** A non-empty string field of the call's input, or `""`. */
-function stringField(record: Record<string, unknown> | undefined, key: string): string {
-  const value = record?.[key]
-  return typeof value === "string" ? value : ""
-}
-
-/** The text under review: the outline, the plan, or the prose a held write tool carries. */
-export function heldBodyText(call: ToolCallDto): string {
-  const record = inputRecord(call)
-  const declared = stringField(record, BODY_FIELDS[call.name] ?? "")
-  if (declared !== "") {
-    return declared
-  }
-  for (const key of FALLBACK_FIELDS) {
-    const value = stringField(record, key)
-    if (value !== "") {
-      return value
-    }
-  }
-  return ""
-}
-
-/** The reference notes of a held `submit_outline`, or `""` (spec/05 §4). */
-export function heldReferenceNotes(call: ToolCallDto): string {
-  return call.name === "submit_outline" ? stringField(inputRecord(call), "reference_notes") : ""
-}
-
-/**
- * The call a `held` session is waiting on: `held_tool_call_id` resolved against the snapshot.
- *
- * The snapshot carries every tool call of its last 200 messages, so the held call is normally
- * there. A session held before that window (or a snapshot still loading) has no call to show; the
- * caller then keeps the generic controls instead of guessing.
- *
- * Only a `held` session resolves: `held_tool_call_id` is cleared when the call is finalized, so a
- * stale id on a non-held row must not resurrect a review block for a decision that was already
- * made.
- */
-export function findHeldCall(
-  session: SessionDto | undefined,
-  calls: ToolCallDto[] | undefined,
-  messages: MessageWithCallsDto[] | undefined,
-): ToolCallDto | undefined {
-  const id = session?.held_tool_call_id
-  if (session?.status !== "held" || id === null || id === undefined) {
-    return undefined
-  }
-  const fromCalls = calls?.find((call) => call.id === id)
-  if (fromCalls !== undefined) {
-    return fromCalls
-  }
-  for (const item of messages ?? []) {
-    const match = item.tool_calls.find((call) => call.id === id)
-    if (match !== undefined) {
-      return match
-    }
-  }
-  return undefined
-}
+// Re-exported so the existing call sites and tests keep one import site for the held-call logic,
+// while the definitions live in the pure module both surfaces share (D-141).
+export {
+  findHeldCall,
+  heldBodyText,
+  heldReferenceNotes,
+  heldReviewCase,
+  type HeldReviewCase,
+} from "@/features/agent/heldCall"
 
 /**
  * The renderer's icon through a stable component type: the icon comes out of the registry at
@@ -168,9 +75,9 @@ export function HeldCallReview({
   onRequestChanges: (feedback: string) => void
 }) {
   const { t } = useTranslation()
-  // The feedback box is a disclosure: closing it drops the draft, so a later open starts clean.
+  // The feedback box is a disclosure: closing it drops the draft, so a later open starts clean
+  // (`key` remounts `HeldFeedback`, whose text is its own state).
   const [changesOpen, setChangesOpen] = useState(false)
-  const [feedback, setFeedback] = useState("")
 
   const kind = heldReviewCase(call.name)
   const renderer = toolRenderer(call.name)
@@ -194,18 +101,12 @@ export function HeldCallReview({
         : t("agent:held.request_changes_hint")
   const body = heldBodyText(call)
   const notes = heldReferenceNotes(call)
-  // The server treats blank feedback as no feedback and then *approves* the call
-  // (`services/sessions.rs` `resume_inner` filters on `trim`). A whitespace-only "request changes"
-  // must therefore be impossible from the UI.
-  const trimmed = feedback.trim()
 
-  const submit = () => {
-    if (trimmed === "") {
-      return
-    }
+  // `HeldFeedback` only calls this with trimmed, non-empty text — the server reads blank feedback
+  // as "no feedback" and would *approve* the call instead (`services/sessions.rs` `resume_inner`).
+  const submit = (feedback: string) => {
     setChangesOpen(false)
-    setFeedback("")
-    onRequestChanges(trimmed)
+    onRequestChanges(feedback)
   }
 
   return (
@@ -241,10 +142,7 @@ export function HeldCallReview({
           variant="outline"
           disabled={busy}
           aria-expanded={changesOpen}
-          onClick={() => {
-            setChangesOpen((open) => !open)
-            setFeedback("")
-          }}
+          onClick={() => setChangesOpen((open) => !open)}
         >
           <Pencil aria-hidden="true" />
           {t("agent:held.request_changes")}
@@ -252,30 +150,13 @@ export function HeldCallReview({
       </div>
 
       {changesOpen ? (
-        <div className="space-y-2">
-          <Textarea
-            value={feedback}
-            autoFocus
-            rows={3}
-            aria-label={t("agent:held.feedback_label")}
-            placeholder={t("agent:feedback.placeholder")}
-            onChange={(event) => setFeedback(event.target.value)}
-            onKeyDown={(event) => {
-              // Ignore IME composition (AGENTS.md §6): Enter confirms Chinese and Japanese input.
-              if (isComposing(event)) {
-                return
-              }
-              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                event.preventDefault()
-                submit()
-              }
-            }}
-          />
-          <p className="text-xs text-muted-foreground">{changesHint}</p>
-          <Button size="sm" disabled={busy || trimmed === ""} onClick={submit}>
-            {t("agent:feedback.submit")}
-          </Button>
-        </div>
+        // Remounted whenever the disclosure reopens, so unsent text never reappears.
+        <HeldFeedback
+          key={changesOpen ? "open" : "closed"}
+          disabled={busy}
+          hint={changesHint}
+          onSubmit={submit}
+        />
       ) : null}
 
       {body === "" ? null : (

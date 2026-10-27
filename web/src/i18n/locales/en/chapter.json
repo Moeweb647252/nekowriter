@@ -131,5 +131,17 @@
   "delete.session_open_action": "Open the chapter to end the session",
   "delete.is_anchor": "This chapter anchors a side story, so it cannot be deleted yet:",
   "delete.is_anchor_hint": "Point each side story below at another anchor chapter, then delete this one.",
-  "delete.side_story_ref": "Side story #{{id}}"
+  "delete.side_story_ref": "Side story #{{id}}",
+  "pending_title": "The agent wrote this. Apply it?",
+  "pending_title_superseded": "The agent's text was not applied",
+  "pending_body": "The highlighted paragraphs are what changes when you apply it. Nothing is stored until you decide.",
+  "pending_superseded_body": "You edited the draft after the agent wrote this (the draft is now version {{draft}}, the agent read version {{expected}}), so its text is not applied. Continue to let it carry on from your draft.",
+  "pending_approve": "Apply and continue",
+  "pending_continue": "Continue without it",
+  "pending_request_changes": "Request changes",
+  "pending_request_changes_hint": "Your feedback goes to the agent, which rewrites the text and continues. This text is not applied.",
+  "pending_preview_note": "Preview: the highlighted paragraphs are the agent's text, not part of your draft yet.",
+  "pending_live_words": "{{staged}} words once applied ({{confirmed}} now)",
+  "word_count_projected": "Word count once the staged write applies (projection only, not stored)",
+  "word_count_projected_suffix": "once applied"
 }

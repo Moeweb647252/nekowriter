@@ -1,11 +1,23 @@
-/** The reading column with in-place paragraph editing and a full-text editor (PROJECT §8.5). */
+/**
+ * The reading column with in-place paragraph editing and a full-text editor (PROJECT §8.5).
+ *
+ * A held **chapter write** is different from the other holds: what the author decides on is the
+ * document itself, so the pane renders the merged result (confirmed draft + staged content, see
+ * `pendingWrite.ts`) and the decision lives in the dock that `ChapterPage` puts under this column
+ * (D-141). While that merged view is up, the paragraphs are read-only: editing them would bump the
+ * version and make the staged write stale, and the text on screen is not the draft's text. Every
+ * other hold keeps the inline `HoldBar` under the paragraphs it touched.
+ */
 import { memo, useCallback, useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { AnimatePresence, motion } from "motion/react"
 
 import { useContentMutations } from "@/api/hooks/chapters"
 import { useResumeSession } from "@/api/hooks/sessions"
+import { useHeldDecision } from "@/features/agent/useHeldDecision"
 import { GhostText, HoldBar, type Preview } from "@/features/chapter/GhostText"
+import { PendingText } from "@/features/chapter/PendingText"
+import type { PendingDraftView } from "@/features/chapter/pendingWrite"
 import { useWriterState } from "@/features/chapter/useWriterState"
 import { useErrorToast } from "@/components/common/ErrorToast"
 import { EmptyState } from "@/components/common/EmptyState"
@@ -29,6 +41,12 @@ export type ChapterTextProps = {
   onFullTextOpenChange: (open: boolean) => void
   /** A pid to scroll to and highlight (a review issue jumped here). */
   focusPid?: string
+  /**
+   * The held write's merged view, when there is one that still applies. `ChapterPage` derives it
+   * (it owns the dock that decides the call) and passes it in, so the pane and the dock cannot
+   * disagree about what is on screen.
+   */
+  pendingView?: PendingDraftView
 }
 
 /** Renders the open document; a click edits one paragraph, the toolbar switches to full text. */
@@ -39,6 +57,7 @@ export function ChapterText({
   fullTextOpen,
   onFullTextOpenChange,
   focusPid,
+  pendingView,
 }: ChapterTextProps) {
   const { t } = useTranslation()
   const showError = useErrorToast()
@@ -51,6 +70,12 @@ export function ChapterText({
   const resume = useResumeSession(bookId)
   const writer = useWriterState(chapter, undefined)
   const locked = writer.locked
+  // The inline bar's two decisions go through the shared contract (D-141): approve sends no
+  // feedback, request changes sends exactly the trimmed text and nothing at all when it is blank.
+  const held = useHeldDecision(writer.session?.id ?? null, resume, showError)
+  // A merged write preview supersedes the editable document: that text is not the draft's, so it
+  // must not be edited here (the dock under the pane owns the decision instead).
+  const preview = pendingView !== undefined
 
   // Stable per-render callbacks: each `Paragraph` is memoized on its own props (spec/11 §5.2), so
   // a streaming tail paragraph must not re-render the other hundreds.
@@ -115,19 +140,33 @@ export function ChapterText({
         </div>
       ) : null}
       <div className="mb-4 flex items-center justify-between gap-2">
+        {/*
+          The count is stated for the document on screen, and named when that is not the confirmed
+          draft: the header shows the server's confirmed count (spec/11 §8), so an unlabelled
+          different number here would contradict it instead of agreeing with it.
+        */}
         <p className="text-xs text-muted-foreground">
-          {t("chapter:live_words", { words: liveWords })}
+          {pendingView === undefined
+            ? t("chapter:live_words", { words: liveWords })
+            : t("chapter:pending_live_words", {
+                staged: pendingView.stagedWords,
+                confirmed: pendingView.confirmedWords,
+              })}
         </p>
         <Button
           size="sm"
           variant="outline"
-          disabled={locked}
+          // Editing the merged preview would edit text that is not the draft's, and the save would
+          // bump the version the staged write is compared against.
+          disabled={locked || preview}
           onClick={() => onFullTextOpenChange(true)}
         >
           {t("chapter:full_text_edit")}
         </Button>
       </div>
-      {paragraphs.length === 0 ? (
+      {pendingView !== undefined ? (
+        <PendingText paragraphs={pendingView.paragraphs} unspaced={unspaced} />
+      ) : paragraphs.length === 0 ? (
         <EmptyState title={t("chapter:empty_title")} description={t("chapter:empty_text")} />
       ) : (
         <div className={unspaced ? "prose-cjk" : "prose-latin"}>
@@ -159,27 +198,17 @@ export function ChapterText({
           </AnimatePresence>
           {/* The paragraph tools' previews are a block of their own. */}
           {tailOpen ? null : <GhostText preview={writer.preview} />}
-          {writer.held === undefined ? null : (
+          {/*
+            A held chapter write is decided in the dock under this pane (D-141), so the inline bar
+            is only for the holds that are not about this document's text.
+          */}
+          {writer.held === undefined || writer.heldWrite ? null : (
             <HoldBar
               outline={writer.heldOutline}
               pids={writer.heldPids}
-              busy={resume.isPending}
-              onContinue={() => {
-                if (writer.session !== undefined) {
-                  resume.mutate(
-                    { sessionId: writer.session.id },
-                    { onError: showError },
-                  )
-                }
-              }}
-              onFeedback={(text) => {
-                if (writer.session !== undefined) {
-                  resume.mutate(
-                    { sessionId: writer.session.id, feedback: text },
-                    { onError: showError },
-                  )
-                }
-              }}
+              busy={held.busy}
+              onContinue={held.approve}
+              onFeedback={held.requestChanges}
             />
           )}
         </div>

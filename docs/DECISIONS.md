@@ -2354,3 +2354,74 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   `/research/:id` for the single task, the defer control is `ghost`, the exact ids, the overview
   invalidation, the partial report, and the `KIND_TABLE` honesty tests. Removing either control
   fails 9 of those tests; replacing the shared batch with a parallel, swallowing one fails 3 more.
+
+### D-141 A held chapter write is reviewed in the draft pane, against the merged text
+- **Context**: D-137 gave a `held` session one review surface (`HeldCallReview`) in the agent panel,
+  because a bare Continue never said which tool was held or what it submitted. That fix was right
+  for `submit_outline` and `submit_revision_plan` — the text to judge *is* the message — and wrong
+  for a chapter write. The author reported the split in those words: 「正文编写要在中间的正文草稿区
+  进行，正文编辑时的意见提出在草稿区下方的 dock 栏里进行」 — the body is written in the middle draft
+  pane, so an opinion about it belongs in a dock under that pane. The panel's block showed the raw
+  `input` text of the one call, while the draft pane (the place the author was looking) showed
+  nothing at all: a held `insert_text` arrived as a live ghost, then vanished from the document,
+  because D-139 keeps it out of `chapters.content`. On top of that, three smaller contradictions
+  came with it: the header showed the server's `word_count` (which excludes the staged text) next to
+  a body saying 「本章还没有正文」; a stale write could be approved from the panel while
+  `apply_pending_content` silently dropped it; and `HoldBar` under the paragraphs offered a *third*
+  wording of the same two decisions.
+- **Decision**: the pane shows the draft the author is being asked for, and the dock under it takes
+  the decision.
+  - **Pending content is a full snapshot, not a delta** — this is what makes the preview possible and
+    is confirmed in code: `crates/server/src/agent/tools/writer.rs` `stage_content` clones the whole
+    resulting `ChapterContent` into `PendingContent.content`, and
+    `crates/server/src/agent/runner.rs::apply_pending_content` stores `write.content` verbatim
+    (`content: Set(stored)`) and derives `transform_ops` and `content_word_count` *from the state it
+    is applied to*. So `pendingDraftView` renders `pending_content.content` as the document and
+    consults the confirmed draft only to classify each paragraph as `confirmed` / `changed` /
+    `added` — never to concatenate.
+  - **Merged, highlighted**: `PendingText` renders that document with the waiting token on the
+    `changed` and `added` paragraphs plus a note that the text is a preview. It is read-only:
+    editing it would save a paragraph the author cannot see, and the save would bump the very
+    `content_version` the staged write is compared against.
+  - **The superseded case does not lie**: `apply_pending_content` drops a write whose
+    `expected_version` is not the chapter's current `content_version`. So `PendingWriteDock` reads
+    that comparison and, when it fails, keeps the confirmed draft on screen and says the staged text
+    will not be applied, naming both versions; its primary action becomes **Continue without it**
+    (the same `resume` — the write is discarded in the finalizing transaction, spec/03 §7's edit
+    report tells the model what the draft now holds). There is no "apply" button that cannot apply.
+  - **One decision surface per held call**: `heldDecisionSurface` gives a write tool that staged
+    content to the dock, and everything else to the panel. `SessionControls` applies the rule
+    itself, so a caller cannot forget it: a dock-owned call renders `HeldWriteNotice` (a sentence
+    plus a link to the chapter) and neither decision, and the composer is disabled with
+    `agent:composer.disabled_dock` instead of "the review above". A write hold that staged nothing
+    (any call from before D-139) stays in the panel, because the dock would have no text to show.
+  - **Word count, one rule**: the header keeps the server's confirmed `word_count` (spec/11 §8 is
+    authoritative) and gains a labelled projection in the waiting token; the body's line names both
+    (`{{staged}} words once applied ({{confirmed}} now)`). The stored count is never replaced by a
+    count of text the chapter does not hold.
+  - **Extraction, not copies**: `features/agent/heldCall.ts` owns which call is held, its body text,
+    its wording case, its target pids, the surface rule and the **two mutation payloads**
+    (`approveHeldInput` = `resume` with no `feedback` key; `requestChangesInput` = the trimmed
+    feedback, or `undefined` when blank); `useHeldDecision` wires them to the resume mutation for
+    both surfaces; `HeldFeedback` is the one request-changes box (trim, blank-disabled, ⌘⏎ with the
+    IME guard). `HeldCallReview` re-exports the pure helpers so its existing call sites and tests
+    keep one import site.
+- **Consequences**: the author decides where they write, on the text they will actually get, and the
+  panel never offers a second, differently-worded way to make the same decision. A held write that
+  the author outran is now visibly dropped instead of failing silently. The dock is part of the
+  chapter page (not the layout shell), so it inherits the page's data and a reload restores it; it
+  is sticky inside the middle column so the decision cannot scroll away from the text. The cost is
+  that the chapter page now reads `pending_content` and computes the merged document on every
+  render where a write holds — bounded by the chapter's paragraph count, and skipped entirely when
+  nothing is staged.
+- **Regression guards**: `pendingWrite.test.ts` pins the snapshot semantics (a rewrite plus an added
+  paragraph renders as the staged document, not as a concatenation; a deleted paragraph disappears;
+  a superseded write is described but not applied) and both word counts. `heldCall.test.ts` pins the
+  payloads (`{sessionId}` exactly, trimmed feedback, `undefined` for blank — the server reads blank
+  feedback as an approval), the surface rule per tool name, and the pid extraction.
+  `pendingWriteDock.test.tsx` pins both dock states, the exact payloads and the blank guard.
+  `heldWriteSurface.test.tsx` pins that a write hold yields no `held-review` block, no
+  Continue/Feedback pair and no approve button in the panel, that the notice links to the chapter, and
+  that a `submit_outline` hold still renders `HeldCallReview` unchanged. `pendingPane.test.tsx` pins
+  the merged rendering, the read-only pane, the two-count word line and the absence of `HoldBar` for
+  a write hold. `wordCount.test.tsx` pins the confirmed-plus-projection rule.

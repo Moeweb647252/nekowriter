@@ -30,6 +30,12 @@ export type ChapterHeaderProps = {
   onRename: (title: string) => void
   /** Called with a new session id (writer, reviewer or archivist) so the panel can focus it. */
   onSessionStarted?: (sessionId: number) => void
+  /**
+   * Words the chapter would read once a held agent write is applied (D-141). The `word_count`
+   * passed in stays the confirmed count — the server's value (spec/11 §8) — and this projection is
+   * labelled beside it, so the header and the draft pane state the same two numbers.
+   */
+  projectedWords?: number
 }
 
 /** Name/status/actions of one chapter. */
@@ -39,6 +45,7 @@ export function ChapterHeader({
   language,
   onRename,
   onSessionStarted,
+  projectedWords,
 }: ChapterHeaderProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
@@ -144,6 +151,7 @@ export function ChapterHeader({
         </div>
         <WordCount
           words={chapter.word_count}
+          projected={projectedWords}
           targetMin={settings.target_words_min}
           targetMax={settings.target_words_max}
           language={language}

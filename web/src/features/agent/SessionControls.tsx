@@ -16,6 +16,12 @@
  * (spec/03 §5.2, §5.4). A bare Continue therefore asks the author to approve something the bar
  * never names; the review block takes over those two decisions whenever the caller can say which
  * call is held.
+ *
+ * A held **chapter write** is the exception (D-141): its text is the draft, so the draft pane's dock
+ * decides it, next to the merged document it would produce. The panel must not keep a competing
+ * block for the same call, and a bare Continue here would be that same approve under a second
+ * wording, so the caller passes the dock surface and the controls render a pointer instead of
+ * either decision (see `HeldWriteNotice`).
  */
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
@@ -34,6 +40,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { ConfirmDialog } from "@/components/common/ConfirmDialog"
 import { FeedbackDialog } from "@/features/agent/FeedbackDialog"
 import { HeldCallReview } from "@/features/agent/HeldCallReview"
+import { HeldWriteNotice } from "@/features/agent/HeldWriteNotice"
+import { heldDecisionSurface } from "@/features/agent/heldCall"
 
 type ControlsProps = {
   session: SessionDto
@@ -54,6 +62,11 @@ type ControlsProps = {
   onApproveHeld?: () => void
   /** Request changes on the held call: `resume` with exactly this feedback. */
   onRequestChanges?: (feedback: string) => void
+  /**
+   * A link to the chapter whose draft pane owns this hold, rendered when the call is a chapter
+   * write (D-141). The panel points at the dock instead of offering the same decision twice.
+   */
+  chapterHref?: string
 }
 
 export function SessionControls({
@@ -67,6 +80,7 @@ export function SessionControls({
   heldCall,
   onApproveHeld,
   onRequestChanges,
+  chapterHref,
 }: ControlsProps) {
   const { t } = useTranslation()
   const [feedbackOpen, setFeedbackOpen] = useState(false)
@@ -78,13 +92,18 @@ export function SessionControls({
   const canPause = status === "running"
   const canStop = status === "running"
   // The review block owns a held session's two decisions when the caller can name the call, so the
-  // same choice is never offered twice under two labels. Anything else keeps the generic pair.
+  // same choice is never offered twice under two labels.
   const reviewHeld =
     status === "held" &&
     heldCall !== undefined &&
     onApproveHeld !== undefined &&
     onRequestChanges !== undefined
-  const genericHeld = status === "held" && !reviewHeld
+  // A held chapter write is decided in the draft pane's dock (D-141). Neither the review block nor
+  // the generic Continue / Feedback… pair may stand in for it here: both are the same two
+  // mutations under a second wording, which is the duplication this change removed. The rule is
+  // applied here rather than by each caller, so a surface cannot forget it.
+  const dockHeld = status === "held" && heldDecisionSurface(heldCall) === "dock"
+  const genericHeld = status === "held" && !reviewHeld && !dockHeld
   const canContinue =
     genericHeld ||
     status === "paused" ||
@@ -171,7 +190,9 @@ export function SessionControls({
           }}
         />
       </div>
-      {reviewHeld ? (
+      {dockHeld ? (
+        <HeldWriteNotice chapterHref={chapterHref} />
+      ) : reviewHeld ? (
         <HeldCallReview
           call={heldCall}
           busy={busy}

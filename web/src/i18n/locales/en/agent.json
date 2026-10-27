@@ -65,7 +65,10 @@
     "request_changes_hint_outline": "Your feedback goes to the agent, which revises the outline and continues. This outline is not approved.",
     "request_changes_hint_revision_plan": "Your feedback goes to the agent, which revises the plan and continues. This plan is not approved.",
     "request_changes_hint": "Your feedback goes to the agent, which revises and continues. This step is not approved.",
-    "feedback_label": "What should change?"
+    "feedback_label": "What should change?",
+    "write_title": "The agent's text is waiting in the draft",
+    "write_body": "Its paragraphs are shown in the chapter's text pane. Apply or reject them there, under the draft.",
+    "write_open_draft": "Open the draft"
   },
   "writer": {
     "granularity": "Granularity",
@@ -119,7 +122,8 @@
     "disabled_form": "Answer the form above first.",
     "disabled_review": "Decide on the review above to continue.",
     "disabled_continue": "Continue the session to write again.",
-    "disabled_done": "This session is finished."
+    "disabled_done": "This session is finished.",
+    "disabled_dock": "Decide on the agent's text in the draft pane to continue."
   },
   "usage": {
     "input": "Input {{tokens}}",

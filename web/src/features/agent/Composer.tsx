@@ -10,7 +10,9 @@
  * One held session is the exception: when the agent panel shows the held-call review block
  * (`HeldCallReview`), that block owns the decision and the composer is disabled with a reason —
  * the same relationship the conception studio's `awaiting_input` form has with this composer, so a
- * `held` session never has two differently-worded ways to reject the same call.
+ * `held` session never has two differently-worded ways to reject the same call. A held **chapter
+ * write** is the same rule with a different owner (D-141): the draft pane's dock decides it, so the
+ * composer is disabled with a reason that points at the draft rather than at a block above it.
  *
  * The state label is rendered **once**, in the hint line under the textarea, which is the live
  * region. An earlier version also used it as the textarea's `placeholder`, so a disabled reason
@@ -54,10 +56,20 @@ export function composerMode(session: SessionDto, reviewingHeld = false): Compos
   }
 }
 
-/** The i18n key of the disabled reason, when the composer is disabled. */
-export function disabledReasonKey(session: SessionDto, reviewingHeld = false): string {
+/**
+ * The i18n key of the disabled reason, when the composer is disabled.
+ *
+ * `reviewInDock` distinguishes the two owners of a held decision (D-141): the panel's review block
+ * is above the composer, while a held chapter write is decided in the draft pane, so "the review
+ * above" would point at nothing.
+ */
+export function disabledReasonKey(
+  session: SessionDto,
+  reviewingHeld = false,
+  reviewInDock = false,
+): string {
   if (reviewingHeld && session.status === "held") {
-    return "agent:composer.disabled_review"
+    return reviewInDock ? "agent:composer.disabled_dock" : "agent:composer.disabled_review"
   }
   switch (session.status) {
     case "awaiting_input":
@@ -81,6 +93,7 @@ export function Composer({
   onSend,
   onFeedback,
   reviewingHeld = false,
+  reviewInDock = false,
 }: {
   session: SessionDto
   busy: boolean
@@ -88,6 +101,8 @@ export function Composer({
   onFeedback: (feedback: string) => void
   /** True while the panel shows the held-call review block, which owns the held decision. */
   reviewingHeld?: boolean
+  /** True when the held decision lives in the draft pane's dock instead (D-141). */
+  reviewInDock?: boolean
 }) {
   const { t } = useTranslation()
   const [text, setText] = useState("")
@@ -102,7 +117,7 @@ export function Composer({
         ? t("agent:composer.feedback")
         : mode === "reply"
           ? t("agent:composer.reply")
-          : t(disabledReasonKey(session, reviewingHeld))
+          : t(disabledReasonKey(session, reviewingHeld, reviewInDock))
 
   const submit = () => {
     const value = text.trim()

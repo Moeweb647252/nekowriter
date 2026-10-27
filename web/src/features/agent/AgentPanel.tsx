@@ -29,7 +29,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { ActivityStream } from "@/features/agent/ActivityStream"
 import { Composer } from "@/features/agent/Composer"
-import { findHeldCall } from "@/features/agent/HeldCallReview"
+import { findHeldCall, heldDecisionSurface } from "@/features/agent/heldCall"
 import { SessionControls } from "@/features/agent/SessionControls"
 import { SessionErrorNotice } from "@/features/agent/SessionErrorNotice"
 import { SessionHeader } from "@/features/agent/SessionHeader"
@@ -216,12 +216,21 @@ export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: 
   // whose call is outside the snapshot window falls back to the generic controls (HeldCallReview
   // documents that degradation).
   const heldCall = findHeldCall(session, snapshot.data?.tool_calls, snapshot.data?.messages)
+  // A held chapter write belongs to the draft pane's dock (D-141): the panel names the hold and
+  // links to the draft, and hands neither decision to `SessionControls` or to the composer, so the
+  // same call never has two decision surfaces.
+  const dockHeld = heldDecisionSurface(heldCall) === "dock"
   // Approve = the documented approve path: `resume` with no feedback, which finalizes the held call
   // with its deferred effects (spec/03 §5.4). Request changes = the same call with the feedback,
   // which revokes those effects and appends the revoke notice.
   const approveHeld = () => {
     resume.mutate({ sessionId: session.id }, { onError: reportError })
   }
+  // The draft pane that owns this hold, for the panel's link. The chapter is the session's own, so
+  // a pinned session that is not the open chapter's still links to the right page.
+  const sessionChapterId = session.chapter_id ?? undefined
+  const draftHref =
+    sessionChapterId === undefined ? undefined : `/books/${session.book_id}/chapters/${sessionChapterId}`
 
   const isWriter = session.kind === "chapter_write" || session.kind === "chapter_revise"
   const canConfigure = !["completed", "superseded", "abandoned"].includes(session.status)
@@ -245,9 +254,12 @@ export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: 
         onContinue={() => runControl(session.status === "held" || session.status === "paused" ? "resume" : "continue")}
         onFeedback={submitFeedback}
         onAbandon={() => runControl("abandon")}
+        // The call is always passed: `SessionControls` owns the surface rule (D-141) and renders
+        // the pointer to the draft instead of a second wording of the same two mutations.
         heldCall={heldCall}
         onApproveHeld={approveHeld}
         onRequestChanges={submitFeedback}
+        chapterHref={draftHref}
       />
       <SessionErrorNotice error={session.error ?? null} />
       {isWriter ? (
@@ -296,7 +308,12 @@ export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: 
           send.mutate({ sessionId: session.id, text }, { onError: reportError })
         }
         onFeedback={submitFeedback}
+        // The composer steps aside for a hold decided above (or in the dock's draft pane): a
+        // `held` session must never have two differently-worded reject paths. A dock-owned hold is
+        // `held`, so the composer waits here as well — and its reason names the draft, not "the
+        // review above".
         reviewingHeld={heldCall !== undefined && session.status === "held"}
+        reviewInDock={dockHeld}
       />
       <UsageFooter session={session} />
       <div className="border-t px-3 py-1">

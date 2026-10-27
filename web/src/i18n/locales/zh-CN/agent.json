@@ -65,7 +65,10 @@
     "request_changes_hint_outline": "你的反馈会发给智能体，它会修改这份章纲后继续。这份章纲不会通过。",
     "request_changes_hint_revision_plan": "你的反馈会发给智能体，它会修改这份修订计划后继续。这份计划不会通过。",
     "request_changes_hint": "你的反馈会发给智能体，它会修改后继续。这一步不会通过。",
-    "feedback_label": "需要改什么？"
+    "feedback_label": "需要改什么？",
+    "write_title": "智能体写的正文正在草稿里等你",
+    "write_body": "这些段落在章节正文区显示。请在正文区下方的 dock 栏里应用或否决。",
+    "write_open_draft": "打开正文"
   },
   "writer": {
     "granularity": "写作粒度",
@@ -119,7 +122,8 @@
     "disabled_form": "请先回答上面的问题。",
     "disabled_review": "请先在上方做出审阅决定。",
     "disabled_continue": "继续会话后才能写入。",
-    "disabled_done": "这个会话已经结束。"
+    "disabled_done": "这个会话已经结束。",
+    "disabled_dock": "请先在正文区的 dock 栏里处理智能体写的正文。"
   },
   "usage": {
     "input": "输入 {{tokens}}",

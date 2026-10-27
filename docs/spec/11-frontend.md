@@ -178,7 +178,30 @@ message and a retry.
 - `HoldBar`: shown under the paragraphs touched by the held call (from `ToolCallDto.ui`). Buttons:
   Continue (⌘⏎), Feedback… (inline textarea → "Send & continue"). For `submit_outline` it renders
   on the Outline tab with "Approve outline" and "Request changes"; the outline and reference
-  notes are editable while held, and unsaved edits are saved before the resume call.
+  notes are editable while held, and unsaved edits are saved before the resume call. It never
+  renders for a held **chapter write**: that hold belongs to the dock below (D-141).
+- Held chapter write (D-139, D-141). A write tool never touches `chapters.content`; it stages a
+  complete `ChapterContent` on `ToolCallDto.pending_content` (`expected_version` = the
+  `content_version` it read). The pane shows the draft the author is being asked for, and the dock
+  under it takes the decision:
+  - `PendingText` renders the **merged** document — `pending_content.content` itself, with each
+    paragraph marked `confirmed` / `changed` / `added` against the draft on screen, the latter two
+    tinted with `--color-status-waiting` and a note saying the text is a preview. The merged view is
+    **not** editable (a click would save a paragraph the author cannot see, and the save would bump
+    the version the staged write is compared against), so `ParagraphEditor` and `FullTextEditor` are
+    closed while it is up.
+  - `PendingWriteDock` is sticky at the bottom of the middle column: **Apply and continue**
+    (`resume` with no feedback — the transaction that applies `pending_content`) and **Request
+    changes** (`resume` with the trimmed feedback). When `pending_content.expected_version` no
+    longer equals the draft's `content_version`, `runner::apply_pending_content` **drops** the write
+    (the author's edit wins), so the pane keeps the confirmed draft, the dock says the text will not
+    be applied and names both versions, and its primary action becomes **Continue without it**.
+  - `pendingDraftView` (`features/chapter/pendingWrite.ts`) is the single derivation of that view,
+    shared by `ChapterText` and `ChapterPage`, so the text and the dock cannot disagree.
+- Word count while a write is staged: the header keeps the server's confirmed `word_count`
+  (§8) and adds the projection as a labelled second number (waiting token, `→`); the body's line
+  names both (`{{staged}} words once applied ({{confirmed}} now)`). One rule for both panes: the
+  stored count is never replaced by a count of text the chapter does not hold.
 - `ParagraphEditor`: click to edit (when not locked). Saves via `PATCH content` with
   `base_version`. Enter at the end of a paragraph inserts a new paragraph after it. Backspace in
   an empty paragraph deletes it. Both are ignored while an IME composition is active
@@ -211,14 +234,21 @@ message and a retry.
     bounded rather than linked to the tool card, because the stream is virtualized, the card is
     collapsed by default and it shows raw JSON. When the id resolves to no call (the call is
     outside the snapshot's 200-message window) the block is absent and the status-driven
-    Continue / Feedback… pair remains. `Abandon` stays in the overflow menu in both cases;
+    Continue / Feedback… pair remains. `Abandon` stays in the overflow menu in both cases.
+    A held **chapter write** is not reviewed here: its text is the draft, so `SessionControls`
+    renders `HeldWriteNotice` instead — a sentence saying the agent's paragraphs are in the draft
+    pane and a link to that chapter — and offers neither decision, because the draft pane's dock
+    owns them (D-141). One decision surface per held call: the panel offers no second wording of
+    the same `resume`. A write hold that staged nothing (a call from before D-139) stays in the
+    panel, since the dock would have no text to show;
   - `ActivityStream` (virtualized with `@tanstack/react-virtual`; sticks to the bottom unless the
     author scrolled up; scrolling to the top loads older messages with `next_cursor`): messages,
     live text and reasoning buffers, tool cards, appendices shown under their tool card as
     `NoticeItem`s;
   - `Composer` (state-dependent label and endpoint: `message` / `resume` with feedback / disabled;
     disabled with `agent:composer.disabled_review` while `HeldCallReview` owns the decision, so a
-    held call never has two differently-worded reject paths);
+    held call never has two differently-worded reject paths; for a write hold it is disabled with
+    `agent:composer.disabled_dock`, which names the draft pane instead of "the review above");
   - `UsageFooter`.
 - `ToolCallCard` uses a renderer registry `toolRenderers: Record<string, { icon: LucideIcon;
   summary: (ui, t) => string; Detail?: Component }>`. Each tool has a summary i18n key

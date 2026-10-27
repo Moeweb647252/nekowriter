@@ -131,5 +131,17 @@
   "delete.session_open_action": "打开本章去结束会话",
   "delete.is_anchor": "本章是某些番外的时间锚点，暂时无法删除：",
   "delete.is_anchor_hint": "先把下面的番外改到别的锚点章节，再删除本章。",
-  "delete.side_story_ref": "番外 #{{id}}"
+  "delete.side_story_ref": "番外 #{{id}}",
+  "pending_title": "智能体写好了这段，应用吗？",
+  "pending_title_superseded": "智能体写的这段没有应用",
+  "pending_body": "高亮的段落是应用后会改变的部分。在你做出决定前，什么都不会写入。",
+  "pending_superseded_body": "智能体写完这段之后你改动了草稿（现在草稿是第 {{draft}} 版，智能体读到的是第 {{expected}} 版），所以它的文字不会被应用。选择继续，它会从你的草稿接着写。",
+  "pending_approve": "应用并继续",
+  "pending_continue": "不应用，继续",
+  "pending_request_changes": "提出修改",
+  "pending_request_changes_hint": "你的反馈会发给智能体，它会重写这段后继续。这段文字不会应用。",
+  "pending_preview_note": "预览：高亮段落是智能体写的，还没有进入你的草稿。",
+  "pending_live_words": "应用后 {{staged}} 字（当前 {{confirmed}} 字）",
+  "word_count_projected": "智能体正文应用后的字数（仅为预览，尚未写入）",
+  "word_count_projected_suffix": "应用后"
 }
