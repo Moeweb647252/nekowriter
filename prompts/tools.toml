@@ -241,7 +241,7 @@ properties.suggestion = { type = "string", description = "具体的修改建议"
 # ───────────────────────────── Archivist ─────────────────────────────
 
 [tools.create_entity]
-description = '''创建一个新实体（人物、组织、地点、物品等）。创建前先确认它不存在；已有的实体请用 update_entity。'''
+description = '''创建一个新实体（人物、组织、地点、物品等）。创建前先确认它不存在；已有的实体请用 update_entity。description 只写稳定档案，控制在约 120 字以内；当前处境与单项事实分别写 state 与 attributes。'''
 examples = [ { kind = "character", name = "苏婉", summary = "青云宗内门弟子，林凡的师姐", state = "在剑冢外等候", attributes = { "修为" = "筑基后期" }, importance = 4 } ]
 [tools.create_entity.input_schema]
 type = "object"
@@ -251,7 +251,7 @@ properties.kind = { type = "string", enum = ["character", "organization", "locat
 properties.name = { type = "string", description = "名称（正文中最常用的称呼）" }
 properties.summary = { type = "string", description = "一句话简介" }
 properties.aliases = { type = "array", items = { type = "string" }, description = "别名列表" }
-properties.description = { type = "string", description = "详细描述（较稳定的档案信息）" }
+properties.description = { type = "string", description = "稳定档案：这是什么、出身背景、长期不变的外貌、性格与能力，约 120 字（2 到 4 句）以内。当前处境写 state，单项事实（修为、官职、年龄等）写 attributes，一句话身份写 summary；不要写成传记，也不要记录本章发生的事。" }
 properties.state = { type = "string", description = "当前即时状态" }
 properties.attributes = { type = "object", additionalProperties = { type = "string" }, description = "关键事实的键值对，例如 {\"修为\": \"筑基中期\"}" }
 properties.importance = { type = "integer", minimum = 1, maximum = 5, description = "重要度 1–5，默认 2" }
@@ -260,7 +260,7 @@ properties.is_protagonist = { type = "boolean", description = "是否为主角�
 properties.note = { type = "string", description = "说明（可选）" }
 
 [tools.update_entity]
-description = '''更新已有实体：状态、属性、描述、别名、重要度或生死状态。note 必须写明这次变化。'''
+description = '''更新已有实体：状态、属性、描述、别名、重要度或生死状态。note 必须写明这次变化。描述只补长期成立的内容，整体保持约 120 字以内；本章的进展写入 state、attributes、add_memory_note 与 add_timeline_event。'''
 examples = [ { entity = "林凡", state = "离开剑冢，左臂伤势加重", attributes_set = { "修为" = "筑基中期" }, note = "修为：筑基初期→筑基中期；左臂伤势加重" } ]
 [tools.update_entity.input_schema]
 type = "object"
@@ -272,8 +272,8 @@ properties.name = { type = "string", description = "新名称（改名时使用�
 properties.aliases_add = { type = "array", items = { type = "string" }, description = "新增别名" }
 properties.aliases_remove = { type = "array", items = { type = "string" }, description = "移除别名" }
 properties.summary = { type = "string", description = "新的一句话简介" }
-properties.description = { type = "string", description = "替换整个详细描述（慎用；不能与 description_append 同时使用）" }
-properties.description_append = { type = "string", description = "追加到详细描述末尾的新信息" }
+properties.description = { type = "string", description = "替换整个描述（不能与 description_append 同时使用）：只写稳定档案，约 120 字（2 到 4 句）以内。原文已经过长时，直接改写成更短的版本，不要在此基础上继续加长。" }
+properties.description_append = { type = "string", description = "只追加长期成立的新信息：二十章之后仍然为真、且改变了这个人或物的定位（例如真实身份揭晓、根本性的转变）。本章的遭遇、处境与关系进展不要追加——它们属于 state、attributes、add_memory_note 与 add_timeline_event。追加后整体仍应保持在约 120 字以内；已经接近或超过这个长度时，改用 description 重写为更紧凑的版本，不要再追加。" }
 properties.state = { type = "string", description = "新的当前即时状态（替换旧状态）" }
 properties.attributes_set = { type = "object", additionalProperties = { type = "string" }, description = "设置或覆盖的属性" }
 properties.attributes_remove = { type = "array", items = { type = "string" }, description = "删除的属性名" }

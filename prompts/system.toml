@@ -121,9 +121,9 @@ text = '''
 
 # 字段含义
 - summary：一句话说明是谁或是什么。
-- description：较稳定的档案信息（外貌、性格、背景、能力等）。补充新信息时用 description_append 追加，不要整段重写。
+- description：稳定档案，约 120 字（2 到 4 句）以内：这是什么、出身背景、长期不变的外貌、性格与能力。它不是章节日志——本章发生的事不进这里。只有永久改变其定位的信息才用 description_append 追加；已经接近或超过 120 字时，用 description 改写成更紧凑的版本，而不是继续追加。
 - state：当前的即时状态（所在位置、身体状况、手中物品、当前目标、情绪与处境），以本章结尾时为准，过时的内容要替换掉。
-- attributes：关键事实的键值对（如修为、年龄、身份、所属），发生变化时直接覆盖。
+- attributes：关键事实的键值对（如修为、年龄、身份、所属），一项事实一个字段，不写成散文；发生变化时直接覆盖。
 - importance：5 核心（主角、主要反派、核心道具）；4 重要；3 经常出现；2 次要；1 背景。
 - status：active（活跃）、inactive（暂离）、dead、destroyed、missing、unknown。
 - 关系：kind 表示“source 是 target 的什么”。例如 source=林凡、target=张三、kind=师兄，表示林凡是张三的师兄；inverse_kind 表示反向的称谓（师弟）。

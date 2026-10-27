@@ -13,6 +13,91 @@ use tower::ServiceExt;
 
 // ───────────────────────────── pack coverage ─────────────────────────────
 
+/// The entity `description` ceiling of D-142 is carried by every prompt that can write it: the
+/// three archivist kickoffs, the archivist system prompt, and both entity-write tool schemas.
+/// Prompt text is data, so an edit could drop the rule without failing anything else — the
+/// author's bloat (8,290 characters over 44 entities) is exactly what the rule prevents, so it is
+/// pinned here rather than left to review.
+#[test]
+fn the_entity_description_ceiling_is_stated_where_entities_are_written() {
+    let registry = PromptRegistry::embedded().expect("pack");
+    let set = registry.defaults_only();
+
+    // Each kickoff must state the ceiling, that `description` is not a chapter log, and where the
+    // per-chapter developments belong instead.
+    for key in [
+        "archivist.kickoff.maintenance",
+        "archivist.kickoff.seed",
+        "archivist.kickoff.resync",
+    ] {
+        let mut checked = 0usize;
+        for sample in registry.sample_contexts(key) {
+            let text = set
+                .render_value(key, nekowriter::prompts::template_value(&sample))
+                .unwrap_or_else(|err| panic!("{key}: {err}"))
+                .text;
+            assert!(
+                text.contains("120 字"),
+                "{key} must state the description ceiling (D-142):\n{text}"
+            );
+            assert!(
+                text.contains("description 不是章节日志")
+                    || text.contains("不要写成传记")
+                    || text.contains("不是章节日志"),
+                "{key} must say that description is not a chapter log:\n{text}"
+            );
+            checked += 1;
+        }
+        assert!(checked > 0, "{key} rendered no sample");
+    }
+
+    // The system prompt explains the field hierarchy that the ceiling depends on.
+    let system = set
+        .render("archivist.system", &json!({}))
+        .expect("archivist.system")
+        .text;
+    assert!(
+        system.contains("120 字"),
+        "archivist.system must state the description ceiling (D-142)"
+    );
+    assert!(
+        system.contains("章节日志"),
+        "archivist.system must say description is not a chapter log"
+    );
+
+    // Both entity-write tool schemas carry the ceiling, and `description_append` is restricted to
+    // durable information and repeats it (this is the field that grew the author's rows).
+    let pack = registry.pack();
+    for tool in ["create_entity", "update_entity"] {
+        let schema = pack.tool(tool).expect("tool schema");
+        let description = schema.input_schema["properties"]["description"]["description"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{tool}.description has no description"));
+        assert!(
+            description.contains("120 字"),
+            "{tool}.description must state the ceiling: {description}"
+        );
+    }
+    let append = pack
+        .tool("update_entity")
+        .expect("update_entity")
+        .input_schema["properties"]["description_append"]["description"]
+        .as_str()
+        .expect("description_append description");
+    assert!(
+        append.contains("120 字"),
+        "description_append must repeat the ceiling: {append}"
+    );
+    assert!(
+        append.contains("长期") || append.contains("二十章"),
+        "description_append must be for durable information only: {append}"
+    );
+    assert!(
+        append.contains("重写") || append.contains("改成"),
+        "description_append must point at rewriting tighter instead: {append}"
+    );
+}
+
 #[test]
 fn every_key_renders_with_every_sample() {
     let registry = PromptRegistry::embedded().expect("the embedded pack must be valid");

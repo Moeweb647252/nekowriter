@@ -98,9 +98,9 @@ expression: rendered
 
 # 字段含义
 - summary：一句话说明是谁或是什么。
-- description：较稳定的档案信息（外貌、性格、背景、能力等）。补充新信息时用 description_append 追加，不要整段重写。
+- description：稳定档案，约 120 字（2 到 4 句）以内：这是什么、出身背景、长期不变的外貌、性格与能力。它不是章节日志——本章发生的事不进这里。只有永久改变其定位的信息才用 description_append 追加；已经接近或超过 120 字时，用 description 改写成更紧凑的版本，而不是继续追加。
 - state：当前的即时状态（所在位置、身体状况、手中物品、当前目标、情绪与处境），以本章结尾时为准，过时的内容要替换掉。
-- attributes：关键事实的键值对（如修为、年龄、身份、所属），发生变化时直接覆盖。
+- attributes：关键事实的键值对（如修为、年龄、身份、所属），一项事实一个字段，不写成散文；发生变化时直接覆盖。
 - importance：5 核心（主角、主要反派、核心道具）；4 重要；3 经常出现；2 次要；1 背景。
 - status：active（活跃）、inactive（暂离）、dead、destroyed、missing、unknown。
 - 关系：kind 表示“source 是 target 的什么”。例如 source=林凡、target=张三、kind=师兄，表示林凡是张三的师兄；inverse_kind 表示反向的称谓（师弟）。
@@ -441,6 +441,8 @@ expression: rendered
 本章已由作者审定为正式文本（见上方正文）。请根据本章内容更新档案：
 1. record_appearances：记录本章出场或被提及的全部实体及其角色（pov、major、minor、mentioned）。（必做）
 2. 实体：新出现且有意义的人物、组织、地点、物品，用 create_entity 创建；已有实体的状态、属性、身份或描述发生变化，用 update_entity 更新，并写明 note。
+   - description 是稳定档案（这是什么、出身背景、长期不变的外貌、性格与能力），不是章节日志，整体保持在约 120 字以内。本章的进展写进 state 与 add_memory_note、add_timeline_event；单项事实（修为、官职、年龄等）写进 attributes；不要把它们追加到 description。
+   - 只有永久改变其定位的信息（例如真实身份揭晓、根本性的转变）才用 description_append，且追加后整体仍应控制在约 120 字内。原文已经接近或超过这个长度时，改用 description 重写成更紧凑的版本，而不是继续追加；本次本来就要更新这个实体时，顺手把过长的描述压缩到 120 字以内。
 3. 主角状态：主角（即记忆中“主角当前状态”所示的人物）在本章出场时，用 update_entity 更新其 state，反映本章结尾时的情况。
 4. 关系：用 set_relation 或 end_relation 记录关系的建立与变化，写明 note。
 5. 时间线：用 add_timeline_event 记录本章的重要事件，按故事时间先后插入正确的位置。
@@ -459,6 +461,8 @@ expression: rendered
 本章已由作者审定为正式文本（见上方正文）。请根据本章内容更新档案：
 1. record_appearances：记录本章出场或被提及的全部实体及其角色（pov、major、minor、mentioned）。（必做）
 2. 实体：新出现且有意义的人物、组织、地点、物品，用 create_entity 创建；已有实体的状态、属性、身份或描述发生变化，用 update_entity 更新，并写明 note。
+   - description 是稳定档案（这是什么、出身背景、长期不变的外貌、性格与能力），不是章节日志，整体保持在约 120 字以内。本章的进展写进 state 与 add_memory_note、add_timeline_event；单项事实（修为、官职、年龄等）写进 attributes；不要把它们追加到 description。
+   - 只有永久改变其定位的信息（例如真实身份揭晓、根本性的转变）才用 description_append，且追加后整体仍应控制在约 120 字内。原文已经接近或超过这个长度时，改用 description 重写成更紧凑的版本，而不是继续追加；本次本来就要更新这个实体时，顺手把过长的描述压缩到 120 字以内。
 3. 主角状态：主角（即记忆中“主角当前状态”所示的人物）在本章出场时，用 update_entity 更新其 state，反映本章结尾时的情况。
    如果该人物属于正史（不是本番外专属的实体），则不能修改；请用 add_memory_note 把其在番外中的状态变化记为番外内的笔记。
 4. 关系：用 set_relation 或 end_relation 记录关系的建立与变化，写明 note。
@@ -475,7 +479,9 @@ expression: rendered
 
 本书刚刚完成构思，还没有正文。请根据上方的设定资料建立初始档案：
 1. 人物：为人物设定中的每个人物创建实体（kind=character）。排第一位的主角设置 is_protagonist=true；重要度依据排名与定位；summary、description、state（故事开始时的状态）与 attributes（年龄、身份、所属、能力等级等）依据设定填写。
-2. 组织、地点、物品：世界观与大纲中明确提到、后续会反复出现的势力、地点、重要物品，各自创建实体。
+   - 把四种字段分开写，不要把它们都堆进 description：summary 是一句话身份；state 是故事开始那一刻的处境；attributes 逐项记录能拆成单项的事实（年龄、身份、所属、修为或能力等级）；description 只放长期成立的档案信息（出身背景、长期不变的外貌、性格与能力），约 120 字（2 到 4 句）以内，不要写成传记。
+   - description 不是章节日志：设定资料里属于后续剧情的内容不要提前写进去，逐章的进展留给对应章节的档案维护会话记录。
+2. 组织、地点、物品：世界观与大纲中明确提到、后续会反复出现的势力、地点、重要物品，各自创建实体；它们的 description 同样是稳定档案，保持在约 120 字以内。
 3. 关系：根据设定建立人物之间、人物与组织之间的关系（师徒、亲属、所属、敌对等）。
 4. 世界规则与事实：用 add_memory_note 记录世界观中的核心规则（kind=world_rule）与重要的背景事实（kind=fact），重要的设为高重要度。
 5. 时间线：设定中明确的背景事件（故事开始之前发生的事）按时间先后加入时间线。
@@ -487,6 +493,7 @@ expression: rendered
 本书写作语言：简体中文（所有记录使用该语言）
 作者在本章建档之后修改了正文，变化见上方的“正文变更”。请让档案与新的正文保持一致：
 - 检查变更涉及的实体、关系、时间线事件、记忆笔记与伏笔，必要时更新、结束或撤销；
+- description 是稳定档案，不是章节日志，整体保持约 120 字（2 到 4 句）以内。本章的情节进展用 state、attributes、add_memory_note 与 add_timeline_event 记录，不要追加到 description；只有改动永久改变了某个实体时，才用 description_append，且追加后整体仍应控制在约 120 字内。原文已经接近或超过这个长度时，用 description 改写成更紧凑的版本，而不是继续追加；
 - 上方只列出了变化的段落。需要全文时（重新记录出场、改写摘要），先用 read_chapter（chapter="#45"）阅读本章当前的全文；
 - 出场人物有变化时，重新调用 record_appearances，提供本章完整的出场列表（它会替换原有记录），而不只是变化的部分；
 - 有必要时更新本章摘要（set_chapter_summary，摘要概括全章）；
@@ -501,6 +508,7 @@ expression: rendered
 时间锚点：发生在第12章《剑冢》之后。锚点之后的正文事件，对本番外中的角色而言尚未发生；检索结果中标注“（锚点之后）”的内容，角色不能知晓，也不能提前发生。
 作者在本章建档之后修改了正文，变化见上方的“正文变更”。请让档案与新的正文保持一致：
 - 检查变更涉及的实体、关系、时间线事件、记忆笔记与伏笔，必要时更新、结束或撤销；
+- description 是稳定档案，不是章节日志，整体保持约 120 字（2 到 4 句）以内。本章的情节进展用 state、attributes、add_memory_note 与 add_timeline_event 记录，不要追加到 description；只有改动永久改变了某个实体时，才用 description_append，且追加后整体仍应控制在约 120 字内。原文已经接近或超过这个长度时，用 description 改写成更紧凑的版本，而不是继续追加；
 - 上方只列出了变化的段落。需要全文时（重新记录出场、改写摘要），先用 read_chapter（chapter="#45"）阅读本章当前的全文；
 - 出场人物有变化时，重新调用 record_appearances，提供本章完整的出场列表（它会替换原有记录），而不只是变化的部分；
 - 有必要时更新本章摘要（set_chapter_summary，摘要概括全章）；
@@ -1485,7 +1493,7 @@ move_after、move_before 不能同时提供，请只用其中一个。
 向作者提出 1 到 4 个问题，等待作者回答。尽量给出具体选项，同时允许作者自由回答。用于确认构思中的关键空白。
 
 ===== tool.create_entity [0] =====
-创建一个新实体（人物、组织、地点、物品等）。创建前先确认它不存在；已有的实体请用 update_entity。
+创建一个新实体（人物、组织、地点、物品等）。创建前先确认它不存在；已有的实体请用 update_entity。description 只写稳定档案，控制在约 120 字以内；当前处境与单项事实分别写 state 与 attributes。
 
 ===== tool.delete_paragraphs [0] =====
 删除一个或多个段落。
@@ -1596,7 +1604,7 @@ move_after、move_before 不能同时提供，请只用其中一个。
 【修订规划阶段】提交修订计划：逐条说明怎么改、改哪些段落。提交后进入修订阶段，检索工具将停用。
 
 ===== tool.update_entity [0] =====
-更新已有实体：状态、属性、描述、别名、重要度或生死状态。note 必须写明这次变化。
+更新已有实体：状态、属性、描述、别名、重要度或生死状态。note 必须写明这次变化。描述只补长期成立的内容，整体保持约 120 字以内；本章的进展写入 state、attributes、add_memory_note 与 add_timeline_event。
 
 ===== tool.update_knowledge_entry [0] =====
 补充或修改目标知识范围中已有的条目。

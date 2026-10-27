@@ -14,9 +14,9 @@ re-indexing (spec/07 §4).
 | `name` | the title, unique among visible entities | 林凡 |
 | `aliases` | other names used in text | 凡哥, 林师弟 |
 | `summary` | one line: who or what it is | 青云宗外门弟子，身怀残破剑灵 |
-| `description` | durable profile (appearance, personality, background, abilities) | Markdown |
+| `description` | durable profile (appearance, personality, background, abilities) as plain text, **about 120 characters (2–4 sentences)** — stable reference, not a chapter log (D-142) | 青云宗外门弟子，父母早亡，由祖母抚养；寡言，剑术天赋极高，左手有旧伤 |
 | `state` | the **current, immediate** state: location, condition, possessions in hand, goal, mood, open situation | 身处剑冢第三层，左臂受伤，持青冥剑，急于寻找师妹 |
-| `attributes` | key facts as key/value strings, overwritten when they change | 修为=筑基中期；年龄=17；所属=青云宗 |
+| `attributes` | key facts as key/value strings, overwritten when they change; one field per fact, never prose | 修为=筑基中期；年龄=17；所属=青云宗 |
 | `importance` | 5 core (protagonist, main antagonist, central item) · 4 major · 3 recurring · 2 minor (default) · 1 background | |
 | `status` | `active`, `inactive` (out of the story for now), `dead`, `destroyed`, `missing`, `unknown` | |
 | `is_protagonist` | at most one per book; its `state` is short-term memory | |
@@ -24,6 +24,16 @@ re-indexing (spec/07 §4).
 
 Kinds: `character`, `organization` (sects, nations, companies), `location`, `item`, `other`
 (techniques, species, concepts).
+
+The four text fields are a hierarchy, not four places to write the same thing: `summary` is the
+one-line identity, `state` the instant condition at the end of the chapter, `attributes` the
+discrete facts, and `description` the durable reference text. Per-chapter developments belong to
+`state`, `add_memory_note` and `add_timeline_event` — **never appended to `description`**. Only a
+permanent redefinition (a true identity reveal, a life-changing fact) may extend a `description`,
+and when the text is already near the ceiling the agent rewrites it tighter instead of appending
+(D-142). The ceiling is prompt-level guidance in `prompts/tools.toml` and the archivist prompts,
+not a schema constraint: a hard cap would either drop information or force a rewrite loop, and the
+archivist cannot ask the author what to cut.
 
 ### 1.2 Relations
 - Directed. `kind` says what **source** is to **target** ("林凡 是 张三 的 师兄" → source 林凡,
@@ -210,7 +220,10 @@ validates the required ones):
 1. **Appearances** (required): `record_appearances` for every entity that appears or is
    mentioned.
 2. **Entities**: `create_entity` for new named entities that matter. `update_entity` for changed
-   state, attributes, status, or new durable description details. Each update has a note.
+   state, attributes, status, or a permanent redefinition of the entity. Each update has a note.
+   This step is **not** a place to extend `description` with what happened in the chapter: the
+   chapter's developments go to `state`, `add_memory_note` and `add_timeline_event`, and a
+   `description` that has grown past its ceiling is rewritten tighter (§1.1, D-142).
 3. **Protagonist state** (expected when they appear): `update_entity(protagonist, state=…)`
    reflecting the end of the chapter (in a side track with a focus character, that character).
    In an isolated track a shared protagonist is read-only, so their in-story changes become a
