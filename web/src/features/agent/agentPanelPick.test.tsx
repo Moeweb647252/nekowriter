@@ -1,6 +1,6 @@
 /** AgentPanel chooses the pinned chapter candidate, not the oldest open session (R3-08/T-02). */
 import "@/i18n"
-import { act, render, screen } from "@testing-library/react"
+import { act, fireEvent, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -110,6 +110,24 @@ describe("AgentPanel pinned candidate", () => {
     )
     expect(screen.getByText("Outlining · Chapter 1")).toBeInTheDocument()
     expect(screen.queryByText("Reviewing · Chapter 1")).not.toBeInTheDocument()
+  })
+
+  it("does not re-pin a hotkey-controlled session after the author switched away", async () => {
+    render(
+      <TooltipProvider>
+        <AgentPanel bookId={3} chapterId={2} />
+      </TooltipProvider>,
+    )
+    act(() => {
+      fireEvent.keyDown(window, { key: "p", altKey: true })
+    })
+    expect(controlMutate).toHaveBeenCalledTimes(1)
+    const options = controlMutate.mock.calls[0]?.[1] as { onSuccess?: (updated: SessionDto) => void }
+    useUiStore.setState({ pinnedSession: { 3: 3 } })
+    act(() => {
+      options.onSuccess?.({ ...planner, id: 2 } as SessionDto)
+    })
+    expect(useUiStore.getState().pinnedSession[3]).toBe(3)
   })
 
   it("does not re-pin a controlled session after the author switched away", async () => {

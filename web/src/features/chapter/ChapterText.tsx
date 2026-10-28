@@ -8,7 +8,7 @@
  * version and make the staged write stale, and the text on screen is not the draft's text. Every
  * other hold keeps the inline `HoldBar` under the paragraphs it touched.
  */
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { AnimatePresence, motion } from "motion/react"
 
@@ -84,6 +84,11 @@ export function ChapterText({
   // A merged write preview supersedes the editable document: that text is not the draft's, so it
   // must not be edited here (the dock under the pane owns the decision instead).
   const preview = pendingView !== undefined
+  const [pendingAfter, setPendingAfter] = useState<{
+    pid: string
+    text: string
+    startText: string
+  } | null>(null)
 
   // Stable per-render callbacks: each `Paragraph` is memoized on its own props (spec/11 §5.2), so
   // a streaming tail paragraph must not re-render the other hundreds.
@@ -107,16 +112,52 @@ export function ChapterText({
       if (current !== startText) {
         return
       }
-      // The whole edit is one patch: update the current paragraph and insert its empty successor.
+      // Enter only opens a pending editor; nothing is persisted until the author types and
+      // leaves it. An empty pending paragraph therefore never enters the data model (R10-01).
+      setPendingAfter({ pid, text, startText })
+    },
+    [paragraphs],
+  )
+  const commitPending = useCallback(
+    (pid: string, text: string, startText: string, newText: string) => {
+      const current = paragraphs.find((paragraph) => paragraph.pid === pid)?.text
+      if (current !== startText) {
+        return
+      }
       const ops: ContentOpInput[] = []
+      let anchor = pid
       if (text !== startText) {
         ops.push({ op: "update", pid, text })
+        // An update splits embedded line breaks into new paragraphs. The pending paragraph
+        // belongs after the last one, not before the split tail (R10-04).
+        const lines = text.split("\n").filter((line) => line.trim() !== "").length
+        if (lines > 1) {
+          anchor = `p${chapter.content.next_pid + lines - 2}`
+        }
       }
-      ops.push({ op: "insert", after: pid, text: "" })
-      patchMutate({ base_version: version, ops }, { onError: showError })
+      ops.push({ op: "insert", after: anchor, text: newText })
+      patchMutate({ base_version: version, ops }, {
+        onError: showError,
+        onSuccess: () => setPendingAfter(null),
+      })
+    },
+    [chapter.content.next_pid, patchMutate, paragraphs, version, showError],
+  )
+  const dismissPending = useCallback(
+    (pid: string, text: string, startText: string) => {
+      const current = paragraphs.find((paragraph) => paragraph.pid === pid)?.text
+      if (current === startText && text !== startText) {
+        patchMutate(
+          { base_version: version, ops: [{ op: "update", pid, text }] },
+          { onError: showError, onSuccess: () => setPendingAfter(null) },
+        )
+      } else {
+        setPendingAfter(null)
+      }
     },
     [patchMutate, paragraphs, version, showError],
   )
+
   const deleteParagraph = useCallback(
     (pid: string, startText: string) => {
       const current = paragraphs.find((paragraph) => paragraph.pid === pid)?.text
@@ -208,6 +249,7 @@ export function ChapterText({
         <div className={unspaced ? "prose-cjk" : "prose-latin"}>
           <AnimatePresence initial={false}>
             {paragraphs.map((paragraph, index) => (
+              <Fragment key={paragraph.pid}>
               <Paragraph
                 key={paragraph.pid}
                 pid={paragraph.pid}
@@ -230,6 +272,18 @@ export function ChapterText({
                 onInsertAfter={insertParagraphAfter}
                 onDelete={deleteParagraph}
               />
+              {pendingAfter?.pid === paragraph.pid ? (
+                <PendingParagraph
+                  key={`pending-${paragraph.pid}`}
+                  onPersist={(newText) =>
+                    commitPending(paragraph.pid, pendingAfter.text, pendingAfter.startText, newText)
+                  }
+                  onDismiss={() =>
+                    dismissPending(paragraph.pid, pendingAfter.text, pendingAfter.startText)
+                  }
+                />
+              ) : null}
+              </Fragment>
             ))}
           </AnimatePresence>
           {/* The paragraph tools' previews are a block of their own. */}
@@ -447,6 +501,56 @@ export const Paragraph = memo(function Paragraph({
     </motion.p>
   )
 })
+
+function PendingParagraph({
+  onPersist,
+  onDismiss,
+}: {
+  onPersist: (text: string) => void
+  onDismiss: () => void
+}) {
+  const { t } = useTranslation()
+  const [text, setText] = useState("")
+  const ref = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    ref.current?.focus()
+  }, [])
+  const finish = () => {
+    const value = text.trim()
+    if (value === "") {
+      onDismiss()
+    } else {
+      onPersist(value)
+    }
+  }
+  return (
+    <motion.div layout className="my-1">
+      <Textarea
+        ref={ref}
+        value={text}
+        autoFocus
+        rows={2}
+        aria-label={t("chapter:new_paragraph")}
+        placeholder={t("chapter:new_paragraph_placeholder")}
+        onChange={(event) => setText(event.target.value)}
+        onBlur={finish}
+        onKeyDown={(event) => {
+          if (isComposing(event)) {
+            return
+          }
+          if (event.key === "Escape") {
+            event.preventDefault()
+            onDismiss()
+          }
+          if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+            event.preventDefault()
+            finish()
+          }
+        }}
+      />
+    </motion.div>
+  )
+}
 
 type FullTextEditorProps = {
   chapter: ChapterDto
