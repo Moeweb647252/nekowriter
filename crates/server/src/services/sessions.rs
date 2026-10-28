@@ -38,6 +38,12 @@ pub const SNAPSHOT_MESSAGE_LIMIT: usize = 200;
 /// The default page size of the message list (spec/10 §2.7).
 pub const MESSAGE_PAGE_DEFAULT: usize = 100;
 
+/// Test-only pause between `abandon`'s first read and its transaction, so a test can make the
+/// session terminal in that gap.
+#[cfg(any(test, feature = "testing"))]
+pub static TEST_ABANDON_PAUSE_MS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 // ───────────────────────────── session creation ─────────────────────────────
 
 impl Default for CreateSession {
@@ -1420,6 +1426,13 @@ pub async fn abandon(
             .manager()
             .wait_for(session_id, std::time::Duration::from_secs(10))
             .await;
+    }
+    #[cfg(any(test, feature = "testing"))]
+    {
+        let millis = TEST_ABANDON_PAUSE_MS.load(std::sync::atomic::Ordering::Relaxed);
+        if millis > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(millis)).await;
+        }
     }
     let db = state.db().clone();
     let (events, dto) = services::write(&db, move |tx| {

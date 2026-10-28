@@ -916,7 +916,7 @@ pub async fn approve(
     // An open reviewer session's verdict is moot once the chapter is approved: its report would
     // be for the text that just became official (spec/08 §1.1).
     for reviewer in super::reviews::open_reviewer_sessions(state.db().conn(), chapter_id).await? {
-        super::sessions::abandon(state, reviewer.id).await?;
+        super::sessions::abandon_if_open(state, reviewer.id).await?;
     }
     let state_owned = state.clone();
     let (response, published) = super::write(state.db(), move |tx| {

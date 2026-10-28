@@ -87,7 +87,7 @@ pub async fn ask_reviewer(
     }
     // "otherwise abandons that session (if any) and starts chapter_review".
     for session in open {
-        sessions::abandon(state, session.id).await?;
+        sessions::abandon_if_open(state, session.id).await?;
     }
     let (session_id, _warnings) = match sessions::create(
         state,
@@ -327,7 +327,7 @@ pub async fn send_back(
 
     // "abandons an open reviewer session" (spec/08 §1.1).
     for reviewer in open_reviewer_sessions(conn, chapter_id).await? {
-        sessions::abandon(state, reviewer.id).await?;
+        sessions::abandon_if_open(state, reviewer.id).await?;
     }
 
     let mode = input.mode;

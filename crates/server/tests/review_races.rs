@@ -122,6 +122,22 @@ async fn insert_report(
     scalar(app, "SELECT max(id) AS n FROM review_reports").await as i32
 }
 
+async fn insert_reviewer(app: &TestApp, book_id: i32, chapter_id: i32, status: &str) -> i32 {
+    app.execute(&format!(
+        "INSERT INTO agent_sessions(book_id, role, kind, chapter_id, track_id, model_snapshot, \
+         system_prompt, tools, status, phase, base_content_version, counters, usage, created_at, \
+         updated_at) VALUES ({book_id}, 'reviewer', 'chapter_review', {chapter_id}, 1, '{{}}', \
+         '', '[]', '{status}', 'none', 0, '{{}}', '{{}}', '2026-01-01T00:00:00Z', \
+         '2026-01-01T00:00:00Z')"
+    ))
+    .await;
+    scalar(
+        app,
+        "SELECT max(id) AS n FROM agent_sessions WHERE kind = 'chapter_review'",
+    )
+    .await as i32
+}
+
 /// Holds an update of `status` in a write transaction until `release` is sent.
 async fn hold_status(
     app: &TestApp,
@@ -395,4 +411,137 @@ async fn abandoning_an_already_terminal_reviewer_is_not_an_error() {
     nekowriter::services::sessions::abandon_if_open(&state, session)
         .await
         .expect("a terminal reviewer is already cleaned up");
+}
+
+#[tokio::test]
+async fn approve_tolerates_a_reviewer_completing_during_pre_transaction_cleanup() {
+    use std::sync::atomic::Ordering;
+    let (app, book_id, chapter_id) = app_with_book().await;
+    assign_models(&app).await;
+    in_review(&app, chapter_id).await;
+    let reviewer = insert_reviewer(&app, book_id, chapter_id, "stopped").await;
+    nekowriter::services::sessions::TEST_ABANDON_PAUSE_MS.store(300, Ordering::Relaxed);
+    let state = app.state().clone();
+    let call =
+        tokio::spawn(
+            async move { nekowriter::services::chapters::approve(&state, chapter_id).await },
+        );
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    app.execute(&format!(
+        "UPDATE agent_sessions SET status = 'completed' WHERE id = {reviewer}"
+    ))
+    .await;
+    let result = call.await.expect("approve task");
+    nekowriter::services::sessions::TEST_ABANDON_PAUSE_MS.store(0, Ordering::Relaxed);
+    result.expect("a completed reviewer does not fail the approval");
+    let status: String = app
+        .db()
+        .conn()
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            format!("SELECT status FROM agent_sessions WHERE id = {reviewer}"),
+        ))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get("", "status")
+        .expect("status");
+    assert_eq!(status, "completed");
+}
+
+#[tokio::test]
+async fn send_back_tolerates_a_reviewer_completing_during_pre_transaction_cleanup() {
+    use nekowriter::api::dto::reviews::SendBackInput;
+    use std::sync::atomic::Ordering;
+    let (app, book_id, chapter_id) = app_with_book().await;
+    assign_models(&app).await;
+    in_review(&app, chapter_id).await;
+    let reviewer = insert_reviewer(&app, book_id, chapter_id, "stopped").await;
+    nekowriter::services::sessions::TEST_ABANDON_PAUSE_MS.store(300, Ordering::Relaxed);
+    let state = app.state().clone();
+    let call = tokio::spawn(async move {
+        nekowriter::services::reviews::send_back(
+            &state,
+            chapter_id,
+            SendBackInput {
+                feedback: "请修改".to_owned(),
+                mode: nekowriter::db::json::FeedbackMode::Revise,
+                review_report_id: None,
+                issue_indexes: Vec::new(),
+            },
+        )
+        .await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    app.execute(&format!(
+        "UPDATE agent_sessions SET status = 'completed' WHERE id = {reviewer}"
+    ))
+    .await;
+    let result = call.await.expect("send-back task");
+    nekowriter::services::sessions::TEST_ABANDON_PAUSE_MS.store(0, Ordering::Relaxed);
+    result.expect("a completed reviewer does not fail send-back");
+}
+
+#[tokio::test]
+async fn approve_tolerates_a_reviewer_completing_during_post_commit_cleanup() {
+    use std::sync::atomic::Ordering;
+    let (app, book_id, chapter_id) = app_with_book().await;
+    assign_models(&app).await;
+    in_review(&app, chapter_id).await;
+    let (release, updater, begun) = hold_insert_reviewer(&app, book_id, chapter_id).await;
+    begun.await.expect("the reviewer insert holds the lock");
+    nekowriter::services::sessions::TEST_ABANDON_PAUSE_MS.store(300, Ordering::Relaxed);
+    let state = app.state().clone();
+    let call =
+        tokio::spawn(
+            async move { nekowriter::services::chapters::approve(&state, chapter_id).await },
+        );
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    release.send(()).expect("release");
+    updater.await.expect("updater");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    app.execute(&format!(
+        "UPDATE agent_sessions SET status = 'completed' WHERE chapter_id = {chapter_id} AND kind = 'chapter_review'"
+    ))
+    .await;
+    let result = call.await.expect("approve task");
+    nekowriter::services::sessions::TEST_ABANDON_PAUSE_MS.store(0, Ordering::Relaxed);
+    result.expect("a reviewer completing during cleanup does not fail approval");
+}
+
+#[tokio::test]
+async fn send_back_tolerates_a_reviewer_completing_during_post_commit_cleanup() {
+    use nekowriter::api::dto::reviews::SendBackInput;
+    use std::sync::atomic::Ordering;
+    let (app, book_id, chapter_id) = app_with_book().await;
+    assign_models(&app).await;
+    in_review(&app, chapter_id).await;
+    let (release, updater, begun) = hold_insert_reviewer(&app, book_id, chapter_id).await;
+    begun.await.expect("the reviewer insert holds the lock");
+    nekowriter::services::sessions::TEST_ABANDON_PAUSE_MS.store(300, Ordering::Relaxed);
+    let state = app.state().clone();
+    let call = tokio::spawn(async move {
+        nekowriter::services::reviews::send_back(
+            &state,
+            chapter_id,
+            SendBackInput {
+                feedback: "请修改".to_owned(),
+                mode: nekowriter::db::json::FeedbackMode::Revise,
+                review_report_id: None,
+                issue_indexes: Vec::new(),
+            },
+        )
+        .await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    release.send(()).expect("release");
+    updater.await.expect("updater");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    app.execute(&format!(
+        "UPDATE agent_sessions SET status = 'completed' WHERE chapter_id = {chapter_id} AND kind = 'chapter_review'"
+    ))
+    .await;
+    let result = call.await.expect("send-back task");
+    nekowriter::services::sessions::TEST_ABANDON_PAUSE_MS.store(0, Ordering::Relaxed);
+    result.expect("a reviewer completing during cleanup does not fail send-back");
 }
