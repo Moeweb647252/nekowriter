@@ -129,9 +129,13 @@ export function useContentMutations(chapterId: number, bookId: number) {
   const applyOps = useChapterDoc((state) => state.applyOps)
 
   const settle = (result: ChapterContentResult) => {
-    if (applyOps(result.version, result.ops, "user") === "gap") {
-      // A gap means this tab missed events; refetching is the only correct recovery.
-      void queryClient.invalidateQueries({ queryKey: keys.chapters.detail(chapterId) })
+    // The mutation belongs to `chapterId`; if the author has already opened another chapter, do
+    // not apply A's ops to B's document even when both happen to be on the same version (R7-02).
+    if (useChapterDoc.getState().chapterId === chapterId) {
+      if (applyOps(result.version, result.ops, "user") === "gap") {
+        // A gap means this tab missed events; refetching is the only correct recovery.
+        void queryClient.invalidateQueries({ queryKey: keys.chapters.detail(chapterId) })
+      }
     }
     void queryClient.invalidateQueries({ queryKey: keys.chapters.detail(chapterId) })
     void queryClient.invalidateQueries({ queryKey: keys.books.overview(bookId) })
@@ -180,7 +184,11 @@ export function useRestoreVersion(bookId: number) {
   return useMutation({
     mutationFn: (versionId: number) => endpoints.restoreVersion(versionId),
     onSuccess: (chapter: ChapterDto) => {
-      load(chapter.id, chapter.content_version, chapter.content)
+      // A restore response can arrive after the author navigated away. The store must keep the
+      // currently open chapter; the restored chapter only needs its caches refreshed (R7-01).
+      if (useChapterDoc.getState().chapterId === chapter.id) {
+        load(chapter.id, chapter.content_version, chapter.content)
+      }
       queryClient.setQueryData(keys.chapters.detail(chapter.id), chapter)
       void queryClient.invalidateQueries({ queryKey: keys.chapters.versions(chapter.id) })
       void queryClient.invalidateQueries({ queryKey: keys.tracks.chapters(chapter.track_id) })

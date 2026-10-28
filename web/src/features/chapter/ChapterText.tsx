@@ -390,6 +390,11 @@ function FullTextEditor({
 }: FullTextEditorProps) {
   const { t } = useTranslation()
   const [text, setText] = useState(() => paragraphTextOf(chapter))
+  // The editor opens against one version. If an agent write advances it while the editor is
+  // open, saving the old whole-document text would silently overwrite that write (S-3): refuse
+  // and ask the author to reopen the editor against the new draft.
+  const [baseVersion] = useState(version)
+  const stale = version !== baseVersion
   return (
     <div className="mx-auto max-w-[42em] space-y-3">
       <p className="text-xs text-muted-foreground">{t("chapter:full_text_hint")}</p>
@@ -399,11 +404,16 @@ function FullTextEditor({
           {t("chapter:locked_banner")}
         </p>
       ) : null}
+      {stale ? (
+        <p role="status" className="text-xs text-destructive">
+          {t("chapter:full_text_stale")}
+        </p>
+      ) : null}
       <Textarea
         value={text}
         rows={28}
         autoFocus
-        disabled={locked}
+        disabled={locked || stale}
         className="font-serif text-[1.05rem] leading-relaxed"
         onChange={(event) => setText(event.target.value)}
         onKeyDown={(event) => {
@@ -415,12 +425,14 @@ function FullTextEditor({
           }
           if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
             event.preventDefault()
-            onSave(text)
+            if (!stale) {
+              onSave(text)
+            }
           }
         }}
       />
       <div className="flex items-center gap-2">
-        <Button size="sm" disabled={saving || locked} onClick={() => onSave(text)}>
+        <Button size="sm" disabled={saving || locked || stale} onClick={() => onSave(text)}>
           {saving ? t("common:saving") : t("common:save")}
         </Button>
         <Button size="sm" variant="ghost" disabled={saving} onClick={onCancel}>

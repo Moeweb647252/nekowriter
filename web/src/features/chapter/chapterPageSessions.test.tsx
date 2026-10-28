@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { BookDto } from "@/api/gen/BookDto"
 import type { ChapterDto } from "@/api/gen/ChapterDto"
 import type { SessionDto } from "@/api/gen/SessionDto"
+import type { ToolCallDto } from "@/api/gen/ToolCallDto"
 import type { BookShell } from "@/features/workspace/shell"
 import { keys } from "@/api/keys"
 import { useUiStore } from "@/stores/ui"
@@ -24,6 +25,9 @@ const server = vi.hoisted(() => ({
   chapters: {} as Record<number, ChapterDto>,
   expanded: 0,
   patchCalls: [] as { chapterId: number; input: unknown }[],
+  resumes: [] as { sessionId: number; feedback?: string }[],
+  sessions: {} as Record<number, { session: SessionDto; tool_calls: ToolCallDto[] }>,
+  pendingDraft: null as unknown,
 }))
 
 function planner(status: SessionDto["status"] = "running"): SessionDto {
@@ -139,16 +143,20 @@ vi.mock("@/api/endpoints/chapters", () => ({
   writeChapter: async () => ({ session_id: 2, warnings: [] }),
 }))
 vi.mock("@/api/endpoints/sessions", () => ({
-  getSession: async () => ({
-    session: planner(),
-    messages: [],
-    tool_calls: [],
-    inbox_pending: 0,
-    system_prompt: "",
-    tool_names: [],
-  }),
+  getSession: async (sessionId: number) =>
+    server.sessions[sessionId] ?? {
+      session: planner(),
+      messages: [],
+      tool_calls: [],
+      inbox_pending: 0,
+      system_prompt: "",
+      tool_names: [],
+    },
   listSessions: async () => [],
-  resumeSession: async () => planner(),
+  resumeSession: async (sessionId: number, input?: { feedback?: string }) => {
+    server.resumes.push({ sessionId, ...input })
+    return planner()
+  },
   control: async () => planner(),
   patchSession: async () => planner(),
   sendSessionMessage: async () => planner(),
@@ -177,6 +185,13 @@ vi.mock("@/components/common/ErrorToast", () => ({
   useErrorToast: () => () => {},
   useWarningToasts: () => () => {},
 }))
+vi.mock("@/features/chapter/usePendingDraft", () => ({
+  usePendingDraft: () =>
+    server.pendingDraft ?? {
+      writer: { held: undefined, session: undefined, heldPids: [], heldWrite: false },
+      view: undefined,
+    },
+}))
 vi.mock("@/features/chapter/ReviewTab", () => ({ ReviewTab: () => null }))
 vi.mock("@/features/chapter/HistoryTab", () => ({ HistoryTab: () => null }))
 
@@ -198,6 +213,30 @@ function chapterText(id: number, title: string, text: string, openSessions: Sess
   const value = chapterAt(id, title, openSessions)
   value.content = { paragraphs: [{ pid: "p1", text }], next_pid: 2, tail_open: false }
   return value
+}
+
+function heldWriteCall(id: number, text: string): ToolCallDto {
+  return {
+    id,
+    message_id: 1,
+    seq: 1,
+    call_index: 0,
+    name: "insert_text",
+    input: { text },
+    input_text: "",
+    status: "held",
+    is_error: false,
+    result_text: null,
+    appendices: [],
+    ui: { inserted: [], appended_to: "p1", tail_open: false, word_count: 1 },
+    sealed: false,
+    pending_content: {
+      content: { paragraphs: [{ pid: "p1", text }], next_pid: 2, tail_open: false },
+      expected_version: 0,
+    },
+    created_at: "2026-01-01T00:00:00Z",
+    finished_at: null,
+  }
 }
 
 function renderPage(tab = "outline") {
@@ -224,12 +263,59 @@ function renderPage(tab = "outline") {
 beforeEach(() => {
   server.expanded = 0
   server.patchCalls = []
+  server.resumes = []
+  server.sessions = {}
+  server.pendingDraft = null
   server.chapter = chapter([planner()])
   server.chapters = {}
   useUiStore.setState({ pinnedSession: {} })
 })
 
 describe("ChapterPage session focus", () => {
+  it("resets the draft dock to the new held call on the chapter shown", async () => {
+    const user = userEvent.setup()
+    const a = chapterText(CHAPTER_ID, "第一章", "A 的正文")
+    const b = chapterText(4, "第二章", "B 的正文")
+    server.chapter = a
+    server.chapters[CHAPTER_ID] = a
+    server.pendingDraft = {
+      writer: { held: heldWriteCall(101, "A 的正文"), session: { id: 11 } },
+      view: {
+        standing: "current",
+        expectedVersion: 0,
+        draftVersion: 0,
+        paragraphs: [{ pid: "p1", text: "A 的正文", kind: "confirmed" }],
+        stagedWords: 1,
+        confirmedWords: 1,
+      },
+    }
+    const { client } = renderPage("text")
+    expect(await screen.findByText("A 的正文", {}, { timeout: 3000 })).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Request changes" }))
+    await user.type(screen.getByRole("textbox"), "A 的反馈")
+    server.chapters[CHAPTER_ID] = b
+    server.pendingDraft = {
+      writer: { held: heldWriteCall(102, "B 的正文"), session: { id: 12 } },
+      view: {
+        standing: "current",
+        expectedVersion: 0,
+        draftVersion: 0,
+        paragraphs: [{ pid: "p1", text: "B 的正文", kind: "confirmed" }],
+        stagedWords: 1,
+        confirmedWords: 1,
+      },
+    }
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: keys.chapters.detail(CHAPTER_ID) })
+    })
+    expect(await screen.findByText("B 的正文", {}, { timeout: 3000 })).toBeInTheDocument()
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Request changes" }))
+    await user.type(screen.getByRole("textbox"), "B 的反馈")
+    await user.click(screen.getByRole("button", { name: "Send and continue" }))
+    expect(server.resumes.at(-1)).toEqual({ sessionId: 12, feedback: "B 的反馈" })
+  })
+
   it("drops an in-progress paragraph editor when the chapter changes", async () => {
     const user = userEvent.setup()
     server.chapter = chapterText(CHAPTER_ID, "第一章", "A 的正文")

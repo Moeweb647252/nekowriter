@@ -1,14 +1,19 @@
 /** Full-text editor chapter identity and lock handling (P-01, P-02). */
-import { render, screen } from "@testing-library/react"
+import { act, render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { ChapterDto } from "@/api/gen/ChapterDto"
 import { useChapterDoc } from "@/stores/chapterDoc"
 
+const contentMutations = vi.hoisted(() => ({
+  patchMutate: vi.fn(),
+  putMutate: vi.fn(),
+}))
 vi.mock("@/api/hooks/chapters", () => ({
   useContentMutations: () => ({
-    patch: { mutate: vi.fn(), isPending: false },
-    putText: { mutate: vi.fn(), isPending: false },
+    patch: { mutate: contentMutations.patchMutate, isPending: false },
+    putText: { mutate: contentMutations.putMutate, isPending: false },
   }),
 }))
 const writer = vi.hoisted(() => ({ locked: false }))
@@ -52,6 +57,8 @@ function chapter(id: number, text: string): ChapterDto {
 
 beforeEach(() => {
   writer.locked = false
+  contentMutations.patchMutate.mockClear()
+  contentMutations.putMutate.mockClear()
   useChapterDoc.getState().load(1, 1, chapter(1, "A").content)
 })
 
@@ -73,6 +80,25 @@ describe("FullTextEditor", () => {
     expect(screen.getByRole("textbox")).toHaveValue("Chapter A text")
     rerender(view(chapter(2, "Chapter B text")))
     expect(screen.getByRole("textbox")).toHaveValue("Chapter B text")
+  })
+
+  it("refuses to save when the document version advances under the editor (S-3)", async () => {
+    const user = userEvent.setup()
+    render(view(chapter(1, "Chapter A text")))
+    act(() => {
+      useChapterDoc.getState().applyOps(
+        2,
+        [{ op: "update", pid: "p1", text: "Agent edit" }],
+        "agent",
+      )
+    })
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "The chapter changed while this editor was open",
+    )
+    const save = screen.getByRole("button", { name: "Save" })
+    expect(save).toBeDisabled()
+    await user.click(save)
+    expect(contentMutations.putMutate).not.toHaveBeenCalled()
   })
 
   it("is read-only and cannot save while the chapter is locked (P-02)", () => {
