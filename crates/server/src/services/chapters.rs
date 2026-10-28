@@ -4,13 +4,13 @@
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, Set};
 use std::collections::HashSet;
 
-use crate::api::dto::chapters::ChapterWriteInput;
 use crate::api::dto::chapters::ChapterWriteResponse;
 use crate::api::dto::chapters::{
     ApproveChapterResponse, ChapterContentPatch, ChapterContentResult, ChapterContentTextPut,
     ChapterDto, ChapterInput, ChapterListItemDto, ChapterPatch, ChapterReorderInput,
     ChapterVersionMetaDto, ManualVersionInput,
 };
+use crate::api::dto::chapters::{ChapterOutlineInput, ChapterWriteInput};
 use crate::db::entities::{agent_sessions, appearances, chapter_versions, chapters, tracks};
 use crate::db::json::{
     AgentRole, BookStatus, CanonStatus, ChangeActor, ChangeOp, ChangeTargetType, ChapterContent,
@@ -620,6 +620,71 @@ pub async fn write(
             granularity: input.granularity,
             auto_pause: input.auto_pause,
             pause_after_outline: None,
+            redraft: false,
+            guidance: input.guidance,
+            kickoff_extra: None,
+            pending_comment: None,
+        },
+    )
+    .await?;
+    Ok(ChapterWriteResponse {
+        session_id,
+        warnings,
+    })
+}
+
+/// `POST /api/chapters/:id/outline` (spec/08 §1.1, D-146): start a `chapter_outline` session.
+///
+/// Preconditions: the chapter is not `official` (re-outlining is allowed on any non-official
+/// chapter, including one in review), it has no open planner or writer session, and the previous
+/// chapter of the track is ready unless `force`. An outline session never changes the chapter's
+/// status; the guidance travels into the creation transaction as it does for Write.
+pub async fn outline(
+    state: &crate::state::AppState,
+    chapter_id: i32,
+    input: ChapterOutlineInput,
+) -> Result<ChapterWriteResponse, AppError> {
+    let chapter = load(state.db().conn(), chapter_id).await?;
+    let status = status_of(&chapter);
+    if status == ChapterStatus::Official {
+        return Err(invalid_state(
+            "an official chapter cannot be re-outlined",
+            status,
+        ));
+    }
+    if let Some(session_id) = super::open_planner_session(state.db().conn(), chapter_id).await? {
+        return Err(super::conflict(
+            ErrorCode::ChapterSessionExists,
+            "the chapter already has an open outline session",
+            serde_json::json!({ "session_id": session_id }),
+        ));
+    }
+    if let Some(session_id) = super::open_writer_session(state.db().conn(), chapter_id).await? {
+        return Err(super::conflict(
+            ErrorCode::ChapterSessionExists,
+            "the chapter already has an open writer session",
+            serde_json::json!({ "session_id": session_id }),
+        ));
+    }
+    if !input.force
+        && let Some(reason) = previous_chapter_blocker(state.db().conn(), &chapter).await?
+    {
+        return Err(super::conflict(
+            ErrorCode::ChapterPreviousNotReady,
+            "the previous chapter is not ready",
+            reason,
+        ));
+    }
+    let (session_id, warnings) = super::sessions::create(
+        state,
+        super::sessions::CreateSession {
+            kind: crate::db::json::SessionKind::ChapterOutline,
+            book_id: Some(chapter.book_id),
+            chapter_id: Some(chapter_id),
+            research_task_id: None,
+            granularity: None,
+            auto_pause: None,
+            pause_after_outline: input.pause_after_outline,
             redraft: false,
             guidance: input.guidance,
             kickoff_extra: None,

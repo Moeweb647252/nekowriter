@@ -6,8 +6,8 @@ use axum::http::StatusCode;
 
 use crate::api::dto::chapters::{
     ApproveChapterResponse, ChapterContentPatch, ChapterContentResult, ChapterContentTextPut,
-    ChapterDto, ChapterPatch, ChapterVersionDto, ChapterVersionMetaDto, ChapterWriteInput,
-    ChapterWriteResponse, ManualVersionInput,
+    ChapterDto, ChapterOutlineInput, ChapterPatch, ChapterVersionDto, ChapterVersionMetaDto,
+    ChapterWriteInput, ChapterWriteResponse, ManualVersionInput,
 };
 use crate::db::json::ChangeActor;
 use crate::error::AppResult;
@@ -61,6 +61,16 @@ pub async fn put_content_text(
     Ok(Json(
         service::put_content_text(state.db(), state.events(), chapter_id, put).await?,
     ))
+}
+
+/// `POST /api/chapters/:id/outline` (spec/08 §1.1, D-146): start the planner session.
+pub async fn outline(
+    State(state): State<AppState>,
+    Path(chapter_id): Path<i32>,
+    Json(input): Json<ChapterOutlineInput>,
+) -> AppResult<(StatusCode, Json<ChapterWriteResponse>)> {
+    let response = service::outline(&state, chapter_id, input).await?;
+    Ok((StatusCode::CREATED, Json(response)))
 }
 
 /// `POST /api/chapters/:id/write` (spec/08 §1.1): start the writer session.

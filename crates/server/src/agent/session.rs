@@ -184,7 +184,8 @@ pub async fn transition(
         if session.view_snapshot.is_none()
             && matches!(
                 kind_of(session),
-                SessionKind::ChapterWrite
+                SessionKind::ChapterOutline
+                    | SessionKind::ChapterWrite
                     | SessionKind::ChapterRevise
                     | SessionKind::ChapterReview
                     | SessionKind::ChapterMaintenance
@@ -609,6 +610,10 @@ pub fn tool_call_dto(row: &agent_tool_calls::Model) -> Result<ToolCallDto, AppEr
             row.effects.as_deref().unwrap_or("{}"),
         )
         .pending_content,
+        pending_outline: json::from_json_or_default::<crate::db::json::ToolEffects>(
+            row.effects.as_deref().unwrap_or("{}"),
+        )
+        .pending_outline,
         created_at: row.created_at,
         finished_at: row.finished_at,
     })

@@ -308,3 +308,41 @@ text = '''
 - 完成后调用 finish_maintenance。
 不要改动与本次变更无关的记录。
 '''
+
+[[prompt]]
+key = "planner.kickoff"
+kind = "task"
+agent = "planner"
+vars = ["book", "track", "chapter", "draft"]
+title_en = "Planner — write the chapter outline"
+title_zh = "策划 · 撰写细纲"
+text = '''
+【细纲任务】{{ chapter.label }}{% if chapter.title %}《{{ chapter.title }}》{% endif %}
+
+本书写作语言：{{ book.writing_language_name }}
+目标字数：{{ chapter.target_min }}–{{ chapter.target_max }} 字
+{% if not track.is_main %}
+{% include "block.anchor" %}
+{% endif %}{% if chapter.guidance %}
+【作者对本章的要求】
+{{ chapter.guidance }}
+{% endif %}{% if chapter.has_draft %}
+本章已有部分正文：
+{% include "block.chapter_draft" %}
+
+请先了解已有内容：细纲覆盖全章，正文会从草稿末尾继续写，不要重复已写部分；已有段落若与新细纲矛盾，写作阶段可以用修改工具调整。{% if chapter.outline %}
+上方也包含本章当前的细纲，作者要求重新规划：请以它为基础，按作者的最新要求提交一份完整的新细纲。{% endif %}
+{% elif chapter.outline %}
+本章已有一份细纲，作者要求重新规划。请以它为基础（可以保留合理的部分），按作者的最新要求提交一份完整的新细纲：
+<chapter_outline>
+{{ chapter.outline }}
+</chapter_outline>
+{% if chapter.reference_notes %}
+现有参考要点：
+<reference_notes>
+{{ chapter.reference_notes }}
+</reference_notes>
+{% endif %}
+{% endif %}
+请开始规划本章。需要时用检索工具核实人物、地点、物品、设定、时间顺序与伏笔；不确定已有正文时用 read_draft 查看。准备好后调用 submit_outline 提交细纲、参考要点，以及本章还没有标题时的标题。作者接受后细纲才会生效。
+'''

@@ -115,7 +115,7 @@ properties.max_chars = { type = "integer", minimum = 500, maximum = 20000, descr
 # ───────────────────────────── Writer ─────────────────────────────
 
 [tools.submit_outline]
-description = '''【规划阶段】提交本章的详细章纲与参考要点。提交后进入正文阶段，检索工具将停用。'''
+description = '''【细纲任务】提交本章的详细细纲与参考要点。细纲在作者接受后生效（作者可以关闭确认），提交后本次任务结束。'''
 examples = [ { outline = "## 场景一：剑冢外\n- 目标：……", reference_notes = "- 林凡左臂有伤，不能用右手剑招以外的招式\n- ……", title = "剑冢" } ]
 [tools.submit_outline.input_schema]
 type = "object"

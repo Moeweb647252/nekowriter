@@ -137,6 +137,19 @@ pub(crate) async fn open_chapter_session(
     .await
 }
 
+/// Any open outline (planner) session of a chapter.
+pub(crate) async fn open_planner_session(
+    conn: &impl ConnectionTrait,
+    chapter_id: i32,
+) -> Result<Option<i32>, AppError> {
+    first_session(
+        conn,
+        chapter_id,
+        "role = 'planner' AND status NOT IN ('completed','superseded','abandoned')",
+    )
+    .await
+}
+
 /// Any open writer session of a chapter.
 pub(crate) async fn open_writer_session(
     conn: &impl ConnectionTrait,

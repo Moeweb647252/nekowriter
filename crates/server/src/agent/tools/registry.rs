@@ -51,6 +51,23 @@ pub const RETRIEVAL_TOOLS: [&str; 10] = [
     "read_chapter",
 ];
 
+/// The planner role's fixed tool list, in order (spec/05 §2, D-146): the ten retrieval tools,
+/// `read_draft` and the terminal `submit_outline`.
+pub const PLANNER_TOOLS: [&str; 12] = [
+    "get_entity",
+    "list_entities",
+    "get_relations",
+    "query_timeline",
+    "list_foreshadowing",
+    "search_canon",
+    "search_knowledge",
+    "read_knowledge_entry",
+    "search_chapters",
+    "read_chapter",
+    "read_draft",
+    "submit_outline",
+];
+
 /// The writer role's fixed tool list, in order (spec/05 §2).
 pub const WRITER_TOOLS: [&str; 20] = [
     "get_entity",
@@ -146,6 +163,7 @@ pub const DEBUG_TOOLS: [&str; 5] = ["echo", "test_write", "test_finish", "test_s
 /// The frozen tool list of a role, in its fixed order (spec/05 §2).
 pub fn tools_for_role(role: &str) -> &'static [&'static str] {
     match role {
+        "planner" => &PLANNER_TOOLS,
         "writer" => &WRITER_TOOLS,
         "reviewer" => &REVIEWER_TOOLS,
         "archivist" => &ARCHIVIST_TOOLS,
@@ -344,6 +362,7 @@ mod tests {
     fn all_frozen() -> Vec<String> {
         let mut names: Vec<String> = Vec::new();
         for role in [
+            "planner",
             "writer",
             "reviewer",
             "archivist",
@@ -366,6 +385,7 @@ mod tests {
 
     #[test]
     fn role_lists_match_spec_05_section_2() {
+        assert_eq!(tools_for_role("planner"), &PLANNER_TOOLS);
         assert_eq!(tools_for_role("writer"), &WRITER_TOOLS);
         assert_eq!(tools_for_role("reviewer"), &REVIEWER_TOOLS);
         assert_eq!(tools_for_role("archivist"), &ARCHIVIST_TOOLS);
@@ -377,6 +397,39 @@ mod tests {
     #[test]
     fn retrieval_tools_are_the_first_ten_writer_tools() {
         assert_eq!(&WRITER_TOOLS[..10], &RETRIEVAL_TOOLS);
+        assert_eq!(&PLANNER_TOOLS[..10], &RETRIEVAL_TOOLS);
+    }
+
+    /// The planner's frozen list is its permission gate: phase-free, it may run all twelve tools
+    /// and none of the drafting tools (spec/05 §2, D-146).
+    #[test]
+    fn the_planner_permits_its_whole_list_and_no_drafting_tool() {
+        let frozen: Vec<String> = PLANNER_TOOLS
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect();
+        for tool in PLANNER_TOOLS {
+            assert!(is_permitted(
+                SessionKind::ChapterOutline,
+                Phase::None,
+                tool,
+                &frozen
+            ));
+        }
+        for tool in WRITE_TOOLS {
+            assert!(!is_permitted(
+                SessionKind::ChapterOutline,
+                Phase::None,
+                tool,
+                &frozen
+            ));
+        }
+        assert!(!is_permitted(
+            SessionKind::ChapterOutline,
+            Phase::None,
+            "submit_outline",
+            &[]
+        ));
     }
 
     /// The phase matrix of spec/05 §2, tool by tool.

@@ -210,19 +210,24 @@ pub(crate) async fn create_inner(
         None => BookSettings::default(),
     };
     let phase = initial_phase(input.kind);
-    let (granularity, auto_pause, pause_after_outline) = if matches!(
-        input.kind,
-        SessionKind::ChapterWrite | SessionKind::ChapterRevise
-    ) {
-        (
+    let (granularity, auto_pause, pause_after_outline) = match input.kind {
+        SessionKind::ChapterWrite | SessionKind::ChapterRevise => (
             Some(input.granularity.unwrap_or(book_settings.granularity)),
             input.auto_pause.unwrap_or(book_settings.auto_pause),
             input
                 .pause_after_outline
                 .unwrap_or(book_settings.pause_after_outline),
-        )
-    } else {
-        (None, false, false)
+        ),
+        // The outline session carries the pause-after-outline switch and no drafting settings
+        // (spec/03 §4 step 3, D-146).
+        SessionKind::ChapterOutline => (
+            None,
+            false,
+            input
+                .pause_after_outline
+                .unwrap_or(book_settings.pause_after_outline),
+        ),
+        _ => (None, false, false),
     };
 
     // Domain side effects of creation happen in this same transaction (spec/03 §4). The guidance
@@ -423,13 +428,23 @@ pub async fn try_resolve_model(
     book: Option<&books::Model>,
     role: AgentRole,
 ) -> Result<Option<i32>, AppError> {
-    if let Some(book) = book {
-        let overrides: RoleModels = crate::db::json::from_json_or_default(&book.model_overrides);
-        if let Some(profile_id) = overrides.get(role) {
+    let book_overrides = book
+        .map(|book| crate::db::json::from_json_or_default::<RoleModels>(&book.model_overrides))
+        .unwrap_or_default();
+    // The planner's own entries at both levels, then the writer's (spec/03 §4, D-146).
+    if let Some(profile_id) = book_overrides.get(role) {
+        return Ok(Some(profile_id));
+    }
+    if let Some(profile_id) = read_role_default(conn, role).await? {
+        return Ok(Some(profile_id));
+    }
+    if role == AgentRole::Planner {
+        if let Some(profile_id) = book_overrides.writer {
             return Ok(Some(profile_id));
         }
+        return read_role_default(conn, AgentRole::Writer).await;
     }
-    read_role_default(conn, role).await
+    Ok(None)
 }
 
 /// `book.model_overrides[role]` → `app_settings["roles.defaults"][role]` (spec/03 §4 step 1).
@@ -438,14 +453,24 @@ async fn resolve_model(
     book: Option<&books::Model>,
     role: AgentRole,
 ) -> Result<i32, AppError> {
-    if let Some(book) = book {
-        let overrides: RoleModels = crate::db::json::from_json_or_default(&book.model_overrides);
-        if let Some(profile_id) = overrides.get(role) {
-            return Ok(profile_id);
-        }
+    let book_overrides = book
+        .map(|book| crate::db::json::from_json_or_default::<RoleModels>(&book.model_overrides))
+        .unwrap_or_default();
+    if let Some(profile_id) = book_overrides.get(role) {
+        return Ok(profile_id);
     }
     if let Some(profile_id) = read_role_default(tx, role).await? {
         return Ok(profile_id);
+    }
+    // An unset planner follows the writer's model, so an existing configuration keeps working
+    // untouched after the upgrade (spec/03 §4, D-146).
+    if role == AgentRole::Planner {
+        if let Some(profile_id) = book_overrides.writer {
+            return Ok(profile_id);
+        }
+        if let Some(profile_id) = read_role_default(tx, AgentRole::Writer).await? {
+            return Ok(profile_id);
+        }
     }
     Err(role_defaults_error(role))
 }
@@ -944,7 +969,7 @@ async fn resume_inner(
             {
                 let effects: crate::db::json::ToolEffects =
                     crate::db::json::from_json_or_default(held.effects.as_deref().unwrap_or("{}"));
-                if effects.complete.is_some() {
+                if effects.complete.is_some() && rejected_notice(&held.name, &session).is_none() {
                     let rendered = prompts
                         .render("notice.completion_revoked", &json!({}))
                         .map_err(|err| err.into_app_error())?;
@@ -954,7 +979,7 @@ async fn resume_inner(
                         inbox_id: None,
                     });
                 }
-                if let Some(notice) = rejected_notice(&held.name) {
+                if let Some(notice) = rejected_notice(&held.name, &session) {
                     let rendered = prompts
                         .render(notice, &json!({}))
                         .map_err(|err| err.into_app_error())?;
@@ -991,6 +1016,12 @@ async fn resume_inner(
             // chapter the agent will actually see.
             if let Some(write) = effects.pending_content.take() {
                 let applied = runner::apply_pending_content(tx, &session, &write).await?;
+                events.extend(applied);
+            }
+            // An accepted outline session's proposal is applied by the resume that approves it
+            // (spec/03 §5.2, §5.4, D-146).
+            if let Some(outline) = effects.pending_outline.take() {
+                let applied = runner::apply_pending_outline(tx, &session, &outline).await?;
                 events.extend(applied);
             }
             // NOTE: the call row is written after the kept effects are resolved, because applying
@@ -1110,9 +1141,17 @@ fn phase_notice(tool: &str) -> Option<&'static str> {
 }
 
 /// The rejection notice of a held call whose effects were revoked (spec/03 §5.4).
-fn rejected_notice(tool: &str) -> Option<&'static str> {
+fn rejected_notice(tool: &str, session: &agent_sessions::Model) -> Option<&'static str> {
     match tool {
-        "submit_outline" => Some("writer.notice.outline_rejected"),
+        // The outline session has its own notice; a legacy planning session keeps the writer's
+        // (spec/03 §5.4, D-146).
+        "submit_outline" => {
+            if session::kind_of(session) == SessionKind::ChapterOutline {
+                Some("planner.notice.outline_rejected")
+            } else {
+                Some("writer.notice.outline_rejected")
+            }
+        }
         "submit_revision_plan" => Some("writer.notice.revision_plan_rejected"),
         _ => None,
     }

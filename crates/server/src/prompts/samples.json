@@ -292,23 +292,104 @@
   "with_title": true
  },
  "variants": {
-  "block.settings": [
+  "archivist.kickoff.maintenance": [
    {},
    {
-    "settings": {
-     "outline": "",
-     "world": "",
-     "protagonist": "",
-     "characters": [],
-     "scopes": []
+    "track": {
+     "is_main": false,
+     "kind": "side",
+     "title": "剑冢旧事",
+     "synopsis": "师父年轻时的故事。",
+     "canon_mode": "isolated",
+     "anchor_kind": "after_chapter",
+     "anchor_label": "第12章《剑冢》"
+    }
+   }
+  ],
+  "archivist.kickoff.resync": [
+   {},
+   {
+    "track": {
+     "is_main": false,
+     "kind": "side",
+     "title": "剑冢旧事",
+     "synopsis": "师父年轻时的故事。",
+     "canon_mode": "isolated",
+     "anchor_kind": "after_chapter",
+     "anchor_label": "第12章《剑冢》"
+    }
+   }
+  ],
+  "block.anchor": [
+   {
+    "track": {
+     "is_main": false,
+     "kind": "side",
+     "title": "剑冢旧事",
+     "synopsis": "师父年轻时的故事。",
+     "canon_mode": "isolated",
+     "anchor_kind": "after_chapter",
+     "anchor_label": "第12章《剑冢》"
+    }
+   },
+   {
+    "track": {
+     "is_main": false,
+     "kind": "side",
+     "title": "剑冢旧事",
+     "synopsis": "师父年轻时的故事。",
+     "canon_mode": "canon",
+     "anchor_kind": "before_start",
+     "anchor_label": ""
+    }
+   },
+   {
+    "track": {
+     "is_main": false,
+     "kind": "side",
+     "title": "剑冢旧事",
+     "synopsis": "师父年轻时的故事。",
+     "canon_mode": "canon",
+     "anchor_kind": "after_end",
+     "anchor_label": "第12章《剑冢》"
+    }
+   }
+  ],
+  "block.cast_index": [
+   {},
+   {
+    "cast_index": []
+   }
+  ],
+  "block.chapter_diff": [
+   {},
+   {
+    "diff": {
+     "changes": []
+    }
+   }
+  ],
+  "block.chapter_draft": [
+   {},
+   {
+    "draft": {
+     "paragraphs": [],
+     "tail_open": false,
+     "word_count": 0,
+     "paragraph_count": 0
     },
-    "book": {
-     "title": "青云劫",
-     "genre": "",
-     "idea": "少年身怀残破剑灵。",
-     "writing_language": "zh-CN",
-     "writing_language_name": "简体中文",
-     "unspaced": true
+    "chapter": {
+     "id": 45,
+     "number": 13,
+     "label": "第13章",
+     "title": "",
+     "guidance": "",
+     "outline": "",
+     "reference_notes": "",
+     "target_min": 3000,
+     "target_max": 4000,
+     "word_count": 0,
+     "has_draft": false
     }
    }
   ],
@@ -499,304 +580,23 @@
     }
    }
   ],
-  "block.chapter_draft": [
+  "block.settings": [
    {},
    {
-    "draft": {
-     "paragraphs": [],
-     "tail_open": false,
-     "word_count": 0,
-     "paragraph_count": 0
-    },
-    "chapter": {
-     "id": 45,
-     "number": 13,
-     "label": "第13章",
-     "title": "",
-     "guidance": "",
+    "settings": {
      "outline": "",
-     "reference_notes": "",
-     "target_min": 3000,
-     "target_max": 4000,
-     "word_count": 0,
-     "has_draft": false
-    }
-   }
-  ],
-  "block.anchor": [
-   {
-    "track": {
-     "is_main": false,
-     "kind": "side",
-     "title": "剑冢旧事",
-     "synopsis": "师父年轻时的故事。",
-     "canon_mode": "isolated",
-     "anchor_kind": "after_chapter",
-     "anchor_label": "第12章《剑冢》"
-    }
-   },
-   {
-    "track": {
-     "is_main": false,
-     "kind": "side",
-     "title": "剑冢旧事",
-     "synopsis": "师父年轻时的故事。",
-     "canon_mode": "canon",
-     "anchor_kind": "before_start",
-     "anchor_label": ""
-    }
-   },
-   {
-    "track": {
-     "is_main": false,
-     "kind": "side",
-     "title": "剑冢旧事",
-     "synopsis": "师父年轻时的故事。",
-     "canon_mode": "canon",
-     "anchor_kind": "after_end",
-     "anchor_label": "第12章《剑冢》"
-    }
-   }
-  ],
-  "block.cast_index": [
-   {},
-   {
-    "cast_index": []
-   }
-  ],
-  "block.chapter_diff": [
-   {},
-   {
-    "diff": {
-     "changes": []
-    }
-   }
-  ],
-  "writer.kickoff.chapter": [
-   {},
-   {
-    "track": {
-     "is_main": false,
-     "kind": "side",
-     "title": "剑冢旧事",
-     "synopsis": "师父年轻时的故事。",
-     "canon_mode": "isolated",
-     "anchor_kind": "after_chapter",
-     "anchor_label": "第12章《剑冢》"
+     "world": "",
+     "protagonist": "",
+     "characters": [],
+     "scopes": []
     },
-    "chapter": {
-     "id": 45,
-     "number": 13,
-     "label": "第13章",
-     "title": "",
-     "guidance": "",
-     "outline": "",
-     "reference_notes": "",
-     "target_min": 3000,
-     "target_max": 4000,
-     "word_count": 0,
-     "has_draft": false
-    }
-   }
-  ],
-  "writer.kickoff.redraft": [
-   {},
-   {
-    "track": {
-     "is_main": false,
-     "kind": "side",
-     "title": "剑冢旧事",
-     "synopsis": "师父年轻时的故事。",
-     "canon_mode": "isolated",
-     "anchor_kind": "after_chapter",
-     "anchor_label": "第12章《剑冢》"
-    },
-    "previous_outline": "",
-    "feedback": {
-     "text": "重写",
-     "issues": []
-    }
-   },
-   {
-    "feedback": {
-     "text": "结尾太仓促。",
-     "issues": [
-      {
-       "severity_label": "严重",
-       "category_label": "连续性",
-       "pids": [
-        "p30",
-        "p31"
-       ],
-       "quote": "",
-       "problem": "剑已毁",
-       "suggestion": "改用断剑"
-      }
-     ]
-    }
-   }
-  ],
-  "writer.kickoff.revise": [
-   {},
-   {
-    "track": {
-     "is_main": false,
-     "kind": "side",
-     "title": "剑冢旧事",
-     "synopsis": "师父年轻时的故事。",
-     "canon_mode": "isolated",
-     "anchor_kind": "after_chapter",
-     "anchor_label": "第12章《剑冢》"
-    },
-    "chapter": {
-     "id": 45,
-     "number": 13,
-     "label": "第13章",
-     "title": "",
-     "guidance": "",
-     "outline": "",
-     "reference_notes": "",
-     "target_min": 3000,
-     "target_max": 4000,
-     "word_count": 0,
-     "has_draft": false
-    }
-   }
-  ],
-  "writer.kickoff.rollover": [
-   {},
-   {
-    "feedback": null,
-    "chapter": {
-     "id": 45,
-     "number": 13,
-     "label": "第13章",
-     "title": "",
-     "guidance": "",
-     "outline": "",
-     "reference_notes": "",
-     "target_min": 3000,
-     "target_max": 4000,
-     "word_count": 0,
-     "has_draft": false
-    }
-   },
-   {
-    "phase": "revising",
-    "granularity": {
-     "key": "sentence",
-     "label": "sentence",
-     "revising": true,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "phase": "revising",
-    "granularity": {
-     "key": "chapter",
-     "label": "chapter",
-     "revising": true,
-     "tail_open": false,
-     "last_pid": "p9"
-    },
-    "revision_plan": "",
-    "author_notes": [],
-    "chapter": {
-     "id": 45,
-     "number": 13,
-     "label": "第13章",
-     "title": "",
-     "guidance": "",
-     "outline": "",
-     "reference_notes": "",
-     "target_min": 3000,
-     "target_max": 4000,
-     "word_count": 0,
-     "has_draft": false
-    },
-    "feedback": {
-     "text": "改短一些",
-     "issues": []
-    }
-   }
-  ],
-  "reviewer.kickoff": [
-   {},
-   {
-    "track": {
-     "is_main": false,
-     "kind": "side",
-     "title": "剑冢旧事",
-     "synopsis": "师父年轻时的故事。",
-     "canon_mode": "isolated",
-     "anchor_kind": "after_chapter",
-     "anchor_label": "第12章《剑冢》"
-    },
-    "chapter": {
-     "id": 45,
-     "number": 13,
-     "label": "第13章",
-     "title": "",
-     "guidance": "",
-     "outline": "",
-     "reference_notes": "",
-     "target_min": 3000,
-     "target_max": 4000,
-     "word_count": 0,
-     "has_draft": false
-    }
-   },
-   {
-    "prior": {
-     "attempt": 1,
-     "verdict_label": "建议修改",
-     "summary": "结尾与时间线矛盾。",
-     "feedback": "请修正 p30。",
-     "comment": "第二条判断有误：令牌在第30章已归还。"
-    }
-   }
-  ],
-  "archivist.kickoff.maintenance": [
-   {},
-   {
-    "track": {
-     "is_main": false,
-     "kind": "side",
-     "title": "剑冢旧事",
-     "synopsis": "师父年轻时的故事。",
-     "canon_mode": "isolated",
-     "anchor_kind": "after_chapter",
-     "anchor_label": "第12章《剑冢》"
-    }
-   }
-  ],
-  "archivist.kickoff.resync": [
-   {},
-   {
-    "track": {
-     "is_main": false,
-     "kind": "side",
-     "title": "剑冢旧事",
-     "synopsis": "师父年轻时的故事。",
-     "canon_mode": "isolated",
-     "anchor_kind": "after_chapter",
-     "anchor_label": "第12章《剑冢》"
-    }
-   }
-  ],
-  "researcher.kickoff": [
-   {},
-   {
-    "research": {
-     "topic": "宋代市井",
-     "requirements": "",
-     "scope_name": "宋代社会",
-     "scope_description": "",
-     "language_name": "简体中文",
-     "existing_titles": [],
-     "max_tool_calls": 40,
-     "max_entries": 25
+    "book": {
+     "title": "青云劫",
+     "genre": "",
+     "idea": "少年身怀残破剑灵。",
+     "writing_language": "zh-CN",
+     "writing_language_name": "简体中文",
+     "unspaced": true
     }
    }
   ],
@@ -811,364 +611,12 @@
     }
    }
   ],
-  "writer.rules.granularity": [
+  "notice.research_budget": [
    {
-    "granularity": {
-     "key": "sentence",
-     "label": "sentence",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "paragraph",
-     "label": "paragraph",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "free",
-     "label": "free",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "chapter",
-     "label": "chapter",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "paragraph",
-     "label": "paragraph",
-     "revising": false,
-     "tail_open": true,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "chapter",
-     "label": "chapter",
-     "revising": true,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   }
-  ],
-  "writer.notice.outline_accepted": [
-   {
-    "granularity": {
-     "key": "sentence",
-     "label": "sentence",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "paragraph",
-     "label": "paragraph",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "free",
-     "label": "free",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "chapter",
-     "label": "chapter",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "paragraph",
-     "label": "paragraph",
-     "revising": false,
-     "tail_open": true,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "chapter",
-     "label": "chapter",
-     "revising": true,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   }
-  ],
-  "writer.notice.revision_plan_accepted": [
-   {
-    "granularity": {
-     "key": "sentence",
-     "label": "sentence",
-     "revising": true,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "paragraph",
-     "label": "paragraph",
-     "revising": true,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "free",
-     "label": "free",
-     "revising": true,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "chapter",
-     "label": "chapter",
-     "revising": true,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "paragraph",
-     "label": "paragraph",
-     "revising": true,
-     "tail_open": true,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "chapter",
-     "label": "chapter",
-     "revising": true,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   }
-  ],
-  "writer.notice.granularity": [
-   {
-    "granularity": {
-     "key": "sentence",
-     "label": "sentence",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "paragraph",
-     "label": "paragraph",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "free",
-     "label": "free",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "chapter",
-     "label": "chapter",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "paragraph",
-     "label": "paragraph",
-     "revising": false,
-     "tail_open": true,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "chapter",
-     "label": "chapter",
-     "revising": true,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   }
-  ],
-  "writer.notice.nudge_drafting": [
-   {
-    "granularity": {
-     "key": "sentence",
-     "label": "sentence",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "paragraph",
-     "label": "paragraph",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "free",
-     "label": "free",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "chapter",
-     "label": "chapter",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "paragraph",
-     "label": "paragraph",
-     "revising": false,
-     "tail_open": true,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "chapter",
-     "label": "chapter",
-     "revising": true,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   }
-  ],
-  "writer.notice.retrieval_budget": [
-   {
-    "used": 30
-   }
-  ],
-  "notice.user_edits": [
-   {
-    "compact": false,
-    "counts": {
-     "modified": 1,
-     "deleted": 1,
-     "inserted": 1
-    },
-    "modified": [
-     {
-      "pid": "p2",
-      "old": "雨",
-      "new": "雨更大了"
-     }
-    ],
-    "deleted": [
-     {
-      "pid": "p3",
-      "old": "风"
-     }
-    ],
-    "inserted": [
-     {
-      "pid": "p9",
-      "after": null,
-      "text": "新"
-     },
-     {
-      "pid": "p10",
-      "after": "p9",
-      "text": "又新"
-     }
-    ],
-    "tail_changed": true,
-    "tail_open": false,
-    "outline_changed": false,
-    "outline": "",
-    "notes_changed": false,
-    "reference_notes": ""
-   },
-   {
-    "compact": true,
-    "counts": {
-     "modified": 5,
-     "deleted": 2,
-     "inserted": 9
-    },
-    "modified": [],
-    "deleted": [],
-    "inserted": [],
-    "tail_changed": false,
-    "tail_open": false,
-    "outline_changed": true,
-    "outline": "## 场景一（作者改）",
-    "notes_changed": true,
-    "reference_notes": "- 苏婉不哭"
-   },
-   {
-    "compact": false,
-    "counts": {
-     "modified": 0,
-     "deleted": 0,
-     "inserted": 0
-    },
-    "modified": [],
-    "deleted": [],
-    "inserted": [],
-    "tail_changed": false,
-    "tail_open": false,
-    "outline_changed": true,
-    "outline": "## 场景一（作者改）",
-    "notes_changed": false,
-    "reference_notes": ""
+    "used_calls": 40,
+    "max_calls": 40,
+    "entries": 10,
+    "max_entries": 25
    }
   ],
   "notice.setting_edits": [
@@ -1259,410 +707,227 @@
     ]
    }
   ],
+  "notice.user_edits": [
+   {
+    "compact": false,
+    "counts": {
+     "modified": 1,
+     "deleted": 1,
+     "inserted": 1
+    },
+    "modified": [
+     {
+      "pid": "p2",
+      "old": "雨",
+      "new": "雨更大了"
+     }
+    ],
+    "deleted": [
+     {
+      "pid": "p3",
+      "old": "风"
+     }
+    ],
+    "inserted": [
+     {
+      "pid": "p9",
+      "after": null,
+      "text": "新"
+     },
+     {
+      "pid": "p10",
+      "after": "p9",
+      "text": "又新"
+     }
+    ],
+    "tail_changed": true,
+    "tail_open": false,
+    "outline_changed": false,
+    "outline": "",
+    "notes_changed": false,
+    "reference_notes": ""
+   },
+   {
+    "compact": true,
+    "counts": {
+     "modified": 5,
+     "deleted": 2,
+     "inserted": 9
+    },
+    "modified": [],
+    "deleted": [],
+    "inserted": [],
+    "tail_changed": false,
+    "tail_open": false,
+    "outline_changed": true,
+    "outline": "## 场景一（作者改）",
+    "notes_changed": true,
+    "reference_notes": "- 苏婉不哭"
+   },
+   {
+    "compact": false,
+    "counts": {
+     "modified": 0,
+     "deleted": 0,
+     "inserted": 0
+    },
+    "modified": [],
+    "deleted": [],
+    "inserted": [],
+    "tail_changed": false,
+    "tail_open": false,
+    "outline_changed": true,
+    "outline": "## 场景一（作者改）",
+    "notes_changed": false,
+    "reference_notes": ""
+   }
+  ],
   "notice.web_content": [
    {
     "body": "外部内容"
    }
   ],
-  "notice.research_budget": [
-   {
-    "used_calls": 40,
-    "max_calls": 40,
-    "entries": 10,
-    "max_entries": 25
-   }
-  ],
-  "shared.label": [
-   {
-    "enum": "entity_kind",
-    "value": "character"
-   },
-   {
-    "enum": "entity_status",
-    "value": "dead"
-   },
-   {
-    "enum": "appearance_role",
-    "value": "pov"
-   },
-   {
-    "enum": "note_kind",
-    "value": "world_rule"
-   },
-   {
-    "enum": "foreshadowing_status",
-    "value": "open"
-   },
-   {
-    "enum": "relation_status",
-    "value": "ended"
-   },
-   {
-    "enum": "setting_doc",
-    "value": "characters"
-   },
-   {
-    "enum": "granularity",
-    "value": "free"
-   },
-   {
-    "enum": "phase",
-    "value": "drafting"
-   },
-   {
-    "enum": "phase",
-    "value": "none"
-   },
-   {
-    "enum": "severity",
-    "value": "major"
-   },
-   {
-    "enum": "category",
-    "value": "prose"
-   },
-   {
-    "enum": "verdict",
-    "value": "revise"
-   },
-   {
-    "enum": "target_type",
-    "value": "timeline_event"
-   },
-   {
-    "enum": "search_kind",
-    "value": "summary"
-   },
-   {
-    "enum": "language",
-    "value": "zh-CN"
-   },
-   {
-    "enum": "language",
-    "value": "xx"
-   }
-  ],
-  "shared.chapter_label": [
+  "planner.kickoff": [
    {},
    {
-    "track_kind": "side",
-    "track_title": "剑冢旧事",
-    "number": 2,
-    "title": "",
-    "with_title": true
-   },
-   {
-    "with_title": false
-   }
-  ],
-  "result.truncated": [
-   {
-    "next_offset": 6000
-   },
-   {
-    "next_offset": null
-   }
-  ],
-  "result.entity_card": [
-   {
-    "e": {
-     "id": 12,
-     "name": "林凡",
-     "kind_label": "人物",
-     "is_protagonist": true,
-     "importance": 5,
-     "status_label": "活跃",
-     "aliases": [
-      "凡哥",
-      "林师弟"
-     ],
-     "summary": "外门弟子",
-     "state": "身处剑冢",
-     "state_after_anchor": true,
-     "attributes": [
-      {
-       "key": "修为",
-       "value": "筑基中期"
-      }
-     ],
-     "description": "……"
-    },
-    "relations": [
-     {
-      "subject": "林凡(#12)",
-      "object": "张三(#15)",
-      "kind": "师兄",
-      "ended": false,
-      "until_label": "",
-      "description": "同门",
-      "since_label": "第3章"
-     },
-     {
-      "subject": "林凡(#12)",
-      "object": "王五(#16)",
-      "kind": "仇敌",
-      "ended": true,
-      "until_label": "第9章",
-      "description": "",
-      "since_label": ""
-     }
-    ],
-    "changes": [
-     {
-      "chapter_label": "第11章",
-      "note": "突破",
-      "after_anchor": true
-     }
-    ],
-    "appearances": {
-     "first_label": "第1章",
-     "last_label": "第12章",
-     "window_size": 10,
-     "window_count": 8
-    },
-    "design": {
-     "role_label": "主角",
-     "summary": "……"
+    "chapter": {
+     "id": 45,
+     "number": 13,
+     "label": "第13章",
+     "title": "夜雨",
+     "guidance": "让苏婉第一次展露实力。",
+     "outline": "## 场景一\n- 目标",
+     "reference_notes": "- 林凡左臂有伤",
+     "target_min": 3000,
+     "target_max": 4000,
+     "word_count": 2350,
+     "has_draft": false
     }
    },
    {
-    "e": {
-     "id": 30,
-     "name": "石碑",
-     "kind_label": "物品",
-     "is_protagonist": false,
-     "importance": 2,
-     "status_label": "活跃",
-     "aliases": [],
-     "summary": "",
-     "state": "",
-     "state_after_anchor": false,
-     "attributes": [],
-     "description": ""
+    "chapter": {
+     "id": 45,
+     "number": 13,
+     "label": "第13章",
+     "title": "夜雨",
+     "guidance": "让苏婉第一次展露实力。",
+     "outline": "",
+     "reference_notes": "",
+     "target_min": 3000,
+     "target_max": 4000,
+     "word_count": 2350,
+     "has_draft": false
     },
-    "relations": [],
-    "changes": [],
-    "appearances": {
-     "first_label": "",
-     "last_label": "",
-     "window_size": 10,
-     "window_count": 0
-    },
-    "design": null
+    "track": {
+     "is_main": false,
+     "kind": "side",
+     "title": "剑冢旧事",
+     "synopsis": "师父年轻时的故事。",
+     "canon_mode": "isolated",
+     "anchor_kind": "after_chapter",
+     "anchor_label": "第12章《剑冢》"
+    }
    }
   ],
-  "result.entity_list": [
+  "planner.notice.retrieval_budget": [
    {
-    "items": [
+    "used": 30
+   }
+  ],
+  "researcher.kickoff": [
+   {},
+   {
+    "research": {
+     "topic": "宋代市井",
+     "requirements": "",
+     "scope_name": "宋代社会",
+     "scope_description": "",
+     "language_name": "简体中文",
+     "existing_titles": [],
+     "max_tool_calls": 40,
+     "max_entries": 25
+    }
+   }
+  ],
+  "result.ask_user": [
+   {
+    "answers": [
      {
-      "id": 12,
-      "name": "林凡",
-      "kind_label": "人物",
-      "aliases": [
-       "凡哥"
+      "question": "基调？",
+      "selected": [
+       "热血"
       ],
-      "summary": "外门弟子",
-      "status": "active",
-      "status_label": "活跃"
+      "other": "再轻松点"
      },
      {
-      "id": 13,
-      "name": "老剑",
-      "kind_label": "物品",
-      "aliases": [],
-      "summary": "",
-      "status": "destroyed",
-      "status_label": "已损毁"
-     }
-    ],
-    "total": 40,
-    "shown": 30
-   },
-   {
-    "items": [],
-    "total": 0,
-    "shown": 0
-   }
-  ],
-  "result.relations": [
-   {
-    "entity": "林凡(#12)",
-    "items": [
+      "question": "结局？",
+      "selected": [],
+      "other": ""
+     },
      {
-      "subject": "林凡(#12)",
-      "object": "张三(#15)",
-      "kind": "师兄",
-      "ended": false,
-      "until_label": "",
-      "description": "",
-      "since_label": ""
+      "question": "篇幅？",
+      "selected": [],
+      "other": "百万字"
      }
     ]
-   },
-   {
-    "entity": "林凡(#12)",
-    "items": []
    }
   ],
-  "result.timeline": [
+  "result.canon_write": [
    {
-    "items": [
-     {
-      "id": 1,
-      "story_time": "春",
-      "title": "入门",
-      "description": "",
-      "chapter_label": "第1章",
-      "entities": [
-       "林凡",
-       "苏婉"
-      ],
-      "after_anchor": false
-     }
-    ],
-    "total": 5,
-    "shown": 1,
-    "mode": "chronological"
+    "action": "create_entity",
+    "target": "苏婉(#21)",
+    "count": 3,
+    "prev_event": null,
+    "next_event": null,
+    "moved": false
    },
    {
-    "items": [],
-    "total": 0,
-    "shown": 0,
-    "mode": "recent_first"
-   }
-  ],
-  "result.foreshadowing_list": [
-   {
-    "items": [
-     {
-      "id": 9,
-      "title": "剑穗",
-      "status_label": "未回收",
-      "description": "……",
-      "planted_label": "第5章",
-      "planned_payoff": "",
-      "resolution": "",
-      "resolved_label": ""
-     }
-    ]
+    "action": "record_appearances",
+    "target": "",
+    "count": 3,
+    "prev_event": null,
+    "next_event": null,
+    "moved": false
    },
    {
-    "items": []
-   }
-  ],
-  "result.search_hits": [
-   {
-    "corpus": "canon",
-    "query": "剑冢",
-    "hits": [
-     {
-      "kind_label": "实体",
-      "title": "剑冢",
-      "ref": 3,
-      "snippet": "……",
-      "location": "范围",
-      "pids": [],
-      "after_anchor": false
-     },
-     {
-      "kind_label": "实体",
-      "title": "剑冢",
-      "ref": 4,
-      "snippet": "……",
-      "location": "范围",
-      "pids": [],
-      "after_anchor": true
-     }
-    ],
-    "vector_available": true
+    "action": "add_timeline_event",
+    "target": "入门(#5)",
+    "count": 3,
+    "prev_event": 4,
+    "next_event": 6,
+    "moved": false
    },
    {
-    "corpus": "knowledge",
-    "query": "剑冢",
-    "hits": [
-     {
-      "kind_label": "实体",
-      "title": "剑冢",
-      "ref": 3,
-      "snippet": "……",
-      "location": "范围",
-      "pids": [],
-      "after_anchor": false
-     },
-     {
-      "kind_label": "实体",
-      "title": "剑冢",
-      "ref": 4,
-      "snippet": "……",
-      "location": "范围",
-      "pids": [],
-      "after_anchor": true
-     }
-    ],
-    "vector_available": false
+    "action": "add_timeline_event",
+    "target": "入门(#5)",
+    "count": 3,
+    "prev_event": null,
+    "next_event": null,
+    "moved": false
    },
    {
-    "corpus": "chapters",
-    "query": "剑冢",
-    "hits": [
-     {
-      "kind_label": "实体",
-      "title": "剑冢",
-      "ref": 3,
-      "snippet": "……",
-      "location": "范围",
-      "pids": [
-       "p3",
-       "p4",
-       "p5"
-      ],
-      "after_anchor": false
-     },
-     {
-      "kind_label": "实体",
-      "title": "剑冢",
-      "ref": 4,
-      "snippet": "……",
-      "location": "范围",
-      "pids": [
-       "p9"
-      ],
-      "after_anchor": true
-     }
-    ],
-    "vector_available": true
+    "action": "update_timeline_event",
+    "target": "入门(#5)",
+    "count": 3,
+    "prev_event": 2,
+    "next_event": null,
+    "moved": true
    },
    {
-    "corpus": "canon",
-    "query": "x",
-    "hits": [],
-    "vector_available": true
-   }
-  ],
-  "result.knowledge_entry": [
-   {
-    "id": 7,
-    "title": "宋代茶馆",
-    "scope": "宋代社会",
-    "sources": [
-     "https://a"
-    ],
-    "content": "……",
-    "offset": 0,
-    "end": 6000,
-    "total": 9000,
-    "next_offset": 6000
+    "action": "set_chapter_summary",
+    "target": "",
+    "count": 3,
+    "prev_event": null,
+    "next_event": null,
+    "moved": false
    },
    {
-    "id": 7,
-    "title": "宋代茶馆",
-    "scope": "宋代社会",
-    "sources": [],
-    "content": "……",
-    "offset": 0,
-    "end": 100,
-    "total": 100,
-    "next_offset": null
+    "action": "propose_setting_change",
+    "target": "世界观",
+    "count": 3,
+    "prev_event": null,
+    "next_event": null,
+    "moved": false
    }
   ],
   "result.chapter_text": [
@@ -1697,33 +962,104 @@
     "total_paragraphs": 2
    }
   ],
-  "result.draft_text": [
+  "result.conception_write": [
    {
-    "paragraphs": [
-     {
-      "pid": "p1",
-      "text": "林凡抬起头。"
-     },
-     {
-      "pid": "p2",
-      "text": "雨更大了"
-     }
+    "action": "write_setting_doc",
+    "doc_label": "世界观",
+    "revision": 3,
+    "chars": 2000,
+    "name": "林凡",
+    "rank": 1,
+    "order": [
+     "林凡",
+     "苏婉"
     ],
-    "tail_open": true,
-    "word_count": 12,
-    "target_min": 3000,
-    "target_max": 4000,
-    "next_pid": null,
-    "total_paragraphs": 2
+    "count": 4,
+    "created": false
    },
    {
-    "paragraphs": [],
-    "tail_open": false,
-    "word_count": 0,
-    "target_min": 3000,
-    "target_max": 4000,
-    "next_pid": null,
-    "total_paragraphs": 0
+    "action": "edit_setting_doc",
+    "doc_label": "世界观",
+    "revision": 3,
+    "chars": 2000,
+    "name": "林凡",
+    "rank": 1,
+    "order": [
+     "林凡",
+     "苏婉"
+    ],
+    "count": 4,
+    "created": false
+   },
+   {
+    "action": "upsert_character",
+    "doc_label": "世界观",
+    "revision": 3,
+    "chars": 2000,
+    "name": "林凡",
+    "rank": 1,
+    "order": [
+     "林凡",
+     "苏婉"
+    ],
+    "count": 4,
+    "created": true
+   },
+   {
+    "action": "upsert_character",
+    "doc_label": "世界观",
+    "revision": 3,
+    "chars": 2000,
+    "name": "林凡",
+    "rank": 1,
+    "order": [
+     "林凡",
+     "苏婉"
+    ],
+    "count": 4,
+    "created": false
+   },
+   {
+    "action": "remove_character",
+    "doc_label": "世界观",
+    "revision": 3,
+    "chars": 2000,
+    "name": "林凡",
+    "rank": 1,
+    "order": [
+     "林凡",
+     "苏婉"
+    ],
+    "count": 4,
+    "created": false
+   },
+   {
+    "action": "reorder_characters",
+    "doc_label": "世界观",
+    "revision": 3,
+    "chars": 2000,
+    "name": "林凡",
+    "rank": 1,
+    "order": [
+     "林凡",
+     "苏婉"
+    ],
+    "count": 4,
+    "created": false
+   },
+   {
+    "action": "set_research_topics",
+    "doc_label": "世界观",
+    "revision": 3,
+    "chars": 2000,
+    "name": "林凡",
+    "rank": 1,
+    "order": [
+     "林凡",
+     "苏婉"
+    ],
+    "count": 4,
+    "created": false
    }
   ],
   "result.draft_edit": [
@@ -1890,357 +1226,154 @@
     "ignored_chapter_end": false
    }
   ],
-  "result.writer_control": [
+  "result.draft_text": [
    {
-    "action": "submit_outline",
-    "word_count": 3100,
-    "target_min": 3000,
-    "confirm_needed": false,
-    "title_set": true,
-    "title": "剑冢"
-   },
-   {
-    "action": "submit_outline",
-    "word_count": 3100,
-    "target_min": 3000,
-    "confirm_needed": false,
-    "title_set": false,
-    "title": "剑冢"
-   },
-   {
-    "action": "submit_revision_plan",
-    "word_count": 3100,
-    "target_min": 3000,
-    "confirm_needed": false,
-    "title_set": false,
-    "title": "剑冢"
-   },
-   {
-    "action": "finish_draft",
-    "word_count": 1200,
-    "target_min": 3000,
-    "confirm_needed": true,
-    "title_set": false,
-    "title": "剑冢"
-   },
-   {
-    "action": "finish_draft",
-    "word_count": 3100,
-    "target_min": 3000,
-    "confirm_needed": false,
-    "title_set": false,
-    "title": "剑冢"
-   },
-   {
-    "action": "finish_revision",
-    "word_count": 3100,
-    "target_min": 3000,
-    "confirm_needed": false,
-    "title_set": false,
-    "title": "剑冢"
-   }
-  ],
-  "result.submit_review": [
-   {
-    "attempt": 1,
-    "issues": 3,
-    "dropped_pids": [
-     "p99"
-    ]
-   },
-   {
-    "attempt": 2,
-    "issues": 0,
-    "dropped_pids": []
-   }
-  ],
-  "result.canon_write": [
-   {
-    "action": "create_entity",
-    "target": "苏婉(#21)",
-    "count": 3,
-    "prev_event": null,
-    "next_event": null,
-    "moved": false
-   },
-   {
-    "action": "record_appearances",
-    "target": "",
-    "count": 3,
-    "prev_event": null,
-    "next_event": null,
-    "moved": false
-   },
-   {
-    "action": "add_timeline_event",
-    "target": "入门(#5)",
-    "count": 3,
-    "prev_event": 4,
-    "next_event": 6,
-    "moved": false
-   },
-   {
-    "action": "add_timeline_event",
-    "target": "入门(#5)",
-    "count": 3,
-    "prev_event": null,
-    "next_event": null,
-    "moved": false
-   },
-   {
-    "action": "update_timeline_event",
-    "target": "入门(#5)",
-    "count": 3,
-    "prev_event": 2,
-    "next_event": null,
-    "moved": true
-   },
-   {
-    "action": "set_chapter_summary",
-    "target": "",
-    "count": 3,
-    "prev_event": null,
-    "next_event": null,
-    "moved": false
-   },
-   {
-    "action": "propose_setting_change",
-    "target": "世界观",
-    "count": 3,
-    "prev_event": null,
-    "next_event": null,
-    "moved": false
-   }
-  ],
-  "result.finish_maintenance": [
-   {
-    "confirm_needed": true,
-    "changes": 0,
-    "proposals": 0
-   },
-   {
-    "confirm_needed": false,
-    "changes": 12,
-    "proposals": 1
-   },
-   {
-    "confirm_needed": false,
-    "changes": 3,
-    "proposals": 0
-   }
-  ],
-  "result.ask_user": [
-   {
-    "answers": [
+    "paragraphs": [
      {
-      "question": "基调？",
-      "selected": [
-       "热血"
+      "pid": "p1",
+      "text": "林凡抬起头。"
+     },
+     {
+      "pid": "p2",
+      "text": "雨更大了"
+     }
+    ],
+    "tail_open": true,
+    "word_count": 12,
+    "target_min": 3000,
+    "target_max": 4000,
+    "next_pid": null,
+    "total_paragraphs": 2
+   },
+   {
+    "paragraphs": [],
+    "tail_open": false,
+    "word_count": 0,
+    "target_min": 3000,
+    "target_max": 4000,
+    "next_pid": null,
+    "total_paragraphs": 0
+   }
+  ],
+  "result.entity_card": [
+   {
+    "e": {
+     "id": 12,
+     "name": "林凡",
+     "kind_label": "人物",
+     "is_protagonist": true,
+     "importance": 5,
+     "status_label": "活跃",
+     "aliases": [
+      "凡哥",
+      "林师弟"
+     ],
+     "summary": "外门弟子",
+     "state": "身处剑冢",
+     "state_after_anchor": true,
+     "attributes": [
+      {
+       "key": "修为",
+       "value": "筑基中期"
+      }
+     ],
+     "description": "……"
+    },
+    "relations": [
+     {
+      "subject": "林凡(#12)",
+      "object": "张三(#15)",
+      "kind": "师兄",
+      "ended": false,
+      "until_label": "",
+      "description": "同门",
+      "since_label": "第3章"
+     },
+     {
+      "subject": "林凡(#12)",
+      "object": "王五(#16)",
+      "kind": "仇敌",
+      "ended": true,
+      "until_label": "第9章",
+      "description": "",
+      "since_label": ""
+     }
+    ],
+    "changes": [
+     {
+      "chapter_label": "第11章",
+      "note": "突破",
+      "after_anchor": true
+     }
+    ],
+    "appearances": {
+     "first_label": "第1章",
+     "last_label": "第12章",
+     "window_size": 10,
+     "window_count": 8
+    },
+    "design": {
+     "role_label": "主角",
+     "summary": "……"
+    }
+   },
+   {
+    "e": {
+     "id": 30,
+     "name": "石碑",
+     "kind_label": "物品",
+     "is_protagonist": false,
+     "importance": 2,
+     "status_label": "活跃",
+     "aliases": [],
+     "summary": "",
+     "state": "",
+     "state_after_anchor": false,
+     "attributes": [],
+     "description": ""
+    },
+    "relations": [],
+    "changes": [],
+    "appearances": {
+     "first_label": "",
+     "last_label": "",
+     "window_size": 10,
+     "window_count": 0
+    },
+    "design": null
+   }
+  ],
+  "result.entity_list": [
+   {
+    "items": [
+     {
+      "id": 12,
+      "name": "林凡",
+      "kind_label": "人物",
+      "aliases": [
+       "凡哥"
       ],
-      "other": "再轻松点"
+      "summary": "外门弟子",
+      "status": "active",
+      "status_label": "活跃"
      },
      {
-      "question": "结局？",
-      "selected": [],
-      "other": ""
-     },
-     {
-      "question": "篇幅？",
-      "selected": [],
-      "other": "百万字"
-     }
-    ]
-   }
-  ],
-  "result.request_review": [
-   {
-    "items": [
-     {
-      "doc_label": "故事大纲",
-      "approved": true,
-      "feedback": ""
-     },
-     {
-      "doc_label": "世界观",
-      "approved": false,
-      "feedback": "势力太多"
+      "id": 13,
+      "name": "老剑",
+      "kind_label": "物品",
+      "aliases": [],
+      "summary": "",
+      "status": "destroyed",
+      "status_label": "已损毁"
      }
     ],
-    "general": "整体不错",
-    "all_approved": false
+    "total": 40,
+    "shown": 30
    },
    {
-    "items": [
-     {
-      "doc_label": "故事大纲",
-      "approved": true,
-      "feedback": ""
-     }
-    ],
-    "general": "",
-    "all_approved": true
-   }
-  ],
-  "result.conception_write": [
-   {
-    "action": "write_setting_doc",
-    "doc_label": "世界观",
-    "revision": 3,
-    "chars": 2000,
-    "name": "林凡",
-    "rank": 1,
-    "order": [
-     "林凡",
-     "苏婉"
-    ],
-    "count": 4,
-    "created": false
-   },
-   {
-    "action": "edit_setting_doc",
-    "doc_label": "世界观",
-    "revision": 3,
-    "chars": 2000,
-    "name": "林凡",
-    "rank": 1,
-    "order": [
-     "林凡",
-     "苏婉"
-    ],
-    "count": 4,
-    "created": false
-   },
-   {
-    "action": "upsert_character",
-    "doc_label": "世界观",
-    "revision": 3,
-    "chars": 2000,
-    "name": "林凡",
-    "rank": 1,
-    "order": [
-     "林凡",
-     "苏婉"
-    ],
-    "count": 4,
-    "created": true
-   },
-   {
-    "action": "upsert_character",
-    "doc_label": "世界观",
-    "revision": 3,
-    "chars": 2000,
-    "name": "林凡",
-    "rank": 1,
-    "order": [
-     "林凡",
-     "苏婉"
-    ],
-    "count": 4,
-    "created": false
-   },
-   {
-    "action": "remove_character",
-    "doc_label": "世界观",
-    "revision": 3,
-    "chars": 2000,
-    "name": "林凡",
-    "rank": 1,
-    "order": [
-     "林凡",
-     "苏婉"
-    ],
-    "count": 4,
-    "created": false
-   },
-   {
-    "action": "reorder_characters",
-    "doc_label": "世界观",
-    "revision": 3,
-    "chars": 2000,
-    "name": "林凡",
-    "rank": 1,
-    "order": [
-     "林凡",
-     "苏婉"
-    ],
-    "count": 4,
-    "created": false
-   },
-   {
-    "action": "set_research_topics",
-    "doc_label": "世界观",
-    "revision": 3,
-    "chars": 2000,
-    "name": "林凡",
-    "rank": 1,
-    "order": [
-     "林凡",
-     "苏婉"
-    ],
-    "count": 4,
-    "created": false
-   }
-  ],
-  "result.web_search": [
-   {
-    "query": "宋代",
-    "hits": [
-     {
-      "title": "宋代茶馆",
-      "url": "https://a",
-      "published": "2020-01-01",
-      "snippet": "……"
-     },
-     {
-      "title": "b",
-      "url": "https://b",
-      "published": "",
-      "snippet": "……"
-     }
-    ]
-   },
-   {
-    "query": "x",
-    "hits": []
-   }
-  ],
-  "result.web_fetch": [
-   {
-    "url": "https://a",
-    "title": "标题",
-    "offset": 0,
-    "end": 8000,
-    "total": 20000,
-    "next_offset": 8000,
-    "body": "正文"
-   },
-   {
-    "url": "https://a",
-    "title": "",
-    "offset": 0,
-    "end": 100,
-    "total": 100,
-    "next_offset": null,
-    "body": "正文"
-   }
-  ],
-  "result.knowledge_write": [
-   {
-    "action": "created",
-    "id": 7,
-    "title": "宋代茶馆",
-    "scope": "宋代社会"
-   },
-   {
-    "action": "updated",
-    "id": 7,
-    "title": "宋代茶馆",
-    "scope": "宋代社会"
-   }
-  ],
-  "result.finish_research": [
-   {
-    "entries": 5
+    "items": [],
+    "total": 0,
+    "shown": 0
    }
   ],
   "result.error": [
@@ -2518,6 +1651,935 @@
    },
    {
     "code": "internal"
+   }
+  ],
+  "result.finish_maintenance": [
+   {
+    "confirm_needed": true,
+    "changes": 0,
+    "proposals": 0
+   },
+   {
+    "confirm_needed": false,
+    "changes": 12,
+    "proposals": 1
+   },
+   {
+    "confirm_needed": false,
+    "changes": 3,
+    "proposals": 0
+   }
+  ],
+  "result.finish_research": [
+   {
+    "entries": 5
+   }
+  ],
+  "result.foreshadowing_list": [
+   {
+    "items": [
+     {
+      "id": 9,
+      "title": "剑穗",
+      "status_label": "未回收",
+      "description": "……",
+      "planted_label": "第5章",
+      "planned_payoff": "",
+      "resolution": "",
+      "resolved_label": ""
+     }
+    ]
+   },
+   {
+    "items": []
+   }
+  ],
+  "result.knowledge_entry": [
+   {
+    "id": 7,
+    "title": "宋代茶馆",
+    "scope": "宋代社会",
+    "sources": [
+     "https://a"
+    ],
+    "content": "……",
+    "offset": 0,
+    "end": 6000,
+    "total": 9000,
+    "next_offset": 6000
+   },
+   {
+    "id": 7,
+    "title": "宋代茶馆",
+    "scope": "宋代社会",
+    "sources": [],
+    "content": "……",
+    "offset": 0,
+    "end": 100,
+    "total": 100,
+    "next_offset": null
+   }
+  ],
+  "result.knowledge_write": [
+   {
+    "action": "created",
+    "id": 7,
+    "title": "宋代茶馆",
+    "scope": "宋代社会"
+   },
+   {
+    "action": "updated",
+    "id": 7,
+    "title": "宋代茶馆",
+    "scope": "宋代社会"
+   }
+  ],
+  "result.relations": [
+   {
+    "entity": "林凡(#12)",
+    "items": [
+     {
+      "subject": "林凡(#12)",
+      "object": "张三(#15)",
+      "kind": "师兄",
+      "ended": false,
+      "until_label": "",
+      "description": "",
+      "since_label": ""
+     }
+    ]
+   },
+   {
+    "entity": "林凡(#12)",
+    "items": []
+   }
+  ],
+  "result.request_review": [
+   {
+    "items": [
+     {
+      "doc_label": "故事大纲",
+      "approved": true,
+      "feedback": ""
+     },
+     {
+      "doc_label": "世界观",
+      "approved": false,
+      "feedback": "势力太多"
+     }
+    ],
+    "general": "整体不错",
+    "all_approved": false
+   },
+   {
+    "items": [
+     {
+      "doc_label": "故事大纲",
+      "approved": true,
+      "feedback": ""
+     }
+    ],
+    "general": "",
+    "all_approved": true
+   }
+  ],
+  "result.search_hits": [
+   {
+    "corpus": "canon",
+    "query": "剑冢",
+    "hits": [
+     {
+      "kind_label": "实体",
+      "title": "剑冢",
+      "ref": 3,
+      "snippet": "……",
+      "location": "范围",
+      "pids": [],
+      "after_anchor": false
+     },
+     {
+      "kind_label": "实体",
+      "title": "剑冢",
+      "ref": 4,
+      "snippet": "……",
+      "location": "范围",
+      "pids": [],
+      "after_anchor": true
+     }
+    ],
+    "vector_available": true
+   },
+   {
+    "corpus": "knowledge",
+    "query": "剑冢",
+    "hits": [
+     {
+      "kind_label": "实体",
+      "title": "剑冢",
+      "ref": 3,
+      "snippet": "……",
+      "location": "范围",
+      "pids": [],
+      "after_anchor": false
+     },
+     {
+      "kind_label": "实体",
+      "title": "剑冢",
+      "ref": 4,
+      "snippet": "……",
+      "location": "范围",
+      "pids": [],
+      "after_anchor": true
+     }
+    ],
+    "vector_available": false
+   },
+   {
+    "corpus": "chapters",
+    "query": "剑冢",
+    "hits": [
+     {
+      "kind_label": "实体",
+      "title": "剑冢",
+      "ref": 3,
+      "snippet": "……",
+      "location": "范围",
+      "pids": [
+       "p3",
+       "p4",
+       "p5"
+      ],
+      "after_anchor": false
+     },
+     {
+      "kind_label": "实体",
+      "title": "剑冢",
+      "ref": 4,
+      "snippet": "……",
+      "location": "范围",
+      "pids": [
+       "p9"
+      ],
+      "after_anchor": true
+     }
+    ],
+    "vector_available": true
+   },
+   {
+    "corpus": "canon",
+    "query": "x",
+    "hits": [],
+    "vector_available": true
+   }
+  ],
+  "result.submit_review": [
+   {
+    "attempt": 1,
+    "issues": 3,
+    "dropped_pids": [
+     "p99"
+    ]
+   },
+   {
+    "attempt": 2,
+    "issues": 0,
+    "dropped_pids": []
+   }
+  ],
+  "result.timeline": [
+   {
+    "items": [
+     {
+      "id": 1,
+      "story_time": "春",
+      "title": "入门",
+      "description": "",
+      "chapter_label": "第1章",
+      "entities": [
+       "林凡",
+       "苏婉"
+      ],
+      "after_anchor": false
+     }
+    ],
+    "total": 5,
+    "shown": 1,
+    "mode": "chronological"
+   },
+   {
+    "items": [],
+    "total": 0,
+    "shown": 0,
+    "mode": "recent_first"
+   }
+  ],
+  "result.truncated": [
+   {
+    "next_offset": 6000
+   },
+   {
+    "next_offset": null
+   }
+  ],
+  "result.web_fetch": [
+   {
+    "url": "https://a",
+    "title": "标题",
+    "offset": 0,
+    "end": 8000,
+    "total": 20000,
+    "next_offset": 8000,
+    "body": "正文"
+   },
+   {
+    "url": "https://a",
+    "title": "",
+    "offset": 0,
+    "end": 100,
+    "total": 100,
+    "next_offset": null,
+    "body": "正文"
+   }
+  ],
+  "result.web_search": [
+   {
+    "query": "宋代",
+    "hits": [
+     {
+      "title": "宋代茶馆",
+      "url": "https://a",
+      "published": "2020-01-01",
+      "snippet": "……"
+     },
+     {
+      "title": "b",
+      "url": "https://b",
+      "published": "",
+      "snippet": "……"
+     }
+    ]
+   },
+   {
+    "query": "x",
+    "hits": []
+   }
+  ],
+  "result.writer_control": [
+   {
+    "action": "submit_outline",
+    "word_count": 3100,
+    "target_min": 3000,
+    "confirm_needed": false,
+    "title_set": true,
+    "title": "剑冢",
+    "staged": false
+   },
+   {
+    "action": "submit_outline",
+    "word_count": 3100,
+    "target_min": 3000,
+    "confirm_needed": false,
+    "title_set": false,
+    "title": "剑冢",
+    "staged": false
+   },
+   {
+    "action": "submit_outline",
+    "word_count": 3100,
+    "target_min": 3000,
+    "confirm_needed": false,
+    "title_set": true,
+    "title": "剑冢",
+    "staged": true
+   },
+   {
+    "action": "submit_revision_plan",
+    "word_count": 3100,
+    "target_min": 3000,
+    "confirm_needed": false,
+    "title_set": false,
+    "title": "剑冢",
+    "staged": false
+   },
+   {
+    "action": "finish_draft",
+    "word_count": 1200,
+    "target_min": 3000,
+    "confirm_needed": true,
+    "title_set": false,
+    "title": "剑冢",
+    "staged": false
+   },
+   {
+    "action": "finish_draft",
+    "word_count": 3100,
+    "target_min": 3000,
+    "confirm_needed": false,
+    "title_set": false,
+    "title": "剑冢",
+    "staged": false
+   },
+   {
+    "action": "finish_revision",
+    "word_count": 3100,
+    "target_min": 3000,
+    "confirm_needed": false,
+    "title_set": false,
+    "title": "剑冢",
+    "staged": false
+   }
+  ],
+  "reviewer.kickoff": [
+   {},
+   {
+    "track": {
+     "is_main": false,
+     "kind": "side",
+     "title": "剑冢旧事",
+     "synopsis": "师父年轻时的故事。",
+     "canon_mode": "isolated",
+     "anchor_kind": "after_chapter",
+     "anchor_label": "第12章《剑冢》"
+    },
+    "chapter": {
+     "id": 45,
+     "number": 13,
+     "label": "第13章",
+     "title": "",
+     "guidance": "",
+     "outline": "",
+     "reference_notes": "",
+     "target_min": 3000,
+     "target_max": 4000,
+     "word_count": 0,
+     "has_draft": false
+    }
+   },
+   {
+    "prior": {
+     "attempt": 1,
+     "verdict_label": "建议修改",
+     "summary": "结尾与时间线矛盾。",
+     "feedback": "请修正 p30。",
+     "comment": "第二条判断有误：令牌在第30章已归还。"
+    }
+   }
+  ],
+  "shared.chapter_label": [
+   {},
+   {
+    "track_kind": "side",
+    "track_title": "剑冢旧事",
+    "number": 2,
+    "title": "",
+    "with_title": true
+   },
+   {
+    "with_title": false
+   }
+  ],
+  "shared.label": [
+   {
+    "enum": "entity_kind",
+    "value": "character"
+   },
+   {
+    "enum": "entity_status",
+    "value": "dead"
+   },
+   {
+    "enum": "appearance_role",
+    "value": "pov"
+   },
+   {
+    "enum": "note_kind",
+    "value": "world_rule"
+   },
+   {
+    "enum": "foreshadowing_status",
+    "value": "open"
+   },
+   {
+    "enum": "relation_status",
+    "value": "ended"
+   },
+   {
+    "enum": "setting_doc",
+    "value": "characters"
+   },
+   {
+    "enum": "granularity",
+    "value": "free"
+   },
+   {
+    "enum": "phase",
+    "value": "drafting"
+   },
+   {
+    "enum": "phase",
+    "value": "none"
+   },
+   {
+    "enum": "severity",
+    "value": "major"
+   },
+   {
+    "enum": "category",
+    "value": "prose"
+   },
+   {
+    "enum": "verdict",
+    "value": "revise"
+   },
+   {
+    "enum": "target_type",
+    "value": "timeline_event"
+   },
+   {
+    "enum": "search_kind",
+    "value": "summary"
+   },
+   {
+    "enum": "language",
+    "value": "zh-CN"
+   },
+   {
+    "enum": "language",
+    "value": "xx"
+   }
+  ],
+  "writer.kickoff.chapter": [
+   {},
+   {
+    "track": {
+     "is_main": false,
+     "kind": "side",
+     "title": "剑冢旧事",
+     "synopsis": "师父年轻时的故事。",
+     "canon_mode": "isolated",
+     "anchor_kind": "after_chapter",
+     "anchor_label": "第12章《剑冢》"
+    },
+    "chapter": {
+     "id": 45,
+     "number": 13,
+     "label": "第13章",
+     "title": "",
+     "guidance": "",
+     "outline": "",
+     "reference_notes": "",
+     "target_min": 3000,
+     "target_max": 4000,
+     "word_count": 0,
+     "has_draft": false
+    }
+   }
+  ],
+  "writer.kickoff.redraft": [
+   {},
+   {
+    "track": {
+     "is_main": false,
+     "kind": "side",
+     "title": "剑冢旧事",
+     "synopsis": "师父年轻时的故事。",
+     "canon_mode": "isolated",
+     "anchor_kind": "after_chapter",
+     "anchor_label": "第12章《剑冢》"
+    },
+    "previous_outline": "",
+    "feedback": {
+     "text": "重写",
+     "issues": []
+    }
+   },
+   {
+    "feedback": {
+     "text": "结尾太仓促。",
+     "issues": [
+      {
+       "severity_label": "严重",
+       "category_label": "连续性",
+       "pids": [
+        "p30",
+        "p31"
+       ],
+       "quote": "",
+       "problem": "剑已毁",
+       "suggestion": "改用断剑"
+      }
+     ]
+    }
+   }
+  ],
+  "writer.kickoff.revise": [
+   {},
+   {
+    "track": {
+     "is_main": false,
+     "kind": "side",
+     "title": "剑冢旧事",
+     "synopsis": "师父年轻时的故事。",
+     "canon_mode": "isolated",
+     "anchor_kind": "after_chapter",
+     "anchor_label": "第12章《剑冢》"
+    },
+    "chapter": {
+     "id": 45,
+     "number": 13,
+     "label": "第13章",
+     "title": "",
+     "guidance": "",
+     "outline": "",
+     "reference_notes": "",
+     "target_min": 3000,
+     "target_max": 4000,
+     "word_count": 0,
+     "has_draft": false
+    }
+   }
+  ],
+  "writer.kickoff.rollover": [
+   {},
+   {
+    "feedback": null,
+    "chapter": {
+     "id": 45,
+     "number": 13,
+     "label": "第13章",
+     "title": "",
+     "guidance": "",
+     "outline": "",
+     "reference_notes": "",
+     "target_min": 3000,
+     "target_max": 4000,
+     "word_count": 0,
+     "has_draft": false
+    }
+   },
+   {
+    "phase": "revising",
+    "granularity": {
+     "key": "sentence",
+     "label": "sentence",
+     "revising": true,
+     "tail_open": false,
+     "last_pid": "p9"
+    }
+   },
+   {
+    "phase": "revising",
+    "granularity": {
+     "key": "chapter",
+     "label": "chapter",
+     "revising": true,
+     "tail_open": false,
+     "last_pid": "p9"
+    },
+    "revision_plan": "",
+    "author_notes": [],
+    "chapter": {
+     "id": 45,
+     "number": 13,
+     "label": "第13章",
+     "title": "",
+     "guidance": "",
+     "outline": "",
+     "reference_notes": "",
+     "target_min": 3000,
+     "target_max": 4000,
+     "word_count": 0,
+     "has_draft": false
+    },
+    "feedback": {
+     "text": "改短一些",
+     "issues": []
+    }
+   }
+  ],
+  "writer.notice.granularity": [
+   {
+    "granularity": {
+     "key": "sentence",
+     "label": "sentence",
+     "revising": false,
+     "tail_open": false,
+     "last_pid": "p9"
+    }
+   },
+   {
+    "granularity": {
+     "key": "paragraph",
+     "label": "paragraph",
+     "revising": false,
+     "tail_open": false,
+     "last_pid": "p9"
+    }
+   },
+   {
+    "granularity": {
+     "key": "free",
+     "label": "free",
+     "revising": false,
+     "tail_open": false,
+     "last_pid": "p9"
+    }
+   },
+   {
+    "granularity": {
+     "key": "chapter",
+     "label": "chapter",
+     "revising": false,
+     "tail_open": false,
+     "last_pid": "p9"
+    }
+   },
+   {
+    "granularity": {
+     "key": "paragraph",
+     "label": "paragraph",
+     "revising": false,
+     "tail_open": true,
+     "last_pid": "p9"
+    }
+   },
+   {
+    "granularity": {
+     "key": "chapter",
+     "label": "chapter",
+     "revising": true,
+     "tail_open": false,
+     "last_pid": "p9"
+    }
+   }
+  ],
+  "writer.notice.nudge_drafting": [
+   {
+    "granularity": {
+     "key": "sentence",
+     "label": "sentence",
+     "revising": false,
+     "tail_open": false,
+     "last_pid": "p9"
+    }
+   },
+   {
+    "granularity": {
+     "key": "paragraph",
+     "label": "paragraph",
+     "revising": false,
+     "tail_open": false,
+     "last_pid": "p9"
+    }
+   },
+   {
+    "granularity": {
+     "key": "free",
+     "label": "free",
+     "revising": false,
+     "tail_open": false,
+     "last_pid": "p9"
+    }
+   },
+   {
+    "granularity": {
+     "key": "chapter",
+     "label": "chapter",
+     "revising": false,
+     "tail_open": false,
+     "last_pid": "p9"
+    }
+   },
+   {
+    "granularity": {
+     "key": "paragraph",
+     "label": "paragraph",
+     "revising": false,
+     "tail_open": true,
+     "last_pid": "p9"
+    }
+   },
+   {
+    "granularity": {
+     "key": "chapter",
+     "label": "chapter",
+     "revising": true,
+     "tail_open": false,
+     "last_pid": "p9"
+    }
+   }
+  ],
+  "writer.notice.outline_accepted": [
+   {
+    "granularity": {
+     "key": "sentence",
+     "label": "sentence",
+     "revising": false,
+     "tail_open": false,
+     "last_pid": "p9"
+    }
+   },
+   {
+    "granularity": {
+     "key": "paragraph",
+     "label": "paragraph",
+     "revising": false,
+     "tail_open": false,
+     "last_pid": "p9"
+    }
+   },
+   {
+    "granularity": {
+     "key": "free",
+     "label": "free",
+     "revising": false,
+     "tail_open": false,
+     "last_pid": "p9"
+    }
+   },
+   {
+    "granularity": {
+     "key": "chapter",
+     "label": "chapter",
+     "revising": false,
+     "tail_open": false,
+     "last_pid": "p9"
+    }
+   },
+   {
+    "granularity": {
+     "key": "paragraph",
+     "label": "paragraph",
+     "revising": false,
+     "tail_open": true,
+     "last_pid": "p9"
+    }
+   },
+   {
+    "granularity": {
+     "key": "chapter",
+     "label": "chapter",
+     "revising": true,
+     "tail_open": false,
+     "last_pid": "p9"
+    }
+   }
+  ],
+  "writer.notice.retrieval_budget": [
+   {
+    "used": 30
+   }
+  ],
+  "writer.notice.revision_plan_accepted": [
+   {
+    "granularity": {
+     "key": "sentence",
+     "label": "sentence",
+     "revising": true,
+     "tail_open": false,
+     "last_pid": "p9"
+    }
+   },
+   {
+    "granularity": {
+     "key": "paragraph",
+     "label": "paragraph",
+     "revising": true,
+     "tail_open": false,
+     "last_pid": "p9"
+    }
+   },
+   {
+    "granularity": {
+     "key": "free",
+     "label": "free",
+     "revising": true,
+     "tail_open": false,
+     "last_pid": "p9"
+    }
+   },
+   {
+    "granularity": {
+     "key": "chapter",
+     "label": "chapter",
+     "revising": true,
+     "tail_open": false,
+     "last_pid": "p9"
+    }
+   },
+   {
+    "granularity": {
+     "key": "paragraph",
+     "label": "paragraph",
+     "revising": true,
+     "tail_open": true,
+     "last_pid": "p9"
+    }
+   },
+   {
+    "granularity": {
+     "key": "chapter",
+     "label": "chapter",
+     "revising": true,
+     "tail_open": false,
+     "last_pid": "p9"
+    }
+   }
+  ],
+  "writer.rules.granularity": [
+   {
+    "granularity": {
+     "key": "sentence",
+     "label": "sentence",
+     "revising": false,
+     "tail_open": false,
+     "last_pid": "p9"
+    }
+   },
+   {
+    "granularity": {
+     "key": "paragraph",
+     "label": "paragraph",
+     "revising": false,
+     "tail_open": false,
+     "last_pid": "p9"
+    }
+   },
+   {
+    "granularity": {
+     "key": "free",
+     "label": "free",
+     "revising": false,
+     "tail_open": false,
+     "last_pid": "p9"
+    }
+   },
+   {
+    "granularity": {
+     "key": "chapter",
+     "label": "chapter",
+     "revising": false,
+     "tail_open": false,
+     "last_pid": "p9"
+    }
+   },
+   {
+    "granularity": {
+     "key": "paragraph",
+     "label": "paragraph",
+     "revising": false,
+     "tail_open": true,
+     "last_pid": "p9"
+    }
+   },
+   {
+    "granularity": {
+     "key": "chapter",
+     "label": "chapter",
+     "revising": true,
+     "tail_open": false,
+     "last_pid": "p9"
+    }
    }
   ]
  }

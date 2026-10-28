@@ -9,8 +9,8 @@ use serde_json::Value;
 use ts_rs::TS;
 
 use crate::db::json::{
-    AgentRole, Appendix, Granularity, MessageKind, PendingContent, Phase, SessionCounters,
-    SessionError, SessionKind, SessionStatus, ToolCallStatus, Usage,
+    AgentRole, Appendix, Granularity, MessageKind, PendingContent, PendingOutline, Phase,
+    SessionCounters, SessionError, SessionKind, SessionStatus, ToolCallStatus, Usage,
 };
 
 /// One session row (spec/10 §2.8).
@@ -113,6 +113,9 @@ pub struct ToolCallDto {
     /// can preview a held write against the confirmed draft without a second endpoint. `None` once
     /// the call is finalized, because the text is then in the chapter.
     pub pending_content: Option<PendingContent>,
+    /// The staged outline of a held outline session's `submit_outline` (spec/03 §5.2, D-146).
+    /// Present only while the call is deferred; approval writes exactly this proposal.
+    pub pending_outline: Option<PendingOutline>,
     pub created_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
 }

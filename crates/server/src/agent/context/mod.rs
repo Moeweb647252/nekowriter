@@ -121,7 +121,8 @@ impl KickoffPlan {
             // `writer.kickoff.chapter` includes `block.chapter_draft` when the chapter has text,
             // and `writer.kickoff.redraft` shows the old outline itself (spec/06 §4.2).
             SessionKind::ChapterWrite => has_draft || self.redraft,
-            SessionKind::ChapterRevise
+            SessionKind::ChapterOutline
+            | SessionKind::ChapterRevise
             | SessionKind::ChapterReview
             | SessionKind::ChapterMaintenance => true,
             _ => false,
@@ -217,6 +218,12 @@ async fn block_context(
         })),
         "researcher.kickoff" => Ok(json!({
             "research": research_context(conn, prompts, session.research_task_id).await?,
+        })),
+        "planner.kickoff" => Ok(json!({
+            "book": book_context(conn, prompts, session.book_id).await?,
+            "track": track_context(conn, prompts, session.track_id).await?,
+            "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
+            "draft": draft_context(conn, session.chapter_id).await?,
         })),
         "writer.kickoff.chapter" => Ok(json!({
             "book": book_context(conn, prompts, session.book_id).await?,

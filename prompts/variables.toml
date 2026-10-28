@@ -152,3 +152,7 @@ zh = "通知模板使用其 vars 中列出的变量"
 [vars.result]
 en = "Result templates receive the variables named in their `vars` list; result.error receives `code` plus code-specific fields (spec/05)"
 zh = "结果模板使用其 vars 中列出的变量；result.error 接收 code 及对应字段"
+
+[vars.used]
+en = "How many retrieval calls the session has made (retrieval-budget notices)"
+zh = "会话已进行的检索次数（检索预算提醒）"

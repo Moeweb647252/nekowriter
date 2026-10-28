@@ -1255,6 +1255,112 @@ pub(crate) async fn apply_pending_content(
     ])
 }
 
+/// Applies an outline session's staged proposal in the transaction that finalizes its call
+/// (spec/03 §5.2, §5.4, D-146).
+///
+/// This is the only place an agent outline reaches `chapters.outline`. It runs for a call that is
+/// not deferred — an ordinary `submit_outline`, or the resume that approves a held one — so the
+/// outline, reference notes and (empty-title) title move together with the call's status and one
+/// `chapter.updated {outline_changed: true}` event. A rejected or abandoned proposal never gets
+/// here: its effects are dropped.
+pub(crate) async fn apply_pending_outline(
+    tx: &sea_orm::DatabaseTransaction,
+    session: &agent_sessions::Model,
+    pending: &crate::db::json::PendingOutline,
+) -> Result<Vec<ServerEvent>, AppError> {
+    let Some(chapter_id) = session.chapter_id else {
+        return Ok(Vec::new());
+    };
+    let Some(chapter) = chapters::Entity::find_by_id(chapter_id).one(tx).await? else {
+        return Ok(Vec::new());
+    };
+    // The title applies only while the author has not set one (spec/05 §4, D-146).
+    let title = if chapter.title.trim().is_empty() {
+        pending
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| chapter.title.clone())
+    } else {
+        chapter.title.clone()
+    };
+    let now = Utc::now();
+    chapters::ActiveModel {
+        id: Set(chapter_id),
+        outline: Set(pending.outline.clone()),
+        reference_notes: Set(pending.reference_notes.clone()),
+        title: Set(title),
+        updated_at: Set(now),
+        ..Default::default()
+    }
+    .update(tx)
+    .await?;
+    keep_view_snapshot_outline_in_sync(
+        tx,
+        session,
+        &chapter,
+        &pending.outline,
+        &pending.reference_notes,
+    )
+    .await?;
+    let row = chapters::Entity::find_by_id(chapter_id)
+        .one(tx)
+        .await?
+        .ok_or_else(|| AppError::internal("the chapter vanished while applying an outline"))?;
+    Ok(vec![ServerEvent::ChapterUpdated {
+        chapter: crate::api::dto::ChapterListItemDto::from(row),
+        outline_changed: true,
+    }])
+}
+
+/// Advances a stored view snapshot past the agent's own accepted outline (spec/03 §7, D-146).
+///
+/// The snapshot is taken when the session holds, i.e. before the accepted outline exists. Without
+/// this the sealing after approval would report the planner's own proposal as an author edit. The
+/// snapshot is advanced only when it still equals the chapter as it was before the apply; if the
+/// author edited it meanwhile, their change wins and stays reportable (approval applies exactly the
+/// proposal the author saw, so that report is only informational).
+async fn keep_view_snapshot_outline_in_sync(
+    tx: &sea_orm::DatabaseTransaction,
+    session: &agent_sessions::Model,
+    before: &chapters::Model,
+    outline: &str,
+    reference_notes: &str,
+) -> Result<(), AppError> {
+    let Some(raw) = session.view_snapshot.as_deref() else {
+        return Ok(());
+    };
+    let Ok(ViewSnapshot::Chapter {
+        content,
+        outline: old_outline,
+        reference_notes: old_notes,
+    }) = json::from_json::<ViewSnapshot>(raw)
+    else {
+        return Ok(());
+    };
+    if old_outline != before.outline || old_notes != before.reference_notes {
+        return Ok(());
+    }
+    let snapshot = ViewSnapshot::Chapter {
+        content,
+        outline: outline.to_owned(),
+        reference_notes: reference_notes.to_owned(),
+    };
+    let stored = json::to_json(&snapshot)
+        .map_err(|err| AppError::internal(format!("cannot serialize view snapshot: {err}")))?;
+    session::guard_columns(
+        tx,
+        session.id,
+        &session.status,
+        "view_snapshot = ?",
+        vec![stored.into()],
+    )
+    .await?;
+    Ok(())
+}
+
 /// Advances a stored view snapshot past the agent's own applied write (spec/03 §7).
 ///
 /// `view_snapshot` is "what the agent last saw" and is captured when the session stops running. A
@@ -1333,6 +1439,10 @@ async fn finalize_inner(
     if !deferred && let Some(write) = outcome.effects.pending_content.take() {
         events.extend(apply_pending_content(tx, session, &write).await?);
     }
+    // The same discipline for an outline session's staged proposal (D-146).
+    if !deferred && let Some(outline) = outcome.effects.pending_outline.take() {
+        events.extend(apply_pending_outline(tx, session, &outline).await?);
+    }
 
     // Effect notices are appended by the transaction that finalizes the call (spec/03 §5.3):
     // while the call is held its effects are not applied yet, so its acceptance notice waits for
@@ -1359,7 +1469,11 @@ async fn finalize_inner(
         if counters.retrieval_calls > RETRIEVAL_BUDGET
             && !outcome.is_error
             && let Ok(rendered) = prompts.render(
-                "writer.notice.retrieval_budget",
+                if session::role_of(session) == crate::db::json::AgentRole::Planner {
+                    "planner.notice.retrieval_budget"
+                } else {
+                    "writer.notice.retrieval_budget"
+                },
                 &json!({ "used": counters.retrieval_calls }),
             )
         {
@@ -2182,6 +2296,7 @@ pub async fn text_only_inner(
 /// The nudge key of a session kind and phase (spec/03 §5.6, D-057).
 fn nudge_key(kind: SessionKind, phase: Phase) -> &'static str {
     match (kind, phase) {
+        (SessionKind::ChapterOutline, _) => "planner.notice.nudge",
         (SessionKind::ChapterWrite, Phase::Planning) => "writer.notice.nudge_planning",
         (SessionKind::ChapterWrite | SessionKind::ChapterRevise, Phase::Drafting) => {
             "writer.notice.nudge_drafting"

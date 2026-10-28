@@ -265,12 +265,16 @@ text = '''
 key = "result.writer_control"
 kind = "result"
 agent = "writer"
-vars = ["action", "word_count", "target_min", "confirm_needed", "title_set", "title"]
+vars = ["action", "word_count", "target_min", "confirm_needed", "title_set", "title", "staged"]
 title_en = "Result — outline, plan and completion"
 title_zh = "工具结果 · 章纲、计划与完成"
 text = '''
 {%- if action == "submit_outline" -%}
+{%- if staged -%}
+细纲与参考要点已提交{% if title_set %}，本章标题建议为《{{ title }}》{% endif %}；作者接受后才会生效，本次任务结束。
+{%- else -%}
 章纲与参考要点已保存{% if title_set %}，本章标题设为《{{ title }}》{% endif %}。
+{%- endif -%}
 {%- elif action == "submit_revision_plan" -%}
 修订计划已保存。
 {%- elif action == "finish_draft" and confirm_needed -%}

@@ -306,3 +306,36 @@ title_zh = "写手 · 检索次数提醒"
 text = '''
 【系统通知】你已经检索了 {{ used }} 次，资料应该足够了。请尽快整理并提交。
 '''
+
+[[prompt]]
+key = "planner.notice.outline_rejected"
+kind = "notice"
+agent = "planner"
+vars = []
+title_en = "Planner — outline needs changes"
+title_zh = "策划 · 细纲未通过"
+text = '''
+【系统通知】作者没有接受这份细纲，它没有生效，章节原有的细纲保持不变。请按下方作者的意见修改（必要时继续查阅资料），然后重新调用 submit_outline，提交完整的细纲与参考要点。
+'''
+
+[[prompt]]
+key = "planner.notice.nudge"
+kind = "notice"
+agent = "planner"
+vars = []
+title_en = "Planner — nudge"
+title_zh = "策划 · 提醒"
+text = '''
+【系统通知】请继续通过工具完成细纲任务。需要时检索资料，准备好后调用 submit_outline 提交细纲与参考要点。不要只回复文字。
+'''
+
+[[prompt]]
+key = "planner.notice.retrieval_budget"
+kind = "notice"
+agent = "planner"
+vars = ["used"]
+title_en = "Planner — retrieval budget reached"
+title_zh = "策划 · 检索次数提醒"
+text = '''
+【系统通知】你已经检索了 {{ used }} 次，资料应该足够了。请尽快整理并提交细纲。
+'''

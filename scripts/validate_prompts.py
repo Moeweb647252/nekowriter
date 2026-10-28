@@ -37,13 +37,14 @@ for name, t in tools.items():
     templates[f"tool.{name}"] = t["description"]
 
 # ---------- expected keys from spec/09 §2 ----------
-expected = """conception.system researcher.system writer.system reviewer.system archivist.system
-conception.kickoff researcher.kickoff writer.kickoff.chapter writer.kickoff.redraft writer.kickoff.revise
+expected = """conception.system researcher.system planner.system writer.system reviewer.system archivist.system
+conception.kickoff researcher.kickoff planner.kickoff writer.kickoff.chapter writer.kickoff.redraft writer.kickoff.revise
 writer.kickoff.rollover reviewer.kickoff reviewer.rereview archivist.kickoff.maintenance archivist.kickoff.seed
 archivist.kickoff.resync block.settings block.memory block.chapter_draft block.cast_index block.chapter_diff
 block.anchor block.book_brief notice.user_feedback notice.user_message notice.user_edits notice.setting_edits
 notice.completion_revoked notice.tool_not_allowed notice.output_truncated notice.web_content notice.nudge_generic
-notice.research_budget writer.notice.outline_accepted writer.notice.outline_rejected
+notice.research_budget planner.notice.outline_rejected planner.notice.nudge planner.notice.retrieval_budget
+writer.notice.outline_accepted writer.notice.outline_rejected
 writer.notice.revision_plan_accepted writer.notice.revision_plan_rejected writer.notice.granularity
 writer.notice.nudge_planning writer.notice.nudge_drafting writer.notice.nudge_revision_planning
 writer.notice.nudge_revising writer.notice.retrieval_budget writer.rules.granularity
@@ -61,6 +62,7 @@ for k in meta:
 
 # ---------- role tool lists from spec/05 §2 ----------
 roles = {
+ "planner": "get_entity list_entities get_relations query_timeline list_foreshadowing search_canon search_knowledge read_knowledge_entry search_chapters read_chapter read_draft submit_outline",
  "writer": "get_entity list_entities get_relations query_timeline list_foreshadowing search_canon search_knowledge read_knowledge_entry search_chapters read_chapter submit_outline submit_revision_plan read_draft insert_text insert_paragraphs replace_text rewrite_paragraph delete_paragraphs finish_draft finish_revision",
  "reviewer": "get_entity list_entities get_relations query_timeline list_foreshadowing search_canon search_knowledge read_knowledge_entry search_chapters read_chapter submit_review",
  "archivist": "get_entity list_entities get_relations query_timeline list_foreshadowing search_canon read_chapter create_entity update_entity set_relation end_relation record_appearances add_timeline_event update_timeline_event add_memory_note retire_memory_note add_foreshadowing resolve_foreshadowing set_chapter_summary propose_setting_change finish_maintenance",
@@ -202,6 +204,8 @@ variants = {
   "block.anchor": [dict(track=track_side), dict(track=track_prequel), dict(track=dict(track_side, anchor_kind="after_end", canon_mode="canon"))],
   "block.cast_index": [dict(), dict(cast_index=[])],
   "block.chapter_diff": [dict(), dict(diff=dict(changes=[]))],
+  "planner.kickoff": [dict(), dict(chapter=dict(chapter_blank, outline="## 旧细纲", reference_notes="")),
+                      dict(track=track_side, chapter=dict(chapter_blank))],
   "writer.kickoff.chapter": [dict(), dict(track=track_side, chapter=chapter_blank)],
   "writer.kickoff.redraft": [dict(), dict(track=track_side, previous_outline="", feedback=dict(text="重写", issues=[])),
                              dict(feedback=dict(feedback, issues=[dict(feedback["issues"][0], quote="")]))],
@@ -221,6 +225,7 @@ variants = {
   "writer.notice.granularity": [dict(granularity=g) for g in gran_cases],
   "writer.notice.nudge_drafting": [dict(granularity=g) for g in gran_cases],
   "writer.notice.retrieval_budget": [dict(used=30)],
+  "planner.notice.retrieval_budget": [dict(used=30)],
   "notice.user_edits": [dict(compact=False, counts=dict(modified=1, deleted=1, inserted=1),
                               modified=[dict(pid="p2", old="雨", new="雨更大了")], deleted=[dict(pid="p3", old="风")],
                               inserted=[dict(pid="p9", after=None, text="新"), dict(pid="p10", after="p9", text="又新")],
@@ -287,9 +292,11 @@ variants = {
                             ("replace_text", [], None, ["p3"], None, False, False, False, False),
                             ("rewrite_paragraph", ["p12"], None, [], None, False, False, False, True),
                             ("delete_paragraphs", [], None, ["p4", "p5"], None, False, False, False, False)]],
-  "result.writer_control": [dict(action=a, word_count=1200 if c else 3100, target_min=3000, confirm_needed=c, title_set=t, title="剑冢")
-                            for a, c, t in [("submit_outline", False, True), ("submit_outline", False, False), ("submit_revision_plan", False, False),
-                                            ("finish_draft", True, False), ("finish_draft", False, False), ("finish_revision", False, False)]],
+  "result.writer_control": [dict(action=a, word_count=1200 if c else 3100, target_min=3000, confirm_needed=c, title_set=t, title="剑冢", staged=st)
+                            for a, c, t, st in [("submit_outline", False, True, False), ("submit_outline", False, False, False),
+                                            ("submit_outline", False, True, True),
+                                            ("submit_revision_plan", False, False, False),
+                                            ("finish_draft", True, False, False), ("finish_draft", False, False, False), ("finish_revision", False, False, False)]],
   "result.submit_review": [dict(attempt=1, issues=3, dropped_pids=["p99"]), dict(attempt=2, issues=0, dropped_pids=[])],
   "result.canon_write": [dict(action=a, target=t, count=3, prev_event=p, next_event=n, moved=m) for a, t, p, n, m in [
                             ("create_entity", "苏婉(#21)", None, None, False), ("record_appearances", "", None, None, False),

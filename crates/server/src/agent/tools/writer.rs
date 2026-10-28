@@ -18,7 +18,8 @@ use serde_json::{Value, json};
 use crate::api::dto::ContentOp;
 use crate::db::entities::chapters;
 use crate::db::json::{
-    ChapterContent, CompletionKind, Granularity, Paragraph, PendingContent, ToolEffects,
+    ChapterContent, CompletionKind, Granularity, Paragraph, PendingContent, PendingOutline,
+    SessionKind, ToolEffects,
 };
 use crate::events::ServerEvent;
 use crate::text;
@@ -342,6 +343,11 @@ impl ToolHandler for SubmitOutlineTool {
         _prepared: Prepared,
     ) -> Result<ToolOutcome, ToolError> {
         let input: SubmitOutlineInput = decode(input)?;
+        // D-146: the outline session stages its proposal; a legacy `chapter_write`/`planning`
+        // session (started before the split) keeps the immediate write and the phase change.
+        if crate::agent::session::kind_of(ctx.session) == SessionKind::ChapterOutline {
+            return stage_outline(ctx, input).await;
+        }
         let chapter = chapter_of(ctx)?.clone();
         // The title is only set when the author has not set one (spec/05 §4).
         let set_title = chapter.title.trim().is_empty()
@@ -393,6 +399,7 @@ impl ToolHandler for SubmitOutlineTool {
                     "confirm_needed": false,
                     "title_set": set_title,
                     "title": title,
+                    "staged": false,
                 })),
             )
             .map_err(|_| ToolError::new(ToolErrorKind::Internal))?
@@ -407,6 +414,56 @@ impl ToolHandler for SubmitOutlineTool {
                 ..ToolEffects::default()
             }))
     }
+}
+
+/// Stages an outline-session `submit_outline` proposal (spec/03 §5.2, D-146).
+///
+/// Nothing is written: `chapters.outline` changes only when the finalizing transaction calls
+/// `apply_pending_outline`, so a held or rejected proposal never reaches the chapter. The title is
+/// staged too and applied only while the chapter's title is still empty.
+async fn stage_outline(
+    ctx: &mut ToolCtx<'_>,
+    input: SubmitOutlineInput,
+) -> Result<ToolOutcome, ToolError> {
+    let chapter = chapter_of(ctx)?;
+    let title = input
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(str::to_owned);
+    let (target_min, target_max) = targets(ctx);
+    let text = ctx
+        .prompts
+        .render_value(
+            "result.writer_control",
+            crate::prompts::template_value(&json!({
+                "action": "submit_outline",
+                "word_count": chapter.word_count,
+                "target_min": target_min,
+                "target_max": target_max,
+                "confirm_needed": false,
+                "title_set": title.is_some(),
+                "title": title.clone().unwrap_or_default(),
+                "staged": true,
+            })),
+        )
+        .map_err(|_| ToolError::new(ToolErrorKind::Internal))?
+        .text;
+    Ok(ToolOutcome::text(text)
+        .with_ui(json!({
+            "outline_chars": input.outline.chars().count(),
+            "notes_chars": input.reference_notes.chars().count(),
+        }))
+        .with_effects(ToolEffects {
+            complete: Some(CompletionKind::Outline),
+            pending_outline: Some(PendingOutline {
+                outline: input.outline,
+                reference_notes: input.reference_notes,
+                title,
+            }),
+            ..ToolEffects::default()
+        }))
 }
 
 // ───────────────────────────── read_draft ─────────────────────────────

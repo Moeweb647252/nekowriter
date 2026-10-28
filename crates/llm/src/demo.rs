@@ -318,6 +318,9 @@ pub fn choose_action(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
         return debug_plan(hints, lang);
     }
     match hints.kind.as_str() {
+        // M12/D-146: an outline session runs the same retrieval-then-outline script; the
+        // `chapter_write`/planning arm below stays for sessions started before the split.
+        "chapter_outline" => chapter_write_planning(hints, lang),
         "chapter_write" => {
             if hints.phase == "planning" {
                 chapter_write_planning(hints, lang)

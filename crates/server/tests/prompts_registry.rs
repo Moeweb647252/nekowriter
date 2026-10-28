@@ -198,14 +198,16 @@ fn every_rendered_key_matches_its_snapshot() {
 #[test]
 fn every_spec_key_exists_and_every_key_is_documented() {
     // The key list of spec/09 §2 (the validator checks the same set).
-    let expected = "conception.system researcher.system writer.system reviewer.system archivist.system \
-        conception.kickoff researcher.kickoff writer.kickoff.chapter writer.kickoff.redraft \
+    let expected = "conception.system researcher.system planner.system writer.system reviewer.system \
+        archivist.system conception.kickoff researcher.kickoff planner.kickoff writer.kickoff.chapter \
+        writer.kickoff.redraft \
         writer.kickoff.revise writer.kickoff.rollover reviewer.kickoff reviewer.rereview \
         archivist.kickoff.maintenance archivist.kickoff.seed archivist.kickoff.resync \
         block.settings block.memory block.chapter_draft block.cast_index block.chapter_diff \
         block.anchor block.book_brief notice.user_feedback notice.user_message notice.user_edits \
         notice.setting_edits notice.completion_revoked notice.tool_not_allowed \
         notice.output_truncated notice.web_content notice.nudge_generic notice.research_budget \
+        planner.notice.outline_rejected planner.notice.nudge planner.notice.retrieval_budget \
         writer.notice.outline_accepted writer.notice.outline_rejected \
         writer.notice.revision_plan_accepted writer.notice.revision_plan_rejected \
         writer.notice.granularity writer.notice.nudge_planning writer.notice.nudge_drafting \
@@ -385,6 +387,54 @@ fn settings_empty_shape() -> nekowriter::prompts::context::SettingsContext {
         characters: Vec::new(),
         scopes: Vec::new(),
     }
+}
+
+/// The outline contract is owned by the planner's entries (D-146, audit D1/D6): both name
+/// `submit_outline` and neither names a drafting tool. The drafting side is pinned when the
+/// writer's entries become drafting-only (task 12.4).
+#[test]
+fn the_planner_prompts_own_the_outline_contract() {
+    let registry = PromptRegistry::embedded().expect("pack");
+    let set = registry.defaults_only();
+    for key in ["planner.system", "planner.kickoff"] {
+        let mut checked = 0usize;
+        let contexts: Vec<Value> = if key == "planner.system" {
+            vec![json!({})]
+        } else {
+            registry.sample_contexts(key)
+        };
+        for sample in contexts {
+            let text = set
+                .render_value(key, nekowriter::prompts::template_value(&sample))
+                .unwrap_or_else(|err| panic!("{key}: {err}"))
+                .text;
+            assert!(
+                text.contains("submit_outline"),
+                "{key} must name submit_outline"
+            );
+            for tool in [
+                "insert_text",
+                "insert_paragraphs",
+                "replace_text",
+                "rewrite_paragraph",
+                "delete_paragraphs",
+            ] {
+                assert!(
+                    !text.contains(tool),
+                    "{key} must not name the drafting tool {tool}"
+                );
+            }
+            checked += 1;
+        }
+        assert!(checked > 0, "{key} rendered no sample");
+    }
+    // The tool description stops promising drafting after submission.
+    let description = set
+        .render("tool.submit_outline", &json!({}))
+        .expect("tool.submit_outline")
+        .text;
+    assert!(description.contains("作者接受"), "{description}");
+    assert!(!description.contains("进入正文阶段"), "{description}");
 }
 
 #[test]
