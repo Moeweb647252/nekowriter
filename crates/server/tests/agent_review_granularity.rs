@@ -626,17 +626,24 @@ async fn a_call_generated_under_paragraph_survives_a_switch_to_sentence() {
     script.extend(finish_pair());
     let runtime = runtime(script).await;
     let session_id = start_writer(&runtime, Granularity::Paragraph, false, false).await;
-    // Wait until the *second* model request reached the provider: the runner loads the session row
-    // (which becomes `request_meta`) at the top of the loop step, before building that request, so
-    // this is the point after which a PATCH cannot change the in-flight call's mode.
+    // After the split, request 1 is the 500-character insert itself (there is no outline request);
+    // wait for *that* request, not the pre-split request 2 (R2-07). A PATCH after the call sealed
+    // would make `inserts[0]` vacuous, so assert the call is still streaming when it lands.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while runtime.scripted.requests().len() < 2 {
+    while runtime.scripted.requests().len() < 1 {
         assert!(
             std::time::Instant::now() < deadline,
             "the drafting request never started"
         );
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
+    let requests_at_patch = runtime.scripted.requests().len();
+    let calls_at_patch = runtime.calls(session_id).await.len();
+    assert_eq!(requests_at_patch, 1, "one model request must be in flight");
+    assert_eq!(
+        calls_at_patch, 0,
+        "the distinguishing call must not have sealed"
+    );
     let (status, body) = runtime
         .app
         .patch(

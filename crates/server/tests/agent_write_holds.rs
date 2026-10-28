@@ -539,16 +539,20 @@ async fn test_10_a_switch_does_not_invalidate_an_in_flight_call() {
         );
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
-    // Wait until the first drafting call has sealed, so the patch lands while the second call
-    // streams. A write session is already `Drafting` at creation (D-146), so the phase alone is
-    // no longer a proxy for "a call is in flight".
-    while runtime.calls(session_id).await.is_empty() {
+    // Wait until the model request is in flight. Waiting for the call row would synchronize
+    // *after* the call sealed, which made this test vacuous (R2-06); `requests()` advances when
+    // the provider receives the request, before the arguments finish streaming.
+    while runtime.scripted.requests().is_empty() {
         assert!(
             std::time::Instant::now() < deadline,
-            "the first call never sealed"
+            "the first request never started"
         );
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
+    let requests_at_patch = runtime.scripted.requests().len();
+    let calls_at_patch = runtime.calls(session_id).await.len();
+    assert_eq!(requests_at_patch, 1, "one model request must be in flight");
+    assert_eq!(calls_at_patch, 0, "the call must not have sealed yet");
     let (status, body) = runtime
         .app
         .patch(
