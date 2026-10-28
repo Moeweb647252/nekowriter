@@ -1,5 +1,5 @@
 /** The History tab: versions, a two-version diff and restore (PROJECT §8.5, spec/11 §5.2). */
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import { useRestoreVersion, useSaveVersion, useVersion, useVersions } from "@/api/hooks/chapters"
@@ -30,7 +30,9 @@ export function HistoryTab({ chapter, bookId, unspaced }: HistoryTabProps) {
   const [afterId, setAfterId] = useState<number | null>(null)
   // Version ids and the note are chapter-scoped; never let them cross a chapter change (M5-06).
   const chapterIdRef = useRef(chapter.id)
-  chapterIdRef.current = chapter.id
+  useEffect(() => {
+    chapterIdRef.current = chapter.id
+  }, [chapter.id])
   const [lastChapterId, setLastChapterId] = useState(chapter.id)
   if (chapter.id !== lastChapterId) {
     setLastChapterId(chapter.id)
