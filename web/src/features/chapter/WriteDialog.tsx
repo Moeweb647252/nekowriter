@@ -47,6 +47,8 @@ export type WriteDialogProps = {
   onStarted: (sessionId: number) => void
   /** Opens the Outline dialog when the chapter lost its outline (a race). */
   onWriteOutline: () => void
+  /** The chapter now has an outline: clear a previously shown race warning. */
+  hasOutline: boolean
 }
 
 export function WriteDialog({
@@ -58,6 +60,7 @@ export function WriteDialog({
   onOpenChange,
   onStarted,
   onWriteOutline,
+  hasOutline,
 }: WriteDialogProps) {
   const { t } = useTranslation()
   const showError = useErrorToast()
@@ -67,6 +70,24 @@ export function WriteDialog({
   const [autoPause, setAutoPause] = useState(settings.auto_pause)
   const [notReady, setNotReady] = useState<PreviousNotReady | null>(null)
   const [outlineMissing, setOutlineMissing] = useState(false)
+  // A latched warning made a reopened dialog insist the chapter had no outline after one was
+  // created. Adjust state while rendering on the two prop transitions (F10), so no effect can
+  // cascade renders and a refetch cannot clobber the author's typing.
+  const [prevOpen, setPrevOpen] = useState(open)
+  const [prevHasOutline, setPrevHasOutline] = useState(hasOutline)
+  if (open !== prevOpen) {
+    setPrevOpen(open)
+    if (open) {
+      setOutlineMissing(false)
+      setNotReady(null)
+    }
+  }
+  if (hasOutline !== prevHasOutline) {
+    setPrevHasOutline(hasOutline)
+    if (hasOutline) {
+      setOutlineMissing(false)
+    }
+  }
 
   const start = (force: boolean) => {
     const input: ChapterWriteInput = {

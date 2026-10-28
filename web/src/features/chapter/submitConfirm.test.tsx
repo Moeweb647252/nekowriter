@@ -124,14 +124,9 @@ describe("ChapterHeader submit", () => {
     ).not.toBeInTheDocument()
   })
 
-  it("does not warn for a running session: the endpoint blocks it with its own error", async () => {
-    const user = userEvent.setup()
+  it("hides Submit while the writer is running: the endpoint would refuse it", () => {
     renderHeader(chapter([{ role: "writer", status: "running" }]))
-
-    await user.click(screen.getByRole("button", { name: "Submit for review" }))
-    expect(submitMutate).toHaveBeenCalledTimes(1)
-    expect(
-      screen.queryByText("End the open writer session?")
-    ).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Submit for review" })).not.toBeInTheDocument()
+    expect(submitMutate).not.toHaveBeenCalled()
   })
 })

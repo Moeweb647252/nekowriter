@@ -231,5 +231,6 @@
   "usage_summary": "{{requests}} 次请求 · {{input}} 输入 token · {{output}} 输出 token",
   "planned_outline_ready": "细纲已就绪",
   "model_planner_default": "默认：{{model}}",
-  "model_planner_follows_writer": "跟随写手：{{model}}"
+  "model_planner_follows_writer": "跟随写手：{{model}}",
+  "pause_after_outline_hint": "关闭后，策划提交细纲即自动接受。"
 }

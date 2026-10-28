@@ -328,3 +328,14 @@ describe("Book settings › planner model hint (D-146)", () => {
     expect(within(withGlobal).getByText("Default: DeepSeek · Review model")).toBeInTheDocument()
   })
 })
+
+describe("Book settings › outline approval hint (D-146)", () => {
+  it("says the outline is accepted immediately when the switch is off", () => {
+    render(<BookSettingsPage />)
+    expect(
+      screen.getByText(
+        "When off, the planner's outline is accepted as soon as it is submitted.",
+      ),
+    ).toBeInTheDocument()
+  })
+})

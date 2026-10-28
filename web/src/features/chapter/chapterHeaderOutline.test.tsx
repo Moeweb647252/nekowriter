@@ -120,6 +120,34 @@ describe("ChapterHeader outline actions", () => {
     expect(screen.getByRole("button", { name: "Redo the outline" })).toBeInTheDocument()
   })
 
+  it("hides Approve while a planner session is open", () => {
+    renderHeader(
+      chapter({
+        status: "in_review",
+        outline: "细纲",
+        has_outline: true,
+        open_sessions: [outlineSession()],
+      }),
+      "accepted",
+    )
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument()
+  })
+
+  it("hides Submit while the writer is running", () => {
+    renderHeader(
+      chapter({
+        status: "drafting",
+        outline: "细纲",
+        has_outline: true,
+        open_sessions: [
+          { id: 8, book_id: 1, role: "writer", kind: "chapter_write", status: "running" } as never,
+        ],
+      }),
+      "accepted",
+    )
+    expect(screen.queryByRole("button", { name: "Submit" })).not.toBeInTheDocument()
+  })
+
   it("does not offer Redo the outline on an official chapter", () => {
     renderHeader(
       chapter({ status: "official", outline: "细纲", has_outline: true }),

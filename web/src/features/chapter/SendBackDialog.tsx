@@ -4,6 +4,7 @@
  * and are copied into `chapter_feedback.issues` by the API (spec/08 §1.1, §3).
  */
 import { useState } from "react"
+import { ApiError } from "@/api/client"
 import { useTranslation } from "react-i18next"
 
 import { useSendBack } from "@/api/hooks/reviews"
@@ -35,6 +36,8 @@ export type SendBackDialogProps = {
   /** Overrides the prefilled feedback (the author's edited text in the Review tab). */
   initialFeedback?: string
   onSentBack?: (sessionId: number) => void
+  /** Opens the Outline dialog when a redraft has no outline (D-146). */
+  onWriteOutline?: () => void
 }
 
 export function SendBackDialog({
@@ -45,6 +48,7 @@ export function SendBackDialog({
   report,
   initialFeedback,
   onSentBack,
+  onWriteOutline,
 }: SendBackDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -60,6 +64,7 @@ export function SendBackDialog({
             initialFeedback={initialFeedback}
             onOpenChange={onOpenChange}
             onSentBack={onSentBack}
+            onWriteOutline={onWriteOutline}
           />
         ) : null}
       </DialogContent>
@@ -75,6 +80,7 @@ function SendBackForm({
   initialFeedback,
   onOpenChange,
   onSentBack,
+  onWriteOutline,
 }: Omit<SendBackDialogProps, "open">) {
   const { t } = useTranslation()
   const showError = useErrorToast()
@@ -83,6 +89,7 @@ function SendBackForm({
   const [feedback, setFeedback] = useState(initialFeedback ?? report?.feedback ?? "")
   const [mode, setMode] = useState<FeedbackMode>("revise")
   const [ticked, setTicked] = useState<Set<number>>(() => defaultTicked(issues.length))
+  const [outlineMissing, setOutlineMissing] = useState(false)
 
   const toggle = (index: number, checked: boolean) => {
     setTicked((current) => {
@@ -113,7 +120,13 @@ function SendBackForm({
           onOpenChange(false)
           onSentBack?.(response.session_id)
         },
-        onError: showError,
+        onError: (error) => {
+          if (error instanceof ApiError && error.code === "chapter.outline_missing") {
+            setOutlineMissing(true)
+            return
+          }
+          showError(error)
+        },
       },
     )
   }
@@ -139,6 +152,15 @@ function SendBackForm({
               onChange={(event) => setFeedback(event.target.value)}
             />
           </div>
+
+          {outlineMissing ? (
+            <div className="space-y-1 rounded-md border border-status-waiting/40 bg-status-waiting/10 p-3 text-sm">
+              <p className="font-medium">{t("chapter:send_back_dialog.outline_missing_title")}</p>
+              <p className="text-muted-foreground">
+                {t("chapter:send_back_dialog.outline_missing_hint")}
+              </p>
+            </div>
+          ) : null}
 
           {issues.length === 0 ? null : (
             <div className="space-y-1.5">
@@ -212,9 +234,20 @@ function SendBackForm({
         <Button variant="ghost" onClick={() => onOpenChange(false)}>
           {t("common:cancel")}
         </Button>
-        <Button disabled={feedback.trim() === "" || sendBack.isPending} onClick={submit}>
-          {t("chapter:send_back_dialog.confirm")}
-        </Button>
+        {outlineMissing ? (
+          <Button
+            onClick={() => {
+              onOpenChange(false)
+              onWriteOutline?.()
+            }}
+          >
+            {t("chapter:send_back_dialog.write_outline")}
+          </Button>
+        ) : (
+          <Button disabled={feedback.trim() === "" || sendBack.isPending} onClick={submit}>
+            {t("chapter:send_back_dialog.confirm")}
+          </Button>
+        )}
       </DialogFooter>
     </>
   )

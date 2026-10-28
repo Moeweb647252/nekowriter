@@ -231,5 +231,6 @@
   "usage_summary": "{{requests}} requests · {{input}} input tokens · {{output}} output tokens",
   "planned_outline_ready": "Outline ready",
   "model_planner_default": "Default: {{model}}",
-  "model_planner_follows_writer": "Follows the Writer: {{model}}"
+  "model_planner_follows_writer": "Follows the Writer: {{model}}",
+  "pause_after_outline_hint": "When off, the planner's outline is accepted as soon as it is submitted."
 }

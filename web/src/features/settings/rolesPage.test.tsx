@@ -96,11 +96,18 @@ describe("RolesPage model pickers (PROJECT §8.12)", () => {
       "DeepSeek · Review model",
     )
     // The roles left unassigned still say so rather than rendering blank.
-    for (const role of ["conception", "reviewer", "archivist"]) {
+    for (const role of ["conception", "planner", "reviewer", "archivist"]) {
       expect(screen.getByLabelText(t(`settings:role.${role}`))).toHaveTextContent(
-        t("settings:role_unset"),
+        role === "planner" ? t("settings:role_planner_unset") : t("settings:role_unset"),
       )
     }
+  })
+
+  it("labels the planner's unset option as following the writer", () => {
+    rolesDefaults = {}
+    render(<RolesPage />)
+    const trigger = screen.getByLabelText(t("settings:role.planner"))
+    expect(trigger).toHaveTextContent(t("settings:role_planner_unset"))
   })
 
   it("writes null when a role is returned to 'Not set'", async () => {
@@ -138,7 +145,14 @@ describe("RolesPage model pickers (PROJECT §8.12)", () => {
     rolesDefaults = { conception: 7, researcher: null, writer: 8, reviewer: null, archivist: 7 }
     render(<RolesPage />)
 
-    for (const role of ["conception", "researcher", "writer", "reviewer", "archivist"]) {
+    for (const role of [
+      "conception",
+      "researcher",
+      "planner",
+      "writer",
+      "reviewer",
+      "archivist",
+    ]) {
       const trigger = screen.getByLabelText(t(`settings:role.${role}`))
       expect((trigger.textContent ?? "").trim(), role).not.toBe("")
     }

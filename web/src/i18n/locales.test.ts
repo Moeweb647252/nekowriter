@@ -28,6 +28,7 @@ const ALL_ERROR_CODES: ErrorCode[] = [
   "chapter.session_exists",
   "chapter.previous_not_ready",
   "chapter.is_anchor",
+  "chapter.outline_missing",
   "chapter.locked",
   "session.invalid_state",
   "model.missing_role",
@@ -293,6 +294,7 @@ function hasTargetVariant(name: string): boolean {
     const kinds = [
       "conception",
       "research",
+      "chapter_outline",
       "chapter_write",
       "chapter_revise",
       "chapter_review",

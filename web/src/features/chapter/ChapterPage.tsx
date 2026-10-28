@@ -34,6 +34,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { keys } from "@/api/keys"
 import { useChapterDoc } from "@/stores/chapterDoc"
+import { useUiStore } from "@/stores/ui"
 import { isUnspaced } from "@/lib/language"
 
 const TABS = ["text", "outline", "review", "history"] as const
@@ -183,6 +184,10 @@ export default function ChapterPage() {
             calls={outlineSnapshot.data?.tool_calls}
             onSessionStarted={() => {
               void queryClient.invalidateQueries({ queryKey: keys.chapters.detail(chapterId) })
+            }}
+            onFocusSession={(sessionId) => {
+              useUiStore.getState().setPinnedSession(bookId, sessionId)
+              void queryClient.invalidateQueries({ queryKey: keys.sessions.detail(sessionId) })
             }}
           />
         </TabsContent>

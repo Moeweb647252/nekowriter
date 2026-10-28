@@ -77,9 +77,20 @@ export function ChapterHeader({
     }
   }
 
+  // An open planner or writer session owns the chapter's start actions (D-146); a running one
+  // also blocks Submit. Approve needs no open session at all (spec/08 §1.1).
+  const openOwnerSession = chapter.open_sessions.find(
+    (candidate) => candidate.role === "planner" || candidate.role === "writer",
+  )
+  const ownerRunning = chapter.open_sessions.some(
+    (candidate) =>
+      (candidate.role === "planner" || candidate.role === "writer") &&
+      candidate.status === "running",
+  )
   // Status actions from PROJECT §8.5; drafting/revising are driven by the agent panel.
-  const canSubmit = chapter.status === "drafting" || chapter.status === "revising"
-  const canApprove = chapter.status === "in_review"
+  const canSubmit =
+    (chapter.status === "drafting" || chapter.status === "revising") && !ownerRunning
+  const canApprove = chapter.status === "in_review" && openOwnerSession === undefined
   const latestReport = reviews.data?.reports[0]
   const canMaintain =
     chapter.status === "official" &&
@@ -88,9 +99,6 @@ export function ChapterHeader({
   // spec/08 §1.1: a manual submit ends the chapter's open, non-running planner or writer
   // session, so the author is warned first. A `running` session is left to the endpoint's 409:
   // stopping it is a separate action on the session.
-  const openOwnerSession = chapter.open_sessions.find(
-    (session) => session.role === "planner" || session.role === "writer",
-  )
   const openWriterSession = chapter.open_sessions.find(
     (session) =>
       (session.role === "planner" || session.role === "writer") && session.status !== "running",
@@ -297,6 +305,7 @@ export function ChapterHeader({
         onOpenChange={setSendBackOpen}
         report={latestReport}
         onSentBack={(sessionId) => onSessionStarted?.(sessionId)}
+        onWriteOutline={() => setOutlineOpen(true)}
       />
       <OutlineDialog
         chapterId={chapter.id}
@@ -316,6 +325,7 @@ export function ChapterHeader({
         onOpenChange={setWriteOpen}
         onStarted={(sessionId) => onSessionStarted?.(sessionId)}
         onWriteOutline={() => setOutlineOpen(true)}
+        hasOutline={chapter.has_outline}
       />
       <ConfirmDialog
         open={submitConfirmOpen}

@@ -162,6 +162,92 @@ describe("OutlineTab", () => {
     })
   })
 
+  it("adopts a new server outline when the author has not typed", () => {
+    const view = (chapterValue: ChapterDto, state: "awaiting_approval" | "accepted") => (
+      <OutlineTab
+        chapter={chapterValue}
+        bookId={1}
+        unspaced={false}
+        settings={SETTINGS}
+        state={state}
+        session={state === "awaiting_approval" ? HELD_SESSION : undefined}
+        calls={
+          state === "awaiting_approval"
+            ? [
+                {
+                  id: 5,
+                  name: "submit_outline",
+                  input: { outline: "", reference_notes: "" },
+                } as never,
+              ]
+            : undefined
+        }
+      />
+    )
+    const { rerender } = render(view(chapter({ outline: "" }), "awaiting_approval"))
+    rerender(view(chapter({ outline: "提议细纲", has_outline: true }), "accepted"))
+    expect(screen.getByLabelText("Outline")).toHaveValue("提议细纲")
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled()
+  })
+
+  it("keeps the author's typing when a refetch brings a different server value", async () => {
+    const user = userEvent.setup()
+    const view = (outline: string) => (
+      <OutlineTab
+        chapter={chapter({ outline, has_outline: true })}
+        bookId={1}
+        unspaced={false}
+        settings={SETTINGS}
+        state="accepted"
+      />
+    )
+    const { rerender } = render(view("原始细纲"))
+    await user.clear(screen.getByLabelText("Outline"))
+    await user.type(screen.getByLabelText("Outline"), "作者正在写的细纲")
+    rerender(view("服务器新值"))
+    expect(screen.getByLabelText("Outline")).toHaveValue("作者正在写的细纲")
+  })
+
+  it("gates Save and Write the outline while an owner session is open", () => {
+    const runningWriter = {
+      id: 7,
+      book_id: 1,
+      role: "writer",
+      kind: "chapter_write",
+      status: "running",
+    } as unknown as SessionDto
+    render(
+      <OutlineTab
+        chapter={chapter({ open_sessions: [runningWriter] })}
+        bookId={1}
+        unspaced={false}
+        settings={SETTINGS}
+        state="missing"
+      />,
+    )
+    expect(screen.queryByRole("button", { name: "Write the outline" })).not.toBeInTheDocument()
+    expect(screen.getByLabelText("Outline")).toHaveAttribute("readonly")
+  })
+
+  it("offers the in-progress focus link", async () => {
+    const user = userEvent.setup()
+    const onFocusSession = vi.fn()
+    const session = { id: 9, kind: "chapter_outline", status: "running" } as unknown as SessionDto
+    render(
+      <OutlineTab
+        chapter={chapter()}
+        bookId={1}
+        unspaced={false}
+        settings={SETTINGS}
+        state="in_progress"
+        session={session}
+        onFocusSession={onFocusSession}
+      />,
+    )
+    await user.click(screen.getByRole("button", { name: "Focus in the agent panel" }))
+    expect(onFocusSession).toHaveBeenCalledWith(9)
+  })
+
   it("shows an empty state with Write the outline when no outline exists", () => {
     render(
       <OutlineTab

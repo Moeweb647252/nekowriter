@@ -208,13 +208,16 @@ export default function BookSettingsPage() {
             onCheckedChange={(checked) => update({ auto_pause: checked })}
           />
         </div>
-        <div className="flex items-center justify-between">
-          <Label htmlFor="settings-pause-outline">{t("book:pause_after_outline")}</Label>
-          <Switch
-            id="settings-pause-outline"
-            checked={settings.pause_after_outline}
-            onCheckedChange={(checked) => update({ pause_after_outline: checked })}
-          />
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="settings-pause-outline">{t("book:pause_after_outline")}</Label>
+            <Switch
+              id="settings-pause-outline"
+              checked={settings.pause_after_outline}
+              onCheckedChange={(checked) => update({ pause_after_outline: checked })}
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">{t("book:pause_after_outline_hint")}</p>
         </div>
         <div className="flex items-center justify-between">
           <Label htmlFor="settings-auto-maintenance">{t("book:auto_maintenance")}</Label>

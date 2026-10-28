@@ -34,6 +34,8 @@ export type OutlineTabProps = {
   session?: SessionDto
   calls?: readonly ToolCallDto[]
   onSessionStarted?: (sessionId: number) => void
+  /** Focus an existing session in the agent panel (the in-progress affordance). */
+  onFocusSession?: (sessionId: number) => void
 }
 
 /** One read-only Markdown field of a held or running outline. */
@@ -60,6 +62,7 @@ export function OutlineTab({
   session,
   calls,
   onSessionStarted,
+  onFocusSession,
 }: OutlineTabProps) {
   const { t } = useTranslation()
   const showError = useErrorToast()
@@ -69,8 +72,36 @@ export function OutlineTab({
   const [outline, setOutline] = useState(chapter.outline)
   const [notes, setNotes] = useState(chapter.reference_notes)
   const [outlineOpen, setOutlineOpen] = useState(false)
+  // The "last seen server value" guard (D-139 pattern): a refetch must not clobber typing, but a
+  // value the author has not edited must follow the server. Without it, the stale local `""`
+  // after an accepted proposal made Save dirty and could write the accepted outline away (F1).
+  // The adjustment happens while rendering on the prop transition — the React-endorsed pattern
+  // for deriving state from props, and it keeps the draft when `outline` differs from last seen.
+  const [lastServerOutline, setLastServerOutline] = useState(chapter.outline)
+  const [lastServerNotes, setLastServerNotes] = useState(chapter.reference_notes)
+  if (chapter.outline !== lastServerOutline) {
+    setLastServerOutline(chapter.outline)
+    if (outline === lastServerOutline) {
+      setOutline(chapter.outline)
+    }
+  }
+  if (chapter.reference_notes !== lastServerNotes) {
+    setLastServerNotes(chapter.reference_notes)
+    if (notes === lastServerNotes) {
+      setNotes(chapter.reference_notes)
+    }
+  }
   const dirty = outline !== chapter.outline || notes !== chapter.reference_notes
   const saving = patchChapter.isPending
+  const openOwnerSession = chapter.open_sessions.find(
+    (candidate) => candidate.role === "planner" || candidate.role === "writer",
+  )
+  const runningOwnerSession = chapter.open_sessions.some(
+    (candidate) =>
+      (candidate.role === "planner" || candidate.role === "writer") &&
+      candidate.status === "running",
+  )
+  const canStartOutline = openOwnerSession === undefined && chapter.status !== "official"
 
   // The pre-split path: a held submit_outline in a chapter_write session (legacy branch).
   const legacyHeld = writer.heldOutline && writer.session?.kind === "chapter_write"
@@ -102,7 +133,10 @@ export function OutlineTab({
     resume.mutate({ sessionId: session.id, feedback }, { onError: showError })
   }
 
-  const editable = state === "missing" || state === "accepted" || legacyHeld
+  // Save/Redo and the missing-state Write outline follow the header's gating: an open session
+  // owns the step (409), and a running owner locks the chapter (423). Editing an accepted outline
+  // while a non-running writer session holds is still allowed — that is how edit reports work.
+  const editable = (state === "missing" || state === "accepted" || legacyHeld) && !runningOwnerSession
 
   return (
     <div className="mx-auto max-w-[42em] space-y-5">
@@ -112,17 +146,29 @@ export function OutlineTab({
             title={t("chapter:outline_tab.empty_title")}
             description={t("chapter:outline_tab.empty_hint")}
           />
-          <div className="flex justify-center">
-            <Button size="sm" onClick={() => setOutlineOpen(true)}>
-              {t("chapter:write_outline")}
-            </Button>
-          </div>
+          {canStartOutline ? (
+            <div className="flex justify-center">
+              <Button size="sm" onClick={() => setOutlineOpen(true)}>
+                {t("chapter:write_outline")}
+              </Button>
+            </div>
+          ) : null}
         </div>
       ) : null}
       {state === "in_progress" && !legacyHeld ? (
         <div className="rounded-md border p-3 text-sm">
           <p className="font-medium">{t("chapter:outline_tab.planner_working")}</p>
           <p className="text-muted-foreground">{t("chapter:outline_tab.planner_working_hint")}</p>
+          {session === undefined ? null : (
+            <Button
+              size="sm"
+              variant="link"
+              className="px-0"
+              onClick={() => onFocusSession?.(session.id)}
+            >
+              {t("chapter:outline_tab.focus_session")}
+            </Button>
+          )}
         </div>
       ) : null}
 
@@ -231,7 +277,7 @@ export function OutlineTab({
           >
             {t("common:reset")}
           </Button>
-          {state === "accepted" && chapter.status !== "official" ? (
+          {state === "accepted" && canStartOutline ? (
             <Button size="sm" variant="outline" onClick={() => setOutlineOpen(true)}>
               {t("chapter:redo_outline")}
             </Button>

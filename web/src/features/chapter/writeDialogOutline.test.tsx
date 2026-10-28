@@ -49,6 +49,7 @@ describe("WriteDialog", () => {
         onOpenChange={() => {}}
         onStarted={() => {}}
         onWriteOutline={() => {}}
+        hasOutline={false}
       />,
     )
     expect(screen.queryByText("Pause after the outline")).not.toBeInTheDocument()
@@ -74,11 +75,48 @@ describe("WriteDialog", () => {
         onOpenChange={() => {}}
         onStarted={() => {}}
         onWriteOutline={onWriteOutline}
+        hasOutline={false}
       />,
     )
     await user.click(screen.getByRole("button", { name: "Start writing" }))
     expect(screen.getByText("This chapter has no outline")).toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Write the outline" }))
     expect(onWriteOutline).toHaveBeenCalledTimes(1)
+  })
+
+  it("clears the outline-missing warning when reopened or when the chapter gains an outline", async () => {
+    const user = userEvent.setup()
+    writeMutate.mockImplementation(
+      (_input: unknown, options: { onError: (error: unknown) => void }) => {
+        options.onError(new ApiError(409, "chapter.outline_missing", "missing"))
+      },
+    )
+    const view = (open: boolean, hasOutline: boolean) => (
+      <TooltipProvider>
+        <WriteDialog
+        chapterId={1}
+        bookId={1}
+        settings={SETTINGS}
+        guidance=""
+        open={open}
+        onOpenChange={() => {}}
+        onStarted={() => {}}
+        onWriteOutline={() => {}}
+          hasOutline={hasOutline}
+        />
+      </TooltipProvider>
+    )
+    const { rerender } = testingRender(view(true, false))
+    await user.click(screen.getByRole("button", { name: "Start writing" }))
+    expect(screen.getByText("This chapter has no outline")).toBeInTheDocument()
+    // Reopening resets the latch.
+    rerender(view(false, false))
+    rerender(view(true, false))
+    expect(screen.queryByText("This chapter has no outline")).not.toBeInTheDocument()
+    // A chapter that gained an outline also clears it.
+    await user.click(screen.getByRole("button", { name: "Start writing" }))
+    expect(screen.getByText("This chapter has no outline")).toBeInTheDocument()
+    rerender(view(true, true))
+    expect(screen.queryByText("This chapter has no outline")).not.toBeInTheDocument()
   })
 })

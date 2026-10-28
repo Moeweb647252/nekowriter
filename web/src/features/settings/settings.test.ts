@@ -163,7 +163,14 @@ describe("settings locale coverage", () => {
           "string",
         )
       }
-      for (const role of ["conception", "researcher", "writer", "reviewer", "archivist"]) {
+      for (const role of [
+        "conception",
+        "researcher",
+        "planner",
+        "writer",
+        "reviewer",
+        "archivist",
+      ]) {
         expect(table[`role.${role}`], `${locale} settings:role.${role}`).toBeTypeOf("string")
       }
     }
