@@ -252,6 +252,33 @@ describe("chapter paragraph editing with real mutations", () => {
     })
   })
 
+  it("retries an empty pending dismissal after a failed PATCH (R13-01)", async () => {
+    const user = userEvent.setup()
+    endpoints.patchContent
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockResolvedValueOnce({
+        version: 2,
+        ops: [{ op: "update", pid: "p1", text: "第一段。 edit" }],
+        word_count: 3,
+        tail_open: false,
+      })
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ChapterText chapter={chapter()} bookId={1} unspaced fullTextOpen={false} onFullTextOpenChange={() => {}} />
+      </QueryClientProvider>,
+    )
+    await user.click(screen.getByText("第一段。"))
+    const editor = screen.getByRole("textbox") as HTMLTextAreaElement
+    await user.type(editor, " edit")
+    editor.setSelectionRange(editor.value.length, editor.value.length)
+    await user.keyboard("{Enter}")
+    const pending = screen.getByRole("textbox", { name: "New paragraph" })
+    fireEvent.blur(pending)
+    await waitFor(() => expect(endpoints.patchContent).toHaveBeenCalledTimes(1))
+    fireEvent.blur(pending)
+    await waitFor(() => expect(endpoints.patchContent).toHaveBeenCalledTimes(2))
+  })
+
   it("retries a pending paragraph after a failed PATCH (R12-02)", async () => {
     const user = userEvent.setup()
     endpoints.patchContent

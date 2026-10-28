@@ -148,12 +148,18 @@ export function ChapterText({
     [nextPid, patchMutate, paragraphs, version, showError],
   )
   const dismissPending = useCallback(
-    (pid: string, text: string, startText: string) => {
+    (pid: string, text: string, startText: string, reset: () => void) => {
       const current = paragraphs.find((paragraph) => paragraph.pid === pid)?.text
       if (current === startText && text !== startText) {
         patchMutate(
           { base_version: version, ops: [{ op: "update", pid, text }] },
-          { onError: showError, onSuccess: () => setPendingAfter(null) },
+          {
+            onError: (error) => {
+              showError(error)
+              reset()
+            },
+            onSuccess: () => setPendingAfter(null),
+          },
         )
       } else {
         setPendingAfter(null)
@@ -289,8 +295,13 @@ export function ChapterText({
                       reset,
                     )
                   }
-                  onDismiss={() =>
-                    dismissPending(paragraph.pid, pendingAfter.text, pendingAfter.startText)
+                  onDismiss={(reset) =>
+                    dismissPending(
+                      paragraph.pid,
+                      pendingAfter.text,
+                      pendingAfter.startText,
+                      reset,
+                    )
                   }
                 />
               ) : null}
@@ -518,7 +529,7 @@ export function PendingParagraph({
   onDismiss,
 }: {
   onPersist: (text: string, onError: () => void) => void
-  onDismiss: () => void
+  onDismiss: (onError: () => void) => void
 }) {
   const { t } = useTranslation()
   const [text, setText] = useState("")
@@ -534,7 +545,9 @@ export function PendingParagraph({
     submitted.current = true
     const value = text.trim()
     if (value === "") {
-      onDismiss()
+      onDismiss(() => {
+        submitted.current = false
+      })
     } else {
       onPersist(value, () => {
         submitted.current = false
@@ -558,7 +571,9 @@ export function PendingParagraph({
           }
           if (event.key === "Escape") {
             event.preventDefault()
-            onDismiss()
+            onDismiss(() => {
+              submitted.current = false
+            })
           }
           if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
             event.preventDefault()
