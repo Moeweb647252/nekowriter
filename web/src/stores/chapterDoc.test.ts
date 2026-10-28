@@ -65,6 +65,16 @@ describe("chapterDoc.applyOps", () => {
     expect(version()).toBe(4)
   })
 
+  it("keeps next_pid in step with inserted pids", () => {
+    useChapterDoc.getState().load(1, 1, content([["p1", "one"]]))
+    useChapterDoc
+      .getState()
+      .applyOps(2, [{ op: "insert", after: "p1", pid: "p9", text: "external" }], "agent")
+    expect(useChapterDoc.getState().nextPid).toBe(10)
+    useChapterDoc.getState().applyOps(3, [{ op: "delete", pid: "p9" }], "agent")
+    expect(useChapterDoc.getState().nextPid).toBe(10)
+  })
+
   it("updates and deletes a paragraph", () => {
     useChapterDoc.getState().load(1, 1, content([["p1", "one"], ["p2", "two"]]))
     useChapterDoc

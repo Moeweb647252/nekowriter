@@ -1,4 +1,5 @@
 /** Real-hook paragraph save/race and Enter-insert tests (R9-01, R9-02). */
+import { useState } from "react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
@@ -23,7 +24,7 @@ vi.mock("@/components/common/ErrorToast", () => ({
   useWarningToasts: () => vi.fn(),
 }))
 
-import { ChapterText } from "@/features/chapter/ChapterText"
+import { ChapterText, PendingParagraph } from "@/features/chapter/ChapterText"
 
 function chapter(): ChapterDto {
   return {
@@ -176,6 +177,90 @@ describe("chapter paragraph editing with real mutations", () => {
     await waitFor(() => expect(useChapterDoc.getState().paragraphs).toHaveLength(3))
   })
 
+  it("re-syncs the full-text editor after a blur save response advances the store (R11-03)", async () => {
+    const user = userEvent.setup()
+    const pendingPatch = deferred<{
+      version: number
+      ops: { op: "update"; pid: string; text: string }[]
+      word_count: number
+      tail_open: boolean
+    }>()
+    endpoints.patchContent.mockReturnValueOnce(pendingPatch.promise)
+    function Harness() {
+      const [open, setOpen] = useState(false)
+      return (
+        <ChapterText
+          chapter={chapter()}
+          bookId={1}
+          unspaced
+          fullTextOpen={open}
+          onFullTextOpenChange={setOpen}
+        />
+      )
+    }
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <Harness />
+      </QueryClientProvider>,
+    )
+    await user.click(screen.getByText("第一段。"))
+    await user.type(screen.getByRole("textbox"), " edit")
+    await user.click(screen.getByRole("button", { name: "Full-text edit" }))
+    expect(await screen.findByRole("textbox")).toBeInTheDocument()
+    await act(async () => {
+      pendingPatch.resolve({
+        version: 2,
+        ops: [{ op: "update", pid: "p1", text: "第一段。 edit" }],
+        word_count: 3,
+        tail_open: false,
+      })
+    })
+    expect(screen.queryByRole("status")).not.toBeInTheDocument()
+    expect(screen.getByRole("textbox")).toHaveValue("第一段。 edit\n\n第二段。")
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled()
+  })
+
+  it("submits a pending paragraph only once after Ctrl+Enter and blur (R11-02)", async () => {
+    const user = userEvent.setup()
+    const pendingPatch = deferred<{
+      version: number
+      ops: { op: "insert"; after: string; pid: string; text: string }[]
+      word_count: number
+      tail_open: boolean
+    }>()
+    endpoints.patchContent.mockReturnValueOnce(pendingPatch.promise)
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ChapterText chapter={chapter()} bookId={1} unspaced fullTextOpen={false} onFullTextOpenChange={() => {}} />
+      </QueryClientProvider>,
+    )
+    await user.click(screen.getByText("第一段。"))
+    await user.keyboard("{Enter}")
+    const pending = screen.getByRole("textbox")
+    await user.type(pending, "新段落")
+    await user.keyboard("{Control>}{Enter}{/Control}")
+    fireEvent.keyDown(pending, { key: "Enter", ctrlKey: true })
+    fireEvent.blur(pending)
+    expect(endpoints.patchContent).toHaveBeenCalledTimes(1)
+    pendingPatch.resolve({
+      version: 2,
+      ops: [{ op: "insert", after: "p1", pid: "p3", text: "新段落" }],
+      word_count: 4,
+      tail_open: false,
+    })
+  })
+
+  it("submits the pending component only once across Ctrl+Enter and blur (R11-02)", async () => {
+    const user = userEvent.setup()
+    const onPersist = vi.fn()
+    render(<PendingParagraph onPersist={onPersist} onDismiss={vi.fn()} />)
+    const pending = screen.getByRole("textbox")
+    await user.type(pending, "新段落")
+    fireEvent.keyDown(pending, { key: "Enter", ctrlKey: true })
+    fireEvent.blur(pending)
+    expect(onPersist).toHaveBeenCalledTimes(1)
+  })
+
   it("does not persist an empty pending paragraph", async () => {
     const user = userEvent.setup()
     render(
@@ -190,6 +275,48 @@ describe("chapter paragraph editing with real mutations", () => {
     expect(screen.getByRole("textbox")).toBeInTheDocument()
     await user.tab()
     expect(endpoints.patchContent).not.toHaveBeenCalled()
+  })
+
+  it("anchors after an external insert that advanced next_pid (R11-01)", async () => {
+    const user = userEvent.setup()
+    const one = chapter()
+    one.content = { paragraphs: [{ pid: "p1", text: "one" }], next_pid: 2, tail_open: false }
+    useChapterDoc.getState().load(1, 1, one.content)
+    useChapterDoc.getState().applyOps(
+      2,
+      [{ op: "insert", after: "p1", pid: "p2", text: "external" }],
+      "agent",
+    )
+    endpoints.patchContent.mockResolvedValueOnce({
+      version: 3,
+      ops: [
+        { op: "update", pid: "p1", text: "one" },
+        { op: "insert", after: "p1", pid: "p3", text: "two" },
+        { op: "insert", after: "p3", pid: "p4", text: "new" },
+      ],
+      word_count: 3,
+      tail_open: false,
+    })
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ChapterText chapter={one} bookId={1} unspaced fullTextOpen={false} onFullTextOpenChange={() => {}} />
+      </QueryClientProvider>,
+    )
+    await user.click(screen.getByText("one"))
+    const editor = screen.getByRole("textbox") as HTMLTextAreaElement
+    fireEvent.change(editor, { target: { value: "one\ntwo" } })
+    editor.setSelectionRange(editor.value.length, editor.value.length)
+    await user.keyboard("{Enter}")
+    await user.type(screen.getByRole("textbox"), "new")
+    await user.tab()
+    await waitFor(() => expect(endpoints.patchContent).toHaveBeenCalledTimes(1))
+    expect(endpoints.patchContent.mock.calls[0]?.[1]).toEqual({
+      base_version: 2,
+      ops: [
+        { op: "update", pid: "p1", text: "one\ntwo" },
+        { op: "insert", after: "p3", text: "new" },
+      ],
+    })
   })
 
   it("orders a pending paragraph after a line break split (R10-04)", async () => {

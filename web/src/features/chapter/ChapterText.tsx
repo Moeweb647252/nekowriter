@@ -72,6 +72,7 @@ export function ChapterText({
   const paragraphs = useChapterDoc((state) => state.paragraphs)
   const tailOpen = useChapterDoc((state) => state.tailOpen)
   const version = useChapterDoc((state) => state.version)
+  const nextPid = useChapterDoc((state) => state.nextPid)
   const highlights = useChapterDoc((state) => state.highlights)
   const clearHighlight = useChapterDoc((state) => state.clearHighlight)
   const { patch, putText } = useContentMutations(chapter.id, bookId)
@@ -132,7 +133,7 @@ export function ChapterText({
         // belongs after the last one, not before the split tail (R10-04).
         const lines = text.split("\n").filter((line) => line.trim() !== "").length
         if (lines > 1) {
-          anchor = `p${chapter.content.next_pid + lines - 2}`
+          anchor = `p${nextPid + lines - 2}`
         }
       }
       ops.push({ op: "insert", after: anchor, text: newText })
@@ -141,7 +142,7 @@ export function ChapterText({
         onSuccess: () => setPendingAfter(null),
       })
     },
-    [chapter.content.next_pid, patchMutate, paragraphs, version, showError],
+    [nextPid, patchMutate, paragraphs, version, showError],
   )
   const dismissPending = useCallback(
     (pid: string, text: string, startText: string) => {
@@ -185,6 +186,7 @@ export function ChapterText({
         version={version}
         locked={locked}
         saving={putText.isPending}
+        savingParagraph={patch.isPending}
         onCancel={() => onFullTextOpenChange(false)}
         onSave={(text) => {
           const saveToken = fullTextToken.current
@@ -502,7 +504,7 @@ export const Paragraph = memo(function Paragraph({
   )
 })
 
-function PendingParagraph({
+export function PendingParagraph({
   onPersist,
   onDismiss,
 }: {
@@ -511,11 +513,16 @@ function PendingParagraph({
 }) {
   const { t } = useTranslation()
   const [text, setText] = useState("")
+  const submitted = useRef(false)
   const ref = useRef<HTMLTextAreaElement>(null)
   useEffect(() => {
     ref.current?.focus()
   }, [])
   const finish = () => {
+    if (submitted.current) {
+      return
+    }
+    submitted.current = true
     const value = text.trim()
     if (value === "") {
       onDismiss()
@@ -556,6 +563,7 @@ type FullTextEditorProps = {
   chapter: ChapterDto
   version: number
   saving: boolean
+  savingParagraph: boolean
   locked: boolean
   onCancel: () => void
   onSave: (text: string) => void
@@ -566,16 +574,38 @@ function FullTextEditor({
   chapter,
   version,
   saving,
+  savingParagraph,
   locked,
   onCancel,
   onSave,
 }: FullTextEditorProps) {
   const { t } = useTranslation()
   const [text, setText] = useState(() => paragraphTextOf(chapter))
-  // The editor opens against one version. If an agent write advances it while the editor is
-  // open, saving the old whole-document text would silently overwrite that write (S-3): refuse
-  // and ask the author to reopen the editor against the new draft.
-  const [baseVersion] = useState(chapter.content_version)
+  const [dirty, setDirty] = useState(false)
+  // The editor opens against one version. Prefer the live store when it already holds this
+  // chapter (a paragraph blur may have advanced it); otherwise use the chapter DTO, which is
+  // correct on the first render after a chapter switch before the load effect runs (R8-01).
+  const storeChapterId = useChapterDoc((state) => state.chapterId)
+  const storeVersion = useChapterDoc((state) => state.version)
+  const storeParagraphs = useChapterDoc((state) => state.paragraphs)
+  const [baseVersion, setBaseVersion] = useState(
+    storeChapterId === chapter.id ? storeVersion : chapter.content_version,
+  )
+  const [openedDuringParagraphSave] = useState(savingParagraph)
+  const [lastVersion, setLastVersion] = useState(version)
+  if (
+    openedDuringParagraphSave &&
+    !dirty &&
+    storeChapterId === chapter.id &&
+    version !== lastVersion
+  ) {
+    // A paragraph blur saved just before this editor mounted; when its response advances the
+    // store, rebase the untouched editor instead of freezing the stale cached chapter text
+    // (R11-03).
+    setLastVersion(version)
+    setBaseVersion(version)
+    setText(storeParagraphs.map((paragraph) => paragraph.text).join("\n\n"))
+  }
   const stale = version !== baseVersion
   return (
     <div className="mx-auto max-w-[42em] space-y-3">
@@ -597,7 +627,10 @@ function FullTextEditor({
         autoFocus
         disabled={locked || stale}
         className="font-serif text-[1.05rem] leading-relaxed"
-        onChange={(event) => setText(event.target.value)}
+        onChange={(event) => {
+          setDirty(true)
+          setText(event.target.value)
+        }}
         onKeyDown={(event) => {
           if (isComposing(event)) {
             return

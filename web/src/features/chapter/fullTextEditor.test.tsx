@@ -122,6 +122,13 @@ describe("FullTextEditor", () => {
     expect(screen.getByRole("textbox")).toBeInTheDocument()
   })
 
+  it("opens against the live store after a blur save advanced it (R11-03)", () => {
+    useChapterDoc.getState().load(1, 2, chapter(1, "Chapter A text").content)
+    render(view(chapter(1, "Chapter A text")))
+    expect(screen.queryByRole("status")).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled()
+  })
+
   it("refuses to save when the document version advances under the editor (S-3)", async () => {
     const user = userEvent.setup()
     render(view(chapter(1, "Chapter A text")))

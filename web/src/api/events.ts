@@ -296,6 +296,7 @@ export function applyServerEvent(
           content: {
             ...cached.content,
             paragraphs: after.paragraphs,
+            next_pid: after.nextPid,
             tail_open: after.tailOpen,
           },
           content_version: version,

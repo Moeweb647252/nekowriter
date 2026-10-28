@@ -11,6 +11,7 @@ export type ApplyResult = "applied" | "gap"
 type ChapterDocState = {
   chapterId: number | null
   version: number
+  nextPid: number
   paragraphs: { pid: string; text: string }[]
   tailOpen: boolean
   highlights: Record<string, Highlight>
@@ -23,6 +24,7 @@ type ChapterDocState = {
 export const useChapterDoc = create<ChapterDocState>()((set, get) => ({
   chapterId: null,
   version: 0,
+  nextPid: 1,
   paragraphs: [],
   tailOpen: false,
   highlights: {},
@@ -30,6 +32,7 @@ export const useChapterDoc = create<ChapterDocState>()((set, get) => ({
     set({
       chapterId,
       version,
+      nextPid: content.next_pid,
       paragraphs: content.paragraphs.map((p) => ({ ...p })),
       tailOpen: content.tail_open,
       highlights: {},
@@ -45,6 +48,7 @@ export const useChapterDoc = create<ChapterDocState>()((set, get) => ({
     }
     let paragraphs = state.paragraphs.map((p) => ({ ...p }))
     let tailOpen = state.tailOpen
+    let nextPid = state.nextPid
     const highlights = { ...state.highlights }
     for (const op of ops) {
       switch (op.op) {
@@ -57,6 +61,10 @@ export const useChapterDoc = create<ChapterDocState>()((set, get) => ({
             return "gap"
           }
           paragraphs.splice(anchor + 1, 0, { pid: op.pid, text: op.text })
+          const numericPid = Number(op.pid.replace(/^p/, ""))
+          if (Number.isFinite(numericPid)) {
+            nextPid = Math.max(nextPid, numericPid + 1)
+          }
           if (actor === "agent") {
             highlights[op.pid] = { kind: "inserted", at: Date.now() }
           }
@@ -87,7 +95,7 @@ export const useChapterDoc = create<ChapterDocState>()((set, get) => ({
         }
       }
     }
-    set({ version, paragraphs, tailOpen, highlights })
+    set({ version, nextPid, paragraphs, tailOpen, highlights })
     return "applied"
   },
   clearHighlight: (pid) =>

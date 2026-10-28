@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest"
 
 import { applyServerEvent, flushLiveDeltas } from "@/api/events"
 import { keys } from "@/api/keys"
+import { useChapterDoc } from "@/stores/chapterDoc"
 import { useLiveStore } from "@/stores/live"
 
 function isInvalidated(
@@ -48,6 +49,32 @@ describe("applyServerEvent", () => {
     expect(isInvalidated(client, keys.changes.all)).toBe(true)
     expect(isInvalidated(client, keys.books.overview(1))).toBe(true)
     expect(isInvalidated(client, keys.chapters.detail(9))).toBe(false)
+  })
+
+  it("keeps next_pid in step with chapter.content events", () => {
+    const client = seededClient()
+    const content = {
+      paragraphs: [{ pid: "p1", text: "one" }],
+      next_pid: 2,
+      tail_open: false,
+    }
+    client.setQueryData(keys.chapters.detail(9), {
+      id: 9,
+      content,
+      content_version: 1,
+      word_count: 1,
+    })
+    useChapterDoc.getState().load(9, 1, content)
+    applyServerEvent(client, "chapter.content", {
+      chapter_id: 9,
+      version: 2,
+      ops: [{ op: "insert", after: "p1", pid: "p5", text: "external" }],
+      word_count: 2,
+      tail_open: false,
+      actor: "agent",
+    })
+    expect(useChapterDoc.getState().nextPid).toBe(6)
+    expect(client.getQueryData<{ content: { next_pid: number } }>(keys.chapters.detail(9))?.content.next_pid).toBe(6)
   })
 
   it("invalidates the proposal lists and the overview on proposal.changed", () => {
