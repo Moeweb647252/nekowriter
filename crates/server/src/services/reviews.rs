@@ -326,9 +326,24 @@ pub async fn send_back(
     let feedback_for_row = feedback_text.clone();
     let (session_id, events) = crate::services::write(state.db(), move |tx| {
         Box::pin(async move {
+            // The `require_in_review` above is a read on a different connection; an approve can
+            // commit `official` before this transaction. Re-read and revalidate here, before the
+            // feedback row or any creation side effect (R4-01). This is intentionally not the
+            // generic `chapter_guard`: an in-review redraft is legal and must stay legal.
+            let current = chapters::Entity::find_by_id(chapter_id)
+                .one(tx)
+                .await?
+                .ok_or_else(|| AppError::not_found(format!("chapter {chapter_id}")))?;
+            require_in_review(&current)?;
+            if mode == FeedbackMode::Redraft && current.outline.trim().is_empty() {
+                return Err(AppError::new(
+                    ErrorCode::ChapterOutlineMissing,
+                    "the chapter has no outline to redraft from",
+                ));
+            }
             let row = chapter_feedback::ActiveModel {
                 chapter_id: Set(chapter_id),
-                content_version: Set(chapter.content_version),
+                content_version: Set(current.content_version),
                 review_report_id: Set(input.review_report_id),
                 text: Set(feedback_for_row),
                 issues: Set(crate::db::json::to_json(&issues)
@@ -345,13 +360,13 @@ pub async fn send_back(
             let input = match mode {
                 FeedbackMode::Revise => CreateSession {
                     kind: SessionKind::ChapterRevise,
-                    book_id: Some(chapter.book_id),
+                    book_id: Some(current.book_id),
                     chapter_id: Some(chapter_id),
                     ..CreateSession::default()
                 },
                 FeedbackMode::Redraft => CreateSession {
                     kind: SessionKind::ChapterWrite,
-                    book_id: Some(chapter.book_id),
+                    book_id: Some(current.book_id),
                     chapter_id: Some(chapter_id),
                     redraft: true,
                     // The feedback row is linked to the session only after `create_inner`

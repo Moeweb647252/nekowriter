@@ -392,3 +392,128 @@ async fn a_concurrent_approve_makes_the_outline_creation_refuse() {
     );
     let _ = book_id;
 }
+
+/// `reviews::send_back` must reload and revalidate the chapter inside its write transaction:
+/// an approve can commit `official` between its precheck and its feedback/session writes. Both
+/// revise and redraft must refuse without clearing the official text or leaving a feedback row
+/// (R4-01).
+async fn race_send_back(mode: nekowriter::db::json::FeedbackMode) {
+    use nekowriter::api::dto::reviews::SendBackInput;
+    use nekowriter::db::Db;
+    use tokio::sync::oneshot;
+
+    let (app, _book_id, chapter_id) = app_with_book().await;
+    assign_models(&app).await;
+    app.execute(&format!(
+        "UPDATE chapters SET status = 'in_review', outline = '细纲', \
+         content = '{{\"paragraphs\":[{{\"pid\":\"p1\",\"text\":\"正文。\"}}],\"tail_open\":false}}' \
+         WHERE id = {chapter_id}"
+    ))
+    .await;
+    let (begun_tx, begun_rx) = oneshot::channel();
+    let (release_tx, release_rx) = oneshot::channel();
+    let db = app.db().clone();
+    let updater = tokio::spawn(async move {
+        Db::write(&db, move |tx| {
+            Box::pin(async move {
+                tx.execute_unprepared(&format!(
+                    "UPDATE chapters SET status = 'official' WHERE id = {chapter_id}"
+                ))
+                .await?;
+                let _ = begun_tx.send(());
+                let _ = release_rx.await;
+                Ok(())
+            })
+        })
+        .await
+        .expect("the status update commits");
+    });
+    begun_rx.await.expect("the updater holds the write lock");
+
+    let state = app.state().clone();
+    let mode_label = mode.as_str().to_owned();
+    let request = tokio::spawn(async move {
+        nekowriter::services::reviews::send_back(
+            &state,
+            chapter_id,
+            SendBackInput {
+                feedback: "请按意见修改".to_owned(),
+                mode,
+                review_report_id: None,
+                issue_indexes: Vec::new(),
+            },
+        )
+        .await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    release_tx.send(()).expect("release the updater");
+    let error = request
+        .await
+        .expect("the send-back task did not panic")
+        .expect_err("an official chapter must refuse send-back");
+    assert_eq!(
+        error.code,
+        nekowriter::error::ErrorCode::ChapterInvalidState
+    );
+    updater.await.expect("updater task");
+
+    let row = app
+        .db()
+        .conn()
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            format!("SELECT status, content FROM chapters WHERE id = {chapter_id}"),
+        ))
+        .await
+        .expect("query chapter")
+        .expect("chapter");
+    assert_eq!(
+        row.try_get::<String>("", "status").expect("status"),
+        "official"
+    );
+    assert!(
+        row.try_get::<String>("", "content")
+            .expect("content")
+            .contains("正文。"),
+        "the official text is untouched ({mode_label})"
+    );
+    let sessions = app
+        .db()
+        .conn()
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            format!(
+                "SELECT count(*) AS n FROM agent_sessions WHERE chapter_id = {chapter_id} \
+                 AND kind IN ('chapter_revise','chapter_write')"
+            ),
+        ))
+        .await
+        .expect("query sessions")
+        .expect("row")
+        .try_get::<i64>("", "n")
+        .expect("count");
+    assert_eq!(sessions, 0, "no revision session is created ({mode_label})");
+    let feedback = app
+        .db()
+        .conn()
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            format!("SELECT count(*) AS n FROM chapter_feedback WHERE chapter_id = {chapter_id}"),
+        ))
+        .await
+        .expect("query feedback")
+        .expect("row")
+        .try_get::<i64>("", "n")
+        .expect("count");
+    assert_eq!(feedback, 0, "no feedback row is left ({mode_label})");
+}
+
+#[tokio::test]
+async fn send_back_redraft_refuses_an_official_chapter() {
+    race_send_back(nekowriter::db::json::FeedbackMode::Redraft).await;
+}
+
+#[tokio::test]
+async fn send_back_revise_refuses_an_official_chapter() {
+    race_send_back(nekowriter::db::json::FeedbackMode::Revise).await;
+}
