@@ -871,7 +871,7 @@ async fn abandon_open_writer_sessions(
 ) -> Result<Vec<ServerEvent>, AppError> {
     let rows = agent_sessions::Entity::find()
         .filter(agent_sessions::Column::ChapterId.eq(chapter_id))
-        .filter(agent_sessions::Column::Role.eq(AgentRole::Writer.as_str()))
+        .filter(agent_sessions::Column::Role.is_in(["planner", "writer"]))
         .filter(agent_sessions::Column::Status.is_in([
             SessionStatus::Idle.as_str(),
             SessionStatus::Held.as_str(),
@@ -1374,8 +1374,12 @@ pub async fn to_dto(
 
 /// The roles that own a chapter and therefore appear in `ChapterDto.open_sessions`
 /// (spec/10 §2.8). Conception, research and canon-seed sessions are not per-chapter.
-pub const CHAPTER_ROLES: [AgentRole; 3] =
-    [AgentRole::Writer, AgentRole::Reviewer, AgentRole::Archivist];
+pub const CHAPTER_ROLES: [AgentRole; 4] = [
+    AgentRole::Planner,
+    AgentRole::Writer,
+    AgentRole::Reviewer,
+    AgentRole::Archivist,
+];
 
 /// The statuses that are closed (spec/03 §3). A session in one of them is never "open".
 pub const TERMINAL_STATUSES: [SessionStatus; 3] = [

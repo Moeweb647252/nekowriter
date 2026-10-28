@@ -575,3 +575,85 @@ async fn another_books_ready_tasks_do_not_leak_into_this_book() {
     );
     assert_eq!(attention_count(&body, "ready_research"), 0, "{body}");
 }
+
+// ───────────────────────────── outline stages (D-146) ─────────────────────────────
+
+/// Inserts an open outline session for a chapter.
+async fn insert_outline_session(app: &TestApp, chapter_id: i32, status: &str) {
+    app.execute(&format!(
+        "INSERT INTO agent_sessions(book_id, role, kind, chapter_id, track_id, model_snapshot, \
+         system_prompt, tools, status, phase, counters, usage, created_at, updated_at) \
+         SELECT book_id, 'planner', 'chapter_outline', id, track_id, '{{}}', '', '[]', \
+         '{status}', 'none', '{{}}', '{{}}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z' \
+         FROM chapters WHERE id = {chapter_id}"
+    ))
+    .await;
+}
+
+/// A planned chapter without an outline: the next action is `write_outline`, naming the chapter.
+#[tokio::test]
+async fn a_planned_chapter_without_an_outline_is_outlined_next() {
+    let (app, book_id, track_id, chapter_id) = app_with_book().await;
+    let body = overview(&app, book_id).await;
+    assert_eq!(body["next_action"]["kind"], "write_outline", "{body}");
+    assert_eq!(body["next_action"]["chapter"]["id"], chapter_id);
+    assert_eq!(body["next_action"]["track_id"], track_id);
+    assert_eq!(
+        body["next_action"].get("session_id"),
+        None,
+        "no session exists yet: {body}"
+    );
+}
+
+/// An open outline session counts as work in progress and is named.
+#[tokio::test]
+async fn an_open_outline_session_points_at_its_chapter_and_session() {
+    let (app, book_id, _, chapter_id) = app_with_book().await;
+    insert_outline_session(&app, chapter_id, "held").await;
+    let body = overview(&app, book_id).await;
+    assert_eq!(body["next_action"]["kind"], "write_outline", "{body}");
+    assert_eq!(body["next_action"]["chapter"]["id"], chapter_id);
+    let session_id = body["next_action"]["session_id"]
+        .as_i64()
+        .expect("the open outline session is named");
+    let (status, session) = app.get(&format!("/api/sessions/{session_id}")).await;
+    assert_eq!(status, StatusCode::OK, "{session}");
+    assert_eq!(session["session"]["kind"], "chapter_outline");
+}
+
+/// An accepted outline on a planned chapter: `write_chapter`.
+#[tokio::test]
+async fn a_planned_chapter_with_an_outline_is_written_next() {
+    let (app, book_id, _, chapter_id) = app_with_book().await;
+    app.execute(&format!(
+        "UPDATE chapters SET outline = '已确认的细纲' WHERE id = {chapter_id}"
+    ))
+    .await;
+    let body = overview(&app, book_id).await;
+    assert_eq!(body["next_action"]["kind"], "write_chapter", "{body}");
+    assert_eq!(body["next_action"]["chapter"]["id"], chapter_id);
+}
+
+/// AC6: a planned chapter is offered before `write_next` creates a new one, even when the previous
+/// chapter is official and synced.
+#[tokio::test]
+async fn a_planned_chapter_outranks_creating_the_next_one() {
+    let (app, book_id, track_id, first_id) = app_with_book().await;
+    official(&app, first_id, "synced").await;
+    let second = app.create_chapter(track_id, "Chapter Two").await;
+    let second_id = second["id"].as_i64().expect("chapter id") as i32;
+
+    let body = overview(&app, book_id).await;
+    assert_eq!(body["next_action"]["kind"], "write_outline", "{body}");
+    assert_eq!(body["next_action"]["chapter"]["id"], second_id);
+    assert_ne!(body["next_action"]["kind"], "write_next");
+
+    // With the outline accepted it becomes `write_chapter` on the same chapter.
+    app.execute(&format!(
+        "UPDATE chapters SET outline = '细纲' WHERE id = {second_id}"
+    ))
+    .await;
+    let body = overview(&app, book_id).await;
+    assert_eq!(body["next_action"]["kind"], "write_chapter", "{body}");
+    assert_eq!(body["next_action"]["chapter"]["id"], second_id);
+}

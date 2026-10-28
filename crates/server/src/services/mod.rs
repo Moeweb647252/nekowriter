@@ -101,12 +101,20 @@ pub(crate) fn field_error(field: &str, message: impl Into<String>) -> AppError {
     )]))
 }
 
-/// The id of a running writer session for a chapter, if any (spec/08 §1.4 locking).
+/// The id of a running planner or writer session for a chapter, if any (spec/08 §1.4 locking).
+///
+/// The two roles form one lock group (D-146): an outline session holds the same chapter lock as
+/// a write or revise session.
 pub(crate) async fn running_writer_session(
     conn: &impl ConnectionTrait,
     chapter_id: i32,
 ) -> Result<Option<i32>, AppError> {
-    first_session(conn, chapter_id, "role = 'writer' AND status = 'running'").await
+    first_session(
+        conn,
+        chapter_id,
+        "role IN ('planner','writer') AND status = 'running'",
+    )
+    .await
 }
 
 /// The id of the first session of `chapter_id` matching `condition_sql`.
@@ -150,7 +158,7 @@ pub(crate) async fn open_planner_session(
     .await
 }
 
-/// Any open writer session of a chapter.
+/// Any open planner or writer session of a chapter — the one lock group of D-146.
 pub(crate) async fn open_writer_session(
     conn: &impl ConnectionTrait,
     chapter_id: i32,
@@ -158,7 +166,7 @@ pub(crate) async fn open_writer_session(
     first_session(
         conn,
         chapter_id,
-        "role = 'writer' AND status NOT IN ('completed','superseded','abandoned')",
+        "role IN ('planner','writer') AND status NOT IN ('completed','superseded','abandoned')",
     )
     .await
 }

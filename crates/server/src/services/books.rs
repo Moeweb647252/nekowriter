@@ -555,19 +555,13 @@ pub async fn next_action(
         }));
     }
 
-    // 5. A chapter is being written or revised.
-    if let Some((track, chapter)) = ordered.iter().find(|(_, chapter)| {
-        matches!(
-            ChapterStatus::from_str_opt(&chapter.status),
-            Some(ChapterStatus::Drafting) | Some(ChapterStatus::Revising)
-        )
-    }) {
-        let session_id = agent_sessions::Entity::find()
+    // 5. Work in progress: the first chapter with an open outline session or one that is being
+    //    written or revised (spec/08 §7 rule 5, D-146). An outline session is work in progress and
+    //    is offered as `write_outline`, not as `continue_chapter`.
+    for (track, chapter) in &ordered {
+        let open = agent_sessions::Entity::find()
             .filter(agent_sessions::Column::ChapterId.eq(chapter.id))
-            .filter(agent_sessions::Column::Kind.is_in([
-                SessionKind::ChapterWrite.as_str(),
-                SessionKind::ChapterRevise.as_str(),
-            ]))
+            .filter(agent_sessions::Column::Role.is_in(["planner", "writer"]))
             .filter(agent_sessions::Column::Status.is_not_in([
                 SessionStatus::Completed.as_str(),
                 SessionStatus::Superseded.as_str(),
@@ -575,12 +569,31 @@ pub async fn next_action(
             ]))
             .order_by_desc(agent_sessions::Column::Id)
             .one(conn)
-            .await?
-            .map(|session| session.id);
+            .await?;
+        let writing = matches!(
+            ChapterStatus::from_str_opt(&chapter.status),
+            Some(ChapterStatus::Drafting) | Some(ChapterStatus::Revising)
+        );
+        if open.is_none() && !writing {
+            continue;
+        }
+        if open
+            .as_ref()
+            .is_some_and(|session| session.kind == SessionKind::ChapterOutline.as_str())
+        {
+            return Ok(Some(NextActionDto {
+                kind: NextActionKind::WriteOutline,
+                chapter: Some(pointer(chapter)),
+                session_id: open.map(|session| session.id),
+                track_id: Some(track.id),
+                ready_research: None,
+                research_task_id: None,
+            }));
+        }
         return Ok(Some(NextActionDto {
             kind: NextActionKind::ContinueChapter,
             chapter: Some(pointer(chapter)),
-            session_id,
+            session_id: open.map(|session| session.id),
             track_id: Some(track.id),
             ready_research: None,
             research_task_id: None,
@@ -619,7 +632,29 @@ pub async fn next_action(
         }));
     }
 
-    // 7. Otherwise the main story continues (or the first track, for a book without one).
+    // 7. The first planned chapter: an empty outline is outlined first, otherwise it is written
+    //    (spec/08 §7 rule 7, D-146). This sits after `sync_canon` because writing chapter N+1
+    //    before chapter N's canon is synced trips `previous_not_ready` anyway.
+    if let Some((track, chapter)) = ordered
+        .iter()
+        .find(|(_, chapter)| chapter.status == ChapterStatus::Planned.as_str())
+    {
+        let kind = if chapter.outline.trim().is_empty() {
+            NextActionKind::WriteOutline
+        } else {
+            NextActionKind::WriteChapter
+        };
+        return Ok(Some(NextActionDto {
+            kind,
+            chapter: Some(pointer(chapter)),
+            session_id: None,
+            track_id: Some(track.id),
+            ready_research: None,
+            research_task_id: None,
+        }));
+    }
+
+    // 8. Otherwise the main story continues (or the first track, for a book without one).
     let track_id = main_track
         .map(|track| track.id)
         .or_else(|| ordered.first().map(|(track, _)| track.id));

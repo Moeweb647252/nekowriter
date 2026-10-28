@@ -146,7 +146,7 @@ pub(crate) async fn create_inner(
     {
         return Err(AppError::new(
             ErrorCode::ChapterSessionExists,
-            format!("chapter {chapter_id} already has an open {role} session"),
+            format!("chapter {chapter_id} already has an open session of its {role} lock group"),
         )
         .with_details(json!({ "session_id": open })));
     }
@@ -1582,11 +1582,19 @@ pub async fn patch(
             if session::is_terminal(session::status_of(&session)) {
                 return Err(invalid_state(&session, "patch"));
             }
-            let is_writer = matches!(
-                session::kind_of(&session),
-                SessionKind::ChapterWrite | SessionKind::ChapterRevise
-            );
-            if !is_writer {
+            let kind = session::kind_of(&session);
+            let is_writer = matches!(kind, SessionKind::ChapterWrite | SessionKind::ChapterRevise);
+            let is_outline = kind == SessionKind::ChapterOutline;
+            if !is_writer && !is_outline {
+                return Err(invalid_state(&session, "patch"));
+            }
+            // Per kind (spec/03 §6, D-146): an outline session accepts `pause_after_outline` only;
+            // a write or revise session accepts the three writer switches as before.
+            if is_outline
+                && (patch.granularity.is_some()
+                    || patch.auto_pause.is_some()
+                    || patch.pause_after_outline.is_none())
+            {
                 return Err(invalid_state(&session, "patch"));
             }
             let mut sets: Vec<&'static str> = Vec::new();
@@ -1967,30 +1975,36 @@ pub fn open_statuses() -> [&'static str; 8] {
     ]
 }
 
-/// The role string invariant 5's chapter-scoped half is about, for a session kind that has one.
+/// The chapter lock group of a session kind (spec/02 §5 invariant 5, D-146).
 ///
-/// `chapter_write` and `chapter_revise` are both writer sessions, so a chapter cannot have an open
-/// write session and an open revise session at once; `canon_seed` has no chapter and no entry.
+/// `chapter_outline`, `chapter_write` and `chapter_revise` share one group because the planner and
+/// writer roles exclude each other per chapter; `canon_seed` has no chapter and no entry.
 fn chapter_session_role(kind: SessionKind) -> Option<&'static str> {
     match kind {
-        SessionKind::ChapterOutline => Some("planner"),
-        SessionKind::ChapterWrite | SessionKind::ChapterRevise => Some("writer"),
+        SessionKind::ChapterOutline | SessionKind::ChapterWrite | SessionKind::ChapterRevise => {
+            Some("chapter_writer")
+        }
         SessionKind::ChapterReview => Some("reviewer"),
         SessionKind::ChapterMaintenance | SessionKind::ChapterResync => Some("archivist"),
         SessionKind::Conception | SessionKind::Research | SessionKind::CanonSeed => None,
     }
 }
 
-/// The id of a chapter's first open session of one role (spec/02 §5 invariant 5).
+/// The id of a chapter's first open session of one lock group (spec/02 §5 invariant 5).
 async fn open_chapter_session(
     conn: &impl ConnectionTrait,
     chapter_id: i32,
-    role: &str,
+    group: &str,
 ) -> Result<Option<i32>, AppError> {
-    let row = agent_sessions::Entity::find()
+    let mut query = agent_sessions::Entity::find()
         .filter(agent_sessions::Column::ChapterId.eq(chapter_id))
-        .filter(agent_sessions::Column::Role.eq(role))
-        .filter(agent_sessions::Column::Status.is_in(open_statuses()))
+        .filter(agent_sessions::Column::Status.is_in(open_statuses()));
+    query = if group == "chapter_writer" {
+        query.filter(agent_sessions::Column::Role.is_in(["planner", "writer"]))
+    } else {
+        query.filter(agent_sessions::Column::Role.eq(group))
+    };
+    let row = query
         .order_by_asc(agent_sessions::Column::Id)
         .one(conn)
         .await?;
