@@ -53,7 +53,7 @@ vi.mock("react-router", () => ({
 vi.mock("@/api/hooks/useCanon", () => ({
   useMemory: () => ({
     isPending: false,
-    data: { snapshot: emptySnapshot, rendered: "rendered memory" },
+    data: { snapshot: emptySnapshot, rendered: "rendered memory", recent_chapters: [] },
   }),
   useMemoryNotes: () => ({
     isPending: false,

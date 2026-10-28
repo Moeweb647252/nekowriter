@@ -2804,7 +2804,10 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   and outline kickoff; the per-chapter cap and `recent_chapter_count = 0` are the controls. The
   skills block is sent in full on every write/revise/review session, so the selection UI shows a
   running character total and warns above 8,000 characters without blocking. Existing selections
-  keep working when a built-in is later retired. Two items of debt are explicit: the reconciler
-  (with `prompts/skills.toml`) and built-in bodies are deferred together until a body exists.
+  keep working when a built-in is later retired. The Memory page names the chapters injected in
+  full (`MemoryViewDto.recent_chapters`) so PROJECT §6.5 still shows what the writer receives even
+  though the full text travels in its own kickoff block. Two items of debt are explicit: the
+  reconciler (with `prompts/skills.toml`) and built-in bodies are deferred together until a body
+  exists.
 - **Spec**: design §4–§8; spec/02 §1–§5; spec/03 §10; spec/06 §4.1; spec/09 §2, §5.8;
   spec/10 §2.9, §4; spec/11 §2–§3, §5.5, §6.

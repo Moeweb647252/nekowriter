@@ -542,3 +542,37 @@ async fn full_writer_kickoff_with_two_prior_chapters_reports_blocks_tags_and_bud
         "recent-chapters block: {recent_chars} chars; total budget = 2 × (4000 × 1.5) = 12,000"
     );
 }
+
+/// The Memory page promises to show what the writer receives (PROJECT §6.5): the API names the
+/// chapters `block.recent_chapters` injects in full for the selected position (design §7), so the
+/// page can state the variant it renders and the full-text chapters.
+#[tokio::test]
+async fn the_memory_page_names_the_chapters_injected_in_full() {
+    let app = TestApp::new().await;
+    let (book_id, track_id) = setup(&app).await;
+    let first = official_chapter(&app, track_id, "第一章", "甲甲乙乙。", "第一章摘要。").await;
+    let second = official_chapter(&app, track_id, "第二章", "丙丙丁丁。", "第二章摘要。").await;
+    let target = app.create_chapter(track_id, "第三章").await;
+    let target_id = target["id"].as_i64().expect("id") as i32;
+    set_recent_settings(&app, book_id, 2, 4000).await;
+
+    let (status, body) = app
+        .get(&format!(
+            "/api/books/{book_id}/memory?chapter_id={target_id}"
+        ))
+        .await;
+    assert_eq!(status, 200, "memory view: {body}");
+    let recent = body["recent_chapters"].as_array().expect("array");
+    assert_eq!(recent.len(), 2);
+    assert_eq!(recent[0]["chapter_id"], first);
+    assert_eq!(recent[1]["chapter_id"], second);
+    assert_eq!(recent[0]["label"], "第1章");
+    assert_eq!(recent[0]["title"], "第一章");
+    assert_eq!(recent[0]["characters"], 5);
+    assert_eq!(recent[0]["partial"], false);
+    // The page renders `block.memory`; the snapshot keeps its summaries.
+    assert_eq!(
+        body["snapshot"]["recent_summaries"][0]["summary"],
+        "第一章摘要。"
+    );
+}

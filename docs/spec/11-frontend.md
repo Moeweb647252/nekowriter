@@ -313,6 +313,9 @@ sensor), `PromptEditor` (monospace textarea, variable docs side panel, "diff vs 
 and reports a partial batch through `BulkDeferReport` (inline) and a toast: how many moved and
 which topics did not.
 
+**Memory** names the chapters injected in full (`MemoryViewDto.recent_chapters`) and states
+which `block.memory` variant the page renders (spec/06 §4.5).
+
 **Writing skills** (design §8). `/skills` is the global catalogue: it lists the active skills, lets
 the author create, edit and delete user rows, and previews built-in rows (badge, no edit
 affordance). Selection lives in Book settings: a checkbox list with a running

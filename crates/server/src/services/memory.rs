@@ -1186,9 +1186,24 @@ pub async fn view(
     let prompts = state.prompts().for_book(state.db(), Some(book_id)).await?;
     let (track, chapter) = target_position(state.db().conn(), book_id, query).await?;
     let snapshot = snapshot(state.db().conn(), &prompts, &track, &chapter).await?;
+    // The Memory page promises to show what the writer receives (PROJECT §6.5): name the chapters
+    // `block.recent_chapters` injects in full for the same position (design §7).
+    let recent_chapters = recent_chapters(state.db().conn(), &prompts, &track, &chapter)
+        .await?
+        .into_iter()
+        .map(|entry| crate::api::dto::canon::MemoryRecentChapterDto {
+            chapter_id: entry.chapter_id,
+            number: entry.number,
+            label: entry.label,
+            title: entry.title,
+            characters: entry.text.chars().count() as i32,
+            partial: entry.partial,
+        })
+        .collect();
     Ok(crate::api::dto::canon::MemoryViewDto {
         rendered: render_block_memory(&prompts, &snapshot)?,
         snapshot: snapshot_dto(&snapshot),
+        recent_chapters,
     })
 }
 

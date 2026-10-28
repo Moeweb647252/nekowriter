@@ -532,12 +532,29 @@ pub struct ForeshadowingQuery {
 // ───────────────────────────── memory snapshot (spec/06 §4) ─────────────────────────────
 
 /// `GET /books/:id/memory` (spec/10 §2.4): the snapshot the writer of the target chapter receives
-/// plus the exact `block.memory` text (spec/06 §4.5).
+/// plus the exact `block.memory` text (spec/06 §4.5). `recent_chapters` names the chapters
+/// `block.recent_chapters` injects **in full** for the same position (design §7), so the page can
+/// state which variant it renders and which chapters the writer also receives.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct MemoryViewDto {
     pub snapshot: MemorySnapshotDto,
     pub rendered: String,
+    pub recent_chapters: Vec<MemoryRecentChapterDto>,
+}
+
+/// One chapter `block.recent_chapters` injects in full (design §7).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MemoryRecentChapterDto {
+    pub chapter_id: i32,
+    pub number: i32,
+    /// Rendered by `shared.chapter_label`.
+    pub label: String,
+    pub title: String,
+    /// Characters injected for this chapter (front-cut when the chapter exceeded its cap).
+    pub characters: i32,
+    pub partial: bool,
 }
 
 /// One target position of the Memory page (spec/06 §4.2 `chapter`).

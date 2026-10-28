@@ -102,7 +102,7 @@
 | PATCH / DELETE | `/memory-notes/:id` | | |
 | GET / POST | `/books/:id/foreshadowing` | `?status` | `ForeshadowingDto[]` |
 | PATCH / DELETE | `/foreshadowing/:id` | | |
-| GET | `/books/:id/memory` | `?track_id&chapter_id` (default: the next chapter of the main track) | `MemorySnapshotDto` plus `rendered` (the exact `block.memory` text) |
+| GET | `/books/:id/memory` | `?track_id&chapter_id` (default: the next chapter of the main track) | `MemorySnapshotDto` plus `rendered` (the exact `block.memory` text) and `recent_chapters` (the chapters `block.recent_chapters` injects in full: id, number, label, title, characters, partial) |
 | GET | `/books/:id/changes` | `?chapter_id&session_id&target_type&actor&cursor` | page of `ChangeDto` |
 | POST | `/changes/:id/revert` | | `ChangeDto` (the revert change) |
 

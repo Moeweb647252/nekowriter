@@ -221,6 +221,12 @@ is told that none of them is official yet), so the model never has to guess. `bl
 (maintenance) lists up to 300 visible entities with aliases, so the archivist matches existing
 entities instead of duplicating them.
 
+`GET /books/:id/memory` returns the exact `block.memory` text plus `recent_chapters`, the chapters
+`block.recent_chapters` injects in full for the same position (id, label, title, characters and
+whether the chapter was front-cut). The Memory page renders the `block.memory` variant and lists
+those chapters, so the promise that the page shows what the writer receives stays true even though
+the full text travels in its own kickoff block (design §7).
+
 ## 5. Setting proposals
 
 - Created only by `propose_setting_change` (archivist). The proposal stores the edits exactly.
