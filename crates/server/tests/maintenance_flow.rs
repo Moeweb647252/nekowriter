@@ -458,6 +458,9 @@ async fn maintain_continues_a_failed_open_session() {
         body["session_id"], session,
         "Retry continues the open failed session"
     );
+    // M5-04's positive path: the continue transaction must put canon back to `syncing` before
+    // the runner completes (the first scripted step is delayed).
+    assert_eq!(chapter_state(&runtime).await.1, "syncing");
     runtime
         .wait_status_within(session, SessionStatus::Completed, Duration::from_secs(20))
         .await;
