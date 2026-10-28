@@ -216,7 +216,14 @@ pub fn apply_inputs(
     for input in inputs {
         match input {
             ContentOpInput::Insert { after, text } => {
-                let texts = split_paragraphs(text);
+                // An empty insert is the author's "start a new, empty paragraph" action
+                // (spec/11 §5.2). Whitespace-only text is still rejected: trimming would
+                // otherwise silently discard the paragraph the author asked for.
+                let texts = if text.is_empty() {
+                    vec![String::new()]
+                } else {
+                    split_paragraphs(text)
+                };
                 if texts.is_empty() {
                     return Err(TextError::EmptyText("insert"));
                 }
@@ -600,6 +607,29 @@ mod tests {
         )
         .expect_err("empty insert");
         assert_eq!(error, TextError::EmptyText("insert"));
+    }
+
+    #[test]
+    fn an_empty_insert_creates_an_empty_placeholder_paragraph() {
+        let mut content = doc(&[("p1", "one")], 2, false);
+        let applied = apply_inputs(
+            &mut content,
+            &[ContentOpInput::Insert {
+                after: Some("p1".to_owned()),
+                text: String::new(),
+            }],
+        )
+        .expect("empty insert is a valid new paragraph");
+        assert_eq!(pids(&content), vec!["p1", "p2"]);
+        assert_eq!(content.paragraphs[1].text, "");
+        assert_eq!(
+            applied.ops,
+            vec![ContentOp::Insert {
+                after: Some("p1".to_owned()),
+                pid: "p2".to_owned(),
+                text: String::new(),
+            }]
+        );
     }
 
     #[test]
