@@ -95,6 +95,8 @@ pub async fn ask_reviewer(
             kind: SessionKind::ChapterReview,
             book_id: Some(chapter.book_id),
             chapter_id: Some(chapter_id),
+            chapter_guard: true,
+            force_previous: false,
             ..CreateSession::default()
         },
     )
@@ -174,6 +176,8 @@ pub async fn rereview(
                 chapter_id: Some(chapter.id),
                 pending_comment: Some(comment),
                 kickoff_extra: Some(json!({ "prior_report_id": report.id })),
+                chapter_guard: true,
+                force_previous: false,
                 ..CreateSession::default()
             },
         )
@@ -200,6 +204,11 @@ pub async fn rereview(
     let comment_for_store = comment.clone();
     let (events, message) = crate::services::write(state.db(), move |tx| {
         Box::pin(async move {
+            let current_chapter = chapters::Entity::find_by_id(chapter.id)
+                .one(tx)
+                .await?
+                .ok_or_else(|| AppError::not_found(format!("chapter {}", chapter.id)))?;
+            require_in_review(&current_chapter)?;
             let current = session::load(tx, session_id).await?;
             if session::status_of(&current) != SessionStatus::Completed {
                 return Err(AppError::new(
@@ -389,6 +398,11 @@ pub async fn send_back(
     })
     .await?;
     state.events().publish_all(events);
+    // A reviewer session can appear between the pre-loop above and this write transaction
+    // (M5-07); the commit must not leave it open after the chapter leaves `in_review`.
+    for reviewer in open_reviewer_sessions(state.db().conn(), chapter_id).await? {
+        sessions::abandon(state, reviewer.id).await?;
+    }
     state.manager().spawn(state.clone(), session_id);
     Ok(ReviewSessionResponse { session_id })
 }

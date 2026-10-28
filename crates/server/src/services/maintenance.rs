@@ -40,14 +40,15 @@ pub async fn maintain(
     }
 
     if let Some(open) = open_archivist_session(state.db().conn(), chapter_id).await? {
-        // Continuing a failed session puts the chapter back to `syncing` (spec/06 §6).
-        mark_syncing(state, chapter_id).await?;
+        // Continuing a failed session puts the chapter back to `syncing` (spec/06 §6). The status
+        // update and the session recheck/continue are one transaction (M5-04): an abandon cannot
+        // leave a `syncing` chapter with no recoverable open session.
         let status = session::status_of(&open);
         if matches!(
             status,
             SessionStatus::Stopped | SessionStatus::Failed | SessionStatus::Interrupted
         ) {
-            sessions::continue_session(state, open.id).await?;
+            sessions::continue_session_and_mark_syncing(state, open.id, chapter_id).await?;
         }
         return Ok(ReviewSessionResponse {
             session_id: open.id,
@@ -219,24 +220,6 @@ pub async fn last_archivist_kind(
         .one(conn)
         .await?;
     Ok(row.and_then(|row| SessionKind::from_str_opt(&row.kind)))
-}
-
-/// Sets `canon_status = syncing` before a continued session runs (spec/06 §6).
-async fn mark_syncing(state: &AppState, chapter_id: i32) -> Result<(), AppError> {
-    crate::services::write(state.db(), move |tx| {
-        Box::pin(async move {
-            chapters::ActiveModel {
-                id: Set(chapter_id),
-                canon_status: Set(CanonStatus::Syncing.as_str().to_owned()),
-                updated_at: Set(crate::services::now()),
-                ..Default::default()
-            }
-            .update(tx)
-            .await?;
-            Ok(())
-        })
-    })
-    .await
 }
 
 /// An `official` version whose text equals `content`, newest first (spec/06 §8: "an existing

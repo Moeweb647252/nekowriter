@@ -56,6 +56,7 @@ async fn a_failed_session_and_its_chapter_consequence_commit_together() {
             legacy_system_prompt: None,
             legacy_kickoff_text: None,
             chapter_guard: false,
+            force_previous: false,
         },
     )
     .await

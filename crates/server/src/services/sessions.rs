@@ -58,6 +58,7 @@ impl Default for CreateSession {
             legacy_system_prompt: None,
             legacy_kickoff_text: None,
             chapter_guard: false,
+            force_previous: false,
         }
     }
 }
@@ -96,6 +97,9 @@ pub struct CreateSession {
     /// and outline preconditions are rechecked inside this transaction (R3-03). Direct service
     /// callers (tests, legacy fixtures) leave it off.
     pub chapter_guard: bool,
+    /// `chapters::write` / `outline`'s `force`: skip the previous-chapter recheck inside the
+    /// creation transaction (M5-03).
+    pub force_previous: bool,
 }
 
 /// Creates a session (spec/03 §4) and spawns its runner. Returns the session id and any
@@ -197,7 +201,29 @@ pub(crate) async fn create_inner(
                     ));
                 }
             }
+            SessionKind::ChapterReview if chapter.status != "in_review" => {
+                return Err(super::conflict(
+                    ErrorCode::ChapterInvalidState,
+                    "only a chapter in review can be reviewed",
+                    json!({ "status": chapter.status }),
+                ));
+            }
             _ => {}
+        }
+        if input.chapter_guard
+            && !input.force_previous
+            && matches!(
+                input.kind,
+                SessionKind::ChapterWrite | SessionKind::ChapterOutline
+            )
+            && let Some(reason) =
+                crate::services::chapters::previous_chapter_blocker(tx, &chapter).await?
+        {
+            return Err(super::conflict(
+                ErrorCode::ChapterPreviousNotReady,
+                "the previous chapter is not ready",
+                reason,
+            ));
         }
     }
 
@@ -1306,6 +1332,24 @@ pub async fn continue_session(
     state: &AppState,
     session_id: i32,
 ) -> Result<crate::api::dto::SessionDto, AppError> {
+    continue_session_inner(state, session_id, None).await
+}
+
+/// Continue a failed archivist session and set its chapter `syncing` in the same transaction
+/// (M5-04): an abandon between the two writes can no longer wedge canon.
+pub(crate) async fn continue_session_and_mark_syncing(
+    state: &AppState,
+    session_id: i32,
+    chapter_id: i32,
+) -> Result<crate::api::dto::SessionDto, AppError> {
+    continue_session_inner(state, session_id, Some(chapter_id)).await
+}
+
+async fn continue_session_inner(
+    state: &AppState,
+    session_id: i32,
+    syncing_chapter_id: Option<i32>,
+) -> Result<crate::api::dto::SessionDto, AppError> {
     // Wait for the previous runner to be **gone**, whatever ended it. A stopped runner is
     // cancelled and must finish its last write (spec/03 §6, D-034); a failed or interrupted
     // runner is exiting on its own after committing the terminal status, and `spawn` treats any
@@ -1327,6 +1371,16 @@ pub async fn continue_session(
                 SessionStatus::Stopped | SessionStatus::Failed | SessionStatus::Interrupted
             ) {
                 return Err(invalid_state(&session, "continue"));
+            }
+            if let Some(chapter_id) = syncing_chapter_id {
+                chapters::ActiveModel {
+                    id: Set(chapter_id),
+                    canon_status: Set(crate::db::json::CanonStatus::Syncing.as_str().to_owned()),
+                    updated_at: Set(crate::services::now()),
+                    ..Default::default()
+                }
+                .update(tx)
+                .await?;
             }
             agent_sessions::ActiveModel {
                 id: Set(session_id),

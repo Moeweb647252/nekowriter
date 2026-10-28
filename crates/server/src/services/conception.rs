@@ -119,6 +119,7 @@ async fn start_session(state: &AppState, book_id: i32) -> Result<(i32, Vec<Strin
             legacy_system_prompt: None,
             legacy_kickoff_text: None,
             chapter_guard: false,
+            force_previous: false,
         },
     )
     .await?;
@@ -490,6 +491,7 @@ async fn seed_session(state: &AppState, book_id: i32) -> Result<(i32, Vec<String
             legacy_system_prompt: None,
             legacy_kickoff_text: None,
             chapter_guard: false,
+            force_previous: false,
         },
     )
     .await

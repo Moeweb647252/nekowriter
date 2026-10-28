@@ -517,3 +517,74 @@ async fn send_back_redraft_refuses_an_official_chapter() {
 async fn send_back_revise_refuses_an_official_chapter() {
     race_send_back(nekowriter::db::json::FeedbackMode::Revise).await;
 }
+
+/// `write`/`outline` must recheck previous-chapter readiness inside the creation transaction
+/// (M5-03): a previous canon change committed after the endpoint's read must refuse the session.
+#[tokio::test]
+async fn outline_rechecks_previous_readiness_inside_the_transaction() {
+    use nekowriter::api::dto::chapters::ChapterOutlineInput;
+    use nekowriter::db::Db;
+    use tokio::sync::oneshot;
+
+    let (app, _book_id, first_id) = app_with_book().await;
+    assign_models(&app).await;
+    app.execute(&format!(
+        "UPDATE chapters SET status = 'official', canon_status = 'synced' WHERE id = {first_id}"
+    ))
+    .await;
+    let (_, tracks) = app.get("/api/books/1/tracks").await;
+    let track_id = tracks[0]["id"].as_i64().expect("track") as i32;
+    let second = app.create_chapter(track_id, "Chapter Two").await;
+    let second_id = second["id"].as_i64().expect("id") as i32;
+    let (begun_tx, begun_rx) = oneshot::channel();
+    let (release_tx, release_rx) = oneshot::channel();
+    let db = app.db().clone();
+    let updater = tokio::spawn(async move {
+        Db::write(&db, move |tx| {
+            Box::pin(async move {
+                tx.execute_unprepared(&format!(
+                    "UPDATE chapters SET canon_status = 'stale' WHERE id = {first_id}"
+                ))
+                .await?;
+                let _ = begun_tx.send(());
+                let _ = release_rx.await;
+                Ok(())
+            })
+        })
+        .await
+        .expect("the previous-chapter update commits");
+    });
+    begun_rx.await.expect("the updater holds the write lock");
+    let state = app.state().clone();
+    let create = tokio::spawn(async move {
+        nekowriter::services::chapters::outline(&state, second_id, ChapterOutlineInput::default())
+            .await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    release_tx.send(()).expect("release the updater");
+    let error = create
+        .await
+        .expect("the create task did not panic")
+        .expect_err("the previous chapter is no longer ready");
+    assert_eq!(
+        error.code,
+        nekowriter::error::ErrorCode::ChapterPreviousNotReady
+    );
+    updater.await.expect("updater task");
+    let count = app
+        .db()
+        .conn()
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            format!(
+                "SELECT count(*) AS n FROM agent_sessions WHERE chapter_id = {second_id} \
+                 AND kind = 'chapter_outline'"
+            ),
+        ))
+        .await
+        .expect("query sessions")
+        .expect("row")
+        .try_get::<i64>("", "n")
+        .expect("count");
+    assert_eq!(count, 0, "no outline session is created");
+}

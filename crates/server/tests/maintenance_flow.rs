@@ -1050,3 +1050,101 @@ async fn unknown_canon_ids_render_the_target_label_from_the_prompt_pack() {
     expect_label("resolve_foreshadowing", "伏笔", 999_003);
     assert_eq!(chapter_state(&runtime).await.1, "synced");
 }
+
+/// A failed archivist session that is abandoned between `maintain`'s open-session read and its
+/// `syncing` write must not wedge canon (M5-04): the status update and the continue validation
+/// share one transaction.
+#[tokio::test]
+async fn maintain_does_not_leave_syncing_when_the_session_is_abandoned() {
+    use nekowriter::db::Db;
+    use sea_orm::ConnectionTrait;
+    use tokio::sync::oneshot;
+
+    let runtime = runtime(vec![
+        create_character("林凡", "主角"),
+        step("finish_maintenance", json!({ "report": "完成" })),
+    ])
+    .await;
+    runtime
+        .app
+        .put_text(runtime.chapter_id, 0, "第一段正文。")
+        .await;
+    review_harness::mark_official(&runtime, runtime.chapter_id).await;
+    let session = start_archivist(
+        &runtime,
+        runtime.chapter_id,
+        SessionKind::ChapterMaintenance,
+    )
+    .await;
+    let (status, _) = runtime
+        .app
+        .post(&format!("/api/sessions/{session}/stop"), json!({}))
+        .await;
+    assert_eq!(status, 200);
+    runtime
+        .wait_status_within(session, SessionStatus::Stopped, Duration::from_secs(10))
+        .await;
+    runtime.app.set_session_status(session, "failed").await;
+    runtime
+        .app
+        .execute(&format!(
+            "UPDATE chapters SET canon_status = 'failed' WHERE id = {}",
+            runtime.chapter_id
+        ))
+        .await;
+
+    let (begun_tx, begun_rx) = oneshot::channel();
+    let (release_tx, release_rx) = oneshot::channel();
+    let db = runtime.app.db().clone();
+    let chapter_id = runtime.chapter_id;
+    let updater = tokio::spawn(async move {
+        Db::write(&db, move |tx| {
+            Box::pin(async move {
+                tx.execute_unprepared(&format!(
+                    "UPDATE agent_sessions SET status = 'abandoned' WHERE id = {session}"
+                ))
+                .await?;
+                let _ = begun_tx.send(());
+                let _ = release_rx.await;
+                Ok(())
+            })
+        })
+        .await
+        .expect("the abandon commits");
+    });
+    begun_rx.await.expect("the updater holds the write lock");
+    let state = runtime.app.state().clone();
+    let maintain = tokio::spawn(async move {
+        nekowriter::services::maintenance::maintain(&state, chapter_id).await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    release_tx.send(()).expect("release the updater");
+    let error = maintain
+        .await
+        .expect("the maintain task did not panic")
+        .expect_err("the abandoned session cannot be continued");
+    assert_eq!(
+        error.code,
+        nekowriter::error::ErrorCode::SessionInvalidState
+    );
+    updater.await.expect("updater task");
+    assert_eq!(
+        chapter_state(&runtime).await.1,
+        "failed",
+        "canon is not left syncing"
+    );
+    let status: String = runtime
+        .app
+        .db()
+        .conn()
+        .query_one_raw(sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Sqlite,
+            format!("SELECT status FROM agent_sessions WHERE id = {session}"),
+        ))
+        .await
+        .expect("query session")
+        .expect("row")
+        .try_get("", "status")
+        .expect("status");
+    assert_eq!(status, "abandoned");
+}

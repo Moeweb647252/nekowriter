@@ -636,6 +636,7 @@ pub async fn write(
             legacy_system_prompt: None,
             legacy_kickoff_text: None,
             chapter_guard: true,
+            force_previous: input.force,
         },
     )
     .await?;
@@ -705,6 +706,7 @@ pub async fn outline(
             legacy_system_prompt: None,
             legacy_kickoff_text: None,
             chapter_guard: true,
+            force_previous: input.force,
         },
     )
     .await?;
@@ -716,7 +718,7 @@ pub async fn outline(
 
 /// Why the previous chapter blocks a write, as the `details` of `chapter.previous_not_ready`
 /// (spec/08 §1.1). `None` means the chapter may be written.
-async fn previous_chapter_blocker(
+pub(crate) async fn previous_chapter_blocker(
     conn: &impl ConnectionTrait,
     chapter: &chapters::Model,
 ) -> Result<Option<serde_json::Value>, AppError> {
@@ -922,6 +924,11 @@ pub async fn approve(
     })
     .await?;
     state.events().publish_all(published);
+    // A reviewer session can appear between the pre-loop above and this write transaction
+    // (M5-07); abandon the ones that survived the commit too.
+    for reviewer in super::reviews::open_reviewer_sessions(state.db().conn(), chapter_id).await? {
+        super::sessions::abandon(state, reviewer.id).await?;
+    }
     if let Some(session_id) = response.maintenance_session_id {
         state.manager().spawn(state.clone(), session_id);
     }

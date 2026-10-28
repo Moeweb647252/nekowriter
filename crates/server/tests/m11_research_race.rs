@@ -93,6 +93,7 @@ async fn a_second_researcher_session_is_refused_by_creation() {
             legacy_system_prompt: None,
             legacy_kickoff_text: None,
             chapter_guard: false,
+            force_previous: false,
         },
     )
     .await;
