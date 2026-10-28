@@ -111,8 +111,10 @@ export function ChapterText({
   if (fullTextOpen) {
     return (
       <FullTextEditor
+        key={chapter.id}
         chapter={chapter}
         version={version}
+        locked={locked}
         saving={putText.isPending}
         onCancel={() => onFullTextOpenChange(false)}
         onSave={(text) => {
@@ -371,21 +373,36 @@ type FullTextEditorProps = {
   chapter: ChapterDto
   version: number
   saving: boolean
+  locked: boolean
   onCancel: () => void
   onSave: (text: string) => void
 }
 
 /** One textarea; paragraphs are separated by blank lines (spec/11 §5.2). */
-function FullTextEditor({ chapter, version, saving, onCancel, onSave }: FullTextEditorProps) {
+function FullTextEditor({
+  chapter,
+  version,
+  saving,
+  locked,
+  onCancel,
+  onSave,
+}: FullTextEditorProps) {
   const { t } = useTranslation()
   const [text, setText] = useState(() => paragraphTextOf(chapter))
   return (
     <div className="mx-auto max-w-[42em] space-y-3">
       <p className="text-xs text-muted-foreground">{t("chapter:full_text_hint")}</p>
+      {locked ? (
+        <p className="flex items-center gap-1 text-xs text-muted-foreground">
+          <Lock className="size-3.5 shrink-0" aria-hidden="true" />
+          {t("chapter:locked_banner")}
+        </p>
+      ) : null}
       <Textarea
         value={text}
         rows={28}
         autoFocus
+        disabled={locked}
         className="font-serif text-[1.05rem] leading-relaxed"
         onChange={(event) => setText(event.target.value)}
         onKeyDown={(event) => {
@@ -402,7 +419,7 @@ function FullTextEditor({ chapter, version, saving, onCancel, onSave }: FullText
         }}
       />
       <div className="flex items-center gap-2">
-        <Button size="sm" disabled={saving} onClick={() => onSave(text)}>
+        <Button size="sm" disabled={saving || locked} onClick={() => onSave(text)}>
           {saving ? t("common:saving") : t("common:save")}
         </Button>
         <Button size="sm" variant="ghost" disabled={saving} onClick={onCancel}>

@@ -3,15 +3,16 @@
 // overview.test.tsx).
 import "@/i18n"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { render, screen, waitFor } from "@testing-library/react"
+import { act, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { MemoryRouter, Outlet, Route, Routes } from "react-router"
+import { Outlet, RouterProvider, createMemoryRouter } from "react-router"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { BookDto } from "@/api/gen/BookDto"
 import type { ChapterDto } from "@/api/gen/ChapterDto"
 import type { SessionDto } from "@/api/gen/SessionDto"
 import type { BookShell } from "@/features/workspace/shell"
+import { keys } from "@/api/keys"
 import { useUiStore } from "@/stores/ui"
 
 const BOOK_ID = 3
@@ -20,6 +21,7 @@ const PLANNER_ID = 11
 
 const server = vi.hoisted(() => ({
   chapter: null as ChapterDto | null,
+  chapters: {} as Record<number, ChapterDto>,
   expanded: 0,
 }))
 
@@ -73,12 +75,16 @@ function planner(status: SessionDto["status"] = "running"): SessionDto {
 }
 
 function chapter(openSessions: SessionDto[]): ChapterDto {
+  return chapterAt(CHAPTER_ID, "第一章", openSessions)
+}
+
+function chapterAt(id: number, title: string, openSessions: SessionDto[]): ChapterDto {
   return {
-    id: CHAPTER_ID,
+    id,
     book_id: BOOK_ID,
     track_id: 1,
-    number: 1,
-    title: "第一章",
+    number: id,
+    title,
     status: "planned",
     canon_status: "none",
     word_count: 0,
@@ -119,7 +125,7 @@ const BOOK = {
 } as unknown as BookDto
 
 vi.mock("@/api/endpoints/chapters", () => ({
-  getChapter: async () => server.chapter,
+  getChapter: async (chapterId: number) => server.chapters[chapterId] ?? server.chapter,
   patchChapter: async () => server.chapter,
   patchContent: async () => ({ version: 1, ops: [], word_count: 0, tail_open: true }),
   putContentText: async () => ({ version: 1, ops: [], word_count: 0, tail_open: true }),
@@ -186,22 +192,29 @@ function Shell() {
 
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(
+  const router = createMemoryRouter(
+    [
+      {
+        element: <Shell />,
+        children: [
+          { path: "/books/:bookId/chapters/:chapterId", element: <ChapterPage /> },
+        ],
+      },
+    ],
+    { initialEntries: [`/books/${BOOK_ID}/chapters/${CHAPTER_ID}?tab=outline`] },
+  )
+  render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[`/books/${BOOK_ID}/chapters/${CHAPTER_ID}?tab=outline`]}>
-        <Routes>
-          <Route element={<Shell />}>
-            <Route path="/books/:bookId/chapters/:chapterId" element={<ChapterPage />} />
-          </Route>
-        </Routes>
-      </MemoryRouter>
+      <RouterProvider router={router} />
     </QueryClientProvider>,
   )
+  return { router, client }
 }
 
 beforeEach(() => {
   server.expanded = 0
   server.chapter = chapter([planner()])
+  server.chapters = {}
   useUiStore.setState({ pinnedSession: {} })
 })
 
@@ -213,6 +226,40 @@ describe("ChapterPage session focus", () => {
     await user.click(screen.getByRole("button", { name: "Focus in the agent panel" }))
     expect(server.expanded).toBe(1)
     expect(useUiStore.getState().pinnedSession[BOOK_ID]).toBe(PLANNER_ID)
+  })
+
+  it("remounts the header when the chapter id changes in place", async () => {
+    const user = userEvent.setup()
+    server.chapter = chapter([])
+    server.chapters[CHAPTER_ID] = chapter([])
+    const { client } = renderPage()
+    expect(await screen.findByText("第一章", {}, { timeout: 3000 })).toBeInTheDocument()
+    await user.click(screen.getAllByRole("button", { name: "Write the outline" })[0])
+    expect(screen.getByText("Write the chapter outline")).toBeInTheDocument()
+    // The query key stays the same (same route); only the returned row's id changes. A keyed
+    // ChapterHeader must remount and close the dialog (R3-02/T-01).
+    server.chapters[CHAPTER_ID] = chapterAt(4, "第二章", [])
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: keys.chapters.detail(CHAPTER_ID) })
+    })
+    expect(await screen.findByText("第二章", {}, { timeout: 3000 })).toBeInTheDocument()
+    expect(screen.queryByText("Write the chapter outline")).not.toBeInTheDocument()
+  })
+
+  it("closes the previous chapter's dialog when the chapter changes", async () => {
+    const user = userEvent.setup()
+    server.chapter = chapter([])
+    server.chapters[CHAPTER_ID] = chapter([])
+    server.chapters[4] = chapterAt(4, "第二章", [])
+    const { router } = renderPage()
+    expect(await screen.findByText("第一章", {}, { timeout: 3000 })).toBeInTheDocument()
+    await user.click(screen.getAllByRole("button", { name: "Write the outline" })[0])
+    expect(screen.getByText("Write the chapter outline")).toBeInTheDocument()
+    await act(async () => {
+      await router.navigate(`/books/${BOOK_ID}/chapters/4?tab=outline`)
+    })
+    expect(await screen.findByText("第二章", {}, { timeout: 3000 })).toBeInTheDocument()
+    expect(screen.queryByText("Write the chapter outline")).not.toBeInTheDocument()
   })
 
   it("pins a session started from the Write-outline dialog instead of the oldest open one", async () => {

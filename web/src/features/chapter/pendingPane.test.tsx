@@ -119,6 +119,7 @@ function renderPane(pendingView?: PendingDraftView) {
 }
 
 beforeEach(() => {
+  writer.locked = false
   writer.held = undefined
   writer.heldWrite = false
   writer.heldPids = []
@@ -151,6 +152,12 @@ describe("PendingText", () => {
     expect(screen.getByText("The agent is working — Pause to edit.")).toBeInTheDocument()
     await userEvent.click(screen.getByText("第一段。"))
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument()
+  })
+
+  it("is editable again in the next test, not stuck on the previous lock", async () => {
+    renderPane()
+    await userEvent.click(screen.getByText("第一段。"))
+    expect(screen.getByRole("textbox")).toBeInTheDocument()
   })
 
   it("does not offer the paragraph editor", () => {

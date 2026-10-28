@@ -100,6 +100,24 @@ describe("guidance follows the last seen server value (R2-01)", () => {
     expect(screen.getByLabelText(GUIDANCE_LABEL)).toHaveValue("作者正在写的细纲要求")
   })
 
+  it("replaces a typed WriteDialog draft with chapter B's guidance", async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(writeView("第一章的要求"))
+    await user.clear(screen.getByLabelText(GUIDANCE_LABEL))
+    await user.type(screen.getByLabelText(GUIDANCE_LABEL), "我在第一章输入的要求")
+    rerender(writeView("第二章的要求", 2))
+    expect(screen.getByLabelText(GUIDANCE_LABEL)).toHaveValue("第二章的要求")
+  })
+
+  it("replaces a typed OutlineDialog draft with chapter B's guidance", async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(outlineView("第一章的要求"))
+    await user.clear(screen.getByLabelText(GUIDANCE_LABEL))
+    await user.type(screen.getByLabelText(GUIDANCE_LABEL), "我在第一章输入的细纲要求")
+    rerender(outlineView("第二章的要求", 2))
+    expect(screen.getByLabelText(GUIDANCE_LABEL)).toHaveValue("第二章的要求")
+  })
+
   it("resets WriteDialog's draft and outline warning when the chapter changes", async () => {
     const user = userEvent.setup()
     writeMutate.mockImplementation(

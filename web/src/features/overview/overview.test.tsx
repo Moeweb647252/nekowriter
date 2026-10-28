@@ -86,6 +86,12 @@ vi.mock("@/components/common/ErrorToast", () => ({
 }))
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }))
 
+const errorToast = vi.hoisted(() => vi.fn())
+vi.mock("@/components/common/ErrorToast", () => ({
+  useErrorToast: () => errorToast,
+  useWarningToasts: () => vi.fn(),
+}))
+
 /** The agent-panel half of the workspace shell; `null` is a page rendered outside a workspace. */
 const shell = vi.hoisted(() => ({
   value: null as unknown as BookShell | null,
@@ -487,6 +493,27 @@ describe("canon seeding points at the agent panel (D-135)", () => {
     await user.click(screen.getByRole("button", { name: /Go/ }))
     expect(mutations.maintain).toHaveBeenCalledTimes(1)
     expect(mutations.resync).not.toHaveBeenCalled()
+  })
+
+  it("reports a maintain failure through the error toast", async () => {
+    const user = userEvent.setup()
+    overview.mockReturnValue(
+      data({
+        next_action: {
+          ...SYNC_CANON,
+          chapter: { ...SYNC_CANON.chapter, canon_status: "failed" },
+        },
+      }),
+    )
+    renderOverview()
+    await user.click(screen.getByRole("button", { name: /Go/ }))
+    expect(mutations.maintain).toHaveBeenCalledTimes(1)
+    act(() => {
+      optionsOf<{ session_id: number }>(mutations.maintain).onError?.(new Error("maintain failed"))
+    })
+    expect(errorToast).toHaveBeenCalledTimes(1)
+    expect(useUiStore.getState().pinnedSession[1]).toBeUndefined()
+    expect(screen.queryByRole("status")).toBeNull()
   })
 
   it("reopens a collapsed agent panel when the run starts", async () => {
