@@ -12,4 +12,9 @@ target_words_min: number, target_words_max: number, recent_summary_count: number
 /**
  * Number of chapters in the mid-term window.
  */
-midterm_window: number, auto_maintenance: boolean, };
+midterm_window: number, 
+/**
+ * How many prior official chapters `block.recent_chapters` injects in full (design §6.4).
+ * `0` disables the block.
+ */
+recent_chapter_count: number, auto_maintenance: boolean, };

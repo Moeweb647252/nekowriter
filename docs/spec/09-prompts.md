@@ -67,7 +67,7 @@ escaping.
 |---|---|
 | System | `conception.system`, `researcher.system`, `planner.system`, `writer.system`, `reviewer.system`, `archivist.system` |
 | Tasks | `conception.kickoff`, `researcher.kickoff`, `planner.kickoff`, `writer.kickoff.chapter` (drafting; its `feedback` branch is today's redraft), `writer.kickoff.revise`, `writer.kickoff.rollover`, `reviewer.kickoff`, `reviewer.rereview`, `archivist.kickoff.maintenance`, `archivist.kickoff.seed`, `archivist.kickoff.resync`. `writer.kickoff.redraft` is retired; existing overrides of it are inert |
-| Blocks | `block.settings`, `block.memory`, `block.chapter_draft`, `block.cast_index`, `block.chapter_diff`, `block.anchor`, `block.book_brief` |
+| Blocks | `block.settings`, `block.writing_skills`, `block.memory`, `block.recent_chapters`, `block.chapter_draft`, `block.cast_index`, `block.chapter_diff`, `block.anchor`, `block.book_brief` |
 | Notices | `notice.user_feedback`, `notice.user_message`, `notice.user_edits`, `notice.setting_edits`, `notice.completion_revoked`, `notice.tool_not_allowed`, `notice.output_truncated` (these two are rendered inside `result.error`), `notice.web_content`, `notice.nudge_generic`, `notice.research_budget`, `planner.notice.outline_rejected`, `planner.notice.nudge`, `planner.notice.retrieval_budget`, `writer.notice.outline_accepted`, `writer.notice.revision_plan_accepted`, `writer.notice.revision_plan_rejected`, `writer.notice.granularity`, `writer.notice.nudge_drafting`, `writer.notice.nudge_revision_planning`, `writer.notice.nudge_revising`, `writer.rules.granularity` (partial, included by other notices). `writer.notice.outline_rejected`, `writer.notice.nudge_planning` and `writer.notice.retrieval_budget` stay as **legacy** keys, used only by sessions started before the outline split (their titles say so) |
 | Shared | `shared.label`, `shared.chapter_label` |
 | Results | `result.error`, `result.truncated`, `result.entity_card`, `result.entity_list`, `result.relations`, `result.timeline`, `result.foreshadowing_list`, `result.search_hits`, `result.knowledge_entry`, `result.chapter_text`, `result.draft_text`, `result.draft_edit`, `result.writer_control`, `result.submit_review`, `result.canon_write`, `result.finish_maintenance`, `result.ask_user`, `result.request_review`, `result.conception_write`, `result.web_search`, `result.web_fetch`, `result.knowledge_write`, `result.finish_research` |
@@ -140,8 +140,9 @@ The Rust side has one context struct per key family (`prompts/context.rs`), seri
 6. **Untrusted content**: web content is always wrapped by `notice.web_content`.
 7. Keep results compact. Long data is paginated with explicit continuation hints.
 8. **Embedded documents are tagged**: author- or model-written Markdown (setting documents,
-   character profiles, chapter outlines, reference notes, chapter text) is wrapped in XML-style
-   tags, for example `<book_outline>…</book_outline>`, `<character rank=… name=…>`,
-   `<chapter_outline>`, `<reference_notes>`, `<chapter_text>`, `<document>`, so its own headings
-   can never be read as the template's structure. A tag line is always followed by a line break
-   (the validator checks it).
+   character profiles, chapter outlines, reference notes, chapter text, writing-skill bodies) is
+   wrapped in XML-style tags, for example `<book_outline>…</book_outline>`,
+   `<character rank=… name=…>`, `<chapter_outline>`, `<reference_notes>`, `<chapter_text>`,
+   `<writing_skill name=… category=…>`, `<document>`, so its own headings can never be read as
+   the template's structure. A tag line is always followed by a line break (the validator checks
+   it).

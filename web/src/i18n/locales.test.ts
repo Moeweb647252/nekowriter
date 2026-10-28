@@ -35,6 +35,7 @@ const ALL_ERROR_CODES: ErrorCode[] = [
   "track.mode_locked",
   "change.not_latest",
   "proposal.invalid_state",
+  "writing_skill.builtin",
   "prompt.template_invalid",
   "provider.unavailable",
   "provider.auth",
@@ -395,6 +396,7 @@ describe("i18n namespaces", () => {
     "canon",
     "knowledge",
     "prompts",
+    "skills",
     "settings",
     "errors",
   ]

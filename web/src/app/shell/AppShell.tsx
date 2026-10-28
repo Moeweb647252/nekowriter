@@ -38,6 +38,9 @@ export function AppShell() {
             <NavLink to="/knowledge" className={navClass}>
               {t("common:knowledge")}
             </NavLink>
+            <NavLink to="/skills" className={navClass}>
+              {t("common:skills")}
+            </NavLink>
             <NavLink to="/prompts" className={navClass}>
               {t("common:prompts")}
             </NavLink>

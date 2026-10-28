@@ -11,6 +11,7 @@ mod m0001_init;
 mod m0002_research_deferred;
 mod m0003_relation_pair_unique;
 mod m0004_outline_sessions;
+mod m0005_writing_skills;
 
 pub struct Migrator;
 
@@ -22,6 +23,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0002_research_deferred::Migration),
             Box::new(m0003_relation_pair_unique::Migration),
             Box::new(m0004_outline_sessions::Migration),
+            Box::new(m0005_writing_skills::Migration),
         ]
     }
 }

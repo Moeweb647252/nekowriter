@@ -42,8 +42,11 @@
   before the rebuild and fails loudly if any changed, then runs `PRAGMA foreign_key_check`. It
   also moves `prompt_overrides` rows of `writer.kickoff.chapter` to `planner.kickoff` where the
   same scope has no planner override yet.
+  `0005_writing_skills.sql` adds the two writing-skill tables and seeds the built-in
+  `basic-writing` row with an empty body (design §4–§5). It touches no existing table, so it runs
+  inside the migrator's transaction; the reconciler is deliberately deferred (design §4.2).
 
-## 2. Schema (0001_init.sql, upgraded by 0002_research_deferred.sql, 0003 and 0004)
+## 2. Schema (0001_init.sql, upgraded by 0002_research_deferred.sql, 0003, 0004 and 0005)
 
 ```sql
 -- ───────────────────────────── App configuration ─────────────────────────────
@@ -581,7 +584,32 @@ CREATE TABLE prompt_overrides (
 );
 CREATE UNIQUE INDEX prompt_overrides_global ON prompt_overrides(key) WHERE scope = 'global';
 CREATE UNIQUE INDEX prompt_overrides_book   ON prompt_overrides(book_id, key) WHERE scope = 'book';
+
+-- ───────────────────────────── Writing skills (0005) ─────────────────────────────
+CREATE TABLE writing_skills (
+  id                 INTEGER PRIMARY KEY,
+  key                TEXT UNIQUE,                -- built-in only; NULL for user rows
+  name               TEXT NOT NULL,
+  category           TEXT NOT NULL DEFAULT '',
+  author             TEXT NOT NULL CHECK (author IN ('builtin','user')),
+  description        TEXT NOT NULL DEFAULT '',
+  body               TEXT NOT NULL DEFAULT '',
+  enabled_by_default INTEGER NOT NULL DEFAULT 0,
+  retired            INTEGER NOT NULL DEFAULT 0,
+  created_at         TEXT NOT NULL,
+  updated_at         TEXT NOT NULL
+);
+CREATE TABLE book_writing_skills (
+  book_id    INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+  skill_id   INTEGER NOT NULL REFERENCES writing_skills(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (book_id, skill_id)
+);
+CREATE INDEX book_writing_skills_skill ON book_writing_skills(skill_id);
 ```
+
+The migration seeds `('basic-writing', '基础写作 / Basic Writing', '写作 / Writing', 'builtin',
+'', '', 0, 0)` — an empty body and `enabled_by_default = 0` (design §5).
 
 ## 3. Enumerations
 
@@ -617,6 +645,7 @@ CREATE UNIQUE INDEX prompt_overrides_book   ON prompt_overrides(book_id, key) WH
 | MessageRole / MessageKind | `user`,`assistant` / `kickoff`,`user`,`notice`,`nudge`,`assistant` |
 | InboxKind | `user_message`, `notice` |
 | PromptScope | `global`, `book` |
+| WritingSkillAuthor | `builtin`, `user` |
 
 Every CHECK-constrained `TEXT` column above maps to one of these Rust enums.
 
@@ -636,6 +665,7 @@ type BookSettings = {
   target_words_max: number;            // default 4000
   recent_summary_count: number;        // N, default 5
   midterm_window: number;              // M chapters, default 10
+  recent_chapter_count: number;        // N, default 2; 0 disables `block.recent_chapters`
   auto_maintenance: boolean;           // default true
 };
 
@@ -785,3 +815,7 @@ type SnapshotCharacterDesign = { rank, name, role_label, summary, profile, entit
     new id; the relations are not restored (documented limitation in the UI).
 11. No `fts_*` or `vec_*` row exists without its `search_docs` / `knowledge_chunks` row (the
     delete triggers above; tests delete a book and a scope and count the index rows).
+12. A `writing_skills` row with `author = 'builtin'` is read-only through the API; only
+    `author = 'user'` rows can be created, edited and deleted. `key` is non-NULL exactly for
+    built-in rows. Deleting a user row cascades its `book_writing_skills` selections and reports
+    the affected books (design §4).

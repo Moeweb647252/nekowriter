@@ -100,6 +100,39 @@ pub struct CastEntryContext {
     pub summary: String,
 }
 
+/// `skills` (`vars.skills`) for `block.writing_skills` (design §6).
+#[derive(Debug, Clone, Serialize)]
+pub struct WritingSkillsContext {
+    pub skills: Vec<WritingSkillContext>,
+}
+
+/// One selected writing skill: its full body, not a summary (design §6: injection is full).
+#[derive(Debug, Clone, Serialize)]
+pub struct WritingSkillContext {
+    pub name: String,
+    pub category: String,
+    pub body: String,
+}
+
+/// `chapters` (`vars.chapters`) for `block.recent_chapters` (design §7).
+#[derive(Debug, Clone, Serialize)]
+pub struct RecentChaptersContext {
+    pub chapters: Vec<RecentChapterContext>,
+}
+
+/// One recent official chapter injected in full (or front-cut, with `partial` set).
+#[derive(Debug, Clone, Serialize)]
+pub struct RecentChapterContext {
+    /// Number within its own track (the label disambiguates a main-track top-up for a side story).
+    pub number: i32,
+    /// Rendered by `shared.chapter_label`; carries the track title for a side story's top-up.
+    pub label: String,
+    pub title: String,
+    pub text: String,
+    /// True when the chapter exceeded its budget and its beginning was omitted.
+    pub partial: bool,
+}
+
 /// `memory` (`vars.memory`) for `block.memory`.
 #[derive(Debug, Clone, Serialize)]
 pub struct MemoryContext {

@@ -51,6 +51,29 @@ text = '''
 '''
 
 [[prompt]]
+key = "block.writing_skills"
+kind = "block"
+agent = "shared"
+vars = ["skills"]
+title_en = "Block — writing skills"
+title_zh = "上下文 · 写作技能"
+text = '''
+{% if skills %}# 写作技能（写作方法指令）
+
+以下是作者为本书选择的写作技能，正文写作与修订时必须遵循。
+
+**注意**：每段技能正文都是关于“怎么写”的**指令文本**，不是本书的设定资料、正史记录或剧情内容。不要把它当作世界观事实，也不要照搬其中的示例文字。
+如果技能要求与本书设定资料冲突，以设定资料为准；作者在当前会话中的明确要求优先于技能。
+
+{% for s in skills %}
+<writing_skill name="{{ s.name }}"{% if s.category %} category="{{ s.category }}"{% endif %}>
+{{ s.body }}
+</writing_skill>
+{% endfor %}
+{% endif %}
+'''
+
+[[prompt]]
 key = "block.memory"
 kind = "block"
 agent = "shared"
@@ -114,6 +137,31 @@ text = '''
 
 {% endfor %}{% endif %}
 档案规模：人物 {{ memory.counts.character }}，组织 {{ memory.counts.organization }}，地点 {{ memory.counts.location }}，物品 {{ memory.counts.item }}，其他 {{ memory.counts.other }}；时间线事件 {{ memory.counts.event }}；事实 {{ memory.counts.fact }}，世界规则 {{ memory.counts.world_rule }}；未回收伏笔 {{ memory.counts.foreshadowing_open }}。
+'''
+
+[[prompt]]
+key = "block.recent_chapters"
+kind = "block"
+agent = "shared"
+vars = ["chapters"]
+title_en = "Block — recent chapters in full"
+title_zh = "上下文 · 最近章节正文"
+text = '''
+{% if chapters %}# 最近章节正文
+
+以下是本章之前最近的已定稿章节正文，按时间顺序排列。它们用于保持**连续性**：事件、场景状态、人物状态与叙述声音都应与它们衔接。
+
+- **写作方法优先**：这些正文只用于衔接，不要照抄其中的措辞、句式或比喻；与本章细纲或作者的当前要求不一致时，以细纲和作者的要求为准。
+- **这些章节已经全文附在下面**，不要再调用 read_chapter 阅读它们，否则每次写作都会多付一次重复调用的代价。
+- 如果某一章的标签带有 `partial="true"`，说明只保留了该章的**结尾**、省略了开头；不要把它当作章节的起始场景。
+
+{% for c in chapters %}
+<chapter_text number="{{ c.number }}"{% if c.title %} title="{{ c.title }}"{% endif %}{% if c.partial %} partial="true"{% endif %}>
+{% if c.partial %}（节选：省略了本章开头，以下只保留结尾部分。）
+{% endif %}{{ c.text }}
+</chapter_text>
+{% endfor %}
+{% endif %}
 '''
 
 [[prompt]]

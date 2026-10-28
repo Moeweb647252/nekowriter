@@ -216,13 +216,20 @@ async fn the_kickoff_blocks_follow_the_kind_table() {
         ),
         (
             SessionKind::ChapterOutline,
-            vec!["block.settings", "block.memory", "planner.kickoff"],
+            vec![
+                "block.settings",
+                "block.memory",
+                "block.recent_chapters",
+                "planner.kickoff",
+            ],
         ),
         (
             SessionKind::ChapterWrite,
             vec![
                 "block.settings",
+                "block.writing_skills",
                 "block.memory",
+                "block.recent_chapters",
                 "block.chapter_draft",
                 "writer.kickoff.chapter",
             ],
@@ -231,6 +238,7 @@ async fn the_kickoff_blocks_follow_the_kind_table() {
             SessionKind::ChapterRevise,
             vec![
                 "block.settings",
+                "block.writing_skills",
                 "block.memory",
                 "block.chapter_draft",
                 "writer.kickoff.revise",
@@ -240,6 +248,7 @@ async fn the_kickoff_blocks_follow_the_kind_table() {
             SessionKind::ChapterReview,
             vec![
                 "block.settings",
+                "block.writing_skills",
                 "block.memory",
                 "block.chapter_draft",
                 "reviewer.kickoff",
@@ -277,9 +286,11 @@ async fn the_kickoff_blocks_follow_the_kind_table() {
             assert_eq!(kickoff_blocks(kind, true), kickoff_blocks(kind, false));
         }
     }
-    // Only `block.settings` carries a cache breakpoint (spec/03 §10).
+    // Only `block.settings` carries a cache breakpoint (spec/03 §10). A skills block after the
+    // settings block is outside the cached prefix; it earns no cache flag (design §6.1).
     assert!(block_is_cached("block.settings"));
     assert!(!block_is_cached("block.memory"));
+    assert!(!block_is_cached("block.writing_skills"));
     assert!(!block_is_cached("writer.kickoff.chapter"));
 }
 

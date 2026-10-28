@@ -15,6 +15,7 @@
   "settings.locked": "构思智能体正在处理这部作品。",
   "change.not_latest": "请先还原更晚的变更。",
   "proposal.invalid_state": "这个提案已无法更改。",
+  "writing_skill.builtin": "内置写作技能只读，不能修改或删除。",
   "model.missing_role": "该角色还没有配置模型。",
   "conception.incomplete": "构思还没有完成。",
   "track.mode_locked": "正史模式已不能再修改。",

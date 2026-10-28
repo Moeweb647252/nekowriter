@@ -194,6 +194,29 @@ type ChapterListItemDto = {
 };
 ```
 
+### 2.9 Writing skills (design §8)
+
+| Method | Path | Body / query | Response |
+|---|---|---|---|
+| GET | `/writing-skills` | `?book_id=` | `WritingSkillDto[]` (active catalogue; `selected` and `used_by_books` are per view) |
+| POST | `/writing-skills` | `WritingSkillInput {name, category?, description?, body?}` | `WritingSkillDto` (201; `author` is forced to `user`, `key` stays `null`) |
+| PATCH / DELETE | `/writing-skills/:id` | `WritingSkillPatch` (partial) / — | `WritingSkillDto` / `WritingSkillDeleteResponse {used_by_books}` — **user rows only**; a built-in row is `409 writing_skill.builtin` |
+| PUT | `/books/:id/writing-skills` | `BookWritingSkillsInput {skill_ids}` | `WritingSkillDto[]` (the replaced selection; every id must exist and not be retired) |
+
+Deleting a user skill cascades away every book's selection of it, so `WritingSkillDeleteResponse`
+(and every catalogue row's `used_by_books`) names the affected books for the confirmation. There
+is no API shape that creates, edits or deletes a built-in row.
+
+```ts
+type WritingSkillDto = {
+  id: number; key: string | null; name: string; category: string;
+  author: "builtin" | "user"; description: string; body: string;
+  enabled_by_default: boolean; retired: boolean;
+  selected: boolean; used_by_books: { id: number; title: string }[];
+  created_at: string; updated_at: string;
+};
+```
+
 ## 3. Server-sent events
 
 `GET /api/events?book_id=<id>` sends events of that book plus global events (`book_id: null`).
@@ -260,6 +283,7 @@ type ContentOpInput =                                                    // auth
 | `change.not_latest` | 409 | `details.later_change_ids` |
 | `proposal.invalid_state` | 409 | the proposal's status does not allow the operation (accept: `pending`; reject: `pending` or `conflict`); `details.status` |
 | `prompt.template_invalid` | 400 | `details.line`, `details.column`, `details.message` |
+| `writing_skill.builtin` | 409 | PATCH/DELETE on a built-in writing skill; `details.id` |
 | `provider.unavailable` · `provider.auth` · `provider.bad_request` | 502 | provider tests and remote models (the connection test reports the same codes inside its 200 `error` field, spec/04 §8); the web search test maps a rejected key to `provider.auth` and other failures to `provider.unavailable` |
 | `embedding.unavailable` | 503 | |
 | `search.not_configured` | 409 | search test without a provider |

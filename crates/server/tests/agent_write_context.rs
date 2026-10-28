@@ -30,10 +30,11 @@ async fn kickoff_text(runtime: &agent_harness::Runtime, chapter_id: i32) -> Stri
     let kickoff = messages.first().expect("a kickoff message");
     assert_eq!(kickoff.kind, "kickoff");
     assert_eq!(kickoff.seq, 0);
-    // One text block per kickoff block (spec/03 §10): settings, memory, the chapter draft and the
-    // task.
+    // One text block per non-empty kickoff block (spec/03 §10): settings, memory, the chapter
+    // draft and the task, plus `block.recent_chapters` when a prior official chapter exists and
+    // `block.writing_skills` when the book selected a skill. `assemble_kickoff` drops blank ones.
     let blocks = kickoff.blocks();
-    assert_eq!(blocks.len(), 4, "writer kickoffs carry four blocks");
+    assert!(!blocks.is_empty(), "a writer kickoff has blocks");
     kickoff.text()
 }
 

@@ -87,6 +87,7 @@ function book(status: BookDto["status"]): BookDto {
       target_words_min: 3000,
       target_words_max: 4000,
       recent_summary_count: 5,
+      recent_chapter_count: 2,
       midterm_window: 10,
       auto_maintenance: true,
     },

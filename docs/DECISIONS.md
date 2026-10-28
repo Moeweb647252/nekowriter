@@ -2749,3 +2749,62 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
 - **Spec**: PROJECT §4–§6, §10.7; spec/02 §1–§5; spec/03 §1, §4–§12, §14–§15; spec/04 §3, §7.2;
   spec/05 §1.5, §2, §4; spec/06 §4.2; spec/08 §1–§3, §7; spec/09 §1–§2; spec/10 §2.2, §2.7–§2.8,
   §4; spec/11 §5–§6.
+
+### D-147 Writing skills and recent-chapter context
+
+- **Context**: the author asked for a writing-skills surface injected like the knowledge base
+  (「弄一个像 skills 那样注入上下文的 writing skills，与书库 知识库 提示词 设置并列」) and for the
+  last n chapters' text in context (「将最近 n 章正文注入上下文」). The locked design is
+  `docs/research/writing-skills-design.md` rev. 4, re-cut against the M12 outline/write split per
+  `session-split-plan.md` §2.14. M12 changed the ground the design assumed in five places:
+  `chapter_outline` is a new session kind with `block.settings · block.memory · planner.kickoff`;
+  `chapter_write` is now drafting-only and always carries `block.chapter_draft`;
+  `writer.kickoff.chapter` is the drafting kickoff and `writer.kickoff.redraft` is retired;
+  `writer.system` is worded with 细纲 and no longer describes planning; and the rollover feedback
+  truthiness defect (design §9.2) is already fixed in M12 (`kickoff_feedback` returns
+  `Option<FeedbackContext>` and walks the session chain), so this change does not touch it.
+- **Decision**:
+  - **Storage B**: `writing_skills` holds the bodies and `book_writing_skills` the per-book
+    selection (migration `0005`). The migration seeds one built-in, `basic-writing`, with
+    **empty body**, `author = 'builtin'`, `enabled_by_default = 0`. Built-in rows are read-only
+    through the API (`409 writing_skill.builtin`); the author creates user rows (`author = 'user'`,
+    `key = NULL`). Deleting a user row cascades its selections away and returns the books that
+    used it. No reconciler ships (design §4.2): when the first built-in body is actually shipped,
+    that change adds **both** `prompts/skills.toml` and the reconciler together; until then a
+    pack file would be unread dead weight, so the validator does not learn one.
+  - **Injection is full**, not on-demand, into `block.writing_skills`; bodies are wrapped in
+    `<writing_skill name=… category=…>` tags and the block says the text is instruction about how
+    to write, **not a document about the book**. It sits right after `block.settings` for
+    stable-first ordering; it earns **no cache breakpoint** because `block_is_cached` matches only
+    `block.settings`.
+  - **Session kinds**: `chapter_write` gets both skills and recent chapters; `chapter_outline`
+    gets recent chapters but **no skills** (it writes an outline, not prose); `chapter_revise` and
+    `chapter_review` get skills only; rollover gets skills only (its chapter text and
+    `previous_tail` already cover the seam); archivist, conception and research get neither.
+  - **`block.recent_chapters`** injects the last `recent_chapter_count` (default 2, `0` disables)
+    **official** chapters before the target, oldest first, wrapped in `<chapter_text …>` tags. It
+    follows memory's rule exactly: same-track official chapters, a side track topped up from
+    main-track official chapters up to its anchor, no non-official text (drafts, in-review and
+    rejected text are not approved prose), target excluded, empty text skipped. The per-chapter
+    cap is `target_words_max × 1.5` (6,000 characters at the 4,000 default; 6,000 when the target
+    is unset) and the total budget is `recent_chapter_count × cap`, filled newest-first; a chapter
+    over its cap is front-cut at a paragraph boundary keeping the ending and is announced as
+    `partial`. `previous_tail` is dropped when its chapter is injected in full; chapter summaries
+    stay because they are condensed accounts, not copies.
+  - **The prose style section leaves `writer.system` now** (design §5.1 option A): the six style
+    bullets and the short-paragraph clause are deleted; 先想清楚再写, 遵循细纲…, the Chinese
+    quotation marks/no-Markdown part and the no-metadata bullet stay. **Accepted consequence: a
+    book has no prose style rules at all until the author writes and selects a skill.** That is
+    deliberate, not a bug.
+  - **API** (spec/10 §2.9): `GET /writing-skills?book_id=`, `POST /writing-skills`,
+    `PATCH`/`DELETE /writing-skills/:id` (user rows only; delete returns `used_by_books`), and
+    `PUT /books/:id/writing-skills` for the selection.
+- **Consequences**: the built-in `basic-writing` row is selectable but injects nothing while its
+  body is empty. The recent-chapters injection adds roughly two chapters of prose to every write
+  and outline kickoff; the per-chapter cap and `recent_chapter_count = 0` are the controls. The
+  skills block is sent in full on every write/revise/review session, so the selection UI shows a
+  running character total and warns above 8,000 characters without blocking. Existing selections
+  keep working when a built-in is later retired. Two items of debt are explicit: the reconciler
+  (with `prompts/skills.toml`) and built-in bodies are deferred together until a body exists.
+- **Spec**: design §4–§8; spec/02 §1–§5; spec/03 §10; spec/06 §4.1; spec/09 §2, §5.8;
+  spec/10 §2.9, §4; spec/11 §2–§3, §5.5, §6.

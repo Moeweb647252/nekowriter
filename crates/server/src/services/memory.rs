@@ -55,6 +55,33 @@ pub const CAST_LIMIT: usize = 40;
 /// The entity count `block.cast_index` lists (spec/06 §4.5).
 pub const CAST_INDEX_LIMIT: usize = 300;
 
+/// The multiplier of the chapter target that bounds one chapter injected in full by
+/// `block.recent_chapters` (design §6.4): `target_words_max × 1.5` = 6,000 characters at the
+/// 4,000-word default. A chapter over it is front-cut, keeping its ending.
+pub const RECENT_CHAPTER_CAP_MULTIPLIER_NUMERATOR: i64 = 3;
+pub const RECENT_CHAPTER_CAP_MULTIPLIER_DENOMINATOR: i64 = 2;
+
+/// The per-chapter cap when `target_words_max` is unset (0 or negative), so a misconfigured book
+/// still gets the documented default rather than an empty block.
+pub const RECENT_CHAPTER_FALLBACK_CAP: usize = 6_000;
+
+/// The per-chapter cap of `block.recent_chapters` (design §6.4). Expressed relative to the book's
+/// chapter target, never a fixed count for a configured book.
+pub fn recent_chapter_cap(settings: &BookSettings) -> usize {
+    if settings.target_words_max <= 0 {
+        return RECENT_CHAPTER_FALLBACK_CAP;
+    }
+    let cap = i64::from(settings.target_words_max) * RECENT_CHAPTER_CAP_MULTIPLIER_NUMERATOR
+        / RECENT_CHAPTER_CAP_MULTIPLIER_DENOMINATOR;
+    usize::try_from(cap).unwrap_or(RECENT_CHAPTER_FALLBACK_CAP)
+}
+
+/// The total character budget of `block.recent_chapters`: `recent_chapter_count × per-chapter
+/// cap` (design §6.4). Fill newest-first under it.
+pub fn recent_chapter_budget(settings: &BookSettings) -> usize {
+    (settings.recent_chapter_count.max(0) as usize).saturating_mul(recent_chapter_cap(settings))
+}
+
 /// An entity counts as important from this importance on (spec/06 §4.3, §4.4).
 pub const IMPORTANT: i32 = 4;
 
@@ -232,9 +259,9 @@ pub struct MemorySnapshot {
 
 /// A chapter of P with its rendered label (spec/06 §4.1).
 #[derive(Debug, Clone)]
-struct ChapterEntry {
-    chapter: chapters::Model,
-    label: String,
+pub(crate) struct ChapterEntry {
+    pub(crate) chapter: chapters::Model,
+    pub(crate) label: String,
 }
 
 /// Builds the memory snapshot for a target chapter (spec/06 §4).
@@ -313,6 +340,27 @@ async fn prior_chapters(
     chapter: &chapters::Model,
     settings: &BookSettings,
 ) -> Result<Vec<ChapterEntry>, AppError> {
+    let wanted = settings
+        .midterm_window
+        .max(settings.recent_summary_count)
+        .max(0) as usize;
+    prior_chapters_wanted(conn, prompts, track, chapter, wanted).await
+}
+
+/// P for a caller that needs exactly `wanted` chapters: the track's own official chapters before
+/// the target, topped up from main-track official chapters for a side track (spec/06 §4.1).
+///
+/// `block.recent_chapters` uses this with `wanted = recent_chapter_count`; the memory windows use
+/// the larger of their two sizes. The top-up must be bounded by the caller's own `wanted`,
+/// otherwise a side story with two own chapters and a wide mid-term window would push its own
+/// chapters out of the short recent list.
+pub(crate) async fn prior_chapters_wanted(
+    conn: &impl ConnectionTrait,
+    prompts: &PromptSet,
+    track: &tracks::Model,
+    chapter: &chapters::Model,
+    wanted: usize,
+) -> Result<Vec<ChapterEntry>, AppError> {
     let own = official_before(conn, track.id, chapter.ord).await?;
     let entries: Vec<ChapterEntry> = own
         .into_iter()
@@ -322,11 +370,7 @@ async fn prior_chapters(
         })
         .collect();
     // A side story's first chapter still gets a short-term window: main-track chapters up to the
-    // anchor are added in front until P has max(N, M) (spec/06 §4.1, D-038).
-    let wanted = settings
-        .midterm_window
-        .max(settings.recent_summary_count)
-        .max(0) as usize;
+    // anchor are added in front until P has `wanted` (spec/06 §4.1, D-038).
     if track.kind != "side" || entries.len() >= wanted {
         return Ok(entries);
     }
@@ -363,6 +407,129 @@ async fn prior_chapters(
         .collect();
     topped.extend(entries);
     Ok(topped)
+}
+
+/// One chapter injected by `block.recent_chapters` (design §7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecentChapter {
+    pub chapter_id: i32,
+    /// Number within its own track.
+    pub number: i32,
+    /// Rendered by `shared.chapter_label` (a side story's main-track top-up keeps the main label).
+    pub label: String,
+    pub title: String,
+    /// The chapter's official text; front-cut when it exceeds its budget.
+    pub text: String,
+    /// True when the beginning of the chapter is omitted, so the block can say the text is partial.
+    pub partial: bool,
+}
+
+/// The chapters `block.recent_chapters` injects (design §7), oldest first.
+///
+/// Selection follows the memory rule (spec/06 §4.1): the last `recent_chapter_count` **official**
+/// chapters before the target on the same track, topped up from main-track official chapters up to
+/// a side story's anchor. Non-official text is never used: a draft, an in-review chapter or a
+/// rejected version is not approved prose. Chapters with empty text are skipped, and the target is
+/// excluded automatically because P is defined as `ord < target.ord`.
+///
+/// Budget (design §6.4): `recent_chapter_count × (target_words_max × 1.5)`, filled newest-first.
+/// A chapter over its cap is cut from the front at a paragraph boundary keeping the ending; when
+/// the remaining total budget is smaller, it is cut to that budget and older chapters get nothing.
+pub async fn recent_chapters(
+    conn: &impl ConnectionTrait,
+    prompts: &PromptSet,
+    track: &tracks::Model,
+    chapter: &chapters::Model,
+) -> Result<Vec<RecentChapter>, AppError> {
+    let settings = book_settings(conn, chapter.book_id).await?;
+    let wanted = settings.recent_chapter_count.max(0) as usize;
+    if wanted == 0 {
+        return Ok(Vec::new());
+    }
+    let cap = recent_chapter_cap(&settings);
+    let mut remaining = recent_chapter_budget(&settings);
+    if remaining == 0 {
+        return Ok(Vec::new());
+    }
+    let prior = prior_chapters_wanted(conn, prompts, track, chapter, wanted).await?;
+    let mut selected = Vec::new();
+    // Newest first: the closest chapter is the most valuable for continuity, so it is filled
+    // first and an older one only gets what is left.
+    for entry in prior.iter().rev() {
+        if remaining == 0 {
+            break;
+        }
+        let content = content_of(&entry.chapter)?;
+        let full = content
+            .paragraphs
+            .iter()
+            .map(|paragraph| paragraph.text.as_str())
+            .filter(|text| !text.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        if full.trim().is_empty() {
+            continue;
+        }
+        let limit = cap.min(remaining);
+        let (text, partial) = front_cut_text(&content, limit);
+        if text.is_empty() {
+            continue;
+        }
+        remaining = remaining.saturating_sub(text.chars().count());
+        selected.push(RecentChapter {
+            chapter_id: entry.chapter.id,
+            number: entry.chapter.ord,
+            label: entry.label.clone(),
+            title: entry.chapter.title.clone(),
+            text,
+            partial,
+        });
+    }
+    selected.reverse();
+    Ok(selected)
+}
+
+/// Keeps the ending of a chapter and drops its front: whole paragraphs from the end while they fit
+/// `limit`, at a paragraph boundary. If a single paragraph exceeds the limit, its last `limit`
+/// characters are kept (there is no paragraph boundary to cut at) and the text is still marked
+/// partial. `partial` is true whenever any text was omitted.
+fn front_cut_text(content: &ChapterContent, limit: usize) -> (String, bool) {
+    let paragraphs: Vec<&str> = content
+        .paragraphs
+        .iter()
+        .map(|paragraph| paragraph.text.as_str())
+        .filter(|text| !text.trim().is_empty())
+        .collect();
+    let Some(last) = paragraphs.last() else {
+        return (String::new(), false);
+    };
+    let full_length: usize = paragraphs
+        .iter()
+        .map(|text| text.chars().count())
+        .sum::<usize>()
+        + paragraphs.len().saturating_sub(1) * 2;
+    if full_length <= limit {
+        return (paragraphs.join("\n\n"), false);
+    }
+    let mut parts: Vec<&str> = Vec::new();
+    let mut total = 0usize;
+    for text in paragraphs.iter().rev() {
+        let length = text.chars().count();
+        let separator = if parts.is_empty() { 0 } else { 2 };
+        if !parts.is_empty() && total + separator + length > limit {
+            break;
+        }
+        total += separator + length;
+        parts.push(text);
+    }
+    if parts.len() == 1 && total > limit {
+        // The last paragraph alone is over the limit; keep its ending at a character boundary.
+        let chars: Vec<char> = last.chars().collect();
+        let cut = chars[chars.len().saturating_sub(limit)..].iter().collect();
+        return (cut, true);
+    }
+    parts.reverse();
+    (parts.join("\n\n"), true)
 }
 
 /// The chapter ids of the mid-term window W of a target position (spec/06 §4.1, §4.3): the last

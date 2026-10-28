@@ -162,6 +162,15 @@ pub struct MemorySnapshot {
   anchor are added in front until it has max(N, M) (labeled with their main-track label).
 - **Short-term window** = the last N chapters of P (`recent_summary_count`, default 5).
 - **Mid-term window** W = the last M chapters of P (`midterm_window`, default 10).
+- **Recent chapters in full** (`block.recent_chapters`, design §7) use the same P and top-up
+  rule, with `wanted = recent_chapter_count` (default 2; `0` disables the block). Only official
+  chapters are candidates; a draft, an in-review chapter and a rejected version are not approved
+  prose and are never top-up sources. The target is excluded (`ord` < target). Chapters with
+  empty text are skipped. The per-chapter cap is `target_words_max × 1.5` (6,000 characters at
+  the 4,000 default, and 6,000 when the target is unset); the total budget is
+  `recent_chapter_count × cap`, filled newest-first. A chapter over its cap keeps its ending and
+  loses its front at a paragraph boundary; when the remaining budget is smaller it is cut to the
+  remaining budget and older chapters get nothing. A front-cut chapter is rendered as partial.
 
 ### 4.2 Short-term
 - `recent_summaries`: label, title, and summary of each chapter in the short-term window. A

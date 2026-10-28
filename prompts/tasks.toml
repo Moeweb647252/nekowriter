@@ -214,7 +214,7 @@ text = '''
 {% endif %}
 本章已由作者审定为正式文本（见上方正文）。请根据本章内容更新档案：
 1. record_appearances：记录本章出场或被提及的全部实体及其角色（pov、major、minor、mentioned）。（必做）
-2. 实体：新出现且有意义的人物、组织、地点、物品，用 create_entity 创建；已有实体的状态、属性、身份或描述发生变化，用 update_entity 更新，并写明 note。
+2. 实体：新出现且有意义的人物、组织、地点、物品，用 create_entity 创建；已有实体的**状态、属性或身份**发生变化，用 update_entity 更新，并写明 note。**不要**因为本章剧情而更新 description：description 只在实体被永久重新定义时才动。
    - description 是稳定档案（这是什么、出身背景、长期不变的外貌、性格与能力），不是章节日志，整体保持在约 120 字以内。本章的进展写进 state 与 add_memory_note、add_timeline_event；单项事实（修为、官职、年龄等）写进 attributes；不要把它们追加到 description。
    - 只有永久改变其定位的信息（例如真实身份揭晓、根本性的转变）才用 description_append，且追加后整体仍应控制在约 120 字内。原文已经接近或超过这个长度时，改用 description 重写成更紧凑的版本，而不是继续追加；本次本来就要更新这个实体时，顺手把过长的描述压缩到 120 字以内。
 3. 主角状态：主角（即记忆中“主角当前状态”所示的人物）在本章出场时，用 update_entity 更新其 state，反映本章结尾时的情况。

@@ -20,6 +20,7 @@ pub mod reviews;
 pub mod search_settings;
 pub mod sessions;
 pub mod settings_materials;
+pub mod skills;
 pub mod spa;
 pub mod tracks;
 
@@ -218,6 +219,16 @@ pub fn build_app(state: AppState) -> Router {
                 .delete(canon::delete_foreshadowing),
         )
         .route("/books/{book_id}/memory", get(canon::memory_snapshot))
+        // Writing skills (spec/10 §2.9, design §8).
+        .route("/writing-skills", get(skills::list).post(skills::create))
+        .route(
+            "/writing-skills/{skill_id}",
+            patch(skills::patch).delete(skills::delete),
+        )
+        .route(
+            "/books/{book_id}/writing-skills",
+            put(skills::replace_selection),
+        )
         .route("/embedding/status", get(embedding::status))
         .route("/embedding/rebuild", post(embedding::rebuild))
         // Knowledge base (spec/10 §2.5).

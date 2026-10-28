@@ -14,12 +14,18 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 
 import enBook from "@/i18n/locales/en/book.json"
 import enSettings from "@/i18n/locales/en/settings.json"
+import enSkills from "@/i18n/locales/en/skills.json"
 import type { BookDto } from "@/api/gen/BookDto"
+import type { WritingSkillDto } from "@/api/gen/WritingSkillDto"
 
 const patchBook = vi.fn()
+const replaceSkills = vi.fn()
 
 /** The book the page loads; tests override `model_overrides` / `status` as needed. */
 let book: BookDto
+
+/** The writing-skill catalogue the page renders; tests override `selected`. */
+let skillRows: WritingSkillDto[]
 
 /** The global role defaults the page compares each row against. */
 let rolesDefaults: Record<string, number | null>
@@ -60,6 +66,11 @@ vi.mock("@/api/hooks/providers", () => ({
   }),
 }))
 
+vi.mock("@/api/hooks/skills", () => ({
+  useWritingSkills: () => ({ isPending: false, isError: false, data: skillRows }),
+  useReplaceBookWritingSkills: () => ({ mutate: replaceSkills, isPending: false }),
+}))
+
 vi.mock("@/components/common/ErrorToast", () => ({ useErrorToast: () => vi.fn() }))
 
 import BookSettingsPage from "./BookSettingsPage"
@@ -72,6 +83,9 @@ beforeAll(() => {
   if (!i18n.hasResourceBundle("en", "settings")) {
     i18n.addResourceBundle("en", "settings", enSettings)
   }
+  if (!i18n.hasResourceBundle("en", "skills")) {
+    i18n.addResourceBundle("en", "skills", enSkills)
+  }
   // jsdom does not implement scrolling; Radix's SelectItem calls it when the list opens.
   Element.prototype.scrollIntoView = vi.fn()
   // Radix's Select trigger guards its pointer-down handler with these jsdom gaps.
@@ -82,6 +96,8 @@ beforeAll(() => {
 
 beforeEach(() => {
   patchBook.mockClear()
+  replaceSkills.mockClear()
+  skillRows = []
   rolesDefaults = { conception: 8, researcher: 8, writer: 7, reviewer: 8, archivist: 8 }
   book = {
     id: 1,
@@ -97,6 +113,7 @@ beforeEach(() => {
       target_words_min: 3000,
       target_words_max: 4000,
       recent_summary_count: 5,
+      recent_chapter_count: 2,
       midterm_window: 10,
       auto_maintenance: true,
     },
@@ -326,5 +343,71 @@ describe("Book settings › planner model hint (D-146)", () => {
     render(<BookSettingsPage />)
     const withGlobal = screen.getByTestId("model-override-row-planner")
     expect(within(withGlobal).getByText("Default: DeepSeek · Review model")).toBeInTheDocument()
+  })
+})
+
+describe("Book settings › writing skills and recent chapters", () => {
+  const builtin: WritingSkillDto = {
+    id: 1,
+    key: "basic-writing",
+    name: "基础写作 / Basic Writing",
+    category: "写作 / Writing",
+    author: "builtin",
+    description: "",
+    body: "",
+    enabled_by_default: false,
+    retired: false,
+    selected: false,
+    used_by_books: [],
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  }
+  const user: WritingSkillDto = {
+    ...builtin,
+    id: 2,
+    key: null,
+    name: "冷硬文风",
+    author: "user",
+    body: "短句推进",
+    selected: true,
+  }
+
+  it("renders the checkbox list and the selected character total", () => {
+    skillRows = [builtin, user]
+    render(<BookSettingsPage />)
+
+    expect(screen.getByTestId("book-skill-1")).toBeInTheDocument()
+    expect(screen.getByTestId("book-skill-2")).toBeInTheDocument()
+    expect(screen.getByText(/1 selected · 4 characters/)).toBeInTheDocument()
+    expect(screen.getAllByText(/The choice applies to new sessions/).length).toBeGreaterThan(0)
+  })
+
+  it("saves a toggle as the whole selection through the selection endpoint", async () => {
+    const userEventInstance = userEvent.setup()
+    skillRows = [builtin, user]
+    render(<BookSettingsPage />)
+
+    await userEventInstance.click(
+      within(screen.getByTestId("book-skill-1")).getByRole("checkbox", {
+        name: "基础写作 / Basic Writing",
+      }),
+    )
+    expect(replaceSkills).toHaveBeenCalledTimes(1)
+    expect(replaceSkills.mock.calls[0][0]).toEqual({ skill_ids: [1, 2] })
+  })
+
+  it("saves recent_chapter_count with the book settings form", async () => {
+    const userEventInstance = userEvent.setup()
+    skillRows = []
+    render(<BookSettingsPage />)
+
+    const input = screen.getByLabelText("Recent chapters in full")
+    await userEventInstance.clear(input)
+    await userEventInstance.type(input, "4")
+    await userEventInstance.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(patchBook).toHaveBeenCalledTimes(1)
+    const [body] = patchBook.mock.calls[0] as [{ settings: { recent_chapter_count: number } }]
+    expect(body.settings.recent_chapter_count).toBe(4)
   })
 })

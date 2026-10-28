@@ -13,6 +13,7 @@ import enKnowledge from "./locales/en/knowledge.json"
 import enLibrary from "./locales/en/library.json"
 import enPrompts from "./locales/en/prompts.json"
 import enSettings from "./locales/en/settings.json"
+import enSkills from "./locales/en/skills.json"
 import zhAgent from "./locales/zh-CN/agent.json"
 import zhBook from "./locales/zh-CN/book.json"
 import zhCanon from "./locales/zh-CN/canon.json"
@@ -23,6 +24,7 @@ import zhKnowledge from "./locales/zh-CN/knowledge.json"
 import zhLibrary from "./locales/zh-CN/library.json"
 import zhPrompts from "./locales/zh-CN/prompts.json"
 import zhSettings from "./locales/zh-CN/settings.json"
+import zhSkills from "./locales/zh-CN/skills.json"
 
 export const SUPPORTED_LANGUAGES = ["en", "zh-CN"] as const
 export type Language = (typeof SUPPORTED_LANGUAGES)[number]
@@ -38,6 +40,7 @@ export const NAMESPACES = [
   "knowledge",
   "settings",
   "prompts",
+  "skills",
   "errors",
 ] as const
 
@@ -53,6 +56,7 @@ export const resources = {
     knowledge: enKnowledge,
     settings: enSettings,
     prompts: enPrompts,
+    skills: enSkills,
     errors: enErrors,
   },
   "zh-CN": {
@@ -65,6 +69,7 @@ export const resources = {
     knowledge: zhKnowledge,
     settings: zhSettings,
     prompts: zhPrompts,
+    skills: zhSkills,
     errors: zhErrors,
   },
 } as const

@@ -15,6 +15,7 @@
   "settings.locked": "The conception agent is working on this book.",
   "change.not_latest": "Revert the later changes first.",
   "proposal.invalid_state": "This proposal can no longer be changed.",
+  "writing_skill.builtin": "Built-in writing skills are read-only.",
   "model.missing_role": "No model is configured for this role.",
   "conception.incomplete": "The conception is not finished yet.",
   "track.mode_locked": "The canon mode cannot change any more.",
