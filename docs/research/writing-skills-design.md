@@ -245,7 +245,10 @@ kickoff that alone crosses the context threshold. The plan must state the full b
   expressed **relative to the chapter target**, not as a fixed character count — a 6,000-character
   cap already binds on a chapter 25–30 % over the default target.
 - **A chapter over the cap is neither skipped nor truncated at the end.** Keep the ending, cut from
-  the **front** at a paragraph boundary, and fill newest-first under one total budget.
+  the **front** at a paragraph boundary, and fill newest-first under one total budget. When a
+  single paragraph alone exceeds the cap, cut at a sentence boundary (the earliest sentence start
+  whose suffix fits); only when even the last sentence is too long does it keep the last `limit`
+  characters. The block still marks the chapter `partial`.
 
 ---
 

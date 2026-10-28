@@ -3,7 +3,7 @@
  * (PROJECT §8.8: "Below: the facts and world rules table").
  */
 import { render, screen } from "@testing-library/react"
-import { beforeAll, describe, expect, it, vi } from "vitest"
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import i18n from "i18next"
 
 import enCanon from "@/i18n/locales/en/canon.json"
@@ -50,10 +50,20 @@ vi.mock("react-router", () => ({
   useParams: () => ({ bookId: "1" }),
 }))
 
+/** The recent-chapter rows the endpoint returns; a test sets them to render the list. */
+let memoryRecent: Array<{
+  chapter_id: number
+  number: number
+  label: string
+  title: string
+  characters: number
+  partial: boolean
+}> = []
+
 vi.mock("@/api/hooks/useCanon", () => ({
   useMemory: () => ({
     isPending: false,
-    data: { snapshot: emptySnapshot, rendered: "rendered memory", recent_chapters: [] },
+    data: { snapshot: emptySnapshot, rendered: "rendered memory", recent_chapters: memoryRecent },
   }),
   useMemoryNotes: () => ({
     isPending: false,
@@ -89,6 +99,10 @@ beforeAll(() => {
   i18n.addResourceBundle("en", "canon", enCanon, true, true)
 })
 
+beforeEach(() => {
+  memoryRecent = []
+})
+
 describe("MemoryPage", () => {
   it("shows the facts and world rules table below the columns", () => {
     render(<MemoryPage />)
@@ -96,5 +110,22 @@ describe("MemoryPage", () => {
     expect(
       screen.getByRole("heading", { name: "Memory notes" }),
     ).toBeInTheDocument()
+  })
+
+  it("names the chapters injected in full", () => {
+    memoryRecent = [
+      {
+        chapter_id: 12,
+        number: 12,
+        label: "Chapter 12",
+        title: "Prev",
+        characters: 500,
+        partial: false,
+      },
+    ]
+    render(<MemoryPage />)
+
+    expect(screen.getByText("Recent chapters injected in full")).toBeInTheDocument()
+    expect(screen.getByText("Chapter 12《Prev》（500 characters）")).toBeInTheDocument()
   })
 })

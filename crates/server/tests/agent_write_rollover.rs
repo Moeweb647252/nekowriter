@@ -363,3 +363,71 @@ async fn author_notes_keep_the_order_the_author_wrote_them_in() {
          third {third_at}): {kickoff}"
     );
 }
+
+/// A write-session rollover has no `block.recent_chapters` block (design §7), so its
+/// `block.memory` must keep `previous_tail`; deriving the dedupe flag from `plan.blocks()` dropped
+/// it because a `chapter_write` plan contains the key even though rollover never emits it.
+#[tokio::test]
+async fn a_rollover_keeps_previous_tail_because_it_has_no_recent_chapters_block() {
+    let runtime = runtime(vec![
+        outline_step(),
+        insert_step("第二章开头的一段。"),
+        insert_step("暂停前写入的一段。"),
+        ScriptStep::new().tool("finish_draft", json!({})),
+        ScriptStep::new().tool("finish_draft", json!({})),
+    ])
+    .await;
+    // The previous chapter is official prose with a tail: a write-session rollover must carry it
+    // in `block.memory`, because the rollover block list deliberately has no `block.recent_chapters`
+    // (design §7, spec/03 §9).
+    runtime
+        .app
+        .put_text(runtime.chapter_id, 0, "雨落在城门口。\n\n他握紧了旧剑。")
+        .await;
+    runtime
+        .app
+        .set_chapter_status(runtime.chapter_id, "official")
+        .await;
+    runtime.app.mark_canon_synced(runtime.chapter_id).await;
+    let second = runtime.app.create_chapter(runtime.track_id, "第二章").await;
+    let second_id = second["id"].as_i64().expect("id") as i32;
+    let session_id = start_writer_on(
+        &runtime,
+        second_id,
+        Granularity::Paragraph,
+        true,
+        false,
+        false,
+    )
+    .await;
+
+    let first = agent_write_harness::wait_for_status(&runtime, session_id, "held").await;
+    let first_id = first.held_tool_call_id.expect("held id");
+    let (status, body) = agent_write_harness::resume_raw(&runtime, session_id, None).await;
+    assert_eq!(status, 200, "approve the first insert: {body}");
+    agent_write_harness::wait_for_new_hold(&runtime, session_id, first_id).await;
+    push_usage_near_the_limit(&runtime, session_id).await;
+    let (status, body) = agent_write_harness::resume_raw(&runtime, session_id, None).await;
+    assert_eq!(status, 200, "{body}");
+
+    runtime
+        .wait_status(session_id, SessionStatus::Superseded)
+        .await;
+    let parent = agent_write_harness::session_dto(&runtime, session_id).await;
+    let child_id = parent["child_session_id"]
+        .as_i64()
+        .expect("the parent exposes its child") as i32;
+    let kickoff = runtime.messages(child_id).await[0].text();
+    assert!(
+        !kickoff.contains("# 最近章节正文"),
+        "a rollover never emits block.recent_chapters: {kickoff}"
+    );
+    assert!(
+        kickoff.contains("### 上一章结尾（第1章）"),
+        "without the recent-chapters block, previous_tail must survive the rollover: {kickoff}"
+    );
+    assert!(
+        kickoff.contains("他握紧了旧剑。"),
+        "the previous chapter's tail itself is present: {kickoff}"
+    );
+}

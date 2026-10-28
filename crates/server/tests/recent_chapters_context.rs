@@ -125,14 +125,14 @@ async fn session(
         .expect("session")
 }
 
-async fn kickoff_text(
+async fn kickoff_blocks(
     app: &TestApp,
     book_id: i32,
     track_id: i32,
     chapter_id: i32,
     role: &str,
     kind: &str,
-) -> String {
+) -> Vec<String> {
     let session = session(app, book_id, track_id, chapter_id, role, kind).await;
     let prompts = app
         .state()
@@ -149,7 +149,19 @@ async fn kickoff_text(
             StoredBlock::Text { text, .. } => Some(text),
             _ => None,
         })
-        .collect::<Vec<_>>()
+        .collect()
+}
+
+async fn kickoff_text(
+    app: &TestApp,
+    book_id: i32,
+    track_id: i32,
+    chapter_id: i32,
+    role: &str,
+    kind: &str,
+) -> String {
+    kickoff_blocks(app, book_id, track_id, chapter_id, role, kind)
+        .await
         .join("\n\n")
 }
 
@@ -180,6 +192,40 @@ async fn selection_uses_official_chapters_only_and_excludes_the_target() {
         !ids.contains(&pending_id) && !ids.contains(&target_id),
         "non-official text and the target never appear"
     );
+}
+
+#[tokio::test]
+async fn recent_chapter_count_is_a_hard_chapter_limit_not_just_a_budget_multiplier() {
+    let app = TestApp::new().await;
+    let (book_id, track_id) = setup(&app).await;
+    let first = official_chapter(&app, track_id, "第一章", &"甲".repeat(100), "").await;
+    let second = official_chapter(&app, track_id, "第二章", &"乙".repeat(100), "").await;
+    let third = official_chapter(&app, track_id, "第三章", &"丙".repeat(100), "").await;
+    let target = app.create_chapter(track_id, "第四章").await;
+    let target_id = target["id"].as_i64().expect("id") as i32;
+    // 2 × 6,000 characters is far above three 100-character chapters: only the chapter count can
+    // stop the iteration, so a bug that treats the setting as a budget multiplier injects all 3.
+    set_recent_settings(&app, book_id, 2, 4000).await;
+
+    let selected = recent(&app, book_id, track_id, target_id).await;
+    assert_eq!(
+        selected.len(),
+        2,
+        "recent_chapter_count = 2 must inject at most two chapters, got {:?}",
+        selected
+            .iter()
+            .map(|entry| entry.chapter_id)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        selected
+            .iter()
+            .map(|entry| entry.chapter_id)
+            .collect::<Vec<_>>(),
+        vec![second, third],
+        "the newest two chapters are the ones kept"
+    );
+    assert!(!selected.iter().any(|entry| entry.chapter_id == first));
 }
 
 #[tokio::test]
@@ -219,6 +265,28 @@ async fn a_side_track_is_topped_up_from_the_main_track_up_to_its_anchor() {
     assert!(
         !ids.contains(&main_one) && !ids.contains(&main_three),
         "only the missing count is topped up, and nothing past the anchor"
+    );
+
+    // The side track's own chapter carries its side label; the main-track top-up keeps the main
+    // label, so the chapter tag tells the model which story the prose belongs to (design §7).
+    let text = kickoff_text(
+        &app,
+        book_id,
+        side_track_id,
+        side_target_id,
+        "writer",
+        "chapter_write",
+    )
+    .await;
+    assert!(
+        text.contains("<chapter_text number=\"2\" label=\"第2章\" title=\"主线二\">"),
+        "the main-track top-up keeps its main label:\n{text}"
+    );
+    assert!(
+        text.contains(
+            "<chapter_text number=\"1\" label=\"番外《剑冢旧事》第1章\" title=\"番外一\">"
+        ),
+        "the side chapter carries its side label:\n{text}"
     );
 }
 
@@ -272,27 +340,64 @@ async fn an_over_cap_chapter_is_front_cut_at_a_paragraph_boundary_keeping_the_en
 }
 
 #[tokio::test]
+async fn a_single_paragraph_over_cap_is_cut_at_a_sentence_boundary() {
+    let app = TestApp::new().await;
+    let (book_id, track_id) = setup(&app).await;
+    // One paragraph of three 599-character sentences; the 1,500-character cap fits the last two
+    // sentences exactly but not the last three, so the cut must start at a sentence boundary.
+    let first = format!("{}。", "甲".repeat(598));
+    let second = format!("{}。", "乙".repeat(598));
+    let third = format!("{}。", "丙".repeat(598));
+    let text = format!("{first}{second}{third}");
+    official_chapter(&app, track_id, "独段长章", &text, "").await;
+    let target = app.create_chapter(track_id, "下一章").await;
+    let target_id = target["id"].as_i64().expect("id") as i32;
+    set_recent_settings(&app, book_id, 1, 1000).await;
+
+    let selected = recent(&app, book_id, track_id, target_id).await;
+    assert_eq!(selected.len(), 1);
+    assert!(selected[0].partial, "the front was cut");
+    assert!(
+        selected[0].text.starts_with(&second),
+        "a single over-cap paragraph is cut at a sentence boundary, not mid-sentence:\n{}",
+        selected[0].text
+    );
+    assert_eq!(
+        selected[0].text,
+        format!("{second}{third}"),
+        "the fitting sentence suffix is kept whole"
+    );
+}
+
+#[tokio::test]
 async fn a_chapter_under_the_cap_is_whole_and_the_budget_fills_newest_first() {
     let app = TestApp::new().await;
     let (book_id, track_id) = setup(&app).await;
     let old_text = "旧".repeat(500);
+    let middle_text = "中".repeat(500);
     let new_text = "新".repeat(500);
     let old = official_chapter(&app, track_id, "旧章", &old_text, "").await;
+    let middle = official_chapter(&app, track_id, "中章", &middle_text, "").await;
     let new = official_chapter(&app, track_id, "新章", &new_text, "").await;
     let target = app.create_chapter(track_id, "目标章").await;
     let target_id = target["id"].as_i64().expect("id") as i32;
     set_recent_settings(&app, book_id, 2, 4000).await;
 
+    // Three official chapters with a wide budget: the count limit, not the budget, must pick the
+    // newest two — two chapters could not tell "last N" apart from "fill the budget".
     let selected = recent(&app, book_id, track_id, target_id).await;
     assert_eq!(
         selected
             .iter()
             .map(|entry| entry.chapter_id)
             .collect::<Vec<_>>(),
-        vec![old, new]
+        vec![middle, new],
+        "at most `recent_chapter_count` chapters, newest first"
     );
+    assert_eq!(selected.len(), 2);
+    assert!(!selected.iter().any(|entry| entry.chapter_id == old));
     assert!(selected.iter().all(|entry| !entry.partial));
-    assert_eq!(selected[0].text, old_text);
+    assert_eq!(selected[0].text, middle_text);
     assert_eq!(selected[1].text, new_text);
 }
 
@@ -334,6 +439,50 @@ async fn zero_disables_the_block_and_an_empty_book_renders_nothing() {
     )
     .await;
     assert!(!text.contains("# 最近章节正文"), "{text}");
+}
+
+#[tokio::test]
+async fn selecting_only_the_empty_builtin_renders_no_skills_block() {
+    let app = TestApp::new().await;
+    let (book_id, track_id) = setup(&app).await;
+    let target = app.create_chapter(track_id, "第一章").await;
+    let target_id = target["id"].as_i64().expect("id") as i32;
+    let (_, all) = app.get("/api/writing-skills").await;
+    let builtin = all
+        .as_array()
+        .expect("array")
+        .iter()
+        .find(|row| row["key"] == "basic-writing")
+        .expect("the seeded built-in")["id"]
+        .as_i64()
+        .expect("id") as i32;
+    // The seeded built-in has `body = ""`: selecting it keeps the selection but injects nothing
+    // (design §5, D-147), so `assemble_kickoff` must drop the blank skills block.
+    let (status, body) = app
+        .put(
+            &format!("/api/books/{book_id}/writing-skills"),
+            json!({ "skill_ids": [builtin] }),
+        )
+        .await;
+    assert_eq!(status, 200, "select the empty built-in: {body}");
+
+    let text = kickoff_text(
+        &app,
+        book_id,
+        track_id,
+        target_id,
+        "writer",
+        "chapter_write",
+    )
+    .await;
+    assert!(
+        !text.contains("# 写作技能"),
+        "the heading must be blank:\n{text}"
+    );
+    assert!(
+        !text.contains("<writing_skill"),
+        "no empty skill tag:\n{text}"
+    );
 }
 
 #[tokio::test]
@@ -532,8 +681,8 @@ async fn full_writer_kickoff_with_two_prior_chapters_reports_blocks_tags_and_bud
         .collect::<Vec<_>>()
         .join("\n\n");
     assert!(joined.contains("<writing_skill name=\"冷硬文风\" category=\"文风\">"));
-    assert!(joined.contains("<chapter_text number=\"1\" title=\"第一章\">"));
-    assert!(joined.contains("<chapter_text number=\"2\" title=\"第二章\">"));
+    assert!(joined.contains("<chapter_text number=\"1\" label=\"第1章\" title=\"第一章\">"));
+    assert!(joined.contains("<chapter_text number=\"2\" label=\"第2章\" title=\"第二章\">"));
     assert!(
         recent_chars <= 12_000,
         "the recent-chapters block stays under the 12,000-character budget: {recent_chars}"
@@ -574,5 +723,58 @@ async fn the_memory_page_names_the_chapters_injected_in_full() {
     assert_eq!(
         body["snapshot"]["recent_summaries"][0]["summary"],
         "第一章摘要。"
+    );
+}
+
+/// WS-05: the Memory page's `rendered` is the exact `block.memory` a writer kickoff receives, so
+/// both apply the same `previous_tail` dedupe when `block.recent_chapters` repeats the chapter.
+#[tokio::test]
+async fn the_memory_page_rendered_text_matches_the_writers_memory_block() {
+    let app = TestApp::new().await;
+    let (book_id, track_id) = setup(&app).await;
+    official_chapter(
+        &app,
+        track_id,
+        "第一章",
+        "雨落在城门口。\n\n他握紧了旧剑。",
+        "第一章摘要。",
+    )
+    .await;
+    let target = app.create_chapter(track_id, "第二章").await;
+    let target_id = target["id"].as_i64().expect("id") as i32;
+    set_recent_settings(&app, book_id, 2, 4000).await;
+
+    let (status, body) = app
+        .get(&format!(
+            "/api/books/{book_id}/memory?chapter_id={target_id}"
+        ))
+        .await;
+    assert_eq!(status, 200, "memory view: {body}");
+    let rendered = body["rendered"].as_str().expect("rendered");
+    assert!(
+        !rendered.contains("### 上一章结尾"),
+        "the page must drop previous_tail exactly like the writer:\n{rendered}"
+    );
+    assert!(
+        body["snapshot"]["previous_tail"].is_null(),
+        "the snapshot shown beside the text agrees: {body}"
+    );
+
+    let blocks = kickoff_blocks(
+        &app,
+        book_id,
+        track_id,
+        target_id,
+        "writer",
+        "chapter_write",
+    )
+    .await;
+    let memory_block = blocks
+        .iter()
+        .find(|block| block.lines().next() == Some("# 记忆"))
+        .expect("the writer's memory block");
+    assert_eq!(
+        rendered, memory_block,
+        "the Memory page shows the exact block.memory text the writer receives"
     );
 }

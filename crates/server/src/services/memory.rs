@@ -432,9 +432,10 @@ pub struct RecentChapter {
 /// rejected version is not approved prose. Chapters with empty text are skipped, and the target is
 /// excluded automatically because P is defined as `ord < target.ord`.
 ///
-/// Budget (design §6.4): `recent_chapter_count × (target_words_max × 1.5)`, filled newest-first.
-/// A chapter over its cap is cut from the front at a paragraph boundary keeping the ending; when
-/// the remaining total budget is smaller, it is cut to that budget and older chapters get nothing.
+/// Budget (design §6.4): `recent_chapter_count × (target_words_max × 1.5)`, filled newest-first
+/// and bounded by `recent_chapter_count` chapters. A chapter over its cap is cut from the front at
+/// a paragraph boundary keeping the ending; when the remaining total budget is smaller, it is cut
+/// to that budget and older chapters get nothing.
 pub async fn recent_chapters(
     conn: &impl ConnectionTrait,
     prompts: &PromptSet,
@@ -454,8 +455,10 @@ pub async fn recent_chapters(
     let prior = prior_chapters_wanted(conn, prompts, track, chapter, wanted).await?;
     let mut selected = Vec::new();
     // Newest first: the closest chapter is the most valuable for continuity, so it is filled
-    // first and an older one only gets what is left.
-    for entry in prior.iter().rev() {
+    // first and an older one only gets what is left. `wanted` is a hard chapter limit, not just
+    // the budget multiplier: `prior_chapters_wanted` returns every own chapter for a main track,
+    // so an unbounded iteration would inject more than the author configured.
+    for entry in prior.iter().rev().take(wanted) {
         if remaining == 0 {
             break;
         }
@@ -489,10 +492,24 @@ pub async fn recent_chapters(
     Ok(selected)
 }
 
+/// Drops `previous_tail` when its chapter is also injected in full by `block.recent_chapters`
+/// (design §7: the tail is then a strict subset of the chapter text). The writer kickoff and the
+/// Memory page both call this, so the page's `rendered` text is exactly the writer's `block.memory`.
+pub fn dedupe_previous_tail(snapshot: &mut MemorySnapshot, recent: &[RecentChapter]) {
+    if let Some(tail) = &snapshot.previous_tail
+        && recent
+            .iter()
+            .any(|entry| entry.chapter_id == tail.chapter_id)
+    {
+        snapshot.previous_tail = None;
+    }
+}
+
 /// Keeps the ending of a chapter and drops its front: whole paragraphs from the end while they fit
-/// `limit`, at a paragraph boundary. If a single paragraph exceeds the limit, its last `limit`
-/// characters are kept (there is no paragraph boundary to cut at) and the text is still marked
-/// partial. `partial` is true whenever any text was omitted.
+/// `limit`, at a paragraph boundary. If a single paragraph exceeds the limit, the cut moves to a
+/// sentence boundary: the earliest sentence start whose suffix fits. Only when even the last
+/// sentence is longer than `limit` does it keep the last `limit` characters (no boundary exists to
+/// cut at). `partial` is true whenever any text was omitted.
 fn front_cut_text(content: &ChapterContent, limit: usize) -> (String, bool) {
     let paragraphs: Vec<&str> = content
         .paragraphs
@@ -523,13 +540,37 @@ fn front_cut_text(content: &ChapterContent, limit: usize) -> (String, bool) {
         parts.push(text);
     }
     if parts.len() == 1 && total > limit {
-        // The last paragraph alone is over the limit; keep its ending at a character boundary.
+        // The last paragraph alone is over the limit: keep its ending from the earliest sentence
+        // start that fits. Only a last sentence longer than `limit` needs a character cut.
+        if let Some(cut) = sentence_suffix(last, limit) {
+            return (cut, true);
+        }
         let chars: Vec<char> = last.chars().collect();
         let cut = chars[chars.len().saturating_sub(limit)..].iter().collect();
         return (cut, true);
     }
     parts.reverse();
     (parts.join("\n\n"), true)
+}
+
+/// The suffix of an over-cap paragraph starting at a sentence boundary, with the earliest start
+/// whose text fits `limit`; `None` when no sentence boundary leaves a non-empty fitting suffix.
+fn sentence_suffix(text: &str, limit: usize) -> Option<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let length = chars.len();
+    for (index, ch) in chars.iter().enumerate() {
+        if !matches!(ch, '。' | '！' | '？' | '；' | '!' | '?' | ';' | '…') {
+            continue;
+        }
+        let mut start = index + 1;
+        while start < length && chars[start].is_whitespace() {
+            start += 1;
+        }
+        if start < length && length - start <= limit {
+            return Some(chars[start..].iter().collect());
+        }
+    }
+    None
 }
 
 /// The chapter ids of the mid-term window W of a target position (spec/06 §4.1, §4.3): the last
@@ -1185,11 +1226,13 @@ pub async fn view(
 ) -> Result<crate::api::dto::canon::MemoryViewDto, AppError> {
     let prompts = state.prompts().for_book(state.db(), Some(book_id)).await?;
     let (track, chapter) = target_position(state.db().conn(), book_id, query).await?;
-    let snapshot = snapshot(state.db().conn(), &prompts, &track, &chapter).await?;
+    let mut snapshot = snapshot(state.db().conn(), &prompts, &track, &chapter).await?;
     // The Memory page promises to show what the writer receives (PROJECT §6.5): name the chapters
-    // `block.recent_chapters` injects in full for the same position (design §7).
-    let recent_chapters = recent_chapters(state.db().conn(), &prompts, &track, &chapter)
-        .await?
+    // `block.recent_chapters` injects in full for the same position (design §7) and apply the same
+    // `previous_tail` dedupe the writer's `block.memory` receives.
+    let recent_chapters = recent_chapters(state.db().conn(), &prompts, &track, &chapter).await?;
+    dedupe_previous_tail(&mut snapshot, &recent_chapters);
+    let recent_chapters = recent_chapters
         .into_iter()
         .map(|entry| crate::api::dto::canon::MemoryRecentChapterDto {
             chapter_id: entry.chapter_id,

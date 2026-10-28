@@ -125,7 +125,10 @@ export default function SkillsPage() {
       ) : skills.isError ? (
         <EmptyState title={t("common:error_title")} description={t("common:error_body")} />
       ) : rows.length === 0 ? (
-        <EmptyState title={t("skills:empty_title")} description={t("skills:empty_body")} />
+        <EmptyState
+          title={t("skills:empty_title")}
+          description={t("skills:empty_catalogue_body")}
+        />
       ) : (
         <ul className="space-y-3" aria-label={t("skills:title")}>
           {rows.map((skill) => (

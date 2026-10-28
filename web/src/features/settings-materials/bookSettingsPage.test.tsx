@@ -316,36 +316,6 @@ describe("Book settings › model overrides", () => {
   })
 })
 
-describe("Book settings › planner model hint (D-146)", () => {
-  it("names the effective planner model: global planner, else the writer, else none", () => {
-    rolesDefaults = {
-      conception: null,
-      researcher: null,
-      planner: null,
-      writer: 7,
-      reviewer: null,
-      archivist: null,
-    }
-    book.model_overrides = {
-      conception: null,
-      researcher: null,
-      planner: null,
-      writer: null,
-      reviewer: null,
-      archivist: null,
-    }
-    const { unmount } = render(<BookSettingsPage />)
-    const row = screen.getByTestId("model-override-row-planner")
-    expect(within(row).getByText("Follows the Writer: Anthropic · Writer model")).toBeInTheDocument()
-    unmount()
-
-    rolesDefaults = { ...rolesDefaults, planner: 8 }
-    render(<BookSettingsPage />)
-    const withGlobal = screen.getByTestId("model-override-row-planner")
-    expect(within(withGlobal).getByText("Default: DeepSeek · Review model")).toBeInTheDocument()
-  })
-})
-
 describe("Book settings › writing skills and recent chapters", () => {
   const builtin: WritingSkillDto = {
     id: 1,
@@ -409,5 +379,35 @@ describe("Book settings › writing skills and recent chapters", () => {
     expect(patchBook).toHaveBeenCalledTimes(1)
     const [body] = patchBook.mock.calls[0] as [{ settings: { recent_chapter_count: number } }]
     expect(body.settings.recent_chapter_count).toBe(4)
+  })
+})
+
+describe("Book settings › planner model hint (D-146)", () => {
+  it("names the effective planner model: global planner, else the writer, else none", () => {
+    rolesDefaults = {
+      conception: null,
+      researcher: null,
+      planner: null,
+      writer: 7,
+      reviewer: null,
+      archivist: null,
+    }
+    book.model_overrides = {
+      conception: null,
+      researcher: null,
+      planner: null,
+      writer: null,
+      reviewer: null,
+      archivist: null,
+    }
+    const { unmount } = render(<BookSettingsPage />)
+    const row = screen.getByTestId("model-override-row-planner")
+    expect(within(row).getByText("Follows the Writer: Anthropic · Writer model")).toBeInTheDocument()
+    unmount()
+
+    rolesDefaults = { ...rolesDefaults, planner: 8 }
+    render(<BookSettingsPage />)
+    const withGlobal = screen.getByTestId("model-override-row-planner")
+    expect(within(withGlobal).getByText("Default: DeepSeek · Review model")).toBeInTheDocument()
   })
 })

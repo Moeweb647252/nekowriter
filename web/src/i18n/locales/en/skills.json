@@ -3,7 +3,7 @@
   "hint": "Reusable writing-method instructions. A book selects skills in its settings; the selected skills are injected into every writing, revision and review session.",
   "new": "New skill",
   "empty_title": "No writing skills yet",
-  "empty_body": "Built-in skills ship empty. Write your own to tell the writer how this book's prose should read.",
+  "empty_catalogue_body": "Built-in skills ship empty. Write your own to tell the writer how this book's prose should read.",
   "built_in": "Built-in",
   "empty_body": "This skill has no body yet.",
   "view": "View",

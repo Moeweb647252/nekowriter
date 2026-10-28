@@ -156,7 +156,7 @@ text = '''
 - 如果某一章的标签带有 `partial="true"`，说明只保留了该章的**结尾**、省略了开头；不要把它当作章节的起始场景。
 
 {% for c in chapters %}
-<chapter_text number="{{ c.number }}"{% if c.title %} title="{{ c.title }}"{% endif %}{% if c.partial %} partial="true"{% endif %}>
+<chapter_text number="{{ c.number }}" label="{{ c.label }}"{% if c.title %} title="{{ c.title }}"{% endif %}{% if c.partial %} partial="true"{% endif %}>
 {% if c.partial %}（节选：省略了本章开头，以下只保留结尾部分。）
 {% endif %}{{ c.text }}
 </chapter_text>

@@ -735,6 +735,19 @@ async fn side_track_memory_tops_up_from_the_main_story() {
         ))
         .await;
     let (_track_id, chapter_id) = side_story_after_anchor(&runtime, second).await;
+    // Turn the recent-chapter block off so its full chapter text cannot mask a missing
+    // `previous_tail` in `block.memory`: this test is about the memory window's tail itself.
+    let (_, book) = runtime.app.get(&format!("/api/books/{book_id}")).await;
+    let mut settings = book["settings"].clone();
+    settings["recent_chapter_count"] = json!(0);
+    let (status, body) = runtime
+        .app
+        .patch(
+            &format!("/api/books/{book_id}"),
+            json!({ "settings": settings }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "patch settings: {body}");
     runtime.app.set_provider(ScriptedProvider::new(Vec::new()));
     let app = &runtime.app;
     let (session_id, _) = sessions::create(
@@ -767,7 +780,12 @@ async fn side_track_memory_tops_up_from_the_main_story() {
         !text.contains("第三章摘要。"),
         "a chapter after the anchor never enters the window:\n{text}"
     );
-    // The previous tail is the anchor chapter's ending (spec/06 §4.2).
+    // The previous tail is the anchor chapter's ending (spec/06 §4.2). Assert the heading, not
+    // only the text: the text also appears in `block.recent_chapters` when that block is on.
+    assert!(
+        text.contains("### 上一章结尾（第3章）"),
+        "the anchor chapter is named as the previous tail:\n{text}"
+    );
     assert!(
         text.contains("第二段正文。"),
         "the anchor chapter's tail is the previous tail:\n{text}"

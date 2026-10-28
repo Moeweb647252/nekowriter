@@ -7,6 +7,7 @@
 //! - a book's selection never leaks into another book;
 //! - new books select `enabled_by_default = 1` skills.
 
+use nekowriter::services::skills;
 use nekowriter::testing::{TestApp, assert_error};
 use serde_json::{Value, json};
 
@@ -280,6 +281,75 @@ async fn deleting_a_user_skill_names_the_books_that_used_it_and_cascades() {
             .iter()
             .all(|row| row["id"] != skill_id)
     );
+}
+
+#[tokio::test]
+async fn toggling_another_skill_preserves_a_retired_selection() {
+    let app = TestApp::new().await;
+    let book_id = book(&app, "退役技能").await;
+    let (_, created) = app
+        .post(
+            "/api/writing-skills",
+            json!({ "name": "旧技能", "body": "旧正文。" }),
+        )
+        .await;
+    let retired_id = created["id"].as_i64().expect("id") as i32;
+    let (status, body) = app
+        .put(
+            &format!("/api/books/{book_id}/writing-skills"),
+            json!({ "skill_ids": [retired_id] }),
+        )
+        .await;
+    assert_eq!(status, 200, "select the future retired skill: {body}");
+    // A later pack update retires the skill: the catalogue stops offering it, but the books that
+    // already selected it keep working (design §4/§12).
+    app.execute(&format!(
+        "UPDATE writing_skills SET retired = 1 WHERE id = {retired_id}"
+    ))
+    .await;
+    let (_, catalogue) = app
+        .get(&format!("/api/writing-skills?book_id={book_id}"))
+        .await;
+    assert!(
+        catalogue
+            .as_array()
+            .expect("array")
+            .iter()
+            .all(|row| row["id"] != retired_id),
+        "a retired row is hidden from the active catalogue"
+    );
+    let builtin = builtin_skill(&app).await["id"].as_i64().expect("id") as i32;
+
+    // Book settings derives its payload from the visible catalogue, so toggling the built-in sends
+    // only the built-in id. The replacement must not silently drop the retired selection.
+    let (status, body) = app
+        .put(
+            &format!("/api/books/{book_id}/writing-skills"),
+            json!({ "skill_ids": [builtin] }),
+        )
+        .await;
+    assert_eq!(status, 200, "toggle the built-in: {body}");
+    let selected = skills::selected_skills(app.db().conn(), book_id)
+        .await
+        .expect("selected skills");
+    let ids: Vec<i32> = selected.iter().map(|row| row.id).collect();
+    assert_eq!(
+        ids,
+        vec![builtin.min(retired_id), builtin.max(retired_id)],
+        "the retired selection survives another toggle"
+    );
+    assert!(ids.contains(&retired_id), "the retired row still injects");
+
+    // An explicit retired id in the payload is still refused (spec/10 §2.9): the preservation
+    // rule only covers rows the book already selected before the request.
+    let (status, body) = app
+        .put(
+            &format!("/api/books/{book_id}/writing-skills"),
+            json!({ "skill_ids": [retired_id] }),
+        )
+        .await;
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+    assert_error(&body, "validation.failed");
 }
 
 #[tokio::test]

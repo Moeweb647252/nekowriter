@@ -141,4 +141,17 @@ describe("writing-skill catalogue", () => {
     await user.click(within(dialog).getByRole("button", { name: "Delete" }))
     expect(deleteSkill).toHaveBeenCalledWith(2, expect.any(Object))
   })
+
+  it("shows the catalogue empty state, not a skill body's empty state", () => {
+    skills = []
+    render(<SkillsPage />)
+
+    expect(screen.getByText("No writing skills yet")).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        "Built-in skills ship empty. Write your own to tell the writer how this book's prose should read.",
+      ),
+    ).toBeInTheDocument()
+    expect(screen.queryByText("This skill has no body yet.")).toBeNull()
+  })
 })

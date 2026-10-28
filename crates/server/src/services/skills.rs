@@ -77,6 +77,24 @@ pub async fn replace_selection(
                     ));
                 }
             }
+            // A retired skill stops being offered but keeps working for the books that selected
+            // it (design §4/§12). The catalogue hides it, so a payload built from the visible
+            // checkbox list cannot name it; preserve the existing links instead of dropping them
+            // on every unrelated toggle.
+            let current_ids: Vec<i32> = selected_ids(tx, book_id).await?.into_iter().collect();
+            if !current_ids.is_empty() {
+                let retired: Vec<i32> = writing_skills::Entity::find()
+                    .filter(writing_skills::Column::Id.is_in(current_ids))
+                    .filter(writing_skills::Column::Retired.eq(1))
+                    .all(tx)
+                    .await?
+                    .into_iter()
+                    .map(|row| row.id)
+                    .collect();
+                ids.extend(retired);
+                ids.sort_unstable();
+                ids.dedup();
+            }
             book_writing_skills::Entity::delete_many()
                 .filter(book_writing_skills::Column::BookId.eq(book_id))
                 .exec(tx)

@@ -2811,3 +2811,30 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   exists.
 - **Spec**: design §4–§8; spec/02 §1–§5; spec/03 §10; spec/06 §4.1; spec/09 §2, §5.8;
   spec/10 §2.9, §4; spec/11 §2–§3, §5.5, §6.
+
+### D-148 Review round 1 fixes for writing skills and recent chapters
+
+- **Context**: review of `25f32db` found that the recent-chapter block did not treat
+  `recent_chapter_count` as a chapter limit, that a write-session rollover dropped `previous_tail`
+  although it emits no recent-chapter block, and several smaller contract/test defects. Two
+  suspicions needed a documented answer: a single-paragraph over-cap chapter had no cut rule
+  beyond a raw character slice, and a retired but selected skill was dropped by the next
+  selection toggle.
+- **Decision**:
+  - A single paragraph over the per-chapter cap is cut at a **sentence boundary** when one leaves
+    a fitting non-empty suffix (the earliest such boundary, so as much ending as possible is
+    kept); only when even the last sentence is longer than the limit does it keep the last
+    `limit` characters. The paragraph-boundary rule still applies to multi-paragraph chapters.
+  - `PUT /books/:id/writing-skills` preserves the book's **already-selected retired skills**
+    when the replacement payload cannot name them: the active catalogue hides retired rows, so a
+    toggle built from the visible list must not silently drop a selection that design §4/§12 says
+    keeps working. An explicitly supplied retired id is still a `validation.failed`, because the
+    request body contract (spec/10 §2.9) forbids selecting a retired skill.
+  - The Memory page applies the same `previous_tail` dedupe as the writer's `block.memory`, so the
+    endpoint's `rendered` text is the exact text the writer receives (PROJECT §6.5, spec/06 §4.5).
+  - A kickoff's memory dedupe is derived from the **actual emitted block list**, not from
+    `KickoffPlan::blocks()`: rollover builds its own list without `block.recent_chapters`.
+- **Consequences**: with one over-cap paragraph the model still gets the chapter's ending, now
+  starting at a sentence start whenever the text allows; a retired built-in selection survives
+  unrelated toggles until the row is deleted (built-ins are never deleted) or the book is deleted.
+- **Spec**: design §6.4, §7; spec/03 §9–§10; spec/06 §4.5; spec/10 §2.9.

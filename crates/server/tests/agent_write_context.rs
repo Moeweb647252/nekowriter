@@ -147,8 +147,29 @@ async fn the_later_chapter_kickoff_snapshot() {
         ))
         .await;
 
+    // Turn the recent-chapter block off: its full text also contains the previous chapter, so the
+    // snapshot must prove `block.memory` itself renders `previous_tail`, not borrow it from there.
+    let (_, book) = runtime
+        .app
+        .get(&format!("/api/books/{}", runtime.book_id))
+        .await;
+    let mut settings = book["settings"].clone();
+    settings["recent_chapter_count"] = serde_json::json!(0);
+    let (status, body) = runtime
+        .app
+        .patch(
+            &format!("/api/books/{}", runtime.book_id),
+            serde_json::json!({ "settings": settings }),
+        )
+        .await;
+    assert_eq!(status, 200, "patch settings: {body}");
+
     let text = kickoff_text(&runtime, second_id).await;
     assert!(text.contains("主角入城，遇守门人。"), "{text}");
+    assert!(
+        text.contains("### 上一章结尾（第2章）"),
+        "the previous-tail heading is in block.memory:\n{text}"
+    );
     assert!(
         text.contains("他握紧了旧剑。"),
         "the previous tail:\n{text}"

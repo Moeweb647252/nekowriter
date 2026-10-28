@@ -724,7 +724,7 @@ expression: rendered
 - **这些章节已经全文附在下面**，不要再调用 read_chapter 阅读它们，否则每次写作都会多付一次重复调用的代价。
 - 如果某一章的标签带有 `partial="true"`，说明只保留了该章的**结尾**、省略了开头；不要把它当作章节的起始场景。
 
-<chapter_text number="12" title="剑鸣" partial="true">
+<chapter_text number="12" label="第12章" title="剑鸣" partial="true">
 （节选：省略了本章开头，以下只保留结尾部分。）
 雨落下来。
 
@@ -740,7 +740,7 @@ expression: rendered
 - **这些章节已经全文附在下面**，不要再调用 read_chapter 阅读它们，否则每次写作都会多付一次重复调用的代价。
 - 如果某一章的标签带有 `partial="true"`，说明只保留了该章的**结尾**、省略了开头；不要把它当作章节的起始场景。
 
-<chapter_text number="12">
+<chapter_text number="12" label="第12章">
 雨落下来。
 </chapter_text>
 
