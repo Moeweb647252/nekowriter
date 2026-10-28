@@ -127,17 +127,27 @@ impl KickoffPlan {
     /// True when a `block.chapter_draft` renders the chapter's outline somewhere in the kickoff
     /// (as a top-level block, or through `writer.kickoff.chapter`'s include when the chapter has
     /// text). `block.memory` then only names the chapter (spec/06 §4.2).
-    pub fn renders_outline_elsewhere(self, _has_draft: bool) -> bool {
+    pub fn renders_outline_elsewhere(self, chapter_draft_renders: bool) -> bool {
         match self.kind {
-            // A write session always has `block.chapter_draft` in its kickoff (D-146).
-            SessionKind::ChapterWrite => true,
-            SessionKind::ChapterOutline
+            // The planner task includes the outline itself when one exists.
+            SessionKind::ChapterOutline => true,
+            // These kickoffs include `block.chapter_draft` only when that block actually renders;
+            // an empty override must not suppress the outline from `block.memory` (IR-01).
+            SessionKind::ChapterWrite
             | SessionKind::ChapterRevise
             | SessionKind::ChapterReview
-            | SessionKind::ChapterMaintenance => true,
+            | SessionKind::ChapterMaintenance => chapter_draft_renders,
             _ => false,
         }
     }
+}
+
+/// Which include-capable blocks actually rendered non-empty after prompt overrides. `block.memory`
+/// uses these facts to avoid suppressing content that no rendered block carries (IR-01).
+#[derive(Debug, Clone, Copy, Default)]
+struct RenderedBlocks {
+    recent_chapters: bool,
+    chapter_draft: bool,
 }
 
 /// The rendered kickoff message of a session kind: one `text` block per kickoff block
@@ -163,10 +173,32 @@ pub async fn assemble_kickoff(
     {
         emitted_blocks.retain(|key| *key != "block.book_brief");
     }
+    let recent_chapters_renders = if emitted_blocks.contains(&"block.recent_chapters") {
+        block_renders_non_empty(conn, prompts, session, plan, "block.recent_chapters", extra)
+            .await?
+    } else {
+        false
+    };
+    let chapter_draft_renders = if emitted_blocks.contains(&"block.chapter_draft") {
+        block_renders_non_empty(conn, prompts, session, plan, "block.chapter_draft", extra).await?
+    } else {
+        false
+    };
     let mut blocks = Vec::new();
     for key in emitted_blocks.iter().copied() {
-        let context =
-            block_context(conn, prompts, session, plan, &emitted_blocks, key, extra).await?;
+        let context = block_context(
+            conn,
+            prompts,
+            session,
+            plan,
+            RenderedBlocks {
+                recent_chapters: recent_chapters_renders,
+                chapter_draft: chapter_draft_renders,
+            },
+            key,
+            extra,
+        )
+        .await?;
         let rendered = prompts
             .render_value(key, crate::prompts::template_value(&context))
             .map_err(|err| err.into_app_error())?;
@@ -187,13 +219,38 @@ pub async fn assemble_kickoff(
     Ok(blocks)
 }
 
+/// Whether one kickoff block renders a non-empty text after its override is applied.
+async fn block_renders_non_empty(
+    conn: &impl ConnectionTrait,
+    prompts: &PromptSet,
+    session: &agent_sessions::Model,
+    plan: KickoffPlan,
+    key: &str,
+    extra: Option<&Value>,
+) -> Result<bool, AppError> {
+    let context = block_context(
+        conn,
+        prompts,
+        session,
+        plan,
+        RenderedBlocks::default(),
+        key,
+        extra,
+    )
+    .await?;
+    let rendered = prompts
+        .render_value(key, crate::prompts::template_value(&context))
+        .map_err(|err| err.into_app_error())?;
+    Ok(!rendered.text.trim().is_empty())
+}
+
 /// The template context of one kickoff block (spec/03 §10, spec/09 §2).
 async fn block_context(
     conn: &impl ConnectionTrait,
     prompts: &PromptSet,
     session: &agent_sessions::Model,
     plan: KickoffPlan,
-    emitted_blocks: &[&str],
+    rendered_blocks: RenderedBlocks,
     key: &str,
     extra: Option<&Value>,
 ) -> Result<Value, AppError> {
@@ -205,7 +262,7 @@ async fn block_context(
         "block.memory" => {
             let chapter =
                 chapter_context(conn, prompts, session.chapter_id, session.book_id).await?;
-            let chapter = memory_chapter_view(chapter, plan);
+            let chapter = memory_chapter_view(chapter, plan, rendered_blocks.chapter_draft);
             Ok(json!({
                 // For a write or outline kickoff the recent-chapters block repeats the previous
                 // chapter in full; `previous_tail` is then a strict subset of it and is dropped
@@ -214,7 +271,7 @@ async fn block_context(
                     conn,
                     prompts,
                     session,
-                    emitted_blocks.contains(&"block.recent_chapters"),
+                    rendered_blocks.recent_chapters,
                 )
                 .await?,
                 "chapter": chapter,
@@ -627,8 +684,12 @@ async fn recent_chapters_context(
 /// The chapter view `block.memory` renders: label and title only, and the outline only when the
 /// kickoff has no `block.chapter_draft` and the task does not show the old outline itself
 /// (spec/06 §4.2, D-050).
-fn memory_chapter_view(chapter: ChapterContext, plan: KickoffPlan) -> ChapterContext {
-    let renders_outline = plan.renders_outline_elsewhere(chapter.has_draft);
+fn memory_chapter_view(
+    chapter: ChapterContext,
+    plan: KickoffPlan,
+    chapter_draft_renders: bool,
+) -> ChapterContext {
+    let renders_outline = plan.renders_outline_elsewhere(chapter_draft_renders);
     ChapterContext {
         label: chapter.label,
         title: chapter.title,
@@ -1537,9 +1598,23 @@ pub async fn rollover(
                 "block.chapter_draft",
                 "writer.kickoff.rollover",
             ];
+            let chapter_draft_renders =
+                block_renders_non_empty(tx, &prompts, &parent, plan, "block.chapter_draft", None)
+                    .await?;
             for key in emitted_blocks.iter().copied() {
-                let context =
-                    block_context(tx, &prompts, &parent, plan, &emitted_blocks, key, None).await?;
+                let context = block_context(
+                    tx,
+                    &prompts,
+                    &parent,
+                    plan,
+                    RenderedBlocks {
+                        chapter_draft: chapter_draft_renders,
+                        ..RenderedBlocks::default()
+                    },
+                    key,
+                    None,
+                )
+                .await?;
                 let rendered = prompts
                     .render_value(key, crate::prompts::template_value(&context))
                     .map_err(|err| err.into_app_error())?;

@@ -16,6 +16,7 @@ use crate::api::dto::skills::{
     BookWritingSkillsInput, WritingSkillBookDto, WritingSkillDeleteResponse, WritingSkillDto,
     WritingSkillInput, WritingSkillPatch,
 };
+use crate::db::entities::writing_skills::WritingSkillAuthor;
 use crate::db::entities::{book_writing_skills, books, writing_skills};
 use crate::error::{AppError, ErrorCode};
 
@@ -132,7 +133,7 @@ pub async fn create(
                 key: Set(None),
                 name: Set(name.to_owned()),
                 category: Set(input.category.trim().to_owned()),
-                author: Set(AUTHOR_USER.to_owned()),
+                author: Set(WritingSkillAuthor::User),
                 description: Set(input.description.trim().to_owned()),
                 body: Set(input.body),
                 enabled_by_default: Set(0),
@@ -349,7 +350,7 @@ async fn load_editable(
         .one(conn)
         .await?
         .ok_or_else(|| AppError::not_found(format!("writing skill #{skill_id}")))?;
-    if row.author != AUTHOR_USER {
+    if row.author != WritingSkillAuthor::User {
         return Err(conflict(
             ErrorCode::WritingSkillBuiltin,
             "built-in writing skills are read-only",
@@ -369,7 +370,7 @@ fn to_dto(
         key: row.key,
         name: row.name,
         category: row.category,
-        author: row.author,
+        author: row.author.as_str().to_owned(),
         description: row.description,
         body: row.body,
         enabled_by_default: row.enabled_by_default != 0,

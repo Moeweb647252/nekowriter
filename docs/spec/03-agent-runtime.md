@@ -497,7 +497,7 @@ the same `pending_comment`.
 - **Procedure** (one transaction):
   1. Create a child session (same kind, role, chapter, phase, granularity, auto-pause flags,
      model snapshot; `parent_session_id` = old). Its kickoff is
-     `[block.settings][block.memory][block.chapter_draft][writer.kickoff.rollover]`.
+     `[block.settings][block.writing_skills][block.memory][block.chapter_draft][writer.kickoff.rollover]`.
      `block.chapter_draft` holds the current outline, reference notes, and text. The task
      block holds the chapter's guidance, the feedback being addressed (a revision's or a redraft's,
      with its ticked issues), the accepted revision plan (revise), the granularity rules, and
@@ -543,7 +543,7 @@ end of the settings block (shared by every session of the book); see spec/04 §3
 
 Task templates pull in two more blocks through template includes, so the table stays short:
 `block.anchor` (every writer, reviewer, and archivist task of a side-track chapter) and
-`block.chapter_draft` (`writer.kickoff.chapter` when the chapter already has text).
+`block.chapter_draft` (`planner.kickoff` when the chapter already has text).
 
 - `block.writing_skills` renders the full bodies of the book's selected skills, wrapped in
   `<writing_skill name="…" category="…">` tags. It states that a body is instruction text about

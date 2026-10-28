@@ -486,6 +486,80 @@ async fn selecting_only_the_empty_builtin_renders_no_skills_block() {
 }
 
 #[tokio::test]
+async fn an_empty_recent_chapters_override_keeps_previous_tail() {
+    let app = TestApp::new().await;
+    let (book_id, track_id) = setup(&app).await;
+    official_chapter(
+        &app,
+        track_id,
+        "第一章",
+        "雨落在城门口。\n\n他握紧了旧剑。",
+        "主角入城。",
+    )
+    .await;
+    let target = app.create_chapter(track_id, "第二章").await;
+    let target_id = target["id"].as_i64().expect("id") as i32;
+    set_recent_settings(&app, book_id, 2, 4000).await;
+    app.execute(&format!(
+        "INSERT INTO prompt_overrides(scope, book_id, key, content, updated_at) \
+         VALUES ('book', {book_id}, 'block.recent_chapters', '', '2026-01-01T00:00:00Z')"
+    ))
+    .await;
+
+    let text = kickoff_text(
+        &app,
+        book_id,
+        track_id,
+        target_id,
+        "writer",
+        "chapter_write",
+    )
+    .await;
+    assert!(
+        text.contains("### 上一章结尾（第1章）"),
+        "an empty recent-chapters override must not suppress previous_tail:\n{text}"
+    );
+    assert!(
+        !text.contains("# 最近章节正文"),
+        "the empty recent-chapters block must be dropped:\n{text}"
+    );
+}
+
+#[tokio::test]
+async fn an_empty_chapter_draft_override_keeps_the_outline_in_memory() {
+    let app = TestApp::new().await;
+    let (book_id, track_id) = setup(&app).await;
+    let target = app.create_chapter(track_id, "第二章").await;
+    let target_id = target["id"].as_i64().expect("id") as i32;
+    let (status, body) = app
+        .patch(
+            &format!("/api/chapters/{target_id}"),
+            json!({ "outline": "这一章要先写雨，再写剑。" }),
+        )
+        .await;
+    assert_eq!(status, 200, "set outline: {body}");
+    app.execute(&format!(
+        "INSERT INTO prompt_overrides(scope, book_id, key, content, updated_at) \
+         VALUES ('book', {book_id}, 'block.chapter_draft', '', '2026-01-01T00:00:00Z')"
+    ))
+    .await;
+
+    let text = kickoff_text(
+        &app,
+        book_id,
+        track_id,
+        target_id,
+        "writer",
+        "chapter_write",
+    )
+    .await;
+    assert!(
+        text.contains("这一章要先写雨，再写剑。"),
+        "an empty chapter_draft override must not suppress the outline in memory:\n{text}"
+    );
+}
+
+#[tokio::test]
 async fn previous_tail_is_deduplicated_but_summaries_and_the_memory_block_stay() {
     let app = TestApp::new().await;
     let (book_id, track_id) = setup(&app).await;
