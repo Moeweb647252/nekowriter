@@ -69,7 +69,7 @@
   "writer_defaults": "写手默认设置",
   "granularity": "默认粒度",
   "auto_pause": "自动暂停",
-  "pause_after_outline": "提交章纲后暂停",
+  "pause_after_outline": "每章细纲需确认后才生效",
   "auto_maintenance": "自动更新正史",
   "target_length": "目标章节长度",
   "target_words_min": "字数下限",
@@ -211,7 +211,9 @@
     "show_agent_panel": "打开智能体面板",
     "started_in_agent_panel": "{{session}}已开始，请在右侧的智能体面板中查看。",
     "defer_research": "全部推迟（{{count}}）",
-    "defer_research_hint": "暂时不做：推迟这些任务，先继续写作。之后可以在资料收集列表里恢复。"
+    "defer_research_hint": "暂时不做：推迟这些任务，先继续写作。之后可以在资料收集列表里恢复。",
+    "write_outline": "写细纲：{{chapter}}",
+    "write_chapter": "写正文：{{chapter}}"
   },
   "attention_title": "需要你来处理",
   "attention_empty": "现在没有需要处理的事情。",
@@ -226,5 +228,8 @@
   },
   "no_chapter": "这本书",
   "usage_title": "Token 用量",
-  "usage_summary": "{{requests}} 次请求 · {{input}} 输入 token · {{output}} 输出 token"
+  "usage_summary": "{{requests}} 次请求 · {{input}} 输入 token · {{output}} 输出 token",
+  "planned_outline_ready": "细纲已就绪",
+  "model_planner_default": "默认：{{model}}",
+  "model_planner_follows_writer": "跟随写手：{{model}}"
 }

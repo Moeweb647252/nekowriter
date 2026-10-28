@@ -69,7 +69,7 @@
   "writer_defaults": "Writer defaults",
   "granularity": "Default granularity",
   "auto_pause": "Auto-pause",
-  "pause_after_outline": "Pause after the outline",
+  "pause_after_outline": "Approve each chapter outline before it takes effect",
   "auto_maintenance": "Update canon automatically",
   "target_length": "Target chapter length",
   "target_words_min": "Minimum words",
@@ -211,7 +211,9 @@
     "show_agent_panel": "Show the agent panel",
     "started_in_agent_panel": "{{session}} started. Follow it in the agent panel on the right.",
     "defer_research": "Defer all ({{count}})",
-    "defer_research_hint": "Not now: postpone these tasks and keep writing. Resume them from the research list."
+    "defer_research_hint": "Not now: postpone these tasks and keep writing. Resume them from the research list.",
+    "write_outline": "Outline {{chapter}}",
+    "write_chapter": "Write {{chapter}}"
   },
   "attention_title": "Needs you",
   "attention_empty": "Nothing needs you right now.",
@@ -226,5 +228,8 @@
   },
   "no_chapter": "This book",
   "usage_title": "Token usage",
-  "usage_summary": "{{requests}} requests · {{input}} input tokens · {{output}} output tokens"
+  "usage_summary": "{{requests}} requests · {{input}} input tokens · {{output}} output tokens",
+  "planned_outline_ready": "Outline ready",
+  "model_planner_default": "Default: {{model}}",
+  "model_planner_follows_writer": "Follows the Writer: {{model}}"
 }

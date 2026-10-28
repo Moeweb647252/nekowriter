@@ -212,6 +212,19 @@ function ActionButton({
           </Link>
         </Button>
       )
+    // The outline and write steps land on the tab that owns the action (D-146).
+    case "write_outline":
+    case "write_chapter": {
+      const tab = action.kind === "write_outline" ? "outline" : "text"
+      return chapterId === undefined ? null : (
+        <Button asChild size="sm">
+          <Link to={`/books/${bookId}/chapters/${chapterId}?tab=${tab}`}>
+            {t("book:next_action.go")}
+            <ArrowRight aria-hidden="true" />
+          </Link>
+        </Button>
+      )
+    }
     case "sync_canon":
       return chapterId === undefined ? null : (
         <ResyncButton

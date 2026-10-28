@@ -157,5 +157,6 @@
   "option_json_invalid": "This is not valid JSON.",
   "option_default_named": "Default: {{value}}",
   "option.cache_ttl": "Cache TTL",
-  "option.cache_ttl_hint": "How long the provider keeps the prompt prefix cached. Automatic resolves per session: 1 hour for conception and for a writer that pauses, otherwise 5 minutes."
+  "option.cache_ttl_hint": "How long the provider keeps the prompt prefix cached. Automatic resolves per session: 1 hour for conception and for a writer that pauses, otherwise 5 minutes.",
+  "role_planner_unset": "Same as Writer"
 }

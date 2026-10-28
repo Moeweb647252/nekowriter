@@ -8,6 +8,7 @@ import type { ChapterDto } from "@/api/gen/ChapterDto"
 import type { ChapterPatch } from "@/api/gen/ChapterPatch"
 import type { ChapterVersionDto } from "@/api/gen/ChapterVersionDto"
 import type { ChapterVersionMetaDto } from "@/api/gen/ChapterVersionMetaDto"
+import type { ChapterOutlineInput } from "@/api/gen/ChapterOutlineInput"
 import type { ChapterWriteInput } from "@/api/gen/ChapterWriteInput"
 import type { ChapterWriteResponse } from "@/api/gen/ChapterWriteResponse"
 import type { ManualVersionInput } from "@/api/gen/ManualVersionInput"
@@ -36,6 +37,14 @@ export function putContentText(
   put: ChapterContentTextPut,
 ): Promise<ChapterContentResult> {
   return api.put<ChapterContentResult>(`/chapters/${chapterId}/content/text`, put)
+}
+
+/** `POST /chapters/:id/outline` (spec/08 §1.1, D-146): start the planner session. */
+export function writeOutline(
+  chapterId: number,
+  input: ChapterOutlineInput,
+): Promise<ChapterWriteResponse> {
+  return api.post<ChapterWriteResponse>(`/chapters/${chapterId}/outline`, input)
 }
 
 /** `POST /chapters/:id/write` (spec/08 §1.1): start the writer session. */

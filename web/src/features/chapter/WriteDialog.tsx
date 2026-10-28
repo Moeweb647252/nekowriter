@@ -1,9 +1,11 @@
 /**
- * The Write dialog (PROJECT §8.5, spec/11 §5.2): guidance, granularity, auto-pause and
- * pause-after-outline, then Start.
+ * The Write dialog (PROJECT §8.5, spec/11 §5.2, D-146): guidance, granularity and auto-pause,
+ * then Start. It drafts from the accepted outline; the pause-after-outline switch belongs to the
+ * Outline dialog.
  *
- * A `409 chapter.previous_not_ready` from the write endpoint is a normal outcome: the dialog shows
- * the reason and offers **Write anyway**, which resends the same input with `force`.
+ * A `409 chapter.previous_not_ready` is a normal outcome: the dialog shows the reason and offers
+ * **Write anyway**, which resends the same input with `force`. A `409 chapter.outline_missing`
+ * (a race with an author edit) offers **Write the outline** instead.
  */
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
@@ -28,20 +30,12 @@ import type { BookSettings } from "@/api/gen/BookSettings"
 import type { ChapterWriteInput } from "@/api/gen/ChapterWriteInput"
 import type { Granularity } from "@/api/gen/Granularity"
 import { ApiError } from "@/api/client"
+import {
+  PreviousNotReadyNotice,
+  type PreviousNotReady,
+} from "@/features/chapter/PreviousNotReady"
 
 const GRANULARITIES: Granularity[] = ["sentence", "paragraph", "free", "chapter"]
-
-/**
- * The previous chapter's state the API reported in `409 chapter.previous_not_ready`
- * (spec/10 §3: `details.chapter_id`, `details.reason`).
- *
- * `reason` is a code (`not_official` | `canon_not_synced`), so the dialog words the explanation
- * itself instead of printing raw enum values.
- */
-type NotReady = {
-  chapterNumber?: number
-  reason?: string
-}
 
 export type WriteDialogProps = {
   chapterId: number
@@ -51,6 +45,8 @@ export type WriteDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
   onStarted: (sessionId: number) => void
+  /** Opens the Outline dialog when the chapter lost its outline (a race). */
+  onWriteOutline: () => void
 }
 
 export function WriteDialog({
@@ -61,6 +57,7 @@ export function WriteDialog({
   open,
   onOpenChange,
   onStarted,
+  onWriteOutline,
 }: WriteDialogProps) {
   const { t } = useTranslation()
   const showError = useErrorToast()
@@ -68,8 +65,8 @@ export function WriteDialog({
   const [draftGuidance, setDraftGuidance] = useState(guidance)
   const [granularity, setGranularity] = useState<Granularity>(settings.granularity)
   const [autoPause, setAutoPause] = useState(settings.auto_pause)
-  const [pauseAfterOutline, setPauseAfterOutline] = useState(settings.pause_after_outline)
-  const [notReady, setNotReady] = useState<NotReady | null>(null)
+  const [notReady, setNotReady] = useState<PreviousNotReady | null>(null)
+  const [outlineMissing, setOutlineMissing] = useState(false)
 
   const start = (force: boolean) => {
     const input: ChapterWriteInput = {
@@ -81,11 +78,11 @@ export function WriteDialog({
     write.mutate(input, {
       onSuccess: ({ session_id }) => {
         setNotReady(null)
+        setOutlineMissing(false)
         onOpenChange(false)
         onStarted(session_id)
       },
       onError: (error) => {
-        // `chapter.previous_not_ready` is the one failure the dialog resolves itself.
         if (error instanceof ApiError && error.code === "chapter.previous_not_ready") {
           const details = (error.details ?? {}) as Record<string, unknown>
           setNotReady({
@@ -93,6 +90,10 @@ export function WriteDialog({
               typeof details.chapter_number === "number" ? details.chapter_number : undefined,
             reason: typeof details.reason === "string" ? details.reason : undefined,
           })
+          return
+        }
+        if (error instanceof ApiError && error.code === "chapter.outline_missing") {
+          setOutlineMissing(true)
           return
         }
         showError(error)
@@ -108,20 +109,15 @@ export function WriteDialog({
           <DialogDescription>{t("chapter:write_dialog.description")}</DialogDescription>
         </DialogHeader>
 
-        {notReady === null ? null : (
+        {notReady === null ? null : <PreviousNotReadyNotice notReady={notReady} />}
+        {outlineMissing ? (
           <div className="space-y-2 rounded-md border border-status-waiting/40 bg-status-waiting/10 p-3 text-sm">
-            <p className="font-medium">{t("chapter:write_dialog.not_ready_title")}</p>
+            <p className="font-medium">{t("chapter:write_dialog.outline_missing_title")}</p>
             <p className="text-muted-foreground">
-              {notReady.reason === "canon_not_synced"
-                ? t("chapter:write_dialog.not_ready_canon", {
-                    number: notReady.chapterNumber ?? 0,
-                  })
-                : t("chapter:write_dialog.not_ready_status", {
-                    number: notReady.chapterNumber ?? 0,
-                  })}
+              {t("chapter:write_dialog.outline_missing_hint")}
             </p>
           </div>
-        )}
+        ) : null}
 
         <div className="space-y-4">
           <div className="space-y-1.5">
@@ -178,25 +174,22 @@ export function WriteDialog({
               {t("agent:writer.auto_pause")}
             </Label>
           </div>
-
-          <div className="flex items-center gap-2">
-            <Switch
-              id="write-pause-outline"
-              checked={pauseAfterOutline}
-              onCheckedChange={setPauseAfterOutline}
-              aria-label={t("chapter:write_dialog.pause_after_outline")}
-            />
-            <Label htmlFor="write-pause-outline" className="text-sm font-normal">
-              {t("chapter:write_dialog.pause_after_outline")}
-            </Label>
-          </div>
         </div>
 
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             {t("common:cancel")}
           </Button>
-          {notReady === null ? (
+          {outlineMissing ? (
+            <Button
+              onClick={() => {
+                onOpenChange(false)
+                onWriteOutline()
+              }}
+            >
+              {t("chapter:write_dialog.write_outline")}
+            </Button>
+          ) : notReady === null ? (
             <Button disabled={write.isPending} onClick={() => start(false)}>
               {write.isPending ? t("common:loading") : t("chapter:write_dialog.start")}
             </Button>

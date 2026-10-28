@@ -14,6 +14,7 @@ const submitMutate = vi.fn()
 vi.mock("@/api/hooks/chapters", () => ({
   useSubmitChapter: () => ({ mutate: submitMutate, isPending: false }),
   useApproveChapter: () => ({ mutate: vi.fn(), isPending: false }),
+  useWriteOutlineChapter: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 vi.mock("@/api/hooks/reviews", () => ({
@@ -83,6 +84,7 @@ function renderHeader(current: ChapterDto) {
         chapter={current}
         settings={SETTINGS}
         language="en"
+        outlineState="accepted"
         onRename={() => {}}
       />
     </QueryClientProvider>

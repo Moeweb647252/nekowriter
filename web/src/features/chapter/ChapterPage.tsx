@@ -18,10 +18,11 @@ import { useTranslation } from "react-i18next"
 
 import { useBook } from "@/api/hooks/books"
 import { useChapter, usePatchChapter } from "@/api/hooks/chapters"
-import { useResumeSession } from "@/api/hooks/sessions"
+import { useResumeSession, useSession } from "@/api/hooks/sessions"
 import { useHeldDecision } from "@/features/agent/useHeldDecision"
 import { ChapterHeader } from "@/features/chapter/ChapterHeader"
 import { ChapterText } from "@/features/chapter/ChapterText"
+import { openOutlineSession, outlineState } from "@/features/chapter/outlineState"
 import { OutlineTab } from "@/features/chapter/OutlineTab"
 import { PendingWriteDock } from "@/features/chapter/PendingWriteDock"
 import { usePendingDraft } from "@/features/chapter/usePendingDraft"
@@ -82,6 +83,11 @@ export default function ChapterPage() {
   // The held write and its merged view, derived once for both the pane (which renders it) and the
   // dock (which decides it). Hooks stay above the early returns.
   const pending = usePendingDraft(chapter.data)
+  // One derivation for the header and the Outline tab (D-146). The snapshot supplies the held
+  // call, so a pause-held retrieval call is in progress rather than "awaiting approval".
+  const outlineSession = openOutlineSession(chapter.data)
+  const outlineSnapshot = useSession(outlineSession?.status === "held" ? outlineSession.id : null)
+  const outlineStateValue = outlineState(chapter.data, outlineSnapshot.data?.tool_calls)
   // Approve and request changes go through the shared payload builders (D-141), so the panel and
   // this dock cannot send different things for the same contract.
   const decision = useHeldDecision(pending.writer.session?.id ?? null, resume, showError)
@@ -114,6 +120,7 @@ export default function ChapterPage() {
         projectedWords={
           pending.view?.standing === "current" ? pending.view.stagedWords : undefined
         }
+        outlineState={outlineStateValue}
         onRename={(title) => patchChapter.mutate({ title })}
         onSessionStarted={() => {
           // The agent panel picks the chapter's open session from `open_sessions` (spec/10 §2.8).
@@ -166,7 +173,18 @@ export default function ChapterPage() {
           )}
         </TabsContent>
         <TabsContent value="outline" className="min-h-0 p-6">
-          <OutlineTab chapter={document} bookId={bookId} unspaced={unspaced} />
+          <OutlineTab
+            chapter={document}
+            bookId={bookId}
+            unspaced={unspaced}
+            settings={book.data.settings}
+            state={outlineStateValue}
+            session={outlineSession}
+            calls={outlineSnapshot.data?.tool_calls}
+            onSessionStarted={() => {
+              void queryClient.invalidateQueries({ queryKey: keys.chapters.detail(chapterId) })
+            }}
+          />
         </TabsContent>
         <TabsContent value="review" className="min-h-0 p-6">
           <ReviewTab

@@ -33,5 +33,6 @@
   "agent.tool_error_streak": "The agent failed to use its tools several times in a row and the session paused. Clear up the instruction, then continue.",
   "agent.no_tool_call": "The agent replied with text where a tool call was required, so the session paused. Continue with a clearer instruction.",
   "model.missing_provider": "The model's provider was deleted. Choose another model in Settings › Agent roles, then continue.",
-  "prompt.override_failed": "A prompt override could not be used and the default was used instead."
+  "prompt.override_failed": "A prompt override could not be used and the default was used instead.",
+  "chapter.outline_missing": "This chapter has no outline yet. Write the outline first."
 }

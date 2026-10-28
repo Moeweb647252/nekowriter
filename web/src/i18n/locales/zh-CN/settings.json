@@ -157,5 +157,6 @@
   "option_json_invalid": "这不是合法的 JSON。",
   "option_default_named": "默认：{{value}}",
   "option.cache_ttl": "缓存有效期",
-  "option.cache_ttl_hint": "提供商缓存提示词前缀的时长。自动会按会话决定：构思会话与会暂停的写作会话为 1 小时，其余为 5 分钟。"
+  "option.cache_ttl_hint": "提供商缓存提示词前缀的时长。自动会按会话决定：构思会话与会暂停的写作会话为 1 小时，其余为 5 分钟。",
+  "role_planner_unset": "同写手"
 }

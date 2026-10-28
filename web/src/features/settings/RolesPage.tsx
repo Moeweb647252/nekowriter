@@ -91,7 +91,11 @@ export default function RolesPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={ROLE_UNSET}>{t("settings:role_unset")}</SelectItem>
+                    <SelectItem value={ROLE_UNSET}>
+                      {role === "planner"
+                        ? t("settings:role_planner_unset")
+                        : t("settings:role_unset")}
+                    </SelectItem>
                     {modelList.map((model) => (
                       <SelectItem key={model.id} value={String(model.id)}>
                         {formatModelLabel(t, modelList, providerList, model.id)}
@@ -112,6 +116,7 @@ export default function RolesPage() {
                   roles_defaults: {
                     conception: null,
                     researcher: null,
+                    planner: null,
                     writer: null,
                     reviewer: null,
                     archivist: null,

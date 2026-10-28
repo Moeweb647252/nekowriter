@@ -298,3 +298,33 @@ describe("Book settings › model overrides", () => {
     ).toBeInTheDocument()
   })
 })
+
+describe("Book settings › planner model hint (D-146)", () => {
+  it("names the effective planner model: global planner, else the writer, else none", () => {
+    rolesDefaults = {
+      conception: null,
+      researcher: null,
+      planner: null,
+      writer: 7,
+      reviewer: null,
+      archivist: null,
+    }
+    book.model_overrides = {
+      conception: null,
+      researcher: null,
+      planner: null,
+      writer: null,
+      reviewer: null,
+      archivist: null,
+    }
+    const { unmount } = render(<BookSettingsPage />)
+    const row = screen.getByTestId("model-override-row-planner")
+    expect(within(row).getByText("Follows the Writer: Anthropic · Writer model")).toBeInTheDocument()
+    unmount()
+
+    rolesDefaults = { ...rolesDefaults, planner: 8 }
+    render(<BookSettingsPage />)
+    const withGlobal = screen.getByTestId("model-override-row-planner")
+    expect(within(withGlobal).getByText("Default: DeepSeek · Review model")).toBeInTheDocument()
+  })
+})

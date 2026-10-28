@@ -8,6 +8,7 @@ import type { ChapterContentResult } from "@/api/gen/ChapterContentResult"
 import type { ChapterContentTextPut } from "@/api/gen/ChapterContentTextPut"
 import type { ChapterDto } from "@/api/gen/ChapterDto"
 import type { ChapterPatch } from "@/api/gen/ChapterPatch"
+import type { ChapterOutlineInput } from "@/api/gen/ChapterOutlineInput"
 import type { ChapterWriteInput } from "@/api/gen/ChapterWriteInput"
 import type { ManualVersionInput } from "@/api/gen/ManualVersionInput"
 import { keys as allKeys } from "@/api/keys"
@@ -29,6 +30,22 @@ export function usePatchChapter(chapterId: number, bookId: number) {
       queryClient.setQueryData(keys.chapters.detail(chapterId), chapter)
       void queryClient.invalidateQueries({ queryKey: keys.tracks.chapters(chapter.track_id) })
       void queryClient.invalidateQueries({ queryKey: keys.books.overview(bookId) })
+    },
+  })
+}
+
+/**
+ * Starts the planner session (spec/08 §1.1, D-146). `409 chapter.previous_not_ready` is a normal
+ * outcome: the caller offers "Write anyway" and resends with `force`.
+ */
+export function useWriteOutlineChapter(chapterId: number, bookId: number) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (input: ChapterOutlineInput) => endpoints.writeOutline(chapterId, input),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: allKeys.chapters.detail(chapterId) })
+      void queryClient.invalidateQueries({ queryKey: allKeys.sessions.list(bookId) })
+      void queryClient.invalidateQueries({ queryKey: allKeys.books.overview(bookId) })
     },
   })
 }

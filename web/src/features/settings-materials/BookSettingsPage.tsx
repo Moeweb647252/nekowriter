@@ -309,6 +309,10 @@ export default function BookSettingsPage() {
             {AGENT_ROLES.map((role) => {
               const override = overrides[role]
               const globalDefault = globalDefaults[role]
+              // The planner falls back to the writer when it has no assignment of its own
+              // (spec/03 §4, D-146); its hint names the model it will actually use.
+              const plannerFollows =
+                role === "planner" ? (overrides.writer ?? globalDefaults.writer) : null
               // An override whose profile was deleted after the pick: it keeps its value (the
               // server would still resolve it) but says so instead of rendering a blank control.
               const missing =
@@ -346,11 +350,25 @@ export default function BookSettingsPage() {
                   </Select>
                   <span aria-hidden="true" />
                   <p className="text-xs text-muted-foreground">
-                    {globalDefault === null
-                      ? t("book:model_global_default_none")
-                      : t("book:model_global_default", {
+                    {role === "planner" ? (
+                      globalDefault !== null ? (
+                        t("book:model_planner_default", {
                           model: formatModelLabel(t, modelList, providerList, globalDefault),
-                        })}
+                        })
+                      ) : plannerFollows !== null ? (
+                        t("book:model_planner_follows_writer", {
+                          model: formatModelLabel(t, modelList, providerList, plannerFollows),
+                        })
+                      ) : (
+                        t("book:model_global_default_none")
+                      )
+                    ) : globalDefault === null ? (
+                      t("book:model_global_default_none")
+                    ) : (
+                      t("book:model_global_default", {
+                        model: formatModelLabel(t, modelList, providerList, globalDefault),
+                      })
+                    )}
                   </p>
                   {missing ? (
                     <>

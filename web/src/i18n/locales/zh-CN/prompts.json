@@ -30,5 +30,6 @@
   "agent.writer": "写手",
   "agent.reviewer": "审稿",
   "agent.archivist": "档案",
-  "agent.shared": "通用"
+  "agent.shared": "通用",
+  "agent.planner": "策划"
 }

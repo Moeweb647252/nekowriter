@@ -10,6 +10,8 @@ import {
   useReviews,
   useStartReview,
 } from "@/api/hooks/reviews"
+import { OutlineDialog } from "@/features/chapter/OutlineDialog"
+import type { OutlineState } from "@/features/chapter/outlineState"
 import { WriteDialog } from "@/features/chapter/WriteDialog"
 import { SendBackDialog } from "@/features/chapter/SendBackDialog"
 import { ConfirmDialog } from "@/components/common/ConfirmDialog"
@@ -30,6 +32,8 @@ export type ChapterHeaderProps = {
   onRename: (title: string) => void
   /** Called with a new session id (writer, reviewer or archivist) so the panel can focus it. */
   onSessionStarted?: (sessionId: number) => void
+  /** Derived state shared with the Outline tab (D-146). */
+  outlineState: OutlineState
   /**
    * Words the chapter would read once a held agent write is applied (D-141). The `word_count`
    * passed in stays the confirmed count — the server's value (spec/11 §8) — and this projection is
@@ -46,6 +50,7 @@ export function ChapterHeader({
   onRename,
   onSessionStarted,
   projectedWords,
+  outlineState,
 }: ChapterHeaderProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
@@ -60,6 +65,7 @@ export function ChapterHeader({
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(chapter.title)
   const [writeOpen, setWriteOpen] = useState(false)
+  const [outlineOpen, setOutlineOpen] = useState(false)
   const [sendBackOpen, setSendBackOpen] = useState(false)
   const [submitConfirmOpen, setSubmitConfirmOpen] = useState(false)
 
@@ -79,11 +85,15 @@ export function ChapterHeader({
     chapter.status === "official" &&
     (chapter.canon_status === "pending" || chapter.canon_status === "failed")
   const canResync = chapter.status === "official" && chapter.canon_status === "stale"
-  // spec/08 §1.1: a manual submit ends the chapter's open, non-running writer session, so the
-  // author is warned first. A `running` session is left to the endpoint's 409: stopping it is a
-  // separate action on the session.
+  // spec/08 §1.1: a manual submit ends the chapter's open, non-running planner or writer
+  // session, so the author is warned first. A `running` session is left to the endpoint's 409:
+  // stopping it is a separate action on the session.
+  const openOwnerSession = chapter.open_sessions.find(
+    (session) => session.role === "planner" || session.role === "writer",
+  )
   const openWriterSession = chapter.open_sessions.find(
-    (session) => session.role === "writer" && session.status !== "running",
+    (session) =>
+      (session.role === "planner" || session.role === "writer") && session.status !== "running",
   )
   const runSubmit = () => {
     submit.mutate(undefined, {
@@ -97,6 +107,18 @@ export function ChapterHeader({
       },
     })
   }
+  // PROJECT §8.5 / D-146: start actions only when no planner or writer session is open; the
+  // outline is started first when it is missing, written second when it is accepted.
+  const canStart = openOwnerSession === undefined && chapter.status !== "official"
+  const canOutlineNow =
+    canStart && (chapter.status === "planned" || chapter.status === "drafting")
+  const showWriteOutline = canOutlineNow && outlineState !== "accepted"
+  const showWriteChapter = canOutlineNow && outlineState === "accepted"
+  const showRedoOutline =
+    canStart &&
+    outlineState === "accepted" &&
+    ["planned", "drafting", "in_review", "revising"].includes(chapter.status)
+
   const requestSubmit = () => {
     if (openWriterSession === undefined) {
       runSubmit()
@@ -159,9 +181,28 @@ export function ChapterHeader({
         />
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        {chapter.status === "planned" ? (
+        {showWriteOutline ? (
+          <Button
+            size="sm"
+            disabled={outlineOpen}
+            onClick={() => setOutlineOpen(true)}
+          >
+            {t("chapter:write_outline")}
+          </Button>
+        ) : null}
+        {showWriteChapter ? (
           <Button size="sm" disabled={writeOpen} onClick={() => setWriteOpen(true)}>
-            {t("chapter:write")}
+            {t("chapter:write_chapter")}
+          </Button>
+        ) : null}
+        {showRedoOutline ? (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={outlineOpen}
+            onClick={() => setOutlineOpen(true)}
+          >
+            {t("chapter:redo_outline")}
           </Button>
         ) : null}
         {canSubmit ? (
@@ -257,6 +298,15 @@ export function ChapterHeader({
         report={latestReport}
         onSentBack={(sessionId) => onSessionStarted?.(sessionId)}
       />
+      <OutlineDialog
+        chapterId={chapter.id}
+        bookId={chapter.book_id}
+        settings={settings}
+        guidance={chapter.guidance}
+        open={outlineOpen}
+        onOpenChange={setOutlineOpen}
+        onStarted={(sessionId) => onSessionStarted?.(sessionId)}
+      />
       <WriteDialog
         chapterId={chapter.id}
         bookId={chapter.book_id}
@@ -265,6 +315,7 @@ export function ChapterHeader({
         open={writeOpen}
         onOpenChange={setWriteOpen}
         onStarted={(sessionId) => onSessionStarted?.(sessionId)}
+        onWriteOutline={() => setOutlineOpen(true)}
       />
       <ConfirmDialog
         open={submitConfirmOpen}

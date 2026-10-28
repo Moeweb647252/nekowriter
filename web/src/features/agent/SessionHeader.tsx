@@ -11,6 +11,7 @@ import {
   ChevronDown,
   ClipboardCheck,
   Info,
+  ListTree,
   PenLine,
   Search,
   Sparkles,
@@ -37,6 +38,8 @@ export function RoleIcon({ role, className }: { role: SessionDto["role"]; classN
       return <Sparkles aria-hidden="true" className={className} />
     case "researcher":
       return <Search aria-hidden="true" className={className} />
+    case "planner":
+      return <ListTree aria-hidden="true" className={className} />
     case "writer":
       return <PenLine aria-hidden="true" className={className} />
     case "reviewer":

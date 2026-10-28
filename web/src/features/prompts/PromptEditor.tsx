@@ -39,6 +39,7 @@ const AGENT_ORDER = [
   "archivist",
   "conception",
   "researcher",
+  "planner",
   "shared",
 ] as const
 

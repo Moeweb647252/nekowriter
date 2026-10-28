@@ -31,6 +31,7 @@ import {
   History,
   Home,
   Library,
+  ListTree,
   MessageSquareCode,
   MoreHorizontal,
   Plus,
@@ -60,6 +61,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { DeleteChapterDialog } from "@/features/chapter/DeleteChapterDialog"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { isComposing } from "@/lib/hotkeys"
 import { NewSideStoryDialog } from "@/features/workspace/NewSideStoryDialog"
 import { cn } from "@/lib/utils"
@@ -442,6 +444,17 @@ function ChapterRow({
             the first in a `<span>` left it aligning on the inline baseline while its sibling used
             the row's `items-center`, so the two icons sat at different heights. */}
         <span className="ml-auto flex shrink-0 items-center gap-1">
+          {chapter.status === "planned" && chapter.has_outline ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="inline-flex text-status-done">
+                  <ListTree aria-hidden="true" className="size-3.5 shrink-0" />
+                  <span className="sr-only">{t("book:planned_outline_ready")}</span>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>{t("book:planned_outline_ready")}</TooltipContent>
+            </Tooltip>
+          ) : null}
           <StatusBadge status={chapter.status} iconOnly />
           {chapter.status === "official" && chapter.canon_status !== "none" ? (
             <StatusBadge status={chapter.canon_status} variant="canon" iconOnly />

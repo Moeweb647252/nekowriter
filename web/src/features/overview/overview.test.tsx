@@ -828,6 +828,24 @@ const KIND_TABLE: {
     expected: { navigates: "/books/1/chapters/5" },
   },
   {
+    kind: "write_outline",
+    action: {
+      kind: "write_outline",
+      chapter: { id: 5, number: 1, title: "One", status: "planned" },
+      track_id: 10,
+    },
+    expected: { navigates: "/books/1/chapters/5?tab=outline" },
+  },
+  {
+    kind: "write_chapter",
+    action: {
+      kind: "write_chapter",
+      chapter: { id: 5, number: 1, title: "One", status: "planned" },
+      track_id: 10,
+    },
+    expected: { navigates: "/books/1/chapters/5?tab=text" },
+  },
+  {
     kind: "write_next",
     action: WRITE_NEXT,
     // Navigates, but only to the chapter it creates, so the destination is asserted after success.
@@ -866,7 +884,9 @@ describe("every next action either navigates or shows a visible outcome (D-135)"
       "run_research",
       "seed_canon",
       "sync_canon",
+      "write_chapter",
       "write_next",
+      "write_outline",
     ])
     for (const entry of KIND_TABLE) {
       const { navigates, mutation, hint } = entry.expected
