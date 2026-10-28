@@ -71,6 +71,14 @@ async fn concurrent_writes_start_one_writer_session() {
         .await;
     assert_eq!(status, StatusCode::CREATED, "{second}");
     let chapter_id = second["id"].as_i64().expect("chapter id") as i32;
+    // A write session needs the accepted outline (D-146).
+    runtime
+        .app
+        .patch(
+            &format!("/api/chapters/{chapter_id}"),
+            json!({ "outline": "细纲" }),
+        )
+        .await;
 
     let path = format!("/api/chapters/{chapter_id}/write");
     let (a, b) = tokio::join!(

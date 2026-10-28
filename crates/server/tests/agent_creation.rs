@@ -56,6 +56,10 @@ async fn a_missing_role_model_is_model_missing_role() {
     let track_id = tracks[0]["id"].as_i64().expect("track id") as i32;
     let chapter = app.create_chapter(track_id, "One").await;
     let chapter_id = chapter["id"].as_i64().expect("chapter id") as i32;
+    app.execute(&format!(
+        "UPDATE chapters SET outline = '细纲' WHERE id = {chapter_id}"
+    ))
+    .await;
 
     let error = nekowriter::services::sessions::create(
         app.state(),
@@ -211,8 +215,17 @@ async fn the_kickoff_blocks_follow_the_kind_table() {
             vec!["block.book_brief", "researcher.kickoff"],
         ),
         (
+            SessionKind::ChapterOutline,
+            vec!["block.settings", "block.memory", "planner.kickoff"],
+        ),
+        (
             SessionKind::ChapterWrite,
-            vec!["block.settings", "block.memory", "writer.kickoff.chapter"],
+            vec![
+                "block.settings",
+                "block.memory",
+                "block.chapter_draft",
+                "writer.kickoff.chapter",
+            ],
         ),
         (
             SessionKind::ChapterRevise,
@@ -258,12 +271,10 @@ async fn the_kickoff_blocks_follow_the_kind_table() {
         ),
     ] {
         assert_eq!(kickoff_blocks(kind, false), expected, "{kind:?}");
-        // A redraft uses the redraft task instead of the chapter task.
+        // A redraft uses the same drafting kickoff; its feedback comes through the task variable
+        // (D-146).
         if kind == SessionKind::ChapterWrite {
-            assert_eq!(
-                kickoff_blocks(kind, true),
-                vec!["block.settings", "block.memory", "writer.kickoff.redraft"]
-            );
+            assert_eq!(kickoff_blocks(kind, true), kickoff_blocks(kind, false));
         }
     }
     // Only `block.settings` carries a cache breakpoint (spec/03 §10).
@@ -294,7 +305,11 @@ async fn the_kickoff_message_holds_one_block_per_kickoff_block() {
     assert_eq!(kickoff.role, "user");
     assert_eq!(kickoff.kind, "kickoff");
     let blocks = kickoff.blocks();
-    assert_eq!(blocks.len(), 3, "settings · memory · task: {blocks:?}");
+    assert_eq!(
+        blocks.len(),
+        4,
+        "settings · memory · draft · task: {blocks:?}"
+    );
     assert!(
         matches!(
             &blocks[0],

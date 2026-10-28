@@ -97,6 +97,14 @@ async fn a_redraft_keeps_the_pid_counter() {
         .app
         .put_text(chapter_id, 0, "第一段。\n\n第二段。\n\n第三段。")
         .await;
+    // A redraft needs the accepted outline it drafts from (D-146).
+    runtime
+        .app
+        .patch(
+            &format!("/api/chapters/{chapter_id}"),
+            json!({ "outline": "重写的细纲" }),
+        )
+        .await;
     let (_, chapter) = runtime
         .app
         .get(&format!("/api/chapters/{chapter_id}"))

@@ -8,9 +8,9 @@
 use std::collections::BTreeSet;
 
 use nekowriter::agent::tools::registry::{
-    ARCHIVIST_TOOLS, CONCEPTION_TOOLS, RESEARCHER_TOOLS, RETRIEVAL_TOOLS, REVIEWER_TOOLS,
-    WRITE_TOOLS, WRITER_TOOLS, allowed_tools, initial_phase, is_permitted, role_of_kind,
-    tools_for_role,
+    ARCHIVIST_TOOLS, CONCEPTION_TOOLS, PLANNER_TOOLS, RESEARCHER_TOOLS, RETRIEVAL_TOOLS,
+    REVIEWER_TOOLS, WRITE_TOOLS, WRITER_TOOLS, allowed_tools, initial_phase, is_permitted,
+    role_of_kind, tools_for_role,
 };
 use nekowriter::agent::tools::spec::{ToolSpecs, validate_input};
 use nekowriter::agent::tools::{ToolErrorKind, ToolRegistry, resolve::EntityResolver};
@@ -30,6 +30,7 @@ fn every_tool_example_matches_its_schema_and_the_registry() {
     //     every name a role lists exists in the TOML.
     let mut role_tools: BTreeSet<&str> = BTreeSet::new();
     for role in [
+        "planner",
         "writer",
         "reviewer",
         "archivist",
@@ -153,13 +154,13 @@ fn invalid_json_reports_the_raw_prefix() {
 /// The role lists are exactly the spec/05 §2 tables, in order.
 #[test]
 fn the_role_lists_are_the_spec_tables_in_order() {
-    // Writer: 10 retrieval tools, then the writer-specific ones.
-    assert_eq!(WRITER_TOOLS.len(), 20);
+    // Writer: 10 retrieval tools, then the writer-specific ones; `submit_outline` belongs to
+    // the planner (D-146).
+    assert_eq!(WRITER_TOOLS.len(), 19);
     assert_eq!(&WRITER_TOOLS[..10], &RETRIEVAL_TOOLS);
     assert_eq!(
         &WRITER_TOOLS[10..],
         &[
-            "submit_outline",
             "submit_revision_plan",
             "read_draft",
             "insert_text",
@@ -171,6 +172,8 @@ fn the_role_lists_are_the_spec_tables_in_order() {
             "finish_revision",
         ]
     );
+    assert_eq!(PLANNER_TOOLS.len(), 12);
+    assert_eq!(&PLANNER_TOOLS[10..], &["read_draft", "submit_outline"]);
     assert_eq!(REVIEWER_TOOLS.len(), 11);
     assert_eq!(REVIEWER_TOOLS[10], "submit_review");
     assert_eq!(ARCHIVIST_TOOLS.len(), 21);
@@ -199,6 +202,7 @@ fn session_kinds_map_to_their_roles() {
     for (kind, role) in [
         (SessionKind::Conception, "conception"),
         (SessionKind::Research, "researcher"),
+        (SessionKind::ChapterOutline, "planner"),
         (SessionKind::ChapterWrite, "writer"),
         (SessionKind::ChapterRevise, "writer"),
         (SessionKind::ChapterReview, "reviewer"),
@@ -208,7 +212,7 @@ fn session_kinds_map_to_their_roles() {
     ] {
         assert_eq!(role_of_kind(kind), role, "{kind:?}");
     }
-    assert_eq!(initial_phase(SessionKind::ChapterWrite), Phase::Planning);
+    assert_eq!(initial_phase(SessionKind::ChapterWrite), Phase::Drafting);
     assert_eq!(
         initial_phase(SessionKind::ChapterRevise),
         Phase::RevisionPlanning
@@ -229,6 +233,12 @@ fn frozen(role: &str) -> Vec<String> {
 #[test]
 fn the_writer_permission_matrix_is_complete() {
     let writer = frozen("writer");
+    // The planning row is legacy-only: a session started before the split froze the old 20-tool
+    // list, `submit_outline` included (D-146).
+    let legacy: Vec<String> = nekowriter::agent::tools::registry::LEGACY_WRITER_TOOLS
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect();
     let planning = [
         "get_entity",
         "list_entities",
@@ -275,22 +285,26 @@ fn the_writer_permission_matrix_is_complete() {
         "delete_paragraphs",
         "finish_revision",
     ];
-    for (phase, allowed) in [
-        (Phase::Planning, planning.as_slice()),
-        (Phase::Drafting, drafting.as_slice()),
-        (Phase::RevisionPlanning, revision_planning.as_slice()),
-        (Phase::Revising, revising.as_slice()),
+    for (phase, allowed, frozen_tools) in [
+        (Phase::Planning, planning.as_slice(), legacy.as_slice()),
+        (Phase::Drafting, drafting.as_slice(), writer.as_slice()),
+        (
+            Phase::RevisionPlanning,
+            revision_planning.as_slice(),
+            writer.as_slice(),
+        ),
+        (Phase::Revising, revising.as_slice(), writer.as_slice()),
     ] {
-        for tool in &writer {
+        for tool in frozen_tools {
             let expected = allowed.contains(&tool.as_str());
             assert_eq!(
-                is_permitted(SessionKind::ChapterWrite, phase, tool, &writer),
+                is_permitted(SessionKind::ChapterWrite, phase, tool, frozen_tools),
                 expected,
                 "{tool} in {phase:?}"
             );
         }
         assert_eq!(
-            allowed_tools(SessionKind::ChapterWrite, phase, &writer),
+            allowed_tools(SessionKind::ChapterWrite, phase, frozen_tools),
             allowed
                 .iter()
                 .map(|name| (*name).to_owned())

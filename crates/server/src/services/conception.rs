@@ -115,6 +115,7 @@ async fn start_session(state: &AppState, book_id: i32) -> Result<(i32, Vec<Strin
             guidance: None,
             kickoff_extra: None,
             pending_comment: None,
+            legacy_planning_fixture: false,
         },
     )
     .await?;
@@ -482,6 +483,7 @@ async fn seed_session(state: &AppState, book_id: i32) -> Result<(i32, Vec<String
             guidance: None,
             kickoff_extra: None,
             pending_comment: None,
+            legacy_planning_fixture: false,
         },
     )
     .await

@@ -271,6 +271,14 @@ pub async fn send_back(
         .await?
         .ok_or_else(|| AppError::not_found(format!("chapter {chapter_id}")))?;
     require_in_review(&chapter)?;
+    // A redraft drafts from the current accepted outline; without one the dialog offers Revise in
+    // place or writing an outline instead (spec/08 §1.1, D-146).
+    if input.mode == FeedbackMode::Redraft && chapter.outline.trim().is_empty() {
+        return Err(AppError::new(
+            ErrorCode::ChapterOutlineMissing,
+            "the chapter has no outline to redraft from",
+        ));
+    }
 
     // The ticked issues come from the report the dialog was built from (spec/08 §3). The report
     // is validated whenever it is named — not only when issues are ticked: a dangling or foreign
@@ -346,6 +354,9 @@ pub async fn send_back(
                     book_id: Some(chapter.book_id),
                     chapter_id: Some(chapter_id),
                     redraft: true,
+                    // The feedback row is linked to the session only after `create_inner`
+                    // returns, so the kickoff finds it by id (D-146).
+                    kickoff_extra: Some(json!({ "feedback_id": row.id })),
                     ..CreateSession::default()
                 },
             };

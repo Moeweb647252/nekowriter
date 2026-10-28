@@ -379,6 +379,8 @@ async fn the_retrieval_tools_mark_items_after_the_anchor() {
             book_id: Some(book_id),
             chapter_id: Some(chapter_id),
             granularity: Some(Granularity::Paragraph),
+            // These tests exercise planning-phase retrieval, which only a legacy session has now.
+            legacy_planning_fixture: true,
             ..Default::default()
         },
     )
@@ -490,6 +492,8 @@ async fn search_chapters_marks_passages_after_the_anchor() {
             book_id: Some(runtime.book_id),
             chapter_id: Some(chapter_id),
             granularity: Some(Granularity::Paragraph),
+            // These tests exercise planning-phase retrieval, which only a legacy session has now.
+            legacy_planning_fixture: true,
             ..Default::default()
         },
     )

@@ -200,7 +200,6 @@ fn every_spec_key_exists_and_every_key_is_documented() {
     // The key list of spec/09 §2 (the validator checks the same set).
     let expected = "conception.system researcher.system planner.system writer.system reviewer.system \
         archivist.system conception.kickoff researcher.kickoff planner.kickoff writer.kickoff.chapter \
-        writer.kickoff.redraft \
         writer.kickoff.revise writer.kickoff.rollover reviewer.kickoff reviewer.rereview \
         archivist.kickoff.maintenance archivist.kickoff.seed archivist.kickoff.resync \
         block.settings block.memory block.chapter_draft block.cast_index block.chapter_diff \
@@ -360,7 +359,8 @@ fn context_structs_match_the_sample_shapes() {
     let rendered = set
         .render(
             "writer.kickoff.chapter",
-            &json!({ "book": book, "track": track, "chapter": chapter, "draft": draft }),
+            &json!({ "book": book, "track": track, "chapter": chapter, "draft": draft,
+                     "granularity": granularity, "feedback": null }),
         )
         .expect("render");
     assert!(rendered.text.contains("t"));
@@ -428,6 +428,52 @@ fn the_planner_prompts_own_the_outline_contract() {
         }
         assert!(checked > 0, "{key} rendered no sample");
     }
+    // The writer's entries are drafting-only: no outline submission and no chapter planning
+    // phase. The granularity rule travels in the write kickoff (spec/03 §10, D-146).
+    for key in ["writer.system", "writer.kickoff.chapter"] {
+        let contexts: Vec<Value> = if key == "writer.system" {
+            vec![json!({})]
+        } else {
+            registry.sample_contexts(key)
+        };
+        for sample in contexts {
+            let text = set
+                .render_value(key, nekowriter::prompts::template_value(&sample))
+                .unwrap_or_else(|err| panic!("{key}: {err}"))
+                .text;
+            assert!(
+                !text.contains("submit_outline"),
+                "{key} names submit_outline"
+            );
+            assert!(
+                !text.contains("【规划阶段】"),
+                "{key} has the chapter planning phase"
+            );
+        }
+    }
+    let plain = set
+        .render(
+            "writer.kickoff.chapter",
+            &json!({
+                "book": {"title": "t", "genre": "", "idea": "", "writing_language": "zh-CN",
+                         "writing_language_name": "简体中文", "unspaced": true},
+                "track": {"is_main": true, "kind": "main", "title": "", "synopsis": "",
+                          "canon_mode": "canon", "anchor_kind": "none", "anchor_label": ""},
+                "chapter": {"id": 1, "number": 1, "label": "第1章", "title": "", "guidance": "",
+                            "outline": "", "reference_notes": "", "target_min": 3000,
+                            "target_max": 4000, "word_count": 0, "has_draft": false},
+                "granularity": {"key": "paragraph", "label": "逐段", "revising": false,
+                                "tail_open": false, "last_pid": "p1"},
+                "feedback": null,
+            }),
+        )
+        .expect("writer.kickoff.chapter");
+    assert!(
+        plain.text.contains("当前写作粒度"),
+        "the write kickoff carries the granularity rule: {}",
+        plain.text
+    );
+
     // The tool description stops promising drafting after submission.
     let description = set
         .render("tool.submit_outline", &json!({}))
@@ -780,7 +826,7 @@ async fn api_lists_entries_with_metadata_and_docs() {
         .find(|entry| entry["key"] == "writer.kickoff.chapter")
         .expect("writer.kickoff.chapter");
     let vars = kickoff["variables"].as_array().expect("variables");
-    assert_eq!(vars.len(), 4, "book, track, chapter, draft");
+    assert_eq!(vars.len(), 5, "book, track, chapter, granularity, feedback");
     let names: Vec<&str> = vars
         .iter()
         .map(|var| var["name"].as_str().expect("name"))

@@ -47,8 +47,8 @@ text = '''
 key = "writer.kickoff.chapter"
 kind = "task"
 agent = "writer"
-vars = ["book", "track", "chapter", "draft"]
-title_en = "Writer — write a chapter"
+vars = ["book", "track", "chapter", "granularity", "feedback"]
+title_en = "Writer — write the chapter"
 title_zh = "写手 · 撰写章节"
 text = '''
 【写作任务】{{ chapter.label }}{% if chapter.title %}《{{ chapter.title }}》{% endif %}
@@ -60,54 +60,21 @@ text = '''
 {% endif %}{% if chapter.guidance %}
 【作者对本章的要求】
 {{ chapter.guidance }}
-{% endif %}{% if chapter.has_draft %}
-本章已有部分正文：
-{% include "block.chapter_draft" %}
-
-请在规划时考虑已有内容：章纲覆盖全章，正文从草稿末尾继续写，不要重复已写部分。
-{% endif %}
-当前处于【规划阶段】：
-1. 结合故事大纲、近期章节摘要与上一章结尾，确定本章在全书中的位置与任务。
-2. 针对本章涉及的人物、地点、物品、设定、时间顺序与伏笔，用检索工具核实需要的信息。
-3. 用 submit_outline 提交：
-   - outline：详细章纲。按场景列出场景目标、出场人物、地点与时间、冲突与转折、关键对话或细节、情绪走向、伏笔的埋设或回收、结尾钩子，并预估各场景篇幅。
-   - reference_notes：正文阶段必须遵守的参考要点，写成简洁的条目，例如人物当前状态与能力边界、称谓、物品归属、时间与地点细节、需要呼应的前文。正文阶段无法再检索，请把需要的信息都整理进来。
-   - title：本章还没有标题时，请拟一个。
-提交章纲后进入正文阶段，届时会告诉你写作粒度的规则。
-'''
-
-[[prompt]]
-key = "writer.kickoff.redraft"
-kind = "task"
-agent = "writer"
-vars = ["book", "track", "chapter", "feedback", "previous_outline"]
-title_en = "Writer — redraft a chapter"
-title_zh = "写手 · 重写章节"
-text = '''
-【重写任务】{{ chapter.label }}{% if chapter.title %}《{{ chapter.title }}》{% endif %}
-
-本书写作语言：{{ book.writing_language_name }}
-目标字数：{{ chapter.target_min }}–{{ chapter.target_max }} 字
-{% if not track.is_main %}
-{% include "block.anchor" %}
-{% endif %}
-作者审阅了本章的上一版，决定推倒重写。上一版正文已经存档，现在的草稿为空。
-
-【作者的意见】
+{% endif %}{% if feedback %}
+【作者要求重写本章】
+作者审阅了上一版，决定推倒重写。上一版正文已经存档，现在的草稿为空。请按下面的意见重写本章；这些意见优先于细纲。
 {{ feedback.text }}
 {% if feedback.issues %}
 【相关问题（引文出自已存档的上一版）】
 {% for i in feedback.issues %}- [{{ i.severity_label }}·{{ i.category_label }}]{% if i.quote %}「{{ i.quote }}」{% endif %}：{{ i.problem }} → {{ i.suggestion }}
-{% endfor %}{% endif %}{% if previous_outline %}
-【上一版章纲（供参考，请按意见调整）】
-<chapter_outline>
-{{ previous_outline }}
-</chapter_outline>
-{% endif %}{% if chapter.guidance %}
-【作者对本章的原始要求】
-{{ chapter.guidance }}
+{% endfor %}{% endif %}
+{% endif %}{% if chapter.has_draft %}
+本章已有部分正文（见上方）。请从草稿末尾继续写，不要重复已写部分；已有的段落若与新细纲不一致，用修改工具调整。
 {% endif %}
-当前处于【规划阶段】：根据作者的意见重新规划本章，必要时查阅资料，然后用 submit_outline 提交新的章纲与参考要点。作者的意见优先于原来的章纲。
+本章的细纲、参考要点与正文见上方。当前处于【正文阶段】，只能使用写作工具：
+- 按细纲写作，先用 insert_text 在末尾追加；需要修改已写内容时用 insert_paragraphs、replace_text、rewrite_paragraph、delete_paragraphs，不确定当前文本时用 read_draft。
+- 全章写完后，在最后一次 insert_text 中设置 chapter_end=true，或调用 finish_draft。
+{% include "writer.rules.granularity" %}
 '''
 
 [[prompt]]

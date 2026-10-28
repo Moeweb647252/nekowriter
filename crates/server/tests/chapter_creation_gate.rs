@@ -380,8 +380,13 @@ async fn a_chapter_that_predates_finalize_is_writable_once_the_book_is_active() 
     );
     assert_eq!(chapter["number"], 1);
 
-    // ...and a writer session starts on it normally. This is what "not stranded" means: the
-    // chapter predates the gate but is a first-class chapter once the book is active.
+    // ...and a writer session starts on it normally once it has an accepted outline. This is what
+    // "not stranded" means: the chapter predates the gate but is a first-class chapter once the
+    // book is active.
+    app.execute(&format!(
+        "UPDATE chapters SET outline = '细纲' WHERE id = {existing_id}"
+    ))
+    .await;
     let (status, body) = app
         .post(&format!("/api/chapters/{existing_id}/write"), json!({}))
         .await;

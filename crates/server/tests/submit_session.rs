@@ -29,6 +29,9 @@ async fn start_writer_session(runtime: &Runtime, pause_after_outline: bool) -> i
             granularity: Some(Granularity::Paragraph),
             auto_pause: Some(false),
             pause_after_outline: Some(pause_after_outline),
+            // A held outline can only occur in a legacy planning session now (D-146); this test
+            // pins the manual-submit rule that ends it.
+            legacy_planning_fixture: true,
             ..CreateSession::default()
         },
     )

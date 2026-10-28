@@ -400,6 +400,11 @@ async fn deleting_a_side_track_abandons_its_open_sessions_first() {
     let app = &runtime.app;
     let anchor = official_main_chapter(&runtime, "第一章").await;
     let (track_id, chapter_id) = side_story_after_anchor(&runtime, anchor).await;
+    app.patch(
+        &format!("/api/chapters/{chapter_id}"),
+        json!({ "outline": "番外细纲" }),
+    )
+    .await;
     let (status, body) = app
         .post(&format!("/api/chapters/{chapter_id}/write"), json!({}))
         .await;
@@ -437,6 +442,11 @@ async fn the_first_side_chapter_reads_the_anchor_as_its_previous_chapter() {
     let anchor_id = anchor["id"].as_i64().expect("id") as i32;
     app.put_text(anchor_id, 0, "正文。").await;
     let (_track_id, chapter_id) = side_story_after_anchor(&runtime, anchor_id).await;
+    app.patch(
+        &format!("/api/chapters/{chapter_id}"),
+        json!({ "outline": "番外细纲" }),
+    )
+    .await;
     let (status, body) = app
         .post(&format!("/api/chapters/{chapter_id}/write"), json!({}))
         .await;
@@ -480,6 +490,11 @@ async fn the_first_side_chapter_reads_the_anchor_as_its_previous_chapter() {
             .create_chapter(track["id"].as_i64().expect("id") as i32, "一")
             .await;
         let id = chapter["id"].as_i64().expect("id") as i32;
+        app.patch(
+            &format!("/api/chapters/{id}"),
+            json!({ "outline": "番外细纲" }),
+        )
+        .await;
         let (status, body) = app
             .post(&format!("/api/chapters/{id}/write"), json!({}))
             .await;

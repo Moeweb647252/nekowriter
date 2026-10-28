@@ -89,6 +89,7 @@ async fn a_second_researcher_session_is_refused_by_creation() {
             guidance: None,
             kickoff_extra: Some(json!({ "scope_id": scope_id })),
             pending_comment: None,
+            legacy_planning_fixture: false,
         },
     )
     .await;

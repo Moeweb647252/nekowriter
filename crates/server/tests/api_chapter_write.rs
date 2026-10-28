@@ -12,7 +12,19 @@ async fn book_and_chapter(app: &TestApp) -> (i32, i32, i32) {
     let track_id = tracks[0]["id"].as_i64().expect("track id") as i32;
     let chapter = app.create_chapter(track_id, "Chapter One").await;
     let chapter_id = chapter["id"].as_i64().expect("chapter id") as i32;
+    set_outline(app, chapter_id, "默认细纲").await;
     (book_id, track_id, chapter_id)
+}
+
+/// Gives a chapter the accepted outline a write session needs (D-146).
+async fn set_outline(app: &TestApp, chapter_id: i32, outline: &str) {
+    let (status, body) = app
+        .patch(
+            &format!("/api/chapters/{chapter_id}"),
+            json!({ "outline": outline }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
 }
 
 /// Assigns one Demo model to every role, so a session can be created.
@@ -62,10 +74,10 @@ async fn assign_models(app: &TestApp) {
     assert_eq!(status, StatusCode::OK, "{body}");
 }
 
-/// The write endpoint starts a `chapter_write` session in planning and the response carries its id
-/// (spec/08 §1.1, spec/10 §2.2).
+/// The write endpoint starts a `chapter_write` session in `drafting` and the response carries its
+/// id (spec/08 §1.1, spec/10 §2.2, D-146).
 #[tokio::test]
-async fn write_starts_a_planning_session() {
+async fn write_starts_a_drafting_session() {
     let app = TestApp::new().await;
     assign_models(&app).await;
     let (_book_id, _track_id, chapter_id) = book_and_chapter(&app).await;
@@ -80,7 +92,7 @@ async fn write_starts_a_planning_session() {
     let (status, session) = app.get(&format!("/api/sessions/{session_id}")).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(session["session"]["kind"], "chapter_write");
-    assert_eq!(session["session"]["phase"], "planning");
+    assert_eq!(session["session"]["phase"], "drafting");
     assert_eq!(session["session"]["chapter_id"], chapter_id);
     // The chapter entered drafting on creation (spec/03 §4 domain side effects).
     let (_, chapter) = app.get(&format!("/api/chapters/{chapter_id}")).await;
@@ -160,6 +172,7 @@ async fn write_requires_the_previous_chapter_to_be_ready_unless_forced() {
     let (_book_id, track_id, first_id) = book_and_chapter(&app).await;
     let second = app.create_chapter(track_id, "Chapter Two").await;
     let second_id = second["id"].as_i64().expect("chapter id") as i32;
+    set_outline(&app, second_id, "第二章细纲").await;
 
     // The first chapter is `planned`, so it is not ready: the write is refused with the reason.
     let (status, body) = app
@@ -187,6 +200,7 @@ async fn write_requires_the_previous_chapter_to_be_ready_unless_forced() {
     let (_book_id, track_id, first_id) = book_and_chapter(&app2).await;
     let second = app2.create_chapter(track_id, "Chapter Two").await;
     let second_id = second["id"].as_i64().expect("chapter id") as i32;
+    set_outline(&app2, second_id, "第二章细纲").await;
     app2.set_chapter_status(first_id, "official").await;
     // Official alone is not enough: the canon must be synced too.
     let (status, body) = app2
@@ -253,6 +267,33 @@ async fn write_of_a_chapter_with_text_carries_the_draft_in_the_kickoff() {
     );
 }
 
+/// A write session needs an accepted outline; empty and whitespace-only both refuse (D-146).
+#[tokio::test]
+async fn write_requires_a_non_empty_outline() {
+    let app = TestApp::new().await;
+    assign_models(&app).await;
+    let (_book_id, _track_id, chapter_id) = book_and_chapter(&app).await;
+    app.execute(&format!(
+        "UPDATE chapters SET outline = '' WHERE id = {chapter_id}"
+    ))
+    .await;
+    let (status, body) = app
+        .post(&format!("/api/chapters/{chapter_id}/write"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_error(&body, "chapter.outline_missing");
+
+    app.execute(&format!(
+        "UPDATE chapters SET outline = '   \n  ' WHERE id = {chapter_id}"
+    ))
+    .await;
+    let (status, body) = app
+        .post(&format!("/api/chapters/{chapter_id}/write"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_error(&body, "chapter.outline_missing");
+}
+
 /// A missing writer model is `409 model.missing_role` (spec/03 §4 step 1).
 #[tokio::test]
 async fn write_without_a_writer_model_is_a_missing_role_error() {
@@ -302,6 +343,7 @@ async fn previous_not_ready_reports_a_reason_code() {
     let (_book_id, track_id, first_id) = book_and_chapter(&app).await;
     let second = app.create_chapter(track_id, "Chapter Two").await;
     let second_id = second["id"].as_i64().expect("chapter id") as i32;
+    set_outline(&app, second_id, "第二章细纲").await;
 
     // Not official yet.
     let (status, body) = app

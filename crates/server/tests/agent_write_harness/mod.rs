@@ -58,6 +58,9 @@ pub async fn start_writer_on(
             guidance: None,
             kickoff_extra: None,
             pending_comment: None,
+            // The M4 runtime suite exercises the legacy planning branch: these tests were written
+            // for the pre-split two-phase writer and remain its coverage (D-146).
+            legacy_planning_fixture: true,
         },
     )
     .await

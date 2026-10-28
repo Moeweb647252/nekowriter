@@ -54,6 +54,7 @@ impl Default for CreateSession {
             guidance: None,
             kickoff_extra: None,
             pending_comment: None,
+            legacy_planning_fixture: false,
         }
     }
 }
@@ -79,6 +80,10 @@ pub struct CreateSession {
     /// The author's re-review comment: `submit_review` copies it into the report's
     /// `user_comment` and clears it (spec/03 §6, spec/05 §5).
     pub pending_comment: Option<String>,
+    /// Test-only: create a `chapter_write` session in the legacy `planning` phase with the old
+    /// 20-tool list, as a session started before the outline split has (D-146). Production
+    /// callers never set it.
+    pub legacy_planning_fixture: bool,
 }
 
 /// Creates a session (spec/03 §4) and spawns its runner. Returns the session id and any
@@ -202,16 +207,36 @@ pub(crate) async fn create_inner(
         .render(&format!("{role}.system"), &json!({}))
         .map_err(|err| err.into_app_error())?;
     warnings.extend(system_prompt.warnings());
-    let tools = frozen_tools(&prompts, role, &mut warnings)?;
+    let tool_names: &[&str] = if input.legacy_planning_fixture {
+        &crate::agent::tools::registry::LEGACY_WRITER_TOOLS
+    } else {
+        tools_for_role(role)
+    };
+    let tools = frozen_tools(&prompts, tool_names, &mut warnings)?;
 
     // 3. Initial fields; writer sessions copy the book's settings unless told otherwise.
     let book_settings = match book.as_ref() {
         Some(book) => crate::db::json::from_json_or_default::<BookSettings>(&book.settings),
         None => BookSettings::default(),
     };
-    let phase = initial_phase(input.kind);
+    let phase = if input.legacy_planning_fixture && input.kind == SessionKind::ChapterWrite {
+        Phase::Planning
+    } else {
+        initial_phase(input.kind)
+    };
     let (granularity, auto_pause, pause_after_outline) = match input.kind {
-        SessionKind::ChapterWrite | SessionKind::ChapterRevise => (
+        // The write session is drafting-only: `pause_after_outline` belongs to the outline
+        // session, so the column is stored as 0 and does nothing here (D-146). The legacy test
+        // fixture of a pre-split session keeps the value it had.
+        SessionKind::ChapterWrite => (
+            Some(input.granularity.unwrap_or(book_settings.granularity)),
+            input.auto_pause.unwrap_or(book_settings.auto_pause),
+            input.legacy_planning_fixture
+                && input
+                    .pause_after_outline
+                    .unwrap_or(book_settings.pause_after_outline),
+        ),
+        SessionKind::ChapterRevise => (
             Some(input.granularity.unwrap_or(book_settings.granularity)),
             input.auto_pause.unwrap_or(book_settings.auto_pause),
             input
@@ -535,11 +560,11 @@ fn model_snapshot(
 /// description is the resolved `tool.<name>` prompt.
 fn frozen_tools(
     prompts: &PromptSet,
-    role: &str,
+    names: &[&str],
     warnings: &mut Vec<String>,
 ) -> Result<Vec<nekowriter_llm::ToolDef>, AppError> {
     let mut tools = Vec::new();
-    for name in tools_for_role(role) {
+    for name in names {
         let key = format!("tool.{name}");
         let rendered = prompts
             .render(&key, &json!({}))

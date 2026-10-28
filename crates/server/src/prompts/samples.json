@@ -2149,6 +2149,25 @@
    }
   ],
   "writer.kickoff.chapter": [
+   {
+    "feedback": null
+   },
+   {
+    "feedback": null,
+    "chapter": {
+     "id": 45,
+     "number": 13,
+     "label": "第13章",
+     "title": "夜雨",
+     "guidance": "让苏婉第一次展露实力。",
+     "outline": "## 场景一\n- 目标",
+     "reference_notes": "- 林凡左臂有伤",
+     "target_min": 3000,
+     "target_max": 4000,
+     "word_count": 2350,
+     "has_draft": false
+    }
+   },
    {},
    {
     "track": {
@@ -2164,52 +2183,16 @@
      "id": 45,
      "number": 13,
      "label": "第13章",
-     "title": "",
-     "guidance": "",
-     "outline": "",
-     "reference_notes": "",
+     "title": "夜雨",
+     "guidance": "让苏婉第一次展露实力。",
+     "outline": "## 场景一\n- 目标",
+     "reference_notes": "- 林凡左臂有伤",
      "target_min": 3000,
      "target_max": 4000,
-     "word_count": 0,
+     "word_count": 2350,
      "has_draft": false
-    }
-   }
-  ],
-  "writer.kickoff.redraft": [
-   {},
-   {
-    "track": {
-     "is_main": false,
-     "kind": "side",
-     "title": "剑冢旧事",
-     "synopsis": "师父年轻时的故事。",
-     "canon_mode": "isolated",
-     "anchor_kind": "after_chapter",
-     "anchor_label": "第12章《剑冢》"
     },
-    "previous_outline": "",
-    "feedback": {
-     "text": "重写",
-     "issues": []
-    }
-   },
-   {
-    "feedback": {
-     "text": "结尾太仓促。",
-     "issues": [
-      {
-       "severity_label": "严重",
-       "category_label": "连续性",
-       "pids": [
-        "p30",
-        "p31"
-       ],
-       "quote": "",
-       "problem": "剑已毁",
-       "suggestion": "改用断剑"
-      }
-     ]
-    }
+    "feedback": null
    }
   ],
   "writer.kickoff.revise": [

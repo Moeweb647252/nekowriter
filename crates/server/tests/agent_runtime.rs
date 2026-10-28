@@ -131,8 +131,8 @@ async fn the_writer_switches_come_from_the_book_settings() {
     assert_eq!(row.granularity.as_deref(), Some("paragraph"));
     assert_eq!(row.auto_pause, 0);
     assert_eq!(
-        row.pause_after_outline, 1,
-        "the default is true (spec/02 §4)"
+        row.pause_after_outline, 0,
+        "the write session does not carry the outline switch (D-146)"
     );
     let (chapter_status, _, _) = runtime.chapter_status().await;
     assert_eq!(chapter_status, "drafting", "the writer took the chapter");

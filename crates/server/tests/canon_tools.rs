@@ -944,6 +944,9 @@ async fn a_side_track_marks_items_after_its_anchor() {
             chapter_id: Some(side_chapter_id),
             granularity: Some(nekowriter::db::json::Granularity::Paragraph),
             guidance: None,
+            // A planning-phase retrieval fixture: this test exercises the legacy planning arm
+            // that still serves sessions started before the outline split (D-146).
+            legacy_planning_fixture: true,
             ..nekowriter::services::sessions::CreateSession::default()
         },
     )

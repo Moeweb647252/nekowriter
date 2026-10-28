@@ -844,10 +844,10 @@ async fn block_memory_omits_the_outline_when_the_kickoff_shows_it() {
     );
 }
 
-/// A write kickoff of a chapter with no draft has no `block.chapter_draft`, so `block.memory`
-/// carries the outline instead (§4.2).
+/// Every write kickoff carries `block.chapter_draft` (even with an empty draft), so `block.memory`
+/// never repeats the outline (spec/06 §4.2, D-146).
 #[tokio::test]
-async fn block_memory_carries_the_outline_when_no_draft_exists() {
+async fn block_memory_does_not_repeat_the_outline_of_a_write_kickoff() {
     use nekowriter::services::sessions::{self, CreateSession};
 
     let app = TestApp::new().await;
@@ -879,10 +879,14 @@ async fn block_memory_carries_the_outline_when_no_draft_exists() {
     .expect("writer session");
     let kickoff = kickoff_text(app.state(), session_id).await;
     assert!(
-        kickoff.contains("### 本章章纲"),
-        "an empty draft means block.memory carries the outline:\n{kickoff}"
+        !kickoff.contains("### 本章章纲"),
+        "block.memory omits the outline the draft block renders:\n{kickoff}"
     );
-    assert!(kickoff.contains("OUTLINE-MARKER"));
+    assert_eq!(
+        kickoff.matches("OUTLINE-MARKER").count(),
+        1,
+        "the outline appears exactly once, in block.chapter_draft:\n{kickoff}"
+    );
 }
 
 // ───────────────────────────── helpers ─────────────────────────────

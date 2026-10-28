@@ -590,6 +590,14 @@ pub async fn write(
             status,
         ));
     }
+    // The write session drafts from an accepted outline; there is no way to skip that step for an
+    // agent write (spec/08 §1.1, D-146).
+    if chapter.outline.trim().is_empty() {
+        return Err(AppError::new(
+            ErrorCode::ChapterOutlineMissing,
+            "the chapter has no outline to draft from",
+        ));
+    }
     if let Some(session_id) = super::open_writer_session(state.db().conn(), chapter_id).await? {
         return Err(super::conflict(
             ErrorCode::ChapterSessionExists,
@@ -624,6 +632,7 @@ pub async fn write(
             guidance: input.guidance,
             kickoff_extra: None,
             pending_comment: None,
+            legacy_planning_fixture: false,
         },
     )
     .await?;
@@ -689,6 +698,7 @@ pub async fn outline(
             guidance: input.guidance,
             kickoff_extra: None,
             pending_comment: None,
+            legacy_planning_fixture: false,
         },
     )
     .await?;

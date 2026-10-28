@@ -38,7 +38,7 @@ for name, t in tools.items():
 
 # ---------- expected keys from spec/09 §2 ----------
 expected = """conception.system researcher.system planner.system writer.system reviewer.system archivist.system
-conception.kickoff researcher.kickoff planner.kickoff writer.kickoff.chapter writer.kickoff.redraft writer.kickoff.revise
+conception.kickoff researcher.kickoff planner.kickoff writer.kickoff.chapter writer.kickoff.revise
 writer.kickoff.rollover reviewer.kickoff reviewer.rereview archivist.kickoff.maintenance archivist.kickoff.seed
 archivist.kickoff.resync block.settings block.memory block.chapter_draft block.cast_index block.chapter_diff
 block.anchor block.book_brief notice.user_feedback notice.user_message notice.user_edits notice.setting_edits
@@ -206,9 +206,8 @@ variants = {
   "block.chapter_diff": [dict(), dict(diff=dict(changes=[]))],
   "planner.kickoff": [dict(), dict(chapter=dict(chapter_blank, outline="## 旧细纲", reference_notes="")),
                       dict(track=track_side, chapter=dict(chapter_blank))],
-  "writer.kickoff.chapter": [dict(), dict(track=track_side, chapter=chapter_blank)],
-  "writer.kickoff.redraft": [dict(), dict(track=track_side, previous_outline="", feedback=dict(text="重写", issues=[])),
-                             dict(feedback=dict(feedback, issues=[dict(feedback["issues"][0], quote="")]))],
+  "writer.kickoff.chapter": [dict(feedback=None), dict(feedback=None, chapter=dict(chapter_blank, has_draft=False)),
+                             dict(), dict(track=track_side, chapter=dict(chapter_blank, has_draft=False), feedback=None)],
   "writer.kickoff.revise": [dict(), dict(track=track_side, chapter=chapter_blank)],
   "writer.kickoff.rollover": [dict(), dict(feedback=None, chapter=chapter_blank),
                               dict(phase="revising", granularity=dict(gran["sentence"], revising=True)),

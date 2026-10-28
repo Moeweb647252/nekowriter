@@ -42,18 +42,19 @@ use super::session;
 /// The kickoff blocks of every session kind, in order (spec/03 §10 table).
 ///
 /// `block.settings` carries a cache breakpoint (`cache: true`).
-pub fn kickoff_blocks(kind: SessionKind, redraft: bool) -> Vec<&'static str> {
+pub fn kickoff_blocks(kind: SessionKind, _redraft: bool) -> Vec<&'static str> {
     match kind {
         SessionKind::Conception => vec!["conception.kickoff"],
         SessionKind::ChapterOutline => vec!["block.settings", "block.memory", "planner.kickoff"],
         SessionKind::Research => vec!["block.book_brief", "researcher.kickoff"],
-        SessionKind::ChapterWrite => {
-            if redraft {
-                vec!["block.settings", "block.memory", "writer.kickoff.redraft"]
-            } else {
-                vec!["block.settings", "block.memory", "writer.kickoff.chapter"]
-            }
-        }
+        // A write session always drafts from the accepted outline; a redraft is the same kickoff
+        // with its `feedback` branch filled (D-146).
+        SessionKind::ChapterWrite => vec![
+            "block.settings",
+            "block.memory",
+            "block.chapter_draft",
+            "writer.kickoff.chapter",
+        ],
         SessionKind::ChapterRevise => vec![
             "block.settings",
             "block.memory",
@@ -116,11 +117,10 @@ impl KickoffPlan {
     /// True when a `block.chapter_draft` renders the chapter's outline somewhere in the kickoff
     /// (as a top-level block, or through `writer.kickoff.chapter`'s include when the chapter has
     /// text). `block.memory` then only names the chapter (spec/06 §4.2).
-    pub fn renders_outline_elsewhere(self, has_draft: bool) -> bool {
+    pub fn renders_outline_elsewhere(self, _has_draft: bool) -> bool {
         match self.kind {
-            // `writer.kickoff.chapter` includes `block.chapter_draft` when the chapter has text,
-            // and `writer.kickoff.redraft` shows the old outline itself (spec/06 §4.2).
-            SessionKind::ChapterWrite => has_draft || self.redraft,
+            // A write session always has `block.chapter_draft` in its kickoff (D-146).
+            SessionKind::ChapterWrite => true,
             SessionKind::ChapterOutline
             | SessionKind::ChapterRevise
             | SessionKind::ChapterReview
@@ -225,19 +225,21 @@ async fn block_context(
             "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
             "draft": draft_context(conn, session.chapter_id).await?,
         })),
-        "writer.kickoff.chapter" => Ok(json!({
-            "book": book_context(conn, prompts, session.book_id).await?,
-            "track": track_context(conn, prompts, session.track_id).await?,
-            "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
-            "draft": draft_context(conn, session.chapter_id).await?,
-        })),
-        "writer.kickoff.redraft" => Ok(json!({
-            "book": book_context(conn, prompts, session.book_id).await?,
-            "track": track_context(conn, prompts, session.track_id).await?,
-            "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
-            "feedback": feedback_context(conn, prompts, session.chapter_id).await?,
-            "previous_outline": previous_outline(conn, session.chapter_id).await?,
-        })),
+        "writer.kickoff.chapter" => {
+            let content = chapter_content(conn, session.chapter_id).await?;
+            Ok(json!({
+                "book": book_context(conn, prompts, session.book_id).await?,
+                "track": track_context(conn, prompts, session.track_id).await?,
+                "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
+                "granularity": granularity_context(
+                    prompts,
+                    session::granularity_of(session),
+                    session::phase_of(session),
+                    &content,
+                ),
+                "feedback": kickoff_feedback(conn, prompts, session, extra).await?,
+            }))
+        }
         "writer.kickoff.revise" => Ok(json!({
             "book": book_context(conn, prompts, session.book_id).await?,
             "track": track_context(conn, prompts, session.track_id).await?,
@@ -818,23 +820,71 @@ pub fn render_issues(prompts: &PromptSet, raw: &str) -> Vec<FeedbackIssueContext
         .collect()
 }
 
-/// `previous_outline` for `writer.kickoff.redraft`: the outline of the backed-up version.
+/// The `feedback` of `writer.kickoff.chapter` and `writer.kickoff.rollover` (spec/03 §9, D-146).
 ///
-/// The redraft's creation side effect saves the previous text as a `backup` version before it
-/// clears the content; the outline itself is not part of a version, so it comes from the newest
-/// `backup` version's sibling state. M6.2 records the old outline on the feedback row's report;
-/// until then the chapter's current outline is the reference (it is what the author saw).
-async fn previous_outline(
+/// `None` means the task renders its non-redraft branch. At session creation a redraft's feedback
+/// row is not linked to the session yet (`chapter_feedback.session_id` is written after
+/// `create_inner` returns), so the caller passes its id through `kickoff_extra.feedback_id`. A
+/// rollover instead walks the session chain: the row whose `session_id` is in the chain, or null
+/// when there is none. Reading "the chapter's latest row" was the defect: a plain drafting
+/// rollover printed the redraft sentence with dangling feedback.
+async fn kickoff_feedback(
     conn: &impl ConnectionTrait,
-    chapter_id: Option<i32>,
-) -> Result<String, AppError> {
-    let Some(chapter_id) = chapter_id else {
-        return Ok(String::new());
+    prompts: &PromptSet,
+    session: &agent_sessions::Model,
+    extra: Option<&Value>,
+) -> Result<Option<FeedbackContext>, AppError> {
+    if let Some(feedback_id) = extra
+        .and_then(|value| value.get("feedback_id"))
+        .and_then(Value::as_i64)
+    {
+        return feedback_by_id(conn, prompts, feedback_id as i32).await;
+    }
+    // Walk the chain from the root to this session.
+    let mut chain = vec![session.id];
+    let mut cursor = session.parent_session_id;
+    let mut guard = 0;
+    while let Some(parent_id) = cursor {
+        guard += 1;
+        if guard > 64 {
+            break;
+        }
+        let Some(parent) = agent_sessions::Entity::find_by_id(parent_id)
+            .one(conn)
+            .await?
+        else {
+            break;
+        };
+        chain.push(parent.id);
+        cursor = parent.parent_session_id;
+    }
+    let feedback = crate::db::entities::chapter_feedback::Entity::find()
+        .filter(crate::db::entities::chapter_feedback::Column::SessionId.is_in(chain))
+        .order_by_desc(crate::db::entities::chapter_feedback::Column::Id)
+        .one(conn)
+        .await?;
+    Ok(feedback.map(|row| FeedbackContext {
+        text: row.text,
+        issues: render_issues(prompts, &row.issues),
+    }))
+}
+
+/// One feedback row by id, when it exists.
+async fn feedback_by_id(
+    conn: &impl ConnectionTrait,
+    prompts: &PromptSet,
+    feedback_id: i32,
+) -> Result<Option<FeedbackContext>, AppError> {
+    let Some(feedback) = crate::db::entities::chapter_feedback::Entity::find_by_id(feedback_id)
+        .one(conn)
+        .await?
+    else {
+        return Ok(None);
     };
-    let Some(chapter) = chapters::Entity::find_by_id(chapter_id).one(conn).await? else {
-        return Ok(String::new());
-    };
-    Ok(chapter.outline)
+    Ok(Some(FeedbackContext {
+        text: feedback.text,
+        issues: render_issues(prompts, &feedback.issues),
+    }))
 }
 
 /// `writer.kickoff.rollover` (spec/03 §9): the continuation task of a superseded session.
@@ -860,7 +910,7 @@ async fn rollover_context(
         "book": book_context(conn, prompts, session.book_id).await?,
         "track": track_context(conn, prompts, session.track_id).await?,
         "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
-        "feedback": feedback_context(conn, prompts, session.chapter_id).await?,
+        "feedback": kickoff_feedback(conn, prompts, session, None).await?,
         "revision_plan": accepted_revision_plan(conn, session).await?,
         "author_notes": author_notes(conn, session).await?,
         "granularity": granularity,

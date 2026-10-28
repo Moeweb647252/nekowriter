@@ -9,6 +9,7 @@ mod agent_harness;
 use agent_harness::runtime;
 use nekowriter::db::json::{Granularity, SessionKind};
 use nekowriter::services::sessions::{self, CreateSession};
+use sea_orm::ConnectionTrait;
 
 /// Renders a writer kickoff through the production `assemble_kickoff` path and returns the joined
 /// text of its blocks, so a snapshot covers every block a real session would carry.
@@ -29,10 +30,10 @@ async fn kickoff_text(runtime: &agent_harness::Runtime, chapter_id: i32) -> Stri
     let kickoff = messages.first().expect("a kickoff message");
     assert_eq!(kickoff.kind, "kickoff");
     assert_eq!(kickoff.seq, 0);
-    // One text block per kickoff block (spec/03 §10): the settings block plus the memory block
-    // plus the task.
+    // One text block per kickoff block (spec/03 §10): settings, memory, the chapter draft and the
+    // task.
     let blocks = kickoff.blocks();
-    assert_eq!(blocks.len(), 3, "writer kickoffs carry three blocks");
+    assert_eq!(blocks.len(), 4, "writer kickoffs carry four blocks");
     kickoff.text()
 }
 
@@ -179,6 +180,19 @@ async fn a_redraft_kickoff_carries_the_feedback_and_the_previous_outline() {
              '2026-01-01T00:00:00Z')"
         ))
         .await;
+    let feedback_id: i32 = runtime
+        .app
+        .db()
+        .conn()
+        .query_one_raw(sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Sqlite,
+            "SELECT max(id) AS id FROM chapter_feedback".to_owned(),
+        ))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get("", "id")
+        .expect("id");
 
     let (session_id, _warnings) = sessions::create(
         runtime.app.state(),
@@ -188,6 +202,7 @@ async fn a_redraft_kickoff_carries_the_feedback_and_the_previous_outline() {
             chapter_id: Some(chapter_id),
             granularity: Some(Granularity::Paragraph),
             redraft: true,
+            kickoff_extra: Some(serde_json::json!({ "feedback_id": feedback_id })),
             ..CreateSession::default()
         },
     )
@@ -199,11 +214,14 @@ async fn a_redraft_kickoff_carries_the_feedback_and_the_previous_outline() {
     assert!(text.contains("节奏太快"), "the ticked issue:\n{text}");
     assert!(
         text.contains("旧章纲：城门口"),
-        "the previous outline:\n{text}"
+        "the chapter draft carries the current outline:\n{text}"
     );
-    assert!(text.contains("重写任务"), "the redraft task:\n{text}");
     assert!(
-        !text.contains("写作任务"),
-        "not the plain chapter task:\n{text}"
+        text.contains("作者要求重写本章"),
+        "the redraft branch:\n{text}"
+    );
+    assert!(
+        !text.contains("【规划阶段】"),
+        "a write kickoff has no planning phase:\n{text}"
     );
 }
