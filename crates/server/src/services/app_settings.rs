@@ -148,6 +148,11 @@ fn validate_book_settings(settings: &BookSettings) -> Result<(), AppError> {
     if settings.midterm_window < 0 {
         return Err(AppError::validation("midterm_window must not be negative"));
     }
+    if settings.recent_chapter_count < 0 {
+        return Err(AppError::validation(
+            "recent_chapter_count must not be negative",
+        ));
+    }
     Ok(())
 }
 
@@ -272,6 +277,7 @@ mod tests {
                     target_words_max: 1000,
                     recent_summary_count: 0,
                     midterm_window: 0,
+                    recent_chapter_count: 2,
                     auto_maintenance: false,
                 },
                 true,

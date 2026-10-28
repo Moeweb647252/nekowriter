@@ -443,6 +443,9 @@ pub struct BookSettings {
     pub recent_summary_count: i32,
     /// Number of chapters in the mid-term window.
     pub midterm_window: i32,
+    /// How many prior official chapters `block.recent_chapters` injects in full (design §6.4).
+    /// `0` disables the block.
+    pub recent_chapter_count: i32,
     pub auto_maintenance: bool,
 }
 
@@ -456,6 +459,7 @@ impl Default for BookSettings {
             target_words_max: 4000,
             recent_summary_count: 5,
             midterm_window: 10,
+            recent_chapter_count: 2,
             auto_maintenance: true,
         }
     }
@@ -1029,6 +1033,7 @@ mod tests {
             target_words_max: 2500,
             recent_summary_count: 3,
             midterm_window: 7,
+            recent_chapter_count: 1,
             auto_maintenance: false,
         };
         assert_eq!(round_trip(&value), value);

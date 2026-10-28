@@ -2761,3 +2761,91 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
 - **Consequences**: submitted/approved chapters and `finish_draft`/`finish_revision` require a
   non-zero word count; full-text blank lines remain separators, never paragraph rows. The legacy
   `f94c2f9` empty-insert allowance is deliberately reverted.
+### D-148 Writing skills and recent-chapter context
+
+- **Context**: the author asked for a writing-skills surface injected like the knowledge base
+  (「弄一个像 skills 那样注入上下文的 writing skills，与书库 知识库 提示词 设置并列」) and for the
+  last n chapters' text in context (「将最近 n 章正文注入上下文」). The locked design is
+  `docs/research/writing-skills-design.md` rev. 4, re-cut against the M12 outline/write split per
+  `session-split-plan.md` §2.14. M12 changed the ground the design assumed in five places:
+  `chapter_outline` is a new session kind with `block.settings · block.memory · planner.kickoff`;
+  `chapter_write` is now drafting-only and always carries `block.chapter_draft`;
+  `writer.kickoff.chapter` is the drafting kickoff and `writer.kickoff.redraft` is retired;
+  `writer.system` is worded with 细纲 and no longer describes planning; and the rollover feedback
+  truthiness defect (design §9.2) is already fixed in M12 (`kickoff_feedback` returns
+  `Option<FeedbackContext>` and walks the session chain), so this change does not touch it.
+- **Decision**:
+  - **Storage B**: `writing_skills` holds the bodies and `book_writing_skills` the per-book
+    selection (migration `0005`). The migration seeds one built-in, `basic-writing`, with
+    **empty body**, `author = 'builtin'`, `enabled_by_default = 0`. Built-in rows are read-only
+    through the API (`409 writing_skill.builtin`); the author creates user rows (`author = 'user'`,
+    `key = NULL`). Deleting a user row cascades its selections away and returns the books that
+    used it. No reconciler ships (design §4.2): when the first built-in body is actually shipped,
+    that change adds **both** `prompts/skills.toml` and the reconciler together; until then a
+    pack file would be unread dead weight, so the validator does not learn one.
+  - **Injection is full**, not on-demand, into `block.writing_skills`; bodies are wrapped in
+    `<writing_skill name=… category=…>` tags and the block says the text is instruction about how
+    to write, **not a document about the book**. It sits right after `block.settings` for
+    stable-first ordering; it earns **no cache breakpoint** because `block_is_cached` matches only
+    `block.settings`.
+  - **Session kinds**: `chapter_write` gets both skills and recent chapters; `chapter_outline`
+    gets recent chapters but **no skills** (it writes an outline, not prose); `chapter_revise` and
+    `chapter_review` get skills only; rollover gets skills only (its chapter text and
+    `previous_tail` already cover the seam); archivist, conception and research get neither.
+  - **`block.recent_chapters`** injects the last `recent_chapter_count` (default 2, `0` disables)
+    **official** chapters before the target, oldest first, wrapped in `<chapter_text …>` tags. It
+    follows memory's rule exactly: same-track official chapters, a side track topped up from
+    main-track official chapters up to its anchor, no non-official text (drafts, in-review and
+    rejected text are not approved prose), target excluded, empty text skipped. The per-chapter
+    cap is `target_words_max × 1.5` (6,000 characters at the 4,000 default; 6,000 when the target
+    is unset) and the total budget is `recent_chapter_count × cap`, filled newest-first; a chapter
+    over its cap is front-cut at a paragraph boundary keeping the ending and is announced as
+    `partial`. `previous_tail` is dropped when its chapter is injected in full; chapter summaries
+    stay because they are condensed accounts, not copies.
+  - **The prose style section leaves `writer.system` now** (design §5.1 option A): the six style
+    bullets and the short-paragraph clause are deleted; 先想清楚再写, 遵循细纲…, the Chinese
+    quotation marks/no-Markdown part and the no-metadata bullet stay. **Accepted consequence: a
+    book has no prose style rules at all until the author writes and selects a skill.** That is
+    deliberate, not a bug.
+  - **API** (spec/10 §2.9): `GET /writing-skills?book_id=`, `POST /writing-skills`,
+    `PATCH`/`DELETE /writing-skills/:id` (user rows only; delete returns `used_by_books`), and
+    `PUT /books/:id/writing-skills` for the selection.
+- **Consequences**: the built-in `basic-writing` row is selectable but injects nothing while its
+  body is empty. The recent-chapters injection adds roughly two chapters of prose to every write
+  and outline kickoff; the per-chapter cap and `recent_chapter_count = 0` are the controls. The
+  skills block is sent in full on every write/revise/review session, so the selection UI shows a
+  running character total and warns above 8,000 characters without blocking. Existing selections
+  keep working when a built-in is later retired. The Memory page names the chapters injected in
+  full (`MemoryViewDto.recent_chapters`) so PROJECT §6.5 still shows what the writer receives even
+  though the full text travels in its own kickoff block. Two items of debt are explicit: the
+  reconciler (with `prompts/skills.toml`) and built-in bodies are deferred together until a body
+  exists.
+- **Spec**: design §4–§8; spec/02 §1–§5; spec/03 §10; spec/06 §4.1; spec/09 §2, §5.8;
+  spec/10 §2.9, §4; spec/11 §2–§3, §5.5, §6.
+
+### D-149 Review round 1 fixes for writing skills and recent chapters
+
+- **Context**: review of `25f32db` found that the recent-chapter block did not treat
+  `recent_chapter_count` as a chapter limit, that a write-session rollover dropped `previous_tail`
+  although it emits no recent-chapter block, and several smaller contract/test defects. Two
+  suspicions needed a documented answer: a single-paragraph over-cap chapter had no cut rule
+  beyond a raw character slice, and a retired but selected skill was dropped by the next
+  selection toggle.
+- **Decision**:
+  - A single paragraph over the per-chapter cap is cut at a **sentence boundary** when one leaves
+    a fitting non-empty suffix (the earliest such boundary, so as much ending as possible is
+    kept); only when even the last sentence is longer than the limit does it keep the last
+    `limit` characters. The paragraph-boundary rule still applies to multi-paragraph chapters.
+  - `PUT /books/:id/writing-skills` preserves the book's **already-selected retired skills**
+    when the replacement payload cannot name them: the active catalogue hides retired rows, so a
+    toggle built from the visible list must not silently drop a selection that design §4/§12 says
+    keeps working. An explicitly supplied retired id is still a `validation.failed`, because the
+    request body contract (spec/10 §2.9) forbids selecting a retired skill.
+  - The Memory page applies the same `previous_tail` dedupe as the writer's `block.memory`, so the
+    endpoint's `rendered` text is the exact text the writer receives (PROJECT §6.5, spec/06 §4.5).
+  - A kickoff's memory dedupe is derived from the **actual emitted block list**, not from
+    `KickoffPlan::blocks()`: rollover builds its own list without `block.recent_chapters`.
+- **Consequences**: with one over-cap paragraph the model still gets the chapter's ending, now
+  starting at a sentence start whenever the text allows; a retired built-in selection survives
+  unrelated toggles until the row is deleted (built-ins are never deleted) or the book is deleted.
+- **Spec**: design §6.4, §7; spec/03 §9–§10; spec/06 §4.5; spec/10 §2.9.

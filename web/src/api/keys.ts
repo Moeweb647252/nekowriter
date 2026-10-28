@@ -86,6 +86,11 @@ export const keys = {
     list: (bookId: number, status?: string) =>
       ["proposals", "list", bookId, status ?? "all"] as const,
   },
+  skills: {
+    /** Every writing-skill view, for any skill or selection write. */
+    all: ["skills"] as const,
+    catalogue: (bookId?: number) => ["skills", "catalogue", bookId ?? "global"] as const,
+  },
   sessions: {
     list: (bookId: number, filters?: string) =>
       ["sessions", "list", bookId, filters ?? ""] as const,

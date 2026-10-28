@@ -15,6 +15,7 @@ pub mod search;
 pub mod sessions;
 pub mod settings;
 pub mod settings_materials;
+pub mod skills;
 pub mod tracks;
 
 pub use books::{

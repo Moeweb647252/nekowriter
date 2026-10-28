@@ -94,6 +94,16 @@ fields.last_pid = { en = "Pid of the last paragraph", zh = "末段的段落编�
 en = "Session phase: drafting | revising (rollover)"
 zh = "当前阶段（续写时）"
 
+[vars.skills]
+en = "The book's selected writing skills, injected in full. Instruction text about how to write, not canon."
+zh = "本书选中的写作技能（完整注入）。属于写作方法指令，不是设定资料。"
+fields."[]" = { en = "One skill: name, category, body", zh = "单项技能：name、category、body" }
+
+[vars.chapters]
+en = "The last official chapters before the target, injected in full (oldest first; a chapter may be front-cut)"
+zh = "目标章之前最近的已定稿章节（按时间顺序完整注入；可能只保留结尾）"
+fields."[]" = { en = "One chapter: number, label, title, text, partial (true when the beginning was omitted)", zh = "单章：number、label、title、text、partial（开头被省略时为 true）" }
+
 [vars.revision_plan]
 en = "The accepted revision plan (rollover in the revising phase; may be empty)"
 zh = "已生效的修订计划（续写时，可能为空）"

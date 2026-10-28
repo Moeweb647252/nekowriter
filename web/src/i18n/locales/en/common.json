@@ -44,6 +44,7 @@
   "settings": "Settings",
   "library": "Library",
   "knowledge": "Knowledge",
+  "skills": "Writing skills",
   "quick_switch": "Quick switch",
   "quick_switch_hint": "Search chapters, pages and books…",
   "quick_switch_empty": "Nothing matches.",

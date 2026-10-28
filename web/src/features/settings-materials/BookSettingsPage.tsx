@@ -10,6 +10,7 @@ import { Lock, UsersRound } from "lucide-react"
 import { useBook, usePatchBook } from "@/api/hooks/books"
 import { useAppSettings } from "@/api/hooks/app-settings"
 import { useModelProfiles, useProviders } from "@/api/hooks/providers"
+import { useReplaceBookWritingSkills, useWritingSkills } from "@/api/hooks/skills"
 import { useErrorToast } from "@/components/common/ErrorToast"
 import { EmptyState } from "@/components/common/EmptyState"
 import { ErrorToastInline } from "@/features/settings/ErrorToastInline"
@@ -21,6 +22,7 @@ import {
   type RoleSelection,
 } from "@/features/settings/roleModels"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -66,6 +68,10 @@ export default function BookSettingsPage() {
   const appSettings = useAppSettings()
   const models = useModelProfiles()
   const providers = useProviders()
+  // The writing-skill catalogue with this book's `selected` flags (design §8). Selection is its
+  // own endpoint, so a checkbox toggles immediately instead of waiting for the form's Save.
+  const writingSkills = useWritingSkills(bookId)
+  const replaceSkills = useReplaceBookWritingSkills(bookId)
   // One draft object keyed by the book's `updated_at`, so an SSE refresh of the query never
   // clobbers unsaved input and no effect has to copy the query into state.
   const [draft, setDraft] = useState<BookDraft | null>(null)
@@ -129,6 +135,25 @@ export default function BookSettingsPage() {
   const globalDefaults = roleSelection(appSettings.data?.roles_defaults)
   const modelsPending = appSettings.isPending || models.isPending || providers.isPending
   const modelsFailed = appSettings.isError || models.isError || providers.isError
+  const skillRows = writingSkills.data ?? []
+  const selectedSkills = skillRows.filter((skill) => skill.selected)
+  // The design's running total counts characters, not UTF-8 bytes (design §6.4).
+  const selectedCharacters = selectedSkills.reduce(
+    (total, skill) => total + Array.from(skill.body).length,
+    0,
+  )
+  const toggleSkill = (skillId: number, checked: boolean) => {
+    const next = new Set(selectedSkills.map((skill) => skill.id))
+    if (checked) {
+      next.add(skillId)
+    } else {
+      next.delete(skillId)
+    }
+    replaceSkills.mutate(
+      { skill_ids: [...next].sort((left, right) => left - right) },
+      { onError: showError },
+    )
+  }
   // A conceiving or archived book's roles are not the author's to pick here: the conception flow
   // chooses them until Finalize, and an archived book is not being worked on (spec/08 §5).
   const rolesLocked = status !== "active"
@@ -259,7 +284,7 @@ export default function BookSettingsPage() {
 
       <section className="space-y-3">
         <h2 className="text-sm font-medium">{t("book:memory_windows")}</h2>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-3 gap-3">
           <div className="space-y-1.5">
             <Label htmlFor="settings-recent">{t("book:recent_summary_count")}</Label>
             <Input
@@ -280,7 +305,79 @@ export default function BookSettingsPage() {
               onChange={(event) => update({ midterm_window: Number(event.target.value) || 0 })}
             />
           </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="settings-recent-chapters">{t("book:recent_chapter_count")}</Label>
+            <Input
+              id="settings-recent-chapters"
+              type="number"
+              value={settings.recent_chapter_count}
+              onChange={(event) =>
+                update({ recent_chapter_count: Number(event.target.value) || 0 })
+              }
+            />
+          </div>
         </div>
+        <p className="text-xs text-muted-foreground">{t("book:recent_chapter_count_hint")}</p>
+      </section>
+
+      {/* Writing skills (design §8): a checkbox list; the catalogue page owns create/edit/delete.
+          Toggling calls PUT immediately — the note tells the author it applies to new sessions. */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-medium">{t("book:writing_skills")}</h2>
+        <p className="text-sm text-muted-foreground">{t("book:writing_skills_hint")}</p>
+        <p className="text-xs text-muted-foreground">
+          {t("book:writing_skills_count", {
+            count: selectedSkills.length,
+            characters: selectedCharacters,
+          })}
+          {" · "}
+          {t("book:writing_skills_applies")}
+        </p>
+        {selectedCharacters > 8000 ? (
+          <p className="text-xs text-destructive">{t("book:writing_skills_warn")}</p>
+        ) : null}
+        {writingSkills.isError ? (
+          <ErrorToastInline />
+        ) : writingSkills.isPending ? (
+          <Skeleton className="h-20" />
+        ) : skillRows.length === 0 ? (
+          <EmptyState
+            title={t("book:writing_skills")}
+            description={t("book:writing_skills_empty")}
+          />
+        ) : (
+          <div className="space-y-2">
+            {skillRows.map((skill) => (
+              <label
+                key={skill.id}
+                className="flex items-start gap-3 rounded-md border p-3"
+                data-testid={`book-skill-${skill.id}`}
+              >
+                <Checkbox
+                  checked={skill.selected}
+                  disabled={replaceSkills.isPending}
+                  onCheckedChange={(checked) => toggleSkill(skill.id, checked === true)}
+                  aria-label={skill.name}
+                />
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium">
+                    {skill.name}
+                    {skill.author === "builtin" ? (
+                      <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                        {t("skills:built_in")}
+                      </span>
+                    ) : null}
+                  </span>
+                  {skill.description === "" ? null : (
+                    <span className="block text-xs text-muted-foreground">
+                      {skill.description}
+                    </span>
+                  )}
+                </span>
+              </label>
+            ))}
+          </div>
+        )}
       </section>
 
       {/* Model overrides per role (PROJECT §8.12): a book may run one or more roles on a different

@@ -486,6 +486,15 @@ async fn the_upgraded_schema_matches_a_fresh_database() {
         .execute_unprepared(include_str!("../../migration/src/sql/0001_init.sql"))
         .await
         .expect("apply the edited 0001");
+    // Later migrations define objects the 0004 rebuild does not touch; apply their SQL verbatim so
+    // the comparison stays about the 0001/0004 object set rather than the migration tail.
+    fresh
+        .conn()
+        .execute_unprepared(include_str!(
+            "../../migration/src/sql/0005_writing_skills.sql"
+        ))
+        .await
+        .expect("apply the writing-skills schema");
     let fresh = schema_dump(fresh.conn()).await;
 
     assert_eq!(

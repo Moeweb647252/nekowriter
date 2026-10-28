@@ -46,6 +46,19 @@ fn the_entity_description_ceiling_is_stated_where_entities_are_written() {
                     || text.contains("不是章节日志"),
                 "{key} must say that description is not a chapter log:\n{text}"
             );
+            // Design §9.1: the routine `update_entity` reasons must never include 描述 — that
+            // one-word contradiction invited the per-chapter appends this guard exists to stop.
+            // The stronger D-142 guard checks the negative invariant, not just the ceiling.
+            assert!(
+                !text.contains("描述发生变化"),
+                "{key} must not list 描述 as a routine update_entity reason:\n{text}"
+            );
+            if key == "archivist.kickoff.maintenance" {
+                assert!(
+                    text.contains("因为本章剧情而更新 description"),
+                    "the maintenance step must forbid chapter-driven description updates:\n{text}"
+                );
+            }
             checked += 1;
         }
         assert!(checked > 0, "{key} rendered no sample");
@@ -202,7 +215,8 @@ fn every_spec_key_exists_and_every_key_is_documented() {
         archivist.system conception.kickoff researcher.kickoff planner.kickoff writer.kickoff.chapter \
         writer.kickoff.revise writer.kickoff.rollover reviewer.kickoff reviewer.rereview \
         archivist.kickoff.maintenance archivist.kickoff.seed archivist.kickoff.resync \
-        block.settings block.memory block.chapter_draft block.cast_index block.chapter_diff \
+        block.settings block.writing_skills block.memory block.recent_chapters \
+        block.chapter_draft block.cast_index block.chapter_diff \
         block.anchor block.book_brief notice.user_feedback notice.user_message notice.user_edits \
         notice.setting_edits notice.completion_revoked notice.tool_not_allowed \
         notice.output_truncated notice.web_content notice.nudge_generic notice.research_budget \
@@ -481,6 +495,46 @@ fn the_planner_prompts_own_the_outline_contract() {
         .text;
     assert!(description.contains("作者接受"), "{description}");
     assert!(!description.contains("进入正文阶段"), "{description}");
+}
+
+/// The prose-style section of `writer.system` is gone (design §5.1 option A): a book has no prose
+/// style rules until the author writes and selects a skill. The workflow and format rules stay,
+/// because unticking a skill must never stop the writer being told to follow the outline or to
+/// avoid Markdown/metadata. This is the fail-before guard for the migration from the old prompt.
+#[test]
+fn writer_system_drops_the_prose_style_rules_and_keeps_the_workflow_ones() {
+    let registry = PromptRegistry::embedded().expect("pack");
+    let set = registry.defaults_only();
+    let text = set
+        .render("writer.system", &json!({}))
+        .expect("writer.system")
+        .text;
+
+    for removed in [
+        "场景化叙事",
+        "人物要有区分度",
+        "节奏张弛有度",
+        "视角统一",
+        "语言干净",
+        "以短段为主",
+    ] {
+        assert!(
+            !text.contains(removed),
+            "writer.system must not carry the prose style bullet {removed:?}:\n{text}"
+        );
+    }
+    for kept in [
+        "先想清楚再写",
+        "遵循细纲",
+        "中文引号",
+        "不使用 Markdown",
+        "正文中不要出现说明",
+    ] {
+        assert!(
+            text.contains(kept),
+            "writer.system must keep the workflow/format rule {kept:?}:\n{text}"
+        );
+    }
 }
 
 #[test]

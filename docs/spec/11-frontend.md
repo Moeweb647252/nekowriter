@@ -68,13 +68,13 @@ web/src/
 │   └── chapterDoc.ts            # open chapter content + ops application + highlights
 ├── features/
 │   ├── library/  conception/  workspace/  overview/  chapter/  agent/  canon/
-│   ├── settings-materials/  proposals/  knowledge/  research/  prompts/  settings/
+│   ├── settings-materials/  proposals/  knowledge/  research/  prompts/  skills/  settings/
 ├── components/
 │   ├── ui/                      # shadcn (generated)
 │   └── common/                  # Markdown, StatusBadge, EmptyState, ConfirmDialog, WordCount, Hotkey, DiffView
 ├── i18n/
 │   ├── index.ts                 # i18next init, language detection, formatters
-│   └── locales/{en,zh-CN}/{common,library,book,chapter,agent,canon,knowledge,prompts,settings,errors}.json
+│   └── locales/{en,zh-CN}/{common,library,book,chapter,agent,canon,knowledge,prompts,skills,settings,errors}.json
 ├── lib/                         # utils (cn), wordcount.ts, format.ts, text.ts (pid helpers), hotkeys.ts
 ├── styles/                      # prose.css (reading column), status tokens
 └── test/setup.ts
@@ -88,6 +88,7 @@ web/src/
 | `/knowledge`, `/knowledge/scopes/:scopeId`, `/knowledge/scopes/:scopeId/entries/:entryId` | `knowledge/*` | |
 | `/research/:taskId` | `research/ResearchTaskPage` | |
 | `/prompts` | `prompts/PromptsPage` | global |
+| `/skills` | `skills/SkillsPage` | global writing-skill catalogue (design §8) |
 | `/settings/:section?` | `settings/SettingsPage` | providers, models, roles, search, embeddings, appearance |
 | `/books/:bookId` | `workspace/BookLayout` (3 panels) | child routes below |
 | `  index` | `overview/OverviewPage` | |
@@ -311,6 +312,16 @@ sensor), `PromptEditor` (monospace textarea, variable docs side panel, "diff vs 
 `ready` rows of its book-scoped list query one request at a time, reusing `useDeferResearchTask`,
 and reports a partial batch through `BulkDeferReport` (inline) and a toast: how many moved and
 which topics did not.
+
+**Memory** names the chapters injected in full (`MemoryViewDto.recent_chapters`) and states
+which `block.memory` variant the page renders (spec/06 §4.5).
+
+**Writing skills** (design §8). `/skills` is the global catalogue: it lists the active skills, lets
+the author create, edit and delete user rows, and previews built-in rows (badge, no edit
+affordance). Selection lives in Book settings: a checkbox list with a running
+`n selected · x characters` total (above 8,000 characters warn, never block), an "applies to new
+sessions" note, and the `recent_chapter_count` input. Deleting a user skill names the books that
+use it from `used_by_books` before confirming.
 
 **Settings › Models is protocol-driven** (spec/04 §5, D-132). The option form renders its fields
 from `GET /provider-presets/options` (the `ModelOptionSpecDto` table generated from the adapters)

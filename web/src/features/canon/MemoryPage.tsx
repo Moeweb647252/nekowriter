@@ -99,6 +99,27 @@ export default function MemoryPage() {
         </p>
       )}
 
+      <div className="space-y-1 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+        <p>{t("canon:memory_variant")}</p>
+        {memory.data.recent_chapters.length === 0 ? null : (
+          <div>
+            <p className="font-medium">{t("canon:memory_recent_chapters")}</p>
+            <ul className="list-inside list-disc">
+              {memory.data.recent_chapters.map((chapter) => (
+                <li key={chapter.chapter_id}>
+                  {t("canon:memory_recent_chapter_item", {
+                    label: chapter.label,
+                    title: chapter.title,
+                    characters: chapter.characters,
+                    partial: chapter.partial ? t("canon:memory_recent_partial") : "",
+                  })}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+
       <div className="grid gap-3 md:grid-cols-3">
         <MemoryColumn title={t("canon:memory_short_term")}>
           {snapshot.is_first ? (

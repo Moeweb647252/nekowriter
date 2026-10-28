@@ -9,6 +9,7 @@ import enChapter from "@/i18n/locales/en/chapter.json"
 import enCommon from "@/i18n/locales/en/common.json"
 import enErrors from "@/i18n/locales/en/errors.json"
 import enLibrary from "@/i18n/locales/en/library.json"
+import enSkills from "@/i18n/locales/en/skills.json"
 
 // jsdom implements no ResizeObserver, and the Radix popper/size primitives that shadcn's `Tooltip`
 // and `DropdownMenu` are built on construct one as soon as their content mounts. Without a stub the
@@ -38,11 +39,12 @@ if (!i18n.isInitialized) {
         common: enCommon,
         errors: enErrors,
         library: enLibrary,
+        skills: enSkills,
       },
     },
     lng: "en",
     fallbackLng: "en",
-    ns: ["agent", "book", "chapter", "common", "errors", "library"],
+    ns: ["agent", "book", "chapter", "common", "errors", "library", "skills"],
     defaultNS: "common",
     interpolation: { escapeValue: false },
   })

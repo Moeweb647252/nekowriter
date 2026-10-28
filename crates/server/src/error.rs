@@ -73,6 +73,9 @@ pub enum ErrorCode {
     #[serde(rename = "proposal.invalid_state")]
     #[ts(rename = "proposal.invalid_state")]
     ProposalInvalidState,
+    #[serde(rename = "writing_skill.builtin")]
+    #[ts(rename = "writing_skill.builtin")]
+    WritingSkillBuiltin,
     #[serde(rename = "prompt.template_invalid")]
     #[ts(rename = "prompt.template_invalid")]
     PromptTemplateInvalid,
@@ -121,6 +124,7 @@ impl ErrorCode {
             ErrorCode::TrackModeLocked => "track.mode_locked",
             ErrorCode::ChangeNotLatest => "change.not_latest",
             ErrorCode::ProposalInvalidState => "proposal.invalid_state",
+            ErrorCode::WritingSkillBuiltin => "writing_skill.builtin",
             ErrorCode::PromptTemplateInvalid => "prompt.template_invalid",
             ErrorCode::ProviderUnavailable => "provider.unavailable",
             ErrorCode::ProviderAuth => "provider.auth",
@@ -154,6 +158,7 @@ impl ErrorCode {
             | ErrorCode::TrackModeLocked
             | ErrorCode::ChangeNotLatest
             | ErrorCode::ProposalInvalidState
+            | ErrorCode::WritingSkillBuiltin
             | ErrorCode::SearchNotConfigured => StatusCode::CONFLICT,
             ErrorCode::SettingsLocked | ErrorCode::ChapterLocked => StatusCode::LOCKED,
             ErrorCode::ProviderUnavailable

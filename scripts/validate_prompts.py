@@ -40,7 +40,8 @@ for name, t in tools.items():
 expected = """conception.system researcher.system planner.system writer.system reviewer.system archivist.system
 conception.kickoff researcher.kickoff planner.kickoff writer.kickoff.chapter writer.kickoff.revise
 writer.kickoff.rollover reviewer.kickoff reviewer.rereview archivist.kickoff.maintenance archivist.kickoff.seed
-archivist.kickoff.resync block.settings block.memory block.chapter_draft block.cast_index block.chapter_diff
+archivist.kickoff.resync block.settings block.writing_skills block.memory block.recent_chapters
+block.chapter_draft block.cast_index block.chapter_diff
 block.anchor block.book_brief notice.user_feedback notice.user_message notice.user_edits notice.setting_edits
 notice.completion_revoked notice.tool_not_allowed notice.output_truncated notice.web_content notice.nudge_generic
 notice.research_budget planner.notice.outline_rejected planner.notice.nudge planner.notice.retrieval_budget
@@ -177,12 +178,15 @@ memory_first = dict(memory, is_first=True, recent_summaries=[], previous_tail=No
                     counts={k: 0 for k in memory["counts"]})
 draft = dict(paragraphs=[dict(pid="p1", text="林凡抬起头。"), dict(pid="p2", text="雨更大了")], tail_open=True, word_count=12, paragraph_count=2)
 draft_empty = dict(paragraphs=[], tail_open=False, word_count=0, paragraph_count=0)
+skills = [dict(name="基础写作", category="写作", body="用动作、对话与细节呈现场景，少用概括与总结。")]
+chapters = [dict(number=12, label="第12章", title="剑鸣", text="雨落下来。\n\n他握紧了旧剑。", partial=True)]
 feedback = dict(text="结尾太仓促。", issues=[dict(severity_label="严重", category_label="连续性", pids=["p30", "p31"], quote="他拔出青冥剑", problem="剑已毁", suggestion="改用断剑")])
 gran = {k: dict(key=k, label=k, revising=False, tail_open=False, last_pid="p9") for k in ["sentence", "paragraph", "free", "chapter"]}
 gran_cases = list(gran.values()) + [dict(gran["paragraph"], tail_open=True), dict(gran["chapter"], revising=True)]
 prior = dict(attempt=1, verdict_label="建议修改", summary="结尾与时间线矛盾。", feedback="请修正 p30。", comment="第二条判断有误：令牌在第30章已归还。")
 
 S = dict(book=book, track=track_main, chapter=chapter, settings=settings, memory=memory, draft=draft, feedback=feedback,
+         skills=skills, chapters=chapters,
          previous_outline="旧章纲", granularity=gran["paragraph"], phase="drafting",
          revision_plan="1. p12：删去重复描写", author_notes=["打斗写得更短。", "苏婉不要哭。"], prior=None,
          review=dict(comment="第二条判断有误。", attempt=1),
@@ -198,6 +202,8 @@ S = dict(book=book, track=track_main, chapter=chapter, settings=settings, memory
 
 variants = {
   "block.settings": [dict(), dict(settings=settings_empty, book=dict(book, genre=""))],
+  "block.writing_skills": [dict()],
+  "block.recent_chapters": [dict(), dict(chapters=[dict(number=12, label="第12章", title="", text="雨落下来。", partial=False)])],
   "block.memory": [dict(), dict(memory=memory_first, chapter=chapter_blank), dict(memory=memory_first, chapter=dict(chapter_blank, number=1, label="第1章")),
                    dict(memory=dict(memory, protagonist=dict(memory["protagonist"], after_anchor=True, status="active")))],
   "block.chapter_draft": [dict(), dict(draft=draft_empty, chapter=chapter_blank)],
@@ -375,7 +381,7 @@ for key, entry in meta.items():
             errors.append(f"{key} case {i}: empty output")
         if "{{" in out_norm or "{%" in out_norm:
             errors.append(f"{key} case {i}: unrendered template syntax")
-        glued = re.search(r"</?(book_outline|world_setting|protagonist_profile|character|character_profile|chapter_outline|reference_notes|chapter_text|document)\b[^>]*>[^\n]", out_norm)
+        glued = re.search(r"</?(book_outline|world_setting|protagonist_profile|character|character_profile|chapter_outline|reference_notes|chapter_text|writing_skill|document)\b[^>]*>[^\n]", out_norm)
         if glued:
             errors.append(f"{key} case {i}: tag line glued to following text: {glued.group(0)!r}")
         if len(sys.argv) > 2 and (sys.argv[2] == "all" or sys.argv[2] == key):

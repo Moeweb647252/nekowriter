@@ -44,6 +44,7 @@
   "settings": "设置",
   "library": "书库",
   "knowledge": "知识库",
+  "skills": "写作技能",
   "quick_switch": "快速切换",
   "quick_switch_hint": "搜索章节、页面和作品…",
   "quick_switch_empty": "没有匹配的结果。",

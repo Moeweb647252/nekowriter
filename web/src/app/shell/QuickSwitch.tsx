@@ -83,6 +83,7 @@ export function QuickSwitch({ open, onOpenChange }: QuickSwitchProps) {
     { label: t("common:library"), to: "/" },
     { label: t("common:knowledge"), to: "/knowledge" },
     { label: t("knowledge:research.title"), to: "/research" },
+    { label: t("common:skills"), to: "/skills" },
     { label: t("common:prompts"), to: "/prompts" },
     { label: t("common:settings"), to: "/settings" },
   ]

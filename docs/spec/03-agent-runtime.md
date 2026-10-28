@@ -530,14 +530,14 @@ end of the settings block (shared by every session of the book); see spec/04 §3
 |---|---|
 | conception | `conception.kickoff` |
 | research | `block.book_brief` (only if linked to a book) · `researcher.kickoff` |
-| chapter_outline | `block.settings`⁎ · `block.memory` · `planner.kickoff` |
-| chapter_write | `block.settings`⁎ · `block.memory` · `block.chapter_draft` · `writer.kickoff.chapter` (a redraft's feedback comes through the task's `feedback` variable) |
-| chapter_revise | `block.settings`⁎ · `block.memory` · `block.chapter_draft` · `writer.kickoff.revise` |
-| chapter_review | `block.settings`⁎ · `block.memory` · `block.chapter_draft` · `reviewer.kickoff` (with `prior` when it replaces a re-review of an older version, §6) |
+| chapter_outline | `block.settings`⁎ · `block.memory` · `block.recent_chapters` · `planner.kickoff` |
+| chapter_write | `block.settings`⁎ · `block.writing_skills` · `block.memory` · `block.recent_chapters` · `block.chapter_draft` · `writer.kickoff.chapter` (a redraft's feedback comes through the task's `feedback` variable) |
+| chapter_revise | `block.settings`⁎ · `block.writing_skills` · `block.memory` · `block.chapter_draft` · `writer.kickoff.revise` |
+| chapter_review | `block.settings`⁎ · `block.writing_skills` · `block.memory` · `block.chapter_draft` · `reviewer.kickoff` (with `prior` when it replaces a re-review of an older version, §6) |
 | chapter_maintenance | `block.settings`⁎ · `block.memory` · `block.cast_index` · `block.chapter_draft` · `archivist.kickoff.maintenance` |
 | canon_seed | `block.settings`⁎ · `archivist.kickoff.seed` |
 | chapter_resync | `block.settings`⁎ · `block.memory` · `block.cast_index` · `block.chapter_diff` · `archivist.kickoff.resync` |
-| rollover | `block.settings`⁎ · `block.memory` · `block.chapter_draft` · `writer.kickoff.rollover` |
+| rollover | `block.settings`⁎ · `block.writing_skills` · `block.memory` · `block.chapter_draft` · `writer.kickoff.rollover` |
 
 ⁎ `cache: true` on that block. Each block is one `text` block of the kickoff message.
 
@@ -545,6 +545,22 @@ Task templates pull in two more blocks through template includes, so the table s
 `block.anchor` (every writer, reviewer, and archivist task of a side-track chapter) and
 `block.chapter_draft` (`writer.kickoff.chapter` when the chapter already has text).
 
+- `block.writing_skills` renders the full bodies of the book's selected skills, wrapped in
+  `<writing_skill name="…" category="…">` tags. It states that a body is instruction text about
+  how to write, not a document about the book. Zero selections render blank and are dropped
+  (design §6.3). Only `block.settings` carries a cache breakpoint: the skills block sits after it
+  and is outside the cached prefix, so it claims no cache benefit.
+- `block.recent_chapters` renders the last `recent_chapter_count` (default 2) official chapters
+  before the target in full, oldest first, wrapped in
+  `<chapter_text number="…" title="…">` tags. Selection follows the memory rule (spec/06 §4.1);
+  a side track is topped up from main-track official chapters up to its anchor, non-official text
+  is never used, and the target is excluded. A chapter over its per-chapter cap (the book's
+  `target_words_max × 1.5`, 6,000 characters at the default) keeps its ending and loses its front
+  at a paragraph boundary; the block says the text is partial. Filling is newest-first under the
+  total budget (`recent_chapter_count × per-chapter cap`). The block tells the model that these
+  chapters are for continuity, that the writing method takes precedence, and that they are
+  already included in full so `read_chapter` must not be called for them. `previous_tail` is
+  dropped when its chapter is one of them; summaries stay.
 - `block.memory` is built for the target chapter's position (spec/06 §4), i.e. the state of
   canon before this chapter. For maintenance and review that is the current canon, because this
   chapter has not been maintained yet. It leaves out the chapter outline when the kickoff

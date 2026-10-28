@@ -289,7 +289,23 @@
   "track_title": "正文",
   "number": 12,
   "title": "剑冢",
-  "with_title": true
+  "with_title": true,
+  "skills": [
+   {
+    "name": "基础写作",
+    "category": "写作",
+    "body": "用动作、对话与细节呈现场景，少用概括与总结。"
+   }
+  ],
+  "chapters": [
+   {
+    "number": 12,
+    "label": "第12章",
+    "title": "剑鸣",
+    "text": "雨落下来。\n\n他握紧了旧剑。",
+    "partial": true
+   }
+  ]
  },
  "variants": {
   "archivist.kickoff.maintenance": [
@@ -2563,6 +2579,23 @@
      "tail_open": false,
      "last_pid": "p9"
     }
+   }
+  ],
+  "block.writing_skills": [
+   {}
+  ],
+  "block.recent_chapters": [
+   {},
+   {
+    "chapters": [
+     {
+      "number": 12,
+      "label": "第12章",
+      "title": "",
+      "text": "雨落下来。",
+      "partial": false
+     }
+    ]
    }
   ]
  }

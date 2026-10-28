@@ -32,8 +32,8 @@ use crate::prompts::PromptSet;
 use crate::prompts::context::{
     BookContext, CastEntryContext, ChapterContext, CharacterContext, DiffChangeContext,
     DiffContext, DraftContext, FeedbackContext, FeedbackIssueContext, GranularityContext,
-    MemoryContext, MemoryCountsContext, ParagraphContext, PriorReportContext, ScopeContext,
-    SettingsContext, TrackContext,
+    MemoryContext, MemoryCountsContext, ParagraphContext, PriorReportContext, RecentChapterContext,
+    ScopeContext, SettingsContext, TrackContext, WritingSkillContext,
 };
 use crate::text;
 
@@ -45,24 +45,34 @@ use super::session;
 pub fn kickoff_blocks(kind: SessionKind, _redraft: bool) -> Vec<&'static str> {
     match kind {
         SessionKind::Conception => vec!["conception.kickoff"],
-        SessionKind::ChapterOutline => vec!["block.settings", "block.memory", "planner.kickoff"],
-        SessionKind::Research => vec!["block.book_brief", "researcher.kickoff"],
-        // A write session always drafts from the accepted outline; a redraft is the same kickoff
-        // with its `feedback` branch filled (D-146).
-        SessionKind::ChapterWrite => vec![
+        SessionKind::ChapterOutline => vec![
             "block.settings",
             "block.memory",
+            "block.recent_chapters",
+            "planner.kickoff",
+        ],
+        SessionKind::Research => vec!["block.book_brief", "researcher.kickoff"],
+        // A write session always drafts from the accepted outline; a redraft is the same kickoff
+        // with its `feedback` branch filled (D-146). Writing skills sit right after settings
+        // (stable-first ordering, design §6.1); recent chapters after memory.
+        SessionKind::ChapterWrite => vec![
+            "block.settings",
+            "block.writing_skills",
+            "block.memory",
+            "block.recent_chapters",
             "block.chapter_draft",
             "writer.kickoff.chapter",
         ],
         SessionKind::ChapterRevise => vec![
             "block.settings",
+            "block.writing_skills",
             "block.memory",
             "block.chapter_draft",
             "writer.kickoff.revise",
         ],
         SessionKind::ChapterReview => vec![
             "block.settings",
+            "block.writing_skills",
             "block.memory",
             "block.chapter_draft",
             "reviewer.kickoff",
@@ -140,19 +150,23 @@ pub async fn assemble_kickoff(
     extra: Option<&Value>,
 ) -> Result<Vec<StoredBlock>, AppError> {
     let plan = KickoffPlan::new(session::kind_of(session), redraft);
+    // The actual emitted block list, before `block.memory` renders: its dedupe decision must read
+    // this list, not `plan.blocks()`, because a caller like `rollover` builds its own list that
+    // deliberately leaves `block.recent_chapters` out (design §7, spec/03 §9).
+    let mut emitted_blocks = plan.blocks();
+    // spec/07 §8 step 2: the researcher's kickoff carries the linked book's brief **only when the
+    // task belongs to one**. A standalone research task has no book, and an empty brief block would
+    // read as a blank book rather than "no book".
+    if session::kind_of(session) == SessionKind::Research
+        && session.book_id.is_none()
+        && session.research_task_id.is_some()
+    {
+        emitted_blocks.retain(|key| *key != "block.book_brief");
+    }
     let mut blocks = Vec::new();
-    for key in plan.blocks() {
-        // spec/07 §8 step 2: the researcher's kickoff carries the linked book's brief **only when
-        // the task belongs to one**. A standalone research task has no book, and an empty brief
-        // block would read as a blank book rather than "no book".
-        if key == "block.book_brief"
-            && session::kind_of(session) == SessionKind::Research
-            && session.book_id.is_none()
-            && session.research_task_id.is_some()
-        {
-            continue;
-        }
-        let context = block_context(conn, prompts, session, plan, key, extra).await?;
+    for key in emitted_blocks.iter().copied() {
+        let context =
+            block_context(conn, prompts, session, plan, &emitted_blocks, key, extra).await?;
         let rendered = prompts
             .render_value(key, crate::prompts::template_value(&context))
             .map_err(|err| err.into_app_error())?;
@@ -179,6 +193,7 @@ async fn block_context(
     prompts: &PromptSet,
     session: &agent_sessions::Model,
     plan: KickoffPlan,
+    emitted_blocks: &[&str],
     key: &str,
     extra: Option<&Value>,
 ) -> Result<Value, AppError> {
@@ -192,10 +207,25 @@ async fn block_context(
                 chapter_context(conn, prompts, session.chapter_id, session.book_id).await?;
             let chapter = memory_chapter_view(chapter, plan);
             Ok(json!({
-                "memory": memory_context(conn, prompts, session).await?,
+                // For a write or outline kickoff the recent-chapters block repeats the previous
+                // chapter in full; `previous_tail` is then a strict subset of it and is dropped
+                // (design §7). Summaries stay: they are condensed accounts, not copies.
+                "memory": memory_context(
+                    conn,
+                    prompts,
+                    session,
+                    emitted_blocks.contains(&"block.recent_chapters"),
+                )
+                .await?,
                 "chapter": chapter,
             }))
         }
+        "block.writing_skills" => Ok(json!({
+            "skills": writing_skills_context(conn, session).await?,
+        })),
+        "block.recent_chapters" => Ok(json!({
+            "chapters": recent_chapters_context(conn, prompts, session).await?,
+        })),
         "block.chapter_draft" => Ok(json!({
             "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
             "draft": draft_context(conn, session.chapter_id).await?,
@@ -509,10 +539,15 @@ async fn settings_context(
 }
 
 /// `block.memory`: the tiered memory snapshot of the target chapter (spec/06 §4).
+///
+/// `dedupe_recent_tail` is true for a kickoff that also carries `block.recent_chapters`: when the
+/// previous chapter is injected in full there, its `previous_tail` excerpt is a strict subset and
+/// is dropped (design §7). Summaries stay — they are condensed accounts, not copies.
 async fn memory_context(
     conn: &impl ConnectionTrait,
     prompts: &PromptSet,
     session: &agent_sessions::Model,
+    dedupe_recent_tail: bool,
 ) -> Result<MemoryContext, AppError> {
     let Some(chapter_id) = session.chapter_id else {
         return Ok(empty_memory_context());
@@ -527,8 +562,66 @@ async fn memory_context(
         return Ok(empty_memory_context());
     };
     // The whole tiered snapshot of spec/06 §4, rendered by `services/memory.rs`.
-    let snapshot = crate::services::memory::snapshot(conn, prompts, &track, &chapter).await?;
+    let mut snapshot = crate::services::memory::snapshot(conn, prompts, &track, &chapter).await?;
+    if dedupe_recent_tail {
+        let recent =
+            crate::services::memory::recent_chapters(conn, prompts, &track, &chapter).await?;
+        crate::services::memory::dedupe_previous_tail(&mut snapshot, &recent);
+    }
     Ok(crate::services::memory::memory_context(&snapshot))
+}
+
+/// `block.writing_skills`: the full bodies of the book's selected skills (design §6).
+async fn writing_skills_context(
+    conn: &impl ConnectionTrait,
+    session: &agent_sessions::Model,
+) -> Result<Vec<WritingSkillContext>, AppError> {
+    let Some(book_id) = session.book_id else {
+        return Ok(Vec::new());
+    };
+    let rows = crate::services::skills::selected_skills(conn, book_id).await?;
+    Ok(rows
+        .into_iter()
+        // A selectable built-in can still have an empty body (design §5, D-148): it injects
+        // nothing then, so the block keeps its heading only when a non-empty skill exists.
+        .filter(|row| !row.body.trim().is_empty())
+        .map(|row| WritingSkillContext {
+            name: row.name,
+            category: row.category,
+            body: row.body,
+        })
+        .collect())
+}
+
+/// `block.recent_chapters`: the last N official chapters in full (design §7).
+async fn recent_chapters_context(
+    conn: &impl ConnectionTrait,
+    prompts: &PromptSet,
+    session: &agent_sessions::Model,
+) -> Result<Vec<RecentChapterContext>, AppError> {
+    let (Some(_book_id), Some(chapter_id)) = (session.book_id, session.chapter_id) else {
+        return Ok(Vec::new());
+    };
+    let Some(chapter) = chapters::Entity::find_by_id(chapter_id).one(conn).await? else {
+        return Ok(Vec::new());
+    };
+    let Some(track) = tracks::Entity::find_by_id(chapter.track_id)
+        .one(conn)
+        .await?
+    else {
+        return Ok(Vec::new());
+    };
+    let rows = crate::services::memory::recent_chapters(conn, prompts, &track, &chapter).await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| RecentChapterContext {
+            number: row.number,
+            label: row.label,
+            title: row.title,
+            text: row.text,
+            partial: row.partial,
+        })
+        .collect())
 }
 
 /// The chapter view `block.memory` renders: label and title only, and the outline only when the
@@ -1434,13 +1527,19 @@ pub async fn rollover(
                 kind,
                 redraft: false,
             };
-            for key in [
+            // The rollover block list is its own: it deliberately excludes
+            // `block.recent_chapters` (design §7, session-kind table), so `block.memory` must keep
+            // `previous_tail` here even though the parent is a `chapter_write` session.
+            let emitted_blocks = [
                 "block.settings",
+                "block.writing_skills",
                 "block.memory",
                 "block.chapter_draft",
                 "writer.kickoff.rollover",
-            ] {
-                let context = block_context(tx, &prompts, &parent, plan, key, None).await?;
+            ];
+            for key in emitted_blocks.iter().copied() {
+                let context =
+                    block_context(tx, &prompts, &parent, plan, &emitted_blocks, key, None).await?;
                 let rendered = prompts
                     .render_value(key, crate::prompts::template_value(&context))
                     .map_err(|err| err.into_app_error())?;

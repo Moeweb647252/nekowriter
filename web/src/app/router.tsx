@@ -64,6 +64,14 @@ export const routes: RouteObject[] = [
         },
       },
       {
+        // The writing-skill catalogue (design §8).
+        path: "skills",
+        lazy: async () => {
+          const module = await import("@/features/skills/SkillsPage")
+          return { Component: module.default }
+        },
+      },
+      {
         // Settings sections: providers, models, roles, appearance (PROJECT §8.12).
         path: "settings",
         lazy: async () => {

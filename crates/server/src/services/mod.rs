@@ -24,6 +24,7 @@ pub mod reviews;
 pub mod search_settings;
 pub mod sessions;
 pub mod setting_docs;
+pub mod skills;
 pub mod tracks;
 pub mod versions;
 

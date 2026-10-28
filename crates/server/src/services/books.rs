@@ -124,6 +124,9 @@ pub async fn create_inner(
         setting_docs::Entity::insert(doc).exec(tx).await?;
     }
 
+    // New books select the skills whose `enabled_by_default = 1` (design §4.1).
+    super::skills::insert_defaults_for_book(tx, book.id, timestamp).await?;
+
     // A book with conception starts `conceiving` and gets its session after this transaction
     // commits; without it, the book starts `active` with empty materials the author writes
     // (spec/08 §5).
@@ -847,8 +850,13 @@ pub fn validate_settings(settings: &BookSettings) -> Result<(), AppError> {
             "target_words_max must be at least target_words_min",
         ));
     }
-    if settings.recent_summary_count < 0 || settings.midterm_window < 0 {
-        return Err(AppError::validation("memory windows must not be negative"));
+    if settings.recent_summary_count < 0
+        || settings.midterm_window < 0
+        || settings.recent_chapter_count < 0
+    {
+        return Err(AppError::validation(
+            "memory windows and recent_chapter_count must not be negative",
+        ));
     }
     Ok(())
 }
