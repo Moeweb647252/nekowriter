@@ -21,7 +21,8 @@ use serde_json::json;
 #[path = "agent_write_harness/mod.rs"]
 mod agent_write_harness;
 
-use agent_write_harness::{outline_step, runtime};
+use agent_write_harness::runtime;
+use nekowriter_llm::mock::ScriptStep;
 
 /// The open sessions of one chapter and role, read through the API.
 async fn open_sessions(
@@ -204,16 +205,19 @@ async fn session_creation_refuses_a_second_open_writer_session() {
 /// creation directly to pin the shape of the guard: it is keyed by role.
 #[tokio::test]
 async fn the_guard_is_per_role_not_per_chapter() {
-    // The scripted outline holds because `pause_after_outline` is on (spec/03 §5.2), so the writer
-    // session is open but not running.
-    let runtime = runtime(vec![outline_step()]).await;
+    // A shipped writer holds its first insert under auto-pause, so the writer session is open but
+    // not running.
+    let runtime = runtime(vec![
+        ScriptStep::new().tool("insert_text", json!({ "text": "第一段。" })),
+    ])
+    .await;
     let chapter_id = runtime.chapter_id;
     let writer = agent_write_harness::start_writer_on(
         &runtime,
         chapter_id,
         Granularity::Paragraph,
-        false,
         true,
+        false,
         false,
     )
     .await;

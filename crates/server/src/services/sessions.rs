@@ -55,6 +55,8 @@ impl Default for CreateSession {
             kickoff_extra: None,
             pending_comment: None,
             legacy_planning_fixture: false,
+            legacy_system_prompt: None,
+            legacy_kickoff_text: None,
         }
     }
 }
@@ -84,6 +86,11 @@ pub struct CreateSession {
     /// 20-tool list, as a session started before the outline split has (D-146). Production
     /// callers never set it.
     pub legacy_planning_fixture: bool,
+    /// Test-only: the exact frozen system prompt of a pre-split session (F3). `None` renders the
+    /// current pack.
+    pub legacy_system_prompt: Option<String>,
+    /// Test-only: the exact frozen kickoff text of a pre-split session (F3).
+    pub legacy_kickoff_text: Option<String>,
 }
 
 /// Creates a session (spec/03 §4) and spawns its runner. Returns the session id and any
@@ -199,14 +206,41 @@ pub(crate) async fn create_inner(
             )
             .with_details(json!({ "role": role }))
         })?;
-    let snapshot = model_snapshot(&profile, &provider)?;
+    // `cache_ttl: "auto"` is resolved at creation from the session's actual holding behaviour
+    // (spec/03 §4 step 1, spec/04 §3, D-031): 1h for conception and for planner/writer sessions
+    // that pause for the author, 5m otherwise.
+    let book_settings: BookSettings = match book.as_ref() {
+        Some(book) => crate::db::json::from_json_or_default::<BookSettings>(&book.settings),
+        None => BookSettings::default(),
+    };
+    let pause_after_outline_setting = input
+        .pause_after_outline
+        .unwrap_or(book_settings.pause_after_outline);
+    let auto_pause_setting = input.auto_pause.unwrap_or(book_settings.auto_pause);
+    let cache_ttl = if input.kind == SessionKind::Conception
+        || (input.kind == SessionKind::ChapterOutline && pause_after_outline_setting)
+        || (matches!(
+            input.kind,
+            SessionKind::ChapterWrite | SessionKind::ChapterRevise
+        ) && auto_pause_setting)
+    {
+        nekowriter_llm::CacheTtlOption::OneHour
+    } else {
+        nekowriter_llm::CacheTtlOption::FiveMinutes
+    };
+    let snapshot = model_snapshot_with_ttl(&profile, &provider, cache_ttl)?;
 
     // 2. Freeze the prompts: the role's system prompt and tool definitions through the registry.
     let prompts = state.prompts().for_book(state.db(), input.book_id).await?;
-    let system_prompt = prompts
+    let mut system_prompt = prompts
         .render(&format!("{role}.system"), &json!({}))
         .map_err(|err| err.into_app_error())?;
     warnings.extend(system_prompt.warnings());
+    // The legacy fixture can carry the exact pre-split prompt, so the test proves the frozen
+    // prompt rather than the current pack (F3, D-146).
+    if let Some(legacy_prompt) = &input.legacy_system_prompt {
+        system_prompt.text = legacy_prompt.clone();
+    }
     let tool_names: &[&str] = if input.legacy_planning_fixture {
         &crate::agent::tools::registry::LEGACY_WRITER_TOOLS
     } else {
@@ -215,10 +249,6 @@ pub(crate) async fn create_inner(
     let tools = frozen_tools(&prompts, tool_names, &mut warnings)?;
 
     // 3. Initial fields; writer sessions copy the book's settings unless told otherwise.
-    let book_settings = match book.as_ref() {
-        Some(book) => crate::db::json::from_json_or_default::<BookSettings>(&book.settings),
-        None => BookSettings::default(),
-    };
     let phase = if input.legacy_planning_fixture && input.kind == SessionKind::ChapterWrite {
         Phase::Planning
     } else {
@@ -356,15 +386,23 @@ pub(crate) async fn create_inner(
         None
     };
 
-    // 4. Kickoff: the block list of the kind, persisted as `seq 0`, kind `kickoff`.
-    let blocks = crate::agent::context::assemble_kickoff(
-        tx,
-        &prompts,
-        &session,
-        input.redraft,
-        input.kickoff_extra.as_ref(),
-    )
-    .await?;
+    // 4. Kickoff: the block list of the kind, persisted as `seq 0`, kind `kickoff`. The legacy
+    // fixture can carry the exact pre-split kickoff text (F3, D-146).
+    let blocks = if let Some(legacy_kickoff) = &input.legacy_kickoff_text {
+        vec![StoredBlock::Text {
+            text: legacy_kickoff.clone(),
+            cache: None,
+        }]
+    } else {
+        crate::agent::context::assemble_kickoff(
+            tx,
+            &prompts,
+            &session,
+            input.redraft,
+            input.kickoff_extra.as_ref(),
+        )
+        .await?
+    };
     let kickoff = runner::insert_kickoff(tx, session.id, blocks).await?;
     events_for_new_session(&mut warnings, &session, &kickoff);
 
@@ -528,6 +566,19 @@ fn model_snapshot(
     profile: &model_profiles::Model,
     provider: &providers::Model,
 ) -> Result<ModelSnapshot, AppError> {
+    model_snapshot_with_ttl(
+        profile,
+        provider,
+        nekowriter_llm::CacheTtlOption::FiveMinutes,
+    )
+}
+
+/// The frozen model snapshot with an already-resolved `cache_ttl` (spec/03 §4 step 1).
+fn model_snapshot_with_ttl(
+    profile: &model_profiles::Model,
+    provider: &providers::Model,
+    cache_ttl: nekowriter_llm::CacheTtlOption,
+) -> Result<ModelSnapshot, AppError> {
     let extra_headers: std::collections::BTreeMap<String, String> =
         serde_json::from_str(&provider.extra_headers).unwrap_or_default();
     let protocol = match provider.protocol.as_str() {
@@ -541,7 +592,7 @@ fn model_snapshot(
     let mut options: nekowriter_llm::ModelOptions =
         serde_json::from_str(&profile.options).unwrap_or_default();
     if options.cache_ttl == nekowriter_llm::CacheTtlOption::Auto {
-        options.cache_ttl = nekowriter_llm::CacheTtlOption::FiveMinutes;
+        options.cache_ttl = cache_ttl;
     }
     Ok(ModelSnapshot {
         provider_id: provider.id,

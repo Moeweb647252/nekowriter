@@ -20,7 +20,7 @@ use axum::http::StatusCode;
 use nekowriter::api::dto::canon::{
     EntityInput, ForeshadowingInput, MemoryNoteInput, RelationInput, TimelineEventInput,
 };
-use nekowriter::db::json::{EntityKind, Granularity, NoteKind};
+use nekowriter::db::json::{EntityKind, NoteKind};
 use nekowriter::services::canon::{
     self, CanonWrite, Visibility, entity, foreshadow, note, relation, timeline,
 };
@@ -185,8 +185,7 @@ async fn retrieval_tools_hide_another_tracks_private_relations() {
     let private = private_entity(&runtime.app, book_id, isolated, "Secret Sidekick").await;
     private_relation(&runtime.app, book_id, isolated, shared, private, "ally").await;
 
-    let session_id =
-        agent_write_harness::start_writer(&runtime, Granularity::Paragraph, false, false).await;
+    let session_id = agent_write_harness::start_planner(&runtime).await;
     runtime.wait_any_status(session_id).await;
     let calls = tool_calls(&runtime, session_id).await;
 

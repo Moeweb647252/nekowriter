@@ -6,7 +6,6 @@
 mod agent_write_harness;
 
 use agent_write_harness::base::runtime;
-use nekowriter::db::json::Granularity;
 use nekowriter::services::indexer;
 use nekowriter::testing::TestApp;
 use nekowriter_llm::mock::ScriptStep;
@@ -167,8 +166,7 @@ async fn the_writer_only_searches_the_books_attached_scopes() {
         )
         .await;
     assert_eq!(status, 200, "attach scope: {body}");
-    let session_id =
-        agent_write_harness::start_writer(&runtime, Granularity::Paragraph, false, false).await;
+    let session_id = agent_write_harness::start_planner(&runtime).await;
     runtime.wait_any_status(session_id).await;
     let session = runtime
         .app

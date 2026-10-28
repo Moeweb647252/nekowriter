@@ -18,8 +18,16 @@ use review_harness::{
 };
 use serde_json::json;
 
-/// Starts a real `chapter_write` session in planning, optionally holding at `submit_outline`.
-async fn start_writer_session(runtime: &Runtime, pause_after_outline: bool) -> i32 {
+/// Starts a shipped drafting-only `chapter_write` session that holds on its first insert.
+async fn start_writer_session(runtime: &Runtime) -> i32 {
+    runtime
+        .app
+        .execute(&format!(
+            "UPDATE chapters SET outline = '场景一：城门口', reference_notes = '- 雨一直下' \
+             WHERE id = {}",
+            runtime.chapter_id
+        ))
+        .await;
     let (session_id, _warnings) = sessions::create(
         runtime.app.state(),
         CreateSession {
@@ -27,24 +35,13 @@ async fn start_writer_session(runtime: &Runtime, pause_after_outline: bool) -> i
             book_id: Some(runtime.book_id),
             chapter_id: Some(runtime.chapter_id),
             granularity: Some(Granularity::Paragraph),
-            auto_pause: Some(false),
-            pause_after_outline: Some(pause_after_outline),
-            // A held outline can only occur in a legacy planning session now (D-146); this test
-            // pins the manual-submit rule that ends it.
-            legacy_planning_fixture: true,
+            auto_pause: Some(true),
             ..CreateSession::default()
         },
     )
     .await
     .expect("create writer session");
     session_id
-}
-
-fn outline_step() -> ScriptStep {
-    ScriptStep::new().tool(
-        "submit_outline",
-        json!({ "outline": "场景一：城门口", "reference_notes": "- 雨一直下" }),
-    )
 }
 
 /// The book settings without auto-maintenance, so an approval starts no archivist runner.
@@ -82,16 +79,19 @@ async fn chapter_open_sessions(runtime: &Runtime) -> Vec<serde_json::Value> {
         .clone()
 }
 
-/// A writer session held at `submit_outline` is abandoned by the manual submit, and the chapter
-/// can then be approved (spec/08 §1.1).
+/// A writer session held at an insert is abandoned by the manual submit, and the chapter can then
+/// be approved (spec/08 §1.1).
 #[tokio::test]
 async fn submit_abandons_a_held_writer_session_and_approve_then_succeeds() {
-    let runtime = runtime(vec![outline_step()]).await;
+    let runtime = runtime(vec![
+        ScriptStep::new().tool("insert_text", json!({ "text": "第一段。" })),
+    ])
+    .await;
     runtime
         .app
         .put_text(runtime.chapter_id, 0, "第一段。\n\n第二段。")
         .await;
-    let writer = start_writer_session(&runtime, true).await;
+    let writer = start_writer_session(&runtime).await;
     runtime
         .wait_status_within(writer, SessionStatus::Held, Duration::from_secs(10))
         .await;
@@ -215,10 +215,7 @@ async fn submit_abandons_a_stopped_revision_session_and_approve_then_succeeds() 
 async fn a_running_writer_session_still_blocks_submit() {
     let runtime = runtime(vec![
         ScriptStep::new()
-            .tool(
-                "submit_outline",
-                json!({ "outline": "场景一：城门口", "reference_notes": "- 雨一直下" }),
-            )
+            .tool("insert_text", json!({ "text": "第一段。" }))
             .delay(Duration::from_millis(3_000)),
     ])
     .await;
@@ -226,7 +223,7 @@ async fn a_running_writer_session_still_blocks_submit() {
         .app
         .put_text(runtime.chapter_id, 0, "第一段。")
         .await;
-    let writer = start_writer_session(&runtime, false).await;
+    let writer = start_writer_session(&runtime).await;
     runtime
         .wait_status_within(writer, SessionStatus::Running, Duration::from_secs(10))
         .await;

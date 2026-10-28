@@ -113,13 +113,7 @@ async fn get_entity_renders_the_card_and_its_ui() {
         ))
         .await;
 
-    let session_id = agent_write_harness::start_writer(
-        &runtime,
-        nekowriter::db::json::Granularity::Paragraph,
-        false,
-        false,
-    )
-    .await;
+    let session_id = agent_write_harness::start_planner(&runtime).await;
     // The script ends after the retrieval call, so the session terminates; the tool-call rows are
     // already persisted, which is what these assertions read.
     runtime.wait_any_status(session_id).await;
@@ -160,13 +154,7 @@ async fn get_entity_resolves_names_aliases_and_substrings() {
     .await;
     entity(&runtime, "character", "Lin Fan", "an outer disciple", 5).await;
     entity(&runtime, "character", "Zhang San", "a senior", 4).await;
-    let session_id = agent_write_harness::start_writer(
-        &runtime,
-        nekowriter::db::json::Granularity::Paragraph,
-        false,
-        false,
-    )
-    .await;
+    let session_id = agent_write_harness::start_planner(&runtime).await;
     // The script ends after the retrieval call, so the session terminates; the tool-call rows are
     // already persisted, which is what these assertions read.
     runtime.wait_any_status(session_id).await;
@@ -204,13 +192,7 @@ async fn get_entity_reports_entity_not_found_with_suggestions() {
     ])
     .await;
     entity(&runtime, "character", "Lin Fan", "an outer disciple", 5).await;
-    let session_id = agent_write_harness::start_writer(
-        &runtime,
-        nekowriter::db::json::Granularity::Paragraph,
-        false,
-        false,
-    )
-    .await;
+    let session_id = agent_write_harness::start_planner(&runtime).await;
     // The script ends after the retrieval call, so the session terminates; the tool-call rows are
     // already persisted, which is what these assertions read.
     runtime.wait_any_status(session_id).await;
@@ -236,13 +218,7 @@ async fn get_entity_reports_entity_ambiguous() {
     .await;
     entity(&runtime, "character", "Lin Fan", "an outer disciple", 5).await;
     entity(&runtime, "character", "Lin Yue", "a swordswoman", 4).await;
-    let session_id = agent_write_harness::start_writer(
-        &runtime,
-        nekowriter::db::json::Granularity::Paragraph,
-        false,
-        false,
-    )
-    .await;
+    let session_id = agent_write_harness::start_planner(&runtime).await;
     // The script ends after the retrieval call, so the session terminates; the tool-call rows are
     // already persisted, which is what these assertions read.
     runtime.wait_any_status(session_id).await;
@@ -271,13 +247,7 @@ async fn list_entities_renders_one_line_per_entity() {
     let runtime = runtime(vec![ScriptStep::new().tool("list_entities", json!({}))]).await;
     entity(&runtime, "character", "Minor", "a minor", 2).await;
     entity(&runtime, "character", "Central", "the central one", 5).await;
-    let session_id = agent_write_harness::start_writer(
-        &runtime,
-        nekowriter::db::json::Granularity::Paragraph,
-        false,
-        false,
-    )
-    .await;
+    let session_id = agent_write_harness::start_planner(&runtime).await;
     // The script ends after the retrieval call, so the session terminates; the tool-call rows are
     // already persisted, which is what these assertions read.
     runtime.wait_any_status(session_id).await;
@@ -311,13 +281,7 @@ async fn list_entities_filters_and_caps() {
     entity(&runtime, "character", "Lin Fan", "an outer disciple", 5).await;
     entity(&runtime, "item", "Broken Sword", "a hilt", 4).await;
     entity(&runtime, "item", "Old Map", "a map", 2).await;
-    let session_id = agent_write_harness::start_writer(
-        &runtime,
-        nekowriter::db::json::Granularity::Paragraph,
-        false,
-        false,
-    )
-    .await;
+    let session_id = agent_write_harness::start_planner(&runtime).await;
     // The script ends after the retrieval call, so the session terminates; the tool-call rows are
     // already persisted, which is what these assertions read.
     runtime.wait_any_status(session_id).await;
@@ -368,13 +332,7 @@ async fn get_relations_phrases_from_the_queried_entity() {
         )
         .await;
     assert_eq!(status, 201);
-    let session_id = agent_write_harness::start_writer(
-        &runtime,
-        nekowriter::db::json::Granularity::Paragraph,
-        false,
-        false,
-    )
-    .await;
+    let session_id = agent_write_harness::start_planner(&runtime).await;
     // The script ends after the retrieval call, so the session terminates; the tool-call rows are
     // already persisted, which is what these assertions read.
     runtime.wait_any_status(session_id).await;
@@ -422,13 +380,7 @@ async fn get_relations_hides_ended_ones_by_default() {
         )
         .await;
     assert_eq!(status, 200);
-    let session_id = agent_write_harness::start_writer(
-        &runtime,
-        nekowriter::db::json::Granularity::Paragraph,
-        false,
-        false,
-    )
-    .await;
+    let session_id = agent_write_harness::start_planner(&runtime).await;
     // The script ends after the retrieval call, so the session terminates; the tool-call rows are
     // already persisted, which is what these assertions read.
     runtime.wait_any_status(session_id).await;
@@ -492,13 +444,7 @@ async fn query_timeline_renders_events_in_story_order() {
         .await;
     assert_eq!(status, 200, "{body}");
 
-    let session_id = agent_write_harness::start_writer(
-        &runtime,
-        nekowriter::db::json::Granularity::Paragraph,
-        false,
-        false,
-    )
-    .await;
+    let session_id = agent_write_harness::start_planner(&runtime).await;
     // The script ends after the retrieval call, so the session terminates; the tool-call rows are
     // already persisted, which is what these assertions read.
     runtime.wait_any_status(session_id).await;
@@ -558,13 +504,7 @@ async fn query_timeline_filters() {
         .map(|event| event["id"].as_i64().expect("id") as i32)
         .collect();
 
-    let session_id = agent_write_harness::start_writer(
-        &runtime,
-        nekowriter::db::json::Granularity::Paragraph,
-        false,
-        false,
-    )
-    .await;
+    let session_id = agent_write_harness::start_planner(&runtime).await;
     // The script ends after the retrieval call, so the session terminates; the tool-call rows are
     // already persisted, which is what these assertions read.
     runtime.wait_any_status(session_id).await;
@@ -633,13 +573,7 @@ async fn list_foreshadowing_lists_open_items() {
         .await;
     assert_eq!(status, 200);
 
-    let session_id = agent_write_harness::start_writer(
-        &runtime,
-        nekowriter::db::json::Granularity::Paragraph,
-        false,
-        false,
-    )
-    .await;
+    let session_id = agent_write_harness::start_planner(&runtime).await;
     // The script ends after the retrieval call, so the session terminates; the tool-call rows are
     // already persisted, which is what these assertions read.
     runtime.wait_any_status(session_id).await;
@@ -683,13 +617,7 @@ async fn read_chapter_returns_the_official_text_with_pids() {
             "First paragraph.\n\nSecond paragraph.",
         )
         .await;
-    let session_id = agent_write_harness::start_writer(
-        &runtime,
-        nekowriter::db::json::Granularity::Paragraph,
-        false,
-        false,
-    )
-    .await;
+    let session_id = agent_write_harness::start_planner(&runtime).await;
     // Creating a writer session moves the chapter to `drafting`; the tool reads the row at call
     // time, so the chapter is made official after the session exists.
     runtime
@@ -723,13 +651,7 @@ async fn read_chapter_rejects_a_non_official_chapter() {
         .app
         .put_text(runtime.chapter_id, 0, "Draft text.")
         .await;
-    let session_id = agent_write_harness::start_writer(
-        &runtime,
-        nekowriter::db::json::Granularity::Paragraph,
-        false,
-        false,
-    )
-    .await;
+    let session_id = agent_write_harness::start_planner(&runtime).await;
     // The script ends after the retrieval call, so the session terminates; the tool-call rows are
     // already persisted, which is what these assertions read.
     runtime.wait_any_status(session_id).await;
@@ -750,13 +672,7 @@ async fn read_chapter_rejects_an_unknown_reference() {
         ScriptStep::new().tool("read_chapter", json!({ "chapter": "not a chapter" })),
     ])
     .await;
-    let session_id = agent_write_harness::start_writer(
-        &runtime,
-        nekowriter::db::json::Granularity::Paragraph,
-        false,
-        false,
-    )
-    .await;
+    let session_id = agent_write_harness::start_planner(&runtime).await;
     // The script ends after the retrieval call, so the session terminates; the tool-call rows are
     // already persisted, which is what these assertions read.
     runtime.wait_any_status(session_id).await;
@@ -795,13 +711,7 @@ async fn read_chapter_pages_with_from_pid_and_max_chars() {
         ));
     }
     runtime.app.put_text(runtime.chapter_id, 0, &text).await;
-    let session_id = agent_write_harness::start_writer(
-        &runtime,
-        nekowriter::db::json::Granularity::Paragraph,
-        false,
-        false,
-    )
-    .await;
+    let session_id = agent_write_harness::start_planner(&runtime).await;
     // Creating a writer session moves the chapter to `drafting`; the tool reads the row at call
     // time, so the chapter is made official after the session exists.
     runtime
@@ -843,13 +753,7 @@ async fn read_chapter_rejects_an_unknown_pid() {
         .app
         .put_text(runtime.chapter_id, 0, "Only paragraph.")
         .await;
-    let session_id = agent_write_harness::start_writer(
-        &runtime,
-        nekowriter::db::json::Granularity::Paragraph,
-        false,
-        false,
-    )
-    .await;
+    let session_id = agent_write_harness::start_planner(&runtime).await;
     // Creating a writer session moves the chapter to `drafting`; the tool reads the row at call
     // time, so the chapter is made official after the session exists.
     runtime
@@ -883,7 +787,14 @@ async fn a_side_track_marks_items_after_its_anchor() {
     // until M10; the anchor marker helper is exercised over a main-track session with the
     // `before_start` anchor set on the main track's row would be wrong, so the test builds the
     // rows directly and drives the tool through a session whose track is the side track.
-    let runtime = runtime(vec![ScriptStep::new().tool("query_timeline", json!({}))]).await;
+    let runtime = runtime(vec![
+        ScriptStep::new().tool("query_timeline", json!({})),
+        ScriptStep::new().tool(
+            "submit_outline",
+            json!({ "outline": "番外细纲", "reference_notes": "- 要点" }),
+        ),
+    ])
+    .await;
     let book_id = runtime.book_id;
     // Two main-track events, one before and one after the anchor chapter.
     let (status, _) = runtime
@@ -939,14 +850,10 @@ async fn a_side_track_marks_items_after_its_anchor() {
     let (session_id, _) = nekowriter::services::sessions::create(
         runtime.app.state(),
         nekowriter::services::sessions::CreateSession {
-            kind: nekowriter::db::json::SessionKind::ChapterWrite,
+            kind: nekowriter::db::json::SessionKind::ChapterOutline,
             book_id: Some(book_id),
             chapter_id: Some(side_chapter_id),
-            granularity: Some(nekowriter::db::json::Granularity::Paragraph),
-            guidance: None,
-            // A planning-phase retrieval fixture: this test exercises the legacy planning arm
-            // that still serves sessions started before the outline split (D-146).
-            legacy_planning_fixture: true,
+            pause_after_outline: Some(false),
             ..nekowriter::services::sessions::CreateSession::default()
         },
     )
@@ -997,11 +904,11 @@ async fn max_track_id(runtime: &agent_write_harness::Runtime, book_id: i32) -> i
 #[tokio::test]
 async fn retrieval_tools_are_limited_to_the_planning_phases() {
     let runtime = runtime(vec![
-        agent_write_harness::outline_step(),
         ScriptStep::new().tool("get_entity", json!({ "entity": "Lin Fan" })),
     ])
     .await;
     entity(&runtime, "character", "Lin Fan", "an outer disciple", 5).await;
+    // A shipped write session starts in `drafting`: retrieval belongs to the planner now.
     let session_id = agent_write_harness::start_writer(
         &runtime,
         nekowriter::db::json::Granularity::Paragraph,

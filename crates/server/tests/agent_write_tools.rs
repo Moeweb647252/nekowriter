@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use agent_write_harness::{
     call_ui, chapter_column, chapter_content, chapter_row, outline_step, phase_of, runtime,
-    start_writer,
+    start_legacy_writer, start_writer,
 };
 use nekowriter::db::json::{Granularity, Phase, SessionStatus, ToolCallStatus};
 use nekowriter::events::ServerEvent;
@@ -66,7 +66,6 @@ fn insert_step(text: &str, extra: serde_json::Value) -> ScriptStep {
 #[tokio::test]
 async fn sentence_granularity_accepts_one_sentence_and_rejects_a_break_and_a_long_one() {
     let runtime = runtime(with_finish(vec![
-        outline_step(),
         insert_step("他抬起头，望向剑冢深处那一点幽蓝的光。", json!({})),
         // A line break is rejected under `sentence`.
         insert_step("第一句。\n第二句。", json!({})),
@@ -104,7 +103,6 @@ async fn sentence_granularity_accepts_one_sentence_and_rejects_a_break_and_a_lon
 #[tokio::test]
 async fn paragraph_granularity_accepts_one_paragraph_and_rejects_a_break() {
     let runtime = runtime(with_finish(vec![
-        outline_step(),
         insert_step("第一段。", json!({})),
         insert_step("一段。\n另一段。", json!({})),
     ]))
@@ -135,7 +133,6 @@ async fn paragraph_granularity_accepts_one_paragraph_and_rejects_a_break() {
 #[tokio::test]
 async fn free_granularity_writes_several_paragraphs_and_keeps_an_open_tail() {
     let runtime = runtime(with_finish(vec![
-        outline_step(),
         insert_step("第一段。\n\n第二段开始", json!({ "paragraph_end": false })),
         // The next call continues the open tail (spec/03 §8 "open tail").
         insert_step("，接在末尾。", json!({ "paragraph_end": true })),
@@ -155,10 +152,10 @@ async fn free_granularity_writes_several_paragraphs_and_keeps_an_open_tail() {
 /// spec/03 §8 `chapter`: the rest of the chapter in one call; `chapter_end` is implied.
 #[tokio::test]
 async fn chapter_granularity_completes_in_one_call() {
-    let runtime = runtime(with_finish(vec![
-        outline_step(),
-        insert_step("第一段。\n\n第二段。\n\n第三段。", json!({})),
-    ]))
+    let runtime = runtime(with_finish(vec![insert_step(
+        "第一段。\n\n第二段。\n\n第三段。",
+        json!({}),
+    )]))
     .await;
     let session_id = start_writer(&runtime, Granularity::Chapter, false, false).await;
     runtime
@@ -178,7 +175,6 @@ async fn chapter_granularity_completes_in_one_call() {
 #[tokio::test]
 async fn paragraph_edits_are_limited_to_one_paragraph_under_sentence_and_paragraph() {
     let runtime = runtime(with_finish(vec![
-        outline_step(),
         insert_step("第一段。", json!({})),
         // insert_paragraphs with two paragraphs is rejected under `paragraph`.
         ScriptStep::new().tool(
@@ -224,7 +220,6 @@ async fn paragraph_edits_are_limited_to_one_paragraph_under_sentence_and_paragra
 #[tokio::test]
 async fn free_granularity_lets_paragraph_edits_write_several_paragraphs() {
     let runtime = runtime(with_finish(vec![
-        outline_step(),
         insert_step("第一段。", json!({})),
         ScriptStep::new().tool(
             "insert_paragraphs",
@@ -260,7 +255,6 @@ async fn a_call_generated_under_paragraph_is_validated_against_paragraph_after_a
     // Step 2's arguments stream slowly, so the PATCH lands while the call is being generated but
     // before it executes. Its `request_meta` is already `paragraph`.
     let runtime = runtime(with_finish(vec![
-        outline_step(),
         insert_step(&in_flight, json!({})).delay_per_event(Duration::from_millis(50)),
         ScriptStep::new().tool("insert_text", json!({ "text": "后续一句。" })),
     ]))
@@ -272,6 +266,15 @@ async fn a_call_generated_under_paragraph_is_validated_against_paragraph_after_a
         assert!(
             std::time::Instant::now() < deadline,
             "never reached drafting"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    // Wait for the first model request to be issued, so the PATCH really lands while the call is
+    // generated under `paragraph` (the session is already drafting at creation now).
+    while runtime.scripted.requests().is_empty() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the first request never started"
         );
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
@@ -344,7 +347,6 @@ async fn a_call_generated_under_paragraph_is_validated_against_paragraph_after_a
 #[tokio::test]
 async fn replace_text_reports_a_missing_and_an_ambiguous_old_text() {
     let runtime = runtime(with_finish(vec![
-        outline_step(),
         insert_step("剑光一闪，剑光又起，剑光不止。", json!({})),
         ScriptStep::new().tool(
             "replace_text",
@@ -394,7 +396,6 @@ async fn replace_text_reports_a_missing_and_an_ambiguous_old_text() {
 #[tokio::test]
 async fn delete_paragraphs_with_an_unknown_pid_deletes_nothing() {
     let runtime = runtime(with_finish(vec![
-        outline_step(),
         insert_step("第一段。", json!({})),
         insert_step("第二段。", json!({})),
         ScriptStep::new().tool("delete_paragraphs", json!({ "pids": ["p1", "p99"] })),
@@ -418,7 +419,6 @@ async fn delete_paragraphs_with_an_unknown_pid_deletes_nothing() {
 #[tokio::test]
 async fn read_draft_renders_paragraphs_with_pids_and_the_target() {
     let runtime = runtime(with_finish(vec![
-        outline_step(),
         insert_step("第一段。", json!({})),
         insert_step("第二段。", json!({})),
         ScriptStep::new().tool("read_draft", json!({})),
@@ -448,7 +448,8 @@ async fn writer_tool_ui_payloads_carry_data_not_labels() {
         insert_step("第一段。", json!({})),
     ]))
     .await;
-    let session_id = start_writer(&runtime, Granularity::Paragraph, false, false).await;
+    // `submit_outline` is a legacy writer tool now; its UI payload is pinned on that branch.
+    let session_id = start_legacy_writer(&runtime, Granularity::Paragraph, false, false).await;
     runtime
         .wait_status(session_id, SessionStatus::Completed)
         .await;
@@ -467,7 +468,6 @@ async fn writer_tool_ui_payloads_carry_data_not_labels() {
 #[tokio::test]
 async fn test_19_a_short_chapter_end_is_withheld_once_and_the_text_is_kept() {
     let runtime = runtime(with_finish(vec![
-        outline_step(),
         // 3,000 target words: 1,000 characters is far below 60%.
         insert_step("很短的一段。", json!({ "chapter_end": true })),
     ]))
@@ -518,7 +518,6 @@ async fn test_19_a_short_chapter_end_is_withheld_once_and_the_text_is_kept() {
 #[tokio::test]
 async fn a_short_chapter_mode_write_is_withheld_once() {
     let runtime = runtime(with_finish(vec![
-        outline_step(),
         insert_step("只有一句。", json!({})),
         // The demo keeps writing; the second `chapter` write goes through.
         insert_step("补足一些内容。", json!({})),
@@ -547,10 +546,10 @@ async fn a_long_enough_chapter_end_completes_at_once() {
     // The chapter needs ≥ 1,800 words: 2,000 short paragraphs would be slow, so a single long
     // paragraph of 2,000 characters is used (each character counts one word in Chinese).
     let long_text: String = "字".repeat(2_000);
-    let runtime = runtime(with_finish(vec![
-        outline_step(),
-        insert_step(&long_text, json!({ "chapter_end": true })),
-    ]))
+    let runtime = runtime(with_finish(vec![insert_step(
+        &long_text,
+        json!({ "chapter_end": true }),
+    )]))
     .await;
     let session_id = start_writer(&runtime, Granularity::Paragraph, false, false).await;
     runtime
@@ -566,7 +565,6 @@ async fn a_long_enough_chapter_end_completes_at_once() {
 #[tokio::test]
 async fn finish_draft_on_an_empty_chapter_is_an_error() {
     let runtime = runtime(with_finish(vec![
-        outline_step(),
         ScriptStep::new().tool("finish_draft", json!({})),
         insert_step("现在有内容了。", json!({})),
     ]))
@@ -620,7 +618,7 @@ async fn submit_outline_saves_the_outline_and_enters_drafting() {
         insert_step("正文。", json!({})),
     ]))
     .await;
-    let session_id = start_writer(&runtime, Granularity::Paragraph, false, false).await;
+    let session_id = start_legacy_writer(&runtime, Granularity::Paragraph, false, false).await;
     runtime
         .wait_status(session_id, SessionStatus::Completed)
         .await;
@@ -666,7 +664,7 @@ async fn submit_outline_sets_the_title_only_when_the_author_has_not() {
     .await;
     let chapter = runtime.app.create_chapter(runtime.track_id, "").await;
     let chapter_id = chapter["id"].as_i64().expect("id") as i32;
-    let session_id = agent_write_harness::start_writer_on(
+    let session_id = agent_write_harness::start_legacy_writer_on(
         &runtime,
         chapter_id,
         Granularity::Paragraph,
@@ -698,10 +696,10 @@ fn chunking_helper_is_available() {
 /// the text.
 #[tokio::test]
 async fn a_write_call_holds_under_auto_pause_and_its_content_is_committed_on_approval() {
-    let runtime = runtime(with_finish(vec![
-        outline_step(),
-        insert_step("自动暂停时写入的一段。", json!({})),
-    ]))
+    let runtime = runtime(with_finish(vec![insert_step(
+        "自动暂停时写入的一段。",
+        json!({}),
+    )]))
     .await;
     let session_id = start_writer(&runtime, Granularity::Paragraph, true, false).await;
     let row = runtime.wait_status(session_id, SessionStatus::Held).await;
@@ -779,7 +777,6 @@ async fn a_write_call_holds_under_auto_pause_and_its_content_is_committed_on_app
 #[tokio::test]
 async fn finish_draft_stores_its_note_on_the_draft_version() {
     let runtime = runtime(vec![
-        outline_step(),
         insert_step("第一段。", json!({})),
         ScriptStep::new().tool(
             "finish_draft",
@@ -832,7 +829,6 @@ async fn draft_version_notes(
 #[tokio::test]
 async fn a_granularity_rejection_leaves_the_chapter_byte_identical() {
     let runtime = runtime(with_finish(vec![
-        outline_step(),
         insert_step("第一段。", json!({})),
         // Rejected: a line break under `paragraph` granularity.
         insert_step("一段。\n另一段。", json!({})),
@@ -869,7 +865,6 @@ async fn a_granularity_rejection_leaves_the_chapter_byte_identical() {
 #[tokio::test]
 async fn a_non_held_write_applies_in_its_own_call_with_one_event() {
     let runtime = runtime(with_finish(vec![
-        outline_step(),
         insert_step("第一段。", json!({})),
         insert_step("第二段。", json!({})),
     ]))
@@ -914,4 +909,28 @@ async fn a_non_held_write_applies_in_its_own_call_with_one_event() {
             call.name
         );
     }
+}
+
+/// The shared M4 harness starts the shipped writer path: `drafting`, the 19-tool list, and no
+/// `submit_outline`. The legacy branch is covered only by `legacy_planning_session.rs` (F2).
+#[tokio::test]
+async fn the_harness_uses_the_shipped_drafting_writer_path() {
+    let runtime = runtime(vec![]).await;
+    let session_id = start_writer(&runtime, Granularity::Paragraph, false, false).await;
+    let (status, snapshot) = runtime
+        .app
+        .get(&format!("/api/sessions/{session_id}"))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{snapshot}");
+    assert_eq!(snapshot["session"]["phase"], "drafting");
+    assert_eq!(snapshot["session"]["kind"], "chapter_write");
+    let names: Vec<&str> = snapshot["tool_names"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .map(|name| name.as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(names.len(), 19, "{names:?}");
+    assert!(!names.contains(&"submit_outline"), "{names:?}");
+    assert!(names.contains(&"insert_text"), "{names:?}");
 }

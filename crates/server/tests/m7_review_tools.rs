@@ -3,7 +3,6 @@
 mod agent_write_harness;
 
 use agent_write_harness::base::runtime;
-use nekowriter::db::json::Granularity;
 use nekowriter::services::indexer;
 use nekowriter::testing::TestApp;
 use nekowriter_llm::mock::ScriptStep;
@@ -33,9 +32,8 @@ async fn calls(
         .collect()
 }
 
-async fn run_writer(runtime: &agent_write_harness::Runtime) -> Vec<(String, String, Value, bool)> {
-    let session_id =
-        agent_write_harness::start_writer(runtime, Granularity::Paragraph, false, false).await;
+async fn run_planner(runtime: &agent_write_harness::Runtime) -> Vec<(String, String, Value, bool)> {
+    let session_id = agent_write_harness::start_planner(runtime).await;
     runtime.wait_any_status(session_id).await;
     calls(runtime, session_id).await
 }
@@ -86,7 +84,7 @@ async fn read_knowledge_entry_reports_invisible_entries_as_not_found() {
         )
         .await;
 
-    let calls = run_writer(&runtime).await;
+    let calls = run_planner(&runtime).await;
     let reads: Vec<_> = calls
         .iter()
         .filter(|(name, _, _, _)| name == "read_knowledge_entry")
@@ -167,7 +165,7 @@ async fn knowledge_hits_are_cut_to_four_hundred_characters() {
     indexer::run_once(runtime.app.state())
         .await
         .expect("indexer");
-    let calls = run_writer(&runtime).await;
+    let calls = run_planner(&runtime).await;
     let (_, text, _, is_error) = calls
         .iter()
         .find(|(name, _, _, _)| name == "search_knowledge")
@@ -215,7 +213,7 @@ async fn search_canon_renders_the_kind_label_and_the_ui_shape() {
     indexer::run_once(runtime.app.state())
         .await
         .expect("indexer");
-    let calls = run_writer(&runtime).await;
+    let calls = run_planner(&runtime).await;
     let (_, text, ui, is_error) = calls
         .iter()
         .find(|(name, _, _, _)| name == "search_canon")
@@ -285,7 +283,7 @@ async fn search_chapters_renders_the_label_pids_and_snippet() {
         .await
         .expect("indexer");
 
-    let calls = run_writer(&runtime).await;
+    let calls = run_planner(&runtime).await;
     let (_, text, ui, is_error) = calls
         .iter()
         .find(|(name, _, _, _)| name == "search_chapters")

@@ -424,6 +424,8 @@ pub async fn run(state: &AppState, task_id: i32) -> Result<i32, AppError> {
             kickoff_extra: Some(serde_json::json!({ "scope_id": scope_id })),
             pending_comment: None,
             legacy_planning_fixture: false,
+            legacy_system_prompt: None,
+            legacy_kickoff_text: None,
         },
     )
     .await?;

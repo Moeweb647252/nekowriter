@@ -1928,6 +1928,10 @@ pub async fn seal_inner(
     prompts: &PromptSet,
 ) -> Result<Vec<ServerEvent>, AppError> {
     let mut events = Vec::new();
+    // Read the row again: a finalizing transaction may have advanced `view_snapshot` (the
+    // accepted outline of F17 / D-146), and the in-memory model the caller holds predates it.
+    let session = crate::agent::session::load(tx, session.id).await?;
+    let session = &session;
     let report = edit_report_text(tx, session, prompts).await?;
     let items = pending_inbox_rows(tx, session.id).await?;
 
@@ -2162,6 +2166,10 @@ pub async fn text_only_inner(
     prompts: &PromptSet,
 ) -> Result<Vec<ServerEvent>, AppError> {
     let mut events = Vec::new();
+    // As in `seal_inner`, use the latest row so a snapshot advanced by the same transaction is
+    // visible to the edit report.
+    let session = crate::agent::session::load(tx, session.id).await?;
+    let session = &session;
     // Pending edits or messages become a user message first (spec/03 §5.6).
     let report = edit_report_text(tx, session, prompts).await?;
     let items = pending_inbox_rows(tx, session.id).await?;

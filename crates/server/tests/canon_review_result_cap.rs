@@ -12,7 +12,6 @@
 mod agent_write_harness;
 
 use agent_write_harness::base::runtime;
-use nekowriter::db::json::Granularity;
 use nekowriter::prompts::PromptRegistry;
 use nekowriter_llm::mock::{ScriptStep, ScriptedProvider};
 use serde_json::json;
@@ -78,8 +77,7 @@ async fn a_long_result_is_capped_at_a_paragraph_boundary_with_the_template() {
     runtime.app.set_provider(ScriptedProvider::new(vec![
         ScriptStep::new().tool("get_entity", json!({ "entity": "Long Winded" })),
     ]));
-    let session_id =
-        agent_write_harness::start_writer(&runtime, Granularity::Paragraph, false, false).await;
+    let session_id = agent_write_harness::start_planner(&runtime).await;
     runtime.wait_any_status(session_id).await;
     let calls = tool_calls(&runtime, session_id).await;
     let (_, text, is_error) = calls
@@ -149,8 +147,7 @@ async fn a_tool_owned_max_chars_is_not_cut_by_the_global_cap() {
             "read_chapter",
             json!({ "chapter": "main 2", "max_chars": 20_000 }),
         )]));
-    let session_id =
-        agent_write_harness::start_writer(&runtime, Granularity::Paragraph, false, false).await;
+    let session_id = agent_write_harness::start_planner(&runtime).await;
     runtime.wait_any_status(session_id).await;
     let calls = tool_calls(&runtime, session_id).await;
     let (_, text, is_error) = calls
@@ -190,8 +187,7 @@ async fn a_smaller_tool_cap_uses_the_tools_own_hint() {
             "read_chapter",
             json!({ "chapter": "main 2", "max_chars": 500 }),
         )]));
-    let session_id =
-        agent_write_harness::start_writer(&runtime, Granularity::Paragraph, false, false).await;
+    let session_id = agent_write_harness::start_planner(&runtime).await;
     runtime.wait_any_status(session_id).await;
     let calls = tool_calls(&runtime, session_id).await;
     let (_, text, is_error) = calls

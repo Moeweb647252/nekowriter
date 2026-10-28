@@ -19,17 +19,22 @@ use nekowriter::db::json::{Granularity, SessionStatus};
 #[path = "agent_write_harness/mod.rs"]
 mod agent_write_harness;
 
-use agent_write_harness::{outline_step, runtime, start_writer};
+use agent_write_harness::{runtime, start_writer};
+use nekowriter_llm::mock::ScriptStep;
+use serde_json::json;
 
 #[tokio::test]
 async fn resume_cannot_leave_a_running_session_without_a_runner() {
-    let runtime = runtime(vec![outline_step()]).await;
+    let runtime = runtime(vec![
+        ScriptStep::new().tool("insert_text", json!({ "text": "第一段。" })),
+    ])
+    .await;
     let manager = runtime.app.state().manager();
     // Arm the gate before the session starts: the next runner to exit (the one that commits
     // `held`) is held between that commit and the removal of its handle.
     let gate = manager.test_hold_next_runner_exit();
 
-    let session_id = start_writer(&runtime, Granularity::Paragraph, false, true).await;
+    let session_id = start_writer(&runtime, Granularity::Paragraph, true, false).await;
     runtime.wait_status(session_id, SessionStatus::Held).await;
     tokio::time::timeout(Duration::from_secs(5), gate.entered.notified())
         .await

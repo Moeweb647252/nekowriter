@@ -6,7 +6,8 @@
 mod agent_write_harness;
 
 use agent_write_harness::{
-    chapter_column, chapter_content, chapter_row, outline_step, phase_of, runtime, start_writer,
+    chapter_column, chapter_content, chapter_row, outline_step, phase_of, runtime,
+    start_legacy_writer, start_writer,
 };
 use axum::http::StatusCode;
 use nekowriter::db::json::{Granularity, Phase, SessionStatus, ToolCallStatus};
@@ -93,7 +94,7 @@ async fn test_01_plan_outline_hold_approve_draft_and_complete() {
         finish_pair()[1].clone(),
     ])
     .await;
-    let session_id = start_writer(&runtime, Granularity::Paragraph, false, true).await;
+    let session_id = start_legacy_writer(&runtime, Granularity::Paragraph, false, true).await;
 
     // The outline held because `pause_after_outline` is on (spec/03 §5.2).
     let (outline, row) = held_call(&runtime, session_id).await;
@@ -148,7 +149,7 @@ async fn test_02_feedback_on_a_held_outline_keeps_planning_and_allows_resubmissi
         finish_pair()[1].clone(),
     ])
     .await;
-    let session_id = start_writer(&runtime, Granularity::Paragraph, false, true).await;
+    let session_id = start_legacy_writer(&runtime, Granularity::Paragraph, false, true).await;
     let (first_outline, _row) = held_call(&runtime, session_id).await;
 
     let (status, body) = resume(&runtime, session_id, Some("章纲再细一点，加一场雨中的戏。")).await;
@@ -195,7 +196,6 @@ async fn test_02_feedback_on_a_held_outline_keeps_planning_and_allows_resubmissi
 #[tokio::test]
 async fn test_03_auto_pause_holds_each_insert_and_feedback_sticks_to_its_call() {
     let runtime = runtime(vec![
-        outline_step(),
         insert_step("第一段。"),
         insert_step("第二段。"),
         finish_pair()[0].clone(),
@@ -266,7 +266,6 @@ async fn test_03_auto_pause_holds_each_insert_and_feedback_sticks_to_its_call() 
 #[tokio::test]
 async fn test_06_author_edits_while_held_are_reported_exactly() {
     let runtime = runtime(vec![
-        outline_step(),
         insert_step("第一段原文。"),
         insert_step("第二段原文。"),
         insert_step("第三段原文。"),
@@ -345,7 +344,6 @@ async fn test_06_author_edits_while_held_are_reported_exactly() {
 async fn the_edit_report_reports_deletions_and_truncates_old_text() {
     let long = "旧".repeat(200);
     let runtime = runtime(vec![
-        outline_step(),
         insert_step(&long),
         insert_step("第二段。"),
         insert_step("第三段。"),
@@ -397,7 +395,6 @@ async fn the_edit_report_reports_deletions_and_truncates_old_text() {
 #[tokio::test]
 async fn a_large_edit_while_held_produces_the_compact_report() {
     let runtime = runtime(vec![
-        outline_step(),
         insert_step("写手新增的一段。"),
         finish_pair()[0].clone(),
         finish_pair()[1].clone(),
@@ -485,7 +482,6 @@ async fn a_large_edit_while_held_produces_the_compact_report() {
 #[tokio::test]
 async fn test_09_a_retrieval_tool_during_drafting_is_rejected() {
     let runtime = runtime(vec![
-        outline_step(),
         ScriptStep::new().tool("get_entity", json!({ "entity": "林凡" })),
         insert_step("正文。"),
         finish_pair()[0].clone(),
@@ -525,10 +521,11 @@ async fn test_09_a_retrieval_tool_during_drafting_is_rejected() {
 async fn test_10_a_switch_does_not_invalidate_an_in_flight_call() {
     // The drafting call streams slowly, so the PATCH lands while it is generated.
     let runtime = runtime(vec![
-        outline_step(),
         insert_step("这一段按逐段粒度写入，是一个完整的段落。")
             .delay_per_event(std::time::Duration::from_millis(40)),
-        ScriptStep::new().tool("insert_text", json!({ "text": "后续一句。" })),
+        ScriptStep::new()
+            .tool("insert_text", json!({ "text": "后续一句。" }))
+            .delay_per_event(std::time::Duration::from_millis(40)),
         finish_pair()[0].clone(),
         finish_pair()[1].clone(),
     ])
@@ -539,6 +536,16 @@ async fn test_10_a_switch_does_not_invalidate_an_in_flight_call() {
         assert!(
             std::time::Instant::now() < deadline,
             "never reached drafting"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    // Wait until the first drafting call has sealed, so the patch lands while the second call
+    // streams. A write session is already `Drafting` at creation (D-146), so the phase alone is
+    // no longer a proxy for "a call is in flight".
+    while runtime.calls(session_id).await.is_empty() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the first call never sealed"
         );
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
@@ -586,7 +593,7 @@ async fn test_18_editing_the_outline_while_held_reports_it_with_the_acceptance()
         finish_pair()[1].clone(),
     ])
     .await;
-    let session_id = start_writer(&runtime, Granularity::Paragraph, false, true).await;
+    let session_id = start_legacy_writer(&runtime, Granularity::Paragraph, false, true).await;
     let (outline, _) = held_call(&runtime, session_id).await;
     assert_eq!(outline.name, "submit_outline");
 
@@ -634,7 +641,6 @@ async fn test_18_editing_the_outline_while_held_reports_it_with_the_acceptance()
 async fn feedback_revokes_a_held_completion_and_keeps_working() {
     let long_text: String = "字".repeat(2_000);
     let runtime = runtime(vec![
-        outline_step(),
         ScriptStep::new().tool(
             "insert_text",
             json!({ "text": long_text, "chapter_end": true }),
@@ -729,7 +735,7 @@ async fn feedback_revokes_a_held_phase_change() {
         finish_pair()[1].clone(),
     ])
     .await;
-    let session_id = start_writer(&runtime, Granularity::Paragraph, false, true).await;
+    let session_id = start_legacy_writer(&runtime, Granularity::Paragraph, false, true).await;
     let (first, _) = held_call(&runtime, session_id).await;
     assert_eq!(
         first.effects().phase_to,
@@ -760,7 +766,6 @@ async fn feedback_revokes_a_held_phase_change() {
 #[tokio::test]
 async fn a_held_session_survives_a_restart_and_continue_resumes_it() {
     let runtime = runtime(vec![
-        outline_step(),
         insert_step("暂停前写入的一段。"),
         insert_step("恢复后写入的一段。"),
         finish_pair()[0].clone(),
@@ -793,7 +798,6 @@ async fn a_held_session_survives_a_restart_and_continue_resumes_it() {
 #[tokio::test]
 async fn the_granularity_notice_names_an_open_tail() {
     let runtime = runtime(vec![
-        outline_step(),
         ScriptStep::new().tool(
             "insert_text",
             json!({ "text": "这一段还没有写完", "paragraph_end": false }),
@@ -856,7 +860,6 @@ async fn the_granularity_notice_names_an_open_tail() {
 #[tokio::test]
 async fn a_pause_request_during_a_writer_stream_holds_the_call() {
     let runtime = runtime(vec![
-        outline_step(),
         insert_step("流式写入的一段。").delay_per_event(std::time::Duration::from_millis(30)),
         finish_pair()[0].clone(),
         finish_pair()[1].clone(),
@@ -936,7 +939,6 @@ async fn a_refusal_finishes_its_calls_as_errors_and_never_executes_them() {
     use nekowriter_llm::StopReason;
 
     let runtime = runtime(vec![
-        outline_step(),
         // A response that carries a call AND refuses: the call must never run.
         ScriptStep::new()
             .tool("insert_text", json!({ "text": "这段文字不应该被写入。" }))
@@ -1000,7 +1002,6 @@ async fn a_refusal_finishes_its_calls_as_errors_and_never_executes_them() {
 #[tokio::test]
 async fn a_held_write_emits_no_content_event_until_it_is_approved() {
     let runtime = runtime(vec![
-        outline_step(),
         insert_step("第一段。"),
         insert_step("第二段。"),
         finish_pair()[0].clone(),
@@ -1056,7 +1057,6 @@ async fn a_held_write_emits_no_content_event_until_it_is_approved() {
 #[tokio::test]
 async fn approving_two_held_writes_does_not_apply_either_twice() {
     let runtime = runtime(vec![
-        outline_step(),
         insert_step("第一段。"),
         insert_step("第二段。"),
         finish_pair()[0].clone(),
@@ -1098,7 +1098,6 @@ async fn approving_two_held_writes_does_not_apply_either_twice() {
 #[tokio::test]
 async fn a_held_write_exposes_its_pending_text_in_the_session_snapshot() {
     let runtime = runtime(vec![
-        outline_step(),
         insert_step("待确认的一段。"),
         finish_pair()[0].clone(),
         finish_pair()[1].clone(),

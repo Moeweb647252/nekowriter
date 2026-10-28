@@ -40,6 +40,13 @@ async fn start_legacy(runtime: &Runtime, pause_after_outline: bool) -> i32 {
             auto_pause: Some(false),
             pause_after_outline: Some(pause_after_outline),
             legacy_planning_fixture: true,
+            // The exact text captured from the pre-split pack at 2d4b7af (F3).
+            legacy_system_prompt: Some(
+                include_str!("fixtures/legacy_writer_system.txt").to_owned(),
+            ),
+            legacy_kickoff_text: Some(
+                include_str!("fixtures/legacy_writer_kickoff.txt").to_owned(),
+            ),
             ..CreateSession::default()
         },
     )
@@ -149,6 +156,47 @@ async fn legacy_feedback_uses_the_writer_rejection_notice() {
     );
     assert!(!all.contains("完成被撤回"), "{all}");
     assert!(all.contains("改得更紧一些"), "{all}");
+}
+
+/// The legacy fixture really freezes the pre-split system prompt and kickoff, not the current
+/// pack (AC5/R10, F3): a silent switch to current prompts fails this test.
+#[tokio::test]
+async fn the_legacy_fixture_freezes_the_pre_split_prompt_and_kickoff() {
+    let runtime = runtime(vec![outline_step("细纲")]).await;
+    let session_id = start_legacy(&runtime, true).await;
+    let (_, snapshot) = runtime
+        .app
+        .get(&format!("/api/sessions/{session_id}"))
+        .await;
+    let old_system = include_str!("fixtures/legacy_writer_system.txt");
+    let old_kickoff = include_str!("fixtures/legacy_writer_kickoff.txt");
+    assert_eq!(snapshot["system_prompt"], old_system);
+    assert!(
+        snapshot["system_prompt"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("规划阶段")
+    );
+    let kickoff = snapshot["messages"][0]["message"]["blocks"][0]["text"]
+        .as_str()
+        .unwrap_or_default();
+    assert_eq!(kickoff, old_kickoff);
+    assert!(
+        kickoff.contains("当前处于【规划阶段】") && !kickoff.contains("当前处于【正文阶段】"),
+        "the pre-split kickoff: {kickoff}"
+    );
+    // The current pack renders a different prompt, so equality above cannot pass by accident.
+    let current = runtime
+        .app
+        .state()
+        .prompts()
+        .for_book(runtime.app.db(), Some(runtime.book_id))
+        .await
+        .expect("current prompts")
+        .render("writer.system", &json!({}))
+        .expect("render writer.system");
+    assert_ne!(current.text, old_system);
+    runtime.wait_status(session_id, SessionStatus::Held).await;
 }
 
 /// The legacy fixture really freezes the old 20-tool list, `submit_outline` included.

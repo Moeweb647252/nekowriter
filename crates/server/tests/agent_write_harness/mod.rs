@@ -17,14 +17,69 @@ use nekowriter::db::json::{Granularity, Phase};
 use nekowriter::services::sessions::{self, CreateSession};
 use serde_json::json;
 
-/// Starts a real `chapter_write` session (planning) for the harness chapter.
+/// Gives a chapter an accepted outline, so a shipped write session can start in `drafting`
+/// (D-146). The values match the old `outline_step()` fixture, so existing expectations carry over.
+pub async fn accept_outline(runtime: &Runtime, chapter_id: i32) {
+    runtime
+        .app
+        .execute(&format!(
+            "UPDATE chapters SET outline = '场景一：城门口', reference_notes = '- 雨一直下' \
+             WHERE id = {chapter_id}"
+        ))
+        .await;
+}
+
+/// Starts a shipped `chapter_write` session (drafting, 19-tool list) for the harness chapter.
 pub async fn start_writer(
+    runtime: &Runtime,
+    granularity: Granularity,
+    auto_pause: bool,
+    _pause_after_outline: bool,
+) -> i32 {
+    start_writer_on(
+        runtime,
+        runtime.chapter_id,
+        granularity,
+        auto_pause,
+        _pause_after_outline,
+        false,
+    )
+    .await
+}
+
+/// Starts a shipped `chapter_write` session for a chosen chapter: accepted outline first, then
+/// the production drafting-only path. The pause-after-outline switch belongs to the outline
+/// session now, so the parameter is kept only for the legacy helper below.
+pub async fn start_writer_on(
+    runtime: &Runtime,
+    chapter_id: i32,
+    granularity: Granularity,
+    auto_pause: bool,
+    _pause_after_outline: bool,
+    redraft: bool,
+) -> i32 {
+    accept_outline(runtime, chapter_id).await;
+    create_writer(
+        runtime,
+        chapter_id,
+        granularity,
+        auto_pause,
+        false,
+        redraft,
+        false,
+    )
+    .await
+}
+
+/// Starts a **legacy** pre-split `chapter_write` session (planning, old 20-tool list) — kept only
+/// for the tests that pin the backwards-compatibility branch (D-146, R10/AC5).
+pub async fn start_legacy_writer(
     runtime: &Runtime,
     granularity: Granularity,
     auto_pause: bool,
     pause_after_outline: bool,
 ) -> i32 {
-    start_writer_on(
+    start_legacy_writer_on(
         runtime,
         runtime.chapter_id,
         granularity,
@@ -35,14 +90,34 @@ pub async fn start_writer(
     .await
 }
 
-/// Starts a real `chapter_write` session for a chosen chapter.
-pub async fn start_writer_on(
+pub async fn start_legacy_writer_on(
     runtime: &Runtime,
     chapter_id: i32,
     granularity: Granularity,
     auto_pause: bool,
     pause_after_outline: bool,
     redraft: bool,
+) -> i32 {
+    create_writer(
+        runtime,
+        chapter_id,
+        granularity,
+        auto_pause,
+        pause_after_outline,
+        redraft,
+        true,
+    )
+    .await
+}
+
+async fn create_writer(
+    runtime: &Runtime,
+    chapter_id: i32,
+    granularity: Granularity,
+    auto_pause: bool,
+    pause_after_outline: bool,
+    redraft: bool,
+    legacy: bool,
 ) -> i32 {
     let (session_id, _warnings) = sessions::create(
         runtime.app.state(),
@@ -58,13 +133,36 @@ pub async fn start_writer_on(
             guidance: None,
             kickoff_extra: None,
             pending_comment: None,
-            // The M4 runtime suite exercises the legacy planning branch: these tests were written
-            // for the pre-split two-phase writer and remain its coverage (D-146).
-            legacy_planning_fixture: true,
+            legacy_planning_fixture: legacy,
+            legacy_system_prompt: None,
+            legacy_kickoff_text: None,
         },
     )
     .await
     .expect("create writer session");
+    session_id
+}
+
+/// Starts a shipped `chapter_outline` session with no pause; retrieval-only tests use it because
+/// retrieval belongs to the planner now (D-146).
+pub async fn start_planner(runtime: &Runtime) -> i32 {
+    start_planner_on(runtime, runtime.chapter_id).await
+}
+
+/// Starts a shipped `chapter_outline` session for a chosen chapter.
+pub async fn start_planner_on(runtime: &Runtime, chapter_id: i32) -> i32 {
+    let (session_id, _warnings) = sessions::create(
+        runtime.app.state(),
+        CreateSession {
+            kind: nekowriter::db::json::SessionKind::ChapterOutline,
+            book_id: Some(runtime.book_id),
+            chapter_id: Some(chapter_id),
+            pause_after_outline: Some(false),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("create planner session");
     session_id
 }
 

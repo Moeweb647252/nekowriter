@@ -558,9 +558,63 @@ async fn the_cache_ttl_is_resolved_at_creation() {
         .as_str()
         .expect("a resolved cache_ttl");
     assert_ne!(ttl, "auto", "auto is resolved at creation: {snapshot}");
-    assert!(ttl == "5m" || ttl == "1h", "a concrete TTL: {ttl}");
+    // A write session with auto-pause off is a plain worker: exactly 5 minutes.
+    assert_eq!(ttl, "5m", "the default worker TTL: {snapshot}");
     let _ = runtime
         .app
         .post(&format!("/api/sessions/{session_id}/abandon"), json!({}))
+        .await;
+
+    // A planner that pauses after the outline is a holding session: exactly 1 hour (F11,
+    // spec/04 §3).
+    let (planner_paused, _) = nekowriter::services::sessions::create(
+        runtime.app.state(),
+        nekowriter::services::sessions::CreateSession {
+            kind: SessionKind::ChapterOutline,
+            book_id: Some(runtime.book_id),
+            chapter_id: Some(runtime.chapter_id),
+            pause_after_outline: Some(true),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("create paused planner");
+    let snapshot = runtime.model_snapshot(planner_paused).await;
+    assert_eq!(
+        snapshot["options"]["cache_ttl"], "1h",
+        "a paused planner keeps its prefix for an hour: {snapshot}"
+    );
+    let _ = runtime
+        .app
+        .post(
+            &format!("/api/sessions/{planner_paused}/abandon"),
+            json!({}),
+        )
+        .await;
+
+    // Without the pause it is an ordinary worker again: 5 minutes.
+    let (planner_instant, _) = nekowriter::services::sessions::create(
+        runtime.app.state(),
+        nekowriter::services::sessions::CreateSession {
+            kind: SessionKind::ChapterOutline,
+            book_id: Some(runtime.book_id),
+            chapter_id: Some(runtime.chapter_id),
+            pause_after_outline: Some(false),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("create instant planner");
+    let snapshot = runtime.model_snapshot(planner_instant).await;
+    assert_eq!(
+        snapshot["options"]["cache_ttl"], "5m",
+        "an unpaused planner is a worker: {snapshot}"
+    );
+    let _ = runtime
+        .app
+        .post(
+            &format!("/api/sessions/{planner_instant}/abandon"),
+            json!({}),
+        )
         .await;
 }

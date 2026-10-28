@@ -111,11 +111,13 @@ async fn hold_then_approve_applies_outline_notes_and_title_and_completes() {
         .await;
     assert_eq!(status, StatusCode::OK);
 
+    // Capture the full chapter row (outline, notes, title, content, version, status) before the
+    // session exists at all: this is the assertion that a held proposal wrote nothing (F16).
+    let before = chapter_snapshot(&runtime).await;
     let session_id = start_outline(&runtime, true).await;
     let held = runtime.wait_status(session_id, SessionStatus::Held).await;
     assert_eq!(held.phase, "none");
     assert_eq!(held.pause_after_outline, 1);
-    let before = chapter_snapshot(&runtime).await;
     // The chapter is byte-identical while the proposal is held, and still `planned`.
     let (chapter_status, _, _) = runtime.chapter_status().await;
     assert_eq!(chapter_status, "planned");
@@ -335,4 +337,145 @@ async fn the_outline_session_freezes_the_planner_tool_list() {
     assert_eq!(snapshot["session"]["role"], "planner");
     assert_eq!(snapshot["session"]["kind"], "chapter_outline");
     let _ = Phase::None;
+}
+
+/// spec/03 §15 test 18: the author edits the chapter while `submit_outline` is held, then
+/// approves → the chapter takes exactly the proposal (the interim edit is replaced), the held call
+/// finalises with the staged wording, and the session completes (F4).
+#[tokio::test]
+async fn author_edits_while_held_are_replaced_by_the_approved_proposal() {
+    let runtime = runtime(vec![ScriptStep::new().tool(
+        "submit_outline",
+        outline_args("提议细纲", "- 提议要点", Some("提议标题")),
+    )])
+    .await;
+    let session_id = start_outline(&runtime, true).await;
+    runtime.wait_status(session_id, SessionStatus::Held).await;
+    // The author writes the chapter by hand while the proposal waits.
+    let (status, _) = runtime
+        .app
+        .patch(
+            &format!("/api/chapters/{}", runtime.chapter_id),
+            json!({
+                "outline": "作者在等待时改的细纲",
+                "reference_notes": "- 作者等待时的要点",
+                "title": "作者标题"
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    approve(&runtime, session_id).await;
+    runtime
+        .wait_status(session_id, SessionStatus::Completed)
+        .await;
+
+    let (_, chapter) = runtime
+        .app
+        .get(&format!("/api/chapters/{}", runtime.chapter_id))
+        .await;
+    // Exactly the proposal: the interim author edit to the outline is replaced, while the
+    // author's non-empty title wins.
+    assert_eq!(chapter["outline"], "提议细纲");
+    assert_eq!(chapter["reference_notes"], "- 提议要点");
+    assert_eq!(chapter["title"], "作者标题");
+    assert_eq!(chapter["status"], "planned");
+
+    let calls = runtime.calls(session_id).await;
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].status, "done");
+    assert!(!calls[0].is_error);
+    let result = calls[0].result_text.clone().unwrap_or_default();
+    assert!(
+        result.contains("作者接受后才会生效"),
+        "the held call finalises with the staged wording: {result}"
+    );
+    assert!(!result.contains("章纲与参考要点已保存"), "{result}");
+}
+
+/// The planner's retrieval path runs end-to-end in a `chapter_outline` session: a real retrieval
+/// call succeeds, the kickoff is the planner's, and the accepted proposal follows it (F5).
+#[tokio::test]
+async fn the_planner_retrieves_then_submits_in_one_session() {
+    let runtime = runtime(vec![
+        ScriptStep::new().tool("get_entity", json!({ "entity": "林凡" })),
+        ScriptStep::new().tool(
+            "submit_outline",
+            outline_args("检索后的细纲", "- 检索后的要点", None),
+        ),
+    ])
+    .await;
+    let (status, _) = runtime
+        .app
+        .post(
+            &format!("/api/books/{}/entities", runtime.book_id),
+            json!({ "kind": "character", "name": "林凡", "summary": "主角", "importance": 5 }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let session_id = start_outline(&runtime, false).await;
+    runtime
+        .wait_status(session_id, SessionStatus::Completed)
+        .await;
+
+    let calls = runtime.calls(session_id).await;
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert_eq!(calls[0].name, "get_entity");
+    assert!(!calls[0].is_error);
+    let retrieved = calls[0].result_text.clone().unwrap_or_default();
+    assert!(
+        retrieved.contains("林凡"),
+        "the retrieval result: {retrieved}"
+    );
+    assert_eq!(calls[1].name, "submit_outline");
+
+    let (_, snapshot) = runtime
+        .app
+        .get(&format!("/api/sessions/{session_id}"))
+        .await;
+    let kickoff: String = snapshot["messages"][0]["message"]["blocks"]
+        .as_array()
+        .expect("blocks")
+        .iter()
+        .filter_map(|block| block["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(kickoff.contains("【细纲任务】"), "{kickoff}");
+    assert!(kickoff.contains("submit_outline"), "{kickoff}");
+    let tools: Vec<&str> = snapshot["tool_names"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .map(|name| name.as_str().unwrap_or_default())
+        .collect();
+    assert!(tools.contains(&"get_entity"));
+    assert!(!tools.contains(&"insert_text"));
+}
+
+/// Approving an outline advances the stored view snapshot past the agent's own proposal, so the
+/// finalised call carries no edit report naming the proposal as an author edit (F17). Deleting
+/// `keep_view_snapshot_outline_in_sync` makes this test fail.
+#[tokio::test]
+async fn approving_an_outline_does_not_report_the_proposal_as_an_author_edit() {
+    let runtime = runtime(vec![ScriptStep::new().tool(
+        "submit_outline",
+        outline_args("提议细纲", "- 提议要点", None),
+    )])
+    .await;
+    let session_id = start_outline(&runtime, true).await;
+    runtime.wait_status(session_id, SessionStatus::Held).await;
+    approve(&runtime, session_id).await;
+    runtime
+        .wait_status(session_id, SessionStatus::Completed)
+        .await;
+    let calls = runtime.calls(session_id).await;
+    let result = calls[0].result_text.clone().unwrap_or_default();
+    assert!(
+        !result.contains("【用户修改了正文】"),
+        "the proposal is not an author edit: {result}"
+    );
+    assert!(
+        !result.contains("〔作者修改后的章纲〕"),
+        "the proposal is not an author outline edit: {result}"
+    );
+    assert!(result.contains("作者接受后才会生效"), "{result}");
 }

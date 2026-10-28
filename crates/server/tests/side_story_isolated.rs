@@ -11,7 +11,7 @@ mod agent_write_harness;
 use std::time::Duration;
 
 use agent_write_harness::base::runtime;
-use nekowriter::db::json::{Granularity, SessionKind, SessionStatus};
+use nekowriter::db::json::{SessionKind, SessionStatus};
 use nekowriter_llm::mock::ScriptStep;
 use serde_json::json;
 
@@ -313,6 +313,10 @@ async fn the_retrieval_tools_mark_items_after_the_anchor() {
     let runtime = runtime(vec![
         ScriptStep::new().tool("get_entity", json!({ "entity": "林凡" })),
         ScriptStep::new().tool("query_timeline", json!({})),
+        ScriptStep::new().tool(
+            "submit_outline",
+            json!({ "outline": "番外细纲", "reference_notes": "- 要点" }),
+        ),
     ])
     .await;
     let app = &runtime.app;
@@ -375,12 +379,10 @@ async fn the_retrieval_tools_mark_items_after_the_anchor() {
     let (session_id, _) = nekowriter::services::sessions::create(
         app.state(),
         nekowriter::services::sessions::CreateSession {
-            kind: SessionKind::ChapterWrite,
+            kind: SessionKind::ChapterOutline,
             book_id: Some(book_id),
             chapter_id: Some(chapter_id),
-            granularity: Some(Granularity::Paragraph),
-            // These tests exercise planning-phase retrieval, which only a legacy session has now.
-            legacy_planning_fixture: true,
+            pause_after_outline: Some(false),
             ..Default::default()
         },
     )
@@ -442,6 +444,10 @@ async fn the_retrieval_tools_mark_items_after_the_anchor() {
 async fn search_chapters_marks_passages_after_the_anchor() {
     let mut runtime = runtime(vec![
         ScriptStep::new().tool("search_chapters", json!({ "query": "tomb" })),
+        ScriptStep::new().tool(
+            "submit_outline",
+            json!({ "outline": "番外细纲", "reference_notes": "- 要点" }),
+        ),
     ])
     .await;
     let first = official_main_chapter(&runtime, "第一章").await;
@@ -488,12 +494,10 @@ async fn search_chapters_marks_passages_after_the_anchor() {
     let (session_id, _) = nekowriter::services::sessions::create(
         app.state(),
         nekowriter::services::sessions::CreateSession {
-            kind: SessionKind::ChapterWrite,
+            kind: SessionKind::ChapterOutline,
             book_id: Some(runtime.book_id),
             chapter_id: Some(chapter_id),
-            granularity: Some(Granularity::Paragraph),
-            // These tests exercise planning-phase retrieval, which only a legacy session has now.
-            legacy_planning_fixture: true,
+            pause_after_outline: Some(false),
             ..Default::default()
         },
     )

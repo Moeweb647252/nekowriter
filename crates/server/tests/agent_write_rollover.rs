@@ -6,7 +6,7 @@
 
 mod agent_write_harness;
 
-use agent_write_harness::{chapter_content, outline_step, runtime, start_writer, start_writer_on};
+use agent_write_harness::{chapter_content, runtime, start_legacy_writer_on, start_writer};
 use nekowriter::db::json::{Granularity, Phase, SessionStatus};
 use nekowriter_llm::mock::ScriptStep;
 use serde_json::json;
@@ -37,7 +37,6 @@ async fn push_usage_near_the_limit(runtime: &agent_write_harness::Runtime, sessi
 #[tokio::test]
 async fn test_13_rollover_carries_the_draft_author_notes_and_the_inbox() {
     let runtime = runtime(vec![
-        outline_step(),
         insert_step("第一章开头的一段。"),
         insert_step("暂停前写入的一段。"),
         // The child keeps writing; the pair lets it complete.
@@ -179,7 +178,9 @@ async fn an_ineligible_session_overflowing_fails_without_rolling_over() {
     .await;
     let chapter = app.app.create_chapter(app.track_id, "第二章").await;
     let chapter_id = chapter["id"].as_i64().expect("id") as i32;
-    let session_id = start_writer_on(
+    // A legacy planning session is a writer that cannot roll over (phase `planning`), which is
+    // exactly the ineligible case this test pins.
+    let session_id = start_legacy_writer_on(
         &app,
         chapter_id,
         Granularity::Paragraph,
@@ -205,9 +206,9 @@ async fn an_ineligible_session_overflowing_fails_without_rolling_over() {
 async fn one_context_overflow_creates_exactly_one_child() {
     use nekowriter_llm::retry::LlmError;
 
-    // The outline is accepted (the one scripted step), then every further request overflows.
+    // The harness pre-accepts the outline, then every request overflows.
     let app = agent_write_harness::runtime_with_failure(
-        vec![outline_step()],
+        vec![],
         LlmError::ContextOverflow("too long".to_owned()),
     )
     .await;
@@ -244,7 +245,6 @@ async fn one_context_overflow_creates_exactly_one_child() {
 #[tokio::test]
 async fn only_the_settings_block_of_a_rollover_kickoff_carries_a_cache_flag() {
     let runtime = runtime(vec![
-        outline_step(),
         insert_step("第一章开头的一段。"),
         insert_step("暂停前写入的一段。"),
         ScriptStep::new().tool("finish_draft", json!({})),
@@ -293,7 +293,6 @@ async fn only_the_settings_block_of_a_rollover_kickoff_carries_a_cache_flag() {
 #[tokio::test]
 async fn author_notes_keep_the_order_the_author_wrote_them_in() {
     let runtime = runtime(vec![
-        outline_step(),
         insert_step("第一段。"),
         insert_step("第二段。"),
         insert_step("第三段。"),

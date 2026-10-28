@@ -4,7 +4,7 @@
 mod agent_write_harness;
 
 use agent_write_harness::base::runtime;
-use nekowriter::db::json::{Granularity, Phase};
+use nekowriter::db::json::Phase;
 use nekowriter::search::{BookCorpus, BookSearch, hybrid_book};
 use nekowriter::services::indexer;
 use nekowriter::testing::TestApp;
@@ -38,8 +38,7 @@ async fn calls(
 
 /// Starts a writer session in `planning`, runs the scripted calls and returns the tool calls.
 async fn run_writer(runtime: &agent_write_harness::Runtime) -> Vec<(String, String, Value, bool)> {
-    let session_id =
-        agent_write_harness::start_writer(runtime, Granularity::Paragraph, false, false).await;
+    let session_id = agent_write_harness::start_planner(runtime).await;
     runtime.wait_any_status(session_id).await;
     calls(runtime, session_id).await
 }

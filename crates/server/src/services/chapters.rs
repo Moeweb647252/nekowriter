@@ -633,6 +633,8 @@ pub async fn write(
             kickoff_extra: None,
             pending_comment: None,
             legacy_planning_fixture: false,
+            legacy_system_prompt: None,
+            legacy_kickoff_text: None,
         },
     )
     .await?;
@@ -699,6 +701,8 @@ pub async fn outline(
             kickoff_extra: None,
             pending_comment: None,
             legacy_planning_fixture: false,
+            legacy_system_prompt: None,
+            legacy_kickoff_text: None,
         },
     )
     .await?;

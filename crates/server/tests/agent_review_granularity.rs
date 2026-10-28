@@ -29,7 +29,7 @@
 mod agent_write_harness;
 
 use agent_write_harness::{
-    chapter_content, chapter_row, outline_step, runtime, start_writer, start_writer_on,
+    chapter_content, chapter_row, runtime, start_legacy_writer, start_writer, start_writer_on,
 };
 use nekowriter::db::json::{Granularity, SessionStatus};
 use nekowriter::services::sessions::{self, CreateSession};
@@ -55,14 +55,13 @@ fn finish_pair() -> [ScriptStep; 2] {
     ]
 }
 
-/// Runs `steps` after the outline in a fresh non-holding writer session, then finishes the
-/// chapter, and returns the runtime with the finished session id.
+/// Runs `steps` in a fresh non-holding writer session (the harness pre-accepts the outline), then
+/// finishes the chapter, and returns the runtime with the finished session id.
 async fn run_scripted(
     granularity: Granularity,
     steps: Vec<ScriptStep>,
 ) -> (agent_write_harness::Runtime, i32) {
-    let mut script = vec![outline_step()];
-    script.extend(steps);
+    let mut script = steps;
     script.extend(finish_pair());
     let runtime = runtime(script).await;
     let session_id = start_writer(&runtime, granularity, false, false).await;
@@ -314,7 +313,6 @@ async fn chapter_mode_implies_chapter_end_and_limits_60000_characters() {
     let over_limit = "字".repeat(60_001);
     let at_limit = "字".repeat(60_000);
     let runtime = runtime(vec![
-        outline_step(),
         // Rejected first, so the session keeps running for the completing call.
         insert(&over_limit, json!({})),
         insert(&at_limit, json!({})),
@@ -350,7 +348,6 @@ async fn chapter_mode_implies_chapter_end_and_limits_60000_characters() {
 #[tokio::test]
 async fn chapter_mode_continues_an_open_tail_and_closes_it() {
     let runtime = runtime(vec![
-        outline_step(),
         // Left open so the `chapter` call below must continue it, then a completing pair so the
         // session can finish.
         insert("开头的一段，还没有写完", json!({ "paragraph_end": false })),
@@ -431,6 +428,8 @@ async fn revising_ignores_chapter_end_and_hints_at_finish_revision() {
             kickoff_extra: None,
             pending_comment: None,
             legacy_planning_fixture: false,
+            legacy_system_prompt: None,
+            legacy_kickoff_text: None,
         },
     )
     .await
@@ -544,7 +543,6 @@ async fn an_empty_segment_is_a_granularity_error_in_every_mode() {
 async fn the_granularity_notice_mentions_an_open_tail_in_every_unspaced_mode() {
     for granularity in [Granularity::Sentence, Granularity::Free] {
         let runtime = runtime(vec![
-            outline_step(),
             insert("这一段的末尾", json!({ "paragraph_end": false })),
             // The next call continues the open tail and closes it.
             insert("，补完。", json!({})),
@@ -620,7 +618,6 @@ async fn a_call_generated_under_paragraph_survives_a_switch_to_sentence() {
     let in_flight = "字".repeat(500);
     let after_switch = "新的句子。";
     let mut script = vec![
-        outline_step(),
         // Streams slowly, so the PATCH lands after `request_meta` was written but before the
         // call executes.
         insert(&in_flight, json!({})).delay_per_event(std::time::Duration::from_millis(40)),
@@ -869,10 +866,9 @@ async fn replace_and_delete_are_not_limited_by_granularity() {
 async fn the_outline_accepted_notice_names_an_open_tail() {
     let runtime = runtime(vec![
         // The first session writes one paragraph and leaves it open, then is abandoned.
-        outline_step(),
         insert("开头的一段，还没写完", json!({ "paragraph_end": false })),
-        // The second session plans and drafts the rest of the chapter.
-        outline_step(),
+        // The second (legacy) session plans first, then drafts the rest of the chapter.
+        agent_write_harness::outline_step(),
         insert("，接着写完了。", json!({})),
         finish_pair()[0].clone(),
         finish_pair()[1].clone(),
@@ -899,9 +895,9 @@ async fn the_outline_accepted_notice_names_an_open_tail() {
         .await;
     assert_eq!(status, 200, "abandon the first session: {body}");
 
-    // The second session starts in planning with that open tail in front of it. Neither auto-pause
-    // nor pause-after-outline is on, so `submit_outline` is finalized in its own transaction.
-    let second = start_writer(&runtime, Granularity::Paragraph, false, false).await;
+    // The second session is the legacy planning branch (the writer acceptance notice it carries
+    // exists only there now), with the open tail in front of it.
+    let second = start_legacy_writer(&runtime, Granularity::Paragraph, false, false).await;
     runtime.wait_status(second, SessionStatus::Completed).await;
 
     let notice = runtime
@@ -959,6 +955,8 @@ async fn revising_ignores_the_implied_chapter_end_of_chapter_mode() {
             kickoff_extra: None,
             pending_comment: None,
             legacy_planning_fixture: false,
+            legacy_system_prompt: None,
+            legacy_kickoff_text: None,
         },
     )
     .await
@@ -995,7 +993,6 @@ async fn a_short_completion_is_withheld_once_at_the_sixtieth_percentile() {
     let just_under = "字".repeat(1_799);
     let at_threshold = "字".repeat(1_800);
     let first = runtime(vec![
-        outline_step(),
         // 1,799 characters: below the threshold, so the `chapter_end` is withheld.
         insert(&just_under, json!({ "chapter_end": true })),
         // The retry goes through even though the chapter is still short.
@@ -1030,11 +1027,7 @@ async fn a_short_completion_is_withheld_once_at_the_sixtieth_percentile() {
     assert_eq!(status, "in_review");
 
     // At exactly 60% the completion is not short at all, so the first `chapter_end` completes.
-    let exact = runtime(vec![
-        outline_step(),
-        insert(&at_threshold, json!({ "chapter_end": true })),
-    ])
-    .await;
+    let exact = runtime(vec![insert(&at_threshold, json!({ "chapter_end": true }))]).await;
     let exact_session = start_writer(&exact, Granularity::Free, false, false).await;
     exact
         .wait_status(exact_session, SessionStatus::Completed)
@@ -1064,7 +1057,6 @@ async fn a_short_completion_is_withheld_once_at_the_sixtieth_percentile() {
 async fn inserting_after_the_open_tail_closes_it() {
     // `free` honours `paragraph_end`, so the fixture can leave a real open tail.
     let runtime = runtime(vec![
-        outline_step(),
         // One segment: p1 complete, p2 open (the last paragraph is the open tail).
         insert(
             "第一段。\n\n第二段还没有写完",

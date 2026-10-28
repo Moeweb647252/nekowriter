@@ -53,6 +53,8 @@ async fn a_failed_session_and_its_chapter_consequence_commit_together() {
             kickoff_extra: None,
             pending_comment: None,
             legacy_planning_fixture: false,
+            legacy_system_prompt: None,
+            legacy_kickoff_text: None,
         },
     )
     .await

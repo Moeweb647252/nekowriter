@@ -12,7 +12,6 @@
 mod agent_write_harness;
 
 use agent_write_harness::base::runtime;
-use nekowriter::db::json::Granularity;
 use nekowriter_llm::mock::{ScriptStep, ScriptedProvider};
 use serde_json::json;
 
@@ -116,15 +115,7 @@ async fn get_entity_counts_the_memory_midterm_window_for_a_side_track() {
     runtime.app.set_provider(ScriptedProvider::new(vec![
         ScriptStep::new().tool("get_entity", json!({ "entity": "Shared One" })),
     ]));
-    let session_id = agent_write_harness::start_writer_on(
-        &runtime,
-        side_chapter_id,
-        Granularity::Paragraph,
-        false,
-        false,
-        false,
-    )
-    .await;
+    let session_id = agent_write_harness::start_planner_on(&runtime, side_chapter_id).await;
     runtime.wait_any_status(session_id).await;
     let calls = tool_calls(&runtime, session_id).await;
     let (_, text, _, is_error) = calls
@@ -181,15 +172,7 @@ async fn a_before_start_side_track_marks_every_main_story_item() {
     runtime.app.set_provider(ScriptedProvider::new(vec![
         ScriptStep::new().tool("query_timeline", json!({})),
     ]));
-    let session_id = agent_write_harness::start_writer_on(
-        &runtime,
-        side_chapter_id,
-        Granularity::Paragraph,
-        false,
-        false,
-        false,
-    )
-    .await;
+    let session_id = agent_write_harness::start_planner_on(&runtime, side_chapter_id).await;
     runtime.wait_any_status(session_id).await;
     let calls = tool_calls(&runtime, session_id).await;
     let (_, text, _, is_error) = calls
@@ -252,8 +235,7 @@ async fn read_chapter_resolves_every_reference_form_and_hides_isolated_tracks() 
             json!({ "chapter": format!("#{side_chapter_id}") }),
         ),
     ]));
-    let session_id =
-        agent_write_harness::start_writer(&runtime, Granularity::Paragraph, false, false).await;
+    let session_id = agent_write_harness::start_planner(&runtime).await;
     runtime.wait_any_status(session_id).await;
     let calls = tool_calls(&runtime, session_id).await;
     let reads: Vec<_> = calls
