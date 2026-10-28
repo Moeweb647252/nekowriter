@@ -2726,8 +2726,26 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   through the marked branch. Overrides of `writer.kickoff.chapter` move to `planner.kickoff`
   because their text is planning instruction; overrides of the retired `writer.kickoff.redraft`
   become inert; overrides of `writer.system`, `tool.submit_outline` and the legacy notices are
-  kept. Task 12.7 records the author-database dry run and the fate of every override in the plan's
-  §2.10 table.
+  kept.
+  - **Author-database dry run (task 12.7)**: on a copy of the author's database
+    (`~/.local/share/nekowriter/nekowriter.db`: 2 books, 1 chapter, 6 sessions, 30 messages, 19 tool
+    calls, 1 inbox row, 2 versions, and 0 proposals, change-log rows, research tasks, reports or
+    feedback), `0004` ran after a copy that recorded `m0001`–`m0003`. Every table count was
+    unchanged before and after (the ten session-referencing tables included), `PRAGMA
+    foreign_key_check` returned no row, and `m0004_outline_sessions` was recorded once. The plan's
+    removal query for open legacy planning sessions returned **0** before and after, so no session
+    needs the legacy branch. `prompt_overrides` had **0** rows: none of the plan §2.10 keys has an
+    override to move (`writer.kickoff.chapter`), leave inert (`writer.kickoff.redraft`) or keep
+    (`writer.system`, `tool.submit_outline`, `writer.notice.outline_accepted`,
+    `writer.notice.outline_rejected`, `writer.notice.nudge_planning`).
+  - **Demo-provider smoke (items 3, 5, 8)**: with `--enable-demo-provider` on a fresh data dir, the
+    new outline step held, accepted a feedback round, approved with the chapter still `planned`,
+    and the write step then paused mid-draft, took a paragraph edit and feedback, and finished to
+    `in_review`; chapter 1 approved and its canon synced; chapter 2 outlined and written at sentence
+    granularity with auto-pause for three steps, then switched to free and finished; book overrides
+    of `planner.system` and `writer.system` were frozen into the next outline and write sessions
+    while a session created before the override kept the shipped prompt. The smoke checklist items
+    3, 5 and 8 were rewritten for the two steps.
 - **Spec**: PROJECT §4–§6, §10.7; spec/02 §1–§5; spec/03 §1, §4–§12, §14–§15; spec/04 §3, §7.2;
   spec/05 §1.5, §2, §4; spec/06 §4.2; spec/08 §1–§3, §7; spec/09 §1–§2; spec/10 §2.2, §2.7–§2.8,
   §4; spec/11 §5–§6.

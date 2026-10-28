@@ -134,17 +134,19 @@ needed. Real providers are tested when the author supplies keys.
 1. Fresh data dir → add the Demo provider, a model, roles → create a book with conception →
    answer questions → review (request changes once) → finalize → canon seeded.
 2. Run a research task → entries searchable (keyword immediately, vector after indexing).
-3. Write chapter 1 at paragraph granularity with pause-after-outline → edit one line of the
-   held outline, then approve (the result shows the edit report) → pause mid-draft → edit a
-   paragraph → feedback → finish.
+3. Write the outline of chapter 1 with pause-after-outline → request changes once → approve
+   (the chapter stays planned) → Write the chapter at paragraph granularity → pause mid-draft →
+   edit a paragraph → feedback → finish.
 4. Ask the reviewer → discuss → send back with edited feedback (revise) → finish revision →
    approve → maintenance → inspect and revert one change → accept a proposal.
-5. Write chapter 2 at sentence granularity with auto-pause for three steps, then switch to free.
+5. Approve chapter 1, then outline chapter 2 and write it at sentence granularity with
+   auto-pause for three steps, then switch to free.
 6. Stop mid-stream → restart the server → continue. A held session survives the restart.
 7. Create an isolated side story anchored after chapter 2 → write, approve, and maintain one
    chapter → shared canon is unchanged.
-8. Override `writer.system` for this book → the next session uses it (check the agent panel's
-   session info popover); sessions created before the change keep the old prompt.
+8. Override `planner.system` and `writer.system` for this book → the next outline session uses
+   the planner override and the next write session the writer override (check each session's info
+   popover); sessions created before the change keep the old prompt.
 9. Switch the UI language and theme. Every screen is fully translated.
 
 ## M12 — Outline and write sessions
