@@ -3,31 +3,35 @@
 ## 1. Chapter lifecycle
 
 ```
-            write (agent) ──► drafting ── draft complete ──┐
- planned ──┤                    │  ▲                         ▼
-            └ manual edit ──────┘  └── send back (redraft) ── in_review ── approve ──► official
-                                                             ▲    │                    │
-                         finish_revision ── revising ◄── send back (revise)          edit text
-                                                                                       ▼
-                                                                         official (canon stale) ── re-sync ──► official (synced)
+ planned ── outline accepted (agent outline session or author) ──► planned (outline ready)
+    │                                                                   │
+    │ manual edit                                                       │ write (agent)
+    ▼                                                                   ▼
+ drafting ── draft complete ──► in_review ── approve ──► official ── edit text ──► official (canon stale) ── re-sync ──► official (synced)
+    ▲                             │    │
+    └── send back (redraft) ──────┘    └── send back (revise) ──► revising ── finish_revision ──► in_review
 ```
+
+An outline session leaves the chapter `planned`; the write session is what moves `planned →
+drafting`, exactly as a manual text edit does.
 
 ### 1.1 Operations
 
 | Operation | Endpoint | Preconditions | Effects |
 |---|---|---|---|
 | Create chapter | `POST /api/tracks/:id/chapters {title?, guidance?}` | the book is `active` (otherwise `409 book.invalid_state` with `details.status`). `conception/finalize` is what activates a book and writes the setting materials and canon the writer's kickoff renders, so a chapter created before it would be written against an empty book; an `archived` book is refused by the same rule (D-130) | `planned`, `ord` = last + 1, empty content |
-| Write | `POST /api/chapters/:id/write {guidance?, granularity?, auto_pause?, pause_after_outline?, force?}` | status `planned` or `drafting`; no open writer session; the previous chapter of the track (and, for the first side-story chapter, the anchor chapter) is `official` with `canon_status = synced`, unless `force` (otherwise `409 chapter.previous_not_ready`; the Write dialog shows the reason and offers **Write anyway**, which sends `force`) | stores guidance; `chapter_write` session (planning). If the chapter already has text, the kickoff includes it and asks the writer to plan the rest and continue from its end |
-| Submit for review (manual) | `POST /api/chapters/:id/submit` | `drafting` or `revising`; non-empty; no `running` writer session (an open, non-running one is abandoned after the UI confirms) | version `draft`/`revision`, status `in_review` |
+| Write the outline | `POST /api/chapters/:id/outline {guidance?, pause_after_outline?, force?}` | the chapter is not `official`; no open planner or writer session; the previous chapter rule is the write rule, unless `force` | stores guidance; `chapter_outline` session. The chapter status does not change. The session stages its outline; acceptance applies `chapters.outline`, `reference_notes` and an empty-title title in one transaction |
+| Write | `POST /api/chapters/:id/write {guidance?, granularity?, auto_pause?, force?}` | status `planned` or `drafting`; `chapters.outline.trim()` is not empty (otherwise `409 chapter.outline_missing`); no open planner or writer session; the previous chapter of the track (and, for the first side-story chapter, the anchor chapter) is `official` with `canon_status = synced`, unless `force` (otherwise `409 chapter.previous_not_ready`; the Write dialog shows the reason and offers **Write anyway**, which sends `force`) | stores guidance; chapter → `drafting`; `chapter_write` session in `drafting`. The kickoff always carries the outline, reference notes and any existing text, and asks the writer to continue from the end and reconcile earlier paragraphs with a changed outline |
+| Submit for review (manual) | `POST /api/chapters/:id/submit` | `drafting` or `revising`; non-empty; no `running` planner or writer session (an open, non-running one is abandoned after the UI confirms) | version `draft`/`revision`, status `in_review` |
 | Draft complete (agent) | completion handler | — | closes the open tail, version `draft` (note = the `finish_draft` note), status `in_review`, toast event |
 | Ask the reviewer | `POST /api/chapters/:id/review` | `in_review` | returns the open reviewer session if its `base_content_version` is the current `content_version`; otherwise abandons that session (if any) and starts `chapter_review` |
 | Re-review | `POST /api/review-reports/:id/rereview {comment}` | chapter `in_review`; the report's session `completed` | spec/03 §6 |
-| Send back | `POST /api/chapters/:id/send-back {feedback, mode, review_report_id?, issue_indexes?}` | `in_review`; feedback non-empty; `issue_indexes` refer to that report's issues | abandons an open reviewer session; `chapter_feedback` row; `revise` → `chapter_revise` session, status `revising`; `redraft` → `backup` version, content cleared, `chapter_write` session with the redraft kickoff (planning), status `drafting` |
+| Send back | `POST /api/chapters/:id/send-back {feedback, mode, review_report_id?, issue_indexes?}` | `in_review`; feedback non-empty; `issue_indexes` refer to that report's issues; `redraft` also needs a non-empty outline (`409 chapter.outline_missing`) | abandons an open reviewer session; `chapter_feedback` row; `revise` → `chapter_revise` session, status `revising`; `redraft` → `backup` version, content cleared, `chapter_write` session in `drafting` whose kickoff carries the feedback through `kickoff_extra.feedback_id`, status `drafting` |
 | Revision complete | completion handler | — | version `revision` (note = summary), status `in_review` |
-| Approve | `POST /api/chapters/:id/approve` | `in_review`; no open writer session | abandons an open reviewer session; version `official`; `official_version_id`; status `official`; `canon_status = pending`; passages indexed; with `auto_maintenance`, start `chapter_maintenance` (when no archivist model is configured, it stays `pending` and the response carries `warnings: ["model.missing_role"]`) |
+| Approve | `POST /api/chapters/:id/approve` | `in_review`; no open planner or writer session | abandons an open reviewer session; version `official`; `official_version_id`; status `official`; `canon_status = pending`; passages indexed; with `auto_maintenance`, start `chapter_maintenance` (when no archivist model is configured, it stays `pending` and the response carries `warnings: ["model.missing_role"]`) |
 | Maintain / retry | `POST /api/chapters/:id/maintain` | `official`; `canon_status ∈ {pending, failed}` | continues the chapter's open archivist session if there is one (failed); otherwise starts a new session of the kind that failed last (`chapter_resync` after an abandoned re-sync, so canon is not maintained twice), or `chapter_maintenance` |
 | Re-sync | `POST /api/chapters/:id/resync` | `official`; `canon_status = stale`; no open archivist session | a new `official` version of the current text becomes `official_version_id`; `chapter_resync` session; on completion it is also `synced_version_id` (spec/06 §8) |
-| Edit text | `PATCH /api/chapters/:id/content` / `PUT …/content/text` | not locked (spec/03 §14) | content + `content_version`; official + synced → `stale`; open writer session not running → reported via edit report. Author edits never open the tail; they close it when the open last paragraph is deleted or a paragraph is inserted after it |
+| Edit text | `PATCH /api/chapters/:id/content` / `PUT …/content/text` | not locked (spec/03 §14: no running planner or writer session) | content + `content_version`; official + synced → `stale`; open planner or writer session not running → reported via edit report. Author edits never open the tail; they close it when the open last paragraph is deleted or a paragraph is inserted after it |
 | Reorder | `POST /api/tracks/:id/chapters/reorder {ids}` | only chapters that are not official may move, and no non-official chapter may end up before an official one | renumber |
 | Delete | `DELETE /api/chapters/:id` | no open session; not the anchor of a side track (`409 chapter.is_anchor` with `details.track_ids`: change those anchors first) | cascades; later chapters of the track are renumbered; the first and last appearances of the entities that appeared in it are recomputed (spec/06 §1.1); for official chapters the UI warns that canon keeps its records (chapter references become null) |
 
@@ -39,8 +43,9 @@
   (approve, resync completion), `manual` (author's "Save version"), `backup` (before redraft,
   before revise, before restore).
 - **Restore** `POST /api/chapter-versions/:id/restore`: creates a `backup` of the current content,
-  then replaces the content with the version's (allowed when no writer session is running; it
-  counts as an author edit, so on an official chapter with synced canon it makes canon `stale`).
+  then replaces the content with the version's (allowed when no planner or writer session is
+  running; it counts as an author edit, so on an official chapter with synced canon it makes canon
+  `stale`).
 
 ### 1.3 Archiving and deleting books and tracks
 - **Archive** (`PATCH /books/:id {status: "archived"}`, active books only; otherwise
@@ -52,30 +57,38 @@
   cannot be deleted (`400 validation.failed`).
 
 ### 1.4 Locking summary
-- Author content edits are rejected (423) only while the chapter's writer session is `running`.
-  The same applies to the chapter's outline and reference notes, which the writer drafts from;
-  while the session is held (e.g. on `submit_outline`), the author may edit them and the agent
-  receives an edit report (spec/03 §7).
+- Author content edits are rejected (423) only while a planner or writer session of the chapter is
+  `running` — the two roles form one lock group. The same applies to the chapter's outline and
+  reference notes; while the session is held (e.g. on `submit_outline`), the author may edit them
+  and the agent receives an edit report (spec/03 §7).
 - Setting documents, character designs, and draft research topics are rejected
   (`423 settings.locked`) only while the book's conception session is `running`. The studio
   disables editing then, so the agent never overwrites a concurrent author edit. Edits made
   while it is not running are reported at the next sealing. After finalize they are never
   locked.
 
-## 2. Writing a chapter (agent)
+## 2. Outlining and writing a chapter (agent)
 
-1. **Kickoff** (`writer.kickoff.chapter`): chapter label, title, guidance, target length, track
-   info (side story premise and anchor), and the existing draft if any. Then the two-phase
-   procedure, with the planning instructions in full and a reminder that drafting rules come
-   after the outline is accepted.
-2. **Planning**: retrieval (as many calls as needed within the soft budget) → `submit_outline`.
-   With `pause_after_outline`, the call holds (spec/03 §5.2). Approve → `drafting`, and the result
-   carries `writer.notice.outline_accepted` with the current granularity's rules. Request changes
-   → the agent stays in planning and resubmits.
-3. **Drafting**: DRAFT_EDIT tools under the granularity rules, with participation (pause,
+1. **Outline kickoff** (`planner.kickoff`): chapter label, title, guidance, target length, track
+   info (side story premise and anchor), the existing text if any (through `block.chapter_draft`),
+   the current accepted outline to replace when there is one, and the planning procedure.
+   Retrieval is allowed and encouraged; drafting tools are not in the planner's list.
+2. **Outline**: retrieval (as many calls as needed within the soft budget) → `submit_outline`,
+   which stages the outline, reference notes and optional title. With `pause_after_outline` the
+   call holds (spec/03 §5.2); approve applies the proposal and completes the session (the held
+   call's result already says the outline takes effect when accepted, `staged = true`).
+   Request changes discards the staged outline,
+   yields `planner.notice.outline_rejected` plus the feedback, and the planner resubmits. The
+   chapter stays `planned` throughout.
+3. **Write kickoff** (`writer.kickoff.chapter`): `block.chapter_draft` carries the accepted
+   outline, the reference notes and any existing text; the task states the drafting procedure,
+   the start-from-the-end rule and the granularity rules, and its `feedback` branch carries a
+   redraft's feedback.
+4. **Drafting**: DRAFT_EDIT tools under the granularity rules, with participation (pause,
    feedback, steering, auto-pause, edits while held, granularity switches). Then
-   `insert_text(chapter_end = true)` or `finish_draft`.
-4. **Completion**: draft version, `in_review`, toast "Chapter N is ready for your review".
+   `insert_text(chapter_end = true)` or `finish_draft`. `submit_outline` is not in the writer's
+   frozen list, so a call to it is refused with no effect.
+5. **Completion**: draft version, `in_review`, toast "Chapter N is ready for your review".
 
 ## 3. Review
 
@@ -99,10 +112,12 @@
    feedback (and the ticked issues from `chapter_feedback.issues`), and the revision procedure:
    revision planning with retrieval → `submit_revision_plan` → revising with edit tools →
    `finish_revision(summary)`.
-6. **Send back (redraft)** → a `chapter_write` session with `writer.kickoff.redraft` (feedback +
-   the previous outline for reference). The agent re-plans and drafts from scratch. The ticked
-   issues are listed by their quotes, because their pids belong to the archived text and new
-   paragraphs never reuse them.
+6. **Send back (redraft)** → a `chapter_write` session in `drafting` whose `writer.kickoff.chapter`
+   carries the feedback (found through `kickoff_extra.feedback_id`) and drafts again from the
+   current accepted outline; the previous text is archived. The ticked issues are listed by their
+   quotes, because their pids belong to the archived text and new paragraphs never reuse them.
+   To change the plan itself, the author uses **Redo the outline** on the in-review chapter first
+   (any non-official chapter without an open session can be re-outlined).
 
 Delegation depth is one: the reviewer never starts other agents, and its reports never go to
 another agent for evaluation. The author judges them (PROJECT §10.9).
@@ -187,10 +202,17 @@ is one, otherwise it starts one.
      `research_task_id` is set only when exactly one is runnable, so the card can open that task's
      page instead of the list (D-136);
   4. a chapter `in_review` → `review_chapter {chapter_id}`;
-  5. a chapter `drafting`/`revising` → `continue_chapter {chapter_id, session_id?}`;
+  5. work in progress: the first chapter in `ordered_chapters` that has an open outline session
+     or is `drafting`/`revising`:
+     - with an open outline session → `write_outline {chapter, session_id}`;
+     - otherwise → `continue_chapter {chapter_id, session_id?}` (the open write or revise
+       session);
   6. latest main chapter official with `canon_status ∈ {pending, failed, stale}` →
      `sync_canon {chapter_id}`;
-  7. otherwise → `write_next {track_id}`.
+  7. the first `planned` chapter in `ordered_chapters`:
+     - an empty outline → `write_outline {chapter}`;
+     - otherwise → `write_chapter {chapter}`;
+  8. otherwise → `write_next {track_id}`.
 
   Rule 3 sits before every chapter rule, matching PROJECT's sentence order ("Run research tasks"
   before "Write chapter 1"). Consequence: while `ready` tasks remain, the overview keeps suggesting

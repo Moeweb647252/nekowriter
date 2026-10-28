@@ -59,7 +59,8 @@
 | DELETE | `/chapters/:id` | | 204 |
 | PATCH | `/chapters/:id/content` | `{ base_version, ops: ContentOpInput[] }` | `{ version, ops: ContentOp[], word_count }` |
 | PUT | `/chapters/:id/content/text` | `{ base_version, text }` (paragraphs separated by blank lines) | same; pids kept by alignment (`similar` paragraph diff) |
-| POST | `/chapters/:id/write` | spec/08 §1.1 | `{ session_id, warnings }` |
+| POST | `/chapters/:id/outline` | `ChapterOutlineInput {guidance?, pause_after_outline?, force?}` (spec/08 §1.1) | `{ session_id, warnings }` |
+| POST | `/chapters/:id/write` | `ChapterWriteInput {guidance?, granularity?, auto_pause?, force?}` (spec/08 §1.1) | `{ session_id, warnings }` |
 | POST | `/chapters/:id/submit` | | `ChapterDto` |
 | POST | `/chapters/:id/review` | | `{ session_id }` |
 | POST | `/chapters/:id/send-back` | `{ feedback, mode, review_report_id?, issue_indexes? }` | `{ session_id }` |
@@ -142,7 +143,7 @@ carries `{ status, operation }`; a task with an open session reports
 | POST | `/sessions/:id/pause` · `/resume` `{feedback?}` · `/stop` · `/continue` · `/abandon` | | `SessionDto` (validated against spec/03 §3; e.g. `stop` only while `running`) |
 | POST | `/sessions/:id/message` | `{ text }` | `SessionDto` |
 | POST | `/sessions/:id/answer` | `{ tool_call_id, payload }` | `SessionDto` |
-| PATCH | `/sessions/:id` | `{ granularity?, auto_pause?, pause_after_outline? }` | `SessionDto` |
+| PATCH | `/sessions/:id` | `{ granularity?, auto_pause?, pause_after_outline? }` — per kind: an outline session accepts `pause_after_outline` only; a write or revise session accepts the three fields; other combinations are `409 session.invalid_state` | `SessionDto` |
 | POST | `/debug/sessions/echo` | `{ book_id }` (debug builds only; a test session with test-only tools, used by PLAN M3.5) | `{ session_id }` |
 
 ### 2.8 Key DTOs (abridged; the Rust definitions are authoritative)
@@ -175,16 +176,20 @@ type ToolCallDto = {
   // The staged chapter write of a deferred text-changing call (spec/03 §5.2, D-139): what
   // approval will commit. Null once the call is finalized, because the text is then in the chapter.
   pending_content: { content: ChapterContent; expected_version: number } | null;
+  // The staged outline of a deferred submit_outline in an outline session (spec/03 §5.2): what
+  // approval will write. Null once the call is finalized.
+  pending_outline: { outline: string; reference_notes: string; title: string | null } | null;
   created_at: string; finished_at: string | null;
 };
 type ChapterDto = ChapterListItemDto & {
   guidance: string; outline: string; reference_notes: string; summary: string;
   content: ChapterContent; content_version: number;
-  open_sessions: SessionDto[];      // open writer/reviewer/archivist sessions of this chapter
+  open_sessions: SessionDto[];      // open planner/writer/reviewer/archivist sessions of this chapter
 };
 type ChapterListItemDto = {
   id: number; book_id: number; track_id: number; number: number /* = ord */;
   title: string; status: ChapterStatus; canon_status: CanonStatus; word_count: number;
+  has_outline: boolean;             // !chapters.outline.trim().is_empty() (the navigator's icon)
   updated_at: string;
 };
 ```
@@ -246,7 +251,8 @@ type ContentOpInput =                                                    // auth
 | `chapter.session_exists` | 409 | `details.session_id` |
 | `chapter.previous_not_ready` | 409 | `details.chapter_id`, `details.reason` |
 | `chapter.is_anchor` | 409 | the chapter anchors side tracks; `details.track_ids` |
-| `chapter.locked` | 423 | writer session running; `details.session_id` |
+| `chapter.outline_missing` | 409 | a write session needs a non-empty `chapters.outline` (write and redraft); no details |
+| `chapter.locked` | 423 | a planner or writer session of the chapter is running; `details.session_id` |
 | `session.invalid_state` | 409 | `details.status`, `details.operation` |
 | `model.missing_role` | 409 | no model for a role; `details.role` |
 | `conception.incomplete` | 409 | `details.missing` |

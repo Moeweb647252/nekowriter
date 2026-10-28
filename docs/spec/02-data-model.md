@@ -33,8 +33,17 @@
   `agent_sessions`' `ON DELETE CASCADE` and `knowledge_entries`' `ON DELETE SET NULL`. Its
   module declares `use_transaction() = Some(false)`: the pragma is a no-op inside a transaction,
   so the migrator must not wrap the file, which opens its own.
+  `0004_outline_sessions.sql` follows the same pattern for `agent_sessions`: its CHECK constraints
+  list the roles and kinds, so it is rebuilt (create, copy, drop, rename, recreate its three
+  indexes) with `PRAGMA foreign_keys = OFF`. Ten foreign keys reference the table (cascade:
+  `agent_messages`, `agent_tool_calls`, `agent_inbox`; set-null: `chapter_versions`,
+  `setting_proposals`, `change_log`, `research_tasks`, `review_reports`, `chapter_feedback`, and
+  the table's own `parent_session_id`), so the migration snapshots the row counts of all ten
+  before the rebuild and fails loudly if any changed, then runs `PRAGMA foreign_key_check`. It
+  also moves `prompt_overrides` rows of `writer.kickoff.chapter` to `planner.kickoff` where the
+  same scope has no planner override yet.
 
-## 2. Schema (0001_init.sql, upgraded by 0002_research_deferred.sql)
+## 2. Schema (0001_init.sql, upgraded by 0002_research_deferred.sql, 0003 and 0004)
 
 ```sql
 -- ───────────────────────────── App configuration ─────────────────────────────
@@ -448,9 +457,9 @@ CREATE TABLE index_meta (
 CREATE TABLE agent_sessions (
   id                   INTEGER PRIMARY KEY,
   book_id              INTEGER REFERENCES books(id) ON DELETE CASCADE,
-  role                 TEXT NOT NULL CHECK (role IN ('conception','researcher','writer','reviewer','archivist')),
-  kind                 TEXT NOT NULL CHECK (kind IN ('conception','research','chapter_write','chapter_revise',
-                         'chapter_review','chapter_maintenance','canon_seed','chapter_resync')),
+  role                 TEXT NOT NULL CHECK (role IN ('conception','researcher','planner','writer','reviewer','archivist')),
+  kind                 TEXT NOT NULL CHECK (kind IN ('conception','research','chapter_outline','chapter_write',
+                         'chapter_revise','chapter_review','chapter_maintenance','canon_seed','chapter_resync')),
   chapter_id           INTEGER REFERENCES chapters(id) ON DELETE CASCADE,
   track_id             INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
   research_task_id     INTEGER REFERENCES research_tasks(id) ON DELETE CASCADE,
@@ -591,10 +600,10 @@ CREATE UNIQUE INDEX prompt_overrides_book   ON prompt_overrides(book_id, key) WH
 | NoteKind / NoteStatus | `fact`,`world_rule`,`other` / `active`,`retired` |
 | ForeshadowingStatus | `open`, `resolved`, `abandoned` |
 | ChangeActor / ChangeOp | `user`,`agent`,`system` / `create`,`update`,`delete` |
-| AgentRole | `conception`, `researcher`, `writer`, `reviewer`, `archivist` |
-| SessionKind | `conception`, `research`, `chapter_write`, `chapter_revise`, `chapter_review`, `chapter_maintenance`, `canon_seed`, `chapter_resync` |
+| AgentRole | `conception`, `researcher`, `planner`, `writer`, `reviewer`, `archivist` |
+| SessionKind | `conception`, `research`, `chapter_outline`, `chapter_write`, `chapter_revise`, `chapter_review`, `chapter_maintenance`, `canon_seed`, `chapter_resync` |
 | SessionStatus | `idle`, `running`, `held`, `awaiting_input`, `paused`, `completed`, `stopped`, `failed`, `interrupted`, `superseded`, `abandoned` |
-| Phase | `none`, `planning`, `drafting`, `revision_planning`, `revising` |
+| Phase | `none`, `planning` (legacy only: a `chapter_write` session started before the outline split), `drafting`, `revision_planning`, `revising` |
 | Granularity | `sentence`, `paragraph`, `free`, `chapter` |
 | ToolCallStatus | `pending`, `executing`, `held`, `awaiting_input`, `done`, `error` |
 | ReviewVerdict / IssueSeverity | `pass`,`revise` / `critical`,`major`,`minor` |
@@ -622,7 +631,7 @@ TypeScript-style notation. Rust structs derive `Serialize, Deserialize, Clone, D
 type BookSettings = {
   granularity: Granularity;            // default "paragraph"
   auto_pause: boolean;                 // default false
-  pause_after_outline: boolean;        // default true
+  pause_after_outline: boolean;        // default true; holds the outline session's submit_outline
   target_words_min: number;            // default 3000 (UAX#29 words; CJK chars count 1 each)
   target_words_max: number;            // default 4000
   recent_summary_count: number;        // N, default 5
@@ -631,6 +640,7 @@ type BookSettings = {
 };
 
 // books.model_overrides and app_settings["roles.defaults"]
+// planner is optional; an unset planner resolves through the writer's entries (spec/03 §4).
 type RoleModels = Partial<Record<AgentRole, number /* model_profile_id */>>;
 
 // books.conception
@@ -700,9 +710,18 @@ type Appendix = {
 
 // agent_tool_calls.effects — applied when the call is finalized (not when executed)
 type ToolEffects = {
-  phase_to?: Phase;                    // e.g. submit_outline → "drafting"
-  complete?: "draft" | "revision" | "review" | "maintenance" | "research";
+  phase_to?: Phase;                    // e.g. submit_revision_plan → "revising"; legacy submit_outline → "drafting"
+  complete?: "draft" | "revision" | "review" | "maintenance" | "research" | "outline";
   await_input?: "ask_user" | "request_review";
+  pending_content?: PendingContent;    // a staging writer call's text (spec/03 §5.2)
+  pending_outline?: PendingOutline;    // an outline session's staged outline (spec/03 §5.2)
+};
+
+// agent_tool_calls.effects.pending_outline — what an accepted submit_outline will write
+type PendingOutline = {
+  outline: string;
+  reference_notes: string;
+  title?: string;                      // applied only while the chapter's title is still empty
 };
 
 // review_reports.issues
@@ -748,8 +767,9 @@ type SnapshotCharacterDesign = { rank, name, role_label, summary, profile, entit
 3. Pids are unique within a chapter and never reused (`next_pid` only grows).
 4. `chapters.content_version` increments on every content change, whether by the author or an
    agent. `word_count` is recomputed in the same transaction.
-5. At most one **open** writer session per chapter (status not in `completed`, `superseded`,
-   `abandoned`).
+5. At most one **open** session across the **planner and writer roles** per chapter — the two
+   roles form one lock group, so an open outline session excludes a write or revise session and
+   the other way round (status not in `completed`, `superseded`, `abandoned`).
    At most one open reviewer session and one open archivist session per chapter. At most one
    open conception session and one open `canon_seed` session per book. At most one open
    research session per task.

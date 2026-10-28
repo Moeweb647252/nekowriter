@@ -2638,3 +2638,96 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   tool example validates against the schema.
 - **Spec**: spec/07 §1 now states the one-or-two-scope budget as prompt guidance, with the cost of
   extra scopes (one KNN query per visible scope, one more name in the author's list).
+
+### D-146 Split chapter writing into an outline session and a drafting-only write session
+
+- **Context**: the requirement (R1–R13 of `docs/research/session-split-requirements.md`) asks for
+  "write the outline" and "write the chapter" as two visible steps. Today one `chapter_write`
+  session runs the writer's `planning` phase (retrieval, then `submit_outline`) and then drafts in
+  the same session and with the same frozen tool list and system prompt; redraft re-plans and
+  rewrites in one go. Tool lists are per **role** (D-007), so a session that must not contain
+  `submit_outline` cannot simply share the writer's list. `chapters.outline` is also written by
+  `submit_outline`'s `execute` today — before the hold decision — so a held or rejected outline is
+  already stored in the chapter.
+- **Decision**:
+  - A new session kind **`chapter_outline`** runs under a new sixth role **`planner`**, with its own
+    system prompt, its own fixed tool list (the ten retrieval tools, `read_draft`, `submit_outline`)
+    and its own model assignment. `chapter_write` keeps its name and becomes drafting-only: its
+    frozen list is the writer list minus `submit_outline` (19 tools), and its initial phase is
+    `drafting`.
+  - **Staging**: the outline session stages its outline. `submit_outline` in a `chapter_outline`
+    session writes nothing to the chapter; it returns `ToolEffects { complete: outline,
+    pending_outline }`, and `apply_pending_outline` writes `chapters.outline`,
+    `reference_notes` and (only while the title is still empty) the proposed title in the
+    transaction that finalizes an accepted call — the non-held path or the approval that resumes a
+    held one. New invariant: `chapters.outline` holds only an accepted or author-written outline.
+    Feedback revokes the effects and the session keeps working; abandon discards the staged outline;
+    edits made while the session is held are reported to the planner.
+  - `submit_outline` is the outline session's terminal tool with the new `outline` completion kind.
+    With `pause_after_outline` on it holds and the completion applies on approval; with it off the
+    outline is accepted immediately and the session completes. There is no `finish_outline` tool and
+    no auto-start of the write session after approval.
+  - The write session starts in `drafting`, needs a non-empty `chapters.outline`
+    (`409 chapter.outline_missing` otherwise), and its kickoff carries `block.chapter_draft` (the
+    outline, reference notes and text) plus `writer.kickoff.chapter`, which now carries the drafting
+    procedure including the granularity rule. `writer.kickoff.redraft` is retired; redraft is the
+    feedback branch of `writer.kickoff.chapter`, fed by `kickoff_extra.feedback_id` because the
+    `chapter_feedback` row is linked to the session only after creation. The rollover kickoff's
+    `feedback` follows the session chain instead of always reading the chapter's latest row.
+  - **No new chapter status**. An outline session never changes the status: a planned chapter stays
+    `planned` through outlining and acceptance, and `planned → drafting` still happens only on
+    write-session creation or an author text edit. The outline's state is derived: missing (empty
+    outline), in progress (an open outline session), awaiting approval (that session holds
+    `submit_outline`), accepted (non-empty outline and no open outline session).
+  - **Concurrency**: the planner and writer roles form one lock group per chapter — at most one open
+    session across both roles — so outline, write and revise sessions exclude each other on one
+    chapter while chapters never block each other. Approve, manual submit, version restore and the
+    edit lock all use the group.
+  - **Model routing**: `RoleModels.planner` is optional with `#[serde(default)]`. The planner
+    resolves `book.model_overrides.planner` → `roles.defaults.planner` →
+    `book.model_overrides.writer` → `roles.defaults.writer`; when nothing resolves, the error is
+    `409 model.missing_role` with `details.role = "planner"`. No stored setting is rewritten, so an
+    unset planner reproduces today's behaviour at upgrade and for every later book.
+  - **`pause_after_outline` is kept** (same `BookSettings` field, same column, same default `true`,
+    same `hold_condition`); its meaning narrows to "hold the outline session's `submit_outline`".
+    Book settings, `book_defaults` and existing session rows keep their values; the label changes,
+    the Write dialog loses the switch and the new Outline dialog gains it.
+  - **Next action**: a new `write_outline` for a planned chapter without an outline (and for a
+    chapter with an open outline session), and `write_chapter` for a planned chapter that has one.
+    An open outline session counts as work in progress (rule 5). A planned chapter is offered
+    before `write_next` creates a new one (rule 7, after `sync_canon`).
+  - **Prompt pack**: new `planner.system`, `planner.kickoff`, `planner.notice.outline_rejected`,
+    `planner.notice.nudge` and `planner.notice.retrieval_budget`; `writer.system` loses the planning
+    phase; `writer.kickoff.chapter` becomes the drafting kickoff; `writer.kickoff.redraft` is
+    retired; the three writer notices that only legacy sessions use are marked legacy; the
+    `submit_outline` tool description and `result.writer_control` gain the staged behaviour.
+  - **Open legacy planning sessions** (`chapter_write` in `planning` at the upgrade) finish under
+    their frozen prompt through a marked branch: the planning permission arm, an immediate write
+    plus `phase_to: drafting` in `submit_outline`, the writer acceptance and rejection notices, the
+    planning nudge key, the Demo provider's planning arm and the legacy Outline-tab path. Their
+    rollover children inherit the frozen prompt. They are not migrated; a follow-up task deletes
+    the branch when the removal query in the plan returns 0.
+  - **Migration `0004_outline_sessions`** rebuilds `agent_sessions` (its CHECK constraints list the
+    roles and kinds) with foreign keys off, row-count guards on all ten referencing tables and
+    `PRAGMA foreign_key_check`; it also moves `prompt_overrides` rows of `writer.kickoff.chapter`
+    to `planner.kickoff` where no planner override exists at the same scope. `0001_init.sql` is
+    edited for fresh databases.
+  - **Behaviour choices taken from the plan's §9** (the first option of each): role labels
+    "Planner" / 「策划」 and session title 「细纲」; R6's first clause read as cross-chapter; redraft
+    redrafts prose from the current outline while re-planning stays a separate step; an unset
+    planner follows the writer's model; re-outlining is allowed on any non-official chapter
+    (including in review); the navigator's `has_outline` icon is included; the planner may issue
+    parallel tool calls.
+- **Consequences**: the author approves two visible steps instead of one and the write session can
+  no longer re-plan mid-draft — stop it, redo the outline, continue — which is the point of the
+  split. Each step has its own history, usage and prompt cache prefix (planner and writer no longer
+  share a cached tools+system prefix; the write and revise sessions of a chapter still do).
+  Historical sessions render unchanged; sessions open in `planning` at the upgrade keep working
+  through the marked branch. Overrides of `writer.kickoff.chapter` move to `planner.kickoff`
+  because their text is planning instruction; overrides of the retired `writer.kickoff.redraft`
+  become inert; overrides of `writer.system`, `tool.submit_outline` and the legacy notices are
+  kept. Task 12.7 records the author-database dry run and the fate of every override in the plan's
+  §2.10 table.
+- **Spec**: PROJECT §4–§6, §10.7; spec/02 §1–§5; spec/03 §1, §4–§12, §14–§15; spec/04 §3, §7.2;
+  spec/05 §1.5, §2, §4; spec/06 §4.2; spec/08 §1–§3, §7; spec/09 §1–§2; spec/10 §2.2, §2.7–§2.8,
+  §4; spec/11 §5–§6.

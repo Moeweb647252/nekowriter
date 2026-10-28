@@ -72,13 +72,13 @@ small embedding model locally.
 | **Foreshadowing** | A planted hook with a status (open, resolved, abandoned) |
 | **Knowledge base** | External reference knowledge in **scopes** (global spaces such as "Tang dynasty officialdom" or "Xianxia cultivation tropes"). Each book selects which scopes its agents may read |
 | **Research task** | A topic plus requirements for the research agent, which collects information from the web into a target scope |
-| **Agent role** | Conception, Researcher, Writer, Reviewer, Archivist (see §5) |
+| **Agent role** | Planner, Conception, Researcher, Writer, Reviewer, Archivist (see §5) |
 | **Session** | One persisted agent conversation working on one task (e.g. "write chapter 12"). It has a status, a phase, and a full transcript |
-| **Phase** | A stage inside a session that decides which tools are allowed (e.g. writer `planning` → `drafting`) |
+| **Phase** | A stage inside a session that decides which tools are allowed. Planner sessions are phase-free; a write session drafts; a revise session runs `revision_planning` → `revising`. `planning` exists only in write sessions started before the outline split |
 | **Granularity** | How much text one `insert_text` call may add: `sentence`, `paragraph`, `free` (any size, with `paragraph_end`/`chapter_end` flags), or `chapter`. At sentence and paragraph level it also limits `insert_paragraphs` and `rewrite_paragraph` to one paragraph |
 | **Hold** | A tool call that has been executed but whose result is withheld until the author resumes. The model request has already finished, so a hold costs nothing and survives restarts |
 | **Pause** | An author request to hold at the next tool boundary |
-| **Auto-pause** | Hold automatically after every text-changing tool call (and, if enabled, after the chapter outline) |
+| **Auto-pause** | Hold automatically after every text-changing tool call. The separate **pause after outline** switch holds an outline session's `submit_outline` for approval |
 | **Feedback** | Author text appended to the withheld tool result when resuming |
 | **Steering message** | Author text sent while the agent runs. It is appended to the next tool result |
 | **Review report** | The review agent's verdict (pass or revise), issues anchored to pids, and consolidated feedback |
@@ -96,7 +96,8 @@ overridable per book.
 |---|---|---|---|---|
 | **Conception** | 构思 | Turns a title and a rough idea into the setting materials and research topics through questions, web research, and review rounds | `ask_user`, `web_search`, `web_fetch`, setting-doc and character tools, `set_research_topics`, `request_review` | Creating a book |
 | **Researcher** | 资料员 | Collects knowledge for a topic per the requirements and saves well-sourced entries to a scope | `web_search`, `web_fetch`, `search_knowledge`, `save_knowledge_entry`, `finish_research` | Research tasks |
-| **Writer** | 写手 | Plans each chapter (retrieval, then a detailed outline), drafts it with granular writing tools, and revises it after feedback | Retrieval tools (planning only), `submit_outline`, `insert_text` and edit tools (drafting only), `finish_draft`, `finish_revision` | Writing and revising chapters |
+| **Planner** | 策划 | Plans a chapter: retrieves what it needs, then submits a detailed outline with reference notes for the author to accept | Retrieval tools, `read_draft`, `submit_outline` | Writing a chapter outline |
+| **Writer** | 写手 | Drafts a chapter from its accepted outline with granular writing tools, and revises or redrafts it after feedback | Retrieval tools (revision planning only), `insert_text` and edit tools (drafting/revising), `finish_draft`, `finish_revision` | Writing and revising chapters |
 | **Reviewer** | 审稿 | Reviews a finished chapter against the setting materials, memory, entity graph, and timeline; reports issues and feedback | Retrieval tools, `submit_review` | The author delegates a review |
 | **Archivist** | 档案员 | Maintains canon after a chapter becomes official: appearances, entities, relations, timeline, notes, foreshadowing, summary, protagonist state, and setting proposals. Also seeds canon from the settings | Canon read/write tools, `set_chapter_summary`, `propose_setting_change`, `finish_maintenance` | After approval; after conception |
 
@@ -138,7 +139,8 @@ overridable per book.
   **Resume** returns the result unchanged, so the agent continues losslessly.
   **Feedback** returns the result with the author's text appended.
 - **Auto-pause**: hold after every insertion or edit. The author approves with one click or
-  gives feedback. Optional "pause after outline".
+  gives feedback. Separately, **pause after outline** holds the planner's `submit_outline` so the
+  author can approve the outline before any writing starts.
 - **Steering**: a message sent while the agent runs is appended to the next tool result.
 - **Direct edits while paused**: the author may edit the text. On resume the agent receives an
   exact report of what changed.
@@ -171,9 +173,11 @@ overridable per book.
   entities. The author can reorder events by drag and drop.
 
 ### 6.8 Workflow discipline
-- **Before writing**: the writer's planning phase retrieves from memory, graph, timeline,
-  knowledge, and past chapters, then submits a detailed outline with reference notes.
-- **While drafting**: retrieval tools are disabled. Only writing and draft-query tools work.
+- **Before writing**: a separate **planner** session retrieves from memory, graph, timeline,
+  knowledge, and past chapters, then submits a detailed outline with reference notes. The outline
+  takes effect only when the author accepts it (or immediately, when pause-after-outline is off).
+- **While drafting**: a **write** session starts from the accepted outline; retrieval tools are
+  disabled. Only writing and draft-query tools work.
 - **After a chapter becomes official**: the archivist maintains memory, graph, timeline, and
   notes, and proposes setting changes when needed.
 - The reviewer reviews against the same memory, graph, timeline, and setting materials.
@@ -206,10 +210,13 @@ overridable per book.
   tasks become ready to run.
 
 ### 6.12 Writing chapters
-- The author clicks **Write next chapter**, with optional guidance for the chapter.
-- Planning: retrieval, then a detailed outline with reference notes. With "pause after outline"
-  on, the author approves the outline or requests changes.
-- Drafting: granular writing, with all participation features.
+- The author clicks **Write the outline** for a planned chapter, with optional guidance.
+- Outline: the planner retrieves, then submits a detailed outline with reference notes. With
+  "pause after outline" on, the author approves the outline or requests changes; with it off the
+  outline is accepted at once. The chapter stays planned throughout.
+- The author then clicks **Write the chapter**: a write session drafts from the accepted outline
+  with granular writing, with all participation features. **Redo the outline** is available on any
+  non-official chapter that has no open session.
 - Finish: the draft enters review (§6.9). Approval triggers maintenance (a book setting, on by
   default).
 
@@ -295,19 +302,30 @@ Each flow lists what the author does, what the system does, and where it happens
    keyword, and by vector once embedded.
 5. The author can edit or delete any entry, and add entries by hand.
 
-### F4 — Write a chapter (planning → drafting) with live participation
+### F4 — Write the outline
 1. In the navigator, **+ Next chapter** (main or side track) creates a *planned* chapter and opens
-   it. In the **Write** dialog the author may add guidance ("the duel ends in a draw; introduce
-   the masked girl"), choose the granularity (default from book settings), and toggle auto-pause
-   and pause-after-outline. **Start**. (If the previous chapter is not official with synced
-   canon yet, the dialog says so and offers **Write anyway**.)
-2. **Planning phase**: the agent panel shows retrieval calls (entity cards, timeline queries,
-   knowledge hits). The agent submits the outline. The chapter's **Outline** tab fills (streamed).
-   - With *pause after outline*: the session holds. The hold bar offers **Approve outline** or
-     **Request changes** (feedback). Requesting changes keeps the agent in planning; it revises
-     and resubmits. The author may also edit the outline directly and then approve; the agent
-     drafts from the edited version and is told what changed.
-3. **Drafting phase** (retrieval disabled): the **Text** tab shows paragraphs as they are inserted.
+   it. The header offers **Write the outline**, which opens the **Outline** dialog: guidance
+   ("the duel ends in a draw; introduce the masked girl"), the "approve the outline before it
+   takes effect" switch (default from book settings) and **Start**. (If the previous chapter is
+   not official with synced canon yet, the dialog says so and offers **Write anyway**.)
+2. The agent panel shows the planner's retrieval calls (entity cards, timeline queries, knowledge
+   hits). The planner submits the outline; the chapter's **Outline** tab fills (streamed), and
+   the chapter stays *planned* — the stored outline does not change until the author accepts it.
+   - With *pause after outline*: the session holds. The tab shows the proposal with **Approve
+     outline** / **Request changes** (feedback), and the current accepted outline below it when
+     there is one. Requesting changes keeps the planner working; it revises and resubmits. The
+     author may also edit the chapter's fields directly while the session is not running; the
+     planner is told what changed.
+   - With the switch off: the outline is accepted as soon as it is submitted and the session
+     completes. The chapter still stays *planned*.
+3. The header then offers **Write the chapter** (and, until writing starts, **Redo the outline**).
+
+### F4b — Write the chapter (drafting) with live participation
+1. **Write the chapter** opens the **Write** dialog: guidance, the granularity (default from book
+   settings) and auto-pause. **Start**. (The same previous-chapter rule and **Write anyway**
+   apply. A chapter with no outline cannot start a write session; the dialog offers **Write the
+   outline** instead.)
+2. **Drafting** (retrieval disabled): the **Text** tab shows paragraphs as they are inserted.
    While a call is being generated, its text streams as ghost text at the cursor position.
    - **Pause** (button or shortcut): the agent finishes the current call; the inserted text is
      highlighted with a hold bar: **Continue** / **Feedback…**.
@@ -322,7 +340,7 @@ Each flow lists what the author does, what the system does, and where it happens
    - **Steering** while running: typed messages reach the agent with the next tool result.
    - **Stop**: aborts the in-flight request. The chapter keeps all applied text. **Continue**
      later picks up exactly there.
-4. The agent finishes with `insert_text(chapter_end=true)` or `finish_draft`. (A chapter far
+3. The agent finishes with `insert_text(chapter_end=true)` or `finish_draft`. (A chapter far
    below the target length is not finished on the first attempt: the agent is asked to keep
    writing or to confirm.) A *draft* version snapshot is saved, the chapter becomes **In
    review**, and a toast says "Chapter 12 is ready for your review".
@@ -335,15 +353,20 @@ Each flow lists what the author does, what the system does, and where it happens
 3. The author can:
    - **Send back with this feedback**: opens the send-back dialog prefilled with the reviewer's
      feedback (and optionally selected issues). The author edits it, chooses **Revise** (edit in
-     place, default) or **Redraft** (re-plan and rewrite from scratch, with the old outline for
-     reference), and confirms.
+     place, default) or **Redraft** (archive the text and draft again from the current outline,
+     following the feedback), and confirms. To change the plan itself, the author redoes the
+     outline first: **Redo the outline** is available on the in-review chapter (any non-official
+     chapter without an open session), and the redraft then starts from the accepted result.
    - **Discuss / re-review**: the author comments on the report ("issue 2 is wrong: the token was
      returned in chapter 30"). The same reviewer continues and produces report #2 (if the text
      changed in between, a fresh reviewer session receives report #1 and the comment).
    - **Approve** regardless of the verdict.
-4. **Send back** → status *revising*. A writer revision session plans (retrieval allowed),
-   revises with edit tools (retrieval disabled), and finishes. A *revision* version is saved, the
-   chapter returns to *in review*, and the **History** tab can diff any two versions.
+4. **Send back (revise)** → status *revising*. A writer revision session plans (retrieval
+   allowed), revises with edit tools (retrieval disabled), and finishes. A *revision* version is
+   saved, the chapter returns to *in review*, and the **History** tab can diff any two versions.
+   **Send back (redraft)** → the text is archived, the chapter returns to *drafting*, and a write
+   session drafts again from the current outline with the feedback; without a non-empty outline
+   the request is refused and the dialog offers **Revise in place** or writing an outline.
 5. **Approve** → status *official* (an *official* version is saved). Maintenance starts
    automatically (book setting, default on).
 
@@ -409,9 +432,11 @@ Each flow lists what the author does, what the system does, and where it happens
 - If the chapter is locked by an agent, the editor says so and offers **Pause** or **Stop**.
 
 ### F12 — Day-to-day overview
-- **Book overview** shows the next action (e.g. "Chapter 43 awaits your review", "Write
-  chapter 44"). It also shows attention items (held or awaiting sessions, chapters in review,
-  pending proposals, failed sessions, stale canon), progress (chapters, words), and recent changes.
+- **Book overview** shows the next action (e.g. "Chapter 43 awaits your review", "Outline
+  Chapter 44", "Write Chapter 44"). A planned chapter is offered before **Write next chapter**
+  creates a new one. It also shows attention items (held or awaiting sessions, chapters in
+  review, pending proposals, failed sessions, stale canon), progress (chapters, words), and
+  recent changes.
 
 ---
 
@@ -514,12 +539,14 @@ App shell (top bar: logo · Library · Knowledge · Prompts · Settings · theme
 **Header**: chapter label and editable title, status badge, word count ("2,350 / 3,000–4,000"),
 and actions by status:
 
-| Status | Primary action | Secondary |
+| Status / state | Primary action | Secondary |
 |---|---|---|
-| planned | **Write** (opens the write dialog) | Write manually (focus the editor) |
-| drafting | — (session controls live in the agent panel) | Submit for review (manual drafts) |
-| in review | **Approve** · **Send back…** · **Ask the reviewer** | — |
-| revising | — (session controls live in the agent panel) | Submit for review (when no writer session is running, e.g. after abandoning it) |
+| planned, no outline, no open session | **Write the outline** (opens the Outline dialog) | Write manually (focus the editor) |
+| planned, outline accepted, no open session | **Write the chapter** (opens the Write dialog) | **Redo the outline** · Write manually |
+| drafting, no open session | **Write the chapter** when it has an outline, otherwise **Write the outline** | Submit for review (manual drafts) · **Redo the outline** |
+| an open planner or writer session | — (the agent panel owns the session) | — |
+| in review | **Approve** · **Send back…** · **Ask the reviewer** | **Redo the outline** |
+| revising | — (session controls live in the agent panel) | Submit for review (when no session is running, e.g. after abandoning one) · **Redo the outline** |
 | official | — | Maintain / Retry maintenance (if canon is pending or failed) · Re-sync canon (if stale) · Copy text |
 
 **Text tab**
@@ -529,8 +556,8 @@ and actions by status:
 - Paragraphs show their pid in the gutter on hover. Clicking a paragraph edits it in place
   (auto-sizing textarea; Esc cancels; blur or ⌘⏎ saves). **Full-text edit** switches to one
   large textarea (paragraphs separated by blank lines). Saving aligns paragraphs and keeps pids.
-- Editing is disabled while the chapter's writer session is *running*. The banner says "The
-  writer is working — Pause to edit".
+- Editing is disabled while the chapter's planner or writer session is *running*. The banner
+  says "The writer is working — Pause to edit".
 - Live agent effects:
   - Inserted paragraphs fade and slide in (Motion, 180 ms). Updated paragraphs flash a subtle
     highlight. Deleted paragraphs collapse out.
@@ -546,8 +573,20 @@ and actions by status:
     Feedback… expands a textarea inside the bar ("Send & continue"). For a held outline the
     buttons read **Approve outline** and **Request changes**.
 
-**Outline tab**: the chapter outline and the reference notes (Markdown, editable unless the
-writer session is running, so also while the outline is held), plus the author's guidance.
+**Outline tab**: the chapter outline and the reference notes (Markdown), plus the author's
+guidance. Its state is derived, never stored:
+- **missing** (empty outline): an empty state with **Write the outline**; the fields stay editable,
+  so the author can write the outline by hand.
+- **in progress** (an open outline session): the fields are read-only, "The planner is working",
+  with a link that focuses the session in the panel.
+- **awaiting approval** (that session holds `submit_outline`): the proposal (outline, reference
+  notes, proposed title) read from the held call's input, the hold bar with **Approve outline** /
+  **Request changes**, and the current accepted outline below it marked "replaced when you
+  approve".
+- **accepted**: the editable fields as before, plus **Redo the outline** when the chapter is not
+  official and has no open session.
+- **legacy**: a held `submit_outline` in a `chapter_write` session keeps the pre-split path — the
+  fields are editable and are saved, then the call resumes.
 
 **Review tab**:
 ```
@@ -566,16 +605,19 @@ Feedback for the writer (editable)
 
 **Send-back dialog**: a feedback textarea (prefilled when it comes from a report), checkboxes to
 include specific issues, a mode radio (**Revise in place** / **Redraft from scratch**), and a
-note that the current text is saved as a version.
+note that the current text is saved as a version. The redraft description says the text is
+archived and the writer drafts again from the current outline, following the feedback; to change
+the plan, redo the outline first.
 
 **History tab**: the version list (kind, time, words, note) and a two-version diff (inline
 word-level diff: insertions underlined green, deletions struck red). **Restore** creates a backup
 version first.
 
 ### 8.6 Agent panel
-- **Header**: role icon (Conception ✦ Sparkles, Researcher 🔎 Search, Writer ✒ PenLine,
-  Reviewer ✓ ClipboardCheck, Archivist 🗃 Archive), session title, status badge, model name, and
-  an info popover (Lucide `Info`) showing the session's frozen system prompt and tool list.
+- **Header**: role icon (Conception ✦ Sparkles, Researcher 🔎 Search, Planner 🌳 ListTree,
+  Writer ✒ PenLine, Reviewer ✓ ClipboardCheck, Archivist 🗃 Archive), session title, status badge,
+  model name, and an info popover (Lucide `Info`) showing the session's frozen system prompt and
+  tool list.
 - **Controls** (by status):
   - running: **Pause** (shows "Pausing…" until held), **Stop** (shows "Stopping…" for the moment
     the runner needs to stop).
@@ -688,16 +730,20 @@ Source badges: **D** default, **G** global override, **B** book override.
   new one.
 - **Models**: a table and a form (provider, model id with Fetch, display name, context window,
   max output tokens, protocol options).
-- **Agent roles**: five selects (Conception, Researcher, Writer, Reviewer, Archivist).
+- **Agent roles**: six selects (Conception, Researcher, Planner, Writer, Reviewer, Archivist).
+  The planner's unset option reads "Same as Writer" and follows the writer's model.
 - **Web search**: provider radio and its fields, and a **Test query** button.
 - **Embeddings**: model select (three supported), status (not downloaded, downloading, ready,
   failed + message), the model cache path, index stats (documents, embedded, pending),
   **Rebuild index**.
 - **Appearance**: language, theme, editor font, editor size.
 - **Book settings** (inside a book): writing language, genre, default granularity, auto-pause,
-  pause after outline, target chapter length (min/max), memory windows (recent summaries N,
-  mid-term window M), auto-maintenance, model overrides per role, and visible knowledge scopes
-  (shortcut).
+  **Approve each chapter outline before it takes effect** (the pause-after-outline switch, with
+  the hint "When off, the planner's outline is accepted as soon as it is submitted"), target
+  chapter length (min/max), memory windows (recent summaries N, mid-term window M),
+  auto-maintenance, model overrides per role (six rows; the planner's hint names its effective
+  model — "Default: {model}", otherwise "Follows the Writer: {model}", or "none"), and visible
+  knowledge scopes (shortcut).
 
 ### 8.13 Interaction details
 - **Keyboard**: ⌘/Ctrl+⏎ = primary action in context (Continue when held, Send in the
@@ -767,7 +813,9 @@ The author can revise them later.
    notes when the author changed them).
 7. **Auto-pause covers text-changing tools** (`insert_text`, `insert_paragraphs`, `replace_text`,
    `rewrite_paragraph`, `delete_paragraphs`). "Pause after outline" is a separate switch (default
-   on), because the outline is the cheapest place to correct course.
+   on) on the outline session's `submit_outline`: the outline is the cheapest place to correct
+   course, and approving it is the outline step's own decision. The Write dialog does not carry
+   the switch.
 8. **Maintenance happens after approval**, so canon contains only official text, and the
    reviewer checks a chapter against canon as it was before that chapter.
 9. **Review delegation is one level deep.** The reviewer advises and the author decides. The
@@ -799,7 +847,8 @@ The author can revise them later.
 |---|---|---|
 | Knowledge base and scopes | §6.1, F10 | `spec/07-knowledge-search.md` |
 | Knowledge accumulation | §6.2, F3 | `spec/07`, `spec/05` (researcher tools) |
-| Writing mode and granularity | §6.3, F4 | `spec/03` §Granularity, `spec/05` (drafting tools) |
+| Writing mode and granularity | §6.3, F4b | `spec/03` §Granularity, `spec/05` (drafting tools) |
+| Chapter outlining | §6.12, F4 | `spec/03` §5.2, `spec/05` (planner tools), `spec/08` §2 |
 | User participation | §6.4, F4 | `spec/03` §5.2–§5.4 (holds), §6 (control operations), §7 (edit reports) |
 | Tiered memory | §6.5 | `spec/06-canon-memory.md` §Memory |
 | Entity graph | §6.6, F7 | `spec/06` §Entities, §Relations |

@@ -223,15 +223,30 @@ message and a retry.
   editable feedback), `SendBackDialog`, `DiscussDialog`, history list (reports and send-backs).
 - `HistoryTab`: version list plus `DiffView` (`diffWordsWithSpace` for spaced languages,
   `diffChars` for unspaced ones, both from `diff`).
-- `WriteDialog`: guidance, granularity (`ToggleGroup`), auto-pause, pause-after-outline; Start.
-  On `409 chapter.previous_not_ready` it shows the reason and a **Write anyway** button that
-  resends with `force`.
+- `OutlineDialog`: guidance, the "Approve each chapter outline before it takes effect" switch
+  (defaulting to the book setting) and Start. It shares the `previous_not_ready` block and
+  **Write anyway** with the Write dialog through one extracted component.
+- `WriteDialog`: guidance, granularity (`ToggleGroup`), auto-pause and Start; the description says
+  it drafts from the accepted outline. The pause-after-outline switch is gone (it belongs to the
+  Outline dialog). On `409 chapter.previous_not_ready` it shows the reason and a **Write anyway**
+  button that resends with `force`; on `409 chapter.outline_missing` (a race) it shows the reason
+  and a **Write the outline** button.
+- Header actions follow the table of PROJECT §8.5. An **open session** (planner or writer) hides
+  every start action, because the agent panel owns the session; **Redo the outline** is offered
+  on any non-official chapter with no open session, including `in_review` and `revising`.
+- `outlineState(chapter, calls)` (`features/chapter/outlineState.ts`) is the single derivation —
+  `missing | in_progress | awaiting_approval | accepted` — shared by the header and the Outline
+  tab, the `pendingDraftView` pattern of D-141 applied to the outline, so they cannot disagree.
+  The Outline tab renders one state per the states in PROJECT §8.5; a held `submit_outline` in a
+  legacy `chapter_write` session keeps the pre-split editable-fields path (save the fields, then
+  resume). `useWriterState` keeps filtering `chapter_write | chapter_revise` for the dock; a
+  sibling `openOutlineSession(chapter)` serves the Outline tab.
 
 ### 5.3 Agent panel (`features/agent`)
 - `AgentPanel`: chooses the session (pinned, or the chapter's open session, or the book's most
   recently updated), fetches `SessionSnapshotDto`, and renders:
-  - `SessionHeader` (role icon: Sparkles / Search / PenLine / ClipboardCheck / Archive; title;
-    status; model; a session switcher dropdown);
+  - `SessionHeader` (role icon: Sparkles / Search / ListTree (planner) / PenLine / ClipboardCheck
+    / Archive; title; status; model; a session switcher dropdown);
   - `SessionControls` (by status, PROJECT §8.6), `GranularityControl`, `AutoPauseSwitch`
     (writer only, PATCH session);
   - `HeldCallReview` (a `held` session only): resolves `SessionDto.held_tool_call_id` against the
@@ -326,7 +341,8 @@ and in the dialog, with a one-click removal that PATCHes exactly those fields aw
   `formatChapterLabel` builds a label from the chapter `number` and its track (`chapter:label`,
   or `chapter:side_label` with the track title). A session's title is
   `agent:session_title.<kind>` with that label or the research topic (`SessionDto`
-  `chapter_number`, `research_topic`).
+  `chapter_number`, `research_topic`). `chapter_outline` renders "Outlining · Chapter N" /
+  「细纲 · 第N章」 and uses the planner's `ListTree` icon.
 
 ## 7. Visual details
 

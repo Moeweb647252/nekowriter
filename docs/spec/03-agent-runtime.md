@@ -13,7 +13,9 @@ while it waits.
 |---|---|---|---|
 | `conception` | conception | `none` | author's Finalize (agent turns end with text → `idle`) |
 | `research` | researcher | `none` | `finish_research` |
-| `chapter_write` | writer | `planning` → `drafting` | `insert_text(chapter_end=true)` or `finish_draft` |
+| `chapter_outline` | planner | `none` (phase-free, like `chapter_review`) | `submit_outline` → `complete: outline` |
+| `chapter_write` | writer | `drafting` | `insert_text(chapter_end=true)` or `finish_draft` |
+| `chapter_write`, legacy (open at the upgrade) | writer | `planning` → `drafting` | as before |
 | `chapter_revise` | writer | `revision_planning` → `revising` | `finish_revision` |
 | `chapter_review` | reviewer | `none` | `submit_review` (re-review continues the same session unless the text changed, §6) |
 | `chapter_maintenance` | archivist | `none` | `finish_maintenance` |
@@ -23,6 +25,12 @@ while it waits.
 A **redraft** is a `chapter_write` session whose kickoff carries the author's feedback. A
 **rollover** continuation (§9) is a new session of the same kind and phase.
 
+`planning` is a **legacy** phase: new code never creates a `chapter_write` session in it. A
+`chapter_write` session already open in `planning` at the upgrade finishes under its frozen prompt
+(§2.12 of the implementation plan): it keeps the planning permission arm, the immediate outline
+write in `submit_outline`, the writer acceptance/rejection notices, the planning nudge key and the
+Demo provider's planning arm.
+
 ### 1.2 Fixed tool lists, phase-gated permissions
 
 Each role has **one fixed, ordered tool list** (spec/05 §2), frozen into the session at creation
@@ -30,6 +38,11 @@ Each role has **one fixed, ordered tool list** (spec/05 §2), frozen into the se
 prefix (tools → system → messages) stays valid. Phases restrict which tools may run. A call
 to a tool that is not permitted in the current phase is answered with an error result
 (`error.tool_not_allowed`, listing the permitted tools), and the call has no effect.
+
+The planner's list is retrieval plus `read_draft` and `submit_outline`; the writer's list excludes
+`submit_outline`. A `chapter_write` session created before the split froze the old 20-tool list
+that still contains `submit_outline`; that frozen list plus the legacy `planning` phase is what
+lets it finish (§1.1).
 
 ### 1.3 Append-only history
 
@@ -106,24 +119,32 @@ transaction:
 ## 4. Creating a session
 
 1. **Resolve the model**: `book.model_overrides[role]` → `app_settings["roles.defaults"][role]`.
-   None → `409 model.missing_role`. Copy the profile and provider into `model_snapshot` (without
-   the API key; the key is resolved from `providers` at every call so key rotation works).
-   Resolve `cache_ttl: "auto"` here (spec/04 §3), so the TTL never changes within a session.
+   The planner has one extra fallback: when neither planner entry is set, it resolves
+   `book.model_overrides.writer` → `roles.defaults.writer`. None → `409 model.missing_role`
+   (`details.role` names the role that was being created, so `planner` for an outline session).
+   Copy the profile and provider into `model_snapshot` (without the API key; the key is resolved
+   from `providers` at every call so key rotation works). Resolve `cache_ttl: "auto"` here
+   (spec/04 §3), so the TTL never changes within a session.
 2. **Freeze prompts**: render the role's system prompt (`<role>.system`) and the tool
    definitions (spec/05 §1.3) through the prompt registry, with book overrides applied. Store
    them in `system_prompt` and `tools`.
-3. **Initial fields**: phase (`planning` / `revision_planning` / `none`); writer sessions copy
-   `granularity`, `auto_pause`, and `pause_after_outline` from book settings, or from the start
-   request when given. Chapter sessions store `base_content_version` = the chapter's
+3. **Initial fields**: phase (`drafting` for `chapter_write`, `revision_planning` for
+   `chapter_revise`, `none` otherwise — `planning` only exists in legacy rows). Write and revise
+   sessions copy `granularity` and `auto_pause` from book settings, or from the start request when
+   given; their `pause_after_outline` is stored as 0. An outline session copies
+   `pause_after_outline` (from the request or the book settings) and stores no granularity,
+   `auto_pause = 0`. Chapter sessions store `base_content_version` = the chapter's
    `content_version` (after the creation side effects below).
 4. **Kickoff**: build the kickoff user message (§10) and persist it as `seq 0`, `kind kickoff`.
 5. Set the status to `running` and spawn the runner. Emit `session.updated` and `session.message`.
 
 Domain side effects on creation (same transaction): `chapter_write` sets the chapter to
 `drafting`. `chapter_revise` sets it to `revising` and saves a `backup` version first.
-`chapter_write` in redraft mode saves a `backup` version and clears the content. Maintenance
-sets `canon_status` to `syncing`. Re-sync also saves the current text as a new `official`
-version (spec/06 §8). Research sets the task to `running`.
+`chapter_write` in redraft mode saves a `backup` version and clears the content. A
+`chapter_outline` session has **no** chapter side effect: the status stays as it is and the
+stored outline is untouched until `submit_outline` is accepted. Maintenance sets `canon_status`
+to `syncing`. Re-sync also saves the current text as a new `official` version (spec/06 §8).
+Research sets the task to `running`.
 
 ## 5. The runner
 
@@ -218,6 +239,17 @@ agent saw, applying an approved write advances the stored snapshot's content pas
 when it still equals the pre-write chapter), so the agent's own accepted text is never reported
 back to it as an author edit.
 
+**Staged outline (`chapter_outline` only).** `submit_outline` follows the same discipline in an
+outline session: `execute` validates the input and stages `pending_outline {outline,
+reference_notes, title?}` on the outcome, with effects `{complete: outline, pending_outline}`, and
+**writes nothing to the chapter**. The transaction that finalizes the call — the non-held path, or
+the resume that approves a held one — calls `apply_pending_outline`, which writes
+`chapters.outline` and `reference_notes`, plus the title only while the chapter's title is still
+empty at apply time, and emits `chapter.updated {outline_changed: true}`. A held outline leaves the
+chapter byte-identical; feedback revokes the effects and discards the staged outline, and abandon
+discards it with the call. `chapters.outline` therefore holds only an accepted or author-written
+outline.
+
 `hold_condition(s, tc, outcome)`:
 ```text
   s.pause_requested                                                        → true
@@ -234,10 +266,11 @@ a blank line, in this **canonical order**:
 
 1. **Effect notices** about the call itself: `writer.notice.outline_accepted` (rendered with
    the current granularity rules), `writer.notice.revision_plan_accepted`,
-   `writer.notice.outline_rejected`, `writer.notice.revision_plan_rejected`,
-   `notice.completion_revoked`, and the budget notices (`writer.notice.retrieval_budget`,
+   `writer.notice.outline_rejected` / `planner.notice.outline_rejected` (chosen by session kind),
+   `writer.notice.revision_plan_rejected`, `notice.completion_revoked`, and the budget notices
+   (`writer.notice.retrieval_budget` / `planner.notice.retrieval_budget` by role,
    `notice.research_budget`). The revoke notices carry no feedback text; the feedback follows in
-   slot 3.
+   slot 3. A tool with its own rejection notice does not also get `notice.completion_revoked`.
 2. **Edit report** (`notice.user_edits` or `notice.setting_edits`, §7): the author's edits since
    the agent last saw the chapter or the setting materials.
 3. **Author feedback** given on a held call (`notice.user_feedback`).
@@ -295,10 +328,13 @@ Every call therefore has a sealed result even in a completed session, which a re
   transaction that finalizes the call. So a held write leaves the chapter byte-identical, approval
   applies it exactly once, and feedback discards it along with the other revoked effects.
 - **Revoking deferred effects**: when the author gives feedback on a held call whose effects
-  include `complete` or `phase_to`, the effects are cleared before finalizing, and the matching
-  revoke notice is appended (`writer.notice.outline_rejected` for `submit_outline`,
-  `writer.notice.revision_plan_rejected` for `submit_revision_plan`, `notice.completion_revoked`
-  for a completion), followed by the feedback. The agent keeps working in the same phase.
+  include `complete`, `phase_to` or a staged write/outline, the effects are cleared before
+  finalizing, and the matching revoke notice is appended (`writer.notice.outline_rejected` for a
+  legacy `submit_outline`, `planner.notice.outline_rejected` for an outline session's
+  `submit_outline`, `writer.notice.revision_plan_rejected` for `submit_revision_plan`,
+  `notice.completion_revoked` for any other completion), followed by the feedback. The agent keeps
+  working in the same phase. A staged outline is discarded with the effects; a staged content
+  write likewise never reaches the chapter.
 
 ### 5.5 `step_model`
 
@@ -341,7 +377,8 @@ handle_text_only(s):
                  else: s.error ← {code: "agent.no_tool_call"}; transition(s, failed)
 ```
 
-Nudge keys by writer phase: `planning` → `writer.notice.nudge_planning`, `drafting` →
+Nudge keys by session kind and phase: `chapter_outline` → `planner.notice.nudge`; writer
+`planning` (legacy only) → `writer.notice.nudge_planning`, `drafting` →
 `writer.notice.nudge_drafting`, `revision_planning` → `writer.notice.nudge_revision_planning`,
 `revising` → `writer.notice.nudge_revising`; reviewer, archivist, and researcher sessions get
 `notice.nudge_generic`.
@@ -358,7 +395,7 @@ Nudge keys by writer phase: `planning` → `writer.notice.nudge_planning`, `draf
 | `refusal` stop reason | `failed` (`provider.refusal`); the author may edit settings or feedback and Continue |
 | 5 consecutive tool errors | `paused` with `agent.tool_error_streak` (the author reads the errors, gives feedback, resumes) |
 | 2 consecutive nudges without a tool call | `failed` (`agent.no_tool_call`) |
-| Planning retrieval budget exceeded (30 retrieval calls in a writer session) | from then on, each retrieval result gets the appendix `writer.notice.retrieval_budget`; calls still work |
+| Retrieval budget exceeded (30 retrieval calls in a planner or writer session) | from then on, each retrieval result gets the appendix `planner.notice.retrieval_budget` for a planner session, `writer.notice.retrieval_budget` otherwise; calls still work |
 
 `failed`, `stopped` and `interrupted` sessions show **Continue**, which re-enters the loop. Because
 history is intact, continuing re-sends exactly the request that failed, plus a user message
@@ -378,7 +415,7 @@ table in §3. Invalid ones return `409 session.invalid_state`.
 | `message {text}` | append an inbox `user_message`. If the status is `idle`, transition to running and spawn. Rejected while `awaiting_input` (the form must be answered) and in terminal statuses |
 | `answer {tool_call_id, payload}` | awaiting_input only. Validates the payload against the call (spec/05 §7); `raw_result_text ← render(answer)`; finalize; status → running; spawn |
 | `abandon` | any open status → abandoned (a running session is stopped first: cancel, wait for the runner to exit). Releases chapter locks; writer sessions leave the chapter content as it is; an archivist session on a chapter sets its `canon_status` to `failed` (spec/06 §6) |
-| `PATCH {granularity?, auto_pause?, pause_after_outline?}` | open writer sessions only. A granularity change during `drafting`/`revising` queues inbox notice `writer.notice.granularity` (rendered for the new mode). The other fields need no notice |
+| `PATCH {granularity?, auto_pause?, pause_after_outline?}` | per kind: an open outline session accepts `pause_after_outline` only; an open write or revise session accepts the three fields as before. Any other combination is `409 session.invalid_state`. A granularity change during `drafting`/`revising` queues inbox notice `writer.notice.granularity` (rendered for the new mode). The other fields need no notice |
 
 Re-review: `POST /api/review-reports/:id/rereview {comment}` appends a user message rendered from
 `reviewer.rereview` to the report's session, stores the comment in `pending_comment` (copied
@@ -390,10 +427,12 @@ the same `pending_comment`.
 
 ## 7. Edit reports (keeping the agent's view consistent)
 
-- When a writer or conception session leaves `running`, `view_snapshot` stores what the agent
-  last saw (spec/02 `ViewSnapshot`): for a writer, the chapter content, outline, and reference
-  notes; for conception, the three setting documents, the character designs, and the draft
-  research topics. Server recovery sets it for interrupted sessions too.
+- When a writer, planner or conception session leaves `running`, `view_snapshot` stores what the
+  agent last saw (spec/02 `ViewSnapshot`): for a writer or planner, the chapter content, outline,
+  and reference notes; for conception, the three setting documents, the character designs, and the
+  draft research topics. Server recovery sets it for interrupted sessions too. For an outline
+  session the content part is not expected to change (drafting tools are not permitted), so the
+  outline and reference notes are what its edit report carries.
 - While the session is not running, the author may edit them (spec/08 §1.4 locking). The most
   common case is editing the outline while `submit_outline` is held, then approving it.
 - When the session next talks to the model (sealing, or a text-only tail), the runtime compares
@@ -466,6 +505,12 @@ the same `pending_comment`.
      (`author_notes`: `user_feedback` appendices, sealed or not, and consumed `user_message`
      inbox items; newest last; at most 20 items / 6,000 characters, keeping the newest).
      Feedback given on the parent's last held call is therefore not lost.
+     **Which feedback**: `feedback` is the `chapter_feedback` row whose `session_id` belongs to
+     the session's chain (the redraft row points at the session it started), or `null` when there
+     is none. It is not "the chapter's latest row": a plain drafting rollover has no redraft
+     feedback and must not print the redraft sentence. Because the row is linked to its session
+     only after the session is created, a redraft's first kickoff gets it through
+     `kickoff_extra.feedback_id`.
   2. Move unconsumed inbox items to the child (delivered at its first sealing, not duplicated in
      `author_notes`). No edit report is needed, because the kickoff contains the current text.
   3. Old session → `superseded`. Child → `running`; spawn.
@@ -485,7 +530,8 @@ end of the settings block (shared by every session of the book); see spec/04 §3
 |---|---|
 | conception | `conception.kickoff` |
 | research | `block.book_brief` (only if linked to a book) · `researcher.kickoff` |
-| chapter_write | `block.settings`⁎ · `block.memory` · `writer.kickoff.chapter` (or `writer.kickoff.redraft`) |
+| chapter_outline | `block.settings`⁎ · `block.memory` · `planner.kickoff` |
+| chapter_write | `block.settings`⁎ · `block.memory` · `block.chapter_draft` · `writer.kickoff.chapter` (a redraft's feedback comes through the task's `feedback` variable) |
 | chapter_revise | `block.settings`⁎ · `block.memory` · `block.chapter_draft` · `writer.kickoff.revise` |
 | chapter_review | `block.settings`⁎ · `block.memory` · `block.chapter_draft` · `reviewer.kickoff` (with `prior` when it replaces a re-review of an older version, §6) |
 | chapter_maintenance | `block.settings`⁎ · `block.memory` · `block.cast_index` · `block.chapter_draft` · `archivist.kickoff.maintenance` |
@@ -502,7 +548,8 @@ Task templates pull in two more blocks through template includes, so the table s
 - `block.memory` is built for the target chapter's position (spec/06 §4), i.e. the state of
   canon before this chapter. For maintenance and review that is the current canon, because this
   chapter has not been maintained yet. It leaves out the chapter outline when the kickoff
-  already shows it (spec/06 §4.2).
+  already shows it (spec/06 §4.2) — and never renders it for a `chapter_outline` session, whose
+  own task shows the outline to replace.
 - `block.chapter_draft` renders the chapter outline, reference notes, and the full text with
   pids (`[p12] …`), marking an open tail paragraph.
 - **Budget warning**: estimate kickoff tokens (CJK characters × 1.0 + other characters ÷ 4,
@@ -516,7 +563,8 @@ build_request(s) → nekowriter_llm::ChatRequest {
   model, max_output_tokens (from model_snapshot),
   system: s.system_prompt,
   tools: s.tools (frozen, fixed order),
-  parallel_tool_calls: role ≠ writer,          # writer: one call per round
+  parallel_tool_calls: role ≠ writer,          # writer: one call per round; a planner may issue
+                                               # several retrieval calls per round
   messages: for m in agent_messages by seq:
      user      → Message::user(blocks with cache flags)
      assistant → Message::assistant_replay(m.provider_payload)
@@ -574,9 +622,11 @@ its sessions (computed on demand for the overview).
   session that is not running, inside one transaction guarded by its expected status, before a
   runner is spawned, so a double click gets `409 session.invalid_state` instead of a second
   runner.
-- **Chapter locks**: at most one open writer session per chapter (`409 chapter.session_exists`,
-  returning the session id). Author edits are rejected with `423 chapter.locked` while that
-  session is `running`; they are allowed in every other status and reported via §7.
+- **Chapter locks**: at most one open session across the planner and writer roles per chapter
+  (`409 chapter.session_exists`, returning the session id); the two roles form one lock group, so
+  an outline session excludes a write or revise session on the same chapter. Author edits are
+  rejected with `423 chapter.locked` while a planner or writer session of the chapter is
+  `running`; they are allowed in every other status and reported via §7.
 - Archivist sessions on a chapter never touch its text, so author edits to an official chapter
   during maintenance are allowed. The completion handler compares `content_version` with the
   session's `base_content_version` and marks the chapter `stale` when they differ (spec/06 §6).
@@ -588,10 +638,17 @@ its sessions (computed on demand for the overview).
 ## 15. Required runtime tests (`crates/server/tests/agent_*.rs`)
 
 With `ScriptedProvider` (spec/04 §7) and a temp database:
-1. Plan → `submit_outline` → (pause_after_outline) held → approve → drafting notice contains the
-   granularity rule → `insert_text` ×3 → `chapter_end` → chapter `in_review` with a draft version.
-2. Held outline + feedback → phase stays `planning`; the result contains the rejection notice and
-   the feedback; resubmission works.
+1. Outline session: retrieval → `submit_outline` → (pause_after_outline) held → approve → the
+   chapter's outline, reference notes and (empty-title) title are applied, the session is
+   `completed` with no further model request, and the chapter is still `planned`. Then a write
+   session: its kickoff carries the outline, notes and granularity rule → `insert_text` ×3 →
+   `chapter_end` → chapter `in_review` with a draft version, and `submit_outline` is not frozen
+   in the write session.
+2. Held outline + feedback → the phase stays phase-free; the result contains
+   `planner.notice.outline_rejected`, the edit report when the author edited meanwhile, and the
+   feedback, in that order, with no `notice.completion_revoked`; the staged outline is discarded
+   and resubmission works. The legacy `chapter_write`/`planning` variant keeps the writer
+   rejection notice and the `planning` phase.
 3. Auto-pause: each insert holds; approve continues. Feedback is appended to that call's result
    only.
 4. Pause request during streaming → holds after the call completes. Pause with a text-only
@@ -620,8 +677,10 @@ With `ScriptedProvider` (spec/04 §7) and a temp database:
     `error.after_completion` without executing; every call of the batch is sealed.
 17. Stop while a call is in its prepare phase (a slow scripted web fetch) → the call is back to
     `pending`, nothing was written; continue executes it once.
-18. Author edits the outline while `submit_outline` is held, then approves → the result
-    carries the outline-accepted notice and an edit report with the new outline.
+18. Author edits the chapter outline while an outline session holds `submit_outline`, then
+    approves → the chapter takes exactly the proposal in the held call (the interim edit is
+    replaced), the held call finalizes with its staged result (`staged = true`), and the session
+    completes.
 19. Short completion: `chapter_end` below 60% of the target → text kept, completion withheld,
     `finish_warned` set; the following `finish_draft` completes.
 20. Pause → held; author edits a paragraph, then resumes with feedback → the sealed result is
@@ -630,3 +689,15 @@ With `ScriptedProvider` (spec/04 §7) and a temp database:
 21. A pause request and a granularity change committed while the runner is inside a tool
     transaction are both honored at the next boundary (no lost update); two concurrent
     `continue` calls start one runner and the second gets `409 session.invalid_state`.
+22. Outline session with `pause_after_outline` off: `submit_outline` completes immediately, the
+    outline, reference notes and empty-title title are applied in one transaction, the chapter is
+    still `planned` and no write session is started.
+23. Outline session abandoned while held: the previous `chapters.outline` and `reference_notes`
+    are unchanged and the staged proposal is gone with the call.
+24. `POST /chapters/:id/write` on a chapter whose outline is empty or whitespace-only →
+    `409 chapter.outline_missing`; the redraft send-back answers the same when the chapter has no
+    outline.
+25. Legacy planning session (fixture row `chapter_write`/`planning` with the old 20-tool list):
+    plans, holds, approves (the writer acceptance notice), drafts and completes. Feedback on its
+    held outline gives the legacy `writer.notice.outline_rejected`. A plain drafting rollover has
+    no redraft sentence in its kickoff; a redraft rollover keeps the feedback its chain addresses.

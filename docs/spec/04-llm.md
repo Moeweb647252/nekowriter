@@ -157,9 +157,9 @@ Rules from the current API (API version `2026-10-21`):
 - All three use the **same TTL**, because the API requires longer TTLs to come before shorter
   ones and rejects an explicit marker on the last block whose TTL differs from the top-level one.
 - `options.cache_ttl` is `5m`, `1h`, or `auto` (default). The server resolves `auto` once, at
-  session creation (spec/03 §4): `1h` for conception sessions and for writer sessions with
-  `auto_pause` or `pause_after_outline` (the author reads the outline or a step, often for more
-  than 5 minutes, and a miss re-writes the whole prefix), otherwise `5m`.
+  session creation (spec/03 §4): `1h` for conception sessions, for planner sessions with
+  `pause_after_outline` (the author reads the outline, often for more than 5 minutes, and a miss
+  re-writes the whole prefix) and for writer sessions with `auto_pause`, otherwise `5m`.
 
 **Message mapping**:
 - `User` → `{ role: "user", content: [ {type: "text", text, cache_control?}, … ] }`.
@@ -285,7 +285,8 @@ history:
 
 | Kind / phase | Behavior |
 |---|---|
-| chapter_write / planning | `get_entity` on the protagonist (if any), then `submit_outline` with a three-scene outline |
+| chapter_outline | `get_entity` on the protagonist (if any), then `submit_outline` with a three-scene outline |
+| chapter_write / planning | legacy only (a session started before the outline split): `get_entity` on the protagonist (if any), then `submit_outline` with a three-scene outline |
 | chapter_write / drafting | `insert_text` with text from a small built-in Chinese and English corpus, matching the granularity (sentence, paragraph, free chunk, or chapter); `chapter_end` after ~8 paragraphs, and `finish_draft` when that completion is withheld as short |
 | chapter_revise | `submit_revision_plan`, then one `replace_text` on the first current paragraph (the pid and the exact `old` text come from the draft the request carries, D-077), then `finish_revision` |
 | chapter_review | `submit_review` (verdict `revise` on attempt 1, `pass` on later attempts) with one issue on `p2` |

@@ -45,7 +45,7 @@ Entry format (all files except `tools.toml` and `variables.toml`):
 [[prompt]]
 key = "writer.system"
 kind = "system"
-agent = "writer"                 # conception | researcher | writer | reviewer | archivist | shared
+agent = "writer"                 # conception | researcher | planner | writer | reviewer | archivist | shared
 vars = []                        # top-level variables the template may use (documented in variables.toml)
 title_en = "Writer — system prompt"
 title_zh = "写手 · 系统提示词"
@@ -65,10 +65,10 @@ escaping.
 
 | Group | Keys |
 |---|---|
-| System | `conception.system`, `researcher.system`, `writer.system`, `reviewer.system`, `archivist.system` |
-| Tasks | `conception.kickoff`, `researcher.kickoff`, `writer.kickoff.chapter`, `writer.kickoff.redraft`, `writer.kickoff.revise`, `writer.kickoff.rollover`, `reviewer.kickoff`, `reviewer.rereview`, `archivist.kickoff.maintenance`, `archivist.kickoff.seed`, `archivist.kickoff.resync` |
+| System | `conception.system`, `researcher.system`, `planner.system`, `writer.system`, `reviewer.system`, `archivist.system` |
+| Tasks | `conception.kickoff`, `researcher.kickoff`, `planner.kickoff`, `writer.kickoff.chapter` (drafting; its `feedback` branch is today's redraft), `writer.kickoff.revise`, `writer.kickoff.rollover`, `reviewer.kickoff`, `reviewer.rereview`, `archivist.kickoff.maintenance`, `archivist.kickoff.seed`, `archivist.kickoff.resync`. `writer.kickoff.redraft` is retired; existing overrides of it are inert |
 | Blocks | `block.settings`, `block.memory`, `block.chapter_draft`, `block.cast_index`, `block.chapter_diff`, `block.anchor`, `block.book_brief` |
-| Notices | `notice.user_feedback`, `notice.user_message`, `notice.user_edits`, `notice.setting_edits`, `notice.completion_revoked`, `notice.tool_not_allowed`, `notice.output_truncated` (these two are rendered inside `result.error`), `notice.web_content`, `notice.nudge_generic`, `notice.research_budget`, `writer.notice.outline_accepted`, `writer.notice.outline_rejected`, `writer.notice.revision_plan_accepted`, `writer.notice.revision_plan_rejected`, `writer.notice.granularity`, `writer.notice.nudge_planning`, `writer.notice.nudge_drafting`, `writer.notice.nudge_revision_planning`, `writer.notice.nudge_revising`, `writer.notice.retrieval_budget`, `writer.rules.granularity` (partial, included by other notices) |
+| Notices | `notice.user_feedback`, `notice.user_message`, `notice.user_edits`, `notice.setting_edits`, `notice.completion_revoked`, `notice.tool_not_allowed`, `notice.output_truncated` (these two are rendered inside `result.error`), `notice.web_content`, `notice.nudge_generic`, `notice.research_budget`, `planner.notice.outline_rejected`, `planner.notice.nudge`, `planner.notice.retrieval_budget`, `writer.notice.outline_accepted`, `writer.notice.revision_plan_accepted`, `writer.notice.revision_plan_rejected`, `writer.notice.granularity`, `writer.notice.nudge_drafting`, `writer.notice.nudge_revision_planning`, `writer.notice.nudge_revising`, `writer.rules.granularity` (partial, included by other notices). `writer.notice.outline_rejected`, `writer.notice.nudge_planning` and `writer.notice.retrieval_budget` stay as **legacy** keys, used only by sessions started before the outline split (their titles say so) |
 | Shared | `shared.label`, `shared.chapter_label` |
 | Results | `result.error`, `result.truncated`, `result.entity_card`, `result.entity_list`, `result.relations`, `result.timeline`, `result.foreshadowing_list`, `result.search_hits`, `result.knowledge_entry`, `result.chapter_text`, `result.draft_text`, `result.draft_edit`, `result.writer_control`, `result.submit_review`, `result.canon_write`, `result.finish_maintenance`, `result.ask_user`, `result.request_review`, `result.conception_write`, `result.web_search`, `result.web_fetch`, `result.knowledge_write`, `result.finish_research` |
 | Tools | `tool.<name>` for every tool in spec/05 §2 |

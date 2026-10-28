@@ -179,9 +179,10 @@ pub struct MemorySnapshot {
   `block.memory` renders only the label and title of these, because every writer and reviewer
   task states the guidance and the target length itself (the Memory page shows all of them).
   Its outline is included only when the kickoff has no `block.chapter_draft` (which renders the
-  outline itself: revise, review, maintenance, rollover, and a write that continues existing
-  text) and is not a redraft (whose task shows the old outline as the previous one), so it never
-  appears twice.
+  outline itself: revise, review, maintenance, rollover, and every write session) and is not a
+  redraft (whose task shows the feedback and the accepted outline's replacement), so it never
+  appears twice. A `chapter_outline` kickoff never renders the outline in `block.memory`: its
+  task shows the outline to replace, and the chapter draft block carries the existing text.
 
 ### 4.3 Mid-term (structured recent evidence)
 - `recent_changes`: visible (`change_log.track_id`, §2), non-reverted rows with

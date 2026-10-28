@@ -97,6 +97,10 @@ At session creation, for each tool in the role's list (§2): take the definition
 - Every reference to a chapter is rendered as its label (`第12章《标题》`, side tracks
   `番外《轨道名》第2章`) via the `chapter_label` helper.
 - Entities are rendered as `名字(#id)`.
+- `result.writer_control` also receives `staged` (boolean). For `submit_outline` in a
+  `chapter_outline` session it is true and the result says the outline was submitted and takes
+  effect when the author accepts it — never that it was saved. For a legacy `chapter_write` /
+  `planning` session it is false and the result describes the immediate save.
 - Errors that the tables below do not name: an unknown or invisible id (`event_id`,
   `after_event`, `before_event`, `around_event`, `move_after`, `move_before`, `note_id`,
   `foreshadowing_id`, `entry_id`) → `error.not_found` with the `target_type` label as
@@ -151,7 +155,8 @@ listing the candidates with ids.
 
 | Role | Tools (this exact order) |
 |---|---|
-| writer | `get_entity`, `list_entities`, `get_relations`, `query_timeline`, `list_foreshadowing`, `search_canon`, `search_knowledge`, `read_knowledge_entry`, `search_chapters`, `read_chapter`, `submit_outline`, `submit_revision_plan`, `read_draft`, `insert_text`, `insert_paragraphs`, `replace_text`, `rewrite_paragraph`, `delete_paragraphs`, `finish_draft`, `finish_revision` |
+| planner | `get_entity`, `list_entities`, `get_relations`, `query_timeline`, `list_foreshadowing`, `search_canon`, `search_knowledge`, `read_knowledge_entry`, `search_chapters`, `read_chapter`, `read_draft`, `submit_outline` |
+| writer | `get_entity`, `list_entities`, `get_relations`, `query_timeline`, `list_foreshadowing`, `search_canon`, `search_knowledge`, `read_knowledge_entry`, `search_chapters`, `read_chapter`, `submit_revision_plan`, `read_draft`, `insert_text`, `insert_paragraphs`, `replace_text`, `rewrite_paragraph`, `delete_paragraphs`, `finish_draft`, `finish_revision` |
 | reviewer | `get_entity`, `list_entities`, `get_relations`, `query_timeline`, `list_foreshadowing`, `search_canon`, `search_knowledge`, `read_knowledge_entry`, `search_chapters`, `read_chapter`, `submit_review` |
 | archivist | `get_entity`, `list_entities`, `get_relations`, `query_timeline`, `list_foreshadowing`, `search_canon`, `read_chapter`, `create_entity`, `update_entity`, `set_relation`, `end_relation`, `record_appearances`, `add_timeline_event`, `update_timeline_event`, `add_memory_note`, `retire_memory_note`, `add_foreshadowing`, `resolve_foreshadowing`, `set_chapter_summary`, `propose_setting_change`, `finish_maintenance` |
 | conception | `ask_user`, `web_search`, `web_fetch`, `write_setting_doc`, `edit_setting_doc`, `upsert_character`, `remove_character`, `reorder_characters`, `set_research_topics`, `request_review` |
@@ -163,14 +168,18 @@ listing the candidates with ids.
 
 | Writer phase | Permitted |
 |---|---|
-| `planning` | RETRIEVAL, `read_draft`, `submit_outline` |
+| `planning` (legacy only) | RETRIEVAL, `read_draft`, `submit_outline` |
 | `drafting` | `read_draft`, DRAFT_EDIT, `finish_draft` |
 | `revision_planning` | RETRIEVAL, `read_draft`, `submit_revision_plan` |
 | `revising` | `read_draft`, DRAFT_EDIT, `finish_revision` |
 
+A `chapter_outline` session is **phase-free**: its frozen planner list is its gate, so it permits
+all twelve tools (retrieval, `read_draft`, `submit_outline`). The writer list has no
+`submit_outline`; only a legacy `chapter_write` session (frozen before the split) still has it.
+
 Archivist by session kind: `canon_seed` forbids `record_appearances`, `set_chapter_summary`,
-`read_chapter`; the other kinds allow all of their tools. Reviewer, conception, and researcher
-sessions allow all of their tools.
+`read_chapter`; the other kinds allow all of their tools. Reviewer, conception, planner, and
+researcher sessions allow all of their tools.
 
 ## 3. Retrieval tools
 
@@ -191,7 +200,7 @@ sessions allow all of their tools.
 
 | Tool | Parameters | Behavior | Effects | `ui` |
 |---|---|---|---|---|
-| `submit_outline` | `outline`*, `reference_notes`*, `title` | Saves the chapter outline and reference notes. Sets the title only when the author has not set one. Result `result.writer_control` (`action = submit_outline`) | `phase_to: drafting` (the accepted notice is appended at finalize) | `{outline_chars, notes_chars}` |
+| `submit_outline` | `outline`*, `reference_notes`*, `title` | **In a `chapter_outline` session**: validates and stages `pending_outline {outline, reference_notes, title?}`; nothing is written to the chapter. Result `result.writer_control` (`action = submit_outline`, `staged = true`). **In a legacy `chapter_write`/`planning` session**: saves the outline and reference notes immediately, setting the title only when the author has not set one; `staged = false` | outline session: `complete: outline` + `pending_outline` (applied by `apply_pending_outline` in the finalizing transaction); legacy: `phase_to: drafting` (the accepted notice is appended at finalize) | `{outline_chars, notes_chars}` |
 | `submit_revision_plan` | `plan`* | Stores the plan in the call result (visible in history) | `phase_to: revising` | `{plan_chars}` |
 | `read_draft` | `from_pid`, `to_pid`, `max_chars` (12,000) | The current text with pids, the tail-open marker, word count and target | — | `{paragraphs}` |
 | `insert_text` | `text`*, `paragraph_end` (true), `chapter_end` (false) | Append per granularity (spec/03 §8). Result `result.draft_edit` (`action = insert_text`): what was written (new pids / appended to pid), whether the tail is open, word count vs target. A short completion is withheld once (`short_of_target`, spec/03 §8) | drafting + `chapter_end` (or `chapter` mode) → `complete: draft` | `{inserted: [pid], appended_to?: pid, tail_open, word_count}` |
