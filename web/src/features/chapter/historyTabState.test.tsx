@@ -1,6 +1,6 @@
 /** HistoryTab's note and diff selection are chapter-scoped (M5-06). */
 import "@/i18n"
-import { render, screen } from "@testing-library/react"
+import { act, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
 
@@ -86,7 +86,9 @@ describe("HistoryTab chapter state", () => {
     expect(saveSuccess).toBeTypeOf("function")
     rerender(view(2))
     await user.type(screen.getByPlaceholderText("Note for this version (optional)"), "B 的备注")
-    saveSuccess?.()
+    await act(async () => {
+      saveSuccess?.()
+    })
     expect(screen.getByPlaceholderText("Note for this version (optional)")).toHaveValue("B 的备注")
   })
 })
