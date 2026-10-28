@@ -421,3 +421,83 @@ fn tool_effects_and_role_models_round_trip_with_the_new_fields() {
     let raw = serde_json::to_value(&roles).expect("serialize roles");
     assert_eq!(raw["planner"], json!(7));
 }
+
+/// The upgraded pre-0004 schema must be object-for-object identical to a fresh database built
+/// from the edited `0001` (F15): a future edit to only one side fails this test.
+#[tokio::test]
+async fn the_upgraded_schema_matches_a_fresh_database() {
+    use sea_orm::ConnectionTrait;
+
+    fn normalize_schema_sql(sql: &str) -> String {
+        // 0004's rebuild drops the inline comments 0001 carries; comments and whitespace are not
+        // schema, so compare the statements themselves (quoted identifiers normalized too).
+        let without_comments: String = sql
+            .lines()
+            .map(|line| line.split("--").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        without_comments
+            .replace('"', "")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    async fn schema_dump(
+        conn: &sea_orm::DatabaseConnection,
+    ) -> std::collections::BTreeMap<String, (String, String)> {
+        conn.query_all_raw(sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Sqlite,
+            "SELECT type, name, sql FROM sqlite_master \
+             WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' \
+               AND name <> 'seaql_migrations' \
+             ORDER BY type, name"
+                .to_owned(),
+        ))
+        .await
+        .expect("schema dump")
+        .into_iter()
+        .map(|row| {
+            (
+                row.try_get::<String>("", "name").unwrap_or_default(),
+                (
+                    row.try_get::<String>("", "type").unwrap_or_default(),
+                    // A rebuild leaves the table name quoted in sqlite_master; SQLite treats that
+                    // identically to the unquoted fresh form, so normalize it before comparing.
+                    normalize_schema_sql(&row.try_get::<String>("", "sql").unwrap_or_default()),
+                ),
+            )
+        })
+        .collect()
+    }
+
+    let (_dir, path) = pre_outline_database().await;
+    let old = nekowriter::db::Db::connect(&path).await.expect("connect");
+    nekowriter_migration::up(old.conn()).await.expect("upgrade");
+    let upgraded = schema_dump(old.conn()).await;
+    let fresh_dir = tempfile::tempdir().expect("fresh temp dir");
+    let fresh = nekowriter::db::Db::connect(&fresh_dir.path().join("fresh.db"))
+        .await
+        .expect("fresh connect");
+    // Build the fresh side from the edited 0001 itself, not through the migrator: applying 0004
+    // there too would overwrite `agent_sessions` and hide a 0001 edit (F15).
+    fresh
+        .conn()
+        .execute_unprepared(include_str!("../../migration/src/sql/0001_init.sql"))
+        .await
+        .expect("apply the edited 0001");
+    let fresh = schema_dump(fresh.conn()).await;
+
+    assert_eq!(
+        upgraded.keys().collect::<Vec<_>>(),
+        fresh.keys().collect::<Vec<_>>(),
+        "the 0004 rebuild must leave the same object set as the edited 0001"
+    );
+    for (name, object) in &upgraded {
+        assert_eq!(
+            Some(object),
+            fresh.get(name),
+            "the 0004 rebuild changed {name}"
+        );
+    }
+}

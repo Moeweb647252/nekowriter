@@ -215,3 +215,109 @@ async fn patch_of_an_outline_session_accepts_only_pause_after_outline() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["pause_after_outline"], false);
 }
+
+/// The in-transaction creation guard refuses a second open planner session even when the caller
+/// bypasses the endpoint's pre-check (F13). This is the lock-group proof; the concurrent HTTP test
+/// above only proves the endpoint's pre-check plus the same guard.
+#[tokio::test]
+async fn a_direct_second_create_is_refused_inside_the_transaction() {
+    let (app, book_id, chapter_id) = app_with_book().await;
+    assign_models(&app).await;
+    insert_outline_session(&app, chapter_id, "held").await;
+    let error = nekowriter::services::sessions::create(
+        app.state(),
+        nekowriter::services::sessions::CreateSession {
+            kind: nekowriter::db::json::SessionKind::ChapterOutline,
+            book_id: Some(book_id),
+            chapter_id: Some(chapter_id),
+            pause_after_outline: Some(true),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect_err("the in-transaction guard must refuse a second session");
+    assert_eq!(
+        error.code,
+        nekowriter::error::ErrorCode::ChapterSessionExists
+    );
+}
+
+/// Approve is in the lock group: an open planner session refuses it with `chapter.session_exists`
+/// (F13, spec/08 §1.1).
+#[tokio::test]
+async fn approve_refuses_an_open_planner_session() {
+    let (app, _book_id, chapter_id) = app_with_book().await;
+    app.execute(&format!(
+        "UPDATE chapters SET status = 'in_review', content = '{{\"paragraphs\":[{{\"pid\":\"p1\",\"text\":\"正文。\"}}],\"tail_open\":false}}' WHERE id = {chapter_id}"
+    ))
+    .await;
+    insert_outline_session(&app, chapter_id, "held").await;
+    let (status, body) = app
+        .post(&format!("/api/chapters/{chapter_id}/approve"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "chapter.session_exists");
+}
+
+/// A running planner blocks submit with `chapter.session_exists`; a held one is abandoned by the
+/// manual submit, exactly like a writer session (F13, spec/08 §1.1).
+#[tokio::test]
+async fn submit_uses_the_planner_writer_lock_group() {
+    let (app, _book_id, chapter_id) = app_with_book().await;
+    app.execute(&format!(
+        "UPDATE chapters SET status = 'drafting', content = '{{\"paragraphs\":[{{\"pid\":\"p1\",\"text\":\"正文。\"}}],\"tail_open\":false}}' WHERE id = {chapter_id}"
+    ))
+    .await;
+    let running = insert_outline_session(&app, chapter_id, "running").await;
+    let (status, body) = app
+        .post(&format!("/api/chapters/{chapter_id}/submit"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "chapter.session_exists");
+    assert_eq!(body["error"]["details"]["session_id"], running);
+    app.execute(&format!(
+        "UPDATE agent_sessions SET status = 'held' WHERE id = {running}"
+    ))
+    .await;
+    let (status, body) = app
+        .post(&format!("/api/chapters/{chapter_id}/submit"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (_, session) = app.get(&format!("/api/sessions/{running}")).await;
+    assert_eq!(session["session"]["status"], "abandoned");
+}
+
+/// Restore is in the lock group: a running planner gives `chapter.locked` (F13, spec/08 §1.2).
+#[tokio::test]
+async fn restore_refuses_a_running_planner_session() {
+    let (app, _book_id, chapter_id) = app_with_book().await;
+    app.execute(&format!(
+        "UPDATE chapters SET status = 'drafting' WHERE id = {chapter_id}"
+    ))
+    .await;
+    app.execute(&format!(
+        "INSERT INTO chapter_versions(chapter_id, version_no, kind, title, content, word_count, note, created_at) \
+         VALUES ({chapter_id}, 1, 'manual', 'Chapter One', '{{\"paragraphs\":[],\"tail_open\":false}}', 0, '', '2026-01-01T00:00:00Z')"
+    ))
+    .await;
+    let row = app
+        .db()
+        .conn()
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "SELECT max(id) AS id FROM chapter_versions".to_owned(),
+        ))
+        .await
+        .expect("query")
+        .expect("row");
+    let version_id = row.try_get::<i32>("", "id").expect("version id");
+    insert_outline_session(&app, chapter_id, "running").await;
+    let (status, body) = app
+        .post(
+            &format!("/api/chapter-versions/{version_id}/restore"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::LOCKED, "{body}");
+    assert_eq!(body["error"]["code"], "chapter.locked");
+}

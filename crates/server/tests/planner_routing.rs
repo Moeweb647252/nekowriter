@@ -159,3 +159,44 @@ async fn a_missing_planner_reports_model_missing_role_for_the_planner() {
         Some("planner")
     );
 }
+
+/// `create_inner` uses `resolve_model`, not `try_resolve_model`; this creates a real outline
+/// session with all four levels populated and asserts the frozen model is the book planner (F14).
+#[tokio::test]
+async fn a_real_outline_session_freezes_the_book_planner_model() {
+    let app = TestApp::new().await;
+    let [global_writer, global_planner, book_writer, book_planner] = models(&app).await;
+    let book = app.create_book("Book").await;
+    let book_id = book["id"].as_i64().expect("book id") as i32;
+    let (_, tracks) = app.get(&format!("/api/books/{book_id}/tracks")).await;
+    let track_id = tracks[0]["id"].as_i64().expect("track id") as i32;
+    let chapter = app.create_chapter(track_id, "Chapter").await;
+    let chapter_id = chapter["id"].as_i64().expect("chapter id") as i32;
+    app.patch(
+        "/api/app-settings",
+        json!({ "roles_defaults": { "writer": global_writer, "planner": global_planner } }),
+    )
+    .await;
+    app.patch(
+        &format!("/api/books/{book_id}"),
+        json!({ "model_overrides": { "writer": book_writer, "planner": book_planner } }),
+    )
+    .await;
+
+    let (session_id, _) = sessions::create(
+        app.state(),
+        CreateSession {
+            kind: SessionKind::ChapterOutline,
+            book_id: Some(book_id),
+            chapter_id: Some(chapter_id),
+            ..CreateSession::default()
+        },
+    )
+    .await
+    .expect("create outline session");
+    let (_, session) = app.get(&format!("/api/sessions/{session_id}")).await;
+    assert_eq!(
+        session["session"]["model_label"], "book planner",
+        "create_inner must resolve through resolve_model: {session}"
+    );
+}
