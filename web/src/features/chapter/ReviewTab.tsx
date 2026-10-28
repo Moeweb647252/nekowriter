@@ -60,6 +60,15 @@ export function ReviewTab({
   )
   const [discuss, setDiscuss] = useState<ReviewReportDto | null>(null)
   const [outlineOpen, setOutlineOpen] = useState(false)
+  // `ChapterPage` keys this tab, but the reset also protects a direct mount: report ids belong
+  // to one chapter and must never cross a chapter change (M5-05).
+  const [lastChapterId, setLastChapterId] = useState(chapter.id)
+  if (chapter.id !== lastChapterId) {
+    setLastChapterId(chapter.id)
+    setSendBack(null)
+    setDiscuss(null)
+    setOutlineOpen(false)
+  }
 
   if (reviews.isPending) {
     return <Skeleton className="h-48" />

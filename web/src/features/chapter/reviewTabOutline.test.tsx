@@ -59,6 +59,30 @@ import { ReviewTab } from "@/features/chapter/ReviewTab"
 beforeEach(() => sendBackMutate.mockReset())
 
 describe("ReviewTab outline-missing handoff", () => {
+  it("closes Discuss when the chapter changes", async () => {
+    const user = userEvent.setup()
+    const view = (current: ChapterDto) => (
+      <ReviewTab chapter={current} bookId={1} settings={SETTINGS} onSessionStarted={() => {}} />
+    )
+    const { rerender } = render(view(chapter))
+    await user.click(screen.getAllByText("Discuss…")[0].closest("button") as HTMLElement)
+    expect(screen.getByText("Discuss with the reviewer")).toBeInTheDocument()
+    rerender(view({ ...chapter, id: 2, number: 2 }))
+    expect(screen.queryByText("Discuss with the reviewer")).not.toBeInTheDocument()
+  })
+
+  it("closes Send back when the chapter changes", async () => {
+    const user = userEvent.setup()
+    const view = (current: ChapterDto) => (
+      <ReviewTab chapter={current} bookId={1} settings={SETTINGS} onSessionStarted={() => {}} />
+    )
+    const { rerender } = render(view(chapter))
+    await user.click(screen.getByRole("button", { name: "Send back with this feedback" }))
+    expect(screen.getByText("Send back for revision")).toBeInTheDocument()
+    rerender(view({ ...chapter, id: 2, number: 2 }))
+    expect(screen.queryByText("Send back for revision")).not.toBeInTheDocument()
+  })
+
   it("opens the Outline dialog from the send-back dialog", async () => {
     const user = userEvent.setup()
     sendBackMutate.mockImplementation((...args: unknown[]) => {

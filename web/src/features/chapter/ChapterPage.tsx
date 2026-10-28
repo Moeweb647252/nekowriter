@@ -206,6 +206,7 @@ export default function ChapterPage() {
         </TabsContent>
         <TabsContent value="review" className="min-h-0 p-6">
           <ReviewTab
+            key={document.id}
             chapter={document}
             bookId={bookId}
             settings={book.data.settings}
