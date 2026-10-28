@@ -8,7 +8,7 @@
  * version and make the staged write stale, and the text on screen is not the draft's text. Every
  * other hold keeps the inline `HoldBar` under the paragraphs it touched.
  */
-import { memo, useCallback, useEffect, useMemo, useState } from "react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { AnimatePresence, motion } from "motion/react"
 
@@ -61,6 +61,14 @@ export function ChapterText({
 }: ChapterTextProps) {
   const { t } = useTranslation()
   const showError = useErrorToast()
+  const fullTextToken = useRef(0)
+  const wasFullTextOpen = useRef(fullTextOpen)
+  useEffect(() => {
+    if (fullTextOpen && !wasFullTextOpen.current) {
+      fullTextToken.current += 1
+    }
+    wasFullTextOpen.current = fullTextOpen
+  }, [fullTextOpen])
   const paragraphs = useChapterDoc((state) => state.paragraphs)
   const tailOpen = useChapterDoc((state) => state.tailOpen)
   const version = useChapterDoc((state) => state.version)
@@ -81,23 +89,33 @@ export function ChapterText({
   // a streaming tail paragraph must not re-render the other hundreds.
   const patchMutate = patch.mutate
   const saveParagraph = useCallback(
-    (pid: string, text: string) => {
+    (pid: string, text: string, baseVersion: number) => {
+      // Never pair an advanced store version with text typed against an older one (R8-02).
+      if (baseVersion !== version) {
+        return
+      }
       const ops: ContentOpInput[] = [{ op: "update", pid, text }]
-      patchMutate({ base_version: version, ops }, { onError: showError })
+      patchMutate({ base_version: baseVersion, ops }, { onError: showError })
     },
     [patchMutate, version, showError],
   )
   const insertParagraphAfter = useCallback(
-    (pid: string, text: string) => {
+    (pid: string, text: string, baseVersion: number) => {
+      if (baseVersion !== version) {
+        return
+      }
       const ops: ContentOpInput[] = [{ op: "insert", after: pid, text }]
-      patchMutate({ base_version: version, ops }, { onError: showError })
+      patchMutate({ base_version: baseVersion, ops }, { onError: showError })
     },
     [patchMutate, version, showError],
   )
   const deleteParagraph = useCallback(
-    (pid: string) => {
+    (pid: string, baseVersion: number) => {
+      if (baseVersion !== version) {
+        return
+      }
       const ops: ContentOpInput[] = [{ op: "delete", pid }]
-      patchMutate({ base_version: version, ops }, { onError: showError })
+      patchMutate({ base_version: baseVersion, ops }, { onError: showError })
     },
     [patchMutate, version, showError],
   )
@@ -118,10 +136,16 @@ export function ChapterText({
         saving={putText.isPending}
         onCancel={() => onFullTextOpenChange(false)}
         onSave={(text) => {
+          const saveToken = fullTextToken.current
           putText.mutate(
             { base_version: version, text },
             {
-              onSuccess: () => onFullTextOpenChange(false),
+              onSuccess: () => {
+                // Do not close an editor the author reopened while this save was in flight (S-4).
+                if (fullTextToken.current === saveToken) {
+                  onFullTextOpenChange(false)
+                }
+              },
               onError: showError,
             },
           )
@@ -178,6 +202,7 @@ export function ChapterText({
                 key={paragraph.pid}
                 pid={paragraph.pid}
                 text={paragraph.text}
+                version={version}
                 // An `insert_text` preview streams into the open tail paragraph (spec/11 §5.2).
                 ghost={
                   writer.preview?.name === "insert_text" &&
@@ -233,9 +258,10 @@ type ParagraphProps = {
   saving: boolean
   locked: boolean
   onHighlightEnd: (pid: string) => void
-  onSave: (pid: string, text: string) => void
-  onInsertAfter: (pid: string, text: string) => void
-  onDelete: (pid: string) => void
+  version: number
+  onSave: (pid: string, text: string, baseVersion: number) => void
+  onInsertAfter: (pid: string, text: string, baseVersion: number) => void
+  onDelete: (pid: string, baseVersion: number) => void
 }
 
 /**
@@ -245,6 +271,7 @@ type ParagraphProps = {
 export const Paragraph = memo(function Paragraph({
   pid,
   text,
+  version,
   ghost,
   onlyParagraph,
   focus,
@@ -256,14 +283,28 @@ export const Paragraph = memo(function Paragraph({
   onInsertAfter,
   onDelete,
 }: ParagraphProps) {
+  const { t } = useTranslation()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(text)
+  const [editBaseVersion, setEditBaseVersion] = useState(version)
+  const [stale, setStale] = useState(false)
 
   useEffect(() => {
     if (focus === true) {
       document.querySelector(`[data-pid="${pid}"]`)?.scrollIntoView({ block: "center" })
     }
   }, [focus, pid])
+
+  if (stale) {
+    return (
+      <motion.div layout className="my-1 space-y-1">
+        <p className="whitespace-pre-wrap">{draft}</p>
+        <p role="status" className="text-xs text-destructive">
+          {t("chapter:full_text_stale")}
+        </p>
+      </motion.div>
+    )
+  }
 
   if (editing) {
     return (
@@ -276,10 +317,15 @@ export const Paragraph = memo(function Paragraph({
           className="resize-none"
           onChange={(event) => setDraft(event.target.value)}
           onBlur={() => {
-            setEditing(false)
             if (draft !== text) {
-              onSave(pid, draft)
+              if (version !== editBaseVersion) {
+                setEditing(false)
+                setStale(true)
+                return
+              }
+              onSave(pid, draft, editBaseVersion)
             }
+            setEditing(false)
           }}
           onKeyDown={(event) => {
             const caret = event.currentTarget.selectionStart ?? draft.length
@@ -301,19 +347,29 @@ export const Paragraph = memo(function Paragraph({
               return
             }
             if (action === "save") {
+              if (version !== editBaseVersion) {
+                setEditing(false)
+                setStale(true)
+                return
+              }
               setEditing(false)
               if (draft !== text) {
-                onSave(pid, draft)
+                onSave(pid, draft, editBaseVersion)
               }
               return
             }
             if (action === "insert-after") {
+              if (version !== editBaseVersion) {
+                setEditing(false)
+                setStale(true)
+                return
+              }
               // Store the edited text first, then start the new paragraph after this pid.
               if (draft !== text) {
-                onSave(pid, draft)
+                onSave(pid, draft, editBaseVersion)
               }
               setEditing(false)
-              onInsertAfter(pid, "")
+              onInsertAfter(pid, "", editBaseVersion)
               return
             }
             if (action === "delete-paragraph") {
@@ -322,8 +378,13 @@ export const Paragraph = memo(function Paragraph({
               if (onlyParagraph) {
                 return
               }
+              if (version !== editBaseVersion) {
+                setEditing(false)
+                setStale(true)
+                return
+              }
               setEditing(false)
-              onDelete(pid)
+              onDelete(pid, editBaseVersion)
             }
           }}
         />
@@ -345,6 +406,8 @@ export const Paragraph = memo(function Paragraph({
           return
         }
         setDraft(text)
+        setEditBaseVersion(version)
+        setStale(false)
         setEditing(true)
       }}
       onAnimationComplete={() => {
@@ -393,7 +456,7 @@ function FullTextEditor({
   // The editor opens against one version. If an agent write advances it while the editor is
   // open, saving the old whole-document text would silently overwrite that write (S-3): refuse
   // and ask the author to reopen the editor against the new draft.
-  const [baseVersion] = useState(version)
+  const [baseVersion] = useState(chapter.content_version)
   const stale = version !== baseVersion
   return (
     <div className="mx-auto max-w-[42em] space-y-3">

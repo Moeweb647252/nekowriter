@@ -166,7 +166,14 @@ export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: 
     control.mutate(
       { sessionId: session.id, operation },
       {
-        onSuccess: (updated) => setPinnedId(updated.id),
+        onSuccess: (updated) => {
+          // A control response may arrive after the author picked another session; only keep the
+          // pin when this is still the selected session.
+          const currentPinned = useUiStore.getState().pinnedSession[bookId] ?? null
+          if (currentPinned === null || currentPinned === session.id) {
+            setPinnedId(updated.id)
+          }
+        },
         onError: (error) => {
           setRequested(null)
           reportError(error)
@@ -210,7 +217,14 @@ export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: 
     control.mutate(
       { sessionId: session.id, operation },
       {
-        onSuccess: (updated) => setPinnedId(updated.id),
+        onSuccess: (updated) => {
+          // A control response may arrive after the author picked another session; only keep the
+          // pin when this is still the selected session.
+          const currentPinned = useUiStore.getState().pinnedSession[bookId] ?? null
+          if (currentPinned === null || currentPinned === session.id) {
+            setPinnedId(updated.id)
+          }
+        },
         onError: (error) => {
           setRequested(null)
           reportError(error)

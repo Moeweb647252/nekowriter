@@ -21,6 +21,7 @@ describe("Paragraph", () => {
       <Paragraph
         pid="p3"
         text="第一段。"
+        version={1}
         onlyParagraph={false}
         saving={false}
         locked={false}
@@ -35,7 +36,7 @@ describe("Paragraph", () => {
     await userEvent.clear(editor)
     await userEvent.type(editor, "改过的段落。")
     await userEvent.tab()
-    expect(onSave).toHaveBeenCalledWith("p3", "改过的段落。")
+    expect(onSave).toHaveBeenCalledWith("p3", "改过的段落。", 1)
   })
 
   it("does not open the editor while the chapter is locked", async () => {
@@ -44,6 +45,7 @@ describe("Paragraph", () => {
       <Paragraph
         pid="p1"
         text="第一段。"
+        version={1}
         onlyParagraph
         saving={false}
         locked

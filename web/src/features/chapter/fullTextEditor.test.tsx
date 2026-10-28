@@ -32,7 +32,7 @@ vi.mock("@/components/common/ErrorToast", () => ({
 
 import { ChapterText } from "@/features/chapter/ChapterText"
 
-function chapter(id: number, text: string): ChapterDto {
+function chapter(id: number, text: string, contentVersion = 1): ChapterDto {
   return {
     id,
     book_id: 1,
@@ -43,7 +43,7 @@ function chapter(id: number, text: string): ChapterDto {
     canon_status: "none",
     word_count: 2,
     has_outline: false,
-    content_version: 1,
+    content_version: contentVersion,
     content: { paragraphs: [{ pid: "p1", text }], next_pid: 2, tail_open: false },
     open_sessions: [],
     guidance: "",
@@ -80,6 +80,19 @@ describe("FullTextEditor", () => {
     expect(screen.getByRole("textbox")).toHaveValue("Chapter A text")
     rerender(view(chapter(2, "Chapter B text")))
     expect(screen.getByRole("textbox")).toHaveValue("Chapter B text")
+  })
+
+  it("uses the chapter's own version after switching chapters (R8-01)", async () => {
+    const a = chapter(1, "Chapter A text", 3)
+    useChapterDoc.getState().load(1, 3, a.content)
+    const b = chapter(2, "Chapter B text", 1)
+    const { rerender } = render(view(a))
+    rerender(view(b))
+    act(() => {
+      useChapterDoc.getState().load(2, 1, b.content)
+    })
+    expect(screen.queryByRole("status")).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled()
   })
 
   it("refuses to save when the document version advances under the editor (S-3)", async () => {
