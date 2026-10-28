@@ -190,3 +190,23 @@ describe("PendingWriteDock", () => {
     expect(screen.queryByText(/insert_text/)).not.toBeInTheDocument()
   })
 })
+
+describe("PendingWriteDock feedback identity", () => {
+  it("clears feedback when the held call changes", async () => {
+    const user = userEvent.setup()
+    const viewProps = {
+      view: view(),
+      busy: false,
+      onApprove: vi.fn(),
+      onRequestChanges: vi.fn(),
+    }
+    const { rerender } = render(
+      <PendingWriteDock call={writeCall({ id: 101 })} {...viewProps} />,
+    )
+    await user.click(screen.getByRole("button", { name: "Request changes" }))
+    await user.type(screen.getByRole("textbox"), "A 的反馈")
+    expect(screen.getByRole("textbox")).toHaveValue("A 的反馈")
+    rerender(<PendingWriteDock call={writeCall({ id: 102 })} {...viewProps} />)
+    expect(screen.getByRole("textbox")).toHaveValue("")
+  })
+})

@@ -1,5 +1,5 @@
 /** The History tab: versions, a two-version diff and restore (PROJECT §8.5, spec/11 §5.2). */
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import { useRestoreVersion, useSaveVersion, useVersion, useVersions } from "@/api/hooks/chapters"
@@ -29,6 +29,8 @@ export function HistoryTab({ chapter, bookId, unspaced }: HistoryTabProps) {
   const [beforeId, setBeforeId] = useState<number | null>(null)
   const [afterId, setAfterId] = useState<number | null>(null)
   // Version ids and the note are chapter-scoped; never let them cross a chapter change (M5-06).
+  const chapterIdRef = useRef(chapter.id)
+  chapterIdRef.current = chapter.id
   const [lastChapterId, setLastChapterId] = useState(chapter.id)
   if (chapter.id !== lastChapterId) {
     setLastChapterId(chapter.id)
@@ -59,7 +61,12 @@ export function HistoryTab({ chapter, bookId, unspaced }: HistoryTabProps) {
             save.mutate(
               { note },
               {
-                onSuccess: () => setNote(""),
+                onSuccess: () => {
+                  // A save started on chapter A must not clear B's note if it resolves late.
+                  if (chapterIdRef.current === chapter.id) {
+                    setNote("")
+                  }
+                },
                 onError: showError,
               },
             )

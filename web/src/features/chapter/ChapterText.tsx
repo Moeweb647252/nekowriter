@@ -206,6 +206,7 @@ export function ChapterText({
           */}
           {writer.held === undefined || writer.heldWrite ? null : (
             <HoldBar
+              key={chapter.id}
               outline={writer.heldOutline}
               pids={writer.heldPids}
               busy={held.busy}

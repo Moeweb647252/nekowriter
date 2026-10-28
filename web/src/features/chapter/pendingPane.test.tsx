@@ -154,6 +154,28 @@ describe("PendingText", () => {
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument()
   })
 
+  it("clears HoldBar feedback when the chapter changes", async () => {
+    const user = userEvent.setup()
+    writer.held = { name: "insert_text" }
+    writer.heldWrite = false
+    writer.heldPids = ["p1"]
+    const view = (chapterValue: ChapterDto) => (
+      <ChapterText
+        chapter={chapterValue}
+        bookId={3}
+        unspaced
+        fullTextOpen={false}
+        onFullTextOpenChange={() => {}}
+      />
+    )
+    const second = { ...CHAPTER, id: 99, number: 9, title: "Second" }
+    const { rerender } = render(view(CHAPTER))
+    await user.click(screen.getByRole("button", { name: "Feedback…" }))
+    await user.type(screen.getByRole("textbox"), "A 的反馈")
+    rerender(view(second))
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument()
+  })
+
   it("is editable again in the next test, not stuck on the previous lock", async () => {
     renderPane()
     await userEvent.click(screen.getByText("第一段。"))

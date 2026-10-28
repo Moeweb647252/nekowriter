@@ -132,7 +132,7 @@ export function PendingWriteDock({
       {changesOpen ? (
         // Remounted when the disclosure reopens, so unsent feedback never reappears.
         <HeldFeedback
-          key={changesOpen ? "open" : "closed"}
+          key={`${call.id}:${changesOpen ? "open" : "closed"}`}
           disabled={busy}
           hint={t("chapter:pending_request_changes_hint")}
           onSubmit={(feedback) => {

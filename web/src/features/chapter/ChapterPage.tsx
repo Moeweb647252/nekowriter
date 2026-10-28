@@ -158,6 +158,7 @@ export default function ChapterPage() {
         </div>
         <TabsContent value="text" className="min-h-0 p-6">
           <ChapterText
+            key={document.id}
             chapter={document}
             bookId={bookId}
             unspaced={unspaced}
@@ -175,6 +176,7 @@ export default function ChapterPage() {
           */}
           {dockView === undefined || pending.writer.held === undefined ? null : (
             <PendingWriteDock
+              key={pending.writer.held.id}
               call={pending.writer.held}
               view={dockView}
               busy={decision.busy}

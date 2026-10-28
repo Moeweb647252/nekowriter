@@ -23,6 +23,7 @@ const server = vi.hoisted(() => ({
   chapter: null as ChapterDto | null,
   chapters: {} as Record<number, ChapterDto>,
   expanded: 0,
+  patchCalls: [] as { chapterId: number; input: unknown }[],
 }))
 
 function planner(status: SessionDto["status"] = "running"): SessionDto {
@@ -127,7 +128,10 @@ const BOOK = {
 vi.mock("@/api/endpoints/chapters", () => ({
   getChapter: async (chapterId: number) => server.chapters[chapterId] ?? server.chapter,
   patchChapter: async () => server.chapter,
-  patchContent: async () => ({ version: 1, ops: [], word_count: 0, tail_open: true }),
+  patchContent: async (chapterId: number, input: unknown) => {
+    server.patchCalls.push({ chapterId, input })
+    return { version: 1, ops: [], word_count: 0, tail_open: true }
+  },
   putContentText: async () => ({ version: 1, ops: [], word_count: 0, tail_open: true }),
   submitChapter: async () => ({ warnings: [] }),
   approveChapter: async () => ({ warnings: [] }),
@@ -190,7 +194,13 @@ function Shell() {
   return <Outlet context={shell} />
 }
 
-function renderPage() {
+function chapterText(id: number, title: string, text: string, openSessions: SessionDto[] = []) {
+  const value = chapterAt(id, title, openSessions)
+  value.content = { paragraphs: [{ pid: "p1", text }], next_pid: 2, tail_open: false }
+  return value
+}
+
+function renderPage(tab = "outline") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const router = createMemoryRouter(
     [
@@ -201,7 +211,7 @@ function renderPage() {
         ],
       },
     ],
-    { initialEntries: [`/books/${BOOK_ID}/chapters/${CHAPTER_ID}?tab=outline`] },
+    { initialEntries: [`/books/${BOOK_ID}/chapters/${CHAPTER_ID}?tab=${tab}`] },
   )
   render(
     <QueryClientProvider client={client}>
@@ -213,12 +223,32 @@ function renderPage() {
 
 beforeEach(() => {
   server.expanded = 0
+  server.patchCalls = []
   server.chapter = chapter([planner()])
   server.chapters = {}
   useUiStore.setState({ pinnedSession: {} })
 })
 
 describe("ChapterPage session focus", () => {
+  it("drops an in-progress paragraph editor when the chapter changes", async () => {
+    const user = userEvent.setup()
+    server.chapter = chapterText(CHAPTER_ID, "第一章", "A 的正文")
+    server.chapters[CHAPTER_ID] = chapterText(CHAPTER_ID, "第一章", "A 的正文")
+    const { client } = renderPage("text")
+    expect(await screen.findByText("A 的正文", {}, { timeout: 3000 })).toBeInTheDocument()
+    await user.click(screen.getByText("A 的正文"))
+    const editor = screen.getByRole("textbox")
+    await user.clear(editor)
+    await user.type(editor, "A 的草稿")
+    server.chapters[CHAPTER_ID] = chapterText(4, "第二章", "B 的正文")
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: keys.chapters.detail(CHAPTER_ID) })
+    })
+    expect(await screen.findByText("B 的正文", {}, { timeout: 3000 })).toBeInTheDocument()
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument()
+    expect(server.patchCalls).toHaveLength(0)
+  })
+
   it("reopens the agent panel from the Outline tab's focus link", async () => {
     const user = userEvent.setup()
     renderPage()
