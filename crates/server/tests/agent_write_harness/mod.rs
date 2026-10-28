@@ -381,6 +381,29 @@ pub async fn wait_for_status(runtime: &Runtime, session_id: i32, status: &str) -
     }
 }
 
+/// Waits until the session's stream after the kickoff contains `needle`. A rollover child consumes
+/// its moved inbox item at the first sealing, so the message appears asynchronously after the
+/// child is created; reading the stream once races that seal under load.
+pub async fn wait_for_delivered_message(runtime: &Runtime, session_id: i32, needle: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let messages = runtime.messages(session_id).await;
+        if messages
+            .iter()
+            .skip(1)
+            .any(|message| message.text().contains(needle))
+        {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "session {session_id} never received {needle:?}: {:?}",
+            messages.iter().map(|m| m.text()).collect::<Vec<_>>()
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
 /// A runtime whose scripted provider fails every request with `error` (a provider that rejects the
 /// request outright, so no scripted step is consumed).
 pub async fn runtime_failing(error: nekowriter_llm::retry::LlmError) -> Runtime {

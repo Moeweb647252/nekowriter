@@ -143,19 +143,8 @@ async fn test_13_rollover_carries_the_draft_author_notes_and_the_inbox() {
         0,
         "the parent has no inbox items left"
     );
-    let child_messages = runtime.messages(child_id).await;
-    let delivered = child_messages
-        .iter()
-        .skip(1)
-        .any(|message| message.text().contains("别忘了城楼上的那个人。"));
-    assert!(
-        delivered,
-        "the moved item is delivered to the child: {:?}",
-        child_messages
-            .iter()
-            .map(|message| message.text())
-            .collect::<Vec<_>>()
-    );
+    agent_write_harness::wait_for_delivered_message(&runtime, child_id, "别忘了城楼上的那个人。")
+        .await;
 
     // The child runs to completion and keeps writing.
     agent_write_harness::resume_until_done(&runtime, child_id, None).await;
