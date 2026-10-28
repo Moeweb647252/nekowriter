@@ -479,3 +479,41 @@ async fn approving_an_outline_does_not_report_the_proposal_as_an_author_edit() {
     );
     assert!(result.contains("作者接受后才会生效"), "{result}");
 }
+
+/// A planner sees an existing chapter's reference notes even when the chapter has neither a
+/// draft nor an outline (R3 suspicion 1): the planner may edit notes, so hiding them risks
+/// overwriting facts it was never shown.
+#[tokio::test]
+async fn the_planner_kickoff_shows_reference_notes_without_an_outline() {
+    let runtime =
+        runtime(vec![ScriptStep::new().tool(
+            "submit_outline",
+            outline_args("新细纲", "- 新要点", None),
+        )])
+        .await;
+    let (status, _) = runtime
+        .app
+        .patch(
+            &format!("/api/chapters/{}", runtime.chapter_id),
+            json!({ "reference_notes": "- 作者早已记下的事实" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let session_id = start_outline(&runtime, false).await;
+    runtime
+        .wait_status(session_id, SessionStatus::Completed)
+        .await;
+    let (_, snapshot) = runtime
+        .app
+        .get(&format!("/api/sessions/{session_id}"))
+        .await;
+    let kickoff: String = snapshot["messages"][0]["message"]["blocks"]
+        .as_array()
+        .expect("blocks")
+        .iter()
+        .filter_map(|block| block["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(kickoff.contains("作者早已记下的事实"), "{kickoff}");
+    assert!(kickoff.contains("<reference_notes>"), "{kickoff}");
+}

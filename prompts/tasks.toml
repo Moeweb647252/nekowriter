@@ -310,6 +310,11 @@ text = '''
 {{ chapter.reference_notes }}
 </reference_notes>
 {% endif %}
+{% elif chapter.reference_notes %}
+本章已有参考要点，请在规划时保留并核对这些事实，不要遗漏：
+<reference_notes>
+{{ chapter.reference_notes }}
+</reference_notes>
 {% endif %}
 请开始规划本章。需要时用检索工具核实人物、地点、物品、设定、时间顺序与伏笔；不确定已有正文时用 read_draft 查看。准备好后调用 submit_outline 提交细纲、参考要点，以及本章还没有标题时的标题。作者接受后细纲才会生效。
 '''

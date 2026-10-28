@@ -430,6 +430,7 @@ async fn revising_ignores_chapter_end_and_hints_at_finish_revision() {
             legacy_planning_fixture: false,
             legacy_system_prompt: None,
             legacy_kickoff_text: None,
+            chapter_guard: false,
         },
     )
     .await
@@ -964,6 +965,7 @@ async fn revising_ignores_the_implied_chapter_end_of_chapter_mode() {
             legacy_planning_fixture: false,
             legacy_system_prompt: None,
             legacy_kickoff_text: None,
+            chapter_guard: false,
         },
     )
     .await

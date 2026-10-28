@@ -57,6 +57,7 @@ impl Default for CreateSession {
             legacy_planning_fixture: false,
             legacy_system_prompt: None,
             legacy_kickoff_text: None,
+            chapter_guard: false,
         }
     }
 }
@@ -91,6 +92,10 @@ pub struct CreateSession {
     pub legacy_system_prompt: Option<String>,
     /// Test-only: the exact frozen kickoff text of a pre-split session (F3).
     pub legacy_kickoff_text: Option<String>,
+    /// Set by the chapter start endpoints (`chapters::outline` / `write`) so the chapter's status
+    /// and outline preconditions are rechecked inside this transaction (R3-03). Direct service
+    /// callers (tests, legacy fixtures) leave it off.
+    pub chapter_guard: bool,
 }
 
 /// Creates a session (spec/03 §4) and spawns its runner. Returns the session id and any
@@ -156,6 +161,44 @@ pub(crate) async fn create_inner(
             format!("chapter {chapter_id} already has an open session of its {role} lock group"),
         )
         .with_details(json!({ "session_id": open })));
+    }
+
+    // The API preconditions for chapter sessions are reads on a different connection from this
+    // insertion. An approve can commit `status = official` in that window (R3-03), so the
+    // chapter row is re-read here, inside the creation transaction. `write` needs the same
+    // outline precondition; a legacy planning fixture is exempt because it predates the split.
+    if input.chapter_guard
+        && let Some(chapter_id) = input.chapter_id
+    {
+        let chapter = chapters::Entity::find_by_id(chapter_id)
+            .one(tx)
+            .await?
+            .ok_or_else(|| AppError::not_found(format!("chapter {chapter_id}")))?;
+        match input.kind {
+            SessionKind::ChapterOutline if chapter.status == "official" => {
+                return Err(super::conflict(
+                    ErrorCode::ChapterInvalidState,
+                    "an official chapter cannot be re-outlined",
+                    json!({ "status": chapter.status }),
+                ));
+            }
+            SessionKind::ChapterWrite if !input.legacy_planning_fixture => {
+                if !matches!(chapter.status.as_str(), "planned" | "drafting") {
+                    return Err(super::conflict(
+                        ErrorCode::ChapterInvalidState,
+                        "only a planned or drafting chapter can be written by the agent",
+                        json!({ "status": chapter.status }),
+                    ));
+                }
+                if chapter.outline.trim().is_empty() {
+                    return Err(AppError::new(
+                        ErrorCode::ChapterOutlineMissing,
+                        "the chapter has no outline to draft from",
+                    ));
+                }
+            }
+            _ => {}
+        }
     }
 
     // A research task has at most one open session (spec/07 §8 step 1, spec/10 §2.5). `run`

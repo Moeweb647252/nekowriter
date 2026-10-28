@@ -635,6 +635,7 @@ pub async fn write(
             legacy_planning_fixture: false,
             legacy_system_prompt: None,
             legacy_kickoff_text: None,
+            chapter_guard: true,
         },
     )
     .await?;
@@ -703,6 +704,7 @@ pub async fn outline(
             legacy_planning_fixture: false,
             legacy_system_prompt: None,
             legacy_kickoff_text: None,
+            chapter_guard: true,
         },
     )
     .await?;

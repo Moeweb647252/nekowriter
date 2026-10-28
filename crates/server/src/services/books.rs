@@ -346,6 +346,7 @@ fn pointer(chapter: &chapters::Model) -> ChapterPointerDto {
         number: chapter.ord,
         title: chapter.title.clone(),
         status: ChapterStatus::from_str_opt(&chapter.status).unwrap_or(ChapterStatus::Planned),
+        canon_status: CanonStatus::from_str_opt(&chapter.canon_status).unwrap_or(CanonStatus::None),
     }
 }
 
@@ -792,6 +793,8 @@ async fn to_summary(
                 title: chapter.title.clone(),
                 status: ChapterStatus::from_str_opt(&chapter.status)
                     .unwrap_or(ChapterStatus::Planned),
+                canon_status: CanonStatus::from_str_opt(&chapter.canon_status)
+                    .unwrap_or(CanonStatus::None),
             })
     });
     // The card's badge counts everything the overview's attention list would show (spec/08 §7,

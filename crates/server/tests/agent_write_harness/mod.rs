@@ -136,6 +136,7 @@ async fn create_writer(
             legacy_planning_fixture: legacy,
             legacy_system_prompt: None,
             legacy_kickoff_text: None,
+            chapter_guard: false,
         },
     )
     .await

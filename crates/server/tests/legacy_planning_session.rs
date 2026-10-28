@@ -47,6 +47,7 @@ async fn start_legacy(runtime: &Runtime, pause_after_outline: bool) -> i32 {
             legacy_kickoff_text: Some(
                 include_str!("fixtures/legacy_writer_kickoff.txt").to_owned(),
             ),
+            chapter_guard: false,
             ..CreateSession::default()
         },
     )

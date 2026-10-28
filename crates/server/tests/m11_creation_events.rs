@@ -80,6 +80,7 @@ fn chapter_session(
         legacy_planning_fixture: false,
         legacy_system_prompt: None,
         legacy_kickoff_text: None,
+        chapter_guard: false,
     }
 }
 
@@ -276,6 +277,7 @@ async fn no_duplicate_chapter_event_for_a_session_without_a_chapter() {
             legacy_planning_fixture: false,
             legacy_system_prompt: None,
             legacy_kickoff_text: None,
+            chapter_guard: false,
         },
     )
     .await

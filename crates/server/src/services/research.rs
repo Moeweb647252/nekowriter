@@ -426,6 +426,7 @@ pub async fn run(state: &AppState, task_id: i32) -> Result<i32, AppError> {
             legacy_planning_fixture: false,
             legacy_system_prompt: None,
             legacy_kickoff_text: None,
+            chapter_guard: false,
         },
     )
     .await?;

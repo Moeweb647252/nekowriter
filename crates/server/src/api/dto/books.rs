@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::db::json::{
-    BookSettings, BookStatus, ChapterStatus, ConceptionState, RoleModels, Usage,
+    BookSettings, BookStatus, CanonStatus, ChapterStatus, ConceptionState, RoleModels, Usage,
 };
 
 /// `GET /books/:id`, and the `book` field of the create response.
@@ -56,6 +56,8 @@ pub struct ChapterPointerDto {
     pub number: i32,
     pub title: String,
     pub status: ChapterStatus,
+    /// The canon state that selects the overview's maintain/resync affordance (R3-04).
+    pub canon_status: CanonStatus,
 }
 
 /// `POST /books` body (spec/10 §2.2, spec/08 §5).

@@ -321,3 +321,74 @@ async fn restore_refuses_a_running_planner_session() {
     assert_eq!(status, StatusCode::LOCKED, "{body}");
     assert_eq!(body["error"]["code"], "chapter.locked");
 }
+
+/// `chapters::outline` must recheck the chapter status inside the creation transaction: an
+/// approve that commits `official` between the endpoint's read and the insert refuses the planner
+/// session (R3-03).
+#[tokio::test]
+async fn a_concurrent_approve_makes_the_outline_creation_refuse() {
+    use nekowriter::db::Db;
+    use tokio::sync::oneshot;
+
+    let (app, book_id, chapter_id) = app_with_book().await;
+    assign_models(&app).await;
+    let (begun_tx, begun_rx) = oneshot::channel();
+    let (release_tx, release_rx) = oneshot::channel();
+    let db = app.db().clone();
+    let updater = tokio::spawn(async move {
+        Db::write(&db, move |tx| {
+            Box::pin(async move {
+                tx.execute_unprepared(&format!(
+                    "UPDATE chapters SET status = 'official' WHERE id = {chapter_id}"
+                ))
+                .await?;
+                let _ = begun_tx.send(());
+                let _ = release_rx.await;
+                Ok(())
+            })
+        })
+        .await
+        .expect("the status update commits");
+    });
+    begun_rx.await.expect("the updater holds the write lock");
+
+    let state = app.state().clone();
+    let create = tokio::spawn(async move {
+        nekowriter::services::chapters::outline(
+            &state,
+            chapter_id,
+            nekowriter::api::dto::chapters::ChapterOutlineInput::default(),
+        )
+        .await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    release_tx.send(()).expect("release the updater");
+    let error = create
+        .await
+        .expect("the create task did not panic")
+        .expect_err("an official chapter must refuse the outline session");
+    assert_eq!(
+        error.code,
+        nekowriter::error::ErrorCode::ChapterInvalidState
+    );
+    updater.await.expect("updater task");
+    let count = app
+        .db()
+        .conn()
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            format!(
+                "SELECT count(*) AS n FROM agent_sessions WHERE chapter_id = {chapter_id}                  AND kind = 'chapter_outline'"
+            ),
+        ))
+        .await
+        .expect("query sessions")
+        .expect("row")
+        .try_get::<i64>("", "n")
+        .expect("count");
+    assert_eq!(
+        count, 0,
+        "no planner session exists on the official chapter"
+    );
+    let _ = book_id;
+}

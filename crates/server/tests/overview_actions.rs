@@ -123,6 +123,7 @@ async fn an_unsynced_official_chapter_is_the_next_action() {
     let body = overview(&app, book_id).await;
     assert_eq!(body["next_action"]["kind"], "sync_canon");
     assert_eq!(body["next_action"]["chapter"]["id"], chapter_id);
+    assert_eq!(body["next_action"]["chapter"]["canon_status"], "pending");
     assert_eq!(body["next_action"]["track_id"], track_id);
 }
 

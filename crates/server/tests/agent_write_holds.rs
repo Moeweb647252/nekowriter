@@ -519,10 +519,12 @@ async fn test_09_a_retrieval_tool_during_drafting_is_rejected() {
 /// against the old mode, and the next result carries the switch notice.
 #[tokio::test]
 async fn test_10_a_switch_does_not_invalidate_an_in_flight_call() {
-    // The drafting call streams slowly, so the PATCH lands while it is generated.
+    // The drafting call streams slowly, so the PATCH lands while it is generated. The 500
+    // characters are valid under `paragraph` (≤ 3,000) and invalid under the switched-to
+    // `sentence` (≤ 400), so the call's request_meta snapshot is load-bearing (R3-05).
+    let in_flight = "字".repeat(500);
     let runtime = runtime(vec![
-        insert_step("这一段按逐段粒度写入，是一个完整的段落。")
-            .delay_per_event(std::time::Duration::from_millis(40)),
+        insert_step(&in_flight).delay_per_event(std::time::Duration::from_millis(40)),
         ScriptStep::new()
             .tool("insert_text", json!({ "text": "后续一句。" }))
             .delay_per_event(std::time::Duration::from_millis(40)),
