@@ -216,14 +216,7 @@ pub fn apply_inputs(
     for input in inputs {
         match input {
             ContentOpInput::Insert { after, text } => {
-                // An empty insert is the author's "start a new, empty paragraph" action
-                // (spec/11 §5.2). Whitespace-only text is still rejected: trimming would
-                // otherwise silently discard the paragraph the author asked for.
-                let texts = if text.is_empty() {
-                    vec![String::new()]
-                } else {
-                    split_paragraphs(text)
-                };
+                let texts = split_paragraphs(text);
                 if texts.is_empty() {
                     return Err(TextError::EmptyText("insert"));
                 }
@@ -610,25 +603,46 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_insert_creates_an_empty_placeholder_paragraph() {
+    fn empty_text_is_rejected_for_inserts() {
         let mut content = doc(&[("p1", "one")], 2, false);
-        let applied = apply_inputs(
+        for text in ["", "   \n\n "] {
+            let error = apply_inputs(
+                &mut content,
+                &[ContentOpInput::Insert {
+                    after: Some("p1".to_owned()),
+                    text: text.to_owned(),
+                }],
+            )
+            .expect_err("empty insert must be rejected");
+            assert_eq!(error, TextError::EmptyText("insert"));
+        }
+    }
+
+    #[test]
+    fn a_line_break_update_then_insert_keeps_the_authored_order() {
+        let mut content = doc(&[("p1", "one")], 2, false);
+        apply_inputs(
             &mut content,
-            &[ContentOpInput::Insert {
-                after: Some("p1".to_owned()),
-                text: String::new(),
-            }],
+            &[
+                ContentOpInput::Update {
+                    pid: "p1".to_owned(),
+                    text: "one\ntwo".to_owned(),
+                },
+                ContentOpInput::Insert {
+                    after: Some("p2".to_owned()),
+                    text: "new".to_owned(),
+                },
+            ],
         )
-        .expect("empty insert is a valid new paragraph");
-        assert_eq!(pids(&content), vec!["p1", "p2"]);
-        assert_eq!(content.paragraphs[1].text, "");
+        .expect("update and insert");
         assert_eq!(
-            applied.ops,
-            vec![ContentOp::Insert {
-                after: Some("p1".to_owned()),
-                pid: "p2".to_owned(),
-                text: String::new(),
-            }]
+            content
+                .paragraphs
+                .iter()
+                .map(|p| p.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["one", "two", "new"],
+            "the pending paragraph follows the line-break split, not the original p1"
         );
     }
 

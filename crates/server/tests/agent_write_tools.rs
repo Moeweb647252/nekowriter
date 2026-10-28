@@ -561,6 +561,41 @@ async fn a_long_enough_chapter_end_completes_at_once() {
     assert_eq!(status, "in_review");
 }
 
+/// A paragraph that exists but holds no text is still an empty draft (R10-03).
+#[tokio::test]
+async fn finish_draft_on_an_empty_paragraph_is_an_error() {
+    let runtime = runtime(with_finish(vec![
+        ScriptStep::new().tool("finish_draft", json!({})),
+        insert_step("现在有内容了。", json!({})),
+    ]))
+    .await;
+    runtime
+        .app
+        .execute(&format!(
+            "UPDATE chapters SET content = '{{\"paragraphs\":[{{\"pid\":\"p1\",\"text\":\"\"}}],\"next_pid\":2,\"tail_open\":false}}' WHERE id = {}",
+            runtime.chapter_id
+        ))
+        .await;
+    let session_id = start_writer(&runtime, Granularity::Paragraph, false, false).await;
+    runtime
+        .wait_status(session_id, SessionStatus::Completed)
+        .await;
+    let calls = runtime.calls(session_id).await;
+    let finishes: Vec<_> = calls
+        .iter()
+        .filter(|call| call.name == "finish_draft")
+        .collect();
+    assert_eq!(finishes.len(), 3);
+    assert!(finishes[0].is_error);
+    assert!(
+        finishes[0]
+            .raw_result_text
+            .clone()
+            .unwrap_or_default()
+            .contains("还没有任何正文")
+    );
+}
+
 /// `finish_draft` on an empty chapter is `error.draft_empty`, and the session keeps working.
 #[tokio::test]
 async fn finish_draft_on_an_empty_chapter_is_an_error() {

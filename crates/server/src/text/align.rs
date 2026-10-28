@@ -490,6 +490,24 @@ mod tests {
     }
 
     #[test]
+    fn blank_lines_never_create_or_delete_empty_paragraphs() {
+        // Empty paragraphs cannot be persisted (the insert validator rejects them), and blank
+        // lines in a full-text save are separators, not paragraphs. The round trip must therefore
+        // leave no Delete op for a synthetic empty paragraph (R10-02).
+        let mut content = doc(&[("p1", "alpha"), ("p2", "beta")]);
+        let aligned = set_full_text(&mut content, "alpha\n\n\n\nbeta");
+        assert_eq!(
+            content
+                .paragraphs
+                .iter()
+                .map(|p| p.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["alpha", "beta"]
+        );
+        assert!(aligned.ops.is_empty());
+    }
+
+    #[test]
     fn word_count_uses_the_shared_rule() {
         let mut content = doc(&[]);
         let aligned = set_full_text(&mut content, "风吹过山谷\n\nThe wind blew");

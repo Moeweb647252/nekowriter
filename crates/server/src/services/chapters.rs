@@ -533,7 +533,7 @@ async fn write_content(
     // drafting through the write endpoint of M4 instead.
     if actor == ContentActor::User
         && status_of(existing) == ChapterStatus::Planned
-        && !content.paragraphs.is_empty()
+        && text::content_word_count(&content) > 0
     {
         active.status = Set(ChapterStatus::Drafting.as_str().to_owned());
     }
@@ -823,7 +823,7 @@ pub async fn submit_inner(
         ));
     }
     let content: ChapterContent = parse_json("chapters.content", &existing.content)?;
-    if content.paragraphs.is_empty() {
+    if text::content_word_count(&content) == 0 {
         return Err(invalid_state("the chapter is empty", status));
     }
     // "an open, non-running one is abandoned after the UI confirms" (spec/08 §1.1): the UI warns
@@ -958,7 +958,7 @@ pub async fn approve_inner(
         ));
     }
     let content: ChapterContent = parse_json("chapters.content", &existing.content)?;
-    if content.paragraphs.is_empty() {
+    if text::content_word_count(&content) == 0 {
         return Err(invalid_state("the chapter is empty", status));
     }
     let word_count = text::content_word_count(&content);

@@ -1093,7 +1093,7 @@ impl ToolHandler for FinishDraftTool {
     ) -> Result<ToolOutcome, ToolError> {
         let input: FinishDraftInput = decode(input)?;
         let mut content = content_of(chapter_of(ctx)?);
-        if content.paragraphs.is_empty() {
+        if text::content_word_count(&content) == 0 {
             return Err(ToolError::new(ToolErrorKind::DraftEmpty));
         }
         // The draft must be non-empty and finishing closes an open tail (spec/05 §4). Closing the
@@ -1224,7 +1224,7 @@ impl ToolHandler for FinishRevisionTool {
     ) -> Result<ToolOutcome, ToolError> {
         let input: FinishRevisionInput = decode(input)?;
         let content = content_of(chapter_of(ctx)?);
-        if content.paragraphs.is_empty() {
+        if text::content_word_count(&content) == 0 {
             return Err(ToolError::new(ToolErrorKind::DraftEmpty));
         }
         let word_count = text::content_word_count(&content);

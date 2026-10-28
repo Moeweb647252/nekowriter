@@ -411,7 +411,7 @@ async fn chapter_context(
         target_min: settings.target_words_min,
         target_max: settings.target_words_max,
         word_count: chapter.word_count,
-        has_draft: !content.paragraphs.is_empty(),
+        has_draft: text::content_word_count(&content) > 0,
     })
 }
 

@@ -2749,3 +2749,15 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
 - **Spec**: PROJECT §4–§6, §10.7; spec/02 §1–§5; spec/03 §1, §4–§12, §14–§15; spec/04 §3, §7.2;
   spec/05 §1.5, §2, §4; spec/06 §4.2; spec/08 §1–§3, §7; spec/09 §1–§2; spec/10 §2.2, §2.7–§2.8,
   §4; spec/11 §5–§6.
+
+### D-147 Enter at the end creates a client-side pending paragraph
+- **Context**: Persisting an empty paragraph to make Enter-at-end work left a zero-height,
+  unfocusable paragraph and leaked empty paragraphs into full-text round trips and the submit gate
+  (R10-01–R10-04). The empty paragraph belongs to the editor, not the data model.
+- **Decision**: an exactly-empty insert is rejected again. Enter at the end opens a focused
+  client-side paragraph editor below the current paragraph; it persists as one normal `insert`
+  with the typed text on blur, and sends nothing if dismissed empty. A draft containing line breaks
+  is updated first and the pending paragraph is anchored after the last split paragraph.
+- **Consequences**: submitted/approved chapters and `finish_draft`/`finish_revision` require a
+  non-zero word count; full-text blank lines remain separators, never paragraph rows. The legacy
+  `f94c2f9` empty-insert allowance is deliberately reverted.
