@@ -70,6 +70,15 @@ export function OutlineDialog({
       setNotReady(null)
     }
   }
+  // The chapter-id reset mirrors WriteDialog (R3-02); the permanent mount must not carry a
+  // draft or a previous 409 into another chapter.
+  const [lastChapterId, setLastChapterId] = useState(chapterId)
+  if (chapterId !== lastChapterId) {
+    setLastChapterId(chapterId)
+    setDraftGuidance(guidance)
+    setLastServerGuidance(guidance)
+    setNotReady(null)
+  }
 
   const start = (force: boolean) => {
     const input: ChapterOutlineInput = {

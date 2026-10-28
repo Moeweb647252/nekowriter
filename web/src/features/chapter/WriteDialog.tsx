@@ -97,6 +97,16 @@ export function WriteDialog({
       setOutlineMissing(false)
     }
   }
+  // `ChapterHeader` is keyed by chapter id in production; this reset is the same guard for a
+  // direct remount that is not keyed (R3-02): per-chapter drafts and warnings never cross chapters.
+  const [lastChapterId, setLastChapterId] = useState(chapterId)
+  if (chapterId !== lastChapterId) {
+    setLastChapterId(chapterId)
+    setDraftGuidance(guidance)
+    setLastServerGuidance(guidance)
+    setNotReady(null)
+    setOutlineMissing(false)
+  }
 
   const start = (force: boolean) => {
     const input: ChapterWriteInput = {

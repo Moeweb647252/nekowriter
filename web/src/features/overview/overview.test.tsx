@@ -46,6 +46,7 @@ vi.mock("@/api/hooks/books", () => ({
 const mutations = vi.hoisted(() => ({
   seed: vi.fn(),
   resync: vi.fn(),
+  maintain: vi.fn(),
   createChapter: vi.fn(),
 }))
 
@@ -54,6 +55,7 @@ vi.mock("@/api/hooks/conception", () => ({
 }))
 vi.mock("@/api/hooks/reviews", () => ({
   useResyncChapter: () => ({ mutate: mutations.resync, isPending: false }),
+  useMaintainChapter: () => ({ mutate: mutations.maintain, isPending: false }),
 }))
 vi.mock("@/api/hooks/tracks", () => ({
   useCreateChapter: () => ({ mutate: mutations.createChapter, isPending: false }),
@@ -225,7 +227,7 @@ const SEED_CANON = {
 /** The overview's `sync_canon` action: an official chapter whose canon is stale (spec/08 §7). */
 const SYNC_CANON = {
   kind: "sync_canon",
-  chapter: { id: 5, number: 1, title: "One", status: "official" },
+  chapter: { id: 5, number: 1, title: "One", status: "official", canon_status: "stale" },
   track_id: 10,
 }
 
@@ -283,6 +285,7 @@ beforeEach(() => {
   overview.mockReset()
   mutations.seed.mockReset()
   mutations.resync.mockReset()
+  mutations.maintain.mockReset()
   mutations.createChapter.mockReset()
   researchApi.list.mockReset()
   researchApi.defer.mockReset()
@@ -467,6 +470,23 @@ describe("canon seeding points at the agent panel (D-135)", () => {
     expect(useUiStore.getState().pinnedSession[1]).toBe(43)
     expect(screen.getByRole("status")).toHaveTextContent(RESYNC_STARTED)
     expect(toast.success).toHaveBeenCalledWith(RESYNC_STARTED)
+  })
+
+  it("retries pending canon through maintain instead of resync", async () => {
+    const user = userEvent.setup()
+    overview.mockReturnValue(
+      data({
+        next_action: {
+          ...SYNC_CANON,
+          chapter: { ...SYNC_CANON.chapter, canon_status: "pending" },
+        },
+      }),
+    )
+    renderOverview()
+
+    await user.click(screen.getByRole("button", { name: /Go/ }))
+    expect(mutations.maintain).toHaveBeenCalledTimes(1)
+    expect(mutations.resync).not.toHaveBeenCalled()
   })
 
   it("reopens a collapsed agent panel when the run starts", async () => {

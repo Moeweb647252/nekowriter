@@ -78,6 +78,9 @@ describe("outlineState", () => {
         { id: 5, name: "get_entity" } as never,
       ]),
     ).toBe("in_progress")
+    // A held call outside the snapshot window has no proposal to show; do not open an empty
+    // approval UI (R3 suspicion 2).
+    expect(outlineState(chapter({ open_sessions: [held] }), [])).toBe("in_progress")
   })
 
   it("is awaiting approval when the held call is submit_outline", () => {

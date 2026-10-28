@@ -31,11 +31,13 @@ export function outlineState(
   if (session !== undefined) {
     if (session.status === "held") {
       const held = calls?.find((call) => call.id === session.held_tool_call_id)
-      // Without the call row (outside the snapshot window) a held outline session is still
-      // treated as awaiting: `submit_outline` is the only tool that can end it.
-      if (held === undefined || held.name === "submit_outline") {
+      // While the snapshot loads (`calls === undefined`) the only held outline call we can name
+      // is the approval. Once the window is known and the held id is outside it, there is no
+      // proposal to show: keep the session in progress instead of an empty approval UI (R3).
+      if (calls === undefined) {
         return "awaiting_approval"
       }
+      return held?.name === "submit_outline" ? "awaiting_approval" : "in_progress"
     }
     return "in_progress"
   }

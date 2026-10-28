@@ -26,9 +26,14 @@ function isWriter(session: SessionDto): boolean {
   return session.kind === "chapter_write" || session.kind === "chapter_revise"
 }
 
+/** An owner session of the chapter: a planner or a writer. */
+function isOwner(session: SessionDto): boolean {
+  return isWriter(session) || session.kind === "chapter_outline"
+}
+
 /** The chapter's open writer session, if there is one (spec/10 §2.8). */
 export function openWriterSession(chapter: ChapterDto | undefined): SessionDto | undefined {
-  return chapter?.open_sessions?.find(isWriter)
+  return chapter?.open_sessions?.find(isOwner)
 }
 
 /**
@@ -73,7 +78,9 @@ export function useWriterState(
   // panel names.
   const held = useMemo(
     () =>
-      findHeldCall(session, snapshot.data?.tool_calls ?? calls, snapshot.data?.messages),
+      session !== undefined && isWriter(session)
+        ? findHeldCall(session, snapshot.data?.tool_calls ?? calls, snapshot.data?.messages)
+        : undefined,
     [session, snapshot.data, calls],
   )
 

@@ -57,6 +57,11 @@ export default function ChapterPage() {
   const showError = useErrorToast()
   const resume = useResumeSession(bookId)
   const shell = useBookShell()
+  const focusStartedSession = (sessionId: number) => {
+    // A newly started session must win over an older open one in the panel (R3-08).
+    useUiStore.getState().setPinnedSession(bookId, sessionId)
+    focusSessionInAgentPanel(shell)
+  }
 
   const rawTab = searchParams.get("tab")
   const tab: Tab = TABS.includes(rawTab as Tab) ? (rawTab as Tab) : "text"
@@ -116,6 +121,7 @@ export default function ChapterPage() {
   return (
     <div className="flex min-h-full flex-col">
       <ChapterHeader
+        key={document.id}
         chapter={document}
         settings={book.data.settings}
         language={book.data.writing_language}
@@ -126,7 +132,8 @@ export default function ChapterPage() {
         }
         outlineState={outlineStateValue}
         onRename={(title) => patchChapter.mutate({ title })}
-        onSessionStarted={() => {
+        onSessionStarted={(sessionId) => {
+          focusStartedSession(sessionId)
           // The agent panel picks the chapter's open session from `open_sessions` (spec/10 §2.8).
           void queryClient.invalidateQueries({ queryKey: keys.chapters.detail(chapterId) })
           void queryClient.invalidateQueries({ queryKey: keys.chapters.reviews(chapterId) })
@@ -186,7 +193,8 @@ export default function ChapterPage() {
             state={outlineStateValue}
             session={outlineSession}
             calls={outlineSnapshot.data?.tool_calls}
-            onSessionStarted={() => {
+            onSessionStarted={(sessionId) => {
+              focusStartedSession(sessionId)
               void queryClient.invalidateQueries({ queryKey: keys.chapters.detail(chapterId) })
             }}
             onFocusSession={(sessionId) => {
@@ -201,7 +209,8 @@ export default function ChapterPage() {
             chapter={document}
             bookId={bookId}
             settings={book.data.settings}
-            onSessionStarted={() => {
+            onSessionStarted={(sessionId) => {
+              focusStartedSession(sessionId)
               void queryClient.invalidateQueries({ queryKey: keys.chapters.detail(chapterId) })
               void queryClient.invalidateQueries({ queryKey: keys.chapters.reviews(chapterId) })
             }}

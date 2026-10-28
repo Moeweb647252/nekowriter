@@ -76,6 +76,18 @@ export function chapterOpenSessions(chapter: ChapterDto | undefined): SessionDto
   return chapter?.open_sessions ?? []
 }
 
+/** The pinned session, preferring the chapter's own open sessions over the book-wide list. */
+export function pickPinnedSession(
+  candidates: SessionDto[],
+  sessions: SessionDto[],
+  pinnedId: number | null,
+): SessionDto | undefined {
+  return (
+    candidates.find((session) => session.id === pinnedId) ??
+    sessions.find((session) => session.id === pinnedId)
+  )
+}
+
 export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: number }) {
   const { t } = useTranslation()
   const reportError = useErrorToast()
@@ -97,8 +109,8 @@ export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: 
   )
   const candidates = chapterSessions.length > 0 ? chapterSessions : sessions
   const pinned = useMemo(
-    () => sessions.find((session) => session.id === pinnedId),
-    [sessions, pinnedId],
+    () => pickPinnedSession(candidates, sessions, pinnedId),
+    [candidates, sessions, pinnedId],
   )
   const pinnedIsCandidate =
     pinned !== undefined && candidates.some((session) => session.id === pinned.id)

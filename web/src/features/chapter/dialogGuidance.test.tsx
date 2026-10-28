@@ -43,10 +43,10 @@ beforeEach(() => {
 })
 
 describe("guidance follows the last seen server value (R2-01)", () => {
-  const writeView = (guidance: string) => (
+  const writeView = (guidance: string, chapterId = 1) => (
     <TooltipProvider>
       <WriteDialog
-        chapterId={1}
+        chapterId={chapterId}
         bookId={1}
         settings={SETTINGS}
         guidance={guidance}
@@ -58,9 +58,9 @@ describe("guidance follows the last seen server value (R2-01)", () => {
       />
     </TooltipProvider>
   )
-  const outlineView = (guidance: string) => (
+  const outlineView = (guidance: string, chapterId = 1) => (
     <OutlineDialog
-      chapterId={1}
+      chapterId={chapterId}
       bookId={1}
       settings={SETTINGS}
       guidance={guidance}
@@ -98,6 +98,40 @@ describe("guidance follows the last seen server value (R2-01)", () => {
     await user.type(screen.getByLabelText(GUIDANCE_LABEL), "作者正在写的细纲要求")
     rerender(outlineView("服务器的新要求"))
     expect(screen.getByLabelText(GUIDANCE_LABEL)).toHaveValue("作者正在写的细纲要求")
+  })
+
+  it("resets WriteDialog's draft and outline warning when the chapter changes", async () => {
+    const user = userEvent.setup()
+    writeMutate.mockImplementation(
+      (_input: unknown, options: { onError: (error: unknown) => void }) => {
+        options.onError(new ApiError(409, "chapter.outline_missing", "missing"))
+      },
+    )
+    const { rerender } = render(writeView("第一章的要求"))
+    await user.click(screen.getByRole("button", { name: "Start writing" }))
+    expect(screen.getByText("This chapter has no outline")).toBeInTheDocument()
+    rerender(writeView("第二章的要求", 2))
+    expect(screen.getByLabelText(GUIDANCE_LABEL)).toHaveValue("第二章的要求")
+    expect(screen.queryByText("This chapter has no outline")).not.toBeInTheDocument()
+  })
+
+  it("resets OutlineDialog's previous-not-ready warning when the chapter changes", async () => {
+    const user = userEvent.setup()
+    outlineMutate.mockImplementation(
+      (_input: unknown, options: { onError: (error: unknown) => void }) => {
+        options.onError(
+          new ApiError(409, "chapter.previous_not_ready", "not ready", {
+            chapter_number: 1,
+            reason: "not_official",
+          }),
+        )
+      },
+    )
+    const { rerender } = render(outlineView("", 1))
+    await user.click(screen.getByRole("button", { name: "Start planning" }))
+    expect(screen.getByText("The previous chapter is not ready")).toBeInTheDocument()
+    rerender(outlineView("", 2))
+    expect(screen.queryByText("The previous chapter is not ready")).not.toBeInTheDocument()
   })
 
   it("uses the writer placeholder in WriteDialog and the planner placeholder in OutlineDialog", () => {

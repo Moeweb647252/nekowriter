@@ -104,7 +104,7 @@ describe("LibraryPage", () => {
         status: "conceiving",
         chapter_count: 1,
         word_count: 0,
-        latest_chapter: { id: 2, number: 1, title: "", status: "planned" },
+        latest_chapter: { id: 2, number: 1, title: "", status: "planned", canon_status: "none" },
       }),
     ]
     renderLibrary()

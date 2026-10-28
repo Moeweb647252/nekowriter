@@ -1,0 +1,239 @@
+/** ChapterPage's session focus/pin path (R3-06, R3-08). */
+// The store reads the persisted language from i18n; import i18n first (the same cycle note as
+// overview.test.tsx).
+import "@/i18n"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { render, screen, waitFor } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
+import { MemoryRouter, Outlet, Route, Routes } from "react-router"
+import { beforeEach, describe, expect, it, vi } from "vitest"
+
+import type { BookDto } from "@/api/gen/BookDto"
+import type { ChapterDto } from "@/api/gen/ChapterDto"
+import type { SessionDto } from "@/api/gen/SessionDto"
+import type { BookShell } from "@/features/workspace/shell"
+import { useUiStore } from "@/stores/ui"
+
+const BOOK_ID = 3
+const CHAPTER_ID = 3
+const PLANNER_ID = 11
+
+const server = vi.hoisted(() => ({
+  chapter: null as ChapterDto | null,
+  expanded: 0,
+}))
+
+function planner(status: SessionDto["status"] = "running"): SessionDto {
+  return {
+    id: PLANNER_ID,
+    book_id: BOOK_ID,
+    role: "planner",
+    kind: "chapter_outline",
+    chapter_id: CHAPTER_ID,
+    track_id: 1,
+    research_task_id: null,
+    chapter_number: 1,
+    research_topic: null,
+    model_label: "Demo",
+    status,
+    phase: "none",
+    granularity: null,
+    auto_pause: false,
+    pause_after_outline: true,
+    pause_requested: false,
+    held_tool_call_id: null,
+    base_content_version: null,
+    error: null,
+    usage: {
+      requests: 0,
+      input_tokens: 0,
+      cached_input_tokens: 0,
+      cache_write_tokens: 0,
+      output_tokens: 0,
+      reasoning_tokens: 0,
+      last_prompt_tokens: 0,
+      estimated: false,
+    },
+    counters: {
+      steps: 0,
+      tool_calls: 0,
+      retrieval_calls: 0,
+      consecutive_tool_errors: 0,
+      consecutive_nudges: 0,
+      finish_warned: false,
+    },
+    parent_session_id: null,
+    child_session_id: null,
+    retrying: null,
+    warnings: [],
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    finished_at: null,
+  }
+}
+
+function chapter(openSessions: SessionDto[]): ChapterDto {
+  return {
+    id: CHAPTER_ID,
+    book_id: BOOK_ID,
+    track_id: 1,
+    number: 1,
+    title: "第一章",
+    status: "planned",
+    canon_status: "none",
+    word_count: 0,
+    has_outline: false,
+    updated_at: "2026-01-01T00:00:00Z",
+    guidance: "",
+    outline: "",
+    reference_notes: "",
+    summary: "",
+    content: { paragraphs: [], next_pid: 1, tail_open: true },
+    content_version: 0,
+    official_version_id: null,
+    open_sessions: openSessions,
+  }
+}
+
+const BOOK = {
+  id: BOOK_ID,
+  title: "Book",
+  idea: "",
+  genre: "",
+  writing_language: "zh-CN",
+  status: "active",
+  settings: {
+    granularity: "paragraph",
+    auto_pause: false,
+    pause_after_outline: true,
+    target_words_min: 3000,
+    target_words_max: 4000,
+    recent_summary_count: 5,
+    midterm_window: 10,
+    auto_maintenance: true,
+  },
+  model_overrides: {},
+  conception: {},
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+} as unknown as BookDto
+
+vi.mock("@/api/endpoints/chapters", () => ({
+  getChapter: async () => server.chapter,
+  patchChapter: async () => server.chapter,
+  patchContent: async () => ({ version: 1, ops: [], word_count: 0, tail_open: true }),
+  putContentText: async () => ({ version: 1, ops: [], word_count: 0, tail_open: true }),
+  submitChapter: async () => ({ warnings: [] }),
+  approveChapter: async () => ({ warnings: [] }),
+  writeOutline: async () => ({ session_id: 2, warnings: [] }),
+  writeChapter: async () => ({ session_id: 2, warnings: [] }),
+}))
+vi.mock("@/api/endpoints/sessions", () => ({
+  getSession: async () => ({
+    session: planner(),
+    messages: [],
+    tool_calls: [],
+    inbox_pending: 0,
+    system_prompt: "",
+    tool_names: [],
+  }),
+  listSessions: async () => [],
+  resumeSession: async () => planner(),
+  control: async () => planner(),
+  patchSession: async () => planner(),
+  sendSessionMessage: async () => planner(),
+  answerSession: async () => planner(),
+  startDebugSession: async () => ({ warnings: [] }),
+  getMessages: async () => ({ messages: [], next_cursor: null }),
+}))
+vi.mock("@/api/endpoints/reviews", () => ({
+  listReviews: async () => ({ reports: [], feedback: [] }),
+  startReview: async () => ({ session: planner() }),
+  rereview: async () => ({ session: planner() }),
+  sendBack: async () => ({ session: planner() }),
+  maintainChapter: async () => ({ session: planner() }),
+  resyncChapter: async () => ({ session: planner() }),
+  listProposals: async () => [],
+  acceptProposal: async () => null,
+  rejectProposal: async () => null,
+}))
+vi.mock("@/api/endpoints/books", () => ({
+  getBook: async () => BOOK,
+  listBooks: async () => [],
+  patchBook: async () => BOOK,
+  getOverview: async () => null,
+}))
+vi.mock("@/components/common/ErrorToast", () => ({
+  useErrorToast: () => () => {},
+  useWarningToasts: () => () => {},
+}))
+vi.mock("@/features/chapter/ReviewTab", () => ({ ReviewTab: () => null }))
+vi.mock("@/features/chapter/HistoryTab", () => ({ HistoryTab: () => null }))
+
+import ChapterPage from "@/features/chapter/ChapterPage"
+import { pickPinnedSession, pickSession } from "@/features/agent/AgentPanel"
+
+function Shell() {
+  const shell = {
+    book: BOOK,
+    agentPanelCollapsed: true,
+    expandAgentPanel: () => {
+      server.expanded += 1
+    },
+  } as unknown as BookShell
+  return <Outlet context={shell} />
+}
+
+function renderPage() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[`/books/${BOOK_ID}/chapters/${CHAPTER_ID}?tab=outline`]}>
+        <Routes>
+          <Route element={<Shell />}>
+            <Route path="/books/:bookId/chapters/:chapterId" element={<ChapterPage />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
+beforeEach(() => {
+  server.expanded = 0
+  server.chapter = chapter([planner()])
+  useUiStore.setState({ pinnedSession: {} })
+})
+
+describe("ChapterPage session focus", () => {
+  it("reopens the agent panel from the Outline tab's focus link", async () => {
+    const user = userEvent.setup()
+    renderPage()
+    expect(await screen.findByText("第一章", {}, { timeout: 3000 })).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Focus in the agent panel" }))
+    expect(server.expanded).toBe(1)
+    expect(useUiStore.getState().pinnedSession[BOOK_ID]).toBe(PLANNER_ID)
+  })
+
+  it("pins a session started from the Write-outline dialog instead of the oldest open one", async () => {
+    const user = userEvent.setup()
+    server.chapter = chapter([])
+    renderPage()
+    expect(await screen.findByText("第一章", {}, { timeout: 3000 })).toBeInTheDocument()
+    await user.click(screen.getAllByRole("button", { name: "Write the outline" })[0])
+    await user.click(screen.getByRole("button", { name: "Start planning" }))
+    await waitFor(() => expect(useUiStore.getState().pinnedSession[BOOK_ID]).toBe(2))
+    expect(server.expanded).toBe(1)
+    // The pinned session wins over the older reviewer/planner candidates.
+    const reviewer = planner("held")
+    reviewer.id = 1
+    reviewer.role = "reviewer"
+    reviewer.kind = "chapter_review"
+    const started = planner("running")
+    started.id = 2
+    expect(pickSession([reviewer, started], started, 2)?.id).toBe(2)
+    // The chapter's own open sessions are searched first; the newly started planner wins even
+    // when the book-wide session query has not caught up with it yet.
+    expect(pickPinnedSession([reviewer, started], [], 2)?.id).toBe(2)
+  })
+})

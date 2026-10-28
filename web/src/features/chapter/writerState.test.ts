@@ -89,6 +89,16 @@ describe("openWriterSession", () => {
     expect(openWriterSession(chapter([revise]))?.id).toBe(3)
   })
 
+  it("treats an outline/planner session as the chapter's owner too", () => {
+    const planner = session({
+      id: 4,
+      role: "planner",
+      kind: "chapter_outline",
+      phase: "none",
+    })
+    expect(openWriterSession(chapter([planner]))?.id).toBe(4)
+  })
+
   it("returns undefined when the chapter has no writer session", () => {
     expect(openWriterSession(chapter([]))).toBeUndefined()
     expect(openWriterSession(undefined)).toBeUndefined()

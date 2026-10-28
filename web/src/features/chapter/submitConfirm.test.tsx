@@ -105,11 +105,22 @@ describe("ChapterHeader submit", () => {
       submitMutate,
       "clicking submit alone must not end the paused writer session"
     ).not.toHaveBeenCalled()
-    expect(screen.getByText("End the open writer session?")).toBeInTheDocument()
+    expect(screen.getByText("End the open session?")).toBeInTheDocument()
 
     await user.click(
       screen.getByRole("button", { name: "Submit and end the session" })
     )
+    expect(submitMutate).toHaveBeenCalledTimes(1)
+  })
+
+  it("warns when a stopped planner session will be ended", async () => {
+    const user = userEvent.setup()
+    renderHeader(chapter([{ role: "planner", status: "stopped" }]))
+
+    await user.click(screen.getByRole("button", { name: "Submit for review" }))
+    expect(submitMutate).not.toHaveBeenCalled()
+    expect(screen.getByText("End the open session?")).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Submit and end the session" }))
     expect(submitMutate).toHaveBeenCalledTimes(1)
   })
 
@@ -120,7 +131,7 @@ describe("ChapterHeader submit", () => {
     await user.click(screen.getByRole("button", { name: "Submit for review" }))
     expect(submitMutate).toHaveBeenCalledTimes(1)
     expect(
-      screen.queryByText("End the open writer session?")
+      screen.queryByText("End the open session?")
     ).not.toBeInTheDocument()
   })
 

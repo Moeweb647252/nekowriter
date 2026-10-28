@@ -17,7 +17,7 @@ import { ArrowRight, CalendarClock, Loader2, PanelRightOpen } from "lucide-react
 import { toast } from "sonner"
 
 import { useSeedCanon } from "@/api/hooks/conception"
-import { useResyncChapter } from "@/api/hooks/reviews"
+import { useMaintainChapter, useResyncChapter } from "@/api/hooks/reviews"
 import { useCreateChapter } from "@/api/hooks/tracks"
 import type { BookStatus } from "@/api/gen/BookStatus"
 import type { NextActionDto } from "@/api/gen/NextActionDto"
@@ -54,10 +54,13 @@ const ARCHIVIST_KINDS: ReadonlySet<NextActionKind> = new Set<NextActionKind>([
 ])
 
 /** The title of the session an archivist action starts or continues (composed in the UI, spec/11 §6). */
-function archivistSessionTitle(t: TFunction, kind: NextActionKind): string {
-  return kind === "sync_canon"
+function archivistSessionTitle(t: TFunction, action: NextActionDto): string {
+  if (action.kind !== "sync_canon") {
+    return t("agent:session_title.canon_seed")
+  }
+  return action.chapter?.canon_status === "stale"
     ? t("agent:session_title.chapter_resync")
-    : t("agent:session_title.canon_seed")
+    : t("agent:session_title.chapter_maintenance")
 }
 
 /** The overview's "what to do next" card. */
@@ -87,7 +90,7 @@ export function NextActionCard({ bookId, status, action, tracks }: NextActionPro
     count: action.ready_research ?? 0,
   })
   const startedText = t("book:next_action.started_in_agent_panel", {
-    session: archivistSessionTitle(t, action.kind),
+    session: archivistSessionTitle(t, action),
   })
 
   const onArchivistStarted = useCallback(
@@ -226,8 +229,18 @@ function ActionButton({
       )
     }
     case "sync_canon":
-      return chapterId === undefined ? null : (
+      if (chapterId === undefined || action.chapter === null) {
+        return null
+      }
+      // pending/failed canon is retried with `maintain`; only stale text is re-synced (R3-04).
+      return action.chapter?.canon_status === "stale" ? (
         <ResyncButton
+          bookId={bookId}
+          chapterId={chapterId}
+          onStarted={onArchivistStarted}
+        />
+      ) : (
+        <MaintainButton
           bookId={bookId}
           chapterId={chapterId}
           onStarted={onArchivistStarted}
@@ -266,6 +279,35 @@ function SeedCanonButton({
       }
     >
       {seed.isPending ? <Loader2 aria-hidden="true" className="animate-spin" /> : null}
+      {t("book:next_action.go")}
+    </Button>
+  )
+}
+
+function MaintainButton({
+  bookId,
+  chapterId,
+  onStarted,
+}: {
+  bookId: number
+  chapterId: number
+  onStarted: (sessionId: number) => void
+}) {
+  const { t } = useTranslation()
+  const showError = useErrorToast()
+  const maintain = useMaintainChapter(chapterId, bookId)
+  return (
+    <Button
+      size="sm"
+      disabled={maintain.isPending}
+      onClick={() =>
+        maintain.mutate(undefined, {
+          onSuccess: (response) => onStarted(response.session_id),
+          onError: showError,
+        })
+      }
+    >
+      {maintain.isPending ? <Loader2 aria-hidden="true" className="animate-spin" /> : null}
       {t("book:next_action.go")}
     </Button>
   )

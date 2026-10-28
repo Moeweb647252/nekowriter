@@ -18,6 +18,7 @@
  * raw input afterwards) and `HoldBar` offered Continue/Feedback for it under the paragraphs.
  */
 import { render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { ChapterDto } from "@/api/gen/ChapterDto"
@@ -142,6 +143,14 @@ describe("PendingText", () => {
         "Preview: the highlighted paragraphs are the agent's text, not part of your draft yet.",
       ),
     ).toBeInTheDocument()
+  })
+
+  it("renders read-only while the chapter's owner is working", async () => {
+    writer.locked = true
+    renderPane()
+    expect(screen.getByText("The agent is working — Pause to edit.")).toBeInTheDocument()
+    await userEvent.click(screen.getByText("第一段。"))
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument()
   })
 
   it("does not offer the paragraph editor", () => {
