@@ -5,6 +5,7 @@ import type { Granularity } from "./Granularity";
  * `POST /chapters/:id/write` body (spec/08 §1.1, spec/10 §2.2).
  *
  * The writer switches default to the book's settings; `force` overrides the "previous chapter is
- * ready" precondition after the Write dialog explained why it failed.
+ * ready" precondition after the Write dialog explained why it failed. `pause_after_outline` is
+ * not here: it belongs to the outline session (D-146).
  */
-export type ChapterWriteInput = { guidance?: string | null, granularity?: Granularity | null, auto_pause?: boolean | null, pause_after_outline?: boolean | null, force: boolean, };
+export type ChapterWriteInput = { guidance?: string | null, granularity?: Granularity | null, auto_pause?: boolean | null, force: boolean, };

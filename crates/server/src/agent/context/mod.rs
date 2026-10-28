@@ -45,6 +45,7 @@ use super::session;
 pub fn kickoff_blocks(kind: SessionKind, redraft: bool) -> Vec<&'static str> {
     match kind {
         SessionKind::Conception => vec!["conception.kickoff"],
+        SessionKind::ChapterOutline => vec!["block.settings", "block.memory", "planner.kickoff"],
         SessionKind::Research => vec!["block.book_brief", "researcher.kickoff"],
         SessionKind::ChapterWrite => {
             if redraft {
@@ -1507,6 +1508,9 @@ pub async fn apply_completion(
                 events.extend(super::completion::finish_seed(tx, session).await?);
             }
         }
+        // `submit_outline` in an outline session: the staged outline was applied by the
+        // finalizing transaction; the completion itself has no further domain effect (D-146).
+        CompletionKind::Outline => {}
         // `finish_research` (M8.3, spec/07 §8 step 5): the task is `done`, with its report and the
         // count of the entries every run of it created.
         CompletionKind::Research => {

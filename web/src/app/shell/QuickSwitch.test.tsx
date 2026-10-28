@@ -113,6 +113,7 @@ const CHAPTERS: ChapterListItemDto[] = [
     status: "drafting",
     canon_status: "none",
     word_count: 8,
+    has_outline: false,
     updated_at: "2026-01-01T00:00:00Z",
   },
 ]

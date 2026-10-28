@@ -4,7 +4,7 @@
  * Two screens assign a model profile to an agent role: the global Agent roles page, which writes
  * `app_settings["roles.defaults"]`, and Book settings, which overrides one or more roles for a
  * single book (`books.model_overrides`, resolved before the global default). Both need the same
- * five roles in the same order, the same role labels, and the same provider-qualified model name
+ * six roles in the same order, the same role labels, and the same provider-qualified model name
  * ("Provider · Model"), including the "missing" case for a profile that was deleted after it was
  * assigned. Keeping the formatting here means the two pages cannot drift apart.
  */
@@ -15,10 +15,11 @@ import type { ModelProfileDto } from "@/api/gen/ModelProfileDto"
 import type { ProviderDto } from "@/api/gen/ProviderDto"
 import type { RoleModels } from "@/api/gen/RoleModels"
 
-/** The five roles in the order the settings pages list them (spec/02 §3). */
+/** The six roles in the order the settings pages list them (spec/02 §3, D-146). */
 export const AGENT_ROLES: readonly AgentRole[] = [
   "conception",
   "researcher",
+  "planner",
   "writer",
   "reviewer",
   "archivist",
@@ -28,6 +29,7 @@ export const AGENT_ROLES: readonly AgentRole[] = [
 const ROLE_LABEL_KEYS: Record<AgentRole, string> = {
   conception: "settings:role.conception",
   researcher: "settings:role.researcher",
+  planner: "settings:role.planner",
   writer: "settings:role.writer",
   reviewer: "settings:role.reviewer",
   archivist: "settings:role.archivist",
@@ -50,6 +52,7 @@ export function roleSelection(models: RoleModels | null | undefined): RoleSelect
   return {
     conception: models?.conception ?? null,
     researcher: models?.researcher ?? null,
+    planner: models?.planner ?? null,
     writer: models?.writer ?? null,
     reviewer: models?.reviewer ?? null,
     archivist: models?.archivist ?? null,

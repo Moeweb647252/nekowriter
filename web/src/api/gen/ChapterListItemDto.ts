@@ -11,4 +11,9 @@ export type ChapterListItemDto = { id: number, book_id: number, track_id: number
 /**
  * The chapter's number within its track, equal to `ord`.
  */
-number: number, title: string, status: ChapterStatus, canon_status: CanonStatus, word_count: number, updated_at: string, };
+number: number, title: string, status: ChapterStatus, canon_status: CanonStatus, word_count: number, 
+/**
+ * `!chapters.outline.trim().is_empty()`: the navigator draws a planned row with an outline
+ * differently, and the header's start action depends on it (spec/08 §7, D-146).
+ */
+has_outline: boolean, updated_at: string, };

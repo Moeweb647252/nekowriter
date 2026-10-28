@@ -3,4 +3,8 @@
 /**
  * `books.model_overrides` and `app_settings["roles.defaults"]`.
  */
-export type RoleModels = { conception?: number | null, researcher?: number | null, writer?: number | null, reviewer?: number | null, archivist?: number | null, };
+export type RoleModels = { conception?: number | null, researcher?: number | null, 
+/**
+ * The planner's own model; unset means "follow the writer" (spec/03 §4).
+ */
+planner?: number | null, writer?: number | null, reviewer?: number | null, archivist?: number | null, };

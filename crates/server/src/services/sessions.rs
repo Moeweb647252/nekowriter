@@ -1909,6 +1909,7 @@ pub fn open_statuses() -> [&'static str; 8] {
 /// write session and an open revise session at once; `canon_seed` has no chapter and no entry.
 fn chapter_session_role(kind: SessionKind) -> Option<&'static str> {
     match kind {
+        SessionKind::ChapterOutline => Some("planner"),
         SessionKind::ChapterWrite | SessionKind::ChapterRevise => Some("writer"),
         SessionKind::ChapterReview => Some("reviewer"),
         SessionKind::ChapterMaintenance | SessionKind::ChapterResync => Some("archivist"),

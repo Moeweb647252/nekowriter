@@ -112,6 +112,7 @@ function chapterWith(status: SessionDto["status"]): ChapterDto {
     status: "drafting",
     canon_status: "none",
     word_count: 0,
+    has_outline: false,
     updated_at: "2026-01-01T00:00:00Z",
     guidance: "",
     outline: "",

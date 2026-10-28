@@ -210,6 +210,7 @@ string_enum! {
     AgentRole {
         Conception => "conception",
         Researcher => "researcher",
+        Planner => "planner",
         Writer => "writer",
         Reviewer => "reviewer",
         Archivist => "archivist",
@@ -220,6 +221,7 @@ string_enum! {
     SessionKind {
         Conception => "conception",
         Research => "research",
+        ChapterOutline => "chapter_outline",
         ChapterWrite => "chapter_write",
         ChapterRevise => "chapter_revise",
         ChapterReview => "chapter_review",
@@ -467,6 +469,8 @@ impl Default for BookSettings {
 pub struct RoleModels {
     pub conception: Option<i32>,
     pub researcher: Option<i32>,
+    /// The planner's own model; unset means "follow the writer" (spec/03 §4).
+    pub planner: Option<i32>,
     pub writer: Option<i32>,
     pub reviewer: Option<i32>,
     pub archivist: Option<i32>,
@@ -477,6 +481,7 @@ impl RoleModels {
         match role {
             AgentRole::Conception => self.conception,
             AgentRole::Researcher => self.researcher,
+            AgentRole::Planner => self.planner,
             AgentRole::Writer => self.writer,
             AgentRole::Reviewer => self.reviewer,
             AgentRole::Archivist => self.archivist,
@@ -487,6 +492,7 @@ impl RoleModels {
         match role {
             AgentRole::Conception => self.conception = value,
             AgentRole::Researcher => self.researcher = value,
+            AgentRole::Planner => self.planner = value,
             AgentRole::Writer => self.writer = value,
             AgentRole::Reviewer => self.reviewer = value,
             AgentRole::Archivist => self.archivist = value,
@@ -781,6 +787,12 @@ pub struct ToolEffects {
     /// held call's text is not in the chapter until the call is approved. Feedback on the held
     /// call revokes the effects (spec/03 §5.4), which is what discards the write.
     pub pending_content: Option<PendingContent>,
+    /// An outline session's staged outline, applied by the transaction that finalizes an accepted
+    /// `submit_outline` (spec/03 §5.2, D-146). `None` for every other tool and session kind.
+    ///
+    /// Like `pending_content` this is an effect, not domain state: `chapters.outline` holds only
+    /// an accepted or author-written outline, so a held or rejected proposal never reaches it.
+    pub pending_outline: Option<PendingOutline>,
 }
 
 /// A writer call's staged chapter write (spec/03 §5.2): the content `execute` computed but did not
@@ -802,6 +814,18 @@ pub struct PendingContent {
     pub expected_version: i32,
 }
 
+/// An outline session's staged proposal (spec/03 §5.2, D-146). `title` is applied only while the
+/// chapter's title is still empty at apply time.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub struct PendingOutline {
+    pub outline: String,
+    pub reference_notes: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
@@ -811,6 +835,8 @@ pub enum CompletionKind {
     Review,
     Maintenance,
     Research,
+    /// `submit_outline` in a `chapter_outline` session (the staged outline is applied first).
+    Outline,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1014,6 +1040,7 @@ mod tests {
         let value = RoleModels {
             conception: Some(1),
             researcher: None,
+            planner: None,
             writer: Some(3),
             reviewer: Some(4),
             archivist: None,
@@ -1255,6 +1282,7 @@ mod tests {
                 },
                 expected_version: 3,
             }),
+            pending_outline: None,
         };
         assert_eq!(round_trip(&value), value);
         assert_eq!(round_trip(&ToolEffects::default()), ToolEffects::default());

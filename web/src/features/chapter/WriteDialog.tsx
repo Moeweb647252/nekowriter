@@ -76,7 +76,6 @@ export function WriteDialog({
       guidance: draftGuidance,
       granularity,
       auto_pause: autoPause,
-      pause_after_outline: pauseAfterOutline,
       force,
     }
     write.mutate(input, {

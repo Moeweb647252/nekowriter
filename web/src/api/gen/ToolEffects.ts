@@ -2,6 +2,7 @@
 import type { AwaitInputKind } from "./AwaitInputKind";
 import type { CompletionKind } from "./CompletionKind";
 import type { PendingContent } from "./PendingContent";
+import type { PendingOutline } from "./PendingOutline";
 import type { Phase } from "./Phase";
 
 /**
@@ -16,4 +17,12 @@ export type ToolEffects = { phase_to: Phase | null, complete: CompletionKind | n
  * held call's text is not in the chapter until the call is approved. Feedback on the held
  * call revokes the effects (spec/03 §5.4), which is what discards the write.
  */
-pending_content: PendingContent | null, };
+pending_content: PendingContent | null, 
+/**
+ * An outline session's staged outline, applied by the transaction that finalizes an accepted
+ * `submit_outline` (spec/03 §5.2, D-146). `None` for every other tool and session kind.
+ *
+ * Like `pending_content` this is an effect, not domain state: `chapters.outline` holds only
+ * an accepted or author-written outline, so a held or rejected proposal never reaches it.
+ */
+pending_outline: PendingOutline | null, };

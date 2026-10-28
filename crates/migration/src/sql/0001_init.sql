@@ -409,9 +409,9 @@ CREATE TABLE index_meta (
 CREATE TABLE agent_sessions (
   id                   INTEGER PRIMARY KEY,
   book_id              INTEGER REFERENCES books(id) ON DELETE CASCADE,
-  role                 TEXT NOT NULL CHECK (role IN ('conception','researcher','writer','reviewer','archivist')),
-  kind                 TEXT NOT NULL CHECK (kind IN ('conception','research','chapter_write','chapter_revise',
-                         'chapter_review','chapter_maintenance','canon_seed','chapter_resync')),
+  role                 TEXT NOT NULL CHECK (role IN ('conception','researcher','planner','writer','reviewer','archivist')),
+  kind                 TEXT NOT NULL CHECK (kind IN ('conception','research','chapter_outline','chapter_write',
+                         'chapter_revise','chapter_review','chapter_maintenance','canon_seed','chapter_resync')),
   chapter_id           INTEGER REFERENCES chapters(id) ON DELETE CASCADE,
   track_id             INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
   research_task_id     INTEGER REFERENCES research_tasks(id) ON DELETE CASCADE,

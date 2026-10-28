@@ -101,7 +101,6 @@ async fn write_accepts_the_writer_switches_and_stores_the_guidance() {
                 "guidance": "Write it in the rain.",
                 "granularity": "sentence",
                 "auto_pause": true,
-                "pause_after_outline": false,
             }),
         )
         .await;
@@ -110,7 +109,6 @@ async fn write_accepts_the_writer_switches_and_stores_the_guidance() {
     let (_, session) = app.get(&format!("/api/sessions/{session_id}")).await;
     assert_eq!(session["session"]["granularity"], "sentence");
     assert_eq!(session["session"]["auto_pause"], true);
-    assert_eq!(session["session"]["pause_after_outline"], false);
     // The guidance is stored before the session reads it into its kickoff.
     let (_, chapter) = app.get(&format!("/api/chapters/{chapter_id}")).await;
     assert_eq!(chapter["guidance"], "Write it in the rain.");

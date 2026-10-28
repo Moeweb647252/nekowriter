@@ -208,6 +208,7 @@ mod tests {
                 status: ChapterStatus::Planned,
                 canon_status: CanonStatus::None,
                 word_count: 0,
+                has_outline: false,
                 updated_at: Utc::now(),
             },
             outline_changed: false,

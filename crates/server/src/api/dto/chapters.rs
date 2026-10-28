@@ -24,6 +24,9 @@ pub struct ChapterListItemDto {
     pub status: ChapterStatus,
     pub canon_status: CanonStatus,
     pub word_count: i32,
+    /// `!chapters.outline.trim().is_empty()`: the navigator draws a planned row with an outline
+    /// differently, and the header's start action depends on it (spec/08 §7, D-146).
+    pub has_outline: bool,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -114,10 +117,27 @@ pub struct ChapterContentResult {
     pub word_count: i32,
 }
 
+/// `POST /chapters/:id/outline` body (spec/08 §1.1, spec/10 §2.2).
+///
+/// `pause_after_outline` defaults to the book setting; `force` overrides the "previous chapter is
+/// ready" precondition after the Outline dialog explained why it failed (the same rule as Write).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[ts(optional_fields = nullable)]
+pub struct ChapterOutlineInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guidance: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pause_after_outline: Option<bool>,
+    #[serde(default)]
+    pub force: bool,
+}
+
 /// `POST /chapters/:id/write` body (spec/08 §1.1, spec/10 §2.2).
 ///
 /// The writer switches default to the book's settings; `force` overrides the "previous chapter is
-/// ready" precondition after the Write dialog explained why it failed.
+/// ready" precondition after the Write dialog explained why it failed. `pause_after_outline` is
+/// not here: it belongs to the outline session (D-146).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[ts(optional_fields = nullable)]
@@ -128,8 +148,6 @@ pub struct ChapterWriteInput {
     pub granularity: Option<crate::db::json::Granularity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_pause: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pause_after_outline: Option<bool>,
     #[serde(default)]
     pub force: bool,
 }
@@ -192,6 +210,7 @@ impl From<crate::db::entities::chapters::Model> for ChapterListItemDto {
             status: ChapterStatus::from_str_opt(&row.status).unwrap_or(ChapterStatus::Planned),
             canon_status: CanonStatus::from_str_opt(&row.canon_status).unwrap_or(CanonStatus::None),
             word_count: row.word_count,
+            has_outline: !row.outline.trim().is_empty(),
             updated_at: row.updated_at,
         }
     }

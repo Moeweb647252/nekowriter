@@ -183,6 +183,11 @@ pub enum NextActionKind {
     ReviewChapter,
     ContinueChapter,
     SyncCanon,
+    /// A planned chapter without an outline (or with an open outline session): open the Outline
+    /// tab and write the outline (spec/08 §7 rule 7, D-146).
+    WriteOutline,
+    /// A planned chapter with an accepted outline: open the Text tab and write the chapter.
+    WriteChapter,
     WriteNext,
 }
 

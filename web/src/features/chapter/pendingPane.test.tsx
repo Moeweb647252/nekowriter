@@ -71,6 +71,7 @@ const CHAPTER: ChapterDto = {
   status: "drafting",
   canon_status: "none",
   word_count: 6,
+  has_outline: false,
   content_version: 4,
   content: {
     paragraphs: [

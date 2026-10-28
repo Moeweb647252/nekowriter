@@ -20,9 +20,10 @@ use nekowriter::testing::TestApp;
 use serde_json::{Value, json};
 
 /// The roles the editor lists, in the order the settings pages use (spec/02 §3).
-const ROLES: [&str; 5] = [
+const ROLES: [&str; 6] = [
     "conception",
     "researcher",
+    "planner",
     "writer",
     "reviewer",
     "archivist",
@@ -152,6 +153,7 @@ async fn the_patch_round_trips_every_role_through_the_book_dto() {
     let overrides = json!({
         "conception": models.book,
         "researcher": models.global,
+        "planner": null,
         "writer": models.book,
         "reviewer": null,
         "archivist": null,

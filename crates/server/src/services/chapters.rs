@@ -270,6 +270,7 @@ pub async fn delete_inner(
                 canon_status: CanonStatus::from_str_opt(&existing.canon_status)
                     .unwrap_or(CanonStatus::None),
                 word_count: existing.word_count,
+                has_outline: !existing.outline.trim().is_empty(),
                 updated_at: timestamp,
             },
             // The UI invalidates the whole list on any chapter event.
@@ -618,7 +619,7 @@ pub async fn write(
             research_task_id: None,
             granularity: input.granularity,
             auto_pause: input.auto_pause,
-            pause_after_outline: input.pause_after_outline,
+            pause_after_outline: None,
             redraft: false,
             guidance: input.guidance,
             kickoff_extra: None,

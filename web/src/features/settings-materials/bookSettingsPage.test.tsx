@@ -123,13 +123,14 @@ describe("Book settings › model overrides", () => {
     expect(rows.map((row) => row.getAttribute("data-testid"))).toEqual([
       "model-override-row-conception",
       "model-override-row-researcher",
+      "model-override-row-planner",
       "model-override-row-writer",
       "model-override-row-reviewer",
       "model-override-row-archivist",
     ])
 
     // With no override the select shows "Use the global default".
-    for (const role of ["conception", "researcher", "writer", "reviewer", "archivist"]) {
+    for (const role of ["conception", "researcher", "planner", "writer", "reviewer", "archivist"]) {
       const row = screen.getByTestId(`model-override-row-${role}`)
       expect(within(row).getByRole("combobox")).toHaveTextContent("Use the global default")
     }
@@ -236,6 +237,7 @@ describe("Book settings › model overrides", () => {
     expect(body.model_overrides).toEqual({
       conception: null,
       researcher: 8,
+      planner: null,
       writer: 7,
       reviewer: 8,
       archivist: null,
@@ -272,7 +274,7 @@ describe("Book settings › model overrides", () => {
     book.status = "conceiving"
     render(<BookSettingsPage />)
 
-    for (const role of ["conception", "researcher", "writer", "reviewer", "archivist"]) {
+    for (const role of ["conception", "researcher", "planner", "writer", "reviewer", "archivist"]) {
       expect(
         within(screen.getByTestId(`model-override-row-${role}`)).getByRole("combobox"),
       ).toBeDisabled()

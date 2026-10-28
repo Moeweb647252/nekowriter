@@ -195,7 +195,8 @@ pub fn is_permitted(kind: SessionKind, phase: Phase, tool: &str, frozen: &[Strin
         ),
         // Phase-free kinds permit every tool they froze (the role list already encoded them at
         // creation).
-        SessionKind::ChapterMaintenance
+        SessionKind::ChapterOutline
+        | SessionKind::ChapterMaintenance
         | SessionKind::ChapterResync
         | SessionKind::ChapterReview
         | SessionKind::Conception
@@ -218,6 +219,7 @@ pub fn role_of_kind(kind: SessionKind) -> &'static str {
     match kind {
         SessionKind::Conception => "conception",
         SessionKind::Research => "researcher",
+        SessionKind::ChapterOutline => "planner",
         SessionKind::ChapterWrite | SessionKind::ChapterRevise => "writer",
         SessionKind::ChapterReview => "reviewer",
         SessionKind::ChapterMaintenance | SessionKind::CanonSeed | SessionKind::ChapterResync => {

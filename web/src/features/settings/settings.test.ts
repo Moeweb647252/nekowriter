@@ -223,6 +223,7 @@ describe("role model labels (PROJECT §8.12)", () => {
     expect(roleSelection({ writer: 7 })).toEqual({
       conception: null,
       researcher: null,
+      planner: null,
       writer: 7,
       reviewer: null,
       archivist: null,
@@ -230,16 +231,18 @@ describe("role model labels (PROJECT §8.12)", () => {
     expect(roleSelection(undefined)).toEqual({
       conception: null,
       researcher: null,
+      planner: null,
       writer: null,
       reviewer: null,
       archivist: null,
     })
   })
 
-  it("lists the five roles in the settings order", () => {
+  it("lists the six roles in the settings order", () => {
     expect(AGENT_ROLES).toEqual([
       "conception",
       "researcher",
+      "planner",
       "writer",
       "reviewer",
       "archivist",
@@ -247,6 +250,7 @@ describe("role model labels (PROJECT §8.12)", () => {
     expect(AGENT_ROLES.map(roleLabelKey)).toEqual([
       "settings:role.conception",
       "settings:role.researcher",
+      "settings:role.planner",
       "settings:role.writer",
       "settings:role.reviewer",
       "settings:role.archivist",

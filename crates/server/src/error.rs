@@ -49,6 +49,9 @@ pub enum ErrorCode {
     #[serde(rename = "chapter.is_anchor")]
     #[ts(rename = "chapter.is_anchor")]
     ChapterIsAnchor,
+    #[serde(rename = "chapter.outline_missing")]
+    #[ts(rename = "chapter.outline_missing")]
+    ChapterOutlineMissing,
     #[serde(rename = "chapter.locked")]
     #[ts(rename = "chapter.locked")]
     ChapterLocked,
@@ -110,6 +113,7 @@ impl ErrorCode {
             ErrorCode::ChapterSessionExists => "chapter.session_exists",
             ErrorCode::ChapterPreviousNotReady => "chapter.previous_not_ready",
             ErrorCode::ChapterIsAnchor => "chapter.is_anchor",
+            ErrorCode::ChapterOutlineMissing => "chapter.outline_missing",
             ErrorCode::ChapterLocked => "chapter.locked",
             ErrorCode::SessionInvalidState => "session.invalid_state",
             ErrorCode::ModelMissingRole => "model.missing_role",
@@ -143,6 +147,7 @@ impl ErrorCode {
             | ErrorCode::ChapterSessionExists
             | ErrorCode::ChapterPreviousNotReady
             | ErrorCode::ChapterIsAnchor
+            | ErrorCode::ChapterOutlineMissing
             | ErrorCode::SessionInvalidState
             | ErrorCode::ModelMissingRole
             | ErrorCode::ConceptionIncomplete
