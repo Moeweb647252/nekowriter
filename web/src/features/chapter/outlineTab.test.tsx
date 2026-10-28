@@ -174,5 +174,22 @@ describe("OutlineTab", () => {
     )
     expect(screen.getByText("No outline yet")).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Write the outline" })).toBeInTheDocument()
+    // The fields stay editable, so the author can write the outline by hand (PROJECT §8.5).
+    expect(screen.getByLabelText("Outline")).not.toHaveAttribute("readonly")
+  })
+
+  it("shows read-only fields while the planner is working", () => {
+    render(
+      <OutlineTab
+        chapter={chapter({ outline: "进行中的旧细纲", has_outline: true })}
+        bookId={1}
+        unspaced={false}
+        settings={SETTINGS}
+        state="in_progress"
+        session={{ id: 9, kind: "chapter_outline", status: "running" } as unknown as SessionDto}
+      />,
+    )
+    expect(screen.getByText("The planner is working")).toBeInTheDocument()
+    expect(screen.getByLabelText("Outline")).toHaveAttribute("readonly")
   })
 })

@@ -104,33 +104,21 @@ export function OutlineTab({
 
   const editable = state === "missing" || state === "accepted" || legacyHeld
 
-  if (state === "missing" && !legacyHeld) {
-    return (
-      <div className="mx-auto max-w-[42em] space-y-4">
-        <EmptyState
-          title={t("chapter:outline_tab.empty_title")}
-          description={t("chapter:outline_tab.empty_hint")}
-        />
-        <div className="flex justify-center">
-          <Button size="sm" onClick={() => setOutlineOpen(true)}>
-            {t("chapter:write_outline")}
-          </Button>
-        </div>
-        <OutlineDialog
-          chapterId={chapter.id}
-          bookId={bookId}
-          settings={settings}
-          guidance={chapter.guidance}
-          open={outlineOpen}
-          onOpenChange={setOutlineOpen}
-          onStarted={(sessionId) => onSessionStarted?.(sessionId)}
-        />
-      </div>
-    )
-  }
-
   return (
     <div className="mx-auto max-w-[42em] space-y-5">
+      {state === "missing" && !legacyHeld ? (
+        <div className="space-y-3">
+          <EmptyState
+            title={t("chapter:outline_tab.empty_title")}
+            description={t("chapter:outline_tab.empty_hint")}
+          />
+          <div className="flex justify-center">
+            <Button size="sm" onClick={() => setOutlineOpen(true)}>
+              {t("chapter:write_outline")}
+            </Button>
+          </div>
+        </div>
+      ) : null}
       {state === "in_progress" && !legacyHeld ? (
         <div className="rounded-md border p-3 text-sm">
           <p className="font-medium">{t("chapter:outline_tab.planner_working")}</p>
@@ -172,46 +160,35 @@ export function OutlineTab({
             onFeedback={(text) => decide(text)}
           />
           {chapter.outline.trim() === "" ? null : (
-            <div className="space-y-1 border-t pt-4">
-              <p className="text-xs text-muted-foreground">
-                {t("chapter:outline_tab.current_replaced")}
-              </p>
-              <ReadOnlyField
-                id="outline-current"
-                label={t("chapter:outline_tab.current_outline")}
-                value={chapter.outline}
-              />
-            </div>
+            <p className="border-t pt-3 text-xs text-muted-foreground">
+              {t("chapter:outline_tab.current_replaced")}
+            </p>
           )}
         </>
       ) : null}
 
-      {editable ? (
-        <>
-          <div className="space-y-1.5">
-            <Label htmlFor="chapter-outline">{t("book:outline")}</Label>
-            <Textarea
-              id="chapter-outline"
-              value={outline}
-              rows={14}
-              className="font-mono text-xs leading-relaxed"
-              readOnly={!editable}
-              onChange={(event) => setOutline(event.target.value)}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="chapter-notes">{t("chapter:reference_notes")}</Label>
-            <Textarea
-              id="chapter-notes"
-              value={notes}
-              rows={6}
-              className="font-mono text-xs leading-relaxed"
-              readOnly={!editable}
-              onChange={(event) => setNotes(event.target.value)}
-            />
-          </div>
-        </>
-      ) : null}
+      <div className="space-y-1.5">
+        <Label htmlFor="chapter-outline">{t("book:outline")}</Label>
+        <Textarea
+          id="chapter-outline"
+          value={outline}
+          rows={14}
+          className="font-mono text-xs leading-relaxed"
+          readOnly={!editable}
+          onChange={(event) => setOutline(event.target.value)}
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="chapter-notes">{t("chapter:reference_notes")}</Label>
+        <Textarea
+          id="chapter-notes"
+          value={notes}
+          rows={6}
+          className="font-mono text-xs leading-relaxed"
+          readOnly={!editable}
+          onChange={(event) => setNotes(event.target.value)}
+        />
+      </div>
 
       <div className="space-y-1.5">
         <Label htmlFor="chapter-guidance">{t("chapter:guidance")}</Label>
