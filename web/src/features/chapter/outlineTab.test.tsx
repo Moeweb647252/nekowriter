@@ -208,6 +208,24 @@ describe("OutlineTab", () => {
     expect(screen.getByLabelText("Outline")).toHaveValue("作者正在写的细纲")
   })
 
+  it("clears a typed draft when the chapter id changes", async () => {
+    const user = userEvent.setup()
+    const view = (chapterValue: ChapterDto) => (
+      <OutlineTab
+        chapter={chapterValue}
+        bookId={1}
+        unspaced={false}
+        settings={SETTINGS}
+        state="accepted"
+      />
+    )
+    const { rerender } = render(view(chapter({ id: 1, outline: "第一章细纲" })))
+    await user.clear(screen.getByLabelText("Outline"))
+    await user.type(screen.getByLabelText("Outline"), "第一章的作者草稿")
+    rerender(view(chapter({ id: 2, outline: "第二章细纲" })))
+    expect(screen.getByLabelText("Outline")).toHaveValue("第二章细纲")
+  })
+
   it("gates Save and Write the outline while an owner session is open", () => {
     const runningWriter = {
       id: 7,

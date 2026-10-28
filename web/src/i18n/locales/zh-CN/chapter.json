@@ -55,7 +55,7 @@
   "write_dialog.title": "撰写本章",
   "write_dialog.description": "写作会话从已确认的细纲开始起草。你随时可以暂停、修改并给出意见。",
   "write_dialog.guidance": "这一章要写成什么样？",
-  "write_dialog.guidance_placeholder": "可选。策划会在写细纲前读到这里。",
+  "write_dialog.guidance_placeholder": "可选。写手会在写正文前读到这里。",
   "write_dialog.start": "开始写作",
   "write_dialog.not_ready_title": "上一章还没有准备好",
   "write_dialog.write_anyway": "仍然写作",
@@ -163,5 +163,6 @@
   "outline_tab.focus_session": "在智能体面板中查看",
   "send_back_dialog.outline_missing_title": "本章还没有细纲",
   "send_back_dialog.outline_missing_hint": "重写需要已确认的细纲。请先写细纲，再重新退回修改。",
-  "send_back_dialog.write_outline": "去写细纲"
+  "send_back_dialog.write_outline": "去写细纲",
+  "outline_dialog.guidance_placeholder": "可选。策划会在写细纲前读到这里。"
 }

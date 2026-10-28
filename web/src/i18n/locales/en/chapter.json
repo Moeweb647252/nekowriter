@@ -55,7 +55,7 @@
   "write_dialog.title": "Write this chapter",
   "write_dialog.description": "The write session drafts from the accepted outline. You can pause, edit and give feedback at any point.",
   "write_dialog.guidance": "What should this chapter do?",
-  "write_dialog.guidance_placeholder": "Optional. The planner reads this before drafting the outline.",
+  "write_dialog.guidance_placeholder": "Optional. The writer reads this before drafting the chapter.",
   "write_dialog.start": "Start writing",
   "write_dialog.not_ready_title": "The previous chapter is not ready",
   "write_dialog.write_anyway": "Write anyway",
@@ -163,5 +163,6 @@
   "outline_tab.focus_session": "Focus in the agent panel",
   "send_back_dialog.outline_missing_title": "This chapter has no outline",
   "send_back_dialog.outline_missing_hint": "A redraft drafts from an accepted outline. Write the outline first, then send back again.",
-  "send_back_dialog.write_outline": "Write the outline"
+  "send_back_dialog.write_outline": "Write the outline",
+  "outline_dialog.guidance_placeholder": "Optional. The planner reads this before drafting the outline."
 }

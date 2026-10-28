@@ -79,6 +79,16 @@ export function OutlineTab({
   // for deriving state from props, and it keeps the draft when `outline` differs from last seen.
   const [lastServerOutline, setLastServerOutline] = useState(chapter.outline)
   const [lastServerNotes, setLastServerNotes] = useState(chapter.reference_notes)
+  // A route can reuse this component while only `chapterId` changes; reset every local draft so
+  // typing on chapter A can never be saved into chapter B (R2 review suspicion).
+  const [lastChapterId, setLastChapterId] = useState(chapter.id)
+  if (chapter.id !== lastChapterId) {
+    setLastChapterId(chapter.id)
+    setOutline(chapter.outline)
+    setNotes(chapter.reference_notes)
+    setLastServerOutline(chapter.outline)
+    setLastServerNotes(chapter.reference_notes)
+  }
   if (chapter.outline !== lastServerOutline) {
     setLastServerOutline(chapter.outline)
     if (outline === lastServerOutline) {

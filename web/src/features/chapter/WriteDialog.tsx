@@ -66,6 +66,15 @@ export function WriteDialog({
   const showError = useErrorToast()
   const write = useWriteChapter(chapterId, bookId)
   const [draftGuidance, setDraftGuidance] = useState(guidance)
+  // The dialog is mounted permanently by `ChapterHeader`: adopt a guidance value changed by the
+  // other dialog, but never overwrite what the author is typing (R2-01).
+  const [lastServerGuidance, setLastServerGuidance] = useState(guidance)
+  if (guidance !== lastServerGuidance) {
+    setLastServerGuidance(guidance)
+    if (draftGuidance === lastServerGuidance) {
+      setDraftGuidance(guidance)
+    }
+  }
   const [granularity, setGranularity] = useState<Granularity>(settings.granularity)
   const [autoPause, setAutoPause] = useState(settings.auto_pause)
   const [notReady, setNotReady] = useState<PreviousNotReady | null>(null)

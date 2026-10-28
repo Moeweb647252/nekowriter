@@ -51,8 +51,25 @@ export function OutlineDialog({
   const showError = useErrorToast()
   const write = useWriteOutlineChapter(chapterId, bookId)
   const [draftGuidance, setDraftGuidance] = useState(guidance)
+  // Same last-seen-server-value rule as WriteDialog: the outline dialog is permanently mounted,
+  // so a guidance edit from a later write dialog must be adopted when untouched (R2-01).
+  const [lastServerGuidance, setLastServerGuidance] = useState(guidance)
+  if (guidance !== lastServerGuidance) {
+    setLastServerGuidance(guidance)
+    if (draftGuidance === lastServerGuidance) {
+      setDraftGuidance(guidance)
+    }
+  }
   const [pauseAfterOutline, setPauseAfterOutline] = useState(settings.pause_after_outline)
   const [notReady, setNotReady] = useState<PreviousNotReady | null>(null)
+  // `previous_not_ready` is a transient decision state: reopening starts from Start again (R2-02).
+  const [prevOpen, setPrevOpen] = useState(open)
+  if (open !== prevOpen) {
+    setPrevOpen(open)
+    if (open) {
+      setNotReady(null)
+    }
+  }
 
   const start = (force: boolean) => {
     const input: ChapterOutlineInput = {
@@ -95,7 +112,7 @@ export function OutlineDialog({
               id="outline-guidance"
               value={draftGuidance}
               rows={4}
-              placeholder={t("chapter:write_dialog.guidance_placeholder")}
+              placeholder={t("chapter:outline_dialog.guidance_placeholder")}
               onChange={(event) => setDraftGuidance(event.target.value)}
             />
           </div>

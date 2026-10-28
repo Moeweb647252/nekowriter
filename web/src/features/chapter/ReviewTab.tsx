@@ -14,6 +14,7 @@ import { useErrorToast } from "@/components/common/ErrorToast"
 import { EmptyState } from "@/components/common/EmptyState"
 import { ErrorToastInline } from "@/features/settings/ErrorToastInline"
 import { SendBackDialog } from "@/features/chapter/SendBackDialog"
+import { OutlineDialog } from "@/features/chapter/OutlineDialog"
 import { firstPid, reportIsCurrent } from "@/features/chapter/reviewUtils"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -29,6 +30,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import { formatRelativeTime } from "@/lib/format"
+import type { BookSettings } from "@/api/gen/BookSettings"
 import type { ChapterDto } from "@/api/gen/ChapterDto"
 import type { ReviewReportDto } from "@/api/gen/ReviewReportDto"
 
@@ -39,9 +41,16 @@ export type ReviewTabProps = {
   onSessionStarted?: (sessionId: number) => void
   /** Jumps to a pid in the Text tab (issues quote paragraphs). */
   onFocusPid?: (pid: string) => void
+  settings: BookSettings
 }
 
-export function ReviewTab({ chapter, bookId, onSessionStarted, onFocusPid }: ReviewTabProps) {
+export function ReviewTab({
+  chapter,
+  bookId,
+  onSessionStarted,
+  onFocusPid,
+  settings,
+}: ReviewTabProps) {
   const { t, i18n } = useTranslation()
   const showError = useErrorToast()
   const reviews = useReviews(chapter.id)
@@ -50,6 +59,7 @@ export function ReviewTab({ chapter, bookId, onSessionStarted, onFocusPid }: Rev
     null,
   )
   const [discuss, setDiscuss] = useState<ReviewReportDto | null>(null)
+  const [outlineOpen, setOutlineOpen] = useState(false)
 
   if (reviews.isPending) {
     return <Skeleton className="h-48" />
@@ -176,6 +186,19 @@ export function ReviewTab({ chapter, bookId, onSessionStarted, onFocusPid }: Rev
         initialFeedback={sendBack?.feedback}
         onSentBack={(sessionId) => {
           setSendBack(null)
+          onSessionStarted?.(sessionId)
+        }}
+        onWriteOutline={() => setOutlineOpen(true)}
+      />
+      <OutlineDialog
+        chapterId={chapter.id}
+        bookId={bookId}
+        settings={settings}
+        guidance={chapter.guidance}
+        open={outlineOpen}
+        onOpenChange={setOutlineOpen}
+        onStarted={(sessionId) => {
+          setOutlineOpen(false)
           onSessionStarted?.(sessionId)
         }}
       />

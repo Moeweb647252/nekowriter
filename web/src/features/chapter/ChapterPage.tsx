@@ -35,6 +35,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { keys } from "@/api/keys"
 import { useChapterDoc } from "@/stores/chapterDoc"
 import { useUiStore } from "@/stores/ui"
+import { useBookShell } from "@/features/workspace/shell"
+import { focusSessionInAgentPanel } from "@/features/chapter/focusSession"
 import { isUnspaced } from "@/lib/language"
 
 const TABS = ["text", "outline", "review", "history"] as const
@@ -54,6 +56,7 @@ export default function ChapterPage() {
   const reset = useChapterDoc((state) => state.reset)
   const showError = useErrorToast()
   const resume = useResumeSession(bookId)
+  const shell = useBookShell()
 
   const rawTab = searchParams.get("tab")
   const tab: Tab = TABS.includes(rawTab as Tab) ? (rawTab as Tab) : "text"
@@ -175,6 +178,7 @@ export default function ChapterPage() {
         </TabsContent>
         <TabsContent value="outline" className="min-h-0 p-6">
           <OutlineTab
+            key={document.id}
             chapter={document}
             bookId={bookId}
             unspaced={unspaced}
@@ -187,6 +191,7 @@ export default function ChapterPage() {
             }}
             onFocusSession={(sessionId) => {
               useUiStore.getState().setPinnedSession(bookId, sessionId)
+              focusSessionInAgentPanel(shell)
               void queryClient.invalidateQueries({ queryKey: keys.sessions.detail(sessionId) })
             }}
           />
@@ -195,6 +200,7 @@ export default function ChapterPage() {
           <ReviewTab
             chapter={document}
             bookId={bookId}
+            settings={book.data.settings}
             onSessionStarted={() => {
               void queryClient.invalidateQueries({ queryKey: keys.chapters.detail(chapterId) })
               void queryClient.invalidateQueries({ queryKey: keys.chapters.reviews(chapterId) })
