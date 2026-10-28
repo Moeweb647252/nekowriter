@@ -235,8 +235,10 @@ describe("chapter paragraph editing with real mutations", () => {
       </QueryClientProvider>,
     )
     await user.click(screen.getByText("第一段。"))
+    const editor = screen.getByRole("textbox") as HTMLTextAreaElement
+    editor.setSelectionRange(editor.value.length, editor.value.length)
     await user.keyboard("{Enter}")
-    const pending = screen.getByRole("textbox")
+    const pending = screen.getByRole("textbox", { name: "New paragraph" })
     await user.type(pending, "新段落")
     await user.keyboard("{Control>}{Enter}{/Control}")
     fireEvent.keyDown(pending, { key: "Enter", ctrlKey: true })
@@ -248,6 +250,33 @@ describe("chapter paragraph editing with real mutations", () => {
       word_count: 4,
       tail_open: false,
     })
+  })
+
+  it("retries a pending paragraph after a failed PATCH (R12-02)", async () => {
+    const user = userEvent.setup()
+    endpoints.patchContent
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockResolvedValueOnce({
+        version: 2,
+        ops: [{ op: "insert", after: "p1", pid: "p3", text: "新段落" }],
+        word_count: 4,
+        tail_open: false,
+      })
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ChapterText chapter={chapter()} bookId={1} unspaced fullTextOpen={false} onFullTextOpenChange={() => {}} />
+      </QueryClientProvider>,
+    )
+    await user.click(screen.getByText("第一段。"))
+    const editor = screen.getByRole("textbox") as HTMLTextAreaElement
+    editor.setSelectionRange(editor.value.length, editor.value.length)
+    await user.keyboard("{Enter}")
+    const pending = screen.getByRole("textbox", { name: "New paragraph" })
+    await user.type(pending, "新段落")
+    fireEvent.blur(pending)
+    await waitFor(() => expect(endpoints.patchContent).toHaveBeenCalledTimes(1))
+    fireEvent.blur(pending)
+    await waitFor(() => expect(endpoints.patchContent).toHaveBeenCalledTimes(2))
   })
 
   it("submits the pending component only once across Ctrl+Enter and blur (R11-02)", async () => {

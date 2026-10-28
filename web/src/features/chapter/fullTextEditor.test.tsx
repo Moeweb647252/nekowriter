@@ -10,10 +10,11 @@ import { useChapterDoc } from "@/stores/chapterDoc"
 const contentMutations = vi.hoisted(() => ({
   patchMutate: vi.fn(),
   putMutate: vi.fn(),
+  patchPending: false,
 }))
 vi.mock("@/api/hooks/chapters", () => ({
   useContentMutations: () => ({
-    patch: { mutate: contentMutations.patchMutate, isPending: false },
+    patch: { mutate: contentMutations.patchMutate, isPending: contentMutations.patchPending },
     putText: { mutate: contentMutations.putMutate, isPending: false },
   }),
 }))
@@ -60,6 +61,7 @@ beforeEach(() => {
   writer.locked = false
   contentMutations.patchMutate.mockClear()
   contentMutations.putMutate.mockClear()
+  contentMutations.patchPending = false
   useChapterDoc.getState().load(1, 1, chapter(1, "A").content)
 })
 
@@ -120,6 +122,47 @@ describe("FullTextEditor", () => {
       options.onSuccess?.()
     })
     expect(screen.getByRole("textbox")).toBeInTheDocument()
+  })
+
+  it("initialises text from the live store when it holds the mounted chapter (R12-01)", async () => {
+    const user = userEvent.setup()
+    useChapterDoc.getState().load(1, 2, {
+      paragraphs: [
+        { pid: "p1", text: "第一段。 edit" },
+        { pid: "p2", text: "第二段。" },
+      ],
+      next_pid: 3,
+      tail_open: false,
+    })
+    render(view(chapter(1, "第一段。")))
+    expect(screen.getByRole("textbox")).toHaveValue("第一段。 edit\n\n第二段。")
+    expect(screen.queryByRole("status")).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    expect(contentMutations.putMutate).toHaveBeenCalledWith(
+      {
+        base_version: 2,
+        text: "第一段。 edit\n\n第二段。",
+      },
+      expect.anything(),
+    )
+  })
+
+  it("keeps editor-typed text when a paragraph save advances the store (R12-04)", async () => {
+    const user = userEvent.setup()
+    contentMutations.patchPending = true
+    render(view(chapter(1, "第一段。")))
+    const editor = screen.getByRole("textbox")
+    await user.type(editor, " typed")
+    act(() => {
+      useChapterDoc.getState().applyOps(
+        2,
+        [{ op: "update", pid: "p1", text: "Agent 的正文" }],
+        "agent",
+      )
+    })
+    expect(editor).toHaveValue("第一段。 typed")
+    expect(screen.getByRole("textbox")).toBe(editor)
+    expect(screen.getByRole("status")).toBeInTheDocument()
   })
 
   it("opens against the live store after a blur save advanced it (R11-03)", () => {

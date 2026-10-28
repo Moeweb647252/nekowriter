@@ -120,7 +120,7 @@ export function ChapterText({
     [paragraphs],
   )
   const commitPending = useCallback(
-    (pid: string, text: string, startText: string, newText: string) => {
+    (pid: string, text: string, startText: string, newText: string, reset: () => void) => {
       const current = paragraphs.find((paragraph) => paragraph.pid === pid)?.text
       if (current !== startText) {
         return
@@ -138,7 +138,10 @@ export function ChapterText({
       }
       ops.push({ op: "insert", after: anchor, text: newText })
       patchMutate({ base_version: version, ops }, {
-        onError: showError,
+        onError: (error) => {
+          showError(error)
+          reset()
+        },
         onSuccess: () => setPendingAfter(null),
       })
     },
@@ -277,8 +280,14 @@ export function ChapterText({
               {pendingAfter?.pid === paragraph.pid ? (
                 <PendingParagraph
                   key={`pending-${paragraph.pid}`}
-                  onPersist={(newText) =>
-                    commitPending(paragraph.pid, pendingAfter.text, pendingAfter.startText, newText)
+                  onPersist={(newText, reset) =>
+                    commitPending(
+                      paragraph.pid,
+                      pendingAfter.text,
+                      pendingAfter.startText,
+                      newText,
+                      reset,
+                    )
                   }
                   onDismiss={() =>
                     dismissPending(paragraph.pid, pendingAfter.text, pendingAfter.startText)
@@ -508,7 +517,7 @@ export function PendingParagraph({
   onPersist,
   onDismiss,
 }: {
-  onPersist: (text: string) => void
+  onPersist: (text: string, onError: () => void) => void
   onDismiss: () => void
 }) {
   const { t } = useTranslation()
@@ -527,7 +536,9 @@ export function PendingParagraph({
     if (value === "") {
       onDismiss()
     } else {
-      onPersist(value)
+      onPersist(value, () => {
+        submitted.current = false
+      })
     }
   }
   return (
@@ -580,14 +591,18 @@ function FullTextEditor({
   onSave,
 }: FullTextEditorProps) {
   const { t } = useTranslation()
-  const [text, setText] = useState(() => paragraphTextOf(chapter))
-  const [dirty, setDirty] = useState(false)
   // The editor opens against one version. Prefer the live store when it already holds this
   // chapter (a paragraph blur may have advanced it); otherwise use the chapter DTO, which is
   // correct on the first render after a chapter switch before the load effect runs (R8-01).
   const storeChapterId = useChapterDoc((state) => state.chapterId)
   const storeVersion = useChapterDoc((state) => state.version)
   const storeParagraphs = useChapterDoc((state) => state.paragraphs)
+  const [text, setText] = useState(() =>
+    storeChapterId === chapter.id && storeVersion !== chapter.content_version
+      ? paragraphTextOfStore(storeParagraphs)
+      : paragraphTextOf(chapter),
+  )
+  const [dirty, setDirty] = useState(false)
   const [baseVersion, setBaseVersion] = useState(
     storeChapterId === chapter.id ? storeVersion : chapter.content_version,
   )
@@ -659,6 +674,13 @@ function FullTextEditor({
       </div>
     </div>
   )
+}
+
+/** The store's paragraphs as one blank-line separated document. */
+function paragraphTextOfStore(
+  paragraphs: { pid: string; text: string }[],
+): string {
+  return paragraphs.map((paragraph) => paragraph.text).join("\n\n")
 }
 
 /** The stored text of a chapter as one blank-line separated document. */
