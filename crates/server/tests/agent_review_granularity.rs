@@ -630,7 +630,7 @@ async fn a_call_generated_under_paragraph_survives_a_switch_to_sentence() {
     // wait for *that* request, not the pre-split request 2 (R2-07). A PATCH after the call sealed
     // would make `inserts[0]` vacuous, so assert the call is still streaming when it lands.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while runtime.scripted.requests().len() < 1 {
+    while runtime.scripted.requests().is_empty() {
         assert!(
             std::time::Instant::now() < deadline,
             "the drafting request never started"
