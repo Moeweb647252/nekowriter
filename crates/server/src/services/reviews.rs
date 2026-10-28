@@ -401,7 +401,7 @@ pub async fn send_back(
     // A reviewer session can appear between the pre-loop above and this write transaction
     // (M5-07); the commit must not leave it open after the chapter leaves `in_review`.
     for reviewer in open_reviewer_sessions(state.db().conn(), chapter_id).await? {
-        sessions::abandon(state, reviewer.id).await?;
+        sessions::abandon_if_open(state, reviewer.id).await?;
     }
     state.manager().spawn(state.clone(), session_id);
     Ok(ReviewSessionResponse { session_id })

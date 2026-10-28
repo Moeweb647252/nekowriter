@@ -927,7 +927,7 @@ pub async fn approve(
     // A reviewer session can appear between the pre-loop above and this write transaction
     // (M5-07); abandon the ones that survived the commit too.
     for reviewer in super::reviews::open_reviewer_sessions(state.db().conn(), chapter_id).await? {
-        super::sessions::abandon(state, reviewer.id).await?;
+        super::sessions::abandon_if_open(state, reviewer.id).await?;
     }
     if let Some(session_id) = response.maintenance_session_id {
         state.manager().spawn(state.clone(), session_id);

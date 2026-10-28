@@ -382,3 +382,17 @@ async fn send_back_abandons_a_reviewer_created_during_the_gap() {
     updater.await.expect("updater");
     assert_eq!(reviewer_status(&app, chapter_id).await, "abandoned");
 }
+
+/// A post-commit cleanup can see a reviewer that completed in the gap; that is success, not an
+/// error that would turn the already-committed chapter transition into a failure (S-1).
+#[tokio::test]
+async fn abandoning_an_already_terminal_reviewer_is_not_an_error() {
+    let (app, book_id, chapter_id) = app_with_book().await;
+    assign_models(&app).await;
+    in_review(&app, chapter_id).await;
+    let session = completed_reviewer(&app, book_id, chapter_id).await;
+    let state = app.state().clone();
+    nekowriter::services::sessions::abandon_if_open(&state, session)
+        .await
+        .expect("a terminal reviewer is already cleaned up");
+}

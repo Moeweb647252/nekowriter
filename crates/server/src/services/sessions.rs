@@ -1445,6 +1445,18 @@ pub async fn abandon(
     Ok(dto)
 }
 
+/// Abandon a session only if it is still open. A cleanup loop runs after the chapter's write
+/// transaction has committed, so a concurrent completion/abandon is already a success for the
+/// cleanup; its `session.invalid_state` must not turn the committed chapter transition into an
+/// error (S-1).
+pub async fn abandon_if_open(state: &AppState, session_id: i32) -> Result<(), AppError> {
+    match abandon(state, session_id).await {
+        Ok(_) => Ok(()),
+        Err(error) if error.code == ErrorCode::SessionInvalidState => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 /// `POST /api/sessions/:id/message` (spec/03 §6).
 pub async fn send_message(
     state: &AppState,
