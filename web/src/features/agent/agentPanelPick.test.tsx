@@ -1,6 +1,7 @@
 /** AgentPanel chooses the pinned chapter candidate, not the oldest open session (R3-08/T-02). */
 import "@/i18n"
-import { render, screen } from "@testing-library/react"
+import { act, render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { ChapterDto } from "@/api/gen/ChapterDto"
@@ -68,6 +69,7 @@ const chapter = {
 vi.mock("@/api/hooks/chapters", () => ({
   useChapter: () => ({ data: chapter, isPending: false }),
 }))
+const controlMutate = vi.hoisted(() => vi.fn())
 vi.mock("@/api/hooks/sessions", () => ({
   useBookSessions: () => ({ data: [], isPending: false }),
   useSession: (id: number | null) => ({
@@ -81,7 +83,7 @@ vi.mock("@/api/hooks/sessions", () => ({
   }),
   useResumeSession: () => ({ mutate: vi.fn(), isPending: false }),
   useSendSessionMessage: () => ({ mutate: vi.fn(), isPending: false }),
-  useSessionControl: () => ({ mutate: vi.fn(), isPending: false }),
+  useSessionControl: () => ({ mutate: controlMutate, isPending: false }),
   usePatchSession: () => ({ mutate: vi.fn(), isPending: false }),
   useStartDebugSession: () => ({ mutate: vi.fn(), isPending: false }),
 }))
@@ -95,6 +97,7 @@ import { AgentPanel } from "@/features/agent/AgentPanel"
 import { TooltipProvider } from "@/components/ui/tooltip"
 
 beforeEach(() => {
+  controlMutate.mockClear()
   useUiStore.setState({ pinnedSession: { 3: 2 } })
 })
 
@@ -107,5 +110,22 @@ describe("AgentPanel pinned candidate", () => {
     )
     expect(screen.getByText("Outlining · Chapter 1")).toBeInTheDocument()
     expect(screen.queryByText("Reviewing · Chapter 1")).not.toBeInTheDocument()
+  })
+
+  it("does not re-pin a controlled session after the author switched away", async () => {
+    const user = userEvent.setup()
+    render(
+      <TooltipProvider>
+        <AgentPanel bookId={3} chapterId={2} />
+      </TooltipProvider>,
+    )
+    await user.click(screen.getByRole("button", { name: "Pause" }))
+    expect(controlMutate).toHaveBeenCalledTimes(1)
+    const options = controlMutate.mock.calls[0]?.[1] as { onSuccess?: (updated: SessionDto) => void }
+    useUiStore.setState({ pinnedSession: { 3: 3 } })
+    act(() => {
+      options.onSuccess?.({ ...planner, id: 2 } as SessionDto)
+    })
+    expect(useUiStore.getState().pinnedSession[3]).toBe(3)
   })
 })

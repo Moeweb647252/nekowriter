@@ -28,6 +28,8 @@
   "word_count_title": "{{words}} words (target {{min}}–{{max}})",
   "live_words": "{{words}} words in this version",
   "full_text_edit": "Full-text edit",
+  "paragraph_stale": "This paragraph changed while you were editing it.",
+  "paragraph_stale_reload": "Reload paragraph",
   "full_text_stale": "The chapter changed while this editor was open. Reopen it before saving.",
   "full_text_hint": "Paragraphs are separated by blank lines. Saving aligns them and keeps their ids.",
   "empty_title": "This chapter is empty",

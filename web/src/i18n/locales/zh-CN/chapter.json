@@ -28,6 +28,8 @@
   "word_count_title": "{{words}} 字（目标 {{min}}–{{max}}）",
   "live_words": "当前版本 {{words}} 字",
   "full_text_edit": "全文编辑",
+  "paragraph_stale": "这段在编辑期间已被改动。",
+  "paragraph_stale_reload": "重新加载此段",
   "full_text_stale": "章节在编辑期间已更新；请重新打开全文编辑后再保存。",
   "full_text_hint": "段落之间用空行分隔；保存时会自动对齐并保留段落编号。",
   "empty_title": "本章还没有正文",

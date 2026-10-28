@@ -89,36 +89,46 @@ export function ChapterText({
   // a streaming tail paragraph must not re-render the other hundreds.
   const patchMutate = patch.mutate
   const saveParagraph = useCallback(
-    (pid: string, text: string, baseVersion: number) => {
-      // Never pair an advanced store version with text typed against an older one (R8-02).
-      if (baseVersion !== version) {
+    (pid: string, text: string, startText: string) => {
+      // Paragraph staleness is per paragraph, not per document version (R9-01): a preceding save
+      // of another paragraph may advance the version and is still a legal base for this edit.
+      const current = paragraphs.find((paragraph) => paragraph.pid === pid)?.text
+      if (current !== startText) {
         return
       }
       const ops: ContentOpInput[] = [{ op: "update", pid, text }]
-      patchMutate({ base_version: baseVersion, ops }, { onError: showError })
+      patchMutate({ base_version: version, ops }, { onError: showError })
     },
-    [patchMutate, version, showError],
+    [patchMutate, paragraphs, version, showError],
   )
   const insertParagraphAfter = useCallback(
-    (pid: string, text: string, baseVersion: number) => {
-      if (baseVersion !== version) {
+    (pid: string, text: string, startText: string) => {
+      const current = paragraphs.find((paragraph) => paragraph.pid === pid)?.text
+      if (current !== startText) {
         return
       }
-      const ops: ContentOpInput[] = [{ op: "insert", after: pid, text }]
-      patchMutate({ base_version: baseVersion, ops }, { onError: showError })
+      // The whole edit is one patch: update the current paragraph and insert its empty successor.
+      const ops: ContentOpInput[] = []
+      if (text !== startText) {
+        ops.push({ op: "update", pid, text })
+      }
+      ops.push({ op: "insert", after: pid, text: "" })
+      patchMutate({ base_version: version, ops }, { onError: showError })
     },
-    [patchMutate, version, showError],
+    [patchMutate, paragraphs, version, showError],
   )
   const deleteParagraph = useCallback(
-    (pid: string, baseVersion: number) => {
-      if (baseVersion !== version) {
+    (pid: string, startText: string) => {
+      const current = paragraphs.find((paragraph) => paragraph.pid === pid)?.text
+      if (current !== startText) {
         return
       }
       const ops: ContentOpInput[] = [{ op: "delete", pid }]
-      patchMutate({ base_version: baseVersion, ops }, { onError: showError })
+      patchMutate({ base_version: version, ops }, { onError: showError })
     },
-    [patchMutate, version, showError],
+    [patchMutate, paragraphs, version, showError],
   )
+
 
   // The live count while typing; the server value is authoritative (spec/11 §8).
   const liveWords = useMemo(
@@ -202,7 +212,6 @@ export function ChapterText({
                 key={paragraph.pid}
                 pid={paragraph.pid}
                 text={paragraph.text}
-                version={version}
                 // An `insert_text` preview streams into the open tail paragraph (spec/11 §5.2).
                 ghost={
                   writer.preview?.name === "insert_text" &&
@@ -258,10 +267,9 @@ type ParagraphProps = {
   saving: boolean
   locked: boolean
   onHighlightEnd: (pid: string) => void
-  version: number
-  onSave: (pid: string, text: string, baseVersion: number) => void
-  onInsertAfter: (pid: string, text: string, baseVersion: number) => void
-  onDelete: (pid: string, baseVersion: number) => void
+  onSave: (pid: string, text: string, startText: string) => void
+  onInsertAfter: (pid: string, text: string, startText: string) => void
+  onDelete: (pid: string, startText: string) => void
 }
 
 /**
@@ -271,7 +279,6 @@ type ParagraphProps = {
 export const Paragraph = memo(function Paragraph({
   pid,
   text,
-  version,
   ghost,
   onlyParagraph,
   focus,
@@ -286,7 +293,7 @@ export const Paragraph = memo(function Paragraph({
   const { t } = useTranslation()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(text)
-  const [editBaseVersion, setEditBaseVersion] = useState(version)
+  const [startText, setStartText] = useState(text)
   const [stale, setStale] = useState(false)
 
   useEffect(() => {
@@ -298,10 +305,22 @@ export const Paragraph = memo(function Paragraph({
   if (stale) {
     return (
       <motion.div layout className="my-1 space-y-1">
-        <p className="whitespace-pre-wrap">{draft}</p>
+        <p className="whitespace-pre-wrap">{text}</p>
         <p role="status" className="text-xs text-destructive">
-          {t("chapter:full_text_stale")}
+          {t("chapter:paragraph_stale")}
         </p>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            setDraft(text)
+            setStartText(text)
+            setEditing(false)
+            setStale(false)
+          }}
+        >
+          {t("chapter:paragraph_stale_reload")}
+        </Button>
       </motion.div>
     )
   }
@@ -318,12 +337,12 @@ export const Paragraph = memo(function Paragraph({
           onChange={(event) => setDraft(event.target.value)}
           onBlur={() => {
             if (draft !== text) {
-              if (version !== editBaseVersion) {
+              if (text !== startText) {
                 setEditing(false)
                 setStale(true)
                 return
               }
-              onSave(pid, draft, editBaseVersion)
+              onSave(pid, draft, startText)
             }
             setEditing(false)
           }}
@@ -347,29 +366,25 @@ export const Paragraph = memo(function Paragraph({
               return
             }
             if (action === "save") {
-              if (version !== editBaseVersion) {
+              if (text !== startText) {
                 setEditing(false)
                 setStale(true)
                 return
               }
               setEditing(false)
               if (draft !== text) {
-                onSave(pid, draft, editBaseVersion)
+                onSave(pid, draft, startText)
               }
               return
             }
             if (action === "insert-after") {
-              if (version !== editBaseVersion) {
+              if (text !== startText) {
                 setEditing(false)
                 setStale(true)
                 return
               }
-              // Store the edited text first, then start the new paragraph after this pid.
-              if (draft !== text) {
-                onSave(pid, draft, editBaseVersion)
-              }
               setEditing(false)
-              onInsertAfter(pid, "", editBaseVersion)
+              onInsertAfter(pid, draft, startText)
               return
             }
             if (action === "delete-paragraph") {
@@ -378,13 +393,13 @@ export const Paragraph = memo(function Paragraph({
               if (onlyParagraph) {
                 return
               }
-              if (version !== editBaseVersion) {
+              if (text !== startText) {
                 setEditing(false)
                 setStale(true)
                 return
               }
               setEditing(false)
-              onDelete(pid, editBaseVersion)
+              onDelete(pid, startText)
             }
           }}
         />
@@ -406,7 +421,7 @@ export const Paragraph = memo(function Paragraph({
           return
         }
         setDraft(text)
-        setEditBaseVersion(version)
+        setStartText(text)
         setStale(false)
         setEditing(true)
       }}

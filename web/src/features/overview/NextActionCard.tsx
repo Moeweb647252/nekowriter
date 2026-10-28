@@ -9,7 +9,7 @@
  * panel", and spec/11 §5.3 puts a book's sessions there — so they pin the session they started in
  * the panel, expand it if it was collapsed, and name where the run is watched (D-135).
  */
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useState } from "react"
 import { Link, useNavigate } from "react-router"
 import { useTranslation } from "react-i18next"
 import type { TFunction } from "i18next"
@@ -74,10 +74,8 @@ export function NextActionCard({ bookId, status, action, tracks }: NextActionPro
   // Remembered per kind: when the overview answers a different action the guidance is back, so no
   // effect has to reset it (the same shape `AgentPanel` uses for its "pausing" hints).
   const [startedKind, setStartedKind] = useState<NextActionKind | null>(null)
-  const actionKindRef = useRef(action.kind)
-  useEffect(() => {
-    actionKindRef.current = action.kind
-  }, [action.kind])
+  // The kind belongs to the request that was clicked; the equality below hides the line if the
+  // overview has moved on to another action while that request was in flight (R9-04).
   const started = startedKind === action.kind
   const archivist = ARCHIVIST_KINDS.has(action.kind)
 
@@ -104,9 +102,7 @@ export function NextActionCard({ bookId, status, action, tracks }: NextActionPro
       const ui = useUiStore.getState()
       ui.setPinnedSession(bookId, sessionId)
       shell?.expandAgentPanel()
-      // A late response belongs to the action that is current when it lands, not to the
-      // action captured at click time (S-3).
-      setStartedKind(actionKindRef.current)
+      setStartedKind(action.kind)
       toast.success(startedText)
     },
     [action.kind, bookId, shell, startedText],

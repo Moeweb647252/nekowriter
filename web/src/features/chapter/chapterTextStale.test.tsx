@@ -85,7 +85,7 @@ describe("chapter paragraph stale version", () => {
     await user.tab()
     expect(mutations.patchMutate).not.toHaveBeenCalled()
     expect(await screen.findByRole("status")).toHaveTextContent(
-      "The chapter changed while this editor was open",
+      "This paragraph changed while you were editing it",
     )
   })
 })

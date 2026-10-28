@@ -1,4 +1,5 @@
 /** Full-text editor chapter identity and lock handling (P-01, P-02). */
+import { useState } from "react"
 import { act, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
@@ -93,6 +94,32 @@ describe("FullTextEditor", () => {
     })
     expect(screen.queryByRole("status")).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled()
+  })
+
+  it("does not close a full-text editor reopened while a save is in flight (S-4)", async () => {
+    const user = userEvent.setup()
+    function Harness() {
+      const [open, setOpen] = useState(true)
+      return (
+        <ChapterText
+          chapter={chapter(1, "Chapter A text")}
+          bookId={1}
+          unspaced
+          fullTextOpen={open}
+          onFullTextOpenChange={setOpen}
+        />
+      )
+    }
+    render(<Harness />)
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    const options = contentMutations.putMutate.mock.calls[0]?.[1] as { onSuccess?: () => void }
+    await user.click(screen.getByRole("button", { name: "Cancel" }))
+    await user.click(screen.getByRole("button", { name: "Full-text edit" }))
+    expect(screen.getByRole("textbox")).toBeInTheDocument()
+    act(() => {
+      options.onSuccess?.()
+    })
+    expect(screen.getByRole("textbox")).toBeInTheDocument()
   })
 
   it("refuses to save when the document version advances under the editor (S-3)", async () => {
