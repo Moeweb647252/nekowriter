@@ -2,6 +2,7 @@
 
 use sea_orm::entity::prelude::*;
 
+#[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "review_reports")]
 pub struct Model {
@@ -17,9 +18,12 @@ pub struct Model {
     pub feedback: String,
     pub user_comment: String,
     pub created_at: DateTimeUtc,
+    #[sea_orm(belongs_to, from = "chapter_id", to = "id")]
+    pub chapter: BelongsTo<super::chapters::Entity>,
+    #[sea_orm(belongs_to, from = "session_id", to = "id")]
+    pub session: BelongsTo<Option<super::agent_sessions::Entity>>,
+    #[sea_orm(has_many)]
+    pub chapter_feedback: HasMany<super::chapter_feedback::Entity>,
 }
-
-#[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {}
 
 impl ActiveModelBehavior for ActiveModel {}

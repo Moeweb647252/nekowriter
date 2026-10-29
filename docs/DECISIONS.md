@@ -2990,3 +2990,33 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     compiler wins and the plan is corrected in the task's report.
 - **Spec**: PROJECT §6.5; spec/01 §2, §3.1, §3.4, §7; spec/02 §1–§5; spec/03 §3, §14; spec/06 §2;
   spec/07; spec/08 §7; D-015, D-034; PLAN M14.
+
+### D-152 SeaORM 2 relation naming corrections (M14.3)
+
+- **Context**: converting all 36 entities to `#[sea_orm::model]` showed that the relation graph of
+  plan §2.1 cannot be written exactly as its snippet says. The dense macro names a relation
+  variant after the *target entity*, not the field: an entity with both a `belongs_to` and a
+  `has_many` to the same table therefore generates the same `RelatedEntity` variant twice
+  (`AgentToolCalls`, `ResearchTasks`, `AgentSessions`, `Tracks`, `Chapters`, `Entities`), and the
+  derive fails. Separately, `has_many, via = "<junction>"` only compiles when the junction's
+  relation variant is named after the far entity: these junction tables name their FK fields after
+  the local role (`book_scopes.book`/`scope`), so the far variant (`Scope`) and near variant
+  (`Book`) must be named explicitly. A `has_many` also needs `via_rel` whenever the child has two
+  relations back to the parent, not only for two FKs to one target. Finally, a `self_ref`
+  `BelongsTo` is `declared = false` in the macro, so it generates no `Related` impl and
+  `find_related` cannot be called on `parent_session`.
+- **Decision**: keep the plan's field names (the FK column without `_id`, the child table for a
+  reverse relation, the far table for an M-N field) and give the relation *variants* explicit
+  names where the macro needs them: `relation_enum` on the `belongs_to` side of a
+  `belongs_to`/`has_many` pair (`HeldToolCall`, `ResearchTask`, `Session`, `AnchorChapter`,
+  `FocusEntity`, `Track`), and on both ends of each junction
+  (`has_many, relation_enum = "Scope", via = "book_scopes::Book"` and the mirror). `has_many`
+  uses `via_rel = "<child belongs_to variant>"` for the two-relation pairs. The self reference is
+  checked at the `RelationDef` level instead of through `find_related`. Plan §2.1 and §7 and
+  spec/02 §1 record the corrected shape.
+- **Consequences**: the graph is 82 `belongs_to`, 60 plain reverse `has_many` (including the
+  `ChildSessions` self reverse) and 10 M-N `via` fields; `tests/entity_schema.rs` compares every
+  `belongs_to` with `PRAGMA foreign_key_list`, every unambiguous reverse with the parent entity,
+  every junction `via` chain and every unique key with `PRAGMA index_list`. A future entity must
+  follow the variant-naming rule or its derive fails at compile time.
+- **Spec**: spec/02 §1; plan §2.1, §7; D-151.

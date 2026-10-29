@@ -21,12 +21,14 @@ impl WritingSkillAuthor {
     }
 }
 
+#[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "writing_skills")]
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,
     /// Built-in only; `NULL` for user rows (design §4).
+    #[sea_orm(unique)]
     pub key: Option<String>,
     pub name: String,
     pub category: String,
@@ -37,9 +39,8 @@ pub struct Model {
     pub retired: i32,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
+    #[sea_orm(has_many, relation_enum = "Book", via = "book_writing_skills::Skill")]
+    pub books: HasMany<super::books::Entity>,
 }
-
-#[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {}
 
 impl ActiveModelBehavior for ActiveModel {}

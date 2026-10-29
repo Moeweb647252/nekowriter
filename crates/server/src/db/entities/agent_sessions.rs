@@ -2,6 +2,7 @@
 
 use sea_orm::entity::prelude::*;
 
+#[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "agent_sessions")]
 pub struct Model {
@@ -34,9 +35,60 @@ pub struct Model {
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
     pub finished_at: Option<DateTimeUtc>,
+    #[sea_orm(belongs_to, from = "book_id", to = "id")]
+    pub book: BelongsTo<Option<super::books::Entity>>,
+    #[sea_orm(belongs_to, from = "chapter_id", to = "id")]
+    pub chapter: BelongsTo<Option<super::chapters::Entity>>,
+    #[sea_orm(belongs_to, from = "track_id", to = "id")]
+    pub track: BelongsTo<Option<super::tracks::Entity>>,
+    #[sea_orm(
+        belongs_to,
+        relation_enum = "ResearchTask",
+        from = "research_task_id",
+        to = "id"
+    )]
+    pub research_task: BelongsTo<Option<super::research_tasks::Entity>>,
+    #[sea_orm(belongs_to, from = "model_profile_id", to = "id")]
+    pub model_profile: BelongsTo<Option<super::model_profiles::Entity>>,
+    #[sea_orm(
+        belongs_to,
+        relation_enum = "HeldToolCall",
+        from = "held_tool_call_id",
+        to = "id"
+    )]
+    pub held_tool_call: BelongsTo<Option<super::agent_tool_calls::Entity>>,
+    #[sea_orm(
+        self_ref,
+        relation_enum = "ParentSession",
+        relation_reverse = "ChildSessions",
+        from = "parent_session_id",
+        to = "id"
+    )]
+    pub parent_session: BelongsTo<Option<Entity>>,
+    #[sea_orm(has_many)]
+    pub agent_inbox: HasMany<super::agent_inbox::Entity>,
+    #[sea_orm(has_many)]
+    pub agent_messages: HasMany<super::agent_messages::Entity>,
+    #[sea_orm(has_many, via_rel = "Session")]
+    pub agent_tool_calls: HasMany<super::agent_tool_calls::Entity>,
+    #[sea_orm(has_many)]
+    pub chapter_versions: HasMany<super::chapter_versions::Entity>,
+    #[sea_orm(has_many)]
+    pub chapter_feedback: HasMany<super::chapter_feedback::Entity>,
+    #[sea_orm(has_many)]
+    pub change_log: HasMany<super::change_log::Entity>,
+    #[sea_orm(has_many, via_rel = "Session")]
+    pub research_tasks: HasMany<super::research_tasks::Entity>,
+    #[sea_orm(has_many)]
+    pub review_reports: HasMany<super::review_reports::Entity>,
+    #[sea_orm(has_many)]
+    pub setting_proposals: HasMany<super::setting_proposals::Entity>,
+    #[sea_orm(
+        self_ref,
+        relation_enum = "ChildSessions",
+        relation_reverse = "ParentSession"
+    )]
+    pub child_sessions: HasMany<Entity>,
 }
-
-#[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {}
 
 impl ActiveModelBehavior for ActiveModel {}

@@ -220,17 +220,32 @@ Rules:
   `consumed_by_message`, and `parent_session_id` becomes `parent_session`.
 - **Reverse field name**: the child table name, used as is (`agent_sessions`, `change_log`,
   `foreshadowing`).
-- **M-N field**: the far table's name, with `#[sea_orm(has_many, via = "<junction>")]`.
+- **M-N field**: the far table's name. When the junction's relation variant follows the far entity
+  name (the normal `cake_filling`/`Filling` case), `#[sea_orm(has_many, via = "<junction>")]` is
+  enough. These junctions name their FK fields after the local role (`book_scopes.book`/`scope`),
+  so the far variant must be named and the near variant passed to `via`:
+  `#[sea_orm(has_many, relation_enum = "Scope", via = "book_scopes::Book")]` on
+  `pub knowledge_scopes: HasMany<..>` (and `relation_enum = "Book", via = "book_scopes::Scope"`
+  in the other direction).
   - `entities` ↔ `timeline_events` / `memory_notes` / `foreshadowing`;
   - `books` ↔ `knowledge_scopes` (`book_scopes`) and `writing_skills` (`book_writing_skills`).
 
   A parent gets the `via` relation, not a `has_many` to the junction itself. The junction keeps
   its two `belongs_to`.
-- **`relation_enum`**: only where §1.6 requires it, as the UpperCamelCase field name.
+- **`relation_enum`**: where §1.6 requires it, plus one side of a `belongs_to` / `has_many` pair
+  that would otherwise generate the same `RelatedEntity` variant (`Track`, `Session`,
+  `ResearchTask`, `HeldToolCall`, `AnchorChapter`, `FocusEntity`), plus each junction end as above.
+  It is the UpperCamelCase relation name and may differ from the field name.
+- **`via_rel`**: a `has_many` whose child has two relations back to the parent (a `belongs_to`
+  plus a `has_many`) needs `via_rel = "<child belongs_to variant>"`; the macro cannot infer which
+  reverse the `has_many` means otherwise.
 - **Self references** use `self_ref` with `relation_enum` and, where codegen gives a reverse side,
   `relation_reverse`. For example, on `agent_sessions`:
-  `#[sea_orm(self_ref, relation_enum = "ParentSession", from = "parent_session_id", to = "id")]`
-  on `pub parent_session: BelongsTo<Option<Entity>>`.
+  `#[sea_orm(self_ref, relation_enum = "ParentSession", relation_reverse = "ChildSessions", from = "parent_session_id", to = "id")]`
+  on `pub parent_session: BelongsTo<Option<Entity>>`, plus the `ChildSessions` `HasMany<Entity>`
+  field. A `self_ref` `BelongsTo` does not generate a `Related` impl, so `find_related` is not
+  available for it; joins use `Relation::ParentSession.def()` and the guard checks that
+  `RelationDef` directly.
 - **Same-target pairs** get no reverse field and no `Related` impl, so `find_related` does not
   compile there. Joins name `Relation::OfficialVersion.def()`, and loaders take
   `.with(chapters::Relation::OfficialVersion)`.
@@ -638,7 +653,7 @@ commit.
 - `Update::one(..)` / `Delete::one(..)` need `.validate()?` before `.build(..)` in 2.0. The
   generated `delete_by_*` returns `ValidatedDeleteOne`.
 - When the compiler disagrees with a snippet here, the compiler wins. Fix the snippet in this plan
-  and say so in D-151.
+  and record it in the decision log (D-152 records the M14.3 corrections).
 - SeaORM 2.x docs: <https://www.sea-ql.org/SeaORM/docs/>. The crate source is in
   `~/.cargo/registry/src/*/sea-orm-2.0.4/` and `sea-orm-macros-2.0.4/`.
 

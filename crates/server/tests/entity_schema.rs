@@ -6,10 +6,16 @@
 //! Check 2 — columns: for each entity the column names, nullability, type affinity and primary
 //! key equal `PRAGMA table_info`.
 //!
+//! Check 3 — relations: every `belongs_to` is a foreign key, every unambiguous foreign key has
+//! its reverse `has_many`, and every junction has a `via` relation on both ends.
+//!
+//! Check 4 — unique keys: the `unique` / `unique_key` attributes equal the non-partial unique
+//! indexes.
+//!
 //! The checks run against the real schema: the migrations are applied to a fresh temporary
-//! database, then both sides are compared. They read only `EntityName`, `ColumnTrait::def` and
-//! `PrimaryKeyTrait`, so they hold both for the pre-M14 expanded entities and for the dense
-//! `#[sea_orm::model]` entities that replace them.
+//! database, then both sides are compared. They read only `EntityName`, `ColumnTrait::def`,
+//! `PrimaryKeyTrait` and `RelationTrait`, so checks 1–2 also hold for the pre-M14 expanded
+//! entities.
 //!
 //! `decode_all_rows` is the other half of the guard: it decodes every row of a database through
 //! every entity, so a column whose Rust type does not match its stored value fails loudly. It is
@@ -20,7 +26,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use sea_orm::entity::Iterable;
 use sea_orm::entity::prelude::*;
-use sea_orm::{ConnectionTrait, DbBackend, Statement};
+use sea_orm::sea_query::{TableName, TableRef};
+use sea_orm::{ConnectionTrait, DbBackend, Identity, RelationType, Statement};
 
 /// Every entity module, one entry per table. Keep sorted by module name.
 macro_rules! for_all_entities {
@@ -79,6 +86,8 @@ struct ColumnInfo {
     nullable: bool,
     affinity: &'static str,
     primary_key: bool,
+    /// The complete column definition the macro generated, including `unique` / `unique_key`.
+    definition: ColumnDef,
 }
 
 /// The SQLite type affinity of a SeaORM column type (https://sqlite.org/datatype3.html §3.1).
@@ -133,6 +142,7 @@ macro_rules! entity_columns {
                                     nullable: def.is_null(),
                                     affinity: affinity(def.get_column_type()),
                                     primary_key: primary_key.contains(column.as_str()),
+                                    definition: def,
                                 }
                             })
                             .collect(),
@@ -283,6 +293,567 @@ async fn every_entity_column_matches_pragma_table_info() {
             }
         }
     }
+}
+
+// ── Check 3: the relation graph ───────────────────────────────────────────────
+
+/// One relation definition, flattened to the SQL names that both sides of the check speak.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct RelationShape {
+    is_owner: bool,
+    has_many: bool,
+    from_table: String,
+    from_column: String,
+    to_table: String,
+    to_column: String,
+}
+
+fn table_name_of(table: &TableRef) -> String {
+    match table {
+        TableRef::Table(TableName(_, name), _) => name.to_string(),
+        other => panic!("unexpected table reference in a relation: {other:?}"),
+    }
+}
+
+fn columns_of(identity: &Identity) -> Vec<String> {
+    identity.iter().map(|column| column.to_string()).collect()
+}
+
+fn flatten_relation(def: RelationDef) -> RelationShape {
+    let from = columns_of(&def.from_col);
+    let to = columns_of(&def.to_col);
+    assert_eq!(
+        from.len(),
+        1,
+        "the schema only has single-column foreign keys"
+    );
+    assert_eq!(
+        to.len(),
+        1,
+        "the schema only has single-column foreign keys"
+    );
+    RelationShape {
+        is_owner: def.is_owner,
+        has_many: def.rel_type == RelationType::HasMany,
+        from_table: table_name_of(&def.from_tbl),
+        from_column: from[0].clone(),
+        to_table: table_name_of(&def.to_tbl),
+        to_column: to[0].clone(),
+    }
+}
+
+macro_rules! entity_relations {
+    ($($module:ident),* $(,)?) => {
+        fn all_relations() -> Vec<(&'static str, &'static str, Vec<RelationShape>)> {
+            vec![$(
+                {
+                    use nekowriter::db::entities::$module::{Entity, Relation};
+                    (
+                        stringify!($module),
+                        Entity::default().table_name(),
+                        Relation::iter()
+                            .map(|relation| flatten_relation(relation.def()))
+                            .collect(),
+                    )
+                }
+            ),*]
+        }
+    };
+}
+
+for_all_entities!(entity_relations);
+
+#[derive(Debug)]
+struct PragmaForeignKey {
+    from: String,
+    to_table: String,
+    to_column: String,
+}
+
+async fn pragma_foreign_keys(conn: &DatabaseConnection, table: &str) -> Vec<PragmaForeignKey> {
+    let statement = Statement::from_string(
+        DbBackend::Sqlite,
+        format!("PRAGMA foreign_key_list(\"{table}\")"),
+    );
+    conn.query_all_raw(statement)
+        .await
+        .unwrap_or_else(|err| panic!("PRAGMA foreign_key_list({table}) failed: {err}"))
+        .iter()
+        .map(|row| PragmaForeignKey {
+            from: row.try_get("", "from").expect("from"),
+            to_table: row.try_get("", "table").expect("table"),
+            to_column: row.try_get("", "to").expect("to"),
+        })
+        .collect()
+}
+
+/// The five junction tables. Their two foreign keys become `has_many, via` on both ends instead
+/// of a `has_many` to the junction itself (plan §2.1).
+const JUNCTIONS: [&str; 5] = [
+    "book_scopes",
+    "book_writing_skills",
+    "foreshadowing_entities",
+    "memory_note_entities",
+    "timeline_event_entities",
+];
+
+/// Check 3a: every `belongs_to` relation is a foreign key of the schema, and every foreign key is
+/// a `belongs_to` relation.
+#[tokio::test]
+async fn every_belongs_to_matches_the_foreign_key_list() {
+    let (_dir, conn) = migrated_db().await;
+    for (module, table, relations) in all_relations() {
+        let actual: BTreeSet<(String, String, String, String)> = relations
+            .iter()
+            .filter(|relation| !relation.has_many)
+            .map(|relation| {
+                (
+                    relation.from_table.clone(),
+                    relation.from_column.clone(),
+                    relation.to_table.clone(),
+                    relation.to_column.clone(),
+                )
+            })
+            .collect();
+        let expected: BTreeSet<(String, String, String, String)> =
+            pragma_foreign_keys(&conn, table)
+                .await
+                .iter()
+                .map(|foreign_key| {
+                    (
+                        table.to_string(),
+                        foreign_key.from.clone(),
+                        foreign_key.to_table.clone(),
+                        foreign_key.to_column.clone(),
+                    )
+                })
+                .collect();
+        assert_eq!(
+            actual, expected,
+            "{module} ({table}) belongs_to relations disagree with PRAGMA foreign_key_list"
+        );
+    }
+}
+
+/// Check 3b: every unambiguous foreign key has its reverse `has_many` on the parent. Junction
+/// foreign keys are covered by check 3c instead; a pair of foreign keys from one child to one
+/// parent is ambiguous and has no reverse (the macro cannot tell which one it would mean).
+#[tokio::test]
+async fn every_unambiguous_foreign_key_has_a_reverse_has_many() {
+    let (_dir, _conn) = migrated_db().await;
+    let relations = all_relations();
+    let by_table: BTreeMap<&str, &Vec<RelationShape>> = relations
+        .iter()
+        .map(|(_, table, defs)| (*table, defs))
+        .collect();
+    let mut foreign_key_count: BTreeMap<(String, String), usize> = BTreeMap::new();
+    for (_, table, defs) in &relations {
+        for def in defs.iter().filter(|def| !def.has_many) {
+            *foreign_key_count
+                .entry(((*table).to_string(), def.to_table.clone()))
+                .or_default() += 1;
+        }
+    }
+
+    let mut checked = 0;
+    for (module, table, defs) in &relations {
+        if JUNCTIONS.contains(table) {
+            continue;
+        }
+        for def in defs.iter().filter(|def| !def.has_many) {
+            let key = ((*table).to_string(), def.to_table.clone());
+            if foreign_key_count[&key] > 1 {
+                continue;
+            }
+            let parent = by_table[def.to_table.as_str()];
+            let found = parent.iter().any(|candidate| {
+                candidate.has_many
+                    && candidate.from_table == def.to_table
+                    && candidate.to_table == *table
+                    && candidate.from_column == def.to_column
+                    && candidate.to_column == def.from_column
+            });
+            assert!(
+                found,
+                "{module} ({table}): no reverse has_many for {} -> {} ({}.{}); parent defs: {parent:?}",
+                table, def.to_table, def.from_column, def.to_column
+            );
+            checked += 1;
+        }
+    }
+    assert_eq!(
+        checked, 60,
+        "the schema has 60 unambiguous foreign keys with a reverse relation"
+    );
+}
+
+fn assert_many_to_many<A, B>()
+where
+    A: EntityTrait + Related<B>,
+    B: EntityTrait,
+{
+    let to = <A as Related<B>>::to();
+    let via = <A as Related<B>>::via().unwrap_or_else(|| {
+        panic!(
+            "{} -> {} has no via relation",
+            A::default().table_name(),
+            B::default().table_name()
+        )
+    });
+    assert_eq!(
+        table_name_of(&via.from_tbl),
+        A::default().table_name(),
+        "the via relation does not start at the parent"
+    );
+    assert_eq!(
+        table_name_of(&via.to_tbl),
+        table_name_of(&to.from_tbl),
+        "the via relation does not end at the junction"
+    );
+    assert_eq!(
+        table_name_of(&to.to_tbl),
+        B::default().table_name(),
+        "the to relation does not end at the far entity"
+    );
+}
+
+/// Check 3c: each junction table has a `via` relation on both ends.
+#[tokio::test]
+async fn every_junction_has_via_relations_on_both_ends() {
+    use nekowriter::db::entities::{
+        books, entities, foreshadowing, knowledge_scopes, memory_notes, timeline_events,
+        writing_skills,
+    };
+
+    assert_many_to_many::<books::Entity, knowledge_scopes::Entity>();
+    assert_many_to_many::<knowledge_scopes::Entity, books::Entity>();
+    assert_many_to_many::<books::Entity, writing_skills::Entity>();
+    assert_many_to_many::<writing_skills::Entity, books::Entity>();
+    assert_many_to_many::<foreshadowing::Entity, entities::Entity>();
+    assert_many_to_many::<entities::Entity, foreshadowing::Entity>();
+    assert_many_to_many::<memory_notes::Entity, entities::Entity>();
+    assert_many_to_many::<entities::Entity, memory_notes::Entity>();
+    assert_many_to_many::<timeline_events::Entity, entities::Entity>();
+    assert_many_to_many::<entities::Entity, timeline_events::Entity>();
+}
+
+// ── Check 4: unique keys ──────────────────────────────────────────────────────
+
+/// The non-partial unique constraints that are not primary keys (plan §1.6), as
+/// `module => [(key, columns)]`. A `""` key is a single-column `unique` attribute.
+macro_rules! unique_groups {
+    ($($module:ident => [$(($key:literal, [$($column:ident),*])),* $(,)?]),* $(,)?) => {
+        fn all_unique_groups() -> Vec<(&'static str, &'static str, Vec<(&'static str, Vec<&'static str>)>)> {
+            vec![$(
+                (
+                    stringify!($module),
+                    nekowriter::db::entities::$module::Entity::default().table_name(),
+                    vec![$(
+                        (
+                            $key,
+                            vec![$(nekowriter::db::entities::$module::Column::$column.as_str()),*],
+                        )
+                    ),*],
+                )
+            ),*]
+        }
+    };
+}
+
+unique_groups! {
+    agent_messages => [("session_seq", [SessionId, Seq])],
+    agent_tool_calls => [("message_call", [MessageId, CallIndex])],
+    appearances => [("chapter_entity", [ChapterId, EntityId])],
+    chapter_versions => [("chapter_version", [ChapterId, VersionNo])],
+    chapters => [("track_ord", [TrackId, Ord])],
+    character_designs => [("book_name", [BookId, Name])],
+    knowledge_chunks => [("entry_ord", [EntryId, Ord])],
+    knowledge_entries => [("scope_title", [ScopeId, Title])],
+    knowledge_scopes => [("", [Name])],
+    model_profiles => [("provider_display_name", [ProviderId, DisplayName])],
+    providers => [("", [Name])],
+    search_docs => [("doc_ref", [Kind, RefId, RefPart])],
+    setting_docs => [("book_kind", [BookId, Kind])],
+    writing_skills => [("", [Key])],
+}
+
+fn expected_column_definition(column: &ColumnInfo, key: Option<&str>) -> ColumnDef {
+    let mut definition = column.definition.get_column_type().clone().def();
+    if column.nullable {
+        definition = definition.nullable();
+    }
+    match key {
+        None => definition,
+        Some("") => definition.unique(),
+        Some(key) => definition.unique_key(key),
+    }
+}
+
+async fn pragma_unique_columns(conn: &DatabaseConnection, table: &str) -> BTreeSet<Vec<String>> {
+    let indexes = conn
+        .query_all_raw(Statement::from_string(
+            DbBackend::Sqlite,
+            format!("PRAGMA index_list(\"{table}\")"),
+        ))
+        .await
+        .unwrap_or_else(|err| panic!("PRAGMA index_list({table}) failed: {err}"));
+    let mut unique = BTreeSet::new();
+    for index in &indexes {
+        let is_unique: i32 = index.try_get("", "unique").expect("unique");
+        let is_partial: i32 = index.try_get("", "partial").expect("partial");
+        let origin: String = index.try_get("", "origin").expect("origin");
+        if is_unique == 0 || is_partial != 0 || origin == "pk" {
+            continue;
+        }
+        let name: String = index.try_get("", "name").expect("name");
+        let columns = conn
+            .query_all_raw(Statement::from_string(
+                DbBackend::Sqlite,
+                format!("PRAGMA index_info(\"{name}\")"),
+            ))
+            .await
+            .unwrap_or_else(|err| panic!("PRAGMA index_info({name}) failed: {err}"));
+        let mut names: Vec<String> = columns
+            .iter()
+            .map(|row| row.try_get("", "name").expect("name"))
+            .collect();
+        names.sort();
+        unique.insert(names);
+    }
+    unique
+}
+
+/// Check 4: the `unique` / `unique_key` attributes equal the non-partial unique indexes, in both
+/// directions, and no other column carries a hidden uniqueness attribute.
+#[tokio::test]
+async fn every_unique_key_matches_the_index_list() {
+    let (_dir, conn) = migrated_db().await;
+    let groups = all_unique_groups();
+    let groups_by_table: BTreeMap<&str, &Vec<(&str, Vec<&str>)>> = groups
+        .iter()
+        .map(|(_, table, groups)| (*table, groups))
+        .collect();
+    let empty = Vec::new();
+    for entity in all_entity_columns() {
+        let module = entity.module;
+        let table = entity.table;
+        let columns = &entity.columns;
+        let entity_groups = groups_by_table.get(table).copied().unwrap_or(&empty);
+        let mut expected: BTreeSet<Vec<String>> = BTreeSet::new();
+        let mut grouped: BTreeSet<&str> = BTreeSet::new();
+        for (key, group) in entity_groups {
+            let mut names: Vec<String> = group.iter().map(|name| (*name).to_string()).collect();
+            names.sort();
+            expected.insert(names);
+            grouped.extend(group.iter().copied());
+            for column in columns.iter().filter(|column| group.contains(&column.name)) {
+                assert_eq!(
+                    column.definition,
+                    expected_column_definition(column, Some(key)),
+                    "{} ({}) column `{}` does not declare unique key `{key}`",
+                    module,
+                    table,
+                    column.name
+                );
+            }
+        }
+        for column in columns {
+            if !grouped.contains(column.name) {
+                assert_eq!(
+                    column.definition,
+                    expected_column_definition(column, None),
+                    "{} ({}) column `{}` carries an unexpected unique attribute",
+                    module,
+                    table,
+                    column.name
+                );
+            }
+        }
+        let actual = pragma_unique_columns(&conn, table).await;
+        assert_eq!(
+            actual, expected,
+            "{module} ({table}) unique keys disagree with PRAGMA index_list"
+        );
+    }
+}
+
+// ── Smoke: the relation graph is usable, not just declared ───────────────────
+
+const SMOKE_SQL: &str = r#"
+INSERT INTO books (id, title, writing_language, status, settings, created_at, updated_at)
+VALUES (1, 'Smoke', 'en', 'active', '{}', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+INSERT INTO tracks (id, book_id, kind, title, canon_mode, anchor_kind, ord, created_at, updated_at)
+VALUES (1, 1, 'main', 'Main', 'canon', 'none', 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+INSERT INTO chapters (id, book_id, track_id, ord, title, status, guidance, outline,
+    reference_notes, summary, content, content_version, word_count, canon_status, created_at, updated_at)
+VALUES (1, 1, 1, 1, 'Chapter 1', 'drafting', '', '', '', '',
+    '{"paragraphs":[],"next_pid":1,"tail_open":false}', 0, 0, 'none',
+    '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+INSERT INTO knowledge_scopes (id, name, description, created_at, updated_at)
+VALUES (1, 'Scope', '', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+INSERT INTO book_scopes (book_id, scope_id) VALUES (1, 1);
+INSERT INTO entities (id, book_id, kind, name, aliases, summary, description, state, attributes,
+    importance, status, is_protagonist, created_at, updated_at)
+VALUES (1, 1, 'character', 'Hero', '[]', '', '', '', '{}', 1, 'active', 0,
+    '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+INSERT INTO timeline_events (id, book_id, position, story_time, title, description, importance, created_at, updated_at)
+VALUES (1, 1, 1.0, '', 'Event', '', 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+INSERT INTO timeline_event_entities (event_id, entity_id) VALUES (1, 1);
+INSERT INTO agent_sessions (id, book_id, role, kind, model_snapshot, system_prompt, tools, status,
+    phase, counters, usage, created_at, updated_at)
+VALUES
+    (1, NULL, 'writer', 'chapter_write', '{}', '', '[]', 'idle', 'none', '{}', '{}',
+        '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+    (2, 1, 'writer', 'chapter_write', '{}', '', '[]', 'idle', 'none', '{}', '{}',
+        '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+    (3, 1, 'reviewer', 'chapter_review', '{}', '', '[]', 'idle', 'none', '{}', '{}',
+        '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+UPDATE agent_sessions SET parent_session_id = 2 WHERE id = 3;
+"#;
+
+async fn smoke_db() -> (tempfile::TempDir, nekowriter::db::Db) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db = nekowriter::db::Db::connect(&dir.path().join("smoke.db"))
+        .await
+        .expect("connect");
+    nekowriter_migration::up(db.conn()).await.expect("migrate");
+    db.write(|tx| {
+        Box::pin(async move {
+            tx.execute_unprepared(SMOKE_SQL).await?;
+            Ok(())
+        })
+    })
+    .await
+    .expect("seed");
+    (dir, db)
+}
+
+/// `find_related` on a required foreign key (`chapters.book`) and a nullable one
+/// (`agent_sessions.book`).
+#[tokio::test]
+async fn smoke_find_related_on_required_and_nullable_foreign_keys() {
+    use nekowriter::db::entities::{agent_sessions, books, chapters};
+
+    let (_dir, db) = smoke_db().await;
+    let chapter = chapters::Entity::find_by_id(1)
+        .one(db.conn())
+        .await
+        .expect("chapter")
+        .expect("chapter row");
+    let book = chapter
+        .find_related(books::Entity)
+        .one(db.conn())
+        .await
+        .expect("book")
+        .expect("required relation");
+    assert_eq!(book.title, "Smoke");
+
+    let orphan = agent_sessions::Entity::find_by_id(1)
+        .one(db.conn())
+        .await
+        .expect("session")
+        .expect("session row");
+    assert!(
+        orphan
+            .find_related(books::Entity)
+            .one(db.conn())
+            .await
+            .expect("book")
+            .is_none(),
+        "a NULL foreign key has no related row"
+    );
+
+    let linked = agent_sessions::Entity::find_by_id(2)
+        .one(db.conn())
+        .await
+        .expect("session")
+        .expect("session row");
+    let book = linked
+        .find_related(books::Entity)
+        .one(db.conn())
+        .await
+        .expect("book")
+        .expect("nullable relation with a value");
+    assert_eq!(book.id, 1);
+}
+
+/// The `parent_session` self reference. A `self_ref` `BelongsTo` does not generate a `Related`
+/// impl in SeaORM 2.0.4, so `find_related` is not available; the relation is checked at the
+/// `RelationDef` level and the stored parent link is read back.
+#[tokio::test]
+async fn smoke_parent_session_self_reference() {
+    use nekowriter::db::entities::agent_sessions;
+
+    let (_dir, db) = smoke_db().await;
+    let child = agent_sessions::Entity::find_by_id(3)
+        .one(db.conn())
+        .await
+        .expect("session")
+        .expect("session row");
+    assert_eq!(child.parent_session_id, Some(2));
+
+    let def = agent_sessions::Relation::ParentSession.def();
+    assert_eq!(table_name_of(&def.from_tbl), "agent_sessions");
+    assert_eq!(table_name_of(&def.to_tbl), "agent_sessions");
+    assert_eq!(columns_of(&def.from_col), ["parent_session_id"]);
+    assert_eq!(columns_of(&def.to_col), ["id"]);
+}
+
+/// The Entity Loader over a `has_many` and an M-N relation.
+#[tokio::test]
+async fn smoke_entity_loader_with_tracks_and_knowledge_scopes() {
+    use nekowriter::db::entities::{books, knowledge_scopes, tracks};
+
+    let (_dir, db) = smoke_db().await;
+    let loaded = books::Entity::load()
+        .with(tracks::Entity)
+        .with(knowledge_scopes::Entity)
+        .all(db.conn())
+        .await
+        .expect("entity loader");
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].tracks.len(), 1);
+    assert_eq!(loaded[0].tracks[0].title, "Main");
+    assert_eq!(loaded[0].knowledge_scopes.len(), 1);
+    assert_eq!(loaded[0].knowledge_scopes[0].name, "Scope");
+}
+
+/// `entities` → `timeline_events` through the `timeline_event_entities` junction.
+#[tokio::test]
+async fn smoke_entities_to_timeline_events_via_junction() {
+    use nekowriter::db::entities::{entities, timeline_events};
+
+    let (_dir, db) = smoke_db().await;
+    let entity = entities::Entity::find_by_id(1)
+        .one(db.conn())
+        .await
+        .expect("entity")
+        .expect("entity row");
+    let events = entity
+        .find_related(timeline_events::Entity)
+        .all(db.conn())
+        .await
+        .expect("timeline events");
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].title, "Event");
+}
+
+/// The generated `find_by_track_ord` finder.
+#[tokio::test]
+async fn smoke_find_by_track_ord() {
+    use nekowriter::db::entities::chapters;
+
+    let (_dir, db) = smoke_db().await;
+    let found = chapters::Entity::find_by_track_ord((1, 1))
+        .one(db.conn())
+        .await
+        .expect("find_by_track_ord");
+    assert_eq!(found.map(|chapter| chapter.id), Some(1));
+    let missing = chapters::Entity::find_by_track_ord((1, 2))
+        .one(db.conn())
+        .await
+        .expect("find_by_track_ord");
+    assert!(missing.is_none());
 }
 
 macro_rules! decode_entities {
