@@ -89,9 +89,21 @@ pretty_assertions = "1.4"
 wiremock = "0.6"
 
 [profile.dev]
-# Keep debug builds of the dependency tree fast while our own code stays debuggable.
+# Debug builds are used by the test suite and local runs. Full-line debug info made the 300-odd
+# test binaries — each statically linking the whole app and its dependency tree — dominate the build
+# directory (71 GB of an 89 GB target tree). `debug = 0` keeps panic messages and symbol names, which
+# is what a failing assertion needs, and drops the DWARF that made each binary ~215 MB.
 opt-level = 0
-debug = 1
+debug = 0
 
 [profile.dev.package."*"]
 opt-level = 1
+
+[profile.release]
+# The shipped binary. Thin LTO and one codegen unit trade a slower release build for a smaller,
+# faster executable; `strip = "debuginfo"` keeps symbol names in panic backtraces.
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+debug = 0
+strip = "debuginfo"
