@@ -20,6 +20,7 @@ pub use crate::api::health::IndexState;
 use crate::api::health::IndexStatusDto;
 use crate::db::Db;
 use crate::db::entities::{index_meta, knowledge_chunks, search_docs};
+use crate::db::json::SearchDocKind;
 use crate::error::AppError;
 use crate::events::{EventBus, ServerEvent};
 use nekowriter_embed::{EmbedError, EmbedKind, Embedder};
@@ -237,23 +238,13 @@ pub async fn store_book_vector(
     if meta_value(conn, META_MODEL).await?.as_deref() != Some(model_key) {
         return Ok(false);
     }
-    let Some(row) = conn
-        // Raw: sqlite-vec/FTS5 virtual tables, KNN/blob syntax and sqlite_master probes have no typed API.
-        .query_one_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            "SELECT content_hash, kind FROM search_docs WHERE id = ?",
-            vec![(doc_id as i64).into()],
-        ))
-        .await?
-    else {
+    let Some(row) = search_docs::Entity::find_by_id(doc_id).one(conn).await? else {
         return Ok(false);
     };
-    let hash: String = row.try_get("", "content_hash")?;
-    if hash != expected_hash {
+    if row.content_hash != expected_hash {
         return Ok(false);
     }
-    let kind: String = row.try_get("", "kind")?;
-    let corpus = if kind == "passage" {
+    let corpus = if row.kind == SearchDocKind::Passage {
         "passage"
     } else {
         "canon"
@@ -298,19 +289,13 @@ pub async fn store_knowledge_vector(
     if meta_value(conn, META_MODEL).await?.as_deref() != Some(model_key) {
         return Ok(false);
     }
-    let Some(row) = conn
-        // Raw: sqlite-vec/FTS5 virtual tables, KNN/blob syntax and sqlite_master probes have no typed API.
-        .query_one_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            "SELECT content_hash FROM knowledge_chunks WHERE id = ?",
-            vec![(chunk_id as i64).into()],
-        ))
+    let Some(row) = knowledge_chunks::Entity::find_by_id(chunk_id)
+        .one(conn)
         .await?
     else {
         return Ok(false);
     };
-    let hash: String = row.try_get("", "content_hash")?;
-    if hash != expected_hash {
+    if row.content_hash != expected_hash {
         return Ok(false);
     }
     // Raw: sqlite-vec virtual table; raw_sql binds the integer id.
