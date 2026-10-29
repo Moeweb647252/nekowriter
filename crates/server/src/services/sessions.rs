@@ -26,8 +26,8 @@ use crate::db::entities::{
 };
 use crate::db::json::{
     AgentRole, BookSettings, ChapterStatus, Granularity, InboxKind, JsonText, ModelSnapshot, Phase,
-    Protocol, ResearchTaskStatus, RoleModels, SessionCounters, SessionKind, SessionStatus,
-    StoredBlock, ToolCallStatus, TrackKind,
+    ResearchTaskStatus, RoleModels, SessionCounters, SessionKind, SessionStatus, StoredBlock,
+    ToolCallStatus, TrackKind,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
@@ -651,11 +651,7 @@ fn model_snapshot_with_ttl(
 ) -> Result<ModelSnapshot, AppError> {
     let extra_headers: std::collections::BTreeMap<String, String> =
         provider.extra_headers.clone().into_inner();
-    let protocol = match provider.protocol.as_str() {
-        "openai" => Protocol::Openai,
-        "anthropic" => Protocol::Anthropic,
-        _ => Protocol::Mock,
-    };
+    let protocol = provider.protocol;
     // `cache_ttl: "auto"` is resolved at creation so the TTL never changes within a session
     // (spec/03 §4 step 1, D-031): 1h for conception and for worker sessions that hold for the
     // author, 5m otherwise.
@@ -2315,4 +2311,72 @@ fn invalid_state(session: &agent_sessions::Model, operation: &str) -> AppError {
         "status": session.status,
         "operation": operation,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::json::Protocol;
+    use sea_orm::entity::Iterable;
+
+    fn provider_with(protocol: Protocol) -> providers::Model {
+        let now = chrono::Utc::now();
+        providers::Model {
+            id: 1,
+            name: "test provider".to_owned(),
+            protocol,
+            base_url: "http://127.0.0.1".to_owned(),
+            api_key: None,
+            extra_headers: JsonText(Default::default()),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn profile() -> model_profiles::Model {
+        let now = chrono::Utc::now();
+        model_profiles::Model {
+            id: 1,
+            provider_id: 1,
+            display_name: "test model".to_owned(),
+            model: "test-model".to_owned(),
+            context_window: 100_000,
+            max_output_tokens: 4_096,
+            options: JsonText(Default::default()),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    /// A session's frozen snapshot carries the provider's typed protocol, not a stringly fallback.
+    /// `Protocol::Mock` is the non-openai/anthropic case; every existing variant is covered.
+    #[test]
+    fn model_snapshot_freezes_every_protocol() {
+        for protocol in Protocol::iter() {
+            let snapshot = model_snapshot_with_ttl(
+                &profile(),
+                &provider_with(protocol),
+                nekowriter_llm::CacheTtlOption::FiveMinutes,
+            )
+            .expect("build the snapshot");
+            assert_eq!(snapshot.protocol, protocol);
+        }
+    }
+
+    /// Mutation guard: restoring the old `provider.protocol.as_str()` match in this function must
+    /// fail. The runtime values happen to coincide for today's closed three-variant enum, so the
+    /// guard is intentionally source-level.
+    #[test]
+    fn model_snapshot_uses_the_typed_protocol() {
+        let source = include_str!("sessions.rs");
+        let start = source
+            .find("fn model_snapshot_with_ttl")
+            .expect("the function exists");
+        let end = start + source[start..].find("\n}\n").expect("the function ends");
+        let body = &source[start..end];
+        assert!(
+            !body.contains(".as_str()"),
+            "model_snapshot_with_ttl must use the typed protocol, not a string match"
+        );
+    }
 }

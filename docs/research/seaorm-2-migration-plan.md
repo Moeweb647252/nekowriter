@@ -53,7 +53,7 @@ file, no API, no event, no prompt and no generated TypeScript binding.
    `DeriveEntityModel` form with `#[derive(DeriveRelation)] pub enum Relation {}`. None uses
    `#[sea_orm::model]`, and no query uses a relation. The only `DeriveActiveEnum` is
    `writing_skills::WritingSkillAuthor`.
-3. **Enum columns are `String`.** The 38 enums of `db/json.rs::string_enum!` (plus
+3. **Enum columns are `String`.** The 39 enums of `db/json.rs::string_enum!` (plus
    `WritingSkillAuthor`) are converted by hand at every boundary:
    - about 125 `.as_str().to_owned()` / `.as_str().into()` calls in `src`;
    - 14 `services::enum_of` calls and about 66 `from_str_opt` calls outside `json.rs`;
