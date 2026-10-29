@@ -46,16 +46,16 @@ pub async fn reports(
         .await?
         .ok_or_else(|| AppError::not_found(format!("chapter {chapter_id}")))?;
     let reports = review_reports::Entity::find()
-        .filter(review_reports::Column::ChapterId.eq(chapter_id))
-        .order_by_desc(review_reports::Column::Id)
+        .filter(review_reports::COLUMN.chapter_id.eq(chapter_id))
+        .order_by_desc(review_reports::COLUMN.id)
         .all(conn)
         .await?
         .into_iter()
         .map(ReviewReportDto::from)
         .collect();
     let feedback = chapter_feedback::Entity::find()
-        .filter(chapter_feedback::Column::ChapterId.eq(chapter_id))
-        .order_by_desc(chapter_feedback::Column::Id)
+        .filter(chapter_feedback::COLUMN.chapter_id.eq(chapter_id))
+        .order_by_desc(chapter_feedback::COLUMN.id)
         .all(conn)
         .await?
         .into_iter()
@@ -413,14 +413,14 @@ pub async fn open_reviewer_sessions(
     chapter_id: i32,
 ) -> Result<Vec<agent_sessions::Model>, AppError> {
     Ok(agent_sessions::Entity::find()
-        .filter(agent_sessions::Column::ChapterId.eq(chapter_id))
-        .filter(agent_sessions::Column::Role.eq(REVIEWER_ROLE))
-        .filter(agent_sessions::Column::Status.is_not_in([
+        .filter(agent_sessions::COLUMN.chapter_id.eq(chapter_id))
+        .filter(agent_sessions::COLUMN.role.eq(REVIEWER_ROLE))
+        .filter(agent_sessions::COLUMN.status.is_not_in([
             SessionStatus::Completed.as_str(),
             SessionStatus::Superseded.as_str(),
             SessionStatus::Abandoned.as_str(),
         ]))
-        .order_by_asc(agent_sessions::Column::Id)
+        .order_by_asc(agent_sessions::COLUMN.id)
         .all(conn)
         .await?)
 }

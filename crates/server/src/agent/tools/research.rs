@@ -5,7 +5,7 @@
 //! of its own research task and nowhere else (spec/05 §1.4). They run in `execute`, inside the
 //! transaction that seals the call, so an entry and its chunks commit with the tool result.
 
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, Set};
+use sea_orm::{ActiveModelTrait, EntityTrait, PaginatorTrait, QueryFilter, Set};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -311,7 +311,7 @@ impl ToolHandler for UpdateKnowledgeEntryTool {
         let (scope_id, scope_name) = target_scope(ctx, "update_knowledge_entry").await?;
         // The target scope only: an entry of another scope is invisible, not merely read-only.
         let existing = knowledge_entries::Entity::find_by_id(input.entry_id)
-            .filter(knowledge_entries::Column::ScopeId.eq(scope_id))
+            .filter(knowledge_entries::COLUMN.scope_id.eq(scope_id))
             .one(ctx.tx)
             .await
             .map_err(|_| internal())?
@@ -432,9 +432,13 @@ impl ToolHandler for FinishResearchTool {
         // accumulates across every run (spec/07 §8 step 5, `services::research::finish`).
         let entries = match ctx.session.research_task_id {
             Some(task_id) => knowledge_entries::Entity::find()
-                .filter(knowledge_entries::Column::ResearchTaskId.eq(task_id))
-                .filter(knowledge_entries::Column::ScopeId.eq(scope_id))
-                .filter(knowledge_entries::Column::UpdatedAt.gte(ctx.session.created_at))
+                .filter(knowledge_entries::COLUMN.research_task_id.eq(task_id))
+                .filter(knowledge_entries::COLUMN.scope_id.eq(scope_id))
+                .filter(
+                    knowledge_entries::COLUMN
+                        .updated_at
+                        .gte(ctx.session.created_at),
+                )
                 .count(ctx.tx)
                 .await
                 .map_err(|_| internal())?,

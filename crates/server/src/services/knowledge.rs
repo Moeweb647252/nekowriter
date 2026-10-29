@@ -6,8 +6,8 @@
 //! cascades to its entries; the schema triggers clean the FTS and vec rows (spec/02 §5.11).
 
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, EntityTrait, PaginatorTrait,
-    QueryFilter, QueryOrder, QuerySelect, Set,
+    ActiveModelTrait, Condition, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter,
+    QueryOrder, QuerySelect, Set,
 };
 
 use crate::api::dto::knowledge::{
@@ -34,7 +34,7 @@ pub const SEARCH_MAX: usize = 50;
 /// `GET /api/knowledge/scopes` (with entry counts, spec/10 §2.5).
 pub async fn scopes(conn: &impl ConnectionTrait) -> Result<Vec<ScopeDto>, AppError> {
     let rows = knowledge_scopes::Entity::find()
-        .order_by_asc(knowledge_scopes::Column::Name)
+        .order_by_asc(knowledge_scopes::COLUMN.name)
         .all(conn)
         .await?;
     let mut items = Vec::with_capacity(rows.len());
@@ -55,7 +55,7 @@ pub async fn to_scope_dto(
     row: &knowledge_scopes::Model,
 ) -> Result<ScopeDto, AppError> {
     let entry_count = knowledge_entries::Entity::find()
-        .filter(knowledge_entries::Column::ScopeId.eq(row.id))
+        .filter(knowledge_entries::COLUMN.scope_id.eq(row.id))
         .count(conn)
         .await? as i64;
     Ok(ScopeDto {
@@ -206,7 +206,7 @@ async fn find_scope_by_name(
     name: &str,
 ) -> Result<Option<knowledge_scopes::Model>, AppError> {
     Ok(knowledge_scopes::Entity::find()
-        .filter(knowledge_scopes::Column::Name.eq(name))
+        .filter(knowledge_scopes::COLUMN.name.eq(name))
         .one(conn)
         .await?)
 }
@@ -241,13 +241,13 @@ pub async fn list_entries(
         .unwrap_or(ENTRY_PAGE_DEFAULT)
         .clamp(1, ENTRY_PAGE_MAX);
     let mut statement = knowledge_entries::Entity::find()
-        .filter(knowledge_entries::Column::ScopeId.eq(scope_id))
-        .order_by_asc(knowledge_entries::Column::Id);
+        .filter(knowledge_entries::COLUMN.scope_id.eq(scope_id))
+        .order_by_asc(knowledge_entries::COLUMN.id);
     if let Some(cursor) = &query.cursor {
         let cursor: i32 = cursor
             .parse()
             .map_err(|_| AppError::validation("the cursor is not valid"))?;
-        statement = statement.filter(knowledge_entries::Column::Id.gt(cursor));
+        statement = statement.filter(knowledge_entries::COLUMN.id.gt(cursor));
     }
     if let Some(text) = query.q.as_deref().map(str::trim)
         && !text.is_empty()
@@ -255,8 +255,8 @@ pub async fn list_entries(
         let pattern = format!("%{text}%");
         statement = statement.filter(
             Condition::any()
-                .add(knowledge_entries::Column::Title.like(&pattern))
-                .add(knowledge_entries::Column::Content.like(&pattern)),
+                .add(knowledge_entries::COLUMN.title.like(&pattern))
+                .add(knowledge_entries::COLUMN.content.like(&pattern)),
         );
     }
     let rows = statement.limit(limit as u64 + 1).all(conn).await?;
@@ -448,8 +448,8 @@ async fn find_entry_by_title(
     title: &str,
 ) -> Result<Option<knowledge_entries::Model>, AppError> {
     Ok(knowledge_entries::Entity::find()
-        .filter(knowledge_entries::Column::ScopeId.eq(scope_id))
-        .filter(knowledge_entries::Column::Title.eq(title))
+        .filter(knowledge_entries::COLUMN.scope_id.eq(scope_id))
+        .filter(knowledge_entries::COLUMN.title.eq(title))
         .one(conn)
         .await?)
 }
@@ -532,7 +532,7 @@ async fn resolve_scope_ids(
     match filter {
         None => {
             let ids: Vec<i32> = knowledge_scopes::Entity::find()
-                .order_by_asc(knowledge_scopes::Column::Id)
+                .order_by_asc(knowledge_scopes::COLUMN.id)
                 .all(state.db_conn())
                 .await?
                 .into_iter()
@@ -566,7 +566,7 @@ pub async fn book_scopes(
 ) -> Result<Vec<ScopeDto>, AppError> {
     super::books::get(conn, book_id).await?;
     let rows = book_scopes::Entity::find()
-        .filter(book_scopes::Column::BookId.eq(book_id))
+        .filter(book_scopes::COLUMN.book_id.eq(book_id))
         .all(conn)
         .await?;
     let mut items = Vec::with_capacity(rows.len());
@@ -607,7 +607,7 @@ pub async fn set_book_scopes_inner(
         load_scope(tx, *scope_id).await?;
     }
     book_scopes::Entity::delete_many()
-        .filter(book_scopes::Column::BookId.eq(book_id))
+        .filter(book_scopes::COLUMN.book_id.eq(book_id))
         .exec(tx)
         .await?;
     for scope_id in &ids {
@@ -639,8 +639,8 @@ pub async fn visible_scope_ids(
     book_id: i32,
 ) -> Result<Vec<i32>, AppError> {
     Ok(book_scopes::Entity::find()
-        .filter(book_scopes::Column::BookId.eq(book_id))
-        .order_by_asc(book_scopes::Column::ScopeId)
+        .filter(book_scopes::COLUMN.book_id.eq(book_id))
+        .order_by_asc(book_scopes::COLUMN.scope_id)
         .all(conn)
         .await?
         .into_iter()

@@ -69,6 +69,7 @@ pub(crate) async fn query_i64(
     values: Vec<sea_orm::Value>,
 ) -> Result<Option<i64>, AppError> {
     let row = conn
+        // Raw: this helper executes a query whose table/aggregate is supplied by the caller.
         .query_one_raw(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             sql,

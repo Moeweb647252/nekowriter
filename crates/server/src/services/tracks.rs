@@ -32,8 +32,8 @@ use super::{field_error, now};
 pub async fn list(conn: &impl ConnectionTrait, book_id: i32) -> Result<Vec<TrackDto>, AppError> {
     super::books::get(conn, book_id).await?;
     let rows = tracks::Entity::find()
-        .filter(tracks::Column::BookId.eq(book_id))
-        .order_by_asc(tracks::Column::Ord)
+        .filter(tracks::COLUMN.book_id.eq(book_id))
+        .order_by_asc(tracks::COLUMN.ord)
         .all(conn)
         .await?;
     rows.iter().map(to_dto).collect()
@@ -340,11 +340,11 @@ pub async fn delete_inner(
     // after the cascade (spec/06 §1.1, D-059, D-080). The ids are read before the rows vanish.
     let appeared: Vec<i32> = appearances::Entity::find()
         .filter(
-            appearances::Column::ChapterId.in_subquery(
+            appearances::COLUMN.chapter_id.in_subquery(
                 chapters::Entity::find()
                     .select_only()
                     .column(chapters::Column::Id)
-                    .filter(chapters::Column::TrackId.eq(track_id))
+                    .filter(chapters::COLUMN.track_id.eq(track_id))
                     .into_query(),
             ),
         )
@@ -377,8 +377,8 @@ pub async fn has_official_chapter(
     track_id: i32,
 ) -> Result<bool, AppError> {
     let count = chapters::Entity::find()
-        .filter(chapters::Column::TrackId.eq(track_id))
-        .filter(chapters::Column::Status.eq(ChapterStatus::Official))
+        .filter(chapters::COLUMN.track_id.eq(track_id))
+        .filter(chapters::COLUMN.status.eq(ChapterStatus::Official))
         .count(conn)
         .await?;
     Ok(count > 0)
@@ -395,8 +395,8 @@ pub async fn main_track(
     book_id: i32,
 ) -> Result<Option<tracks::Model>, AppError> {
     Ok(tracks::Entity::find()
-        .filter(tracks::Column::BookId.eq(book_id))
-        .filter(tracks::Column::Kind.eq(TrackKind::Main))
+        .filter(tracks::COLUMN.book_id.eq(book_id))
+        .filter(tracks::COLUMN.kind.eq(TrackKind::Main))
         .one(conn)
         .await?)
 }
@@ -454,9 +454,9 @@ async fn latest_official_main_chapter(
         return Ok(None);
     };
     Ok(chapters::Entity::find()
-        .filter(chapters::Column::TrackId.eq(main.id))
-        .filter(chapters::Column::Status.eq(ChapterStatus::Official))
-        .order_by_desc(chapters::Column::Ord)
+        .filter(chapters::COLUMN.track_id.eq(main.id))
+        .filter(chapters::COLUMN.status.eq(ChapterStatus::Official))
+        .order_by_desc(chapters::COLUMN.ord)
         .one(conn)
         .await?)
 }
@@ -544,8 +544,8 @@ async fn next_ord(conn: &impl ConnectionTrait, book_id: i32) -> Result<i32, AppE
 /// The open sessions of a track's chapters (status not terminal).
 async fn ensure_no_main(conn: &impl ConnectionTrait, book_id: i32) -> Result<(), AppError> {
     let existing = tracks::Entity::find()
-        .filter(tracks::Column::BookId.eq(book_id))
-        .filter(tracks::Column::Kind.eq(TrackKind::Main))
+        .filter(tracks::COLUMN.book_id.eq(book_id))
+        .filter(tracks::COLUMN.kind.eq(TrackKind::Main))
         .one(conn)
         .await?;
     if let Some(row) = existing {

@@ -74,24 +74,24 @@ pub async fn page(
     super::books::get(conn, book_id).await?;
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let mut statement = change_log::Entity::find()
-        .filter(change_log::Column::BookId.eq(book_id))
-        .order_by_desc(change_log::Column::Id)
+        .filter(change_log::COLUMN.book_id.eq(book_id))
+        .order_by_desc(change_log::COLUMN.id)
         .limit(u64::try_from(limit + 1).unwrap_or(u64::MAX));
     if let Some(chapter_id) = query.chapter_id {
-        statement = statement.filter(change_log::Column::ChapterId.eq(chapter_id));
+        statement = statement.filter(change_log::COLUMN.chapter_id.eq(chapter_id));
     }
     if let Some(session_id) = query.session_id {
-        statement = statement.filter(change_log::Column::SessionId.eq(session_id));
+        statement = statement.filter(change_log::COLUMN.session_id.eq(session_id));
     }
     if let Some(target_type) = query.target_type {
-        statement = statement.filter(change_log::Column::TargetType.eq(target_type.as_str()));
+        statement = statement.filter(change_log::COLUMN.target_type.eq(target_type.as_str()));
     }
     if let Some(actor) = query.actor {
-        statement = statement.filter(change_log::Column::Actor.eq(actor.as_str()));
+        statement = statement.filter(change_log::COLUMN.actor.eq(actor.as_str()));
     }
     if let Some(cursor) = &query.cursor {
         let id = parse_cursor(cursor)?;
-        statement = statement.filter(change_log::Column::Id.lt(id));
+        statement = statement.filter(change_log::COLUMN.id.lt(id));
     }
     let mut rows = statement.all(conn).await?;
     let has_more = rows.len() > limit as usize;
@@ -126,8 +126,8 @@ pub async fn recent_for_book(
     limit: usize,
 ) -> Result<Vec<ChangeDto>, AppError> {
     let rows = change_log::Entity::find()
-        .filter(change_log::Column::BookId.eq(book_id))
-        .order_by_desc(change_log::Column::Id)
+        .filter(change_log::COLUMN.book_id.eq(book_id))
+        .order_by_desc(change_log::COLUMN.id)
         .limit(limit as u64)
         .all(conn)
         .await?;
@@ -142,9 +142,9 @@ pub async fn for_target(
     limit: usize,
 ) -> Result<Vec<ChangeDto>, AppError> {
     let rows = change_log::Entity::find()
-        .filter(change_log::Column::TargetType.eq(target_type.as_str()))
-        .filter(change_log::Column::TargetId.eq(target_id))
-        .order_by_desc(change_log::Column::Id)
+        .filter(change_log::COLUMN.target_type.eq(target_type.as_str()))
+        .filter(change_log::COLUMN.target_id.eq(target_id))
+        .order_by_desc(change_log::COLUMN.id)
         .limit(limit as u64)
         .all(conn)
         .await?;

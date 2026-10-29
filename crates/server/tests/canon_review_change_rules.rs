@@ -40,9 +40,9 @@ async fn changes_of(
     target_id: i32,
 ) -> Vec<change_log::Model> {
     change_log::Entity::find()
-        .filter(change_log::Column::TargetType.eq(target.as_str()))
-        .filter(change_log::Column::TargetId.eq(target_id))
-        .order_by_desc(change_log::Column::Id)
+        .filter(change_log::COLUMN.target_type.eq(target.as_str()))
+        .filter(change_log::COLUMN.target_id.eq(target_id))
+        .order_by_desc(change_log::COLUMN.id)
         .all(app.db().conn())
         .await
         .expect("change rows")

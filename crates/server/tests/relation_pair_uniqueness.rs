@@ -316,10 +316,14 @@ async fn reverting_the_delete_of_an_ended_relation_recreates_it() {
     let (status, _) = app.delete(&format!("/api/relations/{relation_id}")).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     let delete_change = change_log::Entity::find()
-        .filter(change_log::Column::TargetType.eq(ChangeTargetType::Relation.as_str()))
-        .filter(change_log::Column::TargetId.eq(relation_id))
-        .filter(change_log::Column::Op.eq("delete"))
-        .order_by_desc(change_log::Column::Id)
+        .filter(
+            change_log::COLUMN
+                .target_type
+                .eq(ChangeTargetType::Relation.as_str()),
+        )
+        .filter(change_log::COLUMN.target_id.eq(relation_id))
+        .filter(change_log::COLUMN.op.eq("delete"))
+        .order_by_desc(change_log::COLUMN.id)
         .one(app.db().conn())
         .await
         .expect("query")

@@ -532,7 +532,7 @@ pub async fn current_conception_state(
     use sea_orm::{ColumnTrait, EntityTrait as _, QueryFilter, QueryOrder};
 
     let docs = setting_docs::Entity::find()
-        .filter(setting_docs::Column::BookId.eq(book_id))
+        .filter(setting_docs::COLUMN.book_id.eq(book_id))
         .all(conn)
         .await?;
     let mut doc_map = BTreeMap::new();
@@ -546,8 +546,8 @@ pub async fn current_conception_state(
         );
     }
     let characters = character_designs::Entity::find()
-        .filter(character_designs::Column::BookId.eq(book_id))
-        .order_by_asc(character_designs::Column::Rank)
+        .filter(character_designs::COLUMN.book_id.eq(book_id))
+        .order_by_asc(character_designs::COLUMN.rank)
         .all(conn)
         .await?
         .into_iter()
@@ -561,9 +561,9 @@ pub async fn current_conception_state(
         })
         .collect();
     let topics = research_tasks::Entity::find()
-        .filter(research_tasks::Column::BookId.eq(book_id))
-        .filter(research_tasks::Column::Status.eq(ResearchTaskStatus::Draft))
-        .order_by_asc(research_tasks::Column::Id)
+        .filter(research_tasks::COLUMN.book_id.eq(book_id))
+        .filter(research_tasks::COLUMN.status.eq(ResearchTaskStatus::Draft))
+        .order_by_asc(research_tasks::COLUMN.id)
         .all(conn)
         .await?
         .into_iter()

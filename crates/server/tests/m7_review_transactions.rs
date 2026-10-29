@@ -134,7 +134,7 @@ async fn a_model_switch_during_embedding_leaves_no_vector() {
         .await;
     assert_eq!(status, 201, "{body}");
     let doc = search_docs::Entity::find()
-        .filter(search_docs::Column::Kind.eq("entity"))
+        .filter(search_docs::COLUMN.kind.eq("entity"))
         .one(app.db().conn())
         .await
         .expect("doc")

@@ -348,7 +348,7 @@ async fn knowledge_hits_are_grouped_per_entry_and_scoped() {
     indexer::run_once(app.state()).await.expect("indexer");
     assert_eq!(
         knowledge_chunks::Entity::find()
-            .filter(knowledge_chunks::Column::EmbedState.eq("done"))
+            .filter(knowledge_chunks::COLUMN.embed_state.eq("done"))
             .count(app.db().conn())
             .await
             .expect("count"),

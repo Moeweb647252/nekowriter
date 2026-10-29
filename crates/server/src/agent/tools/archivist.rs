@@ -1276,8 +1276,8 @@ impl ToolHandler for FinishMaintenanceTool {
                 let shared_in_isolated =
                     !ctx.visibility.can_write_shared() && protagonist.track_id.is_none();
                 let appeared = appearances::Entity::find()
-                    .filter(appearances::Column::ChapterId.eq(chapter.id))
-                    .filter(appearances::Column::EntityId.eq(protagonist.id))
+                    .filter(appearances::COLUMN.chapter_id.eq(chapter.id))
+                    .filter(appearances::COLUMN.entity_id.eq(protagonist.id))
                     .one(ctx.tx)
                     .await
                     .map_err(|_| internal())?
@@ -1291,13 +1291,17 @@ impl ToolHandler for FinishMaintenanceTool {
         }
 
         let changes = change_log::Entity::find()
-            .filter(change_log::Column::SessionId.eq(ctx.session.id))
+            .filter(change_log::COLUMN.session_id.eq(ctx.session.id))
             .all(ctx.tx)
             .await
             .map_err(|_| internal())?
             .len();
         let proposals = crate::db::entities::setting_proposals::Entity::find()
-            .filter(crate::db::entities::setting_proposals::Column::SessionId.eq(ctx.session.id))
+            .filter(
+                crate::db::entities::setting_proposals::COLUMN
+                    .session_id
+                    .eq(ctx.session.id),
+            )
             .all(ctx.tx)
             .await
             .map_err(|_| internal())?
@@ -1334,9 +1338,9 @@ impl ToolHandler for FinishMaintenanceTool {
 /// True when this session has a resolved call of `name`.
 async fn session_called(ctx: &ToolCtx<'_>, name: &str) -> Result<bool, ToolError> {
     Ok(agent_tool_calls::Entity::find()
-        .filter(agent_tool_calls::Column::SessionId.eq(ctx.session.id))
-        .filter(agent_tool_calls::Column::Name.eq(name))
-        .filter(agent_tool_calls::Column::Status.eq(ToolCallStatus::Done))
+        .filter(agent_tool_calls::COLUMN.session_id.eq(ctx.session.id))
+        .filter(agent_tool_calls::COLUMN.name.eq(name))
+        .filter(agent_tool_calls::COLUMN.status.eq(ToolCallStatus::Done))
         .one(ctx.tx)
         .await
         .map_err(|_| internal())?
@@ -1370,10 +1374,10 @@ async fn protagonist_of(ctx: &ToolCtx<'_>) -> Result<Option<entities::Model>, To
 /// True when a change of this session touched the entity's `state` (spec/06 §6).
 async fn session_changed_state(ctx: &ToolCtx<'_>, entity_id: i32) -> Result<bool, ToolError> {
     let rows = change_log::Entity::find()
-        .filter(change_log::Column::SessionId.eq(ctx.session.id))
-        .filter(change_log::Column::TargetType.eq(ChangeTargetType::Entity))
-        .filter(change_log::Column::TargetId.eq(entity_id))
-        .order_by_asc(change_log::Column::Id)
+        .filter(change_log::COLUMN.session_id.eq(ctx.session.id))
+        .filter(change_log::COLUMN.target_type.eq(ChangeTargetType::Entity))
+        .filter(change_log::COLUMN.target_id.eq(entity_id))
+        .order_by_asc(change_log::COLUMN.id)
         .all(ctx.tx)
         .await
         .map_err(|_| internal())?;

@@ -35,14 +35,14 @@ pub async fn list(
 ) -> Result<Vec<ResearchTaskDto>, AppError> {
     let mut find = research_tasks::Entity::find();
     if let Some(book_id) = query.book_id {
-        find = find.filter(research_tasks::Column::BookId.eq(book_id));
+        find = find.filter(research_tasks::COLUMN.book_id.eq(book_id));
     }
     if let Some(status) = query.status {
-        find = find.filter(research_tasks::Column::Status.eq(status.as_str()));
+        find = find.filter(research_tasks::COLUMN.status.eq(status.as_str()));
     }
     Ok(find
-        .order_by_desc(research_tasks::Column::CreatedAt)
-        .order_by_desc(research_tasks::Column::Id)
+        .order_by_desc(research_tasks::COLUMN.created_at)
+        .order_by_desc(research_tasks::COLUMN.id)
         .all(conn)
         .await?
         .into_iter()
@@ -65,8 +65,8 @@ async fn with_entries(
     let mut dto = to_dto(row);
     if dto.status == ResearchTaskStatus::Done {
         dto.entries = knowledge_entries::Entity::find()
-            .filter(knowledge_entries::Column::ResearchTaskId.eq(dto.id))
-            .order_by_asc(knowledge_entries::Column::Id)
+            .filter(knowledge_entries::COLUMN.research_task_id.eq(dto.id))
+            .order_by_asc(knowledge_entries::COLUMN.id)
             .all(conn)
             .await?
             .into_iter()
@@ -483,7 +483,7 @@ async fn prepare_scope(tx: &impl ConnectionTrait, task_id: i32) -> Result<i32, A
 async fn resolve_scope(tx: &impl ConnectionTrait, name: &str) -> Result<i32, AppError> {
     let name = name.trim();
     if let Some(row) = knowledge_scopes::Entity::find()
-        .filter(knowledge_scopes::Column::Name.eq(name))
+        .filter(knowledge_scopes::COLUMN.name.eq(name))
         .one(tx)
         .await?
     {
@@ -509,8 +509,8 @@ async fn attach_scope(
     scope_id: i32,
 ) -> Result<(), AppError> {
     let exists = book_scopes::Entity::find()
-        .filter(book_scopes::Column::BookId.eq(book_id))
-        .filter(book_scopes::Column::ScopeId.eq(scope_id))
+        .filter(book_scopes::COLUMN.book_id.eq(book_id))
+        .filter(book_scopes::COLUMN.scope_id.eq(scope_id))
         .count(tx)
         .await?;
     if exists == 0 {
@@ -580,7 +580,7 @@ pub async fn finish(
         return Ok(Vec::new());
     }
     let total = knowledge_entries::Entity::find()
-        .filter(knowledge_entries::Column::ResearchTaskId.eq(task_id))
+        .filter(knowledge_entries::COLUMN.research_task_id.eq(task_id))
         .count(tx)
         .await?;
     let row = research_tasks::ActiveModel {
@@ -656,8 +656,8 @@ pub async fn existing_titles(
     scope_id: i32,
 ) -> Result<Vec<String>, AppError> {
     Ok(knowledge_entries::Entity::find()
-        .filter(knowledge_entries::Column::ScopeId.eq(scope_id))
-        .order_by_asc(knowledge_entries::Column::Title)
+        .filter(knowledge_entries::COLUMN.scope_id.eq(scope_id))
+        .order_by_asc(knowledge_entries::COLUMN.title)
         .limit(MAX_EXISTING_TITLES as u64)
         .all(conn)
         .await?
@@ -669,7 +669,7 @@ pub async fn existing_titles(
 /// The number of entries a task has created across every run (spec/07 §8).
 pub async fn entry_count(conn: &impl ConnectionTrait, task_id: i32) -> Result<i32, AppError> {
     let total = knowledge_entries::Entity::find()
-        .filter(knowledge_entries::Column::ResearchTaskId.eq(task_id))
+        .filter(knowledge_entries::COLUMN.research_task_id.eq(task_id))
         .count(conn)
         .await?;
     Ok(i32::try_from(total).unwrap_or(i32::MAX))

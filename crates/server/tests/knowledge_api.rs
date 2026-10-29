@@ -9,7 +9,7 @@ use nekowriter::db::json::EmbedState;
 use nekowriter::events::ServerEvent;
 use nekowriter::services::indexer;
 use nekowriter::testing::{TestApp, assert_error, assert_error_detail};
-use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
+use sea_orm::{EntityTrait, PaginatorTrait, QueryFilter};
 
 async fn count(app: &TestApp, sql: &str) -> i64 {
     use sea_orm::ConnectionTrait;
@@ -79,7 +79,7 @@ async fn scope_and_entry_crud_with_chunking_in_the_same_transaction() {
     // The chunks and their FTS rows exist immediately: keyword search works before any embedding
     // (spec/07 §1.1, §2).
     let chunks = knowledge_chunks::Entity::find()
-        .filter(knowledge_chunks::Column::EntryId.eq(entry_id))
+        .filter(knowledge_chunks::COLUMN.entry_id.eq(entry_id))
         .all(app.db().conn())
         .await
         .expect("chunks");
@@ -132,7 +132,7 @@ async fn scope_and_entry_crud_with_chunking_in_the_same_transaction() {
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let chunks_after = knowledge_chunks::Entity::find()
-        .filter(knowledge_chunks::Column::EntryId.eq(entry_id))
+        .filter(knowledge_chunks::COLUMN.entry_id.eq(entry_id))
         .all(app.db().conn())
         .await
         .expect("chunks");
@@ -166,7 +166,7 @@ async fn scope_and_entry_crud_with_chunking_in_the_same_transaction() {
     assert_eq!(status, StatusCode::NO_CONTENT);
     assert_eq!(
         knowledge_chunks::Entity::find()
-            .filter(knowledge_chunks::Column::EntryId.eq(entry_id))
+            .filter(knowledge_chunks::COLUMN.entry_id.eq(entry_id))
             .count(app.db().conn())
             .await
             .expect("count"),

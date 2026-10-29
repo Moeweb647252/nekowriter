@@ -945,12 +945,12 @@ macro_rules! enum_columns {
             ),*];
             rows.push((
                 nekowriter::db::entities::agent_sessions::Entity::default().table_name(),
-                nekowriter::db::entities::agent_sessions::Column::Granularity.as_str(),
+                nekowriter::db::entities::agent_sessions::COLUMN.granularity.as_str(),
                 <Granularity as ActiveEnum>::values(),
             ));
             rows.push((
                 nekowriter::db::entities::setting_proposals::Entity::default().table_name(),
-                nekowriter::db::entities::setting_proposals::Column::TargetKind.as_str(),
+                nekowriter::db::entities::setting_proposals::COLUMN.target_kind.as_str(),
                 <SettingDocKind as ActiveEnum>::values(),
             ));
             rows
@@ -1221,7 +1221,7 @@ fn enum_column_name(line: &str) -> Option<String> {
 #[test]
 fn enum_gate_extraction_handles_column_spellings() {
     assert_eq!(
-        enum_column_name(r#"    .filter(chapters::Column::TargetKind.eq("outline"))"#),
+        enum_column_name(r#"    .filter(chapters::COLUMN.target_kind.eq("outline"))"#),
         Some("TargetKind".to_owned())
     );
     assert_eq!(

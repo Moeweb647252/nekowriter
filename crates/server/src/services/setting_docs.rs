@@ -180,8 +180,8 @@ pub async fn load(
 ) -> Result<setting_docs::Model, AppError> {
     super::books::get(conn, book_id).await?;
     setting_docs::Entity::find()
-        .filter(setting_docs::Column::BookId.eq(book_id))
-        .filter(setting_docs::Column::Kind.eq(kind.as_str()))
+        .filter(setting_docs::COLUMN.book_id.eq(book_id))
+        .filter(setting_docs::COLUMN.kind.eq(kind.as_str()))
         .one(conn)
         .await?
         .ok_or_else(|| {

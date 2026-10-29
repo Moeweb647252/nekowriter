@@ -389,14 +389,14 @@ pub(crate) async fn prior_chapters_wanted(
         return Ok(entries);
     };
     let mut statement = chapters::Entity::find()
-        .filter(chapters::Column::TrackId.eq(main.id))
-        .filter(chapters::Column::Status.eq(ChapterStatus::Official))
-        .order_by_asc(chapters::Column::Ord);
+        .filter(chapters::COLUMN.track_id.eq(main.id))
+        .filter(chapters::COLUMN.status.eq(ChapterStatus::Official))
+        .order_by_asc(chapters::COLUMN.ord);
     if track.anchor_kind == AnchorKind::AfterChapter {
         let Some(up_to) = anchor_ord(conn, track).await? else {
             return Ok(entries);
         };
-        statement = statement.filter(chapters::Column::Ord.lte(up_to));
+        statement = statement.filter(chapters::COLUMN.ord.lte(up_to));
     }
     let mut main_rows = statement.all(conn).await?;
     let missing = wanted.saturating_sub(entries.len());
@@ -604,10 +604,10 @@ async fn official_before(
     ord: i32,
 ) -> Result<Vec<chapters::Model>, AppError> {
     Ok(chapters::Entity::find()
-        .filter(chapters::Column::TrackId.eq(track_id))
-        .filter(chapters::Column::Ord.lt(ord))
-        .filter(chapters::Column::Status.eq(ChapterStatus::Official))
-        .order_by_asc(chapters::Column::Ord)
+        .filter(chapters::COLUMN.track_id.eq(track_id))
+        .filter(chapters::COLUMN.ord.lt(ord))
+        .filter(chapters::COLUMN.status.eq(ChapterStatus::Official))
+        .order_by_asc(chapters::COLUMN.ord)
         .all(conn)
         .await?)
 }
@@ -618,8 +618,8 @@ async fn main_track(
     book_id: i32,
 ) -> Result<Option<tracks::Model>, AppError> {
     Ok(tracks::Entity::find()
-        .filter(tracks::Column::BookId.eq(book_id))
-        .filter(tracks::Column::Kind.eq(TrackKind::Main))
+        .filter(tracks::COLUMN.book_id.eq(book_id))
+        .filter(tracks::COLUMN.kind.eq(TrackKind::Main))
         .one(conn)
         .await?)
 }
@@ -690,8 +690,8 @@ async fn protagonist(
         Some(focus_id) => entities::Entity::find_by_id(focus_id).one(conn).await?,
         None => {
             entities::Entity::find()
-                .filter(entities::Column::BookId.eq(track.book_id))
-                .filter(entities::Column::IsProtagonist.eq(1))
+                .filter(entities::COLUMN.book_id.eq(track.book_id))
+                .filter(entities::COLUMN.is_protagonist.eq(true))
                 .filter(visibility.visible_condition(entities::Column::TrackId))
                 .one(conn)
                 .await?
@@ -725,10 +725,10 @@ pub async fn state_after_anchor(
         return Ok(false);
     }
     let last = change_log::Entity::find()
-        .filter(change_log::Column::TargetType.eq(ChangeTargetType::Entity))
-        .filter(change_log::Column::TargetId.eq(entity_id))
-        .filter(change_log::Column::RevertedById.is_null())
-        .order_by_desc(change_log::Column::Id)
+        .filter(change_log::COLUMN.target_type.eq(ChangeTargetType::Entity))
+        .filter(change_log::COLUMN.target_id.eq(entity_id))
+        .filter(change_log::COLUMN.reverted_by_id.is_null())
+        .order_by_desc(change_log::COLUMN.id)
         .one(conn)
         .await?;
     let Some(change) = last else {
@@ -775,15 +775,16 @@ async fn recent_changes(
         return Ok(Vec::new());
     }
     let rows = change_log::Entity::find()
-        .filter(change_log::Column::BookId.eq(chapter.book_id))
+        .filter(change_log::COLUMN.book_id.eq(chapter.book_id))
         .filter(visibility.visible_condition(change_log::Column::TrackId))
-        .filter(change_log::Column::RevertedById.is_null())
+        .filter(change_log::COLUMN.reverted_by_id.is_null())
         .filter(
-            change_log::Column::TargetType
+            change_log::COLUMN
+                .target_type
                 .is_in([ChangeTargetType::Entity, ChangeTargetType::Relation]),
         )
-        .filter(change_log::Column::ChapterId.is_in(window.to_vec()))
-        .filter(change_log::Column::Note.ne(""))
+        .filter(change_log::COLUMN.chapter_id.is_in(window.to_vec()))
+        .filter(change_log::COLUMN.note.ne(""))
         .all(conn)
         .await?;
     // "Ordered by chapter, then id; at most 40 (the newest are kept)" (spec/06 §4.3). The window
@@ -886,7 +887,7 @@ async fn appearance_counts(
         return Ok(Vec::new());
     }
     let rows = appearances::Entity::find()
-        .filter(appearances::Column::ChapterId.is_in(window.to_vec()))
+        .filter(appearances::COLUMN.chapter_id.is_in(window.to_vec()))
         .all(conn)
         .await?;
     let entity_ids: Vec<i32> = {
@@ -899,9 +900,9 @@ async fn appearance_counts(
         return Ok(Vec::new());
     }
     let characters = entities::Entity::find()
-        .filter(entities::Column::Id.is_in(entity_ids))
-        .filter(entities::Column::BookId.eq(chapter.book_id))
-        .filter(entities::Column::Kind.eq(EntityKind::Character))
+        .filter(entities::COLUMN.id.is_in(entity_ids))
+        .filter(entities::COLUMN.book_id.eq(chapter.book_id))
+        .filter(entities::COLUMN.kind.eq(EntityKind::Character))
         .filter(visibility.visible_condition(entities::Column::TrackId))
         .all(conn)
         .await?;
@@ -953,7 +954,7 @@ async fn absent_important(
         return Ok(Vec::new());
     }
     let rows = appearances::Entity::find()
-        .filter(appearances::Column::ChapterId.is_in(prior_ids))
+        .filter(appearances::COLUMN.chapter_id.is_in(prior_ids))
         .all(conn)
         .await?;
     // The latest appearance of each entity in P (P is oldest first, so the last write wins).
@@ -975,11 +976,11 @@ async fn absent_important(
         return Ok(Vec::new());
     }
     let rows = entities::Entity::find()
-        .filter(entities::Column::Id.is_in(candidates))
-        .filter(entities::Column::BookId.eq(chapter.book_id))
-        .filter(entities::Column::Kind.eq(EntityKind::Character))
-        .filter(entities::Column::Status.eq(EntityStatus::Active))
-        .filter(entities::Column::Importance.gte(IMPORTANT))
+        .filter(entities::COLUMN.id.is_in(candidates))
+        .filter(entities::COLUMN.book_id.eq(chapter.book_id))
+        .filter(entities::COLUMN.kind.eq(EntityKind::Character))
+        .filter(entities::COLUMN.status.eq(EntityStatus::Active))
+        .filter(entities::COLUMN.importance.gte(IMPORTANT))
         .filter(visibility.visible_condition(entities::Column::TrackId))
         .all(conn)
         .await?;
@@ -1009,16 +1010,17 @@ async fn key_notes(
     visibility: &Visibility,
 ) -> Result<Vec<NoteItem>, AppError> {
     let mut rows = memory_notes::Entity::find()
-        .filter(memory_notes::Column::BookId.eq(visibility.book_id))
+        .filter(memory_notes::COLUMN.book_id.eq(visibility.book_id))
         .filter(visibility.visible_condition(memory_notes::Column::TrackId))
-        .filter(memory_notes::Column::Status.eq(NoteStatus::Active))
+        .filter(memory_notes::COLUMN.status.eq(NoteStatus::Active))
         .filter(
-            memory_notes::Column::Kind
+            memory_notes::COLUMN
+                .kind
                 .is_in([NoteKind::Fact.as_str(), NoteKind::WorldRule.as_str()]),
         )
-        .filter(memory_notes::Column::Importance.gte(IMPORTANT))
-        .order_by_desc(memory_notes::Column::Importance)
-        .order_by_asc(memory_notes::Column::Id)
+        .filter(memory_notes::COLUMN.importance.gte(IMPORTANT))
+        .order_by_desc(memory_notes::COLUMN.importance)
+        .order_by_asc(memory_notes::COLUMN.id)
         .all(conn)
         .await?;
     rows.truncate(KEY_NOTES_LIMIT);
@@ -1043,9 +1045,9 @@ async fn open_foreshadowing(
     labels: &HashMap<i32, String>,
 ) -> Result<Vec<ForeshadowItem>, AppError> {
     let mut rows = foreshadowing::Entity::find()
-        .filter(foreshadowing::Column::BookId.eq(visibility.book_id))
+        .filter(foreshadowing::COLUMN.book_id.eq(visibility.book_id))
         .filter(visibility.visible_condition(foreshadowing::Column::TrackId))
-        .filter(foreshadowing::Column::Status.eq(ForeshadowingStatus::Open))
+        .filter(foreshadowing::COLUMN.status.eq(ForeshadowingStatus::Open))
         .all(conn)
         .await?;
     rows.sort_by(|a, b| {
@@ -1083,7 +1085,7 @@ async fn cast(
     visibility: &Visibility,
 ) -> Result<Vec<CastItem>, AppError> {
     let mut rows = entities::Entity::find()
-        .filter(entities::Column::BookId.eq(visibility.book_id))
+        .filter(entities::COLUMN.book_id.eq(visibility.book_id))
         .filter(visibility.visible_condition(entities::Column::TrackId))
         .all(conn)
         .await?;
@@ -1115,7 +1117,7 @@ async fn counts(
 ) -> Result<CanonCounts, AppError> {
     let mut counts = CanonCounts::default();
     let entity_rows = entities::Entity::find()
-        .filter(entities::Column::BookId.eq(visibility.book_id))
+        .filter(entities::COLUMN.book_id.eq(visibility.book_id))
         .filter(visibility.visible_condition(entities::Column::TrackId))
         .all(conn)
         .await?;
@@ -1129,14 +1131,14 @@ async fn counts(
         }
     }
     counts.event = timeline_events::Entity::find()
-        .filter(timeline_events::Column::BookId.eq(visibility.book_id))
+        .filter(timeline_events::COLUMN.book_id.eq(visibility.book_id))
         .filter(visibility.visible_condition(timeline_events::Column::TrackId))
         .count(conn)
         .await? as i32;
     let note_rows = memory_notes::Entity::find()
-        .filter(memory_notes::Column::BookId.eq(visibility.book_id))
+        .filter(memory_notes::COLUMN.book_id.eq(visibility.book_id))
         .filter(visibility.visible_condition(memory_notes::Column::TrackId))
-        .filter(memory_notes::Column::Status.eq(NoteStatus::Active))
+        .filter(memory_notes::COLUMN.status.eq(NoteStatus::Active))
         .all(conn)
         .await?;
     for row in &note_rows {
@@ -1147,9 +1149,9 @@ async fn counts(
         }
     }
     counts.foreshadowing_open = foreshadowing::Entity::find()
-        .filter(foreshadowing::Column::BookId.eq(visibility.book_id))
+        .filter(foreshadowing::COLUMN.book_id.eq(visibility.book_id))
         .filter(visibility.visible_condition(foreshadowing::Column::TrackId))
-        .filter(foreshadowing::Column::Status.eq(ForeshadowingStatus::Open))
+        .filter(foreshadowing::COLUMN.status.eq(ForeshadowingStatus::Open))
         .count(conn)
         .await? as i32;
     Ok(counts)
@@ -1272,7 +1274,7 @@ async fn target_position(
     let chapter = match query.chapter_id {
         Some(chapter_id) => Some(
             chapters::Entity::find_by_id(chapter_id)
-                .filter(chapters::Column::BookId.eq(book_id))
+                .filter(chapters::COLUMN.book_id.eq(book_id))
                 .one(conn)
                 .await?
                 .ok_or_else(|| AppError::not_found(format!("chapter #{chapter_id}")))?,
@@ -1282,7 +1284,7 @@ async fn target_position(
     let track = match (query.track_id, &chapter) {
         (Some(track_id), Some(chapter)) => {
             let track = tracks::Entity::find_by_id(track_id)
-                .filter(tracks::Column::BookId.eq(book_id))
+                .filter(tracks::COLUMN.book_id.eq(book_id))
                 .one(conn)
                 .await?
                 .ok_or_else(|| AppError::not_found(format!("track #{track_id}")))?;
@@ -1295,7 +1297,7 @@ async fn target_position(
             track
         }
         (Some(track_id), None) => tracks::Entity::find_by_id(track_id)
-            .filter(tracks::Column::BookId.eq(book_id))
+            .filter(tracks::COLUMN.book_id.eq(book_id))
             .one(conn)
             .await?
             .ok_or_else(|| AppError::not_found(format!("track #{track_id}")))?,
@@ -1323,8 +1325,8 @@ async fn next_chapter(
     track: &tracks::Model,
 ) -> Result<chapters::Model, AppError> {
     let last = chapters::Entity::find()
-        .filter(chapters::Column::TrackId.eq(track.id))
-        .order_by_desc(chapters::Column::Ord)
+        .filter(chapters::COLUMN.track_id.eq(track.id))
+        .order_by_desc(chapters::COLUMN.ord)
         .one(conn)
         .await?;
     match last {

@@ -179,18 +179,18 @@ pub async fn finish_seed(
         return Ok(Vec::new());
     };
     let designs = character_designs::Entity::find()
-        .filter(character_designs::Column::BookId.eq(book_id))
-        .filter(character_designs::Column::EntityId.is_null())
-        .order_by_asc(character_designs::Column::Rank)
+        .filter(character_designs::COLUMN.book_id.eq(book_id))
+        .filter(character_designs::COLUMN.entity_id.is_null())
+        .order_by_asc(character_designs::COLUMN.rank)
         .all(tx)
         .await?;
     if designs.is_empty() {
         return Ok(Vec::new());
     }
     let candidates = entities::Entity::find()
-        .filter(entities::Column::BookId.eq(book_id))
-        .filter(entities::Column::Kind.eq(EntityKind::Character))
-        .filter(entities::Column::TrackId.is_null())
+        .filter(entities::COLUMN.book_id.eq(book_id))
+        .filter(entities::COLUMN.kind.eq(EntityKind::Character))
+        .filter(entities::COLUMN.track_id.is_null())
         .all(tx)
         .await?;
     let mut linked = false;
@@ -247,10 +247,10 @@ fn completion_note(call: &agent_tool_calls::Model, field: &str) -> String {
 
 /// The next `version_no` of a chapter (unique per chapter, spec/02 §2).
 async fn next_version_no(tx: &impl ConnectionTrait, chapter_id: i32) -> Result<i32, AppError> {
-    use sea_orm::{ColumnTrait, QueryFilter, QueryOrder};
+    use sea_orm::{QueryFilter, QueryOrder};
     let last = chapter_versions::Entity::find()
-        .filter(chapter_versions::Column::ChapterId.eq(chapter_id))
-        .order_by_desc(chapter_versions::Column::VersionNo)
+        .filter(chapter_versions::COLUMN.chapter_id.eq(chapter_id))
+        .order_by_desc(chapter_versions::COLUMN.version_no)
         .one(tx)
         .await?
         .map(|row| row.version_no);

@@ -8,7 +8,7 @@
 //! Unknown pids are dropped from the issues and the result names them (spec/05 §5), so a review
 //! written against a text the author edited meanwhile never carries dangling references.
 
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, Set};
+use sea_orm::{ActiveModelTrait, EntityTrait, QueryFilter, QueryOrder, Set};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -81,8 +81,8 @@ impl ToolHandler for SubmitReviewTool {
 
         // `attempt` = count + 1 per chapter (spec/05 §5).
         let attempt = review_reports::Entity::find()
-            .filter(review_reports::Column::ChapterId.eq(chapter.id))
-            .order_by_desc(review_reports::Column::Attempt)
+            .filter(review_reports::COLUMN.chapter_id.eq(chapter.id))
+            .order_by_desc(review_reports::COLUMN.attempt)
             .one(ctx.tx)
             .await
             .map_err(|_| ToolError::new(ToolErrorKind::Internal))?

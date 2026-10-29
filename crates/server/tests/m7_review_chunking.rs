@@ -6,7 +6,7 @@ use nekowriter::db::json::EmbedState;
 use nekowriter::search::chunk;
 use nekowriter::services::indexer;
 use nekowriter::testing::TestApp;
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
+use sea_orm::{EntityTrait, QueryFilter, QueryOrder};
 use serde_json::json;
 
 async fn scope(app: &TestApp, name: &str) -> i32 {
@@ -30,8 +30,8 @@ async fn entry(app: &TestApp, scope_id: i32, title: &str, content: &str) -> i32 
 
 async fn chunks(app: &TestApp, entry_id: i32) -> Vec<knowledge_chunks::Model> {
     knowledge_chunks::Entity::find()
-        .filter(knowledge_chunks::Column::EntryId.eq(entry_id))
-        .order_by_asc(knowledge_chunks::Column::Ord)
+        .filter(knowledge_chunks::COLUMN.entry_id.eq(entry_id))
+        .order_by_asc(knowledge_chunks::COLUMN.ord)
         .all(app.db().conn())
         .await
         .expect("chunks")

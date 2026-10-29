@@ -35,14 +35,14 @@ pub async fn list(
     // The canon pages show shared rows by default (spec/06 §2); a private relation belongs to
     // its isolated track and is read through that track's own views.
     let mut statement = relations::Entity::find()
-        .filter(relations::Column::BookId.eq(book_id))
+        .filter(relations::COLUMN.book_id.eq(book_id))
         .filter(Visibility::shared(book_id).visible_condition(relations::Column::TrackId))
-        .order_by_asc(relations::Column::Id);
+        .order_by_asc(relations::COLUMN.id);
     if let Some(entity_id) = query.entity_id {
         statement = statement.filter(
             Condition::any()
-                .add(relations::Column::SourceId.eq(entity_id))
-                .add(relations::Column::TargetId.eq(entity_id)),
+                .add(relations::COLUMN.source_id.eq(entity_id))
+                .add(relations::COLUMN.target_id.eq(entity_id)),
         );
     }
     let rows = statement.all(conn).await?;
@@ -452,17 +452,17 @@ pub async fn find_active(
     kind: &str,
 ) -> CanonResult<Option<relations::Model>> {
     let mut statement = relations::Entity::find()
-        .filter(relations::Column::BookId.eq(book_id))
-        .filter(relations::Column::SourceId.eq(source_id))
-        .filter(relations::Column::TargetId.eq(target_id))
-        .filter(relations::Column::Kind.eq(kind))
-        .filter(relations::Column::Status.eq(RelationStatus::Active));
+        .filter(relations::COLUMN.book_id.eq(book_id))
+        .filter(relations::COLUMN.source_id.eq(source_id))
+        .filter(relations::COLUMN.target_id.eq(target_id))
+        .filter(relations::COLUMN.kind.eq(kind))
+        .filter(relations::COLUMN.status.eq(RelationStatus::Active));
     if let Some(condition) = write.condition(relations::Column::TrackId) {
         statement = statement.filter(condition);
     }
     // A shared row wins over a private one: it is the canon relation (spec/06 §2).
     let rows = statement
-        .order_by_asc(relations::Column::TrackId)
+        .order_by_asc(relations::COLUMN.track_id)
         .all(conn)
         .await?;
     let Some(row) = rows.into_iter().next() else {
@@ -492,16 +492,16 @@ async fn ensure_no_active_pair(
     except_id: Option<i32>,
 ) -> CanonResult<()> {
     let mut statement = relations::Entity::find()
-        .filter(relations::Column::BookId.eq(book_id))
-        .filter(relations::Column::SourceId.eq(source_id))
-        .filter(relations::Column::TargetId.eq(target_id))
-        .filter(relations::Column::Status.eq(RelationStatus::Active));
+        .filter(relations::COLUMN.book_id.eq(book_id))
+        .filter(relations::COLUMN.source_id.eq(source_id))
+        .filter(relations::COLUMN.target_id.eq(target_id))
+        .filter(relations::COLUMN.status.eq(RelationStatus::Active));
     statement = match track_id {
-        Some(track_id) => statement.filter(relations::Column::TrackId.eq(track_id)),
-        None => statement.filter(relations::Column::TrackId.is_null()),
+        Some(track_id) => statement.filter(relations::COLUMN.track_id.eq(track_id)),
+        None => statement.filter(relations::COLUMN.track_id.is_null()),
     };
     if let Some(except_id) = except_id {
-        statement = statement.filter(relations::Column::Id.ne(except_id));
+        statement = statement.filter(relations::COLUMN.id.ne(except_id));
     }
     if let Some(row) = statement.one(tx).await? {
         // The message names the kind the pair already carries, so a caller that has the old
@@ -530,16 +530,16 @@ pub async fn find_active_pair(
     target_id: i32,
 ) -> CanonResult<Option<relations::Model>> {
     let mut statement = relations::Entity::find()
-        .filter(relations::Column::BookId.eq(book_id))
-        .filter(relations::Column::SourceId.eq(source_id))
-        .filter(relations::Column::TargetId.eq(target_id))
-        .filter(relations::Column::Status.eq(RelationStatus::Active));
+        .filter(relations::COLUMN.book_id.eq(book_id))
+        .filter(relations::COLUMN.source_id.eq(source_id))
+        .filter(relations::COLUMN.target_id.eq(target_id))
+        .filter(relations::COLUMN.status.eq(RelationStatus::Active));
     if let Some(condition) = write.condition(relations::Column::TrackId) {
         statement = statement.filter(condition);
     }
     // A shared row wins over a private one: it is the canon relation (spec/06 §2).
     let rows = statement
-        .order_by_asc(relations::Column::TrackId)
+        .order_by_asc(relations::COLUMN.track_id)
         .all(conn)
         .await?;
     Ok(rows.into_iter().next())

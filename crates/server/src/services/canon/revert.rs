@@ -126,8 +126,12 @@ pub async fn revert_inner(
 /// transaction that wrote it.
 async fn revert_row_of(conn: &impl ConnectionTrait, change_id: i32) -> CanonResult<i32> {
     crate::db::entities::change_log::Entity::find()
-        .filter(crate::db::entities::change_log::Column::RevertsId.eq(change_id))
-        .order_by_desc(crate::db::entities::change_log::Column::Id)
+        .filter(
+            crate::db::entities::change_log::COLUMN
+                .reverts_id
+                .eq(change_id),
+        )
+        .order_by_desc(crate::db::entities::change_log::COLUMN.id)
         .one(conn)
         .await?
         .map(|row| row.id)
@@ -155,10 +159,10 @@ async fn later_change_ids(
     target_type: ChangeTargetType,
 ) -> CanonResult<Vec<i32>> {
     let rows = change_log::Entity::find()
-        .filter(change_log::Column::TargetType.eq(target_type.as_str()))
-        .filter(change_log::Column::TargetId.eq(original.target_id))
-        .filter(change_log::Column::Id.gt(original.id))
-        .order_by_desc(change_log::Column::Id)
+        .filter(change_log::COLUMN.target_type.eq(target_type.as_str()))
+        .filter(change_log::COLUMN.target_id.eq(original.target_id))
+        .filter(change_log::COLUMN.id.gt(original.id))
+        .order_by_desc(change_log::COLUMN.id)
         .all(conn)
         .await?;
     Ok(rows.into_iter().map(|row| row.id).collect())

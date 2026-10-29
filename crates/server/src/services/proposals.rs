@@ -65,10 +65,10 @@ pub async fn list(
 ) -> Result<Vec<ProposalDto>, AppError> {
     super::books::get(conn, book_id).await?;
     let mut statement = setting_proposals::Entity::find()
-        .filter(setting_proposals::Column::BookId.eq(book_id))
-        .order_by_desc(setting_proposals::Column::Id);
+        .filter(setting_proposals::COLUMN.book_id.eq(book_id))
+        .order_by_desc(setting_proposals::COLUMN.id);
     if let Some(status) = status {
-        statement = statement.filter(setting_proposals::Column::Status.eq(status.as_str()));
+        statement = statement.filter(setting_proposals::COLUMN.status.eq(status.as_str()));
     }
     let mut items = Vec::new();
     for row in statement.all(conn).await? {
@@ -111,8 +111,8 @@ pub async fn accept_inner(
                 ));
             };
             let doc = setting_docs::Entity::find()
-                .filter(setting_docs::Column::BookId.eq(book_id))
-                .filter(setting_docs::Column::Kind.eq(kind.as_str()))
+                .filter(setting_docs::COLUMN.book_id.eq(book_id))
+                .filter(setting_docs::COLUMN.kind.eq(kind.as_str()))
                 .one(tx)
                 .await?
                 .ok_or_else(|| AppError::internal("the proposed setting document is gone"))?;
@@ -349,8 +349,8 @@ pub async fn to_dto(
             match kind {
                 Some(kind) => {
                     let doc = setting_docs::Entity::find()
-                        .filter(setting_docs::Column::BookId.eq(row.book_id))
-                        .filter(setting_docs::Column::Kind.eq(kind.as_str()))
+                        .filter(setting_docs::COLUMN.book_id.eq(row.book_id))
+                        .filter(setting_docs::COLUMN.kind.eq(kind.as_str()))
                         .one(conn)
                         .await?;
                     match doc {

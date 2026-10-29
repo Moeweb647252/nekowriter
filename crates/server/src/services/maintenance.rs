@@ -194,14 +194,14 @@ pub async fn open_archivist_session(
     chapter_id: i32,
 ) -> Result<Option<agent_sessions::Model>, AppError> {
     Ok(agent_sessions::Entity::find()
-        .filter(agent_sessions::Column::ChapterId.eq(chapter_id))
-        .filter(agent_sessions::Column::Kind.is_in(ARCHIVIST_KINDS))
-        .filter(agent_sessions::Column::Status.is_not_in([
+        .filter(agent_sessions::COLUMN.chapter_id.eq(chapter_id))
+        .filter(agent_sessions::COLUMN.kind.is_in(ARCHIVIST_KINDS))
+        .filter(agent_sessions::COLUMN.status.is_not_in([
             SessionStatus::Completed.as_str(),
             SessionStatus::Superseded.as_str(),
             SessionStatus::Abandoned.as_str(),
         ]))
-        .order_by_asc(agent_sessions::Column::Id)
+        .order_by_asc(agent_sessions::COLUMN.id)
         .one(conn)
         .await?)
 }
@@ -212,9 +212,9 @@ pub async fn last_archivist_kind(
     chapter_id: i32,
 ) -> Result<Option<SessionKind>, AppError> {
     let row = agent_sessions::Entity::find()
-        .filter(agent_sessions::Column::ChapterId.eq(chapter_id))
-        .filter(agent_sessions::Column::Kind.is_in(ARCHIVIST_KINDS))
-        .order_by_desc(agent_sessions::Column::Id)
+        .filter(agent_sessions::COLUMN.chapter_id.eq(chapter_id))
+        .filter(agent_sessions::COLUMN.kind.is_in(ARCHIVIST_KINDS))
+        .order_by_desc(agent_sessions::COLUMN.id)
         .one(conn)
         .await?;
     Ok(row.map(|row| row.kind))
@@ -234,9 +234,13 @@ async fn official_version_with_content(
     content: &ChapterContent,
 ) -> Result<Option<i32>, AppError> {
     let rows = chapter_versions::Entity::find()
-        .filter(chapter_versions::Column::ChapterId.eq(chapter_id))
-        .filter(chapter_versions::Column::Kind.eq(crate::db::json::VersionKind::Official))
-        .order_by_desc(chapter_versions::Column::Id)
+        .filter(chapter_versions::COLUMN.chapter_id.eq(chapter_id))
+        .filter(
+            chapter_versions::COLUMN
+                .kind
+                .eq(crate::db::json::VersionKind::Official),
+        )
+        .order_by_desc(chapter_versions::COLUMN.id)
         .all(conn)
         .await?;
     for row in rows {

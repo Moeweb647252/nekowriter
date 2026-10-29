@@ -520,7 +520,7 @@ async fn visible_scopes(ctx: &ToolCtx<'_>) -> Result<Vec<knowledge_scopes::Model
         return Err(ToolError::new(ToolErrorKind::NoKnowledgeScope));
     }
     knowledge_scopes::Entity::find()
-        .filter(knowledge_scopes::Column::Id.is_in(ids))
+        .filter(knowledge_scopes::COLUMN.id.is_in(ids))
         .all(ctx.tx)
         .await
         .map_err(|_| internal())
@@ -604,8 +604,8 @@ async fn anchor_of(ctx: &ToolCtx<'_>) -> Result<Anchor, ToolError> {
     }
     let book_id = track.book_id;
     anchor.main_track = tracks::Entity::find()
-        .filter(tracks::Column::BookId.eq(book_id))
-        .filter(tracks::Column::Kind.eq(TrackKind::Main))
+        .filter(tracks::COLUMN.book_id.eq(book_id))
+        .filter(tracks::COLUMN.kind.eq(TrackKind::Main))
         .one(ctx.tx)
         .await
         .map_err(|_| internal())?

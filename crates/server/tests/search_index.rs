@@ -62,8 +62,8 @@ async fn create_entity(app: &TestApp, book_id: i32, name: &str) -> i32 {
 
 async fn doc_row(app: &TestApp, kind: &str, ref_id: i32) -> Option<search_docs::Model> {
     search_docs::Entity::find()
-        .filter(search_docs::Column::Kind.eq(kind))
-        .filter(search_docs::Column::RefId.eq(ref_id))
+        .filter(search_docs::COLUMN.kind.eq(kind))
+        .filter(search_docs::COLUMN.ref_id.eq(ref_id))
         .one(app.db().conn())
         .await
         .expect("doc query")
@@ -157,8 +157,8 @@ async fn approving_a_chapter_indexes_its_passages() {
     let chapter_id = official_chapter(&app, track_id, "Sword Tomb", text).await;
 
     let docs = search_docs::Entity::find()
-        .filter(search_docs::Column::Kind.eq("passage"))
-        .filter(search_docs::Column::RefId.eq(chapter_id))
+        .filter(search_docs::COLUMN.kind.eq("passage"))
+        .filter(search_docs::COLUMN.ref_id.eq(chapter_id))
         .all(app.db().conn())
         .await
         .expect("passages");
@@ -186,8 +186,8 @@ async fn approving_a_chapter_indexes_its_passages() {
         .await;
     assert_eq!(status, StatusCode::OK, "content patch: {body}");
     let docs_after = search_docs::Entity::find()
-        .filter(search_docs::Column::Kind.eq("passage"))
-        .filter(search_docs::Column::RefId.eq(chapter_id))
+        .filter(search_docs::COLUMN.kind.eq("passage"))
+        .filter(search_docs::COLUMN.ref_id.eq(chapter_id))
         .all(app.db().conn())
         .await
         .expect("passages");
@@ -404,14 +404,14 @@ async fn the_worker_takes_book_documents_and_knowledge_chunks_in_one_batch() {
     assert_eq!(count_rows(&app, "vec_book").await, 3);
     assert_eq!(
         knowledge_chunks::Entity::find()
-            .filter(knowledge_chunks::Column::EmbedState.eq("done"))
+            .filter(knowledge_chunks::COLUMN.embed_state.eq("done"))
             .count(app.db().conn())
             .await
             .expect("count"),
         3
     );
     let remaining = knowledge_chunks::Entity::find()
-        .filter(knowledge_chunks::Column::EmbedState.eq("pending"))
+        .filter(knowledge_chunks::COLUMN.embed_state.eq("pending"))
         .count(app.db().conn())
         .await
         .expect("count");
@@ -494,7 +494,7 @@ async fn knowledge_entry_chunks_are_rebuilt_with_a_hash_diff() {
     .await
     .expect("sync");
     let rows = knowledge_chunks::Entity::find()
-        .filter(knowledge_chunks::Column::EntryId.eq(1))
+        .filter(knowledge_chunks::COLUMN.entry_id.eq(1))
         .all(app.db().conn())
         .await
         .expect("chunks");
@@ -520,8 +520,8 @@ async fn knowledge_entry_chunks_are_rebuilt_with_a_hash_diff() {
     .await
     .expect("resync");
     let rows = knowledge_chunks::Entity::find()
-        .filter(knowledge_chunks::Column::EntryId.eq(1))
-        .order_by_asc(knowledge_chunks::Column::Ord)
+        .filter(knowledge_chunks::COLUMN.entry_id.eq(1))
+        .order_by_asc(knowledge_chunks::COLUMN.ord)
         .all(app.db().conn())
         .await
         .expect("chunks");

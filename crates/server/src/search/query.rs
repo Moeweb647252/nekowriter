@@ -17,7 +17,7 @@
 
 use std::collections::HashMap;
 
-use sea_orm::{ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter, Statement};
+use sea_orm::{ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter, Statement};
 
 use crate::db::json::SearchDocKind;
 
@@ -129,7 +129,7 @@ pub async fn hybrid_book(
     }
     let ids: Vec<i32> = fused.iter().map(|(id, _)| *id).collect();
     let rows: HashMap<i32, search_docs::Model> = search_docs::Entity::find()
-        .filter(search_docs::Column::Id.is_in(ids))
+        .filter(search_docs::COLUMN.id.is_in(ids))
         .all(conn)
         .await?
         .into_iter()
@@ -234,6 +234,7 @@ async fn fts_book_ids(
     }
     sql.push_str(&format!(" ORDER BY bm25(fts_book) LIMIT {FTS_LIMIT}"));
     let rows = conn
+        // Raw: FTS5 MATCH and vec0 KNN queries have no typed API.
         .query_all_raw(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             &sql,
@@ -277,7 +278,7 @@ async fn filter_knn(
     }
     let ids: Vec<i32> = hits.iter().map(|hit| hit.id).collect();
     let rows: HashMap<i32, search_docs::Model> = search_docs::Entity::find()
-        .filter(search_docs::Column::Id.is_in(ids))
+        .filter(search_docs::COLUMN.id.is_in(ids))
         .all(conn)
         .await?
         .into_iter()
@@ -342,7 +343,7 @@ pub async fn hybrid_knowledge(
     }
     let ids: Vec<i32> = fused.iter().map(|(id, _)| *id).collect();
     let chunks: HashMap<i32, knowledge_chunks::Model> = knowledge_chunks::Entity::find()
-        .filter(knowledge_chunks::Column::Id.is_in(ids))
+        .filter(knowledge_chunks::COLUMN.id.is_in(ids))
         .all(conn)
         .await?
         .into_iter()
@@ -350,14 +351,14 @@ pub async fn hybrid_knowledge(
         .collect();
     let entry_ids: Vec<i32> = chunks.values().map(|row| row.entry_id).collect();
     let entries: HashMap<i32, knowledge_entries::Model> = knowledge_entries::Entity::find()
-        .filter(knowledge_entries::Column::Id.is_in(entry_ids))
+        .filter(knowledge_entries::COLUMN.id.is_in(entry_ids))
         .all(conn)
         .await?
         .into_iter()
         .map(|row| (row.id, row))
         .collect();
     let scopes: HashMap<i32, String> = knowledge_scopes::Entity::find()
-        .filter(knowledge_scopes::Column::Id.is_in(scope_ids.to_vec()))
+        .filter(knowledge_scopes::COLUMN.id.is_in(scope_ids.to_vec()))
         .all(conn)
         .await?
         .into_iter()
@@ -424,6 +425,7 @@ async fn fts_knowledge_ids(
         values.push((*scope_id as i64).into());
     }
     let rows = conn
+        // Raw: FTS5 MATCH and vec0 KNN queries have no typed API.
         .query_all_raw(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             &sql,

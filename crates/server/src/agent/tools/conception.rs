@@ -610,8 +610,8 @@ async fn find_design(
     name: &str,
 ) -> Result<Option<character_designs::Model>, ToolError> {
     character_designs::Entity::find()
-        .filter(character_designs::Column::BookId.eq(book_id))
-        .filter(character_designs::Column::Name.eq(name))
+        .filter(character_designs::COLUMN.book_id.eq(book_id))
+        .filter(character_designs::COLUMN.name.eq(name))
         .one(ctx.tx)
         .await
         .map_err(|_| internal())
@@ -700,8 +700,8 @@ async fn ranked_designs(
     book_id: i32,
 ) -> Result<Vec<character_designs::Model>, ToolError> {
     character_designs::Entity::find()
-        .filter(character_designs::Column::BookId.eq(book_id))
-        .order_by_asc(character_designs::Column::Rank)
+        .filter(character_designs::COLUMN.book_id.eq(book_id))
+        .order_by_asc(character_designs::COLUMN.rank)
         .all(ctx.tx)
         .await
         .map_err(|_| internal())
@@ -935,9 +935,9 @@ impl ToolHandler for SetResearchTopicsTool {
         }
         let book_id = book_id(ctx)?;
         let drafts = research_tasks::Entity::find()
-            .filter(research_tasks::Column::BookId.eq(book_id))
-            .filter(research_tasks::Column::Status.eq(ResearchTaskStatus::Draft))
-            .order_by_asc(research_tasks::Column::Id)
+            .filter(research_tasks::COLUMN.book_id.eq(book_id))
+            .filter(research_tasks::COLUMN.status.eq(ResearchTaskStatus::Draft))
+            .order_by_asc(research_tasks::COLUMN.id)
             .all(ctx.tx)
             .await
             .map_err(|_| internal())?;
@@ -1208,9 +1208,9 @@ pub async fn open_conception_session(
     book_id: i32,
 ) -> Result<Option<i32>, AppError> {
     let row = agent_sessions::Entity::find()
-        .filter(agent_sessions::Column::BookId.eq(book_id))
-        .filter(agent_sessions::Column::Kind.eq(SessionKind::Conception))
-        .filter(agent_sessions::Column::Status.is_in([
+        .filter(agent_sessions::COLUMN.book_id.eq(book_id))
+        .filter(agent_sessions::COLUMN.kind.eq(SessionKind::Conception))
+        .filter(agent_sessions::COLUMN.status.is_in([
             "idle",
             "running",
             "held",
@@ -1220,7 +1220,7 @@ pub async fn open_conception_session(
             "failed",
             "interrupted",
         ]))
-        .order_by_desc(agent_sessions::Column::Id)
+        .order_by_desc(agent_sessions::COLUMN.id)
         .one(tx)
         .await?;
     Ok(row.map(|row| row.id))

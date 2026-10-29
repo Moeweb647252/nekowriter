@@ -5,7 +5,7 @@ use nekowriter::db::entities::knowledge_chunks;
 use nekowriter::search::hybrid_knowledge;
 use nekowriter::services::indexer;
 use nekowriter::testing::TestApp;
-use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter};
+use sea_orm::{ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter};
 use serde_json::json;
 
 async fn count(app: &TestApp, sql: &str) -> i64 {
@@ -211,7 +211,7 @@ async fn a_failed_entry_patch_changes_no_chunk() {
     let first = entry(&app, scope_id, "Tea", "# Tea\n\nSong tea houses.").await;
     entry(&app, scope_id, "Tea houses", "other").await;
     let before: Vec<(i32, String, String)> = knowledge_chunks::Entity::find()
-        .filter(knowledge_chunks::Column::EntryId.eq(first))
+        .filter(knowledge_chunks::COLUMN.entry_id.eq(first))
         .all(app.db().conn())
         .await
         .expect("chunks")
@@ -226,7 +226,7 @@ async fn a_failed_entry_patch_changes_no_chunk() {
         .await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     let after: Vec<(i32, String, String)> = knowledge_chunks::Entity::find()
-        .filter(knowledge_chunks::Column::EntryId.eq(first))
+        .filter(knowledge_chunks::COLUMN.entry_id.eq(first))
         .all(app.db().conn())
         .await
         .expect("chunks")
