@@ -35,8 +35,8 @@ pub struct Model {
     pub author: WritingSkillAuthor,
     pub description: String,
     pub body: String,
-    pub enabled_by_default: i32,
-    pub retired: i32,
+    pub enabled_by_default: bool,
+    pub retired: bool,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
     #[sea_orm(has_many, via = "book_writing_skills")]

@@ -34,8 +34,7 @@ use sea_orm::{
 
 use crate::db::entities::{appearances, chapters, entities, relations, tracks};
 use crate::db::json::{
-    AppearanceRole, AppearanceSnapshot, ChangeActor, ChangeOp, ChangeTargetType, EntityKind,
-    EntityStatus, ForeshadowingStatus, NoteKind, NoteStatus, RelationStatus, Snapshot,
+    AppearanceSnapshot, CanonMode, ChangeActor, ChangeOp, ChangeTargetType, Snapshot, TrackKind,
 };
 use crate::error::AppError;
 use crate::events::ServerEvent;
@@ -366,7 +365,7 @@ pub async fn chapter_label(
         return Ok(String::new());
     };
     Ok(prompts.chapter_label(
-        &track.kind,
+        track.kind.as_str(),
         &track.title,
         i64::from(chapter.ord),
         &chapter.title,
@@ -390,7 +389,7 @@ pub async fn chapter_label_bare(
         return Ok(String::new());
     };
     Ok(prompts.chapter_label(
-        &track.kind,
+        track.kind.as_str(),
         &track.title,
         i64::from(chapter.ord),
         &chapter.title,
@@ -435,7 +434,7 @@ pub async fn chapter_orders(
                 track.id,
                 (
                     track.ord,
-                    track.kind == "main" || track.canon_mode == "canon",
+                    track.kind == TrackKind::Main || track.canon_mode == CanonMode::Canon,
                 ),
             )
         })
@@ -465,7 +464,7 @@ pub async fn chapter_orders(
 
 pub fn entity_snapshot(row: &entities::Model) -> CanonResult<Snapshot> {
     Ok(Snapshot::Entity {
-        kind: super::enum_of::<EntityKind>("entities.kind", &row.kind)?,
+        kind: row.kind,
         name: row.name.clone(),
         aliases: aliases_of(row)?,
         summary: row.summary.clone(),
@@ -473,8 +472,8 @@ pub fn entity_snapshot(row: &entities::Model) -> CanonResult<Snapshot> {
         state: row.state.clone(),
         attributes: parse_json("entities.attributes", &row.attributes)?,
         importance: row.importance,
-        status: super::enum_of::<EntityStatus>("entities.status", &row.status)?,
-        is_protagonist: row.is_protagonist != 0,
+        status: row.status,
+        is_protagonist: row.is_protagonist,
         track_id: row.track_id,
     })
 }
@@ -486,7 +485,7 @@ pub fn relation_snapshot(row: &relations::Model) -> CanonResult<Snapshot> {
         kind: row.kind.clone(),
         inverse_kind: row.inverse_kind.clone(),
         description: row.description.clone(),
-        status: super::enum_of::<RelationStatus>("relations.status", &row.status)?,
+        status: row.status,
         since_chapter_id: row.since_chapter_id,
         until_chapter_id: row.until_chapter_id,
         track_id: row.track_id,
@@ -514,11 +513,11 @@ pub fn note_snapshot(
     entity_ids: Vec<i32>,
 ) -> CanonResult<Snapshot> {
     Ok(Snapshot::Note {
-        kind: super::enum_of::<NoteKind>("memory_notes.kind", &row.kind)?,
+        kind: row.kind,
         content: row.content.clone(),
         chapter_id: row.chapter_id,
         importance: row.importance,
-        status: super::enum_of::<NoteStatus>("memory_notes.status", &row.status)?,
+        status: row.status,
         entity_ids,
         track_id: row.track_id,
     })
@@ -532,7 +531,7 @@ pub fn foreshadowing_snapshot(
         title: row.title.clone(),
         description: row.description.clone(),
         planned_payoff: row.planned_payoff.clone(),
-        status: super::enum_of::<ForeshadowingStatus>("foreshadowing.status", &row.status)?,
+        status: row.status,
         planted_chapter_id: row.planted_chapter_id,
         resolved_chapter_id: row.resolved_chapter_id,
         resolution: row.resolution.clone(),
@@ -551,7 +550,7 @@ pub fn appearance_set_snapshot(rows: &[appearances::Model]) -> Snapshot {
             .into_iter()
             .map(|row| AppearanceSnapshot {
                 entity_id: row.entity_id,
-                role: AppearanceRole::from_str_opt(&row.role).unwrap_or(AppearanceRole::Mentioned),
+                role: row.role,
                 note: row.note.clone(),
             })
             .collect(),
@@ -843,15 +842,6 @@ pub fn summary_snapshot(summary: &str) -> Snapshot {
 
 // ───────────────────────────── shared conversions ─────────────────────────────
 
-/// Reads a plain-TEXT enum column into its Rust enum (the canon services' spelling of
-/// [`crate::services::enum_of`]).
-pub(crate) fn enum_of<T: std::str::FromStr<Err = String>>(
-    column: &str,
-    raw: &str,
-) -> CanonResult<T> {
-    crate::services::enum_of(column, raw).map_err(CanonError::from)
-}
-
 /// Deserializes a typed JSON column.
 pub(crate) fn parse_json<T: for<'de> serde::Deserialize<'de>>(
     column: &str,
@@ -990,7 +980,9 @@ fn decode_error(error: sea_orm::DbErr) -> CanonError {
 /// The visibility of a track (main story and canon-mode side tracks see shared canon only).
 pub fn visibility_of_track(book_id: i32, track: Option<&tracks::Model>) -> Visibility {
     match track {
-        Some(track) if track.canon_mode == "isolated" => Visibility::isolated(book_id, track.id),
+        Some(track) if track.canon_mode == CanonMode::Isolated => {
+            Visibility::isolated(book_id, track.id)
+        }
         _ => Visibility::shared(book_id),
     }
 }

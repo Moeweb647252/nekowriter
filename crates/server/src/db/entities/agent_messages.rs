@@ -2,6 +2,8 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::{MessageKind, MessageRole};
+
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "agent_messages")]
@@ -12,8 +14,8 @@ pub struct Model {
     pub session_id: i32,
     #[sea_orm(unique_key = "session_seq")]
     pub seq: i32,
-    pub role: String,
-    pub kind: String,
+    pub role: MessageRole,
+    pub kind: MessageKind,
     pub content: String,
     pub provider_payload: Option<String>,
     pub request_meta: Option<String>,

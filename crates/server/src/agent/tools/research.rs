@@ -85,8 +85,7 @@ async fn target_scope(ctx: &ToolCtx<'_>, tool: &str) -> Result<(i32, String), To
     use crate::db::json::SessionKind;
     if crate::agent::session::kind_of(ctx.session) != SessionKind::Research {
         // `notice.tool_not_allowed` reads tool, phase_label and allowed.
-        let phase = crate::db::json::Phase::from_str_opt(&ctx.session.phase)
-            .unwrap_or(crate::db::json::Phase::None);
+        let phase = ctx.session.phase;
         return Err(ToolError::tool_not_allowed(
             tool,
             crate::agent::tools::registry::phase_label(ctx.prompts, phase),
@@ -243,7 +242,7 @@ impl ToolHandler for SaveKnowledgeEntryTool {
             knowledge_entries::ActiveModel {
                 id: Set(entry.id),
                 research_task_id: Set(Some(task_id)),
-                source: Set(crate::db::json::EntrySource::Research.as_str().to_owned()),
+                source: Set(crate::db::json::EntrySource::Research),
                 ..Default::default()
             }
             .update(ctx.tx)

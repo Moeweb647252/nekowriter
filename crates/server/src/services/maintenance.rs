@@ -219,7 +219,7 @@ pub async fn last_archivist_kind(
         .order_by_desc(agent_sessions::Column::Id)
         .one(conn)
         .await?;
-    Ok(row.and_then(|row| SessionKind::from_str_opt(&row.kind)))
+    Ok(row.map(|row| row.kind))
 }
 
 /// An `official` version whose text equals `content`, newest first (spec/06 §8: "an existing
@@ -237,7 +237,7 @@ async fn official_version_with_content(
 ) -> Result<Option<i32>, AppError> {
     let rows = chapter_versions::Entity::find()
         .filter(chapter_versions::Column::ChapterId.eq(chapter_id))
-        .filter(chapter_versions::Column::Kind.eq(crate::db::json::VersionKind::Official.as_str()))
+        .filter(chapter_versions::Column::Kind.eq(crate::db::json::VersionKind::Official))
         .order_by_desc(chapter_versions::Column::Id)
         .all(conn)
         .await?;
@@ -254,12 +254,12 @@ async fn official_version_with_content(
 
 /// Reads the canon status column.
 pub fn canon_status_of(chapter: &chapters::Model) -> CanonStatus {
-    CanonStatus::from_str_opt(&chapter.canon_status).unwrap_or(CanonStatus::None)
+    chapter.canon_status
 }
 
 /// Rejects an operation on a chapter that is not official.
 fn require_official(chapter: &chapters::Model) -> Result<(), AppError> {
-    let status = ChapterStatus::from_str_opt(&chapter.status).unwrap_or(ChapterStatus::Planned);
+    let status = chapter.status;
     if status == ChapterStatus::Official {
         return Ok(());
     }

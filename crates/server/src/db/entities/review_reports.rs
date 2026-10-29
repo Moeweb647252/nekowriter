@@ -2,6 +2,8 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::ReviewVerdict;
+
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "review_reports")]
@@ -12,7 +14,7 @@ pub struct Model {
     pub content_version: i32,
     pub session_id: Option<i32>,
     pub attempt: i32,
-    pub verdict: String,
+    pub verdict: ReviewVerdict,
     pub summary: String,
     pub issues: String,
     pub feedback: String,

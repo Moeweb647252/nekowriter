@@ -22,7 +22,7 @@ use similar::{ChangeTag, TextDiff};
 
 use sea_orm::ConnectionTrait;
 
-use crate::db::json::{ChapterContent, ConceptionDocSnapshot, ViewSnapshot};
+use crate::db::json::{ChapterContent, ConceptionDocSnapshot, ResearchTaskStatus, ViewSnapshot};
 use crate::error::AppError;
 use crate::prompts::PromptSet;
 use crate::prompts::context::{
@@ -538,7 +538,7 @@ pub async fn current_conception_state(
     let mut doc_map = BTreeMap::new();
     for doc in docs {
         doc_map.insert(
-            doc.kind,
+            doc.kind.as_str().to_owned(),
             ConceptionDocSnapshot {
                 revision: doc.revision,
                 content: doc.content,
@@ -562,7 +562,7 @@ pub async fn current_conception_state(
         .collect();
     let topics = research_tasks::Entity::find()
         .filter(research_tasks::Column::BookId.eq(book_id))
-        .filter(research_tasks::Column::Status.eq("draft"))
+        .filter(research_tasks::Column::Status.eq(ResearchTaskStatus::Draft))
         .order_by_asc(research_tasks::Column::Id)
         .all(conn)
         .await?

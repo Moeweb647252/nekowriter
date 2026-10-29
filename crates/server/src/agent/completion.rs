@@ -55,7 +55,7 @@ async fn finish_version(
     chapter_versions::ActiveModel {
         chapter_id: Set(chapter_id),
         version_no: Set(version_no),
-        kind: Set(kind.as_str().to_owned()),
+        kind: Set(kind),
         title: Set(chapter.title.clone()),
         content: Set(crate::db::json::to_json(&content)
             .map_err(|err| AppError::internal(err.to_string()))?),
@@ -71,7 +71,7 @@ async fn finish_version(
     let now = Utc::now();
     chapters::ActiveModel {
         id: Set(chapter_id),
-        status: Set(ChapterStatus::InReview.as_str().to_owned()),
+        status: Set(ChapterStatus::InReview),
         word_count: Set(word_count),
         updated_at: Set(now),
         ..Default::default()
@@ -143,7 +143,7 @@ pub async fn finish_maintenance(
     };
     chapters::ActiveModel {
         id: Set(chapter_id),
-        canon_status: Set(canon_status.as_str().to_owned()),
+        canon_status: Set(canon_status),
         synced_version_id: Set(chapter.official_version_id),
         updated_at: Set(Utc::now()),
         ..Default::default()
@@ -190,7 +190,7 @@ pub async fn finish_seed(
     }
     let candidates = entities::Entity::find()
         .filter(entities::Column::BookId.eq(book_id))
-        .filter(entities::Column::Kind.eq(EntityKind::Character.as_str()))
+        .filter(entities::Column::Kind.eq(EntityKind::Character))
         .filter(entities::Column::TrackId.is_null())
         .all(tx)
         .await?;

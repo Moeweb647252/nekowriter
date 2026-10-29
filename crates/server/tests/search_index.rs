@@ -5,6 +5,7 @@
 
 use axum::http::StatusCode;
 use nekowriter::db::entities::{knowledge_chunks, search_docs};
+use nekowriter::db::json::EmbedState;
 use nekowriter::search::{index, maintenance};
 use nekowriter::services::indexer;
 use nekowriter::testing::TestApp;
@@ -115,7 +116,7 @@ async fn entity_documents_follow_the_crud_flow() {
         doc.body, "the protagonist · Fan · qi refining · age: 17 · a young cultivator",
         "spec/07 §2 entity body"
     );
-    assert_eq!(doc.embed_state, "pending");
+    assert_eq!(doc.embed_state, EmbedState::Pending);
     assert_eq!(doc.track_id, None);
     // The FTS row exists and holds jieba-segmented tokens.
     assert_eq!(fts_hits(&app, "\"lin\"").await, 1);
@@ -130,14 +131,14 @@ async fn entity_documents_follow_the_crud_flow() {
         .await;
     assert_eq!(status, StatusCode::OK, "patch entity: {body}");
     let doc = doc_row(&app, "entity", entity_id).await.expect("doc");
-    assert_eq!(doc.embed_state, "pending");
+    assert_eq!(doc.embed_state, EmbedState::Pending);
     assert_eq!(fts_hits(&app, "\"hero\"").await, 1);
 
     // Indexing stores the vector and marks the row done.
     let report = indexer::run_once(app.state()).await.expect("indexer");
     assert_eq!(report.stored, 1, "{report:?}");
     let doc = doc_row(&app, "entity", entity_id).await.expect("doc");
-    assert_eq!(doc.embed_state, "done");
+    assert_eq!(doc.embed_state, EmbedState::Done);
     assert_eq!(count_rows(&app, "vec_book").await, 1);
 
     // Deleting the entity removes the document, its FTS row and its vector (spec/02 §5.11).
@@ -192,7 +193,7 @@ async fn approving_a_chapter_indexes_its_passages() {
         .expect("passages");
     assert_eq!(docs_after.len(), 1);
     assert_eq!(docs_after[0].id, passage_id, "the hash diff keeps the row");
-    assert_eq!(docs_after[0].embed_state, "pending");
+    assert_eq!(docs_after[0].embed_state, EmbedState::Pending);
     assert!(docs_after[0].body.contains("rewritten"));
     // The old vector is replaced only by the next batch, which stores one vector for the row.
     let report = indexer::run_once(app.state()).await.expect("indexer");
@@ -253,7 +254,7 @@ async fn a_model_change_rebuilds_the_vec_tables_and_resets_the_states() {
         "the fake embedder follows the model table's dimension in tests"
     );
     let doc = doc_row(&app, "entity", entity_id).await.expect("doc");
-    assert_eq!(doc.embed_state, "pending");
+    assert_eq!(doc.embed_state, EmbedState::Pending);
     assert_eq!(
         fts_before,
         count_rows(&app, "fts_book").await,
@@ -295,7 +296,7 @@ async fn a_startup_with_a_stale_index_meta_rebuilds_the_schema() {
         Some("384")
     );
     let doc = doc_row(&app, "entity", entity_id).await.expect("doc");
-    assert_eq!(doc.embed_state, "pending");
+    assert_eq!(doc.embed_state, EmbedState::Pending);
 }
 
 #[tokio::test]
@@ -327,7 +328,7 @@ async fn an_item_changed_or_deleted_during_embedding_gets_no_stale_vector() {
     assert!(!stored, "a changed row must not get the old vector");
     assert_eq!(count_rows(&app, "vec_book").await, 0);
     let doc = doc_row(&app, "entity", entity_id).await.expect("doc");
-    assert_eq!(doc.embed_state, "pending");
+    assert_eq!(doc.embed_state, EmbedState::Pending);
 
     // A deleted row gets no vector either, and the next batch stores the fresh content.
     let old_hash = doc.content_hash.clone();
@@ -461,14 +462,14 @@ async fn rebuild_marks_everything_pending_and_retries_failed_items() {
     app.execute("UPDATE search_docs SET embed_state = 'failed'")
         .await;
     let doc = doc_row(&app, "entity", entity_id).await.expect("doc");
-    assert_eq!(doc.embed_state, "failed");
+    assert_eq!(doc.embed_state, EmbedState::Failed);
 
     let (status, _) = app
         .post("/api/embedding/rebuild", serde_json::json!({}))
         .await;
     assert_eq!(status, StatusCode::ACCEPTED);
     let doc = doc_row(&app, "entity", entity_id).await.expect("doc");
-    assert_eq!(doc.embed_state, "pending");
+    assert_eq!(doc.embed_state, EmbedState::Pending);
 }
 
 #[tokio::test]

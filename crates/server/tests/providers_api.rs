@@ -4,6 +4,7 @@
 //! `wiremock` server, and the Demo provider's in-process `mock://` client covers the rest.
 
 use nekowriter::api::dto::providers as dto;
+use nekowriter::db::json::Protocol;
 use nekowriter::testing::{TestApp, assert_error};
 use serde_json::{Value, json};
 use wiremock::matchers::{bearer_token, body_string_contains, method, path};
@@ -1017,7 +1018,7 @@ fn a_stored_demo_provider_is_only_usable_when_the_demo_provider_is_enabled() {
     let row = nekowriter::db::entities::providers::Model {
         id: 1,
         name: "Demo".to_owned(),
-        protocol: "mock".to_owned(),
+        protocol: Protocol::Mock,
         base_url: "mock://demo".to_owned(),
         api_key: None,
         extra_headers: "{}".to_owned(),
@@ -1038,7 +1039,7 @@ fn a_stored_demo_provider_is_only_usable_when_the_demo_provider_is_enabled() {
 
     // An ordinary provider is unaffected by the flag.
     let openai = nekowriter::db::entities::providers::Model {
-        protocol: "openai".to_owned(),
+        protocol: Protocol::Openai,
         base_url: "https://example.invalid/v1".to_owned(),
         ..row
     };

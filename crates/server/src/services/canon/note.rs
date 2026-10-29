@@ -12,7 +12,7 @@ use sea_orm::{
 
 use crate::api::dto::canon::{MemoryNoteDto, MemoryNoteInput, MemoryNotePatch, MemoryNoteQuery};
 use crate::db::entities::memory_notes;
-use crate::db::json::{ChangeOp, ChangeTargetType, NoteKind, NoteStatus};
+use crate::db::json::{ChangeOp, ChangeTargetType, NoteStatus};
 use crate::events::ServerEvent;
 
 use super::{
@@ -88,11 +88,11 @@ pub async fn create_inner(
         id: Set(new_id),
         book_id: Set(book_id),
         track_id: Set(write.new_row_track()),
-        kind: Set(input.kind.as_str().to_owned()),
+        kind: Set(input.kind),
         content: Set(content.to_owned()),
         chapter_id: Set(input.chapter_id.or(write.chapter_id)),
         importance: Set(input.importance),
-        status: Set(NoteStatus::Active.as_str().to_owned()),
+        status: Set(NoteStatus::Active),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),
     };
@@ -166,7 +166,7 @@ pub async fn update_inner(
         ..Default::default()
     };
     if let Some(kind) = patch.kind {
-        active.kind = Set(kind.as_str().to_owned());
+        active.kind = Set(kind);
     }
     if let Some(content) = &patch.content {
         let content = content.trim();
@@ -182,7 +182,7 @@ pub async fn update_inner(
         active.importance = Set(importance);
     }
     if let Some(status) = patch.status {
-        active.status = Set(status.as_str().to_owned());
+        active.status = Set(status);
     }
     active.update(tx).await?;
     if let Some(entity_ids) = &patch.entity_ids {
@@ -289,7 +289,7 @@ pub async fn retire_inner(
 ) -> CanonResult<(MemoryNoteDto, Vec<ServerEvent>)> {
     let existing = load(tx, note_id).await?;
     write.ensure_writable(existing.track_id, &format!("memory note #{}", existing.id))?;
-    if existing.status == NoteStatus::Retired.as_str() {
+    if existing.status == NoteStatus::Retired {
         return Ok((to_dto(tx, &existing).await?, Vec::new()));
     }
     let patch = MemoryNotePatch {
@@ -317,11 +317,11 @@ pub async fn to_dto(
         id: row.id,
         book_id: row.book_id,
         track_id: row.track_id,
-        kind: super::enum_of::<NoteKind>("memory_notes.kind", &row.kind)?,
+        kind: row.kind,
         content: row.content.clone(),
         chapter_id: row.chapter_id,
         importance: row.importance,
-        status: super::enum_of::<NoteStatus>("memory_notes.status", &row.status)?,
+        status: row.status,
         entity_ids: super::linked_entity_ids(conn, super::LinkTable::MemoryNote, row.id).await?,
         created_at: row.created_at,
         updated_at: row.updated_at,
@@ -397,11 +397,11 @@ pub async fn restore_inner(
     write.ensure_writable(existing.track_id, &format!("memory note #{}", existing.id))?;
     memory_notes::ActiveModel {
         id: Set(note_id),
-        kind: Set(kind.as_str().to_owned()),
+        kind: Set(*kind),
         content: Set(content.clone()),
         chapter_id: Set(*chapter_id),
         importance: Set(*importance),
-        status: Set(status.as_str().to_owned()),
+        status: Set(*status),
         updated_at: Set(stamp()),
         ..Default::default()
     }
@@ -443,11 +443,11 @@ pub async fn recreate_inner(
         id: Set(new_id),
         book_id: Set(book_id),
         track_id: Set(track_id.or_else(|| write.new_row_track())),
-        kind: Set(kind.as_str().to_owned()),
+        kind: Set(*kind),
         content: Set(content.clone()),
         chapter_id: Set(*chapter_id),
         importance: Set(*importance),
-        status: Set(status.as_str().to_owned()),
+        status: Set(*status),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),
     };

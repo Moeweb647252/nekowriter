@@ -2,6 +2,8 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::FeedbackMode;
+
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "chapter_feedback")]
@@ -13,7 +15,7 @@ pub struct Model {
     pub review_report_id: Option<i32>,
     pub text: String,
     pub issues: String,
-    pub mode: String,
+    pub mode: FeedbackMode,
     pub session_id: Option<i32>,
     pub created_at: DateTimeUtc,
     #[sea_orm(belongs_to, from = "chapter_id", to = "id")]

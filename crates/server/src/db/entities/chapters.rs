@@ -2,6 +2,8 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::{CanonStatus, ChapterStatus};
+
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "chapters")]
@@ -14,7 +16,7 @@ pub struct Model {
     #[sea_orm(unique_key = "track_ord")]
     pub ord: i32,
     pub title: String,
-    pub status: String,
+    pub status: ChapterStatus,
     pub guidance: String,
     pub outline: String,
     pub reference_notes: String,
@@ -23,7 +25,7 @@ pub struct Model {
     pub content_version: i32,
     pub word_count: i32,
     pub official_version_id: Option<i32>,
-    pub canon_status: String,
+    pub canon_status: CanonStatus,
     pub synced_version_id: Option<i32>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,

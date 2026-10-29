@@ -2,6 +2,8 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::AppearanceRole;
+
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "appearances")]
@@ -12,7 +14,7 @@ pub struct Model {
     pub chapter_id: i32,
     #[sea_orm(unique_key = "chapter_entity")]
     pub entity_id: i32,
-    pub role: String,
+    pub role: AppearanceRole,
     pub note: String,
     #[sea_orm(belongs_to, from = "chapter_id", to = "id")]
     pub chapter: BelongsTo<super::chapters::Entity>,

@@ -10,6 +10,7 @@
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 
 use crate::db::entities::{knowledge_chunks, knowledge_entries, search_docs};
+use crate::db::json::EmbedState;
 use crate::error::AppError;
 use crate::search::{chunk, index};
 use crate::state::AppState;
@@ -199,13 +200,13 @@ pub fn doc_embedding_input(title: &str, body: &str) -> String {
 /// (spec/07 §4).
 async fn take_pending(state: &AppState) -> Result<(Vec<PendingDoc>, Vec<PendingChunk>), AppError> {
     let doc_rows = search_docs::Entity::find()
-        .filter(search_docs::Column::EmbedState.eq("pending"))
+        .filter(search_docs::Column::EmbedState.eq(EmbedState::Pending))
         .order_by_asc(search_docs::Column::Id)
         .limit(BATCH_SIZE as u64)
         .all(state.db_conn())
         .await?;
     let chunk_rows = knowledge_chunks::Entity::find()
-        .filter(knowledge_chunks::Column::EmbedState.eq("pending"))
+        .filter(knowledge_chunks::Column::EmbedState.eq(EmbedState::Pending))
         .order_by_asc(knowledge_chunks::Column::Id)
         .limit(BATCH_SIZE as u64)
         .all(state.db_conn())

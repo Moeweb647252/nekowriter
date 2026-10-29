@@ -5,6 +5,7 @@
 
 use axum::http::StatusCode;
 use nekowriter::db::entities::knowledge_chunks;
+use nekowriter::db::json::EmbedState;
 use nekowriter::events::ServerEvent;
 use nekowriter::services::indexer;
 use nekowriter::testing::{TestApp, assert_error, assert_error_detail};
@@ -83,7 +84,7 @@ async fn scope_and_entry_crud_with_chunking_in_the_same_transaction() {
         .await
         .expect("chunks");
     assert_eq!(chunks.len(), 2, "{chunks:?}");
-    assert_eq!(chunks[0].embed_state, "pending");
+    assert_eq!(chunks[0].embed_state, EmbedState::Pending);
     assert!(
         count(
             &app,

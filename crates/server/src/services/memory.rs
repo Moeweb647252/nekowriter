@@ -23,8 +23,8 @@ use crate::db::entities::{
     tracks,
 };
 use crate::db::json::{
-    BookSettings, ChapterContent, ChapterStatus, EntityKind, EntityStatus, ForeshadowingStatus,
-    NoteKind, NoteStatus,
+    AnchorKind, BookSettings, CanonStatus, ChangeTargetType, ChapterContent, ChapterStatus,
+    EntityKind, EntityStatus, ForeshadowingStatus, NoteKind, NoteStatus, TrackKind,
 };
 use crate::error::AppError;
 use crate::prompts::PromptSet;
@@ -371,7 +371,7 @@ pub(crate) async fn prior_chapters_wanted(
         .collect();
     // A side story's first chapter still gets a short-term window: main-track chapters up to the
     // anchor are added in front until P has `wanted` (spec/06 §4.1, D-038).
-    if track.kind != "side" || entries.len() >= wanted {
+    if track.kind != TrackKind::Side || entries.len() >= wanted {
         return Ok(entries);
     }
     // "Main-track official chapters up to the anchor are added in front" (spec/06 §4.1): an
@@ -386,9 +386,9 @@ pub(crate) async fn prior_chapters_wanted(
     };
     let mut statement = chapters::Entity::find()
         .filter(chapters::Column::TrackId.eq(main.id))
-        .filter(chapters::Column::Status.eq(ChapterStatus::Official.as_str()))
+        .filter(chapters::Column::Status.eq(ChapterStatus::Official))
         .order_by_asc(chapters::Column::Ord);
-    if track.anchor_kind == "after_chapter" {
+    if track.anchor_kind == AnchorKind::AfterChapter {
         let Some(up_to) = anchor_ord(conn, track).await? else {
             return Ok(entries);
         };
@@ -602,7 +602,7 @@ async fn official_before(
     Ok(chapters::Entity::find()
         .filter(chapters::Column::TrackId.eq(track_id))
         .filter(chapters::Column::Ord.lt(ord))
-        .filter(chapters::Column::Status.eq(ChapterStatus::Official.as_str()))
+        .filter(chapters::Column::Status.eq(ChapterStatus::Official))
         .order_by_asc(chapters::Column::Ord)
         .all(conn)
         .await?)
@@ -615,7 +615,7 @@ async fn main_track(
 ) -> Result<Option<tracks::Model>, AppError> {
     Ok(tracks::Entity::find()
         .filter(tracks::Column::BookId.eq(book_id))
-        .filter(tracks::Column::Kind.eq("main"))
+        .filter(tracks::Column::Kind.eq(TrackKind::Main))
         .one(conn)
         .await?)
 }
@@ -640,7 +640,7 @@ async fn anchor_ord(
 /// (`{{ label }}《{{ title }}》`), so the label never carries the title itself.
 fn label_of(prompts: &PromptSet, track: &tracks::Model, chapter: &chapters::Model) -> String {
     prompts.chapter_label(
-        &track.kind,
+        track.kind.as_str(),
         &track.title,
         i64::from(chapter.ord),
         &chapter.title,
@@ -701,8 +701,8 @@ async fn protagonist(
     Ok(Some(EntityStateItem {
         id: row.id,
         name: row.name,
-        status_label: prompts.label("entity_status", &row.status),
-        status: row.status,
+        status_label: prompts.label("entity_status", row.status.as_str()),
+        status: row.status.as_str().to_owned(),
         state: row.state,
         after_anchor: state_after_anchor(conn, track, row.id).await?,
         attributes: attributes.into_iter().collect(),
@@ -718,11 +718,11 @@ pub async fn state_after_anchor(
     track: &tracks::Model,
     entity_id: i32,
 ) -> Result<bool, AppError> {
-    if track.kind != "side" {
+    if track.kind != TrackKind::Side {
         return Ok(false);
     }
     let last = change_log::Entity::find()
-        .filter(change_log::Column::TargetType.eq("entity"))
+        .filter(change_log::Column::TargetType.eq(ChangeTargetType::Entity))
         .filter(change_log::Column::TargetId.eq(entity_id))
         .filter(change_log::Column::RevertedById.is_null())
         .order_by_desc(change_log::Column::Id)
@@ -775,7 +775,10 @@ async fn recent_changes(
         .filter(change_log::Column::BookId.eq(chapter.book_id))
         .filter(visibility.visible_condition(change_log::Column::TrackId))
         .filter(change_log::Column::RevertedById.is_null())
-        .filter(change_log::Column::TargetType.is_in(["entity", "relation"]))
+        .filter(
+            change_log::Column::TargetType
+                .is_in([ChangeTargetType::Entity, ChangeTargetType::Relation]),
+        )
         .filter(change_log::Column::ChapterId.is_in(window.to_vec()))
         .filter(change_log::Column::Note.ne(""))
         .all(conn)
@@ -889,7 +892,7 @@ async fn appearance_counts(
     let characters = entities::Entity::find()
         .filter(entities::Column::Id.is_in(entity_ids))
         .filter(entities::Column::BookId.eq(chapter.book_id))
-        .filter(entities::Column::Kind.eq(EntityKind::Character.as_str()))
+        .filter(entities::Column::Kind.eq(EntityKind::Character))
         .filter(visibility.visible_condition(entities::Column::TrackId))
         .all(conn)
         .await?;
@@ -908,9 +911,8 @@ async fn appearance_counts(
             .push(AppearanceChapterItem {
                 chapter_id: row.chapter_id,
                 label: labels.get(&row.chapter_id).cloned().unwrap_or_default(),
-                role: crate::db::json::AppearanceRole::from_str_opt(&row.role)
-                    .unwrap_or(crate::db::json::AppearanceRole::Mentioned),
-                role_label: prompts.label("appearance_role", &row.role),
+                role: row.role,
+                role_label: prompts.label("appearance_role", row.role.as_str()),
             });
     }
     let mut items: Vec<AppearanceItem> = by_entity
@@ -966,8 +968,8 @@ async fn absent_important(
     let rows = entities::Entity::find()
         .filter(entities::Column::Id.is_in(candidates))
         .filter(entities::Column::BookId.eq(chapter.book_id))
-        .filter(entities::Column::Kind.eq(EntityKind::Character.as_str()))
-        .filter(entities::Column::Status.eq(EntityStatus::Active.as_str()))
+        .filter(entities::Column::Kind.eq(EntityKind::Character))
+        .filter(entities::Column::Status.eq(EntityStatus::Active))
         .filter(entities::Column::Importance.gte(IMPORTANT))
         .filter(visibility.visible_condition(entities::Column::TrackId))
         .all(conn)
@@ -1000,7 +1002,7 @@ async fn key_notes(
     let mut rows = memory_notes::Entity::find()
         .filter(memory_notes::Column::BookId.eq(visibility.book_id))
         .filter(visibility.visible_condition(memory_notes::Column::TrackId))
-        .filter(memory_notes::Column::Status.eq(NoteStatus::Active.as_str()))
+        .filter(memory_notes::Column::Status.eq(NoteStatus::Active))
         .filter(
             memory_notes::Column::Kind
                 .is_in([NoteKind::Fact.as_str(), NoteKind::WorldRule.as_str()]),
@@ -1015,8 +1017,8 @@ async fn key_notes(
         .into_iter()
         .map(|row| NoteItem {
             id: row.id,
-            kind: NoteKind::from_str_opt(&row.kind).unwrap_or(NoteKind::Other),
-            kind_label: prompts.label("note_kind", &row.kind),
+            kind: row.kind,
+            kind_label: prompts.label("note_kind", row.kind.as_str()),
             content: row.content,
         })
         .collect())
@@ -1034,7 +1036,7 @@ async fn open_foreshadowing(
     let mut rows = foreshadowing::Entity::find()
         .filter(foreshadowing::Column::BookId.eq(visibility.book_id))
         .filter(visibility.visible_condition(foreshadowing::Column::TrackId))
-        .filter(foreshadowing::Column::Status.eq(ForeshadowingStatus::Open.as_str()))
+        .filter(foreshadowing::Column::Status.eq(ForeshadowingStatus::Open))
         .all(conn)
         .await?;
     rows.sort_by(|a, b| {
@@ -1088,8 +1090,8 @@ async fn cast(
         .map(|row| CastItem {
             id: row.id,
             name: row.name,
-            kind_label: prompts.label("entity_kind", &row.kind),
-            kind: EntityKind::from_str_opt(&row.kind).unwrap_or(EntityKind::Other),
+            kind_label: prompts.label("entity_kind", row.kind.as_str()),
+            kind: row.kind,
             summary: row.summary,
             importance: row.importance,
             last_chapter_id: row.last_chapter_id,
@@ -1125,7 +1127,7 @@ async fn counts(
     let note_rows = memory_notes::Entity::find()
         .filter(memory_notes::Column::BookId.eq(visibility.book_id))
         .filter(visibility.visible_condition(memory_notes::Column::TrackId))
-        .filter(memory_notes::Column::Status.eq(NoteStatus::Active.as_str()))
+        .filter(memory_notes::Column::Status.eq(NoteStatus::Active))
         .all(conn)
         .await?;
     for row in &note_rows {
@@ -1138,7 +1140,7 @@ async fn counts(
     counts.foreshadowing_open = foreshadowing::Entity::find()
         .filter(foreshadowing::Column::BookId.eq(visibility.book_id))
         .filter(visibility.visible_condition(foreshadowing::Column::TrackId))
-        .filter(foreshadowing::Column::Status.eq(ForeshadowingStatus::Open.as_str()))
+        .filter(foreshadowing::Column::Status.eq(ForeshadowingStatus::Open))
         .count(conn)
         .await? as i32;
     Ok(counts)
@@ -1150,7 +1152,7 @@ async fn anchor(
     prompts: &PromptSet,
     track: &tracks::Model,
 ) -> Result<Option<AnchorInfo>, AppError> {
-    if track.kind == "main" || track.anchor_kind == "none" {
+    if track.kind == TrackKind::Main || track.anchor_kind == AnchorKind::None {
         return Ok(None);
     }
     let (chapter_id, label) = match track.anchor_chapter_id {
@@ -1168,7 +1170,7 @@ async fn anchor(
         None => (None, String::new()),
     };
     Ok(Some(AnchorInfo {
-        kind: track.anchor_kind.clone(),
+        kind: track.anchor_kind.as_str().to_owned(),
         chapter_id,
         label,
     }))
@@ -1327,7 +1329,7 @@ async fn next_chapter(
             track_id: track.id,
             ord: 1,
             title: String::new(),
-            status: ChapterStatus::Planned.as_str().to_owned(),
+            status: ChapterStatus::Planned,
             guidance: String::new(),
             outline: String::new(),
             reference_notes: String::new(),
@@ -1336,7 +1338,7 @@ async fn next_chapter(
             content_version: 0,
             word_count: 0,
             official_version_id: None,
-            canon_status: "none".to_owned(),
+            canon_status: CanonStatus::None,
             synced_version_id: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),

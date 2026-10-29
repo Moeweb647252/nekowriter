@@ -2,6 +2,8 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::{ChangeActor, ChangeOp, ChangeTargetType};
+
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "change_log")]
@@ -12,10 +14,10 @@ pub struct Model {
     pub track_id: Option<i32>,
     pub chapter_id: Option<i32>,
     pub session_id: Option<i32>,
-    pub actor: String,
-    pub target_type: String,
+    pub actor: ChangeActor,
+    pub target_type: ChangeTargetType,
     pub target_id: i32,
-    pub op: String,
+    pub op: ChangeOp,
     pub before: Option<String>,
     pub after: Option<String>,
     pub note: String,

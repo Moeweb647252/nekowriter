@@ -236,7 +236,7 @@ pub async fn stored_option_mismatches(
         let Some(provider) = providers.iter().find(|row| row.id == profile.provider_id) else {
             continue;
         };
-        let protocol = llm_protocol(parse_protocol(&provider.protocol)?);
+        let protocol = llm_protocol(parse_protocol(provider.protocol.as_str())?);
         let options: ModelOptionsDto = serde_json::from_str(&profile.options).unwrap_or_default();
         let unreachable: Vec<String> = options
             .to_model_options()
@@ -343,7 +343,7 @@ async fn provider_dto(
     let extra_headers: BTreeMap<String, String> =
         serde_json::from_str(&row.extra_headers).unwrap_or_default();
     // Every profile of this provider shares its protocol, which is what decides `ignored_options`.
-    let protocol = parse_protocol(&row.protocol)?;
+    let protocol = parse_protocol(row.protocol.as_str())?;
     let protocols = BTreeMap::from([(row.id, protocol)]);
     Ok(ProviderDto {
         id: row.id,
@@ -434,7 +434,7 @@ pub async fn create(state: &AppState, input: &ProviderInput) -> Result<ProviderD
                 let now = chrono::Utc::now();
                 let active = providers::ActiveModel {
                     name: Set(validated.name.clone()),
-                    protocol: Set(validated.protocol.as_str().to_owned()),
+                    protocol: Set(validated.protocol),
                     base_url: Set(validated.base_url.clone()),
                     api_key: Set(validated.api_key.clone()),
                     extra_headers: Set(serde_json::to_string(&validated.extra_headers)
@@ -475,7 +475,7 @@ pub async fn update(
                 }
                 let mut active: providers::ActiveModel = row.clone().into();
                 active.name = Set(validated.name.clone());
-                active.protocol = Set(validated.protocol.as_str().to_owned());
+                active.protocol = Set(validated.protocol);
                 active.base_url = Set(validated.base_url.clone());
                 active.extra_headers = Set(serde_json::to_string(&validated.extra_headers)
                     .unwrap_or_else(|_| "{}".to_owned()));
@@ -629,7 +629,7 @@ async fn provider_protocols(
 ) -> Result<BTreeMap<i32, Protocol>, AppError> {
     let rows = providers::Entity::find().all(conn).await?;
     rows.into_iter()
-        .map(|row| Ok((row.id, parse_protocol(&row.protocol)?)))
+        .map(|row| Ok((row.id, parse_protocol(row.protocol.as_str())?)))
         .collect()
 }
 
@@ -700,7 +700,10 @@ pub async fn create_model(
                 check_protocol_row_allowed(&provider, demo_enabled)?;
                 // The protocol lives on the provider row, so the cross-protocol check belongs
                 // inside the transaction that reads it (spec/04 §5, D-132).
-                validate_options_protocol(&input.options, parse_protocol(&provider.protocol)?)?;
+                validate_options_protocol(
+                    &input.options,
+                    parse_protocol(provider.protocol.as_str())?,
+                )?;
                 ensure_unique_name(tx, input.provider_id, &input.display_name, None).await?;
                 let now = chrono::Utc::now();
                 let active = model_profiles::ActiveModel {
@@ -730,7 +733,7 @@ fn check_protocol_row_allowed(
     provider: &providers::Model,
     demo_enabled: bool,
 ) -> Result<(), AppError> {
-    if provider.protocol == Protocol::Mock.as_str() && !demo_enabled {
+    if provider.protocol == Protocol::Mock && !demo_enabled {
         return Err(AppError::validation(
             "the demo provider is disabled; start the server with --enable-demo-provider",
         ));
@@ -752,7 +755,10 @@ pub async fn update_model(
             Box::pin(async move {
                 let provider = find_provider(tx, input.provider_id).await?;
                 check_protocol_row_allowed(&provider, demo_enabled)?;
-                validate_options_protocol(&input.options, parse_protocol(&provider.protocol)?)?;
+                validate_options_protocol(
+                    &input.options,
+                    parse_protocol(provider.protocol.as_str())?,
+                )?;
                 ensure_unique_name(tx, input.provider_id, &input.display_name, Some(id)).await?;
                 let row = model_profiles::Entity::find_by_id(id)
                     .one(tx)
@@ -1017,7 +1023,7 @@ async fn test_request_config(
     if let Some(row) = borrowed {
         return Ok((row.model.clone(), options));
     }
-    if provider.protocol == Protocol::Mock.as_str() {
+    if provider.protocol == Protocol::Mock {
         return Ok((DEMO_MODEL_ID.to_owned(), options));
     }
     Err(AppError::validation(
@@ -1087,7 +1093,7 @@ pub fn client_for(
 pub fn provider_config(
     provider: &providers::Model,
 ) -> Result<nekowriter_llm::ProviderConfig, AppError> {
-    let protocol = parse_protocol(&provider.protocol)?;
+    let protocol = parse_protocol(provider.protocol.as_str())?;
     let api_key = match provider.api_key.as_deref() {
         Some(key) if key.starts_with("env:") => {
             let name = &key["env:".len()..];

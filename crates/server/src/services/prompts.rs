@@ -216,10 +216,10 @@ async fn upsert(
     let mut query = prompt_overrides::Entity::find().filter(prompt_overrides::Column::Key.eq(key));
     query = match (scope, book_id) {
         (PromptScope::Book, Some(book_id)) => query
-            .filter(prompt_overrides::Column::Scope.eq("book"))
+            .filter(prompt_overrides::Column::Scope.eq(PromptScope::Book))
             .filter(prompt_overrides::Column::BookId.eq(book_id)),
         _ => query
-            .filter(prompt_overrides::Column::Scope.eq("global"))
+            .filter(prompt_overrides::Column::Scope.eq(PromptScope::Global))
             .filter(prompt_overrides::Column::BookId.is_null()),
     };
     let existing = query.one(tx).await?;
@@ -233,7 +233,7 @@ async fn upsert(
         }
         None => {
             let active = prompt_overrides::ActiveModel {
-                scope: Set(scope.as_str().to_owned()),
+                scope: Set(scope),
                 book_id: Set(book_id),
                 key: Set(key.to_owned()),
                 content: Set(content.to_owned()),

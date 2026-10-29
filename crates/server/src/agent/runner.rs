@@ -130,7 +130,7 @@ pub async fn drive(ctx: RunnerCtx) -> Result<(), AppError> {
         // Re-reading the row at every loop step is what makes a concurrent pause or granularity
         // change impossible to lose (spec/03 §14, test 21).
         let session = session::load(ctx.state.db().conn(), ctx.session_id).await?;
-        if session.status != SessionStatus::Running.as_str() {
+        if session.status != SessionStatus::Running {
             return Ok(());
         }
         if ctx.cancel.is_cancelled() {
@@ -162,7 +162,7 @@ pub async fn drive(ctx: RunnerCtx) -> Result<(), AppError> {
 
         match classify_tail(ctx.state.db().conn(), ctx.session_id).await? {
             Tail::NeedsModel => {
-                if session.pause_requested != 0 {
+                if session.pause_requested {
                     let events = transition_in_write(
                         &ctx.state,
                         ctx.session_id,
@@ -217,7 +217,7 @@ async fn first_pending_call(
 ) -> Result<Option<agent_tool_calls::Model>, AppError> {
     Ok(agent_tool_calls::Entity::find()
         .filter(agent_tool_calls::Column::SessionId.eq(session_id))
-        .filter(agent_tool_calls::Column::Status.eq(ToolCallStatus::Pending.as_str()))
+        .filter(agent_tool_calls::Column::Status.eq(ToolCallStatus::Pending))
         .order_by_asc(agent_tool_calls::Column::Id)
         .one(conn)
         .await?)
@@ -228,7 +228,7 @@ pub async fn classify_tail(conn: &impl ConnectionTrait, session_id: i32) -> Resu
     let Some(last) = messages_of(conn, session_id).await?.pop() else {
         return Ok(Tail::NeedsModel);
     };
-    if last.role == MessageRole::User.as_str() {
+    if last.role == MessageRole::User {
         return Ok(Tail::NeedsModel);
     }
     let calls = calls_of(conn, last.id).await?;
@@ -260,8 +260,8 @@ pub async fn insert_user_message(
     let row = agent_messages::ActiveModel {
         session_id: Set(session_id),
         seq: Set(seq),
-        role: Set(MessageRole::User.as_str().to_owned()),
-        kind: Set(kind.as_str().to_owned()),
+        role: Set(MessageRole::User),
+        kind: Set(kind),
         content: Set(
             serde_json::to_string(&blocks).map_err(|err| AppError::internal(err.to_string()))?
         ),
@@ -499,7 +499,7 @@ async fn fail_in_write(
     crate::services::write(state.db(), move |tx| {
         Box::pin(async move {
             let session = session::load(tx, session_id).await?;
-            if session.status != SessionStatus::Running.as_str() {
+            if session.status != SessionStatus::Running {
                 return Ok(Vec::new());
             }
             session::set_error_running(tx, session_id, &error).await?;
@@ -532,7 +532,7 @@ async fn step_model(ctx: &RunnerCtx, session: &agent_sessions::Model) -> Result<
             // Drop the stream, persist nothing (spec/03 §5.5).
             sink.flush();
             let fresh = session::load(state.db().conn(), session.id).await?;
-            if fresh.status == SessionStatus::Running.as_str() {
+            if fresh.status == SessionStatus::Running {
                 // The reason decides the status: a shutdown during a stream gives `interrupted`,
                 // exactly as startup recovery would (spec/03 §5.1, spec/01 §5). The fallback keeps
                 // the Stop behaviour for a defensive token without a reason.
@@ -560,7 +560,7 @@ async fn step_model(ctx: &RunnerCtx, session: &agent_sessions::Model) -> Result<
                 }
             }
             let mut events = Vec::new();
-            if fresh.status == SessionStatus::Running.as_str() {
+            if fresh.status == SessionStatus::Running {
                 events =
                     fail_in_write(state, session.id, (*error).clone(), TransitionCause::Failed)
                         .await?;
@@ -722,8 +722,8 @@ async fn persist_assistant(
             let message = agent_messages::ActiveModel {
                 session_id: Set(session.id),
                 seq: Set(seq),
-                role: Set(MessageRole::Assistant.as_str().to_owned()),
-                kind: Set(MessageKind::Assistant.as_str().to_owned()),
+                role: Set(MessageRole::Assistant),
+                kind: Set(MessageKind::Assistant),
                 content: Set(
                     json::to_json(&blocks).map_err(|err| AppError::internal(err.to_string()))?
                 ),
@@ -769,15 +769,15 @@ async fn persist_assistant(
                     provider_call_id: Set(call.id.clone()),
                     name: Set(call.name.clone()),
                     input: Set(call.input_text.clone()),
-                    status: Set(status.as_str().to_owned()),
+                    status: Set(status),
                     raw_result_text: Set(raw_result_text),
                     appendices: Set(json::to_json(&appendices)
                         .map_err(|err| AppError::internal(err.to_string()))?),
                     result_text: Set(None),
-                    is_error: Set(i32::from(is_truncated)),
+                    is_error: Set(is_truncated),
                     ui: Set(None),
                     effects: Set(None),
-                    sealed: Set(0),
+                    sealed: Set(false),
                     created_at: Set(now),
                     started_at: Set(None),
                     finished_at: Set(if is_truncated { Some(now) } else { None }),
@@ -866,7 +866,7 @@ async fn persist_assistant(
             at: Utc::now(),
         };
         let fresh = session::load(state.db().conn(), session.id).await?;
-        if fresh.status == SessionStatus::Running.as_str() {
+        if fresh.status == SessionStatus::Running {
             let mut resolved = refuse_batch(state, &fresh, &prompts).await?;
             events.append(&mut resolved);
             let mut transition =
@@ -893,7 +893,7 @@ async fn refuse_batch(
             let Some(last) = messages
                 .iter()
                 .rev()
-                .find(|message| message.role == MessageRole::Assistant.as_str())
+                .find(|message| message.role == MessageRole::Assistant)
             else {
                 return Ok(events);
             };
@@ -901,19 +901,19 @@ async fn refuse_batch(
             let text = ToolOutcome::error(&prompts, &ToolError::new(ToolErrorKind::Refusal)).text;
             for call in calls_of(tx, last.id).await? {
                 if !matches!(
-                    ToolCallStatus::from_str_opt(&call.status),
-                    Some(ToolCallStatus::Pending)
-                        | Some(ToolCallStatus::Executing)
-                        | Some(ToolCallStatus::Held)
-                        | Some(ToolCallStatus::AwaitingInput)
+                    call.status,
+                    ToolCallStatus::Pending
+                        | ToolCallStatus::Executing
+                        | ToolCallStatus::Held
+                        | ToolCallStatus::AwaitingInput
                 ) {
                     continue;
                 }
                 agent_tool_calls::ActiveModel {
                     id: Set(call.id),
-                    status: Set(ToolCallStatus::Error.as_str().to_owned()),
+                    status: Set(ToolCallStatus::Error),
                     raw_result_text: Set(Some(text.clone())),
-                    is_error: Set(1),
+                    is_error: Set(true),
                     finished_at: Set(Some(Utc::now())),
                     effects: Set(Some(
                         json::to_json(&ToolEffects::default())
@@ -981,7 +981,7 @@ async fn step_tool(
         Box::pin(async move {
             agent_tool_calls::ActiveModel {
                 id: Set(call_id),
-                status: Set(ToolCallStatus::Executing.as_str().to_owned()),
+                status: Set(ToolCallStatus::Executing),
                 started_at: Set(Some(Utc::now())),
                 ..Default::default()
             }
@@ -1353,7 +1353,7 @@ async fn keep_view_snapshot_outline_in_sync(
     session::guard_columns(
         tx,
         session.id,
-        &session.status,
+        session.status.as_str(),
         "view_snapshot = ?",
         vec![stored.into()],
     )
@@ -1402,7 +1402,7 @@ async fn keep_view_snapshot_in_sync(
     session::guard_columns(
         tx,
         session.id,
-        &session.status,
+        session.status.as_str(),
         "view_snapshot = ?",
         vec![stored.into()],
     )
@@ -1541,7 +1541,7 @@ async fn finalize_inner(
     let raw_result_text = cap_result(prompts, &outcome.text, &call.name);
     agent_tool_calls::ActiveModel {
         id: Set(call.id),
-        status: Set(status.as_str().to_owned()),
+        status: Set(status),
         raw_result_text: Set(Some(raw_result_text)),
         appendices: Set(
             json::to_json(&appendices).map_err(|err| AppError::internal(err.to_string()))?
@@ -1552,7 +1552,7 @@ async fn finalize_inner(
             Some(json::to_json(&outcome.ui).map_err(|err| AppError::internal(err.to_string()))?)
         }),
         effects: Set(Some(stored_effects)),
-        is_error: Set(i32::from(outcome.is_error)),
+        is_error: Set(outcome.is_error),
         finished_at: Set(if deferred { None } else { Some(now) }),
         ..Default::default()
     }
@@ -1684,7 +1684,7 @@ pub(crate) async fn run_completion_handler(
     //    `error.after_completion` (spec/03 §5.4, D-025).
     let siblings = agent_tool_calls::Entity::find()
         .filter(agent_tool_calls::Column::MessageId.eq(call.message_id))
-        .filter(agent_tool_calls::Column::Status.eq(ToolCallStatus::Pending.as_str()))
+        .filter(agent_tool_calls::Column::Status.eq(ToolCallStatus::Pending))
         .order_by_asc(agent_tool_calls::Column::CallIndex)
         .all(tx)
         .await?;
@@ -1692,9 +1692,9 @@ pub(crate) async fn run_completion_handler(
         let rendered = ToolOutcome::error(prompts, &ToolError::new(ToolErrorKind::AfterCompletion));
         agent_tool_calls::ActiveModel {
             id: Set(sibling.id),
-            status: Set(ToolCallStatus::Error.as_str().to_owned()),
+            status: Set(ToolCallStatus::Error),
             raw_result_text: Set(Some(rendered.text)),
-            is_error: Set(1),
+            is_error: Set(true),
             finished_at: Set(Some(Utc::now())),
             ..Default::default()
         }
@@ -1810,16 +1810,14 @@ fn hold_condition(
     call: &agent_tool_calls::Model,
     outcome: &ToolOutcome,
 ) -> bool {
-    if session.pause_requested != 0 {
+    if session.pause_requested {
         return true;
     }
-    if session.auto_pause != 0
-        && super::tools::registry::is_write_tool(&call.name)
-        && !outcome.is_error
+    if session.auto_pause && super::tools::registry::is_write_tool(&call.name) && !outcome.is_error
     {
         return true;
     }
-    if call.name == "submit_outline" && session.pause_after_outline != 0 && !outcome.is_error {
+    if call.name == "submit_outline" && session.pause_after_outline && !outcome.is_error {
         return true;
     }
     false
@@ -1838,9 +1836,9 @@ async fn record_internal_failure(
         Box::pin(async move {
             agent_tool_calls::ActiveModel {
                 id: Set(call_id),
-                status: Set(ToolCallStatus::Error.as_str().to_owned()),
+                status: Set(ToolCallStatus::Error),
                 raw_result_text: Set(Some(text)),
-                is_error: Set(1),
+                is_error: Set(true),
                 finished_at: Set(Some(Utc::now())),
                 ..Default::default()
             }
@@ -1880,7 +1878,7 @@ async fn reset_call_to_pending_and_stop(
         Box::pin(async move {
             agent_tool_calls::ActiveModel {
                 id: Set(call_id),
-                status: Set(ToolCallStatus::Pending.as_str().to_owned()),
+                status: Set(ToolCallStatus::Pending),
                 started_at: Set(None),
                 ..Default::default()
             }
@@ -1940,12 +1938,12 @@ pub async fn seal_inner(
     let batch = match messages
         .iter()
         .rev()
-        .find(|message| message.role == MessageRole::Assistant.as_str())
+        .find(|message| message.role == MessageRole::Assistant)
     {
         Some(message) => calls_of(tx, message.id)
             .await?
             .into_iter()
-            .filter(|call| call.sealed == 0)
+            .filter(|call| !call.sealed)
             .collect::<Vec<_>>(),
         None => Vec::new(),
     };
@@ -1972,7 +1970,7 @@ pub async fn seal_inner(
                 appendices: Set(json::to_json(&appendices)
                     .map_err(|err| AppError::internal(err.to_string()))?),
                 result_text: Set(Some(composed)),
-                sealed: Set(1),
+                sealed: Set(true),
                 ..Default::default()
             }
             .update(tx)
@@ -1998,7 +1996,7 @@ pub async fn seal_inner(
         }
         let author = items
             .iter()
-            .any(|item| item.kind == json::InboxKind::UserMessage.as_str());
+            .any(|item| item.kind == json::InboxKind::UserMessage);
         let kind = if author {
             MessageKind::User
         } else {
@@ -2183,7 +2181,7 @@ pub async fn text_only_inner(
         }
         let author = items
             .iter()
-            .any(|item| item.kind == json::InboxKind::UserMessage.as_str());
+            .any(|item| item.kind == json::InboxKind::UserMessage);
         let kind = if author {
             MessageKind::User
         } else {
@@ -2398,7 +2396,7 @@ async fn provider_client(
             at: Utc::now(),
         };
         let fresh = session::load(state.db().conn(), session.id).await?;
-        if fresh.status == SessionStatus::Running.as_str() {
+        if fresh.status == SessionStatus::Running {
             let events = fail_in_write(state, session.id, error, TransitionCause::Failed).await?;
             state.events().publish_all(events);
         }

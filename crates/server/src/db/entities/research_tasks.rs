@@ -2,6 +2,8 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::ResearchTaskStatus;
+
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "research_tasks")]
@@ -14,7 +16,7 @@ pub struct Model {
     pub topic: String,
     pub requirements: String,
     pub language: String,
-    pub status: String,
+    pub status: ResearchTaskStatus,
     pub session_id: Option<i32>,
     pub report: String,
     pub entries_created: i32,

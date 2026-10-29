@@ -27,7 +27,7 @@ use crate::db::entities::{
     appearances, chapters, character_designs, entities, relations, timeline_event_entities, tracks,
 };
 use crate::db::json::{
-    AppearanceRole, ChangeOp, ChangeTargetType, EntityKind, EntityStatus, RelationStatus,
+    CanonMode, ChangeOp, ChangeTargetType, EntityKind, EntityStatus, RelationStatus,
 };
 use crate::events::ServerEvent;
 
@@ -149,7 +149,7 @@ pub async fn detail(
         attributes: attributes_of(&row)?,
         importance: row.importance,
         status: status_of(&row)?,
-        is_protagonist: row.is_protagonist != 0,
+        is_protagonist: row.is_protagonist,
         first_chapter_id: row.first_chapter_id,
         last_chapter_id: row.last_chapter_id,
         created_at: row.created_at,
@@ -241,7 +241,7 @@ pub async fn create_inner(
     let model = entities::ActiveModel {
         book_id: Set(book_id),
         track_id: Set(track_id),
-        kind: Set(input.kind.as_str().to_owned()),
+        kind: Set(input.kind),
         name: Set(name.to_owned()),
         aliases: Set(super::json(&aliases)?),
         summary: Set(input.summary.trim().to_owned()),
@@ -249,8 +249,8 @@ pub async fn create_inner(
         state: Set(input.state.clone()),
         attributes: Set(super::json(&input.attributes)?),
         importance: Set(input.importance),
-        status: Set(input.status.as_str().to_owned()),
-        is_protagonist: Set(i32::from(input.is_protagonist)),
+        status: Set(input.status),
+        is_protagonist: Set(input.is_protagonist),
         first_chapter_id: Set(first_chapter_id),
         last_chapter_id: Set(last_chapter_id),
         created_at: Set(timestamp),
@@ -292,7 +292,7 @@ pub async fn create_inner(
 
 /// A shared character entity links the character design with the same name (spec/05 §6).
 async fn link_design_by_name(tx: &impl ConnectionTrait, row: &entities::Model) -> CanonResult<()> {
-    if row.track_id.is_some() || row.kind != EntityKind::Character.as_str() {
+    if row.track_id.is_some() || row.kind != EntityKind::Character {
         return Ok(());
     }
     let design = character_designs::Entity::find()
@@ -403,7 +403,7 @@ pub async fn update_inner(
     }
     if let Some(is_protagonist) = patch.is_protagonist
         && is_protagonist
-        && existing.is_protagonist == 0
+        && !existing.is_protagonist
     {
         ensure_protagonist_free(tx, existing.book_id, Some(entity_id)).await?;
     }
@@ -414,7 +414,7 @@ pub async fn update_inner(
         ..Default::default()
     };
     if let Some(kind) = patch.kind {
-        active.kind = Set(kind.as_str().to_owned());
+        active.kind = Set(kind);
     }
     if patch.name.is_some() {
         active.name = Set(target_name);
@@ -438,10 +438,10 @@ pub async fn update_inner(
         active.importance = Set(importance);
     }
     if let Some(status) = patch.status {
-        active.status = Set(status.as_str().to_owned());
+        active.status = Set(status);
     }
     if let Some(is_protagonist) = patch.is_protagonist {
-        active.is_protagonist = Set(i32::from(is_protagonist));
+        active.is_protagonist = Set(is_protagonist);
     }
     active.update(tx).await?;
     let row = super::load_entity(tx, entity_id).await?;
@@ -605,7 +605,7 @@ pub async fn merge_inner(
     move_design_link(tx, &target, &source).await?;
     move_track_focus(tx, &target, &source).await?;
     // The protagonist flag moves with the merge (D-046).
-    let target_is_protagonist = target.is_protagonist != 0 || source.is_protagonist != 0;
+    let target_is_protagonist = target.is_protagonist || source.is_protagonist;
     // Union the aliases; B's name becomes an alias of A.
     let mut aliases = aliases_of(&target)?;
     aliases.push(source.name.clone());
@@ -613,12 +613,12 @@ pub async fn merge_inner(
     let aliases = clean_aliases(&aliases);
     // A never loses the more central importance to a minor duplicate.
     let importance = target.importance.max(source.importance);
-    if target_is_protagonist && source.is_protagonist != 0 && target.is_protagonist == 0 {
+    if target_is_protagonist && source.is_protagonist && !target.is_protagonist {
         // The partial unique index allows one protagonist per book: clear B's flag before A
         // takes it (D-046).
         entities::ActiveModel {
             id: Set(source.id),
-            is_protagonist: Set(0),
+            is_protagonist: Set(false),
             ..Default::default()
         }
         .update(tx)
@@ -628,7 +628,7 @@ pub async fn merge_inner(
         id: Set(into_id),
         aliases: Set(super::json(&aliases)?),
         importance: Set(importance),
-        is_protagonist: Set(i32::from(target_is_protagonist)),
+        is_protagonist: Set(target_is_protagonist),
         updated_at: Set(stamp()),
         ..Default::default()
     }
@@ -727,7 +727,7 @@ async fn move_relations(
         )
         .filter(relations::Column::SourceId.ne(source.id))
         .filter(relations::Column::TargetId.ne(source.id))
-        .filter(relations::Column::Status.eq(RelationStatus::Active.as_str()))
+        .filter(relations::Column::Status.eq(RelationStatus::Active))
         .all(tx)
         .await?;
     // The key is the ordered pair alone. `kind` is data on a relation, not part of its identity
@@ -763,7 +763,7 @@ async fn move_relations(
         // active relation of A; a collision is dropped, a free pair is recorded. A row with a
         // *different* kind is still a collision: the pair can only keep one active relation, and
         // the merge cannot invent a combined wording, so A's existing row wins.
-        if row.status == RelationStatus::Active.as_str()
+        if row.status == RelationStatus::Active
             && !taken.insert((source_id, target_id, row.track_id))
         {
             relations::Entity::delete_by_id(row.id).exec(tx).await?;
@@ -810,10 +810,10 @@ async fn move_appearances(
             }
             Some(existing) => {
                 // A keeps the more prominent role: pov > major > minor > mentioned.
-                if role_rank(&row.role) > role_rank(&existing.role) {
+                if role_rank(row.role.as_str()) > role_rank(existing.role.as_str()) {
                     appearances::ActiveModel {
                         id: Set(existing.id),
-                        role: Set(row.role.clone()),
+                        role: Set(row.role),
                         note: Set(row.note.clone()),
                         ..Default::default()
                     }
@@ -956,7 +956,7 @@ pub async fn set_protagonist_inner(
         let before = entity_snapshot(&row)?;
         entities::ActiveModel {
             id: Set(row.id),
-            is_protagonist: Set(0),
+            is_protagonist: Set(false),
             updated_at: Set(stamp()),
             ..Default::default()
         }
@@ -989,11 +989,11 @@ pub async fn set_protagonist_inner(
             change_id,
         ));
     }
-    if existing.is_protagonist == 0 {
+    if !existing.is_protagonist {
         let before = entity_snapshot(&existing)?;
         entities::ActiveModel {
             id: Set(entity_id),
-            is_protagonist: Set(1),
+            is_protagonist: Set(true),
             updated_at: Set(stamp()),
             ..Default::default()
         }
@@ -1119,7 +1119,7 @@ async fn ensure_isolated_track(
             "the track belongs to another book",
         ));
     }
-    if track.canon_mode != "isolated" {
+    if track.canon_mode != CanonMode::Isolated {
         // Canon rows with a non-NULL track_id belong to isolated tracks only (spec/02 §5 (8)).
         return Err(CanonError::field(
             "track_id",
@@ -1202,11 +1202,11 @@ pub async fn recompute_bounds(
 // ───────────────────────────── DTO helpers ─────────────────────────────
 
 pub fn kind_of(row: &entities::Model) -> CanonResult<EntityKind> {
-    super::enum_of("entities.kind", &row.kind)
+    Ok(row.kind)
 }
 
 pub fn status_of(row: &entities::Model) -> CanonResult<EntityStatus> {
-    super::enum_of("entities.status", &row.status)
+    Ok(row.status)
 }
 
 pub fn attributes_of(row: &entities::Model) -> CanonResult<BTreeMap<String, String>> {
@@ -1224,7 +1224,7 @@ pub fn list_item(row: &entities::Model) -> CanonResult<EntityListItemDto> {
         summary: row.summary.clone(),
         importance: row.importance,
         status: status_of(row)?,
-        is_protagonist: row.is_protagonist != 0,
+        is_protagonist: row.is_protagonist,
         first_chapter_id: row.first_chapter_id,
         last_chapter_id: row.last_chapter_id,
         created_at: row.created_at,
@@ -1237,9 +1237,7 @@ fn appearance_dto(row: &appearances::Model) -> CanonResult<AppearanceDto> {
         id: row.id,
         chapter_id: row.chapter_id,
         entity_id: row.entity_id,
-        role: AppearanceRole::from_str_opt(&row.role).ok_or_else(|| {
-            CanonError::internal(format!("unknown appearances.role {:?}", row.role))
-        })?,
+        role: row.role,
         note: row.note.clone(),
     })
 }
@@ -1296,7 +1294,7 @@ pub async fn restore_inner(
     let existing = super::load_entity(tx, entity_id).await?;
     write.ensure_writable(existing.track_id, &entity_label(&existing.name, entity_id))?;
     // Restoring the protagonist flag must not collide with another holder (spec/02 §5 (7)).
-    if *is_protagonist && existing.is_protagonist == 0 {
+    if *is_protagonist && !existing.is_protagonist {
         let other = entities::Entity::find()
             .filter(entities::Column::BookId.eq(existing.book_id))
             .filter(entities::Column::IsProtagonist.eq(1))
@@ -1306,7 +1304,7 @@ pub async fn restore_inner(
         if let Some(other) = other {
             entities::ActiveModel {
                 id: Set(other.id),
-                is_protagonist: Set(0),
+                is_protagonist: Set(false),
                 updated_at: Set(stamp()),
                 ..Default::default()
             }
@@ -1316,7 +1314,7 @@ pub async fn restore_inner(
     }
     entities::ActiveModel {
         id: Set(entity_id),
-        kind: Set(kind.as_str().to_owned()),
+        kind: Set(*kind),
         name: Set(name.clone()),
         aliases: Set(super::json(aliases)?),
         summary: Set(summary.clone()),
@@ -1324,8 +1322,8 @@ pub async fn restore_inner(
         state: Set(state.clone()),
         attributes: Set(super::json(attributes)?),
         importance: Set(*importance),
-        status: Set(status.as_str().to_owned()),
-        is_protagonist: Set(i32::from(*is_protagonist)),
+        status: Set(*status),
+        is_protagonist: Set(*is_protagonist),
         updated_at: Set(stamp()),
         ..Default::default()
     }
@@ -1384,7 +1382,7 @@ pub async fn recreate_inner(
         if let Some(other) = other {
             entities::ActiveModel {
                 id: Set(other.id),
-                is_protagonist: Set(0),
+                is_protagonist: Set(false),
                 updated_at: Set(stamp()),
                 ..Default::default()
             }
@@ -1399,7 +1397,7 @@ pub async fn recreate_inner(
         id: Set(new_id),
         book_id: Set(book_id),
         track_id: Set(*track_id),
-        kind: Set(kind.as_str().to_owned()),
+        kind: Set(*kind),
         name: Set(name.clone()),
         aliases: Set(super::json(aliases)?),
         summary: Set(summary.clone()),
@@ -1407,8 +1405,8 @@ pub async fn recreate_inner(
         state: Set(state.clone()),
         attributes: Set(super::json(attributes)?),
         importance: Set(*importance),
-        status: Set(status.as_str().to_owned()),
-        is_protagonist: Set(i32::from(*is_protagonist)),
+        status: Set(*status),
+        is_protagonist: Set(*is_protagonist),
         first_chapter_id: Set(None),
         last_chapter_id: Set(None),
         created_at: Set(timestamp),

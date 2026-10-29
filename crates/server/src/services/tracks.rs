@@ -105,15 +105,15 @@ pub async fn create_inner(
     };
     let row = tracks::ActiveModel {
         book_id: Set(book_id),
-        kind: Set(kind.as_str().to_owned()),
+        kind: Set(kind),
         title: Set(if kind == TrackKind::Main {
             String::new()
         } else {
             input.title.trim().to_owned()
         }),
         synopsis: Set(input.synopsis.trim().to_owned()),
-        canon_mode: Set(canon_mode.as_str().to_owned()),
-        anchor_kind: Set(anchor_kind.as_str().to_owned()),
+        canon_mode: Set(canon_mode),
+        anchor_kind: Set(anchor_kind),
         anchor_chapter_id: Set(anchor_chapter_id),
         focus_entity_id: Set(focus_entity_id),
         ord: Set(ord),
@@ -156,7 +156,7 @@ pub async fn update_inner(
     patch: TrackPatch,
 ) -> Result<(TrackDto, Vec<ServerEvent>), AppError> {
     let existing = load(tx, track_id).await?;
-    let kind: TrackKind = super::enum_of("tracks.kind", &existing.kind)?;
+    let kind: TrackKind = existing.kind;
     if kind == TrackKind::Main {
         if patch.title.is_some()
             || patch.canon_mode.is_some()
@@ -199,7 +199,7 @@ pub async fn update_inner(
         active.synopsis = Set(synopsis.trim().to_owned());
     }
     if let Some(ref canon_mode) = patch.canon_mode {
-        let current: CanonMode = super::enum_of("tracks.canon_mode", &existing.canon_mode)?;
+        let current: CanonMode = existing.canon_mode;
         if *canon_mode != current {
             // A track with an official chapter is already in the canon it chose (spec/08 §6).
             if has_official_chapter(tx, track_id).await? {
@@ -209,7 +209,7 @@ pub async fn update_inner(
                     serde_json::json!({ "canon_mode": current.as_str() }),
                 ));
             }
-            active.canon_mode = Set(canon_mode.as_str().to_owned());
+            active.canon_mode = Set(*canon_mode);
         }
     }
     apply_anchor_patch(tx, &existing, &patch, &mut active).await?;
@@ -240,11 +240,11 @@ async fn apply_anchor_patch(
     patch: &TrackPatch,
     active: &mut tracks::ActiveModel,
 ) -> Result<(), AppError> {
-    let current_kind: AnchorKind = super::enum_of("tracks.anchor_kind", &existing.anchor_kind)?;
+    let current_kind: AnchorKind = existing.anchor_kind;
     match (patch.anchor_kind, patch.anchor_chapter_id) {
         (Some(AnchorKind::AfterChapter), Some(chapter_id)) => {
             validate_anchor_chapter(tx, existing.book_id, chapter_id).await?;
-            active.anchor_kind = Set(AnchorKind::AfterChapter.as_str().to_owned());
+            active.anchor_kind = Set(AnchorKind::AfterChapter);
             active.anchor_chapter_id = Set(Some(chapter_id));
         }
         (Some(AnchorKind::AfterChapter), None) => {
@@ -263,7 +263,7 @@ async fn apply_anchor_patch(
             ));
         }
         (Some(other), None) => {
-            active.anchor_kind = Set(other.as_str().to_owned());
+            active.anchor_kind = Set(other);
             active.anchor_chapter_id = Set(None);
         }
         (None, Some(chapter_id)) => {
@@ -303,7 +303,7 @@ async fn finish_update(
 /// removes its chapters, its private canon rows and its change rows (spec/08 §1.3, D-043).
 pub async fn delete(state: &crate::state::AppState, track_id: i32) -> Result<(), AppError> {
     let existing = load(state.db().conn(), track_id).await?;
-    let kind: TrackKind = super::enum_of("tracks.kind", &existing.kind)?;
+    let kind: TrackKind = existing.kind;
     if kind == TrackKind::Main {
         return Err(AppError::validation("the main track cannot be deleted"));
     }
@@ -332,7 +332,7 @@ pub async fn delete_inner(
     track_id: i32,
 ) -> Result<Vec<ServerEvent>, AppError> {
     let existing = load(tx, track_id).await?;
-    let kind: TrackKind = super::enum_of("tracks.kind", &existing.kind)?;
+    let kind: TrackKind = existing.kind;
     if kind == TrackKind::Main {
         return Err(AppError::validation("the main track cannot be deleted"));
     }
@@ -378,7 +378,7 @@ pub async fn has_official_chapter(
 ) -> Result<bool, AppError> {
     let count = chapters::Entity::find()
         .filter(chapters::Column::TrackId.eq(track_id))
-        .filter(chapters::Column::Status.eq(ChapterStatus::Official.as_str()))
+        .filter(chapters::Column::Status.eq(ChapterStatus::Official))
         .count(conn)
         .await?;
     Ok(count > 0)
@@ -386,7 +386,7 @@ pub async fn has_official_chapter(
 
 /// True when the track is a side track in isolated canon mode (spec/06 §2).
 pub fn is_isolated(row: &tracks::Model) -> bool {
-    row.kind == TrackKind::Side.as_str() && row.canon_mode == CanonMode::Isolated.as_str()
+    row.kind == TrackKind::Side && row.canon_mode == CanonMode::Isolated
 }
 
 /// The main track of a book, when it exists (a book always has one, spec/02 §5).
@@ -396,7 +396,7 @@ pub async fn main_track(
 ) -> Result<Option<tracks::Model>, AppError> {
     Ok(tracks::Entity::find()
         .filter(tracks::Column::BookId.eq(book_id))
-        .filter(tracks::Column::Kind.eq(TrackKind::Main.as_str()))
+        .filter(tracks::Column::Kind.eq(TrackKind::Main))
         .one(conn)
         .await?)
 }
@@ -455,7 +455,7 @@ async fn latest_official_main_chapter(
     };
     Ok(chapters::Entity::find()
         .filter(chapters::Column::TrackId.eq(main.id))
-        .filter(chapters::Column::Status.eq(ChapterStatus::Official.as_str()))
+        .filter(chapters::Column::Status.eq(ChapterStatus::Official))
         .order_by_desc(chapters::Column::Ord)
         .one(conn)
         .await?)
@@ -475,7 +475,7 @@ async fn validate_anchor_chapter(
         .one(conn)
         .await?
         .ok_or_else(|| field_error("anchor_chapter_id", "the anchor chapter has no track"))?;
-    if track.book_id != book_id || track.kind != TrackKind::Main.as_str() {
+    if track.book_id != book_id || track.kind != TrackKind::Main {
         return Err(field_error(
             "anchor_chapter_id",
             "the anchor must be a main-track chapter of this book",
@@ -506,7 +506,7 @@ async fn validate_focus_entity(
             "the focus character belongs to another book",
         ));
     }
-    if row.kind != EntityKind::Character.as_str() {
+    if row.kind != EntityKind::Character {
         return Err(field_error(
             "focus_entity_id",
             "the focus entity must be a character",
@@ -515,8 +515,8 @@ async fn validate_focus_entity(
     if let Some(private_track) = row.track_id {
         let visible = track.is_some_and(|track| {
             track.id == private_track
-                && track.kind == TrackKind::Side.as_str()
-                && track.canon_mode == CanonMode::Isolated.as_str()
+                && track.kind == TrackKind::Side
+                && track.canon_mode == CanonMode::Isolated
         });
         if !visible {
             return Err(field_error(
@@ -545,7 +545,7 @@ async fn next_ord(conn: &impl ConnectionTrait, book_id: i32) -> Result<i32, AppE
 async fn ensure_no_main(conn: &impl ConnectionTrait, book_id: i32) -> Result<(), AppError> {
     let existing = tracks::Entity::find()
         .filter(tracks::Column::BookId.eq(book_id))
-        .filter(tracks::Column::Kind.eq(TrackKind::Main.as_str()))
+        .filter(tracks::Column::Kind.eq(TrackKind::Main))
         .one(conn)
         .await?;
     if let Some(row) = existing {
@@ -565,11 +565,11 @@ pub fn to_dto(row: &tracks::Model) -> Result<TrackDto, AppError> {
     Ok(TrackDto {
         id: row.id,
         book_id: row.book_id,
-        kind: super::enum_of("tracks.kind", &row.kind)?,
+        kind: row.kind,
         title: row.title.clone(),
         synopsis: row.synopsis.clone(),
-        canon_mode: super::enum_of("tracks.canon_mode", &row.canon_mode)?,
-        anchor_kind: super::enum_of("tracks.anchor_kind", &row.anchor_kind)?,
+        canon_mode: row.canon_mode,
+        anchor_kind: row.anchor_kind,
         anchor_chapter_id: row.anchor_chapter_id,
         focus_entity_id: row.focus_entity_id,
         ord: row.ord,

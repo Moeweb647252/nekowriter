@@ -53,10 +53,10 @@ pub async fn record(tx: &impl ConnectionTrait, change: NewChange<'_>) -> Result<
         track_id: Set(change.track_id),
         chapter_id: Set(change.chapter_id),
         session_id: Set(change.session_id),
-        actor: Set(change.actor.as_str().to_owned()),
-        target_type: Set(change.target_type.as_str().to_owned()),
+        actor: Set(change.actor),
+        target_type: Set(change.target_type),
         target_id: Set(change.target_id),
-        op: Set(change.op.as_str().to_owned()),
+        op: Set(change.op),
         before: Set(before),
         after: Set(after),
         note: Set(change.note.to_owned()),
@@ -191,18 +191,10 @@ pub fn to_dto(row: &change_log::Model) -> Result<ChangeDto, AppError> {
         track_id: row.track_id,
         chapter_id: row.chapter_id,
         session_id: row.session_id,
-        actor: ChangeActor::from_str_opt(&row.actor).ok_or_else(|| {
-            AppError::internal(format!("unknown change_log.actor {:?}", row.actor))
-        })?,
-        target_type: ChangeTargetType::from_str_opt(&row.target_type).ok_or_else(|| {
-            AppError::internal(format!(
-                "unknown change_log.target_type {:?}",
-                row.target_type
-            ))
-        })?,
+        actor: row.actor,
+        target_type: row.target_type,
         target_id: row.target_id,
-        op: ChangeOp::from_str_opt(&row.op)
-            .ok_or_else(|| AppError::internal(format!("unknown change_log.op {:?}", row.op)))?,
+        op: row.op,
         before: parse_snapshot(row.before.as_deref())?,
         after: parse_snapshot(row.after.as_deref())?,
         note: row.note.clone(),

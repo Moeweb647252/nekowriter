@@ -2,6 +2,8 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::InboxKind;
+
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "agent_inbox")]
@@ -9,7 +11,7 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,
     pub session_id: i32,
-    pub kind: String,
+    pub kind: InboxKind,
     pub content: String,
     pub created_at: DateTimeUtc,
     pub consumed_at: Option<DateTimeUtc>,

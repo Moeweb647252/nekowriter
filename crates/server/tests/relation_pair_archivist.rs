@@ -22,16 +22,17 @@ mod review_harness;
 
 use std::time::Duration;
 
+use nekowriter::db::json::RelationStatus;
 use nekowriter::db::json::{SessionKind, SessionStatus};
 use nekowriter_llm::mock::ScriptStep;
 use review_harness::{Runtime, create_entity, prepare_in_review, runtime, start_archivist};
 use serde_json::json;
 
 /// Every relation row of the book, as `(id, kind, status)`.
-async fn relation_rows(runtime: &Runtime) -> Vec<(i32, String, String)> {
+async fn relation_rows(runtime: &Runtime) -> Vec<(i32, String, RelationStatus)> {
     use nekowriter::db::entities::relations;
     use sea_orm::EntityTrait;
-    let mut rows: Vec<(i32, String, String)> = relations::Entity::find()
+    let mut rows: Vec<(i32, String, RelationStatus)> = relations::Entity::find()
         .all(runtime.app.db().conn())
         .await
         .expect("relations")
@@ -129,7 +130,11 @@ async fn a_reworded_set_relation_updates_the_pair_instead_of_adding_a_row() {
         "one relation row for the pair, not two: {rows:?}"
     );
     assert_eq!(rows[0].1, "同门盟友", "the new wording wins: {rows:?}");
-    assert_eq!(rows[0].2, "active", "and the row stays active");
+    assert_eq!(
+        rows[0].2,
+        RelationStatus::Active,
+        "and the row stays active"
+    );
 }
 
 /// The `ui` payload of `set_relation` names the same relation both times, so the web UI invalidates

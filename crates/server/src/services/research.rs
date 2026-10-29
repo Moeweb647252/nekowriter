@@ -155,9 +155,7 @@ async fn create_inner(
     // A draft while the book is still being conceived, `ready` otherwise (spec/10 §2.5).
     let status = match input.book_id {
         Some(book_id) => match books::Entity::find_by_id(book_id).one(tx).await? {
-            Some(book) if book.status == BookStatus::Conceiving.as_str() => {
-                ResearchTaskStatus::Draft
-            }
+            Some(book) if book.status == BookStatus::Conceiving => ResearchTaskStatus::Draft,
             _ => ResearchTaskStatus::Ready,
         },
         None => ResearchTaskStatus::Ready,
@@ -169,7 +167,7 @@ async fn create_inner(
         topic: Set(topic),
         requirements: Set(input.requirements.trim().to_owned()),
         language: Set(language),
-        status: Set(status.as_str().to_owned()),
+        status: Set(status),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),
         ..Default::default()
@@ -242,13 +240,13 @@ async fn patch_inner(
                 "only `ready` can be set; the researcher and the runtime own the other statuses",
             ));
         }
-        if existing.status != ResearchTaskStatus::Draft.as_str() {
+        if existing.status != ResearchTaskStatus::Draft {
             return Err(field_error(
                 "status",
                 "only a draft can be confirmed as ready",
             ));
         }
-        active.status = Set(ResearchTaskStatus::Ready.as_str().to_owned());
+        active.status = Set(ResearchTaskStatus::Ready);
     }
     let row = active.update(tx).await?;
     let events = vec![ServerEvent::ResearchUpdated {
@@ -337,8 +335,7 @@ async fn transition_inner(
     transition: Transition,
 ) -> Result<(ResearchTaskDto, Vec<ServerEvent>), AppError> {
     let task = load(tx, task_id).await?;
-    let current =
-        ResearchTaskStatus::from_str_opt(&task.status).unwrap_or(ResearchTaskStatus::Draft);
+    let current = task.status;
     // A task whose session is open is being written by the researcher: the same conflict `run`,
     // PATCH and DELETE report (spec/07 §8 step 1, spec/10 §2.5).
     if is_open(&task) {
@@ -365,7 +362,7 @@ async fn transition_inner(
     }
     let row = research_tasks::ActiveModel {
         id: Set(task_id),
-        status: Set(target.as_str().to_owned()),
+        status: Set(target),
         updated_at: Set(now()),
         ..Default::default()
     }
@@ -576,7 +573,7 @@ pub async fn finish(
         .await?;
     let row = research_tasks::ActiveModel {
         id: Set(task_id),
-        status: Set(ResearchTaskStatus::Done.as_str().to_owned()),
+        status: Set(ResearchTaskStatus::Done),
         report: Set(report.trim().to_owned()),
         entries_created: Set(i32::try_from(total).unwrap_or(i32::MAX)),
         updated_at: Set(now()),
@@ -614,12 +611,12 @@ pub async fn on_session_status(
         "running" => ResearchTaskStatus::Running,
         _ => return Ok(Vec::new()),
     };
-    if task.status == next.as_str() {
+    if task.status == next {
         return Ok(Vec::new());
     }
     let row = research_tasks::ActiveModel {
         id: Set(task_id),
-        status: Set(next.as_str().to_owned()),
+        status: Set(next),
         updated_at: Set(now()),
         ..Default::default()
     }
@@ -666,7 +663,7 @@ pub fn to_dto(row: research_tasks::Model) -> ResearchTaskDto {
         topic: row.topic,
         requirements: row.requirements,
         language: row.language,
-        status: ResearchTaskStatus::from_str_opt(&row.status).unwrap_or(ResearchTaskStatus::Draft),
+        status: row.status,
         session_id: row.session_id,
         report: row.report,
         entries_created: row.entries_created,

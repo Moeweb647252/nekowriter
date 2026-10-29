@@ -23,7 +23,9 @@ use crate::db::entities::{
     agent_sessions, books, character_designs, research_tasks,
     setting_docs::ActiveModel as SettingDocActive,
 };
-use crate::db::json::{AwaitInputKind, ConceptionState, SettingDocKind};
+use crate::db::json::{
+    AwaitInputKind, ConceptionState, ResearchTaskStatus, SessionKind, SettingDocKind,
+};
 use crate::error::AppError;
 use crate::events::ServerEvent;
 use crate::services::setting_docs as setting_docs_service;
@@ -934,7 +936,7 @@ impl ToolHandler for SetResearchTopicsTool {
         let book_id = book_id(ctx)?;
         let drafts = research_tasks::Entity::find()
             .filter(research_tasks::Column::BookId.eq(book_id))
-            .filter(research_tasks::Column::Status.eq("draft"))
+            .filter(research_tasks::Column::Status.eq(ResearchTaskStatus::Draft))
             .order_by_asc(research_tasks::Column::Id)
             .all(ctx.tx)
             .await
@@ -960,7 +962,7 @@ impl ToolHandler for SetResearchTopicsTool {
                 language: Set(language.clone()),
                 // The book is conceiving, so the task starts as a draft (spec/10 §2.5); finalize
                 // turns the drafts `ready`.
-                status: Set("draft".to_owned()),
+                status: Set(ResearchTaskStatus::Draft),
                 created_at: Set(now),
                 updated_at: Set(now),
                 ..Default::default()
@@ -1207,7 +1209,7 @@ pub async fn open_conception_session(
 ) -> Result<Option<i32>, AppError> {
     let row = agent_sessions::Entity::find()
         .filter(agent_sessions::Column::BookId.eq(book_id))
-        .filter(agent_sessions::Column::Kind.eq("conception"))
+        .filter(agent_sessions::Column::Kind.eq(SessionKind::Conception))
         .filter(agent_sessions::Column::Status.is_in([
             "idle",
             "running",

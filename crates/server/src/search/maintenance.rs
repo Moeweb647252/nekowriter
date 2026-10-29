@@ -14,7 +14,10 @@ use crate::db::entities::{
     chapters, entities, foreshadowing, knowledge_chunks, knowledge_entries, memory_notes,
     search_docs, timeline_events, tracks,
 };
-use crate::db::json::{ChangeTargetType, ChapterContent, ChapterStatus};
+use crate::db::json::{
+    CanonMode, ChangeTargetType, ChapterContent, ChapterStatus, EmbedState, NoteStatus,
+    SearchDocKind,
+};
 use crate::error::AppError;
 use crate::events::ServerEvent;
 
@@ -31,7 +34,7 @@ pub const NOTE_TITLE_CHARS: usize = 40;
 pub struct NewDoc<'a> {
     pub book_id: i32,
     pub track_id: Option<i32>,
-    pub kind: &'a str,
+    pub kind: SearchDocKind,
     pub ref_id: i32,
     pub ref_part: i32,
     pub title: &'a str,
@@ -70,7 +73,7 @@ pub async fn upsert_doc(conn: &impl ConnectionTrait, doc: NewDoc<'_>) -> Result<
                 ..Default::default()
             };
             if row.content_hash != hash {
-                active.embed_state = Set("pending".to_owned());
+                active.embed_state = Set(EmbedState::Pending);
             }
             active.update(conn).await?;
             replace_fts(conn, row.id, doc.title, doc.body).await?;
@@ -86,7 +89,7 @@ pub async fn upsert_doc(conn: &impl ConnectionTrait, doc: NewDoc<'_>) -> Result<
                 body: Set(doc.body.to_owned()),
                 meta: Set(doc.meta.to_owned()),
                 content_hash: Set(hash),
-                embed_state: Set("pending".to_owned()),
+                embed_state: Set(EmbedState::Pending),
                 updated_at: Set(chrono::Utc::now()),
                 ..Default::default()
             })
@@ -164,7 +167,7 @@ pub async fn sync_entity(
         NewDoc {
             book_id,
             track_id: row.track_id,
-            kind: "entity",
+            kind: SearchDocKind::Entity,
             ref_id: row.id,
             ref_part: 0,
             title: &row.name,
@@ -217,7 +220,7 @@ pub async fn sync_note(
     let Some(row) = memory_notes::Entity::find_by_id(note_id).one(conn).await? else {
         return delete_ref_docs(conn, "note", note_id).await;
     };
-    if row.status != "active" {
+    if row.status != NoteStatus::Active {
         return delete_ref_docs(conn, "note", note_id).await;
     }
     let title: String = row.content.trim().chars().take(NOTE_TITLE_CHARS).collect();
@@ -226,7 +229,7 @@ pub async fn sync_note(
         NewDoc {
             book_id,
             track_id: row.track_id,
-            kind: "note",
+            kind: SearchDocKind::Note,
             ref_id: row.id,
             ref_part: 0,
             title: &title,
@@ -258,7 +261,7 @@ pub async fn sync_foreshadowing(
         NewDoc {
             book_id,
             track_id: row.track_id,
-            kind: "foreshadowing",
+            kind: SearchDocKind::Foreshadowing,
             ref_id: row.id,
             ref_part: 0,
             title: &row.title,
@@ -293,7 +296,7 @@ pub async fn sync_timeline_event(
         NewDoc {
             book_id,
             track_id: row.track_id,
-            kind: "event",
+            kind: SearchDocKind::Event,
             ref_id: row.id,
             ref_part: 0,
             title: &row.title,
@@ -313,7 +316,7 @@ async fn chapter_doc_track(
     let Some(track) = tracks::Entity::find_by_id(track_id).one(conn).await? else {
         return Ok(None);
     };
-    Ok(if track.canon_mode == "isolated" {
+    Ok(if track.canon_mode == CanonMode::Isolated {
         Some(track.id)
     } else {
         None
@@ -329,7 +332,7 @@ pub async fn sync_chapter_summary(
         return delete_ref_docs(conn, "summary", chapter_id).await;
     };
     // Only official chapters are indexed (spec/07 §2), and an empty summary has nothing to find.
-    if row.status != ChapterStatus::Official.as_str() || row.summary.trim().is_empty() {
+    if row.status != ChapterStatus::Official || row.summary.trim().is_empty() {
         return delete_ref_docs(conn, "summary", chapter_id).await;
     }
     let track_id = chapter_doc_track(conn, row.track_id).await?;
@@ -338,7 +341,7 @@ pub async fn sync_chapter_summary(
         NewDoc {
             book_id: row.book_id,
             track_id,
-            kind: "summary",
+            kind: SearchDocKind::Summary,
             ref_id: row.id,
             ref_part: 0,
             title: &row.title,
@@ -356,7 +359,7 @@ pub async fn sync_passages(conn: &impl ConnectionTrait, chapter_id: i32) -> Resu
     let Some(row) = chapters::Entity::find_by_id(chapter_id).one(conn).await? else {
         return delete_ref_docs(conn, "passage", chapter_id).await;
     };
-    if row.status != ChapterStatus::Official.as_str() {
+    if row.status != ChapterStatus::Official {
         return delete_ref_docs(conn, "passage", chapter_id).await;
     }
     let track_id = chapter_doc_track(conn, row.track_id).await?;
@@ -372,7 +375,7 @@ pub async fn sync_passages(conn: &impl ConnectionTrait, chapter_id: i32) -> Resu
         SyncRows {
             book_id: row.book_id,
             track_id,
-            kind: "passage",
+            kind: SearchDocKind::Passage,
             ref_id: row.id,
             title: &row.title,
             entries: passages
@@ -484,7 +487,7 @@ async fn sync_knowledge_chunk_rows(
                     heading: Set(chunk.heading.clone()),
                     text: Set(chunk.text.clone()),
                     content_hash: Set(hash),
-                    embed_state: Set("pending".to_owned()),
+                    embed_state: Set(EmbedState::Pending),
                     ..Default::default()
                 })
                 .exec_with_returning(conn)
@@ -519,7 +522,7 @@ async fn sync_knowledge_chunk_rows(
 struct SyncRows<'a> {
     book_id: i32,
     track_id: Option<i32>,
-    kind: &'a str,
+    kind: SearchDocKind,
     ref_id: i32,
     title: &'a str,
     entries: Vec<SyncEntry>,
@@ -689,6 +692,7 @@ fn sql_string(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::json::{EntityKind, EntityStatus};
 
     #[test]
     fn entity_body_follows_the_spec_field_order() {
@@ -696,7 +700,7 @@ mod tests {
             id: 1,
             book_id: 1,
             track_id: None,
-            kind: "character".to_owned(),
+            kind: EntityKind::Character,
             name: "Lin Fan".to_owned(),
             aliases: "[\"Fan\"]".to_owned(),
             summary: "the protagonist".to_owned(),
@@ -704,8 +708,8 @@ mod tests {
             state: "qi refining".to_owned(),
             attributes: "{\"age\":\"17\"}".to_owned(),
             importance: 5,
-            status: "active".to_owned(),
-            is_protagonist: 1,
+            status: EntityStatus::Active,
+            is_protagonist: true,
             first_chapter_id: None,
             last_chapter_id: None,
             created_at: chrono::Utc::now(),

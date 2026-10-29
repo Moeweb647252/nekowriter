@@ -2,6 +2,8 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::EmbedState;
+
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "knowledge_chunks")]
@@ -16,7 +18,7 @@ pub struct Model {
     pub heading: String,
     pub text: String,
     pub content_hash: String,
-    pub embed_state: String,
+    pub embed_state: EmbedState,
     #[sea_orm(belongs_to, from = "entry_id", to = "id")]
     pub entry: BelongsTo<super::knowledge_entries::Entity>,
     #[sea_orm(belongs_to, from = "scope_id", to = "id")]

@@ -56,15 +56,6 @@ pub(crate) fn parse_json<T: for<'de> serde::Deserialize<'de>>(
     from_json(raw).map_err(|err| AppError::internal(format!("corrupt {column} column: {err}")))
 }
 
-/// Reads a plain-TEXT enum column (`CHECK (col IN (...))`, spec/02 §3) into its Rust enum.
-pub(crate) fn enum_of<T: std::str::FromStr<Err = String>>(
-    column: &str,
-    raw: &str,
-) -> Result<T, AppError> {
-    raw.parse::<T>()
-        .map_err(|_| AppError::internal(format!("unknown {column} value {raw:?}")))
-}
-
 /// Runs a raw SELECT that returns at most one row and reads one `i64` column.
 pub(crate) async fn query_i64(
     conn: &impl ConnectionTrait,

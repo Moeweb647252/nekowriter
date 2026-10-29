@@ -2,6 +2,8 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::BookStatus;
+
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "books")]
@@ -12,7 +14,7 @@ pub struct Model {
     pub idea: String,
     pub genre: String,
     pub writing_language: String,
-    pub status: String,
+    pub status: BookStatus,
     pub settings: String,
     pub model_overrides: String,
     pub conception: String,

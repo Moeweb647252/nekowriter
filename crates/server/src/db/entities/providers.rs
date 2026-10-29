@@ -2,6 +2,8 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::Protocol;
+
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "providers")]
@@ -10,7 +12,7 @@ pub struct Model {
     pub id: i32,
     #[sea_orm(unique)]
     pub name: String,
-    pub protocol: String,
+    pub protocol: Protocol,
     pub base_url: String,
     pub api_key: Option<String>,
     pub extra_headers: String,

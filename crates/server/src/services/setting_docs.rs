@@ -209,9 +209,7 @@ pub fn to_dto(row: &setting_docs::Model) -> Result<SettingDocDto, AppError> {
     Ok(SettingDocDto {
         id: row.id,
         book_id: row.book_id,
-        kind: SettingDocKind::from_str_opt(&row.kind).ok_or_else(|| {
-            AppError::internal(format!("unknown setting doc kind {:?}", row.kind))
-        })?,
+        kind: row.kind,
         content: row.content.clone(),
         revision: row.revision,
         approved_revision: row.approved_revision,

@@ -97,7 +97,7 @@ async fn every_entity_write_records_a_typed_change() {
     let history = change_log_of(&app, ChangeTargetType::Entity, entity_id).await;
     assert_eq!(history.len(), 2, "the update appended one change");
     let update = &history[0];
-    assert_eq!(update.op, "update");
+    assert_eq!(update.op, ChangeOp::Update);
     assert_eq!(update.note, "moved on");
     assert_eq!(
         snapshot_before(update)["state"],
@@ -122,7 +122,7 @@ async fn every_entity_write_records_a_typed_change() {
     assert_eq!(status, StatusCode::NO_CONTENT);
     let deleted = change_log_of(&app, ChangeTargetType::Entity, entity_id).await;
     assert_eq!(deleted.len(), 3);
-    assert_eq!(deleted[0].op, "delete");
+    assert_eq!(deleted[0].op, ChangeOp::Delete);
     assert_eq!(snapshot_before(&deleted[0])["name"], "Lin Fan");
     assert!(deleted[0].after.is_none());
 }
@@ -504,10 +504,7 @@ async fn a_revert_of_a_create_writes_no_second_change_row() {
         after.len(),
         2,
         "the delete that the revert performed is the revert row itself: {:?}",
-        after
-            .iter()
-            .map(|row| (row.id, row.op.clone()))
-            .collect::<Vec<_>>()
+        after.iter().map(|row| (row.id, row.op)).collect::<Vec<_>>()
     );
 }
 
@@ -538,7 +535,7 @@ async fn a_revert_of_a_delete_writes_no_second_change_row() {
         "the recreate is one change row: {:?}",
         recreated.iter().map(|row| row.id).collect::<Vec<_>>()
     );
-    assert_eq!(recreated[0].op, ChangeOp::Create.as_str());
+    assert_eq!(recreated[0].op, ChangeOp::Create);
     assert_eq!(recreated[0].reverts_id, Some(delete_id));
 }
 
@@ -1013,7 +1010,7 @@ async fn merging_two_entities_in_one_chapter_keeps_the_more_prominent_role() {
         "the update change carries the merge note: {changes:?}"
     );
     let deleted = change_log_of(&app, ChangeTargetType::Entity, source_id).await;
-    assert_eq!(deleted[0].op, "delete");
+    assert_eq!(deleted[0].op, ChangeOp::Delete);
     assert_eq!(deleted[0].note, "#Lin Fann → #Lin Fan");
 
     // B is gone, and A's bounds still point at the chapter both appeared in.

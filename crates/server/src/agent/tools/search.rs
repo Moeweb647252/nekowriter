@@ -11,6 +11,8 @@
 //! session's target scope (spec/07 §1, spec/05 §8).
 
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+
+use crate::db::json::{AnchorKind, TrackKind};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -596,18 +598,18 @@ async fn anchor_of(ctx: &ToolCtx<'_>) -> Result<Anchor, ToolError> {
     let Some(track) = ctx.track else {
         return Ok(anchor);
     };
-    if track.kind != "side" || track.anchor_kind == "none" {
+    if track.kind != TrackKind::Side || track.anchor_kind == AnchorKind::None {
         return Ok(anchor);
     }
     let book_id = track.book_id;
     anchor.main_track = tracks::Entity::find()
         .filter(tracks::Column::BookId.eq(book_id))
-        .filter(tracks::Column::Kind.eq("main"))
+        .filter(tracks::Column::Kind.eq(TrackKind::Main))
         .one(ctx.tx)
         .await
         .map_err(|_| internal())?
         .map(|row| row.id);
-    anchor.kind = track.anchor_kind.clone();
+    anchor.kind = track.anchor_kind.as_str().to_owned();
     if let Some(chapter_id) = track.anchor_chapter_id
         && let Some(chapter) = chapters::Entity::find_by_id(chapter_id)
             .one(ctx.tx)

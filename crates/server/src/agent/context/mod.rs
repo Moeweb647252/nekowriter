@@ -23,8 +23,9 @@ use crate::db::entities::{
     setting_docs, tracks,
 };
 use crate::db::json::{
-    self, AgentRole, ChapterContent, CompletionKind, MessageKind, MessageRole, Phase, Protocol,
-    RequestMeta, ReviewVerdict, SessionKind, StoredBlock, ToolCallStatus, VersionKind,
+    self, AgentRole, CanonMode, ChapterContent, CompletionKind, InboxKind, MessageKind,
+    MessageRole, Phase, Protocol, RequestMeta, SessionKind, StoredBlock, ToolCallStatus, TrackKind,
+    VersionKind,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
@@ -410,7 +411,7 @@ async fn track_context(
                 .await?
                 .ok_or_else(|| AppError::not_found(format!("chapter {chapter_id}")))?;
             prompts.chapter_label(
-                &track.kind,
+                track.kind.as_str(),
                 &track.title,
                 i64::from(chapter.ord),
                 &chapter.title,
@@ -420,16 +421,16 @@ async fn track_context(
         None => String::new(),
     };
     Ok(TrackContext {
-        is_main: track.kind == "main",
-        title: if track.kind == "main" {
+        is_main: track.kind == TrackKind::Main,
+        title: if track.kind == TrackKind::Main {
             String::new()
         } else {
             track.title.clone()
         },
-        kind: track.kind,
+        kind: track.kind.as_str().to_owned(),
         synopsis: track.synopsis,
-        canon_mode: track.canon_mode,
-        anchor_kind: track.anchor_kind,
+        canon_mode: track.canon_mode.as_str().to_owned(),
+        anchor_kind: track.anchor_kind.as_str().to_owned(),
         anchor_label,
     })
 }
@@ -485,7 +486,7 @@ async fn chapter_context(
         // none (spec/09 §1: `with_title` is for callers that need the whole reference in one
         // string, such as the memory window).
         label: prompts.chapter_label(
-            &track.kind,
+            track.kind.as_str(),
             &track.title,
             i64::from(chapter.ord),
             &chapter.title,
@@ -768,9 +769,9 @@ async fn cast_index_context(
         .map(|row| CastEntryContext {
             id: row.id,
             name: row.name,
-            kind_label: prompts.label("entity_kind", &row.kind),
-            status_label: prompts.label("entity_status", &row.status),
-            status: row.status,
+            kind_label: prompts.label("entity_kind", row.kind.as_str()),
+            status_label: prompts.label("entity_status", row.status.as_str()),
+            status: row.status.as_str().to_owned(),
             aliases: json::from_json_or_default(&row.aliases),
             summary: row.summary,
         })
@@ -948,7 +949,7 @@ async fn prior_report_context(
     else {
         return Ok(Value::Null);
     };
-    let verdict = ReviewVerdict::from_str_opt(&report.verdict).unwrap_or(ReviewVerdict::Revise);
+    let verdict = report.verdict;
     Ok(json!(PriorReportContext {
         attempt: report.attempt,
         verdict_label: prompts.label("verdict", verdict.as_str()),
@@ -1156,7 +1157,7 @@ async fn author_notes(
         // Steering messages are consumed inbox rows, stamped when the author sent them.
         let items = crate::db::entities::agent_inbox::Entity::find()
             .filter(crate::db::entities::agent_inbox::Column::SessionId.eq(ancestor.id))
-            .filter(crate::db::entities::agent_inbox::Column::Kind.eq("user_message"))
+            .filter(crate::db::entities::agent_inbox::Column::Kind.eq(InboxKind::UserMessage))
             .filter(crate::db::entities::agent_inbox::Column::ConsumedAt.is_not_null())
             .order_by_asc(crate::db::entities::agent_inbox::Column::Id)
             .all(conn)
@@ -1303,7 +1304,7 @@ pub async fn build_request(
 
     let mut messages = Vec::new();
     for message in super::runner::messages_of(conn, session.id).await? {
-        if message.role == MessageRole::User.as_str() {
+        if message.role == MessageRole::User {
             let blocks: Vec<StoredBlock> = json::from_json_or_default(&message.content);
             let blocks = blocks
                 .into_iter()
@@ -1343,7 +1344,7 @@ pub async fn build_request(
             results.push(nekowriter_llm::ToolResult {
                 call_id: call.provider_call_id.clone(),
                 content,
-                is_error: call.is_error != 0,
+                is_error: call.is_error,
             });
         }
         messages.push(nekowriter_llm::Message::ToolResults { results });
@@ -1428,8 +1429,8 @@ async fn demo_hints(
             .one(conn)
             .await?
             .map(|track| track.canon_mode)
-            .unwrap_or_else(|| "canon".to_owned()),
-        None => "canon".to_owned(),
+            .unwrap_or_else(|| CanonMode::Canon),
+        None => CanonMode::Canon,
     };
     // The entries the research task already has, so the demo researcher continues instead of
     // duplicating (spec/04 §7.2).
@@ -1465,20 +1466,20 @@ async fn demo_hints(
             .await?
             .into_iter()
             .filter(|doc| doc.approved_revision == Some(doc.revision))
-            .map(|doc| doc.kind)
+            .map(|doc| doc.kind.as_str().to_owned())
             .collect(),
         None => Vec::new(),
     };
     Ok(nekowriter_llm::DemoHints {
-        kind: session.kind.clone(),
-        phase: session.phase.clone(),
-        granularity: session.granularity.clone(),
+        kind: session.kind.as_str().to_owned(),
+        phase: session.phase.as_str().to_owned(),
+        granularity: session.granularity.map(|value| value.as_str().to_owned()),
         step_in_phase: counters.steps.max(0) as u32,
         language,
         tools: frozen_tool_names(session),
         protagonist: protagonist_name(conn, session).await?,
         review_attempt: review_attempt.max(1) as u32,
-        canon_mode,
+        canon_mode: canon_mode.as_str().to_owned(),
         draft,
         saved_entries,
         characters,
@@ -1635,8 +1636,8 @@ pub async fn rollover(
             let now = chrono::Utc::now();
             let child = agent_sessions::ActiveModel {
                 book_id: sea_orm::Set(parent.book_id),
-                role: sea_orm::Set(parent.role.clone()),
-                kind: sea_orm::Set(kind.as_str().to_owned()),
+                role: sea_orm::Set(parent.role),
+                kind: sea_orm::Set(kind),
                 chapter_id: sea_orm::Set(parent.chapter_id),
                 track_id: sea_orm::Set(parent.track_id),
                 research_task_id: sea_orm::Set(None),
@@ -1644,12 +1645,12 @@ pub async fn rollover(
                 model_snapshot: sea_orm::Set(parent.model_snapshot.clone()),
                 system_prompt: sea_orm::Set(parent.system_prompt.clone()),
                 tools: sea_orm::Set(parent.tools.clone()),
-                status: sea_orm::Set(json::SessionStatus::Running.as_str().to_owned()),
-                phase: sea_orm::Set(parent.phase.clone()),
-                granularity: sea_orm::Set(parent.granularity.clone()),
+                status: sea_orm::Set(json::SessionStatus::Running),
+                phase: sea_orm::Set(parent.phase),
+                granularity: sea_orm::Set(parent.granularity),
                 auto_pause: sea_orm::Set(parent.auto_pause),
                 pause_after_outline: sea_orm::Set(parent.pause_after_outline),
-                pause_requested: sea_orm::Set(0),
+                pause_requested: sea_orm::Set(false),
                 held_tool_call_id: sea_orm::Set(None),
                 base_content_version: sea_orm::Set(parent.base_content_version),
                 pending_comment: sea_orm::Set(parent.pending_comment.clone()),
@@ -1804,7 +1805,7 @@ pub async fn latest_version_kind(
         .order_by_desc(chapter_versions::Column::Id)
         .one(conn)
         .await?;
-    Ok(row.and_then(|row| VersionKind::from_str_opt(&row.kind)))
+    Ok(row.map(|row| row.kind))
 }
 
 /// The calls of a message that are still unresolved (used by tests and the debug endpoint).
@@ -1850,7 +1851,7 @@ pub async fn setting_docs_map(
         .await?;
     Ok(docs
         .into_iter()
-        .map(|doc| (doc.kind, doc.content))
+        .map(|doc| (doc.kind.as_str().to_owned(), doc.content))
         .collect())
 }
 

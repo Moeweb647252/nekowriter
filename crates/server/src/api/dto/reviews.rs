@@ -94,7 +94,7 @@ impl From<crate::db::entities::review_reports::Model> for ReviewReportDto {
             content_version: row.content_version,
             session_id: row.session_id,
             attempt: row.attempt,
-            verdict: ReviewVerdict::from_str_opt(&row.verdict).unwrap_or(ReviewVerdict::Revise),
+            verdict: row.verdict,
             summary: row.summary,
             issues: crate::db::json::from_json_or_default(&row.issues),
             feedback: row.feedback,
@@ -113,7 +113,7 @@ impl From<crate::db::entities::chapter_feedback::Model> for ChapterFeedbackDto {
             review_report_id: row.review_report_id,
             text: row.text,
             issues: crate::db::json::from_json_or_default(&row.issues),
-            mode: FeedbackMode::from_str_opt(&row.mode).unwrap_or(FeedbackMode::Revise),
+            mode: row.mode,
             session_id: row.session_id,
             created_at: row.created_at,
         }

@@ -126,7 +126,7 @@ impl SessionManager {
                 // return at once for a non-running row).
                 let still_running = matches!(
                     session::load(state.db().conn(), session_id).await,
-                    Ok(row) if row.status == SessionStatus::Running.as_str()
+                    Ok(row) if row.status == SessionStatus::Running
                 );
                 if still_running {
                     manager.spawn(state.clone(), session_id);
@@ -355,9 +355,7 @@ async fn interrupted_running_sessions(
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
     let rows = crate::db::entities::agent_sessions::Entity::find()
-        .filter(
-            crate::db::entities::agent_sessions::Column::Status.eq(SessionStatus::Running.as_str()),
-        )
+        .filter(crate::db::entities::agent_sessions::Column::Status.eq(SessionStatus::Running))
         .all(tx)
         .await?;
     let mut ids = Vec::new();

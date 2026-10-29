@@ -25,7 +25,7 @@ use crate::api::dto::canon::{
 use crate::db::entities::{agent_tool_calls, appearances, change_log, chapters, entities};
 use crate::db::json::{
     AppearanceRole, ChangeActor, ChangeOp, ChangeTargetType, CompletionKind, EntityKind,
-    EntityStatus, ForeshadowingStatus, NoteKind, Snapshot, ToolEffects,
+    EntityStatus, ForeshadowingStatus, NoteKind, Snapshot, ToolCallStatus, ToolEffects,
 };
 use crate::events::ServerEvent;
 use crate::services::canon::{
@@ -86,7 +86,7 @@ async fn resolver(ctx: &ToolCtx<'_>) -> Result<EntityResolver, ToolError> {
                 id: row.id,
                 name: row.name,
                 aliases: crate::db::json::from_json_or_default(&row.aliases),
-                kind_label: ctx.prompts.label("entity_kind", &row.kind),
+                kind_label: ctx.prompts.label("entity_kind", row.kind.as_str()),
             })
             .collect(),
     ))
@@ -1336,7 +1336,7 @@ async fn session_called(ctx: &ToolCtx<'_>, name: &str) -> Result<bool, ToolError
     Ok(agent_tool_calls::Entity::find()
         .filter(agent_tool_calls::Column::SessionId.eq(ctx.session.id))
         .filter(agent_tool_calls::Column::Name.eq(name))
-        .filter(agent_tool_calls::Column::Status.eq("done"))
+        .filter(agent_tool_calls::Column::Status.eq(ToolCallStatus::Done))
         .one(ctx.tx)
         .await
         .map_err(|_| internal())?
@@ -1364,14 +1364,14 @@ async fn protagonist_of(ctx: &ToolCtx<'_>) -> Result<Option<entities::Model>, To
     let rows = canon::visible_entities(ctx.tx, visibility)
         .await
         .map_err(|error| map_canon(error, None, None))?;
-    Ok(rows.into_iter().find(|row| row.is_protagonist == 1))
+    Ok(rows.into_iter().find(|row| row.is_protagonist))
 }
 
 /// True when a change of this session touched the entity's `state` (spec/06 §6).
 async fn session_changed_state(ctx: &ToolCtx<'_>, entity_id: i32) -> Result<bool, ToolError> {
     let rows = change_log::Entity::find()
         .filter(change_log::Column::SessionId.eq(ctx.session.id))
-        .filter(change_log::Column::TargetType.eq(ChangeTargetType::Entity.as_str()))
+        .filter(change_log::Column::TargetType.eq(ChangeTargetType::Entity))
         .filter(change_log::Column::TargetId.eq(entity_id))
         .order_by_asc(change_log::Column::Id)
         .all(ctx.tx)

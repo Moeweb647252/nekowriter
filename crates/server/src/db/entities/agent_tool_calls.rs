@@ -2,6 +2,8 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::ToolCallStatus;
+
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "agent_tool_calls")]
@@ -16,14 +18,14 @@ pub struct Model {
     pub provider_call_id: String,
     pub name: String,
     pub input: String,
-    pub status: String,
+    pub status: ToolCallStatus,
     pub raw_result_text: Option<String>,
     pub appendices: String,
     pub result_text: Option<String>,
-    pub is_error: i32,
+    pub is_error: bool,
     pub ui: Option<String>,
     pub effects: Option<String>,
-    pub sealed: i32,
+    pub sealed: bool,
     pub created_at: DateTimeUtc,
     pub started_at: Option<DateTimeUtc>,
     pub finished_at: Option<DateTimeUtc>,

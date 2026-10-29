@@ -43,12 +43,12 @@ pub async fn create_inner(
         .map_err(|err| AppError::internal(format!("cannot serialize proposal edits: {err}")))?;
     Ok(setting_proposals::ActiveModel {
         book_id: Set(proposal.book_id),
-        target_type: Set(proposal.target_type.as_str().to_owned()),
-        target_kind: Set(proposal.target_kind.map(|kind| kind.as_str().to_owned())),
+        target_type: Set(proposal.target_type),
+        target_kind: Set(proposal.target_kind),
         target_id: Set(proposal.target_id),
         edits: Set(edits),
         rationale: Set(proposal.rationale.trim().to_owned()),
-        status: Set(ProposalStatus::Pending.as_str().to_owned()),
+        status: Set(ProposalStatus::Pending),
         chapter_id: Set(proposal.chapter_id),
         session_id: Set(proposal.session_id),
         created_at: Set(now()),
@@ -97,7 +97,7 @@ pub async fn accept_inner(
     proposal_id: i32,
 ) -> Result<(ProposalDto, Vec<ServerEvent>), AppError> {
     let proposal = load(tx, proposal_id).await?;
-    if proposal.status != ProposalStatus::Pending.as_str() {
+    if proposal.status != ProposalStatus::Pending {
         return Err(invalid_state(&proposal, "accept"));
     }
     let book_id = proposal.book_id;
@@ -106,11 +106,7 @@ pub async fn accept_inner(
 
     match target_type_of(&proposal) {
         ProposalTargetType::SettingDoc => {
-            let Some(kind) = proposal
-                .target_kind
-                .as_deref()
-                .and_then(SettingDocKind::from_str_opt)
-            else {
+            let Some(kind) = proposal.target_kind else {
                 return Err(AppError::internal(
                     "a setting proposal has no document kind",
                 ));
@@ -229,7 +225,7 @@ pub async fn accept_inner(
     }
     setting_proposals::ActiveModel {
         id: Set(proposal.id),
-        status: Set(ProposalStatus::Accepted.as_str().to_owned()),
+        status: Set(ProposalStatus::Accepted),
         decided_at: Set(Some(now())),
         ..Default::default()
     }
@@ -252,7 +248,7 @@ async fn mark_conflict(
 ) -> Result<(ProposalDto, Vec<ServerEvent>), AppError> {
     setting_proposals::ActiveModel {
         id: Set(proposal.id),
-        status: Set(ProposalStatus::Conflict.as_str().to_owned()),
+        status: Set(ProposalStatus::Conflict),
         decided_at: Set(Some(now())),
         ..Default::default()
     }
@@ -286,13 +282,13 @@ pub async fn reject_inner(
     proposal_id: i32,
 ) -> Result<(ProposalDto, Vec<ServerEvent>), AppError> {
     let proposal = load(tx, proposal_id).await?;
-    let status = ProposalStatus::from_str_opt(&proposal.status).unwrap_or(ProposalStatus::Pending);
+    let status = proposal.status;
     if !matches!(status, ProposalStatus::Pending | ProposalStatus::Conflict) {
         return Err(invalid_state(&proposal, "reject"));
     }
     setting_proposals::ActiveModel {
         id: Set(proposal.id),
-        status: Set(ProposalStatus::Rejected.as_str().to_owned()),
+        status: Set(ProposalStatus::Rejected),
         decided_at: Set(Some(now())),
         ..Default::default()
     }
@@ -350,10 +346,7 @@ pub async fn to_dto(
     let edits = edits_of(row)?;
     let (before, after) = match target_type_of(row) {
         ProposalTargetType::SettingDoc => {
-            let kind = row
-                .target_kind
-                .as_deref()
-                .and_then(SettingDocKind::from_str_opt);
+            let kind = row.target_kind;
             match kind {
                 Some(kind) => {
                     let doc = setting_docs::Entity::find()
@@ -403,14 +396,11 @@ pub async fn to_dto(
         id: row.id,
         book_id: row.book_id,
         target_type: target_type_of(row),
-        target_kind: row
-            .target_kind
-            .as_deref()
-            .and_then(SettingDocKind::from_str_opt),
+        target_kind: row.target_kind,
         target_id: row.target_id,
         edits,
         rationale: row.rationale.clone(),
-        status: ProposalStatus::from_str_opt(&row.status).unwrap_or(ProposalStatus::Pending),
+        status: row.status,
         chapter_id: row.chapter_id,
         session_id: row.session_id,
         created_at: row.created_at,
@@ -437,7 +427,7 @@ pub fn edits_of(row: &setting_proposals::Model) -> Result<ProposalEdits, AppErro
 }
 
 fn target_type_of(row: &setting_proposals::Model) -> ProposalTargetType {
-    ProposalTargetType::from_str_opt(&row.target_type).unwrap_or(ProposalTargetType::SettingDoc)
+    row.target_type
 }
 
 fn invalid_state(row: &setting_proposals::Model, operation: &str) -> AppError {

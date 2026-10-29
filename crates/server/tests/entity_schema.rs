@@ -24,6 +24,15 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use nekowriter::db::entities::writing_skills::WritingSkillAuthor;
+use nekowriter::db::json::{
+    AgentRole, AnchorKind, AppearanceRole, BookStatus, CanonMode, CanonStatus, ChangeActor,
+    ChangeOp, ChangeTargetType, ChapterStatus, EmbedState, EntityKind, EntityStatus, EntrySource,
+    FeedbackMode, ForeshadowingStatus, Granularity, InboxKind, MessageKind, MessageRole, NoteKind,
+    NoteStatus, Phase, PromptScope, ProposalStatus, ProposalTargetType, Protocol, RelationStatus,
+    ResearchTaskStatus, ReviewVerdict, SearchDocKind, SessionKind, SessionStatus, SettingDocKind,
+    ToolCallStatus, TrackKind, VersionKind,
+};
 use sea_orm::entity::Iterable;
 use sea_orm::entity::prelude::*;
 use sea_orm::sea_query::{TableName, TableRef};
@@ -918,4 +927,273 @@ async fn decode_all_rows() {
         .expect("migrate the copy");
     println!("decoding {}", source.display());
     decode_all(db.conn()).await;
+}
+
+// ── Check 5: enum and boolean columns ────────────────────────────────────────
+
+/// Every CHECK-constrained `TEXT` column and its Rust enum, plus the matching `Column` variant.
+macro_rules! enum_columns {
+    ($(($module:ident, $field:ident, $ty:ty, $column:ident)),* $(,)?) => {
+        fn enum_column_values() -> Vec<(&'static str, &'static str, Vec<String>)> {
+            #[allow(unused_mut)]
+            let mut rows = vec![$(
+                (
+                    nekowriter::db::entities::$module::Entity::default().table_name(),
+                    nekowriter::db::entities::$module::Column::$column.as_str(),
+                    <$ty as ActiveEnum>::values(),
+                )
+            ),*];
+            rows.push((
+                nekowriter::db::entities::agent_sessions::Entity::default().table_name(),
+                nekowriter::db::entities::agent_sessions::Column::Granularity.as_str(),
+                <Granularity as ActiveEnum>::values(),
+            ));
+            rows.push((
+                nekowriter::db::entities::setting_proposals::Entity::default().table_name(),
+                nekowriter::db::entities::setting_proposals::Column::TargetKind.as_str(),
+                <SettingDocKind as ActiveEnum>::values(),
+            ));
+            rows
+        }
+
+        /// Compile-time proof that the entity field has the enum type.
+        #[test]
+        fn enum_fields_are_typed() {
+            $(
+                let _: fn(&nekowriter::db::entities::$module::Model) -> &$ty =
+                    |model| &model.$field;
+            )*
+        }
+    };
+}
+
+enum_columns! {
+    (agent_inbox, kind, InboxKind, Kind),
+    (agent_messages, role, MessageRole, Role),
+    (agent_messages, kind, MessageKind, Kind),
+    (agent_sessions, role, AgentRole, Role),
+    (agent_sessions, kind, SessionKind, Kind),
+    (agent_sessions, status, SessionStatus, Status),
+    (agent_sessions, phase, Phase, Phase),
+    (agent_tool_calls, status, ToolCallStatus, Status),
+    (appearances, role, AppearanceRole, Role),
+    (books, status, BookStatus, Status),
+    (change_log, actor, ChangeActor, Actor),
+    (change_log, target_type, ChangeTargetType, TargetType),
+    (change_log, op, ChangeOp, Op),
+    (chapter_feedback, mode, FeedbackMode, Mode),
+    (chapter_versions, kind, VersionKind, Kind),
+    (chapters, status, ChapterStatus, Status),
+    (chapters, canon_status, CanonStatus, CanonStatus),
+    (entities, kind, EntityKind, Kind),
+    (entities, status, EntityStatus, Status),
+    (foreshadowing, status, ForeshadowingStatus, Status),
+    (knowledge_chunks, embed_state, EmbedState, EmbedState),
+    (knowledge_entries, source, EntrySource, Source),
+    (memory_notes, kind, NoteKind, Kind),
+    (memory_notes, status, NoteStatus, Status),
+    (prompt_overrides, scope, PromptScope, Scope),
+    (providers, protocol, Protocol, Protocol),
+    (relations, status, RelationStatus, Status),
+    (research_tasks, status, ResearchTaskStatus, Status),
+    (review_reports, verdict, ReviewVerdict, Verdict),
+    (search_docs, kind, SearchDocKind, Kind),
+    (search_docs, embed_state, EmbedState, EmbedState),
+    (setting_docs, kind, SettingDocKind, Kind),
+    (setting_proposals, target_type, ProposalTargetType, TargetType),
+    (setting_proposals, status, ProposalStatus, Status),
+    (tracks, kind, TrackKind, Kind),
+    (tracks, canon_mode, CanonMode, CanonMode),
+    (tracks, anchor_kind, AnchorKind, AnchorKind),
+    (writing_skills, author, WritingSkillAuthor, Author),
+}
+
+/// The eight `INTEGER` 0/1 flags must be `bool` fields.
+#[test]
+fn boolean_fields_are_typed() {
+    let _: fn(&nekowriter::db::entities::agent_sessions::Model) -> &bool =
+        |model| &model.auto_pause;
+    let _: fn(&nekowriter::db::entities::agent_sessions::Model) -> &bool =
+        |model| &model.pause_after_outline;
+    let _: fn(&nekowriter::db::entities::agent_sessions::Model) -> &bool =
+        |model| &model.pause_requested;
+    let _: fn(&nekowriter::db::entities::agent_tool_calls::Model) -> &bool =
+        |model| &model.is_error;
+    let _: fn(&nekowriter::db::entities::agent_tool_calls::Model) -> &bool = |model| &model.sealed;
+    let _: fn(&nekowriter::db::entities::entities::Model) -> &bool = |model| &model.is_protagonist;
+    let _: fn(&nekowriter::db::entities::writing_skills::Model) -> &bool =
+        |model| &model.enabled_by_default;
+    let _: fn(&nekowriter::db::entities::writing_skills::Model) -> &bool = |model| &model.retired;
+}
+
+/// The two nullable enum columns have the exact `Option<Enum>` type.
+#[test]
+fn nullable_enum_fields_are_typed() {
+    let _: fn(&nekowriter::db::entities::agent_sessions::Model) -> &Option<Granularity> =
+        |model| &model.granularity;
+    let _: fn(&nekowriter::db::entities::setting_proposals::Model) -> &Option<SettingDocKind> =
+        |model| &model.target_kind;
+}
+
+/// Parse the `CHECK (col IN ('a', 'b', ...))` lists from a table's `sqlite_master` SQL.
+fn check_in_lists(sql: &str) -> Vec<(String, Vec<String>)> {
+    let mut checks = Vec::new();
+    let mut index = 0;
+    while let Some(found) = sql[index..].find("CHECK") {
+        let start = index + found + "CHECK".len();
+        let rest = &sql[start..];
+        let Some(open) = rest.find('(') else {
+            index = start;
+            continue;
+        };
+        let after = &rest[open + 1..];
+        let Some(in_pos) = after.find(" IN (") else {
+            index = start + open + 1;
+            continue;
+        };
+        let column = after[..in_pos].split_whitespace().last().unwrap_or("");
+        if !column
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+        {
+            index = start + open + 1;
+            continue;
+        }
+        let values_start = start + open + 1 + in_pos + " IN (".len();
+        let Some(close) = sql[values_start..].find(')') else {
+            index = values_start;
+            continue;
+        };
+        let values = &sql[values_start..values_start + close];
+        let values = values
+            .split(',')
+            .filter_map(|value| {
+                let value = value.trim();
+                value
+                    .strip_prefix('\'')
+                    .and_then(|value| value.strip_suffix('\''))
+                    .map(str::to_owned)
+            })
+            .collect();
+        checks.push((column.to_owned(), values));
+        index = values_start + close + 1;
+    }
+    checks
+}
+
+/// Check 5: every enum column's `ActiveEnum::values()` equals its SQL CHECK list, in both
+/// directions, and every `CHECK (col IN (...))` in the schema has an enum row.
+#[tokio::test]
+async fn every_enum_column_matches_its_check_constraint() {
+    let (_dir, conn) = migrated_db().await;
+    let enum_rows = enum_column_values();
+    let expected: BTreeMap<(&str, &str), Vec<String>> = enum_rows
+        .iter()
+        .map(|(table, column, values)| ((*table, *column), values.clone()))
+        .collect();
+    assert_eq!(
+        expected.len(),
+        40,
+        "the schema has 40 CHECK (col IN (...)) enum columns"
+    );
+
+    let mut seen = BTreeSet::new();
+    for entity in all_entity_columns() {
+        let module = entity.module;
+        let table = entity.table;
+        let sql: String = conn
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+                [table.to_owned().into()],
+            ))
+            .await
+            .unwrap_or_else(|err| panic!("sqlite_master query for {table} failed: {err}"))
+            .unwrap_or_else(|| panic!("{table} has no sqlite_master row"))
+            .try_get("", "sql")
+            .expect("table sql");
+        for (column, check_values) in check_in_lists(&sql) {
+            let Some(values) = expected.get(&(table, column.as_str())) else {
+                panic!("{module} ({table}) column `{column}` has a CHECK list but no enum row");
+            };
+            let actual: BTreeSet<&str> = values.iter().map(String::as_str).collect();
+            let wanted: BTreeSet<&str> = check_values.iter().map(String::as_str).collect();
+            assert_eq!(
+                actual, wanted,
+                "{module} ({table}) column `{column}`: ActiveEnum::values() disagrees with the SQL CHECK list"
+            );
+            seen.insert((table, column));
+        }
+    }
+    for (table, column) in expected.keys() {
+        assert!(
+            seen.contains(&(*table, (*column).to_owned())),
+            "{table}.{column} has an enum row but no CHECK (col IN (...)) in the schema"
+        );
+    }
+}
+
+/// `agent_sessions.granularity` is nullable and therefore not in the CHECK-only map.
+#[test]
+fn the_nullable_enum_has_values() {
+    let values: BTreeSet<String> = <Granularity as ActiveEnum>::values().into_iter().collect();
+    assert_eq!(
+        values,
+        BTreeSet::from([
+            "sentence".to_owned(),
+            "paragraph".to_owned(),
+            "free".to_owned(),
+            "chapter".to_owned()
+        ])
+    );
+}
+
+/// The plan §2.9 grep gate: a filter on an enum column must use the enum value, not a string
+/// literal. Genuine `TEXT` columns (`name`, `note`, …) are allowed and are not in this list.
+#[test]
+fn enum_filter_literals_are_typed() {
+    const ENUM_COLUMNS: [&str; 18] = [
+        "Actor",
+        "AnchorKind",
+        "Author",
+        "CanonMode",
+        "CanonStatus",
+        "EmbedState",
+        "Granularity",
+        "Kind",
+        "Mode",
+        "Op",
+        "Phase",
+        "Protocol",
+        "Role",
+        "Scope",
+        "Source",
+        "Status",
+        "TargetType",
+        "Verdict",
+    ];
+    let source = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
+    let pattern = r#"(Column::[A-Za-z]+|COLUMN\.[a-z_]+)\.(eq|ne|is_in|is_not_in)\(\s*\[?\s*""#;
+    let output = std::process::Command::new("grep")
+        .args(["-rnE", pattern, source])
+        .output()
+        .expect("run grep");
+    assert!(
+        matches!(output.status.code(), Some(0) | Some(1)),
+        "grep failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let Some(after_call) = line.split("Column::").nth(1) else {
+            continue;
+        };
+        let column = after_call
+            .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+            .next()
+            .unwrap_or_default();
+        assert!(
+            !ENUM_COLUMNS.contains(&column),
+            "enum column `{column}` is filtered with a string literal: {line}"
+        );
+    }
 }

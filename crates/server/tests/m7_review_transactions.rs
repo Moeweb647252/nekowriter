@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use nekowriter::db::Db;
 use nekowriter::db::entities::{knowledge_chunks, search_docs};
+use nekowriter::db::json::EmbedState;
 use nekowriter::search::index;
 use nekowriter::services::indexer;
 use nekowriter::testing::TestApp;
@@ -164,7 +165,8 @@ async fn a_model_switch_during_embedding_leaves_no_vector() {
         .expect("reload")
         .expect("row");
     assert_eq!(
-        row.embed_state, "pending",
+        row.embed_state,
+        EmbedState::Pending,
         "it stays pending for the new model"
     );
 }
@@ -219,7 +221,7 @@ async fn a_changed_chunk_is_not_given_its_old_vector() {
         .await
         .expect("reload")
         .expect("row");
-    assert_eq!(row.embed_state, "pending");
+    assert_eq!(row.embed_state, EmbedState::Pending);
 }
 
 /// The knowledge search endpoint computes its query vector outside any transaction: the write lock

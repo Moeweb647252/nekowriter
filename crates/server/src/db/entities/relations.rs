@@ -2,6 +2,8 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::RelationStatus;
+
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "relations")]
@@ -15,7 +17,7 @@ pub struct Model {
     pub kind: String,
     pub inverse_kind: String,
     pub description: String,
-    pub status: String,
+    pub status: RelationStatus,
     pub since_chapter_id: Option<i32>,
     pub until_chapter_id: Option<i32>,
     pub created_at: DateTimeUtc,

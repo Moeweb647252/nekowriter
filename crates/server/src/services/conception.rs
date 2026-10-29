@@ -17,7 +17,8 @@ use crate::db::entities::{
     agent_sessions, book_scopes, books, knowledge_scopes, research_tasks, setting_docs, tracks,
 };
 use crate::db::json::{
-    AgentRole, BookStatus, ConceptionState, SessionKind, SessionStatus, SettingDocKind,
+    AgentRole, BookStatus, ConceptionState, ResearchTaskStatus, SessionKind, SessionStatus,
+    SettingDocKind, TrackKind,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::{BookOp, ServerEvent};
@@ -69,7 +70,7 @@ pub async fn start(state: &AppState, book_id: i32) -> Result<(i32, Vec<String>),
                     .one(tx)
                     .await?
                     .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
-                if book.status != BookStatus::Conceiving.as_str() {
+                if book.status != BookStatus::Conceiving {
                     return Err(conflict(
                         ErrorCode::BookInvalidState,
                         "only a conceiving book can start conception",
@@ -235,8 +236,8 @@ async fn running_conception_session(
 ) -> Result<Option<i32>, AppError> {
     let row = agent_sessions::Entity::find()
         .filter(agent_sessions::Column::BookId.eq(book_id))
-        .filter(agent_sessions::Column::Kind.eq(SessionKind::Conception.as_str()))
-        .filter(agent_sessions::Column::Status.eq(SessionStatus::Running.as_str()))
+        .filter(agent_sessions::Column::Kind.eq(SessionKind::Conception))
+        .filter(agent_sessions::Column::Status.eq(SessionStatus::Running))
         .order_by_desc(agent_sessions::Column::Id)
         .one(conn)
         .await?;
@@ -252,7 +253,7 @@ async fn finalize_inner(
         .one(tx)
         .await?
         .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
-    if book.status != BookStatus::Conceiving.as_str() {
+    if book.status != BookStatus::Conceiving {
         return Err(conflict(
             ErrorCode::BookInvalidState,
             "only a conceiving book can be finalized",
@@ -269,7 +270,7 @@ async fn finalize_inner(
         .await?;
     let empty_doc = |kind: SettingDocKind| {
         docs.iter()
-            .find(|doc| doc.kind == kind.as_str())
+            .find(|doc| doc.kind == kind)
             .is_none_or(|doc| doc.content.trim().is_empty())
     };
     let characters = crate::db::entities::character_designs::Entity::find()
@@ -322,7 +323,7 @@ async fn finalize_inner(
     conception.session_id = None;
     let updated = books::ActiveModel {
         id: Set(book_id),
-        status: Set(BookStatus::Active.as_str().to_owned()),
+        status: Set(BookStatus::Active),
         conception: Set(crate::db::json::to_json(&conception)
             .map_err(|err| AppError::internal(err.to_string()))?),
         updated_at: Set(now()),
@@ -340,7 +341,7 @@ async fn finalize_inner(
     // and a language-neutral separator, so no wording is generated in code (D-054).
     let drafts = research_tasks::Entity::find()
         .filter(research_tasks::Column::BookId.eq(book_id))
-        .filter(research_tasks::Column::Status.eq("draft"))
+        .filter(research_tasks::Column::Status.eq(ResearchTaskStatus::Draft))
         .order_by_asc(research_tasks::Column::Id)
         .all(tx)
         .await?;
@@ -356,7 +357,7 @@ async fn finalize_inner(
         };
         let ready = research_tasks::ActiveModel {
             id: Set(task.id),
-            status: Set("ready".to_owned()),
+            status: Set(ResearchTaskStatus::Ready),
             scope_id: Set(Some(scope_id)),
             updated_at: Set(now()),
             ..Default::default()
@@ -443,7 +444,7 @@ pub async fn seed(state: &AppState, book_id: i32) -> Result<i32, AppError> {
                     .one(tx)
                     .await?
                     .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
-                if book.status != BookStatus::Active.as_str() {
+                if book.status != BookStatus::Active {
                     return Err(conflict(
                         ErrorCode::BookInvalidState,
                         "only an active book can seed canon",
@@ -501,7 +502,7 @@ async fn seed_session(state: &AppState, book_id: i32) -> Result<(i32, Vec<String
 pub async fn has_main_track(conn: &impl ConnectionTrait, book_id: i32) -> Result<bool, AppError> {
     Ok(tracks::Entity::find()
         .filter(tracks::Column::BookId.eq(book_id))
-        .filter(tracks::Column::Kind.eq("main"))
+        .filter(tracks::Column::Kind.eq(TrackKind::Main))
         .one(conn)
         .await?
         .is_some())

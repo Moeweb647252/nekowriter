@@ -13,8 +13,8 @@ use crate::api::dto::chapters::{
 use crate::api::dto::chapters::{ChapterOutlineInput, ChapterWriteInput};
 use crate::db::entities::{agent_sessions, appearances, chapter_versions, chapters, tracks};
 use crate::db::json::{
-    AgentRole, BookStatus, CanonStatus, ChangeActor, ChangeOp, ChangeTargetType, ChapterContent,
-    ChapterStatus, SessionStatus, Snapshot, TrackKind, VersionKind,
+    AgentRole, AnchorKind, BookStatus, CanonStatus, ChangeActor, ChangeOp, ChangeTargetType,
+    ChapterContent, ChapterStatus, SessionStatus, Snapshot, TrackKind, VersionKind,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::{BookOp, ContentActor, ServerEvent};
@@ -78,7 +78,7 @@ pub async fn create_inner(
         track_id: Set(track_id),
         ord: Set(ord),
         title: Set(input.title.trim().to_owned()),
-        status: Set(ChapterStatus::Planned.as_str().to_owned()),
+        status: Set(ChapterStatus::Planned),
         guidance: Set(input.guidance.trim().to_owned()),
         outline: Set(String::new()),
         reference_notes: Set(String::new()),
@@ -87,7 +87,7 @@ pub async fn create_inner(
         content_version: Set(0),
         word_count: Set(0),
         official_version_id: Set(None),
-        canon_status: Set(CanonStatus::None.as_str().to_owned()),
+        canon_status: Set(CanonStatus::None),
         synced_version_id: Set(None),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),
@@ -265,10 +265,8 @@ pub async fn delete_inner(
                 track_id: existing.track_id,
                 number: existing.ord,
                 title: existing.title.clone(),
-                status: ChapterStatus::from_str_opt(&existing.status)
-                    .unwrap_or(ChapterStatus::Planned),
-                canon_status: CanonStatus::from_str_opt(&existing.canon_status)
-                    .unwrap_or(CanonStatus::None),
+                status: existing.status,
+                canon_status: existing.canon_status,
                 word_count: existing.word_count,
                 has_outline: !existing.outline.trim().is_empty(),
                 updated_at: timestamp,
@@ -325,7 +323,7 @@ pub async fn reorder_inner(
         .filter(|(_, id)| {
             by_id
                 .get(id)
-                .is_some_and(|row| row.status == ChapterStatus::Official.as_str())
+                .is_some_and(|row| row.status == ChapterStatus::Official)
         })
         .map(|(index, _)| index)
         .collect();
@@ -338,7 +336,7 @@ pub async fn reorder_inner(
         .filter(|(_, id)| {
             by_id
                 .get(id)
-                .is_some_and(|row| row.status == ChapterStatus::Official.as_str())
+                .is_some_and(|row| row.status == ChapterStatus::Official)
         })
         .map(|(index, _)| index)
         .collect();
@@ -347,7 +345,7 @@ pub async fn reorder_inner(
         // chapters that may not move are the actionable part, so send both.
         let status = if by_id
             .values()
-            .any(|row| row.status == ChapterStatus::Official.as_str())
+            .any(|row| row.status == ChapterStatus::Official)
         {
             ChapterStatus::Official
         } else {
@@ -362,7 +360,7 @@ pub async fn reorder_inner(
                     .ids
                     .iter()
                     .filter(|id| by_id.get(id).is_some_and(|row| {
-                        row.status == ChapterStatus::Official.as_str()
+                        row.status == ChapterStatus::Official
                     }))
                     .collect::<Vec<_>>()
             }),
@@ -519,14 +517,13 @@ async fn write_content(
     };
     // An author edit of an official chapter whose canon is synced makes the canon stale
     // (spec/08 §1.1 "Edit text").
-    let mut canon_status =
-        CanonStatus::from_str_opt(&existing.canon_status).unwrap_or(CanonStatus::None);
+    let mut canon_status = existing.canon_status;
     if actor == ContentActor::User
-        && existing.status == ChapterStatus::Official.as_str()
+        && existing.status == ChapterStatus::Official
         && canon_status == CanonStatus::Synced
     {
         canon_status = CanonStatus::Stale;
-        active.canon_status = Set(canon_status.as_str().to_owned());
+        active.canon_status = Set(canon_status);
     }
     // `planned ── manual edit ──► drafting` (lifecycle diagram of spec/08 §1): a planned chapter
     // enters drafting as soon as the author writes text into it by hand. An agent's write starts
@@ -535,10 +532,10 @@ async fn write_content(
         && status_of(existing) == ChapterStatus::Planned
         && text::content_word_count(&content) > 0
     {
-        active.status = Set(ChapterStatus::Drafting.as_str().to_owned());
+        active.status = Set(ChapterStatus::Drafting);
     }
     active.update(tx).await?;
-    if existing.status == ChapterStatus::Official.as_str() {
+    if existing.status == ChapterStatus::Official {
         // The official text changed: its passage documents are rebuilt in this transaction, and
         // unchanged passages keep their vectors (spec/07 §2, D-039).
         crate::search::maintenance::sync_passages(tx, existing.id).await?;
@@ -733,8 +730,8 @@ pub(crate) async fn previous_chapter_blocker(
         // (spec/08 §6): the anchor chapter for `after_chapter`, nothing otherwise.
         return first_side_chapter_blocker(conn, chapter).await;
     };
-    let official = previous.status == ChapterStatus::Official.as_str();
-    let synced = previous.canon_status == crate::db::json::CanonStatus::Synced.as_str();
+    let official = previous.status == ChapterStatus::Official;
+    let synced = previous.canon_status == CanonStatus::Synced;
     if official && synced {
         return Ok(None);
     }
@@ -760,7 +757,7 @@ async fn first_side_chapter_blocker(
     chapter: &chapters::Model,
 ) -> Result<Option<serde_json::Value>, AppError> {
     let track = super::tracks::load(conn, chapter.track_id).await?;
-    if track.kind != TrackKind::Side.as_str() || track.anchor_kind != "after_chapter" {
+    if track.kind != TrackKind::Side || track.anchor_kind != AnchorKind::AfterChapter {
         return Ok(None);
     }
     let Some(anchor_id) = track.anchor_chapter_id else {
@@ -770,8 +767,8 @@ async fn first_side_chapter_blocker(
         .one(conn)
         .await?
         .ok_or_else(|| AppError::not_found(format!("chapter #{anchor_id}")))?;
-    let official = anchor.status == ChapterStatus::Official.as_str();
-    let synced = anchor.canon_status == crate::db::json::CanonStatus::Synced.as_str();
+    let official = anchor.status == ChapterStatus::Official;
+    let synced = anchor.canon_status == CanonStatus::Synced;
     if official && synced {
         return Ok(None);
     }
@@ -853,7 +850,7 @@ pub async fn submit_inner(
     let timestamp = now();
     let active = chapters::ActiveModel {
         id: Set(chapter_id),
-        status: Set(ChapterStatus::InReview.as_str().to_owned()),
+        status: Set(ChapterStatus::InReview),
         updated_at: Set(timestamp),
         ..Default::default()
     };
@@ -879,7 +876,7 @@ async fn abandon_open_writer_sessions(
 ) -> Result<Vec<ServerEvent>, AppError> {
     let rows = agent_sessions::Entity::find()
         .filter(agent_sessions::Column::ChapterId.eq(chapter_id))
-        .filter(agent_sessions::Column::Role.is_in(["planner", "writer"]))
+        .filter(agent_sessions::Column::Role.is_in([AgentRole::Planner, AgentRole::Writer]))
         .filter(agent_sessions::Column::Status.is_in([
             SessionStatus::Idle.as_str(),
             SessionStatus::Held.as_str(),
@@ -979,8 +976,8 @@ pub async fn approve_inner(
     let timestamp = now();
     let active = chapters::ActiveModel {
         id: Set(chapter_id),
-        status: Set(ChapterStatus::Official.as_str().to_owned()),
-        canon_status: Set(CanonStatus::Pending.as_str().to_owned()),
+        status: Set(ChapterStatus::Official),
+        canon_status: Set(CanonStatus::Pending),
         official_version_id: Set(Some(version.id)),
         synced_version_id: Set(None),
         updated_at: Set(timestamp),
@@ -1122,9 +1119,8 @@ pub async fn restore_inner(
     // The restore is an author edit: record it even when `actor` is an agent, because the
     // content change is the same (spec/08 §1.2).
     let _ = actor;
-    let mut canon_status =
-        CanonStatus::from_str_opt(&existing.canon_status).unwrap_or(CanonStatus::None);
-    if existing.status == ChapterStatus::Official.as_str() && canon_status == CanonStatus::Synced {
+    let mut canon_status = existing.canon_status;
+    if existing.status == ChapterStatus::Official && canon_status == CanonStatus::Synced {
         canon_status = CanonStatus::Stale;
     }
 
@@ -1134,12 +1130,12 @@ pub async fn restore_inner(
         content: Set(json(&restored)?),
         content_version: Set(version_no),
         word_count: Set(word_count),
-        canon_status: Set(canon_status.as_str().to_owned()),
+        canon_status: Set(canon_status),
         updated_at: Set(timestamp),
         ..Default::default()
     };
     active.update(tx).await?;
-    if existing.status == ChapterStatus::Official.as_str() {
+    if existing.status == ChapterStatus::Official {
         crate::search::maintenance::sync_passages(tx, existing.id).await?;
         crate::search::index::wake();
     }
@@ -1303,7 +1299,7 @@ pub async fn ensure_book_active(tx: &impl ConnectionTrait, book_id: i32) -> Resu
         .one(tx)
         .await?
         .ok_or_else(|| AppError::not_found(format!("book #{book_id}")))?;
-    if book.status == BookStatus::Active.as_str() {
+    if book.status == BookStatus::Active {
         return Ok(());
     }
     Err(super::conflict(
@@ -1326,7 +1322,7 @@ fn ensure_version(existing: &chapters::Model, base_version: i32) -> Result<(), A
 }
 
 fn status_of(row: &chapters::Model) -> ChapterStatus {
-    ChapterStatus::from_str_opt(&row.status).unwrap_or(ChapterStatus::Planned)
+    row.status
 }
 
 fn invalid_state(message: &str, status: ChapterStatus) -> AppError {
@@ -1471,7 +1467,7 @@ pub async fn record_summary_change(
 /// True when the track's kind is `main` (used by rules that differ per track).
 pub async fn track_is_main(conn: &impl ConnectionTrait, track_id: i32) -> Result<bool, AppError> {
     let track = super::tracks::load(conn, track_id).await?;
-    Ok(super::enum_of::<TrackKind>("tracks.kind", &track.kind)? == TrackKind::Main)
+    Ok(track.kind == TrackKind::Main)
 }
 
 /// Convenience for tests and future services: a chapter's full text as a paragraph list.

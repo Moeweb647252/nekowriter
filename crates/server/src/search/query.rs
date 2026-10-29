@@ -19,6 +19,8 @@ use std::collections::HashMap;
 
 use sea_orm::{ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter, Statement};
 
+use crate::db::json::SearchDocKind;
+
 use crate::db::entities::{knowledge_chunks, knowledge_entries, knowledge_scopes, search_docs};
 use crate::error::AppError;
 
@@ -145,12 +147,12 @@ pub async fn hybrid_book(
         if !matches_filters(row, search) {
             continue;
         }
-        if !seen.insert((row.kind.clone(), row.ref_id)) {
+        if !seen.insert((row.kind.as_str().to_owned(), row.ref_id)) {
             continue;
         }
         let snippet = snippet(&row.body, &tokens);
         hits.push(BookHit {
-            kind: row.kind.clone(),
+            kind: row.kind.as_str().to_owned(),
             ref_id: row.ref_id,
             ref_part: row.ref_part,
             title: row.title.clone(),
@@ -176,14 +178,14 @@ fn matches_filters(row: &search_docs::Model, search: &BookSearch<'_>) -> bool {
         return false;
     }
     let corpus_ok = match search.corpus {
-        BookCorpus::Canon => row.kind != "passage",
-        BookCorpus::Passage => row.kind == "passage",
+        BookCorpus::Canon => row.kind != SearchDocKind::Passage,
+        BookCorpus::Passage => row.kind == SearchDocKind::Passage,
     };
     if !corpus_ok {
         return false;
     }
     if let Some(kinds) = search.kinds
-        && !kinds.iter().any(|kind| kind == &row.kind)
+        && !kinds.iter().any(|kind| kind == row.kind.as_str())
     {
         return false;
     }

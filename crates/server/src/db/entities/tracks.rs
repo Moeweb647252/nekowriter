@@ -2,6 +2,8 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::{AnchorKind, CanonMode, TrackKind};
+
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "tracks")]
@@ -9,11 +11,11 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,
     pub book_id: i32,
-    pub kind: String,
+    pub kind: TrackKind,
     pub title: String,
     pub synopsis: String,
-    pub canon_mode: String,
-    pub anchor_kind: String,
+    pub canon_mode: CanonMode,
+    pub anchor_kind: AnchorKind,
     pub anchor_chapter_id: Option<i32>,
     pub focus_entity_id: Option<i32>,
     pub ord: i32,

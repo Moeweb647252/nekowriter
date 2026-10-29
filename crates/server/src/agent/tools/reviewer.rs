@@ -98,7 +98,7 @@ impl ToolHandler for SubmitReviewTool {
             content_version: Set(content_version),
             session_id: Set(Some(ctx.session.id)),
             attempt: Set(attempt),
-            verdict: Set(input.verdict.as_str().to_owned()),
+            verdict: Set(input.verdict),
             summary: Set(input.summary.trim().to_owned()),
             issues: Set(crate::db::json::to_json(&issues)
                 .map_err(|_| ToolError::new(ToolErrorKind::Internal))?),

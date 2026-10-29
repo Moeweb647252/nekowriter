@@ -126,7 +126,7 @@ pub async fn create_inner(
         kind: Set(kind.to_owned()),
         inverse_kind: Set(input.inverse_kind.trim().to_owned()),
         description: Set(input.description.trim().to_owned()),
-        status: Set(RelationStatus::Active.as_str().to_owned()),
+        status: Set(RelationStatus::Active),
         since_chapter_id: Set(input.since_chapter_id),
         until_chapter_id: Set(input.until_chapter_id),
         created_at: Set(timestamp),
@@ -220,7 +220,7 @@ pub async fn update_inner(
         active.description = Set(description.trim().to_owned());
     }
     if let Some(status) = patch.status {
-        active.status = Set(status.as_str().to_owned());
+        active.status = Set(status);
     }
     if let Some(since) = patch.since_chapter_id {
         active.since_chapter_id = Set(since);
@@ -456,7 +456,7 @@ pub async fn find_active(
         .filter(relations::Column::SourceId.eq(source_id))
         .filter(relations::Column::TargetId.eq(target_id))
         .filter(relations::Column::Kind.eq(kind))
-        .filter(relations::Column::Status.eq(RelationStatus::Active.as_str()));
+        .filter(relations::Column::Status.eq(RelationStatus::Active));
     if let Some(condition) = write.condition(relations::Column::TrackId) {
         statement = statement.filter(condition);
     }
@@ -495,7 +495,7 @@ async fn ensure_no_active_pair(
         .filter(relations::Column::BookId.eq(book_id))
         .filter(relations::Column::SourceId.eq(source_id))
         .filter(relations::Column::TargetId.eq(target_id))
-        .filter(relations::Column::Status.eq(RelationStatus::Active.as_str()));
+        .filter(relations::Column::Status.eq(RelationStatus::Active));
     statement = match track_id {
         Some(track_id) => statement.filter(relations::Column::TrackId.eq(track_id)),
         None => statement.filter(relations::Column::TrackId.is_null()),
@@ -533,7 +533,7 @@ pub async fn find_active_pair(
         .filter(relations::Column::BookId.eq(book_id))
         .filter(relations::Column::SourceId.eq(source_id))
         .filter(relations::Column::TargetId.eq(target_id))
-        .filter(relations::Column::Status.eq(RelationStatus::Active.as_str()));
+        .filter(relations::Column::Status.eq(RelationStatus::Active));
     if let Some(condition) = write.condition(relations::Column::TrackId) {
         statement = statement.filter(condition);
     }
@@ -561,7 +561,7 @@ pub fn to_dto(row: &relations::Model) -> CanonResult<RelationDto> {
         kind: row.kind.clone(),
         inverse_kind: row.inverse_kind.clone(),
         description: row.description.clone(),
-        status: super::enum_of("relations.status", &row.status)?,
+        status: row.status,
         since_chapter_id: row.since_chapter_id,
         until_chapter_id: row.until_chapter_id,
         created_at: row.created_at,
@@ -628,7 +628,7 @@ pub async fn restore_inner(
         kind: Set(kind.clone()),
         inverse_kind: Set(inverse_kind.clone()),
         description: Set(description.clone()),
-        status: Set(status.as_str().to_owned()),
+        status: Set(*status),
         since_chapter_id: Set(*since_chapter_id),
         until_chapter_id: Set(*until_chapter_id),
         updated_at: Set(stamp()),
@@ -686,7 +686,7 @@ pub async fn recreate_inner(
         kind: Set(kind.clone()),
         inverse_kind: Set(inverse_kind.clone()),
         description: Set(description.clone()),
-        status: Set(status.as_str().to_owned()),
+        status: Set(*status),
         since_chapter_id: Set(*since_chapter_id),
         until_chapter_id: Set(*until_chapter_id),
         created_at: Set(timestamp),

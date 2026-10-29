@@ -24,7 +24,10 @@ use crate::db::entities::{
     appearances, change_log, chapters, character_designs, entities, foreshadowing, relations,
     timeline_event_entities, timeline_events, tracks,
 };
-use crate::db::json::{ChangeTargetType, EntityKind, EntityStatus, ForeshadowingStatus};
+use crate::db::json::{
+    CanonMode, ChangeTargetType, ChapterStatus, EntityKind, EntityStatus, ForeshadowingStatus,
+    RelationStatus, TrackKind,
+};
 use crate::prompts::context::{
     AppearanceSummaryContext, ChangeLineContext, DesignLinkContext, RelationLineContext,
 };
@@ -194,7 +197,7 @@ async fn resolver(ctx: &ToolCtx<'_>) -> Result<EntityResolver, ToolError> {
             id: row.id,
             name: row.name.clone(),
             aliases: canon::aliases_of(row).map_err(|error| canon_error(ctx, error))?,
-            kind_label: ctx.prompts.label("entity_kind", &row.kind),
+            kind_label: ctx.prompts.label("entity_kind", row.kind.as_str()),
         });
     }
     Ok(EntityResolver::new(visible))
@@ -223,7 +226,7 @@ async fn anchor_of(ctx: &ToolCtx<'_>) -> Anchor {
     let Some(track) = ctx.track else {
         return Anchor::default();
     };
-    if track.kind != "side" {
+    if track.kind != TrackKind::Side {
         return Anchor::default();
     }
     let kind = match track.anchor_kind.as_str() {
@@ -329,12 +332,12 @@ fn entity_ref(row: &entities::Model) -> String {
 
 /// The `ui` payload's kind value: the stored enum (spec/05 §1.6, D-054).
 fn kind_of(row: &entities::Model) -> EntityKind {
-    EntityKind::from_str_opt(&row.kind).unwrap_or(EntityKind::Other)
+    row.kind
 }
 
 /// The `ui` payload's status value.
 fn status_of(row: &entities::Model) -> EntityStatus {
-    EntityStatus::from_str_opt(&row.status).unwrap_or(EntityStatus::Active)
+    row.status
 }
 
 /// The resolved entity a parameter names (spec/05 §1.7).
@@ -441,7 +444,7 @@ impl ToolHandler for GetEntityTool {
                 subject,
                 object,
                 kind,
-                ended: row.status == "ended",
+                ended: row.status == RelationStatus::Ended,
                 until_label: label_of_chapter(ctx, row.until_chapter_id, &mut labels).await?,
                 description: row.description.clone(),
                 since_label: label_of_chapter(ctx, row.since_chapter_id, &mut labels).await?,
@@ -450,7 +453,7 @@ impl ToolHandler for GetEntityTool {
 
         // The latest change notes, with chapter labels and anchor marks (spec/05 §3).
         let change_rows = change_log::Entity::find()
-            .filter(change_log::Column::TargetType.eq(ChangeTargetType::Entity.as_str()))
+            .filter(change_log::Column::TargetType.eq(ChangeTargetType::Entity))
             .filter(change_log::Column::TargetId.eq(entity.id))
             .filter(visibility.visible_condition(change_log::Column::TrackId))
             .filter(change_log::Column::RevertedById.is_null())
@@ -545,10 +548,10 @@ impl ToolHandler for GetEntityTool {
                 "id": entity.id,
                 "name": entity.name,
                 "kind": entity.kind,
-                "kind_label": ctx.prompts.label("entity_kind", &entity.kind),
-                "is_protagonist": entity.is_protagonist != 0,
+                "kind_label": ctx.prompts.label("entity_kind", entity.kind.as_str()),
+                "is_protagonist": entity.is_protagonist,
                 "importance": entity.importance,
-                "status_label": ctx.prompts.label("entity_status", &entity.status),
+                "status_label": ctx.prompts.label("entity_status", entity.status.as_str()),
                 "aliases": aliases,
                 "summary": entity.summary,
                 "state": entity.state,
@@ -621,12 +624,12 @@ impl ToolHandler for ListEntitiesTool {
         let mut items = Vec::new();
         for row in &rows {
             if let Some(kind) = input.kind
-                && row.kind != kind.as_str()
+                && row.kind != kind
             {
                 continue;
             }
             if let Some(status) = input.status
-                && row.status != status.as_str()
+                && row.status != status
             {
                 continue;
             }
@@ -643,11 +646,11 @@ impl ToolHandler for ListEntitiesTool {
             items.push(json!({
                 "id": row.id,
                 "name": row.name,
-                "kind_label": ctx.prompts.label("entity_kind", &row.kind),
+                "kind_label": ctx.prompts.label("entity_kind", row.kind.as_str()),
                 "aliases": aliases,
                 "summary": row.summary,
                 "status": status_of(row),
-                "status_label": ctx.prompts.label("entity_status", &row.status),
+                "status_label": ctx.prompts.label("entity_status", row.status.as_str()),
             }));
         }
         // Sorted by importance desc, then last appearance desc (spec/05 §3).
@@ -745,7 +748,7 @@ impl ToolHandler for GetRelationsTool {
         let mut labels = BTreeMap::new();
         let mut items = Vec::new();
         for row in &rows {
-            if row.status == "ended" && !include_ended {
+            if row.status == RelationStatus::Ended && !include_ended {
                 continue;
             }
             let counterpart = if row.source_id == entity.id {
@@ -782,7 +785,7 @@ impl ToolHandler for GetRelationsTool {
                 subject,
                 object,
                 kind,
-                ended: row.status == "ended",
+                ended: row.status == RelationStatus::Ended,
                 until_label: label_of_chapter(ctx, row.until_chapter_id, &mut labels).await?,
                 description: row.description.clone(),
                 since_label: label_of_chapter(ctx, row.since_chapter_id, &mut labels).await?,
@@ -997,7 +1000,7 @@ async fn main_track_id(ctx: &ToolCtx<'_>) -> Option<i32> {
     let visibility = visibility_of(ctx);
     tracks::Entity::find()
         .filter(tracks::Column::BookId.eq(visibility.book_id))
-        .filter(tracks::Column::Kind.eq("main"))
+        .filter(tracks::Column::Kind.eq(TrackKind::Main))
         .one(ctx.tx)
         .await
         .ok()
@@ -1097,7 +1100,7 @@ impl ToolHandler for ListForeshadowingTool {
             items.push(json!({
                 "id": row.id,
                 "title": row.title,
-                "status_label": ctx.prompts.label("foreshadowing_status", &row.status),
+                "status_label": ctx.prompts.label("foreshadowing_status", row.status.as_str()),
                 "description": row.description,
                 "planted_label": label_of_chapter(ctx, row.planted_chapter_id, &mut labels).await?,
                 "planned_payoff": row.planned_payoff,
@@ -1140,7 +1143,7 @@ impl ToolHandler for ReadChapterTool {
     ) -> Result<ToolOutcome, ToolError> {
         let input: ReadChapterInput = decode(input)?;
         let chapter = resolve_chapter(ctx, &input.chapter).await?;
-        if chapter.status != "official" {
+        if chapter.status != ChapterStatus::Official {
             return Err(ToolError::new(ToolErrorKind::ChapterNotOfficial).with(
                 "label",
                 canon::chapter_label(ctx.tx, ctx.prompts, Some(chapter.id))
@@ -1265,7 +1268,7 @@ async fn visible_track(
     else {
         return Ok(false);
     };
-    if track.kind == "main" || track.canon_mode == "canon" {
+    if track.kind == TrackKind::Main || track.canon_mode == CanonMode::Canon {
         return Ok(true);
     }
     Ok(visibility.sees(Some(track.id)))

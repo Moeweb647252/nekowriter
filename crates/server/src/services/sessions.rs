@@ -23,8 +23,9 @@ use crate::db::entities::{
     providers, research_tasks, tracks,
 };
 use crate::db::json::{
-    AgentRole, BookSettings, Granularity, InboxKind, ModelSnapshot, Phase, Protocol, RoleModels,
-    SessionCounters, SessionKind, SessionStatus, StoredBlock, ToolCallStatus,
+    AgentRole, BookSettings, ChapterStatus, Granularity, InboxKind, ModelSnapshot, Phase, Protocol,
+    ResearchTaskStatus, RoleModels, SessionCounters, SessionKind, SessionStatus, StoredBlock,
+    ToolCallStatus, TrackKind,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
@@ -185,7 +186,7 @@ pub(crate) async fn create_inner(
             .await?
             .ok_or_else(|| AppError::not_found(format!("chapter {chapter_id}")))?;
         match input.kind {
-            SessionKind::ChapterOutline if chapter.status == "official" => {
+            SessionKind::ChapterOutline if chapter.status == ChapterStatus::Official => {
                 return Err(super::conflict(
                     ErrorCode::ChapterInvalidState,
                     "an official chapter cannot be re-outlined",
@@ -207,7 +208,7 @@ pub(crate) async fn create_inner(
                     ));
                 }
             }
-            SessionKind::ChapterReview if chapter.status != "in_review" => {
+            SessionKind::ChapterReview if chapter.status != ChapterStatus::InReview => {
                 return Err(super::conflict(
                     ErrorCode::ChapterInvalidState,
                     "only a chapter in review can be reviewed",
@@ -394,8 +395,8 @@ pub(crate) async fn create_inner(
     let now = chrono::Utc::now();
     let session = agent_sessions::ActiveModel {
         book_id: Set(input.book_id),
-        role: Set(role.to_owned()),
-        kind: Set(input.kind.as_str().to_owned()),
+        role: Set(role_enum),
+        kind: Set(input.kind),
         chapter_id: Set(input.chapter_id),
         track_id: Set(track_id),
         research_task_id: Set(input.research_task_id),
@@ -406,12 +407,12 @@ pub(crate) async fn create_inner(
         tools: Set(
             crate::db::json::to_json(&tools).map_err(|err| AppError::internal(err.to_string()))?
         ),
-        status: Set(SessionStatus::Running.as_str().to_owned()),
-        phase: Set(phase.as_str().to_owned()),
-        granularity: Set(granularity.map(|value| value.as_str().to_owned())),
-        auto_pause: Set(i32::from(auto_pause)),
-        pause_after_outline: Set(i32::from(pause_after_outline)),
-        pause_requested: Set(0),
+        status: Set(SessionStatus::Running),
+        phase: Set(phase),
+        granularity: Set(granularity),
+        auto_pause: Set(auto_pause),
+        pause_after_outline: Set(pause_after_outline),
+        pause_requested: Set(false),
         held_tool_call_id: Set(None),
         base_content_version: Set(base_content_version),
         pending_comment: Set(input.pending_comment.clone()),
@@ -439,7 +440,7 @@ pub(crate) async fn create_inner(
         research_tasks::ActiveModel {
             id: Set(task_id),
             session_id: Set(Some(session.id)),
-            status: Set("running".to_owned()),
+            status: Set(ResearchTaskStatus::Running),
             updated_at: Set(now),
             ..Default::default()
         }
@@ -790,7 +791,7 @@ async fn apply_creation_side_effects(
                         .map_err(|err| AppError::internal(err.to_string()))?),
                     content_version: Set(chapter.content_version + 1),
                     word_count: Set(0),
-                    status: Set(ChapterStatus::Drafting.as_str().to_owned()),
+                    status: Set(ChapterStatus::Drafting),
                     updated_at: Set(now),
                     ..Default::default()
                 }
@@ -799,7 +800,7 @@ async fn apply_creation_side_effects(
             } else {
                 chapters::ActiveModel {
                     id: Set(chapter_id),
-                    status: Set(ChapterStatus::Drafting.as_str().to_owned()),
+                    status: Set(ChapterStatus::Drafting),
                     updated_at: Set(now),
                     ..Default::default()
                 }
@@ -826,7 +827,7 @@ async fn apply_creation_side_effects(
             .await?;
             chapters::ActiveModel {
                 id: Set(chapter_id),
-                status: Set(ChapterStatus::Revising.as_str().to_owned()),
+                status: Set(ChapterStatus::Revising),
                 updated_at: Set(now),
                 ..Default::default()
             }
@@ -836,7 +837,7 @@ async fn apply_creation_side_effects(
         SessionKind::ChapterMaintenance | SessionKind::ChapterResync => {
             chapters::ActiveModel {
                 id: Set(chapter_id),
-                canon_status: Set(crate::db::json::CanonStatus::Syncing.as_str().to_owned()),
+                canon_status: Set(crate::db::json::CanonStatus::Syncing),
                 updated_at: Set(now),
                 ..Default::default()
             }
@@ -1046,12 +1047,12 @@ async fn pause_inner(
     session_id: i32,
 ) -> Result<(Vec<ServerEvent>, crate::api::dto::SessionDto), AppError> {
     let session = session::load(tx, session_id).await?;
-    if session.status != SessionStatus::Running.as_str() {
+    if session.status != SessionStatus::Running {
         return Err(invalid_state(&session, "pause"));
     }
     agent_sessions::ActiveModel {
         id: Set(session_id),
-        pause_requested: Set(1),
+        pause_requested: Set(true),
         updated_at: Set(chrono::Utc::now()),
         ..Default::default()
     }
@@ -1106,7 +1107,7 @@ async fn resume_inner(
                 return Err(invalid_state(&session, "resume"));
             };
             let mut held = runner::load_call(tx, call_id).await?;
-            if held.status != ToolCallStatus::Held.as_str() {
+            if held.status != ToolCallStatus::Held {
                 return Err(invalid_state(&session, "resume"));
             }
             let prompts = state_prompts(state, &session).await?;
@@ -1205,7 +1206,7 @@ async fn resume_inner(
                 }
                 agent_sessions::ActiveModel {
                     id: Set(session_id),
-                    phase: Set(phase.as_str().to_owned()),
+                    phase: Set(phase),
                     ..Default::default()
                 }
                 .update(tx)
@@ -1213,10 +1214,10 @@ async fn resume_inner(
             }
             agent_tool_calls::ActiveModel {
                 id: Set(held.id),
-                status: Set(if held.is_error != 0 {
-                    ToolCallStatus::Error.as_str().to_owned()
+                status: Set(if held.is_error {
+                    ToolCallStatus::Error
                 } else {
-                    ToolCallStatus::Done.as_str().to_owned()
+                    ToolCallStatus::Done
                 }),
                 appendices: Set(crate::db::json::to_json(&appendices)
                     .map_err(|err| AppError::internal(err.to_string()))?),
@@ -1318,7 +1319,7 @@ pub async fn stop(
     let dto = services::write(&db, move |tx| {
         Box::pin(async move {
             let session = session::load(tx, session_id).await?;
-            if session.status != SessionStatus::Running.as_str() {
+            if session.status != SessionStatus::Running {
                 return Err(invalid_state(&session, "stop"));
             }
             session::to_dto(tx, &session, Vec::new()).await
@@ -1381,7 +1382,7 @@ async fn continue_session_inner(
             if let Some(chapter_id) = syncing_chapter_id {
                 chapters::ActiveModel {
                     id: Set(chapter_id),
-                    canon_status: Set(crate::db::json::CanonStatus::Syncing.as_str().to_owned()),
+                    canon_status: Set(crate::db::json::CanonStatus::Syncing),
                     updated_at: Set(crate::services::now()),
                     ..Default::default()
                 }
@@ -1418,7 +1419,7 @@ pub async fn abandon(
 ) -> Result<crate::api::dto::SessionDto, AppError> {
     // A running session is stopped first: cancel, wait for the runner to exit (spec/03 §6).
     let session = session::load(state.db().conn(), session_id).await?;
-    if session.status == SessionStatus::Running.as_str() {
+    if session.status == SessionStatus::Running {
         state
             .manager()
             .cancel(session_id, crate::agent::CancelReason::Abandon);
@@ -1553,7 +1554,7 @@ async fn answer_inner(
     input: SessionAnswerInput,
 ) -> Result<(Vec<ServerEvent>, crate::api::dto::SessionDto), AppError> {
     let session = session::load(tx, session_id).await?;
-    if session.status != SessionStatus::AwaitingInput.as_str() {
+    if session.status != SessionStatus::AwaitingInput {
         return Err(invalid_state(&session, "answer"));
     }
     if session.held_tool_call_id != Some(input.tool_call_id) {
@@ -1562,7 +1563,7 @@ async fn answer_inner(
         ));
     }
     let call = runner::load_call(tx, input.tool_call_id).await?;
-    if call.status != ToolCallStatus::AwaitingInput.as_str() {
+    if call.status != ToolCallStatus::AwaitingInput {
         return Err(invalid_state(&session, "answer"));
     }
     let prompts = state_prompts(state, &session).await?;
@@ -1606,7 +1607,7 @@ async fn answer_inner(
         if let Some(phase) = effects.phase_to {
             agent_sessions::ActiveModel {
                 id: Set(session_id),
-                phase: Set(phase.as_str().to_owned()),
+                phase: Set(phase),
                 ..Default::default()
             }
             .update(tx)
@@ -1615,7 +1616,7 @@ async fn answer_inner(
     }
     agent_tool_calls::ActiveModel {
         id: Set(call.id),
-        status: Set(ToolCallStatus::Done.as_str().to_owned()),
+        status: Set(ToolCallStatus::Done),
         raw_result_text: Set(Some(rendered)),
         appendices: Set(crate::db::json::to_json(&answer_appendices)
             .map_err(|err| AppError::internal(err.to_string()))?),
@@ -1794,8 +1795,14 @@ pub async fn patch(
             }
             sets.push("updated_at = ?");
             values.push(chrono::Utc::now().into());
-            session::guard_columns(tx, session_id, &session.status, &sets.join(", "), values)
-                .await?;
+            session::guard_columns(
+                tx,
+                session_id,
+                session.status.as_str(),
+                &sets.join(", "),
+                values,
+            )
+            .await?;
             // A granularity change during drafting or revising queues the notice (spec/03 §8).
             // The notice names the open tail when there is one, because the new mode's first
             // segment continues it (spec/03 §8 "open tail").
@@ -1891,7 +1898,7 @@ async fn debug_session_inner(
             .map(|chapter| chapter.track_id),
         None => tracks::Entity::find()
             .filter(tracks::Column::BookId.eq(spec.book_id))
-            .filter(tracks::Column::Kind.eq("main"))
+            .filter(tracks::Column::Kind.eq(TrackKind::Main))
             .one(tx)
             .await?
             .map(|track| track.id),
@@ -1927,8 +1934,9 @@ async fn debug_session_inner(
     let now = chrono::Utc::now();
     let session = agent_sessions::ActiveModel {
         book_id: Set(Some(spec.book_id)),
-        role: Set(role_of_kind(spec.kind).to_owned()),
-        kind: Set(spec.kind.as_str().to_owned()),
+        role: Set(AgentRole::from_str_opt(role_of_kind(spec.kind))
+            .ok_or_else(|| AppError::internal("unknown debug session role"))?),
+        kind: Set(spec.kind),
         chapter_id: Set(spec.chapter_id),
         track_id: Set(track),
         research_task_id: Set(None),
@@ -1942,12 +1950,12 @@ async fn debug_session_inner(
         tools: Set(
             crate::db::json::to_json(&tools).map_err(|err| AppError::internal(err.to_string()))?
         ),
-        status: Set(SessionStatus::Running.as_str().to_owned()),
-        phase: Set(spec.phase.as_str().to_owned()),
-        granularity: Set(spec.granularity.map(|value| value.as_str().to_owned())),
-        auto_pause: Set(i32::from(spec.auto_pause)),
-        pause_after_outline: Set(i32::from(spec.pause_after_outline)),
-        pause_requested: Set(0),
+        status: Set(SessionStatus::Running),
+        phase: Set(spec.phase),
+        granularity: Set(spec.granularity),
+        auto_pause: Set(spec.auto_pause),
+        pause_after_outline: Set(spec.pause_after_outline),
+        pause_requested: Set(false),
         held_tool_call_id: Set(None),
         base_content_version: Set(match spec.chapter_id {
             Some(chapter_id) => chapters::Entity::find_by_id(chapter_id)
@@ -1973,7 +1981,7 @@ async fn debug_session_inner(
     if let Some(chapter_id) = spec.chapter_id {
         chapters::ActiveModel {
             id: Set(chapter_id),
-            status: Set(crate::db::json::ChapterStatus::Drafting.as_str().to_owned()),
+            status: Set(crate::db::json::ChapterStatus::Drafting),
             updated_at: Set(now),
             ..Default::default()
         }
@@ -2026,7 +2034,7 @@ async fn debug_echo_inner(
         .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
     let track = tracks::Entity::find()
         .filter(tracks::Column::BookId.eq(book_id))
-        .filter(tracks::Column::Kind.eq("main"))
+        .filter(tracks::Column::Kind.eq(TrackKind::Main))
         .one(tx)
         .await?;
     let profile_id = resolve_model(tx, Some(&book), AgentRole::Writer).await?;
@@ -2058,8 +2066,8 @@ async fn debug_echo_inner(
     let now = chrono::Utc::now();
     let session = agent_sessions::ActiveModel {
         book_id: Set(Some(book_id)),
-        role: Set(AgentRole::Writer.as_str().to_owned()),
-        kind: Set(SessionKind::ChapterWrite.as_str().to_owned()),
+        role: Set(AgentRole::Writer),
+        kind: Set(SessionKind::ChapterWrite),
         chapter_id: Set(None),
         track_id: Set(track.map(|track| track.id)),
         research_task_id: Set(None),
@@ -2073,12 +2081,12 @@ async fn debug_echo_inner(
         tools: Set(
             crate::db::json::to_json(&tools).map_err(|err| AppError::internal(err.to_string()))?
         ),
-        status: Set(SessionStatus::Running.as_str().to_owned()),
-        phase: Set(Phase::Drafting.as_str().to_owned()),
-        granularity: Set(Some(Granularity::Paragraph.as_str().to_owned())),
-        auto_pause: Set(0),
-        pause_after_outline: Set(0),
-        pause_requested: Set(0),
+        status: Set(SessionStatus::Running),
+        phase: Set(Phase::Drafting),
+        granularity: Set(Some(Granularity::Paragraph)),
+        auto_pause: Set(false),
+        pause_after_outline: Set(false),
+        pause_requested: Set(false),
         held_tool_call_id: Set(None),
         base_content_version: Set(None),
         pending_comment: Set(None),
@@ -2173,7 +2181,7 @@ async fn open_chapter_session(
         .filter(agent_sessions::Column::ChapterId.eq(chapter_id))
         .filter(agent_sessions::Column::Status.is_in(open_statuses()));
     query = if group == "chapter_writer" {
-        query.filter(agent_sessions::Column::Role.is_in(["planner", "writer"]))
+        query.filter(agent_sessions::Column::Role.is_in([AgentRole::Planner, AgentRole::Writer]))
     } else {
         query.filter(agent_sessions::Column::Role.eq(group))
     };
@@ -2195,12 +2203,12 @@ async fn set_status(
     let now = chrono::Utc::now();
     let mut active = agent_sessions::ActiveModel {
         id: Set(session.id),
-        status: Set(to.as_str().to_owned()),
+        status: Set(to),
         updated_at: Set(now),
         ..Default::default()
     };
     if clear_pause {
-        active.pause_requested = Set(0);
+        active.pause_requested = Set(false);
     }
     // A status change that leaves `running` clears the pause flag and captures the snapshot, so
     // those operations must go through `transition`; these paths all enter `running`.
@@ -2218,7 +2226,7 @@ async fn insert_inbox(
 ) -> Result<agent_inbox::Model, AppError> {
     Ok(agent_inbox::ActiveModel {
         session_id: Set(session_id),
-        kind: Set(kind.as_str().to_owned()),
+        kind: Set(kind),
         content: Set(content.to_owned()),
         created_at: Set(chrono::Utc::now()),
         consumed_at: Set(None),

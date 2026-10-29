@@ -2,6 +2,8 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::{EntityKind, EntityStatus};
+
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "entities")]
@@ -10,7 +12,7 @@ pub struct Model {
     pub id: i32,
     pub book_id: i32,
     pub track_id: Option<i32>,
-    pub kind: String,
+    pub kind: EntityKind,
     pub name: String,
     pub aliases: String,
     pub summary: String,
@@ -18,8 +20,8 @@ pub struct Model {
     pub state: String,
     pub attributes: String,
     pub importance: i32,
-    pub status: String,
-    pub is_protagonist: i32,
+    pub status: EntityStatus,
+    pub is_protagonist: bool,
     pub first_chapter_id: Option<i32>,
     pub last_chapter_id: Option<i32>,
     pub created_at: DateTimeUtc,

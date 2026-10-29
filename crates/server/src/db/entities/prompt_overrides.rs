@@ -2,13 +2,15 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::PromptScope;
+
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "prompt_overrides")]
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,
-    pub scope: String,
+    pub scope: PromptScope,
     pub book_id: Option<i32>,
     pub key: String,
     pub content: String,

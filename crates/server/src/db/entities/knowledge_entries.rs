@@ -2,6 +2,8 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::EntrySource;
+
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "knowledge_entries")]
@@ -13,7 +15,7 @@ pub struct Model {
     #[sea_orm(unique_key = "scope_title")]
     pub title: String,
     pub content: String,
-    pub source: String,
+    pub source: EntrySource,
     pub source_urls: String,
     pub tags: String,
     pub research_task_id: Option<i32>,

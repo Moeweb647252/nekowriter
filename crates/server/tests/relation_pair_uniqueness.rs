@@ -23,6 +23,7 @@
 //!    has a shared active relation is legal, and a shared write never sees a private row.
 
 use axum::http::StatusCode;
+use nekowriter::db::json::RelationStatus;
 use nekowriter::services::canon::{self, CanonWrite, Visibility, relation};
 use nekowriter::testing::TestApp;
 use serde_json::json;
@@ -404,7 +405,10 @@ async fn an_isolated_track_may_relate_a_pair_that_shared_canon_already_related()
         .all(conn)
         .await
         .expect("relations");
-    let active: Vec<_> = rows.iter().filter(|row| row.status == "active").collect();
+    let active: Vec<_> = rows
+        .iter()
+        .filter(|row| row.status == RelationStatus::Active)
+        .collect();
     assert_eq!(
         active.len(),
         2,

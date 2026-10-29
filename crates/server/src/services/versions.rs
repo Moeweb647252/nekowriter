@@ -33,7 +33,7 @@ pub async fn create_version(
     let model = chapter_versions::ActiveModel {
         chapter_id: Set(version.chapter_id),
         version_no: Set(version_no),
-        kind: Set(version.kind.as_str().to_owned()),
+        kind: Set(version.kind),
         title: Set(version.title.to_owned()),
         content: Set(json(version.content)?),
         word_count: Set(version.word_count),
@@ -101,8 +101,7 @@ pub fn to_meta(row: &chapter_versions::Model) -> Result<ChapterVersionMetaDto, A
         id: row.id,
         chapter_id: row.chapter_id,
         version_no: row.version_no,
-        kind: VersionKind::from_str_opt(&row.kind)
-            .ok_or_else(|| AppError::internal(format!("unknown version kind {:?}", row.kind)))?,
+        kind: row.kind,
         title: row.title.clone(),
         word_count: row.word_count,
         note: row.note.clone(),

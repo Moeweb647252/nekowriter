@@ -20,8 +20,8 @@ use crate::db::entities::{
 };
 use crate::db::json::{
     self, ConceptionCharacterSnapshot, ConceptionDocSnapshot, ConceptionState,
-    ConceptionTopicSnapshot, Granularity, MessageKind, Phase, SessionCounters, SessionError,
-    SessionKind, SessionStatus, StoredBlock, ToolCallStatus, Usage, ViewSnapshot,
+    ConceptionTopicSnapshot, Granularity, Phase, ResearchTaskStatus, SessionCounters, SessionError,
+    SessionKind, SessionStatus, StoredBlock, Usage, ViewSnapshot,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
@@ -43,35 +43,32 @@ pub fn is_terminal(status: SessionStatus) -> bool {
 
 /// True when the session is running (the only status a runner may act on).
 pub fn is_running(row: &agent_sessions::Model) -> bool {
-    row.status == SessionStatus::Running.as_str()
+    row.status == SessionStatus::Running
 }
 
 /// Reads the status column as its enum.
 pub fn status_of(row: &agent_sessions::Model) -> SessionStatus {
-    SessionStatus::from_str_opt(&row.status).unwrap_or(SessionStatus::Failed)
+    row.status
 }
 
 /// Reads the phase column as its enum.
 pub fn phase_of(row: &agent_sessions::Model) -> Phase {
-    Phase::from_str_opt(&row.phase).unwrap_or(Phase::None)
+    row.phase
 }
 
 /// Reads the kind column as its enum.
 pub fn kind_of(row: &agent_sessions::Model) -> SessionKind {
-    SessionKind::from_str_opt(&row.kind).unwrap_or(SessionKind::ChapterWrite)
+    row.kind
 }
 
 /// Reads the role column as its enum.
 pub fn role_of(row: &agent_sessions::Model) -> crate::db::json::AgentRole {
-    crate::db::json::AgentRole::from_str_opt(&row.role)
-        .unwrap_or(crate::db::json::AgentRole::Writer)
+    row.role
 }
 
 /// Reads the granularity column, when set.
 pub fn granularity_of(row: &agent_sessions::Model) -> Option<Granularity> {
     row.granularity
-        .as_deref()
-        .and_then(Granularity::from_str_opt)
 }
 
 /// Loads one session row, or a `not_found` error.
@@ -205,7 +202,7 @@ pub async fn transition(
         sets.join(", ")
     );
     values.push(session.id.into());
-    values.push(session.status.clone().into());
+    values.push(session.status.into());
     let result = conn
         .execute_raw(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
@@ -400,7 +397,7 @@ async fn conception_snapshot(
     let mut doc_map = std::collections::BTreeMap::new();
     for doc in docs {
         doc_map.insert(
-            doc.kind.clone(),
+            doc.kind.as_str().to_owned(),
             ConceptionDocSnapshot {
                 revision: doc.revision,
                 content: doc.content,
@@ -424,7 +421,7 @@ async fn conception_snapshot(
         .collect();
     let topics = research_tasks::Entity::find()
         .filter(research_tasks::Column::BookId.eq(book_id))
-        .filter(research_tasks::Column::Status.eq("draft"))
+        .filter(research_tasks::Column::Status.eq(ResearchTaskStatus::Draft))
         .order_by_asc(research_tasks::Column::Id)
         .all(conn)
         .await?
@@ -482,9 +479,9 @@ pub async fn to_dto(
         status: status_of(row),
         phase: phase_of(row),
         granularity: granularity_of(row),
-        auto_pause: row.auto_pause != 0,
-        pause_after_outline: row.pause_after_outline != 0,
-        pause_requested: row.pause_requested != 0,
+        auto_pause: row.auto_pause,
+        pause_after_outline: row.pause_after_outline,
+        pause_requested: row.pause_requested,
         held_tool_call_id: row.held_tool_call_id,
         base_content_version: row.base_content_version,
         error: error_of(row),
@@ -561,8 +558,8 @@ pub fn message_dto(row: &agent_messages::Model) -> Result<MessageDto, AppError> 
     Ok(MessageDto {
         id: row.id,
         seq: row.seq,
-        role: row.role.clone(),
-        kind: MessageKind::from_str_opt(&row.kind).unwrap_or(MessageKind::Assistant),
+        role: row.role.as_str().to_owned(),
+        kind: row.kind,
         blocks,
         stop_reason: row.stop_reason.clone(),
         usage: row
@@ -592,8 +589,8 @@ pub fn tool_call_dto(row: &agent_tool_calls::Model) -> Result<ToolCallDto, AppEr
         name: row.name.clone(),
         input: serde_json::from_str::<Value>(&row.input).ok(),
         input_text,
-        status: ToolCallStatus::from_str_opt(&row.status).unwrap_or(ToolCallStatus::Error),
-        is_error: row.is_error != 0,
+        status: row.status,
+        is_error: row.is_error,
         result_text: row
             .result_text
             .clone()
@@ -603,7 +600,7 @@ pub fn tool_call_dto(row: &agent_tool_calls::Model) -> Result<ToolCallDto, AppEr
             .ui
             .as_deref()
             .and_then(|raw| serde_json::from_str::<Value>(raw).ok()),
-        sealed: row.sealed != 0,
+        sealed: row.sealed,
         // A deferred call stores its staged write in `effects`; a finalized call has already applied
         // and cleared it, so this is `None` exactly when the text is in the chapter (D-139).
         pending_content: json::from_json_or_default::<crate::db::json::ToolEffects>(

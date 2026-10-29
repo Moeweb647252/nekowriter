@@ -44,8 +44,8 @@ pub async fn revert_inner(
         .one(tx)
         .await?
         .ok_or_else(|| CanonError::not_found(format!("change #{change_id}")))?;
-    let target_type = parse_target_type(&original.target_type)?;
-    let op = parse_op(&original.op)?;
+    let target_type = parse_target_type(original.target_type.as_str())?;
+    let op = parse_op(original.op.as_str())?;
     if original.reverts_id.is_some() {
         return Err(CanonError::App(AppError::validation(
             "a revert cannot itself be reverted",

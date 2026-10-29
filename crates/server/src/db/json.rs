@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
+use sea_orm::{DeriveActiveEnum, EnumIter};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
@@ -16,13 +17,18 @@ use ts_rs::TS;
 macro_rules! string_enum {
     ($(#[$meta:meta])* $name:ident { $($variant:ident => $value:literal),+ $(,)? }) => {
         $(#[$meta])*
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+        #[derive(
+            Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+            TS, EnumIter, DeriveActiveEnum,
+        )]
         #[serde(rename_all = "snake_case")]
+        #[sea_orm(rs_type = "String", db_type = "Text")]
         #[ts(export)]
         pub enum $name {
             $(
                 #[serde(rename = $value)]
                 #[ts(rename = $value)]
+                #[sea_orm(string_value = $value)]
                 $variant,
             )+
         }

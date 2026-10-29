@@ -2,6 +2,8 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::ForeshadowingStatus;
+
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "foreshadowing")]
@@ -13,7 +15,7 @@ pub struct Model {
     pub title: String,
     pub description: String,
     pub planned_payoff: String,
-    pub status: String,
+    pub status: ForeshadowingStatus,
     pub planted_chapter_id: Option<i32>,
     pub resolved_chapter_id: Option<i32>,
     pub resolution: String,

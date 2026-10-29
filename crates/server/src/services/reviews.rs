@@ -357,7 +357,7 @@ pub async fn send_back(
                 text: Set(feedback_for_row),
                 issues: Set(crate::db::json::to_json(&issues)
                     .map_err(|err| AppError::internal(err.to_string()))?),
-                mode: Set(mode.as_str().to_owned()),
+                mode: Set(mode),
                 created_at: Set(chrono::Utc::now()),
                 ..Default::default()
             }
@@ -427,7 +427,7 @@ pub async fn open_reviewer_sessions(
 
 /// Rejects a review operation on a chapter that is not `in_review`.
 fn require_in_review(chapter: &chapters::Model) -> Result<(), AppError> {
-    let status = ChapterStatus::from_str_opt(&chapter.status).unwrap_or(ChapterStatus::Planned);
+    let status = chapter.status;
     if status == ChapterStatus::InReview {
         return Ok(());
     }

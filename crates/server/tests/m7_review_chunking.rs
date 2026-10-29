@@ -2,6 +2,7 @@
 
 use axum::http::StatusCode;
 use nekowriter::db::entities::knowledge_chunks;
+use nekowriter::db::json::EmbedState;
 use nekowriter::search::chunk;
 use nekowriter::services::indexer;
 use nekowriter::testing::TestApp;
@@ -53,7 +54,7 @@ async fn a_new_leading_chunk_keeps_the_unchanged_chunks_on_their_rows() {
     assert_eq!(before.len(), 2, "{before:?}");
     let alpha_id = before[0].id;
     let beta_id = before[1].id;
-    assert!(before.iter().all(|row| row.embed_state == "done"));
+    assert!(before.iter().all(|row| row.embed_state == EmbedState::Done));
 
     // Insert a new section before both existing ones.
     let (status, body) = app
@@ -94,12 +95,17 @@ async fn a_new_leading_chunk_keeps_the_unchanged_chunks_on_their_rows() {
         .iter()
         .find(|row| row.text.contains("new text"))
         .expect("the new chunk");
-    assert_eq!(new_row.embed_state, "pending", "new chunks are pending");
+    assert_eq!(
+        new_row.embed_state,
+        EmbedState::Pending,
+        "new chunks are pending"
+    );
     assert_eq!(new_row.ord, 0);
     assert_eq!(alpha.ord, 1);
     assert_eq!(beta.ord, 2);
     assert_eq!(
-        alpha.embed_state, "done",
+        alpha.embed_state,
+        EmbedState::Done,
         "the unchanged chunk keeps its vector state"
     );
 }

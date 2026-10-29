@@ -2,6 +2,8 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::{AgentRole, Granularity, Phase, SessionKind, SessionStatus};
+
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "agent_sessions")]
@@ -9,8 +11,8 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,
     pub book_id: Option<i32>,
-    pub role: String,
-    pub kind: String,
+    pub role: AgentRole,
+    pub kind: SessionKind,
     pub chapter_id: Option<i32>,
     pub track_id: Option<i32>,
     pub research_task_id: Option<i32>,
@@ -18,12 +20,12 @@ pub struct Model {
     pub model_snapshot: String,
     pub system_prompt: String,
     pub tools: String,
-    pub status: String,
-    pub phase: String,
-    pub granularity: Option<String>,
-    pub auto_pause: i32,
-    pub pause_after_outline: i32,
-    pub pause_requested: i32,
+    pub status: SessionStatus,
+    pub phase: Phase,
+    pub granularity: Option<Granularity>,
+    pub auto_pause: bool,
+    pub pause_after_outline: bool,
+    pub pause_requested: bool,
     pub held_tool_call_id: Option<i32>,
     pub base_content_version: Option<i32>,
     pub pending_comment: Option<String>,
