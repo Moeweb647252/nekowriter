@@ -318,10 +318,23 @@ async fn memory_off_keeps_the_write_outline() {
 
 #[tokio::test]
 async fn search_canon_uses_the_sessions_frozen_kinds_after_a_flip() {
+    // The delay makes the freeze/flip ordering deterministic: `sessions::create` returns and the
+    // test flips the book before the scripted provider is asked for the tool call.
     let fixture = fixture_with_steps(vec![
-        ScriptStep::new().tool("search_canon", json!({ "query": "独有记忆笔记内容" })),
+        ScriptStep::new()
+            .delay(Duration::from_secs(1))
+            .tool("search_canon", json!({ "query": "搜索验证的独有记忆" })),
     ])
     .await;
+    let (status, note) = fixture
+        .runtime
+        .app
+        .post(
+            &format!("/api/books/{}/memory-notes", fixture.runtime.book_id),
+            json!({ "kind": "fact", "content": "搜索验证的独有记忆" }),
+        )
+        .await;
+    assert_eq!(status, 201, "memory note: {note}");
     nekowriter::services::indexer::run_once(fixture.runtime.app.state())
         .await
         .expect("index canon");
@@ -348,12 +361,16 @@ async fn search_canon_uses_the_sessions_frozen_kinds_after_a_flip() {
         .cloned()
         .expect("the search_canon call");
     assert_eq!(call["is_error"], false, "search_canon failed: {call}");
+    assert_eq!(
+        call["ui"]["count"], 1,
+        "the call must return the real Memory hit, not the echoed query: {call}"
+    );
     assert!(
         call["result_text"]
             .as_str()
             .unwrap_or_default()
-            .contains("独有记忆笔记内容"),
-        "the frozen all-on session must still search Memory after the book flip: {call}"
+            .contains("【笔记】"),
+        "the frozen all-on session must still return the note kind after the book flip: {call}"
     );
 }
 
@@ -539,10 +556,83 @@ async fn canon_counts_and_the_memory_view_report_the_book_systems() {
 }
 
 #[tokio::test]
+async fn block_goals_does_not_render_ancestors_of_capped_tasks() {
+    let fixture = fixture().await;
+    let book = fixture.runtime.book_id;
+    // A plan beyond the chapter range is the ancestor of task 300. The cap keeps the first 30
+    // tasks (id 1 and ids 2–30), so task 300 and its plan must both disappear.
+    let mut rows = format!(
+        "INSERT INTO goal_nodes(id, book_id, track_id, level, parent_id, title, purpose, status, \
+         chapter_from, chapter_to, conditions, created_at, updated_at) VALUES \
+         (101, {book}, NULL, 'plan', NULL, '被丢弃任务的计划', '不应渲染', 'active', 99, NULL, '[]', \
+          '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');\n"
+    );
+    for i in 2..=30 {
+        rows.push_str(&format!(
+            "INSERT INTO goal_nodes(id, book_id, track_id, level, parent_id, title, purpose, status, \
+             chapter_from, chapter_to, conditions, created_at, updated_at) VALUES \
+             ({i}, {book}, NULL, 'task', NULL, '目标{i}', '目的{i}', 'active', 1, NULL, '[]', \
+             '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');\n"
+        ));
+    }
+    rows.push_str(&format!(
+        "INSERT INTO goal_nodes(id, book_id, track_id, level, parent_id, title, purpose, status, \
+         chapter_from, chapter_to, conditions, created_at, updated_at) VALUES \
+         (300, {book}, NULL, 'task', 101, '被丢弃任务', '不应渲染', 'active', 1, NULL, '[]', \
+         '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');"
+    ));
+    fixture.runtime.app.execute(&rows).await;
+
+    let session_id = create(&fixture, SessionKind::ChapterMaintenance).await;
+    let kickoff = kickoff_text(&fixture, session_id).await;
+    assert!(
+        !kickoff.contains("id=\"300\""),
+        "dropped task leaked: {kickoff}"
+    );
+    assert!(
+        !kickoff.contains("id=\"101\""),
+        "the plan of a dropped task leaked without a rendered descendant: {kickoff}"
+    );
+}
+
+#[tokio::test]
+async fn block_goals_keeps_a_selected_tasks_ancestors_outside_the_range() {
+    let fixture = fixture().await;
+    let book = fixture.runtime.book_id;
+    fixture
+        .runtime
+        .app
+        .execute(&format!(
+            "INSERT INTO goal_nodes(id, book_id, track_id, level, parent_id, title, purpose, status, \
+             chapter_from, chapter_to, conditions, created_at, updated_at) VALUES \
+             (201, {book}, NULL, 'goal', NULL, '范围外目标', '范围外目的', 'active', 99, NULL, '[]', \
+              '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'); \
+             INSERT INTO goal_nodes(id, book_id, track_id, level, parent_id, title, purpose, status, \
+             chapter_from, chapter_to, conditions, created_at, updated_at) VALUES \
+             (202, {book}, NULL, 'plan', 201, '范围外计划', '范围外目的', 'active', 99, NULL, '[]', \
+              '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'); \
+             INSERT INTO goal_nodes(id, book_id, track_id, level, parent_id, title, purpose, status, \
+             chapter_from, chapter_to, conditions, created_at, updated_at) VALUES \
+             (203, {book}, NULL, 'task', 202, '范围内的任务', '范围内的目的', 'active', 1, NULL, '[]', \
+              '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');"
+        ))
+        .await;
+    let session_id = create(&fixture, SessionKind::ChapterMaintenance).await;
+    let kickoff = kickoff_text(&fixture, session_id).await;
+    for id in [201, 202, 203] {
+        assert!(
+            kickoff.contains(&format!("id=\"{id}\"")),
+            "a selected task's ancestor must render (missing {id}): {kickoff}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn block_goals_renders_links_and_caps_at_thirty() {
     let fixture = fixture().await;
     let book = fixture.runtime.book_id;
-    // Link the one goal to its entity/event/hook; then add enough tasks to reach the cap.
+    // Link the one goal to its entity/event/hook, and give task 1 a plan ancestor outside the
+    // chapter range: a selected task must still bring its plan.
     fixture
         .runtime
         .app
@@ -552,12 +642,27 @@ async fn block_goals_renders_links_and_caps_at_thirty() {
              INSERT INTO goal_node_foreshadowing(node_id, foreshadowing_id) VALUES (1, 1);",
         )
         .await;
+    fixture
+        .runtime
+        .app
+        .execute(&format!(
+            "INSERT INTO goal_nodes(id, book_id, track_id, level, parent_id, title, purpose, status, \
+             chapter_from, chapter_to, conditions, created_at, updated_at) VALUES \
+             (100, {book}, NULL, 'plan', NULL, '范围之外的计划', '范围之外的目的', 'active', 99, \
+              NULL, '[]', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'); \
+             UPDATE goal_nodes SET parent_id = 100 WHERE id = 1;"
+        ))
+        .await;
     let mut rows = String::new();
     for i in 2..=36 {
+        // Varied ranges: id 1 and the odd ids start at 1; even ids start at 2 (still <= the
+        // target chapter's ordinal 2). The cap must keep the earliest 30 nodes including the
+        // one plan ancestor, in this exact order.
+        let from = if i % 2 == 0 { 2 } else { 1 };
         rows.push_str(&format!(
-            "INSERT INTO goal_nodes(book_id, track_id, level, parent_id, title, purpose, status, \
+            "INSERT INTO goal_nodes(id, book_id, track_id, level, parent_id, title, purpose, status, \
              chapter_from, chapter_to, conditions, created_at, updated_at) VALUES \
-             ({book}, NULL, 'task', NULL, '额外目标{i}', '额外目的{i}', 'active', 1, NULL, '[]', \
+             ({i}, {book}, NULL, 'task', NULL, '额外目标{i}', '额外目的{i}', 'active', {from}, NULL, '[]', \
              '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');\n"
         ));
     }
@@ -572,12 +677,70 @@ async fn block_goals_renders_links_and_caps_at_thirty() {
     assert!(kickoff.contains("#1 独有时间线事件"), "{kickoff}");
     assert!(kickoff.contains("#1 独有伏笔标题"), "{kickoff}");
     assert!(
-        kickoff.contains("还有"),
-        "the omitted count must render: {kickoff}"
+        kickoff.contains("还有 7 个相关目标未显示"),
+        "the omitted count must be exact: {kickoff}"
     );
     assert!(
-        kickoff.matches("<task").count() <= 30,
-        "the block.goals cap was exceeded: {kickoff}"
+        kickoff.contains("id=\"100\""),
+        "the selected task's plan must render"
+    );
+    assert_eq!(kickoff.matches("<plan").count(), 1, "plan count: {kickoff}");
+    assert_eq!(
+        kickoff.matches("<task").count(),
+        29,
+        "task count: {kickoff}"
+    );
+    let kept: std::collections::BTreeSet<i32> = kickoff
+        .split("<task id=\"")
+        .skip(1)
+        .filter_map(|tail| tail.split('"').next())
+        .filter_map(|id| id.parse().ok())
+        .collect();
+    let mut expected = std::collections::BTreeSet::new();
+    expected.insert(1);
+    expected.extend((3..=35).step_by(2));
+    expected.extend((2..=22).step_by(2));
+    assert_eq!(kept, expected, "kept task ids: {kept:?}");
+}
+
+#[tokio::test]
+async fn overview_rule_two_is_gated_on_entities() {
+    let runtime = agent_harness::runtime(idle_provider()).await;
+    let book = runtime.book_id;
+    runtime
+        .app
+        .execute(&format!(
+            "INSERT INTO character_designs(book_id, rank, name, role_label, summary, profile, \
+             entity_id, created_at, updated_at) VALUES ({book}, 1, '主角设计', '主角', '', '', \
+             NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ))
+        .await;
+    let (status, overview) = runtime
+        .app
+        .get(&format!("/api/books/{book}/overview"))
+        .await;
+    assert_eq!(status, 200, "overview: {overview}");
+    assert_eq!(overview["next_action"]["kind"], "seed_canon");
+
+    let (_, current) = runtime.app.get(&format!("/api/books/{book}")).await;
+    let mut settings = current["settings"].clone();
+    settings["canon_systems"] = json!({ "entities": false });
+    let (status, body) = runtime
+        .app
+        .patch(
+            &format!("/api/books/{book}"),
+            json!({ "settings": settings }),
+        )
+        .await;
+    assert_eq!(status, 200, "settings: {body}");
+    let (status, overview) = runtime
+        .app
+        .get(&format!("/api/books/{book}/overview"))
+        .await;
+    assert_eq!(status, 200, "overview: {overview}");
+    assert_ne!(
+        overview["next_action"]["kind"], "seed_canon",
+        "rule 2 must not offer seed_canon with Entities off: {overview}"
     );
 }
 
@@ -585,16 +748,16 @@ async fn block_goals_renders_links_and_caps_at_thirty() {
 async fn isolated_memory_only_and_entities_only_maintenance_complete() {
     for systems in [
         CanonSystems {
-            memory: true,
             entities: false,
+            memory: true,
             timeline: false,
             foreshadowing: false,
             goals: false,
         },
         CanonSystems {
             entities: true,
-            timeline: false,
             memory: false,
+            timeline: false,
             foreshadowing: false,
             goals: false,
         },
@@ -672,13 +835,9 @@ async fn isolated_memory_only_and_entities_only_maintenance_complete() {
         .await
         .expect("maintenance session");
         let row = runtime.wait_any_status(session_id).await;
-        let (_, detail) = runtime
-            .app
-            .get(&format!("/api/sessions/{session_id}"))
-            .await;
         assert_eq!(
             row.status, "completed",
-            "isolated maintenance failed: {:?}\n{detail}",
+            "isolated maintenance failed: {:?}",
             row.error
         );
         let row = runtime
@@ -696,47 +855,6 @@ async fn isolated_memory_only_and_entities_only_maintenance_complete() {
         let canon_status: Option<String> = row.try_get("", "value").expect("status");
         assert_eq!(canon_status.as_deref(), Some("synced"));
     }
-}
-
-#[tokio::test]
-async fn overview_rule_two_is_gated_on_entities() {
-    let runtime = agent_harness::runtime(idle_provider()).await;
-    let book = runtime.book_id;
-    runtime
-        .app
-        .execute(&format!(
-            "INSERT INTO character_designs(book_id, rank, name, role_label, summary, profile, \
-             entity_id, created_at, updated_at) VALUES ({book}, 1, '主角设计', '主角', '', '', \
-             NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
-        ))
-        .await;
-    let (status, overview) = runtime
-        .app
-        .get(&format!("/api/books/{book}/overview"))
-        .await;
-    assert_eq!(status, 200, "overview: {overview}");
-    assert_eq!(overview["next_action"]["kind"], "seed_canon");
-
-    let (_, current) = runtime.app.get(&format!("/api/books/{book}")).await;
-    let mut settings = current["settings"].clone();
-    settings["canon_systems"] = json!({ "entities": false });
-    let (status, body) = runtime
-        .app
-        .patch(
-            &format!("/api/books/{book}"),
-            json!({ "settings": settings }),
-        )
-        .await;
-    assert_eq!(status, 200, "settings: {body}");
-    let (status, overview) = runtime
-        .app
-        .get(&format!("/api/books/{book}/overview"))
-        .await;
-    assert_eq!(status, 200, "overview: {overview}");
-    assert_ne!(
-        overview["next_action"]["kind"], "seed_canon",
-        "rule 2 must not offer seed_canon with Entities off: {overview}"
-    );
 }
 
 #[tokio::test]

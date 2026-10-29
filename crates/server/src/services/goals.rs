@@ -35,28 +35,39 @@ pub async fn relevant_nodes(
     }
     let by_id: BTreeMap<i32, &goal_nodes::Model> =
         nodes.iter().map(|node| (node.id, node)).collect();
-    let mut selected: BTreeSet<i32> = BTreeSet::new();
-    for node in &nodes {
-        if node.status != GoalStatus::Active
-            || node.chapter_from.is_some_and(|from| from > chapter.ord)
-            || !in_scope(node, track)
-            || has_closed_ancestor(node, &by_id, &mut BTreeSet::new())
-        {
-            continue;
-        }
-        selected.insert(node.id);
-        add_active_ancestors(node, &by_id, &mut selected, &mut BTreeSet::new());
-    }
-    // §11.5 cap: keep tasks by earliest `chapter_from`, each together with its ancestors;
-    // then fill the remaining slots with the other relevant nodes. A waiting ancestor is never
-    // selected (only active ancestors are), so a task under a waiting plan still renders at the
-    // top level.
-    let all: Vec<goal_nodes::Model> = selected
+    // Only the nodes that pass the relevance gates are candidates. Ancestors are collected
+    // later, per *selected* task: pre-seeding them here would leave the ancestor of a task that
+    // the cap drops without a rendered descendant (task 13.4 review S2-1).
+    let candidates: Vec<&goal_nodes::Model> = nodes
         .iter()
-        .filter_map(|id| by_id.get(id).map(|node| (*node).clone()))
+        .filter(|node| {
+            node.status == GoalStatus::Active
+                && node.chapter_from.is_none_or(|from| from <= chapter.ord)
+                && in_scope(node, track)
+                && !has_closed_ancestor(node, &by_id, &mut BTreeSet::new())
+        })
         .collect();
-    let mut tasks: Vec<&goal_nodes::Model> = all
+    if candidates.is_empty() {
+        return Ok(GoalSelection::default());
+    }
+    // The universe used for the "left out" count: candidates plus the active ancestors they
+    // would bring. It is deliberately not used to fill the render list.
+    let mut relevant_ids: BTreeSet<i32> = candidates.iter().map(|node| node.id).collect();
+    for candidate in &candidates {
+        collect_active_ancestor_ids(
+            candidate,
+            &by_id,
+            track,
+            &mut relevant_ids,
+            &mut BTreeSet::new(),
+        );
+    }
+
+    // §11.5 cap: keep tasks by earliest `chapter_from`, each with its active ancestors; then
+    // fill the remaining slots with the other candidates. A skipped task brings no ancestor.
+    let mut tasks: Vec<&goal_nodes::Model> = candidates
         .iter()
+        .copied()
         .filter(|node| node.level == GoalLevel::Task)
         .collect();
     tasks.sort_by_key(|node| (node.chapter_from.unwrap_or(i32::MAX), node.id));
@@ -64,10 +75,10 @@ pub async fn relevant_nodes(
     for task in tasks {
         let mut with_ancestors = BTreeSet::new();
         with_ancestors.insert(task.id);
-        collect_ancestor_ids(
+        collect_active_ancestor_ids(
             task,
             &by_id,
-            &selected,
+            track,
             &mut with_ancestors,
             &mut BTreeSet::new(),
         );
@@ -76,15 +87,27 @@ pub async fn relevant_nodes(
         }
         chosen.extend(with_ancestors);
     }
-    for node in &all {
+    for node in &candidates {
         if chosen.len() >= GOAL_NODE_CAP {
             break;
         }
-        if node.level != GoalLevel::Task {
-            chosen.insert(node.id);
+        if node.level == GoalLevel::Task || chosen.contains(&node.id) {
+            continue;
+        }
+        let mut with_ancestors = BTreeSet::new();
+        with_ancestors.insert(node.id);
+        collect_active_ancestor_ids(
+            node,
+            &by_id,
+            track,
+            &mut with_ancestors,
+            &mut BTreeSet::new(),
+        );
+        if chosen.len() + with_ancestors.difference(&chosen).count() <= GOAL_NODE_CAP {
+            chosen.extend(with_ancestors);
         }
     }
-    let omitted = all.len().saturating_sub(chosen.len()) as i32;
+    let omitted = relevant_ids.len().saturating_sub(chosen.len()) as i32;
     let mut nodes: Vec<goal_nodes::Model> = chosen
         .into_iter()
         .filter_map(|id| by_id.get(&id).map(|node| (*node).clone()))
@@ -152,10 +175,12 @@ fn has_closed_ancestor(
 /// The cap of `block.goals` (plan §4.5).
 pub const GOAL_NODE_CAP: usize = 30;
 
-fn collect_ancestor_ids(
+/// Adds every active ancestor in the same track scope, even when its own `chapter_from` is
+/// outside the target chapter: a selected task brings its plan and goal with it (plan §4.5).
+fn collect_active_ancestor_ids(
     node: &goal_nodes::Model,
     by_id: &BTreeMap<i32, &goal_nodes::Model>,
-    allowed: &BTreeSet<i32>,
+    track: &tracks::Model,
     ids: &mut BTreeSet<i32>,
     seen: &mut BTreeSet<i32>,
 ) {
@@ -168,30 +193,9 @@ fn collect_ancestor_ids(
     let Some(parent) = by_id.get(&parent_id) else {
         return;
     };
-    if !allowed.contains(&parent.id) {
+    if parent.status != GoalStatus::Active || !in_scope(parent, track) {
         return;
     }
     ids.insert(parent.id);
-    collect_ancestor_ids(parent, by_id, allowed, ids, seen);
-}
-
-fn add_active_ancestors(
-    node: &goal_nodes::Model,
-    by_id: &BTreeMap<i32, &goal_nodes::Model>,
-    selected: &mut BTreeSet<i32>,
-    seen: &mut BTreeSet<i32>,
-) {
-    let Some(parent_id) = node.parent_id else {
-        return;
-    };
-    if !seen.insert(parent_id) {
-        return;
-    }
-    let Some(parent) = by_id.get(&parent_id) else {
-        return;
-    };
-    if parent.status == GoalStatus::Active {
-        selected.insert(parent.id);
-        add_active_ancestors(parent, by_id, selected, seen);
-    }
+    collect_active_ancestor_ids(parent, by_id, track, ids, seen);
 }
