@@ -39,7 +39,7 @@ pub struct Model {
     pub retired: i32,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
-    #[sea_orm(has_many, relation_enum = "Book", via = "book_writing_skills::Skill")]
+    #[sea_orm(has_many, via = "book_writing_skills")]
     pub books: HasMany<super::books::Entity>,
 }
 

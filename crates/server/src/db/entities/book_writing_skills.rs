@@ -11,9 +11,9 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub skill_id: i32,
     pub created_at: DateTimeUtc,
-    #[sea_orm(belongs_to, relation_enum = "Book", from = "book_id", to = "id")]
+    #[sea_orm(belongs_to, from = "book_id", to = "id")]
     pub book: BelongsTo<super::books::Entity>,
-    #[sea_orm(belongs_to, relation_enum = "Skill", from = "skill_id", to = "id")]
+    #[sea_orm(belongs_to, from = "skill_id", to = "id")]
     pub skill: BelongsTo<super::writing_skills::Entity>,
 }
 

@@ -9,9 +9,9 @@ pub struct Model {
     pub event_id: i32,
     #[sea_orm(primary_key, auto_increment = false)]
     pub entity_id: i32,
-    #[sea_orm(belongs_to, relation_enum = "Event", from = "event_id", to = "id")]
+    #[sea_orm(belongs_to, from = "event_id", to = "id")]
     pub event: BelongsTo<super::timeline_events::Entity>,
-    #[sea_orm(belongs_to, relation_enum = "Entity", from = "entity_id", to = "id")]
+    #[sea_orm(belongs_to, from = "entity_id", to = "id")]
     pub entity: BelongsTo<super::entities::Entity>,
 }
 

@@ -9,14 +9,9 @@ pub struct Model {
     pub foreshadowing_id: i32,
     #[sea_orm(primary_key, auto_increment = false)]
     pub entity_id: i32,
-    #[sea_orm(
-        belongs_to,
-        relation_enum = "Foreshadowing",
-        from = "foreshadowing_id",
-        to = "id"
-    )]
+    #[sea_orm(belongs_to, from = "foreshadowing_id", to = "id")]
     pub foreshadowing: BelongsTo<super::foreshadowing::Entity>,
-    #[sea_orm(belongs_to, relation_enum = "Entity", from = "entity_id", to = "id")]
+    #[sea_orm(belongs_to, from = "entity_id", to = "id")]
     pub entity: BelongsTo<super::entities::Entity>,
 }
 

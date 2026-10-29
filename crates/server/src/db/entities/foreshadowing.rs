@@ -38,11 +38,7 @@ pub struct Model {
         to = "id"
     )]
     pub resolved_chapter: BelongsTo<Option<super::chapters::Entity>>,
-    #[sea_orm(
-        has_many,
-        relation_enum = "Entity",
-        via = "foreshadowing_entities::Foreshadowing"
-    )]
+    #[sea_orm(has_many, via = "foreshadowing_entities")]
     pub entities: HasMany<super::entities::Entity>,
 }
 

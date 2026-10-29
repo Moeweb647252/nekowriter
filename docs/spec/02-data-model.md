@@ -11,13 +11,12 @@
   the `Model` struct: a `belongs_to` for every foreign key (`BelongsTo<..>`, nullable FK →
   `BelongsTo<Option<..>>`; the field name is the FK column without `_id`), a reverse `has_many`
   named after the child table for every unambiguous foreign key, `has_many, via = "<junction>"`
-  in both directions over the join tables (with `relation_enum` naming the far junction relation
-  and `via` the near one where the junction's variants are not named after the far entity),
-  `self_ref` for self references, and `relation_enum` where two foreign keys share a target or
-  where a `belongs_to` / `has_many` pair would otherwise generate the same related-entity name.
-  Every non-partial unique constraint is a `unique` or `unique_key` attribute. No schema-only
-  attributes (`indexed`, `default_value`, `on_update`, `on_delete`): the SQL owns them.
-  `crates/server/tests/entity_schema.rs` checks the entities against the SQL.
+  in both directions over the join tables, `self_ref` for self references, and `relation_enum`
+  where two foreign keys share a target or where a `belongs_to` / `has_many` pair would
+  otherwise generate the same related-entity name. Every non-partial unique constraint is a
+  `unique` or `unique_key` attribute. No schema-only attributes (`indexed`, `default_value`,
+  `on_update`, `on_delete`): the SQL owns them. `crates/server/tests/entity_schema.rs` checks the
+  entities against the SQL.
 - **Booleans**: `INTEGER` 0/1, Rust `bool`.
 - **JSON columns**: `TEXT` with `CHECK (json_valid(col))`, mapped to typed Rust structs through the
   `JsonText<T>` wrapper in `db/json.rs`, which stores the exact `serde_json::to_string` text (see

@@ -48,9 +48,9 @@ pub struct Model {
     pub prompt_overrides: HasMany<super::prompt_overrides::Entity>,
     #[sea_orm(has_many)]
     pub setting_proposals: HasMany<super::setting_proposals::Entity>,
-    #[sea_orm(has_many, relation_enum = "Scope", via = "book_scopes::Book")]
+    #[sea_orm(has_many, via = "book_scopes")]
     pub knowledge_scopes: HasMany<super::knowledge_scopes::Entity>,
-    #[sea_orm(has_many, relation_enum = "Skill", via = "book_writing_skills::Book")]
+    #[sea_orm(has_many, via = "book_writing_skills")]
     pub writing_skills: HasMany<super::writing_skills::Entity>,
 }
 

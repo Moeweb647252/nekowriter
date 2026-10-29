@@ -9,9 +9,9 @@ pub struct Model {
     pub book_id: i32,
     #[sea_orm(primary_key, auto_increment = false)]
     pub scope_id: i32,
-    #[sea_orm(belongs_to, relation_enum = "Book", from = "book_id", to = "id")]
+    #[sea_orm(belongs_to, from = "book_id", to = "id")]
     pub book: BelongsTo<super::books::Entity>,
-    #[sea_orm(belongs_to, relation_enum = "Scope", from = "scope_id", to = "id")]
+    #[sea_orm(belongs_to, from = "scope_id", to = "id")]
     pub scope: BelongsTo<super::knowledge_scopes::Entity>,
 }
 

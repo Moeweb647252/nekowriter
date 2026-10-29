@@ -2991,27 +2991,44 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
 - **Spec**: PROJECT §6.5; spec/01 §2, §3.1, §3.4, §7; spec/02 §1–§5; spec/03 §3, §14; spec/06 §2;
   spec/07; spec/08 §7; D-015, D-034; PLAN M14.
 
-### D-152 SeaORM 2 relation naming corrections (M14.3)
+### D-152 SeaORM 2 relation naming and API corrections (M14.3)
 
-- **Context**: converting all 36 entities to `#[sea_orm::model]` showed that the relation graph of
-  plan §2.1 cannot be written exactly as its snippet says. The dense macro names a relation
-  variant after the *target entity*, not the field: an entity with both a `belongs_to` and a
-  `has_many` to the same table therefore generates the same `RelatedEntity` variant twice
-  (`AgentToolCalls`, `ResearchTasks`, `AgentSessions`, `Tracks`, `Chapters`, `Entities`), and the
-  derive fails. Separately, `has_many, via = "<junction>"` only compiles when the junction's
-  relation variant is named after the far entity: these junction tables name their FK fields after
-  the local role (`book_scopes.book`/`scope`), so the far variant (`Scope`) and near variant
-  (`Book`) must be named explicitly. A `has_many` also needs `via_rel` whenever the child has two
-  relations back to the parent, not only for two FKs to one target. Finally, a `self_ref`
-  `BelongsTo` is `declared = false` in the macro, so it generates no `Related` impl and
-  `find_related` cannot be called on `parent_session`.
+- **Context**: converting all 36 entities to `#[sea_orm::model]` established seven facts about
+  sea-orm 2.0.4 that the plan's snippet or the crate's own documentation did not state correctly:
+  1. The dense macro names a relation variant after the *target module path*, not the field, so an
+     entity with both a `belongs_to` and a `has_many` to the same table generates the same
+     `RelatedEntity` variant twice (`AgentToolCalls`, `ResearchTasks`, `AgentSessions`, `Tracks`,
+     `Chapters`, `Entities`) and the derive fails; one side needs an explicit `relation_enum`.
+  2. A `has_many` needs `via_rel = "<child belongs_to variant>"` whenever the child has two
+     relations back to the parent (a `belongs_to` plus a `has_many`), not only when two FKs share
+     a target.
+  3. A `self_ref` `BelongsTo` is `declared = false` in the macro, so it generates no `Related`
+     impl and `find_related` cannot be called on `parent_session`; the guard checks the
+     `Relation::ParentSession` `RelationDef` and the stored `parent_session_id` instead.
+  4. The plan's original M-N form `has_many, via = "<junction>"` **does compile**:
+     `infer_relation_name_from_entity` (`sea-orm-macros-2.0.4/src/derives/model_ex.rs:1448-1457`)
+     takes the variant from the target module path, and `expand_related_via_trait` (`:619-643`)
+     falls back to
+     `<junction::Entity as Related<Entity>>::to().rev()` for the `via` leg. The first M14.3 attempt
+     named the junction ends explicitly (`relation_enum = "Scope", via = "book_scopes::Book"`) and
+     then needed field-level names; that long form was a misdiagnosis and is reverted, so all ten
+     M-N fields use `via = "<junction>"` and the five junction `belongs_to`s have no `relation_enum`.
+  5. `ConnectionTrait::query_all` takes `&S: StatementBuilder`; a built `Statement` must go through
+     `query_all_raw` (the skill's 2.x cheat sheet says this as well).
+  6. `ColumnDef::unique_key` has no public getter, so the unique-key guard compares complete
+     `ColumnDef` values (built with `.unique()` / `.unique_key()`) against
+     `PRAGMA index_list` / `index_info` instead of reading the attribute.
+  7. `RelationDef::is_owner` is `false` for a `belongs_to` and `true` for a `has_many` in 2.0.4,
+     the opposite of the field's doc text; the guard therefore branches on
+     `RelationType::HasMany`, not on `is_owner`.
 - **Decision**: keep the plan's field names (the FK column without `_id`, the child table for a
-  reverse relation, the far table for an M-N field) and give the relation *variants* explicit
-  names where the macro needs them: `relation_enum` on the `belongs_to` side of a
-  `belongs_to`/`has_many` pair (`HeldToolCall`, `ResearchTask`, `Session`, `AnchorChapter`,
-  `FocusEntity`, `Track`), and on both ends of each junction
-  (`has_many, relation_enum = "Scope", via = "book_scopes::Book"` and the mirror). `has_many`
-  uses `via_rel = "<child belongs_to variant>"` for the two-relation pairs. The self reference is
+  reverse relation, the far table for an M-N field) and its original M-N `via = "<junction>"`
+  syntax. Give a relation an explicit `relation_enum` only where needed: the `belongs_to` side of
+  a `belongs_to`/`has_many` pair (`HeldToolCall`, `ResearchTask`, `Session`, `AnchorChapter`,
+  `FocusEntity`, `Track`), plus the existing same-target names (`OfficialVersion`,
+  `SyncedVersion`, `FirstChapter`, `LastChapter`, `PlantedChapter`, `ResolvedChapter`, `Source`,
+  `Target`, `SinceChapter`, `UntilChapter`, `Reverts`, `RevertedBy`, `ParentSession`,
+  `ChildSessions`). `has_many` uses `via_rel` for the two-relation pairs. The self reference is
   checked at the `RelationDef` level instead of through `find_related`. Plan §2.1 and §7 and
   spec/02 §1 record the corrected shape.
 - **Consequences**: the graph is 82 `belongs_to`, 60 plain reverse `has_many` (including the
@@ -3019,4 +3036,4 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   `belongs_to` with `PRAGMA foreign_key_list`, every unambiguous reverse with the parent entity,
   every junction `via` chain and every unique key with `PRAGMA index_list`. A future entity must
   follow the variant-naming rule or its derive fails at compile time.
-- **Spec**: spec/02 §1; plan §2.1, §7; D-151.
+- **Spec**: spec/02 §1; plan §2.1, §5, §7; D-151.

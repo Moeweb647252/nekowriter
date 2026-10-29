@@ -23,7 +23,7 @@ pub struct Model {
     pub track: BelongsTo<Option<super::tracks::Entity>>,
     #[sea_orm(belongs_to, from = "chapter_id", to = "id")]
     pub chapter: BelongsTo<Option<super::chapters::Entity>>,
-    #[sea_orm(has_many, relation_enum = "Entity", via = "memory_note_entities::Note")]
+    #[sea_orm(has_many, via = "memory_note_entities")]
     pub entities: HasMany<super::entities::Entity>,
 }
 

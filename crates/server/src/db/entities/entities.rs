@@ -48,19 +48,11 @@ pub struct Model {
     pub character_designs: HasMany<super::character_designs::Entity>,
     #[sea_orm(has_many, via_rel = "FocusEntity")]
     pub tracks: HasMany<super::tracks::Entity>,
-    #[sea_orm(
-        has_many,
-        relation_enum = "Event",
-        via = "timeline_event_entities::Entity"
-    )]
+    #[sea_orm(has_many, via = "timeline_event_entities")]
     pub timeline_events: HasMany<super::timeline_events::Entity>,
-    #[sea_orm(has_many, relation_enum = "Note", via = "memory_note_entities::Entity")]
+    #[sea_orm(has_many, via = "memory_note_entities")]
     pub memory_notes: HasMany<super::memory_notes::Entity>,
-    #[sea_orm(
-        has_many,
-        relation_enum = "Foreshadowing",
-        via = "foreshadowing_entities::Entity"
-    )]
+    #[sea_orm(has_many, via = "foreshadowing_entities")]
     pub foreshadowing: HasMany<super::foreshadowing::Entity>,
 }
 

@@ -19,7 +19,7 @@ pub struct Model {
     pub knowledge_chunks: HasMany<super::knowledge_chunks::Entity>,
     #[sea_orm(has_many)]
     pub research_tasks: HasMany<super::research_tasks::Entity>,
-    #[sea_orm(has_many, relation_enum = "Book", via = "book_scopes::Scope")]
+    #[sea_orm(has_many, via = "book_scopes")]
     pub books: HasMany<super::books::Entity>,
 }
 

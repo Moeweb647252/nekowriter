@@ -9,9 +9,9 @@ pub struct Model {
     pub note_id: i32,
     #[sea_orm(primary_key, auto_increment = false)]
     pub entity_id: i32,
-    #[sea_orm(belongs_to, relation_enum = "Note", from = "note_id", to = "id")]
+    #[sea_orm(belongs_to, from = "note_id", to = "id")]
     pub note: BelongsTo<super::memory_notes::Entity>,
-    #[sea_orm(belongs_to, relation_enum = "Entity", from = "entity_id", to = "id")]
+    #[sea_orm(belongs_to, from = "entity_id", to = "id")]
     pub entity: BelongsTo<super::entities::Entity>,
 }
 
