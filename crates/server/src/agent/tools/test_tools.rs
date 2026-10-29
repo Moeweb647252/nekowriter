@@ -98,12 +98,10 @@ impl ToolHandler for TestWriteTool {
         if ctx.chapter.is_some() {
             // A write tool stages its content like the real ones (D-139), so the hold/resume path
             // carries a real pending write.
-            let mut content: crate::db::json::ChapterContent =
-                crate::db::json::from_json_or_default(
-                    &ctx.chapter
-                        .map(|chapter| chapter.content.clone())
-                        .unwrap_or_default(),
-                );
+            let mut content: crate::db::json::ChapterContent = ctx
+                .chapter
+                .map(|chapter| chapter.content.clone().into_inner())
+                .unwrap_or_default();
             let paragraph = crate::db::json::Paragraph {
                 pid: crate::text::allocate_pid(&mut content),
                 text: text.clone(),

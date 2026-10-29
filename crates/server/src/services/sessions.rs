@@ -23,9 +23,9 @@ use crate::db::entities::{
     providers, research_tasks, tracks,
 };
 use crate::db::json::{
-    AgentRole, BookSettings, ChapterStatus, Granularity, InboxKind, ModelSnapshot, Phase, Protocol,
-    ResearchTaskStatus, RoleModels, SessionCounters, SessionKind, SessionStatus, StoredBlock,
-    ToolCallStatus, TrackKind,
+    AgentRole, BookSettings, ChapterStatus, Granularity, InboxKind, JsonText, ModelSnapshot, Phase,
+    Protocol, ResearchTaskStatus, RoleModels, SessionCounters, SessionKind, SessionStatus,
+    StoredBlock, ToolCallStatus, TrackKind,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
@@ -286,7 +286,7 @@ pub(crate) async fn create_inner(
     // (spec/03 §4 step 1, spec/04 §3, D-031): 1h for conception and for planner/writer sessions
     // that pause for the author, 5m otherwise.
     let book_settings: BookSettings = match book.as_ref() {
-        Some(book) => crate::db::json::from_json_or_default::<BookSettings>(&book.settings),
+        Some(book) => book.settings.clone().into_inner(),
         None => BookSettings::default(),
     };
     let pause_after_outline_setting = input
@@ -401,12 +401,9 @@ pub(crate) async fn create_inner(
         track_id: Set(track_id),
         research_task_id: Set(input.research_task_id),
         model_profile_id: Set(Some(model_profile_id)),
-        model_snapshot: Set(crate::db::json::to_json(&snapshot)
-            .map_err(|err| AppError::internal(err.to_string()))?),
+        model_snapshot: Set(JsonText(snapshot)),
         system_prompt: Set(system_prompt.text),
-        tools: Set(
-            crate::db::json::to_json(&tools).map_err(|err| AppError::internal(err.to_string()))?
-        ),
+        tools: Set(JsonText(tools)),
         status: Set(SessionStatus::Running),
         phase: Set(phase),
         granularity: Set(granularity),
@@ -417,9 +414,8 @@ pub(crate) async fn create_inner(
         base_content_version: Set(base_content_version),
         pending_comment: Set(input.pending_comment.clone()),
         view_snapshot: Set(None),
-        counters: Set(crate::db::json::to_json(&SessionCounters::default())
-            .map_err(|err| AppError::internal(err.to_string()))?),
-        usage: Set("{}".to_owned()),
+        counters: Set(JsonText(SessionCounters::default())),
+        usage: Set(JsonText(crate::db::json::Usage::default())),
         error: Set(None),
         parent_session_id: Set(None),
         created_at: Set(now),
@@ -533,10 +529,8 @@ fn events_for_new_session(
 
 /// Rough token estimate of the kickoff: CJK characters × 1.0 + other characters ÷ 4 (spec/03 §10).
 fn kickoff_too_large(session: &agent_sessions::Model, kickoff: &agent_messages::Model) -> bool {
-    let Ok(snapshot) = crate::db::json::from_json::<ModelSnapshot>(&session.model_snapshot) else {
-        return false;
-    };
-    let blocks: Vec<StoredBlock> = crate::db::json::from_json_or_default(&kickoff.content);
+    let snapshot = session.model_snapshot.clone().into_inner();
+    let blocks: Vec<StoredBlock> = kickoff.content.clone().into_inner();
     let mut estimate = 0i64;
     for block in blocks {
         if let StoredBlock::Text { text, .. } = block {
@@ -568,7 +562,7 @@ pub async fn try_resolve_model(
     role: AgentRole,
 ) -> Result<Option<i32>, AppError> {
     let book_overrides = book
-        .map(|book| crate::db::json::from_json_or_default::<RoleModels>(&book.model_overrides))
+        .map(|book| book.model_overrides.clone().into_inner())
         .unwrap_or_default();
     // The planner's own entries at both levels, then the writer's (spec/03 §4, D-146).
     if let Some(profile_id) = book_overrides.get(role) {
@@ -593,7 +587,7 @@ async fn resolve_model(
     role: AgentRole,
 ) -> Result<i32, AppError> {
     let book_overrides = book
-        .map(|book| crate::db::json::from_json_or_default::<RoleModels>(&book.model_overrides))
+        .map(|book| book.model_overrides.clone().into_inner())
         .unwrap_or_default();
     if let Some(profile_id) = book_overrides.get(role) {
         return Ok(profile_id);
@@ -627,8 +621,7 @@ async fn read_role_default(
     let Some(row) = row else {
         return Ok(None);
     };
-    let roles: RoleModels = crate::db::json::from_json(&row.value)
-        .map_err(|err| AppError::internal(format!("corrupt roles.defaults: {err}")))?;
+    let roles: RoleModels = crate::services::parse_json("roles.defaults", &row.value)?;
     Ok(roles.get(role))
 }
 
@@ -656,7 +649,7 @@ fn model_snapshot_with_ttl(
     cache_ttl: nekowriter_llm::CacheTtlOption,
 ) -> Result<ModelSnapshot, AppError> {
     let extra_headers: std::collections::BTreeMap<String, String> =
-        serde_json::from_str(&provider.extra_headers).unwrap_or_default();
+        provider.extra_headers.clone().into_inner();
     let protocol = match provider.protocol.as_str() {
         "openai" => Protocol::Openai,
         "anthropic" => Protocol::Anthropic,
@@ -666,7 +659,9 @@ fn model_snapshot_with_ttl(
     // (spec/03 §4 step 1, D-031): 1h for conception and for worker sessions that hold for the
     // author, 5m otherwise.
     let mut options: nekowriter_llm::ModelOptions =
-        serde_json::from_str(&profile.options).unwrap_or_default();
+        crate::api::dto::providers::ModelOptionsDto::from(profile.options.clone().into_inner())
+            .to_model_options()
+            .unwrap_or_default();
     if options.cache_ttl == nekowriter_llm::CacheTtlOption::Auto {
         options.cache_ttl = cache_ttl;
     }
@@ -747,8 +742,7 @@ async fn apply_creation_side_effects(
     match input.kind {
         SessionKind::ChapterWrite => {
             if input.redraft {
-                let content: crate::db::json::ChapterContent =
-                    crate::db::json::from_json_or_default(&chapter.content);
+                let content: crate::db::json::ChapterContent = chapter.content.clone().into_inner();
                 let word_count = crate::text::content_word_count(&content);
                 // The text is cleared in this transaction; the event after the commit tells a
                 // client which paragraphs vanished instead of leaving it with stale prose
@@ -787,8 +781,7 @@ async fn apply_creation_side_effects(
                 crate::text::keep_next_pid(&mut cleared_content, &content);
                 chapters::ActiveModel {
                     id: Set(chapter_id),
-                    content: Set(crate::db::json::to_json(&cleared_content)
-                        .map_err(|err| AppError::internal(err.to_string()))?),
+                    content: Set(JsonText(cleared_content)),
                     content_version: Set(chapter.content_version + 1),
                     word_count: Set(0),
                     status: Set(ChapterStatus::Drafting),
@@ -809,8 +802,7 @@ async fn apply_creation_side_effects(
             }
         }
         SessionKind::ChapterRevise => {
-            let content: crate::db::json::ChapterContent =
-                crate::db::json::from_json_or_default(&chapter.content);
+            let content: crate::db::json::ChapterContent = chapter.content.clone().into_inner();
             let word_count = crate::text::content_word_count(&content);
             versions::create_version(
                 tx,
@@ -893,7 +885,7 @@ pub async fn snapshot(
                 .collect::<Result<_, _>>()?,
         });
     }
-    let tools: Vec<nekowriter_llm::ToolDef> = crate::db::json::from_json_or_default(&session.tools);
+    let tools: Vec<nekowriter_llm::ToolDef> = session.tools.clone().into_inner();
     Ok(SessionSnapshotDto {
         session: session::to_dto(conn, &session, Vec::new()).await?,
         messages: items,
@@ -1112,15 +1104,18 @@ async fn resume_inner(
             }
             let prompts = state_prompts(state, &session).await?;
             let mut appendices: Vec<crate::db::json::Appendix> =
-                crate::db::json::from_json_or_default(&held.appendices);
+                held.appendices.clone().into_inner();
             // Feedback appended, and deferred effects revoked first (spec/03 §5.4).
             if let Some(feedback) = feedback
                 .as_deref()
                 .map(str::trim)
                 .filter(|text| !text.is_empty())
             {
-                let effects: crate::db::json::ToolEffects =
-                    crate::db::json::from_json_or_default(held.effects.as_deref().unwrap_or("{}"));
+                let effects: crate::db::json::ToolEffects = held
+                    .effects
+                    .clone()
+                    .map(|value| value.into_inner())
+                    .unwrap_or_default();
                 if effects.complete.is_some() && rejected_notice(&held.name, &session).is_none() {
                     let rendered = prompts
                         .render("notice.completion_revoked", &json!({}))
@@ -1156,8 +1151,11 @@ async fn resume_inner(
                 .map(str::trim)
                 .is_some_and(|text| !text.is_empty());
             let now = chrono::Utc::now();
-            let mut effects: crate::db::json::ToolEffects =
-                crate::db::json::from_json_or_default(held.effects.as_deref().unwrap_or("{}"));
+            let mut effects: crate::db::json::ToolEffects = held
+                .effects
+                .clone()
+                .map(|value| value.into_inner())
+                .unwrap_or_default();
             if revoke {
                 effects = crate::db::json::ToolEffects::default();
             }
@@ -1219,12 +1217,8 @@ async fn resume_inner(
                 } else {
                     ToolCallStatus::Done
                 }),
-                appendices: Set(crate::db::json::to_json(&appendices)
-                    .map_err(|err| AppError::internal(err.to_string()))?),
-                effects: Set(Some(
-                    crate::db::json::to_json(&crate::db::json::ToolEffects::default())
-                        .map_err(|err| AppError::internal(err.to_string()))?,
-                )),
+                appendices: Set(JsonText(appendices)),
+                effects: Set(Some(JsonText(crate::db::json::ToolEffects::default()))),
                 finished_at: Set(Some(now)),
                 ..Default::default()
             }
@@ -1570,14 +1564,17 @@ async fn answer_inner(
     // The answer becomes the call's result (spec/03 §6). `ask_user` and `request_review`
     // validate their payload in their handlers; M3 validates the envelope here.
     let rendered = render_answer(tx, &prompts, &session, &call, &input.payload).await?;
-    let effects: crate::db::json::ToolEffects =
-        crate::db::json::from_json_or_default(call.effects.as_deref().unwrap_or("{}"));
+    let effects: crate::db::json::ToolEffects = call
+        .effects
+        .clone()
+        .map(|value| value.into_inner())
+        .unwrap_or_default();
     // This is the transaction that finalizes the call, so the full recorded `ToolEffects` apply
     // here — the phase change with its acceptance notice, and the completion with its handler
     // (spec/03 §5.4 has no exception for the answer path). The appendix order stays canonical:
     // effect notice → edit report → feedback → inbox.
     let mut answer_appendices: Vec<crate::db::json::Appendix> =
-        crate::db::json::from_json_or_default(&call.appendices);
+        call.appendices.clone().into_inner();
     // An answering call applies any staged write it made, for the same reason a resumed one does:
     // this is the transaction that finalizes it (spec/03 §5.4). No shipped tool both needs input
     // and writes text, but the invariant belongs here rather than in the tools.
@@ -1618,12 +1615,8 @@ async fn answer_inner(
         id: Set(call.id),
         status: Set(ToolCallStatus::Done),
         raw_result_text: Set(Some(rendered)),
-        appendices: Set(crate::db::json::to_json(&answer_appendices)
-            .map_err(|err| AppError::internal(err.to_string()))?),
-        effects: Set(Some(
-            crate::db::json::to_json(&crate::db::json::ToolEffects::default())
-                .map_err(|err| AppError::internal(err.to_string()))?,
-        )),
+        appendices: Set(JsonText(answer_appendices)),
+        effects: Set(Some(JsonText(crate::db::json::ToolEffects::default()))),
         finished_at: Set(Some(chrono::Utc::now())),
         ..Default::default()
     }
@@ -1941,15 +1934,12 @@ async fn debug_session_inner(
         track_id: Set(track),
         research_task_id: Set(None),
         model_profile_id: Set(Some(profile_id)),
-        model_snapshot: Set(crate::db::json::to_json(&snapshot)
-            .map_err(|err| AppError::internal(err.to_string()))?),
+        model_snapshot: Set(JsonText(snapshot)),
         system_prompt: Set(prompts
             .render("writer.system", &json!({}))
             .map_err(|err| err.into_app_error())?
             .text),
-        tools: Set(
-            crate::db::json::to_json(&tools).map_err(|err| AppError::internal(err.to_string()))?
-        ),
+        tools: Set(JsonText(tools)),
         status: Set(SessionStatus::Running),
         phase: Set(spec.phase),
         granularity: Set(spec.granularity),
@@ -1966,9 +1956,8 @@ async fn debug_session_inner(
         }),
         pending_comment: Set(None),
         view_snapshot: Set(None),
-        counters: Set(crate::db::json::to_json(&SessionCounters::default())
-            .map_err(|err| AppError::internal(err.to_string()))?),
-        usage: Set("{}".to_owned()),
+        counters: Set(JsonText(SessionCounters::default())),
+        usage: Set(JsonText(crate::db::json::Usage::default())),
         error: Set(None),
         parent_session_id: Set(None),
         created_at: Set(now),
@@ -2072,15 +2061,12 @@ async fn debug_echo_inner(
         track_id: Set(track.map(|track| track.id)),
         research_task_id: Set(None),
         model_profile_id: Set(Some(profile_id)),
-        model_snapshot: Set(crate::db::json::to_json(&snapshot)
-            .map_err(|err| AppError::internal(err.to_string()))?),
+        model_snapshot: Set(JsonText(snapshot)),
         system_prompt: Set(prompts
             .render("writer.system", &json!({}))
             .map_err(|err| err.into_app_error())?
             .text),
-        tools: Set(
-            crate::db::json::to_json(&tools).map_err(|err| AppError::internal(err.to_string()))?
-        ),
+        tools: Set(JsonText(tools)),
         status: Set(SessionStatus::Running),
         phase: Set(Phase::Drafting),
         granularity: Set(Some(Granularity::Paragraph)),
@@ -2091,9 +2077,8 @@ async fn debug_echo_inner(
         base_content_version: Set(None),
         pending_comment: Set(None),
         view_snapshot: Set(None),
-        counters: Set(crate::db::json::to_json(&SessionCounters::default())
-            .map_err(|err| AppError::internal(err.to_string()))?),
-        usage: Set("{}".to_owned()),
+        counters: Set(JsonText(SessionCounters::default())),
+        usage: Set(JsonText(crate::db::json::Usage::default())),
         error: Set(None),
         parent_session_id: Set(None),
         created_at: Set(now),
@@ -2249,7 +2234,7 @@ async fn chapter_content_of(
     let Some(chapter) = chapters::Entity::find_by_id(chapter_id).one(conn).await? else {
         return Ok(crate::db::json::ChapterContent::default());
     };
-    Ok(crate::db::json::from_json_or_default(&chapter.content))
+    Ok(chapter.content.clone().into_inner())
 }
 
 /// The tail state and last pid of a session's chapter, for the granularity contexts
@@ -2268,8 +2253,11 @@ async fn tail_state_after_pending(
             .one(conn)
             .await?
     {
-        let effects: crate::db::json::ToolEffects =
-            crate::db::json::from_json_or_default(call.effects.as_deref().unwrap_or("{}"));
+        let effects: crate::db::json::ToolEffects = call
+            .effects
+            .clone()
+            .map(|value| value.into_inner())
+            .unwrap_or_default();
         if let Some(write) = effects.pending_content {
             return Ok((
                 write.content.tail_open,
@@ -2295,8 +2283,7 @@ async fn tail_state(
     let Some(chapter) = chapters::Entity::find_by_id(chapter_id).one(conn).await? else {
         return Ok((false, String::new()));
     };
-    let content: crate::db::json::ChapterContent =
-        crate::db::json::from_json_or_default(&chapter.content);
+    let content: crate::db::json::ChapterContent = chapter.content.clone().into_inner();
     Ok((
         content.tail_open,
         content

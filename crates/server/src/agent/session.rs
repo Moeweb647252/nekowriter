@@ -84,19 +84,17 @@ pub async fn load(
 
 /// The session's counters.
 pub fn counters_of(row: &agent_sessions::Model) -> SessionCounters {
-    json::from_json_or_default(&row.counters)
+    row.counters.clone().into_inner()
 }
 
 /// The session's cumulative usage.
 pub fn usage_of(row: &agent_sessions::Model) -> Usage {
-    json::from_json_or_default(&row.usage)
+    row.usage.clone().into_inner()
 }
 
 /// The session's stored error, when it has one.
 pub fn error_of(row: &agent_sessions::Model) -> Option<SessionError> {
-    row.error
-        .as_deref()
-        .and_then(|raw| json::from_json::<SessionError>(raw).ok())
+    row.error.clone().map(|value| value.into_inner())
 }
 
 // ───────────────────────────── transitions ─────────────────────────────
@@ -372,7 +370,7 @@ pub async fn capture_view_snapshot(
                 return Ok(None);
             };
             ViewSnapshot::Chapter {
-                content: json::from_json_or_default(&chapter.content),
+                content: chapter.content.clone().into_inner(),
                 outline: chapter.outline,
                 reference_notes: chapter.reference_notes,
             }
@@ -447,7 +445,7 @@ pub async fn to_dto(
     row: &agent_sessions::Model,
     warnings: Vec<String>,
 ) -> Result<SessionDto, AppError> {
-    let snapshot: json::ModelSnapshot = json::from_json_or_default(&row.model_snapshot);
+    let snapshot: json::ModelSnapshot = row.model_snapshot.clone().into_inner();
     let model_label = model_label(conn, row, &snapshot).await?;
     let chapter_number = match row.chapter_id {
         Some(chapter_id) => chapters::Entity::find_by_id(chapter_id)
@@ -536,7 +534,7 @@ pub async fn conception_state(
         .one(conn)
         .await?
         .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
-    Ok(json::from_json_or_default(&book.conception))
+    Ok(book.conception.clone().into_inner())
 }
 
 // ───────────────────────────── message and call DTOs ─────────────────────────────
@@ -546,7 +544,7 @@ pub const INPUT_TEXT_DISPLAY_LIMIT: usize = 20_000;
 
 /// The message DTO of a row (spec/10 §2.8). Tool-call blocks are delivered as `ToolCallDto`s.
 pub fn message_dto(row: &agent_messages::Model) -> Result<MessageDto, AppError> {
-    let blocks: Vec<StoredBlock> = json::from_json_or_default(&row.content);
+    let blocks: Vec<StoredBlock> = row.content.clone().into_inner();
     let blocks = blocks
         .into_iter()
         .filter_map(|block| match block {
@@ -562,10 +560,7 @@ pub fn message_dto(row: &agent_messages::Model) -> Result<MessageDto, AppError> 
         kind: row.kind,
         blocks,
         stop_reason: row.stop_reason.clone(),
-        usage: row
-            .usage
-            .as_deref()
-            .and_then(|raw| json::from_json::<json::Usage>(raw).ok()),
+        usage: row.usage.clone().map(|value| value.into_inner()),
         created_at: row.created_at,
     })
 }
@@ -595,22 +590,23 @@ pub fn tool_call_dto(row: &agent_tool_calls::Model) -> Result<ToolCallDto, AppEr
             .result_text
             .clone()
             .or_else(|| row.raw_result_text.clone()),
-        appendices: json::from_json_or_default(&row.appendices),
-        ui: row
-            .ui
-            .as_deref()
-            .and_then(|raw| serde_json::from_str::<Value>(raw).ok()),
+        appendices: row.appendices.clone().into_inner(),
+        ui: row.ui.clone().map(|value| value.into_inner()),
         sealed: row.sealed,
         // A deferred call stores its staged write in `effects`; a finalized call has already applied
         // and cleared it, so this is `None` exactly when the text is in the chapter (D-139).
-        pending_content: json::from_json_or_default::<crate::db::json::ToolEffects>(
-            row.effects.as_deref().unwrap_or("{}"),
-        )
-        .pending_content,
-        pending_outline: json::from_json_or_default::<crate::db::json::ToolEffects>(
-            row.effects.as_deref().unwrap_or("{}"),
-        )
-        .pending_outline,
+        pending_content: row
+            .effects
+            .clone()
+            .map(|value| value.into_inner())
+            .unwrap_or_default()
+            .pending_content,
+        pending_outline: row
+            .effects
+            .clone()
+            .map(|value| value.into_inner())
+            .unwrap_or_default()
+            .pending_outline,
         created_at: row.created_at,
         finished_at: row.finished_at,
     })

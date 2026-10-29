@@ -10,7 +10,7 @@ use chrono::Utc;
 use sea_orm::{ActiveModelTrait, ConnectionTrait, EntityTrait, Set};
 
 use crate::db::entities::{agent_sessions, agent_tool_calls, chapter_versions, chapters};
-use crate::db::json::{CanonStatus, ChapterContent, ChapterStatus, VersionKind};
+use crate::db::json::{CanonStatus, ChapterContent, ChapterStatus, JsonText, VersionKind};
 use crate::error::AppError;
 use crate::events::{ContentActor, ServerEvent};
 use crate::text;
@@ -47,7 +47,7 @@ async fn finish_version(
     let Some(chapter) = chapters::Entity::find_by_id(chapter_id).one(tx).await? else {
         return Ok(Vec::new());
     };
-    let content: ChapterContent = crate::db::json::from_json_or_default(&chapter.content);
+    let content: ChapterContent = chapter.content.clone().into_inner();
     let word_count = text::content_word_count(&content);
 
     // A `draft`/`revision` version, so the text the author reads is recoverable (spec/08 §1.2).
@@ -57,8 +57,7 @@ async fn finish_version(
         version_no: Set(version_no),
         kind: Set(kind),
         title: Set(chapter.title.clone()),
-        content: Set(crate::db::json::to_json(&content)
-            .map_err(|err| AppError::internal(err.to_string()))?),
+        content: Set(JsonText(content.clone())),
         word_count: Set(word_count),
         note: Set(completion_note(call, note_field)),
         session_id: Set(Some(session.id)),
@@ -198,7 +197,10 @@ pub async fn finish_seed(
     for design in designs {
         let found = candidates.iter().find(|entity| {
             entity.name == design.name
-                || crate::db::json::from_json_or_default::<Vec<String>>(&entity.aliases)
+                || entity
+                    .aliases
+                    .clone()
+                    .into_inner()
                     .iter()
                     .any(|alias| alias == &design.name)
         });
@@ -232,7 +234,7 @@ pub async fn finish_seed(
 /// chapter-completing `insert_text` has no such field, so its version note stays empty. A revision
 /// will read `finish_revision`'s `summary` here once M6.2 owns that handler.
 fn completion_note(call: &agent_tool_calls::Model, field: &str) -> String {
-    let Ok(input) = crate::db::json::from_json::<serde_json::Value>(&call.input) else {
+    let Ok(input) = serde_json::from_str::<serde_json::Value>(&call.input) else {
         return String::new();
     };
     input

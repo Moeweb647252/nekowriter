@@ -23,9 +23,9 @@ use crate::db::entities::{
     setting_docs, tracks,
 };
 use crate::db::json::{
-    self, AgentRole, CanonMode, ChapterContent, CompletionKind, InboxKind, MessageKind,
-    MessageRole, Phase, Protocol, RequestMeta, SessionKind, StoredBlock, ToolCallStatus, TrackKind,
-    VersionKind,
+    self, AgentRole, CanonMode, ChapterContent, CompletionKind, InboxKind, JsonText, MessageKind,
+    MessageRole, Phase, Protocol, RequestMeta, SessionCounters, SessionKind, StoredBlock,
+    ToolCallStatus, TrackKind, Usage, VersionKind,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
@@ -478,7 +478,7 @@ async fn chapter_context(
         .await?
         .ok_or_else(|| AppError::not_found(format!("track {}", chapter.track_id)))?;
     let settings = book_settings(conn, book_id.or(Some(chapter.book_id))).await?;
-    let content: ChapterContent = json::from_json_or_default(&chapter.content);
+    let content: ChapterContent = chapter.content.clone().into_inner();
     Ok(ChapterContext {
         id: chapter.id,
         number: chapter.ord,
@@ -515,7 +515,7 @@ async fn book_settings(
         .one(conn)
         .await?
         .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
-    Ok(json::from_json_or_default(&book.settings))
+    Ok(book.settings.clone().into_inner())
 }
 
 /// `block.settings`: the three documents, the character designs and the attached scopes.
@@ -772,7 +772,7 @@ async fn cast_index_context(
             kind_label: prompts.label("entity_kind", row.kind.as_str()),
             status_label: prompts.label("entity_status", row.status.as_str()),
             status: row.status.as_str().to_owned(),
-            aliases: json::from_json_or_default(&row.aliases),
+            aliases: row.aliases.clone().into_inner(),
             summary: row.summary,
         })
         .collect())
@@ -798,7 +798,7 @@ async fn chapter_diff_context(
         Some(version_id) => chapter_versions::Entity::find_by_id(version_id)
             .one(conn)
             .await?
-            .and_then(|row| json::from_json::<ChapterContent>(&row.content).ok())
+            .map(|row| row.content.clone().into_inner())
             .unwrap_or_default(),
         None => ChapterContent::default(),
     };
@@ -806,9 +806,9 @@ async fn chapter_diff_context(
         Some(version_id) => chapter_versions::Entity::find_by_id(version_id)
             .one(conn)
             .await?
-            .and_then(|row| json::from_json::<ChapterContent>(&row.content).ok())
+            .map(|row| row.content.clone().into_inner())
             .unwrap_or_default(),
-        None => json::from_json_or_default(&chapter.content),
+        None => chapter.content.clone().into_inner(),
     };
     Ok(DiffContext {
         changes: paragraph_diff(&previous, &current),
@@ -878,7 +878,7 @@ async fn draft_context(
         .one(conn)
         .await?
         .ok_or_else(|| AppError::not_found(format!("chapter {chapter_id}")))?;
-    let content: ChapterContent = json::from_json_or_default(&chapter.content);
+    let content: ChapterContent = chapter.content.clone().into_inner();
     let paragraphs: Vec<ParagraphContext> = content
         .paragraphs
         .iter()
@@ -960,17 +960,19 @@ async fn prior_report_context(
 }
 
 /// Renders the stored `ReviewIssue[]` of a feedback row for `vars.feedback.issues`.
-pub fn render_issues(prompts: &PromptSet, raw: &str) -> Vec<FeedbackIssueContext> {
-    let issues: Vec<json::ReviewIssue> = json::from_json_or_default(raw);
+pub fn render_issues(
+    prompts: &PromptSet,
+    issues: &[json::ReviewIssue],
+) -> Vec<FeedbackIssueContext> {
     issues
-        .into_iter()
+        .iter()
         .map(|issue| FeedbackIssueContext {
             severity_label: prompts.label("severity", issue.severity.as_str()),
             category_label: prompts.label("category", issue.category.as_str()),
-            pids: issue.pids,
-            quote: issue.quote,
-            problem: issue.problem,
-            suggestion: issue.suggestion,
+            pids: issue.pids.clone(),
+            quote: issue.quote.clone(),
+            problem: issue.problem.clone(),
+            suggestion: issue.suggestion.clone(),
         })
         .collect()
 }
@@ -1144,7 +1146,7 @@ async fn author_notes(
             .all(conn)
             .await?;
         for call in calls {
-            let appendices: Vec<json::Appendix> = json::from_json_or_default(&call.appendices);
+            let appendices: Vec<json::Appendix> = call.appendices.clone().into_inner();
             for appendix in appendices {
                 if appendix.kind == json::AppendixKind::UserFeedback
                     && !appendix.text.trim().is_empty()
@@ -1202,7 +1204,7 @@ async fn chapter_content(
     let Some(chapter) = chapters::Entity::find_by_id(chapter_id).one(conn).await? else {
         return Ok(ChapterContent::default());
     };
-    Ok(json::from_json_or_default(&chapter.content))
+    Ok(chapter.content.clone().into_inner())
 }
 
 /// `conception.kickoff` (spec/03 §10).
@@ -1293,19 +1295,16 @@ pub async fn build_request(
     session: &agent_sessions::Model,
     _prompts: &PromptSet,
 ) -> Result<nekowriter_llm::ChatRequest, AppError> {
-    let snapshot: json::ModelSnapshot = match json::from_json(&session.model_snapshot) {
-        Ok(snapshot) => snapshot,
-        Err(err) => return Err(AppError::internal(format!("corrupt model_snapshot: {err}"))),
-    };
+    let snapshot: json::ModelSnapshot = session.model_snapshot.clone().into_inner();
     let options: nekowriter_llm::ModelOptions =
         serde_json::from_value(snapshot.options.clone()).unwrap_or_default();
-    let tools: Vec<nekowriter_llm::ToolDef> = json::from_json_or_default(&session.tools);
+    let tools: Vec<nekowriter_llm::ToolDef> = session.tools.clone().into_inner();
     let role = session::role_of(session);
 
     let mut messages = Vec::new();
     for message in super::runner::messages_of(conn, session.id).await? {
         if message.role == MessageRole::User {
-            let blocks: Vec<StoredBlock> = json::from_json_or_default(&message.content);
+            let blocks: Vec<StoredBlock> = message.content.clone().into_inner();
             let blocks = blocks
                 .into_iter()
                 .filter_map(|block| match block {
@@ -1321,8 +1320,8 @@ pub async fn build_request(
         }
         let payload: json::ProviderPayload = message
             .provider_payload
-            .as_deref()
-            .and_then(|raw| json::from_json::<json::ProviderPayload>(raw).ok())
+            .clone()
+            .map(|value| value.into_inner())
             .unwrap_or(json::ProviderPayload::Mock {
                 content: Value::Null,
             });
@@ -1409,7 +1408,7 @@ async fn demo_hints(
             let chapter = chapters::Entity::find_by_id(chapter_id).one(conn).await?;
             match chapter {
                 Some(chapter) => {
-                    let content: ChapterContent = json::from_json_or_default(&chapter.content);
+                    let content: ChapterContent = chapter.content.clone().into_inner();
                     content
                         .paragraphs
                         .into_iter()
@@ -1655,8 +1654,8 @@ pub async fn rollover(
                 base_content_version: sea_orm::Set(parent.base_content_version),
                 pending_comment: sea_orm::Set(parent.pending_comment.clone()),
                 view_snapshot: sea_orm::Set(None),
-                counters: sea_orm::Set("{}".to_owned()),
-                usage: sea_orm::Set("{}".to_owned()),
+                counters: sea_orm::Set(JsonText(SessionCounters::default())),
+                usage: sea_orm::Set(JsonText(Usage::default())),
                 error: sea_orm::Set(None),
                 parent_session_id: sea_orm::Set(Some(parent.id)),
                 created_at: sea_orm::Set(now),
@@ -1773,15 +1772,12 @@ pub fn completion_version_kind(completion: CompletionKind) -> Option<VersionKind
 
 /// Stored `request_meta` of a message, when present.
 pub fn request_meta(message: &agent_messages::Model) -> Option<RequestMeta> {
-    message
-        .request_meta
-        .as_deref()
-        .and_then(|raw| json::from_json::<RequestMeta>(raw).ok())
+    message.request_meta.clone().map(|value| value.into_inner())
 }
 
 /// Reads the frozen tool names of a session (spec/03 §1.3).
 pub fn frozen_tool_names(session: &agent_sessions::Model) -> Vec<String> {
-    let tools: Vec<nekowriter_llm::ToolDef> = json::from_json_or_default(&session.tools);
+    let tools: Vec<nekowriter_llm::ToolDef> = session.tools.clone().into_inner();
     tools.into_iter().map(|tool| tool.name).collect()
 }
 

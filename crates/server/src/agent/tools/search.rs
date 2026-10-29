@@ -360,7 +360,7 @@ impl ToolHandler for ReadKnowledgeEntryTool {
             .collect();
         let end = start + content.chars().count();
         let next_offset = if end < total { Some(end) } else { None };
-        let sources: Vec<String> = crate::db::json::from_json_or_default(&entry.source_urls);
+        let sources: Vec<String> = entry.source_urls.clone().into_inner();
         let text = ctx
             .prompts
             .render_value(

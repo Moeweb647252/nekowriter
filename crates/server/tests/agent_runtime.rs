@@ -609,7 +609,7 @@ async fn truncated_output_records_output_truncated() {
         .find(|message| message.role == "assistant")
         .expect("assistant message");
     let payload: nekowriter::db::json::ProviderPayload =
-        nekowriter::db::json::from_json(assistant.provider_payload.as_deref().expect("payload"))
+        serde_json::from_str(assistant.provider_payload.as_deref().expect("payload"))
             .expect("payload");
     assert!(matches!(
         payload,

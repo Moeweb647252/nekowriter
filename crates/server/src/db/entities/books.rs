@@ -2,6 +2,8 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::{BookSettings, ConceptionState, JsonText, RoleModels};
+
 use crate::db::json::BookStatus;
 
 #[sea_orm::model]
@@ -15,9 +17,9 @@ pub struct Model {
     pub genre: String,
     pub writing_language: String,
     pub status: BookStatus,
-    pub settings: String,
-    pub model_overrides: String,
-    pub conception: String,
+    pub settings: JsonText<BookSettings>,
+    pub model_overrides: JsonText<RoleModels>,
+    pub conception: JsonText<ConceptionState>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
     #[sea_orm(has_many)]

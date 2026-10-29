@@ -78,16 +78,16 @@ INSERT INTO agent_sessions
    tools, status, phase, granularity, auto_pause, pause_after_outline, pause_requested,
    base_content_version, counters, usage, parent_session_id, created_at, updated_at)
 VALUES
-  (1, 1, 'conception',  'conception',          NULL, NULL, NULL, '{}', '', '[]', 'completed', 'none', NULL, 0, 0, 0, NULL, '{}', '{}', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
-  (2, 1, 'researcher',  'research',            NULL, NULL, 1,    '{}', '', '[]', 'running',   'none', NULL, 0, 0, 0, NULL, '{}', '{}', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
-  (3, 1, 'writer',      'chapter_write',       1,    1,    NULL, '{}', '', '[]', 'held',      'planning', 'paragraph', 0, 1, 0, 0, '{}', '{}', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
-  (4, 1, 'writer',      'chapter_revise',      1,    1,    NULL, '{}', '', '[]', 'paused',    'revision_planning', 'paragraph', 0, 0, 0, 0, '{}', '{}', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
-  (5, 1, 'reviewer',    'chapter_review',      1,    1,    NULL, '{}', '', '[]', 'completed', 'none', NULL, 0, 0, 0, 0, '{}', '{}', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
-  (6, 1, 'archivist',   'chapter_maintenance', 1,    1,    NULL, '{}', '', '[]', 'completed', 'none', NULL, 0, 0, 0, 0, '{}', '{}', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
-  (7, 1, 'archivist',   'canon_seed',          NULL, 1,    NULL, '{}', '', '[]', 'completed', 'none', NULL, 0, 0, 0, NULL, '{}', '{}', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
-  (8, 1, 'archivist',   'chapter_resync',      1,    1,    NULL, '{}', '', '[]', 'failed',    'none', NULL, 0, 0, 0, 0, '{}', '{}', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
-  (10, 1, 'writer',     'chapter_write',       1,    1,    NULL, '{}', '', '[]', 'completed', 'drafting', 'paragraph', 0, 0, 0, 0, '{}', '{}', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
-  (11, 1, 'writer',     'chapter_write',       1,    1,    NULL, '{}', '', '[]', 'running',   'drafting', 'paragraph', 0, 0, 0, 0, '{}', '{}', 10, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+  (1, 1, 'conception',  'conception',          NULL, NULL, NULL, '{"provider_id":0,"protocol":"mock","base_url":"","extra_headers":{},"model":"","context_window":0,"max_output_tokens":0,"options":null}', '', '[]', 'completed', 'none', NULL, 0, 0, 0, NULL, '{}', '{}', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+  (2, 1, 'researcher',  'research',            NULL, NULL, 1,    '{"provider_id":0,"protocol":"mock","base_url":"","extra_headers":{},"model":"","context_window":0,"max_output_tokens":0,"options":null}', '', '[]', 'running',   'none', NULL, 0, 0, 0, NULL, '{}', '{}', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+  (3, 1, 'writer',      'chapter_write',       1,    1,    NULL, '{"provider_id":0,"protocol":"mock","base_url":"","extra_headers":{},"model":"","context_window":0,"max_output_tokens":0,"options":null}', '', '[]', 'held',      'planning', 'paragraph', 0, 1, 0, 0, '{}', '{}', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+  (4, 1, 'writer',      'chapter_revise',      1,    1,    NULL, '{"provider_id":0,"protocol":"mock","base_url":"","extra_headers":{},"model":"","context_window":0,"max_output_tokens":0,"options":null}', '', '[]', 'paused',    'revision_planning', 'paragraph', 0, 0, 0, 0, '{}', '{}', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+  (5, 1, 'reviewer',    'chapter_review',      1,    1,    NULL, '{"provider_id":0,"protocol":"mock","base_url":"","extra_headers":{},"model":"","context_window":0,"max_output_tokens":0,"options":null}', '', '[]', 'completed', 'none', NULL, 0, 0, 0, 0, '{}', '{}', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+  (6, 1, 'archivist',   'chapter_maintenance', 1,    1,    NULL, '{"provider_id":0,"protocol":"mock","base_url":"","extra_headers":{},"model":"","context_window":0,"max_output_tokens":0,"options":null}', '', '[]', 'completed', 'none', NULL, 0, 0, 0, 0, '{}', '{}', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+  (7, 1, 'archivist',   'canon_seed',          NULL, 1,    NULL, '{"provider_id":0,"protocol":"mock","base_url":"","extra_headers":{},"model":"","context_window":0,"max_output_tokens":0,"options":null}', '', '[]', 'completed', 'none', NULL, 0, 0, 0, NULL, '{}', '{}', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+  (8, 1, 'archivist',   'chapter_resync',      1,    1,    NULL, '{"provider_id":0,"protocol":"mock","base_url":"","extra_headers":{},"model":"","context_window":0,"max_output_tokens":0,"options":null}', '', '[]', 'failed',    'none', NULL, 0, 0, 0, 0, '{}', '{}', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+  (10, 1, 'writer',     'chapter_write',       1,    1,    NULL, '{"provider_id":0,"protocol":"mock","base_url":"","extra_headers":{},"model":"","context_window":0,"max_output_tokens":0,"options":null}', '', '[]', 'completed', 'drafting', 'paragraph', 0, 0, 0, 0, '{}', '{}', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+  (11, 1, 'writer',     'chapter_write',       1,    1,    NULL, '{"provider_id":0,"protocol":"mock","base_url":"","extra_headers":{},"model":"","context_window":0,"max_output_tokens":0,"options":null}', '', '[]', 'running',   'drafting', 'paragraph', 0, 0, 0, 0, '{}', '{}', 10, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
 
 INSERT INTO agent_messages(id, session_id, seq, role, kind, content, created_at)
 VALUES (1, 3, 0, 'user', 'kickoff', '[]', '2026-01-01T00:00:00Z'),
@@ -171,7 +171,7 @@ async fn pre_outline_database() -> (tempfile::TempDir, std::path::PathBuf) {
             .execute_unprepared(
                 "INSERT INTO agent_sessions(book_id, role, kind, model_snapshot, system_prompt, \
                  tools, status, created_at, updated_at) \
-                 VALUES (1, 'planner', 'chapter_outline', '{}', '', '[]', 'completed', \
+                 VALUES (1, 'planner', 'chapter_outline', '{\"provider_id\":0,\"protocol\":\"mock\",\"base_url\":\"\",\"extra_headers\":{},\"model\":\"\",\"context_window\":0,\"max_output_tokens\":0,\"options\":null}', '', '[]', 'completed', \
                  '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
             )
             .await
@@ -215,7 +215,7 @@ async fn a_fresh_database_accepts_the_planner_role_and_outline_kind() {
     app.execute(
         "INSERT INTO agent_sessions(book_id, role, kind, model_snapshot, system_prompt, tools, \
          status, created_at, updated_at) \
-         VALUES (NULL, 'planner', 'chapter_outline', '{}', '', '[]', 'completed', \
+         VALUES (NULL, 'planner', 'chapter_outline', '{\"provider_id\":0,\"protocol\":\"mock\",\"base_url\":\"\",\"extra_headers\":{},\"model\":\"\",\"context_window\":0,\"max_output_tokens\":0,\"options\":null}', '', '[]', 'completed', \
          '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
     )
     .await;
@@ -289,7 +289,7 @@ async fn the_upgrade_keeps_every_row_and_every_session_reference() {
         .execute_unprepared(
             "INSERT INTO agent_sessions(book_id, role, kind, model_snapshot, system_prompt, tools, \
              status, created_at, updated_at) \
-             VALUES (1, 'planner', 'chapter_outline', '{}', '', '[]', 'completed', \
+             VALUES (1, 'planner', 'chapter_outline', '{\"provider_id\":0,\"protocol\":\"mock\",\"base_url\":\"\",\"extra_headers\":{},\"model\":\"\",\"context_window\":0,\"max_output_tokens\":0,\"options\":null}', '', '[]', 'completed', \
              '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
         )
         .await

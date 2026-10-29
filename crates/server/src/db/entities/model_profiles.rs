@@ -2,6 +2,8 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::{JsonText, ModelOptions};
+
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "model_profiles")]
@@ -15,7 +17,7 @@ pub struct Model {
     pub model: String,
     pub context_window: i32,
     pub max_output_tokens: i32,
-    pub options: String,
+    pub options: JsonText<ModelOptions>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
     #[sea_orm(belongs_to, from = "provider_id", to = "id")]

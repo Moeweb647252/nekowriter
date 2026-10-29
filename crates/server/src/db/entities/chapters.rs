@@ -2,7 +2,7 @@
 
 use sea_orm::entity::prelude::*;
 
-use crate::db::json::{CanonStatus, ChapterStatus};
+use crate::db::json::{CanonStatus, ChapterContent, ChapterStatus, JsonText};
 
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
@@ -21,7 +21,7 @@ pub struct Model {
     pub outline: String,
     pub reference_notes: String,
     pub summary: String,
-    pub content: String,
+    pub content: JsonText<ChapterContent>,
     pub content_version: i32,
     pub word_count: i32,
     pub official_version_id: Option<i32>,

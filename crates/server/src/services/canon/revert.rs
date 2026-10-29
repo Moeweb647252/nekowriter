@@ -16,7 +16,7 @@ use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder
 
 use crate::api::dto::changes::ChangeDto;
 use crate::db::entities::change_log;
-use crate::db::json::{ChangeOp, ChangeTargetType, Snapshot};
+use crate::db::json::{ChangeOp, ChangeTargetType, JsonText, Snapshot};
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
 
@@ -64,8 +64,8 @@ pub async fn revert_inner(
 
     // 2. Compute the inverse. The inverse operation itself records the revert row (D-079):
     //    `before` is the target's state before the revert, `after` its state afterwards.
-    let before = parse_snapshot(original.before.as_deref())?;
-    let after = parse_snapshot(original.after.as_deref())?;
+    let before = original.before.clone().map(JsonText::into_inner);
+    let after = original.after.clone().map(JsonText::into_inner);
     let write = revert_write(original.book_id, original.track_id)
         .with_chapter(original.chapter_id)
         .as_revert(original.id);
@@ -180,15 +180,6 @@ fn parse_target_type(raw: &str) -> CanonResult<ChangeTargetType> {
 fn parse_op(raw: &str) -> CanonResult<ChangeOp> {
     ChangeOp::from_str_opt(raw)
         .ok_or_else(|| CanonError::internal(format!("unknown change_log.op {raw:?}")))
-}
-
-fn parse_snapshot(raw: Option<&str>) -> CanonResult<Option<Snapshot>> {
-    match raw {
-        Some(raw) => crate::db::json::from_json::<Snapshot>(raw)
-            .map(Some)
-            .map_err(|err| CanonError::internal(format!("corrupt change snapshot: {err}"))),
-        None => Ok(None),
-    }
 }
 
 /// The `track_id` a snapshot carries (`None` for the snapshot kinds that have none).

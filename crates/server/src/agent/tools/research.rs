@@ -89,19 +89,13 @@ async fn target_scope(ctx: &ToolCtx<'_>, tool: &str) -> Result<(i32, String), To
         return Err(ToolError::tool_not_allowed(
             tool,
             crate::agent::tools::registry::phase_label(ctx.prompts, phase),
-            serde_json::from_str::<Vec<serde_json::Value>>(&ctx.session.tools)
-                .ok()
-                .map(|tools| {
-                    tools
-                        .iter()
-                        .filter_map(|tool| {
-                            tool.get("name")
-                                .and_then(serde_json::Value::as_str)
-                                .map(str::to_owned)
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
+            ctx.session
+                .tools
+                .clone()
+                .into_inner()
+                .iter()
+                .map(|tool| tool.name.clone())
+                .collect(),
         ));
     }
     let Some(task_id) = ctx.session.research_task_id else {
@@ -346,8 +340,7 @@ impl ToolHandler for UpdateKnowledgeEntryTool {
         let source_urls = if input.source_urls_add.is_empty() {
             None
         } else {
-            let mut urls: Vec<String> =
-                serde_json::from_str(&existing.source_urls).unwrap_or_default();
+            let mut urls: Vec<String> = existing.source_urls.clone().into_inner();
             for url in &input.source_urls_add {
                 let url = url.trim().to_owned();
                 if !url.is_empty() && !urls.contains(&url) {

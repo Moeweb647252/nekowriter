@@ -470,7 +470,7 @@ pub fn entity_snapshot(row: &entities::Model) -> CanonResult<Snapshot> {
         summary: row.summary.clone(),
         description: row.description.clone(),
         state: row.state.clone(),
-        attributes: parse_json("entities.attributes", &row.attributes)?,
+        attributes: row.attributes.clone().into_inner(),
         importance: row.importance,
         status: row.status,
         is_protagonist: row.is_protagonist,
@@ -558,7 +558,7 @@ pub fn appearance_set_snapshot(rows: &[appearances::Model]) -> Snapshot {
 }
 
 pub fn aliases_of(row: &entities::Model) -> CanonResult<Vec<String>> {
-    parse_json("entities.aliases", &row.aliases)
+    Ok(row.aliases.clone().into_inner())
 }
 
 /// The normalized alias list: trimmed, non-empty, unique, in insertion order.
@@ -841,19 +841,6 @@ pub fn summary_snapshot(summary: &str) -> Snapshot {
 }
 
 // ───────────────────────────── shared conversions ─────────────────────────────
-
-/// Deserializes a typed JSON column.
-pub(crate) fn parse_json<T: for<'de> serde::Deserialize<'de>>(
-    column: &str,
-    raw: &str,
-) -> CanonResult<T> {
-    crate::services::parse_json(column, raw).map_err(CanonError::from)
-}
-
-/// Serializes a typed JSON column.
-pub(crate) fn json<T: serde::Serialize>(value: &T) -> CanonResult<String> {
-    crate::services::json(value).map_err(CanonError::from)
-}
 
 /// A `conflict.exists` carrying the existing row's id (spec/10 §4).
 pub(crate) fn conflict(message: impl Into<String>, id: i32) -> CanonError {

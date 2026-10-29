@@ -2,6 +2,8 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::{ChapterContent, JsonText};
+
 use crate::db::json::VersionKind;
 
 #[sea_orm::model]
@@ -16,7 +18,7 @@ pub struct Model {
     pub version_no: i32,
     pub kind: VersionKind,
     pub title: String,
-    pub content: String,
+    pub content: JsonText<ChapterContent>,
     pub word_count: i32,
     pub note: String,
     pub session_id: Option<i32>,

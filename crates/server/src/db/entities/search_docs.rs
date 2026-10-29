@@ -2,7 +2,7 @@
 
 use sea_orm::entity::prelude::*;
 
-use crate::db::json::{EmbedState, SearchDocKind};
+use crate::db::json::{EmbedState, JsonText, SearchDocKind};
 
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
@@ -20,7 +20,7 @@ pub struct Model {
     pub ref_part: i32,
     pub title: String,
     pub body: String,
-    pub meta: String,
+    pub meta: JsonText<serde_json::Value>,
     pub content_hash: String,
     pub embed_state: EmbedState,
     pub updated_at: DateTimeUtc,

@@ -477,7 +477,7 @@ async fn frozen_tool_names(fixture: &Baseline, session_id: i32) -> Vec<String> {
         .expect("session row");
     let raw: String = row.try_get("", "tools").expect("tools column");
     let tools: Vec<nekowriter_llm::ToolDef> =
-        nekowriter::db::json::from_json(&raw).expect("frozen tool definitions");
+        serde_json::from_str(&raw).expect("frozen tool definitions");
     tools.into_iter().map(|tool| tool.name).collect()
 }
 

@@ -2,6 +2,8 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::JsonText;
+
 use crate::db::json::EntrySource;
 
 #[sea_orm::model]
@@ -16,8 +18,8 @@ pub struct Model {
     pub title: String,
     pub content: String,
     pub source: EntrySource,
-    pub source_urls: String,
-    pub tags: String,
+    pub source_urls: JsonText<Vec<String>>,
+    pub tags: JsonText<Vec<String>>,
     pub research_task_id: Option<i32>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,

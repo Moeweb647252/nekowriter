@@ -1,8 +1,10 @@
 //! `entities` entity (spec/02 §2).
 
+use std::collections::BTreeMap;
+
 use sea_orm::entity::prelude::*;
 
-use crate::db::json::{EntityKind, EntityStatus};
+use crate::db::json::{EntityKind, EntityStatus, JsonText};
 
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
@@ -14,11 +16,11 @@ pub struct Model {
     pub track_id: Option<i32>,
     pub kind: EntityKind,
     pub name: String,
-    pub aliases: String,
+    pub aliases: JsonText<Vec<String>>,
     pub summary: String,
     pub description: String,
     pub state: String,
-    pub attributes: String,
+    pub attributes: JsonText<BTreeMap<String, String>>,
     pub importance: i32,
     pub status: EntityStatus,
     pub is_protagonist: bool,

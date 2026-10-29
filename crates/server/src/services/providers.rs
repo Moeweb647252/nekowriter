@@ -20,6 +20,7 @@ use crate::api::dto::providers::{
     ProviderInput, ProviderPresetDto, ProviderTestDto, ProviderTestErrorDto, RemoteModelDto,
 };
 use crate::db::entities::{model_profiles, providers};
+use crate::db::json::JsonText;
 use crate::db::json::Protocol;
 use crate::error::{AppError, ErrorCode};
 use crate::services::app_settings::mask_secret;
@@ -237,7 +238,7 @@ pub async fn stored_option_mismatches(
             continue;
         };
         let protocol = llm_protocol(parse_protocol(provider.protocol.as_str())?);
-        let options: ModelOptionsDto = serde_json::from_str(&profile.options).unwrap_or_default();
+        let options = ModelOptionsDto::from(profile.options.clone().into_inner());
         let unreachable: Vec<String> = options
             .to_model_options()
             .map(|model_options| {
@@ -340,8 +341,7 @@ async fn provider_dto(
         .order_by_asc(model_profiles::Column::Id)
         .all(conn)
         .await?;
-    let extra_headers: BTreeMap<String, String> =
-        serde_json::from_str(&row.extra_headers).unwrap_or_default();
+    let extra_headers: BTreeMap<String, String> = row.extra_headers.clone().into_inner();
     // Every profile of this provider shares its protocol, which is what decides `ignored_options`.
     let protocol = parse_protocol(row.protocol.as_str())?;
     let protocols = BTreeMap::from([(row.id, protocol)]);
@@ -437,8 +437,7 @@ pub async fn create(state: &AppState, input: &ProviderInput) -> Result<ProviderD
                     protocol: Set(validated.protocol),
                     base_url: Set(validated.base_url.clone()),
                     api_key: Set(validated.api_key.clone()),
-                    extra_headers: Set(serde_json::to_string(&validated.extra_headers)
-                        .unwrap_or_else(|_| "{}".to_owned())),
+                    extra_headers: Set(JsonText(validated.extra_headers.clone())),
                     created_at: Set(now),
                     updated_at: Set(now),
                     ..Default::default()
@@ -477,8 +476,7 @@ pub async fn update(
                 active.name = Set(validated.name.clone());
                 active.protocol = Set(validated.protocol);
                 active.base_url = Set(validated.base_url.clone());
-                active.extra_headers = Set(serde_json::to_string(&validated.extra_headers)
-                    .unwrap_or_else(|_| "{}".to_owned()));
+                active.extra_headers = Set(JsonText(validated.extra_headers.clone()));
                 active.updated_at = Set(chrono::Utc::now());
                 if let Some(key) = &validated.api_key {
                     active.api_key = Set(if key.is_empty() {
@@ -644,7 +642,7 @@ fn model_profile_dto(
     row: model_profiles::Model,
     protocols: &BTreeMap<i32, Protocol>,
 ) -> Result<ModelProfileDto, AppError> {
-    let options: ModelOptionsDto = serde_json::from_str(&row.options).unwrap_or_default();
+    let options = ModelOptionsDto::from(row.options.clone().into_inner());
     let ignored_options = match protocols.get(&row.provider_id) {
         Some(protocol) => options
             .to_model_options()
@@ -712,9 +710,9 @@ pub async fn create_model(
                     model: Set(input.model.trim().to_owned()),
                     context_window: Set(input.context_window),
                     max_output_tokens: Set(input.max_output_tokens),
-                    options: Set(
-                        serde_json::to_string(&input.options).unwrap_or_else(|_| "{}".to_owned())
-                    ),
+                    options: Set(JsonText(crate::db::json::ModelOptions::from(
+                        input.options.clone(),
+                    ))),
                     created_at: Set(now),
                     updated_at: Set(now),
                     ..Default::default()
@@ -770,8 +768,9 @@ pub async fn update_model(
                 active.model = Set(input.model.trim().to_owned());
                 active.context_window = Set(input.context_window);
                 active.max_output_tokens = Set(input.max_output_tokens);
-                active.options =
-                    Set(serde_json::to_string(&input.options).unwrap_or_else(|_| "{}".to_owned()));
+                active.options = Set(JsonText(crate::db::json::ModelOptions::from(
+                    input.options.clone(),
+                )));
                 active.updated_at = Set(chrono::Utc::now());
                 active.update(tx).await?;
                 Ok(())
@@ -1015,7 +1014,11 @@ async fn test_request_config(
         None => rows.first(),
     };
     let options = borrowed
-        .and_then(|row| serde_json::from_str(&row.options).ok())
+        .map(|row| {
+            ModelOptionsDto::from(row.options.clone().into_inner())
+                .to_model_options()
+                .unwrap_or_default()
+        })
         .unwrap_or_default();
     if let Some(model_id) = requested {
         return Ok((model_id, options));
@@ -1111,8 +1114,7 @@ pub fn provider_config(
         Some(key) if !key.is_empty() => Some(key.to_owned()),
         _ => None,
     };
-    let extra_headers: BTreeMap<String, String> =
-        serde_json::from_str(&provider.extra_headers).unwrap_or_default();
+    let extra_headers: BTreeMap<String, String> = provider.extra_headers.clone().into_inner();
     Ok(nekowriter_llm::ProviderConfig {
         protocol: llm_protocol(protocol),
         base_url: provider.base_url.clone(),

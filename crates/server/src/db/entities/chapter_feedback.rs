@@ -2,6 +2,8 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::{JsonText, ReviewIssue};
+
 use crate::db::json::FeedbackMode;
 
 #[sea_orm::model]
@@ -14,7 +16,7 @@ pub struct Model {
     pub content_version: i32,
     pub review_report_id: Option<i32>,
     pub text: String,
-    pub issues: String,
+    pub issues: JsonText<Vec<ReviewIssue>>,
     pub mode: FeedbackMode,
     pub session_id: Option<i32>,
     pub created_at: DateTimeUtc,

@@ -26,7 +26,7 @@ async fn seed_orphaned_session(db: &nekowriter::db::Db) -> i32 {
             "INSERT INTO agent_sessions \
              (role, kind, model_snapshot, system_prompt, tools, status, phase, \
               counters, usage, created_at, updated_at) \
-             VALUES ('writer', 'chapter_write', '{}', 'frozen prompt', '[]', 'running', \
+             VALUES ('writer', 'chapter_write', '{\"provider_id\":0,\"protocol\":\"mock\",\"base_url\":\"\",\"extra_headers\":{},\"model\":\"\",\"context_window\":0,\"max_output_tokens\":0,\"options\":null}', 'frozen prompt', '[]', 'running', \
                      'drafting', '{}', '{}', ?, ?) RETURNING id",
             vec![TS.into(), TS.into()],
         ))

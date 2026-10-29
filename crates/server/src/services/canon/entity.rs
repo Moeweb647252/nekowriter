@@ -243,11 +243,11 @@ pub async fn create_inner(
         track_id: Set(track_id),
         kind: Set(input.kind),
         name: Set(name.to_owned()),
-        aliases: Set(super::json(&aliases)?),
+        aliases: Set(crate::services::json_text(aliases.clone())),
         summary: Set(input.summary.trim().to_owned()),
         description: Set(input.description.clone()),
         state: Set(input.state.clone()),
-        attributes: Set(super::json(&input.attributes)?),
+        attributes: Set(crate::services::json_text(input.attributes)),
         importance: Set(input.importance),
         status: Set(input.status),
         is_protagonist: Set(input.is_protagonist),
@@ -420,7 +420,7 @@ pub async fn update_inner(
         active.name = Set(target_name);
     }
     if patch.aliases.is_some() {
-        active.aliases = Set(super::json(&aliases)?);
+        active.aliases = Set(crate::services::json_text(aliases.clone()));
     }
     if let Some(summary) = &patch.summary {
         active.summary = Set(summary.trim().to_owned());
@@ -432,7 +432,7 @@ pub async fn update_inner(
         active.state = Set(state.clone());
     }
     if let Some(attributes) = &patch.attributes {
-        active.attributes = Set(super::json(attributes)?);
+        active.attributes = Set(crate::services::json_text(attributes.clone()));
     }
     if let Some(importance) = patch.importance {
         active.importance = Set(importance);
@@ -626,7 +626,7 @@ pub async fn merge_inner(
     }
     entities::ActiveModel {
         id: Set(into_id),
-        aliases: Set(super::json(&aliases)?),
+        aliases: Set(crate::services::json_text(aliases.clone())),
         importance: Set(importance),
         is_protagonist: Set(target_is_protagonist),
         updated_at: Set(stamp()),
@@ -1210,7 +1210,7 @@ pub fn status_of(row: &entities::Model) -> CanonResult<EntityStatus> {
 }
 
 pub fn attributes_of(row: &entities::Model) -> CanonResult<BTreeMap<String, String>> {
-    super::parse_json("entities.attributes", &row.attributes)
+    Ok(row.attributes.clone().into_inner())
 }
 
 pub fn list_item(row: &entities::Model) -> CanonResult<EntityListItemDto> {
@@ -1316,11 +1316,11 @@ pub async fn restore_inner(
         id: Set(entity_id),
         kind: Set(*kind),
         name: Set(name.clone()),
-        aliases: Set(super::json(aliases)?),
+        aliases: Set(crate::services::json_text(aliases.clone())),
         summary: Set(summary.clone()),
         description: Set(description.clone()),
         state: Set(state.clone()),
-        attributes: Set(super::json(attributes)?),
+        attributes: Set(crate::services::json_text(attributes.clone())),
         importance: Set(*importance),
         status: Set(*status),
         is_protagonist: Set(*is_protagonist),
@@ -1399,11 +1399,11 @@ pub async fn recreate_inner(
         track_id: Set(*track_id),
         kind: Set(*kind),
         name: Set(name.clone()),
-        aliases: Set(super::json(aliases)?),
+        aliases: Set(crate::services::json_text(aliases.clone())),
         summary: Set(summary.clone()),
         description: Set(description.clone()),
         state: Set(state.clone()),
-        attributes: Set(super::json(attributes)?),
+        attributes: Set(crate::services::json_text(attributes.clone())),
         importance: Set(*importance),
         status: Set(*status),
         is_protagonist: Set(*is_protagonist),

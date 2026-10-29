@@ -34,7 +34,7 @@ use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseTransaction, DbErr, Stat
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::db::json::{from_json, to_json};
+use crate::db::json::{JsonText, to_json};
 use crate::error::{AppError, ErrorCode};
 
 /// The current UTC time in the representation the schema stores.
@@ -48,12 +48,18 @@ pub(crate) fn json<T: serde::Serialize>(value: &T) -> Result<String, AppError> {
     to_json(value).map_err(|err| AppError::internal(format!("cannot serialize JSON column: {err}")))
 }
 
+/// Wraps a typed JSON column value for a `JsonText<T>` entity field.
+pub(crate) fn json_text<T>(value: T) -> JsonText<T> {
+    JsonText(value)
+}
+
 /// Deserializes a typed JSON column, mapping a failure to an internal error.
 pub(crate) fn parse_json<T: for<'de> serde::Deserialize<'de>>(
     column: &str,
     raw: &str,
 ) -> Result<T, AppError> {
-    from_json(raw).map_err(|err| AppError::internal(format!("corrupt {column} column: {err}")))
+    serde_json::from_str(raw)
+        .map_err(|err| AppError::internal(format!("corrupt {column} column: {err}")))
 }
 
 /// Runs a raw SELECT that returns at most one row and reads one `i64` column.

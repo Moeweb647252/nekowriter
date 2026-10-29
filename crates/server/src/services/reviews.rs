@@ -24,7 +24,8 @@ use crate::api::dto::reviews::{
 };
 use crate::db::entities::{agent_sessions, chapter_feedback, chapters, review_reports};
 use crate::db::json::{
-    ChapterStatus, FeedbackMode, MessageKind, ReviewIssue, SessionKind, SessionStatus, StoredBlock,
+    ChapterStatus, FeedbackMode, JsonText, MessageKind, ReviewIssue, SessionKind, SessionStatus,
+    StoredBlock,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
@@ -305,7 +306,7 @@ pub async fn send_back(
                     "the review report belongs to another chapter",
                 ));
             }
-            let all: Vec<ReviewIssue> = crate::db::json::from_json_or_default(&report.issues);
+            let all: Vec<ReviewIssue> = report.issues.clone().into_inner();
             for index in &input.issue_indexes {
                 let issue = all.get(*index).ok_or_else(|| {
                     AppError::invalid_fields(serde_json::Map::from_iter([(
@@ -355,8 +356,7 @@ pub async fn send_back(
                 content_version: Set(current.content_version),
                 review_report_id: Set(input.review_report_id),
                 text: Set(feedback_for_row),
-                issues: Set(crate::db::json::to_json(&issues)
-                    .map_err(|err| AppError::internal(err.to_string()))?),
+                issues: Set(JsonText(issues)),
                 mode: Set(mode),
                 created_at: Set(chrono::Utc::now()),
                 ..Default::default()

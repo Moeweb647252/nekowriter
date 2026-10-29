@@ -2,7 +2,10 @@
 
 use sea_orm::entity::prelude::*;
 
-use crate::db::json::{AgentRole, Granularity, Phase, SessionKind, SessionStatus};
+use crate::db::json::{
+    AgentRole, Granularity, JsonText, ModelSnapshot, Phase, SessionCounters, SessionError,
+    SessionKind, SessionStatus, Usage, ViewSnapshot,
+};
 
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
@@ -17,9 +20,9 @@ pub struct Model {
     pub track_id: Option<i32>,
     pub research_task_id: Option<i32>,
     pub model_profile_id: Option<i32>,
-    pub model_snapshot: String,
+    pub model_snapshot: JsonText<ModelSnapshot>,
     pub system_prompt: String,
-    pub tools: String,
+    pub tools: JsonText<Vec<nekowriter_llm::ToolDef>>,
     pub status: SessionStatus,
     pub phase: Phase,
     pub granularity: Option<Granularity>,
@@ -29,10 +32,10 @@ pub struct Model {
     pub held_tool_call_id: Option<i32>,
     pub base_content_version: Option<i32>,
     pub pending_comment: Option<String>,
-    pub view_snapshot: Option<String>,
-    pub counters: String,
-    pub usage: String,
-    pub error: Option<String>,
+    pub view_snapshot: Option<JsonText<ViewSnapshot>>,
+    pub counters: JsonText<SessionCounters>,
+    pub usage: JsonText<Usage>,
+    pub error: Option<JsonText<SessionError>>,
     pub parent_session_id: Option<i32>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,

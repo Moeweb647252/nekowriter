@@ -17,8 +17,8 @@ use crate::db::entities::{
     agent_sessions, book_scopes, books, knowledge_scopes, research_tasks, setting_docs, tracks,
 };
 use crate::db::json::{
-    AgentRole, BookStatus, ConceptionState, ResearchTaskStatus, SessionKind, SessionStatus,
-    SettingDocKind, TrackKind,
+    AgentRole, BookStatus, ConceptionState, JsonText, ResearchTaskStatus, SessionKind,
+    SessionStatus, SettingDocKind, TrackKind,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::{BookOp, ServerEvent};
@@ -131,13 +131,11 @@ async fn start_session(state: &AppState, book_id: i32) -> Result<(i32, Vec<Strin
                 .one(tx)
                 .await?
                 .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
-            let mut conception: ConceptionState =
-                crate::db::json::from_json_or_default(&book.conception);
+            let mut conception: ConceptionState = book.conception.clone().into_inner();
             conception.session_id = Some(session_id);
             books::ActiveModel {
                 id: Set(book_id),
-                conception: Set(crate::db::json::to_json(&conception)
-                    .map_err(|err| AppError::internal(err.to_string()))?),
+                conception: Set(JsonText(conception)),
                 updated_at: Set(now()),
                 ..Default::default()
             }
@@ -318,14 +316,13 @@ async fn finalize_inner(
     }
 
     // The book activates and records the finalization (step 3).
-    let mut conception: ConceptionState = crate::db::json::from_json_or_default(&book.conception);
+    let mut conception: ConceptionState = book.conception.clone().into_inner();
     conception.finalized_at = Some(now());
     conception.session_id = None;
     let updated = books::ActiveModel {
         id: Set(book_id),
         status: Set(BookStatus::Active),
-        conception: Set(crate::db::json::to_json(&conception)
-            .map_err(|err| AppError::internal(err.to_string()))?),
+        conception: Set(JsonText(conception)),
         updated_at: Set(now()),
         ..Default::default()
     }

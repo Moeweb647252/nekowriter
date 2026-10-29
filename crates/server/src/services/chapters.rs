@@ -20,7 +20,7 @@ use crate::error::{AppError, ErrorCode};
 use crate::events::{BookOp, ContentActor, ServerEvent};
 use crate::text;
 
-use super::{json, now, parse_json};
+use super::now;
 
 /// `GET /api/tracks/:id/chapters` (spec/10 §2.2: no content).
 pub async fn list(
@@ -83,7 +83,7 @@ pub async fn create_inner(
         outline: Set(String::new()),
         reference_notes: Set(String::new()),
         summary: Set(String::new()),
-        content: Set(json(&content)?),
+        content: Set(crate::services::json_text(content.clone())),
         content_version: Set(0),
         word_count: Set(0),
         official_version_id: Set(None),
@@ -427,7 +427,7 @@ pub async fn patch_content_inner(
     let existing = load(tx, chapter_id).await?;
     ensure_editable(tx, chapter_id).await?;
     ensure_version(&existing, patch.base_version)?;
-    let mut content: ChapterContent = parse_json("chapters.content", &existing.content)?;
+    let mut content: ChapterContent = existing.content.clone().into_inner();
     let applied = text::apply_inputs(&mut content, &patch.ops).map_err(map_text_error)?;
     write_content(
         tx,
@@ -463,7 +463,7 @@ pub async fn put_content_text_inner(
     let existing = load(tx, chapter_id).await?;
     ensure_editable(tx, chapter_id).await?;
     ensure_version(&existing, put.base_version)?;
-    let mut content: ChapterContent = parse_json("chapters.content", &existing.content)?;
+    let mut content: ChapterContent = existing.content.clone().into_inner();
     let aligned = text::set_full_text(&mut content, &put.text);
     write_content(
         tx,
@@ -492,7 +492,7 @@ async fn write_content(
 ) -> Result<(ChapterContentResult, Vec<ServerEvent>), AppError> {
     use sea_orm::ActiveModelTrait;
 
-    let stored: ChapterContent = parse_json("chapters.content", &existing.content)?;
+    let stored: ChapterContent = existing.content.clone().into_inner();
     let unchanged = ops.is_empty() && stored == content;
     if unchanged {
         return Ok((
@@ -509,7 +509,7 @@ async fn write_content(
     let timestamp = now();
     let mut active = chapters::ActiveModel {
         id: Set(existing.id),
-        content: Set(json(&content)?),
+        content: Set(crate::services::json_text(content.clone())),
         content_version: Set(version),
         word_count: Set(word_count),
         updated_at: Set(timestamp),
@@ -819,7 +819,7 @@ pub async fn submit_inner(
             serde_json::json!({ "session_id": session_id }),
         ));
     }
-    let content: ChapterContent = parse_json("chapters.content", &existing.content)?;
+    let content: ChapterContent = existing.content.clone().into_inner();
     if text::content_word_count(&content) == 0 {
         return Err(invalid_state("the chapter is empty", status));
     }
@@ -954,7 +954,7 @@ pub async fn approve_inner(
             serde_json::json!({ "session_id": session_id }),
         ));
     }
-    let content: ChapterContent = parse_json("chapters.content", &existing.content)?;
+    let content: ChapterContent = existing.content.clone().into_inner();
     if text::content_word_count(&content) == 0 {
         return Err(invalid_state("the chapter is empty", status));
     }
@@ -1043,7 +1043,7 @@ pub async fn save_version_inner(
     input: ManualVersionInput,
 ) -> Result<chapter_versions::Model, AppError> {
     let existing = load(tx, chapter_id).await?;
-    let content: ChapterContent = parse_json("chapters.content", &existing.content)?;
+    let content: ChapterContent = existing.content.clone().into_inner();
     let word_count = text::content_word_count(&content);
     super::versions::create_version(
         tx,
@@ -1092,7 +1092,7 @@ pub async fn restore_inner(
             serde_json::json!({ "session_id": session_id }),
         ));
     }
-    let current: ChapterContent = parse_json("chapters.content", &existing.content)?;
+    let current: ChapterContent = existing.content.clone().into_inner();
     let current_words = text::content_word_count(&current);
     super::versions::create_version(
         tx,
@@ -1108,7 +1108,7 @@ pub async fn restore_inner(
     )
     .await?;
 
-    let mut restored: ChapterContent = parse_json("chapter_versions.content", &version.content)?;
+    let mut restored: ChapterContent = version.content.clone().into_inner();
     // A restored version is older than the text it replaces, so its own counter can be lower.
     // Pids are never reused (spec/02 §5 invariant 3), so the counter keeps the current value.
     text::keep_next_pid(&mut restored, &current);
@@ -1127,7 +1127,7 @@ pub async fn restore_inner(
     let ops = restore_ops(&current, &restored);
     let active = chapters::ActiveModel {
         id: Set(existing.id),
-        content: Set(json(&restored)?),
+        content: Set(crate::services::json_text(restored.clone())),
         content_version: Set(version_no),
         word_count: Set(word_count),
         canon_status: Set(canon_status),
@@ -1364,7 +1364,7 @@ pub fn to_dto_without_sessions(row: &chapters::Model) -> Result<ChapterDto, AppE
         outline: row.outline.clone(),
         reference_notes: row.reference_notes.clone(),
         summary: row.summary.clone(),
-        content: parse_json("chapters.content", &row.content)?,
+        content: row.content.clone().into_inner(),
         content_version: row.content_version,
         official_version_id: row.official_version_id,
         open_sessions: Vec::new(),
@@ -1485,7 +1485,7 @@ pub async fn version_content(
     version_id: i32,
 ) -> Result<ChapterContent, AppError> {
     let row = super::versions::load(conn, version_id).await?;
-    parse_json("chapter_versions.content", &row.content)
+    Ok(row.content.clone().into_inner())
 }
 
 #[cfg(test)]

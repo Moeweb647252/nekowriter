@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use crate::api::dto::changes::{ChangeDto, ChangePageDto, ChangeQuery};
 use crate::db::entities::change_log;
-use crate::db::json::{ChangeActor, ChangeOp, ChangeTargetType, Snapshot, from_json, to_json};
+use crate::db::json::{ChangeActor, ChangeOp, ChangeTargetType, JsonText, Snapshot, to_json};
 use crate::error::AppError;
 
 use super::now;
@@ -40,13 +40,8 @@ pub struct NewChange<'a> {
 
 /// Appends one change inside the caller's transaction and returns its id.
 pub async fn record(tx: &impl ConnectionTrait, change: NewChange<'_>) -> Result<i32, AppError> {
-    let before = change.before.map(to_json).transpose().map_err(|err| {
-        AppError::internal(format!("cannot serialize the before snapshot: {err}"))
-    })?;
-    let after =
-        change.after.map(to_json).transpose().map_err(|err| {
-            AppError::internal(format!("cannot serialize the after snapshot: {err}"))
-        })?;
+    let before = change.before.map(|snapshot| JsonText(snapshot.clone()));
+    let after = change.after.map(|snapshot| JsonText(snapshot.clone()));
     let model = change_log::ActiveModel {
         id: sea_orm::ActiveValue::NotSet,
         book_id: Set(change.book_id),
@@ -195,22 +190,13 @@ pub fn to_dto(row: &change_log::Model) -> Result<ChangeDto, AppError> {
         target_type: row.target_type,
         target_id: row.target_id,
         op: row.op,
-        before: parse_snapshot(row.before.as_deref())?,
-        after: parse_snapshot(row.after.as_deref())?,
+        before: row.before.clone().map(JsonText::into_inner),
+        after: row.after.clone().map(JsonText::into_inner),
         note: row.note.clone(),
         reverts_id: row.reverts_id,
         reverted_by_id: row.reverted_by_id,
         created_at: row.created_at,
     })
-}
-
-fn parse_snapshot(raw: Option<&str>) -> Result<Option<Snapshot>, AppError> {
-    match raw {
-        Some(raw) => from_json::<Snapshot>(raw)
-            .map(Some)
-            .map_err(|err| AppError::internal(format!("corrupt change snapshot: {err}"))),
-        None => Ok(None),
-    }
 }
 
 fn parse_cursor(cursor: &str) -> Result<i32, AppError> {

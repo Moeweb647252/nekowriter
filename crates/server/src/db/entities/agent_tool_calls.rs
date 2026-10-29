@@ -2,6 +2,8 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::{Appendix, JsonText, ToolEffects};
+
 use crate::db::json::ToolCallStatus;
 
 #[sea_orm::model]
@@ -20,11 +22,11 @@ pub struct Model {
     pub input: String,
     pub status: ToolCallStatus,
     pub raw_result_text: Option<String>,
-    pub appendices: String,
+    pub appendices: JsonText<Vec<Appendix>>,
     pub result_text: Option<String>,
     pub is_error: bool,
-    pub ui: Option<String>,
-    pub effects: Option<String>,
+    pub ui: Option<JsonText<serde_json::Value>>,
+    pub effects: Option<JsonText<ToolEffects>>,
     pub sealed: bool,
     pub created_at: DateTimeUtc,
     pub started_at: Option<DateTimeUtc>,

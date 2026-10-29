@@ -501,12 +501,7 @@ impl ToolHandler for GetEntityTool {
             .map_err(|error| canon_error(ctx, canon::CanonError::from(error)))?;
         let window_size = ctx
             .book
-            .map(|book| {
-                crate::db::json::from_json_or_default::<crate::db::json::BookSettings>(
-                    &book.settings,
-                )
-                .midterm_window
-            })
+            .map(|book| book.settings.clone().into_inner().midterm_window)
             .unwrap_or(10)
             .max(0);
         // The mid-term window of the target position, shared with `block.memory` (spec/06 §4.1):
@@ -540,8 +535,7 @@ impl ToolHandler for GetEntityTool {
                 role_label: row.role_label,
                 summary: row.summary,
             });
-        let attributes: BTreeMap<String, String> =
-            crate::db::json::from_json_or_default(&entity.attributes);
+        let attributes: BTreeMap<String, String> = entity.attributes.clone().into_inner();
         let aliases = canon::aliases_of(&entity).map_err(|error| canon_error(ctx, error))?;
         let value = json!({
             "e": {
@@ -1151,8 +1145,7 @@ impl ToolHandler for ReadChapterTool {
                     .map_err(|error| canon_error(ctx, error))?,
             ));
         }
-        let content: crate::db::json::ChapterContent =
-            crate::db::json::from_json_or_default(&chapter.content);
+        let content: crate::db::json::ChapterContent = chapter.content.clone().into_inner();
         let limit = input
             .max_chars
             .map(|value| value.clamp(500, READ_CHAPTER_MAX as i64) as usize)

@@ -85,7 +85,7 @@ async fn resolver(ctx: &ToolCtx<'_>) -> Result<EntityResolver, ToolError> {
             .map(|row| VisibleEntity {
                 id: row.id,
                 name: row.name,
-                aliases: crate::db::json::from_json_or_default(&row.aliases),
+                aliases: row.aliases.clone().into_inner(),
                 kind_label: ctx.prompts.label("entity_kind", row.kind.as_str()),
             })
             .collect(),
@@ -1378,14 +1378,8 @@ async fn session_changed_state(ctx: &ToolCtx<'_>, entity_id: i32) -> Result<bool
         .await
         .map_err(|_| internal())?;
     for row in rows {
-        let before = row
-            .before
-            .as_deref()
-            .and_then(|raw| crate::db::json::from_json::<Snapshot>(raw).ok());
-        let after = row
-            .after
-            .as_deref()
-            .and_then(|raw| crate::db::json::from_json::<Snapshot>(raw).ok());
+        let before = row.before.clone().map(|value| value.into_inner());
+        let after = row.after.clone().map(|value| value.into_inner());
         let before_state = match &before {
             Some(Snapshot::Entity { state, .. }) => state.clone(),
             _ => String::new(),

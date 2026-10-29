@@ -1219,16 +1219,20 @@ async fn setting_the_protagonist_moves_the_flag() {
 
 /// The typed `before` snapshot of a change row, as JSON (spec/02 §4).
 fn snapshot_before(row: &change_log::Model) -> serde_json::Value {
-    parse_snapshot(row.before.as_deref())
+    serde_json::to_value(
+        row.before
+            .as_ref()
+            .expect("a snapshot")
+            .clone()
+            .into_inner(),
+    )
+    .expect("a JSON snapshot")
 }
 
 /// The typed `after` snapshot of a change row, as JSON.
 fn snapshot_after(row: &change_log::Model) -> serde_json::Value {
-    parse_snapshot(row.after.as_deref())
-}
-
-fn parse_snapshot(raw: Option<&str>) -> serde_json::Value {
-    serde_json::from_str(raw.expect("a snapshot")).expect("valid snapshot JSON")
+    serde_json::to_value(row.after.as_ref().expect("a snapshot").clone().into_inner())
+        .expect("a JSON snapshot")
 }
 
 /// The change rows of one target, newest first.

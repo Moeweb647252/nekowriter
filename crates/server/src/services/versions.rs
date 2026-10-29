@@ -11,7 +11,7 @@ use crate::db::entities::chapter_versions;
 use crate::db::json::{ChapterContent, VersionKind};
 use crate::error::AppError;
 
-use super::{json, now, parse_json};
+use super::now;
 
 /// One version to append.
 pub struct NewVersion<'a> {
@@ -35,7 +35,7 @@ pub async fn create_version(
         version_no: Set(version_no),
         kind: Set(version.kind),
         title: Set(version.title.to_owned()),
-        content: Set(json(version.content)?),
+        content: Set(crate::services::json_text(version.content.clone())),
         word_count: Set(version.word_count),
         note: Set(version.note.to_owned()),
         session_id: Set(version.session_id),
@@ -80,7 +80,7 @@ pub async fn get(
     let row = load(conn, version_id).await?;
     Ok(ChapterVersionDto {
         meta: to_meta(&row)?,
-        content: parse_json("chapter_versions.content", &row.content)?,
+        content: row.content.clone().into_inner(),
     })
 }
 

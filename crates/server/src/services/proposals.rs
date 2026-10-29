@@ -39,8 +39,7 @@ pub async fn create_inner(
     tx: &impl ConnectionTrait,
     proposal: NewProposal<'_>,
 ) -> Result<setting_proposals::Model, AppError> {
-    let edits = crate::db::json::to_json(proposal.edits)
-        .map_err(|err| AppError::internal(format!("cannot serialize proposal edits: {err}")))?;
+    let edits = crate::services::json_text(proposal.edits.clone());
     Ok(setting_proposals::ActiveModel {
         book_id: Set(proposal.book_id),
         target_type: Set(proposal.target_type),
@@ -422,8 +421,7 @@ pub async fn load(
 
 /// The stored edits, decoded.
 pub fn edits_of(row: &setting_proposals::Model) -> Result<ProposalEdits, AppError> {
-    crate::db::json::from_json(&row.edits)
-        .map_err(|err| AppError::internal(format!("corrupt proposal edits: {err}")))
+    Ok(row.edits.clone().into_inner())
 }
 
 fn target_type_of(row: &setting_proposals::Model) -> ProposalTargetType {

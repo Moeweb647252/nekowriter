@@ -164,7 +164,7 @@ async fn the_change_actor_names_who_wrote() {
     );
     assert!(
         matches!(
-            serde_json::from_str::<Snapshot>(history[0].after.as_deref().expect("after")).ok(),
+            history[0].after.as_ref().map(|value| &value.0),
             Some(Snapshot::Entity { .. })
         ),
         "the row still carries the typed after snapshot"

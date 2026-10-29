@@ -165,7 +165,7 @@ async fn approving_a_chapter_indexes_its_passages() {
     assert_eq!(docs.len(), 1, "three short paragraphs are one passage");
     assert_eq!(docs[0].ref_part, 0);
     assert_eq!(docs[0].title, "Sword Tomb");
-    let meta: serde_json::Value = serde_json::from_str(&docs[0].meta).expect("meta");
+    let meta: serde_json::Value = docs[0].meta.clone().into_inner();
     assert_eq!(meta["pids"], serde_json::json!(["p1", "p2", "p3"]));
     assert!(docs[0].body.contains("First paragraph"));
     // An empty summary has no document.

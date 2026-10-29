@@ -2,6 +2,8 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::{JsonText, ReviewIssue};
+
 use crate::db::json::ReviewVerdict;
 
 #[sea_orm::model]
@@ -16,7 +18,7 @@ pub struct Model {
     pub attempt: i32,
     pub verdict: ReviewVerdict,
     pub summary: String,
-    pub issues: String,
+    pub issues: JsonText<Vec<ReviewIssue>>,
     pub feedback: String,
     pub user_comment: String,
     pub created_at: DateTimeUtc,

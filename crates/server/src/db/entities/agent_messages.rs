@@ -2,7 +2,9 @@
 
 use sea_orm::entity::prelude::*;
 
-use crate::db::json::{MessageKind, MessageRole};
+use crate::db::json::{
+    JsonText, MessageKind, MessageRole, ProviderPayload, RequestMeta, StoredBlock, Usage,
+};
 
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
@@ -16,11 +18,11 @@ pub struct Model {
     pub seq: i32,
     pub role: MessageRole,
     pub kind: MessageKind,
-    pub content: String,
-    pub provider_payload: Option<String>,
-    pub request_meta: Option<String>,
+    pub content: JsonText<Vec<StoredBlock>>,
+    pub provider_payload: Option<JsonText<ProviderPayload>>,
+    pub request_meta: Option<JsonText<RequestMeta>>,
     pub stop_reason: Option<String>,
-    pub usage: Option<String>,
+    pub usage: Option<JsonText<Usage>>,
     pub created_at: DateTimeUtc,
     #[sea_orm(belongs_to, from = "session_id", to = "id")]
     pub session: BelongsTo<super::agent_sessions::Entity>,

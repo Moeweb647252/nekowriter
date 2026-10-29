@@ -94,8 +94,7 @@ pub async fn resync(state: &AppState, chapter_id: i32) -> Result<ReviewSessionRe
                 )
                 .with_details(json!({ "session_id": open.id })));
             }
-            let content: ChapterContent = crate::db::json::from_json(&chapter.content)
-                .map_err(|err| AppError::internal(format!("corrupt chapter content: {err}")))?;
+            let content: ChapterContent = chapter.content.clone().into_inner();
             // "an existing official version with identical content is reused" (spec/06 §8,
             // D-046): the diff then shows only the author's real edits.
             let official_id = official_version_with_content(tx, chapter_id, &content).await?;
@@ -185,8 +184,7 @@ pub async fn auto_maintenance_enabled(
         .one(conn)
         .await?
         .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
-    let settings: crate::db::json::BookSettings =
-        crate::db::json::from_json_or_default(&book.settings);
+    let settings: crate::db::json::BookSettings = book.settings.clone().into_inner();
     Ok(settings.auto_maintenance)
 }
 
@@ -242,10 +240,8 @@ async fn official_version_with_content(
         .all(conn)
         .await?;
     for row in rows {
-        if let Ok(stored) = crate::db::json::from_json::<ChapterContent>(&row.content)
-            && stored.paragraphs == content.paragraphs
-            && stored.tail_open == content.tail_open
-        {
+        let stored = row.content.clone().into_inner();
+        if stored.paragraphs == content.paragraphs && stored.tail_open == content.tail_open {
             return Ok(Some(row.id));
         }
     }

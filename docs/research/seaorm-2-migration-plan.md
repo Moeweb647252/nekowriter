@@ -418,13 +418,19 @@ already deserialize into):
 | `books.settings`, `.model_overrides`, `.conception` | `JsonText<BookSettings \| RoleModels \| ConceptionState>` |
 | `change_log.before`, `.after` | `Option<JsonText<Snapshot>>` (tagged by `type`, so it is self-describing) |
 | `chapters.content`, `chapter_versions.content` | `JsonText<ChapterContent>` |
-| `review_reports.issues`, `chapter_feedback.issues` | `JsonText<Vec<ReviewIssue>>`; confirm `chapter_feedback`'s shape in `services/reviews.rs` |
+| `review_reports.issues`, `chapter_feedback.issues` | `JsonText<Vec<ReviewIssue>>`; both use the same shape in `services/reviews.rs` |
+| `setting_proposals.edits` | `JsonText<ProposalEdits>` (the 30th typed column; the original list of 31 `json_valid` columns omitted this row) |
 | `entities.aliases`, `knowledge_entries.source_urls`, `.tags` | `JsonText<Vec<String>>` |
 | `entities.attributes` | `JsonText<..>`, the map type its readers use (`services/canon/mod.rs`) |
 | `providers.extra_headers` | `JsonText<BTreeMap<String, String>>` |
 | `model_profiles.options` | `JsonText<ModelOptions>`, a new `json.rs` struct with the fields `ModelOptionsDto` reads today. The DTO stays where it is and converts with `From`, so entities never depend on `api/` (spec/01 §4 rule 4) and the bindings do not change. |
 | `search_docs.meta` | `JsonText<serde_json::Value>` (`parse_pids` reads it loosely; typing its shape is not in scope) |
 | `app_settings.value` | **stays `String`**, read with `parse_json` per key |
+
+**One byte-shape caveat:** the old `agent_messages.usage` writer serialized
+`nekowriter_llm::Usage`, which omits `requests` and `last_prompt_tokens`. The typed field is
+`Option<JsonText<Usage>>` (the `json.rs` spec type); `#[serde(default)]` keeps old rows readable,
+and new rows now carry the full spec shape. Every other JSON column stays byte-identical.
 
 **Call sites:**
 - `json::to_json(&x).map_err(..)?` in an `ActiveModel` becomes `Set(JsonText(x))`.

@@ -26,7 +26,7 @@ use crate::error::{AppError, ErrorCode};
 use crate::events::{BookOp, ServerEvent};
 
 use super::app_settings;
-use super::{conflict, json, now, parse_json};
+use super::{conflict, now};
 
 /// The three setting documents every book has (spec/02 §5 invariant 2).
 pub const SETTING_DOC_KINDS: [SettingDocKind; 3] = [
@@ -89,9 +89,9 @@ pub async fn create_inner(
         genre: Set(input.genre.trim().to_owned()),
         writing_language: Set(language.to_owned()),
         status: Set(status),
-        settings: Set(json(&settings)?),
-        model_overrides: Set(json(&RoleModels::default())?),
-        conception: Set(json(&ConceptionState::default())?),
+        settings: Set(crate::services::json_text(settings.clone())),
+        model_overrides: Set(crate::services::json_text(RoleModels::default())),
+        conception: Set(crate::services::json_text(ConceptionState::default())),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),
         ..Default::default()
@@ -223,10 +223,10 @@ pub async fn update_inner(
     }
     if let Some(settings) = &patch.settings {
         validate_settings(settings)?;
-        active.settings = Set(json(settings)?);
+        active.settings = Set(crate::services::json_text(settings.clone()));
     }
     if let Some(overrides) = &patch.model_overrides {
-        active.model_overrides = Set(json(overrides)?);
+        active.model_overrides = Set(crate::services::json_text(overrides.clone()));
     }
     if let Some(status) = patch.status {
         // Archiving only hides the book; unarchiving sets it back to active (spec/08 §1.3).
@@ -683,7 +683,7 @@ pub async fn book_usage(conn: &impl ConnectionTrait, book_id: i32) -> Result<Usa
         .await?;
     let mut total = Usage::default();
     for session in sessions {
-        let usage: Usage = crate::db::json::from_json_or_default(&session.usage);
+        let usage: Usage = session.usage.clone().into_inner();
         total.requests += usage.requests;
         total.input_tokens += usage.input_tokens;
         total.cached_input_tokens += usage.cached_input_tokens;
@@ -833,9 +833,9 @@ pub fn to_dto(row: &books::Model) -> Result<BookDto, AppError> {
         genre: row.genre.clone(),
         writing_language: row.writing_language.clone(),
         status: row.status,
-        settings: parse_json("books.settings", &row.settings)?,
-        model_overrides: parse_json("books.model_overrides", &row.model_overrides)?,
-        conception: parse_json("books.conception", &row.conception)?,
+        settings: row.settings.clone().into_inner(),
+        model_overrides: row.model_overrides.clone().into_inner(),
+        conception: row.conception.clone().into_inner(),
         created_at: row.created_at,
         updated_at: row.updated_at,
     })

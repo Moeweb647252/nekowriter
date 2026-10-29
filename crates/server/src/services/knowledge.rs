@@ -19,7 +19,7 @@ use crate::db::json::{ChangeOp, EntrySource};
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
 
-use super::{field_error, json, now, parse_json};
+use super::{field_error, now};
 
 /// The entries page size (spec/10 §1: default 100, max 500).
 pub const ENTRY_PAGE_DEFAULT: i64 = 100;
@@ -315,8 +315,8 @@ pub async fn create_entry_inner(
         title: Set(title.to_owned()),
         content: Set(input.content.clone()),
         source: Set(EntrySource::Manual),
-        source_urls: Set(json(&input.source_urls)?),
-        tags: Set(json(&input.tags)?),
+        source_urls: Set(crate::services::json_text(input.source_urls)),
+        tags: Set(crate::services::json_text(input.tags)),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),
         ..Default::default()
@@ -381,10 +381,10 @@ pub async fn update_entry_inner(
         active.content = Set(content.clone());
     }
     if let Some(urls) = &patch.source_urls {
-        active.source_urls = Set(json(urls)?);
+        active.source_urls = Set(crate::services::json_text(urls.clone()));
     }
     if let Some(tags) = &patch.tags {
-        active.tags = Set(json(tags)?);
+        active.tags = Set(crate::services::json_text(tags.clone()));
     }
     active.update(tx).await?;
     if content_changed {
@@ -461,8 +461,8 @@ fn to_dto(row: &knowledge_entries::Model) -> Result<EntryDto, AppError> {
         title: row.title.clone(),
         content: row.content.clone(),
         source: row.source,
-        source_urls: parse_json("knowledge_entries.source_urls", &row.source_urls)?,
-        tags: parse_json("knowledge_entries.tags", &row.tags)?,
+        source_urls: row.source_urls.clone().into_inner(),
+        tags: row.tags.clone().into_inner(),
         research_task_id: row.research_task_id,
         created_at: row.created_at,
         updated_at: row.updated_at,
@@ -475,7 +475,7 @@ fn to_summary(row: &knowledge_entries::Model) -> Result<EntrySummaryDto, AppErro
         scope_id: row.scope_id,
         title: row.title.clone(),
         source: row.source,
-        tags: parse_json("knowledge_entries.tags", &row.tags)?,
+        tags: row.tags.clone().into_inner(),
         updated_at: row.updated_at,
     })
 }

@@ -711,11 +711,11 @@ INSERT INTO timeline_event_entities (event_id, entity_id) VALUES (1, 1);
 INSERT INTO agent_sessions (id, book_id, role, kind, model_snapshot, system_prompt, tools, status,
     phase, counters, usage, created_at, updated_at)
 VALUES
-    (1, NULL, 'writer', 'chapter_write', '{}', '', '[]', 'idle', 'none', '{}', '{}',
+    (1, NULL, 'writer', 'chapter_write', '{"provider_id":0,"protocol":"mock","base_url":"","extra_headers":{},"model":"","context_window":0,"max_output_tokens":0,"options":null}', '', '[]', 'idle', 'none', '{}', '{}',
         '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
-    (2, 1, 'writer', 'chapter_write', '{}', '', '[]', 'idle', 'none', '{}', '{}',
+    (2, 1, 'writer', 'chapter_write', '{"provider_id":0,"protocol":"mock","base_url":"","extra_headers":{},"model":"","context_window":0,"max_output_tokens":0,"options":null}', '', '[]', 'idle', 'none', '{}', '{}',
         '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
-    (3, 1, 'reviewer', 'chapter_review', '{}', '', '[]', 'idle', 'none', '{}', '{}',
+    (3, 1, 'reviewer', 'chapter_review', '{"provider_id":0,"protocol":"mock","base_url":"","extra_headers":{},"model":"","context_window":0,"max_output_tokens":0,"options":null}', '', '[]', 'idle', 'none', '{}', '{}',
         '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
 UPDATE agent_sessions SET parent_session_id = 2 WHERE id = 3;
 "#;
@@ -1196,4 +1196,173 @@ fn enum_filter_literals_are_typed() {
             "enum column `{column}` is filtered with a string literal: {line}"
         );
     }
+}
+
+/// Plan §2.4: every `json_valid` column is a typed `JsonText<T>` field, so a decode failure is a
+/// query error rather than a silent default. Only `app_settings.value` stays `String` because it
+/// holds one JSON document per key, decoded with `parse_json` after the key is known.
+#[test]
+fn json_columns_are_typed() {
+    use nekowriter::db::entities::{
+        agent_messages, agent_sessions, agent_tool_calls, app_settings, books, change_log,
+        chapter_feedback, chapter_versions, chapters, entities, knowledge_entries, model_profiles,
+        providers, review_reports, search_docs, setting_proposals,
+    };
+    use nekowriter::db::json::{
+        Appendix, BookSettings, ChapterContent, ConceptionState, JsonText, ModelOptions,
+        ModelSnapshot, ProposalEdits, ProviderPayload, RequestMeta, ReviewIssue, RoleModels,
+        SessionCounters, SessionError, Snapshot, StoredBlock, ToolEffects, Usage, ViewSnapshot,
+    };
+
+    /// Compile-time type assertion: the field has exactly this type.
+    macro_rules! typed {
+        ($entity:ty, $field:ident, $ty:ty) => {{
+            let _: fn(&$entity) -> &$ty = |row| &row.$field;
+        }};
+    }
+
+    typed!(agent_messages::Model, content, JsonText<Vec<StoredBlock>>);
+    typed!(
+        agent_messages::Model,
+        provider_payload,
+        Option<JsonText<ProviderPayload>>
+    );
+    typed!(
+        agent_messages::Model,
+        request_meta,
+        Option<JsonText<RequestMeta>>
+    );
+    typed!(agent_messages::Model, usage, Option<JsonText<Usage>>);
+    typed!(
+        agent_sessions::Model,
+        model_snapshot,
+        JsonText<ModelSnapshot>
+    );
+    typed!(
+        agent_sessions::Model,
+        tools,
+        JsonText<Vec<nekowriter_llm::ToolDef>>
+    );
+    typed!(
+        agent_sessions::Model,
+        view_snapshot,
+        Option<JsonText<ViewSnapshot>>
+    );
+    typed!(agent_sessions::Model, counters, JsonText<SessionCounters>);
+    typed!(agent_sessions::Model, usage, JsonText<Usage>);
+    typed!(agent_sessions::Model, error, Option<JsonText<SessionError>>);
+    typed!(agent_tool_calls::Model, appendices, JsonText<Vec<Appendix>>);
+    typed!(
+        agent_tool_calls::Model,
+        ui,
+        Option<JsonText<serde_json::Value>>
+    );
+    typed!(
+        agent_tool_calls::Model,
+        effects,
+        Option<JsonText<ToolEffects>>
+    );
+    typed!(app_settings::Model, value, String);
+    typed!(books::Model, settings, JsonText<BookSettings>);
+    typed!(books::Model, model_overrides, JsonText<RoleModels>);
+    typed!(books::Model, conception, JsonText<ConceptionState>);
+    typed!(change_log::Model, before, Option<JsonText<Snapshot>>);
+    typed!(change_log::Model, after, Option<JsonText<Snapshot>>);
+    typed!(chapter_feedback::Model, issues, JsonText<Vec<ReviewIssue>>);
+    typed!(chapter_versions::Model, content, JsonText<ChapterContent>);
+    typed!(chapters::Model, content, JsonText<ChapterContent>);
+    typed!(entities::Model, aliases, JsonText<Vec<String>>);
+    typed!(
+        entities::Model,
+        attributes,
+        JsonText<BTreeMap<String, String>>
+    );
+    typed!(knowledge_entries::Model, source_urls, JsonText<Vec<String>>);
+    typed!(knowledge_entries::Model, tags, JsonText<Vec<String>>);
+    typed!(model_profiles::Model, options, JsonText<ModelOptions>);
+    typed!(
+        providers::Model,
+        extra_headers,
+        JsonText<BTreeMap<String, String>>
+    );
+    typed!(review_reports::Model, issues, JsonText<Vec<ReviewIssue>>);
+    typed!(search_docs::Model, meta, JsonText<serde_json::Value>);
+    typed!(setting_proposals::Model, edits, JsonText<ProposalEdits>);
+}
+
+/// Check 6's other half: the compile-time guards in `json_columns_are_typed` cover exactly the
+/// `json_valid` columns of the schema, so a new JSON column cannot be added without a guard.
+#[tokio::test]
+async fn every_json_column_has_a_typed_field_guard() {
+    const JSON_COLUMNS: &[(&str, &str)] = &[
+        ("agent_messages", "content"),
+        ("agent_messages", "provider_payload"),
+        ("agent_messages", "request_meta"),
+        ("agent_messages", "usage"),
+        ("agent_sessions", "model_snapshot"),
+        ("agent_sessions", "tools"),
+        ("agent_sessions", "view_snapshot"),
+        ("agent_sessions", "counters"),
+        ("agent_sessions", "usage"),
+        ("agent_sessions", "error"),
+        ("agent_tool_calls", "appendices"),
+        ("agent_tool_calls", "ui"),
+        ("agent_tool_calls", "effects"),
+        ("books", "settings"),
+        ("books", "model_overrides"),
+        ("books", "conception"),
+        ("change_log", "before"),
+        ("change_log", "after"),
+        ("chapter_feedback", "issues"),
+        ("chapter_versions", "content"),
+        ("chapters", "content"),
+        ("entities", "aliases"),
+        ("entities", "attributes"),
+        ("knowledge_entries", "source_urls"),
+        ("knowledge_entries", "tags"),
+        ("model_profiles", "options"),
+        ("providers", "extra_headers"),
+        ("review_reports", "issues"),
+        ("search_docs", "meta"),
+        ("setting_proposals", "edits"),
+    ];
+
+    let (_dir, conn) = migrated_db().await;
+    let tables = conn
+        .query_all_raw(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT name, sql FROM sqlite_master WHERE type = 'table' \
+             AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'seaql_%'",
+        ))
+        .await
+        .expect("read the schema");
+    let mut actual = BTreeSet::new();
+    for table in &tables {
+        let name: String = table.try_get("", "name").expect("table name");
+        let sql: String = table.try_get("", "sql").expect("table SQL");
+        let mut rest = sql.as_str();
+        while let Some(position) = rest.find("json_valid(") {
+            let tail = &rest[position + "json_valid(".len()..];
+            let column = tail
+                .split(|character: char| {
+                    character == ')' || character == ',' || character.is_whitespace()
+                })
+                .next()
+                .unwrap_or_default();
+            if !column.is_empty() {
+                actual.insert((name.clone(), column.to_owned()));
+            }
+            rest = tail;
+        }
+    }
+    actual.remove(&("app_settings".to_owned(), "value".to_owned()));
+
+    let declared: BTreeSet<(String, String)> = JSON_COLUMNS
+        .iter()
+        .map(|(table, column)| ((*table).to_owned(), (*column).to_owned()))
+        .collect();
+    assert_eq!(
+        declared, actual,
+        "every json_valid column must have a compile-time JsonText guard"
+    );
 }

@@ -2,7 +2,7 @@
 
 use sea_orm::entity::prelude::*;
 
-use crate::db::json::{ChangeActor, ChangeOp, ChangeTargetType};
+use crate::db::json::{ChangeActor, ChangeOp, ChangeTargetType, JsonText, Snapshot};
 
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
@@ -18,8 +18,8 @@ pub struct Model {
     pub target_type: ChangeTargetType,
     pub target_id: i32,
     pub op: ChangeOp,
-    pub before: Option<String>,
-    pub after: Option<String>,
+    pub before: Option<JsonText<Snapshot>>,
+    pub after: Option<JsonText<Snapshot>>,
     pub note: String,
     pub reverts_id: Option<i32>,
     pub reverted_by_id: Option<i32>,

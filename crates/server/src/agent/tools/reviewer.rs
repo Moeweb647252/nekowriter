@@ -13,7 +13,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::db::entities::{agent_sessions, review_reports};
-use crate::db::json::{ChapterContent, CompletionKind, ReviewIssue, ReviewVerdict, ToolEffects};
+use crate::db::json::{
+    ChapterContent, CompletionKind, JsonText, ReviewIssue, ReviewVerdict, ToolEffects,
+};
 
 use super::{Prepared, ToolCtx, ToolError, ToolErrorKind, ToolHandler, ToolKind, ToolOutcome};
 
@@ -55,7 +57,7 @@ impl ToolHandler for SubmitReviewTool {
         let chapter = ctx
             .chapter
             .ok_or_else(|| ToolError::new(ToolErrorKind::Internal))?;
-        let content: ChapterContent = crate::db::json::from_json_or_default(&chapter.content);
+        let content: ChapterContent = chapter.content.clone().into_inner();
 
         // Unknown pids are dropped, with a note in the result (spec/05 §5).
         let mut dropped: Vec<String> = Vec::new();
@@ -93,6 +95,7 @@ impl ToolHandler for SubmitReviewTool {
             .unwrap_or(chapter.content_version);
         let user_comment = ctx.session.pending_comment.clone().unwrap_or_default();
         let now = chrono::Utc::now();
+        let issue_count = issues.len();
         let report = review_reports::ActiveModel {
             chapter_id: Set(chapter.id),
             content_version: Set(content_version),
@@ -100,8 +103,7 @@ impl ToolHandler for SubmitReviewTool {
             attempt: Set(attempt),
             verdict: Set(input.verdict),
             summary: Set(input.summary.trim().to_owned()),
-            issues: Set(crate::db::json::to_json(&issues)
-                .map_err(|_| ToolError::new(ToolErrorKind::Internal))?),
+            issues: Set(JsonText(issues)),
             feedback: Set(input.feedback.trim().to_owned()),
             user_comment: Set(user_comment),
             created_at: Set(now),
@@ -129,7 +131,7 @@ impl ToolHandler for SubmitReviewTool {
                 "result.submit_review",
                 crate::prompts::template_value(&json!({
                     "attempt": attempt,
-                    "issues": issues.len(),
+                    "issues": issue_count,
                     "dropped_pids": dropped,
                 })),
             )
@@ -139,7 +141,7 @@ impl ToolHandler for SubmitReviewTool {
             .with_ui(json!({
                 "report_id": report.id,
                 "verdict": input.verdict.as_str(),
-                "issues": issues.len(),
+                "issues": issue_count,
             }))
             .with_effects(ToolEffects {
                 complete: Some(CompletionKind::Review),

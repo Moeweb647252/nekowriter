@@ -2,7 +2,9 @@
 
 use sea_orm::entity::prelude::*;
 
-use crate::db::json::{ProposalStatus, ProposalTargetType, SettingDocKind};
+use crate::db::json::{
+    JsonText, ProposalEdits, ProposalStatus, ProposalTargetType, SettingDocKind,
+};
 
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
@@ -14,7 +16,7 @@ pub struct Model {
     pub target_type: ProposalTargetType,
     pub target_kind: Option<SettingDocKind>,
     pub target_id: Option<i32>,
-    pub edits: String,
+    pub edits: JsonText<ProposalEdits>,
     pub rationale: String,
     pub status: ProposalStatus,
     pub chapter_id: Option<i32>,

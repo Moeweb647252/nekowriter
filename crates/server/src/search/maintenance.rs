@@ -15,7 +15,7 @@ use crate::db::entities::{
     search_docs, timeline_events, tracks,
 };
 use crate::db::json::{
-    CanonMode, ChangeTargetType, ChapterContent, ChapterStatus, EmbedState, NoteStatus,
+    CanonMode, ChangeTargetType, ChapterContent, ChapterStatus, EmbedState, JsonText, NoteStatus,
     SearchDocKind,
 };
 use crate::error::AppError;
@@ -67,7 +67,9 @@ pub async fn upsert_doc(conn: &impl ConnectionTrait, doc: NewDoc<'_>) -> Result<
                 track_id: Set(doc.track_id),
                 title: Set(doc.title.to_owned()),
                 body: Set(doc.body.to_owned()),
-                meta: Set(doc.meta.to_owned()),
+                meta: Set(JsonText(
+                    serde_json::from_str(doc.meta).unwrap_or(serde_json::Value::Null),
+                )),
                 content_hash: Set(hash.clone()),
                 updated_at: Set(chrono::Utc::now()),
                 ..Default::default()
@@ -87,7 +89,9 @@ pub async fn upsert_doc(conn: &impl ConnectionTrait, doc: NewDoc<'_>) -> Result<
                 ref_part: Set(doc.ref_part),
                 title: Set(doc.title.to_owned()),
                 body: Set(doc.body.to_owned()),
-                meta: Set(doc.meta.to_owned()),
+                meta: Set(JsonText(
+                    serde_json::from_str(doc.meta).unwrap_or(serde_json::Value::Null),
+                )),
                 content_hash: Set(hash),
                 embed_state: Set(EmbedState::Pending),
                 updated_at: Set(chrono::Utc::now()),
@@ -185,7 +189,7 @@ pub fn entity_body(row: &entities::Model) -> Result<String, AppError> {
     if !summary.is_empty() {
         parts.push(summary.to_owned());
     }
-    let aliases: Vec<String> = crate::db::json::from_json_or_default::<Vec<String>>(&row.aliases);
+    let aliases: Vec<String> = row.aliases.clone().into_inner();
     if !aliases.is_empty() {
         parts.push(aliases.join(" / "));
     }
@@ -194,7 +198,7 @@ pub fn entity_body(row: &entities::Model) -> Result<String, AppError> {
         parts.push(state.to_owned());
     }
     let attributes: std::collections::BTreeMap<String, String> =
-        crate::db::json::from_json_or_default(&row.attributes);
+        row.attributes.clone().into_inner();
     if !attributes.is_empty() {
         parts.push(
             attributes
@@ -363,7 +367,7 @@ pub async fn sync_passages(conn: &impl ConnectionTrait, chapter_id: i32) -> Resu
         return delete_ref_docs(conn, "passage", chapter_id).await;
     }
     let track_id = chapter_doc_track(conn, row.track_id).await?;
-    let content: ChapterContent = crate::db::json::from_json_or_default(&row.content);
+    let content: ChapterContent = row.content.clone().into_inner();
     let paragraphs: Vec<(String, String)> = content
         .paragraphs
         .iter()
@@ -577,7 +581,9 @@ async fn sync_chunk_rows(conn: &impl ConnectionTrait, rows: SyncRows<'_>) -> Res
                     id: Set(*id),
                     ref_part: Set(index as i32),
                     title: Set(rows.title.to_owned()),
-                    meta: Set(entry.meta.clone()),
+                    meta: Set(JsonText(
+                        serde_json::from_str(&entry.meta).unwrap_or(serde_json::Value::Null),
+                    )),
                     updated_at: Set(chrono::Utc::now()),
                     ..Default::default()
                 }
@@ -693,6 +699,7 @@ fn sql_string(value: &str) -> String {
 mod tests {
     use super::*;
     use crate::db::json::{EntityKind, EntityStatus};
+    use std::collections::BTreeMap;
 
     #[test]
     fn entity_body_follows_the_spec_field_order() {
@@ -702,11 +709,11 @@ mod tests {
             track_id: None,
             kind: EntityKind::Character,
             name: "Lin Fan".to_owned(),
-            aliases: "[\"Fan\"]".to_owned(),
+            aliases: JsonText(vec!["Fan".to_owned()]),
             summary: "the protagonist".to_owned(),
             description: "long description".to_owned(),
             state: "qi refining".to_owned(),
-            attributes: "{\"age\":\"17\"}".to_owned(),
+            attributes: JsonText(BTreeMap::from([("age".to_owned(), "17".to_owned())])),
             importance: 5,
             status: EntityStatus::Active,
             is_protagonist: true,

@@ -158,7 +158,7 @@ pub async fn hybrid_book(
             title: row.title.clone(),
             body: row.body.clone(),
             track_id: row.track_id,
-            meta: row.meta.clone(),
+            meta: serde_json::to_string(&*row.meta).unwrap_or_else(|_| "{}".to_owned()),
             snippet,
             score,
         });

@@ -37,9 +37,9 @@ use crate::db::entities::{
     agent_inbox, agent_messages, agent_sessions, agent_tool_calls, books, chapters, tracks,
 };
 use crate::db::json::{
-    self, Appendix, AppendixKind, ChapterContent, CompletionKind, MessageKind, MessageRole, Phase,
-    RequestMeta, SessionError, SessionKind, SessionStatus, StoredBlock, ToolCallStatus,
-    ToolEffects, Usage, ViewSnapshot,
+    self, Appendix, AppendixKind, ChapterContent, CompletionKind, JsonText, MessageKind,
+    MessageRole, Phase, RequestMeta, SessionError, SessionKind, SessionStatus, StoredBlock,
+    ToolCallStatus, ToolEffects, Usage, ViewSnapshot,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::{DeltaKind, ServerEvent};
@@ -262,9 +262,7 @@ pub async fn insert_user_message(
         seq: Set(seq),
         role: Set(MessageRole::User),
         kind: Set(kind),
-        content: Set(
-            serde_json::to_string(&blocks).map_err(|err| AppError::internal(err.to_string()))?
-        ),
+        content: Set(JsonText(blocks)),
         provider_payload: Set(None),
         request_meta: Set(None),
         stop_reason: Set(None),
@@ -554,7 +552,7 @@ async fn step_model(ctx: &RunnerCtx, session: &agent_sessions::Model) -> Result<
             // has not persisted anything, so the rollover would retry the same request.
             if error.code == CONTEXT_OVERFLOW_CODE {
                 let mut overflowed = fresh.clone();
-                overflowed.error = Some(crate::db::json::to_json(&*error).unwrap_or_default());
+                overflowed.error = Some(JsonText((*error).clone()));
                 if rollover_needed(&overflowed) {
                     return super::context::rollover(state, &fresh).await;
                 }
@@ -717,25 +715,17 @@ async fn persist_assistant(
                     input_text: call.input_text.clone(),
                 });
             }
-            let payload = json::to_json(&to_stored_payload(&turn.payload))
-                .map_err(|err| AppError::internal(err.to_string()))?;
+            let payload = JsonText(to_stored_payload(&turn.payload));
             let message = agent_messages::ActiveModel {
                 session_id: Set(session.id),
                 seq: Set(seq),
                 role: Set(MessageRole::Assistant),
                 kind: Set(MessageKind::Assistant),
-                content: Set(
-                    json::to_json(&blocks).map_err(|err| AppError::internal(err.to_string()))?
-                ),
+                content: Set(JsonText(blocks)),
                 provider_payload: Set(Some(payload)),
-                request_meta: Set(Some(
-                    json::to_json(&meta).map_err(|err| AppError::internal(err.to_string()))?,
-                )),
+                request_meta: Set(Some(JsonText(meta))),
                 stop_reason: Set(Some(turn.stop_reason.as_str().to_owned())),
-                usage: Set(Some(
-                    json::to_json(&turn.usage)
-                        .map_err(|err| AppError::internal(err.to_string()))?,
-                )),
+                usage: Set(Some(JsonText(message_usage(&turn.usage)))),
                 created_at: Set(now),
                 ..Default::default()
             }
@@ -771,8 +761,7 @@ async fn persist_assistant(
                     input: Set(call.input_text.clone()),
                     status: Set(status),
                     raw_result_text: Set(raw_result_text),
-                    appendices: Set(json::to_json(&appendices)
-                        .map_err(|err| AppError::internal(err.to_string()))?),
+                    appendices: Set(JsonText(appendices)),
                     result_text: Set(None),
                     is_error: Set(is_truncated),
                     ui: Set(None),
@@ -915,10 +904,7 @@ async fn refuse_batch(
                     raw_result_text: Set(Some(text.clone())),
                     is_error: Set(true),
                     finished_at: Set(Some(Utc::now())),
-                    effects: Set(Some(
-                        json::to_json(&ToolEffects::default())
-                            .map_err(|err| AppError::internal(err.to_string()))?,
-                    )),
+                    effects: Set(Some(JsonText(ToolEffects::default()))),
                     ..Default::default()
                 }
                 .update(tx)
@@ -1199,7 +1185,7 @@ pub(crate) async fn apply_pending_content(
     let Some(chapter) = chapters::Entity::find_by_id(chapter_id).one(tx).await? else {
         return Ok(Vec::new());
     };
-    let before: ChapterContent = json::from_json_or_default(&chapter.content);
+    let before: ChapterContent = chapter.content.clone().into_inner();
     // An author edit while the call was held wins; the agent's staged text is not applied over it.
     let stale = chapter.content_version != write.expected_version;
     if stale && before != write.content {
@@ -1221,12 +1207,10 @@ pub(crate) async fn apply_pending_content(
         write.content.tail_open,
     );
     let version = chapter.content_version + 1;
-    let stored =
-        json::to_json(&write.content).map_err(|err| AppError::internal(err.to_string()))?;
     let now = Utc::now();
     chapters::ActiveModel {
         id: Set(chapter_id),
-        content: Set(stored),
+        content: Set(JsonText(write.content.clone())),
         content_version: Set(version),
         word_count: Set(word_count),
         updated_at: Set(now),
@@ -1329,14 +1313,11 @@ async fn keep_view_snapshot_outline_in_sync(
     outline: &str,
     reference_notes: &str,
 ) -> Result<(), AppError> {
-    let Some(raw) = session.view_snapshot.as_deref() else {
-        return Ok(());
-    };
-    let Ok(ViewSnapshot::Chapter {
+    let Some(ViewSnapshot::Chapter {
         content,
         outline: old_outline,
         reference_notes: old_notes,
-    }) = json::from_json::<ViewSnapshot>(raw)
+    }) = session.view_snapshot.as_ref().map(|value| value.0.clone())
     else {
         return Ok(());
     };
@@ -1348,8 +1329,7 @@ async fn keep_view_snapshot_outline_in_sync(
         outline: outline.to_owned(),
         reference_notes: reference_notes.to_owned(),
     };
-    let stored = json::to_json(&snapshot)
-        .map_err(|err| AppError::internal(format!("cannot serialize view snapshot: {err}")))?;
+    let stored = JsonText(snapshot);
     session::guard_columns(
         tx,
         session.id,
@@ -1375,14 +1355,11 @@ async fn keep_view_snapshot_in_sync(
     before: &ChapterContent,
     after: &ChapterContent,
 ) -> Result<(), AppError> {
-    let Some(raw) = session.view_snapshot.as_deref() else {
-        return Ok(());
-    };
-    let Ok(ViewSnapshot::Chapter {
+    let Some(ViewSnapshot::Chapter {
         content,
         outline,
         reference_notes,
-    }) = json::from_json::<ViewSnapshot>(raw)
+    }) = session.view_snapshot.as_ref().map(|value| value.0.clone())
     else {
         return Ok(());
     };
@@ -1423,7 +1400,7 @@ async fn finalize_inner(
     prompts: &PromptSet,
 ) -> Result<Finalization, AppError> {
     let mut events = Vec::new();
-    let mut appendices: Vec<Appendix> = json::from_json_or_default(&call.appendices);
+    let mut appendices: Vec<Appendix> = call.appendices.clone().into_inner();
 
     // The field is public API for later milestones (M4 appends its reference notes notice).
     let _ = &prompts;
@@ -1530,9 +1507,9 @@ async fn finalize_inner(
         ToolCallStatus::Done
     };
     let stored_effects = if deferred {
-        json::to_json(&outcome.effects).map_err(|err| AppError::internal(err.to_string()))?
+        JsonText(outcome.effects.clone())
     } else {
-        json::to_json(&ToolEffects::default()).map_err(|err| AppError::internal(err.to_string()))?
+        JsonText(ToolEffects::default())
     };
     let now = Utc::now();
 
@@ -1543,13 +1520,11 @@ async fn finalize_inner(
         id: Set(call.id),
         status: Set(status),
         raw_result_text: Set(Some(raw_result_text)),
-        appendices: Set(
-            json::to_json(&appendices).map_err(|err| AppError::internal(err.to_string()))?
-        ),
+        appendices: Set(JsonText(appendices)),
         ui: Set(if outcome.ui.is_null() {
             None
         } else {
-            Some(json::to_json(&outcome.ui).map_err(|err| AppError::internal(err.to_string()))?)
+            Some(JsonText(outcome.ui.clone()))
         }),
         effects: Set(Some(stored_effects)),
         is_error: Set(outcome.is_error),
@@ -1773,7 +1748,7 @@ async fn tail_state(
     session: &agent_sessions::Model,
 ) -> Result<(bool, String), AppError> {
     if let Some(chapter) = lookup_chapter(tx, session).await? {
-        let content: json::ChapterContent = json::from_json_or_default(&chapter.content);
+        let content: json::ChapterContent = chapter.content.clone().into_inner();
         return Ok((
             content.tail_open,
             content
@@ -1788,10 +1763,9 @@ async fn tail_state(
 
 /// The tail state recorded in the session's view snapshot, when it has one.
 fn snapshot_tail_state(session: &agent_sessions::Model) -> (bool, String) {
-    let Some(raw) = session.view_snapshot.as_deref() else {
-        return (false, String::new());
-    };
-    let Ok(ViewSnapshot::Chapter { content, .. }) = json::from_json::<ViewSnapshot>(raw) else {
+    let Some(ViewSnapshot::Chapter { content, .. }) =
+        session.view_snapshot.as_ref().map(|value| value.0.clone())
+    else {
         return (false, String::new());
     };
     (
@@ -1951,7 +1925,7 @@ pub async fn seal_inner(
     if !batch.is_empty() {
         let last_id = batch.last().map(|call| call.id);
         for call in &batch {
-            let mut appendices: Vec<Appendix> = json::from_json_or_default(&call.appendices);
+            let mut appendices: Vec<Appendix> = call.appendices.clone().into_inner();
             if Some(call.id) == last_id {
                 if let Some(report) = &report {
                     appendices.push(Appendix {
@@ -1967,8 +1941,7 @@ pub async fn seal_inner(
             let composed = seal::compose(call.raw_result_text.as_deref(), &appendices);
             agent_tool_calls::ActiveModel {
                 id: Set(call.id),
-                appendices: Set(json::to_json(&appendices)
-                    .map_err(|err| AppError::internal(err.to_string()))?),
+                appendices: Set(JsonText(appendices)),
                 result_text: Set(Some(composed)),
                 sealed: Set(true),
                 ..Default::default()
@@ -2064,10 +2037,7 @@ async fn edit_report_text(
     session: &agent_sessions::Model,
     prompts: &PromptSet,
 ) -> Result<Option<String>, AppError> {
-    let Some(raw) = session.view_snapshot.as_deref() else {
-        return Ok(None);
-    };
-    let Ok(snapshot) = json::from_json::<ViewSnapshot>(raw) else {
+    let Some(snapshot) = session.view_snapshot.as_ref().map(|value| value.0.clone()) else {
         return Ok(None);
     };
     match snapshot {
@@ -2079,7 +2049,7 @@ async fn edit_report_text(
                 return Ok(None);
             };
             let current = super::report::ChapterState {
-                content: json::from_json_or_default(&chapter.content),
+                content: chapter.content.clone().into_inner(),
                 outline: chapter.outline,
                 reference_notes: chapter.reference_notes,
             };
@@ -2336,9 +2306,7 @@ pub fn rollover_needed(session: &agent_sessions::Model) -> bool {
     if session::error_of(session).is_some_and(|error| error.code == CONTEXT_OVERFLOW_CODE) {
         return true;
     }
-    let Ok(snapshot) = json::from_json::<json::ModelSnapshot>(&session.model_snapshot) else {
-        return false;
-    };
+    let snapshot = session.model_snapshot.clone().into_inner();
     let usage = session::usage_of(session);
     let window = i64::from(snapshot.context_window);
     if window <= 0 {
@@ -2383,7 +2351,7 @@ async fn provider_client(
     if let Some(provider) = state.provider_override() {
         return Ok(provider.clone());
     }
-    let snapshot: json::ModelSnapshot = json::from_json_or_default(&session.model_snapshot);
+    let snapshot: json::ModelSnapshot = session.model_snapshot.clone().into_inner();
     let provider = crate::db::entities::providers::Entity::find_by_id(snapshot.provider_id)
         .one(state.db().conn())
         .await?;
@@ -2424,8 +2392,8 @@ async fn request_meta_of(
         .ok_or_else(|| AppError::internal("tool call has no message"))?;
     Ok(message
         .request_meta
-        .as_deref()
-        .and_then(|raw| json::from_json::<RequestMeta>(raw).ok())
+        .clone()
+        .map(|value| value.into_inner())
         .unwrap_or(RequestMeta {
             phase: Phase::None,
             granularity: None,
@@ -2444,4 +2412,20 @@ fn preview_fields_of(state: &AppState) -> BTreeMap<String, &'static str> {
                 .map(|field| (name.to_owned(), field))
         })
         .collect()
+}
+
+/// The spec/02 §4 `Usage` shape recorded on one assistant message.
+fn message_usage(usage: &nekowriter_llm::Usage) -> crate::db::json::Usage {
+    crate::db::json::Usage {
+        requests: 1,
+        input_tokens: usage.input_tokens,
+        cached_input_tokens: usage.cached_input_tokens,
+        cache_write_tokens: usage.cache_write_tokens,
+        output_tokens: usage.output_tokens,
+        reasoning_tokens: usage.reasoning_tokens,
+        last_prompt_tokens: usage.input_tokens
+            + usage.cached_input_tokens
+            + usage.cache_write_tokens,
+        estimated: usage.estimated,
+    }
 }

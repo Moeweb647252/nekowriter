@@ -1181,7 +1181,7 @@ pub async fn load_conception_state(
         .one(tx)
         .await?
         .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
-    Ok(crate::db::json::from_json_or_default(&book.conception))
+    Ok(book.conception.clone().into_inner())
 }
 
 /// Writes the book's `ConceptionState`.
@@ -1190,7 +1190,7 @@ pub async fn store_conception_state(
     book_id: i32,
     state: &ConceptionState,
 ) -> Result<(), AppError> {
-    let raw = crate::db::json::to_json(state).map_err(|err| AppError::internal(err.to_string()))?;
+    let raw = crate::services::json_text(state.clone());
     books::ActiveModel {
         id: Set(book_id),
         conception: Set(raw),

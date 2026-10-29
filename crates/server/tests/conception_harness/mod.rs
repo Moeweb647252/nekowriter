@@ -223,9 +223,8 @@ pub async fn conception_state(
         .await
         .expect("query conception state")
         .expect("book row");
-    nekowriter::db::json::from_json_or_default(
-        &row.try_get::<String>("", "conception").expect("conception"),
-    )
+    serde_json::from_str(&row.try_get::<String>("", "conception").expect("conception"))
+        .unwrap_or_default()
 }
 
 /// The book's status column.

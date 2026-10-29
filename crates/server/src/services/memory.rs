@@ -24,7 +24,7 @@ use crate::db::entities::{
 };
 use crate::db::json::{
     AnchorKind, BookSettings, CanonStatus, ChangeTargetType, ChapterContent, ChapterStatus,
-    EntityKind, EntityStatus, ForeshadowingStatus, NoteKind, NoteStatus, TrackKind,
+    EntityKind, EntityStatus, ForeshadowingStatus, JsonText, NoteKind, NoteStatus, TrackKind,
 };
 use crate::error::AppError;
 use crate::prompts::PromptSet;
@@ -696,8 +696,7 @@ async fn protagonist(
     let Some(row) = row else {
         return Ok(None);
     };
-    let attributes: BTreeMap<String, String> =
-        crate::db::json::from_json_or_default(&row.attributes);
+    let attributes: BTreeMap<String, String> = row.attributes.clone().into_inner();
     Ok(Some(EntityStateItem {
         id: row.id,
         name: row.name,
@@ -1187,7 +1186,7 @@ async fn book_settings(
         .one(conn)
         .await?
     {
-        Some(book) => Ok(crate::db::json::from_json_or_default(&book.settings)),
+        Some(book) => Ok(book.settings.clone().into_inner()),
         None => Ok(BookSettings::default()),
     }
 }
@@ -1210,8 +1209,7 @@ pub fn tail_text(content: &ChapterContent, limit: usize) -> String {
 
 /// A chapter's stored content.
 pub fn content_of(chapter: &chapters::Model) -> Result<ChapterContent, AppError> {
-    crate::db::json::from_json(&chapter.content)
-        .map_err(|err| AppError::internal(format!("corrupt chapters.content: {err}")))
+    Ok(chapter.content.clone().into_inner())
 }
 
 // ───────────────────────────── the Memory page API (spec/10 §2.4) ─────────────────────────────
@@ -1334,7 +1332,7 @@ async fn next_chapter(
             outline: String::new(),
             reference_notes: String::new(),
             summary: String::new(),
-            content: String::from("{\"paragraphs\":[],\"next_pid\":1,\"tail_open\":false}"),
+            content: JsonText(ChapterContent::default()),
             content_version: 0,
             word_count: 0,
             official_version_id: None,
