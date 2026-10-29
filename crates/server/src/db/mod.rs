@@ -7,6 +7,7 @@ pub mod json;
 use std::path::Path;
 use std::sync::Arc;
 
+use sea_orm::raw_sql;
 use sea_orm::sqlx::sqlite::SqliteJournalMode;
 use sea_orm::{
     ConnectOptions, Database, DatabaseConnection, DbErr, SqliteTransactionMode, TransactionOptions,
@@ -151,11 +152,8 @@ impl Db {
 
     /// Checks the sqlite-vec extension and returns its version string (spec/01 §5 step 4).
     pub async fn vec_version(&self) -> Result<String, DbErr> {
-        use sea_orm::{ConnectionTrait, Statement};
-        let statement = Statement::from_string(
-            sea_orm::DatabaseBackend::Sqlite,
-            "select vec_version() as version",
-        );
+        use sea_orm::ConnectionTrait;
+        let statement = raw_sql!(Sqlite, "select vec_version() as version");
         let row = self
             .conn
             .query_one_raw(statement)
