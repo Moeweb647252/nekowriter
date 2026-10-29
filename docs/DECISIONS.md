@@ -2915,3 +2915,78 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   §10.18–§10.28, §11; spec/01 §3.1; spec/02 §1–§5; spec/03 §1.2, §4, §9, §10, §15; spec/05 §1.5,
   §2, §3, §6, §9; spec/06 intro, §2–§11; spec/08 §5, §7; spec/09 §1, §2, §5; spec/10 §2.3, §2.4,
   §2.8, §3, §4; spec/11 §3, §4, §5.1, §5.5, §9; PLAN M13.
+
+### D-151 SeaORM 2 target shape
+
+- **Context**: the dependencies are already SeaORM 2.0.4 (spec/01 §2), but the code is written in
+  the 1.x style: 36 expanded entities with empty `Relation` enums, enum/boolean/JSON columns typed
+  as `String`/`i32` and converted by hand, SQL assembled from strings, and per-row lookup loops.
+  The migration touches no dependency, no SQL file and no API: it brings the *code* to the shape
+  SeaORM 2.0 documents. The plan (`docs/research/seaorm-2-migration-plan.md`, M14) rests on facts
+  measured against this tree: 36 tables and 82 foreign keys; 14 non-partial unique constraints
+  besides primary keys; 39 CHECK-constrained TEXT columns (38 enums in `db/json.rs` plus
+  `WritingSkillAuthor`); 8 INTEGER 0/1 flags; 31 `json_valid` columns, of which 30 become typed
+  (the exception is `app_settings.value`); about 125 enum-to-string conversions in `src`, and
+  stringly-built SQL in `agent/session.rs`, `services/sessions.rs`, `agent/manager.rs` and
+  `services/indexer.rs`.
+- **Decision**:
+  - **Schema ownership stays SQL-first** (D-015). Entity-first `schema-sync` cannot express the
+    CHECK lists, FTS5/vec0 tables, partial unique indexes or triggers, and never alters a CHECK.
+    The entities describe the schema; `tests/entity_schema.rs` proves they match it.
+  - **Entity format**: all 36 entities use `#[sea_orm::model]` (the dense 2.0 format) above
+    `DeriveEntityModel`; the empty `Relation` enums are deleted; `impl ActiveModelBehavior for
+    ActiveModel {}` stays. Relations live on `Model` as `BelongsTo`/`HasOne`/`HasMany` with a
+    `belongs_to` for every FK, a reverse `has_many` for every unambiguous FK, M-N `via` in both
+    directions over the five join tables, `self_ref` for the three self references, and
+    `relation_enum` where two FKs share a target. Field naming: FK field = column without `_id`,
+    reverse = child table name, M-N = far table name. No reverse relation or `Related` impl on the
+    same-target pairs; joins and loaders use the named `Relation` variant. No schema-only
+    attributes (`indexed`, `default_value`, `on_update`, `on_delete`).
+  - **Unique keys**: `unique` / `unique_key` on the 14 non-partial unique constraints; partial
+    unique indexes stay SQL-only. The generated finders replace hand-written lookups.
+  - **Enum columns**: the 39 CHECK-constrained TEXT columns become their Rust enums through
+    `DeriveActiveEnum` added to `string_enum!`; `as_str`/`from_str_opt`/`Display`/`FromStr` stay
+    for parsing that is not a column read. **Boolean columns**: the 8 flags become `bool`.
+    **JSON columns**: 30 columns become `JsonText<T>`, one wrapper in `db/json.rs` that stores the
+    exact `serde_json::to_string` text `to_json` wrote, so rows written before and after are
+    byte-identical; `app_settings.value` stays `String` because its shape depends on `key`.
+  - **Decoding is strict** (author confirmed): a value that does not match its type fails the
+    query (`DbErr::Type` → `500 internal`) and names the column. This removes the silent
+    fallbacks (`from_json_or_default`, `from_str_opt(...).unwrap_or(..)`) whose empty
+    `ChapterContent` could later be written back over real text. `CHECK` constraints make an
+    unknown enum value or invalid JSON syntax impossible; `#[serde(default)]` keeps old rows
+    loading.
+  - **Writes**: stringly SQL becomes typed `update_many().set(partial ActiveModel)` or
+    `.col_expr(..)` with typed filters; `guard_columns` becomes `guard_update` and keeps the
+    `rows_affected == 0 → session.invalid_state` rule (spec/03 §14, D-034). Static raw statements
+    move to `raw_sql!` with named parameters; `Statement::from_sql_and_values` remains only where
+    the table name is chosen at runtime from a closed set, plus test fixtures and the
+    FTS5/vec0/`sqlite_master` statements that are raw by nature.
+  - **Reads**: per-row lookup loops become the Entity/Model Loader or one `is_in` query; list
+    queries that never read `content` use a `DerivePartialModel`; existence filters use
+    `has_related`; unique-key lookups use the generated finders. Filters and ordering use the
+    typed `COLUMN` constant; `col_expr`, `select_only().column(..)`, `group_by`,
+    `Relation::X.def()` and `visible_condition` keep `Column::`. Files that call `Expr` methods
+    import `sea_orm::sea_query::ExprTrait`.
+  - **Not adopted**: nested ActiveModel saves (canon ids come from `services/canon::fresh_id` and
+    change-log/event order is explicit); `ActiveModelBehavior` timestamp hooks (they do not run
+    for `update_many` or raw SQL); typed-ID newtypes (would change the DTO and TS binding
+    surface); RBAC, Arrow, Seaography and ClickHouse; regenerating the entities with
+    `sea-orm-cli` as the source (ids come out `i64`, timestamps `String`, same-target names are
+    generated names, and SQLite partial unique indexes are misread as `HasOne`); entity-first
+    `schema-sync`.
+  - **Ordering**: M14 runs after 13.2 (so its kickoff snapshots guard the refactor) and before
+    13.3 (so the goal tables are born in the target shape); the author confirmed this and strict
+    decoding in plan §9.
+- **Consequences**:
+  - A corrupt or shape-mismatched JSON/enum value now fails the read instead of silently becoming
+    a default; the error names the column. Task 14.9 runs `decode_all_rows` on a **copy** of the
+    author's database before shipping and reports the row counts and build times.
+  - No SQL file, prompt, API response, SSE event or `web/src/api/gen` binding changes; the 13.2
+    kickoff snapshots stay byte-identical.
+  - `tests/entity_schema.rs` lands before any entity change and grows with each task: table and
+    column guards first, then relations and unique keys, then enums/booleans, then JSON.
+  - The plan's snippets are checked against the compiler; where the compiler disagrees the
+    compiler wins and the plan is corrected in the task's report.
+- **Spec**: PROJECT §6.5; spec/01 §2, §3.1, §3.4, §7; spec/02 §1–§5; spec/03 §3, §14; spec/06 §2;
+  spec/07; spec/08 §7; D-015, D-034; PLAN M14.
