@@ -32,6 +32,15 @@ fn the_entity_description_ceiling_is_stated_where_entities_are_written() {
     ] {
         let mut checked = 0usize;
         for sample in registry.sample_contexts(key) {
+            // System-off variants intentionally omit the Entities-only description rules.
+            if sample
+                .get("systems")
+                .and_then(|systems| systems.get("entities"))
+                .and_then(|value| value.as_bool())
+                == Some(false)
+            {
+                continue;
+            }
             let text = set
                 .render_value(key, nekowriter::prompts::template_value(&sample))
                 .unwrap_or_else(|err| panic!("{key}: {err}"))
@@ -170,8 +179,9 @@ fn every_key_renders_with_every_sample() {
             let output = set
                 .render_value(&entry.key, nekowriter::prompts::template_value(sample))
                 .unwrap_or_else(|err| panic!("{} sample {index}: {err}", entry.key));
+            let blank_allowed = matches!(entry.key.as_str(), "block.canon_systems" | "block.goals");
             assert!(
-                !output.text.is_empty(),
+                blank_allowed || !output.text.is_empty(),
                 "{} sample {index} rendered nothing",
                 entry.key
             );

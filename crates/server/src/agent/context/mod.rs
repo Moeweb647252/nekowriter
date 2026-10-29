@@ -145,6 +145,129 @@ fn systems_context(session: &agent_sessions::Model) -> SystemsContext {
     SystemsContext::from(&session::canon_systems_of(session))
 }
 
+/// `goal_node_entities` links, one batch, mapped back to the node order.
+async fn goal_entity_links(
+    conn: &impl ConnectionTrait,
+    node_ids: &[i32],
+) -> Result<std::collections::BTreeMap<i32, Vec<String>>, AppError> {
+    if node_ids.is_empty() {
+        return Ok(std::collections::BTreeMap::new());
+    }
+    let links = crate::db::entities::goal_node_entities::Entity::find()
+        .filter(
+            crate::db::entities::goal_node_entities::COLUMN
+                .node_id
+                .is_in(node_ids.to_vec()),
+        )
+        .order_by_asc(crate::db::entities::goal_node_entities::COLUMN.entity_id)
+        .all(conn)
+        .await?;
+    let entity_ids: Vec<i32> = links.iter().map(|link| link.entity_id).collect();
+    let names: std::collections::BTreeMap<i32, String> =
+        crate::db::entities::entities::Entity::find()
+            .filter(
+                crate::db::entities::entities::COLUMN
+                    .id
+                    .is_in(entity_ids.clone()),
+            )
+            .all(conn)
+            .await?
+            .into_iter()
+            .map(|entity| (entity.id, entity.name))
+            .collect();
+    let mut out: std::collections::BTreeMap<i32, Vec<String>> = std::collections::BTreeMap::new();
+    for link in links {
+        if let Some(name) = names.get(&link.entity_id) {
+            out.entry(link.node_id)
+                .or_default()
+                .push(format!("{name}(#{})", link.entity_id));
+        }
+    }
+    Ok(out)
+}
+
+/// `goal_node_events` links, one batch, mapped back to the node order.
+async fn goal_event_links(
+    conn: &impl ConnectionTrait,
+    node_ids: &[i32],
+) -> Result<std::collections::BTreeMap<i32, Vec<String>>, AppError> {
+    if node_ids.is_empty() {
+        return Ok(std::collections::BTreeMap::new());
+    }
+    let links = crate::db::entities::goal_node_events::Entity::find()
+        .filter(
+            crate::db::entities::goal_node_events::COLUMN
+                .node_id
+                .is_in(node_ids.to_vec()),
+        )
+        .order_by_asc(crate::db::entities::goal_node_events::COLUMN.event_id)
+        .all(conn)
+        .await?;
+    let event_ids: Vec<i32> = links.iter().map(|link| link.event_id).collect();
+    let titles: std::collections::BTreeMap<i32, String> =
+        crate::db::entities::timeline_events::Entity::find()
+            .filter(
+                crate::db::entities::timeline_events::COLUMN
+                    .id
+                    .is_in(event_ids.clone()),
+            )
+            .all(conn)
+            .await?
+            .into_iter()
+            .map(|event| (event.id, event.title))
+            .collect();
+    let mut out: std::collections::BTreeMap<i32, Vec<String>> = std::collections::BTreeMap::new();
+    for link in links {
+        if let Some(title) = titles.get(&link.event_id) {
+            out.entry(link.node_id)
+                .or_default()
+                .push(format!("#{} {title}", link.event_id));
+        }
+    }
+    Ok(out)
+}
+
+/// `goal_node_foreshadowing` links, one batch, mapped back to the node order.
+async fn goal_foreshadowing_links(
+    conn: &impl ConnectionTrait,
+    node_ids: &[i32],
+) -> Result<std::collections::BTreeMap<i32, Vec<String>>, AppError> {
+    if node_ids.is_empty() {
+        return Ok(std::collections::BTreeMap::new());
+    }
+    let links = crate::db::entities::goal_node_foreshadowing::Entity::find()
+        .filter(
+            crate::db::entities::goal_node_foreshadowing::COLUMN
+                .node_id
+                .is_in(node_ids.to_vec()),
+        )
+        .order_by_asc(crate::db::entities::goal_node_foreshadowing::COLUMN.foreshadowing_id)
+        .all(conn)
+        .await?;
+    let hook_ids: Vec<i32> = links.iter().map(|link| link.foreshadowing_id).collect();
+    let titles: std::collections::BTreeMap<i32, String> =
+        crate::db::entities::foreshadowing::Entity::find()
+            .filter(
+                crate::db::entities::foreshadowing::COLUMN
+                    .id
+                    .is_in(hook_ids.clone()),
+            )
+            .all(conn)
+            .await?
+            .into_iter()
+            .map(|hook| (hook.id, hook.title))
+            .collect();
+    let mut out: std::collections::BTreeMap<i32, Vec<String>> = std::collections::BTreeMap::new();
+    for link in links {
+        if let Some(title) = titles.get(&link.foreshadowing_id) {
+            out.entry(link.node_id)
+                .or_default()
+                .push(format!("#{} {title}", link.foreshadowing_id));
+        }
+    }
+    Ok(out)
+}
+
 /// `block.goals` and the maintenance task: the relevant goal tree of the session's chapter.
 async fn goals_context(
     conn: &impl ConnectionTrait,
@@ -162,6 +285,23 @@ async fn goals_context(
         return Ok(GoalsContext::default());
     };
     let selection = crate::services::goals::relevant_nodes(conn, book_id, &track, &chapter).await?;
+    let systems = session::canon_systems_of(session);
+    let ids: Vec<i32> = selection.nodes.iter().map(|node| node.id).collect();
+    let entity_links = if systems.entities {
+        goal_entity_links(conn, &ids).await?
+    } else {
+        std::collections::BTreeMap::new()
+    };
+    let event_links = if systems.timeline {
+        goal_event_links(conn, &ids).await?
+    } else {
+        std::collections::BTreeMap::new()
+    };
+    let foreshadowing_links = if systems.foreshadowing {
+        goal_foreshadowing_links(conn, &ids).await?
+    } else {
+        std::collections::BTreeMap::new()
+    };
     let nodes = selection
         .nodes
         .into_iter()
@@ -177,9 +317,12 @@ async fn goals_context(
                 (Some(from), Some(to)) => format!("{from}-{to}"),
             },
             overdue: node.chapter_to.is_some_and(|to| to < chapter.ord),
-            entities: Vec::new(),
-            events: Vec::new(),
-            foreshadowing: Vec::new(),
+            entities: entity_links.get(&node.id).cloned().unwrap_or_default(),
+            events: event_links.get(&node.id).cloned().unwrap_or_default(),
+            foreshadowing: foreshadowing_links
+                .get(&node.id)
+                .cloned()
+                .unwrap_or_default(),
         })
         .collect();
     Ok(GoalsContext {
@@ -1746,7 +1889,7 @@ pub async fn rollover(
             // The rollover block list is its own: it deliberately excludes
             // `block.recent_chapters` (design §7, session-kind table), so `block.memory` must keep
             // `previous_tail` here even though the parent is a `chapter_write` session.
-            let emitted_blocks = [
+            let mut emitted_blocks = vec![
                 "block.settings",
                 "block.canon_systems",
                 "block.writing_skills",
@@ -1755,6 +1898,12 @@ pub async fn rollover(
                 "block.chapter_draft",
                 "writer.kickoff.rollover",
             ];
+            // Rollover has its own list; apply the same system-owned block filter as
+            // `assemble_kickoff`, reading the child's inherited frozen systems (R1, task 13.4).
+            let systems = session::canon_systems_of(&parent);
+            emitted_blocks.retain(|key| {
+                system_of_block(key).is_none_or(|system| system_is_on(&systems, system))
+            });
             let chapter_draft_renders =
                 block_renders_non_empty(tx, &prompts, &parent, plan, "block.chapter_draft", None)
                     .await?;

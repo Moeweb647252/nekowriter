@@ -411,6 +411,7 @@ pub(crate) async fn create_inner(
             input.kind,
             &frozen_systems,
             has_relevant_goals,
+            state.tool_registry(),
         )
     };
     let tools = frozen_tools(&prompts, &tool_names, &mut warnings)?;

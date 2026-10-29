@@ -79,6 +79,11 @@ zh = "与本章相关的写作目标"
 fields."nodes[]" = { en = "id, level (goal|plan|task), title, purpose, chapters, overdue, entities[], events[], foreshadowing[]", zh = "目标节点：id、level、title、purpose、chapters、overdue、关联项" }
 fields.omitted = { en = "Relevant nodes left out by the 30-node cap", zh = "因 30 个节点上限而未显示的节点数" }
 
+[vars.goal_proposals]
+en = "Goal proposals created by the current maintenance session"
+zh = "本次维护会话创建的写作目标建议"
+fields.count = { en = "Number of goal proposals awaiting the author", zh = "等待作者决定的写作目标建议数量" }
+
 [vars.draft]
 en = "Chapter text"
 zh = "章节正文"

@@ -425,6 +425,323 @@
    },
    {
     "systems": {
+     "entities": false,
+     "timeline": true,
+     "memory": true,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "timeline",
+      "memory",
+      "foreshadowing"
+     ]
+    },
+    "goals": {
+     "nodes": [],
+     "omitted": 0
+    }
+   },
+   {
+    "systems": {
+     "entities": false,
+     "timeline": true,
+     "memory": true,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "timeline",
+      "memory",
+      "foreshadowing"
+     ]
+    },
+    "goals": {
+     "nodes": [
+      {
+       "id": 8,
+       "level": "plan",
+       "title": "守住剑冢",
+       "purpose": "让林凡在宗门倾覆前守住最后的传承。",
+       "chapters": "第10–15章",
+       "overdue": false,
+       "entities": [
+        "苏婉(#21)"
+       ],
+       "events": [
+        "#3 宗门夜变"
+       ],
+       "foreshadowing": []
+      },
+      {
+       "id": 12,
+       "level": "task",
+       "title": "找回断剑",
+       "purpose": "用断剑证明林凡的继承者身份。",
+       "chapters": "第13章",
+       "overdue": true,
+       "entities": [],
+       "events": [],
+       "foreshadowing": [
+        "#9 黑衣人的剑穗"
+       ]
+      }
+     ],
+     "omitted": 2
+    }
+   },
+   {
+    "systems": {
+     "entities": true,
+     "timeline": false,
+     "memory": true,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "memory",
+      "foreshadowing"
+     ]
+    },
+    "goals": {
+     "nodes": [],
+     "omitted": 0
+    }
+   },
+   {
+    "systems": {
+     "entities": true,
+     "timeline": false,
+     "memory": true,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "memory",
+      "foreshadowing"
+     ]
+    },
+    "goals": {
+     "nodes": [
+      {
+       "id": 8,
+       "level": "plan",
+       "title": "守住剑冢",
+       "purpose": "让林凡在宗门倾覆前守住最后的传承。",
+       "chapters": "第10–15章",
+       "overdue": false,
+       "entities": [
+        "苏婉(#21)"
+       ],
+       "events": [
+        "#3 宗门夜变"
+       ],
+       "foreshadowing": []
+      },
+      {
+       "id": 12,
+       "level": "task",
+       "title": "找回断剑",
+       "purpose": "用断剑证明林凡的继承者身份。",
+       "chapters": "第13章",
+       "overdue": true,
+       "entities": [],
+       "events": [],
+       "foreshadowing": [
+        "#9 黑衣人的剑穗"
+       ]
+      }
+     ],
+     "omitted": 2
+    }
+   },
+   {
+    "systems": {
+     "entities": true,
+     "timeline": true,
+     "memory": false,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "timeline",
+      "foreshadowing"
+     ]
+    },
+    "goals": {
+     "nodes": [],
+     "omitted": 0
+    }
+   },
+   {
+    "systems": {
+     "entities": true,
+     "timeline": true,
+     "memory": false,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "timeline",
+      "foreshadowing"
+     ]
+    },
+    "goals": {
+     "nodes": [
+      {
+       "id": 8,
+       "level": "plan",
+       "title": "守住剑冢",
+       "purpose": "让林凡在宗门倾覆前守住最后的传承。",
+       "chapters": "第10–15章",
+       "overdue": false,
+       "entities": [
+        "苏婉(#21)"
+       ],
+       "events": [
+        "#3 宗门夜变"
+       ],
+       "foreshadowing": []
+      },
+      {
+       "id": 12,
+       "level": "task",
+       "title": "找回断剑",
+       "purpose": "用断剑证明林凡的继承者身份。",
+       "chapters": "第13章",
+       "overdue": true,
+       "entities": [],
+       "events": [],
+       "foreshadowing": [
+        "#9 黑衣人的剑穗"
+       ]
+      }
+     ],
+     "omitted": 2
+    }
+   },
+   {
+    "systems": {
+     "entities": true,
+     "timeline": true,
+     "memory": true,
+     "foreshadowing": false,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "timeline",
+      "memory"
+     ]
+    },
+    "goals": {
+     "nodes": [],
+     "omitted": 0
+    }
+   },
+   {
+    "systems": {
+     "entities": true,
+     "timeline": true,
+     "memory": true,
+     "foreshadowing": false,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "timeline",
+      "memory"
+     ]
+    },
+    "goals": {
+     "nodes": [
+      {
+       "id": 8,
+       "level": "plan",
+       "title": "守住剑冢",
+       "purpose": "让林凡在宗门倾覆前守住最后的传承。",
+       "chapters": "第10–15章",
+       "overdue": false,
+       "entities": [
+        "苏婉(#21)"
+       ],
+       "events": [
+        "#3 宗门夜变"
+       ],
+       "foreshadowing": []
+      },
+      {
+       "id": 12,
+       "level": "task",
+       "title": "找回断剑",
+       "purpose": "用断剑证明林凡的继承者身份。",
+       "chapters": "第13章",
+       "overdue": true,
+       "entities": [],
+       "events": [],
+       "foreshadowing": [
+        "#9 黑衣人的剑穗"
+       ]
+      }
+     ],
+     "omitted": 2
+    }
+   },
+   {
+    "systems": {
+     "entities": false,
+     "timeline": false,
+     "memory": false,
+     "foreshadowing": false,
+     "goals": true,
+     "enabled": []
+    },
+    "goals": {
+     "nodes": [],
+     "omitted": 0
+    }
+   },
+   {
+    "systems": {
+     "entities": false,
+     "timeline": false,
+     "memory": false,
+     "foreshadowing": false,
+     "goals": true,
+     "enabled": []
+    },
+    "goals": {
+     "nodes": [
+      {
+       "id": 8,
+       "level": "plan",
+       "title": "守住剑冢",
+       "purpose": "让林凡在宗门倾覆前守住最后的传承。",
+       "chapters": "第10–15章",
+       "overdue": false,
+       "entities": [
+        "苏婉(#21)"
+       ],
+       "events": [
+        "#3 宗门夜变"
+       ],
+       "foreshadowing": []
+      },
+      {
+       "id": 12,
+       "level": "task",
+       "title": "找回断剑",
+       "purpose": "用断剑证明林凡的继承者身份。",
+       "chapters": "第13章",
+       "overdue": true,
+       "entities": [],
+       "events": [],
+       "foreshadowing": [
+        "#9 黑衣人的剑穗"
+       ]
+      }
+     ],
+     "omitted": 2
+    }
+   },
+   {
+    "systems": {
      "entities": true,
      "timeline": true,
      "memory": true,
@@ -466,6 +783,96 @@
       "memory",
       "foreshadowing"
      ]
+    }
+   },
+   {
+    "systems": {
+     "entities": false,
+     "timeline": true,
+     "memory": true,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "timeline",
+      "memory",
+      "foreshadowing"
+     ]
+    }
+   },
+   {
+    "systems": {
+     "entities": true,
+     "timeline": false,
+     "memory": true,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "memory",
+      "foreshadowing"
+     ]
+    }
+   },
+   {
+    "systems": {
+     "entities": true,
+     "timeline": true,
+     "memory": false,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "timeline",
+      "foreshadowing"
+     ]
+    }
+   },
+   {
+    "systems": {
+     "entities": true,
+     "timeline": true,
+     "memory": true,
+     "foreshadowing": false,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "timeline",
+      "memory"
+     ]
+    }
+   },
+   {
+    "systems": {
+     "entities": false,
+     "timeline": false,
+     "memory": false,
+     "foreshadowing": false,
+     "goals": true,
+     "enabled": []
+    }
+   },
+   {
+    "systems": {
+     "entities": true,
+     "timeline": true,
+     "memory": true,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "timeline",
+      "memory",
+      "foreshadowing"
+     ]
+    },
+    "track": {
+     "is_main": true,
+     "kind": "main",
+     "title": "",
+     "synopsis": "",
+     "canon_mode": "canon",
+     "anchor_kind": "none",
+     "anchor_label": ""
     }
    }
   ],
@@ -2386,6 +2793,14 @@
    {
     "enum": "language",
     "value": "xx"
+   },
+   {
+    "enum": "target_type",
+    "value": "goal"
+   },
+   {
+    "enum": "goal_level",
+    "value": "plan"
    }
   ],
   "writer.kickoff.chapter": [
@@ -2825,6 +3240,21 @@
   "block.canon_systems": [
    {
     "systems": {
+     "entities": true,
+     "timeline": true,
+     "memory": true,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "timeline",
+      "memory",
+      "foreshadowing"
+     ]
+    }
+   },
+   {
+    "systems": {
      "entities": false,
      "timeline": true,
      "memory": true,
@@ -2938,6 +3368,256 @@
       "foreshadowing"
      ]
     }
+   },
+   {
+    "goals": {
+     "nodes": [
+      {
+       "id": 8,
+       "level": "plan",
+       "title": "守住剑冢",
+       "purpose": "让林凡在宗门倾覆前守住最后的传承。",
+       "chapters": "第10–15章",
+       "overdue": false,
+       "entities": [
+        "苏婉(#21)"
+       ],
+       "events": [
+        "#3 宗门夜变"
+       ],
+       "foreshadowing": []
+      },
+      {
+       "id": 12,
+       "level": "task",
+       "title": "找回断剑",
+       "purpose": "用断剑证明林凡的继承者身份。",
+       "chapters": "第13章",
+       "overdue": true,
+       "entities": [],
+       "events": [],
+       "foreshadowing": [
+        "#9 黑衣人的剑穗"
+       ]
+      }
+     ],
+     "omitted": 2
+    },
+    "systems": {
+     "entities": false,
+     "timeline": true,
+     "memory": true,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "timeline",
+      "memory",
+      "foreshadowing"
+     ]
+    }
+   },
+   {
+    "goals": {
+     "nodes": [
+      {
+       "id": 8,
+       "level": "plan",
+       "title": "守住剑冢",
+       "purpose": "让林凡在宗门倾覆前守住最后的传承。",
+       "chapters": "第10–15章",
+       "overdue": false,
+       "entities": [
+        "苏婉(#21)"
+       ],
+       "events": [
+        "#3 宗门夜变"
+       ],
+       "foreshadowing": []
+      },
+      {
+       "id": 12,
+       "level": "task",
+       "title": "找回断剑",
+       "purpose": "用断剑证明林凡的继承者身份。",
+       "chapters": "第13章",
+       "overdue": true,
+       "entities": [],
+       "events": [],
+       "foreshadowing": [
+        "#9 黑衣人的剑穗"
+       ]
+      }
+     ],
+     "omitted": 2
+    },
+    "systems": {
+     "entities": true,
+     "timeline": false,
+     "memory": true,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "memory",
+      "foreshadowing"
+     ]
+    }
+   },
+   {
+    "goals": {
+     "nodes": [
+      {
+       "id": 8,
+       "level": "plan",
+       "title": "守住剑冢",
+       "purpose": "让林凡在宗门倾覆前守住最后的传承。",
+       "chapters": "第10–15章",
+       "overdue": false,
+       "entities": [
+        "苏婉(#21)"
+       ],
+       "events": [
+        "#3 宗门夜变"
+       ],
+       "foreshadowing": []
+      },
+      {
+       "id": 12,
+       "level": "task",
+       "title": "找回断剑",
+       "purpose": "用断剑证明林凡的继承者身份。",
+       "chapters": "第13章",
+       "overdue": true,
+       "entities": [],
+       "events": [],
+       "foreshadowing": [
+        "#9 黑衣人的剑穗"
+       ]
+      }
+     ],
+     "omitted": 2
+    },
+    "systems": {
+     "entities": true,
+     "timeline": true,
+     "memory": false,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "timeline",
+      "foreshadowing"
+     ]
+    }
+   },
+   {
+    "goals": {
+     "nodes": [
+      {
+       "id": 8,
+       "level": "plan",
+       "title": "守住剑冢",
+       "purpose": "让林凡在宗门倾覆前守住最后的传承。",
+       "chapters": "第10–15章",
+       "overdue": false,
+       "entities": [
+        "苏婉(#21)"
+       ],
+       "events": [
+        "#3 宗门夜变"
+       ],
+       "foreshadowing": []
+      },
+      {
+       "id": 12,
+       "level": "task",
+       "title": "找回断剑",
+       "purpose": "用断剑证明林凡的继承者身份。",
+       "chapters": "第13章",
+       "overdue": true,
+       "entities": [],
+       "events": [],
+       "foreshadowing": [
+        "#9 黑衣人的剑穗"
+       ]
+      }
+     ],
+     "omitted": 2
+    },
+    "systems": {
+     "entities": true,
+     "timeline": true,
+     "memory": true,
+     "foreshadowing": false,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "timeline",
+      "memory"
+     ]
+    }
+   },
+   {
+    "goals": {
+     "nodes": [
+      {
+       "id": 8,
+       "level": "plan",
+       "title": "守住剑冢",
+       "purpose": "让林凡在宗门倾覆前守住最后的传承。",
+       "chapters": "第10–15章",
+       "overdue": false,
+       "entities": [
+        "苏婉(#21)"
+       ],
+       "events": [
+        "#3 宗门夜变"
+       ],
+       "foreshadowing": []
+      },
+      {
+       "id": 12,
+       "level": "task",
+       "title": "找回断剑",
+       "purpose": "用断剑证明林凡的继承者身份。",
+       "chapters": "第13章",
+       "overdue": true,
+       "entities": [],
+       "events": [],
+       "foreshadowing": [
+        "#9 黑衣人的剑穗"
+       ]
+      }
+     ],
+     "omitted": 2
+    },
+    "systems": {
+     "entities": false,
+     "timeline": false,
+     "memory": false,
+     "foreshadowing": false,
+     "goals": true,
+     "enabled": []
+    }
+   },
+   {
+    "goals": {
+     "nodes": [],
+     "omitted": 0
+    },
+    "systems": {
+     "entities": true,
+     "timeline": true,
+     "memory": true,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "timeline",
+      "memory",
+      "foreshadowing"
+     ]
+    }
    }
   ],
   "archivist.kickoff.seed": [
@@ -2954,6 +3634,72 @@
       "memory",
       "foreshadowing"
      ]
+    }
+   },
+   {
+    "systems": {
+     "entities": false,
+     "timeline": true,
+     "memory": true,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "timeline",
+      "memory",
+      "foreshadowing"
+     ]
+    }
+   },
+   {
+    "systems": {
+     "entities": true,
+     "timeline": false,
+     "memory": true,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "memory",
+      "foreshadowing"
+     ]
+    }
+   },
+   {
+    "systems": {
+     "entities": true,
+     "timeline": true,
+     "memory": false,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "timeline",
+      "foreshadowing"
+     ]
+    }
+   },
+   {
+    "systems": {
+     "entities": true,
+     "timeline": true,
+     "memory": true,
+     "foreshadowing": false,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "timeline",
+      "memory"
+     ]
+    }
+   },
+   {
+    "systems": {
+     "entities": false,
+     "timeline": false,
+     "memory": false,
+     "foreshadowing": false,
+     "goals": true,
+     "enabled": []
     }
    }
   ]

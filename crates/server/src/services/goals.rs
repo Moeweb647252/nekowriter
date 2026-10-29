@@ -47,17 +47,50 @@ pub async fn relevant_nodes(
         selected.insert(node.id);
         add_active_ancestors(node, &by_id, &mut selected, &mut BTreeSet::new());
     }
-    let mut selected: Vec<goal_nodes::Model> = selected
+    // §11.5 cap: keep tasks by earliest `chapter_from`, each together with its ancestors;
+    // then fill the remaining slots with the other relevant nodes. A waiting ancestor is never
+    // selected (only active ancestors are), so a task under a waiting plan still renders at the
+    // top level.
+    let all: Vec<goal_nodes::Model> = selected
+        .iter()
+        .filter_map(|id| by_id.get(id).map(|node| (*node).clone()))
+        .collect();
+    let mut tasks: Vec<&goal_nodes::Model> = all
+        .iter()
+        .filter(|node| node.level == GoalLevel::Task)
+        .collect();
+    tasks.sort_by_key(|node| (node.chapter_from.unwrap_or(i32::MAX), node.id));
+    let mut chosen: BTreeSet<i32> = BTreeSet::new();
+    for task in tasks {
+        let mut with_ancestors = BTreeSet::new();
+        with_ancestors.insert(task.id);
+        collect_ancestor_ids(
+            task,
+            &by_id,
+            &selected,
+            &mut with_ancestors,
+            &mut BTreeSet::new(),
+        );
+        if chosen.len() + with_ancestors.difference(&chosen).count() > GOAL_NODE_CAP {
+            continue;
+        }
+        chosen.extend(with_ancestors);
+    }
+    for node in &all {
+        if chosen.len() >= GOAL_NODE_CAP {
+            break;
+        }
+        if node.level != GoalLevel::Task {
+            chosen.insert(node.id);
+        }
+    }
+    let omitted = all.len().saturating_sub(chosen.len()) as i32;
+    let mut nodes: Vec<goal_nodes::Model> = chosen
         .into_iter()
         .filter_map(|id| by_id.get(&id).map(|node| (*node).clone()))
         .collect();
-    selected.sort_by_key(|node| (level_rank(node.level), node.chapter_from, node.id));
-    let omitted = selected.len().saturating_sub(30) as i32;
-    selected.truncate(30);
-    Ok(GoalSelection {
-        nodes: selected,
-        omitted,
-    })
+    nodes.sort_by_key(|node| (level_rank(node.level), node.chapter_from, node.id));
+    Ok(GoalSelection { nodes, omitted })
 }
 
 /// True when the chapter has at least one node in the `block.goals` set (plan §4.5).
@@ -114,6 +147,32 @@ fn has_closed_ancestor(
     };
     matches!(parent.status, GoalStatus::Done | GoalStatus::Dropped)
         || has_closed_ancestor(parent, by_id, seen)
+}
+
+/// The cap of `block.goals` (plan §4.5).
+pub const GOAL_NODE_CAP: usize = 30;
+
+fn collect_ancestor_ids(
+    node: &goal_nodes::Model,
+    by_id: &BTreeMap<i32, &goal_nodes::Model>,
+    allowed: &BTreeSet<i32>,
+    ids: &mut BTreeSet<i32>,
+    seen: &mut BTreeSet<i32>,
+) {
+    let Some(parent_id) = node.parent_id else {
+        return;
+    };
+    if !seen.insert(parent_id) {
+        return;
+    }
+    let Some(parent) = by_id.get(&parent_id) else {
+        return;
+    };
+    if !allowed.contains(&parent.id) {
+        return;
+    }
+    ids.insert(parent.id);
+    collect_ancestor_ids(parent, by_id, allowed, ids, seen);
 }
 
 fn add_active_ancestors(

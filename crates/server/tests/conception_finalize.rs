@@ -582,3 +582,63 @@ async fn finalize_leaves_a_pending_form_unanswered() {
     let (status, body) = answer(&runtime, session_id, call_id, ask_answer()).await;
     assert_eq!(status, 409, "a completed session takes no answer: {body}");
 }
+
+/// Every seedable system off means finalize starts no `canon_seed` session at all — not even a
+/// warning (spec/08 §5 step 5, spec/06 §7, D-150).
+#[tokio::test]
+async fn finalize_does_not_seed_when_all_seedable_systems_are_off() {
+    let runtime = runtime(vec![]).await;
+    let book = create_conceiving_book(&runtime, "No Seed").await;
+    let book_id = book["book"]["id"].as_i64().expect("book id") as i32;
+    let session_id = book["session_id"].as_i64().expect("session") as i32;
+    runtime.wait_any_status(session_id).await;
+    complete_materials(&runtime, book_id).await;
+
+    let (_, current) = runtime.app.get(&format!("/api/books/{book_id}")).await;
+    let mut settings = current["settings"].clone();
+    settings["canon_systems"] = json!({
+        "entities": false,
+        "timeline": false,
+        "memory": false,
+        "foreshadowing": false,
+        "goals": false,
+    });
+    let (status, body) = runtime
+        .app
+        .patch(
+            &format!("/api/books/{book_id}"),
+            json!({ "settings": settings }),
+        )
+        .await;
+    assert_eq!(status, 200, "settings: {body}");
+
+    let (status, body) = runtime
+        .app
+        .post(
+            &format!("/api/books/{book_id}/conception/finalize"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, 200, "finalize: {body}");
+    assert!(
+        body["seed_session_id"].is_null(),
+        "no seed session may start: {body}"
+    );
+    assert_eq!(body["warnings"], json!([]));
+
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+    let row = runtime
+        .app
+        .db()
+        .conn()
+        .query_one_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT count(*) AS value FROM agent_sessions WHERE book_id = ? AND kind = 'canon_seed'",
+            vec![book_id.into()],
+        ))
+        .await
+        .expect("query")
+        .expect("row");
+    let count: i64 = row.try_get("", "value").expect("count");
+    assert_eq!(count, 0);
+}

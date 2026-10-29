@@ -224,8 +224,8 @@ variants = {
   "block.memory": [dict(systems=s) for s in systems_cases] + [
       dict(memory=memory_first, chapter=chapter_blank), dict(memory=memory_first, chapter=dict(chapter_blank, number=1, label="第1章")),
       dict(memory=dict(memory, protagonist=dict(memory["protagonist"], after_anchor=True, status="active")))],
-  "block.canon_systems": [dict(systems=s) for s in systems_cases[1:]],
-  "block.goals": [dict(goals=goals_sample, systems=systems_all), dict(goals=goals_empty, systems=systems_all)],
+  "block.canon_systems": [dict(systems=s) for s in systems_cases],
+  "block.goals": [dict(goals=goals_sample, systems=s) for s in systems_cases] + [dict(goals=goals_empty, systems=systems_all)],
   "block.chapter_draft": [dict(), dict(draft=draft_empty, chapter=chapter_blank)],
   "block.anchor": [dict(track=track_side), dict(track=track_prequel), dict(track=dict(track_side, anchor_kind="after_end", canon_mode="canon"))],
   "block.cast_index": [dict(), dict(cast_index=[])],
@@ -403,6 +403,10 @@ for key, entry in meta.items():
             errors.append(f"{key} case {i}: empty output")
         if "{{" in out_norm or "{%" in out_norm:
             errors.append(f"{key} case {i}: unrendered template syntax")
+        if key in {"archivist.kickoff.maintenance", "archivist.kickoff.seed"}:
+            numbers = [int(m.group(1)) for m in re.finditer(r"(?m)^(\d+)\.", out_norm)]
+            if numbers != list(range(1, len(numbers) + 1)):
+                errors.append(f"{key} case {i}: numbered steps are not contiguous from 1: {numbers}")
         glued = re.search(r"</?(book_outline|world_setting|protagonist_profile|character|character_profile|chapter_outline|reference_notes|chapter_text|writing_skill|document)\b[^>]*>[^\n]", out_norm)
         if glued:
             errors.append(f"{key} case {i}: tag line glued to following text: {glued.group(0)!r}")

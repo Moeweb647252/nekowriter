@@ -446,6 +446,141 @@ expression: rendered
 【档案维护任务】第13章《夜雨》
 本书写作语言：简体中文（所有记录使用该语言）
 本章已由作者审定为正式文本（见上方正文）。请根据本章内容更新档案：
+1. 时间线：用 add_timeline_event 记录本章的重要事件，按故事时间先后插入正确的位置。
+2. 记忆笔记：用 add_memory_note 记录新确立的事实与世界规则；被推翻的用 retire_memory_note 撤销。
+3. 伏笔：用 add_foreshadowing 记录新埋下的伏笔；用 resolve_foreshadowing 更新已回收的伏笔。
+4. set_chapter_summary：撰写本章摘要（150 到 400 字：发生了什么、涉及谁、结尾停在哪里）。（必做）
+5. 如果正文与设定资料矛盾，或确立了应写入设定的重要内容，用 propose_setting_change 提出建议。
+6. 调用 finish_maintenance，简要报告做了哪些更新。
+
+===== archivist.kickoff.maintenance [3] =====
+【档案维护任务】第13章《夜雨》
+本书写作语言：简体中文（所有记录使用该语言）
+本章已由作者审定为正式文本（见上方正文）。请根据本章内容更新档案：
+1. 时间线：用 add_timeline_event 记录本章的重要事件，按故事时间先后插入正确的位置。
+2. 记忆笔记：用 add_memory_note 记录新确立的事实与世界规则；被推翻的用 retire_memory_note 撤销。
+3. 伏笔：用 add_foreshadowing 记录新埋下的伏笔；用 resolve_foreshadowing 更新已回收的伏笔。
+4. set_chapter_summary：撰写本章摘要（150 到 400 字：发生了什么、涉及谁、结尾停在哪里）。（必做）
+5. 目标：对照上方的写作目标，若本章完成了某个节点的目的，用 propose_goal_change 提出 complete；若本章使某个节点无法达成，用 drop 并说明原因；若本章在某个计划下打开了新机会，用 create 提出新任务。本章没有推动目标时跳过此步。
+6. 如果正文与设定资料矛盾，或确立了应写入设定的重要内容，用 propose_setting_change 提出建议。
+7. 调用 finish_maintenance，简要报告做了哪些更新。
+
+===== archivist.kickoff.maintenance [4] =====
+【档案维护任务】第13章《夜雨》
+本书写作语言：简体中文（所有记录使用该语言）
+本章已由作者审定为正式文本（见上方正文）。请根据本章内容更新档案：
+1. record_appearances：记录本章出场或被提及的全部实体及其角色（pov、major、minor、mentioned）。（必做）
+2. 实体：新出现且有意义的人物、组织、地点、物品，用 create_entity 创建；已有实体的**状态、属性或身份**发生变化，用 update_entity 更新，并写明 note。**不要**因为本章剧情而更新 description：description 只在实体被永久重新定义时才动。
+   - description 是稳定档案（这是什么、出身背景、长期不变的外貌、性格与能力），不是章节日志，整体保持在约 120 字以内。本章的进展写进 state 与 add_memory_note、add_timeline_event；单项事实（修为、官职、年龄等）写进 attributes；不要把它们追加到 description。
+   - 只有永久改变其定位的信息（例如真实身份揭晓、根本性的转变）才用 description_append，且追加后整体仍应控制在约 120 字内。原文已经接近或超过这个长度时，改用 description 重写成更紧凑的版本，而不是继续追加；本次本来就要更新这个实体时，顺手把过长的描述压缩到 120 字以内。
+3. 主角状态：主角（即记忆中“主角当前状态”所示的人物）在本章出场时，用 update_entity 更新其 state，反映本章结尾时的情况。
+4. 关系：用 set_relation 或 end_relation 记录关系的建立与变化，写明 note。
+5. 记忆笔记：用 add_memory_note 记录新确立的事实与世界规则；被推翻的用 retire_memory_note 撤销。
+6. 伏笔：用 add_foreshadowing 记录新埋下的伏笔；用 resolve_foreshadowing 更新已回收的伏笔。
+7. set_chapter_summary：撰写本章摘要（150 到 400 字：发生了什么、涉及谁、结尾停在哪里）。（必做）
+8. 如果正文与设定资料矛盾，或确立了应写入设定的重要内容，用 propose_setting_change 提出建议。
+9. 调用 finish_maintenance，简要报告做了哪些更新。
+
+===== archivist.kickoff.maintenance [5] =====
+【档案维护任务】第13章《夜雨》
+本书写作语言：简体中文（所有记录使用该语言）
+本章已由作者审定为正式文本（见上方正文）。请根据本章内容更新档案：
+1. record_appearances：记录本章出场或被提及的全部实体及其角色（pov、major、minor、mentioned）。（必做）
+2. 实体：新出现且有意义的人物、组织、地点、物品，用 create_entity 创建；已有实体的**状态、属性或身份**发生变化，用 update_entity 更新，并写明 note。**不要**因为本章剧情而更新 description：description 只在实体被永久重新定义时才动。
+   - description 是稳定档案（这是什么、出身背景、长期不变的外貌、性格与能力），不是章节日志，整体保持在约 120 字以内。本章的进展写进 state 与 add_memory_note、add_timeline_event；单项事实（修为、官职、年龄等）写进 attributes；不要把它们追加到 description。
+   - 只有永久改变其定位的信息（例如真实身份揭晓、根本性的转变）才用 description_append，且追加后整体仍应控制在约 120 字内。原文已经接近或超过这个长度时，改用 description 重写成更紧凑的版本，而不是继续追加；本次本来就要更新这个实体时，顺手把过长的描述压缩到 120 字以内。
+3. 主角状态：主角（即记忆中“主角当前状态”所示的人物）在本章出场时，用 update_entity 更新其 state，反映本章结尾时的情况。
+4. 关系：用 set_relation 或 end_relation 记录关系的建立与变化，写明 note。
+5. 记忆笔记：用 add_memory_note 记录新确立的事实与世界规则；被推翻的用 retire_memory_note 撤销。
+6. 伏笔：用 add_foreshadowing 记录新埋下的伏笔；用 resolve_foreshadowing 更新已回收的伏笔。
+7. set_chapter_summary：撰写本章摘要（150 到 400 字：发生了什么、涉及谁、结尾停在哪里）。（必做）
+8. 目标：对照上方的写作目标，若本章完成了某个节点的目的，用 propose_goal_change 提出 complete；若本章使某个节点无法达成，用 drop 并说明原因；若本章在某个计划下打开了新机会，用 create 提出新任务。本章没有推动目标时跳过此步。
+9. 如果正文与设定资料矛盾，或确立了应写入设定的重要内容，用 propose_setting_change 提出建议。
+10. 调用 finish_maintenance，简要报告做了哪些更新。
+
+===== archivist.kickoff.maintenance [6] =====
+【档案维护任务】第13章《夜雨》
+本书写作语言：简体中文（所有记录使用该语言）
+本章已由作者审定为正式文本（见上方正文）。请根据本章内容更新档案：
+1. record_appearances：记录本章出场或被提及的全部实体及其角色（pov、major、minor、mentioned）。（必做）
+2. 实体：新出现且有意义的人物、组织、地点、物品，用 create_entity 创建；已有实体的**状态、属性或身份**发生变化，用 update_entity 更新，并写明 note。**不要**因为本章剧情而更新 description：description 只在实体被永久重新定义时才动。
+   - description 是稳定档案（这是什么、出身背景、长期不变的外貌、性格与能力），不是章节日志，整体保持在约 120 字以内。本章的进展写进 state 与 add_memory_note、add_timeline_event；单项事实（修为、官职、年龄等）写进 attributes；不要把它们追加到 description。
+   - 只有永久改变其定位的信息（例如真实身份揭晓、根本性的转变）才用 description_append，且追加后整体仍应控制在约 120 字内。原文已经接近或超过这个长度时，改用 description 重写成更紧凑的版本，而不是继续追加；本次本来就要更新这个实体时，顺手把过长的描述压缩到 120 字以内。
+3. 主角状态：主角（即记忆中“主角当前状态”所示的人物）在本章出场时，用 update_entity 更新其 state，反映本章结尾时的情况。
+4. 关系：用 set_relation 或 end_relation 记录关系的建立与变化，写明 note。
+5. 时间线：用 add_timeline_event 记录本章的重要事件，按故事时间先后插入正确的位置。
+6. 伏笔：用 add_foreshadowing 记录新埋下的伏笔；用 resolve_foreshadowing 更新已回收的伏笔。
+7. 如果正文与设定资料矛盾，或确立了应写入设定的重要内容，用 propose_setting_change 提出建议。
+8. 调用 finish_maintenance，简要报告做了哪些更新。
+
+===== archivist.kickoff.maintenance [7] =====
+【档案维护任务】第13章《夜雨》
+本书写作语言：简体中文（所有记录使用该语言）
+本章已由作者审定为正式文本（见上方正文）。请根据本章内容更新档案：
+1. record_appearances：记录本章出场或被提及的全部实体及其角色（pov、major、minor、mentioned）。（必做）
+2. 实体：新出现且有意义的人物、组织、地点、物品，用 create_entity 创建；已有实体的**状态、属性或身份**发生变化，用 update_entity 更新，并写明 note。**不要**因为本章剧情而更新 description：description 只在实体被永久重新定义时才动。
+   - description 是稳定档案（这是什么、出身背景、长期不变的外貌、性格与能力），不是章节日志，整体保持在约 120 字以内。本章的进展写进 state 与 add_memory_note、add_timeline_event；单项事实（修为、官职、年龄等）写进 attributes；不要把它们追加到 description。
+   - 只有永久改变其定位的信息（例如真实身份揭晓、根本性的转变）才用 description_append，且追加后整体仍应控制在约 120 字内。原文已经接近或超过这个长度时，改用 description 重写成更紧凑的版本，而不是继续追加；本次本来就要更新这个实体时，顺手把过长的描述压缩到 120 字以内。
+3. 主角状态：主角（即记忆中“主角当前状态”所示的人物）在本章出场时，用 update_entity 更新其 state，反映本章结尾时的情况。
+4. 关系：用 set_relation 或 end_relation 记录关系的建立与变化，写明 note。
+5. 时间线：用 add_timeline_event 记录本章的重要事件，按故事时间先后插入正确的位置。
+6. 伏笔：用 add_foreshadowing 记录新埋下的伏笔；用 resolve_foreshadowing 更新已回收的伏笔。
+7. 目标：对照上方的写作目标，若本章完成了某个节点的目的，用 propose_goal_change 提出 complete；若本章使某个节点无法达成，用 drop 并说明原因；若本章在某个计划下打开了新机会，用 create 提出新任务。本章没有推动目标时跳过此步。
+8. 如果正文与设定资料矛盾，或确立了应写入设定的重要内容，用 propose_setting_change 提出建议。
+9. 调用 finish_maintenance，简要报告做了哪些更新。
+
+===== archivist.kickoff.maintenance [8] =====
+【档案维护任务】第13章《夜雨》
+本书写作语言：简体中文（所有记录使用该语言）
+本章已由作者审定为正式文本（见上方正文）。请根据本章内容更新档案：
+1. record_appearances：记录本章出场或被提及的全部实体及其角色（pov、major、minor、mentioned）。（必做）
+2. 实体：新出现且有意义的人物、组织、地点、物品，用 create_entity 创建；已有实体的**状态、属性或身份**发生变化，用 update_entity 更新，并写明 note。**不要**因为本章剧情而更新 description：description 只在实体被永久重新定义时才动。
+   - description 是稳定档案（这是什么、出身背景、长期不变的外貌、性格与能力），不是章节日志，整体保持在约 120 字以内。本章的进展写进 state 与 add_memory_note、add_timeline_event；单项事实（修为、官职、年龄等）写进 attributes；不要把它们追加到 description。
+   - 只有永久改变其定位的信息（例如真实身份揭晓、根本性的转变）才用 description_append，且追加后整体仍应控制在约 120 字内。原文已经接近或超过这个长度时，改用 description 重写成更紧凑的版本，而不是继续追加；本次本来就要更新这个实体时，顺手把过长的描述压缩到 120 字以内。
+3. 主角状态：主角（即记忆中“主角当前状态”所示的人物）在本章出场时，用 update_entity 更新其 state，反映本章结尾时的情况。
+4. 关系：用 set_relation 或 end_relation 记录关系的建立与变化，写明 note。
+5. 时间线：用 add_timeline_event 记录本章的重要事件，按故事时间先后插入正确的位置。
+6. 记忆笔记：用 add_memory_note 记录新确立的事实与世界规则；被推翻的用 retire_memory_note 撤销。
+7. set_chapter_summary：撰写本章摘要（150 到 400 字：发生了什么、涉及谁、结尾停在哪里）。（必做）
+8. 如果正文与设定资料矛盾，或确立了应写入设定的重要内容，用 propose_setting_change 提出建议。
+9. 调用 finish_maintenance，简要报告做了哪些更新。
+
+===== archivist.kickoff.maintenance [9] =====
+【档案维护任务】第13章《夜雨》
+本书写作语言：简体中文（所有记录使用该语言）
+本章已由作者审定为正式文本（见上方正文）。请根据本章内容更新档案：
+1. record_appearances：记录本章出场或被提及的全部实体及其角色（pov、major、minor、mentioned）。（必做）
+2. 实体：新出现且有意义的人物、组织、地点、物品，用 create_entity 创建；已有实体的**状态、属性或身份**发生变化，用 update_entity 更新，并写明 note。**不要**因为本章剧情而更新 description：description 只在实体被永久重新定义时才动。
+   - description 是稳定档案（这是什么、出身背景、长期不变的外貌、性格与能力），不是章节日志，整体保持在约 120 字以内。本章的进展写进 state 与 add_memory_note、add_timeline_event；单项事实（修为、官职、年龄等）写进 attributes；不要把它们追加到 description。
+   - 只有永久改变其定位的信息（例如真实身份揭晓、根本性的转变）才用 description_append，且追加后整体仍应控制在约 120 字内。原文已经接近或超过这个长度时，改用 description 重写成更紧凑的版本，而不是继续追加；本次本来就要更新这个实体时，顺手把过长的描述压缩到 120 字以内。
+3. 主角状态：主角（即记忆中“主角当前状态”所示的人物）在本章出场时，用 update_entity 更新其 state，反映本章结尾时的情况。
+4. 关系：用 set_relation 或 end_relation 记录关系的建立与变化，写明 note。
+5. 时间线：用 add_timeline_event 记录本章的重要事件，按故事时间先后插入正确的位置。
+6. 记忆笔记：用 add_memory_note 记录新确立的事实与世界规则；被推翻的用 retire_memory_note 撤销。
+7. set_chapter_summary：撰写本章摘要（150 到 400 字：发生了什么、涉及谁、结尾停在哪里）。（必做）
+8. 目标：对照上方的写作目标，若本章完成了某个节点的目的，用 propose_goal_change 提出 complete；若本章使某个节点无法达成，用 drop 并说明原因；若本章在某个计划下打开了新机会，用 create 提出新任务。本章没有推动目标时跳过此步。
+9. 如果正文与设定资料矛盾，或确立了应写入设定的重要内容，用 propose_setting_change 提出建议。
+10. 调用 finish_maintenance，简要报告做了哪些更新。
+
+===== archivist.kickoff.maintenance [10] =====
+【档案维护任务】第13章《夜雨》
+本书写作语言：简体中文（所有记录使用该语言）
+本章已由作者审定为正式文本（见上方正文）。请根据本章内容更新档案：
+1. 如果正文与设定资料矛盾，或确立了应写入设定的重要内容，用 propose_setting_change 提出建议。
+2. 调用 finish_maintenance，简要报告做了哪些更新。
+
+===== archivist.kickoff.maintenance [11] =====
+【档案维护任务】第13章《夜雨》
+本书写作语言：简体中文（所有记录使用该语言）
+本章已由作者审定为正式文本（见上方正文）。请根据本章内容更新档案：
+1. 目标：对照上方的写作目标，若本章完成了某个节点的目的，用 propose_goal_change 提出 complete；若本章使某个节点无法达成，用 drop 并说明原因；若本章在某个计划下打开了新机会，用 create 提出新任务。本章没有推动目标时跳过此步。
+2. 如果正文与设定资料矛盾，或确立了应写入设定的重要内容，用 propose_setting_change 提出建议。
+3. 调用 finish_maintenance，简要报告做了哪些更新。
+
+===== archivist.kickoff.maintenance [12] =====
+【档案维护任务】第13章《夜雨》
+本书写作语言：简体中文（所有记录使用该语言）
+本章已由作者审定为正式文本（见上方正文）。请根据本章内容更新档案：
 1. record_appearances：记录本章出场或被提及的全部实体及其角色（pov、major、minor、mentioned）。（必做）
 2. 实体：新出现且有意义的人物、组织、地点、物品，用 create_entity 创建；已有实体的**状态、属性或身份**发生变化，用 update_entity 更新，并写明 note。**不要**因为本章剧情而更新 description：description 只在实体被永久重新定义时才动。
    - description 是稳定档案（这是什么、出身背景、长期不变的外貌、性格与能力），不是章节日志，整体保持在约 120 字以内。本章的进展写进 state 与 add_memory_note、add_timeline_event；单项事实（修为、官职、年龄等）写进 attributes；不要把它们追加到 description。
@@ -474,7 +609,130 @@ expression: rendered
 6. 伏笔：大纲中明确规划的悬念，可以用 add_foreshadowing 记录（planned_payoff 写回收方向）。
 只记录设定资料中明确写出的内容，不要补充设定里没有的信息。完成后调用 finish_maintenance。
 
+===== archivist.kickoff.seed [1] =====
+【建立初始档案】
+本书写作语言：简体中文（所有记录使用该语言）
+
+本书刚刚完成构思，还没有正文。请根据上方的设定资料建立初始档案：
+1. 世界规则与事实：用 add_memory_note 记录世界观中的核心规则（kind=world_rule）与重要的背景事实（kind=fact），重要的设为高重要度。
+2. 时间线：设定中明确的背景事件（故事开始之前发生的事）按时间先后加入时间线。
+3. 伏笔：大纲中明确规划的悬念，可以用 add_foreshadowing 记录（planned_payoff 写回收方向）。
+只记录设定资料中明确写出的内容，不要补充设定里没有的信息。完成后调用 finish_maintenance。
+
+===== archivist.kickoff.seed [2] =====
+【建立初始档案】
+本书写作语言：简体中文（所有记录使用该语言）
+
+本书刚刚完成构思，还没有正文。请根据上方的设定资料建立初始档案：
+1. 人物：为人物设定中的每个人物创建实体（kind=character）。排第一位的主角设置 is_protagonist=true；重要度依据排名与定位；summary、description、state（故事开始时的状态）与 attributes（年龄、身份、所属、能力等级等）依据设定填写。
+   - 把四种字段分开写，不要把它们都堆进 description：summary 是一句话身份；state 是故事开始那一刻的处境；attributes 逐项记录能拆成单项的事实（年龄、身份、所属、修为或能力等级）；description 只放长期成立的档案信息（出身背景、长期不变的外貌、性格与能力），约 120 字（2 到 4 句）以内，不要写成传记。
+   - description 不是章节日志：设定资料里属于后续剧情的内容不要提前写进去，逐章的进展留给对应章节的档案维护会话记录。
+2. 组织、地点、物品：世界观与大纲中明确提到、后续会反复出现的势力、地点、重要物品，各自创建实体；它们的 description 同样是稳定档案，保持在约 120 字以内。
+3. 关系：根据设定建立人物之间、人物与组织之间的关系（师徒、亲属、所属、敌对等）。
+4. 世界规则与事实：用 add_memory_note 记录世界观中的核心规则（kind=world_rule）与重要的背景事实（kind=fact），重要的设为高重要度。
+5. 伏笔：大纲中明确规划的悬念，可以用 add_foreshadowing 记录（planned_payoff 写回收方向）。
+只记录设定资料中明确写出的内容，不要补充设定里没有的信息。完成后调用 finish_maintenance。
+
+===== archivist.kickoff.seed [3] =====
+【建立初始档案】
+本书写作语言：简体中文（所有记录使用该语言）
+
+本书刚刚完成构思，还没有正文。请根据上方的设定资料建立初始档案：
+1. 人物：为人物设定中的每个人物创建实体（kind=character）。排第一位的主角设置 is_protagonist=true；重要度依据排名与定位；summary、description、state（故事开始时的状态）与 attributes（年龄、身份、所属、能力等级等）依据设定填写。
+   - 把四种字段分开写，不要把它们都堆进 description：summary 是一句话身份；state 是故事开始那一刻的处境；attributes 逐项记录能拆成单项的事实（年龄、身份、所属、修为或能力等级）；description 只放长期成立的档案信息（出身背景、长期不变的外貌、性格与能力），约 120 字（2 到 4 句）以内，不要写成传记。
+   - description 不是章节日志：设定资料里属于后续剧情的内容不要提前写进去，逐章的进展留给对应章节的档案维护会话记录。
+2. 组织、地点、物品：世界观与大纲中明确提到、后续会反复出现的势力、地点、重要物品，各自创建实体；它们的 description 同样是稳定档案，保持在约 120 字以内。
+3. 关系：根据设定建立人物之间、人物与组织之间的关系（师徒、亲属、所属、敌对等）。
+4. 时间线：设定中明确的背景事件（故事开始之前发生的事）按时间先后加入时间线。
+5. 伏笔：大纲中明确规划的悬念，可以用 add_foreshadowing 记录（planned_payoff 写回收方向）。
+只记录设定资料中明确写出的内容，不要补充设定里没有的信息。完成后调用 finish_maintenance。
+
+===== archivist.kickoff.seed [4] =====
+【建立初始档案】
+本书写作语言：简体中文（所有记录使用该语言）
+
+本书刚刚完成构思，还没有正文。请根据上方的设定资料建立初始档案：
+1. 人物：为人物设定中的每个人物创建实体（kind=character）。排第一位的主角设置 is_protagonist=true；重要度依据排名与定位；summary、description、state（故事开始时的状态）与 attributes（年龄、身份、所属、能力等级等）依据设定填写。
+   - 把四种字段分开写，不要把它们都堆进 description：summary 是一句话身份；state 是故事开始那一刻的处境；attributes 逐项记录能拆成单项的事实（年龄、身份、所属、修为或能力等级）；description 只放长期成立的档案信息（出身背景、长期不变的外貌、性格与能力），约 120 字（2 到 4 句）以内，不要写成传记。
+   - description 不是章节日志：设定资料里属于后续剧情的内容不要提前写进去，逐章的进展留给对应章节的档案维护会话记录。
+2. 组织、地点、物品：世界观与大纲中明确提到、后续会反复出现的势力、地点、重要物品，各自创建实体；它们的 description 同样是稳定档案，保持在约 120 字以内。
+3. 关系：根据设定建立人物之间、人物与组织之间的关系（师徒、亲属、所属、敌对等）。
+4. 世界规则与事实：用 add_memory_note 记录世界观中的核心规则（kind=world_rule）与重要的背景事实（kind=fact），重要的设为高重要度。
+5. 时间线：设定中明确的背景事件（故事开始之前发生的事）按时间先后加入时间线。
+只记录设定资料中明确写出的内容，不要补充设定里没有的信息。完成后调用 finish_maintenance。
+
+===== archivist.kickoff.seed [5] =====
+【建立初始档案】
+本书写作语言：简体中文（所有记录使用该语言）
+
+本书刚刚完成构思，还没有正文。请根据上方的设定资料建立初始档案：
+只记录设定资料中明确写出的内容，不要补充设定里没有的信息。完成后调用 finish_maintenance。
+
 ===== archivist.kickoff.resync [0] =====
+【档案同步任务】第13章《夜雨》
+本书写作语言：简体中文（所有记录使用该语言）
+作者在本章建档之后修改了正文，变化见上方的“正文变更”。请让档案与新的正文保持一致：
+- 检查变更涉及的实体、关系、时间线事件、记忆笔记与伏笔，必要时更新、结束或撤销；
+- description 是稳定档案，不是章节日志，整体保持约 120 字（2 到 4 句）以内。本章的情节进展用 state、attributes、add_memory_note 与 add_timeline_event 记录，不要追加到 description；只有改动永久改变了某个实体时，才用 description_append，且追加后整体仍应控制在约 120 字内。原文已经接近或超过这个长度时，用 description 改写成更紧凑的版本，而不是继续追加；
+- 上方只列出了变化的段落。需要全文时（重新记录出场、改写摘要），先用 read_chapter（chapter="#45"）阅读本章当前的全文；
+- 出场人物有变化时，重新调用 record_appearances，提供本章完整的出场列表（它会替换原有记录），而不只是变化的部分；
+- 有必要时更新本章摘要（set_chapter_summary，摘要概括全章）；
+- 完成后调用 finish_maintenance。
+不要改动与本次变更无关的记录。
+
+===== archivist.kickoff.resync [1] =====
+【档案同步任务】第13章《夜雨》
+本书写作语言：简体中文（所有记录使用该语言）
+作者在本章建档之后修改了正文，变化见上方的“正文变更”。请让档案与新的正文保持一致：
+- 检查变更涉及的时间线事件、记忆笔记与伏笔，必要时更新、结束或撤销；
+- 上方只列出了变化的段落。需要全文时（改写摘要），先用 read_chapter（chapter="#45"）阅读本章当前的全文；
+- 有必要时更新本章摘要（set_chapter_summary，摘要概括全章）；
+- 完成后调用 finish_maintenance。
+不要改动与本次变更无关的记录。
+
+===== archivist.kickoff.resync [2] =====
+【档案同步任务】第13章《夜雨》
+本书写作语言：简体中文（所有记录使用该语言）
+作者在本章建档之后修改了正文，变化见上方的“正文变更”。请让档案与新的正文保持一致：
+- 检查变更涉及的实体、关系、记忆笔记与伏笔，必要时更新、结束或撤销；
+- description 是稳定档案，不是章节日志，整体保持约 120 字（2 到 4 句）以内。本章的情节进展用 state、attributes、add_memory_note 与 add_timeline_event 记录，不要追加到 description；只有改动永久改变了某个实体时，才用 description_append，且追加后整体仍应控制在约 120 字内。原文已经接近或超过这个长度时，用 description 改写成更紧凑的版本，而不是继续追加；
+- 上方只列出了变化的段落。需要全文时（重新记录出场、改写摘要），先用 read_chapter（chapter="#45"）阅读本章当前的全文；
+- 出场人物有变化时，重新调用 record_appearances，提供本章完整的出场列表（它会替换原有记录），而不只是变化的部分；
+- 有必要时更新本章摘要（set_chapter_summary，摘要概括全章）；
+- 完成后调用 finish_maintenance。
+不要改动与本次变更无关的记录。
+
+===== archivist.kickoff.resync [3] =====
+【档案同步任务】第13章《夜雨》
+本书写作语言：简体中文（所有记录使用该语言）
+作者在本章建档之后修改了正文，变化见上方的“正文变更”。请让档案与新的正文保持一致：
+- 检查变更涉及的实体、关系、时间线事件与伏笔，必要时更新、结束或撤销；
+- description 是稳定档案，不是章节日志，整体保持约 120 字（2 到 4 句）以内。本章的情节进展用 state、attributes、add_memory_note 与 add_timeline_event 记录，不要追加到 description；只有改动永久改变了某个实体时，才用 description_append，且追加后整体仍应控制在约 120 字内。原文已经接近或超过这个长度时，用 description 改写成更紧凑的版本，而不是继续追加；
+- 上方只列出了变化的段落。需要全文时（重新记录出场），先用 read_chapter（chapter="#45"）阅读本章当前的全文；
+- 出场人物有变化时，重新调用 record_appearances，提供本章完整的出场列表（它会替换原有记录），而不只是变化的部分；
+- 完成后调用 finish_maintenance。
+不要改动与本次变更无关的记录。
+
+===== archivist.kickoff.resync [4] =====
+【档案同步任务】第13章《夜雨》
+本书写作语言：简体中文（所有记录使用该语言）
+作者在本章建档之后修改了正文，变化见上方的“正文变更”。请让档案与新的正文保持一致：
+- 检查变更涉及的实体、关系、时间线事件与记忆笔记，必要时更新、结束或撤销；
+- description 是稳定档案，不是章节日志，整体保持约 120 字（2 到 4 句）以内。本章的情节进展用 state、attributes、add_memory_note 与 add_timeline_event 记录，不要追加到 description；只有改动永久改变了某个实体时，才用 description_append，且追加后整体仍应控制在约 120 字内。原文已经接近或超过这个长度时，用 description 改写成更紧凑的版本，而不是继续追加；
+- 上方只列出了变化的段落。需要全文时（重新记录出场、改写摘要），先用 read_chapter（chapter="#45"）阅读本章当前的全文；
+- 出场人物有变化时，重新调用 record_appearances，提供本章完整的出场列表（它会替换原有记录），而不只是变化的部分；
+- 有必要时更新本章摘要（set_chapter_summary，摘要概括全章）；
+- 完成后调用 finish_maintenance。
+不要改动与本次变更无关的记录。
+
+===== archivist.kickoff.resync [5] =====
+【档案同步任务】第13章《夜雨》
+本书写作语言：简体中文（所有记录使用该语言）
+作者在本章建档之后修改了正文，变化见上方的“正文变更”。请让档案与新的正文保持一致：
+- 完成后调用 finish_maintenance。
+不要改动与本次变更无关的记录。
+
+===== archivist.kickoff.resync [6] =====
 【档案同步任务】第13章《夜雨》
 本书写作语言：简体中文（所有记录使用该语言）
 作者在本章建档之后修改了正文，变化见上方的“正文变更”。请让档案与新的正文保持一致：
@@ -946,30 +1204,33 @@ expression: rendered
 请让收集的资料服务于这部作品的创作需要。
 
 ===== block.canon_systems [0] =====
-# 未启用的档案系统
 
-本书关闭了以下档案系统。它们的记录不会出现在上下文中，相关工具不会出现在工具列表中，search_canon 也不会返回它们的内容；如果某个工具的 entities 参数属于已关闭的实体系统，请保持为空。
-- 实体：人物、组织、地点、物品、关系与出场记录均不可用。
 
 ===== block.canon_systems [1] =====
 # 未启用的档案系统
 
 本书关闭了以下档案系统。它们的记录不会出现在上下文中，相关工具不会出现在工具列表中，search_canon 也不会返回它们的内容；如果某个工具的 entities 参数属于已关闭的实体系统，请保持为空。
-- 时间线：事件记录与时间顺序查询不可用。
+- 实体：人物、组织、地点、物品、关系与出场记录均不可用。
 
 ===== block.canon_systems [2] =====
 # 未启用的档案系统
 
 本书关闭了以下档案系统。它们的记录不会出现在上下文中，相关工具不会出现在工具列表中，search_canon 也不会返回它们的内容；如果某个工具的 entities 参数属于已关闭的实体系统，请保持为空。
-- 记忆：章节摘要、笔记与前后文记忆不可用。
+- 时间线：事件记录与时间顺序查询不可用。
 
 ===== block.canon_systems [3] =====
 # 未启用的档案系统
 
 本书关闭了以下档案系统。它们的记录不会出现在上下文中，相关工具不会出现在工具列表中，search_canon 也不会返回它们的内容；如果某个工具的 entities 参数属于已关闭的实体系统，请保持为空。
-- 伏笔：已埋设的伏笔与回收状态不可用。
+- 记忆：章节摘要、笔记与前后文记忆不可用。
 
 ===== block.canon_systems [4] =====
+# 未启用的档案系统
+
+本书关闭了以下档案系统。它们的记录不会出现在上下文中，相关工具不会出现在工具列表中，search_canon 也不会返回它们的内容；如果某个工具的 entities 参数属于已关闭的实体系统，请保持为空。
+- 伏笔：已埋设的伏笔与回收状态不可用。
+
+===== block.canon_systems [5] =====
 # 未启用的档案系统
 
 本书关闭了以下档案系统。它们的记录不会出现在上下文中，相关工具不会出现在工具列表中，search_canon 也不会返回它们的内容；如果某个工具的 entities 参数属于已关闭的实体系统，请保持为空。
@@ -993,6 +1254,89 @@ expression: rendered
 <foreshadowing>#9 黑衣人的剑穗</foreshadowing>
 </task>
 还有 2 个相关目标未显示。
+
+===== block.goals [1] =====
+# 写作目标
+
+以下是作者为本章设置的相关写作目标。每个目标的 purpose 说明它为何存在、要达成什么；大纲与正文必须服务于任务的目的，目的应通过故事实现，绝不在正文中直接说明。审查者会判断本章是否服务于这些目标；档案员按节点编号引用目标。
+
+<plan id="8" title="守住剑冢" chapters="第10–15章">
+<purpose>让林凡在宗门倾覆前守住最后的传承。</purpose>
+<entities>苏婉(#21)</entities>
+<events>#3 宗门夜变</events>
+</plan>
+<task id="12" title="找回断剑" chapters="第13章" overdue="true">
+<purpose>用断剑证明林凡的继承者身份。</purpose>
+<foreshadowing>#9 黑衣人的剑穗</foreshadowing>
+</task>
+还有 2 个相关目标未显示。
+
+===== block.goals [2] =====
+# 写作目标
+
+以下是作者为本章设置的相关写作目标。每个目标的 purpose 说明它为何存在、要达成什么；大纲与正文必须服务于任务的目的，目的应通过故事实现，绝不在正文中直接说明。审查者会判断本章是否服务于这些目标；档案员按节点编号引用目标。
+
+<plan id="8" title="守住剑冢" chapters="第10–15章">
+<purpose>让林凡在宗门倾覆前守住最后的传承。</purpose>
+<entities>苏婉(#21)</entities>
+<events>#3 宗门夜变</events>
+</plan>
+<task id="12" title="找回断剑" chapters="第13章" overdue="true">
+<purpose>用断剑证明林凡的继承者身份。</purpose>
+<foreshadowing>#9 黑衣人的剑穗</foreshadowing>
+</task>
+还有 2 个相关目标未显示。
+
+===== block.goals [3] =====
+# 写作目标
+
+以下是作者为本章设置的相关写作目标。每个目标的 purpose 说明它为何存在、要达成什么；大纲与正文必须服务于任务的目的，目的应通过故事实现，绝不在正文中直接说明。审查者会判断本章是否服务于这些目标；档案员按节点编号引用目标。
+
+<plan id="8" title="守住剑冢" chapters="第10–15章">
+<purpose>让林凡在宗门倾覆前守住最后的传承。</purpose>
+<entities>苏婉(#21)</entities>
+<events>#3 宗门夜变</events>
+</plan>
+<task id="12" title="找回断剑" chapters="第13章" overdue="true">
+<purpose>用断剑证明林凡的继承者身份。</purpose>
+<foreshadowing>#9 黑衣人的剑穗</foreshadowing>
+</task>
+还有 2 个相关目标未显示。
+
+===== block.goals [4] =====
+# 写作目标
+
+以下是作者为本章设置的相关写作目标。每个目标的 purpose 说明它为何存在、要达成什么；大纲与正文必须服务于任务的目的，目的应通过故事实现，绝不在正文中直接说明。审查者会判断本章是否服务于这些目标；档案员按节点编号引用目标。
+
+<plan id="8" title="守住剑冢" chapters="第10–15章">
+<purpose>让林凡在宗门倾覆前守住最后的传承。</purpose>
+<entities>苏婉(#21)</entities>
+<events>#3 宗门夜变</events>
+</plan>
+<task id="12" title="找回断剑" chapters="第13章" overdue="true">
+<purpose>用断剑证明林凡的继承者身份。</purpose>
+<foreshadowing>#9 黑衣人的剑穗</foreshadowing>
+</task>
+还有 2 个相关目标未显示。
+
+===== block.goals [5] =====
+# 写作目标
+
+以下是作者为本章设置的相关写作目标。每个目标的 purpose 说明它为何存在、要达成什么；大纲与正文必须服务于任务的目的，目的应通过故事实现，绝不在正文中直接说明。审查者会判断本章是否服务于这些目标；档案员按节点编号引用目标。
+
+<plan id="8" title="守住剑冢" chapters="第10–15章">
+<purpose>让林凡在宗门倾覆前守住最后的传承。</purpose>
+<entities>苏婉(#21)</entities>
+<events>#3 宗门夜变</events>
+</plan>
+<task id="12" title="找回断剑" chapters="第13章" overdue="true">
+<purpose>用断剑证明林凡的继承者身份。</purpose>
+<foreshadowing>#9 黑衣人的剑穗</foreshadowing>
+</task>
+还有 2 个相关目标未显示。
+
+===== block.goals [6] =====
+
 
 ===== shared.label [0] =====
 人物
@@ -1044,6 +1388,12 @@ expression: rendered
 
 ===== shared.label [16] =====
 xx
+
+===== shared.label [17] =====
+目标
+
+===== shared.label [18] =====
+计划
 
 ===== shared.chapter_label [0] =====
 第12章《剑冢》

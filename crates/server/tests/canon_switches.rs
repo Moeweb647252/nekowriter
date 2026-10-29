@@ -29,7 +29,11 @@ struct Fixture {
 /// A book with one official prior chapter and one target chapter, plus one unique row for each
 /// canon system and one relevant goal node. The names never appear in the packed prompts.
 async fn fixture() -> Fixture {
-    let runtime = agent_harness::runtime(idle_provider()).await;
+    fixture_with_steps(idle_provider()).await
+}
+
+async fn fixture_with_steps(steps: Vec<ScriptStep>) -> Fixture {
+    let runtime = agent_harness::runtime(steps).await;
     let first_id = runtime.chapter_id;
     let target = runtime
         .app
@@ -313,6 +317,82 @@ async fn memory_off_keeps_the_write_outline() {
 }
 
 #[tokio::test]
+async fn search_canon_uses_the_sessions_frozen_kinds_after_a_flip() {
+    let fixture = fixture_with_steps(vec![
+        ScriptStep::new().tool("search_canon", json!({ "query": "独有记忆笔记内容" })),
+    ])
+    .await;
+    nekowriter::services::indexer::run_once(fixture.runtime.app.state())
+        .await
+        .expect("index canon");
+    let session_id = create(&fixture, SessionKind::ChapterOutline).await;
+    set_systems(
+        &fixture,
+        &CanonSystems {
+            memory: false,
+            ..Default::default()
+        },
+    )
+    .await;
+    fixture.runtime.wait_any_status(session_id).await;
+    let call = fixture
+        .runtime
+        .app
+        .get(&format!("/api/sessions/{session_id}"))
+        .await
+        .1["tool_calls"]
+        .as_array()
+        .expect("tool calls")
+        .iter()
+        .find(|call| call["name"] == "search_canon")
+        .cloned()
+        .expect("the search_canon call");
+    assert_eq!(call["is_error"], false, "search_canon failed: {call}");
+    assert!(
+        call["result_text"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("独有记忆笔记内容"),
+        "the frozen all-on session must still search Memory after the book flip: {call}"
+    );
+}
+
+#[tokio::test]
+async fn memory_off_keeps_the_outline_with_a_blank_draft_override() {
+    let fixture = fixture().await;
+    set_systems(
+        &fixture,
+        &CanonSystems {
+            memory: false,
+            ..Default::default()
+        },
+    )
+    .await;
+    let (status, body) = fixture
+        .runtime
+        .app
+        .put(
+            "/api/prompts/block.chapter_draft",
+            json!({
+                "scope": "book",
+                "book_id": fixture.runtime.book_id,
+                "content": "",
+            }),
+        )
+        .await;
+    assert_eq!(
+        status, 200,
+        "save blank block.chapter_draft override: {body}"
+    );
+    let session_id = create(&fixture, SessionKind::ChapterWrite).await;
+    let kickoff = kickoff_text(&fixture, session_id).await;
+    assert!(
+        kickoff.contains("本章章纲：独孤影在渡口拦住沈砚。"),
+        "the memory block must echo the outline when block.chapter_draft is blank:\n{kickoff}"
+    );
+}
+
+#[tokio::test]
 async fn turning_a_system_back_on_restores_everything() {
     let fixture = fixture().await;
     set_systems(
@@ -335,6 +415,41 @@ async fn turning_a_system_back_on_restores_everything() {
     assert!(on_kickoff.contains("萧无咎"));
     assert!(on_kickoff.contains("旧伤未愈"));
     assert_tool(&frozen_tools(&fixture, on_id).await, "get_entity", true);
+}
+
+#[tokio::test]
+async fn rollover_respects_the_frozen_goals_switch() {
+    let fixture = fixture().await;
+    set_systems(
+        &fixture,
+        &CanonSystems {
+            goals: false,
+            ..Default::default()
+        },
+    )
+    .await;
+    let parent_id = create(&fixture, SessionKind::ChapterWrite).await;
+    let parent = nekowriter::agent::session::load(fixture.runtime.app.db().conn(), parent_id)
+        .await
+        .expect("parent");
+    nekowriter::agent::context::rollover(fixture.runtime.app.state(), &parent)
+        .await
+        .expect("rollover");
+    let child_id = scalar_i64(
+        &fixture,
+        &format!("SELECT id AS value FROM agent_sessions WHERE parent_session_id = {parent_id}"),
+    )
+    .await as i32;
+    let child_kickoff = kickoff_text(&fixture, child_id).await;
+    assert!(
+        !child_kickoff.contains("独有目标节点"),
+        "the rollover child leaked the disabled goals block:\n{child_kickoff}"
+    );
+    assert_tool(
+        &frozen_tools(&fixture, child_id).await,
+        "propose_goal_change",
+        false,
+    );
 }
 
 #[tokio::test]
@@ -420,6 +535,207 @@ async fn canon_counts_and_the_memory_view_report_the_book_systems() {
             .as_str()
             .unwrap_or_default()
             .contains("独有记忆笔记内容")
+    );
+}
+
+#[tokio::test]
+async fn block_goals_renders_links_and_caps_at_thirty() {
+    let fixture = fixture().await;
+    let book = fixture.runtime.book_id;
+    // Link the one goal to its entity/event/hook; then add enough tasks to reach the cap.
+    fixture
+        .runtime
+        .app
+        .execute(
+            "INSERT INTO goal_node_entities(node_id, entity_id) VALUES (1, 1); \
+             INSERT INTO goal_node_events(node_id, event_id) VALUES (1, 1); \
+             INSERT INTO goal_node_foreshadowing(node_id, foreshadowing_id) VALUES (1, 1);",
+        )
+        .await;
+    let mut rows = String::new();
+    for i in 2..=36 {
+        rows.push_str(&format!(
+            "INSERT INTO goal_nodes(book_id, track_id, level, parent_id, title, purpose, status, \
+             chapter_from, chapter_to, conditions, created_at, updated_at) VALUES \
+             ({book}, NULL, 'task', NULL, '额外目标{i}', '额外目的{i}', 'active', 1, NULL, '[]', \
+             '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');\n"
+        ));
+    }
+    fixture.runtime.app.execute(&rows).await;
+
+    let session_id = create(&fixture, SessionKind::ChapterMaintenance).await;
+    let kickoff = kickoff_text(&fixture, session_id).await;
+    assert!(
+        kickoff.contains("<entities>萧无咎(#1)</entities>"),
+        "{kickoff}"
+    );
+    assert!(kickoff.contains("#1 独有时间线事件"), "{kickoff}");
+    assert!(kickoff.contains("#1 独有伏笔标题"), "{kickoff}");
+    assert!(
+        kickoff.contains("还有"),
+        "the omitted count must render: {kickoff}"
+    );
+    assert!(
+        kickoff.matches("<task").count() <= 30,
+        "the block.goals cap was exceeded: {kickoff}"
+    );
+}
+
+#[tokio::test]
+async fn isolated_memory_only_and_entities_only_maintenance_complete() {
+    for systems in [
+        CanonSystems {
+            memory: true,
+            entities: false,
+            timeline: false,
+            foreshadowing: false,
+            goals: false,
+        },
+        CanonSystems {
+            entities: true,
+            timeline: false,
+            memory: false,
+            foreshadowing: false,
+            goals: false,
+        },
+    ] {
+        let steps = if systems.entities {
+            vec![
+                ScriptStep::new().tool(
+                    "create_entity",
+                    json!({ "kind": "character", "name": "番外角色", "summary": "独立番外角色。" }),
+                ),
+                ScriptStep::new().tool(
+                    "record_appearances",
+                    json!({ "appearances": [ { "entity": "番外角色", "role": "pov" } ] }),
+                ),
+                ScriptStep::new().tool(
+                    "finish_maintenance",
+                    json!({ "report": "独立番外维护完成。" }),
+                ),
+                ScriptStep::new().tool(
+                    "finish_maintenance",
+                    json!({ "report": "独立番外维护完成。" }),
+                ),
+            ]
+        } else {
+            vec![
+                ScriptStep::new().tool(
+                    "set_chapter_summary",
+                    json!({ "summary": "独立番外摘要。" }),
+                ),
+                ScriptStep::new().tool(
+                    "finish_maintenance",
+                    json!({ "report": "独立番外维护完成。" }),
+                ),
+                ScriptStep::new().tool(
+                    "finish_maintenance",
+                    json!({ "report": "独立番外维护完成。" }),
+                ),
+            ]
+        };
+        let runtime = agent_harness::runtime(steps).await;
+        let book = runtime.book_id;
+        let (status, track) = runtime
+            .app
+            .post(
+                &format!("/api/books/{book}/tracks"),
+                json!({
+                    "title": "Side",
+                    "synopsis": "",
+                    "canon_mode": "isolated",
+                    "anchor_kind": "before_start",
+                }),
+            )
+            .await;
+        assert_eq!(status, 201, "track: {track}");
+        let track_id = track["id"].as_i64().expect("track id") as i32;
+        let chapter = runtime.app.create_chapter(track_id, "Side One").await;
+        let chapter_id = chapter["id"].as_i64().expect("chapter id") as i32;
+        let (status, body) = runtime
+            .app
+            .patch(
+                &format!("/api/books/{book}"),
+                json!({ "settings": { "canon_systems": systems } }),
+            )
+            .await;
+        assert_eq!(status, 200, "settings: {body}");
+        let (session_id, _warnings) = sessions::create(
+            runtime.app.state(),
+            CreateSession {
+                kind: SessionKind::ChapterMaintenance,
+                book_id: Some(book),
+                chapter_id: Some(chapter_id),
+                ..CreateSession::default()
+            },
+        )
+        .await
+        .expect("maintenance session");
+        let row = runtime.wait_any_status(session_id).await;
+        let (_, detail) = runtime
+            .app
+            .get(&format!("/api/sessions/{session_id}"))
+            .await;
+        assert_eq!(
+            row.status, "completed",
+            "isolated maintenance failed: {:?}\n{detail}",
+            row.error
+        );
+        let row = runtime
+            .app
+            .db()
+            .conn()
+            .query_one_raw(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "SELECT canon_status AS value FROM chapters WHERE id = ?",
+                vec![chapter_id.into()],
+            ))
+            .await
+            .expect("chapter")
+            .expect("row");
+        let canon_status: Option<String> = row.try_get("", "value").expect("status");
+        assert_eq!(canon_status.as_deref(), Some("synced"));
+    }
+}
+
+#[tokio::test]
+async fn overview_rule_two_is_gated_on_entities() {
+    let runtime = agent_harness::runtime(idle_provider()).await;
+    let book = runtime.book_id;
+    runtime
+        .app
+        .execute(&format!(
+            "INSERT INTO character_designs(book_id, rank, name, role_label, summary, profile, \
+             entity_id, created_at, updated_at) VALUES ({book}, 1, '主角设计', '主角', '', '', \
+             NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ))
+        .await;
+    let (status, overview) = runtime
+        .app
+        .get(&format!("/api/books/{book}/overview"))
+        .await;
+    assert_eq!(status, 200, "overview: {overview}");
+    assert_eq!(overview["next_action"]["kind"], "seed_canon");
+
+    let (_, current) = runtime.app.get(&format!("/api/books/{book}")).await;
+    let mut settings = current["settings"].clone();
+    settings["canon_systems"] = json!({ "entities": false });
+    let (status, body) = runtime
+        .app
+        .patch(
+            &format!("/api/books/{book}"),
+            json!({ "settings": settings }),
+        )
+        .await;
+    assert_eq!(status, 200, "settings: {body}");
+    let (status, overview) = runtime
+        .app
+        .get(&format!("/api/books/{book}/overview"))
+        .await;
+    assert_eq!(status, 200, "overview: {overview}");
+    assert_ne!(
+        overview["next_action"]["kind"], "seed_canon",
+        "rule 2 must not offer seed_canon with Entities off: {overview}"
     );
 }
 

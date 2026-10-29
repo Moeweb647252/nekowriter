@@ -243,10 +243,14 @@ pub fn tools_for_session(
     kind: SessionKind,
     systems: &CanonSystems,
     has_relevant_goals: bool,
+    registry: &ToolRegistry,
 ) -> Vec<&'static str> {
     tools_for_role(role)
         .iter()
         .copied()
+        .filter(|tool| registry.has(tool))
+        // `propose_goal_change` has no handler yet; it stays out of every frozen list until
+        // 13.6 registers it (the prompt key already exists, the gate below is ready for it).
         .filter(|tool| match *tool {
             "search_canon" => systems.any_search_system(),
             "propose_goal_change" => {
@@ -486,11 +490,19 @@ mod tests {
     #[test]
     fn switch_filtering_keeps_the_fixed_order_and_the_archivist_list_grows_to_22() {
         let all = CanonSystems::default();
-        let full = tools_for_session("archivist", SessionKind::ChapterMaintenance, &all, true);
-        assert_eq!(full.len(), 22);
-        assert_eq!(full[19], "propose_goal_change");
-        assert_eq!(full[20], "propose_setting_change");
-        assert_eq!(full[21], "finish_maintenance");
+        let full = tools_for_session(
+            "archivist",
+            SessionKind::ChapterMaintenance,
+            &all,
+            true,
+            &ToolRegistry::new(),
+        );
+        // `propose_goal_change` is gated but has no handler until 13.6, so it is not frozen.
+        assert!(!ToolRegistry::new().has("propose_goal_change"));
+        assert_eq!(full.len(), 21);
+        assert!(!full.contains(&"propose_goal_change"));
+        assert_eq!(full[19], "propose_setting_change");
+        assert_eq!(full[20], "finish_maintenance");
 
         let no_entities = CanonSystems {
             entities: false,
@@ -501,6 +513,7 @@ mod tests {
             SessionKind::ChapterMaintenance,
             &no_entities,
             true,
+            &ToolRegistry::new(),
         );
         let expected: Vec<&str> = full
             .iter()
@@ -525,7 +538,13 @@ mod tests {
             foreshadowing: false,
             goals: false,
         };
-        let bare = tools_for_session("archivist", SessionKind::ChapterMaintenance, &all_off, true);
+        let bare = tools_for_session(
+            "archivist",
+            SessionKind::ChapterMaintenance,
+            &all_off,
+            true,
+            &ToolRegistry::new(),
+        );
         assert!(!bare.contains(&"search_canon"));
         assert!(!bare.contains(&"propose_goal_change"));
         assert!(bare.contains(&"propose_setting_change"));
