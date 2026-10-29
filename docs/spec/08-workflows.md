@@ -149,7 +149,9 @@ Proposals never block writing.
    ` / ` (model-written text and a language-neutral separator, so no wording is generated in
    code); the author can edit it.
 5. Start `canon_seed` if an archivist model is configured (otherwise return
-   `warnings: ["model.missing_role"]`; the overview offers **Seed canon** later).
+   `warnings: ["model.missing_role"]`; the overview offers **Seed canon** later) and at least one
+   of Entities, Timeline, Memory and Foreshadowing is on in the book's `canon_systems`. With all
+   four off there is nothing to seed: no session and no warning (spec/06 §7).
 6. Response: `{book, seed_session_id?, warnings}`. The UI navigates to the book overview.
 
 Books created with `start_conception: false` start `active`, with empty setting materials that the
@@ -189,8 +191,10 @@ is one, otherwise it starts one.
 `GET /api/books/:id/overview` returns:
 - `next_action` (first match):
   1. `conceiving` → `continue_conception`;
-  2. no `canon_seed` session has completed (never run, failed, or abandoned), and the book has
-     character designs but no entities → `seed_canon`;
+  2. Entities is on in the book's `canon_systems`, no `canon_seed` session has completed (never
+     run, failed, or abandoned), and the book has character designs but no entities →
+     `seed_canon`. Without the Entities condition, a book with Entities off would be offered
+     seeding forever (D-150);
   3. at least one research task of the book is `ready` → `run_research {ready_research,
      research_task_id?}`. This is the knowledge-accumulation step of PROJECT §8.4 F2 step 6: after
      finalize the overview suggests running the research tasks the conception created, because the
@@ -224,7 +228,14 @@ is one, otherwise it starts one.
 - `attention[]`: open sessions in `held`, `awaiting_input`, `paused`, `failed`, `interrupted`,
   `stopped`; chapters in review; canon not synced; pending proposals (count); ready research tasks
   (count, `ready` only — the same set rule 3 counts, so a deferred task produces no row: it does
-  not demand action, the author already decided to postpone it).
+  not demand action, the author already decided to postpone it); **ready goals** (count of goal
+  nodes of the book, any scope, that are `ready` or `closable` per spec/06 §11.3; only while Goals
+  is on; links to the Goals page's Ready filter).
+- **`next_action.ready_goals`**: the same count, set on `write_outline`, `write_chapter` and
+  `write_next` when it is > 0 and Goals is on. The card shows it as a secondary line with the same
+  link. Ready goals are deliberately **not** a next-action rule. A node stays ready until the
+  author acts on it, so a first-match rule would hide the next chapter behind it: the dead end
+  research tasks needed `defer` to escape (D-138, D-150).
 - `progress`: chapter counts per status and track, official word count, total word count.
 - `recent_changes`: the latest 10 change log entries.
 - `usage`: the token totals of the book's sessions.

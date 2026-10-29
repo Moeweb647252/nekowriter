@@ -14,7 +14,7 @@
 | [spec/09-prompts.md](spec/09-prompts.md) | Prompt registry: pack layout, keys, resolution, overrides, authoring rules |
 | [spec/10-api.md](spec/10-api.md) | REST endpoints, DTOs, server-sent events, error codes |
 | [spec/11-frontend.md](spec/11-frontend.md) | Scaffold commands, structure, routing, data layer, stores, components, i18n, visual details |
-| [PLAN.md](PLAN.md) | Milestones M0–M11 with tasks, acceptance criteria, smoke checklist |
+| [PLAN.md](PLAN.md) | Milestones M0–M13 with tasks, acceptance criteria, smoke checklist |
 | [DECISIONS.md](DECISIONS.md) | Decision log |
 
 Reading order for implementers: `../AGENTS.md` → PROJECT → spec 01–03 → the specs referenced by

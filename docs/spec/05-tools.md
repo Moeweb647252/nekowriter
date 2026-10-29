@@ -97,6 +97,9 @@ At session creation, for each tool in the role's list (§2): take the definition
 - Every reference to a chapter is rendered as its label (`第12章《标题》`, side tracks
   `番外《轨道名》第2章`) via the `chapter_label` helper.
 - Entities are rendered as `名字(#id)`.
+- `result.finish_maintenance` receives `proposals` (setting proposals of the session) and
+  `goal_proposals` (goal proposals of the session) separately, so a goal proposal is never
+  reported as a setting change. With no goal proposals the text is unchanged.
 - `result.writer_control` also receives `staged` (boolean). For `submit_outline` in a
   `chapter_outline` session it is true and the result says the outline was submitted and takes
   effect when the author accepts it — never that it was saved. For a legacy `chapter_write` /
@@ -127,7 +130,7 @@ At session creation, for each tool in the role's list (§2): take the definition
   | `result.draft_edit` (`action` = tool) | DRAFT_EDIT tools |
   | `result.writer_control` (`action` = tool) | `submit_outline`, `submit_revision_plan`, `finish_draft`, `finish_revision` |
   | `result.submit_review` | `submit_review` |
-  | `result.canon_write` (`action` = tool) | archivist write tools except `finish_maintenance` |
+  | `result.canon_write` (`action` = tool) | archivist write tools except `finish_maintenance`, including `propose_goal_change` |
   | `result.finish_maintenance` | `finish_maintenance` |
   | `result.ask_user` / `result.request_review` | the answers to `ask_user` / `request_review` |
   | `result.conception_write` (`action` = tool) | `write_setting_doc`, `edit_setting_doc`, `upsert_character`, `remove_character`, `reorder_characters`, `set_research_topics` |
@@ -158,13 +161,33 @@ listing the candidates with ids.
 | planner | `get_entity`, `list_entities`, `get_relations`, `query_timeline`, `list_foreshadowing`, `search_canon`, `search_knowledge`, `read_knowledge_entry`, `search_chapters`, `read_chapter`, `read_draft`, `submit_outline` |
 | writer | `get_entity`, `list_entities`, `get_relations`, `query_timeline`, `list_foreshadowing`, `search_canon`, `search_knowledge`, `read_knowledge_entry`, `search_chapters`, `read_chapter`, `submit_revision_plan`, `read_draft`, `insert_text`, `insert_paragraphs`, `replace_text`, `rewrite_paragraph`, `delete_paragraphs`, `finish_draft`, `finish_revision` |
 | reviewer | `get_entity`, `list_entities`, `get_relations`, `query_timeline`, `list_foreshadowing`, `search_canon`, `search_knowledge`, `read_knowledge_entry`, `search_chapters`, `read_chapter`, `submit_review` |
-| archivist | `get_entity`, `list_entities`, `get_relations`, `query_timeline`, `list_foreshadowing`, `search_canon`, `read_chapter`, `create_entity`, `update_entity`, `set_relation`, `end_relation`, `record_appearances`, `add_timeline_event`, `update_timeline_event`, `add_memory_note`, `retire_memory_note`, `add_foreshadowing`, `resolve_foreshadowing`, `set_chapter_summary`, `propose_setting_change`, `finish_maintenance` |
+| archivist | `get_entity`, `list_entities`, `get_relations`, `query_timeline`, `list_foreshadowing`, `search_canon`, `read_chapter`, `create_entity`, `update_entity`, `set_relation`, `end_relation`, `record_appearances`, `add_timeline_event`, `update_timeline_event`, `add_memory_note`, `retire_memory_note`, `add_foreshadowing`, `resolve_foreshadowing`, `set_chapter_summary`, `propose_goal_change`, `propose_setting_change`, `finish_maintenance` |
 | conception | `ask_user`, `web_search`, `web_fetch`, `write_setting_doc`, `edit_setting_doc`, `upsert_character`, `remove_character`, `reorder_characters`, `set_research_topics`, `request_review` |
 | researcher | `web_search`, `web_fetch`, `search_knowledge`, `read_knowledge_entry`, `save_knowledge_entry`, `update_knowledge_entry`, `finish_research` |
 
 **RETRIEVAL** = the first ten writer tools (`get_entity` … `read_chapter`).
 **DRAFT_EDIT** = `insert_text`, `insert_paragraphs`, `replace_text`, `rewrite_paragraph`,
 `delete_paragraphs`.
+
+**What a session freezes** (D-150). The table above is each role's full list. A session freezes
+that list, in that order, minus:
+- the tools of every canon system that is off in its `canon_systems` (spec/06 §10.1):
+
+  | System | Tools |
+  |---|---|
+  | Entities | `get_entity`, `list_entities`, `get_relations`, `create_entity`, `update_entity`, `set_relation`, `end_relation`, `record_appearances` |
+  | Timeline | `query_timeline`, `add_timeline_event`, `update_timeline_event` |
+  | Memory | `add_memory_note`, `retire_memory_note`, `set_chapter_summary` |
+  | Foreshadowing | `list_foreshadowing`, `add_foreshadowing`, `resolve_foreshadowing` |
+  | Goals | `propose_goal_change` |
+
+- `search_canon`, only when Entities, Timeline, Memory and Foreshadowing are all off;
+- `propose_goal_change`, unless the session is `chapter_maintenance`, Goals is on, and the
+  chapter has relevant goal nodes (the `block.goals` set, spec/06 §11.5).
+
+A book with all five systems on and no relevant goal nodes therefore freezes exactly the pre-D-150
+lists (the archivist's 21 tools). The map lives once in `agent/tools/registry.rs`;
+`scripts/validate_prompts.py` keeps the same map as data.
 
 | Writer phase | Permitted |
 |---|---|
@@ -190,7 +213,7 @@ researcher sessions allow all of their tools.
 | `get_relations` | `entity`*, `other`, `include_ended` (false) | Relation lines with descriptions and since/until chapter labels | `{entity_id, count}` |
 | `query_timeline` | `entity`, `query`, `around_event` (id), `from_chapter`, `to_chapter` (numbers in the main track), `limit` (20, max 50), `order` (`chronological` \| `recent_first`) | Ordered events: `[#id] (story_time) 标题 — 描述 · 第N章 · 涉及：A、B`. With `around_event`: the 5 events before and after it. Anchor marking as above | `{count}` |
 | `list_foreshadowing` | `status` (`open`), `entity`, `limit` (20, max 50) | `[#id] 标题 — 描述 · 埋设于第N章 · 计划回收：…` | `{count}` |
-| `search_canon` | `query`*, `kinds` (subset of `entity`,`note`,`foreshadowing`,`event`,`summary`), `limit` (8, max 20) | Hybrid search (spec/07 §5) over visible search docs except passages: `【类型】标题(#ref) — snippet` | `{query, count}` |
+| `search_canon` | `query`*, `kinds` (subset of `entity`,`note`,`foreshadowing`,`event`,`summary`), `limit` (8, max 20) | Hybrid search (spec/07 §5) over visible search docs except passages: `【类型】标题(#ref) — snippet`. The kinds searched are the requested ones (or all) **intersected with the enabled kinds of the session's frozen `canon_systems`**: `entity` needs Entities, `event` Timeline, `note` and `summary` Memory, `foreshadowing` Foreshadowing. An empty intersection gives the ordinary empty result; `block.canon_systems` has told the model which systems are off | `{query, count}` |
 | `search_knowledge` | `query`*, `scope` (name), `limit` (6, max 15) | Hybrid search over the book's visible scopes (researcher: its target scope only), or over the one named by `scope`, which must be one of them (`error.scope_not_found`, listing the visible names). `[条目#id]《标题》（范围）— snippet ≤400 chars`. No visible scope → `error.no_knowledge_scope` | `{query, count}` |
 | `read_knowledge_entry` | `entry_id`*, `offset` (0) | Title, scope, sources, content from `offset`, ≤ 6,000 characters, plus a continuation hint. The scope must be visible | `{entry_id, title}` |
 | `search_chapters` | `query`*, `limit` (6, max 15) | Hybrid search over official-chapter passages in visible tracks: `第N章《标题》 p12–p15：snippet`. Main-story passages after a side story's anchor are marked | `{query, count}` |
@@ -243,13 +266,15 @@ materials are shared too, so `propose_setting_change` returns `error.isolated_re
 | `resolve_foreshadowing` | `foreshadowing_id`*, `status`* (`resolved` \| `abandoned`), `resolution`* | `resolved_chapter_id` = session chapter |
 | `set_chapter_summary` | `summary`* | Writes `chapters.summary` (150–400 characters recommended; hard limit 2,000) |
 | `propose_setting_change` | `target`* (`outline` \| `world` \| `protagonist` \| `character:<name>` \| `new_character`), `rationale`*, `edits` (array of `{find, replace}`), `append`, `character` (`{name, role_label, summary, profile}` for `new_character`) | Exactly one of `edits` / `append` / `character` (`error.exactly_one`). For `character:<name>`, `edits` and `append` apply to that design's `profile` (unknown name → `error.character_not_found`). Each `find` must currently match exactly once (`error.find_failed`). A `new_character` name that a design already has → `error.character_exists`. Creates a `pending` proposal and emits `proposal.changed` |
-| `finish_maintenance` | `report`* | `chapter_maintenance` requires a summary and recorded appearances; otherwise `error.maintenance_incomplete` lists what is missing. In `chapter_maintenance` only: if the protagonist (for a side track, its focus character when set; spec/06 §4.2) appeared, this session may update them (a shared entity is read-only in an isolated track), and no `update_entity` in this session touched their `state`, the **first** call does not complete: it returns `result.finish_maintenance` with `confirm_needed = true` (not an error; sets `counters.finish_warned`), and the next call completes. Effects: `complete: maintenance` |
+| `propose_goal_change` | `action`* (`create` \| `complete` \| `drop`), `rationale`*, `node` (id; `complete`/`drop`), `parent` (id of a plan; `create`, optional), `title`, `purpose` (`create`, required), `chapter_from`, `chapter_to` (`create`), `entities` (names), `events`, `foreshadowing` (ids) (`create`) | Proposes a change to the author's writing goals (spec/06 §11.6). `complete` / `drop`: the node exists, is visible and is `active` or `waiting`. `create`: a new **task**; `parent`, when given, is an open plan in the session's scope; title, purpose and range follow spec/06 §11.1. Missing fields for the action → `error.validation`; an unknown or invisible `node`/`parent` → `error.not_found` (`what_label` = the level's `target_type` label). In an isolated track only that track's private nodes may be targeted; a shared node → `error.isolated_readonly`. Creates a `pending` proposal (`goal_node` or `new_goal_task`, spec/06 §5) and emits `proposal.changed`. A pending proposal of the same node and status already exists → no new row, and the result names it. Result `result.canon_write` (`action = propose_goal_change`) |
+| `finish_maintenance` | `report`* | `chapter_maintenance` requires recorded appearances when the session's `canon_systems` include **Entities**, and a summary when they include **Memory**; otherwise `error.maintenance_incomplete` lists what is missing. Goals are never required. In `chapter_maintenance` only, and only with Entities in the session's systems: if the protagonist (for a side track, its focus character when set; spec/06 §4.2) appeared, this session may update them (a shared entity is read-only in an isolated track), and no `update_entity` in this session touched their `state`, the **first** call does not complete: it returns `result.finish_maintenance` with `confirm_needed = true` (not an error; sets `counters.finish_warned`), and the next call completes. Effects: `complete: maintenance` |
 
 `ui` for canon writes: `{change_ids: [id], target_type, target_id, name}`, where `name` is the
 target's stored name or title (an entity's name, an event's or a foreshadowing's title, a note's
 first 40 characters, a relation's kind) and is empty for appearance sets and chapter summaries,
-whose `target_id` is the chapter; for proposals `{proposal_id, target}`; for
-`finish_maintenance` `{changes: n, proposals: n}`.
+whose `target_id` is the chapter; for proposals `{proposal_id, target}`; for goal proposals
+`{proposal_id, action, node_id?}`; for `finish_maintenance` `{changes: n, proposals: n,
+goal_proposals: n}`.
 
 ## 7. Conception tools
 
@@ -292,6 +317,11 @@ Past the budget, every result gets `notice.research_budget`.
 - `tools.toml` examples validate against the schema and the Rust struct (compile-time list
   equals the TOML list; no orphan definitions).
 - Phase gating matrix (every tool × every phase).
+- Frozen lists per role × canon systems: each system off removes exactly its tools in order;
+  `search_canon` survives until all four are off; `propose_goal_change` follows its gate.
+- `search_canon` never returns a kind of a system that is off in the session's `canon_systems`.
+- `propose_goal_change`: each action's happy path, missing fields, an unknown node or parent, a
+  closed node, a parent that is not a plan, the isolated rule, the duplicate rule.
 - Entity resolution order and ambiguity.
 - Isolated-track write rules.
 - Granularity matrix for `insert_text` (mode × tail state × flags), including CJK and English

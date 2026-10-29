@@ -45,8 +45,22 @@
   `0005_writing_skills.sql` adds the two writing-skill tables and seeds the built-in
   `basic-writing` row with an empty body (design §4–§5). It touches no existing table, so it runs
   inside the migrator's transaction; the reconciler is deliberately deferred (design §4.2).
+  `0006_goals_and_switches.sql` (D-150) runs outside the migrator's transaction like 0004. With
+  `PRAGMA foreign_keys = OFF` it:
+  - rebuilds `change_log`, whose `target_type` CHECK gains `goal`, `plan`, `task`, and recreates its
+    three indexes;
+  - rebuilds `setting_proposals`, whose `target_type` CHECK gains `goal_node`, `new_goal_task`, and
+    recreates its index;
+  - creates the four goal tables;
+  - adds `agent_sessions.canon_systems` with `ALTER TABLE … ADD COLUMN` (no rebuild).
 
-## 2. Schema (0001_init.sql, upgraded by 0002_research_deferred.sql, 0003, 0004 and 0005)
+  Neither rebuilt table is referenced by another table (`change_log` only by itself), so the guards
+  count the rows of both tables and the two revert links of `change_log`, then require an empty
+  `PRAGMA foreign_key_check`. Nothing is back-filled: `BookSettings` and `book_defaults` without
+  `canon_systems` load with all five systems on (§4), and sessions created before 0006 have
+  `canon_systems = NULL`, which means all on.
+
+## 2. Schema (0001_init.sql, upgraded by 0002_research_deferred.sql, 0003, 0004, 0005 and 0006)
 
 ```sql
 -- ───────────────────────────── App configuration ─────────────────────────────
@@ -182,12 +196,15 @@ CREATE TABLE character_designs (
   UNIQUE (book_id, name)
 );
 
+-- Setting proposals and, since 0006, goal proposals (the table name predates goals; spec/06 §5).
 CREATE TABLE setting_proposals (
   id           INTEGER PRIMARY KEY,
   book_id      INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
-  target_type  TEXT NOT NULL CHECK (target_type IN ('setting_doc','character_design','new_character')),
+  target_type  TEXT NOT NULL CHECK (target_type IN ('setting_doc','character_design','new_character',
+                 'goal_node','new_goal_task')),
   target_kind  TEXT CHECK (target_kind IS NULL OR target_kind IN ('outline','world','protagonist')),
-  target_id    INTEGER,                                 -- character_designs.id
+  target_id    INTEGER,                                 -- character_designs.id; goal_nodes.id (goal_node);
+                                                        -- the parent plan or NULL (new_goal_task)
   edits        TEXT NOT NULL CHECK (json_valid(edits)), -- ProposalEdits
   rationale    TEXT NOT NULL DEFAULT '',
   status       TEXT NOT NULL CHECK (status IN ('pending','accepted','rejected','conflict')),
@@ -330,8 +347,8 @@ CREATE TABLE change_log (
   actor           TEXT NOT NULL CHECK (actor IN ('user','agent','system')),
   target_type     TEXT NOT NULL CHECK (target_type IN ('entity','relation','appearance_set',
                     'timeline_event','memory_note','foreshadowing','chapter_summary',
-                    'setting_doc','character_design')),
-  target_id       INTEGER NOT NULL,   -- appearance_set / chapter_summary: chapter id
+                    'setting_doc','character_design','goal','plan','task')),
+  target_id       INTEGER NOT NULL,   -- appearance_set / chapter_summary: chapter id; goal / plan / task: goal_nodes.id
   op              TEXT NOT NULL CHECK (op IN ('create','update','delete')),
   before          TEXT CHECK (before IS NULL OR json_valid(before)),     -- snapshot (Snapshot*)
   after           TEXT CHECK (after IS NULL OR json_valid(after)),
@@ -343,6 +360,47 @@ CREATE TABLE change_log (
 CREATE INDEX change_log_book ON change_log(book_id, id DESC);
 CREATE INDEX change_log_target ON change_log(target_type, target_id, id DESC);
 CREATE INDEX change_log_chapter ON change_log(chapter_id);
+
+-- ───────────────────────────── Writing goals (0006, spec/06 §11) ─────────────────────────────
+CREATE TABLE goal_nodes (
+  id            INTEGER PRIMARY KEY,
+  book_id       INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+  track_id      INTEGER REFERENCES tracks(id) ON DELETE CASCADE,      -- NULL = shared (main story); T = isolated side track T
+  level         TEXT NOT NULL CHECK (level IN ('goal','plan','task')),
+  parent_id     INTEGER REFERENCES goal_nodes(id) ON DELETE CASCADE,  -- services refuse to delete a node with children;
+                                                                       -- CASCADE only acts in a book or track delete
+  title         TEXT NOT NULL CHECK (length(trim(title)) > 0),
+  purpose       TEXT NOT NULL CHECK (length(trim(purpose)) > 0),       -- why the node exists (spec/06 §11.1)
+  status        TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','waiting','done','dropped')),
+  conditions    TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(conditions)),   -- GoalCondition[]
+  chapter_from  INTEGER CHECK (chapter_from IS NULL OR chapter_from >= 1),   -- chapter numbers in the node's storyline
+  chapter_to    INTEGER CHECK (chapter_to IS NULL OR chapter_to >= 1),
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL,
+  CHECK (level <> 'goal' OR parent_id IS NULL),
+  CHECK (chapter_from IS NULL OR chapter_to IS NULL OR chapter_to >= chapter_from),
+  CHECK (status <> 'waiting' OR json_array_length(conditions) > 0)
+);
+CREATE INDEX goal_nodes_book ON goal_nodes(book_id, status);
+CREATE INDEX goal_nodes_parent ON goal_nodes(parent_id);
+CREATE TABLE goal_node_entities (
+  node_id    INTEGER NOT NULL REFERENCES goal_nodes(id) ON DELETE CASCADE,
+  entity_id  INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+  PRIMARY KEY (node_id, entity_id)
+);
+CREATE INDEX goal_node_entities_entity ON goal_node_entities(entity_id);
+CREATE TABLE goal_node_events (
+  node_id    INTEGER NOT NULL REFERENCES goal_nodes(id) ON DELETE CASCADE,
+  event_id   INTEGER NOT NULL REFERENCES timeline_events(id) ON DELETE CASCADE,
+  PRIMARY KEY (node_id, event_id)
+);
+CREATE INDEX goal_node_events_event ON goal_node_events(event_id);
+CREATE TABLE goal_node_foreshadowing (
+  node_id           INTEGER NOT NULL REFERENCES goal_nodes(id) ON DELETE CASCADE,
+  foreshadowing_id  INTEGER NOT NULL REFERENCES foreshadowing(id) ON DELETE CASCADE,
+  PRIMARY KEY (node_id, foreshadowing_id)
+);
+CREATE INDEX goal_node_foreshadowing_target ON goal_node_foreshadowing(foreshadowing_id);
 
 -- ───────────────────────────── Knowledge ─────────────────────────────
 CREATE TABLE knowledge_scopes (
@@ -488,7 +546,9 @@ CREATE TABLE agent_sessions (
   parent_session_id    INTEGER REFERENCES agent_sessions(id) ON DELETE SET NULL,         -- rollover / redo
   created_at           TEXT NOT NULL,
   updated_at           TEXT NOT NULL,
-  finished_at          TEXT
+  finished_at          TEXT,
+  canon_systems        TEXT CHECK (canon_systems IS NULL OR json_valid(canon_systems))   -- CanonSystems frozen at
+                                                        -- creation (spec/03 §4); NULL = all on (rows before 0006)
 );
 CREATE INDEX agent_sessions_book ON agent_sessions(book_id, id DESC);
 CREATE INDEX agent_sessions_chapter ON agent_sessions(chapter_id, id DESC);
@@ -637,8 +697,11 @@ The migration seeds `('basic-writing', '基础写作 / Basic Writing', '写作 /
 | ReviewVerdict / IssueSeverity | `pass`,`revise` / `critical`,`major`,`minor` |
 | FeedbackMode | `revise`, `redraft` |
 | RelationStatus | `active`, `ended` |
-| ChangeTargetType | `entity`, `relation`, `appearance_set`, `timeline_event`, `memory_note`, `foreshadowing`, `chapter_summary`, `setting_doc`, `character_design` |
-| ProposalStatus / ProposalTargetType | `pending`,`accepted`,`rejected`,`conflict` / `setting_doc`,`character_design`,`new_character` |
+| ChangeTargetType | `entity`, `relation`, `appearance_set`, `timeline_event`, `memory_note`, `foreshadowing`, `chapter_summary`, `setting_doc`, `character_design`, `goal`, `plan`, `task` |
+| ProposalStatus / ProposalTargetType | `pending`,`accepted`,`rejected`,`conflict` / `setting_doc`,`character_design`,`new_character`,`goal_node`,`new_goal_task` |
+| GoalLevel / GoalStatus | `goal`,`plan`,`task` / `active`,`waiting`,`done`,`dropped` (`ready` and `closable` are derived, never stored; spec/06 §11.3) |
+| GoalConditionKind | `chapter_at_least`, `foreshadowing_resolved`, `entity_status_is` |
+| CanonSystem | `entities`, `timeline`, `memory`, `foreshadowing`, `goals` (not a column; the keys of `CanonSystems`, spec/06 §10) |
 | ResearchTaskStatus | `draft`, `ready`, `deferred`, `running`, `done`, `failed`, `cancelled` |
 | EntrySource | `manual`, `research` |
 | SearchDocKind / EmbedState | `entity`,`note`,`foreshadowing`,`event`,`summary`,`passage` / `pending`,`done`,`failed` |
@@ -667,7 +730,20 @@ type BookSettings = {
   midterm_window: number;              // M chapters, default 10
   recent_chapter_count: number;        // N, default 2; 0 disables `block.recent_chapters`
   auto_maintenance: boolean;           // default true
+  canon_systems: CanonSystems;         // default: all five on (spec/06 §10)
 };
+
+// books.settings.canon_systems and agent_sessions.canon_systems (frozen copy). Every field defaults
+// to true, so a row without the object, or with a partial one, loads with the missing systems on.
+type CanonSystems = {
+  entities: boolean; timeline: boolean; memory: boolean; foreshadowing: boolean; goals: boolean;
+};
+
+// goal_nodes.conditions (spec/06 §11.3); chapter numbers count in the node's storyline
+type GoalCondition =
+  | { kind: "chapter_at_least"; chapter: number }
+  | { kind: "foreshadowing_resolved"; foreshadowing_id: number }
+  | { kind: "entity_status_is"; entity_id: number; status: EntityStatus };
 
 // books.model_overrides and app_settings["roles.defaults"]
 // planner is optional; an unset planner resolves through the writer's entries (spec/03 §4).
@@ -765,7 +841,18 @@ type ReviewIssue = {
 type ProposalEdits =
   | { kind: "edits"; edits: { find: string; replace: string }[] }   // each find must match exactly once
   | { kind: "append"; text: string }
-  | { kind: "create_character"; character: { name: string; role_label: string; summary: string; profile: string } };
+  | { kind: "create_character"; character: { name: string; role_label: string; summary: string; profile: string } }
+  | { kind: "set_goal_status"; status: "done" | "dropped" }         // target_type goal_node
+  | { kind: "create_goal_task"; task: NewGoalTask };                // target_type new_goal_task
+
+// A task proposed by the archivist (spec/06 §5); created `active` on accept
+type NewGoalTask = {
+  parent_id: number | null;            // a plan in the same scope
+  title: string; purpose: string;
+  chapter_from: number | null; chapter_to: number | null;
+  entity_ids: number[]; event_ids: number[]; foreshadowing_ids: number[];
+  track_id: number | null;             // the proposing session's scope (spec/06 §2)
+};
 
 // change_log.before / after — snapshot of the target (only domain fields, no timestamps)
 type SnapshotEntity = { kind, name, aliases, summary, description, state, attributes, importance, status, is_protagonist, track_id };
@@ -777,6 +864,7 @@ type SnapshotAppearanceSet = { appearances: { entity_id: number; role: Appearanc
 type SnapshotChapterSummary = { summary: string };
 type SnapshotSettingDoc = { content: string };
 type SnapshotCharacterDesign = { rank, name, role_label, summary, profile, entity_id };
+type SnapshotGoalNode = { level, parent_id, title, purpose, status, conditions, chapter_from, chapter_to, entity_ids, event_ids, foreshadowing_ids, track_id };   // goal / plan / task
 ```
 
 `ModelOptions` and `ToolUi` are defined in spec/04 §5 and spec/05 §1.6.
@@ -819,3 +907,15 @@ type SnapshotCharacterDesign = { rank, name, role_label, summary, profile, entit
     `author = 'user'` rows can be created, edited and deleted. `key` is non-NULL exactly for
     built-in rows. Deleting a user row cascades its `book_writing_skills` selections and reports
     the affected books (design §4).
+13. A goal node's parent has the level directly above it (a plan's parent is a goal, a task's a
+    plan) and the same `track_id`. Goals have no parent; tasks have no children. `level` and
+    `track_id` never change after creation (spec/06 §11.2).
+14. Invariant 8 applies to `goal_nodes` and their `change_log` rows: a non-NULL `track_id` names
+    an isolated side track. Every row a node links to or conditions on was visible from the node's
+    scope when it was written.
+15. A `waiting` node has at least one condition. `title` and `purpose` are non-empty after
+    trimming (the service trims Unicode whitespace; the CHECK constraints are a backstop).
+16. A goal node with children is never deleted, by the API or by a revert (`409
+    goal.has_children`).
+17. `agent_sessions.canon_systems` is written once, at creation (a rollover child copies its
+    parent's), and never changed.

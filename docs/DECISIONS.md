@@ -2849,3 +2849,69 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   starting at a sentence start whenever the text allows; a retired built-in selection survives
   unrelated toggles until the row is deleted (built-ins are never deleted) or the book is deleted.
 - **Spec**: design §6.4, §7; spec/03 §9–§10; spec/06 §4.5; spec/10 §2.9.
+
+### D-150 Writing goals and per-book canon system switches
+
+- **Context**: `docs/research/goals-and-system-switches-requirements.md` asks for a fifth canon
+  system — goals, plans and tasks, each with a mandatory purpose that agents receive — and for a
+  per-book switch on each of the five systems. Review against the code found:
+  - `block.memory`'s mid-term "state and relationship changes" come from entity and relation
+    change notes, not from memory notes;
+  - the writer's outline has come from `block.chapter_draft` since D-146;
+  - `timeline_event_exists` can only name an event that already exists;
+  - the requirement contradicts itself on injecting waiting nodes and on the protagonist's state;
+  - `finish_maintenance`'s required steps and overview rule 2 would trap a book with Memory or
+    Entities off.
+
+  The plan (`docs/research/goals-and-system-switches-plan.md`) answers the requirement's nine
+  questions. This entry records the decisions.
+- **Decision**:
+  - **Goals schema**: one `goal_nodes` table (`level` goal/plan/task, nullable `parent_id`,
+    mandatory `purpose`, status active/waiting/done/dropped, optional chapter range, typed JSON
+    `conditions`) plus three link tables. Parent level and scope are service invariants, backed by
+    CHECK constraints for the cheap cases.
+  - **Readiness** (`ready`, `closable`) is derived on read by one evaluator. Conditions:
+    `chapter_at_least`, `foreshadowing_resolved`, `entity_status_is`. The timeline condition is
+    dropped because it is satisfied at creation.
+  - **Scope** follows canon visibility. Ranges count in the node's storyline. Injection follows
+    the storyline: main sessions get shared nodes, side tracks get their own private nodes plus
+    book-wide goals.
+  - **Injection**: `block.goals` carries active nodes relevant at the chapter (range started or
+    absent, no closed ancestor) with their active ancestors and full purposes. It goes to outline,
+    write, revise, review, maintenance and rollover kickoffs, and waiting nodes are never injected.
+  - **Archivist**: an optional maintenance step with `propose_goal_change` (create task, complete,
+    drop), gated on the chapter having relevant goals. Proposals reuse `setting_proposals`
+    (`goal_node`, `new_goal_task`), and the "looks unreachable" note is a drop proposal.
+  - **Change log**: `goal`, `plan`, `task` target types. A node with children cannot be deleted,
+    nor its create reverted.
+  - **Overview**: no new next-action kind; a `ready_goals` hint on the write kinds and an
+    attention row.
+  - **Switches**: `BookSettings.canon_systems`, all on by default with no back-fill, frozen per
+    session in `agent_sessions.canon_systems` and inherited by rollover children.
+    - A disabled system loses its tools, its `block.memory` fragments and blocks, and its
+      maintenance and seed steps; its required steps are no longer required.
+    - `search_canon` drops its kinds, and its page leaves the navigation.
+    - The protagonist's state belongs to Entities. The outline echo is scaffolding.
+    - `block.canon_systems` tells the model what is off, because system prompts stay static and
+      unchanged.
+    - Overview rule 2 and the finalize seed require the systems they serve.
+  - **Upgrade guarantee**: with all systems on and no goal nodes, every kickoff, tool list and
+    system prompt is byte-identical to before, pinned by a baseline snapshot task before any
+    code change.
+  - Migration `0006` rebuilds `change_log` and `setting_proposals` (CHECK lists), creates the goal
+    tables and adds the session column.
+- **Consequences**:
+  - Tool lists vary by book, and for the archivist by chapter. Within a book the planner, writer
+    and reviewer prefixes stay stable.
+  - A disabled system's data stays editable through its page, reached from Book settings. A
+    re-enabled system resumes from the next maintained chapter, with no back-fill.
+  - Chinese vocabulary avoids the pack's 「任务」 and 「计划」 (目标 · 阶段计划 · 情节点).
+  - These choices change behaviour and wait for the author's confirmation in plan §12: the
+    vocabulary; dropping the timeline condition; drop-as-note; book-wide goals in side stories;
+    the archivist gate and closing plans and goals; children of a closed node leaving the prompt;
+    revise and rollover carrying goals; switches saved with the form. The spec follows the
+    recommended option of each.
+- **Spec**: PROJECT §4, §5, §6.5, §6.16–§6.17, F6, F7, F12, §8.1, §8.4, §8.8, §8.12, §9.2,
+  §10.18–§10.28, §11; spec/01 §3.1; spec/02 §1–§5; spec/03 §1.2, §4, §9, §10, §15; spec/05 §1.5,
+  §2, §3, §6, §9; spec/06 intro, §2–§11; spec/08 §5, §7; spec/09 §1, §2, §5; spec/10 §2.3, §2.4,
+  §2.8, §3, §4; spec/11 §3, §4, §5.1, §5.5, §9; PLAN M13.

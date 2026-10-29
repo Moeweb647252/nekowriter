@@ -95,7 +95,7 @@ web/src/
 | `  conception` | `conception/ConceptionStudio` | full width (the agent panel is collapsed by default) |
 | `  chapters/:chapterId` | `chapter/ChapterPage` | `?tab=` one of `text`, `outline`, `review`, `history` |
 | `  settings/:doc` | `settings-materials/*` | `outline`, `world`, `protagonist`, `characters` |
-| `  canon/entities/:entityId?`, `canon/timeline`, `canon/memory`, `canon/foreshadowing`, `canon/changes` | `canon/*` | |
+| `  canon/entities/:entityId?`, `canon/timeline`, `canon/memory`, `canon/foreshadowing`, `canon/goals`, `canon/changes` | `canon/*` | `canon/goals?filter=ready&node=<id>` (spec/06 §11). A disabled system's page stays routable (spec/06 §10.3) |
 | `  proposals` · `knowledge` · `prompts` · `tracks/:trackId` · `book-settings` | | |
 
 Use `createBrowserRouter` from `react-router` and `RouterProvider` from `react-router/dom`. Route
@@ -110,7 +110,9 @@ message and a retry.
   `ApiError{code: "network"}`.
 - Query keys: `keys.books.all`, `keys.books.detail(id)`, `keys.chapters.list(trackId)`,
   `keys.chapters.detail(id)`, `keys.sessions.list(bookId, filters)`, `keys.sessions.detail(id)`,
-  `keys.canon.entities(bookId, filters)`, … (one factory, no ad-hoc arrays).
+  `keys.canon.entities(bookId, filters)`, `keys.canon.goals(bookId, filters)`,
+  `keys.canon.counts(bookId)`, … (one factory, no ad-hoc arrays). The goal keys belong to the
+  canon family on purpose: `canon.changed` already refreshes readiness.
 - QueryClient defaults: `staleTime: 30_000`, `refetchOnWindowFocus: false` (SSE keeps data
   fresh), queries `retry: 1`, mutations `retry: 0`. Mutations invalidate their resource keys on
   success. Errors show a toast through `errors.json` (`t("errors:" + code, {defaultValue: message})`).
@@ -133,6 +135,9 @@ message and a retry.
   `api/hooks/sessions.ts`); this is the same invalidation for the event path (D-144). The scope is
   one chapter key: no blanket invalidation, so a research or conception event cannot refetch the
   open chapter.
+- `chapter.updated` also invalidates `keys.canon.goals(book_id)` and `keys.books.overview(book_id)`,
+  because an approval can make a `chapter_at_least` condition true (spec/06 §11.3). No goal page
+  ever needs a manual refresh.
 - Deltas and previews are coalesced with `requestAnimationFrame` before they reach the store.
 - After a reconnect (`onopen` following an `onerror`), invalidate all active queries
   (`queryClient.invalidateQueries()`) and reload the open chapter document.
@@ -176,6 +181,11 @@ message and a retry.
   Proposals with badge, Prompts, Book settings). The chapter rows of each track are a dnd-kit
   `SortableContext` (official rows are fixed: `disabled`). "+ Next chapter" per track. Side
   stories collapse under one group.
+  - The Canon group lists Entities, Timeline, Memory, Foreshadowing and Goals, then Changes.
+  - Entries of systems that are off in `book.settings.canon_systems` are hidden. Changes and
+    Proposals always show. QuickSwitch omits the same pages.
+  - Goals carries a badge: its nodes that are `ready` or `closable`, from the goals list query,
+    fetched only while Goals is on.
 
 ### 5.2 Chapter
 - `ChapterPage`: header (label, inline-editable title, `StatusBadge`, `WordCount` with target),
@@ -314,7 +324,61 @@ and reports a partial batch through `BulkDeferReport` (inline) and a toast: how 
 which topics did not.
 
 **Memory** names the chapters injected in full (`MemoryViewDto.recent_chapters`) and states
-which `block.memory` variant the page renders (spec/06 §4.5).
+which `block.memory` variant the page renders (spec/06 §4.5). It leaves out the sections of the
+systems that are off in `MemoryViewDto.systems`, as the rendered text does (spec/06 §4.6).
+
+**Goals** (`features/canon/GoalsPage.tsx`, spec/06 §11, D-150) uses the grammar of the other canon
+pages.
+- **Toolbar:** a track filter (shared nodes by default; an isolated track adds its private nodes,
+  badged), a **Ready** filter (`ready` or `closable` nodes with their path) and **+ Goal**.
+- **The tree** (goal → plan → task) shows every non-dropped node. Each row has:
+  - the level icon (`Target`, `Route`, `Flag`);
+  - the title and the **purpose** clamped to two lines, so it is readable without opening the
+    node;
+  - the status badge;
+  - the range chip (overdue tinted);
+  - linked canon chips;
+  - for a `waiting` node, each condition as a sentence composed from `kind` and `target_label`
+    ("Waiting for «玉佩之谜» to be resolved") with a satisfied or open mark, and broken
+    conditions flagged;
+  - the `ready` badge, or the `closable` prompt with **Mark done**;
+  - a row menu: edit, add child, activate, mark done, drop, delete.
+- `done` rows stay in the tree, dimmed. A node under a closed ancestor is marked "not sent to
+  agents". `dropped` rows live in a collapsed **Dropped (n)** section.
+- Pending goal proposals show inline: a status proposal on its node, a new task at the top of its
+  parent, each with Accept and Reject through the proposal hooks.
+- **`GoalNodeDialog`** has: level (fixed when adding a child), a parent select limited to the
+  node's scope, title, purpose (required; hint "Why this exists and what it is for"), status,
+  chapter range, a conditions editor (kind plus a target picker: a chapter number, a foreshadowing
+  combobox, `EntityPicker` with a status select), link pickers over the existing canon
+  (`EntityPicker`, an event combobox, a foreshadowing combobox; never typed ids) and the change
+  note. `409 goal.open_children` becomes a confirmation dialog that names the open descendants
+  and says they stop reaching agents; its confirm resends with `confirm_open_children`.
+- **Referenced by:** the entity detail pane and the timeline and foreshadowing edit dialogs list
+  the nodes from `GET /books/:id/goals?entity_id=` (or `event_id`, `foreshadowing_id`) as links
+  to `canon/goals?node=`. The section is hidden while Goals is off.
+- **Proposals page:** `ProposalCard` gains a renderer for `goal_node` and `new_goal_task`
+  targets (from `goal_target` and the edits).
+- **Overview:** `AttentionList` renders the `ready_goals` row, and `NextActionCard` renders
+  `ready_goals` as a secondary line under the three write kinds. Both link to
+  `canon/goals?filter=ready`.
+
+**Canon systems** (Book settings, spec/06 §10, D-150) is a section above "Memory windows".
+- Five switches in the form draft, saved with the page's **Save** (no reload: the save invalidates
+  the book and the navigator re-renders). Each has a one-line effect hint.
+- A switch the draft turns **off** shows the retained rows from `GET /books/:id/canon/counts`
+  ("42 entities, 30 relations and 120 appearances stay in the book. Agents stop reading and
+  maintaining them.") and offers nothing destructive.
+- A disabled system shows **View data** (a link to its page).
+- The footnote: nothing is deleted, running sessions keep what they started with, and chapters
+  approved while a system is off are not recorded into it later.
+- Warning (non-blocking) when Memory is off and `recent_chapter_count` is 0: the writer then sees
+  no earlier text.
+- "Recent summaries" is disabled while Memory is off, and "Mid-term window" while Entities is off,
+  each with a hint. "Recent chapters in full" stays: it is a length setting, not a system.
+- A disabled system's page, reached through View data or a URL, renders under a banner ("This
+  system is off for this book: agents neither read nor maintain it.") with **Turn on**, which
+  PATCHes that one flag.
 
 **Writing skills** (design §8). `/skills` is the global catalogue: it lists the active skills, lets
 the author create, edit and delete user rows, and previews built-in rows (badge, no edit
@@ -397,3 +461,15 @@ test imports the file by relative path).
   `agent:session_title.<kind>` key, in both locales (these keys are built dynamically, so
   `check-i18n` cannot see them).
 - `check-i18n` runs in `scripts/check.sh`.
+- Canon systems (D-150): toggles save with the form; the navigator and QuickSwitch hide and show
+  entries; retained counts and the Memory-off warning render; a disabled page shows its banner and
+  **Turn on** works.
+- Goals (D-150):
+  - the tree renders purposes, statuses, ranges, chips and condition sentences with their marks;
+  - the Ready filter and the navigator badge;
+  - the dialog refuses an empty purpose;
+  - the open-children confirmation resends with the flag;
+  - Referenced-by lists;
+  - `chapter.updated` invalidates the goal keys and the overview;
+  - every `ErrorCode` (`goal.*`) and the `propose_goal_change` tool renderer have keys in both
+    locales.

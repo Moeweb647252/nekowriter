@@ -70,6 +70,9 @@ small embedding model locally.
 | **Relation** | A directed, described link between two entities with a free-text kind ("senior brother", "classmate", "sworn enemy") |
 | **Timeline event** | A story event kept in chronological story order ("Lin Fan obtains the Nine-Turn Sword"), linked to entities and its source chapter |
 | **Foreshadowing** | A planted hook with a status (open, resolved, abandoned) |
+| **Writing goals** | The author's narrative intent in three levels: a **goal** (an arc or the whole book: what the reader should feel, understand or believe), its **plans** (the next tens of chapters: what has to change), and their **tasks** (the next few chapters: the scene or event where it changes). Every node carries a mandatory **purpose**, why it exists, which is what agents receive (§6.16) |
+| **Ready** (goals) | A `waiting` node whose conditions (a chapter reached, a hook resolved, an entity's status) are all met in current canon; or an active node whose children are all closed. Derived, never stored |
+| **Canon system** | One of Entities, Timeline, Memory (notes and chapter summaries), Foreshadowing and Goals. Each can be switched off per book (§6.17) |
 | **Knowledge base** | External reference knowledge in **scopes** (global spaces such as "Tang dynasty officialdom" or "Xianxia cultivation tropes"). Each book selects which scopes its agents may read |
 | **Research task** | A topic plus requirements for the research agent, which collects information from the web into a target scope |
 | **Agent role** | Planner, Conception, Researcher, Writer, Reviewer, Archivist (see §5) |
@@ -99,7 +102,7 @@ overridable per book.
 | **Planner** | 策划 | Plans a chapter: retrieves what it needs, then submits a detailed outline with reference notes for the author to accept | Retrieval tools, `read_draft`, `submit_outline` | Writing a chapter outline |
 | **Writer** | 写手 | Drafts a chapter from its accepted outline with granular writing tools, and revises or redrafts it after feedback | Retrieval tools (revision planning only), `insert_text` and edit tools (drafting/revising), `finish_draft`, `finish_revision` | Writing and revising chapters |
 | **Reviewer** | 审稿 | Reviews a finished chapter against the setting materials, memory, entity graph, and timeline; reports issues and feedback | Retrieval tools, `submit_review` | The author delegates a review |
-| **Archivist** | 档案员 | Maintains canon after a chapter becomes official: appearances, entities, relations, timeline, notes, foreshadowing, summary, protagonist state, and setting proposals. Also seeds canon from the settings | Canon read/write tools, `set_chapter_summary`, `propose_setting_change`, `finish_maintenance` | After approval; after conception |
+| **Archivist** | 档案员 | Maintains canon after a chapter becomes official: appearances, entities, relations, timeline, notes, foreshadowing, summary, protagonist state, and setting proposals. Proposes goal changes (a new task, a node done, a node dropped) for the author to decide. Also seeds canon from the settings. Maintains only the canon systems the book has on | Canon read/write tools, `set_chapter_summary`, `propose_goal_change`, `propose_setting_change`, `finish_maintenance` | After approval; after conception |
 
 ## 6. Feature set (MVP)
 
@@ -156,6 +159,8 @@ overridable per book.
 - **Long-term** (retrieved by tools, with a compact index injected): character states and
   attributes, story facts, world rules, the timeline, and open foreshadowing.
 - The Memory page shows exactly what the next chapter's writer will receive.
+- Each part of tiered memory belongs to one canon system (or is session scaffolding, like the
+  current chapter's label), so switching a system off removes exactly its parts (§6.17).
 
 ### 6.6 Entity graph
 - Entities have a kind (character, organization, location, item, other), a name and aliases, a
@@ -240,6 +245,29 @@ overridable per book.
 - Frontend: shadcn/ui (Nova preset, Radix base), Lucide icons, Motion, react-resizable-panels,
   dnd-kit, Zustand.
 - Backend: Rust, axum, SeaORM 2 on SQLite, sqlite-vec, fastembed (local ONNX embedding model).
+
+### 6.16 Writing goals
+- A tree of **goals → plans → tasks**. Every node has a title, a mandatory **purpose** (why it
+  exists, in the author's words), a status (active, waiting, done, dropped), an optional chapter
+  range, and links to entities, timeline events and foreshadowing.
+- A **waiting** node names what it waits for: a chapter reached, a hook resolved, an entity's
+  status. Readiness is computed from current canon, so a node becomes ready the moment the canon
+  does. Ready nodes are badged in the navigator and suggested on the overview.
+- Agents receive the purposes of the **active** nodes relevant to the chapter. A task with its plan
+  and goal reaches the planner, the writer and the reviewer, so a scene is written for its reason,
+  not as a generic scene.
+- The author creates and edits nodes. The archivist proposes new tasks, completions and drops
+  after maintenance, and the author decides. Every change is in the change log and revertible.
+- Not a project-management tool (no assignees, estimates or dependencies), not a replacement for
+  chapter outlines, and not volumes or arcs as data objects (§9.2).
+
+### 6.17 Canon system switches
+- Per book, each of Entities, Timeline, Memory, Foreshadowing and Goals can be switched off.
+- **Off** means: its content leaves the agents' context, maintenance skips it, its tools are not
+  offered, and its page leaves the navigation.
+- **Nothing is deleted:** switching it back on restores everything with the data intact. Sessions
+  already running keep what they started with.
+- Book settings shows what each switch does and how much data a disabled system keeps.
 
 ---
 
@@ -374,7 +402,10 @@ Each flow lists what the author does, what the system does, and where it happens
 1. The archivist session records appearances, creates or updates entities and relations (with
    change notes), inserts timeline events in chronological position, adds or retires facts and
    world rules, plants or resolves foreshadowing, writes the chapter summary, updates the
-   protagonist's state, and may propose setting changes. It ends with a report.
+   protagonist's state, and may propose setting changes. It ends with a report. It does only the
+   steps of the canon systems the book has on. When the chapter has relevant writing goals, it may
+   also propose goal changes: a new task the chapter made possible, a node whose purpose the
+   chapter achieved, or a task the chapter made unreachable.
 2. The chapter's canon badge goes *pending → syncing → synced*. The **Changes** page (filterable
    by chapter) lists every change with before/after. **Revert** undoes one (the newest change of
    a target is reverted first).
@@ -396,6 +427,15 @@ Each flow lists what the author does, what the system does, and where it happens
 - **Memory**: three-tier view for a chosen chapter context, and the facts and world rules list
   (add, edit, retire).
 - **Foreshadowing**: open, resolved, and abandoned lists, with an edit form.
+- **Goals**: a tree of goals, plans and tasks with their purposes visible. The author:
+  - adds a node (title, purpose, chapter range, linked canon picked from lists);
+  - sets a node to wait for conditions, activates it when it becomes ready, and marks nodes done or
+    dropped;
+  - accepts or rejects the archivist's goal proposals inline.
+
+  Entity, event and foreshadowing views list the goals that reference them.
+- **Book settings › Canon systems**: switch a system off or on. The page says what stays in the
+  book, and a disabled system's data stays reachable through **View data**.
 - Every manual change is in the change log and can be reverted.
 
 ### F8 — Customize prompts
@@ -434,9 +474,10 @@ Each flow lists what the author does, what the system does, and where it happens
 ### F12 — Day-to-day overview
 - **Book overview** shows the next action (e.g. "Chapter 43 awaits your review", "Outline
   Chapter 44", "Write Chapter 44"). A planned chapter is offered before **Write next chapter**
-  creates a new one. It also shows attention items (held or awaiting sessions, chapters in
-  review, pending proposals, failed sessions, stale canon), progress (chapters, words), and
-  recent changes.
+  creates a new one. When writing goals are ready to activate or to close, the chapter actions
+  say so in a second line. It also shows attention items (held or awaiting sessions, chapters in
+  review, pending proposals, failed sessions, stale canon, ready goals), progress (chapters,
+  words), and recent changes.
 
 ---
 
@@ -453,7 +494,7 @@ App shell (top bar: logo · Library · Knowledge · Prompts · Settings · theme
 │   ├── Chapter                  chapters/:chapterId     tabs: Text · Outline · Review · History
 │   ├── Setting materials        settings/:doc           outline · world · protagonist · characters
 │   ├── Canon                    canon/entities[/:id] · canon/timeline · canon/memory ·
-│   │                            canon/foreshadowing · canon/changes
+│   │                            canon/foreshadowing · canon/goals · canon/changes
 │   ├── Proposals                proposals
 │   ├── Book knowledge           knowledge               visible scopes + research tasks
 │   ├── Book prompts             prompts                 overrides
@@ -518,6 +559,7 @@ App shell (top bar: logo · Library · Knowledge · Prompts · Settings · theme
 │   Timeline    │                                          │ │ Message the agent… │ │
 │   Memory      │                                          │ └────────────────────┘ │
 │   Foreshadow  │                                          │   Send ⌘⏎               │
+│   Goals ①    │                                          │                        │
 │   Changes     │                                          │ in 41.2k (38.9k cached)│
 │ ▸ Knowledge   │                                          │ out 3.1k               │
 │   Proposals ②│                                          │                        │
@@ -530,6 +572,8 @@ App shell (top bar: logo · Library · Knowledge · Prompts · Settings · theme
   in review ◐, revising ↺, official ✓) plus a canon badge for official chapters (synced ◉,
   pending/syncing spinner, stale ⚠, failed ✕). Rows of non-official chapters can be reordered
   by drag and drop.
+- The Canon group shows only the canon systems the book has on (§6.17); Changes always shows.
+  Goals carries a badge counting nodes that are ready to activate or to close.
 - The agent panel follows the context: on a chapter it shows that chapter's latest session; on
   other pages, the most recently active session of the book. A dropdown lists all sessions
   (filter by kind or status) to pin any of them.
@@ -683,8 +727,21 @@ version first.
   Below: the facts and world rules table.
 - **Foreshadowing**: three tabs (Open, Resolved, Abandoned) with planted and resolved chapter
   links and the planned payoff.
+- **Goals**: a toolbar (track filter, **Ready** filter, **+ Goal**) above a tree of goals, plans
+  and tasks.
+  - Each row shows the level icon, the title, the **purpose** (two lines, readable without
+    opening), the status, the chapter range (overdue tinted) and linked canon chips.
+  - A waiting node lists its conditions as sentences ("Waiting for «玉佩之谜» to be resolved")
+    with a met or unmet mark.
+  - Ready nodes carry a badge. A node whose children are all closed offers **Mark done**.
+  - Pending archivist proposals sit on the node they concern, with Accept and Reject.
+  - Done nodes stay dimmed in the tree. Dropped nodes collapse into a section at the bottom.
+  - The node dialog: title, purpose (required), status, range, conditions, and canon links picked
+    from lists. Closing a node with open children asks first and names them.
 - **Changes**: a filterable log (chapter, session, target type, actor) with a before/after diff
   per row and **Revert**.
+- A canon page whose system is off for the book is hidden from the navigator. Opened through
+  Book settings › **View data**, it shows a banner with **Turn on**.
 
 ### 8.9 Setting materials pages
 - Outline, World, Protagonist: a Markdown editor (textarea plus a preview toggle), revision
@@ -740,10 +797,13 @@ Source badges: **D** default, **G** global override, **B** book override.
 - **Book settings** (inside a book): writing language, genre, default granularity, auto-pause,
   **Approve each chapter outline before it takes effect** (the pause-after-outline switch, with
   the hint "When off, the planner's outline is accepted as soon as it is submitted"), target
-  chapter length (min/max), memory windows (recent summaries N, mid-term window M),
-  auto-maintenance, model overrides per role (six rows; the planner's hint names its effective
-  model — "Default: {model}", otherwise "Follows the Writer: {model}", or "none"), and visible
-  knowledge scopes (shortcut).
+  chapter length (min/max), **canon systems** (five switches with a one-line effect each; a switch
+  turned off says how much data the book keeps and offers **View data**; a footnote says nothing is
+  deleted and running sessions are unaffected; a warning when Memory is off and recent chapters
+  are 0), memory windows (recent summaries N, mid-term window M; disabled while their system is
+  off), auto-maintenance, model overrides per role (six rows; the planner's hint names its
+  effective model — "Default: {model}", otherwise "Follows the Writer: {model}", or "none"), and
+  visible knowledge scopes (shortcut).
 
 ### 8.13 Interaction details
 - **Keyboard**: ⌘/Ctrl+⏎ = primary action in context (Continue when held, Send in the
@@ -783,7 +843,12 @@ the design target; ≥1024 px must remain usable).
 - Graph visualization of entities (list and detail views only).
 - Prompt lab or playground, prompt preview with live data, A/B testing.
 - Cost in currency or price tables (token counts only).
-- Volumes or arcs as data objects, chapter branching, alternative versions as branches.
+- Volumes or arcs as data objects, chapter branching, alternative versions as branches. Writing
+  goals (§6.16) are intent records with an optional chapter range, not containers of chapters.
+- Project-management features for goals (assignees, estimates, task dependencies, burndown),
+  prose generated from a goal, and seeding goals from the setting materials.
+- Per-chapter or per-session canon system switches, partial switches, and back-filling a
+  re-enabled system.
 - Multi-chapter autopilot (each chapter needs the author's approval anyway).
 - Provider-hosted web tools (we run our own `web_search` and `web_fetch`).
 - Image generation, text-to-speech, plugins, desktop notifications, telemetry.
@@ -840,6 +905,35 @@ The author can revise them later.
     flag, the extra calls simply run in order.)
 17. **Word count** uses Unicode UAX #29 word segmentation: every CJK ideograph counts as one
     word, and space-delimited scripts count words.
+18. **Writing goals are intent, kept like canon.** They are not story facts, but they follow canon's
+    conventions: `track_id` scope, change log, revert, a per-book switch. Their readiness is
+    computed from canon (D-150).
+19. **Only active goal nodes reach agents.** "Active and waiting nodes are injected" conflicts with
+    "a waiting node is never injected", and the second wins. A node under a done or dropped
+    ancestor is not injected either.
+20. **No timeline condition.** A condition can only name an existing event, so "the event exists"
+    would be true at once. Waits use a chapter reached, a hook resolved or an entity's status.
+    Events remain linkable.
+21. **The protagonist's state belongs to Entities.** With Entities off it leaves the prompt,
+    because maintenance would stop keeping it current. Continuity rests on the previous chapter's
+    ending, recent chapters in full, summaries and the protagonist document.
+22. **The chapter outline is never Memory's.** The writer gets it with the chapter text. The echo
+    in tiered memory, used by re-sync and as a fallback, is session scaffolding and survives
+    Memory off.
+23. **"Archive counts" under Memory off** means Memory's own counts (facts, world rules). Each
+    system's counts leave with that system.
+24. **Switches are independent of other settings.** Recent chapters in full is a length setting,
+    not a system. Auto-maintenance decides when maintenance runs, not what it maintains. The
+    memory windows apply only while their system is on.
+25. **Ready goals do not take over the next action.** They appear as a second line on the chapter
+    actions and as an attention row, because a node can stay ready as long as the author likes.
+26. **"A task looks unreachable" is a drop proposal.** The archivist explains why. Accept drops
+    the task, reject keeps it.
+27. **Side stories get book-wide goals.** Shared goals without a chapter range reach every
+    storyline. An isolated side story also gets its own private nodes. Main-story plans and tasks
+    never reach a side story.
+28. **Upgrading changes nothing for an existing book.** With all systems on and no goal nodes,
+    every prompt and tool list is byte-identical to before.
 
 ## 11. Requirement traceability
 
@@ -860,4 +954,6 @@ The author can revise them later.
 | Writing chapters | §6.12, F4 | `spec/08` §Chapter lifecycle |
 | Evolving settings | §6.13, F6 | `spec/06` §Proposals |
 | Side stories | §6.14, F9 | `spec/06` §Visibility, `spec/08` §Side stories |
+| Writing goals | §6.16, F6, F7, F12 | `spec/06` §11, `spec/05` (`propose_goal_change`), `spec/03` §10, `spec/10` §2.4 |
+| Canon system switches | §6.17, F7 | `spec/06` §10, `spec/05` §2, `spec/03` §1.2, §4, §10 |
 | Software stack and i18n | §6.15 | `spec/01-architecture.md`, `spec/11-frontend.md` |

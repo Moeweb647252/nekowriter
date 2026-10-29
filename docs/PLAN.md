@@ -148,6 +148,21 @@ needed. Real providers are tested when the author supplies keys.
    the planner override and the next write session the writer override (check each session's info
    popover); sessions created before the change keep the old prompt.
 9. Switch the UI language and theme. Every screen is fully translated.
+10. Writing goals (M13):
+    - Create a goal, a plan under it, and a task for the next chapter, each with a purpose. Add a
+      second task waiting for a hook to be resolved.
+    - Outline and write the chapter. The planner's and the write session's kickoffs (session info
+      popover) show the three purposes and not the waiting task.
+    - Approve and maintain. Accept the archivist's goal proposal.
+    - Resolve the hook by hand. The waiting task turns ready without a reload; activate it.
+    - Revert one goal change on the Changes page.
+11. Canon system switches (M13):
+    - Turn Foreshadowing off and save. Its navigator entry disappears and the page explains what is
+      kept.
+    - Outline the next chapter: no hooks in the kickoff, no foreshadowing tools in the session's tool
+      list.
+    - Approve: maintenance skips the step and the chapter syncs.
+    - Turn Foreshadowing on again. The entry and the data are back.
 
 ## M12 — Outline and write sessions
 
@@ -160,3 +175,21 @@ needed. Real providers are tested when the author supplies keys.
 | 12.5 | **Overview, locks, DTOs.** Next-action rules 5 and 7; `has_outline`; `CHAPTER_ROLES` + planner; lock group in creation, approve, submit, restore and the edit lock; PATCH per kind. | 08 §1, §7; 10 §2 | `overview_actions.rs`: one case per stage — no outline, outline in progress, held, approved, drafting, in review, official unsynced, official synced → `write_next`; a planned chapter is offered before `write_next` (AC6). `outline_concurrency.rs`: the R6 matrix and a concurrent-creation race (D-121 style); 423 while an outline session runs. |
 | 12.6 | **Web.** Role lists and the follows-writer hint; Outline dialog; Write dialog; header action table; Outline tab states plus the legacy path; `outlineState`; next-action kinds; navigator `has_outline`; session titles and icons; send-back wording; Prompts group; both locales. | 11 §5–§6, §9; PROJECT §8 | Vitest: an `outlineState` table; header actions per state; Outline tab approve and request-changes calls `resume` with and without feedback, and the legacy held path still saves then resumes; the card's targets and labels; the Roles and Book settings pages render six rows and the planner hint; the Write dialog's `outline_missing` state; `i18n:check` (AC4, AC7). |
 | 12.7 | **Smoke and pre-ship.** Update smoke items 3, 5 and 8 for the two steps and run them with the Demo provider. Run `0004` on a **copy** of the author's database and report open legacy planning sessions and the overrides of every key in plan §2.10 with their fate. Record the results in the D-entry's consequences. | PLAN §M11.5 | the checklist passes; the report is in the final message |
+
+## M13 — Writing goals and canon system switches
+
+Plan: `docs/research/goals-and-system-switches-plan.md` (D-150). The author answers its §12
+before 13.3 starts.
+
+| # | Task | Spec | Tests / acceptance |
+|---|---|---|---|
+| 13.1 | **Docs** — done with the plan (D-150). Re-check them against the author's §12 answers. | plan §8 | `check.sh` green (docs only) |
+| 13.2 | **Pin the baseline** before any code change: snapshot every chapter-kind kickoff (outline, write, revise, review, maintenance, seed, resync, rollover) and every role's frozen tool list for an all-on fixture book with canon data and no goal nodes. | 03 §10 | `kickoff_baseline.rs` and its `.snap` files, committed on unchanged code; every later task leaves them untouched (AC13) |
+| 13.3 | **Schema and types**: migration `0006` plus the `0001` edit; goal tables and entities; `agent_sessions.canon_systems`; enums, JSON types, DTOs and error codes; regenerate the bindings. | 02 §1–§5; 10 §2.4, §2.8, §4 | `goals_migration.rs`: a pre-0006 fixture (changes with revert links, every proposal type, sessions) upgrades with every row and link intact; a broken copy fails loudly with no data lost; the new values are accepted; old sessions read NULL. JSON round trips: `BookSettings` without the field → all on; a partial `canon_systems` → the missing fields on |
+| 13.4 | **Switches in the runtime**: freeze `canon_systems`; filter tool lists; `block.canon_systems`; `block.memory` fragments; system-gated blocks; the `search_canon` filter; `finish_maintenance` required steps; conditional archivist tasks; the seed gate and overview rule 2; rollover inheritance; the Demo provider skips unfrozen tools; `GET /canon/counts`; `MemoryViewDto.systems`; prompt pack, variables, samples, validator. | 03 §1.2, §4, §9, §10, §15; 05 §2–§3, §6; 06 §4.6, §6–§8, §10; 08 §5, §7; 09 §2 | `canon_switches.rs` (spec/03 §15 tests 27–29): each system off removes its data, tools and step and keeps its rows (AC9, AC10); Memory off keeps the outline, including the IR-01 fallback (AC11); off then on restores everything (AC12); a mid-session flip changes nothing in that session or its rollover child (AC14); maintenance with Memory, Entities or all five off completes `synced` (AC15). `kickoff_baseline` unchanged (AC13). Registry and validator: the archivist's 22-tool role list; filtered lists keep the order |
+| 13.5 | **Goals service and API**: `services/goals.rs` (validation, scope, parents, status rules, open-children confirmation, delete refusal, change log, the evaluator); revert arms; the entity merge; endpoints. | 02 §5; 06 §3, §9, §11; 10 §2.4 | `goals_api.rs`: create, edit and link a tree, refused without a purpose (AC1); one parent, re-parenting moves, tasks have no children (AC2); every mutation is logged and revertible, a delete or a create revert with children is refused (AC7). `goals_readiness.rs`: a hook resolved → ready with no refresh (AC3); chapter *n* approved → `chapter_at_least(n)` ready (AC4); broken targets; `closable`; scope checks; the merge moves links and conditions |
+| 13.6 | **Goals in agent context**: `block.goals` and the relevance rules; the kickoff lists; the archivist gate; `propose_goal_change` (`tools.toml`, handler, result branches, `goal_proposals`); goal proposals accept and reject; the Demo arm. | 03 §10; 05 §2, §6; 06 §5, §6, §11.5–§11.6; 09 §2; 10 §2.3 | `goals_context.rs` (spec/03 §15 tests 30–31): the outline and write kickoffs at *k* carry each relevant task's purpose with its plan's and goal's, and nothing from a later task or a waiting node (AC5); the review kickoff the same (AC6); closed ancestors; side-track scope and book-wide goals; no leakage; the cap; Entities off removes entity links. `goals_proposals.rs`: create, complete and drop; conflict; the duplicate rule; open-children on accept; the isolated rule; no relevant goals → 21 frozen tools |
+| 13.7 | **Overview**: the `ready_goals` attention row and next-action hint, gated by Goals. | 08 §7 | `overview_actions.rs`: a ready or closable node gives the row and the hint on the write kinds only; Goals off gives neither; the library count includes the row |
+| 13.8 | **Web — switches**: the Canon systems section (hints, retained counts, View data, warnings, disabled window inputs); navigator and QuickSwitch hiding; the disabled-page banner with Turn on; Memory page sections; both locales. | 11 §5.1, §5.5, §9; PROJECT §8.4, §8.12 | Vitest per spec/11 §9; `i18n:check` |
+| 13.9 | **Web — goals**: the Goals page, `GoalNodeDialog` and pickers, condition sentences, the Ready filter and badge, inline and Proposals-page cards, Referenced-by sections, the overview row and hint, the `chapter.updated` invalidation, the tool renderer; both locales. | 11 §3, §4, §5.5, §9; PROJECT §8.8 | Vitest per spec/11 §9 (AC8); `i18n:check` |
+| 13.10 | **Smoke and pre-ship**: run smoke items 10–11 with the Demo provider; run `0006` on a **copy** of the author's database and report the guard counts and any overrides of `block.memory` and the three archivist tasks. | PLAN §M11.5 | the checklist passes; the report is in the final message |

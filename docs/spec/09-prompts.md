@@ -26,8 +26,8 @@ track_title, number, title, with_title}` through the same registry, cached per `
 one exception is a character design's `role_label`, which is stored text (主角, 反派). The label
 enums are `entity_kind`, `entity_status`, `appearance_role`, `note_kind`,
 `foreshadowing_status`, `relation_status`, `setting_doc`, `granularity`, `phase`, `severity`,
-`category`, `verdict`, `target_type`, `search_kind`, and `language`; an unknown enum or value
-renders the raw value. Lists (aliases, field names, pids, tool names, scope names) reach templates
+`category`, `verdict`, `target_type` (including `goal`, `plan`, `task`), `search_kind`,
+`goal_level`, and `language`; an unknown enum or value renders the raw value. Lists (aliases, field names, pids, tool names, scope names) reach templates
 as arrays and are joined there (`| join("、")`), and a pid range as its pids, so no separator or
 other punctuation of the model-facing language lives in code. Entity references use the
 language-neutral form `名字(#id)` (spec/05 §1.5).
@@ -67,7 +67,7 @@ escaping.
 |---|---|
 | System | `conception.system`, `researcher.system`, `planner.system`, `writer.system`, `reviewer.system`, `archivist.system` |
 | Tasks | `conception.kickoff`, `researcher.kickoff`, `planner.kickoff`, `writer.kickoff.chapter` (drafting; its `feedback` branch is today's redraft), `writer.kickoff.revise`, `writer.kickoff.rollover`, `reviewer.kickoff`, `reviewer.rereview`, `archivist.kickoff.maintenance`, `archivist.kickoff.seed`, `archivist.kickoff.resync`. `writer.kickoff.redraft` is retired; existing overrides of it are inert |
-| Blocks | `block.settings`, `block.writing_skills`, `block.memory`, `block.recent_chapters`, `block.chapter_draft`, `block.cast_index`, `block.chapter_diff`, `block.anchor`, `block.book_brief` |
+| Blocks | `block.settings`, `block.canon_systems`, `block.writing_skills`, `block.memory`, `block.recent_chapters`, `block.goals`, `block.chapter_draft`, `block.cast_index`, `block.chapter_diff`, `block.anchor`, `block.book_brief`. `block.canon_systems` and `block.goals` render blank unless a canon system is off or a goal is relevant (spec/06 §10.3, §11.5). `block.memory`, `archivist.kickoff.maintenance`, `archivist.kickoff.seed` and `archivist.kickoff.resync` receive `systems`; the maintenance task also receives `goals` (D-150) |
 | Notices | `notice.user_feedback`, `notice.user_message`, `notice.user_edits`, `notice.setting_edits`, `notice.completion_revoked`, `notice.tool_not_allowed`, `notice.output_truncated` (these two are rendered inside `result.error`), `notice.web_content`, `notice.nudge_generic`, `notice.research_budget`, `planner.notice.outline_rejected`, `planner.notice.nudge`, `planner.notice.retrieval_budget`, `writer.notice.outline_accepted`, `writer.notice.revision_plan_accepted`, `writer.notice.revision_plan_rejected`, `writer.notice.granularity`, `writer.notice.nudge_drafting`, `writer.notice.nudge_revision_planning`, `writer.notice.nudge_revising`, `writer.rules.granularity` (partial, included by other notices). `writer.notice.outline_rejected`, `writer.notice.nudge_planning` and `writer.notice.retrieval_budget` stay as **legacy** keys, used only by sessions started before the outline split (their titles say so) |
 | Shared | `shared.label`, `shared.chapter_label` |
 | Results | `result.error`, `result.truncated`, `result.entity_card`, `result.entity_list`, `result.relations`, `result.timeline`, `result.foreshadowing_list`, `result.search_hits`, `result.knowledge_entry`, `result.chapter_text`, `result.draft_text`, `result.draft_edit`, `result.writer_control`, `result.submit_review`, `result.canon_write`, `result.finish_maintenance`, `result.ask_user`, `result.request_review`, `result.conception_write`, `result.web_search`, `result.web_fetch`, `result.knowledge_write`, `result.finish_research` |
@@ -124,7 +124,9 @@ The Rust side has one context struct per key family (`prompts/context.rs`), seri
 
 1. **System prompts are static** (no variables), so the tools + system prefix is identical across
    sessions of a role and caches well. Everything book-, chapter-, or session-specific goes into
-   blocks and tasks.
+   blocks and tasks. That includes a book's disabled canon systems: the system prompts keep
+   describing all of them, and `block.canon_systems` tells the model which ones this book does not
+   use (D-150).
 2. **Writing language**: `block.settings` and every kickoff task state the language to write in
    (`本书写作语言：…`; the research task says `撰写语言：…` with the task's language). All prose,
    outlines, summaries, canon records, and knowledge entries must be in that language. The prompts
@@ -140,9 +142,10 @@ The Rust side has one context struct per key family (`prompts/context.rs`), seri
 6. **Untrusted content**: web content is always wrapped by `notice.web_content`.
 7. Keep results compact. Long data is paginated with explicit continuation hints.
 8. **Embedded documents are tagged**: author- or model-written Markdown (setting documents,
-   character profiles, chapter outlines, reference notes, chapter text, writing-skill bodies) is
-   wrapped in XML-style tags, for example `<book_outline>…</book_outline>`,
+   character profiles, chapter outlines, reference notes, chapter text, writing-skill bodies, goal
+   purposes) is wrapped in XML-style tags, for example `<book_outline>…</book_outline>`,
    `<character rank=… name=…>`, `<chapter_outline>`, `<reference_notes>`, `<chapter_text>`,
-   `<writing_skill name=… category=…>`, `<document>`, so its own headings can never be read as
+   `<writing_skill name=… category=…>`, `<goal id=… title=…>` / `<plan …>` / `<task …>` with a
+   `<purpose>` child, `<document>`, so its own headings can never be read as
    the template's structure. A tag line is always followed by a line break (the validator checks
    it).

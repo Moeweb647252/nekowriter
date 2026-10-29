@@ -141,6 +141,7 @@ src/
 ├── services/            # domain logic; own transactions; emit events; enqueue indexing
 │   ├── books.rs  tracks.rs  chapters.rs  versions.rs  settings_docs.rs  characters.rs
 │   ├── proposals.rs  canon/{entities,relations,appearances,timeline,notes,foreshadowing,changes}.rs
+│   ├── goals.rs         # writing goals: rules, change log, readiness evaluator (spec/06 §11)
 │   ├── memory.rs        # tiered memory snapshot builder
 │   ├── reviews.rs  knowledge.rs  research.rs  app_settings.rs  providers.rs
 ├── text/                # paragraphs (ChapterContent ops), granularity validation, word count,

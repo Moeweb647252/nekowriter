@@ -83,7 +83,7 @@
 | PATCH / DELETE | `/characters/:id` | | |
 | POST | `/books/:id/characters/reorder` | `{ ids }` | `CharacterDto[]` |
 | GET | `/books/:id/proposals` | `?status=pending` | `ProposalDto[]` (with the computed preview diff) |
-| POST | `/proposals/:id/accept` / `/proposals/:id/reject` | | `ProposalDto` (an accept whose `find` no longer matches returns 200 with `status: "conflict"`, nothing applied. Accept needs `pending`; reject needs `pending` or `conflict` (it dismisses a conflict); otherwise `409 proposal.invalid_state`) |
+| POST | `/proposals/:id/accept` / `/proposals/:id/reject` | accept: optional `{ confirm_open_children?: boolean }` (goal status proposals only, spec/06 §5) | `ProposalDto` (an accept whose `find` no longer matches, or whose goal target is gone or closed, returns 200 with `status: "conflict"`, nothing applied; a goal status change with open descendants is `409 goal.open_children` unless confirmed. Accept needs `pending`; reject needs `pending` or `conflict` (it dismisses a conflict); otherwise `409 proposal.invalid_state`) |
 
 ### 2.4 Canon
 | Method | Path | Body / query | Response |
@@ -102,9 +102,13 @@
 | PATCH / DELETE | `/memory-notes/:id` | | |
 | GET / POST | `/books/:id/foreshadowing` | `?status` | `ForeshadowingDto[]` |
 | PATCH / DELETE | `/foreshadowing/:id` | | |
-| GET | `/books/:id/memory` | `?track_id&chapter_id` (default: the next chapter of the main track) | `MemorySnapshotDto` plus `rendered` (the exact `block.memory` text) and `recent_chapters` (the chapters `block.recent_chapters` injects in full: id, number, label, title, characters, partial) |
+| GET | `/books/:id/memory` | `?track_id&chapter_id` (default: the next chapter of the main track) | `MemorySnapshotDto` plus `rendered` (the exact `block.memory` text), `recent_chapters` (the chapters `block.recent_chapters` injects in full: id, number, label, title, characters, partial) and `systems` (the book's `CanonSystems` the text was rendered with) |
 | GET | `/books/:id/changes` | `?chapter_id&session_id&target_type&actor&cursor` | page of `ChangeDto` |
-| POST | `/changes/:id/revert` | | `ChangeDto` (the revert change) |
+| POST | `/changes/:id/revert` | | `ChangeDto` (the revert change); reverting the `create` of a goal node that has children is `409 goal.has_children` |
+| GET | `/books/:id/goals` | `?track_id&status&entity_id&event_id&foreshadowing_id` (the last three return the nodes linking to or conditioned on that row: "Referenced by") | `GoalNodeDto[]` with the derived `ready`, `closable` and per-condition state (spec/06 §11.3) |
+| POST | `/books/:id/goals` | `GoalNodeInput` | `GoalNodeDto` |
+| PATCH / DELETE | `/goals/:id` | PATCH: partial `GoalNodeInput` (`level` and `track_id` cannot change), `note?`, `confirm_open_children?` | `GoalNodeDto` / 204 (`409 goal.open_children`, `409 goal.has_children`, spec/06 §11.4) |
+| GET | `/books/:id/canon/counts` | | `CanonCountsDto`: per system, the rows kept in every scope and status (Book settings' retained-data line, spec/06 §10.3) |
 
 ### 2.5 Knowledge and research
 | Method | Path | Body / query | Response |
@@ -192,6 +196,34 @@ type ChapterListItemDto = {
   has_outline: boolean;             // !chapters.outline.trim().is_empty() (the navigator's icon)
   updated_at: string;
 };
+type GoalNodeDto = {
+  id: number; book_id: number; track_id: number | null; level: GoalLevel; parent_id: number | null;
+  title: string; purpose: string; status: GoalStatus;
+  chapter_from: number | null; chapter_to: number | null;
+  conditions: { condition: GoalCondition; satisfied: boolean; broken: boolean;
+                target_label: string | null /* stored name or title, for the readable sentence */ }[];
+  entities: { id: number; name: string }[]; events: { id: number; title: string }[];
+  foreshadowing: { id: number; title: string; status: ForeshadowingStatus }[];
+  ready: boolean; closable: boolean;             // derived on read (spec/06 §11.3)
+  created_at: string; updated_at: string;
+};
+type GoalNodeInput = {
+  track_id?: number | null; level: GoalLevel; parent_id?: number | null;
+  title: string; purpose: string; status?: GoalStatus;
+  chapter_from?: number | null; chapter_to?: number | null; conditions?: GoalCondition[];
+  entity_ids?: number[]; event_ids?: number[]; foreshadowing_ids?: number[];
+};
+type CanonCountsDto = {
+  entities: { entities: number; relations: number; appearances: number };
+  timeline: { events: number };
+  memory: { notes: number; summaries: number };
+  foreshadowing: { items: number };
+  goals: { nodes: number };
+};
+// ProposalDto gains `goal_target: { id: number; level: GoalLevel; title: string; status: GoalStatus } | null`
+// (the node of a goal_node proposal, or the parent plan of a new_goal_task proposal).
+// BookOverviewDto: AttentionKind gains `ready_goals` (one row with its count); NextActionDto gains
+// `ready_goals: number | null` (set on write_outline, write_chapter and write_next; spec/08 §7).
 ```
 
 ### 2.9 Writing skills (design §8)
@@ -236,9 +268,9 @@ Without `book_id` it sends everything.
 | `session.tool_call` | `{ session_id, tool_call: ToolCallDto }` | upsert the card; no chapter invalidation of its own — `ToolCallDto` carries no chapter, and every tool call is published beside a `session.updated` (D-144) |
 | `session.tool_preview` | `{ session_id, seq, call_index, name, field, delta }` | append to the preview buffer (ghost text) |
 | `book.updated` | `{ book_id, op: "create" \| "update" \| "delete" }` (book row or its tracks: create, edit, finalize, archive) | invalidate the library, the book, and its tracks |
-| `chapter.updated` | `{ chapter: ChapterListItemDto, outline_changed: boolean }` | update lists; invalidate the chapter query when the outline changed |
+| `chapter.updated` | `{ chapter: ChapterListItemDto, outline_changed: boolean }` | update lists; invalidate the chapter query when the outline changed; invalidate the book's goal nodes and overview (an approval can make `chapter_at_least` true, spec/06 §11.3) |
 | `chapter.content` | `{ chapter_id, version, ops: ContentOp[], word_count, tail_open, actor: "agent" \| "user" }` | apply the ops if `version = local + 1`, else refetch |
-| `canon.changed` | `{ book_id, target_type, target_id, op, change_id }` | invalidate canon queries for that type and the memory snapshot |
+| `canon.changed` | `{ book_id, target_type, target_id, op, change_id }` (goal-node writes use `goal`, `plan`, `task`) | invalidate canon queries (the goal-node keys are in the canon family, so readiness refreshes with every canon write) and the memory snapshot |
 | `settings.changed` | `{ book_id, kind: "setting_doc" \| "characters" \| "research_topics", doc_kind?, revision? }` (setting materials; a change of `books.settings` emits `book.updated`) | invalidate the matching queries |
 | `proposal.changed` | `{ book_id, proposal_id, status }` | invalidate proposals and the overview |
 | `knowledge.changed` | `{ scope_id, entry_id, op }` | invalidate knowledge queries |
@@ -284,6 +316,8 @@ type ContentOpInput =                                                    // auth
 | `proposal.invalid_state` | 409 | the proposal's status does not allow the operation (accept: `pending`; reject: `pending` or `conflict`); `details.status` |
 | `prompt.template_invalid` | 400 | `details.line`, `details.column`, `details.message` |
 | `writing_skill.builtin` | 409 | PATCH/DELETE on a built-in writing skill; `details.id` |
+| `goal.open_children` | 409 | setting `done`/`dropped` on a goal node (or accepting such a proposal) while it has `active` or `waiting` descendants, without `confirm_open_children`; `details.children: [{id, level, title, status}]` |
+| `goal.has_children` | 409 | deleting a goal node with children, or reverting its `create`; `details.children_count` |
 | `provider.unavailable` · `provider.auth` · `provider.bad_request` | 502 | provider tests and remote models (the connection test reports the same codes inside its 200 `error` field, spec/04 §8); the web search test maps a rejected key to `provider.auth` and other failures to `provider.unavailable` |
 | `embedding.unavailable` | 503 | |
 | `search.not_configured` | 409 | search test without a provider |

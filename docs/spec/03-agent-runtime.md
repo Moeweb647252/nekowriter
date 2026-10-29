@@ -44,6 +44,16 @@ The planner's list is retrieval plus `read_draft` and `submit_outline`; the writ
 that still contains `submit_outline`; that frozen list plus the legacy `planning` phase is what
 lets it finish (§1.1).
 
+**Canon system switches** (spec/06 §10) narrow the list, never reorder it. A session freezes its
+role's list minus the tools of the canon systems that are off in its `canon_systems` (§4 step 2).
+Two tools follow their own rules:
+- `search_canon` reads four systems, so it stays unless all four are off;
+- `propose_goal_change` is frozen only into a `chapter_maintenance` session whose chapter has
+  relevant goal nodes (spec/05 §2).
+
+The list is still fixed for the session's whole life. Flipping a switch affects only sessions
+created afterwards.
+
 ### 1.3 Append-only history
 
 - Persisted messages (`agent_messages`) are never modified or deleted.
@@ -125,9 +135,14 @@ transaction:
    Copy the profile and provider into `model_snapshot` (without the API key; the key is resolved
    from `providers` at every call so key rotation works). Resolve `cache_ttl: "auto"` here
    (spec/04 §3), so the TTL never changes within a session.
-2. **Freeze prompts**: render the role's system prompt (`<role>.system`) and the tool
-   definitions (spec/05 §1.3) through the prompt registry, with book overrides applied. Store
-   them in `system_prompt` and `tools`.
+2. **Freeze prompts and canon systems**: copy the book's `settings.canon_systems` into
+   `agent_sessions.canon_systems` (a rollover child copies its parent's, §9; a session without a
+   book stores NULL, which means all on). Render the role's system prompt (`<role>.system`) and
+   the tool definitions (spec/05 §1.3) through the prompt registry, with book overrides applied.
+   The tool list is the role's list filtered by those systems (§1.2, spec/05 §2). Store them in
+   `system_prompt` and `tools`. From here on every decision about canon systems (the tool list,
+   the kickoff blocks and fragments, `search_canon`'s kinds, `finish_maintenance`'s required steps)
+   reads the session's frozen `canon_systems`, never the book's current settings.
 3. **Initial fields**: phase (`drafting` for `chapter_write`, `revision_planning` for
    `chapter_revise`, `none` otherwise — `planning` only exists in legacy rows). Write and revise
    sessions copy `granularity` and `auto_pause` from book settings, or from the start request when
@@ -496,8 +511,10 @@ the same `pending_comment`.
   > 0.85 × context_window`, or the previous request failed with context overflow.
 - **Procedure** (one transaction):
   1. Create a child session (same kind, role, chapter, phase, granularity, auto-pause flags,
-     model snapshot; `parent_session_id` = old). Its kickoff is
-     `[block.settings][block.writing_skills][block.memory][block.chapter_draft][writer.kickoff.rollover]`.
+     model snapshot, `canon_systems`; `parent_session_id` = old). Its kickoff is
+     `[block.settings][block.canon_systems][block.writing_skills][block.memory][block.goals][block.chapter_draft][writer.kickoff.rollover]`,
+     rendered with the parent's frozen `canon_systems`, so the child's context matches the tools it
+     inherits.
      `block.chapter_draft` holds the current outline, reference notes, and text. The task
      block holds the chapter's guidance, the feedback being addressed (a revision's or a redraft's,
      with its ticked issues), the accepted revision plan (revise), the granularity rules, and
@@ -530,16 +547,26 @@ end of the settings block (shared by every session of the book); see spec/04 §3
 |---|---|
 | conception | `conception.kickoff` |
 | research | `block.book_brief` (only if linked to a book) · `researcher.kickoff` |
-| chapter_outline | `block.settings`⁎ · `block.memory` · `block.recent_chapters` · `planner.kickoff` |
-| chapter_write | `block.settings`⁎ · `block.writing_skills` · `block.memory` · `block.recent_chapters` · `block.chapter_draft` · `writer.kickoff.chapter` (a redraft's feedback comes through the task's `feedback` variable) |
-| chapter_revise | `block.settings`⁎ · `block.writing_skills` · `block.memory` · `block.chapter_draft` · `writer.kickoff.revise` |
-| chapter_review | `block.settings`⁎ · `block.writing_skills` · `block.memory` · `block.chapter_draft` · `reviewer.kickoff` (with `prior` when it replaces a re-review of an older version, §6) |
-| chapter_maintenance | `block.settings`⁎ · `block.memory` · `block.cast_index` · `block.chapter_draft` · `archivist.kickoff.maintenance` |
-| canon_seed | `block.settings`⁎ · `archivist.kickoff.seed` |
-| chapter_resync | `block.settings`⁎ · `block.memory` · `block.cast_index` · `block.chapter_diff` · `archivist.kickoff.resync` |
-| rollover | `block.settings`⁎ · `block.writing_skills` · `block.memory` · `block.chapter_draft` · `writer.kickoff.rollover` |
+| chapter_outline | `block.settings`⁎ · `block.canon_systems` · `block.memory` · `block.recent_chapters` · `block.goals` · `planner.kickoff` |
+| chapter_write | `block.settings`⁎ · `block.canon_systems` · `block.writing_skills` · `block.memory` · `block.recent_chapters` · `block.goals` · `block.chapter_draft` · `writer.kickoff.chapter` (a redraft's feedback comes through the task's `feedback` variable) |
+| chapter_revise | `block.settings`⁎ · `block.canon_systems` · `block.writing_skills` · `block.memory` · `block.goals` · `block.chapter_draft` · `writer.kickoff.revise` |
+| chapter_review | `block.settings`⁎ · `block.canon_systems` · `block.writing_skills` · `block.memory` · `block.goals` · `block.chapter_draft` · `reviewer.kickoff` (with `prior` when it replaces a re-review of an older version, §6) |
+| chapter_maintenance | `block.settings`⁎ · `block.canon_systems` · `block.memory` · `block.cast_index` · `block.goals` · `block.chapter_draft` · `archivist.kickoff.maintenance` |
+| canon_seed | `block.settings`⁎ · `block.canon_systems` · `archivist.kickoff.seed` |
+| chapter_resync | `block.settings`⁎ · `block.canon_systems` · `block.memory` · `block.cast_index` · `block.chapter_diff` · `archivist.kickoff.resync` |
+| rollover | `block.settings`⁎ · `block.canon_systems` · `block.writing_skills` · `block.memory` · `block.goals` · `block.chapter_draft` · `writer.kickoff.rollover` |
 
 ⁎ `cache: true` on that block. Each block is one `text` block of the kickoff message.
+
+**System-gated blocks** (spec/06 §10): a block owned by a canon system that is off in the
+session's `canon_systems` is not rendered at all: `block.cast_index` (Entities), `block.goals`
+(Goals). `block.memory` is always rendered, because it carries session scaffolding; its
+system-owned fragments are guarded inside the template (spec/06 §4.6).
+
+**Upgrade guarantee (D-150):** for a book with all five systems on and no relevant goal nodes,
+`block.canon_systems` and `block.goals` render blank and are dropped, `block.memory` renders its
+pre-0006 text, and the tool lists are the pre-0006 lists. Every kickoff is therefore
+byte-identical to the one before the change; `kickoff_baseline.rs` pins it.
 
 Task templates pull in two more blocks through template includes, so the table stays short:
 `block.anchor` (every writer, reviewer, and archivist task of a side-track chapter) and
@@ -568,6 +595,11 @@ Task templates pull in two more blocks through template includes, so the table s
   own task shows the outline to replace.
 - `block.chapter_draft` renders the chapter outline, reference notes, and the full text with
   pids (`[p12] …`), marking an open tail paragraph.
+- `block.canon_systems` (spec/06 §10.3) renders blank when Entities, Timeline, Memory and
+  Foreshadowing are all on in the session's `canon_systems`. Otherwise it names the canon systems
+  this book does not use, because the static system prompts still describe them (spec/09 §5.1).
+- `block.goals` (spec/06 §11.5) renders the author's goal nodes relevant to the target chapter:
+  each with its purpose, chapter range and links. It is blank when none is relevant.
 - **Budget warning**: estimate kickoff tokens (CJK characters × 1.0 + other characters ÷ 4,
   rounded up). If the estimate exceeds 50% of the context window, the session still starts and
   `session.updated` carries `warnings: ["context.large_kickoff"]`.
@@ -717,3 +749,25 @@ With `ScriptedProvider` (spec/04 §7) and a temp database:
     plans, holds, approves (the writer acceptance notice), drafts and completes. Feedback on its
     held outline gives the legacy `writer.notice.outline_rejected`. A plain drafting rollover has
     no redraft sentence in its kickoff; a redraft rollover keeps the feedback its chain addresses.
+26. Baseline (`kickoff_baseline.rs`, committed before D-150's code): the kickoff of every chapter
+    kind and the frozen tool list of every role, for an all-on fixture book with canon data and no
+    goal nodes, match their snapshots byte for byte.
+27. For each canon system switched off (`canon_switches.rs`): a new session's kickoff contains
+    none of that system's fixture data (names, states, notes, titles, its counts fragment, its
+    section titles); its tools are not frozen; the maintenance kickoff has no step for it; its
+    rows are unchanged. Memory off: the write kickoff still carries the outline (through
+    `block.chapter_draft`), and with a blank `block.chapter_draft` override the outline still
+    appears in `block.memory`.
+28. A switch flipped while a session runs leaves that session's system prompt, tool list and
+    `search_canon` kinds unchanged. Its rollover child's kickoff is rendered with the parent's
+    frozen systems.
+29. `chapter_maintenance` with Memory off completes without a summary, with Entities off without
+    appearances or the protagonist confirmation, and with all five off with only
+    `finish_maintenance`. Each leaves the chapter `synced`.
+30. Goal injection (`goals_context.rs`): the outline, write and review kickoffs at chapter *k*
+    contain the purposes of the relevant active tasks with their active plans and goals, and
+    nothing from a node starting after *k*, a `waiting` node, or a node under a closed ancestor. A
+    side-track session gets its own private nodes plus the book-wide goals, and never another
+    track's private nodes.
+31. `propose_goal_change` is frozen only into a `chapter_maintenance` session whose chapter has
+    relevant goal nodes with Goals on. Otherwise the archivist freezes the pre-0006 21 tools.
