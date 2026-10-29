@@ -10,7 +10,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 use tokio_util::sync::CancellationToken;
 
 use crate::db::json::{SessionError, SessionStatus, ToolCallStatus};
@@ -126,7 +125,7 @@ impl SessionManager {
                 // return at once for a non-running row).
                 let still_running = matches!(
                     session::load(state.db().conn(), session_id).await,
-                    Ok(row) if row.status == SessionStatus::Running.as_str()
+                    Ok(row) if row.status == SessionStatus::Running
                 );
                 if still_running {
                     manager.spawn(state.clone(), session_id);
@@ -356,7 +355,9 @@ async fn interrupted_running_sessions(
 
     let rows = crate::db::entities::agent_sessions::Entity::find()
         .filter(
-            crate::db::entities::agent_sessions::Column::Status.eq(SessionStatus::Running.as_str()),
+            crate::db::entities::agent_sessions::COLUMN
+                .status
+                .eq(SessionStatus::Running),
         )
         .all(tx)
         .await?;
@@ -379,19 +380,29 @@ async fn interrupted_running_sessions(
     Ok((ids, events))
 }
 
+/// The partial `agent_tool_calls` update that resets a crashed call.
+pub(crate) fn recovery_changes() -> crate::db::entities::agent_tool_calls::ActiveModel {
+    crate::db::entities::agent_tool_calls::ActiveModel {
+        status: sea_orm::Set(ToolCallStatus::Pending),
+        started_at: sea_orm::Set(None),
+        ..Default::default()
+    }
+}
+
 /// Every `executing` tool call becomes `pending` again (spec/01 §5 step 8).
 async fn reset_executing_calls(tx: &sea_orm::DatabaseTransaction) -> Result<u64, AppError> {
-    let result = tx
-        .execute_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            "UPDATE agent_tool_calls SET status = ?, started_at = NULL WHERE status = ?",
-            vec![
-                ToolCallStatus::Pending.as_str().to_owned().into(),
-                ToolCallStatus::Executing.as_str().to_owned().into(),
-            ],
-        ))
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+
+    let result = crate::db::entities::agent_tool_calls::Entity::update_many()
+        .set(recovery_changes())
+        .filter(
+            crate::db::entities::agent_tool_calls::COLUMN
+                .status
+                .eq(ToolCallStatus::Executing),
+        )
+        .exec(tx)
         .await?;
-    Ok(result.rows_affected())
+    Ok(result.rows_affected)
 }
 
 /// Clears a stale session error before a Continue (spec/03 §6).

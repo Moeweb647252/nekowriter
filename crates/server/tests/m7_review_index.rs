@@ -24,8 +24,8 @@ async fn count(app: &TestApp, sql: &str) -> i64 {
 
 async fn doc(app: &TestApp, kind: &str, ref_id: i32) -> Option<search_docs::Model> {
     search_docs::Entity::find()
-        .filter(search_docs::Column::Kind.eq(kind))
-        .filter(search_docs::Column::RefId.eq(ref_id))
+        .filter(search_docs::COLUMN.kind.eq(kind))
+        .filter(search_docs::COLUMN.ref_id.eq(ref_id))
         .one(app.db().conn())
         .await
         .expect("doc query")

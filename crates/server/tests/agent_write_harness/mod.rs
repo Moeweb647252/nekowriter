@@ -215,7 +215,7 @@ pub async fn chapter_content(
     )
     .await
     .unwrap_or_else(|| "{}".to_owned());
-    nekowriter::db::json::from_json_or_default(&raw)
+    serde_json::from_str(&raw).unwrap_or_default()
 }
 
 /// The chapter's `(status, word_count, content_version)`.

@@ -6,7 +6,7 @@
 //! the chapter outline out when the kickoff already shows it (§4.2).
 
 use axum::http::StatusCode;
-use nekowriter::db::json::{AppearanceRole, NoteKind};
+use nekowriter::db::json::{AppearanceRole, EntityStatus, NoteKind};
 use nekowriter::services::canon::{self, CanonWrite};
 use nekowriter::services::memory::{self, MemorySnapshot};
 use nekowriter::testing::TestApp;
@@ -221,7 +221,7 @@ async fn the_protagonist_carries_its_state_and_attributes() {
     assert_eq!(item.id, protagonist);
     assert_eq!(item.name, "Shen Yan");
     assert_eq!(item.state, "Shen Yan state");
-    assert_eq!(item.status, "active");
+    assert_eq!(item.status, EntityStatus::Active);
     assert_eq!(item.status_label, "活跃");
     assert_eq!(
         item.attributes,

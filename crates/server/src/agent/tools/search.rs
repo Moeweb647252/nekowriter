@@ -11,6 +11,8 @@
 //! session's target scope (spec/07 §1, spec/05 §8).
 
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+
+use crate::db::json::{AnchorKind, TrackKind};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -20,6 +22,7 @@ use crate::db::json::SessionKind;
 use crate::search::{BookCorpus, BookSearch, hybrid_book, hybrid_knowledge};
 use crate::services::canon;
 
+use super::retrieval::{AnchorKindState, anchor_kind_state};
 use super::{PrepareCtx, Prepared, ToolCtx, ToolHandler, ToolKind, ToolOutcome};
 
 /// `search_canon` default and maximum (spec/05 §3).
@@ -358,7 +361,7 @@ impl ToolHandler for ReadKnowledgeEntryTool {
             .collect();
         let end = start + content.chars().count();
         let next_offset = if end < total { Some(end) } else { None };
-        let sources: Vec<String> = crate::db::json::from_json_or_default(&entry.source_urls);
+        let sources: Vec<String> = entry.source_urls.clone().into_inner();
         let text = ctx
             .prompts
             .render_value(
@@ -517,7 +520,7 @@ async fn visible_scopes(ctx: &ToolCtx<'_>) -> Result<Vec<knowledge_scopes::Model
         return Err(ToolError::new(ToolErrorKind::NoKnowledgeScope));
     }
     knowledge_scopes::Entity::find()
-        .filter(knowledge_scopes::Column::Id.is_in(ids))
+        .filter(knowledge_scopes::COLUMN.id.is_in(ids))
         .all(ctx.tx)
         .await
         .map_err(|_| internal())
@@ -550,7 +553,7 @@ fn parse_pids(meta: &str) -> Vec<String> {
 
 /// The session track's anchor (`none` for the main track).
 struct Anchor {
-    kind: String,
+    kind: AnchorKindState,
     /// The anchor chapter's main-track `ord` for `after_chapter`.
     ord: Option<i32>,
     /// The book's main track id.
@@ -565,7 +568,7 @@ impl Anchor {
         chapter_id: i32,
         conn: &impl sea_orm::ConnectionTrait,
     ) -> Result<bool, ToolError> {
-        if self.kind == "none" {
+        if self.kind == AnchorKindState::None {
             return Ok(false);
         }
         let Some(chapter) = chapters::Entity::find_by_id(chapter_id)
@@ -578,10 +581,10 @@ impl Anchor {
         if Some(chapter.track_id) != self.main_track {
             return Ok(false);
         }
-        match self.kind.as_str() {
-            "before_start" => Ok(true),
-            "after_chapter" => Ok(self.ord.is_some_and(|ord| chapter.ord > ord)),
-            _ => Ok(false),
+        match self.kind {
+            AnchorKindState::BeforeStart => Ok(true),
+            AnchorKindState::AfterChapter => Ok(self.ord.is_some_and(|ord| chapter.ord > ord)),
+            AnchorKindState::AfterEnd | AnchorKindState::None => Ok(false),
         }
     }
 }
@@ -589,25 +592,25 @@ impl Anchor {
 /// Reads the session track's anchor.
 async fn anchor_of(ctx: &ToolCtx<'_>) -> Result<Anchor, ToolError> {
     let mut anchor = Anchor {
-        kind: "none".to_owned(),
+        kind: AnchorKindState::None,
         ord: None,
         main_track: None,
     };
     let Some(track) = ctx.track else {
         return Ok(anchor);
     };
-    if track.kind != "side" || track.anchor_kind == "none" {
+    if track.kind != TrackKind::Side || track.anchor_kind == AnchorKind::None {
         return Ok(anchor);
     }
     let book_id = track.book_id;
     anchor.main_track = tracks::Entity::find()
-        .filter(tracks::Column::BookId.eq(book_id))
-        .filter(tracks::Column::Kind.eq("main"))
+        .filter(tracks::COLUMN.book_id.eq(book_id))
+        .filter(tracks::COLUMN.kind.eq(TrackKind::Main))
         .one(ctx.tx)
         .await
         .map_err(|_| internal())?
         .map(|row| row.id);
-    anchor.kind = track.anchor_kind.clone();
+    anchor.kind = anchor_kind_state(track.anchor_kind);
     if let Some(chapter_id) = track.anchor_chapter_id
         && let Some(chapter) = chapters::Entity::find_by_id(chapter_id)
             .one(ctx.tx)
@@ -629,4 +632,16 @@ pub fn all() -> Vec<std::sync::Arc<dyn ToolHandler>> {
         std::sync::Arc::new(ReadKnowledgeEntryTool),
         std::sync::Arc::new(SearchChaptersTool),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The anchor is held typed, so a new `AnchorKind` variant is a compile error in the shared
+    /// `anchor_kind_state` mapping instead of falling through a string match.
+    #[test]
+    fn the_search_anchor_is_typed() {
+        let _: fn(&Anchor) -> AnchorKindState = |anchor| anchor.kind;
+    }
 }

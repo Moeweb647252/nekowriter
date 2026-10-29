@@ -132,8 +132,8 @@ src/
 ├── error.rs             # AppError, ErrorCode, IntoResponse
 ├── db/
 │   ├── mod.rs           # connect(): sqlite-vec registration, pragmas, pool, migrations; Db::write (§7)
-│   ├── entities/        # SeaORM entities (one file per table)
-│   └── json.rs          # typed JSON column wrappers (ChapterContent, BookSettings, …)
+│   ├── entities/        # SeaORM entities in the #[sea_orm::model] dense format (one file per table)
+│   └── json.rs          # typed JSON column wrappers (JsonText<T>, ChapterContent, BookSettings, …)
 ├── api/                 # axum routers per resource; thin handlers; DTOs (ts-rs) in api/dto/
 │   ├── mod.rs           # router assembly, host/origin guard, error mapping
 │   ├── events.rs        # GET /api/events (SSE)
@@ -193,7 +193,9 @@ src/lib.rs   # trait Embedder { fn info(); async fn embed(texts, kind) }, EmbedK
 `sea-orm-migration` crate whose migrations execute embedded SQL files
 (`src/sql/NNNN_name.sql`) via `execute_unprepared`. The SQL is the source of truth for the
 schema (see `spec/02-data-model.md`). SeaORM entities in `crates/server/src/db/entities/` are
-hand-written to match it. Schema sync (`schema-sync` feature) is **not** used.
+hand-written in the SeaORM 2 `#[sea_orm::model]` (dense) format, with the full relation graph and
+unique keys, and `crates/server/tests/entity_schema.rs` checks them against the SQL. Schema sync
+(`schema-sync` feature) is **not** used.
 
 ## 4. Layering rules
 

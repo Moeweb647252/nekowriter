@@ -11,9 +11,7 @@
 //!
 //! Story order is what the API returns (and what the UI reorders by drag and drop).
 
-use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, Set,
-};
+use sea_orm::{ActiveModelTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, Set};
 
 use crate::api::dto::canon::{
     TimelineEventDto, TimelineEventInput, TimelineEventPatch, TimelineMoveInput, TimelineQuery,
@@ -71,10 +69,10 @@ pub async fn ordered(
         None => Visibility::shared(book_id),
     };
     Ok(timeline_events::Entity::find()
-        .filter(timeline_events::Column::BookId.eq(book_id))
+        .filter(timeline_events::COLUMN.book_id.eq(book_id))
         .filter(visibility.visible_condition(timeline_events::Column::TrackId))
-        .order_by_asc(timeline_events::Column::Position)
-        .order_by_asc(timeline_events::Column::Id)
+        .order_by_asc(timeline_events::COLUMN.position)
+        .order_by_asc(timeline_events::COLUMN.id)
         .all(conn)
         .await?)
 }
@@ -508,9 +506,9 @@ fn midpoint(low: f64, high: f64) -> f64 {
 /// Renormalizes a book's timeline to `1024, 2048, …` (spec/02 §1).
 pub async fn renormalize(tx: &impl ConnectionTrait, book_id: i32) -> CanonResult<()> {
     let rows = timeline_events::Entity::find()
-        .filter(timeline_events::Column::BookId.eq(book_id))
-        .order_by_asc(timeline_events::Column::Position)
-        .order_by_asc(timeline_events::Column::Id)
+        .filter(timeline_events::COLUMN.book_id.eq(book_id))
+        .order_by_asc(timeline_events::COLUMN.position)
+        .order_by_asc(timeline_events::COLUMN.id)
         .all(tx)
         .await?;
     for (index, row) in rows.iter().enumerate() {
@@ -536,11 +534,11 @@ async fn last_position(
     moving: Option<i32>,
 ) -> CanonResult<Option<f64>> {
     let mut statement = timeline_events::Entity::find()
-        .filter(timeline_events::Column::BookId.eq(book_id))
-        .order_by_desc(timeline_events::Column::Position)
-        .order_by_desc(timeline_events::Column::Id);
+        .filter(timeline_events::COLUMN.book_id.eq(book_id))
+        .order_by_desc(timeline_events::COLUMN.position)
+        .order_by_desc(timeline_events::COLUMN.id);
     if let Some(moving) = moving {
-        statement = statement.filter(timeline_events::Column::Id.ne(moving));
+        statement = statement.filter(timeline_events::COLUMN.id.ne(moving));
     }
     Ok(statement.one(tx).await?.map(|row| row.position))
 }
@@ -553,12 +551,12 @@ async fn next_after(
     moving: Option<i32>,
 ) -> CanonResult<Option<f64>> {
     let mut statement = timeline_events::Entity::find()
-        .filter(timeline_events::Column::BookId.eq(book_id))
-        .filter(timeline_events::Column::Position.gt(position))
-        .order_by_asc(timeline_events::Column::Position)
-        .order_by_asc(timeline_events::Column::Id);
+        .filter(timeline_events::COLUMN.book_id.eq(book_id))
+        .filter(timeline_events::COLUMN.position.gt(position))
+        .order_by_asc(timeline_events::COLUMN.position)
+        .order_by_asc(timeline_events::COLUMN.id);
     if let Some(moving) = moving {
-        statement = statement.filter(timeline_events::Column::Id.ne(moving));
+        statement = statement.filter(timeline_events::COLUMN.id.ne(moving));
     }
     Ok(statement.one(tx).await?.map(|row| row.position))
 }
@@ -571,12 +569,12 @@ async fn first_before(
     moving: Option<i32>,
 ) -> CanonResult<Option<f64>> {
     let mut statement = timeline_events::Entity::find()
-        .filter(timeline_events::Column::BookId.eq(book_id))
-        .filter(timeline_events::Column::Position.lt(position))
-        .order_by_desc(timeline_events::Column::Position)
-        .order_by_desc(timeline_events::Column::Id);
+        .filter(timeline_events::COLUMN.book_id.eq(book_id))
+        .filter(timeline_events::COLUMN.position.lt(position))
+        .order_by_desc(timeline_events::COLUMN.position)
+        .order_by_desc(timeline_events::COLUMN.id);
     if let Some(moving) = moving {
-        statement = statement.filter(timeline_events::Column::Id.ne(moving));
+        statement = statement.filter(timeline_events::COLUMN.id.ne(moving));
     }
     Ok(statement.one(tx).await?.map(|row| row.position))
 }
@@ -801,16 +799,7 @@ pub async fn recreate_inner(
         .exec_with_returning(tx)
         .await?;
     // Join rows are restored when their entities still exist (spec/02 §5.10).
-    let mut restored = Vec::new();
-    for entity_id in unique_ids(entity_ids) {
-        if crate::db::entities::entities::Entity::find_by_id(entity_id)
-            .one(tx)
-            .await?
-            .is_some()
-        {
-            restored.push(entity_id);
-        }
-    }
+    let restored = super::existing_entity_ids(tx, &unique_ids(entity_ids)).await?;
     super::set_linked_entities(tx, super::LinkTable::TimelineEvent, row.id, &restored).await?;
     Ok((row.id, timeline_snapshot(&row, restored)))
 }

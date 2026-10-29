@@ -95,14 +95,14 @@ async fn load_overrides(
     let mut global = BTreeMap::new();
     let mut book = BTreeMap::new();
     for row in rows {
-        match row.scope.as_str() {
-            "global" => {
+        match row.scope {
+            crate::db::json::PromptScope::Global => {
                 global.insert(row.key, row.content);
             }
-            "book" if row.book_id == book_id && book_id.is_some() => {
+            crate::db::json::PromptScope::Book if row.book_id == book_id && book_id.is_some() => {
                 book.insert(row.key, row.content);
             }
-            _ => {}
+            crate::db::json::PromptScope::Book => {}
         }
     }
     Ok((global, book))
@@ -185,13 +185,13 @@ pub async fn reset(
     crate::services::write(state.db(), move |tx| {
         Box::pin(async move {
             let mut query = prompt_overrides::Entity::delete_many()
-                .filter(prompt_overrides::Column::Key.eq(key_owned.clone()))
-                .filter(prompt_overrides::Column::Scope.eq(scope.as_str()));
+                .filter(prompt_overrides::COLUMN.key.eq(key_owned.clone()))
+                .filter(prompt_overrides::COLUMN.scope.eq(scope.as_str()));
             query = match (scope, effective_book) {
                 (PromptScope::Book, Some(book_id)) => {
-                    query.filter(prompt_overrides::Column::BookId.eq(book_id))
+                    query.filter(prompt_overrides::COLUMN.book_id.eq(book_id))
                 }
-                _ => query.filter(prompt_overrides::Column::BookId.is_null()),
+                _ => query.filter(prompt_overrides::COLUMN.book_id.is_null()),
             };
             query.exec(tx).await?;
             Ok(())
@@ -213,14 +213,14 @@ async fn upsert(
 ) -> Result<(), AppError> {
     // The partial unique indexes make "one row per level and key" a schema guarantee, so the
     // existing row (if any) is updated instead of inserted twice.
-    let mut query = prompt_overrides::Entity::find().filter(prompt_overrides::Column::Key.eq(key));
+    let mut query = prompt_overrides::Entity::find().filter(prompt_overrides::COLUMN.key.eq(key));
     query = match (scope, book_id) {
         (PromptScope::Book, Some(book_id)) => query
-            .filter(prompt_overrides::Column::Scope.eq("book"))
-            .filter(prompt_overrides::Column::BookId.eq(book_id)),
+            .filter(prompt_overrides::COLUMN.scope.eq(PromptScope::Book))
+            .filter(prompt_overrides::COLUMN.book_id.eq(book_id)),
         _ => query
-            .filter(prompt_overrides::Column::Scope.eq("global"))
-            .filter(prompt_overrides::Column::BookId.is_null()),
+            .filter(prompt_overrides::COLUMN.scope.eq(PromptScope::Global))
+            .filter(prompt_overrides::COLUMN.book_id.is_null()),
     };
     let existing = query.one(tx).await?;
     let now = chrono::Utc::now();
@@ -233,7 +233,7 @@ async fn upsert(
         }
         None => {
             let active = prompt_overrides::ActiveModel {
-                scope: Set(scope.as_str().to_owned()),
+                scope: Set(scope),
                 book_id: Set(book_id),
                 key: Set(key.to_owned()),
                 content: Set(content.to_owned()),

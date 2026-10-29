@@ -12,7 +12,7 @@ use sea_orm::{
 
 use crate::api::dto::canon::{MemoryNoteDto, MemoryNoteInput, MemoryNotePatch, MemoryNoteQuery};
 use crate::db::entities::memory_notes;
-use crate::db::json::{ChangeOp, ChangeTargetType, NoteKind, NoteStatus};
+use crate::db::json::{ChangeOp, ChangeTargetType, NoteStatus};
 use crate::events::ServerEvent;
 
 use super::{
@@ -30,14 +30,14 @@ pub async fn list(
     // Shared rows by default (spec/06 §2); an isolated track's private notes are read through
     // the track's own views.
     let mut statement = memory_notes::Entity::find()
-        .filter(memory_notes::Column::BookId.eq(book_id))
+        .filter(memory_notes::COLUMN.book_id.eq(book_id))
         .filter(Visibility::shared(book_id).visible_condition(memory_notes::Column::TrackId))
-        .order_by_asc(memory_notes::Column::Id);
+        .order_by_asc(memory_notes::COLUMN.id);
     if let Some(kind) = query.kind {
-        statement = statement.filter(memory_notes::Column::Kind.eq(kind.as_str()));
+        statement = statement.filter(memory_notes::COLUMN.kind.eq(kind.as_str()));
     }
     if let Some(status) = query.status {
-        statement = statement.filter(memory_notes::Column::Status.eq(status.as_str()));
+        statement = statement.filter(memory_notes::COLUMN.status.eq(status.as_str()));
     }
     let rows = statement.all(conn).await?;
     let mut items = Vec::with_capacity(rows.len());
@@ -88,11 +88,11 @@ pub async fn create_inner(
         id: Set(new_id),
         book_id: Set(book_id),
         track_id: Set(write.new_row_track()),
-        kind: Set(input.kind.as_str().to_owned()),
+        kind: Set(input.kind),
         content: Set(content.to_owned()),
         chapter_id: Set(input.chapter_id.or(write.chapter_id)),
         importance: Set(input.importance),
-        status: Set(NoteStatus::Active.as_str().to_owned()),
+        status: Set(NoteStatus::Active),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),
     };
@@ -166,7 +166,7 @@ pub async fn update_inner(
         ..Default::default()
     };
     if let Some(kind) = patch.kind {
-        active.kind = Set(kind.as_str().to_owned());
+        active.kind = Set(kind);
     }
     if let Some(content) = &patch.content {
         let content = content.trim();
@@ -182,7 +182,7 @@ pub async fn update_inner(
         active.importance = Set(importance);
     }
     if let Some(status) = patch.status {
-        active.status = Set(status.as_str().to_owned());
+        active.status = Set(status);
     }
     active.update(tx).await?;
     if let Some(entity_ids) = &patch.entity_ids {
@@ -289,7 +289,7 @@ pub async fn retire_inner(
 ) -> CanonResult<(MemoryNoteDto, Vec<ServerEvent>)> {
     let existing = load(tx, note_id).await?;
     write.ensure_writable(existing.track_id, &format!("memory note #{}", existing.id))?;
-    if existing.status == NoteStatus::Retired.as_str() {
+    if existing.status == NoteStatus::Retired {
         return Ok((to_dto(tx, &existing).await?, Vec::new()));
     }
     let patch = MemoryNotePatch {
@@ -317,11 +317,11 @@ pub async fn to_dto(
         id: row.id,
         book_id: row.book_id,
         track_id: row.track_id,
-        kind: super::enum_of::<NoteKind>("memory_notes.kind", &row.kind)?,
+        kind: row.kind,
         content: row.content.clone(),
         chapter_id: row.chapter_id,
         importance: row.importance,
-        status: super::enum_of::<NoteStatus>("memory_notes.status", &row.status)?,
+        status: row.status,
         entity_ids: super::linked_entity_ids(conn, super::LinkTable::MemoryNote, row.id).await?,
         created_at: row.created_at,
         updated_at: row.updated_at,
@@ -397,11 +397,11 @@ pub async fn restore_inner(
     write.ensure_writable(existing.track_id, &format!("memory note #{}", existing.id))?;
     memory_notes::ActiveModel {
         id: Set(note_id),
-        kind: Set(kind.as_str().to_owned()),
+        kind: Set(*kind),
         content: Set(content.clone()),
         chapter_id: Set(*chapter_id),
         importance: Set(*importance),
-        status: Set(status.as_str().to_owned()),
+        status: Set(*status),
         updated_at: Set(stamp()),
         ..Default::default()
     }
@@ -443,27 +443,18 @@ pub async fn recreate_inner(
         id: Set(new_id),
         book_id: Set(book_id),
         track_id: Set(track_id.or_else(|| write.new_row_track())),
-        kind: Set(kind.as_str().to_owned()),
+        kind: Set(*kind),
         content: Set(content.clone()),
         chapter_id: Set(*chapter_id),
         importance: Set(*importance),
-        status: Set(status.as_str().to_owned()),
+        status: Set(*status),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),
     };
     let row = memory_notes::Entity::insert(model)
         .exec_with_returning(tx)
         .await?;
-    let mut restored = Vec::new();
-    for entity_id in unique_ids(entity_ids) {
-        if crate::db::entities::entities::Entity::find_by_id(entity_id)
-            .one(tx)
-            .await?
-            .is_some()
-        {
-            restored.push(entity_id);
-        }
-    }
+    let restored = super::existing_entity_ids(tx, &unique_ids(entity_ids)).await?;
     super::set_linked_entities(tx, super::LinkTable::MemoryNote, row.id, &restored).await?;
     Ok((row.id, note_snapshot(&row, restored)?))
 }

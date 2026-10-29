@@ -5,6 +5,7 @@
 
 use axum::http::StatusCode;
 use nekowriter::db::entities::{knowledge_chunks, search_docs};
+use nekowriter::db::json::EmbedState;
 use nekowriter::search::{index, maintenance};
 use nekowriter::services::indexer;
 use nekowriter::testing::TestApp;
@@ -61,8 +62,8 @@ async fn create_entity(app: &TestApp, book_id: i32, name: &str) -> i32 {
 
 async fn doc_row(app: &TestApp, kind: &str, ref_id: i32) -> Option<search_docs::Model> {
     search_docs::Entity::find()
-        .filter(search_docs::Column::Kind.eq(kind))
-        .filter(search_docs::Column::RefId.eq(ref_id))
+        .filter(search_docs::COLUMN.kind.eq(kind))
+        .filter(search_docs::COLUMN.ref_id.eq(ref_id))
         .one(app.db().conn())
         .await
         .expect("doc query")
@@ -115,7 +116,7 @@ async fn entity_documents_follow_the_crud_flow() {
         doc.body, "the protagonist · Fan · qi refining · age: 17 · a young cultivator",
         "spec/07 §2 entity body"
     );
-    assert_eq!(doc.embed_state, "pending");
+    assert_eq!(doc.embed_state, EmbedState::Pending);
     assert_eq!(doc.track_id, None);
     // The FTS row exists and holds jieba-segmented tokens.
     assert_eq!(fts_hits(&app, "\"lin\"").await, 1);
@@ -130,14 +131,14 @@ async fn entity_documents_follow_the_crud_flow() {
         .await;
     assert_eq!(status, StatusCode::OK, "patch entity: {body}");
     let doc = doc_row(&app, "entity", entity_id).await.expect("doc");
-    assert_eq!(doc.embed_state, "pending");
+    assert_eq!(doc.embed_state, EmbedState::Pending);
     assert_eq!(fts_hits(&app, "\"hero\"").await, 1);
 
     // Indexing stores the vector and marks the row done.
     let report = indexer::run_once(app.state()).await.expect("indexer");
     assert_eq!(report.stored, 1, "{report:?}");
     let doc = doc_row(&app, "entity", entity_id).await.expect("doc");
-    assert_eq!(doc.embed_state, "done");
+    assert_eq!(doc.embed_state, EmbedState::Done);
     assert_eq!(count_rows(&app, "vec_book").await, 1);
 
     // Deleting the entity removes the document, its FTS row and its vector (spec/02 §5.11).
@@ -156,15 +157,15 @@ async fn approving_a_chapter_indexes_its_passages() {
     let chapter_id = official_chapter(&app, track_id, "Sword Tomb", text).await;
 
     let docs = search_docs::Entity::find()
-        .filter(search_docs::Column::Kind.eq("passage"))
-        .filter(search_docs::Column::RefId.eq(chapter_id))
+        .filter(search_docs::COLUMN.kind.eq("passage"))
+        .filter(search_docs::COLUMN.ref_id.eq(chapter_id))
         .all(app.db().conn())
         .await
         .expect("passages");
     assert_eq!(docs.len(), 1, "three short paragraphs are one passage");
     assert_eq!(docs[0].ref_part, 0);
     assert_eq!(docs[0].title, "Sword Tomb");
-    let meta: serde_json::Value = serde_json::from_str(&docs[0].meta).expect("meta");
+    let meta: serde_json::Value = docs[0].meta.clone().into_inner();
     assert_eq!(meta["pids"], serde_json::json!(["p1", "p2", "p3"]));
     assert!(docs[0].body.contains("First paragraph"));
     // An empty summary has no document.
@@ -185,14 +186,14 @@ async fn approving_a_chapter_indexes_its_passages() {
         .await;
     assert_eq!(status, StatusCode::OK, "content patch: {body}");
     let docs_after = search_docs::Entity::find()
-        .filter(search_docs::Column::Kind.eq("passage"))
-        .filter(search_docs::Column::RefId.eq(chapter_id))
+        .filter(search_docs::COLUMN.kind.eq("passage"))
+        .filter(search_docs::COLUMN.ref_id.eq(chapter_id))
         .all(app.db().conn())
         .await
         .expect("passages");
     assert_eq!(docs_after.len(), 1);
     assert_eq!(docs_after[0].id, passage_id, "the hash diff keeps the row");
-    assert_eq!(docs_after[0].embed_state, "pending");
+    assert_eq!(docs_after[0].embed_state, EmbedState::Pending);
     assert!(docs_after[0].body.contains("rewritten"));
     // The old vector is replaced only by the next batch, which stores one vector for the row.
     let report = indexer::run_once(app.state()).await.expect("indexer");
@@ -253,7 +254,7 @@ async fn a_model_change_rebuilds_the_vec_tables_and_resets_the_states() {
         "the fake embedder follows the model table's dimension in tests"
     );
     let doc = doc_row(&app, "entity", entity_id).await.expect("doc");
-    assert_eq!(doc.embed_state, "pending");
+    assert_eq!(doc.embed_state, EmbedState::Pending);
     assert_eq!(
         fts_before,
         count_rows(&app, "fts_book").await,
@@ -295,7 +296,7 @@ async fn a_startup_with_a_stale_index_meta_rebuilds_the_schema() {
         Some("384")
     );
     let doc = doc_row(&app, "entity", entity_id).await.expect("doc");
-    assert_eq!(doc.embed_state, "pending");
+    assert_eq!(doc.embed_state, EmbedState::Pending);
 }
 
 #[tokio::test]
@@ -327,7 +328,7 @@ async fn an_item_changed_or_deleted_during_embedding_gets_no_stale_vector() {
     assert!(!stored, "a changed row must not get the old vector");
     assert_eq!(count_rows(&app, "vec_book").await, 0);
     let doc = doc_row(&app, "entity", entity_id).await.expect("doc");
-    assert_eq!(doc.embed_state, "pending");
+    assert_eq!(doc.embed_state, EmbedState::Pending);
 
     // A deleted row gets no vector either, and the next batch stores the fresh content.
     let old_hash = doc.content_hash.clone();
@@ -403,14 +404,14 @@ async fn the_worker_takes_book_documents_and_knowledge_chunks_in_one_batch() {
     assert_eq!(count_rows(&app, "vec_book").await, 3);
     assert_eq!(
         knowledge_chunks::Entity::find()
-            .filter(knowledge_chunks::Column::EmbedState.eq("done"))
+            .filter(knowledge_chunks::COLUMN.embed_state.eq("done"))
             .count(app.db().conn())
             .await
             .expect("count"),
         3
     );
     let remaining = knowledge_chunks::Entity::find()
-        .filter(knowledge_chunks::Column::EmbedState.eq("pending"))
+        .filter(knowledge_chunks::COLUMN.embed_state.eq("pending"))
         .count(app.db().conn())
         .await
         .expect("count");
@@ -461,14 +462,14 @@ async fn rebuild_marks_everything_pending_and_retries_failed_items() {
     app.execute("UPDATE search_docs SET embed_state = 'failed'")
         .await;
     let doc = doc_row(&app, "entity", entity_id).await.expect("doc");
-    assert_eq!(doc.embed_state, "failed");
+    assert_eq!(doc.embed_state, EmbedState::Failed);
 
     let (status, _) = app
         .post("/api/embedding/rebuild", serde_json::json!({}))
         .await;
     assert_eq!(status, StatusCode::ACCEPTED);
     let doc = doc_row(&app, "entity", entity_id).await.expect("doc");
-    assert_eq!(doc.embed_state, "pending");
+    assert_eq!(doc.embed_state, EmbedState::Pending);
 }
 
 #[tokio::test]
@@ -493,7 +494,7 @@ async fn knowledge_entry_chunks_are_rebuilt_with_a_hash_diff() {
     .await
     .expect("sync");
     let rows = knowledge_chunks::Entity::find()
-        .filter(knowledge_chunks::Column::EntryId.eq(1))
+        .filter(knowledge_chunks::COLUMN.entry_id.eq(1))
         .all(app.db().conn())
         .await
         .expect("chunks");
@@ -519,8 +520,8 @@ async fn knowledge_entry_chunks_are_rebuilt_with_a_hash_diff() {
     .await
     .expect("resync");
     let rows = knowledge_chunks::Entity::find()
-        .filter(knowledge_chunks::Column::EntryId.eq(1))
-        .order_by_asc(knowledge_chunks::Column::Ord)
+        .filter(knowledge_chunks::COLUMN.entry_id.eq(1))
+        .order_by_asc(knowledge_chunks::COLUMN.ord)
         .all(app.db().conn())
         .await
         .expect("chunks");

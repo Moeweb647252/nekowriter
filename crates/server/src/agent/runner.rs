@@ -37,9 +37,9 @@ use crate::db::entities::{
     agent_inbox, agent_messages, agent_sessions, agent_tool_calls, books, chapters, tracks,
 };
 use crate::db::json::{
-    self, Appendix, AppendixKind, ChapterContent, CompletionKind, MessageKind, MessageRole, Phase,
-    RequestMeta, SessionError, SessionKind, SessionStatus, StoredBlock, ToolCallStatus,
-    ToolEffects, Usage, ViewSnapshot,
+    self, Appendix, AppendixKind, ChapterContent, CompletionKind, JsonText, MessageKind,
+    MessageRole, Phase, RequestMeta, SessionCounters, SessionError, SessionKind, SessionStatus,
+    StoredBlock, ToolCallStatus, ToolEffects, Usage, ViewSnapshot,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::{DeltaKind, ServerEvent};
@@ -130,7 +130,7 @@ pub async fn drive(ctx: RunnerCtx) -> Result<(), AppError> {
         // Re-reading the row at every loop step is what makes a concurrent pause or granularity
         // change impossible to lose (spec/03 §14, test 21).
         let session = session::load(ctx.state.db().conn(), ctx.session_id).await?;
-        if session.status != SessionStatus::Running.as_str() {
+        if session.status != SessionStatus::Running {
             return Ok(());
         }
         if ctx.cancel.is_cancelled() {
@@ -162,7 +162,7 @@ pub async fn drive(ctx: RunnerCtx) -> Result<(), AppError> {
 
         match classify_tail(ctx.state.db().conn(), ctx.session_id).await? {
             Tail::NeedsModel => {
-                if session.pause_requested != 0 {
+                if session.pause_requested {
                     let events = transition_in_write(
                         &ctx.state,
                         ctx.session_id,
@@ -192,8 +192,8 @@ pub async fn messages_of(
     session_id: i32,
 ) -> Result<Vec<agent_messages::Model>, AppError> {
     Ok(agent_messages::Entity::find()
-        .filter(agent_messages::Column::SessionId.eq(session_id))
-        .order_by_asc(agent_messages::Column::Seq)
+        .filter(agent_messages::COLUMN.session_id.eq(session_id))
+        .order_by_asc(agent_messages::COLUMN.seq)
         .all(conn)
         .await?)
 }
@@ -204,8 +204,8 @@ pub async fn calls_of(
     message_id: i32,
 ) -> Result<Vec<agent_tool_calls::Model>, AppError> {
     Ok(agent_tool_calls::Entity::find()
-        .filter(agent_tool_calls::Column::MessageId.eq(message_id))
-        .order_by_asc(agent_tool_calls::Column::CallIndex)
+        .filter(agent_tool_calls::COLUMN.message_id.eq(message_id))
+        .order_by_asc(agent_tool_calls::COLUMN.call_index)
         .all(conn)
         .await?)
 }
@@ -216,9 +216,9 @@ async fn first_pending_call(
     session_id: i32,
 ) -> Result<Option<agent_tool_calls::Model>, AppError> {
     Ok(agent_tool_calls::Entity::find()
-        .filter(agent_tool_calls::Column::SessionId.eq(session_id))
-        .filter(agent_tool_calls::Column::Status.eq(ToolCallStatus::Pending.as_str()))
-        .order_by_asc(agent_tool_calls::Column::Id)
+        .filter(agent_tool_calls::COLUMN.session_id.eq(session_id))
+        .filter(agent_tool_calls::COLUMN.status.eq(ToolCallStatus::Pending))
+        .order_by_asc(agent_tool_calls::COLUMN.id)
         .one(conn)
         .await?)
 }
@@ -228,7 +228,7 @@ pub async fn classify_tail(conn: &impl ConnectionTrait, session_id: i32) -> Resu
     let Some(last) = messages_of(conn, session_id).await?.pop() else {
         return Ok(Tail::NeedsModel);
     };
-    if last.role == MessageRole::User.as_str() {
+    if last.role == MessageRole::User {
         return Ok(Tail::NeedsModel);
     }
     let calls = calls_of(conn, last.id).await?;
@@ -241,8 +241,8 @@ pub async fn classify_tail(conn: &impl ConnectionTrait, session_id: i32) -> Resu
 /// The next `seq` of a session's messages (contiguous, spec/02 §5 invariant 6).
 pub async fn next_seq(conn: &impl ConnectionTrait, session_id: i32) -> Result<i32, AppError> {
     let max = agent_messages::Entity::find()
-        .filter(agent_messages::Column::SessionId.eq(session_id))
-        .order_by_desc(agent_messages::Column::Seq)
+        .filter(agent_messages::COLUMN.session_id.eq(session_id))
+        .order_by_desc(agent_messages::COLUMN.seq)
         .one(conn)
         .await?
         .map(|row| row.seq);
@@ -260,11 +260,9 @@ pub async fn insert_user_message(
     let row = agent_messages::ActiveModel {
         session_id: Set(session_id),
         seq: Set(seq),
-        role: Set(MessageRole::User.as_str().to_owned()),
-        kind: Set(kind.as_str().to_owned()),
-        content: Set(
-            serde_json::to_string(&blocks).map_err(|err| AppError::internal(err.to_string()))?
-        ),
+        role: Set(MessageRole::User),
+        kind: Set(kind),
+        content: Set(JsonText(blocks)),
         provider_payload: Set(None),
         request_meta: Set(None),
         stop_reason: Set(None),
@@ -292,9 +290,9 @@ pub async fn pending_inbox_rows(
     session_id: i32,
 ) -> Result<Vec<agent_inbox::Model>, AppError> {
     Ok(agent_inbox::Entity::find()
-        .filter(agent_inbox::Column::SessionId.eq(session_id))
-        .filter(agent_inbox::Column::ConsumedAt.is_null())
-        .order_by_asc(agent_inbox::Column::Id)
+        .filter(agent_inbox::COLUMN.session_id.eq(session_id))
+        .filter(agent_inbox::COLUMN.consumed_at.is_null())
+        .order_by_asc(agent_inbox::COLUMN.id)
         .all(conn)
         .await?)
 }
@@ -499,7 +497,7 @@ async fn fail_in_write(
     crate::services::write(state.db(), move |tx| {
         Box::pin(async move {
             let session = session::load(tx, session_id).await?;
-            if session.status != SessionStatus::Running.as_str() {
+            if session.status != SessionStatus::Running {
                 return Ok(Vec::new());
             }
             session::set_error_running(tx, session_id, &error).await?;
@@ -532,7 +530,7 @@ async fn step_model(ctx: &RunnerCtx, session: &agent_sessions::Model) -> Result<
             // Drop the stream, persist nothing (spec/03 §5.5).
             sink.flush();
             let fresh = session::load(state.db().conn(), session.id).await?;
-            if fresh.status == SessionStatus::Running.as_str() {
+            if fresh.status == SessionStatus::Running {
                 // The reason decides the status: a shutdown during a stream gives `interrupted`,
                 // exactly as startup recovery would (spec/03 §5.1, spec/01 §5). The fallback keeps
                 // the Stop behaviour for a defensive token without a reason.
@@ -554,13 +552,13 @@ async fn step_model(ctx: &RunnerCtx, session: &agent_sessions::Model) -> Result<
             // has not persisted anything, so the rollover would retry the same request.
             if error.code == CONTEXT_OVERFLOW_CODE {
                 let mut overflowed = fresh.clone();
-                overflowed.error = Some(crate::db::json::to_json(&*error).unwrap_or_default());
+                overflowed.error = Some(JsonText((*error).clone()));
                 if rollover_needed(&overflowed) {
                     return super::context::rollover(state, &fresh).await;
                 }
             }
             let mut events = Vec::new();
-            if fresh.status == SessionStatus::Running.as_str() {
+            if fresh.status == SessionStatus::Running {
                 events =
                     fail_in_write(state, session.id, (*error).clone(), TransitionCause::Failed)
                         .await?;
@@ -658,6 +656,49 @@ fn classify_llm_error(error: &nekowriter_llm::LlmError) -> SessionError {
 
 /// Persists one assistant turn, its tool calls and the session counters in one transaction
 /// (spec/03 §5.5), then handles the stop reason.
+/// The partial session update written after an assistant message: counters, usage and time.
+pub(crate) fn persist_assistant_changes(
+    counters: SessionCounters,
+    usage: Usage,
+    now: chrono::DateTime<chrono::Utc>,
+) -> agent_sessions::ActiveModel {
+    agent_sessions::ActiveModel {
+        counters: Set(JsonText(counters)),
+        usage: Set(JsonText(usage)),
+        updated_at: Set(now),
+        ..Default::default()
+    }
+}
+
+/// A guarded counters-only update (the nudge and tool-error paths).
+pub(crate) fn counters_changes(counters: SessionCounters) -> agent_sessions::ActiveModel {
+    agent_sessions::ActiveModel {
+        counters: Set(JsonText(counters)),
+        ..Default::default()
+    }
+}
+
+/// The partial session update written when a tool call is finalized.
+pub(crate) fn finalize_changes(
+    counters: SessionCounters,
+    now: chrono::DateTime<chrono::Utc>,
+    held_call_id: Option<i32>,
+    phase: Option<Phase>,
+) -> agent_sessions::ActiveModel {
+    let mut changes = agent_sessions::ActiveModel {
+        counters: Set(JsonText(counters)),
+        updated_at: Set(now),
+        ..Default::default()
+    };
+    if let Some(held_call_id) = held_call_id {
+        changes.held_tool_call_id = Set(Some(held_call_id));
+    }
+    if let Some(phase) = phase {
+        changes.phase = Set(phase);
+    }
+    changes
+}
+
 async fn persist_assistant(
     state: &AppState,
     session: &agent_sessions::Model,
@@ -717,25 +758,17 @@ async fn persist_assistant(
                     input_text: call.input_text.clone(),
                 });
             }
-            let payload = json::to_json(&to_stored_payload(&turn.payload))
-                .map_err(|err| AppError::internal(err.to_string()))?;
+            let payload = JsonText(to_stored_payload(&turn.payload));
             let message = agent_messages::ActiveModel {
                 session_id: Set(session.id),
                 seq: Set(seq),
-                role: Set(MessageRole::Assistant.as_str().to_owned()),
-                kind: Set(MessageKind::Assistant.as_str().to_owned()),
-                content: Set(
-                    json::to_json(&blocks).map_err(|err| AppError::internal(err.to_string()))?
-                ),
+                role: Set(MessageRole::Assistant),
+                kind: Set(MessageKind::Assistant),
+                content: Set(JsonText(blocks)),
                 provider_payload: Set(Some(payload)),
-                request_meta: Set(Some(
-                    json::to_json(&meta).map_err(|err| AppError::internal(err.to_string()))?,
-                )),
+                request_meta: Set(Some(JsonText(meta))),
                 stop_reason: Set(Some(turn.stop_reason.as_str().to_owned())),
-                usage: Set(Some(
-                    json::to_json(&turn.usage)
-                        .map_err(|err| AppError::internal(err.to_string()))?,
-                )),
+                usage: Set(Some(JsonText(message_usage(&turn.usage)))),
                 created_at: Set(now),
                 ..Default::default()
             }
@@ -769,15 +802,14 @@ async fn persist_assistant(
                     provider_call_id: Set(call.id.clone()),
                     name: Set(call.name.clone()),
                     input: Set(call.input_text.clone()),
-                    status: Set(status.as_str().to_owned()),
+                    status: Set(status),
                     raw_result_text: Set(raw_result_text),
-                    appendices: Set(json::to_json(&appendices)
-                        .map_err(|err| AppError::internal(err.to_string()))?),
+                    appendices: Set(JsonText(appendices)),
                     result_text: Set(None),
-                    is_error: Set(i32::from(is_truncated)),
+                    is_error: Set(is_truncated),
                     ui: Set(None),
                     effects: Set(None),
-                    sealed: Set(0),
+                    sealed: Set(false),
                     created_at: Set(now),
                     started_at: Set(None),
                     finished_at: Set(if is_truncated { Some(now) } else { None }),
@@ -808,20 +840,11 @@ async fn persist_assistant(
                 estimated: turn.usage.estimated,
             };
             usage.accumulate(&request_usage);
-            session::guard_columns(
+            session::guard_update(
                 tx,
                 session.id,
-                SessionStatus::Running.as_str(),
-                "counters = ?, usage = ?, updated_at = ?",
-                vec![
-                    json::to_json(&counters)
-                        .map_err(|err| AppError::internal(err.to_string()))?
-                        .into(),
-                    json::to_json(&usage)
-                        .map_err(|err| AppError::internal(err.to_string()))?
-                        .into(),
-                    now.into(),
-                ],
+                SessionStatus::Running,
+                persist_assistant_changes(counters, usage, now),
             )
             .await?;
             Ok((message, rows))
@@ -866,7 +889,7 @@ async fn persist_assistant(
             at: Utc::now(),
         };
         let fresh = session::load(state.db().conn(), session.id).await?;
-        if fresh.status == SessionStatus::Running.as_str() {
+        if fresh.status == SessionStatus::Running {
             let mut resolved = refuse_batch(state, &fresh, &prompts).await?;
             events.append(&mut resolved);
             let mut transition =
@@ -893,7 +916,7 @@ async fn refuse_batch(
             let Some(last) = messages
                 .iter()
                 .rev()
-                .find(|message| message.role == MessageRole::Assistant.as_str())
+                .find(|message| message.role == MessageRole::Assistant)
             else {
                 return Ok(events);
             };
@@ -901,24 +924,21 @@ async fn refuse_batch(
             let text = ToolOutcome::error(&prompts, &ToolError::new(ToolErrorKind::Refusal)).text;
             for call in calls_of(tx, last.id).await? {
                 if !matches!(
-                    ToolCallStatus::from_str_opt(&call.status),
-                    Some(ToolCallStatus::Pending)
-                        | Some(ToolCallStatus::Executing)
-                        | Some(ToolCallStatus::Held)
-                        | Some(ToolCallStatus::AwaitingInput)
+                    call.status,
+                    ToolCallStatus::Pending
+                        | ToolCallStatus::Executing
+                        | ToolCallStatus::Held
+                        | ToolCallStatus::AwaitingInput
                 ) {
                     continue;
                 }
                 agent_tool_calls::ActiveModel {
                     id: Set(call.id),
-                    status: Set(ToolCallStatus::Error.as_str().to_owned()),
+                    status: Set(ToolCallStatus::Error),
                     raw_result_text: Set(Some(text.clone())),
-                    is_error: Set(1),
+                    is_error: Set(true),
                     finished_at: Set(Some(Utc::now())),
-                    effects: Set(Some(
-                        json::to_json(&ToolEffects::default())
-                            .map_err(|err| AppError::internal(err.to_string()))?,
-                    )),
+                    effects: Set(Some(JsonText(ToolEffects::default()))),
                     ..Default::default()
                 }
                 .update(tx)
@@ -981,7 +1001,7 @@ async fn step_tool(
         Box::pin(async move {
             agent_tool_calls::ActiveModel {
                 id: Set(call_id),
-                status: Set(ToolCallStatus::Executing.as_str().to_owned()),
+                status: Set(ToolCallStatus::Executing),
                 started_at: Set(Some(Utc::now())),
                 ..Default::default()
             }
@@ -1199,7 +1219,7 @@ pub(crate) async fn apply_pending_content(
     let Some(chapter) = chapters::Entity::find_by_id(chapter_id).one(tx).await? else {
         return Ok(Vec::new());
     };
-    let before: ChapterContent = json::from_json_or_default(&chapter.content);
+    let before: ChapterContent = chapter.content.clone().into_inner();
     // An author edit while the call was held wins; the agent's staged text is not applied over it.
     let stale = chapter.content_version != write.expected_version;
     if stale && before != write.content {
@@ -1221,12 +1241,10 @@ pub(crate) async fn apply_pending_content(
         write.content.tail_open,
     );
     let version = chapter.content_version + 1;
-    let stored =
-        json::to_json(&write.content).map_err(|err| AppError::internal(err.to_string()))?;
     let now = Utc::now();
     chapters::ActiveModel {
         id: Set(chapter_id),
-        content: Set(stored),
+        content: Set(JsonText(write.content.clone())),
         content_version: Set(version),
         word_count: Set(word_count),
         updated_at: Set(now),
@@ -1329,14 +1347,11 @@ async fn keep_view_snapshot_outline_in_sync(
     outline: &str,
     reference_notes: &str,
 ) -> Result<(), AppError> {
-    let Some(raw) = session.view_snapshot.as_deref() else {
-        return Ok(());
-    };
-    let Ok(ViewSnapshot::Chapter {
+    let Some(ViewSnapshot::Chapter {
         content,
         outline: old_outline,
         reference_notes: old_notes,
-    }) = json::from_json::<ViewSnapshot>(raw)
+    }) = session.view_snapshot.as_ref().map(|value| value.0.clone())
     else {
         return Ok(());
     };
@@ -1348,14 +1363,11 @@ async fn keep_view_snapshot_outline_in_sync(
         outline: outline.to_owned(),
         reference_notes: reference_notes.to_owned(),
     };
-    let stored = json::to_json(&snapshot)
-        .map_err(|err| AppError::internal(format!("cannot serialize view snapshot: {err}")))?;
-    session::guard_columns(
+    session::guard_update(
         tx,
         session.id,
-        &session.status,
-        "view_snapshot = ?",
-        vec![stored.into()],
+        session.status,
+        session::view_snapshot_changes(snapshot),
     )
     .await?;
     Ok(())
@@ -1375,14 +1387,11 @@ async fn keep_view_snapshot_in_sync(
     before: &ChapterContent,
     after: &ChapterContent,
 ) -> Result<(), AppError> {
-    let Some(raw) = session.view_snapshot.as_deref() else {
-        return Ok(());
-    };
-    let Ok(ViewSnapshot::Chapter {
+    let Some(ViewSnapshot::Chapter {
         content,
         outline,
         reference_notes,
-    }) = json::from_json::<ViewSnapshot>(raw)
+    }) = session.view_snapshot.as_ref().map(|value| value.0.clone())
     else {
         return Ok(());
     };
@@ -1394,17 +1403,14 @@ async fn keep_view_snapshot_in_sync(
         outline,
         reference_notes,
     };
-    let stored = json::to_json(&snapshot)
-        .map_err(|err| AppError::internal(format!("cannot serialize view snapshot: {err}")))?;
     // Guarded on the status the row actually has: an ordinary call finalizes while the session is
     // still `running`, and the resume that approves a held call finalizes while it is `held` (the
     // status change follows in the same transaction).
-    session::guard_columns(
+    session::guard_update(
         tx,
         session.id,
-        &session.status,
-        "view_snapshot = ?",
-        vec![stored.into()],
+        session.status,
+        session::view_snapshot_changes(snapshot),
     )
     .await?;
     tracing::debug!(
@@ -1423,7 +1429,7 @@ async fn finalize_inner(
     prompts: &PromptSet,
 ) -> Result<Finalization, AppError> {
     let mut events = Vec::new();
-    let mut appendices: Vec<Appendix> = json::from_json_or_default(&call.appendices);
+    let mut appendices: Vec<Appendix> = call.appendices.clone().into_inner();
 
     // The field is public API for later milestones (M4 appends its reference notes notice).
     let _ = &prompts;
@@ -1530,9 +1536,9 @@ async fn finalize_inner(
         ToolCallStatus::Done
     };
     let stored_effects = if deferred {
-        json::to_json(&outcome.effects).map_err(|err| AppError::internal(err.to_string()))?
+        JsonText(outcome.effects.clone())
     } else {
-        json::to_json(&ToolEffects::default()).map_err(|err| AppError::internal(err.to_string()))?
+        JsonText(ToolEffects::default())
     };
     let now = Utc::now();
 
@@ -1541,18 +1547,16 @@ async fn finalize_inner(
     let raw_result_text = cap_result(prompts, &outcome.text, &call.name);
     agent_tool_calls::ActiveModel {
         id: Set(call.id),
-        status: Set(status.as_str().to_owned()),
+        status: Set(status),
         raw_result_text: Set(Some(raw_result_text)),
-        appendices: Set(
-            json::to_json(&appendices).map_err(|err| AppError::internal(err.to_string()))?
-        ),
+        appendices: Set(JsonText(appendices)),
         ui: Set(if outcome.ui.is_null() {
             None
         } else {
-            Some(json::to_json(&outcome.ui).map_err(|err| AppError::internal(err.to_string()))?)
+            Some(JsonText(outcome.ui.clone()))
         }),
         effects: Set(Some(stored_effects)),
-        is_error: Set(i32::from(outcome.is_error)),
+        is_error: Set(outcome.is_error),
         finished_at: Set(if deferred { None } else { Some(now) }),
         ..Default::default()
     }
@@ -1560,31 +1564,15 @@ async fn finalize_inner(
     .await?;
 
     // The session row: counters, held call, phase (column-wise and guarded).
-    let mut sets = vec!["counters = ?".to_owned(), "updated_at = ?".to_owned()];
-    let mut values: Vec<sea_orm::Value> = vec![
-        json::to_json(&counters)
-            .map_err(|err| AppError::internal(err.to_string()))?
-            .into(),
-        now.into(),
-    ];
-    if deferred {
-        sets.push("held_tool_call_id = ?".to_owned());
-        values.push(Some(call.id).into());
-    }
     // Deferred effects are applied by the transaction that *finalizes* the call (spec/03 §5.4):
     // a held or awaiting call only stores them, so its phase change must not happen yet.
-    if !deferred && let Some(phase) = outcome.effects.phase_to {
-        sets.push("phase = ?".to_owned());
-        values.push(phase.as_str().to_owned().into());
-    }
-    session::guard_columns(
-        tx,
-        session.id,
-        SessionStatus::Running.as_str(),
-        &sets.join(", "),
-        values,
-    )
-    .await?;
+    let phase = if deferred {
+        None
+    } else {
+        outcome.effects.phase_to
+    };
+    let changes = finalize_changes(counters.clone(), now, deferred.then_some(call.id), phase);
+    session::guard_update(tx, session.id, SessionStatus::Running, changes).await?;
 
     let refreshed = load_call(tx, call.id).await?;
     events.push(ServerEvent::SessionToolCall {
@@ -1626,16 +1614,11 @@ async fn finalize_inner(
                     retryable: true,
                     at: now,
                 };
-                session::guard_columns(
+                session::guard_update(
                     tx,
                     session.id,
-                    SessionStatus::Running.as_str(),
-                    "error = ?",
-                    vec![
-                        json::to_json(&error)
-                            .map_err(|err| AppError::internal(err.to_string()))?
-                            .into(),
-                    ],
+                    SessionStatus::Running,
+                    session::error_changes(&error),
                 )
                 .await?;
                 let reloaded = session::load(tx, session.id).await?;
@@ -1683,18 +1666,18 @@ pub(crate) async fn run_completion_handler(
     // 2. Every remaining pending call of the same assistant message ends as
     //    `error.after_completion` (spec/03 §5.4, D-025).
     let siblings = agent_tool_calls::Entity::find()
-        .filter(agent_tool_calls::Column::MessageId.eq(call.message_id))
-        .filter(agent_tool_calls::Column::Status.eq(ToolCallStatus::Pending.as_str()))
-        .order_by_asc(agent_tool_calls::Column::CallIndex)
+        .filter(agent_tool_calls::COLUMN.message_id.eq(call.message_id))
+        .filter(agent_tool_calls::COLUMN.status.eq(ToolCallStatus::Pending))
+        .order_by_asc(agent_tool_calls::COLUMN.call_index)
         .all(tx)
         .await?;
     for sibling in siblings {
         let rendered = ToolOutcome::error(prompts, &ToolError::new(ToolErrorKind::AfterCompletion));
         agent_tool_calls::ActiveModel {
             id: Set(sibling.id),
-            status: Set(ToolCallStatus::Error.as_str().to_owned()),
+            status: Set(ToolCallStatus::Error),
             raw_result_text: Set(Some(rendered.text)),
-            is_error: Set(1),
+            is_error: Set(true),
             finished_at: Set(Some(Utc::now())),
             ..Default::default()
         }
@@ -1773,7 +1756,7 @@ async fn tail_state(
     session: &agent_sessions::Model,
 ) -> Result<(bool, String), AppError> {
     if let Some(chapter) = lookup_chapter(tx, session).await? {
-        let content: json::ChapterContent = json::from_json_or_default(&chapter.content);
+        let content: json::ChapterContent = chapter.content.clone().into_inner();
         return Ok((
             content.tail_open,
             content
@@ -1788,10 +1771,9 @@ async fn tail_state(
 
 /// The tail state recorded in the session's view snapshot, when it has one.
 fn snapshot_tail_state(session: &agent_sessions::Model) -> (bool, String) {
-    let Some(raw) = session.view_snapshot.as_deref() else {
-        return (false, String::new());
-    };
-    let Ok(ViewSnapshot::Chapter { content, .. }) = json::from_json::<ViewSnapshot>(raw) else {
+    let Some(ViewSnapshot::Chapter { content, .. }) =
+        session.view_snapshot.as_ref().map(|value| value.0.clone())
+    else {
         return (false, String::new());
     };
     (
@@ -1810,16 +1792,14 @@ fn hold_condition(
     call: &agent_tool_calls::Model,
     outcome: &ToolOutcome,
 ) -> bool {
-    if session.pause_requested != 0 {
+    if session.pause_requested {
         return true;
     }
-    if session.auto_pause != 0
-        && super::tools::registry::is_write_tool(&call.name)
-        && !outcome.is_error
+    if session.auto_pause && super::tools::registry::is_write_tool(&call.name) && !outcome.is_error
     {
         return true;
     }
-    if call.name == "submit_outline" && session.pause_after_outline != 0 && !outcome.is_error {
+    if call.name == "submit_outline" && session.pause_after_outline && !outcome.is_error {
         return true;
     }
     false
@@ -1838,9 +1818,9 @@ async fn record_internal_failure(
         Box::pin(async move {
             agent_tool_calls::ActiveModel {
                 id: Set(call_id),
-                status: Set(ToolCallStatus::Error.as_str().to_owned()),
+                status: Set(ToolCallStatus::Error),
                 raw_result_text: Set(Some(text)),
-                is_error: Set(1),
+                is_error: Set(true),
                 finished_at: Set(Some(Utc::now())),
                 ..Default::default()
             }
@@ -1880,7 +1860,7 @@ async fn reset_call_to_pending_and_stop(
         Box::pin(async move {
             agent_tool_calls::ActiveModel {
                 id: Set(call_id),
-                status: Set(ToolCallStatus::Pending.as_str().to_owned()),
+                status: Set(ToolCallStatus::Pending),
                 started_at: Set(None),
                 ..Default::default()
             }
@@ -1940,12 +1920,12 @@ pub async fn seal_inner(
     let batch = match messages
         .iter()
         .rev()
-        .find(|message| message.role == MessageRole::Assistant.as_str())
+        .find(|message| message.role == MessageRole::Assistant)
     {
         Some(message) => calls_of(tx, message.id)
             .await?
             .into_iter()
-            .filter(|call| call.sealed == 0)
+            .filter(|call| !call.sealed)
             .collect::<Vec<_>>(),
         None => Vec::new(),
     };
@@ -1953,7 +1933,7 @@ pub async fn seal_inner(
     if !batch.is_empty() {
         let last_id = batch.last().map(|call| call.id);
         for call in &batch {
-            let mut appendices: Vec<Appendix> = json::from_json_or_default(&call.appendices);
+            let mut appendices: Vec<Appendix> = call.appendices.clone().into_inner();
             if Some(call.id) == last_id {
                 if let Some(report) = &report {
                     appendices.push(Appendix {
@@ -1969,10 +1949,9 @@ pub async fn seal_inner(
             let composed = seal::compose(call.raw_result_text.as_deref(), &appendices);
             agent_tool_calls::ActiveModel {
                 id: Set(call.id),
-                appendices: Set(json::to_json(&appendices)
-                    .map_err(|err| AppError::internal(err.to_string()))?),
+                appendices: Set(JsonText(appendices)),
                 result_text: Set(Some(composed)),
-                sealed: Set(1),
+                sealed: Set(true),
                 ..Default::default()
             }
             .update(tx)
@@ -1998,7 +1977,7 @@ pub async fn seal_inner(
         }
         let author = items
             .iter()
-            .any(|item| item.kind == json::InboxKind::UserMessage.as_str());
+            .any(|item| item.kind == json::InboxKind::UserMessage);
         let kind = if author {
             MessageKind::User
         } else {
@@ -2066,10 +2045,7 @@ async fn edit_report_text(
     session: &agent_sessions::Model,
     prompts: &PromptSet,
 ) -> Result<Option<String>, AppError> {
-    let Some(raw) = session.view_snapshot.as_deref() else {
-        return Ok(None);
-    };
-    let Ok(snapshot) = json::from_json::<ViewSnapshot>(raw) else {
+    let Some(snapshot) = session.view_snapshot.as_ref().map(|value| value.0.clone()) else {
         return Ok(None);
     };
     match snapshot {
@@ -2081,7 +2057,7 @@ async fn edit_report_text(
                 return Ok(None);
             };
             let current = super::report::ChapterState {
-                content: json::from_json_or_default(&chapter.content),
+                content: chapter.content.clone().into_inner(),
                 outline: chapter.outline,
                 reference_notes: chapter.reference_notes,
             };
@@ -2183,7 +2159,7 @@ pub async fn text_only_inner(
         }
         let author = items
             .iter()
-            .any(|item| item.kind == json::InboxKind::UserMessage.as_str());
+            .any(|item| item.kind == json::InboxKind::UserMessage);
         let kind = if author {
             MessageKind::User
         } else {
@@ -2250,16 +2226,11 @@ pub async fn text_only_inner(
                     }],
                 )
                 .await?;
-                session::guard_columns(
+                session::guard_update(
                     tx,
                     session.id,
-                    SessionStatus::Running.as_str(),
-                    "counters = ?",
-                    vec![
-                        json::to_json(&counters)
-                            .map_err(|err| AppError::internal(err.to_string()))?
-                            .into(),
-                    ],
+                    SessionStatus::Running,
+                    counters_changes(counters.clone()),
                 )
                 .await?;
                 events.push(ServerEvent::SessionMessage {
@@ -2274,16 +2245,11 @@ pub async fn text_only_inner(
                     retryable: true,
                     at: Utc::now(),
                 };
-                session::guard_columns(
+                session::guard_update(
                     tx,
                     session.id,
-                    SessionStatus::Running.as_str(),
-                    "error = ?",
-                    vec![
-                        json::to_json(&error)
-                            .map_err(|err| AppError::internal(err.to_string()))?
-                            .into(),
-                    ],
+                    SessionStatus::Running,
+                    session::error_changes(&error),
                 )
                 .await?;
                 let reloaded = session::load(tx, session.id).await?;
@@ -2338,9 +2304,7 @@ pub fn rollover_needed(session: &agent_sessions::Model) -> bool {
     if session::error_of(session).is_some_and(|error| error.code == CONTEXT_OVERFLOW_CODE) {
         return true;
     }
-    let Ok(snapshot) = json::from_json::<json::ModelSnapshot>(&session.model_snapshot) else {
-        return false;
-    };
+    let snapshot = session.model_snapshot.clone().into_inner();
     let usage = session::usage_of(session);
     let window = i64::from(snapshot.context_window);
     if window <= 0 {
@@ -2385,7 +2349,7 @@ async fn provider_client(
     if let Some(provider) = state.provider_override() {
         return Ok(provider.clone());
     }
-    let snapshot: json::ModelSnapshot = json::from_json_or_default(&session.model_snapshot);
+    let snapshot: json::ModelSnapshot = session.model_snapshot.clone().into_inner();
     let provider = crate::db::entities::providers::Entity::find_by_id(snapshot.provider_id)
         .one(state.db().conn())
         .await?;
@@ -2398,7 +2362,7 @@ async fn provider_client(
             at: Utc::now(),
         };
         let fresh = session::load(state.db().conn(), session.id).await?;
-        if fresh.status == SessionStatus::Running.as_str() {
+        if fresh.status == SessionStatus::Running {
             let events = fail_in_write(state, session.id, error, TransitionCause::Failed).await?;
             state.events().publish_all(events);
         }
@@ -2426,8 +2390,8 @@ async fn request_meta_of(
         .ok_or_else(|| AppError::internal("tool call has no message"))?;
     Ok(message
         .request_meta
-        .as_deref()
-        .and_then(|raw| json::from_json::<RequestMeta>(raw).ok())
+        .clone()
+        .map(|value| value.into_inner())
         .unwrap_or(RequestMeta {
             phase: Phase::None,
             granularity: None,
@@ -2446,4 +2410,20 @@ fn preview_fields_of(state: &AppState) -> BTreeMap<String, &'static str> {
                 .map(|field| (name.to_owned(), field))
         })
         .collect()
+}
+
+/// The spec/02 §4 `Usage` shape recorded on one assistant message.
+fn message_usage(usage: &nekowriter_llm::Usage) -> crate::db::json::Usage {
+    crate::db::json::Usage {
+        requests: 1,
+        input_tokens: usage.input_tokens,
+        cached_input_tokens: usage.cached_input_tokens,
+        cache_write_tokens: usage.cache_write_tokens,
+        output_tokens: usage.output_tokens,
+        reasoning_tokens: usage.reasoning_tokens,
+        last_prompt_tokens: usage.input_tokens
+            + usage.cached_input_tokens
+            + usage.cache_write_tokens,
+        estimated: usage.estimated,
+    }
 }

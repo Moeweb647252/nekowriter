@@ -24,7 +24,8 @@ use crate::api::dto::reviews::{
 };
 use crate::db::entities::{agent_sessions, chapter_feedback, chapters, review_reports};
 use crate::db::json::{
-    ChapterStatus, FeedbackMode, MessageKind, ReviewIssue, SessionKind, SessionStatus, StoredBlock,
+    ChapterStatus, FeedbackMode, JsonText, MessageKind, ReviewIssue, SessionKind, SessionStatus,
+    StoredBlock,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
@@ -45,16 +46,16 @@ pub async fn reports(
         .await?
         .ok_or_else(|| AppError::not_found(format!("chapter {chapter_id}")))?;
     let reports = review_reports::Entity::find()
-        .filter(review_reports::Column::ChapterId.eq(chapter_id))
-        .order_by_desc(review_reports::Column::Id)
+        .filter(review_reports::COLUMN.chapter_id.eq(chapter_id))
+        .order_by_desc(review_reports::COLUMN.id)
         .all(conn)
         .await?
         .into_iter()
         .map(ReviewReportDto::from)
         .collect();
     let feedback = chapter_feedback::Entity::find()
-        .filter(chapter_feedback::Column::ChapterId.eq(chapter_id))
-        .order_by_desc(chapter_feedback::Column::Id)
+        .filter(chapter_feedback::COLUMN.chapter_id.eq(chapter_id))
+        .order_by_desc(chapter_feedback::COLUMN.id)
         .all(conn)
         .await?
         .into_iter()
@@ -305,7 +306,7 @@ pub async fn send_back(
                     "the review report belongs to another chapter",
                 ));
             }
-            let all: Vec<ReviewIssue> = crate::db::json::from_json_or_default(&report.issues);
+            let all: Vec<ReviewIssue> = report.issues.clone().into_inner();
             for index in &input.issue_indexes {
                 let issue = all.get(*index).ok_or_else(|| {
                     AppError::invalid_fields(serde_json::Map::from_iter([(
@@ -355,9 +356,8 @@ pub async fn send_back(
                 content_version: Set(current.content_version),
                 review_report_id: Set(input.review_report_id),
                 text: Set(feedback_for_row),
-                issues: Set(crate::db::json::to_json(&issues)
-                    .map_err(|err| AppError::internal(err.to_string()))?),
-                mode: Set(mode.as_str().to_owned()),
+                issues: Set(JsonText(issues)),
+                mode: Set(mode),
                 created_at: Set(chrono::Utc::now()),
                 ..Default::default()
             }
@@ -413,21 +413,21 @@ pub async fn open_reviewer_sessions(
     chapter_id: i32,
 ) -> Result<Vec<agent_sessions::Model>, AppError> {
     Ok(agent_sessions::Entity::find()
-        .filter(agent_sessions::Column::ChapterId.eq(chapter_id))
-        .filter(agent_sessions::Column::Role.eq(REVIEWER_ROLE))
-        .filter(agent_sessions::Column::Status.is_not_in([
+        .filter(agent_sessions::COLUMN.chapter_id.eq(chapter_id))
+        .filter(agent_sessions::COLUMN.role.eq(REVIEWER_ROLE))
+        .filter(agent_sessions::COLUMN.status.is_not_in([
             SessionStatus::Completed.as_str(),
             SessionStatus::Superseded.as_str(),
             SessionStatus::Abandoned.as_str(),
         ]))
-        .order_by_asc(agent_sessions::Column::Id)
+        .order_by_asc(agent_sessions::COLUMN.id)
         .all(conn)
         .await?)
 }
 
 /// Rejects a review operation on a chapter that is not `in_review`.
 fn require_in_review(chapter: &chapters::Model) -> Result<(), AppError> {
-    let status = ChapterStatus::from_str_opt(&chapter.status).unwrap_or(ChapterStatus::Planned);
+    let status = chapter.status;
     if status == ChapterStatus::InReview {
         return Ok(());
     }

@@ -7,6 +7,8 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
+use sea_orm::{DeriveActiveEnum, EnumIter};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
@@ -16,13 +18,18 @@ use ts_rs::TS;
 macro_rules! string_enum {
     ($(#[$meta:meta])* $name:ident { $($variant:ident => $value:literal),+ $(,)? }) => {
         $(#[$meta])*
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+        #[derive(
+            Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+            TS, EnumIter, DeriveActiveEnum,
+        )]
         #[serde(rename_all = "snake_case")]
+        #[sea_orm(rs_type = "String", db_type = "Text")]
         #[ts(export)]
         pub enum $name {
             $(
                 #[serde(rename = $value)]
                 #[ts(rename = $value)]
+                #[sea_orm(string_value = $value)]
                 $variant,
             )+
         }
@@ -502,6 +509,37 @@ impl RoleModels {
             AgentRole::Archivist => self.archivist = value,
         }
     }
+}
+
+/// `model_profiles.options` (spec/04 §5). The API's `ModelOptionsDto` converts to and from this
+/// type, so entities never depend on `api/` and the TypeScript bindings do not change.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "snake_case")]
+pub struct ModelOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_replay: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_ttl: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens_field: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub send_parallel_tool_calls: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_usage: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra_body: Option<BTreeMap<String, serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_display: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refusal_fallback: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub eager_input_streaming: Option<bool>,
 }
 
 /// `books.conception` (spec/02 §4).
@@ -994,15 +1032,77 @@ pub fn to_json<T: Serialize>(value: &T) -> Result<String, serde_json::Error> {
     serde_json::to_string(value)
 }
 
-/// Deserializes a `TEXT` JSON column. A corrupt value is a database defect, never a user error.
-pub fn from_json<T: for<'de> Deserialize<'de>>(raw: &str) -> Result<T, serde_json::Error> {
-    serde_json::from_str(raw)
+/// A typed JSON column (spec/02 §1, §4), stored as the exact `serde_json::to_string` text that
+/// `to_json` wrote before D-151. Three session/usage columns canonicalize `{}` to the full default
+/// object; every other column is byte-identical and both forms decode. Decoding is strict: a value
+/// that does not deserialize fails the query and names the column.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct JsonText<T>(pub T);
+
+impl<T> JsonText<T> {
+    pub fn into_inner(self) -> T {
+        self.0
+    }
 }
 
-/// Parses a JSON column, falling back to the type's default on invalid content. Used for
-/// percent-new optional columns so a hand-edited database cannot break the API.
-pub fn from_json_or_default<T: for<'de> Deserialize<'de> + Default>(raw: &str) -> T {
-    serde_json::from_str(raw).unwrap_or_default()
+impl<T> std::ops::Deref for JsonText<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T: Serialize> From<JsonText<T>> for sea_orm::Value {
+    fn from(source: JsonText<T>) -> Self {
+        let text = serde_json::to_string(&source.0).unwrap_or_else(|err| {
+            // Unreachable for the json.rs types (derived Serialize, string-keyed maps). The empty
+            // text fails the column's `CHECK (json_valid(..))`, so the write still aborts.
+            tracing::error!(error = %err, "cannot serialize a JSON column");
+            String::new()
+        });
+        sea_orm::Value::String(Some(text))
+    }
+}
+
+impl<T: DeserializeOwned> sea_orm::TryGetable for JsonText<T> {
+    fn try_get_by<I: sea_orm::ColIdx>(
+        res: &sea_orm::QueryResult,
+        idx: I,
+    ) -> Result<Self, sea_orm::TryGetError> {
+        let raw = <String as sea_orm::TryGetable>::try_get_by(res, idx)?;
+        serde_json::from_str(&raw).map(JsonText).map_err(|err| {
+            sea_orm::TryGetError::DbErr(sea_orm::DbErr::Type(format!(
+                "corrupt JSON column {idx:?}: {err}"
+            )))
+        })
+    }
+}
+
+impl<T: DeserializeOwned> sea_orm::sea_query::ValueType for JsonText<T> {
+    fn try_from(v: sea_orm::Value) -> Result<Self, sea_orm::sea_query::ValueTypeErr> {
+        let raw = <String as sea_orm::sea_query::ValueType>::try_from(v)?;
+        serde_json::from_str(&raw)
+            .map(JsonText)
+            .map_err(|_| sea_orm::sea_query::ValueTypeErr)
+    }
+
+    fn type_name() -> String {
+        "JsonText".to_owned()
+    }
+
+    fn array_type() -> sea_orm::sea_query::ArrayType {
+        sea_orm::sea_query::ArrayType::String
+    }
+
+    fn column_type() -> sea_orm::sea_query::ColumnType {
+        sea_orm::sea_query::ColumnType::Text
+    }
+}
+
+impl<T> sea_orm::sea_query::Nullable for JsonText<T> {
+    fn null() -> sea_orm::Value {
+        sea_orm::Value::String(None)
+    }
 }
 
 #[cfg(test)]
@@ -1011,13 +1111,37 @@ mod tests {
     use serde_json::json;
 
     /// Round-trips one typed JSON column value through its stored `TEXT` form, exactly as
-    /// `Db::write` stores it and as `from_json` reads it back (PLAN 0.3).
+    /// `Db::write` stores it and as `JsonText` reads it back (PLAN 0.3).
     fn round_trip<T>(value: &T) -> T
     where
-        T: Serialize + for<'de> Deserialize<'de>,
+        T: Serialize + for<'de> Deserialize<'de> + Clone,
     {
         let stored = to_json(value).expect("serialize to the column TEXT form");
-        from_json(&stored).expect("deserialize back from the column TEXT form")
+        let encoded: sea_orm::Value = JsonText(value.clone()).into();
+        let sea_orm::Value::String(Some(encoded)) = encoded else {
+            panic!("JsonText stores Text");
+        };
+        assert_eq!(encoded, stored, "JsonText stores the exact to_json bytes");
+        serde_json::from_str(&stored).expect("deserialize back from the column TEXT form")
+    }
+
+    /// `JsonText` writes exactly the bytes `serde_json::to_string` produces, and `None` is SQL NULL.
+    #[test]
+    fn json_text_stores_the_exact_bytes_and_none_is_null() {
+        let settings = BookSettings {
+            granularity: Granularity::Sentence,
+            target_words_min: 900,
+            ..BookSettings::default()
+        };
+        let expected = serde_json::to_string(&settings).expect("serialize");
+        let actual: sea_orm::Value = JsonText(settings).into();
+        let sea_orm::Value::String(Some(actual)) = actual else {
+            panic!("JsonText stores Text");
+        };
+        assert_eq!(actual, expected);
+
+        let null = <JsonText<BookSettings> as sea_orm::sea_query::Nullable>::null();
+        assert_eq!(null, sea_orm::Value::String(None));
     }
 
     // Every typed JSON column of spec/02 §2 gets a round trip below.
@@ -1443,14 +1567,16 @@ mod tests {
         assert_eq!(round_trip(&arbitrary), arbitrary);
     }
 
-    /// `from_json_or_default` keeps a hand-edited database loadable (spec/02 §4).
+    /// Strict decoding: invalid JSON is a query error, never a silent default (spec/02 §4).
     #[test]
-    fn invalid_json_falls_back_to_default() {
-        let parsed: BookSettings = from_json_or_default("{not json");
-        assert_eq!(parsed, BookSettings::default());
+    fn invalid_json_is_a_decode_error() {
+        let decoded = <JsonText<BookSettings> as sea_orm::sea_query::ValueType>::try_from(
+            sea_orm::Value::String(Some("{not json".to_owned())),
+        );
+        assert!(decoded.is_err());
     }
 
-    /// A stored column is always valid JSON, so `from_json` never sees a raw SQL `NULL`.
+    /// A stored column is always valid JSON, so a typed read never sees a raw SQL `NULL`.
     #[test]
     fn stored_form_is_a_json_object() {
         let stored = to_json(&BookSettings::default()).expect("serialize");

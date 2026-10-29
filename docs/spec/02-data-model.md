@@ -7,12 +7,25 @@
   Agents see ids as `#12`.
 - **Timestamps**: `TEXT` RFC 3339 UTC with milliseconds (`chrono::DateTime<Utc>`, SeaORM
   `DateTimeUtc`), set by the application, never by SQL defaults.
-- **Booleans**: `INTEGER` 0/1.
-- **JSON columns**: `TEXT` with `CHECK (json_valid(col))`, mapped to typed Rust structs through
-  SeaORM `Json` plus serde (see §4). Never store untyped JSON blobs.
+- **Entities**: hand-written in the SeaORM 2 `#[sea_orm::model]` (dense) format. Relations live on
+  the `Model` struct: a `belongs_to` for every foreign key (`BelongsTo<..>`, nullable FK →
+  `BelongsTo<Option<..>>`; the field name is the FK column without `_id`), a reverse `has_many`
+  named after the child table for every unambiguous foreign key, `has_many, via = "<junction>"`
+  in both directions over the join tables, `self_ref` for self references, and `relation_enum`
+  where two foreign keys share a target or where a `belongs_to` / `has_many` pair would
+  otherwise generate the same related-entity name. Every non-partial unique constraint is a
+  `unique` or `unique_key` attribute. No schema-only attributes (`indexed`, `default_value`,
+  `on_update`, `on_delete`): the SQL owns them. `crates/server/tests/entity_schema.rs` checks the
+  entities against the SQL.
+- **Booleans**: `INTEGER` 0/1, Rust `bool`.
+- **JSON columns**: `TEXT` with `CHECK (json_valid(col))`, mapped to typed Rust structs through the
+  `JsonText<T>` wrapper in `db/json.rs`, which stores the exact `serde_json::to_string` text (see
+  §4). Decoding is strict: a value that does not match the type fails the query and names the
+  column. `app_settings.value` is the exception and stays `String`, because its shape depends on
+  its key. Never store untyped JSON blobs.
 - **Enums**: `TEXT` with `CHECK (... IN (...))`. Rust enums use
   `#[derive(DeriveActiveEnum, EnumIter)] #[sea_orm(rs_type = "String", db_type = "Text")]` and
-  `#[serde(rename_all = "snake_case")]`.
+  `#[serde(rename_all = "snake_case")]`, and entity fields use the enum type, not `String`.
 - **Canon visibility**: canon tables have `track_id`. `NULL` means shared canon (main story
   plus canon-mode side stories). Non-NULL means private to that isolated side track (spec/06 §2).
 - **Ordering**: chapters use `ord INTEGER`, contiguous `1..n` per track, and a chapter's number

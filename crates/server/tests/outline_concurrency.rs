@@ -80,7 +80,7 @@ async fn insert_outline_session(app: &TestApp, chapter_id: i32, status: &str) ->
     app.execute(&format!(
         "INSERT INTO agent_sessions(book_id, role, kind, chapter_id, track_id, model_snapshot, \
          system_prompt, tools, status, phase, counters, usage, created_at, updated_at) \
-         SELECT book_id, 'planner', 'chapter_outline', id, track_id, '{{}}', '', '[]', \
+         SELECT book_id, 'planner', 'chapter_outline', id, track_id, '{{\"provider_id\":0,\"protocol\":\"mock\",\"base_url\":\"\",\"extra_headers\":{{}},\"model\":\"\",\"context_window\":0,\"max_output_tokens\":0,\"options\":null}}', '', '[]', \
          '{status}', 'none', '{{}}', '{{}}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z' \
          FROM chapters WHERE id = {chapter_id}"
     ))

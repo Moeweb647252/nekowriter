@@ -25,7 +25,7 @@ use crate::api::dto::canon::{
 use crate::db::entities::{agent_tool_calls, appearances, change_log, chapters, entities};
 use crate::db::json::{
     AppearanceRole, ChangeActor, ChangeOp, ChangeTargetType, CompletionKind, EntityKind,
-    EntityStatus, ForeshadowingStatus, NoteKind, Snapshot, ToolEffects,
+    EntityStatus, ForeshadowingStatus, NoteKind, Snapshot, ToolCallStatus, ToolEffects,
 };
 use crate::events::ServerEvent;
 use crate::services::canon::{
@@ -85,8 +85,8 @@ async fn resolver(ctx: &ToolCtx<'_>) -> Result<EntityResolver, ToolError> {
             .map(|row| VisibleEntity {
                 id: row.id,
                 name: row.name,
-                aliases: crate::db::json::from_json_or_default(&row.aliases),
-                kind_label: ctx.prompts.label("entity_kind", &row.kind),
+                aliases: row.aliases.clone().into_inner(),
+                kind_label: ctx.prompts.label("entity_kind", row.kind.as_str()),
             })
             .collect(),
     ))
@@ -1276,8 +1276,8 @@ impl ToolHandler for FinishMaintenanceTool {
                 let shared_in_isolated =
                     !ctx.visibility.can_write_shared() && protagonist.track_id.is_none();
                 let appeared = appearances::Entity::find()
-                    .filter(appearances::Column::ChapterId.eq(chapter.id))
-                    .filter(appearances::Column::EntityId.eq(protagonist.id))
+                    .filter(appearances::COLUMN.chapter_id.eq(chapter.id))
+                    .filter(appearances::COLUMN.entity_id.eq(protagonist.id))
                     .one(ctx.tx)
                     .await
                     .map_err(|_| internal())?
@@ -1291,13 +1291,17 @@ impl ToolHandler for FinishMaintenanceTool {
         }
 
         let changes = change_log::Entity::find()
-            .filter(change_log::Column::SessionId.eq(ctx.session.id))
+            .filter(change_log::COLUMN.session_id.eq(ctx.session.id))
             .all(ctx.tx)
             .await
             .map_err(|_| internal())?
             .len();
         let proposals = crate::db::entities::setting_proposals::Entity::find()
-            .filter(crate::db::entities::setting_proposals::Column::SessionId.eq(ctx.session.id))
+            .filter(
+                crate::db::entities::setting_proposals::COLUMN
+                    .session_id
+                    .eq(ctx.session.id),
+            )
             .all(ctx.tx)
             .await
             .map_err(|_| internal())?
@@ -1334,9 +1338,9 @@ impl ToolHandler for FinishMaintenanceTool {
 /// True when this session has a resolved call of `name`.
 async fn session_called(ctx: &ToolCtx<'_>, name: &str) -> Result<bool, ToolError> {
     Ok(agent_tool_calls::Entity::find()
-        .filter(agent_tool_calls::Column::SessionId.eq(ctx.session.id))
-        .filter(agent_tool_calls::Column::Name.eq(name))
-        .filter(agent_tool_calls::Column::Status.eq("done"))
+        .filter(agent_tool_calls::COLUMN.session_id.eq(ctx.session.id))
+        .filter(agent_tool_calls::COLUMN.name.eq(name))
+        .filter(agent_tool_calls::COLUMN.status.eq(ToolCallStatus::Done))
         .one(ctx.tx)
         .await
         .map_err(|_| internal())?
@@ -1364,28 +1368,22 @@ async fn protagonist_of(ctx: &ToolCtx<'_>) -> Result<Option<entities::Model>, To
     let rows = canon::visible_entities(ctx.tx, visibility)
         .await
         .map_err(|error| map_canon(error, None, None))?;
-    Ok(rows.into_iter().find(|row| row.is_protagonist == 1))
+    Ok(rows.into_iter().find(|row| row.is_protagonist))
 }
 
 /// True when a change of this session touched the entity's `state` (spec/06 §6).
 async fn session_changed_state(ctx: &ToolCtx<'_>, entity_id: i32) -> Result<bool, ToolError> {
     let rows = change_log::Entity::find()
-        .filter(change_log::Column::SessionId.eq(ctx.session.id))
-        .filter(change_log::Column::TargetType.eq(ChangeTargetType::Entity.as_str()))
-        .filter(change_log::Column::TargetId.eq(entity_id))
-        .order_by_asc(change_log::Column::Id)
+        .filter(change_log::COLUMN.session_id.eq(ctx.session.id))
+        .filter(change_log::COLUMN.target_type.eq(ChangeTargetType::Entity))
+        .filter(change_log::COLUMN.target_id.eq(entity_id))
+        .order_by_asc(change_log::COLUMN.id)
         .all(ctx.tx)
         .await
         .map_err(|_| internal())?;
     for row in rows {
-        let before = row
-            .before
-            .as_deref()
-            .and_then(|raw| crate::db::json::from_json::<Snapshot>(raw).ok());
-        let after = row
-            .after
-            .as_deref()
-            .and_then(|raw| crate::db::json::from_json::<Snapshot>(raw).ok());
+        let before = row.before.clone().map(|value| value.into_inner());
+        let after = row.after.clone().map(|value| value.into_inner());
         let before_state = match &before {
             Some(Snapshot::Entity { state, .. }) => state.clone(),
             _ => String::new(),

@@ -8,8 +8,8 @@
 use std::collections::BTreeMap;
 
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait,
-    PaginatorTrait, QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ConnectionTrait, DatabaseConnection, EntityTrait, PaginatorTrait,
+    QueryFilter, QueryOrder, Set,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -20,6 +20,7 @@ use crate::api::dto::providers::{
     ProviderInput, ProviderPresetDto, ProviderTestDto, ProviderTestErrorDto, RemoteModelDto,
 };
 use crate::db::entities::{model_profiles, providers};
+use crate::db::json::JsonText;
 use crate::db::json::Protocol;
 use crate::error::{AppError, ErrorCode};
 use crate::services::app_settings::mask_secret;
@@ -227,7 +228,7 @@ pub async fn stored_option_mismatches(
     conn: &DatabaseConnection,
 ) -> Result<Vec<(i32, String, String, Vec<String>)>, AppError> {
     let profiles = model_profiles::Entity::find()
-        .order_by_asc(model_profiles::Column::Id)
+        .order_by_asc(model_profiles::COLUMN.id)
         .all(conn)
         .await?;
     let providers = providers::Entity::find().all(conn).await?;
@@ -236,8 +237,8 @@ pub async fn stored_option_mismatches(
         let Some(provider) = providers.iter().find(|row| row.id == profile.provider_id) else {
             continue;
         };
-        let protocol = llm_protocol(parse_protocol(&provider.protocol)?);
-        let options: ModelOptionsDto = serde_json::from_str(&profile.options).unwrap_or_default();
+        let protocol = llm_protocol(provider.protocol);
+        let options = ModelOptionsDto::from(profile.options.clone().into_inner());
         let unreachable: Vec<String> = options
             .to_model_options()
             .map(|model_options| {
@@ -320,7 +321,7 @@ pub fn check_protocol_allowed(state: &AppState, protocol: Protocol) -> Result<()
 /// `GET /api/providers`.
 pub async fn list(conn: &DatabaseConnection) -> Result<Vec<ProviderDto>, AppError> {
     let rows = providers::Entity::find()
-        .order_by_asc(providers::Column::Id)
+        .order_by_asc(providers::COLUMN.id)
         .all(conn)
         .await?;
     let mut dtos = Vec::with_capacity(rows.len());
@@ -336,14 +337,13 @@ async fn provider_dto(
     row: providers::Model,
 ) -> Result<ProviderDto, AppError> {
     let models = model_profiles::Entity::find()
-        .filter(model_profiles::Column::ProviderId.eq(row.id))
-        .order_by_asc(model_profiles::Column::Id)
+        .filter(model_profiles::COLUMN.provider_id.eq(row.id))
+        .order_by_asc(model_profiles::COLUMN.id)
         .all(conn)
         .await?;
-    let extra_headers: BTreeMap<String, String> =
-        serde_json::from_str(&row.extra_headers).unwrap_or_default();
+    let extra_headers: BTreeMap<String, String> = row.extra_headers.clone().into_inner();
     // Every profile of this provider shares its protocol, which is what decides `ignored_options`.
-    let protocol = parse_protocol(&row.protocol)?;
+    let protocol = row.protocol;
     let protocols = BTreeMap::from([(row.id, protocol)]);
     Ok(ProviderDto {
         id: row.id,
@@ -388,11 +388,6 @@ fn db_protocol(protocol: nekowriter_llm::Protocol) -> Protocol {
     }
 }
 
-fn parse_protocol(value: &str) -> Result<Protocol, AppError> {
-    Protocol::from_str_opt(value)
-        .ok_or_else(|| AppError::internal(format!("unknown provider protocol {value}")))
-}
-
 /// The LLM-layer protocol of a stored protocol value (spec/04 §1). One helper, because the option
 /// table in `crates/llm` speaks the LLM enum while the row speaks the DB enum.
 fn llm_protocol(protocol: Protocol) -> nekowriter_llm::Protocol {
@@ -425,7 +420,7 @@ pub async fn create(state: &AppState, input: &ProviderInput) -> Result<ProviderD
         move |tx| {
             Box::pin(async move {
                 let existing = providers::Entity::find()
-                    .filter(providers::Column::Name.eq(validated.name.clone()))
+                    .filter(providers::COLUMN.name.eq(validated.name.clone()))
                     .one(tx)
                     .await?;
                 if let Some(existing) = existing {
@@ -434,11 +429,10 @@ pub async fn create(state: &AppState, input: &ProviderInput) -> Result<ProviderD
                 let now = chrono::Utc::now();
                 let active = providers::ActiveModel {
                     name: Set(validated.name.clone()),
-                    protocol: Set(validated.protocol.as_str().to_owned()),
+                    protocol: Set(validated.protocol),
                     base_url: Set(validated.base_url.clone()),
                     api_key: Set(validated.api_key.clone()),
-                    extra_headers: Set(serde_json::to_string(&validated.extra_headers)
-                        .unwrap_or_else(|_| "{}".to_owned())),
+                    extra_headers: Set(JsonText(validated.extra_headers.clone())),
                     created_at: Set(now),
                     updated_at: Set(now),
                     ..Default::default()
@@ -466,8 +460,8 @@ pub async fn update(
             Box::pin(async move {
                 let row = find_provider(tx, id).await?;
                 let duplicate = providers::Entity::find()
-                    .filter(providers::Column::Name.eq(validated.name.clone()))
-                    .filter(providers::Column::Id.ne(id))
+                    .filter(providers::COLUMN.name.eq(validated.name.clone()))
+                    .filter(providers::COLUMN.id.ne(id))
                     .one(tx)
                     .await?;
                 if let Some(duplicate) = duplicate {
@@ -475,10 +469,9 @@ pub async fn update(
                 }
                 let mut active: providers::ActiveModel = row.clone().into();
                 active.name = Set(validated.name.clone());
-                active.protocol = Set(validated.protocol.as_str().to_owned());
+                active.protocol = Set(validated.protocol);
                 active.base_url = Set(validated.base_url.clone());
-                active.extra_headers = Set(serde_json::to_string(&validated.extra_headers)
-                    .unwrap_or_else(|_| "{}".to_owned()));
+                active.extra_headers = Set(JsonText(validated.extra_headers.clone()));
                 active.updated_at = Set(chrono::Utc::now());
                 if let Some(key) = &validated.api_key {
                     active.api_key = Set(if key.is_empty() {
@@ -613,7 +606,7 @@ fn field_error(field: &str, message: impl Into<String>) -> AppError {
 /// `GET /api/model-profiles`.
 pub async fn list_models(conn: &DatabaseConnection) -> Result<Vec<ModelProfileDto>, AppError> {
     let rows = model_profiles::Entity::find()
-        .order_by_asc(model_profiles::Column::Id)
+        .order_by_asc(model_profiles::COLUMN.id)
         .all(conn)
         .await?;
     let protocols = provider_protocols(conn).await?;
@@ -628,9 +621,7 @@ async fn provider_protocols(
     conn: &DatabaseConnection,
 ) -> Result<BTreeMap<i32, Protocol>, AppError> {
     let rows = providers::Entity::find().all(conn).await?;
-    rows.into_iter()
-        .map(|row| Ok((row.id, parse_protocol(&row.protocol)?)))
-        .collect()
+    Ok(rows.into_iter().map(|row| (row.id, row.protocol)).collect())
 }
 
 /// The DTO of one model profile row.
@@ -644,7 +635,7 @@ fn model_profile_dto(
     row: model_profiles::Model,
     protocols: &BTreeMap<i32, Protocol>,
 ) -> Result<ModelProfileDto, AppError> {
-    let options: ModelOptionsDto = serde_json::from_str(&row.options).unwrap_or_default();
+    let options = ModelOptionsDto::from(row.options.clone().into_inner());
     let ignored_options = match protocols.get(&row.provider_id) {
         Some(protocol) => options
             .to_model_options()
@@ -700,7 +691,7 @@ pub async fn create_model(
                 check_protocol_row_allowed(&provider, demo_enabled)?;
                 // The protocol lives on the provider row, so the cross-protocol check belongs
                 // inside the transaction that reads it (spec/04 §5, D-132).
-                validate_options_protocol(&input.options, parse_protocol(&provider.protocol)?)?;
+                validate_options_protocol(&input.options, provider.protocol)?;
                 ensure_unique_name(tx, input.provider_id, &input.display_name, None).await?;
                 let now = chrono::Utc::now();
                 let active = model_profiles::ActiveModel {
@@ -709,9 +700,9 @@ pub async fn create_model(
                     model: Set(input.model.trim().to_owned()),
                     context_window: Set(input.context_window),
                     max_output_tokens: Set(input.max_output_tokens),
-                    options: Set(
-                        serde_json::to_string(&input.options).unwrap_or_else(|_| "{}".to_owned())
-                    ),
+                    options: Set(JsonText(crate::db::json::ModelOptions::from(
+                        input.options.clone(),
+                    ))),
                     created_at: Set(now),
                     updated_at: Set(now),
                     ..Default::default()
@@ -730,7 +721,7 @@ fn check_protocol_row_allowed(
     provider: &providers::Model,
     demo_enabled: bool,
 ) -> Result<(), AppError> {
-    if provider.protocol == Protocol::Mock.as_str() && !demo_enabled {
+    if provider.protocol == Protocol::Mock && !demo_enabled {
         return Err(AppError::validation(
             "the demo provider is disabled; start the server with --enable-demo-provider",
         ));
@@ -752,7 +743,7 @@ pub async fn update_model(
             Box::pin(async move {
                 let provider = find_provider(tx, input.provider_id).await?;
                 check_protocol_row_allowed(&provider, demo_enabled)?;
-                validate_options_protocol(&input.options, parse_protocol(&provider.protocol)?)?;
+                validate_options_protocol(&input.options, provider.protocol)?;
                 ensure_unique_name(tx, input.provider_id, &input.display_name, Some(id)).await?;
                 let row = model_profiles::Entity::find_by_id(id)
                     .one(tx)
@@ -764,8 +755,9 @@ pub async fn update_model(
                 active.model = Set(input.model.trim().to_owned());
                 active.context_window = Set(input.context_window);
                 active.max_output_tokens = Set(input.max_output_tokens);
-                active.options =
-                    Set(serde_json::to_string(&input.options).unwrap_or_else(|_| "{}".to_owned()));
+                active.options = Set(JsonText(crate::db::json::ModelOptions::from(
+                    input.options.clone(),
+                )));
                 active.updated_at = Set(chrono::Utc::now());
                 active.update(tx).await?;
                 Ok(())
@@ -905,13 +897,14 @@ async fn ensure_unique_name(
     display_name: &str,
     exclude: Option<i32>,
 ) -> Result<(), AppError> {
-    let mut query = model_profiles::Entity::find()
-        .filter(model_profiles::Column::ProviderId.eq(provider_id))
-        .filter(model_profiles::Column::DisplayName.eq(display_name.trim()));
-    if let Some(exclude) = exclude {
-        query = query.filter(model_profiles::Column::Id.ne(exclude));
-    }
-    if let Some(existing) = query.one(tx).await? {
+    if let Some(existing) = model_profiles::Entity::find_by_provider_display_name((
+        provider_id,
+        display_name.trim().to_owned(),
+    ))
+    .one(tx)
+    .await?
+        && Some(existing.id) != exclude
+    {
         return Err(AppError::new(
             ErrorCode::ConflictExists,
             format!(
@@ -927,7 +920,7 @@ async fn ensure_unique_name(
 /// Counts the models of a provider (settings UI).
 pub async fn model_count(conn: &DatabaseConnection, provider_id: i32) -> Result<u64, AppError> {
     let count = model_profiles::Entity::find()
-        .filter(model_profiles::Column::ProviderId.eq(provider_id))
+        .filter(model_profiles::COLUMN.provider_id.eq(provider_id))
         .count(conn)
         .await?;
     Ok(count)
@@ -1000,8 +993,8 @@ async fn test_request_config(
     provider: &providers::Model,
 ) -> Result<(String, nekowriter_llm::ModelOptions), AppError> {
     let rows = model_profiles::Entity::find()
-        .filter(model_profiles::Column::ProviderId.eq(provider_id))
-        .order_by_asc(model_profiles::Column::Id)
+        .filter(model_profiles::COLUMN.provider_id.eq(provider_id))
+        .order_by_asc(model_profiles::COLUMN.id)
         .all(state.db().conn())
         .await?;
     let borrowed = match requested.as_deref() {
@@ -1009,7 +1002,11 @@ async fn test_request_config(
         None => rows.first(),
     };
     let options = borrowed
-        .and_then(|row| serde_json::from_str(&row.options).ok())
+        .map(|row| {
+            ModelOptionsDto::from(row.options.clone().into_inner())
+                .to_model_options()
+                .unwrap_or_default()
+        })
         .unwrap_or_default();
     if let Some(model_id) = requested {
         return Ok((model_id, options));
@@ -1017,7 +1014,7 @@ async fn test_request_config(
     if let Some(row) = borrowed {
         return Ok((row.model.clone(), options));
     }
-    if provider.protocol == Protocol::Mock.as_str() {
+    if provider.protocol == Protocol::Mock {
         return Ok((DEMO_MODEL_ID.to_owned(), options));
     }
     Err(AppError::validation(
@@ -1087,7 +1084,7 @@ pub fn client_for(
 pub fn provider_config(
     provider: &providers::Model,
 ) -> Result<nekowriter_llm::ProviderConfig, AppError> {
-    let protocol = parse_protocol(&provider.protocol)?;
+    let protocol = provider.protocol;
     let api_key = match provider.api_key.as_deref() {
         Some(key) if key.starts_with("env:") => {
             let name = &key["env:".len()..];
@@ -1105,8 +1102,7 @@ pub fn provider_config(
         Some(key) if !key.is_empty() => Some(key.to_owned()),
         _ => None,
     };
-    let extra_headers: BTreeMap<String, String> =
-        serde_json::from_str(&provider.extra_headers).unwrap_or_default();
+    let extra_headers: BTreeMap<String, String> = provider.extra_headers.clone().into_inner();
     Ok(nekowriter_llm::ProviderConfig {
         protocol: llm_protocol(protocol),
         base_url: provider.base_url.clone(),

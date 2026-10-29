@@ -16,7 +16,7 @@ use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder
 
 use crate::api::dto::changes::ChangeDto;
 use crate::db::entities::change_log;
-use crate::db::json::{ChangeOp, ChangeTargetType, Snapshot};
+use crate::db::json::{ChangeOp, ChangeTargetType, JsonText, Snapshot};
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
 
@@ -44,8 +44,8 @@ pub async fn revert_inner(
         .one(tx)
         .await?
         .ok_or_else(|| CanonError::not_found(format!("change #{change_id}")))?;
-    let target_type = parse_target_type(&original.target_type)?;
-    let op = parse_op(&original.op)?;
+    let target_type = original.target_type;
+    let op = original.op;
     if original.reverts_id.is_some() {
         return Err(CanonError::App(AppError::validation(
             "a revert cannot itself be reverted",
@@ -64,8 +64,8 @@ pub async fn revert_inner(
 
     // 2. Compute the inverse. The inverse operation itself records the revert row (D-079):
     //    `before` is the target's state before the revert, `after` its state afterwards.
-    let before = parse_snapshot(original.before.as_deref())?;
-    let after = parse_snapshot(original.after.as_deref())?;
+    let before = original.before.clone().map(JsonText::into_inner);
+    let after = original.after.clone().map(JsonText::into_inner);
     let write = revert_write(original.book_id, original.track_id)
         .with_chapter(original.chapter_id)
         .as_revert(original.id);
@@ -126,8 +126,12 @@ pub async fn revert_inner(
 /// transaction that wrote it.
 async fn revert_row_of(conn: &impl ConnectionTrait, change_id: i32) -> CanonResult<i32> {
     crate::db::entities::change_log::Entity::find()
-        .filter(crate::db::entities::change_log::Column::RevertsId.eq(change_id))
-        .order_by_desc(crate::db::entities::change_log::Column::Id)
+        .filter(
+            crate::db::entities::change_log::COLUMN
+                .reverts_id
+                .eq(change_id),
+        )
+        .order_by_desc(crate::db::entities::change_log::COLUMN.id)
         .one(conn)
         .await?
         .map(|row| row.id)
@@ -155,10 +159,10 @@ async fn later_change_ids(
     target_type: ChangeTargetType,
 ) -> CanonResult<Vec<i32>> {
     let rows = change_log::Entity::find()
-        .filter(change_log::Column::TargetType.eq(target_type.as_str()))
-        .filter(change_log::Column::TargetId.eq(original.target_id))
-        .filter(change_log::Column::Id.gt(original.id))
-        .order_by_desc(change_log::Column::Id)
+        .filter(change_log::COLUMN.target_type.eq(target_type.as_str()))
+        .filter(change_log::COLUMN.target_id.eq(original.target_id))
+        .filter(change_log::COLUMN.id.gt(original.id))
+        .order_by_desc(change_log::COLUMN.id)
         .all(conn)
         .await?;
     Ok(rows.into_iter().map(|row| row.id).collect())
@@ -170,25 +174,6 @@ fn not_latest(later: Vec<i32>) -> CanonError {
         AppError::new(ErrorCode::ChangeNotLatest, "a later change exists")
             .with_details(super::change_log_service::not_latest_details(later)),
     )
-}
-
-fn parse_target_type(raw: &str) -> CanonResult<ChangeTargetType> {
-    ChangeTargetType::from_str_opt(raw)
-        .ok_or_else(|| CanonError::internal(format!("unknown change_log.target_type {raw:?}")))
-}
-
-fn parse_op(raw: &str) -> CanonResult<ChangeOp> {
-    ChangeOp::from_str_opt(raw)
-        .ok_or_else(|| CanonError::internal(format!("unknown change_log.op {raw:?}")))
-}
-
-fn parse_snapshot(raw: Option<&str>) -> CanonResult<Option<Snapshot>> {
-    match raw {
-        Some(raw) => crate::db::json::from_json::<Snapshot>(raw)
-            .map(Some)
-            .map_err(|err| CanonError::internal(format!("corrupt change snapshot: {err}"))),
-        None => Ok(None),
-    }
 }
 
 /// The `track_id` a snapshot carries (`None` for the snapshot kinds that have none).

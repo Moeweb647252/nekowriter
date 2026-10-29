@@ -16,7 +16,7 @@ use crate::api::dto::research::{
 use crate::db::entities::{
     book_scopes, books, knowledge_entries, knowledge_scopes, research_tasks,
 };
-use crate::db::json::{BookStatus, ResearchTaskStatus, SessionKind};
+use crate::db::json::{BookStatus, ResearchTaskStatus, SessionKind, SessionStatus};
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
 use crate::state::AppState;
@@ -35,14 +35,14 @@ pub async fn list(
 ) -> Result<Vec<ResearchTaskDto>, AppError> {
     let mut find = research_tasks::Entity::find();
     if let Some(book_id) = query.book_id {
-        find = find.filter(research_tasks::Column::BookId.eq(book_id));
+        find = find.filter(research_tasks::COLUMN.book_id.eq(book_id));
     }
     if let Some(status) = query.status {
-        find = find.filter(research_tasks::Column::Status.eq(status.as_str()));
+        find = find.filter(research_tasks::COLUMN.status.eq(status.as_str()));
     }
     Ok(find
-        .order_by_desc(research_tasks::Column::CreatedAt)
-        .order_by_desc(research_tasks::Column::Id)
+        .order_by_desc(research_tasks::COLUMN.created_at)
+        .order_by_desc(research_tasks::COLUMN.id)
         .all(conn)
         .await?
         .into_iter()
@@ -65,8 +65,8 @@ async fn with_entries(
     let mut dto = to_dto(row);
     if dto.status == ResearchTaskStatus::Done {
         dto.entries = knowledge_entries::Entity::find()
-            .filter(knowledge_entries::Column::ResearchTaskId.eq(dto.id))
-            .order_by_asc(knowledge_entries::Column::Id)
+            .filter(knowledge_entries::COLUMN.research_task_id.eq(dto.id))
+            .order_by_asc(knowledge_entries::COLUMN.id)
             .all(conn)
             .await?
             .into_iter()
@@ -155,9 +155,7 @@ async fn create_inner(
     // A draft while the book is still being conceived, `ready` otherwise (spec/10 §2.5).
     let status = match input.book_id {
         Some(book_id) => match books::Entity::find_by_id(book_id).one(tx).await? {
-            Some(book) if book.status == BookStatus::Conceiving.as_str() => {
-                ResearchTaskStatus::Draft
-            }
+            Some(book) if book.status == BookStatus::Conceiving => ResearchTaskStatus::Draft,
             _ => ResearchTaskStatus::Ready,
         },
         None => ResearchTaskStatus::Ready,
@@ -169,7 +167,7 @@ async fn create_inner(
         topic: Set(topic),
         requirements: Set(input.requirements.trim().to_owned()),
         language: Set(language),
-        status: Set(status.as_str().to_owned()),
+        status: Set(status),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),
         ..Default::default()
@@ -242,13 +240,13 @@ async fn patch_inner(
                 "only `ready` can be set; the researcher and the runtime own the other statuses",
             ));
         }
-        if existing.status != ResearchTaskStatus::Draft.as_str() {
+        if existing.status != ResearchTaskStatus::Draft {
             return Err(field_error(
                 "status",
                 "only a draft can be confirmed as ready",
             ));
         }
-        active.status = Set(ResearchTaskStatus::Ready.as_str().to_owned());
+        active.status = Set(ResearchTaskStatus::Ready);
     }
     let row = active.update(tx).await?;
     let events = vec![ServerEvent::ResearchUpdated {
@@ -337,8 +335,7 @@ async fn transition_inner(
     transition: Transition,
 ) -> Result<(ResearchTaskDto, Vec<ServerEvent>), AppError> {
     let task = load(tx, task_id).await?;
-    let current =
-        ResearchTaskStatus::from_str_opt(&task.status).unwrap_or(ResearchTaskStatus::Draft);
+    let current = task.status;
     // A task whose session is open is being written by the researcher: the same conflict `run`,
     // PATCH and DELETE report (spec/07 §8 step 1, spec/10 §2.5).
     if is_open(&task) {
@@ -365,7 +362,7 @@ async fn transition_inner(
     }
     let row = research_tasks::ActiveModel {
         id: Set(task_id),
-        status: Set(target.as_str().to_owned()),
+        status: Set(target),
         updated_at: Set(now()),
         ..Default::default()
     }
@@ -446,10 +443,15 @@ async fn prepare_scope(tx: &impl ConnectionTrait, task_id: i32) -> Result<i32, A
     // un-defer step before every run would add friction without any safety gain (D-138). The run
     // starts the session, which moves the task to `running` through its own transition
     // (spec/07 §8 step 5), so the deferred state never outlives the first run.
-    if !matches!(
-        task.status.as_str(),
-        "draft" | "ready" | "deferred" | "done" | "cancelled"
-    ) {
+    let runnable = match task.status {
+        ResearchTaskStatus::Draft
+        | ResearchTaskStatus::Ready
+        | ResearchTaskStatus::Deferred
+        | ResearchTaskStatus::Done
+        | ResearchTaskStatus::Cancelled => true,
+        ResearchTaskStatus::Running | ResearchTaskStatus::Failed => false,
+    };
+    if !runnable {
         return Err(AppError::new(
             ErrorCode::ResearchInvalidState,
             format!("a {} research task cannot be run", task.status),
@@ -481,7 +483,7 @@ async fn prepare_scope(tx: &impl ConnectionTrait, task_id: i32) -> Result<i32, A
 async fn resolve_scope(tx: &impl ConnectionTrait, name: &str) -> Result<i32, AppError> {
     let name = name.trim();
     if let Some(row) = knowledge_scopes::Entity::find()
-        .filter(knowledge_scopes::Column::Name.eq(name))
+        .filter(knowledge_scopes::COLUMN.name.eq(name))
         .one(tx)
         .await?
     {
@@ -507,8 +509,8 @@ async fn attach_scope(
     scope_id: i32,
 ) -> Result<(), AppError> {
     let exists = book_scopes::Entity::find()
-        .filter(book_scopes::Column::BookId.eq(book_id))
-        .filter(book_scopes::Column::ScopeId.eq(scope_id))
+        .filter(book_scopes::COLUMN.book_id.eq(book_id))
+        .filter(book_scopes::COLUMN.scope_id.eq(scope_id))
         .count(tx)
         .await?;
     if exists == 0 {
@@ -526,7 +528,14 @@ async fn attach_scope(
 
 /// True while the task has a session that has not finished (spec/07 §8 step 1).
 pub fn is_open(task: &research_tasks::Model) -> bool {
-    matches!(task.status.as_str(), "running" | "failed") && task.session_id.is_some()
+    match task.status {
+        ResearchTaskStatus::Running | ResearchTaskStatus::Failed => task.session_id.is_some(),
+        ResearchTaskStatus::Draft
+        | ResearchTaskStatus::Ready
+        | ResearchTaskStatus::Deferred
+        | ResearchTaskStatus::Done
+        | ResearchTaskStatus::Cancelled => false,
+    }
 }
 
 /// Rejects an author write to a draft research topic while the book's conception session runs
@@ -571,12 +580,12 @@ pub async fn finish(
         return Ok(Vec::new());
     }
     let total = knowledge_entries::Entity::find()
-        .filter(knowledge_entries::Column::ResearchTaskId.eq(task_id))
+        .filter(knowledge_entries::COLUMN.research_task_id.eq(task_id))
         .count(tx)
         .await?;
     let row = research_tasks::ActiveModel {
         id: Set(task_id),
-        status: Set(ResearchTaskStatus::Done.as_str().to_owned()),
+        status: Set(ResearchTaskStatus::Done),
         report: Set(report.trim().to_owned()),
         entries_created: Set(i32::try_from(total).unwrap_or(i32::MAX)),
         updated_at: Set(now()),
@@ -595,7 +604,7 @@ pub async fn on_session_status(
     conn: &impl ConnectionTrait,
     task_id: i32,
     session_id: i32,
-    status: &str,
+    status: SessionStatus,
 ) -> Result<Vec<ServerEvent>, AppError> {
     let Some(task) = research_tasks::Entity::find_by_id(task_id)
         .one(conn)
@@ -608,18 +617,15 @@ pub async fn on_session_status(
     if task.session_id != Some(session_id) {
         return Ok(Vec::new());
     }
-    let next = match status {
-        "abandoned" | "cancelled" => ResearchTaskStatus::Cancelled,
-        "failed" | "interrupted" => ResearchTaskStatus::Failed,
-        "running" => ResearchTaskStatus::Running,
-        _ => return Ok(Vec::new()),
+    let Some(next) = research_status_for_session(status) else {
+        return Ok(Vec::new());
     };
-    if task.status == next.as_str() {
+    if task.status == next {
         return Ok(Vec::new());
     }
     let row = research_tasks::ActiveModel {
         id: Set(task_id),
-        status: Set(next.as_str().to_owned()),
+        status: Set(next),
         updated_at: Set(now()),
         ..Default::default()
     }
@@ -628,14 +634,30 @@ pub async fn on_session_status(
     Ok(vec![ServerEvent::ResearchUpdated { task: to_dto(row) }])
 }
 
+/// The task status a session status maps to; every other session status leaves the task alone.
+fn research_status_for_session(status: SessionStatus) -> Option<ResearchTaskStatus> {
+    match status {
+        SessionStatus::Running => Some(ResearchTaskStatus::Running),
+        SessionStatus::Failed | SessionStatus::Interrupted => Some(ResearchTaskStatus::Failed),
+        SessionStatus::Abandoned => Some(ResearchTaskStatus::Cancelled),
+        SessionStatus::Idle
+        | SessionStatus::Held
+        | SessionStatus::AwaitingInput
+        | SessionStatus::Paused
+        | SessionStatus::Completed
+        | SessionStatus::Stopped
+        | SessionStatus::Superseded => None,
+    }
+}
+
 /// The existing titles of a scope, capped (spec/07 §8 step 2: at most 200).
 pub async fn existing_titles(
     conn: &impl ConnectionTrait,
     scope_id: i32,
 ) -> Result<Vec<String>, AppError> {
     Ok(knowledge_entries::Entity::find()
-        .filter(knowledge_entries::Column::ScopeId.eq(scope_id))
-        .order_by_asc(knowledge_entries::Column::Title)
+        .filter(knowledge_entries::COLUMN.scope_id.eq(scope_id))
+        .order_by_asc(knowledge_entries::COLUMN.title)
         .limit(MAX_EXISTING_TITLES as u64)
         .all(conn)
         .await?
@@ -647,7 +669,7 @@ pub async fn existing_titles(
 /// The number of entries a task has created across every run (spec/07 §8).
 pub async fn entry_count(conn: &impl ConnectionTrait, task_id: i32) -> Result<i32, AppError> {
     let total = knowledge_entries::Entity::find()
-        .filter(knowledge_entries::Column::ResearchTaskId.eq(task_id))
+        .filter(knowledge_entries::COLUMN.research_task_id.eq(task_id))
         .count(conn)
         .await?;
     Ok(i32::try_from(total).unwrap_or(i32::MAX))
@@ -666,7 +688,7 @@ pub fn to_dto(row: research_tasks::Model) -> ResearchTaskDto {
         topic: row.topic,
         requirements: row.requirements,
         language: row.language,
-        status: ResearchTaskStatus::from_str_opt(&row.status).unwrap_or(ResearchTaskStatus::Draft),
+        status: row.status,
         session_id: row.session_id,
         report: row.report,
         entries_created: row.entries_created,
@@ -681,4 +703,33 @@ fn field_error(field: &str, message: &str) -> AppError {
         field.to_owned(),
         serde_json::Value::String(message.to_owned()),
     )]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sea_orm::entity::Iterable;
+
+    #[test]
+    fn every_session_status_maps_explicitly() {
+        let expected = |status: SessionStatus| match status {
+            SessionStatus::Running => Some(ResearchTaskStatus::Running),
+            SessionStatus::Failed | SessionStatus::Interrupted => Some(ResearchTaskStatus::Failed),
+            SessionStatus::Abandoned => Some(ResearchTaskStatus::Cancelled),
+            SessionStatus::Idle
+            | SessionStatus::Held
+            | SessionStatus::AwaitingInput
+            | SessionStatus::Paused
+            | SessionStatus::Completed
+            | SessionStatus::Stopped
+            | SessionStatus::Superseded => None,
+        };
+        for status in SessionStatus::iter() {
+            assert_eq!(
+                research_status_for_session(status),
+                expected(status),
+                "the mapping is explicit for {status:?}"
+            );
+        }
+    }
 }

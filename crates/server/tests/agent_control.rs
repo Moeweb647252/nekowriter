@@ -600,7 +600,7 @@ async fn transition_is_guarded_by_the_expected_status() {
     // The loaded row says `completed`; a transition asking for `held` still updates (the guard
     // matches the loaded status). Abandoning twice must fail because the second sees `abandoned`.
     let mut stale = row.clone();
-    stale.status = "running".to_owned();
+    stale.status = SessionStatus::Running;
     let error = nekowriter::agent::session::transition(
         runtime.app.state().db_conn(),
         &stale,

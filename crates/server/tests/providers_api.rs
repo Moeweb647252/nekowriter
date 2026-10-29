@@ -4,8 +4,10 @@
 //! `wiremock` server, and the Demo provider's in-process `mock://` client covers the rest.
 
 use nekowriter::api::dto::providers as dto;
+use nekowriter::db::json::{JsonText, Protocol};
 use nekowriter::testing::{TestApp, assert_error};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use wiremock::matchers::{bearer_token, body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -1017,10 +1019,10 @@ fn a_stored_demo_provider_is_only_usable_when_the_demo_provider_is_enabled() {
     let row = nekowriter::db::entities::providers::Model {
         id: 1,
         name: "Demo".to_owned(),
-        protocol: "mock".to_owned(),
+        protocol: Protocol::Mock,
         base_url: "mock://demo".to_owned(),
         api_key: None,
-        extra_headers: "{}".to_owned(),
+        extra_headers: JsonText(BTreeMap::new()),
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
     };
@@ -1038,7 +1040,7 @@ fn a_stored_demo_provider_is_only_usable_when_the_demo_provider_is_enabled() {
 
     // An ordinary provider is unaffected by the flag.
     let openai = nekowriter::db::entities::providers::Model {
-        protocol: "openai".to_owned(),
+        protocol: Protocol::Openai,
         base_url: "https://example.invalid/v1".to_owned(),
         ..row
     };
@@ -1290,7 +1292,10 @@ async fn an_already_stored_mismatch_is_readable_and_reported() {
         model: Set("deepseek-v4-pro".to_owned()),
         context_window: Set(200_000),
         max_output_tokens: Set(16_384),
-        options: Set(stored.to_string()),
+        options: Set(JsonText(
+            serde_json::from_value::<nekowriter::db::json::ModelOptions>(stored.clone())
+                .expect("typed options"),
+        )),
         created_at: Set(now),
         updated_at: Set(now),
         ..Default::default()

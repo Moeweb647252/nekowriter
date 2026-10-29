@@ -34,12 +34,23 @@ not delete other agents' temp directories.
   fields here (`Mutex`/`Arc` handles); keep it cheap to clone.
 - `crates/server/src/db/mod.rs` — `Db::connect`, `Db::write` (the only write path),
   `Db::conn()` for reads, `Db::vec_version()`.
-- `crates/server/src/db/entities/` — hand-written SeaORM entities matching
-  `crates/migration/src/sql/0001_init.sql`. Composite-key join tables use
-  `#[sea_orm(primary_key, auto_increment = false)]` on each key column.
+- `crates/server/src/db/entities/` — hand-written SeaORM 2 entities in the `#[sea_orm::model]`
+  dense format (M14), matching the SQL migrations: relation fields (`BelongsTo`/`HasOne`/
+  `HasMany`, `self_ref`, M-N `via`) and `unique`/`unique_key` on every non-partial unique
+  constraint. Composite-key join tables use `#[sea_orm(primary_key, auto_increment = false)]` on
+  each key column. The macro also generates the typed `COLUMN` constant, `find_by_*` /
+  `filter_by_*` / `delete_by_*` finders, `ModelEx`/`ActiveModelEx`/`EntityLoader`; queries use
+  `COLUMN` for filters and ordering, loaders (`Entity::load()`, `load_many`) instead of per-row
+  loops, and `DerivePartialModel` for list queries that skip large JSON columns. Writes that
+  change columns conditionally use `guard_update` with a partial `ActiveModel`; static raw SQL
+  uses `raw_sql!` with named parameters; `Expr` methods need `sea_orm::sea_query::ExprTrait` in
+  scope.
 - `crates/server/src/db/json.rs` — every typed JSON column and every string-backed enum from
   spec/02 §3–§4 (`BookSettings`, `ChapterContent`, `ViewSnapshot`, `StoredBlock`, `Usage`, …).
-  Add new JSON shapes here and export them with `#[ts(export)]`, never inline `Value`.
+  Columns are `JsonText<T>`, which stores the exact `serde_json::to_string` text and decodes
+  strictly (a mismatch names the column); `app_settings.value` stays `String`. Enums get
+  `DeriveActiveEnum` + `EnumIter` inside `string_enum!`. Add new JSON shapes here and export them
+  with `#[ts(export)]`, never inline `Value`.
 - `crates/server/src/api/mod.rs` — `build_app(state)` (what tests call), the Host/Origin guard,
   `security_headers`.
 - `crates/server/src/api/dto/` — DTOs. `ContentOp` / `ContentOpInput` already exist.

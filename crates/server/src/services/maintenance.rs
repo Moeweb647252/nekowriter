@@ -94,8 +94,7 @@ pub async fn resync(state: &AppState, chapter_id: i32) -> Result<ReviewSessionRe
                 )
                 .with_details(json!({ "session_id": open.id })));
             }
-            let content: ChapterContent = crate::db::json::from_json(&chapter.content)
-                .map_err(|err| AppError::internal(format!("corrupt chapter content: {err}")))?;
+            let content: ChapterContent = chapter.content.clone().into_inner();
             // "an existing official version with identical content is reused" (spec/06 §8,
             // D-046): the diff then shows only the author's real edits.
             let official_id = official_version_with_content(tx, chapter_id, &content).await?;
@@ -185,8 +184,7 @@ pub async fn auto_maintenance_enabled(
         .one(conn)
         .await?
         .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
-    let settings: crate::db::json::BookSettings =
-        crate::db::json::from_json_or_default(&book.settings);
+    let settings: crate::db::json::BookSettings = book.settings.clone().into_inner();
     Ok(settings.auto_maintenance)
 }
 
@@ -196,14 +194,14 @@ pub async fn open_archivist_session(
     chapter_id: i32,
 ) -> Result<Option<agent_sessions::Model>, AppError> {
     Ok(agent_sessions::Entity::find()
-        .filter(agent_sessions::Column::ChapterId.eq(chapter_id))
-        .filter(agent_sessions::Column::Kind.is_in(ARCHIVIST_KINDS))
-        .filter(agent_sessions::Column::Status.is_not_in([
+        .filter(agent_sessions::COLUMN.chapter_id.eq(chapter_id))
+        .filter(agent_sessions::COLUMN.kind.is_in(ARCHIVIST_KINDS))
+        .filter(agent_sessions::COLUMN.status.is_not_in([
             SessionStatus::Completed.as_str(),
             SessionStatus::Superseded.as_str(),
             SessionStatus::Abandoned.as_str(),
         ]))
-        .order_by_asc(agent_sessions::Column::Id)
+        .order_by_asc(agent_sessions::COLUMN.id)
         .one(conn)
         .await?)
 }
@@ -214,12 +212,12 @@ pub async fn last_archivist_kind(
     chapter_id: i32,
 ) -> Result<Option<SessionKind>, AppError> {
     let row = agent_sessions::Entity::find()
-        .filter(agent_sessions::Column::ChapterId.eq(chapter_id))
-        .filter(agent_sessions::Column::Kind.is_in(ARCHIVIST_KINDS))
-        .order_by_desc(agent_sessions::Column::Id)
+        .filter(agent_sessions::COLUMN.chapter_id.eq(chapter_id))
+        .filter(agent_sessions::COLUMN.kind.is_in(ARCHIVIST_KINDS))
+        .order_by_desc(agent_sessions::COLUMN.id)
         .one(conn)
         .await?;
-    Ok(row.and_then(|row| SessionKind::from_str_opt(&row.kind)))
+    Ok(row.map(|row| row.kind))
 }
 
 /// An `official` version whose text equals `content`, newest first (spec/06 §8: "an existing
@@ -236,16 +234,18 @@ async fn official_version_with_content(
     content: &ChapterContent,
 ) -> Result<Option<i32>, AppError> {
     let rows = chapter_versions::Entity::find()
-        .filter(chapter_versions::Column::ChapterId.eq(chapter_id))
-        .filter(chapter_versions::Column::Kind.eq(crate::db::json::VersionKind::Official.as_str()))
-        .order_by_desc(chapter_versions::Column::Id)
+        .filter(chapter_versions::COLUMN.chapter_id.eq(chapter_id))
+        .filter(
+            chapter_versions::COLUMN
+                .kind
+                .eq(crate::db::json::VersionKind::Official),
+        )
+        .order_by_desc(chapter_versions::COLUMN.id)
         .all(conn)
         .await?;
     for row in rows {
-        if let Ok(stored) = crate::db::json::from_json::<ChapterContent>(&row.content)
-            && stored.paragraphs == content.paragraphs
-            && stored.tail_open == content.tail_open
-        {
+        let stored = row.content.clone().into_inner();
+        if stored.paragraphs == content.paragraphs && stored.tail_open == content.tail_open {
             return Ok(Some(row.id));
         }
     }
@@ -254,12 +254,12 @@ async fn official_version_with_content(
 
 /// Reads the canon status column.
 pub fn canon_status_of(chapter: &chapters::Model) -> CanonStatus {
-    CanonStatus::from_str_opt(&chapter.canon_status).unwrap_or(CanonStatus::None)
+    chapter.canon_status
 }
 
 /// Rejects an operation on a chapter that is not official.
 fn require_official(chapter: &chapters::Model) -> Result<(), AppError> {
-    let status = ChapterStatus::from_str_opt(&chapter.status).unwrap_or(ChapterStatus::Planned);
+    let status = chapter.status;
     if status == ChapterStatus::Official {
         return Ok(());
     }

@@ -32,11 +32,11 @@ pub async fn list(
     // Shared rows by default (spec/06 §2); an isolated track's private hooks are read through
     // the track's own views.
     let mut statement = foreshadowing::Entity::find()
-        .filter(foreshadowing::Column::BookId.eq(book_id))
+        .filter(foreshadowing::COLUMN.book_id.eq(book_id))
         .filter(Visibility::shared(book_id).visible_condition(foreshadowing::Column::TrackId))
-        .order_by_asc(foreshadowing::Column::Id);
+        .order_by_asc(foreshadowing::COLUMN.id);
     if let Some(status) = query.status {
-        statement = statement.filter(foreshadowing::Column::Status.eq(status.as_str()));
+        statement = statement.filter(foreshadowing::COLUMN.status.eq(status.as_str()));
     }
     let rows = statement.all(conn).await?;
     let mut items = Vec::with_capacity(rows.len());
@@ -93,7 +93,7 @@ pub async fn create_inner(
         title: Set(title.to_owned()),
         description: Set(input.description.trim().to_owned()),
         planned_payoff: Set(input.planned_payoff.trim().to_owned()),
-        status: Set(ForeshadowingStatus::Open.as_str().to_owned()),
+        status: Set(ForeshadowingStatus::Open),
         planted_chapter_id: Set(input.planted_chapter_id.or(write.chapter_id)),
         resolved_chapter_id: Set(None),
         resolution: Set(String::new()),
@@ -191,7 +191,7 @@ pub async fn update_inner(
         active.planned_payoff = Set(planned_payoff.trim().to_owned());
     }
     if let Some(status) = patch.status {
-        active.status = Set(status.as_str().to_owned());
+        active.status = Set(status);
     }
     if let Some(planted) = patch.planted_chapter_id {
         active.planted_chapter_id = Set(planted);
@@ -345,7 +345,7 @@ pub async fn to_dto(
         title: row.title.clone(),
         description: row.description.clone(),
         planned_payoff: row.planned_payoff.clone(),
-        status: super::enum_of::<ForeshadowingStatus>("foreshadowing.status", &row.status)?,
+        status: row.status,
         planted_chapter_id: row.planted_chapter_id,
         resolved_chapter_id: row.resolved_chapter_id,
         resolution: row.resolution.clone(),
@@ -437,7 +437,7 @@ pub async fn restore_inner(
         title: Set(title.clone()),
         description: Set(description.clone()),
         planned_payoff: Set(planned_payoff.clone()),
-        status: Set(status.as_str().to_owned()),
+        status: Set(*status),
         planted_chapter_id: Set(*planted_chapter_id),
         resolved_chapter_id: Set(*resolved_chapter_id),
         resolution: Set(resolution.clone()),
@@ -491,7 +491,7 @@ pub async fn recreate_inner(
         title: Set(title.clone()),
         description: Set(description.clone()),
         planned_payoff: Set(planned_payoff.clone()),
-        status: Set(status.as_str().to_owned()),
+        status: Set(*status),
         planted_chapter_id: Set(*planted_chapter_id),
         resolved_chapter_id: Set(*resolved_chapter_id),
         resolution: Set(resolution.clone()),
@@ -502,16 +502,7 @@ pub async fn recreate_inner(
     let row = foreshadowing::Entity::insert(model)
         .exec_with_returning(tx)
         .await?;
-    let mut restored = Vec::new();
-    for entity_id in unique_ids(entity_ids) {
-        if crate::db::entities::entities::Entity::find_by_id(entity_id)
-            .one(tx)
-            .await?
-            .is_some()
-        {
-            restored.push(entity_id);
-        }
-    }
+    let restored = super::existing_entity_ids(tx, &unique_ids(entity_ids)).await?;
     super::set_linked_entities(tx, super::LinkTable::Foreshadowing, row.id, &restored).await?;
     Ok((row.id, foreshadowing_snapshot(&row, restored)?))
 }

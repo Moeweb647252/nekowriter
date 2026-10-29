@@ -23,7 +23,9 @@ use crate::db::entities::{
     agent_sessions, books, character_designs, research_tasks,
     setting_docs::ActiveModel as SettingDocActive,
 };
-use crate::db::json::{AwaitInputKind, ConceptionState, SettingDocKind};
+use crate::db::json::{
+    AwaitInputKind, ConceptionState, ResearchTaskStatus, SessionKind, SettingDocKind,
+};
 use crate::error::AppError;
 use crate::events::ServerEvent;
 use crate::services::setting_docs as setting_docs_service;
@@ -607,9 +609,7 @@ async fn find_design(
     book_id: i32,
     name: &str,
 ) -> Result<Option<character_designs::Model>, ToolError> {
-    character_designs::Entity::find()
-        .filter(character_designs::Column::BookId.eq(book_id))
-        .filter(character_designs::Column::Name.eq(name))
+    character_designs::Entity::find_by_book_name((book_id, name.to_owned()))
         .one(ctx.tx)
         .await
         .map_err(|_| internal())
@@ -698,8 +698,8 @@ async fn ranked_designs(
     book_id: i32,
 ) -> Result<Vec<character_designs::Model>, ToolError> {
     character_designs::Entity::find()
-        .filter(character_designs::Column::BookId.eq(book_id))
-        .order_by_asc(character_designs::Column::Rank)
+        .filter(character_designs::COLUMN.book_id.eq(book_id))
+        .order_by_asc(character_designs::COLUMN.rank)
         .all(ctx.tx)
         .await
         .map_err(|_| internal())
@@ -933,9 +933,9 @@ impl ToolHandler for SetResearchTopicsTool {
         }
         let book_id = book_id(ctx)?;
         let drafts = research_tasks::Entity::find()
-            .filter(research_tasks::Column::BookId.eq(book_id))
-            .filter(research_tasks::Column::Status.eq("draft"))
-            .order_by_asc(research_tasks::Column::Id)
+            .filter(research_tasks::COLUMN.book_id.eq(book_id))
+            .filter(research_tasks::COLUMN.status.eq(ResearchTaskStatus::Draft))
+            .order_by_asc(research_tasks::COLUMN.id)
             .all(ctx.tx)
             .await
             .map_err(|_| internal())?;
@@ -960,7 +960,7 @@ impl ToolHandler for SetResearchTopicsTool {
                 language: Set(language.clone()),
                 // The book is conceiving, so the task starts as a draft (spec/10 §2.5); finalize
                 // turns the drafts `ready`.
-                status: Set("draft".to_owned()),
+                status: Set(ResearchTaskStatus::Draft),
                 created_at: Set(now),
                 updated_at: Set(now),
                 ..Default::default()
@@ -1179,7 +1179,7 @@ pub async fn load_conception_state(
         .one(tx)
         .await?
         .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
-    Ok(crate::db::json::from_json_or_default(&book.conception))
+    Ok(book.conception.clone().into_inner())
 }
 
 /// Writes the book's `ConceptionState`.
@@ -1188,7 +1188,7 @@ pub async fn store_conception_state(
     book_id: i32,
     state: &ConceptionState,
 ) -> Result<(), AppError> {
-    let raw = crate::db::json::to_json(state).map_err(|err| AppError::internal(err.to_string()))?;
+    let raw = crate::services::json_text(state.clone());
     books::ActiveModel {
         id: Set(book_id),
         conception: Set(raw),
@@ -1206,9 +1206,9 @@ pub async fn open_conception_session(
     book_id: i32,
 ) -> Result<Option<i32>, AppError> {
     let row = agent_sessions::Entity::find()
-        .filter(agent_sessions::Column::BookId.eq(book_id))
-        .filter(agent_sessions::Column::Kind.eq("conception"))
-        .filter(agent_sessions::Column::Status.is_in([
+        .filter(agent_sessions::COLUMN.book_id.eq(book_id))
+        .filter(agent_sessions::COLUMN.kind.eq(SessionKind::Conception))
+        .filter(agent_sessions::COLUMN.status.is_in([
             "idle",
             "running",
             "held",
@@ -1218,7 +1218,7 @@ pub async fn open_conception_session(
             "failed",
             "interrupted",
         ]))
-        .order_by_desc(agent_sessions::Column::Id)
+        .order_by_desc(agent_sessions::COLUMN.id)
         .one(tx)
         .await?;
     Ok(row.map(|row| row.id))

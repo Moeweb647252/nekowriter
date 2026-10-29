@@ -253,7 +253,7 @@ fn chapter_of<'a>(ctx: &'a ToolCtx<'_>) -> Result<&'a chapters::Model, ToolError
 
 /// The chapter's stored content.
 fn content_of(chapter: &chapters::Model) -> ChapterContent {
-    crate::db::json::from_json_or_default(&chapter.content)
+    chapter.content.clone().into_inner()
 }
 
 /// The book's target length, defaulting to the schema defaults when the book is absent.
@@ -261,7 +261,7 @@ fn targets(ctx: &ToolCtx<'_>) -> (i32, i32) {
     let settings: crate::db::json::BookSettings = ctx
         .book
         .as_ref()
-        .map(|book| crate::db::json::from_json_or_default(&book.settings))
+        .map(|book| book.settings.clone().into_inner())
         .unwrap_or_default();
     (settings.target_words_min, settings.target_words_max)
 }

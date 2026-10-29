@@ -5,16 +5,19 @@
 //! FTS columns hold jieba-segmented, space-joined tokens (spec/07 §5); the searchable text is
 //! never copied into the FTS table unsegmented, or CJK queries could not match.
 
+use sea_orm::raw_sql;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter,
-    QueryOrder, Set, Statement,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, Set,
 };
 
 use crate::db::entities::{
     chapters, entities, foreshadowing, knowledge_chunks, knowledge_entries, memory_notes,
     search_docs, timeline_events, tracks,
 };
-use crate::db::json::{ChangeTargetType, ChapterContent, ChapterStatus};
+use crate::db::json::{
+    CanonMode, ChangeTargetType, ChapterContent, ChapterStatus, EmbedState, JsonText, NoteStatus,
+    SearchDocKind,
+};
 use crate::error::AppError;
 use crate::events::ServerEvent;
 
@@ -31,7 +34,7 @@ pub const NOTE_TITLE_CHARS: usize = 40;
 pub struct NewDoc<'a> {
     pub book_id: i32,
     pub track_id: Option<i32>,
-    pub kind: &'a str,
+    pub kind: SearchDocKind,
     pub ref_id: i32,
     pub ref_part: i32,
     pub title: &'a str,
@@ -50,10 +53,7 @@ pub fn doc_hash(body: &str) -> String {
 /// vector stays until the indexer replaces it (spec/07 §2).
 pub async fn upsert_doc(conn: &impl ConnectionTrait, doc: NewDoc<'_>) -> Result<(), AppError> {
     let hash = doc_hash(doc.body);
-    let existing = search_docs::Entity::find()
-        .filter(search_docs::Column::Kind.eq(doc.kind))
-        .filter(search_docs::Column::RefId.eq(doc.ref_id))
-        .filter(search_docs::Column::RefPart.eq(doc.ref_part))
+    let existing = search_docs::Entity::find_by_doc_ref((doc.kind, doc.ref_id, doc.ref_part))
         .one(conn)
         .await?;
     match existing {
@@ -64,13 +64,15 @@ pub async fn upsert_doc(conn: &impl ConnectionTrait, doc: NewDoc<'_>) -> Result<
                 track_id: Set(doc.track_id),
                 title: Set(doc.title.to_owned()),
                 body: Set(doc.body.to_owned()),
-                meta: Set(doc.meta.to_owned()),
+                meta: Set(JsonText(
+                    serde_json::from_str(doc.meta).unwrap_or(serde_json::Value::Null),
+                )),
                 content_hash: Set(hash.clone()),
                 updated_at: Set(chrono::Utc::now()),
                 ..Default::default()
             };
             if row.content_hash != hash {
-                active.embed_state = Set("pending".to_owned());
+                active.embed_state = Set(EmbedState::Pending);
             }
             active.update(conn).await?;
             replace_fts(conn, row.id, doc.title, doc.body).await?;
@@ -84,9 +86,11 @@ pub async fn upsert_doc(conn: &impl ConnectionTrait, doc: NewDoc<'_>) -> Result<
                 ref_part: Set(doc.ref_part),
                 title: Set(doc.title.to_owned()),
                 body: Set(doc.body.to_owned()),
-                meta: Set(doc.meta.to_owned()),
+                meta: Set(JsonText(
+                    serde_json::from_str(doc.meta).unwrap_or(serde_json::Value::Null),
+                )),
                 content_hash: Set(hash),
-                embed_state: Set("pending".to_owned()),
+                embed_state: Set(EmbedState::Pending),
                 updated_at: Set(chrono::Utc::now()),
                 ..Default::default()
             })
@@ -105,8 +109,8 @@ pub async fn delete_ref_docs(
     ref_id: i32,
 ) -> Result<(), AppError> {
     search_docs::Entity::delete_many()
-        .filter(search_docs::Column::Kind.eq(kind))
-        .filter(search_docs::Column::RefId.eq(ref_id))
+        .filter(search_docs::COLUMN.kind.eq(kind))
+        .filter(search_docs::COLUMN.ref_id.eq(ref_id))
         .exec(conn)
         .await?;
     Ok(())
@@ -123,10 +127,10 @@ async fn replace_fts(
     let title_tokens = fts::segment(title);
     let body_tokens = fts::segment(body);
     if let Some(row) = conn
-        .query_one_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            "SELECT title, body FROM fts_book WHERE rowid = ?",
-            vec![(id as i64).into()],
+        // Raw: FTS5 virtual-table inserts/deletes and rowid addressing have no typed API.
+        .query_one_raw(raw_sql!(
+            Sqlite,
+            "SELECT title, body FROM fts_book WHERE rowid = {id}"
         ))
         .await?
     {
@@ -136,12 +140,13 @@ async fn replace_fts(
             return Ok(());
         }
     }
-    conn.execute_unprepared(&format!("DELETE FROM fts_book WHERE rowid = {id}"))
+    // Raw: FTS5 virtual-table deletes have no typed API; `raw_sql!` binds the rowid.
+    conn.execute_raw(raw_sql!(Sqlite, "DELETE FROM fts_book WHERE rowid = {id}"))
         .await?;
-    conn.execute_raw(Statement::from_sql_and_values(
-        DatabaseBackend::Sqlite,
-        "INSERT INTO fts_book(rowid, title, body) VALUES (?, ?, ?)",
-        vec![(id as i64).into(), title_tokens.into(), body_tokens.into()],
+    // Raw: FTS5 virtual-table inserts/deletes and rowid addressing have no typed API.
+    conn.execute_raw(raw_sql!(
+        Sqlite,
+        "INSERT INTO fts_book(rowid, title, body) VALUES ({id}, {title_tokens}, {body_tokens})"
     ))
     .await?;
     Ok(())
@@ -164,7 +169,7 @@ pub async fn sync_entity(
         NewDoc {
             book_id,
             track_id: row.track_id,
-            kind: "entity",
+            kind: SearchDocKind::Entity,
             ref_id: row.id,
             ref_part: 0,
             title: &row.name,
@@ -182,7 +187,7 @@ pub fn entity_body(row: &entities::Model) -> Result<String, AppError> {
     if !summary.is_empty() {
         parts.push(summary.to_owned());
     }
-    let aliases: Vec<String> = crate::db::json::from_json_or_default::<Vec<String>>(&row.aliases);
+    let aliases: Vec<String> = row.aliases.clone().into_inner();
     if !aliases.is_empty() {
         parts.push(aliases.join(" / "));
     }
@@ -191,7 +196,7 @@ pub fn entity_body(row: &entities::Model) -> Result<String, AppError> {
         parts.push(state.to_owned());
     }
     let attributes: std::collections::BTreeMap<String, String> =
-        crate::db::json::from_json_or_default(&row.attributes);
+        row.attributes.clone().into_inner();
     if !attributes.is_empty() {
         parts.push(
             attributes
@@ -217,7 +222,7 @@ pub async fn sync_note(
     let Some(row) = memory_notes::Entity::find_by_id(note_id).one(conn).await? else {
         return delete_ref_docs(conn, "note", note_id).await;
     };
-    if row.status != "active" {
+    if row.status != NoteStatus::Active {
         return delete_ref_docs(conn, "note", note_id).await;
     }
     let title: String = row.content.trim().chars().take(NOTE_TITLE_CHARS).collect();
@@ -226,7 +231,7 @@ pub async fn sync_note(
         NewDoc {
             book_id,
             track_id: row.track_id,
-            kind: "note",
+            kind: SearchDocKind::Note,
             ref_id: row.id,
             ref_part: 0,
             title: &title,
@@ -258,7 +263,7 @@ pub async fn sync_foreshadowing(
         NewDoc {
             book_id,
             track_id: row.track_id,
-            kind: "foreshadowing",
+            kind: SearchDocKind::Foreshadowing,
             ref_id: row.id,
             ref_part: 0,
             title: &row.title,
@@ -293,7 +298,7 @@ pub async fn sync_timeline_event(
         NewDoc {
             book_id,
             track_id: row.track_id,
-            kind: "event",
+            kind: SearchDocKind::Event,
             ref_id: row.id,
             ref_part: 0,
             title: &row.title,
@@ -313,7 +318,7 @@ async fn chapter_doc_track(
     let Some(track) = tracks::Entity::find_by_id(track_id).one(conn).await? else {
         return Ok(None);
     };
-    Ok(if track.canon_mode == "isolated" {
+    Ok(if track.canon_mode == CanonMode::Isolated {
         Some(track.id)
     } else {
         None
@@ -329,7 +334,7 @@ pub async fn sync_chapter_summary(
         return delete_ref_docs(conn, "summary", chapter_id).await;
     };
     // Only official chapters are indexed (spec/07 §2), and an empty summary has nothing to find.
-    if row.status != ChapterStatus::Official.as_str() || row.summary.trim().is_empty() {
+    if row.status != ChapterStatus::Official || row.summary.trim().is_empty() {
         return delete_ref_docs(conn, "summary", chapter_id).await;
     }
     let track_id = chapter_doc_track(conn, row.track_id).await?;
@@ -338,7 +343,7 @@ pub async fn sync_chapter_summary(
         NewDoc {
             book_id: row.book_id,
             track_id,
-            kind: "summary",
+            kind: SearchDocKind::Summary,
             ref_id: row.id,
             ref_part: 0,
             title: &row.title,
@@ -356,11 +361,11 @@ pub async fn sync_passages(conn: &impl ConnectionTrait, chapter_id: i32) -> Resu
     let Some(row) = chapters::Entity::find_by_id(chapter_id).one(conn).await? else {
         return delete_ref_docs(conn, "passage", chapter_id).await;
     };
-    if row.status != ChapterStatus::Official.as_str() {
+    if row.status != ChapterStatus::Official {
         return delete_ref_docs(conn, "passage", chapter_id).await;
     }
     let track_id = chapter_doc_track(conn, row.track_id).await?;
-    let content: ChapterContent = crate::db::json::from_json_or_default(&row.content);
+    let content: ChapterContent = row.content.clone().into_inner();
     let paragraphs: Vec<(String, String)> = content
         .paragraphs
         .iter()
@@ -372,7 +377,7 @@ pub async fn sync_passages(conn: &impl ConnectionTrait, chapter_id: i32) -> Resu
         SyncRows {
             book_id: row.book_id,
             track_id,
-            kind: "passage",
+            kind: SearchDocKind::Passage,
             ref_id: row.id,
             title: &row.title,
             entries: passages
@@ -405,7 +410,7 @@ pub async fn sync_knowledge_entry(
         .await?
     else {
         knowledge_chunks::Entity::delete_many()
-            .filter(knowledge_chunks::Column::EntryId.eq(entry_id))
+            .filter(knowledge_chunks::COLUMN.entry_id.eq(entry_id))
             .exec(conn)
             .await?;
         return Ok(());
@@ -421,8 +426,8 @@ async fn sync_knowledge_chunk_rows(
     chunks: Vec<Chunk>,
 ) -> Result<(), AppError> {
     let existing = knowledge_chunks::Entity::find()
-        .filter(knowledge_chunks::Column::EntryId.eq(entry.id))
-        .order_by_asc(knowledge_chunks::Column::Ord)
+        .filter(knowledge_chunks::COLUMN.entry_id.eq(entry.id))
+        .order_by_asc(knowledge_chunks::COLUMN.ord)
         .all(conn)
         .await?;
     // Match by content hash, one to one, so repeated identical chunks are counted (spec/07 §1.1).
@@ -448,11 +453,14 @@ async fn sync_knowledge_chunk_rows(
     // value collides with a live one (spec/02 §1, like chapter `ord`).
     for (position, (id, changed, _)) in kept.iter().enumerate() {
         if *changed {
-            conn.execute_unprepared(&format!(
-                "UPDATE knowledge_chunks SET ord = {} WHERE id = {id}",
-                -(position as i64) - 1
-            ))
-            .await?;
+            knowledge_chunks::Entity::update_many()
+                .set(knowledge_chunks::ActiveModel {
+                    ord: Set(-(position as i32) - 1),
+                    ..Default::default()
+                })
+                .filter(knowledge_chunks::COLUMN.id.eq(*id))
+                .exec(conn)
+                .await?;
         }
     }
     for id in &stale {
@@ -467,14 +475,17 @@ async fn sync_knowledge_chunk_rows(
         let hash = chunk::content_hash(&chunk.heading, &chunk.text);
         match kept_ids.get(&index) {
             Some(id) => {
-                conn.execute_unprepared(&format!(
-                    "UPDATE knowledge_chunks SET ord = {index}, heading = {}, text = {}, \
-                     content_hash = {} WHERE id = {id}",
-                    sql_string(&chunk.heading),
-                    sql_string(&chunk.text),
-                    sql_string(&hash)
-                ))
-                .await?;
+                knowledge_chunks::Entity::update_many()
+                    .set(knowledge_chunks::ActiveModel {
+                        ord: Set(index as i32),
+                        heading: Set(chunk.heading.clone()),
+                        text: Set(chunk.text.clone()),
+                        content_hash: Set(hash),
+                        ..Default::default()
+                    })
+                    .filter(knowledge_chunks::COLUMN.id.eq(*id))
+                    .exec(conn)
+                    .await?;
             }
             None => {
                 let row = knowledge_chunks::Entity::insert(knowledge_chunks::ActiveModel {
@@ -484,7 +495,7 @@ async fn sync_knowledge_chunk_rows(
                     heading: Set(chunk.heading.clone()),
                     text: Set(chunk.text.clone()),
                     content_hash: Set(hash),
-                    embed_state: Set("pending".to_owned()),
+                    embed_state: Set(EmbedState::Pending),
                     ..Default::default()
                 })
                 .exec_with_returning(conn)
@@ -500,8 +511,15 @@ async fn sync_knowledge_chunk_rows(
         }
     }
     // The FTS title column carries the entry title for every chunk; a rename updates all rows.
+    let kept_ids: Vec<i32> = kept.iter().map(|(id, _, _)| *id).collect();
+    let kept_rows = knowledge_chunks::Entity::find()
+        .filter(knowledge_chunks::COLUMN.id.is_in(kept_ids))
+        .all(conn)
+        .await?;
+    let rows_by_id: std::collections::HashMap<i32, knowledge_chunks::Model> =
+        kept_rows.into_iter().map(|row| (row.id, row)).collect();
     for (id, _, _) in kept.iter() {
-        let Some(row) = knowledge_chunks::Entity::find_by_id(*id).one(conn).await? else {
+        let Some(row) = rows_by_id.get(id) else {
             continue;
         };
         replace_knowledge_fts(
@@ -519,7 +537,7 @@ async fn sync_knowledge_chunk_rows(
 struct SyncRows<'a> {
     book_id: i32,
     track_id: Option<i32>,
-    kind: &'a str,
+    kind: SearchDocKind,
     ref_id: i32,
     title: &'a str,
     entries: Vec<SyncEntry>,
@@ -532,9 +550,9 @@ struct SyncEntry {
 
 async fn sync_chunk_rows(conn: &impl ConnectionTrait, rows: SyncRows<'_>) -> Result<(), AppError> {
     let existing = search_docs::Entity::find()
-        .filter(search_docs::Column::Kind.eq(rows.kind))
-        .filter(search_docs::Column::RefId.eq(rows.ref_id))
-        .order_by_asc(search_docs::Column::RefPart)
+        .filter(search_docs::COLUMN.kind.eq(rows.kind))
+        .filter(search_docs::COLUMN.ref_id.eq(rows.ref_id))
+        .order_by_asc(search_docs::COLUMN.ref_part)
         .all(conn)
         .await?;
     let mut pool: std::collections::HashMap<String, Vec<search_docs::Model>> =
@@ -553,11 +571,14 @@ async fn sync_chunk_rows(conn: &impl ConnectionTrait, rows: SyncRows<'_>) -> Res
     // Park kept rows on negative `ref_part` values before writing final positions.
     for (position, (id, changed, _)) in kept.iter().enumerate() {
         if *changed {
-            conn.execute_unprepared(&format!(
-                "UPDATE search_docs SET ref_part = {} WHERE id = {id}",
-                -(position as i64) - 1
-            ))
-            .await?;
+            search_docs::Entity::update_many()
+                .set(search_docs::ActiveModel {
+                    ref_part: Set(-(position as i32) - 1),
+                    ..Default::default()
+                })
+                .filter(search_docs::COLUMN.id.eq(*id))
+                .exec(conn)
+                .await?;
         }
     }
     for id in &stale {
@@ -574,7 +595,9 @@ async fn sync_chunk_rows(conn: &impl ConnectionTrait, rows: SyncRows<'_>) -> Res
                     id: Set(*id),
                     ref_part: Set(index as i32),
                     title: Set(rows.title.to_owned()),
-                    meta: Set(entry.meta.clone()),
+                    meta: Set(JsonText(
+                        serde_json::from_str(&entry.meta).unwrap_or(serde_json::Value::Null),
+                    )),
                     updated_at: Set(chrono::Utc::now()),
                     ..Default::default()
                 }
@@ -622,10 +645,10 @@ async fn replace_knowledge_fts(
     let title_tokens = fts::segment(title);
     let body_tokens = fts::segment(body);
     if let Some(row) = conn
-        .query_one_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            "SELECT title, body FROM fts_knowledge WHERE rowid = ?",
-            vec![(id as i64).into()],
+        // Raw: FTS5 virtual-table inserts/deletes and rowid addressing have no typed API.
+        .query_one_raw(raw_sql!(
+            Sqlite,
+            "SELECT title, body FROM fts_knowledge WHERE rowid = {id}"
         ))
         .await?
     {
@@ -635,12 +658,16 @@ async fn replace_knowledge_fts(
             return Ok(());
         }
     }
-    conn.execute_unprepared(&format!("DELETE FROM fts_knowledge WHERE rowid = {id}"))
-        .await?;
-    conn.execute_raw(Statement::from_sql_and_values(
-        DatabaseBackend::Sqlite,
-        "INSERT INTO fts_knowledge(rowid, title, body) VALUES (?, ?, ?)",
-        vec![(id as i64).into(), title_tokens.into(), body_tokens.into()],
+    // Raw: FTS5 virtual-table deletes have no typed API; `raw_sql!` binds the rowid.
+    conn.execute_raw(raw_sql!(
+        Sqlite,
+        "DELETE FROM fts_knowledge WHERE rowid = {id}"
+    ))
+    .await?;
+    // Raw: FTS5 virtual-table inserts/deletes and rowid addressing have no typed API.
+    conn.execute_raw(raw_sql!(
+        Sqlite,
+        "INSERT INTO fts_knowledge(rowid, title, body) VALUES ({id}, {title_tokens}, {body_tokens})"
     ))
     .await?;
     Ok(())
@@ -681,14 +708,11 @@ pub async fn sync_events(
     Ok(())
 }
 
-/// Quotes a Rust string as a SQLite string literal.
-fn sql_string(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::json::{EntityKind, EntityStatus};
+    use std::collections::BTreeMap;
 
     #[test]
     fn entity_body_follows_the_spec_field_order() {
@@ -696,16 +720,16 @@ mod tests {
             id: 1,
             book_id: 1,
             track_id: None,
-            kind: "character".to_owned(),
+            kind: EntityKind::Character,
             name: "Lin Fan".to_owned(),
-            aliases: "[\"Fan\"]".to_owned(),
+            aliases: JsonText(vec!["Fan".to_owned()]),
             summary: "the protagonist".to_owned(),
             description: "long description".to_owned(),
             state: "qi refining".to_owned(),
-            attributes: "{\"age\":\"17\"}".to_owned(),
+            attributes: JsonText(BTreeMap::from([("age".to_owned(), "17".to_owned())])),
             importance: 5,
-            status: "active".to_owned(),
-            is_protagonist: 1,
+            status: EntityStatus::Active,
+            is_protagonist: true,
             first_chapter_id: None,
             last_chapter_id: None,
             created_at: chrono::Utc::now(),

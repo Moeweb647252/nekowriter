@@ -498,17 +498,17 @@ pub struct SessionRow {
 
 impl SessionRow {
     pub fn counters(&self) -> nekowriter::db::json::SessionCounters {
-        nekowriter::db::json::from_json_or_default(&self.counters)
+        serde_json::from_str(&self.counters).unwrap_or_default()
     }
 
     pub fn usage(&self) -> nekowriter::db::json::Usage {
-        nekowriter::db::json::from_json_or_default(&self.usage)
+        serde_json::from_str(&self.usage).unwrap_or_default()
     }
 
     pub fn error(&self) -> Option<nekowriter::db::json::SessionError> {
         self.error
             .as_deref()
-            .and_then(|raw| nekowriter::db::json::from_json(raw).ok())
+            .and_then(|raw| serde_json::from_str(raw).ok())
     }
 }
 
@@ -535,7 +535,7 @@ impl CallRow {
     }
 
     pub fn effects(&self) -> nekowriter::db::json::ToolEffects {
-        nekowriter::db::json::from_json_or_default(self.effects.as_deref().unwrap_or("{}"))
+        serde_json::from_str(self.effects.as_deref().unwrap_or("{}")).unwrap_or_default()
     }
 }
 
@@ -553,7 +553,7 @@ pub struct MessageRow {
 
 impl MessageRow {
     pub fn blocks(&self) -> Vec<nekowriter::db::json::StoredBlock> {
-        nekowriter::db::json::from_json_or_default(&self.content)
+        serde_json::from_str(&self.content).unwrap_or_default()
     }
 
     /// The joined text of the message's text blocks.
@@ -571,7 +571,7 @@ impl MessageRow {
     pub fn request_meta(&self) -> Option<nekowriter::db::json::RequestMeta> {
         self.request_meta
             .as_deref()
-            .and_then(|raw| nekowriter::db::json::from_json(raw).ok())
+            .and_then(|raw| serde_json::from_str(raw).ok())
     }
 }
 

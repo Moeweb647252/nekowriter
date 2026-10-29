@@ -1,7 +1,10 @@
 //! Chapter service: CRUD, reorder, content writes (PATCH/PUT with `base_version`), submit,
 //! approve, versions and restore (spec/08 §1.1, §1.2, spec/10 §2.2, spec/02 §5 invariants 3–4).
 
-use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, Set};
+use sea_orm::{
+    ColumnTrait, ConnectionTrait, DerivePartialModel, EntityTrait, QueryFilter, QueryOrder,
+    QuerySelect, Set,
+};
 use std::collections::HashSet;
 
 use crate::api::dto::chapters::ChapterWriteResponse;
@@ -13,14 +16,48 @@ use crate::api::dto::chapters::{
 use crate::api::dto::chapters::{ChapterOutlineInput, ChapterWriteInput};
 use crate::db::entities::{agent_sessions, appearances, chapter_versions, chapters, tracks};
 use crate::db::json::{
-    AgentRole, BookStatus, CanonStatus, ChangeActor, ChangeOp, ChangeTargetType, ChapterContent,
-    ChapterStatus, SessionStatus, Snapshot, TrackKind, VersionKind,
+    AgentRole, AnchorKind, BookStatus, CanonStatus, ChangeActor, ChangeOp, ChangeTargetType,
+    ChapterContent, ChapterStatus, SessionStatus, Snapshot, TrackKind, VersionKind,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::{BookOp, ContentActor, ServerEvent};
 use crate::text;
 
-use super::{json, now, parse_json};
+use super::now;
+
+/// The metadata columns of the chapter list; `content` is deliberately not decoded (spec/10 §2.2,
+/// plan §2.7).
+#[derive(DerivePartialModel)]
+#[sea_orm(entity = "chapters::Entity")]
+struct ChapterListItemRow {
+    id: i32,
+    book_id: i32,
+    track_id: i32,
+    ord: i32,
+    title: String,
+    status: ChapterStatus,
+    canon_status: CanonStatus,
+    word_count: i32,
+    outline: String,
+    updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl From<ChapterListItemRow> for ChapterListItemDto {
+    fn from(row: ChapterListItemRow) -> Self {
+        Self {
+            id: row.id,
+            book_id: row.book_id,
+            track_id: row.track_id,
+            number: row.ord,
+            title: row.title,
+            status: row.status,
+            canon_status: row.canon_status,
+            word_count: row.word_count,
+            has_outline: !row.outline.trim().is_empty(),
+            updated_at: row.updated_at,
+        }
+    }
+}
 
 /// `GET /api/tracks/:id/chapters` (spec/10 §2.2: no content).
 pub async fn list(
@@ -29,8 +66,22 @@ pub async fn list(
 ) -> Result<Vec<ChapterListItemDto>, AppError> {
     super::tracks::load(conn, track_id).await?;
     let rows = chapters::Entity::find()
-        .filter(chapters::Column::TrackId.eq(track_id))
-        .order_by_asc(chapters::Column::Ord)
+        .filter(chapters::COLUMN.track_id.eq(track_id))
+        .order_by_asc(chapters::COLUMN.ord)
+        .select_only()
+        .columns([
+            chapters::Column::Id,
+            chapters::Column::BookId,
+            chapters::Column::TrackId,
+            chapters::Column::Ord,
+            chapters::Column::Title,
+            chapters::Column::Status,
+            chapters::Column::CanonStatus,
+            chapters::Column::WordCount,
+            chapters::Column::Outline,
+            chapters::Column::UpdatedAt,
+        ])
+        .into_model::<ChapterListItemRow>()
         .all(conn)
         .await?;
     Ok(rows.into_iter().map(ChapterListItemDto::from).collect())
@@ -78,16 +129,16 @@ pub async fn create_inner(
         track_id: Set(track_id),
         ord: Set(ord),
         title: Set(input.title.trim().to_owned()),
-        status: Set(ChapterStatus::Planned.as_str().to_owned()),
+        status: Set(ChapterStatus::Planned),
         guidance: Set(input.guidance.trim().to_owned()),
         outline: Set(String::new()),
         reference_notes: Set(String::new()),
         summary: Set(String::new()),
-        content: Set(json(&content)?),
+        content: Set(crate::services::json_text(content.clone())),
         content_version: Set(0),
         word_count: Set(0),
         official_version_id: Set(None),
-        canon_status: Set(CanonStatus::None.as_str().to_owned()),
+        canon_status: Set(CanonStatus::None),
         synced_version_id: Set(None),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),
@@ -232,7 +283,7 @@ pub async fn delete_inner(
     // bound, so their `first_chapter_id` / `last_chapter_id` are recomputed (spec/08 §1.1,
     // D-059). The entity ids are read before the cascade removes the rows.
     let appeared: Vec<i32> = appearances::Entity::find()
-        .filter(appearances::Column::ChapterId.eq(chapter_id))
+        .filter(appearances::COLUMN.chapter_id.eq(chapter_id))
         .all(tx)
         .await?
         .into_iter()
@@ -265,10 +316,8 @@ pub async fn delete_inner(
                 track_id: existing.track_id,
                 number: existing.ord,
                 title: existing.title.clone(),
-                status: ChapterStatus::from_str_opt(&existing.status)
-                    .unwrap_or(ChapterStatus::Planned),
-                canon_status: CanonStatus::from_str_opt(&existing.canon_status)
-                    .unwrap_or(CanonStatus::None),
+                status: existing.status,
+                canon_status: existing.canon_status,
                 word_count: existing.word_count,
                 has_outline: !existing.outline.trim().is_empty(),
                 updated_at: timestamp,
@@ -325,7 +374,7 @@ pub async fn reorder_inner(
         .filter(|(_, id)| {
             by_id
                 .get(id)
-                .is_some_and(|row| row.status == ChapterStatus::Official.as_str())
+                .is_some_and(|row| row.status == ChapterStatus::Official)
         })
         .map(|(index, _)| index)
         .collect();
@@ -338,7 +387,7 @@ pub async fn reorder_inner(
         .filter(|(_, id)| {
             by_id
                 .get(id)
-                .is_some_and(|row| row.status == ChapterStatus::Official.as_str())
+                .is_some_and(|row| row.status == ChapterStatus::Official)
         })
         .map(|(index, _)| index)
         .collect();
@@ -347,7 +396,7 @@ pub async fn reorder_inner(
         // chapters that may not move are the actionable part, so send both.
         let status = if by_id
             .values()
-            .any(|row| row.status == ChapterStatus::Official.as_str())
+            .any(|row| row.status == ChapterStatus::Official)
         {
             ChapterStatus::Official
         } else {
@@ -362,7 +411,7 @@ pub async fn reorder_inner(
                     .ids
                     .iter()
                     .filter(|id| by_id.get(id).is_some_and(|row| {
-                        row.status == ChapterStatus::Official.as_str()
+                        row.status == ChapterStatus::Official
                     }))
                     .collect::<Vec<_>>()
             }),
@@ -429,7 +478,7 @@ pub async fn patch_content_inner(
     let existing = load(tx, chapter_id).await?;
     ensure_editable(tx, chapter_id).await?;
     ensure_version(&existing, patch.base_version)?;
-    let mut content: ChapterContent = parse_json("chapters.content", &existing.content)?;
+    let mut content: ChapterContent = existing.content.clone().into_inner();
     let applied = text::apply_inputs(&mut content, &patch.ops).map_err(map_text_error)?;
     write_content(
         tx,
@@ -465,7 +514,7 @@ pub async fn put_content_text_inner(
     let existing = load(tx, chapter_id).await?;
     ensure_editable(tx, chapter_id).await?;
     ensure_version(&existing, put.base_version)?;
-    let mut content: ChapterContent = parse_json("chapters.content", &existing.content)?;
+    let mut content: ChapterContent = existing.content.clone().into_inner();
     let aligned = text::set_full_text(&mut content, &put.text);
     write_content(
         tx,
@@ -494,7 +543,7 @@ async fn write_content(
 ) -> Result<(ChapterContentResult, Vec<ServerEvent>), AppError> {
     use sea_orm::ActiveModelTrait;
 
-    let stored: ChapterContent = parse_json("chapters.content", &existing.content)?;
+    let stored: ChapterContent = existing.content.clone().into_inner();
     let unchanged = ops.is_empty() && stored == content;
     if unchanged {
         return Ok((
@@ -511,7 +560,7 @@ async fn write_content(
     let timestamp = now();
     let mut active = chapters::ActiveModel {
         id: Set(existing.id),
-        content: Set(json(&content)?),
+        content: Set(crate::services::json_text(content.clone())),
         content_version: Set(version),
         word_count: Set(word_count),
         updated_at: Set(timestamp),
@@ -519,14 +568,13 @@ async fn write_content(
     };
     // An author edit of an official chapter whose canon is synced makes the canon stale
     // (spec/08 §1.1 "Edit text").
-    let mut canon_status =
-        CanonStatus::from_str_opt(&existing.canon_status).unwrap_or(CanonStatus::None);
+    let mut canon_status = existing.canon_status;
     if actor == ContentActor::User
-        && existing.status == ChapterStatus::Official.as_str()
+        && existing.status == ChapterStatus::Official
         && canon_status == CanonStatus::Synced
     {
         canon_status = CanonStatus::Stale;
-        active.canon_status = Set(canon_status.as_str().to_owned());
+        active.canon_status = Set(canon_status);
     }
     // `planned ── manual edit ──► drafting` (lifecycle diagram of spec/08 §1): a planned chapter
     // enters drafting as soon as the author writes text into it by hand. An agent's write starts
@@ -535,10 +583,10 @@ async fn write_content(
         && status_of(existing) == ChapterStatus::Planned
         && text::content_word_count(&content) > 0
     {
-        active.status = Set(ChapterStatus::Drafting.as_str().to_owned());
+        active.status = Set(ChapterStatus::Drafting);
     }
     active.update(tx).await?;
-    if existing.status == ChapterStatus::Official.as_str() {
+    if existing.status == ChapterStatus::Official {
         // The official text changed: its passage documents are rebuilt in this transaction, and
         // unchanged passages keep their vectors (spec/07 §2, D-039).
         crate::search::maintenance::sync_passages(tx, existing.id).await?;
@@ -723,9 +771,9 @@ pub(crate) async fn previous_chapter_blocker(
     chapter: &chapters::Model,
 ) -> Result<Option<serde_json::Value>, AppError> {
     let previous = chapters::Entity::find()
-        .filter(chapters::Column::TrackId.eq(chapter.track_id))
-        .filter(chapters::Column::Ord.lt(chapter.ord))
-        .order_by_desc(chapters::Column::Ord)
+        .filter(chapters::COLUMN.track_id.eq(chapter.track_id))
+        .filter(chapters::COLUMN.ord.lt(chapter.ord))
+        .order_by_desc(chapters::COLUMN.ord)
         .one(conn)
         .await?;
     let Some(previous) = previous else {
@@ -733,8 +781,8 @@ pub(crate) async fn previous_chapter_blocker(
         // (spec/08 §6): the anchor chapter for `after_chapter`, nothing otherwise.
         return first_side_chapter_blocker(conn, chapter).await;
     };
-    let official = previous.status == ChapterStatus::Official.as_str();
-    let synced = previous.canon_status == crate::db::json::CanonStatus::Synced.as_str();
+    let official = previous.status == ChapterStatus::Official;
+    let synced = previous.canon_status == CanonStatus::Synced;
     if official && synced {
         return Ok(None);
     }
@@ -760,7 +808,7 @@ async fn first_side_chapter_blocker(
     chapter: &chapters::Model,
 ) -> Result<Option<serde_json::Value>, AppError> {
     let track = super::tracks::load(conn, chapter.track_id).await?;
-    if track.kind != TrackKind::Side.as_str() || track.anchor_kind != "after_chapter" {
+    if track.kind != TrackKind::Side || track.anchor_kind != AnchorKind::AfterChapter {
         return Ok(None);
     }
     let Some(anchor_id) = track.anchor_chapter_id else {
@@ -770,8 +818,8 @@ async fn first_side_chapter_blocker(
         .one(conn)
         .await?
         .ok_or_else(|| AppError::not_found(format!("chapter #{anchor_id}")))?;
-    let official = anchor.status == ChapterStatus::Official.as_str();
-    let synced = anchor.canon_status == crate::db::json::CanonStatus::Synced.as_str();
+    let official = anchor.status == ChapterStatus::Official;
+    let synced = anchor.canon_status == CanonStatus::Synced;
     if official && synced {
         return Ok(None);
     }
@@ -822,7 +870,7 @@ pub async fn submit_inner(
             serde_json::json!({ "session_id": session_id }),
         ));
     }
-    let content: ChapterContent = parse_json("chapters.content", &existing.content)?;
+    let content: ChapterContent = existing.content.clone().into_inner();
     if text::content_word_count(&content) == 0 {
         return Err(invalid_state("the chapter is empty", status));
     }
@@ -853,7 +901,7 @@ pub async fn submit_inner(
     let timestamp = now();
     let active = chapters::ActiveModel {
         id: Set(chapter_id),
-        status: Set(ChapterStatus::InReview.as_str().to_owned()),
+        status: Set(ChapterStatus::InReview),
         updated_at: Set(timestamp),
         ..Default::default()
     };
@@ -878,9 +926,13 @@ async fn abandon_open_writer_sessions(
     chapter_id: i32,
 ) -> Result<Vec<ServerEvent>, AppError> {
     let rows = agent_sessions::Entity::find()
-        .filter(agent_sessions::Column::ChapterId.eq(chapter_id))
-        .filter(agent_sessions::Column::Role.is_in(["planner", "writer"]))
-        .filter(agent_sessions::Column::Status.is_in([
+        .filter(agent_sessions::COLUMN.chapter_id.eq(chapter_id))
+        .filter(
+            agent_sessions::COLUMN
+                .role
+                .is_in([AgentRole::Planner, AgentRole::Writer]),
+        )
+        .filter(agent_sessions::COLUMN.status.is_in([
             SessionStatus::Idle.as_str(),
             SessionStatus::Held.as_str(),
             SessionStatus::AwaitingInput.as_str(),
@@ -889,7 +941,7 @@ async fn abandon_open_writer_sessions(
             SessionStatus::Failed.as_str(),
             SessionStatus::Interrupted.as_str(),
         ]))
-        .order_by_asc(agent_sessions::Column::Id)
+        .order_by_asc(agent_sessions::COLUMN.id)
         .all(tx)
         .await?;
     let mut events = Vec::new();
@@ -957,7 +1009,7 @@ pub async fn approve_inner(
             serde_json::json!({ "session_id": session_id }),
         ));
     }
-    let content: ChapterContent = parse_json("chapters.content", &existing.content)?;
+    let content: ChapterContent = existing.content.clone().into_inner();
     if text::content_word_count(&content) == 0 {
         return Err(invalid_state("the chapter is empty", status));
     }
@@ -979,8 +1031,8 @@ pub async fn approve_inner(
     let timestamp = now();
     let active = chapters::ActiveModel {
         id: Set(chapter_id),
-        status: Set(ChapterStatus::Official.as_str().to_owned()),
-        canon_status: Set(CanonStatus::Pending.as_str().to_owned()),
+        status: Set(ChapterStatus::Official),
+        canon_status: Set(CanonStatus::Pending),
         official_version_id: Set(Some(version.id)),
         synced_version_id: Set(None),
         updated_at: Set(timestamp),
@@ -1046,7 +1098,7 @@ pub async fn save_version_inner(
     input: ManualVersionInput,
 ) -> Result<chapter_versions::Model, AppError> {
     let existing = load(tx, chapter_id).await?;
-    let content: ChapterContent = parse_json("chapters.content", &existing.content)?;
+    let content: ChapterContent = existing.content.clone().into_inner();
     let word_count = text::content_word_count(&content);
     super::versions::create_version(
         tx,
@@ -1095,7 +1147,7 @@ pub async fn restore_inner(
             serde_json::json!({ "session_id": session_id }),
         ));
     }
-    let current: ChapterContent = parse_json("chapters.content", &existing.content)?;
+    let current: ChapterContent = existing.content.clone().into_inner();
     let current_words = text::content_word_count(&current);
     super::versions::create_version(
         tx,
@@ -1111,7 +1163,7 @@ pub async fn restore_inner(
     )
     .await?;
 
-    let mut restored: ChapterContent = parse_json("chapter_versions.content", &version.content)?;
+    let mut restored: ChapterContent = version.content.clone().into_inner();
     // A restored version is older than the text it replaces, so its own counter can be lower.
     // Pids are never reused (spec/02 §5 invariant 3), so the counter keeps the current value.
     text::keep_next_pid(&mut restored, &current);
@@ -1122,24 +1174,23 @@ pub async fn restore_inner(
     // The restore is an author edit: record it even when `actor` is an agent, because the
     // content change is the same (spec/08 §1.2).
     let _ = actor;
-    let mut canon_status =
-        CanonStatus::from_str_opt(&existing.canon_status).unwrap_or(CanonStatus::None);
-    if existing.status == ChapterStatus::Official.as_str() && canon_status == CanonStatus::Synced {
+    let mut canon_status = existing.canon_status;
+    if existing.status == ChapterStatus::Official && canon_status == CanonStatus::Synced {
         canon_status = CanonStatus::Stale;
     }
 
     let ops = restore_ops(&current, &restored);
     let active = chapters::ActiveModel {
         id: Set(existing.id),
-        content: Set(json(&restored)?),
+        content: Set(crate::services::json_text(restored.clone())),
         content_version: Set(version_no),
         word_count: Set(word_count),
-        canon_status: Set(canon_status.as_str().to_owned()),
+        canon_status: Set(canon_status),
         updated_at: Set(timestamp),
         ..Default::default()
     };
     active.update(tx).await?;
-    if existing.status == ChapterStatus::Official.as_str() {
+    if existing.status == ChapterStatus::Official {
         crate::search::maintenance::sync_passages(tx, existing.id).await?;
         crate::search::index::wake();
     }
@@ -1208,8 +1259,8 @@ async fn ordered_chapters(
     track_id: i32,
 ) -> Result<Vec<chapters::Model>, AppError> {
     Ok(chapters::Entity::find()
-        .filter(chapters::Column::TrackId.eq(track_id))
-        .order_by_asc(chapters::Column::Ord)
+        .filter(chapters::COLUMN.track_id.eq(track_id))
+        .order_by_asc(chapters::COLUMN.ord)
         .all(conn)
         .await?)
 }
@@ -1238,9 +1289,9 @@ async fn renumber_subsequent(
 ) -> Result<(), AppError> {
     use sea_orm::ActiveModelTrait;
     let rows = chapters::Entity::find()
-        .filter(chapters::Column::TrackId.eq(track_id))
-        .filter(chapters::Column::Ord.gt(removed_ord))
-        .order_by_asc(chapters::Column::Ord)
+        .filter(chapters::COLUMN.track_id.eq(track_id))
+        .filter(chapters::COLUMN.ord.gt(removed_ord))
+        .order_by_asc(chapters::COLUMN.ord)
         .all(tx)
         .await?;
     // Two phases (spec/02 §1): shift every `ord` negative first so no intermediate value
@@ -1271,7 +1322,7 @@ async fn renumber_subsequent(
 /// The tracks anchored to a chapter (spec/08 §1.1 `chapter.is_anchor`).
 async fn anchor_tracks(conn: &impl ConnectionTrait, chapter_id: i32) -> Result<Vec<i32>, AppError> {
     let rows = tracks::Entity::find()
-        .filter(tracks::Column::AnchorChapterId.eq(chapter_id))
+        .filter(tracks::COLUMN.anchor_chapter_id.eq(chapter_id))
         .all(conn)
         .await?;
     Ok(rows.into_iter().map(|row| row.id).collect())
@@ -1303,7 +1354,7 @@ pub async fn ensure_book_active(tx: &impl ConnectionTrait, book_id: i32) -> Resu
         .one(tx)
         .await?
         .ok_or_else(|| AppError::not_found(format!("book #{book_id}")))?;
-    if book.status == BookStatus::Active.as_str() {
+    if book.status == BookStatus::Active {
         return Ok(());
     }
     Err(super::conflict(
@@ -1326,7 +1377,7 @@ fn ensure_version(existing: &chapters::Model, base_version: i32) -> Result<(), A
 }
 
 fn status_of(row: &chapters::Model) -> ChapterStatus {
-    ChapterStatus::from_str_opt(&row.status).unwrap_or(ChapterStatus::Planned)
+    row.status
 }
 
 fn invalid_state(message: &str, status: ChapterStatus) -> AppError {
@@ -1368,7 +1419,7 @@ pub fn to_dto_without_sessions(row: &chapters::Model) -> Result<ChapterDto, AppE
         outline: row.outline.clone(),
         reference_notes: row.reference_notes.clone(),
         summary: row.summary.clone(),
-        content: parse_json("chapters.content", &row.content)?,
+        content: row.content.clone().into_inner(),
         content_version: row.content_version,
         official_version_id: row.official_version_id,
         open_sessions: Vec::new(),
@@ -1417,10 +1468,10 @@ pub async fn open_sessions(
         .map(|status| status.as_str().to_owned())
         .collect();
     let rows = agent_sessions::Entity::find()
-        .filter(agent_sessions::Column::ChapterId.eq(chapter_id))
-        .filter(agent_sessions::Column::Role.is_in(roles))
-        .filter(agent_sessions::Column::Status.is_not_in(closed))
-        .order_by_asc(agent_sessions::Column::Id)
+        .filter(agent_sessions::COLUMN.chapter_id.eq(chapter_id))
+        .filter(agent_sessions::COLUMN.role.is_in(roles))
+        .filter(agent_sessions::COLUMN.status.is_not_in(closed))
+        .order_by_asc(agent_sessions::COLUMN.id)
         .all(conn)
         .await?;
     let mut sessions = Vec::with_capacity(rows.len());
@@ -1471,7 +1522,7 @@ pub async fn record_summary_change(
 /// True when the track's kind is `main` (used by rules that differ per track).
 pub async fn track_is_main(conn: &impl ConnectionTrait, track_id: i32) -> Result<bool, AppError> {
     let track = super::tracks::load(conn, track_id).await?;
-    Ok(super::enum_of::<TrackKind>("tracks.kind", &track.kind)? == TrackKind::Main)
+    Ok(track.kind == TrackKind::Main)
 }
 
 /// Convenience for tests and future services: a chapter's full text as a paragraph list.
@@ -1489,7 +1540,7 @@ pub async fn version_content(
     version_id: i32,
 ) -> Result<ChapterContent, AppError> {
     let row = super::versions::load(conn, version_id).await?;
-    parse_json("chapter_versions.content", &row.content)
+    Ok(row.content.clone().into_inner())
 }
 
 #[cfg(test)]

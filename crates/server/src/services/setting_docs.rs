@@ -4,7 +4,7 @@
 //! book. A `PUT` carries `base_revision` (optimistic concurrency), bumps `revision`, and writes a
 //! `change_log` row. Editing is locked only while the book's conception session is running.
 
-use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, Set};
+use sea_orm::{ConnectionTrait, Set};
 
 use crate::api::dto::settings_materials::{SettingDocDto, SettingDocInput};
 use crate::db::entities::setting_docs;
@@ -179,9 +179,7 @@ pub async fn load(
     kind: SettingDocKind,
 ) -> Result<setting_docs::Model, AppError> {
     super::books::get(conn, book_id).await?;
-    setting_docs::Entity::find()
-        .filter(setting_docs::Column::BookId.eq(book_id))
-        .filter(setting_docs::Column::Kind.eq(kind.as_str()))
+    setting_docs::Entity::find_by_book_kind((book_id, kind))
         .one(conn)
         .await?
         .ok_or_else(|| {
@@ -209,9 +207,7 @@ pub fn to_dto(row: &setting_docs::Model) -> Result<SettingDocDto, AppError> {
     Ok(SettingDocDto {
         id: row.id,
         book_id: row.book_id,
-        kind: SettingDocKind::from_str_opt(&row.kind).ok_or_else(|| {
-            AppError::internal(format!("unknown setting doc kind {:?}", row.kind))
-        })?,
+        kind: row.kind,
         content: row.content.clone(),
         revision: row.revision,
         approved_revision: row.approved_revision,

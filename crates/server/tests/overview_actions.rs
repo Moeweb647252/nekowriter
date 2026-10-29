@@ -72,7 +72,7 @@ async fn a_canon_seed_that_completed_is_not_offered_again() {
     // A completed seed session means the canonical next step is no longer seeding.
     app.execute(&format!(
         "INSERT INTO agent_sessions(book_id, role, kind, model_snapshot, system_prompt, tools, \
-         status, created_at, updated_at) VALUES ({book_id}, 'archivist', 'canon_seed', '{{}}', '', \
+         status, created_at, updated_at) VALUES ({book_id}, 'archivist', 'canon_seed', '{{\"provider_id\":0,\"protocol\":\"mock\",\"base_url\":\"\",\"extra_headers\":{{}},\"model\":\"\",\"context_window\":0,\"max_output_tokens\":0,\"options\":null}}', '', \
          '[]', 'completed', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
     ))
     .await;
@@ -229,7 +229,7 @@ async fn usage_sums_the_token_totals_of_the_books_sessions() {
         app.execute(&format!(
             "INSERT INTO agent_sessions(book_id, role, kind, chapter_id, track_id, model_snapshot, \
              system_prompt, tools, status, usage, created_at, updated_at) VALUES ({book_id}, \
-             'writer', 'chapter_write', {chapter_id}, 1, '{{}}', '', '[]', '{status}', '{values}', \
+             'writer', 'chapter_write', {chapter_id}, 1, '{{\"provider_id\":0,\"protocol\":\"mock\",\"base_url\":\"\",\"extra_headers\":{{}},\"model\":\"\",\"context_window\":0,\"max_output_tokens\":0,\"options\":null}}', '', '[]', '{status}', '{values}', \
              '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
         ))
         .await;
@@ -296,7 +296,7 @@ async fn ready_research_tasks_are_the_next_action_after_seeding() {
     // Canon seeded, as the author's book 3 has it (43 entities).
     app.execute(&format!(
         "INSERT INTO agent_sessions(book_id, role, kind, model_snapshot, system_prompt, tools, \
-         status, created_at, updated_at) VALUES ({book_id}, 'archivist', 'canon_seed', '{{}}', '', \
+         status, created_at, updated_at) VALUES ({book_id}, 'archivist', 'canon_seed', '{{\"provider_id\":0,\"protocol\":\"mock\",\"base_url\":\"\",\"extra_headers\":{{}},\"model\":\"\",\"context_window\":0,\"max_output_tokens\":0,\"options\":null}}', '', \
          '[]', 'completed', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
     ))
     .await;
@@ -514,7 +514,7 @@ async fn a_drafting_chapter_wins_back_a_deferred_book() {
     let (app, book_id, _, chapter_id) = app_with_book().await;
     app.execute(&format!(
         "INSERT INTO agent_sessions(book_id, role, kind, model_snapshot, system_prompt, tools, \
-         status, created_at, updated_at) VALUES ({book_id}, 'archivist', 'canon_seed', '{{}}', '', \
+         status, created_at, updated_at) VALUES ({book_id}, 'archivist', 'canon_seed', '{{\"provider_id\":0,\"protocol\":\"mock\",\"base_url\":\"\",\"extra_headers\":{{}},\"model\":\"\",\"context_window\":0,\"max_output_tokens\":0,\"options\":null}}', '', \
          '[]', 'completed', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
     ))
     .await;
@@ -584,7 +584,7 @@ async fn insert_outline_session(app: &TestApp, chapter_id: i32, status: &str) {
     app.execute(&format!(
         "INSERT INTO agent_sessions(book_id, role, kind, chapter_id, track_id, model_snapshot, \
          system_prompt, tools, status, phase, counters, usage, created_at, updated_at) \
-         SELECT book_id, 'planner', 'chapter_outline', id, track_id, '{{}}', '', '[]', \
+         SELECT book_id, 'planner', 'chapter_outline', id, track_id, '{{\"provider_id\":0,\"protocol\":\"mock\",\"base_url\":\"\",\"extra_headers\":{{}},\"model\":\"\",\"context_window\":0,\"max_output_tokens\":0,\"options\":null}}', '', '[]', \
          '{status}', 'none', '{{}}', '{{}}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z' \
          FROM chapters WHERE id = {chapter_id}"
     ))

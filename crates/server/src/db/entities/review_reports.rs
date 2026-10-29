@@ -2,6 +2,11 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::{JsonText, ReviewIssue};
+
+use crate::db::json::ReviewVerdict;
+
+#[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "review_reports")]
 pub struct Model {
@@ -11,15 +16,18 @@ pub struct Model {
     pub content_version: i32,
     pub session_id: Option<i32>,
     pub attempt: i32,
-    pub verdict: String,
+    pub verdict: ReviewVerdict,
     pub summary: String,
-    pub issues: String,
+    pub issues: JsonText<Vec<ReviewIssue>>,
     pub feedback: String,
     pub user_comment: String,
     pub created_at: DateTimeUtc,
+    #[sea_orm(belongs_to, from = "chapter_id", to = "id")]
+    pub chapter: BelongsTo<super::chapters::Entity>,
+    #[sea_orm(belongs_to, from = "session_id", to = "id")]
+    pub session: BelongsTo<Option<super::agent_sessions::Entity>>,
+    #[sea_orm(has_many)]
+    pub chapter_feedback: HasMany<super::chapter_feedback::Entity>,
 }
-
-#[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {}
 
 impl ActiveModelBehavior for ActiveModel {}

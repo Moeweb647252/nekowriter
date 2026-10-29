@@ -4,7 +4,7 @@
 //! creates a `pending` proposal; the author decides later (spec/06 §5, D-013). Isolated side
 //! stories cannot propose changes to the shared setting materials (spec/05 §6).
 
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::EntityTrait;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -149,12 +149,13 @@ impl ToolHandler for ProposeSettingChangeTool {
             }
             Target::New => {
                 if let ProposalEdits::CreateCharacter { character } = &edits {
-                    let existing = character_designs::Entity::find()
-                        .filter(character_designs::Column::BookId.eq(book_id))
-                        .filter(character_designs::Column::Name.eq(character.name.trim()))
-                        .one(ctx.tx)
-                        .await
-                        .map_err(|_| ToolError::new(ToolErrorKind::Internal))?;
+                    let existing = character_designs::Entity::find_by_book_name((
+                        book_id,
+                        character.name.trim().to_owned(),
+                    ))
+                    .one(ctx.tx)
+                    .await
+                    .map_err(|_| ToolError::new(ToolErrorKind::Internal))?;
                     if existing.is_some() {
                         return Err(ToolError::new(ToolErrorKind::CharacterExists)
                             .with("name", character.name.trim().to_owned()));
@@ -235,9 +236,7 @@ async fn parse_target(ctx: &ToolCtx<'_>, target: &str) -> Result<Target, ToolErr
                 .book
                 .map(|book| book.id)
                 .ok_or_else(|| ToolError::new(ToolErrorKind::Internal))?;
-            let row = character_designs::Entity::find()
-                .filter(character_designs::Column::BookId.eq(book_id))
-                .filter(character_designs::Column::Name.eq(name))
+            let row = character_designs::Entity::find_by_book_name((book_id, name.to_owned()))
                 .one(ctx.tx)
                 .await
                 .map_err(|_| ToolError::new(ToolErrorKind::Internal))?;

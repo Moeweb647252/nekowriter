@@ -26,7 +26,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::db::entities::{agent_sessions, books, chapters, tracks};
-use crate::db::json::{AwaitInputKind, PendingContent, RequestMeta, ToolEffects};
+use crate::db::json::{AwaitInputKind, CanonMode, PendingContent, RequestMeta, ToolEffects};
 use crate::events::ServerEvent;
 use crate::prompts::PromptSet;
 
@@ -224,7 +224,7 @@ impl Visibility {
     /// The visibility of a session's track.
     pub fn of(session: &agent_sessions::Model, track: Option<&tracks::Model>) -> Self {
         match track {
-            Some(track) if track.canon_mode == "isolated" => {
+            Some(track) if track.canon_mode == CanonMode::Isolated => {
                 Visibility::Isolated { track_id: track.id }
             }
             _ => {

@@ -10,7 +10,7 @@ use chrono::Utc;
 use sea_orm::{ActiveModelTrait, ConnectionTrait, EntityTrait, Set};
 
 use crate::db::entities::{agent_sessions, agent_tool_calls, chapter_versions, chapters};
-use crate::db::json::{CanonStatus, ChapterContent, ChapterStatus, VersionKind};
+use crate::db::json::{CanonStatus, ChapterContent, ChapterStatus, JsonText, VersionKind};
 use crate::error::AppError;
 use crate::events::{ContentActor, ServerEvent};
 use crate::text;
@@ -47,7 +47,7 @@ async fn finish_version(
     let Some(chapter) = chapters::Entity::find_by_id(chapter_id).one(tx).await? else {
         return Ok(Vec::new());
     };
-    let content: ChapterContent = crate::db::json::from_json_or_default(&chapter.content);
+    let content: ChapterContent = chapter.content.clone().into_inner();
     let word_count = text::content_word_count(&content);
 
     // A `draft`/`revision` version, so the text the author reads is recoverable (spec/08 §1.2).
@@ -55,10 +55,9 @@ async fn finish_version(
     chapter_versions::ActiveModel {
         chapter_id: Set(chapter_id),
         version_no: Set(version_no),
-        kind: Set(kind.as_str().to_owned()),
+        kind: Set(kind),
         title: Set(chapter.title.clone()),
-        content: Set(crate::db::json::to_json(&content)
-            .map_err(|err| AppError::internal(err.to_string()))?),
+        content: Set(JsonText(content.clone())),
         word_count: Set(word_count),
         note: Set(completion_note(call, note_field)),
         session_id: Set(Some(session.id)),
@@ -71,7 +70,7 @@ async fn finish_version(
     let now = Utc::now();
     chapters::ActiveModel {
         id: Set(chapter_id),
-        status: Set(ChapterStatus::InReview.as_str().to_owned()),
+        status: Set(ChapterStatus::InReview),
         word_count: Set(word_count),
         updated_at: Set(now),
         ..Default::default()
@@ -143,7 +142,7 @@ pub async fn finish_maintenance(
     };
     chapters::ActiveModel {
         id: Set(chapter_id),
-        canon_status: Set(canon_status.as_str().to_owned()),
+        canon_status: Set(canon_status),
         synced_version_id: Set(chapter.official_version_id),
         updated_at: Set(Utc::now()),
         ..Default::default()
@@ -180,25 +179,28 @@ pub async fn finish_seed(
         return Ok(Vec::new());
     };
     let designs = character_designs::Entity::find()
-        .filter(character_designs::Column::BookId.eq(book_id))
-        .filter(character_designs::Column::EntityId.is_null())
-        .order_by_asc(character_designs::Column::Rank)
+        .filter(character_designs::COLUMN.book_id.eq(book_id))
+        .filter(character_designs::COLUMN.entity_id.is_null())
+        .order_by_asc(character_designs::COLUMN.rank)
         .all(tx)
         .await?;
     if designs.is_empty() {
         return Ok(Vec::new());
     }
     let candidates = entities::Entity::find()
-        .filter(entities::Column::BookId.eq(book_id))
-        .filter(entities::Column::Kind.eq(EntityKind::Character.as_str()))
-        .filter(entities::Column::TrackId.is_null())
+        .filter(entities::COLUMN.book_id.eq(book_id))
+        .filter(entities::COLUMN.kind.eq(EntityKind::Character))
+        .filter(entities::COLUMN.track_id.is_null())
         .all(tx)
         .await?;
     let mut linked = false;
     for design in designs {
         let found = candidates.iter().find(|entity| {
             entity.name == design.name
-                || crate::db::json::from_json_or_default::<Vec<String>>(&entity.aliases)
+                || entity
+                    .aliases
+                    .clone()
+                    .into_inner()
                     .iter()
                     .any(|alias| alias == &design.name)
         });
@@ -232,7 +234,7 @@ pub async fn finish_seed(
 /// chapter-completing `insert_text` has no such field, so its version note stays empty. A revision
 /// will read `finish_revision`'s `summary` here once M6.2 owns that handler.
 fn completion_note(call: &agent_tool_calls::Model, field: &str) -> String {
-    let Ok(input) = crate::db::json::from_json::<serde_json::Value>(&call.input) else {
+    let Ok(input) = serde_json::from_str::<serde_json::Value>(&call.input) else {
         return String::new();
     };
     input
@@ -245,10 +247,10 @@ fn completion_note(call: &agent_tool_calls::Model, field: &str) -> String {
 
 /// The next `version_no` of a chapter (unique per chapter, spec/02 §2).
 async fn next_version_no(tx: &impl ConnectionTrait, chapter_id: i32) -> Result<i32, AppError> {
-    use sea_orm::{ColumnTrait, QueryFilter, QueryOrder};
+    use sea_orm::{QueryFilter, QueryOrder};
     let last = chapter_versions::Entity::find()
-        .filter(chapter_versions::Column::ChapterId.eq(chapter_id))
-        .order_by_desc(chapter_versions::Column::VersionNo)
+        .filter(chapter_versions::COLUMN.chapter_id.eq(chapter_id))
+        .order_by_desc(chapter_versions::COLUMN.version_no)
         .one(tx)
         .await?
         .map(|row| row.version_no);

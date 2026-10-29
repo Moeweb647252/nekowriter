@@ -24,7 +24,10 @@ use crate::db::entities::{
     appearances, change_log, chapters, character_designs, entities, foreshadowing, relations,
     timeline_event_entities, timeline_events, tracks,
 };
-use crate::db::json::{ChangeTargetType, EntityKind, EntityStatus, ForeshadowingStatus};
+use crate::db::json::{
+    AnchorKind, CanonMode, ChangeTargetType, ChapterStatus, EntityKind, EntityStatus,
+    ForeshadowingStatus, RelationStatus, TrackKind,
+};
 use crate::prompts::context::{
     AppearanceSummaryContext, ChangeLineContext, DesignLinkContext, RelationLineContext,
 };
@@ -194,7 +197,7 @@ async fn resolver(ctx: &ToolCtx<'_>) -> Result<EntityResolver, ToolError> {
             id: row.id,
             name: row.name.clone(),
             aliases: canon::aliases_of(row).map_err(|error| canon_error(ctx, error))?,
-            kind_label: ctx.prompts.label("entity_kind", &row.kind),
+            kind_label: ctx.prompts.label("entity_kind", row.kind.as_str()),
         });
     }
     Ok(EntityResolver::new(visible))
@@ -210,7 +213,7 @@ struct Anchor {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-enum AnchorKindState {
+pub(super) enum AnchorKindState {
     #[default]
     None,
     BeforeStart,
@@ -218,20 +221,25 @@ enum AnchorKindState {
     AfterEnd,
 }
 
+/// Maps the stored typed anchor kind to the retrieval marker; exhaustive by construction.
+pub(super) fn anchor_kind_state(kind: AnchorKind) -> AnchorKindState {
+    match kind {
+        AnchorKind::None => AnchorKindState::None,
+        AnchorKind::BeforeStart => AnchorKindState::BeforeStart,
+        AnchorKind::AfterChapter => AnchorKindState::AfterChapter,
+        AnchorKind::AfterEnd => AnchorKindState::AfterEnd,
+    }
+}
+
 /// Reads the session track's anchor (nothing for the main track).
 async fn anchor_of(ctx: &ToolCtx<'_>) -> Anchor {
     let Some(track) = ctx.track else {
         return Anchor::default();
     };
-    if track.kind != "side" {
+    if track.kind != TrackKind::Side {
         return Anchor::default();
     }
-    let kind = match track.anchor_kind.as_str() {
-        "before_start" => AnchorKindState::BeforeStart,
-        "after_chapter" => AnchorKindState::AfterChapter,
-        "after_end" => AnchorKindState::AfterEnd,
-        _ => AnchorKindState::None,
-    };
+    let kind = anchor_kind_state(track.anchor_kind);
     let mut anchor = Anchor {
         kind,
         main_ord: None,
@@ -280,7 +288,7 @@ async fn entities_by_id(
         return Ok(BTreeMap::new());
     }
     let rows = entities::Entity::find()
-        .filter(entities::Column::Id.is_in(ids.to_vec()))
+        .filter(entities::COLUMN.id.is_in(ids.to_vec()))
         .all(ctx.tx)
         .await
         .map_err(|error| canon_error(ctx, canon::CanonError::from(error)))?;
@@ -296,7 +304,7 @@ async fn chapters_by_id(
         return Ok(BTreeMap::new());
     }
     let rows = chapters::Entity::find()
-        .filter(chapters::Column::Id.is_in(ids.to_vec()))
+        .filter(chapters::COLUMN.id.is_in(ids.to_vec()))
         .all(ctx.tx)
         .await
         .map_err(|error| canon_error(ctx, canon::CanonError::from(error)))?;
@@ -329,12 +337,12 @@ fn entity_ref(row: &entities::Model) -> String {
 
 /// The `ui` payload's kind value: the stored enum (spec/05 §1.6, D-054).
 fn kind_of(row: &entities::Model) -> EntityKind {
-    EntityKind::from_str_opt(&row.kind).unwrap_or(EntityKind::Other)
+    row.kind
 }
 
 /// The `ui` payload's status value.
 fn status_of(row: &entities::Model) -> EntityStatus {
-    EntityStatus::from_str_opt(&row.status).unwrap_or(EntityStatus::Active)
+    row.status
 }
 
 /// The resolved entity a parameter names (spec/05 §1.7).
@@ -381,14 +389,14 @@ impl ToolHandler for GetEntityTool {
         // and only the ones this session may see: a shared entity never leaks another isolated
         // track's private relation (spec/06 §2).
         let relation_rows = relations::Entity::find()
-            .filter(relations::Column::BookId.eq(entity.book_id))
+            .filter(relations::COLUMN.book_id.eq(entity.book_id))
             .filter(visibility.visible_condition(relations::Column::TrackId))
             .filter(
                 sea_orm::Condition::any()
-                    .add(relations::Column::SourceId.eq(entity.id))
-                    .add(relations::Column::TargetId.eq(entity.id)),
+                    .add(relations::COLUMN.source_id.eq(entity.id))
+                    .add(relations::COLUMN.target_id.eq(entity.id)),
             )
-            .order_by_asc(relations::Column::Id)
+            .order_by_asc(relations::COLUMN.id)
             .all(ctx.tx)
             .await
             .map_err(|error| canon_error(ctx, canon::CanonError::from(error)))?;
@@ -441,7 +449,7 @@ impl ToolHandler for GetEntityTool {
                 subject,
                 object,
                 kind,
-                ended: row.status == "ended",
+                ended: row.status == RelationStatus::Ended,
                 until_label: label_of_chapter(ctx, row.until_chapter_id, &mut labels).await?,
                 description: row.description.clone(),
                 since_label: label_of_chapter(ctx, row.since_chapter_id, &mut labels).await?,
@@ -450,12 +458,12 @@ impl ToolHandler for GetEntityTool {
 
         // The latest change notes, with chapter labels and anchor marks (spec/05 §3).
         let change_rows = change_log::Entity::find()
-            .filter(change_log::Column::TargetType.eq(ChangeTargetType::Entity.as_str()))
-            .filter(change_log::Column::TargetId.eq(entity.id))
+            .filter(change_log::COLUMN.target_type.eq(ChangeTargetType::Entity))
+            .filter(change_log::COLUMN.target_id.eq(entity.id))
             .filter(visibility.visible_condition(change_log::Column::TrackId))
-            .filter(change_log::Column::RevertedById.is_null())
-            .filter(change_log::Column::Note.ne(""))
-            .order_by_desc(change_log::Column::Id)
+            .filter(change_log::COLUMN.reverted_by_id.is_null())
+            .filter(change_log::COLUMN.note.ne(""))
+            .order_by_desc(change_log::COLUMN.id)
             .limit(ENTITY_CHANGES as u64)
             .all(ctx.tx)
             .await
@@ -492,18 +500,13 @@ impl ToolHandler for GetEntityTool {
 
         // Appearances: first, last and the mid-term window count (spec/05 §3).
         let appearance_rows = appearances::Entity::find()
-            .filter(appearances::Column::EntityId.eq(entity.id))
+            .filter(appearances::COLUMN.entity_id.eq(entity.id))
             .all(ctx.tx)
             .await
             .map_err(|error| canon_error(ctx, canon::CanonError::from(error)))?;
         let window_size = ctx
             .book
-            .map(|book| {
-                crate::db::json::from_json_or_default::<crate::db::json::BookSettings>(
-                    &book.settings,
-                )
-                .midterm_window
-            })
+            .map(|book| book.settings.clone().into_inner().midterm_window)
             .unwrap_or(10)
             .max(0);
         // The mid-term window of the target position, shared with `block.memory` (spec/06 §4.1):
@@ -528,8 +531,8 @@ impl ToolHandler for GetEntityTool {
         let last_label = label_of_chapter(ctx, entity.last_chapter_id, &mut labels).await?;
 
         let design = character_designs::Entity::find()
-            .filter(character_designs::Column::EntityId.eq(entity.id))
-            .order_by_asc(character_designs::Column::Rank)
+            .filter(character_designs::COLUMN.entity_id.eq(entity.id))
+            .order_by_asc(character_designs::COLUMN.rank)
             .one(ctx.tx)
             .await
             .map_err(|error| canon_error(ctx, canon::CanonError::from(error)))?
@@ -537,18 +540,17 @@ impl ToolHandler for GetEntityTool {
                 role_label: row.role_label,
                 summary: row.summary,
             });
-        let attributes: BTreeMap<String, String> =
-            crate::db::json::from_json_or_default(&entity.attributes);
+        let attributes: BTreeMap<String, String> = entity.attributes.clone().into_inner();
         let aliases = canon::aliases_of(&entity).map_err(|error| canon_error(ctx, error))?;
         let value = json!({
             "e": {
                 "id": entity.id,
                 "name": entity.name,
                 "kind": entity.kind,
-                "kind_label": ctx.prompts.label("entity_kind", &entity.kind),
-                "is_protagonist": entity.is_protagonist != 0,
+                "kind_label": ctx.prompts.label("entity_kind", entity.kind.as_str()),
+                "is_protagonist": entity.is_protagonist,
                 "importance": entity.importance,
-                "status_label": ctx.prompts.label("entity_status", &entity.status),
+                "status_label": ctx.prompts.label("entity_status", entity.status.as_str()),
                 "aliases": aliases,
                 "summary": entity.summary,
                 "state": entity.state,
@@ -621,12 +623,12 @@ impl ToolHandler for ListEntitiesTool {
         let mut items = Vec::new();
         for row in &rows {
             if let Some(kind) = input.kind
-                && row.kind != kind.as_str()
+                && row.kind != kind
             {
                 continue;
             }
             if let Some(status) = input.status
-                && row.status != status.as_str()
+                && row.status != status
             {
                 continue;
             }
@@ -643,11 +645,11 @@ impl ToolHandler for ListEntitiesTool {
             items.push(json!({
                 "id": row.id,
                 "name": row.name,
-                "kind_label": ctx.prompts.label("entity_kind", &row.kind),
+                "kind_label": ctx.prompts.label("entity_kind", row.kind.as_str()),
                 "aliases": aliases,
                 "summary": row.summary,
                 "status": status_of(row),
-                "status_label": ctx.prompts.label("entity_status", &row.status),
+                "status_label": ctx.prompts.label("entity_status", row.status.as_str()),
             }));
         }
         // Sorted by importance desc, then last appearance desc (spec/05 §3).
@@ -722,14 +724,14 @@ impl ToolHandler for GetRelationsTool {
         let include_ended = input.include_ended.unwrap_or(false);
         let visibility = visibility_of(ctx);
         let rows = relations::Entity::find()
-            .filter(relations::Column::BookId.eq(entity.book_id))
+            .filter(relations::COLUMN.book_id.eq(entity.book_id))
             .filter(visibility.visible_condition(relations::Column::TrackId))
             .filter(
                 sea_orm::Condition::any()
-                    .add(relations::Column::SourceId.eq(entity.id))
-                    .add(relations::Column::TargetId.eq(entity.id)),
+                    .add(relations::COLUMN.source_id.eq(entity.id))
+                    .add(relations::COLUMN.target_id.eq(entity.id)),
             )
-            .order_by_asc(relations::Column::Id)
+            .order_by_asc(relations::COLUMN.id)
             .all(ctx.tx)
             .await
             .map_err(|error| canon_error(ctx, canon::CanonError::from(error)))?;
@@ -745,7 +747,7 @@ impl ToolHandler for GetRelationsTool {
         let mut labels = BTreeMap::new();
         let mut items = Vec::new();
         for row in &rows {
-            if row.status == "ended" && !include_ended {
+            if row.status == RelationStatus::Ended && !include_ended {
                 continue;
             }
             let counterpart = if row.source_id == entity.id {
@@ -782,7 +784,7 @@ impl ToolHandler for GetRelationsTool {
                 subject,
                 object,
                 kind,
-                ended: row.status == "ended",
+                ended: row.status == RelationStatus::Ended,
                 until_label: label_of_chapter(ctx, row.until_chapter_id, &mut labels).await?,
                 description: row.description.clone(),
                 since_label: label_of_chapter(ctx, row.since_chapter_id, &mut labels).await?,
@@ -846,10 +848,10 @@ impl ToolHandler for QueryTimelineTool {
             .filter(|value| !value.is_empty())
             .map(str::to_lowercase);
         let mut rows = timeline_events::Entity::find()
-            .filter(timeline_events::Column::BookId.eq(book_id))
+            .filter(timeline_events::COLUMN.book_id.eq(book_id))
             .filter(visibility.visible_condition(timeline_events::Column::TrackId))
-            .order_by_asc(timeline_events::Column::Position)
-            .order_by_asc(timeline_events::Column::Id)
+            .order_by_asc(timeline_events::COLUMN.position)
+            .order_by_asc(timeline_events::COLUMN.id)
             .all(ctx.tx)
             .await
             .map_err(|error| canon_error(ctx, canon::CanonError::from(error)))?;
@@ -981,8 +983,8 @@ async fn timeline_links(
     }
     let ids: Vec<i32> = rows.iter().map(|row| row.id).collect();
     let join_rows = timeline_event_entities::Entity::find()
-        .filter(timeline_event_entities::Column::EventId.is_in(ids))
-        .order_by_asc(timeline_event_entities::Column::EntityId)
+        .filter(timeline_event_entities::COLUMN.event_id.is_in(ids))
+        .order_by_asc(timeline_event_entities::COLUMN.entity_id)
         .all(ctx.tx)
         .await
         .map_err(|error| canon_error(ctx, canon::CanonError::from(error)))?;
@@ -996,8 +998,8 @@ async fn timeline_links(
 async fn main_track_id(ctx: &ToolCtx<'_>) -> Option<i32> {
     let visibility = visibility_of(ctx);
     tracks::Entity::find()
-        .filter(tracks::Column::BookId.eq(visibility.book_id))
-        .filter(tracks::Column::Kind.eq("main"))
+        .filter(tracks::COLUMN.book_id.eq(visibility.book_id))
+        .filter(tracks::COLUMN.kind.eq(TrackKind::Main))
         .one(ctx.tx)
         .await
         .ok()
@@ -1051,9 +1053,9 @@ impl ToolHandler for ListForeshadowingTool {
             None => None,
         };
         let mut rows = foreshadowing::Entity::find()
-            .filter(foreshadowing::Column::BookId.eq(visibility.book_id))
+            .filter(foreshadowing::COLUMN.book_id.eq(visibility.book_id))
             .filter(visibility.visible_condition(foreshadowing::Column::TrackId))
-            .filter(foreshadowing::Column::Status.eq(status.as_str()))
+            .filter(foreshadowing::COLUMN.status.eq(status.as_str()))
             .all(ctx.tx)
             .await
             .map_err(|error| canon_error(ctx, canon::CanonError::from(error)))?;
@@ -1063,7 +1065,8 @@ impl ToolHandler for ListForeshadowingTool {
             if !ids.is_empty() {
                 let join_rows = crate::db::entities::foreshadowing_entities::Entity::find()
                     .filter(
-                        crate::db::entities::foreshadowing_entities::Column::ForeshadowingId
+                        crate::db::entities::foreshadowing_entities::COLUMN
+                            .foreshadowing_id
                             .is_in(ids),
                     )
                     .all(ctx.tx)
@@ -1097,7 +1100,7 @@ impl ToolHandler for ListForeshadowingTool {
             items.push(json!({
                 "id": row.id,
                 "title": row.title,
-                "status_label": ctx.prompts.label("foreshadowing_status", &row.status),
+                "status_label": ctx.prompts.label("foreshadowing_status", row.status.as_str()),
                 "description": row.description,
                 "planted_label": label_of_chapter(ctx, row.planted_chapter_id, &mut labels).await?,
                 "planned_payoff": row.planned_payoff,
@@ -1140,7 +1143,7 @@ impl ToolHandler for ReadChapterTool {
     ) -> Result<ToolOutcome, ToolError> {
         let input: ReadChapterInput = decode(input)?;
         let chapter = resolve_chapter(ctx, &input.chapter).await?;
-        if chapter.status != "official" {
+        if chapter.status != ChapterStatus::Official {
             return Err(ToolError::new(ToolErrorKind::ChapterNotOfficial).with(
                 "label",
                 canon::chapter_label(ctx.tx, ctx.prompts, Some(chapter.id))
@@ -1148,8 +1151,7 @@ impl ToolHandler for ReadChapterTool {
                     .map_err(|error| canon_error(ctx, error))?,
             ));
         }
-        let content: crate::db::json::ChapterContent =
-            crate::db::json::from_json_or_default(&chapter.content);
+        let content: crate::db::json::ChapterContent = chapter.content.clone().into_inner();
         let limit = input
             .max_chars
             .map(|value| value.clamp(500, READ_CHAPTER_MAX as i64) as usize)
@@ -1239,9 +1241,7 @@ async fn resolve_chapter(ctx: &ToolCtx<'_>, reference: &str) -> Result<chapters:
             .ok_or_else(not_found)?;
         (track_id, number)
     };
-    let row = chapters::Entity::find()
-        .filter(chapters::Column::TrackId.eq(track_id))
-        .filter(chapters::Column::Ord.eq(number))
+    let row = chapters::Entity::find_by_track_ord((track_id, number))
         .one(ctx.tx)
         .await
         .map_err(|error| canon_error(ctx, canon::CanonError::from(error)))?
@@ -1265,7 +1265,7 @@ async fn visible_track(
     else {
         return Ok(false);
     };
-    if track.kind == "main" || track.canon_mode == "canon" {
+    if track.kind == TrackKind::Main || track.canon_mode == CanonMode::Canon {
         return Ok(true);
     }
     Ok(visibility.sees(Some(track.id)))
@@ -1283,4 +1283,40 @@ pub fn all() -> Vec<std::sync::Arc<dyn ToolHandler>> {
         std::sync::Arc::new(ListForeshadowingTool),
         std::sync::Arc::new(ReadChapterTool),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn anchor_kind_state_covers_every_variant() {
+        assert_eq!(anchor_kind_state(AnchorKind::None), AnchorKindState::None);
+        assert_eq!(
+            anchor_kind_state(AnchorKind::BeforeStart),
+            AnchorKindState::BeforeStart
+        );
+        assert_eq!(
+            anchor_kind_state(AnchorKind::AfterChapter),
+            AnchorKindState::AfterChapter
+        );
+        assert_eq!(
+            anchor_kind_state(AnchorKind::AfterEnd),
+            AnchorKindState::AfterEnd
+        );
+    }
+
+    /// Restoring the old `as_str()` + catch-all match must fail this source guard.
+    #[test]
+    fn anchor_kind_mapping_is_typed() {
+        let source = include_str!("retrieval.rs");
+        let start = source
+            .find("fn anchor_kind_state")
+            .expect("the mapping exists");
+        let end = start + source[start..].find("\n}\n").expect("the mapping ends");
+        assert!(
+            !source[start..end].contains(".as_str()"),
+            "anchor_kind_state must match the typed AnchorKind"
+        );
+    }
 }

@@ -4,14 +4,16 @@
 //! or submit from revising), `official` (approve, re-sync completion), `manual` (the author's
 //! "Save version") and `backup` (before redraft, revise or restore).
 
-use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, Set};
+use sea_orm::{
+    ConnectionTrait, DerivePartialModel, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set,
+};
 
 use crate::api::dto::chapters::{ChapterVersionDto, ChapterVersionMetaDto};
 use crate::db::entities::chapter_versions;
 use crate::db::json::{ChapterContent, VersionKind};
 use crate::error::AppError;
 
-use super::{json, now, parse_json};
+use super::now;
 
 /// One version to append.
 pub struct NewVersion<'a> {
@@ -33,9 +35,9 @@ pub async fn create_version(
     let model = chapter_versions::ActiveModel {
         chapter_id: Set(version.chapter_id),
         version_no: Set(version_no),
-        kind: Set(version.kind.as_str().to_owned()),
+        kind: Set(version.kind),
         title: Set(version.title.to_owned()),
-        content: Set(json(version.content)?),
+        content: Set(crate::services::json_text(version.content.clone())),
         word_count: Set(version.word_count),
         note: Set(version.note.to_owned()),
         session_id: Set(version.session_id),
@@ -50,13 +52,44 @@ pub async fn create_version(
 
 async fn next_version_no(conn: &impl ConnectionTrait, chapter_id: i32) -> Result<i32, AppError> {
     let latest = chapter_versions::Entity::find()
-        .filter(chapter_versions::Column::ChapterId.eq(chapter_id))
-        .order_by_desc(chapter_versions::Column::VersionNo)
+        .filter(chapter_versions::COLUMN.chapter_id.eq(chapter_id))
+        .order_by_desc(chapter_versions::COLUMN.version_no)
         .all(conn)
         .await?
         .into_iter()
         .next();
     Ok(latest.map(|row| row.version_no + 1).unwrap_or(1))
+}
+
+/// The metadata columns of the version list; `content` is deliberately not decoded (plan §2.7).
+#[derive(DerivePartialModel)]
+#[sea_orm(entity = "chapter_versions::Entity")]
+struct ChapterVersionListItemRow {
+    id: i32,
+    chapter_id: i32,
+    version_no: i32,
+    kind: crate::db::json::VersionKind,
+    title: String,
+    word_count: i32,
+    note: String,
+    session_id: Option<i32>,
+    created_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl From<ChapterVersionListItemRow> for ChapterVersionMetaDto {
+    fn from(row: ChapterVersionListItemRow) -> Self {
+        Self {
+            id: row.id,
+            chapter_id: row.chapter_id,
+            version_no: row.version_no,
+            kind: row.kind,
+            title: row.title,
+            word_count: row.word_count,
+            note: row.note,
+            session_id: row.session_id,
+            created_at: row.created_at,
+        }
+    }
 }
 
 /// `GET /api/chapters/:id/versions`, newest first.
@@ -65,11 +98,24 @@ pub async fn list(
     chapter_id: i32,
 ) -> Result<Vec<ChapterVersionMetaDto>, AppError> {
     let rows = chapter_versions::Entity::find()
-        .filter(chapter_versions::Column::ChapterId.eq(chapter_id))
-        .order_by_desc(chapter_versions::Column::VersionNo)
+        .filter(chapter_versions::COLUMN.chapter_id.eq(chapter_id))
+        .order_by_desc(chapter_versions::COLUMN.version_no)
+        .select_only()
+        .columns([
+            chapter_versions::Column::Id,
+            chapter_versions::Column::ChapterId,
+            chapter_versions::Column::VersionNo,
+            chapter_versions::Column::Kind,
+            chapter_versions::Column::Title,
+            chapter_versions::Column::WordCount,
+            chapter_versions::Column::Note,
+            chapter_versions::Column::SessionId,
+            chapter_versions::Column::CreatedAt,
+        ])
+        .into_model::<ChapterVersionListItemRow>()
         .all(conn)
         .await?;
-    rows.iter().map(to_meta).collect()
+    Ok(rows.into_iter().map(ChapterVersionMetaDto::from).collect())
 }
 
 /// `GET /api/chapter-versions/:id` — a version with its content.
@@ -80,7 +126,7 @@ pub async fn get(
     let row = load(conn, version_id).await?;
     Ok(ChapterVersionDto {
         meta: to_meta(&row)?,
-        content: parse_json("chapter_versions.content", &row.content)?,
+        content: row.content.clone().into_inner(),
     })
 }
 
@@ -101,8 +147,7 @@ pub fn to_meta(row: &chapter_versions::Model) -> Result<ChapterVersionMetaDto, A
         id: row.id,
         chapter_id: row.chapter_id,
         version_no: row.version_no,
-        kind: VersionKind::from_str_opt(&row.kind)
-            .ok_or_else(|| AppError::internal(format!("unknown version kind {:?}", row.kind)))?,
+        kind: row.kind,
         title: row.title.clone(),
         word_count: row.word_count,
         note: row.note.clone(),

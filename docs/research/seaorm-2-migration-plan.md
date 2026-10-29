@@ -30,9 +30,9 @@ file, no API, no event, no prompt and no generated TypeScript binding.
 | **Entity format** | All 36 entities use `#[sea_orm::model]` (the dense 2.0 format). The 36 empty `enum Relation {}` blocks are deleted. |
 | **Relation graph** | Complete, in the shape SeaORM's own codegen produces:<br>• a `belongs_to` for every one of the 82 FKs;<br>• a reverse `has_many` on the parent for every FK whose (child, parent) pair is unambiguous;<br>• `has_many, via = "<junction>"` in both directions over the five join tables;<br>• `self_ref` for the three self references;<br>• `relation_enum` names where two FKs share a target. The reverse side of such pairs is omitted, as codegen omits it. |
 | **Unique keys** | `#[sea_orm(unique)]` / `unique_key = ".."` on the 14 non-partial unique constraints. 2.0 then generates `find_by_*`, `filter_by_*` and `delete_by_*`, which replace the hand-written lookups. Partial unique indexes stay SQL-only. |
-| **Enum columns** | The 39 CHECK-constrained `TEXT` columns become their Rust enums, through `DeriveActiveEnum` added to `string_enum!`. spec/02 §1 already requires this; the code does not do it today. |
+| **Enum columns** | The 40 CHECK-constrained `TEXT` columns become their Rust enums, through `DeriveActiveEnum` added to `string_enum!`. spec/02 §1 already requires this; the code does not do it today. |
 | **Boolean columns** | The 8 `INTEGER` 0/1 flags become `bool`. The stored values do not change. |
-| **JSON columns** | 30 of the 31 `json_valid` columns become `JsonText<T>`, one generic wrapper in `db/json.rs` (§2.4). It writes exactly the text `json::to_json` writes today. `app_settings.value` stays `String`, because its shape depends on `key`. |
+| **JSON columns** | 30 of the 31 `json_valid` columns become `JsonText<T>`, one generic wrapper in `db/json.rs` (§2.4). It writes the same text `json::to_json` wrote, except that new `agent_messages.usage`, `agent_sessions.usage` and `agent_sessions.counters` rows canonicalize `{}` to the full default object; both forms decode under `#[serde(default)]`. `app_settings.value` stays `String`, because its shape depends on `key`. |
 | **Decoding** | Strict. A value that does not decode fails the query (→ `500 internal`) and names the column. This removes every silent fallback on column reads. **Author confirms (§9 Q1).** |
 | **Writes** | SQL built from strings becomes typed `update_many().set(partial ActiveModel)` or `.col_expr(..)`, with typed filters: the session state machine, startup recovery, the indexer. |
 | **Reads** | Per-row lookup loops become the Entity/Model Loader or one `is_in` query. List queries that never read `content` use a `DerivePartialModel`. Related-row existence filters use `has_related`. Filters and ordering use the typed `COLUMN` constant everywhere. |
@@ -53,7 +53,7 @@ file, no API, no event, no prompt and no generated TypeScript binding.
    `DeriveEntityModel` form with `#[derive(DeriveRelation)] pub enum Relation {}`. None uses
    `#[sea_orm::model]`, and no query uses a relation. The only `DeriveActiveEnum` is
    `writing_skills::WritingSkillAuthor`.
-3. **Enum columns are `String`.** The 38 enums of `db/json.rs::string_enum!` (plus
+3. **Enum columns are `String`.** The 39 enums of `db/json.rs::string_enum!` (plus
    `WritingSkillAuthor`) are converted by hand at every boundary:
    - about 125 `.as_str().to_owned()` / `.as_str().into()` calls in `src`;
    - 14 `services::enum_of` calls and about 66 `from_str_opt` calls outside `json.rs`;
@@ -220,17 +220,29 @@ Rules:
   `consumed_by_message`, and `parent_session_id` becomes `parent_session`.
 - **Reverse field name**: the child table name, used as is (`agent_sessions`, `change_log`,
   `foreshadowing`).
-- **M-N field**: the far table's name, with `#[sea_orm(has_many, via = "<junction>")]`.
+- **M-N field**: the far table's name, with `#[sea_orm(has_many, via = "<junction>")]`. The macro
+  names a relation variant after the target module path and resolves the `via` leg from the
+  junction's `Related` impl, so role-named junction fields (`book_scopes.book`/`scope`,
+  `book_writing_skills.skill`, …) need no extra attribute.
   - `entities` ↔ `timeline_events` / `memory_notes` / `foreshadowing`;
   - `books` ↔ `knowledge_scopes` (`book_scopes`) and `writing_skills` (`book_writing_skills`).
 
   A parent gets the `via` relation, not a `has_many` to the junction itself. The junction keeps
   its two `belongs_to`.
-- **`relation_enum`**: only where §1.6 requires it, as the UpperCamelCase field name.
+- **`relation_enum`**: where §1.6 requires it, plus one side of a `belongs_to` / `has_many` pair
+  that would otherwise generate the same `RelatedEntity` variant (`Track`, `Session`,
+  `ResearchTask`, `HeldToolCall`, `AnchorChapter`, `FocusEntity`). It is the UpperCamelCase
+  relation name and may differ from the field name. The M-N fields need none.
+- **`via_rel`**: a `has_many` whose child has two relations back to the parent (a `belongs_to`
+  plus a `has_many`) needs `via_rel = "<child belongs_to variant>"`; the macro cannot infer which
+  reverse the `has_many` means otherwise.
 - **Self references** use `self_ref` with `relation_enum` and, where codegen gives a reverse side,
   `relation_reverse`. For example, on `agent_sessions`:
-  `#[sea_orm(self_ref, relation_enum = "ParentSession", from = "parent_session_id", to = "id")]`
-  on `pub parent_session: BelongsTo<Option<Entity>>`.
+  `#[sea_orm(self_ref, relation_enum = "ParentSession", relation_reverse = "ChildSessions", from = "parent_session_id", to = "id")]`
+  on `pub parent_session: BelongsTo<Option<Entity>>`, plus the `ChildSessions` `HasMany<Entity>`
+  field. A `self_ref` `BelongsTo` does not generate a `Related` impl, so `find_related` is not
+  available for it; joins use `Relation::ParentSession.def()` and the guard checks that
+  `RelationDef` directly.
 - **Same-target pairs** get no reverse field and no `Related` impl, so `find_related` does not
   compile there. Joins name `Relation::OfficialVersion.def()`, and loaders take
   `.with(chapters::Relation::OfficialVersion)`.
@@ -268,7 +280,7 @@ pub enum $name {
 }
 ```
 
-**The 39 columns:**
+**The 40 columns:**
 
 | Table | Column → enum |
 |---|---|
@@ -294,7 +306,7 @@ pub enum $name {
 | `review_reports` | `verdict` → `ReviewVerdict` |
 | `search_docs` | `kind` → `SearchDocKind`; `embed_state` → `EmbedState` |
 | `setting_docs` | `kind` → `SettingDocKind` |
-| `setting_proposals` | `target_type` → `ProposalTargetType`; `status` → `ProposalStatus` |
+| `setting_proposals` | `target_type` → `ProposalTargetType`; `target_kind` → `Option<SettingDocKind>`; `status` → `ProposalStatus` |
 | `tracks` | `kind` → `TrackKind`; `canon_mode` → `CanonMode`; `anchor_kind` → `AnchorKind` |
 | `writing_skills` | `author` → `WritingSkillAuthor` (already done) |
 
@@ -323,8 +335,9 @@ So one generic wrapper goes in `db/json.rs`, exactly as program 1 ran it:
 
 ```rust
 /// A typed JSON column (spec/02 §1, §4), stored as the exact `serde_json::to_string` text, which is
-/// what `to_json` wrote before D-151: rows written before and after are byte-identical. Decoding
-/// is strict; a value that does not deserialize fails the query and names the column.
+/// what `to_json` wrote before D-151. Three session/usage columns canonicalize `{}` to the full
+/// default object; every other column is byte-identical, and both forms decode. Decoding is strict;
+/// a value that does not deserialize fails the query and names the column.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct JsonText<T>(pub T);
 
@@ -406,13 +419,21 @@ already deserialize into):
 | `books.settings`, `.model_overrides`, `.conception` | `JsonText<BookSettings \| RoleModels \| ConceptionState>` |
 | `change_log.before`, `.after` | `Option<JsonText<Snapshot>>` (tagged by `type`, so it is self-describing) |
 | `chapters.content`, `chapter_versions.content` | `JsonText<ChapterContent>` |
-| `review_reports.issues`, `chapter_feedback.issues` | `JsonText<Vec<ReviewIssue>>`; confirm `chapter_feedback`'s shape in `services/reviews.rs` |
+| `review_reports.issues`, `chapter_feedback.issues` | `JsonText<Vec<ReviewIssue>>`; both use the same shape in `services/reviews.rs` |
+| `setting_proposals.edits` | `JsonText<ProposalEdits>` (the 30th typed column; the original list of 31 `json_valid` columns omitted this row) |
 | `entities.aliases`, `knowledge_entries.source_urls`, `.tags` | `JsonText<Vec<String>>` |
 | `entities.attributes` | `JsonText<..>`, the map type its readers use (`services/canon/mod.rs`) |
 | `providers.extra_headers` | `JsonText<BTreeMap<String, String>>` |
 | `model_profiles.options` | `JsonText<ModelOptions>`, a new `json.rs` struct with the fields `ModelOptionsDto` reads today. The DTO stays where it is and converts with `From`, so entities never depend on `api/` (spec/01 §4 rule 4) and the bindings do not change. |
 | `search_docs.meta` | `JsonText<serde_json::Value>` (`parse_pids` reads it loosely; typing its shape is not in scope) |
 | `app_settings.value` | **stays `String`**, read with `parse_json` per key |
+
+**Byte-shape caveat (three columns):** `agent_messages.usage` used to serialize
+`nekowriter_llm::Usage`, which omits `requests` and `last_prompt_tokens`; new rows carry the full
+spec shape. `agent_sessions.usage` and `agent_sessions.counters` used to be written as `{}`; new
+rows carry the full default object (`Usage::default()` / `SessionCounters::default()`), including
+the rollover children. All three decode both forms under `#[serde(default)]`; no consumer breaks.
+Every other JSON column stays byte-identical.
 
 **Call sites:**
 - `json::to_json(&x).map_err(..)?` in an `ActiveModel` becomes `Set(JsonText(x))`.
@@ -601,8 +622,8 @@ commit.
 |---|---|---|---|
 | 14.1 | **Docs first**: §4, D-151, the M14 table. | plan §4 | `check.sh` green (docs only) |
 | 14.2 | **Guards on unchanged code**: `tests/entity_schema.rs` checks 1–2 and `decode_all_rows`. | 02 §1–§2 | The new test passes before any entity changes. Deliberately breaking one entity column in a scratch edit makes it fail. |
-| 14.3 | **Entity format, relation graph, unique keys**: all 36 entities become `#[sea_orm::model]`, the empty `Relation` enums go, and the relation graph and unique keys of §2.1 come in. Enum, JSON and bool fields stay `String`/`i32` in this task. | 02 §2 | Checks 3–4 pass. Smoke tests: `find_related` on a required FK, a nullable FK and the `parent_session` self reference; `books::Entity::load().with(tracks::Entity).with(knowledge_scopes::Entity)`; `entities` → `timeline_events` via the junction; `chapters::Entity::find_by_track_ord`. The suite passes with no other test edits. |
-| 14.4 | **Enum and boolean columns**: the `string_enum!` derive, the 39 enum fields and the 8 bool fields; delete `enum_of` and the column uses of `from_str_opt`/`as_str`; the §2.9 grep gate; compile-driven test edits (string literal → enum). | 02 §1, §3 | Check 5 passes. Existing tests pass, changed only from string to enum comparisons. No `web/src/api/gen` diff. The grep gate lists only genuine string columns. |
+| 14.3 | **Entity format, relation graph, unique keys**: all 36 entities become `#[sea_orm::model]`, the empty `Relation` enums go, and the relation graph and unique keys of §2.1 come in. Enum, JSON and bool fields stay `String`/`i32` in this task. | 02 §2 | Checks 3–4 pass. Smoke tests: `find_related` on a required FK and a nullable FK; the `parent_session` self reference through `Relation::ParentSession.def()` plus its stored `parent_session_id`, with `ChildSessions` as the reverse (a self-ref `BelongsTo` has no `Related` impl, so `find_related` is not available there); `books::Entity::load().with(tracks::Entity).with(knowledge_scopes::Entity)`; `entities` → `timeline_events` via the junction; `chapters::Entity::find_by_track_ord`. The suite passes with no other test edits. |
+| 14.4 | **Enum and boolean columns**: the `string_enum!` derive, the 40 enum fields and the 8 bool fields; delete `enum_of` and the column uses of `from_str_opt`/`as_str`; the §2.9 grep gate; compile-driven test edits (string literal → enum). | 02 §1, §3 | Check 5 passes. Existing tests pass, changed only from string to enum comparisons. No `web/src/api/gen` diff. The grep gate lists only genuine string columns. |
 | 14.5 | **JSON columns**: `JsonText<T>` with its unit tests, the 30 fields, `json::ModelOptions`, and removal of every silent column fallback (§1.4). | 02 §1, §4 | `JsonText` tests: for every type in the existing round-trip test, the stored text equals `serde_json::to_string`; `Option` ↔ `NULL`; a shape mismatch names the column; the empty string fails the CHECK. Check 6 passes. `strict_decode.rs`: a chapter whose `content` is valid JSON of the wrong shape (set through `Db::write_unprepared`) makes `GET /api/chapters/:id` answer `500 internal`, and a write session refuses to start instead of seeing an empty chapter. |
 | 14.6 | **Writes** (§2.6): `guard_update`, `transition`, the session patch, the `canon_status` compare-and-swap, the `error` clear, manager recovery, indexer `embed_state`, `raw_sql!` for static raw statements, and a reason comment on every remaining raw statement. | 03 §3, §14; 07 §4 | The race and transition suites (`review_races`, `outline_concurrency`, `m11_transition_atomicity`, the agent harness suites) and the M7 index suites pass unchanged. A unit test: `guard_update` with a stale expected status returns `session.invalid_state` and changes no column. A unit test per non-trivial converted statement compares `.build(DbBackend::Sqlite).to_string()` with the SQL it replaces, ignoring quoting. `grep -n 'format!' crates/server/src/services/indexer.rs` shows no SQL. |
 | 14.7 | **Reads** (§2.7): loaders for the §1.7 loops, `is_in` batching, partial models for the `chapters`/`chapter_versions` list queries, `has_related`, generated finders. | 07, 08 §7 | Each converted function keeps its output, including order, as proven by its existing tests or a new one written **before** the change. `overview_actions.rs` and the agent-context snapshots are unchanged. |
@@ -638,7 +659,7 @@ commit.
 - `Update::one(..)` / `Delete::one(..)` need `.validate()?` before `.build(..)` in 2.0. The
   generated `delete_by_*` returns `ValidatedDeleteOne`.
 - When the compiler disagrees with a snippet here, the compiler wins. Fix the snippet in this plan
-  and say so in D-151.
+  and record it in the decision log (D-152 records the M14.3 corrections).
 - SeaORM 2.x docs: <https://www.sea-ql.org/SeaORM/docs/>. The crate source is in
   `~/.cargo/registry/src/*/sea-orm-2.0.4/` and `sea-orm-macros-2.0.4/`.
 

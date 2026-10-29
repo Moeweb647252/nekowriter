@@ -23,6 +23,7 @@
 //!    has a shared active relation is legal, and a shared write never sees a private row.
 
 use axum::http::StatusCode;
+use nekowriter::db::json::RelationStatus;
 use nekowriter::services::canon::{self, CanonWrite, Visibility, relation};
 use nekowriter::testing::TestApp;
 use serde_json::json;
@@ -315,10 +316,14 @@ async fn reverting_the_delete_of_an_ended_relation_recreates_it() {
     let (status, _) = app.delete(&format!("/api/relations/{relation_id}")).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     let delete_change = change_log::Entity::find()
-        .filter(change_log::Column::TargetType.eq(ChangeTargetType::Relation.as_str()))
-        .filter(change_log::Column::TargetId.eq(relation_id))
-        .filter(change_log::Column::Op.eq("delete"))
-        .order_by_desc(change_log::Column::Id)
+        .filter(
+            change_log::COLUMN
+                .target_type
+                .eq(ChangeTargetType::Relation.as_str()),
+        )
+        .filter(change_log::COLUMN.target_id.eq(relation_id))
+        .filter(change_log::COLUMN.op.eq("delete"))
+        .order_by_desc(change_log::COLUMN.id)
         .one(app.db().conn())
         .await
         .expect("query")
@@ -404,7 +409,10 @@ async fn an_isolated_track_may_relate_a_pair_that_shared_canon_already_related()
         .all(conn)
         .await
         .expect("relations");
-    let active: Vec<_> = rows.iter().filter(|row| row.status == "active").collect();
+    let active: Vec<_> = rows
+        .iter()
+        .filter(|row| row.status == RelationStatus::Active)
+        .collect();
     assert_eq!(
         active.len(),
         2,

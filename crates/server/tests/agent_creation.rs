@@ -629,3 +629,28 @@ async fn the_cache_ttl_is_resolved_at_creation() {
         )
         .await;
 }
+
+/// Every provider protocol freezes into the session's `model_snapshot` as the typed value; the
+/// non-openai/anthropic case is `mock` (spec/03 §4 step 1).
+#[tokio::test]
+async fn a_session_freezes_each_provider_protocol() {
+    for protocol in ["mock", "openai", "anthropic"] {
+        let runtime = runtime(vec![finish_step()]).await;
+        let (status, providers) = runtime.app.get("/api/providers").await;
+        assert_eq!(status, StatusCode::OK, "{providers}");
+        let provider_id = providers[0]["id"].as_i64().expect("provider id");
+        runtime
+            .app
+            .execute(&format!(
+                "UPDATE providers SET protocol = '{protocol}' WHERE id = {provider_id}"
+            ))
+            .await;
+
+        let session_id = runtime.start_debug().await;
+        let snapshot = runtime.model_snapshot(session_id).await;
+        assert_eq!(
+            snapshot["protocol"], protocol,
+            "session creation froze the wrong protocol: {snapshot}"
+        );
+    }
+}

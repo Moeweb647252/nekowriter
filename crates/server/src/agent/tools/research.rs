@@ -5,7 +5,7 @@
 //! of its own research task and nowhere else (spec/05 §1.4). They run in `execute`, inside the
 //! transaction that seals the call, so an entry and its chunks commit with the tool result.
 
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, Set};
+use sea_orm::{ActiveModelTrait, EntityTrait, PaginatorTrait, QueryFilter, Set};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -85,24 +85,17 @@ async fn target_scope(ctx: &ToolCtx<'_>, tool: &str) -> Result<(i32, String), To
     use crate::db::json::SessionKind;
     if crate::agent::session::kind_of(ctx.session) != SessionKind::Research {
         // `notice.tool_not_allowed` reads tool, phase_label and allowed.
-        let phase = crate::db::json::Phase::from_str_opt(&ctx.session.phase)
-            .unwrap_or(crate::db::json::Phase::None);
+        let phase = ctx.session.phase;
         return Err(ToolError::tool_not_allowed(
             tool,
             crate::agent::tools::registry::phase_label(ctx.prompts, phase),
-            serde_json::from_str::<Vec<serde_json::Value>>(&ctx.session.tools)
-                .ok()
-                .map(|tools| {
-                    tools
-                        .iter()
-                        .filter_map(|tool| {
-                            tool.get("name")
-                                .and_then(serde_json::Value::as_str)
-                                .map(str::to_owned)
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
+            ctx.session
+                .tools
+                .clone()
+                .into_inner()
+                .iter()
+                .map(|tool| tool.name.clone())
+                .collect(),
         ));
     }
     let Some(task_id) = ctx.session.research_task_id else {
@@ -243,7 +236,7 @@ impl ToolHandler for SaveKnowledgeEntryTool {
             knowledge_entries::ActiveModel {
                 id: Set(entry.id),
                 research_task_id: Set(Some(task_id)),
-                source: Set(crate::db::json::EntrySource::Research.as_str().to_owned()),
+                source: Set(crate::db::json::EntrySource::Research),
                 ..Default::default()
             }
             .update(ctx.tx)
@@ -318,7 +311,7 @@ impl ToolHandler for UpdateKnowledgeEntryTool {
         let (scope_id, scope_name) = target_scope(ctx, "update_knowledge_entry").await?;
         // The target scope only: an entry of another scope is invisible, not merely read-only.
         let existing = knowledge_entries::Entity::find_by_id(input.entry_id)
-            .filter(knowledge_entries::Column::ScopeId.eq(scope_id))
+            .filter(knowledge_entries::COLUMN.scope_id.eq(scope_id))
             .one(ctx.tx)
             .await
             .map_err(|_| internal())?
@@ -347,8 +340,7 @@ impl ToolHandler for UpdateKnowledgeEntryTool {
         let source_urls = if input.source_urls_add.is_empty() {
             None
         } else {
-            let mut urls: Vec<String> =
-                serde_json::from_str(&existing.source_urls).unwrap_or_default();
+            let mut urls: Vec<String> = existing.source_urls.clone().into_inner();
             for url in &input.source_urls_add {
                 let url = url.trim().to_owned();
                 if !url.is_empty() && !urls.contains(&url) {
@@ -440,9 +432,13 @@ impl ToolHandler for FinishResearchTool {
         // accumulates across every run (spec/07 §8 step 5, `services::research::finish`).
         let entries = match ctx.session.research_task_id {
             Some(task_id) => knowledge_entries::Entity::find()
-                .filter(knowledge_entries::Column::ResearchTaskId.eq(task_id))
-                .filter(knowledge_entries::Column::ScopeId.eq(scope_id))
-                .filter(knowledge_entries::Column::UpdatedAt.gte(ctx.session.created_at))
+                .filter(knowledge_entries::COLUMN.research_task_id.eq(task_id))
+                .filter(knowledge_entries::COLUMN.scope_id.eq(scope_id))
+                .filter(
+                    knowledge_entries::COLUMN
+                        .updated_at
+                        .gte(ctx.session.created_at),
+                )
                 .count(ctx.tx)
                 .await
                 .map_err(|_| internal())?,

@@ -1,6 +1,7 @@
 //! `foreshadowing_entities` join table entity (spec/02 §2).
 use sea_orm::entity::prelude::*;
 
+#[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "foreshadowing_entities")]
 pub struct Model {
@@ -8,9 +9,10 @@ pub struct Model {
     pub foreshadowing_id: i32,
     #[sea_orm(primary_key, auto_increment = false)]
     pub entity_id: i32,
+    #[sea_orm(belongs_to, from = "foreshadowing_id", to = "id")]
+    pub foreshadowing: BelongsTo<super::foreshadowing::Entity>,
+    #[sea_orm(belongs_to, from = "entity_id", to = "id")]
+    pub entity: BelongsTo<super::entities::Entity>,
 }
-
-#[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {}
 
 impl ActiveModelBehavior for ActiveModel {}

@@ -34,7 +34,7 @@ use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseTransaction, DbErr, Stat
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::db::json::{from_json, to_json};
+use crate::db::json::{JsonText, to_json};
 use crate::error::{AppError, ErrorCode};
 
 /// The current UTC time in the representation the schema stores.
@@ -48,21 +48,18 @@ pub(crate) fn json<T: serde::Serialize>(value: &T) -> Result<String, AppError> {
     to_json(value).map_err(|err| AppError::internal(format!("cannot serialize JSON column: {err}")))
 }
 
+/// Wraps a typed JSON column value for a `JsonText<T>` entity field.
+pub(crate) fn json_text<T>(value: T) -> JsonText<T> {
+    JsonText(value)
+}
+
 /// Deserializes a typed JSON column, mapping a failure to an internal error.
 pub(crate) fn parse_json<T: for<'de> serde::Deserialize<'de>>(
     column: &str,
     raw: &str,
 ) -> Result<T, AppError> {
-    from_json(raw).map_err(|err| AppError::internal(format!("corrupt {column} column: {err}")))
-}
-
-/// Reads a plain-TEXT enum column (`CHECK (col IN (...))`, spec/02 §3) into its Rust enum.
-pub(crate) fn enum_of<T: std::str::FromStr<Err = String>>(
-    column: &str,
-    raw: &str,
-) -> Result<T, AppError> {
-    raw.parse::<T>()
-        .map_err(|_| AppError::internal(format!("unknown {column} value {raw:?}")))
+    serde_json::from_str(raw)
+        .map_err(|err| AppError::internal(format!("corrupt {column} column: {err}")))
 }
 
 /// Runs a raw SELECT that returns at most one row and reads one `i64` column.
@@ -72,6 +69,7 @@ pub(crate) async fn query_i64(
     values: Vec<sea_orm::Value>,
 ) -> Result<Option<i64>, AppError> {
     let row = conn
+        // Raw: this helper executes a query whose table/aggregate is supplied by the caller.
         .query_one_raw(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             sql,

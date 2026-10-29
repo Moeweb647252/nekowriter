@@ -22,7 +22,7 @@ use similar::{ChangeTag, TextDiff};
 
 use sea_orm::ConnectionTrait;
 
-use crate::db::json::{ChapterContent, ConceptionDocSnapshot, ViewSnapshot};
+use crate::db::json::{ChapterContent, ConceptionDocSnapshot, ResearchTaskStatus, ViewSnapshot};
 use crate::error::AppError;
 use crate::prompts::PromptSet;
 use crate::prompts::context::{
@@ -532,13 +532,13 @@ pub async fn current_conception_state(
     use sea_orm::{ColumnTrait, EntityTrait as _, QueryFilter, QueryOrder};
 
     let docs = setting_docs::Entity::find()
-        .filter(setting_docs::Column::BookId.eq(book_id))
+        .filter(setting_docs::COLUMN.book_id.eq(book_id))
         .all(conn)
         .await?;
     let mut doc_map = BTreeMap::new();
     for doc in docs {
         doc_map.insert(
-            doc.kind,
+            doc.kind.as_str().to_owned(),
             ConceptionDocSnapshot {
                 revision: doc.revision,
                 content: doc.content,
@@ -546,8 +546,8 @@ pub async fn current_conception_state(
         );
     }
     let characters = character_designs::Entity::find()
-        .filter(character_designs::Column::BookId.eq(book_id))
-        .order_by_asc(character_designs::Column::Rank)
+        .filter(character_designs::COLUMN.book_id.eq(book_id))
+        .order_by_asc(character_designs::COLUMN.rank)
         .all(conn)
         .await?
         .into_iter()
@@ -561,9 +561,9 @@ pub async fn current_conception_state(
         })
         .collect();
     let topics = research_tasks::Entity::find()
-        .filter(research_tasks::Column::BookId.eq(book_id))
-        .filter(research_tasks::Column::Status.eq("draft"))
-        .order_by_asc(research_tasks::Column::Id)
+        .filter(research_tasks::COLUMN.book_id.eq(book_id))
+        .filter(research_tasks::COLUMN.status.eq(ResearchTaskStatus::Draft))
+        .order_by_asc(research_tasks::COLUMN.id)
         .all(conn)
         .await?
         .into_iter()

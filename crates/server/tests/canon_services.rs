@@ -97,7 +97,7 @@ async fn every_entity_write_records_a_typed_change() {
     let history = change_log_of(&app, ChangeTargetType::Entity, entity_id).await;
     assert_eq!(history.len(), 2, "the update appended one change");
     let update = &history[0];
-    assert_eq!(update.op, "update");
+    assert_eq!(update.op, ChangeOp::Update);
     assert_eq!(update.note, "moved on");
     assert_eq!(
         snapshot_before(update)["state"],
@@ -122,7 +122,7 @@ async fn every_entity_write_records_a_typed_change() {
     assert_eq!(status, StatusCode::NO_CONTENT);
     let deleted = change_log_of(&app, ChangeTargetType::Entity, entity_id).await;
     assert_eq!(deleted.len(), 3);
-    assert_eq!(deleted[0].op, "delete");
+    assert_eq!(deleted[0].op, ChangeOp::Delete);
     assert_eq!(snapshot_before(&deleted[0])["name"], "Lin Fan");
     assert!(deleted[0].after.is_none());
 }
@@ -504,10 +504,7 @@ async fn a_revert_of_a_create_writes_no_second_change_row() {
         after.len(),
         2,
         "the delete that the revert performed is the revert row itself: {:?}",
-        after
-            .iter()
-            .map(|row| (row.id, row.op.clone()))
-            .collect::<Vec<_>>()
+        after.iter().map(|row| (row.id, row.op)).collect::<Vec<_>>()
     );
 }
 
@@ -538,7 +535,7 @@ async fn a_revert_of_a_delete_writes_no_second_change_row() {
         "the recreate is one change row: {:?}",
         recreated.iter().map(|row| row.id).collect::<Vec<_>>()
     );
-    assert_eq!(recreated[0].op, ChangeOp::Create.as_str());
+    assert_eq!(recreated[0].op, ChangeOp::Create);
     assert_eq!(recreated[0].reverts_id, Some(delete_id));
 }
 
@@ -1013,7 +1010,7 @@ async fn merging_two_entities_in_one_chapter_keeps_the_more_prominent_role() {
         "the update change carries the merge note: {changes:?}"
     );
     let deleted = change_log_of(&app, ChangeTargetType::Entity, source_id).await;
-    assert_eq!(deleted[0].op, "delete");
+    assert_eq!(deleted[0].op, ChangeOp::Delete);
     assert_eq!(deleted[0].note, "#Lin Fann → #Lin Fan");
 
     // B is gone, and A's bounds still point at the chapter both appeared in.
@@ -1222,16 +1219,20 @@ async fn setting_the_protagonist_moves_the_flag() {
 
 /// The typed `before` snapshot of a change row, as JSON (spec/02 §4).
 fn snapshot_before(row: &change_log::Model) -> serde_json::Value {
-    parse_snapshot(row.before.as_deref())
+    serde_json::to_value(
+        row.before
+            .as_ref()
+            .expect("a snapshot")
+            .clone()
+            .into_inner(),
+    )
+    .expect("a JSON snapshot")
 }
 
 /// The typed `after` snapshot of a change row, as JSON.
 fn snapshot_after(row: &change_log::Model) -> serde_json::Value {
-    parse_snapshot(row.after.as_deref())
-}
-
-fn parse_snapshot(raw: Option<&str>) -> serde_json::Value {
-    serde_json::from_str(raw.expect("a snapshot")).expect("valid snapshot JSON")
+    serde_json::to_value(row.after.as_ref().expect("a snapshot").clone().into_inner())
+        .expect("a JSON snapshot")
 }
 
 /// The change rows of one target, newest first.
@@ -1241,9 +1242,9 @@ async fn change_log_of(
     target_id: i32,
 ) -> Vec<change_log::Model> {
     change_log::Entity::find()
-        .filter(change_log::Column::TargetType.eq(target_type.as_str()))
-        .filter(change_log::Column::TargetId.eq(target_id))
-        .order_by_desc(change_log::Column::Id)
+        .filter(change_log::COLUMN.target_type.eq(target_type.as_str()))
+        .filter(change_log::COLUMN.target_id.eq(target_id))
+        .order_by_desc(change_log::COLUMN.id)
         .all(app.db().conn())
         .await
         .expect("change log rows")

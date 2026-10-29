@@ -102,7 +102,7 @@ async fn session(
     app.execute(&format!(
         "INSERT INTO agent_sessions(book_id, role, kind, chapter_id, track_id, model_snapshot, \
          system_prompt, tools, status, phase, created_at, updated_at) VALUES \
-         ({book_id}, '{role}', '{kind}', {chapter_id}, {track_id}, '{{}}', '', '[]', 'idle', \
+         ({book_id}, '{role}', '{kind}', {chapter_id}, {track_id}, '{{\"provider_id\":0,\"protocol\":\"mock\",\"base_url\":\"\",\"extra_headers\":{{}},\"model\":\"\",\"context_window\":0,\"max_output_tokens\":0,\"options\":null}}', '', '[]', 'idle', \
          'none', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
     ))
     .await;

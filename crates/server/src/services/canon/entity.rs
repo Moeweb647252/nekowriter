@@ -27,7 +27,7 @@ use crate::db::entities::{
     appearances, chapters, character_designs, entities, relations, timeline_event_entities, tracks,
 };
 use crate::db::json::{
-    AppearanceRole, ChangeOp, ChangeTargetType, EntityKind, EntityStatus, RelationStatus,
+    CanonMode, ChangeOp, ChangeTargetType, EntityKind, EntityStatus, RelationStatus,
 };
 use crate::events::ServerEvent;
 
@@ -54,16 +54,16 @@ pub async fn list(
         None => Visibility::shared(book_id),
     };
     let mut statement = entities::Entity::find()
-        .filter(entities::Column::BookId.eq(book_id))
+        .filter(entities::COLUMN.book_id.eq(book_id))
         .filter(visibility.visible_condition(entities::Column::TrackId))
-        .order_by_desc(entities::Column::Importance)
-        .order_by_desc(entities::Column::LastChapterId)
-        .order_by_asc(entities::Column::Id);
+        .order_by_desc(entities::COLUMN.importance)
+        .order_by_desc(entities::COLUMN.last_chapter_id)
+        .order_by_asc(entities::COLUMN.id);
     if let Some(kind) = query.kind {
-        statement = statement.filter(entities::Column::Kind.eq(kind.as_str()));
+        statement = statement.filter(entities::COLUMN.kind.eq(kind.as_str()));
     }
     if let Some(status) = query.status {
-        statement = statement.filter(entities::Column::Status.eq(status.as_str()));
+        statement = statement.filter(entities::COLUMN.status.eq(status.as_str()));
     }
     let rows = statement.all(conn).await?;
     let needle = query.q.as_deref().map(str::trim).filter(|q| !q.is_empty());
@@ -109,19 +109,19 @@ pub async fn detail(
         None => Visibility::shared(row.book_id),
     };
     let relation_rows = relations::Entity::find()
-        .filter(relations::Column::BookId.eq(row.book_id))
+        .filter(relations::COLUMN.book_id.eq(row.book_id))
         .filter(relation_visibility.visible_condition(relations::Column::TrackId))
         .filter(
             Condition::any()
-                .add(relations::Column::SourceId.eq(entity_id))
-                .add(relations::Column::TargetId.eq(entity_id)),
+                .add(relations::COLUMN.source_id.eq(entity_id))
+                .add(relations::COLUMN.target_id.eq(entity_id)),
         )
-        .order_by_asc(relations::Column::Id)
+        .order_by_asc(relations::COLUMN.id)
         .all(conn)
         .await?;
     let appearance_rows = appearances::Entity::find()
-        .filter(appearances::Column::EntityId.eq(entity_id))
-        .order_by_asc(appearances::Column::ChapterId)
+        .filter(appearances::COLUMN.entity_id.eq(entity_id))
+        .order_by_asc(appearances::COLUMN.chapter_id)
         .all(conn)
         .await?;
     let changes = super::super::change_log::for_target(
@@ -132,8 +132,8 @@ pub async fn detail(
     )
     .await?;
     let design = character_designs::Entity::find()
-        .filter(character_designs::Column::EntityId.eq(entity_id))
-        .order_by_asc(character_designs::Column::Rank)
+        .filter(character_designs::COLUMN.entity_id.eq(entity_id))
+        .order_by_asc(character_designs::COLUMN.rank)
         .one(conn)
         .await?;
     Ok(EntityDto {
@@ -149,7 +149,7 @@ pub async fn detail(
         attributes: attributes_of(&row)?,
         importance: row.importance,
         status: status_of(&row)?,
-        is_protagonist: row.is_protagonist != 0,
+        is_protagonist: row.is_protagonist,
         first_chapter_id: row.first_chapter_id,
         last_chapter_id: row.last_chapter_id,
         created_at: row.created_at,
@@ -241,16 +241,16 @@ pub async fn create_inner(
     let model = entities::ActiveModel {
         book_id: Set(book_id),
         track_id: Set(track_id),
-        kind: Set(input.kind.as_str().to_owned()),
+        kind: Set(input.kind),
         name: Set(name.to_owned()),
-        aliases: Set(super::json(&aliases)?),
+        aliases: Set(crate::services::json_text(aliases.clone())),
         summary: Set(input.summary.trim().to_owned()),
         description: Set(input.description.clone()),
         state: Set(input.state.clone()),
-        attributes: Set(super::json(&input.attributes)?),
+        attributes: Set(crate::services::json_text(input.attributes)),
         importance: Set(input.importance),
-        status: Set(input.status.as_str().to_owned()),
-        is_protagonist: Set(i32::from(input.is_protagonist)),
+        status: Set(input.status),
+        is_protagonist: Set(input.is_protagonist),
         first_chapter_id: Set(first_chapter_id),
         last_chapter_id: Set(last_chapter_id),
         created_at: Set(timestamp),
@@ -292,15 +292,13 @@ pub async fn create_inner(
 
 /// A shared character entity links the character design with the same name (spec/05 §6).
 async fn link_design_by_name(tx: &impl ConnectionTrait, row: &entities::Model) -> CanonResult<()> {
-    if row.track_id.is_some() || row.kind != EntityKind::Character.as_str() {
+    if row.track_id.is_some() || row.kind != EntityKind::Character {
         return Ok(());
     }
-    let design = character_designs::Entity::find()
-        .filter(character_designs::Column::BookId.eq(row.book_id))
-        .filter(character_designs::Column::Name.eq(row.name.clone()))
-        .filter(character_designs::Column::EntityId.is_null())
+    let design = character_designs::Entity::find_by_book_name((row.book_id, row.name.clone()))
         .one(tx)
-        .await?;
+        .await?
+        .filter(|design| design.entity_id.is_none());
     let Some(design) = design else {
         return Ok(());
     };
@@ -403,7 +401,7 @@ pub async fn update_inner(
     }
     if let Some(is_protagonist) = patch.is_protagonist
         && is_protagonist
-        && existing.is_protagonist == 0
+        && !existing.is_protagonist
     {
         ensure_protagonist_free(tx, existing.book_id, Some(entity_id)).await?;
     }
@@ -414,13 +412,13 @@ pub async fn update_inner(
         ..Default::default()
     };
     if let Some(kind) = patch.kind {
-        active.kind = Set(kind.as_str().to_owned());
+        active.kind = Set(kind);
     }
     if patch.name.is_some() {
         active.name = Set(target_name);
     }
     if patch.aliases.is_some() {
-        active.aliases = Set(super::json(&aliases)?);
+        active.aliases = Set(crate::services::json_text(aliases.clone()));
     }
     if let Some(summary) = &patch.summary {
         active.summary = Set(summary.trim().to_owned());
@@ -432,16 +430,16 @@ pub async fn update_inner(
         active.state = Set(state.clone());
     }
     if let Some(attributes) = &patch.attributes {
-        active.attributes = Set(super::json(attributes)?);
+        active.attributes = Set(crate::services::json_text(attributes.clone()));
     }
     if let Some(importance) = patch.importance {
         active.importance = Set(importance);
     }
     if let Some(status) = patch.status {
-        active.status = Set(status.as_str().to_owned());
+        active.status = Set(status);
     }
     if let Some(is_protagonist) = patch.is_protagonist {
-        active.is_protagonist = Set(i32::from(is_protagonist));
+        active.is_protagonist = Set(is_protagonist);
     }
     active.update(tx).await?;
     let row = super::load_entity(tx, entity_id).await?;
@@ -605,7 +603,7 @@ pub async fn merge_inner(
     move_design_link(tx, &target, &source).await?;
     move_track_focus(tx, &target, &source).await?;
     // The protagonist flag moves with the merge (D-046).
-    let target_is_protagonist = target.is_protagonist != 0 || source.is_protagonist != 0;
+    let target_is_protagonist = target.is_protagonist || source.is_protagonist;
     // Union the aliases; B's name becomes an alias of A.
     let mut aliases = aliases_of(&target)?;
     aliases.push(source.name.clone());
@@ -613,12 +611,12 @@ pub async fn merge_inner(
     let aliases = clean_aliases(&aliases);
     // A never loses the more central importance to a minor duplicate.
     let importance = target.importance.max(source.importance);
-    if target_is_protagonist && source.is_protagonist != 0 && target.is_protagonist == 0 {
+    if target_is_protagonist && source.is_protagonist && !target.is_protagonist {
         // The partial unique index allows one protagonist per book: clear B's flag before A
         // takes it (D-046).
         entities::ActiveModel {
             id: Set(source.id),
-            is_protagonist: Set(0),
+            is_protagonist: Set(false),
             ..Default::default()
         }
         .update(tx)
@@ -626,9 +624,9 @@ pub async fn merge_inner(
     }
     entities::ActiveModel {
         id: Set(into_id),
-        aliases: Set(super::json(&aliases)?),
+        aliases: Set(crate::services::json_text(aliases.clone())),
         importance: Set(importance),
-        is_protagonist: Set(i32::from(target_is_protagonist)),
+        is_protagonist: Set(target_is_protagonist),
         updated_at: Set(stamp()),
         ..Default::default()
     }
@@ -706,11 +704,11 @@ async fn move_relations(
     source: &entities::Model,
 ) -> CanonResult<()> {
     let rows = relations::Entity::find()
-        .filter(relations::Column::BookId.eq(source.book_id))
+        .filter(relations::COLUMN.book_id.eq(source.book_id))
         .filter(
             Condition::any()
-                .add(relations::Column::SourceId.eq(source.id))
-                .add(relations::Column::TargetId.eq(source.id)),
+                .add(relations::COLUMN.source_id.eq(source.id))
+                .add(relations::COLUMN.target_id.eq(source.id)),
         )
         .all(tx)
         .await?;
@@ -719,15 +717,15 @@ async fn move_relations(
     // `X → A`, so A as the *target* counts too — checking only A as the source let that shape
     // reach the unique index and abort the merge.
     let existing = relations::Entity::find()
-        .filter(relations::Column::BookId.eq(target.book_id))
+        .filter(relations::COLUMN.book_id.eq(target.book_id))
         .filter(
             Condition::any()
-                .add(relations::Column::SourceId.eq(target.id))
-                .add(relations::Column::TargetId.eq(target.id)),
+                .add(relations::COLUMN.source_id.eq(target.id))
+                .add(relations::COLUMN.target_id.eq(target.id)),
         )
-        .filter(relations::Column::SourceId.ne(source.id))
-        .filter(relations::Column::TargetId.ne(source.id))
-        .filter(relations::Column::Status.eq(RelationStatus::Active.as_str()))
+        .filter(relations::COLUMN.source_id.ne(source.id))
+        .filter(relations::COLUMN.target_id.ne(source.id))
+        .filter(relations::COLUMN.status.eq(RelationStatus::Active))
         .all(tx)
         .await?;
     // The key is the ordered pair alone. `kind` is data on a relation, not part of its identity
@@ -763,7 +761,7 @@ async fn move_relations(
         // active relation of A; a collision is dropped, a free pair is recorded. A row with a
         // *different* kind is still a collision: the pair can only keep one active relation, and
         // the merge cannot invent a combined wording, so A's existing row wins.
-        if row.status == RelationStatus::Active.as_str()
+        if row.status == RelationStatus::Active
             && !taken.insert((source_id, target_id, row.track_id))
         {
             relations::Entity::delete_by_id(row.id).exec(tx).await?;
@@ -789,15 +787,21 @@ async fn move_appearances(
     source: &entities::Model,
 ) -> CanonResult<()> {
     let rows = appearances::Entity::find()
-        .filter(appearances::Column::EntityId.eq(source.id))
+        .filter(appearances::COLUMN.entity_id.eq(source.id))
         .all(tx)
         .await?;
+    let chapter_ids: Vec<i32> = rows.iter().map(|row| row.chapter_id).collect();
+    let existing_rows = appearances::Entity::find()
+        .filter(appearances::COLUMN.entity_id.eq(target.id))
+        .filter(appearances::COLUMN.chapter_id.is_in(chapter_ids))
+        .all(tx)
+        .await?;
+    let mut existing_by_chapter: std::collections::HashMap<i32, appearances::Model> = existing_rows
+        .into_iter()
+        .map(|row| (row.chapter_id, row))
+        .collect();
     for row in rows {
-        let existing = appearances::Entity::find()
-            .filter(appearances::Column::ChapterId.eq(row.chapter_id))
-            .filter(appearances::Column::EntityId.eq(target.id))
-            .one(tx)
-            .await?;
+        let existing = existing_by_chapter.remove(&row.chapter_id);
         match existing {
             None => {
                 appearances::ActiveModel {
@@ -810,10 +814,12 @@ async fn move_appearances(
             }
             Some(existing) => {
                 // A keeps the more prominent role: pov > major > minor > mentioned.
-                if role_rank(&row.role) > role_rank(&existing.role) {
+                if super::appearance::role_rank(row.role)
+                    > super::appearance::role_rank(existing.role)
+                {
                     appearances::ActiveModel {
                         id: Set(existing.id),
-                        role: Set(row.role.clone()),
+                        role: Set(row.role),
                         note: Set(row.note.clone()),
                         ..Default::default()
                     }
@@ -825,16 +831,6 @@ async fn move_appearances(
         }
     }
     Ok(())
-}
-
-/// `pov` is the most prominent role and `mentioned` the least (spec/06 §1.3).
-fn role_rank(role: &str) -> u8 {
-    match role {
-        "pov" => 4,
-        "major" => 3,
-        "minor" => 2,
-        _ => 1,
-    }
 }
 
 /// Moves the join rows of one link table from B to A (deleting B cascades them otherwise).
@@ -852,6 +848,7 @@ async fn move_link_rows(
         table = table.table(),
         owner = table.owner_column()
     );
+    // Raw: the link table name is chosen at runtime from the closed `LinkTable` set.
     tx.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Sqlite,
         sql,
@@ -868,12 +865,12 @@ async fn move_design_link(
     source: &entities::Model,
 ) -> CanonResult<()> {
     let designs = character_designs::Entity::find()
-        .filter(character_designs::Column::EntityId.eq(source.id))
-        .order_by_asc(character_designs::Column::Rank)
+        .filter(character_designs::COLUMN.entity_id.eq(source.id))
+        .order_by_asc(character_designs::COLUMN.rank)
         .all(tx)
         .await?;
     let target_linked = character_designs::Entity::find()
-        .filter(character_designs::Column::EntityId.eq(target.id))
+        .filter(character_designs::COLUMN.entity_id.eq(target.id))
         .one(tx)
         .await?
         .is_some();
@@ -903,7 +900,7 @@ async fn move_track_focus(
     source: &entities::Model,
 ) -> CanonResult<()> {
     let rows = tracks::Entity::find()
-        .filter(tracks::Column::FocusEntityId.eq(source.id))
+        .filter(tracks::COLUMN.focus_entity_id.eq(source.id))
         .all(tx)
         .await?;
     for row in rows {
@@ -945,8 +942,8 @@ pub async fn set_protagonist_inner(
     let mut events = Vec::new();
     // The flag moves: whoever held it loses it in the same transaction (one per book, §5 (7)).
     let current = entities::Entity::find()
-        .filter(entities::Column::BookId.eq(existing.book_id))
-        .filter(entities::Column::IsProtagonist.eq(1))
+        .filter(entities::COLUMN.book_id.eq(existing.book_id))
+        .filter(entities::COLUMN.is_protagonist.eq(true))
         .all(tx)
         .await?;
     for row in current {
@@ -956,7 +953,7 @@ pub async fn set_protagonist_inner(
         let before = entity_snapshot(&row)?;
         entities::ActiveModel {
             id: Set(row.id),
-            is_protagonist: Set(0),
+            is_protagonist: Set(false),
             updated_at: Set(stamp()),
             ..Default::default()
         }
@@ -989,11 +986,11 @@ pub async fn set_protagonist_inner(
             change_id,
         ));
     }
-    if existing.is_protagonist == 0 {
+    if !existing.is_protagonist {
         let before = entity_snapshot(&existing)?;
         entities::ActiveModel {
             id: Set(entity_id),
-            is_protagonist: Set(1),
+            is_protagonist: Set(true),
             updated_at: Set(stamp()),
             ..Default::default()
         }
@@ -1038,10 +1035,10 @@ async fn ensure_protagonist_free(
     except_id: Option<i32>,
 ) -> CanonResult<()> {
     let mut statement = entities::Entity::find()
-        .filter(entities::Column::BookId.eq(book_id))
-        .filter(entities::Column::IsProtagonist.eq(1));
+        .filter(entities::COLUMN.book_id.eq(book_id))
+        .filter(entities::COLUMN.is_protagonist.eq(true));
     if let Some(except_id) = except_id {
-        statement = statement.filter(entities::Column::Id.ne(except_id));
+        statement = statement.filter(entities::COLUMN.id.ne(except_id));
     }
     if let Some(existing) = statement.one(tx).await? {
         return Err(super::conflict(
@@ -1071,10 +1068,10 @@ async fn ensure_name_free(
         .visibility
         .unwrap_or_else(|| Visibility::shared(book_id));
     let mut statement = entities::Entity::find()
-        .filter(entities::Column::BookId.eq(book_id))
+        .filter(entities::COLUMN.book_id.eq(book_id))
         .filter(visibility.visible_condition(entities::Column::TrackId));
     if let Some(except_id) = except_id {
-        statement = statement.filter(entities::Column::Id.ne(except_id));
+        statement = statement.filter(entities::COLUMN.id.ne(except_id));
     }
     let rows = statement.all(tx).await?;
     let wanted: Vec<String> = std::iter::once(name.to_owned())
@@ -1119,7 +1116,7 @@ async fn ensure_isolated_track(
             "the track belongs to another book",
         ));
     }
-    if track.canon_mode != "isolated" {
+    if track.canon_mode != CanonMode::Isolated {
         // Canon rows with a non-NULL track_id belong to isolated tracks only (spec/02 §5 (8)).
         return Err(CanonError::field(
             "track_id",
@@ -1149,14 +1146,29 @@ pub async fn recompute_bounds(
         return Ok(());
     }
     let orders = chapter_orders(tx, book_id).await?;
+    let entity_rows = entities::Entity::find()
+        .filter(entities::COLUMN.id.is_in(unique.clone()))
+        .all(tx)
+        .await?;
+    let entity_by_id: std::collections::HashMap<i32, entities::Model> =
+        entity_rows.into_iter().map(|row| (row.id, row)).collect();
+    let appearance_rows = appearances::Entity::find()
+        .filter(appearances::COLUMN.entity_id.is_in(unique.clone()))
+        .all(tx)
+        .await?;
+    let mut appearances_by_entity: std::collections::HashMap<i32, Vec<appearances::Model>> =
+        std::collections::HashMap::new();
+    for appearance in appearance_rows {
+        appearances_by_entity
+            .entry(appearance.entity_id)
+            .or_default()
+            .push(appearance);
+    }
     for entity_id in unique {
-        let Some(row) = entities::Entity::find_by_id(entity_id).one(tx).await? else {
+        let Some(row) = entity_by_id.get(&entity_id) else {
             continue;
         };
-        let rows = appearances::Entity::find()
-            .filter(appearances::Column::EntityId.eq(entity_id))
-            .all(tx)
-            .await?;
+        let rows = appearances_by_entity.remove(&entity_id).unwrap_or_default();
         let mut first: Option<(i32, super::ChapterOrder)> = None;
         let mut last: Option<(i32, super::ChapterOrder)> = None;
         for appearance in &rows {
@@ -1202,15 +1214,15 @@ pub async fn recompute_bounds(
 // ───────────────────────────── DTO helpers ─────────────────────────────
 
 pub fn kind_of(row: &entities::Model) -> CanonResult<EntityKind> {
-    super::enum_of("entities.kind", &row.kind)
+    Ok(row.kind)
 }
 
 pub fn status_of(row: &entities::Model) -> CanonResult<EntityStatus> {
-    super::enum_of("entities.status", &row.status)
+    Ok(row.status)
 }
 
 pub fn attributes_of(row: &entities::Model) -> CanonResult<BTreeMap<String, String>> {
-    super::parse_json("entities.attributes", &row.attributes)
+    Ok(row.attributes.clone().into_inner())
 }
 
 pub fn list_item(row: &entities::Model) -> CanonResult<EntityListItemDto> {
@@ -1224,7 +1236,7 @@ pub fn list_item(row: &entities::Model) -> CanonResult<EntityListItemDto> {
         summary: row.summary.clone(),
         importance: row.importance,
         status: status_of(row)?,
-        is_protagonist: row.is_protagonist != 0,
+        is_protagonist: row.is_protagonist,
         first_chapter_id: row.first_chapter_id,
         last_chapter_id: row.last_chapter_id,
         created_at: row.created_at,
@@ -1237,9 +1249,7 @@ fn appearance_dto(row: &appearances::Model) -> CanonResult<AppearanceDto> {
         id: row.id,
         chapter_id: row.chapter_id,
         entity_id: row.entity_id,
-        role: AppearanceRole::from_str_opt(&row.role).ok_or_else(|| {
-            CanonError::internal(format!("unknown appearances.role {:?}", row.role))
-        })?,
+        role: row.role,
         note: row.note.clone(),
     })
 }
@@ -1296,17 +1306,17 @@ pub async fn restore_inner(
     let existing = super::load_entity(tx, entity_id).await?;
     write.ensure_writable(existing.track_id, &entity_label(&existing.name, entity_id))?;
     // Restoring the protagonist flag must not collide with another holder (spec/02 §5 (7)).
-    if *is_protagonist && existing.is_protagonist == 0 {
+    if *is_protagonist && !existing.is_protagonist {
         let other = entities::Entity::find()
-            .filter(entities::Column::BookId.eq(existing.book_id))
-            .filter(entities::Column::IsProtagonist.eq(1))
-            .filter(entities::Column::Id.ne(entity_id))
+            .filter(entities::COLUMN.book_id.eq(existing.book_id))
+            .filter(entities::COLUMN.is_protagonist.eq(true))
+            .filter(entities::COLUMN.id.ne(entity_id))
             .one(tx)
             .await?;
         if let Some(other) = other {
             entities::ActiveModel {
                 id: Set(other.id),
-                is_protagonist: Set(0),
+                is_protagonist: Set(false),
                 updated_at: Set(stamp()),
                 ..Default::default()
             }
@@ -1316,16 +1326,16 @@ pub async fn restore_inner(
     }
     entities::ActiveModel {
         id: Set(entity_id),
-        kind: Set(kind.as_str().to_owned()),
+        kind: Set(*kind),
         name: Set(name.clone()),
-        aliases: Set(super::json(aliases)?),
+        aliases: Set(crate::services::json_text(aliases.clone())),
         summary: Set(summary.clone()),
         description: Set(description.clone()),
         state: Set(state.clone()),
-        attributes: Set(super::json(attributes)?),
+        attributes: Set(crate::services::json_text(attributes.clone())),
         importance: Set(*importance),
-        status: Set(status.as_str().to_owned()),
-        is_protagonist: Set(i32::from(*is_protagonist)),
+        status: Set(*status),
+        is_protagonist: Set(*is_protagonist),
         updated_at: Set(stamp()),
         ..Default::default()
     }
@@ -1377,14 +1387,14 @@ pub async fn recreate_inner(
     }
     if *is_protagonist {
         let other = entities::Entity::find()
-            .filter(entities::Column::BookId.eq(book_id))
-            .filter(entities::Column::IsProtagonist.eq(1))
+            .filter(entities::COLUMN.book_id.eq(book_id))
+            .filter(entities::COLUMN.is_protagonist.eq(true))
             .one(tx)
             .await?;
         if let Some(other) = other {
             entities::ActiveModel {
                 id: Set(other.id),
-                is_protagonist: Set(0),
+                is_protagonist: Set(false),
                 updated_at: Set(stamp()),
                 ..Default::default()
             }
@@ -1399,16 +1409,16 @@ pub async fn recreate_inner(
         id: Set(new_id),
         book_id: Set(book_id),
         track_id: Set(*track_id),
-        kind: Set(kind.as_str().to_owned()),
+        kind: Set(*kind),
         name: Set(name.clone()),
-        aliases: Set(super::json(aliases)?),
+        aliases: Set(crate::services::json_text(aliases.clone())),
         summary: Set(summary.clone()),
         description: Set(description.clone()),
         state: Set(state.clone()),
-        attributes: Set(super::json(attributes)?),
+        attributes: Set(crate::services::json_text(attributes.clone())),
         importance: Set(*importance),
-        status: Set(status.as_str().to_owned()),
-        is_protagonist: Set(i32::from(*is_protagonist)),
+        status: Set(*status),
+        is_protagonist: Set(*is_protagonist),
         first_chapter_id: Set(None),
         last_chapter_id: Set(None),
         created_at: Set(timestamp),
@@ -1428,11 +1438,11 @@ async fn find_by_name(
     name: &str,
 ) -> CanonResult<Option<entities::Model>> {
     let mut statement = entities::Entity::find()
-        .filter(entities::Column::BookId.eq(book_id))
-        .filter(entities::Column::Name.eq(name));
+        .filter(entities::COLUMN.book_id.eq(book_id))
+        .filter(entities::COLUMN.name.eq(name));
     statement = match track_id {
-        Some(track_id) => statement.filter(entities::Column::TrackId.eq(track_id)),
-        None => statement.filter(entities::Column::TrackId.is_null()),
+        Some(track_id) => statement.filter(entities::COLUMN.track_id.eq(track_id)),
+        None => statement.filter(entities::COLUMN.track_id.is_null()),
     };
     Ok(statement.one(conn).await?)
 }

@@ -34,8 +34,7 @@ use sea_orm::{
 
 use crate::db::entities::{appearances, chapters, entities, relations, tracks};
 use crate::db::json::{
-    AppearanceRole, AppearanceSnapshot, ChangeActor, ChangeOp, ChangeTargetType, EntityKind,
-    EntityStatus, ForeshadowingStatus, NoteKind, NoteStatus, RelationStatus, Snapshot,
+    AppearanceSnapshot, CanonMode, ChangeActor, ChangeOp, ChangeTargetType, Snapshot, TrackKind,
 };
 use crate::error::AppError;
 use crate::events::ServerEvent;
@@ -366,7 +365,7 @@ pub async fn chapter_label(
         return Ok(String::new());
     };
     Ok(prompts.chapter_label(
-        &track.kind,
+        track.kind.as_str(),
         &track.title,
         i64::from(chapter.ord),
         &chapter.title,
@@ -390,7 +389,7 @@ pub async fn chapter_label_bare(
         return Ok(String::new());
     };
     Ok(prompts.chapter_label(
-        &track.kind,
+        track.kind.as_str(),
         &track.title,
         i64::from(chapter.ord),
         &chapter.title,
@@ -425,7 +424,7 @@ pub async fn chapter_orders(
     book_id: i32,
 ) -> CanonResult<HashMap<i32, ChapterOrder>> {
     let tracks = tracks::Entity::find()
-        .filter(tracks::Column::BookId.eq(book_id))
+        .filter(tracks::COLUMN.book_id.eq(book_id))
         .all(conn)
         .await?;
     let track_info: HashMap<i32, (i32, bool)> = tracks
@@ -435,14 +434,14 @@ pub async fn chapter_orders(
                 track.id,
                 (
                     track.ord,
-                    track.kind == "main" || track.canon_mode == "canon",
+                    track.kind == TrackKind::Main || track.canon_mode == CanonMode::Canon,
                 ),
             )
         })
         .collect();
     let mut orders = HashMap::new();
     let rows = chapters::Entity::find()
-        .filter(chapters::Column::BookId.eq(book_id))
+        .filter(chapters::COLUMN.book_id.eq(book_id))
         .all(conn)
         .await?;
     for chapter in rows {
@@ -465,16 +464,16 @@ pub async fn chapter_orders(
 
 pub fn entity_snapshot(row: &entities::Model) -> CanonResult<Snapshot> {
     Ok(Snapshot::Entity {
-        kind: super::enum_of::<EntityKind>("entities.kind", &row.kind)?,
+        kind: row.kind,
         name: row.name.clone(),
         aliases: aliases_of(row)?,
         summary: row.summary.clone(),
         description: row.description.clone(),
         state: row.state.clone(),
-        attributes: parse_json("entities.attributes", &row.attributes)?,
+        attributes: row.attributes.clone().into_inner(),
         importance: row.importance,
-        status: super::enum_of::<EntityStatus>("entities.status", &row.status)?,
-        is_protagonist: row.is_protagonist != 0,
+        status: row.status,
+        is_protagonist: row.is_protagonist,
         track_id: row.track_id,
     })
 }
@@ -486,7 +485,7 @@ pub fn relation_snapshot(row: &relations::Model) -> CanonResult<Snapshot> {
         kind: row.kind.clone(),
         inverse_kind: row.inverse_kind.clone(),
         description: row.description.clone(),
-        status: super::enum_of::<RelationStatus>("relations.status", &row.status)?,
+        status: row.status,
         since_chapter_id: row.since_chapter_id,
         until_chapter_id: row.until_chapter_id,
         track_id: row.track_id,
@@ -514,11 +513,11 @@ pub fn note_snapshot(
     entity_ids: Vec<i32>,
 ) -> CanonResult<Snapshot> {
     Ok(Snapshot::Note {
-        kind: super::enum_of::<NoteKind>("memory_notes.kind", &row.kind)?,
+        kind: row.kind,
         content: row.content.clone(),
         chapter_id: row.chapter_id,
         importance: row.importance,
-        status: super::enum_of::<NoteStatus>("memory_notes.status", &row.status)?,
+        status: row.status,
         entity_ids,
         track_id: row.track_id,
     })
@@ -532,7 +531,7 @@ pub fn foreshadowing_snapshot(
         title: row.title.clone(),
         description: row.description.clone(),
         planned_payoff: row.planned_payoff.clone(),
-        status: super::enum_of::<ForeshadowingStatus>("foreshadowing.status", &row.status)?,
+        status: row.status,
         planted_chapter_id: row.planted_chapter_id,
         resolved_chapter_id: row.resolved_chapter_id,
         resolution: row.resolution.clone(),
@@ -551,7 +550,7 @@ pub fn appearance_set_snapshot(rows: &[appearances::Model]) -> Snapshot {
             .into_iter()
             .map(|row| AppearanceSnapshot {
                 entity_id: row.entity_id,
-                role: AppearanceRole::from_str_opt(&row.role).unwrap_or(AppearanceRole::Mentioned),
+                role: row.role,
                 note: row.note.clone(),
             })
             .collect(),
@@ -559,7 +558,7 @@ pub fn appearance_set_snapshot(rows: &[appearances::Model]) -> Snapshot {
 }
 
 pub fn aliases_of(row: &entities::Model) -> CanonResult<Vec<String>> {
-    parse_json("entities.aliases", &row.aliases)
+    Ok(row.aliases.clone().into_inner())
 }
 
 /// The normalized alias list: trimmed, non-empty, unique, in insertion order.
@@ -616,6 +615,7 @@ pub async fn linked_entity_ids(
         table.owner_column()
     );
     let rows = conn
+        // Raw: the link table name is chosen at runtime from the closed `LinkTable` set.
         .query_all_raw(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             sql,
@@ -638,6 +638,7 @@ pub async fn set_linked_entities(
 ) -> CanonResult<()> {
     let owner_column = table.owner_column();
     let delete = format!("DELETE FROM {} WHERE {owner_column} = ?", table.table());
+    // Raw: the link table name is chosen at runtime from the closed `LinkTable` set.
     tx.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Sqlite,
         delete,
@@ -653,6 +654,7 @@ pub async fn set_linked_entities(
             "INSERT OR IGNORE INTO {}({owner_column}, entity_id) VALUES (?, ?)",
             table.table()
         );
+        // Raw: the link table name is chosen at runtime from the closed `LinkTable` set.
         tx.execute_raw(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             insert,
@@ -672,7 +674,7 @@ pub async fn load_visible_entity(
     entity_id: i32,
 ) -> CanonResult<entities::Model> {
     let row = entities::Entity::find_by_id(entity_id)
-        .filter(entities::Column::BookId.eq(visibility.book_id))
+        .filter(entities::COLUMN.book_id.eq(visibility.book_id))
         .one(conn)
         .await?
         .ok_or_else(|| CanonError::not_found(format!("entity #{entity_id}")))?;
@@ -760,6 +762,7 @@ pub async fn fresh_id(
 ) -> CanonResult<i32> {
     // `table` is a compile-time constant at every call site, never user input.
     let row = conn
+        // Raw: the link table name is chosen at runtime from the closed `LinkTable` set.
         .query_one_raw(sea_orm::Statement::from_string(
             sea_orm::DatabaseBackend::Sqlite,
             format!("SELECT max(id) AS value FROM {table}"),
@@ -770,8 +773,12 @@ pub async fn fresh_id(
         None => 0,
     };
     let logged = crate::db::entities::change_log::Entity::find()
-        .filter(crate::db::entities::change_log::Column::TargetType.eq(target_type.as_str()))
-        .order_by_desc(crate::db::entities::change_log::Column::TargetId)
+        .filter(
+            crate::db::entities::change_log::COLUMN
+                .target_type
+                .eq(target_type.as_str()),
+        )
+        .order_by_desc(crate::db::entities::change_log::COLUMN.target_id)
         .one(conn)
         .await?
         .map(|row| row.target_id)
@@ -841,29 +848,31 @@ pub fn summary_snapshot(summary: &str) -> Snapshot {
     }
 }
 
+/// The subset of `ids` that still exist, in input order. One `is_in` query replaces a per-id
+/// existence loop (§2.7).
+pub(crate) async fn existing_entity_ids(
+    tx: &impl sea_orm::ConnectionTrait,
+    ids: &[i32],
+) -> CanonResult<Vec<i32>> {
+    use sea_orm::{EntityTrait, QueryFilter};
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let existing: std::collections::HashSet<i32> = crate::db::entities::entities::Entity::find()
+        .filter(crate::db::entities::entities::COLUMN.id.is_in(ids.to_vec()))
+        .all(tx)
+        .await?
+        .into_iter()
+        .map(|row| row.id)
+        .collect();
+    Ok(ids
+        .iter()
+        .copied()
+        .filter(|id| existing.contains(id))
+        .collect())
+}
+
 // ───────────────────────────── shared conversions ─────────────────────────────
-
-/// Reads a plain-TEXT enum column into its Rust enum (the canon services' spelling of
-/// [`crate::services::enum_of`]).
-pub(crate) fn enum_of<T: std::str::FromStr<Err = String>>(
-    column: &str,
-    raw: &str,
-) -> CanonResult<T> {
-    crate::services::enum_of(column, raw).map_err(CanonError::from)
-}
-
-/// Deserializes a typed JSON column.
-pub(crate) fn parse_json<T: for<'de> serde::Deserialize<'de>>(
-    column: &str,
-    raw: &str,
-) -> CanonResult<T> {
-    crate::services::parse_json(column, raw).map_err(CanonError::from)
-}
-
-/// Serializes a typed JSON column.
-pub(crate) fn json<T: serde::Serialize>(value: &T) -> CanonResult<String> {
-    crate::services::json(value).map_err(CanonError::from)
-}
 
 /// A `conflict.exists` carrying the existing row's id (spec/10 §4).
 pub(crate) fn conflict(message: impl Into<String>, id: i32) -> CanonError {
@@ -990,7 +999,9 @@ fn decode_error(error: sea_orm::DbErr) -> CanonError {
 /// The visibility of a track (main story and canon-mode side tracks see shared canon only).
 pub fn visibility_of_track(book_id: i32, track: Option<&tracks::Model>) -> Visibility {
     match track {
-        Some(track) if track.canon_mode == "isolated" => Visibility::isolated(book_id, track.id),
+        Some(track) if track.canon_mode == CanonMode::Isolated => {
+            Visibility::isolated(book_id, track.id)
+        }
         _ => Visibility::shared(book_id),
     }
 }
@@ -1001,9 +1012,9 @@ pub async fn visible_entities(
     visibility: Visibility,
 ) -> CanonResult<Vec<entities::Model>> {
     Ok(entities::Entity::find()
-        .filter(entities::Column::BookId.eq(visibility.book_id))
+        .filter(entities::COLUMN.book_id.eq(visibility.book_id))
         .filter(visibility.visible_condition(entities::Column::TrackId))
-        .order_by_asc(entities::Column::Id)
+        .order_by_asc(entities::COLUMN.id)
         .all(conn)
         .await?)
 }

@@ -12,13 +12,15 @@
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
-use sea_orm::{ConnectionTrait, DatabaseBackend, EntityTrait, Statement};
+use sea_orm::raw_sql;
+use sea_orm::{ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter, Statement};
 use tokio::sync::Notify;
 
 pub use crate::api::health::IndexState;
 use crate::api::health::IndexStatusDto;
 use crate::db::Db;
-use crate::db::entities::index_meta;
+use crate::db::entities::{index_meta, knowledge_chunks, search_docs};
+use crate::db::json::SearchDocKind;
 use crate::error::AppError;
 use crate::events::{EventBus, ServerEvent};
 use nekowriter_embed::{EmbedError, EmbedKind, Embedder};
@@ -103,6 +105,7 @@ pub async fn ensure_schema(
          UPDATE search_docs SET embed_state = 'pending' WHERE embed_state <> 'pending';
          UPDATE knowledge_chunks SET embed_state = 'pending' WHERE embed_state <> 'pending';"
     );
+    // Raw: sqlite-vec/FTS5 virtual tables, KNN/blob syntax and sqlite_master probes have no typed API.
     tx.execute_unprepared(&ddl).await?;
     upsert_meta(tx, META_MODEL, model_key).await?;
     upsert_meta(tx, META_DIM, &dimension.to_string()).await?;
@@ -116,10 +119,11 @@ pub async fn ensure_schema(
 
 async fn vec_tables_exist(conn: &impl ConnectionTrait) -> Result<bool, AppError> {
     let rows = conn
-        .query_all_raw(Statement::from_string(
-            DatabaseBackend::Sqlite,
+        // Raw: sqlite-vec/FTS5 virtual tables, KNN/blob syntax and sqlite_master probes have no typed API.
+        .query_all_raw(raw_sql!(
+            Sqlite,
             "SELECT name FROM sqlite_master WHERE type = 'table' \
-             AND name IN ('vec_book', 'vec_knowledge')",
+             AND name IN ('vec_book', 'vec_knowledge')"
         ))
         .await?;
     Ok(rows.len() == 2)
@@ -137,11 +141,12 @@ pub async fn meta_value(
 }
 
 async fn upsert_meta(conn: &impl ConnectionTrait, key: &str, value: &str) -> Result<(), AppError> {
-    conn.execute_unprepared(&format!(
-        "INSERT INTO index_meta(key, value) VALUES ('{}', '{}') \
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        key.replace('\'', "''"),
-        value.replace('\'', "''")
+    // Raw: index_meta has no JsonText/typed entity column beyond the key/value pair; upsert is
+    // expressed with the 2.0 raw_sql macro and named parameters.
+    conn.execute_raw(raw_sql!(
+        Sqlite,
+        "INSERT INTO index_meta(key, value) VALUES ({key}, {value}) \
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value"
     ))
     .await?;
     Ok(())
@@ -176,6 +181,7 @@ pub async fn knn_book(
             corpus.into(),
         ],
     );
+    // Raw: sqlite-vec/FTS5 virtual tables, KNN/blob syntax and sqlite_master probes have no typed API.
     let rows = conn.query_all_raw(statement).await?;
     let mut hits = Vec::with_capacity(rows.len());
     for row in rows {
@@ -205,6 +211,7 @@ pub async fn knn_knowledge(
             (scope_id as i64).into(),
         ],
     );
+    // Raw: sqlite-vec/FTS5 virtual tables, KNN/blob syntax and sqlite_master probes have no typed API.
     let rows = conn.query_all_raw(statement).await?;
     let mut hits = Vec::with_capacity(rows.len());
     for row in rows {
@@ -231,28 +238,24 @@ pub async fn store_book_vector(
     if meta_value(conn, META_MODEL).await?.as_deref() != Some(model_key) {
         return Ok(false);
     }
-    let Some(row) = conn
-        .query_one_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            "SELECT content_hash, kind FROM search_docs WHERE id = ?",
-            vec![(doc_id as i64).into()],
-        ))
-        .await?
-    else {
+    let Some(row) = search_docs::Entity::find_by_id(doc_id).one(conn).await? else {
         return Ok(false);
     };
-    let hash: String = row.try_get("", "content_hash")?;
-    if hash != expected_hash {
+    if row.content_hash != expected_hash {
         return Ok(false);
     }
-    let kind: String = row.try_get("", "kind")?;
-    let corpus = if kind == "passage" {
+    let corpus = if row.kind == SearchDocKind::Passage {
         "passage"
     } else {
         "canon"
     };
-    conn.execute_unprepared(&format!("DELETE FROM vec_book WHERE doc_id = {doc_id}"))
-        .await?;
+    // Raw: sqlite-vec virtual table; raw_sql binds the integer id.
+    conn.execute_raw(raw_sql!(
+        Sqlite,
+        "DELETE FROM vec_book WHERE doc_id = {doc_id}"
+    ))
+    .await?;
+    // Raw: sqlite-vec/FTS5 virtual tables, KNN/blob syntax and sqlite_master probes have no typed API.
     conn.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Sqlite,
         "INSERT INTO vec_book(doc_id, embedding, book_id, corpus) \
@@ -264,10 +267,14 @@ pub async fn store_book_vector(
         ],
     ))
     .await?;
-    conn.execute_unprepared(&format!(
-        "UPDATE search_docs SET embed_state = 'done' WHERE id = {doc_id}"
-    ))
-    .await?;
+    search_docs::Entity::update_many()
+        .set(search_docs::ActiveModel {
+            embed_state: sea_orm::Set(crate::db::json::EmbedState::Done),
+            ..Default::default()
+        })
+        .filter(search_docs::COLUMN.id.eq(doc_id))
+        .exec(conn)
+        .await?;
     Ok(true)
 }
 
@@ -282,24 +289,22 @@ pub async fn store_knowledge_vector(
     if meta_value(conn, META_MODEL).await?.as_deref() != Some(model_key) {
         return Ok(false);
     }
-    let Some(row) = conn
-        .query_one_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            "SELECT content_hash FROM knowledge_chunks WHERE id = ?",
-            vec![(chunk_id as i64).into()],
-        ))
+    let Some(row) = knowledge_chunks::Entity::find_by_id(chunk_id)
+        .one(conn)
         .await?
     else {
         return Ok(false);
     };
-    let hash: String = row.try_get("", "content_hash")?;
-    if hash != expected_hash {
+    if row.content_hash != expected_hash {
         return Ok(false);
     }
-    conn.execute_unprepared(&format!(
+    // Raw: sqlite-vec virtual table; raw_sql binds the integer id.
+    conn.execute_raw(raw_sql!(
+        Sqlite,
         "DELETE FROM vec_knowledge WHERE chunk_id = {chunk_id}"
     ))
     .await?;
+    // Raw: sqlite-vec/FTS5 virtual tables, KNN/blob syntax and sqlite_master probes have no typed API.
     conn.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Sqlite,
         "INSERT INTO vec_knowledge(chunk_id, embedding, scope_id) \
@@ -310,10 +315,14 @@ pub async fn store_knowledge_vector(
         ],
     ))
     .await?;
-    conn.execute_unprepared(&format!(
-        "UPDATE knowledge_chunks SET embed_state = 'done' WHERE id = {chunk_id}"
-    ))
-    .await?;
+    knowledge_chunks::Entity::update_many()
+        .set(knowledge_chunks::ActiveModel {
+            embed_state: sea_orm::Set(crate::db::json::EmbedState::Done),
+            ..Default::default()
+        })
+        .filter(knowledge_chunks::COLUMN.id.eq(chunk_id))
+        .exec(conn)
+        .await?;
     Ok(true)
 }
 
@@ -587,15 +596,16 @@ impl SearchState {
 /// `(pending, failed, done)` across both index tables (spec/10 §3 `index.status`).
 pub async fn index_counts(conn: &impl ConnectionTrait) -> Result<(i64, i64, i64), AppError> {
     let row = conn
-        .query_one_raw(Statement::from_string(
-            DatabaseBackend::Sqlite,
+        // Raw: sqlite-vec/FTS5 virtual tables, KNN/blob syntax and sqlite_master probes have no typed API.
+        .query_one_raw(raw_sql!(
+            Sqlite,
             "SELECT \
                (SELECT count(*) FROM search_docs WHERE embed_state = 'pending') + \
                (SELECT count(*) FROM knowledge_chunks WHERE embed_state = 'pending') AS pending, \
                (SELECT count(*) FROM search_docs WHERE embed_state = 'failed') + \
                (SELECT count(*) FROM knowledge_chunks WHERE embed_state = 'failed') AS failed, \
                (SELECT count(*) FROM search_docs WHERE embed_state = 'done') + \
-               (SELECT count(*) FROM knowledge_chunks WHERE embed_state = 'done') AS done",
+               (SELECT count(*) FROM knowledge_chunks WHERE embed_state = 'done') AS done"
         ))
         .await?
         .ok_or_else(|| AppError::internal("index counts returned no row"))?;

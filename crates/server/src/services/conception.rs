@@ -17,7 +17,8 @@ use crate::db::entities::{
     agent_sessions, book_scopes, books, knowledge_scopes, research_tasks, setting_docs, tracks,
 };
 use crate::db::json::{
-    AgentRole, BookStatus, ConceptionState, SessionKind, SessionStatus, SettingDocKind,
+    AgentRole, BookStatus, ConceptionState, JsonText, ResearchTaskStatus, SessionKind,
+    SessionStatus, SettingDocKind, TrackKind,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::{BookOp, ServerEvent};
@@ -69,7 +70,7 @@ pub async fn start(state: &AppState, book_id: i32) -> Result<(i32, Vec<String>),
                     .one(tx)
                     .await?
                     .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
-                if book.status != BookStatus::Conceiving.as_str() {
+                if book.status != BookStatus::Conceiving {
                     return Err(conflict(
                         ErrorCode::BookInvalidState,
                         "only a conceiving book can start conception",
@@ -130,13 +131,11 @@ async fn start_session(state: &AppState, book_id: i32) -> Result<(i32, Vec<Strin
                 .one(tx)
                 .await?
                 .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
-            let mut conception: ConceptionState =
-                crate::db::json::from_json_or_default(&book.conception);
+            let mut conception: ConceptionState = book.conception.clone().into_inner();
             conception.session_id = Some(session_id);
             books::ActiveModel {
                 id: Set(book_id),
-                conception: Set(crate::db::json::to_json(&conception)
-                    .map_err(|err| AppError::internal(err.to_string()))?),
+                conception: Set(JsonText(conception)),
                 updated_at: Set(now()),
                 ..Default::default()
             }
@@ -234,10 +233,10 @@ async fn running_conception_session(
     book_id: i32,
 ) -> Result<Option<i32>, AppError> {
     let row = agent_sessions::Entity::find()
-        .filter(agent_sessions::Column::BookId.eq(book_id))
-        .filter(agent_sessions::Column::Kind.eq(SessionKind::Conception.as_str()))
-        .filter(agent_sessions::Column::Status.eq(SessionStatus::Running.as_str()))
-        .order_by_desc(agent_sessions::Column::Id)
+        .filter(agent_sessions::COLUMN.book_id.eq(book_id))
+        .filter(agent_sessions::COLUMN.kind.eq(SessionKind::Conception))
+        .filter(agent_sessions::COLUMN.status.eq(SessionStatus::Running))
+        .order_by_desc(agent_sessions::COLUMN.id)
         .one(conn)
         .await?;
     Ok(row.map(|row| row.id))
@@ -252,7 +251,7 @@ async fn finalize_inner(
         .one(tx)
         .await?
         .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
-    if book.status != BookStatus::Conceiving.as_str() {
+    if book.status != BookStatus::Conceiving {
         return Err(conflict(
             ErrorCode::BookInvalidState,
             "only a conceiving book can be finalized",
@@ -264,16 +263,20 @@ async fn finalize_inner(
     // `conception.incomplete` with what is missing (spec/08 §5 step 1). Unapproved items are
     // allowed: the UI confirms.
     let docs = setting_docs::Entity::find()
-        .filter(setting_docs::Column::BookId.eq(book_id))
+        .filter(setting_docs::COLUMN.book_id.eq(book_id))
         .all(tx)
         .await?;
     let empty_doc = |kind: SettingDocKind| {
         docs.iter()
-            .find(|doc| doc.kind == kind.as_str())
+            .find(|doc| doc.kind == kind)
             .is_none_or(|doc| doc.content.trim().is_empty())
     };
     let characters = crate::db::entities::character_designs::Entity::find()
-        .filter(crate::db::entities::character_designs::Column::BookId.eq(book_id))
+        .filter(
+            crate::db::entities::character_designs::COLUMN
+                .book_id
+                .eq(book_id),
+        )
         .one(tx)
         .await?;
     let mut missing = Vec::new();
@@ -317,14 +320,13 @@ async fn finalize_inner(
     }
 
     // The book activates and records the finalization (step 3).
-    let mut conception: ConceptionState = crate::db::json::from_json_or_default(&book.conception);
+    let mut conception: ConceptionState = book.conception.clone().into_inner();
     conception.finalized_at = Some(now());
     conception.session_id = None;
     let updated = books::ActiveModel {
         id: Set(book_id),
-        status: Set(BookStatus::Active.as_str().to_owned()),
-        conception: Set(crate::db::json::to_json(&conception)
-            .map_err(|err| AppError::internal(err.to_string()))?),
+        status: Set(BookStatus::Active),
+        conception: Set(JsonText(conception)),
         updated_at: Set(now()),
         ..Default::default()
     }
@@ -339,9 +341,9 @@ async fn finalize_inner(
     // (step 4). A new scope's description is its topics joined with ` / ` — model-written text
     // and a language-neutral separator, so no wording is generated in code (D-054).
     let drafts = research_tasks::Entity::find()
-        .filter(research_tasks::Column::BookId.eq(book_id))
-        .filter(research_tasks::Column::Status.eq("draft"))
-        .order_by_asc(research_tasks::Column::Id)
+        .filter(research_tasks::COLUMN.book_id.eq(book_id))
+        .filter(research_tasks::COLUMN.status.eq(ResearchTaskStatus::Draft))
+        .order_by_asc(research_tasks::COLUMN.id)
         .all(tx)
         .await?;
     let mut scope_by_name = std::collections::BTreeMap::new();
@@ -356,7 +358,7 @@ async fn finalize_inner(
         };
         let ready = research_tasks::ActiveModel {
             id: Set(task.id),
-            status: Set("ready".to_owned()),
+            status: Set(ResearchTaskStatus::Ready),
             scope_id: Set(Some(scope_id)),
             updated_at: Set(now()),
             ..Default::default()
@@ -382,7 +384,7 @@ async fn find_or_create_scope(
     drafts: &[research_tasks::Model],
 ) -> Result<i32, AppError> {
     if let Some(row) = knowledge_scopes::Entity::find()
-        .filter(knowledge_scopes::Column::Name.eq(name))
+        .filter(knowledge_scopes::COLUMN.name.eq(name))
         .one(tx)
         .await?
     {
@@ -416,8 +418,8 @@ async fn attach_scope(
     scope_id: i32,
 ) -> Result<(), AppError> {
     let exists = book_scopes::Entity::find()
-        .filter(book_scopes::Column::BookId.eq(book_id))
-        .filter(book_scopes::Column::ScopeId.eq(scope_id))
+        .filter(book_scopes::COLUMN.book_id.eq(book_id))
+        .filter(book_scopes::COLUMN.scope_id.eq(scope_id))
         .one(tx)
         .await?;
     if exists.is_some() {
@@ -443,7 +445,7 @@ pub async fn seed(state: &AppState, book_id: i32) -> Result<i32, AppError> {
                     .one(tx)
                     .await?
                     .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
-                if book.status != BookStatus::Active.as_str() {
+                if book.status != BookStatus::Active {
                     return Err(conflict(
                         ErrorCode::BookInvalidState,
                         "only an active book can seed canon",
@@ -500,8 +502,8 @@ async fn seed_session(state: &AppState, book_id: i32) -> Result<(i32, Vec<String
 /// True when a book still has a main track (used by the API layer's guards).
 pub async fn has_main_track(conn: &impl ConnectionTrait, book_id: i32) -> Result<bool, AppError> {
     Ok(tracks::Entity::find()
-        .filter(tracks::Column::BookId.eq(book_id))
-        .filter(tracks::Column::Kind.eq("main"))
+        .filter(tracks::COLUMN.book_id.eq(book_id))
+        .filter(tracks::COLUMN.kind.eq(TrackKind::Main))
         .one(conn)
         .await?
         .is_some())

@@ -18,17 +18,22 @@ use crate::db::entities::{
     setting_docs, setting_proposals, tracks,
 };
 use crate::db::json::{
-    AnchorKind, BookSettings, BookStatus, CanonMode, CanonStatus, ChapterStatus, ConceptionState,
-    ResearchTaskStatus, RoleModels, SessionKind, SessionStatus, TrackKind, Usage,
+    AgentRole, AnchorKind, BookSettings, BookStatus, CanonMode, CanonStatus, ChapterStatus,
+    ConceptionState, ProposalStatus, ResearchTaskStatus, RoleModels, SessionKind, SessionStatus,
+    SettingDocKind, TrackKind, Usage,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::{BookOp, ServerEvent};
 
 use super::app_settings;
-use super::{conflict, json, now, parse_json};
+use super::{conflict, now};
 
 /// The three setting documents every book has (spec/02 §5 invariant 2).
-pub const SETTING_DOC_KINDS: [&str; 3] = ["outline", "world", "protagonist"];
+pub const SETTING_DOC_KINDS: [SettingDocKind; 3] = [
+    SettingDocKind::Outline,
+    SettingDocKind::World,
+    SettingDocKind::Protagonist,
+];
 
 /// `POST /api/books` (spec/08 §5). `start_conception` makes the book `conceiving` and starts
 /// its conception session (when a conception model is configured; the response's `session_id`
@@ -83,10 +88,10 @@ pub async fn create_inner(
         idea: Set(input.idea.trim().to_owned()),
         genre: Set(input.genre.trim().to_owned()),
         writing_language: Set(language.to_owned()),
-        status: Set(status.as_str().to_owned()),
-        settings: Set(json(&settings)?),
-        model_overrides: Set(json(&RoleModels::default())?),
-        conception: Set(json(&ConceptionState::default())?),
+        status: Set(status),
+        settings: Set(crate::services::json_text(settings.clone())),
+        model_overrides: Set(crate::services::json_text(RoleModels::default())),
+        conception: Set(crate::services::json_text(ConceptionState::default())),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),
         ..Default::default()
@@ -96,11 +101,11 @@ pub async fn create_inner(
     // Invariant 1: exactly one main track, created with the book (spec/02 §5).
     let main_track = tracks::ActiveModel {
         book_id: Set(book.id),
-        kind: Set(TrackKind::Main.as_str().to_owned()),
+        kind: Set(TrackKind::Main),
         title: Set(String::new()),
         synopsis: Set(String::new()),
-        canon_mode: Set(CanonMode::Canon.as_str().to_owned()),
-        anchor_kind: Set(AnchorKind::None.as_str().to_owned()),
+        canon_mode: Set(CanonMode::Canon),
+        anchor_kind: Set(AnchorKind::None),
         anchor_chapter_id: Set(None),
         focus_entity_id: Set(None),
         ord: Set(0),
@@ -149,9 +154,9 @@ pub async fn list(
     conn: &impl ConnectionTrait,
     status: Option<BookStatus>,
 ) -> Result<Vec<BookSummaryDto>, AppError> {
-    let mut query = books::Entity::find().order_by_desc(books::Column::UpdatedAt);
+    let mut query = books::Entity::find().order_by_desc(books::COLUMN.updated_at);
     if let Some(status) = status {
-        query = query.filter(books::Column::Status.eq(status.as_str()));
+        query = query.filter(books::COLUMN.status.eq(status.as_str()));
     }
     let rows = query.all(conn).await?;
     let mut summaries = Vec::with_capacity(rows.len());
@@ -194,7 +199,7 @@ pub async fn update_inner(
         .one(tx)
         .await?
         .ok_or_else(|| AppError::not_found(format!("book #{book_id}")))?;
-    let current_status = super::enum_of::<BookStatus>("books.status", &existing.status)?;
+    let current_status = existing.status;
 
     let mut active = books::ActiveModel {
         id: Set(book_id),
@@ -218,10 +223,10 @@ pub async fn update_inner(
     }
     if let Some(settings) = &patch.settings {
         validate_settings(settings)?;
-        active.settings = Set(json(settings)?);
+        active.settings = Set(crate::services::json_text(settings.clone()));
     }
     if let Some(overrides) = &patch.model_overrides {
-        active.model_overrides = Set(json(overrides)?);
+        active.model_overrides = Set(crate::services::json_text(overrides.clone()));
     }
     if let Some(status) = patch.status {
         // Archiving only hides the book; unarchiving sets it back to active (spec/08 §1.3).
@@ -251,7 +256,7 @@ pub async fn update_inner(
                 ));
             }
         }
-        active.status = Set(status.as_str().to_owned());
+        active.status = Set(status);
     }
     active.update(tx).await?;
 
@@ -348,8 +353,8 @@ fn pointer(chapter: &chapters::Model) -> ChapterPointerDto {
         id: chapter.id,
         number: chapter.ord,
         title: chapter.title.clone(),
-        status: ChapterStatus::from_str_opt(&chapter.status).unwrap_or(ChapterStatus::Planned),
-        canon_status: CanonStatus::from_str_opt(&chapter.canon_status).unwrap_or(CanonStatus::None),
+        status: chapter.status,
+        canon_status: chapter.canon_status,
     }
 }
 
@@ -359,12 +364,12 @@ async fn ordered_chapters(
     book_id: i32,
 ) -> Result<Vec<(tracks::Model, chapters::Model)>, AppError> {
     let track_rows = tracks::Entity::find()
-        .filter(tracks::Column::BookId.eq(book_id))
-        .order_by_asc(tracks::Column::Ord)
+        .filter(tracks::COLUMN.book_id.eq(book_id))
+        .order_by_asc(tracks::COLUMN.ord)
         .all(conn)
         .await?;
     let mut chapter_rows = chapters::Entity::find()
-        .filter(chapters::Column::BookId.eq(book_id))
+        .filter(chapters::COLUMN.book_id.eq(book_id))
         .all(conn)
         .await?;
     chapter_rows.sort_by_key(|chapter| (chapter.track_id, chapter.ord, chapter.id));
@@ -387,9 +392,13 @@ pub async fn attention(
     let mut items = Vec::new();
 
     let sessions = agent_sessions::Entity::find()
-        .filter(agent_sessions::Column::BookId.eq(book_id))
-        .filter(agent_sessions::Column::Status.is_in(ATTENTION_SESSION_STATUSES))
-        .order_by_asc(agent_sessions::Column::Id)
+        .filter(agent_sessions::COLUMN.book_id.eq(book_id))
+        .filter(
+            agent_sessions::COLUMN
+                .status
+                .is_in(ATTENTION_SESSION_STATUSES),
+        )
+        .order_by_asc(agent_sessions::COLUMN.id)
         .all(conn)
         .await?;
     for session in sessions {
@@ -401,15 +410,15 @@ pub async fn attention(
             kind: AttentionKind::OpenSession,
             count: 1,
             session_id: Some(session.id),
-            session_kind: SessionKind::from_str_opt(&session.kind),
-            session_status: SessionStatus::from_str_opt(&session.status),
+            session_kind: Some(session.kind),
+            session_status: Some(session.status),
             chapter,
             track_id: session.track_id,
         });
     }
 
     for (track, chapter) in &ordered {
-        if chapter.status == ChapterStatus::InReview.as_str() {
+        if chapter.status == ChapterStatus::InReview {
             items.push(AttentionItemDto {
                 kind: AttentionKind::ChapterInReview,
                 count: 1,
@@ -420,8 +429,8 @@ pub async fn attention(
                 track_id: Some(track.id),
             });
         }
-        let canon = CanonStatus::from_str_opt(&chapter.canon_status).unwrap_or(CanonStatus::None);
-        if chapter.status == ChapterStatus::Official.as_str()
+        let canon = chapter.canon_status;
+        if chapter.status == ChapterStatus::Official
             && matches!(
                 canon,
                 CanonStatus::Pending | CanonStatus::Failed | CanonStatus::Stale
@@ -440,8 +449,8 @@ pub async fn attention(
     }
 
     let proposals = setting_proposals::Entity::find()
-        .filter(setting_proposals::Column::BookId.eq(book_id))
-        .filter(setting_proposals::Column::Status.eq("pending"))
+        .filter(setting_proposals::COLUMN.book_id.eq(book_id))
+        .filter(setting_proposals::COLUMN.status.eq(ProposalStatus::Pending))
         .count(conn)
         .await?;
     if proposals > 0 {
@@ -457,8 +466,8 @@ pub async fn attention(
     }
 
     let research = research_tasks::Entity::find()
-        .filter(research_tasks::Column::BookId.eq(book_id))
-        .filter(research_tasks::Column::Status.eq(ResearchTaskStatus::Ready.as_str()))
+        .filter(research_tasks::COLUMN.book_id.eq(book_id))
+        .filter(research_tasks::COLUMN.status.eq(ResearchTaskStatus::Ready))
         .count(conn)
         .await?;
     if research > 0 {
@@ -490,26 +499,26 @@ pub async fn next_action(
         research_task_id: None,
     };
     // 1. The book is still being conceived.
-    if book.status == BookStatus::Conceiving.as_str() {
+    if book.status == BookStatus::Conceiving {
         return Ok(Some(action(NextActionKind::ContinueConception)));
     }
     let ordered = ordered_chapters(conn, book.id).await?;
 
     // 2. The canon was never seeded and the materials to seed it exist.
     let seeded = agent_sessions::Entity::find()
-        .filter(agent_sessions::Column::BookId.eq(book.id))
-        .filter(agent_sessions::Column::Kind.eq(SessionKind::CanonSeed.as_str()))
-        .filter(agent_sessions::Column::Status.eq(SessionStatus::Completed.as_str()))
+        .filter(agent_sessions::COLUMN.book_id.eq(book.id))
+        .filter(agent_sessions::COLUMN.kind.eq(SessionKind::CanonSeed))
+        .filter(agent_sessions::COLUMN.status.eq(SessionStatus::Completed))
         .count(conn)
         .await?
         > 0;
     if !seeded {
         let designs = character_designs::Entity::find()
-            .filter(character_designs::Column::BookId.eq(book.id))
+            .filter(character_designs::COLUMN.book_id.eq(book.id))
             .count(conn)
             .await?;
         let entities = canon_entities::Entity::find()
-            .filter(canon_entities::Column::BookId.eq(book.id))
+            .filter(canon_entities::COLUMN.book_id.eq(book.id))
             .count(conn)
             .await?;
         if designs > 0 && entities == 0 {
@@ -523,8 +532,8 @@ pub async fn next_action(
     //    confirmed by the author yet and cannot be run (spec/07 §8), so counting it would make the
     //    step a dead end. The count travels with the action so the card can name it.
     let research = research_tasks::Entity::find()
-        .filter(research_tasks::Column::BookId.eq(book.id))
-        .filter(research_tasks::Column::Status.eq(ResearchTaskStatus::Ready.as_str()))
+        .filter(research_tasks::COLUMN.book_id.eq(book.id))
+        .filter(research_tasks::COLUMN.status.eq(ResearchTaskStatus::Ready))
         .all(conn)
         .await?;
     if let Some(first) = research.first() {
@@ -547,7 +556,7 @@ pub async fn next_action(
     // 4. A chapter waits for the author's review.
     if let Some((track, chapter)) = ordered
         .iter()
-        .find(|(_, chapter)| chapter.status == ChapterStatus::InReview.as_str())
+        .find(|(_, chapter)| chapter.status == ChapterStatus::InReview)
     {
         return Ok(Some(NextActionDto {
             kind: NextActionKind::ReviewChapter,
@@ -562,29 +571,39 @@ pub async fn next_action(
     // 5. Work in progress: the first chapter with an open outline session or one that is being
     //    written or revised (spec/08 §7 rule 5, D-146). An outline session is work in progress and
     //    is offered as `write_outline`, not as `continue_chapter`.
+    let chapter_ids: Vec<i32> = ordered.iter().map(|(_, chapter)| chapter.id).collect();
+    let open_sessions = agent_sessions::Entity::find()
+        .filter(agent_sessions::COLUMN.chapter_id.is_in(chapter_ids))
+        .filter(
+            agent_sessions::COLUMN
+                .role
+                .is_in([AgentRole::Planner, AgentRole::Writer]),
+        )
+        .filter(agent_sessions::COLUMN.status.is_not_in([
+            SessionStatus::Completed,
+            SessionStatus::Superseded,
+            SessionStatus::Abandoned,
+        ]))
+        .order_by_desc(agent_sessions::COLUMN.id)
+        .all(conn)
+        .await?;
+    let mut open_by_chapter: std::collections::HashMap<i32, agent_sessions::Model> =
+        std::collections::HashMap::new();
+    for session in open_sessions {
+        if let Some(chapter_id) = session.chapter_id {
+            open_by_chapter.entry(chapter_id).or_insert(session);
+        }
+    }
     for (track, chapter) in &ordered {
-        let open = agent_sessions::Entity::find()
-            .filter(agent_sessions::Column::ChapterId.eq(chapter.id))
-            .filter(agent_sessions::Column::Role.is_in(["planner", "writer"]))
-            .filter(agent_sessions::Column::Status.is_not_in([
-                SessionStatus::Completed.as_str(),
-                SessionStatus::Superseded.as_str(),
-                SessionStatus::Abandoned.as_str(),
-            ]))
-            .order_by_desc(agent_sessions::Column::Id)
-            .one(conn)
-            .await?;
+        let open = open_by_chapter.get(&chapter.id);
         let writing = matches!(
-            ChapterStatus::from_str_opt(&chapter.status),
-            Some(ChapterStatus::Drafting) | Some(ChapterStatus::Revising)
+            chapter.status,
+            ChapterStatus::Drafting | ChapterStatus::Revising
         );
         if open.is_none() && !writing {
             continue;
         }
-        if open
-            .as_ref()
-            .is_some_and(|session| session.kind == SessionKind::ChapterOutline.as_str())
-        {
+        if open.is_some_and(|session| session.kind == SessionKind::ChapterOutline) {
             return Ok(Some(NextActionDto {
                 kind: NextActionKind::WriteOutline,
                 chapter: Some(pointer(chapter)),
@@ -606,22 +625,20 @@ pub async fn next_action(
 
     // 6. The latest official main chapter's canon is not synced.
     let main_track = tracks::Entity::find()
-        .filter(tracks::Column::BookId.eq(book.id))
-        .filter(tracks::Column::Kind.eq(TrackKind::Main.as_str()))
+        .filter(tracks::COLUMN.book_id.eq(book.id))
+        .filter(tracks::COLUMN.kind.eq(TrackKind::Main))
         .one(conn)
         .await?;
     if let Some(main) = &main_track
         && let Some((_, chapter)) = ordered
             .iter()
             .filter(|(track, chapter)| {
-                track.id == main.id && chapter.status == ChapterStatus::Official.as_str()
+                track.id == main.id && chapter.status == ChapterStatus::Official
             })
             .filter(|(_, chapter)| {
                 matches!(
-                    CanonStatus::from_str_opt(&chapter.canon_status),
-                    Some(CanonStatus::Pending)
-                        | Some(CanonStatus::Failed)
-                        | Some(CanonStatus::Stale)
+                    chapter.canon_status,
+                    CanonStatus::Pending | CanonStatus::Failed | CanonStatus::Stale
                 )
             })
             .max_by_key(|(_, chapter)| chapter.ord)
@@ -641,7 +658,7 @@ pub async fn next_action(
     //    before chapter N's canon is synced trips `previous_not_ready` anyway.
     if let Some((track, chapter)) = ordered
         .iter()
-        .find(|(_, chapter)| chapter.status == ChapterStatus::Planned.as_str())
+        .find(|(_, chapter)| chapter.status == ChapterStatus::Planned)
     {
         let kind = if chapter.outline.trim().is_empty() {
             NextActionKind::WriteOutline
@@ -675,12 +692,12 @@ pub async fn next_action(
 /// Token totals over every session of the book (spec/08 §7 `usage`).
 pub async fn book_usage(conn: &impl ConnectionTrait, book_id: i32) -> Result<Usage, AppError> {
     let sessions = agent_sessions::Entity::find()
-        .filter(agent_sessions::Column::BookId.eq(book_id))
+        .filter(agent_sessions::COLUMN.book_id.eq(book_id))
         .all(conn)
         .await?;
     let mut total = Usage::default();
     for session in sessions {
-        let usage: Usage = crate::db::json::from_json_or_default(&session.usage);
+        let usage: Usage = session.usage.clone().into_inner();
         total.requests += usage.requests;
         total.input_tokens += usage.input_tokens;
         total.cached_input_tokens += usage.cached_input_tokens;
@@ -700,12 +717,12 @@ pub async fn progress(
     book_id: i32,
 ) -> Result<BookProgressDto, AppError> {
     let track_rows = tracks::Entity::find()
-        .filter(tracks::Column::BookId.eq(book_id))
-        .order_by_asc(tracks::Column::Ord)
+        .filter(tracks::COLUMN.book_id.eq(book_id))
+        .order_by_asc(tracks::COLUMN.ord)
         .all(conn)
         .await?;
     let chapter_rows = chapters::Entity::find()
-        .filter(chapters::Column::BookId.eq(book_id))
+        .filter(chapters::COLUMN.book_id.eq(book_id))
         .all(conn)
         .await?;
 
@@ -731,7 +748,7 @@ pub async fn progress(
         ] {
             let count = rows
                 .iter()
-                .filter(|chapter| chapter.status == status.as_str())
+                .filter(|chapter| chapter.status == status)
                 .count() as i32;
             by_status.push(StatusCountDto { status, count });
             if status == ChapterStatus::Official {
@@ -741,7 +758,7 @@ pub async fn progress(
         let words: i32 = rows.iter().map(|chapter| chapter.word_count).sum();
         let official: i32 = rows
             .iter()
-            .filter(|chapter| chapter.status == ChapterStatus::Official.as_str())
+            .filter(|chapter| chapter.status == ChapterStatus::Official)
             .map(|chapter| chapter.word_count)
             .sum();
         total_chapters += rows.len() as i32;
@@ -749,7 +766,7 @@ pub async fn progress(
         official_words += official;
         tracks_progress.push(TrackProgressDto {
             track_id: track.id,
-            kind: super::enum_of("tracks.kind", &track.kind)?,
+            kind: track.kind,
             title: track.title.clone(),
             chapters: rows.len() as i32,
             words,
@@ -771,18 +788,18 @@ async fn to_summary(
     row: books::Model,
 ) -> Result<BookSummaryDto, AppError> {
     let chapter_rows = chapters::Entity::find()
-        .filter(chapters::Column::BookId.eq(row.id))
+        .filter(chapters::COLUMN.book_id.eq(row.id))
         .all(conn)
         .await?;
     let main_track = tracks::Entity::find()
-        .filter(tracks::Column::BookId.eq(row.id))
-        .filter(tracks::Column::Kind.eq(TrackKind::Main.as_str()))
+        .filter(tracks::COLUMN.book_id.eq(row.id))
+        .filter(tracks::COLUMN.kind.eq(TrackKind::Main))
         .one(conn)
         .await?;
     let chapter_count = chapter_rows.len() as i32;
     let official_chapter_count = chapter_rows
         .iter()
-        .filter(|chapter| chapter.status == ChapterStatus::Official.as_str())
+        .filter(|chapter| chapter.status == ChapterStatus::Official)
         .count() as i32;
     let word_count: i32 = chapter_rows.iter().map(|chapter| chapter.word_count).sum();
     let latest_chapter = main_track.and_then(|track| {
@@ -794,10 +811,8 @@ async fn to_summary(
                 id: chapter.id,
                 number: chapter.ord,
                 title: chapter.title.clone(),
-                status: ChapterStatus::from_str_opt(&chapter.status)
-                    .unwrap_or(ChapterStatus::Planned),
-                canon_status: CanonStatus::from_str_opt(&chapter.canon_status)
-                    .unwrap_or(CanonStatus::None),
+                status: chapter.status,
+                canon_status: chapter.canon_status,
             })
     });
     // The card's badge counts everything the overview's attention list would show (spec/08 §7,
@@ -812,7 +827,7 @@ async fn to_summary(
         title: row.title,
         genre: row.genre,
         writing_language: row.writing_language,
-        status: super::enum_of("books.status", &row.status)?,
+        status: row.status,
         chapter_count,
         official_chapter_count,
         word_count,
@@ -831,10 +846,10 @@ pub fn to_dto(row: &books::Model) -> Result<BookDto, AppError> {
         idea: row.idea.clone(),
         genre: row.genre.clone(),
         writing_language: row.writing_language.clone(),
-        status: super::enum_of("books.status", &row.status)?,
-        settings: parse_json("books.settings", &row.settings)?,
-        model_overrides: parse_json("books.model_overrides", &row.model_overrides)?,
-        conception: parse_json("books.conception", &row.conception)?,
+        status: row.status,
+        settings: row.settings.clone().into_inner(),
+        model_overrides: row.model_overrides.clone().into_inner(),
+        conception: row.conception.clone().into_inner(),
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
@@ -888,7 +903,7 @@ pub async fn setting_docs_of(
     book_id: i32,
 ) -> Result<Vec<setting_docs::Model>, AppError> {
     let mut rows = setting_docs::Entity::find()
-        .filter(setting_docs::Column::BookId.eq(book_id))
+        .filter(setting_docs::COLUMN.book_id.eq(book_id))
         .all(conn)
         .await?;
     rows.sort_by_key(|row| {
@@ -916,19 +931,14 @@ pub async fn touch(
     Ok(())
 }
 
-/// The canonical status of a chapter, for services that only carry the string column.
-pub fn canon_status_of(raw: &str) -> CanonStatus {
-    CanonStatus::from_str_opt(raw).unwrap_or(CanonStatus::None)
-}
-
 /// Loads the main track of a book.
 pub async fn main_track(
     conn: &impl ConnectionTrait,
     book_id: i32,
 ) -> Result<tracks::Model, AppError> {
     tracks::Entity::find()
-        .filter(tracks::Column::BookId.eq(book_id))
-        .filter(tracks::Column::Kind.eq(TrackKind::Main.as_str()))
+        .filter(tracks::COLUMN.book_id.eq(book_id))
+        .filter(tracks::COLUMN.kind.eq(TrackKind::Main))
         .one(conn)
         .await?
         .ok_or_else(|| AppError::internal(format!("book #{book_id} has no main track")))
@@ -937,8 +947,8 @@ pub async fn main_track(
 /// Selects the highest `ord` of a track's chapters (0 when it has none).
 pub async fn last_ord(conn: &impl ConnectionTrait, track_id: i32) -> Result<i32, AppError> {
     let row = chapters::Entity::find()
-        .filter(chapters::Column::TrackId.eq(track_id))
-        .order_by_desc(chapters::Column::Ord)
+        .filter(chapters::COLUMN.track_id.eq(track_id))
+        .order_by_desc(chapters::COLUMN.ord)
         .select_only()
         .column(chapters::Column::Ord)
         .into_tuple::<i32>()

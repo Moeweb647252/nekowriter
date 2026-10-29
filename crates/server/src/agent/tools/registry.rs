@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::db::json::{Granularity, Phase, SessionKind};
+use crate::db::json::{AgentRole, Granularity, Phase, SessionKind};
 
 use super::ToolHandler;
 
@@ -265,18 +265,23 @@ pub fn allowed_tools(kind: SessionKind, phase: Phase, frozen: &[String]) -> Vec<
         .collect()
 }
 
-/// The role that runs a session kind (spec/03 §1.1).
-pub fn role_of_kind(kind: SessionKind) -> &'static str {
+/// The typed role that runs a session kind (spec/03 §1.1).
+pub fn role_enum_of_kind(kind: SessionKind) -> AgentRole {
     match kind {
-        SessionKind::Conception => "conception",
-        SessionKind::Research => "researcher",
-        SessionKind::ChapterOutline => "planner",
-        SessionKind::ChapterWrite | SessionKind::ChapterRevise => "writer",
-        SessionKind::ChapterReview => "reviewer",
+        SessionKind::Conception => AgentRole::Conception,
+        SessionKind::Research => AgentRole::Researcher,
+        SessionKind::ChapterOutline => AgentRole::Planner,
+        SessionKind::ChapterWrite | SessionKind::ChapterRevise => AgentRole::Writer,
+        SessionKind::ChapterReview => AgentRole::Reviewer,
         SessionKind::ChapterMaintenance | SessionKind::CanonSeed | SessionKind::ChapterResync => {
-            "archivist"
+            AgentRole::Archivist
         }
     }
+}
+
+/// The role that runs a session kind (spec/03 §1.1).
+pub fn role_of_kind(kind: SessionKind) -> &'static str {
+    role_enum_of_kind(kind).as_str()
 }
 
 /// The initial phase of a session kind (spec/03 §1.1, §4 step 3).

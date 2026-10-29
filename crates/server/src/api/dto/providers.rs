@@ -47,6 +47,44 @@ pub struct ModelOptionsDto {
     pub eager_input_streaming: Option<bool>,
 }
 
+impl From<crate::db::json::ModelOptions> for ModelOptionsDto {
+    fn from(value: crate::db::json::ModelOptions) -> Self {
+        Self {
+            reasoning_replay: value.reasoning_replay,
+            cache_ttl: value.cache_ttl,
+            reasoning_effort: value.reasoning_effort,
+            max_tokens_field: value.max_tokens_field,
+            send_parallel_tool_calls: value.send_parallel_tool_calls,
+            stream_usage: value.stream_usage,
+            temperature: value.temperature,
+            extra_body: value.extra_body,
+            effort: value.effort,
+            thinking_display: value.thinking_display,
+            refusal_fallback: value.refusal_fallback,
+            eager_input_streaming: value.eager_input_streaming,
+        }
+    }
+}
+
+impl From<ModelOptionsDto> for crate::db::json::ModelOptions {
+    fn from(value: ModelOptionsDto) -> Self {
+        Self {
+            reasoning_replay: value.reasoning_replay,
+            cache_ttl: value.cache_ttl,
+            reasoning_effort: value.reasoning_effort,
+            max_tokens_field: value.max_tokens_field,
+            send_parallel_tool_calls: value.send_parallel_tool_calls,
+            stream_usage: value.stream_usage,
+            temperature: value.temperature,
+            extra_body: value.extra_body,
+            effort: value.effort,
+            thinking_display: value.thinking_display,
+            refusal_fallback: value.refusal_fallback,
+            eager_input_streaming: value.eager_input_streaming,
+        }
+    }
+}
+
 impl ModelOptionsDto {
     /// The neutral options these fields describe, or `None` when a value is not one the adapters
     /// accept (spec/04 §5). The write path rejects such a blob, so `None` only happens for a row

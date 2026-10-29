@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use crate::api::dto::changes::{ChangeDto, ChangePageDto, ChangeQuery};
 use crate::db::entities::change_log;
-use crate::db::json::{ChangeActor, ChangeOp, ChangeTargetType, Snapshot, from_json, to_json};
+use crate::db::json::{ChangeActor, ChangeOp, ChangeTargetType, JsonText, Snapshot, to_json};
 use crate::error::AppError;
 
 use super::now;
@@ -40,23 +40,18 @@ pub struct NewChange<'a> {
 
 /// Appends one change inside the caller's transaction and returns its id.
 pub async fn record(tx: &impl ConnectionTrait, change: NewChange<'_>) -> Result<i32, AppError> {
-    let before = change.before.map(to_json).transpose().map_err(|err| {
-        AppError::internal(format!("cannot serialize the before snapshot: {err}"))
-    })?;
-    let after =
-        change.after.map(to_json).transpose().map_err(|err| {
-            AppError::internal(format!("cannot serialize the after snapshot: {err}"))
-        })?;
+    let before = change.before.map(|snapshot| JsonText(snapshot.clone()));
+    let after = change.after.map(|snapshot| JsonText(snapshot.clone()));
     let model = change_log::ActiveModel {
         id: sea_orm::ActiveValue::NotSet,
         book_id: Set(change.book_id),
         track_id: Set(change.track_id),
         chapter_id: Set(change.chapter_id),
         session_id: Set(change.session_id),
-        actor: Set(change.actor.as_str().to_owned()),
-        target_type: Set(change.target_type.as_str().to_owned()),
+        actor: Set(change.actor),
+        target_type: Set(change.target_type),
         target_id: Set(change.target_id),
-        op: Set(change.op.as_str().to_owned()),
+        op: Set(change.op),
         before: Set(before),
         after: Set(after),
         note: Set(change.note.to_owned()),
@@ -79,24 +74,24 @@ pub async fn page(
     super::books::get(conn, book_id).await?;
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let mut statement = change_log::Entity::find()
-        .filter(change_log::Column::BookId.eq(book_id))
-        .order_by_desc(change_log::Column::Id)
+        .filter(change_log::COLUMN.book_id.eq(book_id))
+        .order_by_desc(change_log::COLUMN.id)
         .limit(u64::try_from(limit + 1).unwrap_or(u64::MAX));
     if let Some(chapter_id) = query.chapter_id {
-        statement = statement.filter(change_log::Column::ChapterId.eq(chapter_id));
+        statement = statement.filter(change_log::COLUMN.chapter_id.eq(chapter_id));
     }
     if let Some(session_id) = query.session_id {
-        statement = statement.filter(change_log::Column::SessionId.eq(session_id));
+        statement = statement.filter(change_log::COLUMN.session_id.eq(session_id));
     }
     if let Some(target_type) = query.target_type {
-        statement = statement.filter(change_log::Column::TargetType.eq(target_type.as_str()));
+        statement = statement.filter(change_log::COLUMN.target_type.eq(target_type.as_str()));
     }
     if let Some(actor) = query.actor {
-        statement = statement.filter(change_log::Column::Actor.eq(actor.as_str()));
+        statement = statement.filter(change_log::COLUMN.actor.eq(actor.as_str()));
     }
     if let Some(cursor) = &query.cursor {
         let id = parse_cursor(cursor)?;
-        statement = statement.filter(change_log::Column::Id.lt(id));
+        statement = statement.filter(change_log::COLUMN.id.lt(id));
     }
     let mut rows = statement.all(conn).await?;
     let has_more = rows.len() > limit as usize;
@@ -131,8 +126,8 @@ pub async fn recent_for_book(
     limit: usize,
 ) -> Result<Vec<ChangeDto>, AppError> {
     let rows = change_log::Entity::find()
-        .filter(change_log::Column::BookId.eq(book_id))
-        .order_by_desc(change_log::Column::Id)
+        .filter(change_log::COLUMN.book_id.eq(book_id))
+        .order_by_desc(change_log::COLUMN.id)
         .limit(limit as u64)
         .all(conn)
         .await?;
@@ -147,9 +142,9 @@ pub async fn for_target(
     limit: usize,
 ) -> Result<Vec<ChangeDto>, AppError> {
     let rows = change_log::Entity::find()
-        .filter(change_log::Column::TargetType.eq(target_type.as_str()))
-        .filter(change_log::Column::TargetId.eq(target_id))
-        .order_by_desc(change_log::Column::Id)
+        .filter(change_log::COLUMN.target_type.eq(target_type.as_str()))
+        .filter(change_log::COLUMN.target_id.eq(target_id))
+        .order_by_desc(change_log::COLUMN.id)
         .limit(limit as u64)
         .all(conn)
         .await?;
@@ -191,34 +186,17 @@ pub fn to_dto(row: &change_log::Model) -> Result<ChangeDto, AppError> {
         track_id: row.track_id,
         chapter_id: row.chapter_id,
         session_id: row.session_id,
-        actor: ChangeActor::from_str_opt(&row.actor).ok_or_else(|| {
-            AppError::internal(format!("unknown change_log.actor {:?}", row.actor))
-        })?,
-        target_type: ChangeTargetType::from_str_opt(&row.target_type).ok_or_else(|| {
-            AppError::internal(format!(
-                "unknown change_log.target_type {:?}",
-                row.target_type
-            ))
-        })?,
+        actor: row.actor,
+        target_type: row.target_type,
         target_id: row.target_id,
-        op: ChangeOp::from_str_opt(&row.op)
-            .ok_or_else(|| AppError::internal(format!("unknown change_log.op {:?}", row.op)))?,
-        before: parse_snapshot(row.before.as_deref())?,
-        after: parse_snapshot(row.after.as_deref())?,
+        op: row.op,
+        before: row.before.clone().map(JsonText::into_inner),
+        after: row.after.clone().map(JsonText::into_inner),
         note: row.note.clone(),
         reverts_id: row.reverts_id,
         reverted_by_id: row.reverted_by_id,
         created_at: row.created_at,
     })
-}
-
-fn parse_snapshot(raw: Option<&str>) -> Result<Option<Snapshot>, AppError> {
-    match raw {
-        Some(raw) => from_json::<Snapshot>(raw)
-            .map(Some)
-            .map_err(|err| AppError::internal(format!("corrupt change snapshot: {err}"))),
-        None => Ok(None),
-    }
 }
 
 fn parse_cursor(cursor: &str) -> Result<i32, AppError> {

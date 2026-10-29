@@ -6,8 +6,8 @@
 //! cascades to its entries; the schema triggers clean the FTS and vec rows (spec/02 §5.11).
 
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, EntityTrait, PaginatorTrait,
-    QueryFilter, QueryOrder, QuerySelect, Set,
+    ActiveModelTrait, Condition, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter,
+    QueryOrder, QuerySelect, Set,
 };
 
 use crate::api::dto::knowledge::{
@@ -19,7 +19,7 @@ use crate::db::json::{ChangeOp, EntrySource};
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
 
-use super::{field_error, json, now, parse_json};
+use super::{field_error, now};
 
 /// The entries page size (spec/10 §1: default 100, max 500).
 pub const ENTRY_PAGE_DEFAULT: i64 = 100;
@@ -34,7 +34,7 @@ pub const SEARCH_MAX: usize = 50;
 /// `GET /api/knowledge/scopes` (with entry counts, spec/10 §2.5).
 pub async fn scopes(conn: &impl ConnectionTrait) -> Result<Vec<ScopeDto>, AppError> {
     let rows = knowledge_scopes::Entity::find()
-        .order_by_asc(knowledge_scopes::Column::Name)
+        .order_by_asc(knowledge_scopes::COLUMN.name)
         .all(conn)
         .await?;
     let mut items = Vec::with_capacity(rows.len());
@@ -55,7 +55,7 @@ pub async fn to_scope_dto(
     row: &knowledge_scopes::Model,
 ) -> Result<ScopeDto, AppError> {
     let entry_count = knowledge_entries::Entity::find()
-        .filter(knowledge_entries::Column::ScopeId.eq(row.id))
+        .filter(knowledge_entries::COLUMN.scope_id.eq(row.id))
         .count(conn)
         .await? as i64;
     Ok(ScopeDto {
@@ -206,7 +206,7 @@ async fn find_scope_by_name(
     name: &str,
 ) -> Result<Option<knowledge_scopes::Model>, AppError> {
     Ok(knowledge_scopes::Entity::find()
-        .filter(knowledge_scopes::Column::Name.eq(name))
+        .filter(knowledge_scopes::COLUMN.name.eq(name))
         .one(conn)
         .await?)
 }
@@ -241,13 +241,13 @@ pub async fn list_entries(
         .unwrap_or(ENTRY_PAGE_DEFAULT)
         .clamp(1, ENTRY_PAGE_MAX);
     let mut statement = knowledge_entries::Entity::find()
-        .filter(knowledge_entries::Column::ScopeId.eq(scope_id))
-        .order_by_asc(knowledge_entries::Column::Id);
+        .filter(knowledge_entries::COLUMN.scope_id.eq(scope_id))
+        .order_by_asc(knowledge_entries::COLUMN.id);
     if let Some(cursor) = &query.cursor {
         let cursor: i32 = cursor
             .parse()
             .map_err(|_| AppError::validation("the cursor is not valid"))?;
-        statement = statement.filter(knowledge_entries::Column::Id.gt(cursor));
+        statement = statement.filter(knowledge_entries::COLUMN.id.gt(cursor));
     }
     if let Some(text) = query.q.as_deref().map(str::trim)
         && !text.is_empty()
@@ -255,8 +255,8 @@ pub async fn list_entries(
         let pattern = format!("%{text}%");
         statement = statement.filter(
             Condition::any()
-                .add(knowledge_entries::Column::Title.like(&pattern))
-                .add(knowledge_entries::Column::Content.like(&pattern)),
+                .add(knowledge_entries::COLUMN.title.like(&pattern))
+                .add(knowledge_entries::COLUMN.content.like(&pattern)),
         );
     }
     let rows = statement.limit(limit as u64 + 1).all(conn).await?;
@@ -314,9 +314,9 @@ pub async fn create_entry_inner(
         scope_id: Set(scope_id),
         title: Set(title.to_owned()),
         content: Set(input.content.clone()),
-        source: Set(EntrySource::Manual.as_str().to_owned()),
-        source_urls: Set(json(&input.source_urls)?),
-        tags: Set(json(&input.tags)?),
+        source: Set(EntrySource::Manual),
+        source_urls: Set(crate::services::json_text(input.source_urls)),
+        tags: Set(crate::services::json_text(input.tags)),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),
         ..Default::default()
@@ -381,10 +381,10 @@ pub async fn update_entry_inner(
         active.content = Set(content.clone());
     }
     if let Some(urls) = &patch.source_urls {
-        active.source_urls = Set(json(urls)?);
+        active.source_urls = Set(crate::services::json_text(urls.clone()));
     }
     if let Some(tags) = &patch.tags {
-        active.tags = Set(json(tags)?);
+        active.tags = Set(crate::services::json_text(tags.clone()));
     }
     active.update(tx).await?;
     if content_changed {
@@ -447,11 +447,11 @@ async fn find_entry_by_title(
     scope_id: i32,
     title: &str,
 ) -> Result<Option<knowledge_entries::Model>, AppError> {
-    Ok(knowledge_entries::Entity::find()
-        .filter(knowledge_entries::Column::ScopeId.eq(scope_id))
-        .filter(knowledge_entries::Column::Title.eq(title))
-        .one(conn)
-        .await?)
+    Ok(
+        knowledge_entries::Entity::find_by_scope_title((scope_id, title.to_owned()))
+            .one(conn)
+            .await?,
+    )
 }
 
 fn to_dto(row: &knowledge_entries::Model) -> Result<EntryDto, AppError> {
@@ -460,9 +460,9 @@ fn to_dto(row: &knowledge_entries::Model) -> Result<EntryDto, AppError> {
         scope_id: row.scope_id,
         title: row.title.clone(),
         content: row.content.clone(),
-        source: EntrySource::from_str_opt(&row.source).unwrap_or(EntrySource::Manual),
-        source_urls: parse_json("knowledge_entries.source_urls", &row.source_urls)?,
-        tags: parse_json("knowledge_entries.tags", &row.tags)?,
+        source: row.source,
+        source_urls: row.source_urls.clone().into_inner(),
+        tags: row.tags.clone().into_inner(),
         research_task_id: row.research_task_id,
         created_at: row.created_at,
         updated_at: row.updated_at,
@@ -474,8 +474,8 @@ fn to_summary(row: &knowledge_entries::Model) -> Result<EntrySummaryDto, AppErro
         id: row.id,
         scope_id: row.scope_id,
         title: row.title.clone(),
-        source: EntrySource::from_str_opt(&row.source).unwrap_or(EntrySource::Manual),
-        tags: parse_json("knowledge_entries.tags", &row.tags)?,
+        source: row.source,
+        tags: row.tags.clone().into_inner(),
         updated_at: row.updated_at,
     })
 }
@@ -532,7 +532,7 @@ async fn resolve_scope_ids(
     match filter {
         None => {
             let ids: Vec<i32> = knowledge_scopes::Entity::find()
-                .order_by_asc(knowledge_scopes::Column::Id)
+                .order_by_asc(knowledge_scopes::COLUMN.id)
                 .all(state.db_conn())
                 .await?
                 .into_iter()
@@ -566,7 +566,7 @@ pub async fn book_scopes(
 ) -> Result<Vec<ScopeDto>, AppError> {
     super::books::get(conn, book_id).await?;
     let rows = book_scopes::Entity::find()
-        .filter(book_scopes::Column::BookId.eq(book_id))
+        .filter(book_scopes::COLUMN.book_id.eq(book_id))
         .all(conn)
         .await?;
     let mut items = Vec::with_capacity(rows.len());
@@ -607,7 +607,7 @@ pub async fn set_book_scopes_inner(
         load_scope(tx, *scope_id).await?;
     }
     book_scopes::Entity::delete_many()
-        .filter(book_scopes::Column::BookId.eq(book_id))
+        .filter(book_scopes::COLUMN.book_id.eq(book_id))
         .exec(tx)
         .await?;
     for scope_id in &ids {
@@ -639,8 +639,8 @@ pub async fn visible_scope_ids(
     book_id: i32,
 ) -> Result<Vec<i32>, AppError> {
     Ok(book_scopes::Entity::find()
-        .filter(book_scopes::Column::BookId.eq(book_id))
-        .order_by_asc(book_scopes::Column::ScopeId)
+        .filter(book_scopes::COLUMN.book_id.eq(book_id))
+        .order_by_asc(book_scopes::COLUMN.scope_id)
         .all(conn)
         .await?
         .into_iter()

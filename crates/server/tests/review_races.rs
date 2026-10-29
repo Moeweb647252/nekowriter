@@ -95,7 +95,7 @@ async fn completed_reviewer(app: &TestApp, book_id: i32, chapter_id: i32) -> i32
     app.execute(&format!(
         "INSERT INTO agent_sessions(book_id, role, kind, chapter_id, track_id, model_snapshot, \
          system_prompt, tools, status, phase, base_content_version, counters, usage, created_at, \
-         updated_at) VALUES ({book_id}, 'reviewer', 'chapter_review', {chapter_id}, 1, '{{}}', \
+         updated_at) VALUES ({book_id}, 'reviewer', 'chapter_review', {chapter_id}, 1, '{{\"provider_id\":0,\"protocol\":\"mock\",\"base_url\":\"\",\"extra_headers\":{{}},\"model\":\"\",\"context_window\":0,\"max_output_tokens\":0,\"options\":null}}', \
          '', '[]', 'completed', 'none', 0, '{{}}', '{{}}', '2026-01-01T00:00:00Z', \
          '2026-01-01T00:00:00Z')"
     ))
@@ -126,7 +126,7 @@ async fn insert_reviewer(app: &TestApp, book_id: i32, chapter_id: i32, status: &
     app.execute(&format!(
         "INSERT INTO agent_sessions(book_id, role, kind, chapter_id, track_id, model_snapshot, \
          system_prompt, tools, status, phase, base_content_version, counters, usage, created_at, \
-         updated_at) VALUES ({book_id}, 'reviewer', 'chapter_review', {chapter_id}, 1, '{{}}', \
+         updated_at) VALUES ({book_id}, 'reviewer', 'chapter_review', {chapter_id}, 1, '{{\"provider_id\":0,\"protocol\":\"mock\",\"base_url\":\"\",\"extra_headers\":{{}},\"model\":\"\",\"context_window\":0,\"max_output_tokens\":0,\"options\":null}}', \
          '', '[]', '{status}', 'none', 0, '{{}}', '{{}}', '2026-01-01T00:00:00Z', \
          '2026-01-01T00:00:00Z')"
     ))
@@ -315,7 +315,7 @@ async fn hold_insert_reviewer(
                     "INSERT INTO agent_sessions(book_id, role, kind, chapter_id, track_id, \
                      model_snapshot, system_prompt, tools, status, phase, base_content_version, \
                      counters, usage, created_at, updated_at) VALUES ({book_id}, 'reviewer', \
-                     'chapter_review', {chapter_id}, 1, '{{}}', '', '[]', 'stopped', 'none', 0, \
+                     'chapter_review', {chapter_id}, 1, '{{\"provider_id\":0,\"protocol\":\"mock\",\"base_url\":\"\",\"extra_headers\":{{}},\"model\":\"\",\"context_window\":0,\"max_output_tokens\":0,\"options\":null}}', '', '[]', 'stopped', 'none', 0, \
                      '{{}}', '{{}}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
                 ))
                 .await?;

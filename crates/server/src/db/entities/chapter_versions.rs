@@ -2,23 +2,31 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::{ChapterContent, JsonText};
+
+use crate::db::json::VersionKind;
+
+#[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "chapter_versions")]
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,
+    #[sea_orm(unique_key = "chapter_version")]
     pub chapter_id: i32,
+    #[sea_orm(unique_key = "chapter_version")]
     pub version_no: i32,
-    pub kind: String,
+    pub kind: VersionKind,
     pub title: String,
-    pub content: String,
+    pub content: JsonText<ChapterContent>,
     pub word_count: i32,
     pub note: String,
     pub session_id: Option<i32>,
     pub created_at: DateTimeUtc,
+    #[sea_orm(belongs_to, from = "chapter_id", to = "id")]
+    pub chapter: BelongsTo<super::chapters::Entity>,
+    #[sea_orm(belongs_to, from = "session_id", to = "id")]
+    pub session: BelongsTo<Option<super::agent_sessions::Entity>>,
 }
-
-#[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {}
 
 impl ActiveModelBehavior for ActiveModel {}

@@ -1,22 +1,29 @@
 //! `providers` entity (spec/02 §2).
 
+use std::collections::BTreeMap;
+
 use sea_orm::entity::prelude::*;
 
+use crate::db::json::JsonText;
+
+use crate::db::json::Protocol;
+
+#[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "providers")]
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,
+    #[sea_orm(unique)]
     pub name: String,
-    pub protocol: String,
+    pub protocol: Protocol,
     pub base_url: String,
     pub api_key: Option<String>,
-    pub extra_headers: String,
+    pub extra_headers: JsonText<BTreeMap<String, String>>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
+    #[sea_orm(has_many)]
+    pub model_profiles: HasMany<super::model_profiles::Entity>,
 }
-
-#[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {}
 
 impl ActiveModelBehavior for ActiveModel {}

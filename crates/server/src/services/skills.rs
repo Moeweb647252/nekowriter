@@ -8,9 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
-use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, Set,
-};
+use sea_orm::{ActiveModelTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, Set};
 
 use crate::api::dto::skills::{
     BookWritingSkillsInput, WritingSkillBookDto, WritingSkillDeleteResponse, WritingSkillDto,
@@ -43,8 +41,8 @@ pub async fn catalogue(
     let rows = writing_skills::Entity::find()
         // A retired built-in stops being offered (design §4); selections already made keep
         // working because `selected_skills` below does not filter it out.
-        .filter(writing_skills::Column::Retired.eq(0))
-        .order_by_asc(writing_skills::Column::Id)
+        .filter(writing_skills::COLUMN.retired.eq(false))
+        .order_by_asc(writing_skills::COLUMN.id)
         .all(conn)
         .await?;
     let usage = usage_map(conn).await?;
@@ -68,8 +66,8 @@ pub async fn replace_selection(
             ids.dedup();
             if !ids.is_empty() {
                 let found = writing_skills::Entity::find()
-                    .filter(writing_skills::Column::Id.is_in(ids.clone()))
-                    .filter(writing_skills::Column::Retired.eq(0))
+                    .filter(writing_skills::COLUMN.id.is_in(ids.clone()))
+                    .filter(writing_skills::COLUMN.retired.eq(false))
                     .all(tx)
                     .await?;
                 if found.len() != ids.len() {
@@ -85,8 +83,8 @@ pub async fn replace_selection(
             let current_ids: Vec<i32> = selected_ids(tx, book_id).await?.into_iter().collect();
             if !current_ids.is_empty() {
                 let retired: Vec<i32> = writing_skills::Entity::find()
-                    .filter(writing_skills::Column::Id.is_in(current_ids))
-                    .filter(writing_skills::Column::Retired.eq(1))
+                    .filter(writing_skills::COLUMN.id.is_in(current_ids))
+                    .filter(writing_skills::COLUMN.retired.eq(true))
                     .all(tx)
                     .await?
                     .into_iter()
@@ -97,7 +95,7 @@ pub async fn replace_selection(
                 ids.dedup();
             }
             book_writing_skills::Entity::delete_many()
-                .filter(book_writing_skills::Column::BookId.eq(book_id))
+                .filter(book_writing_skills::COLUMN.book_id.eq(book_id))
                 .exec(tx)
                 .await?;
             let timestamp = now();
@@ -136,8 +134,8 @@ pub async fn create(
                 author: Set(WritingSkillAuthor::User),
                 description: Set(input.description.trim().to_owned()),
                 body: Set(input.body),
-                enabled_by_default: Set(0),
-                retired: Set(0),
+                enabled_by_default: Set(false),
+                retired: Set(false),
                 created_at: Set(timestamp),
                 updated_at: Set(timestamp),
                 ..Default::default()
@@ -226,8 +224,12 @@ pub async fn selected_skills(
         return Ok(Vec::new());
     }
     Ok(writing_skills::Entity::find()
-        .filter(writing_skills::Column::Id.is_in(ids.into_iter().collect::<Vec<_>>()))
-        .order_by_asc(writing_skills::Column::Id)
+        .filter(
+            writing_skills::COLUMN
+                .id
+                .is_in(ids.into_iter().collect::<Vec<_>>()),
+        )
+        .order_by_asc(writing_skills::COLUMN.id)
         .all(conn)
         .await?)
 }
@@ -241,8 +243,8 @@ pub async fn insert_defaults_for_book(
     timestamp: DateTime<Utc>,
 ) -> Result<(), AppError> {
     let defaults = writing_skills::Entity::find()
-        .filter(writing_skills::Column::EnabledByDefault.eq(1))
-        .filter(writing_skills::Column::Retired.eq(0))
+        .filter(writing_skills::COLUMN.enabled_by_default.eq(true))
+        .filter(writing_skills::COLUMN.retired.eq(false))
         .all(tx)
         .await?;
     for row in defaults {
@@ -263,7 +265,7 @@ async fn selected_ids(
     book_id: i32,
 ) -> Result<BTreeSet<i32>, AppError> {
     Ok(book_writing_skills::Entity::find()
-        .filter(book_writing_skills::Column::BookId.eq(book_id))
+        .filter(book_writing_skills::COLUMN.book_id.eq(book_id))
         .all(conn)
         .await?
         .into_iter()
@@ -294,7 +296,11 @@ async fn books_using(
         return Ok(map);
     }
     let links = book_writing_skills::Entity::find()
-        .filter(book_writing_skills::Column::SkillId.is_in(skill_ids.to_vec()))
+        .filter(
+            book_writing_skills::COLUMN
+                .skill_id
+                .is_in(skill_ids.to_vec()),
+        )
         .all(conn)
         .await?;
     let book_ids: Vec<i32> = {
@@ -306,7 +312,7 @@ async fn books_using(
     let mut titles: BTreeMap<i32, String> = BTreeMap::new();
     if !book_ids.is_empty() {
         for book in books::Entity::find()
-            .filter(books::Column::Id.is_in(book_ids))
+            .filter(books::COLUMN.id.is_in(book_ids))
             .all(conn)
             .await?
         {
@@ -373,8 +379,8 @@ fn to_dto(
         author: row.author.as_str().to_owned(),
         description: row.description,
         body: row.body,
-        enabled_by_default: row.enabled_by_default != 0,
-        retired: row.retired != 0,
+        enabled_by_default: row.enabled_by_default,
+        retired: row.retired,
         selected: selected.contains(&row.id),
         used_by_books: usage.get(&row.id).cloned().unwrap_or_default(),
         created_at: row.created_at,

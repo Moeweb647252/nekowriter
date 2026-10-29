@@ -23,8 +23,9 @@ use crate::db::entities::{
     setting_docs, tracks,
 };
 use crate::db::json::{
-    self, AgentRole, ChapterContent, CompletionKind, MessageKind, MessageRole, Phase, Protocol,
-    RequestMeta, ReviewVerdict, SessionKind, StoredBlock, ToolCallStatus, VersionKind,
+    self, AgentRole, CanonMode, ChapterContent, CompletionKind, InboxKind, JsonText, MessageKind,
+    MessageRole, Phase, Protocol, RequestMeta, SessionCounters, SessionKind, StoredBlock,
+    ToolCallStatus, TrackKind, Usage, VersionKind,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
@@ -410,7 +411,7 @@ async fn track_context(
                 .await?
                 .ok_or_else(|| AppError::not_found(format!("chapter {chapter_id}")))?;
             prompts.chapter_label(
-                &track.kind,
+                track.kind.as_str(),
                 &track.title,
                 i64::from(chapter.ord),
                 &chapter.title,
@@ -420,16 +421,16 @@ async fn track_context(
         None => String::new(),
     };
     Ok(TrackContext {
-        is_main: track.kind == "main",
-        title: if track.kind == "main" {
+        is_main: track.kind == TrackKind::Main,
+        title: if track.kind == TrackKind::Main {
             String::new()
         } else {
             track.title.clone()
         },
-        kind: track.kind,
+        kind: track.kind.as_str().to_owned(),
         synopsis: track.synopsis,
-        canon_mode: track.canon_mode,
-        anchor_kind: track.anchor_kind,
+        canon_mode: track.canon_mode.as_str().to_owned(),
+        anchor_kind: track.anchor_kind.as_str().to_owned(),
         anchor_label,
     })
 }
@@ -477,7 +478,7 @@ async fn chapter_context(
         .await?
         .ok_or_else(|| AppError::not_found(format!("track {}", chapter.track_id)))?;
     let settings = book_settings(conn, book_id.or(Some(chapter.book_id))).await?;
-    let content: ChapterContent = json::from_json_or_default(&chapter.content);
+    let content: ChapterContent = chapter.content.clone().into_inner();
     Ok(ChapterContext {
         id: chapter.id,
         number: chapter.ord,
@@ -485,7 +486,7 @@ async fn chapter_context(
         // none (spec/09 §1: `with_title` is for callers that need the whole reference in one
         // string, such as the memory window).
         label: prompts.chapter_label(
-            &track.kind,
+            track.kind.as_str(),
             &track.title,
             i64::from(chapter.ord),
             &chapter.title,
@@ -514,7 +515,7 @@ async fn book_settings(
         .one(conn)
         .await?
         .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
-    Ok(json::from_json_or_default(&book.settings))
+    Ok(book.settings.clone().into_inner())
 }
 
 /// `block.settings`: the three documents, the character designs and the attached scopes.
@@ -532,23 +533,22 @@ async fn settings_context(
         });
     };
     let docs = setting_docs::Entity::find()
-        .filter(setting_docs::Column::BookId.eq(book_id))
+        .filter(setting_docs::COLUMN.book_id.eq(book_id))
         .all(conn)
         .await?;
     let mut outline = String::new();
     let mut world = String::new();
     let mut protagonist = String::new();
     for doc in docs {
-        match doc.kind.as_str() {
-            "outline" => outline = doc.content,
-            "world" => world = doc.content,
-            "protagonist" => protagonist = doc.content,
-            _ => {}
+        match doc.kind {
+            crate::db::json::SettingDocKind::Outline => outline = doc.content,
+            crate::db::json::SettingDocKind::World => world = doc.content,
+            crate::db::json::SettingDocKind::Protagonist => protagonist = doc.content,
         }
     }
     let characters = character_designs::Entity::find()
-        .filter(character_designs::Column::BookId.eq(book_id))
-        .order_by_asc(character_designs::Column::Rank)
+        .filter(character_designs::COLUMN.book_id.eq(book_id))
+        .order_by_asc(character_designs::COLUMN.rank)
         .all(conn)
         .await?
         .into_iter()
@@ -564,8 +564,8 @@ async fn settings_context(
     // them (name + description)"); the attached set is exactly what `visible_scope_ids` gates the
     // tools with, so the model never learns a scope it cannot search.
     let scope_ids: Vec<i32> = book_scopes::Entity::find()
-        .filter(book_scopes::Column::BookId.eq(book_id))
-        .order_by_asc(book_scopes::Column::ScopeId)
+        .filter(book_scopes::COLUMN.book_id.eq(book_id))
+        .order_by_asc(book_scopes::COLUMN.scope_id)
         .all(conn)
         .await?
         .into_iter()
@@ -575,8 +575,8 @@ async fn settings_context(
         Vec::new()
     } else {
         knowledge_scopes::Entity::find()
-            .filter(knowledge_scopes::Column::Id.is_in(scope_ids))
-            .order_by_asc(knowledge_scopes::Column::Name)
+            .filter(knowledge_scopes::COLUMN.id.is_in(scope_ids))
+            .order_by_asc(knowledge_scopes::COLUMN.name)
             .all(conn)
             .await?
             .into_iter()
@@ -768,10 +768,10 @@ async fn cast_index_context(
         .map(|row| CastEntryContext {
             id: row.id,
             name: row.name,
-            kind_label: prompts.label("entity_kind", &row.kind),
-            status_label: prompts.label("entity_status", &row.status),
-            status: row.status,
-            aliases: json::from_json_or_default(&row.aliases),
+            kind_label: prompts.label("entity_kind", row.kind.as_str()),
+            status_label: prompts.label("entity_status", row.status.as_str()),
+            status: row.status.as_str().to_owned(),
+            aliases: row.aliases.clone().into_inner(),
             summary: row.summary,
         })
         .collect())
@@ -797,7 +797,7 @@ async fn chapter_diff_context(
         Some(version_id) => chapter_versions::Entity::find_by_id(version_id)
             .one(conn)
             .await?
-            .and_then(|row| json::from_json::<ChapterContent>(&row.content).ok())
+            .map(|row| row.content.clone().into_inner())
             .unwrap_or_default(),
         None => ChapterContent::default(),
     };
@@ -805,9 +805,9 @@ async fn chapter_diff_context(
         Some(version_id) => chapter_versions::Entity::find_by_id(version_id)
             .one(conn)
             .await?
-            .and_then(|row| json::from_json::<ChapterContent>(&row.content).ok())
+            .map(|row| row.content.clone().into_inner())
             .unwrap_or_default(),
-        None => json::from_json_or_default(&chapter.content),
+        None => chapter.content.clone().into_inner(),
     };
     Ok(DiffContext {
         changes: paragraph_diff(&previous, &current),
@@ -877,7 +877,7 @@ async fn draft_context(
         .one(conn)
         .await?
         .ok_or_else(|| AppError::not_found(format!("chapter {chapter_id}")))?;
-    let content: ChapterContent = json::from_json_or_default(&chapter.content);
+    let content: ChapterContent = chapter.content.clone().into_inner();
     let paragraphs: Vec<ParagraphContext> = content
         .paragraphs
         .iter()
@@ -912,8 +912,12 @@ async fn feedback_context(
         });
     };
     let feedback = crate::db::entities::chapter_feedback::Entity::find()
-        .filter(crate::db::entities::chapter_feedback::Column::ChapterId.eq(chapter_id))
-        .order_by_desc(crate::db::entities::chapter_feedback::Column::Id)
+        .filter(
+            crate::db::entities::chapter_feedback::COLUMN
+                .chapter_id
+                .eq(chapter_id),
+        )
+        .order_by_desc(crate::db::entities::chapter_feedback::COLUMN.id)
         .one(conn)
         .await?;
     let Some(feedback) = feedback else {
@@ -948,7 +952,7 @@ async fn prior_report_context(
     else {
         return Ok(Value::Null);
     };
-    let verdict = ReviewVerdict::from_str_opt(&report.verdict).unwrap_or(ReviewVerdict::Revise);
+    let verdict = report.verdict;
     Ok(json!(PriorReportContext {
         attempt: report.attempt,
         verdict_label: prompts.label("verdict", verdict.as_str()),
@@ -959,17 +963,19 @@ async fn prior_report_context(
 }
 
 /// Renders the stored `ReviewIssue[]` of a feedback row for `vars.feedback.issues`.
-pub fn render_issues(prompts: &PromptSet, raw: &str) -> Vec<FeedbackIssueContext> {
-    let issues: Vec<json::ReviewIssue> = json::from_json_or_default(raw);
+pub fn render_issues(
+    prompts: &PromptSet,
+    issues: &[json::ReviewIssue],
+) -> Vec<FeedbackIssueContext> {
     issues
-        .into_iter()
+        .iter()
         .map(|issue| FeedbackIssueContext {
             severity_label: prompts.label("severity", issue.severity.as_str()),
             category_label: prompts.label("category", issue.category.as_str()),
-            pids: issue.pids,
-            quote: issue.quote,
-            problem: issue.problem,
-            suggestion: issue.suggestion,
+            pids: issue.pids.clone(),
+            quote: issue.quote.clone(),
+            problem: issue.problem.clone(),
+            suggestion: issue.suggestion.clone(),
         })
         .collect()
 }
@@ -1013,8 +1019,12 @@ async fn kickoff_feedback(
         cursor = parent.parent_session_id;
     }
     let feedback = crate::db::entities::chapter_feedback::Entity::find()
-        .filter(crate::db::entities::chapter_feedback::Column::SessionId.is_in(chain))
-        .order_by_desc(crate::db::entities::chapter_feedback::Column::Id)
+        .filter(
+            crate::db::entities::chapter_feedback::COLUMN
+                .session_id
+                .is_in(chain),
+        )
+        .order_by_desc(crate::db::entities::chapter_feedback::COLUMN.id)
         .one(conn)
         .await?;
     Ok(feedback.map(|row| FeedbackContext {
@@ -1079,9 +1089,9 @@ async fn accepted_revision_plan(
     session: &agent_sessions::Model,
 ) -> Result<String, AppError> {
     let calls = agent_tool_calls::Entity::find()
-        .filter(agent_tool_calls::Column::SessionId.eq(session.id))
-        .filter(agent_tool_calls::Column::Name.eq("submit_revision_plan"))
-        .order_by_desc(agent_tool_calls::Column::Id)
+        .filter(agent_tool_calls::COLUMN.session_id.eq(session.id))
+        .filter(agent_tool_calls::COLUMN.name.eq("submit_revision_plan"))
+        .order_by_desc(agent_tool_calls::COLUMN.id)
         .one(conn)
         .await?;
     let Some(call) = calls else {
@@ -1133,17 +1143,61 @@ async fn author_notes(
     //
     // The chain runs root → this session, so an ancestor's index orders the ancestors while the
     // timestamp orders the notes inside one ancestor.
+    let session_ids: Vec<i32> = chain.iter().map(|ancestor| ancestor.id).collect();
+    let call_rows = agent_tool_calls::Entity::find()
+        .filter(
+            agent_tool_calls::COLUMN
+                .session_id
+                .is_in(session_ids.clone()),
+        )
+        .order_by_asc(agent_tool_calls::COLUMN.id)
+        .all(conn)
+        .await?;
+    let mut calls_by_session: std::collections::HashMap<i32, Vec<agent_tool_calls::Model>> =
+        std::collections::HashMap::new();
+    for call in call_rows {
+        calls_by_session
+            .entry(call.session_id)
+            .or_default()
+            .push(call);
+    }
+    let inbox_rows = crate::db::entities::agent_inbox::Entity::find()
+        .filter(
+            crate::db::entities::agent_inbox::COLUMN
+                .session_id
+                .is_in(session_ids),
+        )
+        .filter(
+            crate::db::entities::agent_inbox::COLUMN
+                .kind
+                .eq(InboxKind::UserMessage),
+        )
+        .filter(
+            crate::db::entities::agent_inbox::COLUMN
+                .consumed_at
+                .is_not_null(),
+        )
+        .order_by_asc(crate::db::entities::agent_inbox::COLUMN.id)
+        .all(conn)
+        .await?;
+    let mut inbox_by_session: std::collections::HashMap<
+        i32,
+        Vec<crate::db::entities::agent_inbox::Model>,
+    > = std::collections::HashMap::new();
+    for item in inbox_rows {
+        inbox_by_session
+            .entry(item.session_id)
+            .or_default()
+            .push(item);
+    }
     let mut notes: Vec<(usize, chrono::DateTime<chrono::Utc>, i32, String)> = Vec::new();
     for (ancestor_index, ancestor) in chain.iter().enumerate() {
+        let calls = calls_by_session.remove(&ancestor.id).unwrap_or_default();
+        let items = inbox_by_session.remove(&ancestor.id).unwrap_or_default();
         // Feedback given on a held call is stored in that call's appendices; the call's
         // `finished_at` is when the author wrote it (the resume that sealed it).
-        let calls = agent_tool_calls::Entity::find()
-            .filter(agent_tool_calls::Column::SessionId.eq(ancestor.id))
-            .order_by_asc(agent_tool_calls::Column::Id)
-            .all(conn)
-            .await?;
         for call in calls {
-            let appendices: Vec<json::Appendix> = json::from_json_or_default(&call.appendices);
+            let appendices: Vec<json::Appendix> = call.appendices.clone().into_inner();
             for appendix in appendices {
                 if appendix.kind == json::AppendixKind::UserFeedback
                     && !appendix.text.trim().is_empty()
@@ -1154,13 +1208,6 @@ async fn author_notes(
             }
         }
         // Steering messages are consumed inbox rows, stamped when the author sent them.
-        let items = crate::db::entities::agent_inbox::Entity::find()
-            .filter(crate::db::entities::agent_inbox::Column::SessionId.eq(ancestor.id))
-            .filter(crate::db::entities::agent_inbox::Column::Kind.eq("user_message"))
-            .filter(crate::db::entities::agent_inbox::Column::ConsumedAt.is_not_null())
-            .order_by_asc(crate::db::entities::agent_inbox::Column::Id)
-            .all(conn)
-            .await?;
         for item in items {
             if !item.content.trim().is_empty() {
                 notes.push((
@@ -1201,7 +1248,7 @@ async fn chapter_content(
     let Some(chapter) = chapters::Entity::find_by_id(chapter_id).one(conn).await? else {
         return Ok(ChapterContent::default());
     };
-    Ok(json::from_json_or_default(&chapter.content))
+    Ok(chapter.content.clone().into_inner())
 }
 
 /// `conception.kickoff` (spec/03 §10).
@@ -1292,19 +1339,16 @@ pub async fn build_request(
     session: &agent_sessions::Model,
     _prompts: &PromptSet,
 ) -> Result<nekowriter_llm::ChatRequest, AppError> {
-    let snapshot: json::ModelSnapshot = match json::from_json(&session.model_snapshot) {
-        Ok(snapshot) => snapshot,
-        Err(err) => return Err(AppError::internal(format!("corrupt model_snapshot: {err}"))),
-    };
+    let snapshot: json::ModelSnapshot = session.model_snapshot.clone().into_inner();
     let options: nekowriter_llm::ModelOptions =
         serde_json::from_value(snapshot.options.clone()).unwrap_or_default();
-    let tools: Vec<nekowriter_llm::ToolDef> = json::from_json_or_default(&session.tools);
+    let tools: Vec<nekowriter_llm::ToolDef> = session.tools.clone().into_inner();
     let role = session::role_of(session);
 
     let mut messages = Vec::new();
     for message in super::runner::messages_of(conn, session.id).await? {
-        if message.role == MessageRole::User.as_str() {
-            let blocks: Vec<StoredBlock> = json::from_json_or_default(&message.content);
+        if message.role == MessageRole::User {
+            let blocks: Vec<StoredBlock> = message.content.clone().into_inner();
             let blocks = blocks
                 .into_iter()
                 .filter_map(|block| match block {
@@ -1320,8 +1364,8 @@ pub async fn build_request(
         }
         let payload: json::ProviderPayload = message
             .provider_payload
-            .as_deref()
-            .and_then(|raw| json::from_json::<json::ProviderPayload>(raw).ok())
+            .clone()
+            .map(|value| value.into_inner())
             .unwrap_or(json::ProviderPayload::Mock {
                 content: Value::Null,
             });
@@ -1343,7 +1387,7 @@ pub async fn build_request(
             results.push(nekowriter_llm::ToolResult {
                 call_id: call.provider_call_id.clone(),
                 content,
-                is_error: call.is_error != 0,
+                is_error: call.is_error,
             });
         }
         messages.push(nekowriter_llm::Message::ToolResults { results });
@@ -1393,8 +1437,12 @@ async fn demo_hints(
     // attempt is one more than the chapter's newest report (spec/04 §7.2).
     let review_attempt = match session.chapter_id {
         Some(chapter_id) => crate::db::entities::review_reports::Entity::find()
-            .filter(crate::db::entities::review_reports::Column::ChapterId.eq(chapter_id))
-            .order_by_desc(crate::db::entities::review_reports::Column::Attempt)
+            .filter(
+                crate::db::entities::review_reports::COLUMN
+                    .chapter_id
+                    .eq(chapter_id),
+            )
+            .order_by_desc(crate::db::entities::review_reports::COLUMN.attempt)
             .one(conn)
             .await?
             .map(|row| row.attempt + 1)
@@ -1408,7 +1456,7 @@ async fn demo_hints(
             let chapter = chapters::Entity::find_by_id(chapter_id).one(conn).await?;
             match chapter {
                 Some(chapter) => {
-                    let content: ChapterContent = json::from_json_or_default(&chapter.content);
+                    let content: ChapterContent = chapter.content.clone().into_inner();
                     content
                         .paragraphs
                         .into_iter()
@@ -1428,8 +1476,8 @@ async fn demo_hints(
             .one(conn)
             .await?
             .map(|track| track.canon_mode)
-            .unwrap_or_else(|| "canon".to_owned()),
-        None => "canon".to_owned(),
+            .unwrap_or_else(|| CanonMode::Canon),
+        None => CanonMode::Canon,
     };
     // The entries the research task already has, so the demo researcher continues instead of
     // duplicating (spec/04 §7.2).
@@ -1442,8 +1490,8 @@ async fn demo_hints(
     // The character designs, for the Demo's `canon_seed` plan (spec/04 §7.2, spec/06 §7).
     let characters = match session.book_id {
         Some(book_id) => character_designs::Entity::find()
-            .filter(character_designs::Column::BookId.eq(book_id))
-            .order_by_asc(character_designs::Column::Rank)
+            .filter(character_designs::COLUMN.book_id.eq(book_id))
+            .order_by_asc(character_designs::COLUMN.rank)
             .all(conn)
             .await?
             .into_iter()
@@ -1460,25 +1508,25 @@ async fn demo_hints(
     // conception plan revises only the rejected ones (spec/04 §7.2, spec/05 §7).
     let approved_docs = match session.book_id {
         Some(book_id) => setting_docs::Entity::find()
-            .filter(setting_docs::Column::BookId.eq(book_id))
+            .filter(setting_docs::COLUMN.book_id.eq(book_id))
             .all(conn)
             .await?
             .into_iter()
             .filter(|doc| doc.approved_revision == Some(doc.revision))
-            .map(|doc| doc.kind)
+            .map(|doc| doc.kind.as_str().to_owned())
             .collect(),
         None => Vec::new(),
     };
     Ok(nekowriter_llm::DemoHints {
-        kind: session.kind.clone(),
-        phase: session.phase.clone(),
-        granularity: session.granularity.clone(),
+        kind: session.kind.as_str().to_owned(),
+        phase: session.phase.as_str().to_owned(),
+        granularity: session.granularity.map(|value| value.as_str().to_owned()),
         step_in_phase: counters.steps.max(0) as u32,
         language,
         tools: frozen_tool_names(session),
         protagonist: protagonist_name(conn, session).await?,
         review_attempt: review_attempt.max(1) as u32,
-        canon_mode,
+        canon_mode: canon_mode.as_str().to_owned(),
         draft,
         saved_entries,
         characters,
@@ -1509,8 +1557,8 @@ async fn protagonist_name(
         Some(entity_id) => entities::Entity::find_by_id(entity_id).one(conn).await?,
         None => {
             entities::Entity::find()
-                .filter(entities::Column::BookId.eq(book_id))
-                .filter(entities::Column::IsProtagonist.eq(1))
+                .filter(entities::COLUMN.book_id.eq(book_id))
+                .filter(entities::COLUMN.is_protagonist.eq(true))
                 .one(conn)
                 .await?
         }
@@ -1635,8 +1683,8 @@ pub async fn rollover(
             let now = chrono::Utc::now();
             let child = agent_sessions::ActiveModel {
                 book_id: sea_orm::Set(parent.book_id),
-                role: sea_orm::Set(parent.role.clone()),
-                kind: sea_orm::Set(kind.as_str().to_owned()),
+                role: sea_orm::Set(parent.role),
+                kind: sea_orm::Set(kind),
                 chapter_id: sea_orm::Set(parent.chapter_id),
                 track_id: sea_orm::Set(parent.track_id),
                 research_task_id: sea_orm::Set(None),
@@ -1644,18 +1692,18 @@ pub async fn rollover(
                 model_snapshot: sea_orm::Set(parent.model_snapshot.clone()),
                 system_prompt: sea_orm::Set(parent.system_prompt.clone()),
                 tools: sea_orm::Set(parent.tools.clone()),
-                status: sea_orm::Set(json::SessionStatus::Running.as_str().to_owned()),
-                phase: sea_orm::Set(parent.phase.clone()),
-                granularity: sea_orm::Set(parent.granularity.clone()),
+                status: sea_orm::Set(json::SessionStatus::Running),
+                phase: sea_orm::Set(parent.phase),
+                granularity: sea_orm::Set(parent.granularity),
                 auto_pause: sea_orm::Set(parent.auto_pause),
                 pause_after_outline: sea_orm::Set(parent.pause_after_outline),
-                pause_requested: sea_orm::Set(0),
+                pause_requested: sea_orm::Set(false),
                 held_tool_call_id: sea_orm::Set(None),
                 base_content_version: sea_orm::Set(parent.base_content_version),
                 pending_comment: sea_orm::Set(parent.pending_comment.clone()),
                 view_snapshot: sea_orm::Set(None),
-                counters: sea_orm::Set("{}".to_owned()),
-                usage: sea_orm::Set("{}".to_owned()),
+                counters: sea_orm::Set(JsonText(SessionCounters::default())),
+                usage: sea_orm::Set(JsonText(Usage::default())),
                 error: sea_orm::Set(None),
                 parent_session_id: sea_orm::Set(Some(parent.id)),
                 created_at: sea_orm::Set(now),
@@ -1772,15 +1820,12 @@ pub fn completion_version_kind(completion: CompletionKind) -> Option<VersionKind
 
 /// Stored `request_meta` of a message, when present.
 pub fn request_meta(message: &agent_messages::Model) -> Option<RequestMeta> {
-    message
-        .request_meta
-        .as_deref()
-        .and_then(|raw| json::from_json::<RequestMeta>(raw).ok())
+    message.request_meta.clone().map(|value| value.into_inner())
 }
 
 /// Reads the frozen tool names of a session (spec/03 §1.3).
 pub fn frozen_tool_names(session: &agent_sessions::Model) -> Vec<String> {
-    let tools: Vec<nekowriter_llm::ToolDef> = json::from_json_or_default(&session.tools);
+    let tools: Vec<nekowriter_llm::ToolDef> = session.tools.clone().into_inner();
     tools.into_iter().map(|tool| tool.name).collect()
 }
 
@@ -1800,11 +1845,11 @@ pub async fn latest_version_kind(
     chapter_id: i32,
 ) -> Result<Option<VersionKind>, AppError> {
     let row = chapter_versions::Entity::find()
-        .filter(chapter_versions::Column::ChapterId.eq(chapter_id))
-        .order_by_desc(chapter_versions::Column::Id)
+        .filter(chapter_versions::COLUMN.chapter_id.eq(chapter_id))
+        .order_by_desc(chapter_versions::COLUMN.id)
         .one(conn)
         .await?;
-    Ok(row.and_then(|row| VersionKind::from_str_opt(&row.kind)))
+    Ok(row.map(|row| row.kind))
 }
 
 /// The calls of a message that are still unresolved (used by tests and the debug endpoint).
@@ -1813,8 +1858,8 @@ pub async fn unresolved_calls(
     message_id: i32,
 ) -> Result<Vec<agent_tool_calls::Model>, AppError> {
     Ok(agent_tool_calls::Entity::find()
-        .filter(agent_tool_calls::Column::MessageId.eq(message_id))
-        .filter(agent_tool_calls::Column::Status.is_in([
+        .filter(agent_tool_calls::COLUMN.message_id.eq(message_id))
+        .filter(agent_tool_calls::COLUMN.status.is_in([
             ToolCallStatus::Pending.as_str(),
             ToolCallStatus::Executing.as_str(),
             ToolCallStatus::Held.as_str(),
@@ -1828,8 +1873,16 @@ pub async fn unresolved_calls(
 pub async fn inbox_pending(conn: &impl ConnectionTrait, session_id: i32) -> Result<i64, AppError> {
     use sea_orm::PaginatorTrait;
     Ok(crate::db::entities::agent_inbox::Entity::find()
-        .filter(crate::db::entities::agent_inbox::Column::SessionId.eq(session_id))
-        .filter(crate::db::entities::agent_inbox::Column::ConsumedAt.is_null())
+        .filter(
+            crate::db::entities::agent_inbox::COLUMN
+                .session_id
+                .eq(session_id),
+        )
+        .filter(
+            crate::db::entities::agent_inbox::COLUMN
+                .consumed_at
+                .is_null(),
+        )
         .count(conn)
         .await? as i64)
 }
@@ -1845,12 +1898,12 @@ pub async fn setting_docs_map(
     book_id: i32,
 ) -> Result<BTreeMap<String, String>, AppError> {
     let docs = setting_docs::Entity::find()
-        .filter(setting_docs::Column::BookId.eq(book_id))
+        .filter(setting_docs::COLUMN.book_id.eq(book_id))
         .all(conn)
         .await?;
     Ok(docs
         .into_iter()
-        .map(|doc| (doc.kind, doc.content))
+        .map(|doc| (doc.kind.as_str().to_owned(), doc.content))
         .collect())
 }
 

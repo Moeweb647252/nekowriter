@@ -2915,3 +2915,154 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   §10.18–§10.28, §11; spec/01 §3.1; spec/02 §1–§5; spec/03 §1.2, §4, §9, §10, §15; spec/05 §1.5,
   §2, §3, §6, §9; spec/06 intro, §2–§11; spec/08 §5, §7; spec/09 §1, §2, §5; spec/10 §2.3, §2.4,
   §2.8, §3, §4; spec/11 §3, §4, §5.1, §5.5, §9; PLAN M13.
+
+### D-151 SeaORM 2 target shape
+
+- **Context**: the dependencies are already SeaORM 2.0.4 (spec/01 §2), but the code is written in
+  the 1.x style: 36 expanded entities with empty `Relation` enums, enum/boolean/JSON columns typed
+  as `String`/`i32` and converted by hand, SQL assembled from strings, and per-row lookup loops.
+  The migration touches no dependency, no SQL file and no API: it brings the *code* to the shape
+  SeaORM 2.0 documents. The plan (`docs/research/seaorm-2-migration-plan.md`, M14) rests on facts
+  measured against this tree: 36 tables and 82 foreign keys; 14 non-partial unique constraints
+  besides primary keys; 40 CHECK-constrained TEXT columns (39 enums in `db/json.rs` plus
+  `WritingSkillAuthor`); 8 INTEGER 0/1 flags; 31 `json_valid` columns, of which 30 become typed
+  (the exception is `app_settings.value`); about 125 enum-to-string conversions in `src`, and
+  stringly-built SQL in `agent/session.rs`, `services/sessions.rs`, `agent/manager.rs` and
+  `services/indexer.rs`.
+- **Decision**:
+  - **Schema ownership stays SQL-first** (D-015). Entity-first `schema-sync` cannot express the
+    CHECK lists, FTS5/vec0 tables, partial unique indexes or triggers, and never alters a CHECK.
+    The entities describe the schema; `tests/entity_schema.rs` proves they match it.
+  - **Entity format**: all 36 entities use `#[sea_orm::model]` (the dense 2.0 format) above
+    `DeriveEntityModel`; the empty `Relation` enums are deleted; `impl ActiveModelBehavior for
+    ActiveModel {}` stays. Relations live on `Model` as `BelongsTo`/`HasOne`/`HasMany` with a
+    `belongs_to` for every FK, a reverse `has_many` for every unambiguous FK, M-N `via` in both
+    directions over the five join tables, `self_ref` for the three self references, and
+    `relation_enum` where two FKs share a target. Field naming: FK field = column without `_id`,
+    reverse = child table name, M-N = far table name. No reverse relation or `Related` impl on the
+    same-target pairs; joins and loaders use the named `Relation` variant. No schema-only
+    attributes (`indexed`, `default_value`, `on_update`, `on_delete`).
+  - **Unique keys**: `unique` / `unique_key` on the 14 non-partial unique constraints; partial
+    unique indexes stay SQL-only. The generated finders replace hand-written lookups.
+  - **Enum columns**: the 40 CHECK-constrained TEXT columns become their Rust enums through
+    `DeriveActiveEnum` added to `string_enum!`; `as_str`/`from_str_opt`/`Display`/`FromStr` stay
+    for parsing that is not a column read. **Boolean columns**: the 8 flags become `bool`.
+    **JSON columns**: 30 columns become `JsonText<T>`, one wrapper in `db/json.rs` that stores the
+    exact `serde_json::to_string` text `to_json` wrote. `agent_messages.usage`,
+    `agent_sessions.usage` and `agent_sessions.counters` canonicalize `{}` to the full default
+    object on new writes; both forms decode under `#[serde(default)]`, and every other column is
+    byte-identical. `app_settings.value` stays `String` because its shape depends on `key`.
+  - **Decoding is strict** (author confirmed): a value that does not match its type fails the
+    query (`DbErr::Type` → `500 internal`) and names the column. This removes the silent
+    fallbacks (`from_json_or_default`, `from_str_opt(...).unwrap_or(..)`) whose empty
+    `ChapterContent` could later be written back over real text. `CHECK` constraints make an
+    unknown enum value or invalid JSON syntax impossible; `#[serde(default)]` keeps old rows
+    loading. The no-silent-fallback rule covers column reads; the pre-existing model-option
+    semantic defaults in `services/sessions.rs::model_snapshot_with_ttl`,
+    `agent/context/mod.rs::build_request` and `services/providers.rs::test_request_config` convert
+    an already-decoded value and remain out of scope.
+  - **Writes**: stringly SQL becomes typed `update_many().set(partial ActiveModel)` or
+    `.col_expr(..)` with typed filters; `guard_columns` becomes `guard_update` and keeps the
+    `rows_affected == 0 → session.invalid_state` rule (spec/03 §14, D-034). Static raw statements
+    move to `raw_sql!` with named parameters; `Statement::from_sql_and_values` remains only where
+    the table name is chosen at runtime from a closed set, plus test fixtures and the
+    FTS5/vec0/`sqlite_master` statements that are raw by nature.
+  - **Reads**: per-row lookup loops become the Entity/Model Loader or one `is_in` query; list
+    queries that never read `content` use a `DerivePartialModel`; existence filters use
+    `has_related`; unique-key lookups use the generated finders. Filters and ordering use the
+    typed `COLUMN` constant; `col_expr`, `select_only().column(..)`, `group_by`,
+    `Relation::X.def()` and `visible_condition` keep `Column::`. Files that call `Expr` methods
+    import `sea_orm::sea_query::ExprTrait`.
+  - **Not adopted**: nested ActiveModel saves (canon ids come from `services/canon::fresh_id` and
+    change-log/event order is explicit); `ActiveModelBehavior` timestamp hooks (they do not run
+    for `update_many` or raw SQL); typed-ID newtypes (would change the DTO and TS binding
+    surface); RBAC, Arrow, Seaography and ClickHouse; regenerating the entities with
+    `sea-orm-cli` as the source (ids come out `i64`, timestamps `String`, same-target names are
+    generated names, and SQLite partial unique indexes are misread as `HasOne`); entity-first
+    `schema-sync`.
+  - **Ordering**: M14 runs after 13.2 (so its kickoff snapshots guard the refactor) and before
+    13.3 (so the goal tables are born in the target shape); the author confirmed this and strict
+    decoding in plan §9.
+- **Consequences**:
+  - A corrupt or shape-mismatched JSON/enum value now fails the read instead of silently becoming
+    a default; the error names the column. Task 14.9 ran `decode_all_rows` on a copy of the
+    author's database at `target/tmp/decode-real/nekowriter.db` (the test copies it again before
+    migration); all 36 tables decoded with no error. Row counts: agent_inbox 1, agent_messages 30,
+    agent_sessions 6, agent_tool_calls 19, app_settings 4, appearances 0, book_scopes 0,
+    book_writing_skills 0, books 2, change_log 0, chapter_feedback 0, chapter_versions 2,
+    chapters 1, character_designs 0, entities 0, foreshadowing 0, foreshadowing_entities 0,
+    index_meta 2, knowledge_chunks 0, knowledge_entries 0, knowledge_scopes 0,
+    memory_note_entities 0, memory_notes 0, model_profiles 3, prompt_overrides 0, providers 2,
+    relations 0, research_tasks 0, review_reports 0, search_docs 0, setting_docs 6,
+    setting_proposals 0, timeline_event_entities 0, timeline_events 0, tracks 2,
+    writing_skills 1. The source database and its `-wal`/`-shm` sidecars were SHA-256-verified
+    unchanged (`1c09955b…`, `e3b0c442…`, `fd4c9fda…`).
+  - Smoke items 1–4 and 8 passed with the Demo provider against a copy at
+    `target/tmp/smoke-data`: conception (Demo roles, two questions, one review change, finalize,
+    canon seed: 2 entities, 1 timeline event), research (task done, 2 knowledge entries, keyword
+    hit immediately and vector index 4/4 done), outline/write (outline approved, chapter stayed
+    `planned`; paragraph-autopause held after the first paragraph, an author paragraph edit
+    applied, feedback accepted, writer finished), review/maintenance (reviewer verdict `revise`,
+    edited send-back revision finished, approval, maintenance completed, one change reverted,
+    one proposal accepted), and book prompt overrides (new planner session had
+    `SMOKE_OVERRIDE_PLANNER` and new writer session `SMOKE_OVERRIDE_WRITER`; pre-change sessions
+    10/11 kept the old prompts).
+  - Build comparison: `cargo build -p nekowriter` at pre-M14 `3fe8cfc` was 112.95 s and at
+    `97579bf` 75.02 s, both in fresh `CARGO_TARGET_DIR` directories (`target/tmp/pre-target`,
+    `target/tmp/post-target`) with the shared kache warm and mold active; the difference is not a
+    clean-cache claim.
+  - No SQL file, prompt, API response, SSE event or `web/src/api/gen` binding changes; the 13.2
+    kickoff snapshots stay byte-identical.
+  - `tests/entity_schema.rs` lands before any entity change and grows with each task: table and
+    column guards first, then relations and unique keys, then enums/booleans, then JSON.
+  - The plan's snippets are checked against the compiler; where the compiler disagrees the
+    compiler wins and the plan is corrected in the task's report.
+- **Spec**: PROJECT §6.5; spec/01 §2, §3.1, §3.4, §7; spec/02 §1–§5; spec/03 §3, §14; spec/06 §2;
+  spec/07; spec/08 §7; D-015, D-034; PLAN M14.
+
+### D-152 SeaORM 2 relation naming and API corrections (M14.3)
+
+- **Context**: converting all 36 entities to `#[sea_orm::model]` established seven facts about
+  sea-orm 2.0.4 that the plan's snippet or the crate's own documentation did not state correctly:
+  1. The dense macro names a relation variant after the *target module path*, not the field, so an
+     entity with both a `belongs_to` and a `has_many` to the same table generates the same
+     `RelatedEntity` variant twice (`AgentToolCalls`, `ResearchTasks`, `AgentSessions`, `Tracks`,
+     `Chapters`, `Entities`) and the derive fails; one side needs an explicit `relation_enum`.
+  2. A `has_many` needs `via_rel = "<child belongs_to variant>"` whenever the child has two
+     relations back to the parent (a `belongs_to` plus a `has_many`), not only when two FKs share
+     a target.
+  3. A `self_ref` `BelongsTo` is `declared = false` in the macro, so it generates no `Related`
+     impl and `find_related` cannot be called on `parent_session`; the guard checks the
+     `Relation::ParentSession` `RelationDef` and the stored `parent_session_id` instead.
+  4. The plan's original M-N form `has_many, via = "<junction>"` **does compile**:
+     `infer_relation_name_from_entity` (`sea-orm-macros-2.0.4/src/derives/model_ex.rs:1448-1457`)
+     takes the variant from the target module path, and `expand_related_via_trait` (`:619-643`)
+     falls back to
+     `<junction::Entity as Related<Entity>>::to().rev()` for the `via` leg. The first M14.3 attempt
+     named the junction ends explicitly (`relation_enum = "Scope", via = "book_scopes::Book"`) and
+     then needed field-level names; that long form was a misdiagnosis and is reverted, so all ten
+     M-N fields use `via = "<junction>"` and the five junction `belongs_to`s have no `relation_enum`.
+  5. `ConnectionTrait::query_all` takes `&S: StatementBuilder`; a built `Statement` must go through
+     `query_all_raw` (the skill's 2.x cheat sheet says this as well).
+  6. `ColumnDef::unique_key` has no public getter, so the unique-key guard compares complete
+     `ColumnDef` values (built with `.unique()` / `.unique_key()`) against
+     `PRAGMA index_list` / `index_info` instead of reading the attribute.
+  7. `RelationDef::is_owner` is `false` for a `belongs_to` and `true` for a `has_many` in 2.0.4,
+     the opposite of the field's doc text; the guard therefore branches on
+     `RelationType::HasMany`, not on `is_owner`.
+- **Decision**: keep the plan's field names (the FK column without `_id`, the child table for a
+  reverse relation, the far table for an M-N field) and its original M-N `via = "<junction>"`
+  syntax. Give a relation an explicit `relation_enum` only where needed: the `belongs_to` side of
+  a `belongs_to`/`has_many` pair (`HeldToolCall`, `ResearchTask`, `Session`, `AnchorChapter`,
+  `FocusEntity`, `Track`), plus the existing same-target names (`OfficialVersion`,
+  `SyncedVersion`, `FirstChapter`, `LastChapter`, `PlantedChapter`, `ResolvedChapter`, `Source`,
+  `Target`, `SinceChapter`, `UntilChapter`, `Reverts`, `RevertedBy`, `ParentSession`,
+  `ChildSessions`). `has_many` uses `via_rel` for the two-relation pairs. The self reference is
+  checked at the `RelationDef` level instead of through `find_related`. Plan §2.1 and §7 and
+  spec/02 §1 record the corrected shape.
+- **Consequences**: the graph is 82 `belongs_to`, 60 plain reverse `has_many` (including the
+  `ChildSessions` self reverse) and 10 M-N `via` fields; `tests/entity_schema.rs` compares every
+  `belongs_to` with `PRAGMA foreign_key_list`, every unambiguous reverse with the parent entity,
+  every junction `via` chain and every unique key with `PRAGMA index_list`. A future entity must
+  follow the variant-naming rule or its derive fails at compile time.
+- **Spec**: spec/02 §1; plan §2.1, §5, §7; D-151.

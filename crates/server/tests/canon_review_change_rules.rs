@@ -13,7 +13,7 @@ mod canon_fixture;
 use axum::http::StatusCode;
 use nekowriter::api::dto::canon::EntityPatch;
 use nekowriter::db::entities::change_log;
-use nekowriter::db::json::{ChangeActor, ChangeTargetType, Snapshot};
+use nekowriter::db::json::{ChangeActor, ChangeOp, ChangeTargetType, Snapshot};
 use nekowriter::services::canon::{self, CanonWrite, Visibility, entity};
 use nekowriter::testing::TestApp;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
@@ -40,9 +40,9 @@ async fn changes_of(
     target_id: i32,
 ) -> Vec<change_log::Model> {
     change_log::Entity::find()
-        .filter(change_log::Column::TargetType.eq(target.as_str()))
-        .filter(change_log::Column::TargetId.eq(target_id))
-        .order_by_desc(change_log::Column::Id)
+        .filter(change_log::COLUMN.target_type.eq(target.as_str()))
+        .filter(change_log::COLUMN.target_id.eq(target_id))
+        .order_by_desc(change_log::COLUMN.id)
         .all(app.db().conn())
         .await
         .expect("change rows")
@@ -133,7 +133,7 @@ async fn the_change_actor_names_who_wrote() {
         .await;
     assert_eq!(status, StatusCode::OK);
     let history = changes_of(&app, ChangeTargetType::Entity, entity_id).await;
-    assert_eq!(history[0].actor, ChangeActor::User.as_str());
+    assert_eq!(history[0].actor, ChangeActor::User);
 
     // Agent write through the same service (the archivist tools call it this way).
     let write = CanonWrite {
@@ -159,12 +159,12 @@ async fn the_change_actor_names_who_wrote() {
     let history = changes_of(&app, ChangeTargetType::Entity, entity_id).await;
     assert_eq!(
         history[0].actor,
-        ChangeActor::Agent.as_str(),
+        ChangeActor::Agent,
         "a tool write is an agent change"
     );
     assert!(
         matches!(
-            serde_json::from_str::<Snapshot>(history[0].after.as_deref().expect("after")).ok(),
+            history[0].after.as_ref().map(|value| &value.0),
             Some(Snapshot::Entity { .. })
         ),
         "the row still carries the typed after snapshot"
@@ -206,7 +206,7 @@ async fn concurrent_reverts_of_deleted_rows_get_distinct_fresh_ids() {
         assert_eq!(status, StatusCode::OK, "entity #{new_id} exists");
         let rows = changes_of(&app, ChangeTargetType::Entity, new_id as i32).await;
         assert_eq!(rows.len(), 1, "one recreate change for #{new_id}");
-        assert_eq!(rows[0].op, "create");
+        assert_eq!(rows[0].op, ChangeOp::Create);
     }
 }
 

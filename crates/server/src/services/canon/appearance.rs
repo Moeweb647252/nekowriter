@@ -12,9 +12,7 @@
 
 use std::collections::HashSet;
 
-use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, Set,
-};
+use sea_orm::{ActiveModelTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, Set};
 
 use crate::api::dto::canon::{AppearanceDto, AppearanceInput};
 use crate::db::entities::appearances;
@@ -32,8 +30,8 @@ pub async fn for_chapter(
     chapter_id: i32,
 ) -> CanonResult<Vec<appearances::Model>> {
     Ok(appearances::Entity::find()
-        .filter(appearances::Column::ChapterId.eq(chapter_id))
-        .order_by_asc(appearances::Column::EntityId)
+        .filter(appearances::COLUMN.chapter_id.eq(chapter_id))
+        .order_by_asc(appearances::COLUMN.entity_id)
         .all(conn)
         .await?)
 }
@@ -86,14 +84,14 @@ pub async fn record_set_inner(
     }
 
     appearances::Entity::delete_many()
-        .filter(appearances::Column::ChapterId.eq(chapter_id))
+        .filter(appearances::COLUMN.chapter_id.eq(chapter_id))
         .exec(tx)
         .await?;
     for input in &wanted {
         appearances::ActiveModel {
             chapter_id: Set(chapter_id),
             entity_id: Set(input.entity_id),
-            role: Set(input.role.as_str().to_owned()),
+            role: Set(input.role),
             note: Set(input.note.trim().to_owned()),
             ..Default::default()
         }
@@ -182,9 +180,7 @@ pub fn to_dto(row: &appearances::Model) -> CanonResult<AppearanceDto> {
         id: row.id,
         chapter_id: row.chapter_id,
         entity_id: row.entity_id,
-        role: AppearanceRole::from_str_opt(&row.role).ok_or_else(|| {
-            CanonError::internal(format!("unknown appearances.role {:?}", row.role))
-        })?,
+        role: row.role,
         note: row.note.clone(),
     })
 }
