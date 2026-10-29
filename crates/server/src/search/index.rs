@@ -12,7 +12,8 @@
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
-use sea_orm::{ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter, Statement};
+use sea_orm::raw_sql;
+use sea_orm::{ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter, Statement};
 use tokio::sync::Notify;
 
 pub use crate::api::health::IndexState;
@@ -118,10 +119,10 @@ pub async fn ensure_schema(
 async fn vec_tables_exist(conn: &impl ConnectionTrait) -> Result<bool, AppError> {
     let rows = conn
         // Raw: sqlite-vec/FTS5 virtual tables, KNN/blob syntax and sqlite_master probes have no typed API.
-        .query_all_raw(Statement::from_string(
-            DatabaseBackend::Sqlite,
+        .query_all_raw(raw_sql!(
+            Sqlite,
             "SELECT name FROM sqlite_master WHERE type = 'table' \
-             AND name IN ('vec_book', 'vec_knowledge')",
+             AND name IN ('vec_book', 'vec_knowledge')"
         ))
         .await?;
     Ok(rows.len() == 2)
@@ -139,12 +140,12 @@ pub async fn meta_value(
 }
 
 async fn upsert_meta(conn: &impl ConnectionTrait, key: &str, value: &str) -> Result<(), AppError> {
-    // Raw: sqlite-vec/FTS5 virtual tables, KNN/blob syntax and sqlite_master probes have no typed API.
-    conn.execute_unprepared(&format!(
-        "INSERT INTO index_meta(key, value) VALUES ('{}', '{}') \
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        key.replace('\'', "''"),
-        value.replace('\'', "''")
+    // Raw: index_meta has no JsonText/typed entity column beyond the key/value pair; upsert is
+    // expressed with the 2.0 raw_sql macro and named parameters.
+    conn.execute_raw(raw_sql!(
+        Sqlite,
+        "INSERT INTO index_meta(key, value) VALUES ({key}, {value}) \
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value"
     ))
     .await?;
     Ok(())
@@ -257,9 +258,12 @@ pub async fn store_book_vector(
     } else {
         "canon"
     };
-    // Raw: sqlite-vec/FTS5 virtual tables, KNN/blob syntax and sqlite_master probes have no typed API.
-    conn.execute_unprepared(&format!("DELETE FROM vec_book WHERE doc_id = {doc_id}"))
-        .await?;
+    // Raw: sqlite-vec virtual table; raw_sql binds the integer id.
+    conn.execute_raw(raw_sql!(
+        Sqlite,
+        "DELETE FROM vec_book WHERE doc_id = {doc_id}"
+    ))
+    .await?;
     // Raw: sqlite-vec/FTS5 virtual tables, KNN/blob syntax and sqlite_master probes have no typed API.
     conn.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Sqlite,
@@ -277,7 +281,7 @@ pub async fn store_book_vector(
             embed_state: sea_orm::Set(crate::db::json::EmbedState::Done),
             ..Default::default()
         })
-        .filter(search_docs::Column::Id.eq(doc_id))
+        .filter(search_docs::COLUMN.id.eq(doc_id))
         .exec(conn)
         .await?;
     Ok(true)
@@ -309,8 +313,9 @@ pub async fn store_knowledge_vector(
     if hash != expected_hash {
         return Ok(false);
     }
-    // Raw: sqlite-vec/FTS5 virtual tables, KNN/blob syntax and sqlite_master probes have no typed API.
-    conn.execute_unprepared(&format!(
+    // Raw: sqlite-vec virtual table; raw_sql binds the integer id.
+    conn.execute_raw(raw_sql!(
+        Sqlite,
         "DELETE FROM vec_knowledge WHERE chunk_id = {chunk_id}"
     ))
     .await?;
@@ -330,7 +335,7 @@ pub async fn store_knowledge_vector(
             embed_state: sea_orm::Set(crate::db::json::EmbedState::Done),
             ..Default::default()
         })
-        .filter(knowledge_chunks::Column::Id.eq(chunk_id))
+        .filter(knowledge_chunks::COLUMN.id.eq(chunk_id))
         .exec(conn)
         .await?;
     Ok(true)
@@ -607,15 +612,15 @@ impl SearchState {
 pub async fn index_counts(conn: &impl ConnectionTrait) -> Result<(i64, i64, i64), AppError> {
     let row = conn
         // Raw: sqlite-vec/FTS5 virtual tables, KNN/blob syntax and sqlite_master probes have no typed API.
-        .query_one_raw(Statement::from_string(
-            DatabaseBackend::Sqlite,
+        .query_one_raw(raw_sql!(
+            Sqlite,
             "SELECT \
                (SELECT count(*) FROM search_docs WHERE embed_state = 'pending') + \
                (SELECT count(*) FROM knowledge_chunks WHERE embed_state = 'pending') AS pending, \
                (SELECT count(*) FROM search_docs WHERE embed_state = 'failed') + \
                (SELECT count(*) FROM knowledge_chunks WHERE embed_state = 'failed') AS failed, \
                (SELECT count(*) FROM search_docs WHERE embed_state = 'done') + \
-               (SELECT count(*) FROM knowledge_chunks WHERE embed_state = 'done') AS done",
+               (SELECT count(*) FROM knowledge_chunks WHERE embed_state = 'done') AS done"
         ))
         .await?
         .ok_or_else(|| AppError::internal("index counts returned no row"))?;

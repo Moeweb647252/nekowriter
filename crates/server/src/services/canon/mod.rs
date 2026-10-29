@@ -848,6 +848,30 @@ pub fn summary_snapshot(summary: &str) -> Snapshot {
     }
 }
 
+/// The subset of `ids` that still exist, in input order. One `is_in` query replaces a per-id
+/// existence loop (§2.7).
+pub(crate) async fn existing_entity_ids(
+    tx: &impl sea_orm::ConnectionTrait,
+    ids: &[i32],
+) -> CanonResult<Vec<i32>> {
+    use sea_orm::{EntityTrait, QueryFilter};
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let existing: std::collections::HashSet<i32> = crate::db::entities::entities::Entity::find()
+        .filter(crate::db::entities::entities::COLUMN.id.is_in(ids.to_vec()))
+        .all(tx)
+        .await?
+        .into_iter()
+        .map(|row| row.id)
+        .collect();
+    Ok(ids
+        .iter()
+        .copied()
+        .filter(|id| existing.contains(id))
+        .collect())
+}
+
 // ───────────────────────────── shared conversions ─────────────────────────────
 
 /// A `conflict.exists` carrying the existing row's id (spec/10 §4).

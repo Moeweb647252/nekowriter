@@ -17,6 +17,22 @@ use crate::error::AppError;
 use crate::search::{chunk, index};
 use crate::state::AppState;
 
+/// The partial `search_docs` update for one embed-state transition.
+pub(crate) fn doc_embed_changes(state: EmbedState) -> search_docs::ActiveModel {
+    search_docs::ActiveModel {
+        embed_state: Set(state),
+        ..Default::default()
+    }
+}
+
+/// The partial `knowledge_chunks` update for one embed-state transition.
+pub(crate) fn chunk_embed_changes(state: EmbedState) -> knowledge_chunks::ActiveModel {
+    knowledge_chunks::ActiveModel {
+        embed_state: Set(state),
+        ..Default::default()
+    }
+}
+
 /// The batch size of one indexing pass (spec/07 §4).
 pub const BATCH_SIZE: usize = 32;
 
@@ -291,20 +307,14 @@ async fn mark_failed(
             for (id, hash, is_doc) in changes {
                 let result = if is_doc {
                     search_docs::Entity::update_many()
-                        .set(search_docs::ActiveModel {
-                            embed_state: Set(EmbedState::Failed),
-                            ..Default::default()
-                        })
+                        .set(doc_embed_changes(EmbedState::Failed))
                         .filter(search_docs::COLUMN.id.eq(id))
                         .filter(search_docs::COLUMN.content_hash.eq(hash))
                         .exec(tx)
                         .await?
                 } else {
                     knowledge_chunks::Entity::update_many()
-                        .set(knowledge_chunks::ActiveModel {
-                            embed_state: Set(EmbedState::Failed),
-                            ..Default::default()
-                        })
+                        .set(chunk_embed_changes(EmbedState::Failed))
                         .filter(knowledge_chunks::COLUMN.id.eq(id))
                         .filter(knowledge_chunks::COLUMN.content_hash.eq(hash))
                         .exec(tx)
@@ -320,10 +330,7 @@ async fn mark_failed(
 
 async fn mark_doc_done(conn: &impl ConnectionTrait, id: i32, hash: &str) -> Result<(), AppError> {
     search_docs::Entity::update_many()
-        .set(search_docs::ActiveModel {
-            embed_state: Set(EmbedState::Done),
-            ..Default::default()
-        })
+        .set(doc_embed_changes(EmbedState::Done))
         .filter(search_docs::COLUMN.id.eq(id))
         .filter(search_docs::COLUMN.content_hash.eq(hash))
         .exec(conn)
@@ -333,10 +340,7 @@ async fn mark_doc_done(conn: &impl ConnectionTrait, id: i32, hash: &str) -> Resu
 
 async fn mark_chunk_done(conn: &impl ConnectionTrait, id: i32, hash: &str) -> Result<(), AppError> {
     knowledge_chunks::Entity::update_many()
-        .set(knowledge_chunks::ActiveModel {
-            embed_state: Set(EmbedState::Done),
-            ..Default::default()
-        })
+        .set(chunk_embed_changes(EmbedState::Done))
         .filter(knowledge_chunks::COLUMN.id.eq(id))
         .filter(knowledge_chunks::COLUMN.content_hash.eq(hash))
         .exec(conn)
@@ -373,18 +377,12 @@ pub async fn rebuild(state: &AppState) -> Result<(), AppError> {
     crate::services::write(state.db(), |tx| {
         Box::pin(async move {
             search_docs::Entity::update_many()
-                .set(search_docs::ActiveModel {
-                    embed_state: Set(EmbedState::Pending),
-                    ..Default::default()
-                })
+                .set(doc_embed_changes(EmbedState::Pending))
                 .filter(search_docs::COLUMN.embed_state.ne(EmbedState::Pending))
                 .exec(tx)
                 .await?;
             knowledge_chunks::Entity::update_many()
-                .set(knowledge_chunks::ActiveModel {
-                    embed_state: Set(EmbedState::Pending),
-                    ..Default::default()
-                })
+                .set(chunk_embed_changes(EmbedState::Pending))
                 .filter(knowledge_chunks::COLUMN.embed_state.ne(EmbedState::Pending))
                 .exec(tx)
                 .await?;

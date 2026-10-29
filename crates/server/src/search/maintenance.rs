@@ -5,9 +5,9 @@
 //! FTS columns hold jieba-segmented, space-joined tokens (spec/07 §5); the searchable text is
 //! never copied into the FTS table unsegmented, or CJK queries could not match.
 
+use sea_orm::raw_sql;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter,
-    QueryOrder, Set, Statement,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, Set,
 };
 
 use crate::db::entities::{
@@ -53,10 +53,7 @@ pub fn doc_hash(body: &str) -> String {
 /// vector stays until the indexer replaces it (spec/07 §2).
 pub async fn upsert_doc(conn: &impl ConnectionTrait, doc: NewDoc<'_>) -> Result<(), AppError> {
     let hash = doc_hash(doc.body);
-    let existing = search_docs::Entity::find()
-        .filter(search_docs::COLUMN.kind.eq(doc.kind))
-        .filter(search_docs::COLUMN.ref_id.eq(doc.ref_id))
-        .filter(search_docs::COLUMN.ref_part.eq(doc.ref_part))
+    let existing = search_docs::Entity::find_by_doc_ref((doc.kind, doc.ref_id, doc.ref_part))
         .one(conn)
         .await?;
     match existing {
@@ -131,10 +128,9 @@ async fn replace_fts(
     let body_tokens = fts::segment(body);
     if let Some(row) = conn
         // Raw: FTS5 virtual-table inserts/deletes and rowid addressing have no typed API.
-        .query_one_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            "SELECT title, body FROM fts_book WHERE rowid = ?",
-            vec![(id as i64).into()],
+        .query_one_raw(raw_sql!(
+            Sqlite,
+            "SELECT title, body FROM fts_book WHERE rowid = {id}"
         ))
         .await?
     {
@@ -144,14 +140,13 @@ async fn replace_fts(
             return Ok(());
         }
     }
-    // Raw: FTS5 virtual-table inserts/deletes and rowid addressing have no typed API.
-    conn.execute_unprepared(&format!("DELETE FROM fts_book WHERE rowid = {id}"))
+    // Raw: FTS5 virtual-table deletes have no typed API; `raw_sql!` binds the rowid.
+    conn.execute_raw(raw_sql!(Sqlite, "DELETE FROM fts_book WHERE rowid = {id}"))
         .await?;
     // Raw: FTS5 virtual-table inserts/deletes and rowid addressing have no typed API.
-    conn.execute_raw(Statement::from_sql_and_values(
-        DatabaseBackend::Sqlite,
-        "INSERT INTO fts_book(rowid, title, body) VALUES (?, ?, ?)",
-        vec![(id as i64).into(), title_tokens.into(), body_tokens.into()],
+    conn.execute_raw(raw_sql!(
+        Sqlite,
+        "INSERT INTO fts_book(rowid, title, body) VALUES ({id}, {title_tokens}, {body_tokens})"
     ))
     .await?;
     Ok(())
@@ -458,12 +453,14 @@ async fn sync_knowledge_chunk_rows(
     // value collides with a live one (spec/02 §1, like chapter `ord`).
     for (position, (id, changed, _)) in kept.iter().enumerate() {
         if *changed {
-            // Raw: FTS5 virtual-table inserts/deletes and rowid addressing have no typed API.
-            conn.execute_unprepared(&format!(
-                "UPDATE knowledge_chunks SET ord = {} WHERE id = {id}",
-                -(position as i64) - 1
-            ))
-            .await?;
+            knowledge_chunks::Entity::update_many()
+                .set(knowledge_chunks::ActiveModel {
+                    ord: Set(-(position as i32) - 1),
+                    ..Default::default()
+                })
+                .filter(knowledge_chunks::COLUMN.id.eq(*id))
+                .exec(conn)
+                .await?;
         }
     }
     for id in &stale {
@@ -478,15 +475,17 @@ async fn sync_knowledge_chunk_rows(
         let hash = chunk::content_hash(&chunk.heading, &chunk.text);
         match kept_ids.get(&index) {
             Some(id) => {
-                // Raw: FTS5 virtual-table inserts/deletes and rowid addressing have no typed API.
-                conn.execute_unprepared(&format!(
-                    "UPDATE knowledge_chunks SET ord = {index}, heading = {}, text = {}, \
-                     content_hash = {} WHERE id = {id}",
-                    sql_string(&chunk.heading),
-                    sql_string(&chunk.text),
-                    sql_string(&hash)
-                ))
-                .await?;
+                knowledge_chunks::Entity::update_many()
+                    .set(knowledge_chunks::ActiveModel {
+                        ord: Set(index as i32),
+                        heading: Set(chunk.heading.clone()),
+                        text: Set(chunk.text.clone()),
+                        content_hash: Set(hash),
+                        ..Default::default()
+                    })
+                    .filter(knowledge_chunks::COLUMN.id.eq(*id))
+                    .exec(conn)
+                    .await?;
             }
             None => {
                 let row = knowledge_chunks::Entity::insert(knowledge_chunks::ActiveModel {
@@ -572,12 +571,14 @@ async fn sync_chunk_rows(conn: &impl ConnectionTrait, rows: SyncRows<'_>) -> Res
     // Park kept rows on negative `ref_part` values before writing final positions.
     for (position, (id, changed, _)) in kept.iter().enumerate() {
         if *changed {
-            // Raw: FTS5 virtual-table inserts/deletes and rowid addressing have no typed API.
-            conn.execute_unprepared(&format!(
-                "UPDATE search_docs SET ref_part = {} WHERE id = {id}",
-                -(position as i64) - 1
-            ))
-            .await?;
+            search_docs::Entity::update_many()
+                .set(search_docs::ActiveModel {
+                    ref_part: Set(-(position as i32) - 1),
+                    ..Default::default()
+                })
+                .filter(search_docs::COLUMN.id.eq(*id))
+                .exec(conn)
+                .await?;
         }
     }
     for id in &stale {
@@ -645,10 +646,9 @@ async fn replace_knowledge_fts(
     let body_tokens = fts::segment(body);
     if let Some(row) = conn
         // Raw: FTS5 virtual-table inserts/deletes and rowid addressing have no typed API.
-        .query_one_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            "SELECT title, body FROM fts_knowledge WHERE rowid = ?",
-            vec![(id as i64).into()],
+        .query_one_raw(raw_sql!(
+            Sqlite,
+            "SELECT title, body FROM fts_knowledge WHERE rowid = {id}"
         ))
         .await?
     {
@@ -658,14 +658,16 @@ async fn replace_knowledge_fts(
             return Ok(());
         }
     }
+    // Raw: FTS5 virtual-table deletes have no typed API; `raw_sql!` binds the rowid.
+    conn.execute_raw(raw_sql!(
+        Sqlite,
+        "DELETE FROM fts_knowledge WHERE rowid = {id}"
+    ))
+    .await?;
     // Raw: FTS5 virtual-table inserts/deletes and rowid addressing have no typed API.
-    conn.execute_unprepared(&format!("DELETE FROM fts_knowledge WHERE rowid = {id}"))
-        .await?;
-    // Raw: FTS5 virtual-table inserts/deletes and rowid addressing have no typed API.
-    conn.execute_raw(Statement::from_sql_and_values(
-        DatabaseBackend::Sqlite,
-        "INSERT INTO fts_knowledge(rowid, title, body) VALUES (?, ?, ?)",
-        vec![(id as i64).into(), title_tokens.into(), body_tokens.into()],
+    conn.execute_raw(raw_sql!(
+        Sqlite,
+        "INSERT INTO fts_knowledge(rowid, title, body) VALUES ({id}, {title_tokens}, {body_tokens})"
     ))
     .await?;
     Ok(())
@@ -704,11 +706,6 @@ pub async fn sync_events(
         }
     }
     Ok(())
-}
-
-/// Quotes a Rust string as a SQLite string literal.
-fn sql_string(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
 }
 
 #[cfg(test)]

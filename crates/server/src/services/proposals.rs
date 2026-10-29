@@ -110,9 +110,7 @@ pub async fn accept_inner(
                     "a setting proposal has no document kind",
                 ));
             };
-            let doc = setting_docs::Entity::find()
-                .filter(setting_docs::COLUMN.book_id.eq(book_id))
-                .filter(setting_docs::COLUMN.kind.eq(kind.as_str()))
+            let doc = setting_docs::Entity::find_by_book_kind((book_id, kind))
                 .one(tx)
                 .await?
                 .ok_or_else(|| AppError::internal("the proposed setting document is gone"))?;
@@ -348,9 +346,7 @@ pub async fn to_dto(
             let kind = row.target_kind;
             match kind {
                 Some(kind) => {
-                    let doc = setting_docs::Entity::find()
-                        .filter(setting_docs::COLUMN.book_id.eq(row.book_id))
-                        .filter(setting_docs::COLUMN.kind.eq(kind.as_str()))
+                    let doc = setting_docs::Entity::find_by_book_kind((row.book_id, kind))
                         .one(conn)
                         .await?;
                     match doc {

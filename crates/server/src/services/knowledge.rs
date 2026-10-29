@@ -447,11 +447,11 @@ async fn find_entry_by_title(
     scope_id: i32,
     title: &str,
 ) -> Result<Option<knowledge_entries::Model>, AppError> {
-    Ok(knowledge_entries::Entity::find()
-        .filter(knowledge_entries::COLUMN.scope_id.eq(scope_id))
-        .filter(knowledge_entries::COLUMN.title.eq(title))
-        .one(conn)
-        .await?)
+    Ok(
+        knowledge_entries::Entity::find_by_scope_title((scope_id, title.to_owned()))
+            .one(conn)
+            .await?,
+    )
 }
 
 fn to_dto(row: &knowledge_entries::Model) -> Result<EntryDto, AppError> {

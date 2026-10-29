@@ -609,9 +609,7 @@ async fn find_design(
     book_id: i32,
     name: &str,
 ) -> Result<Option<character_designs::Model>, ToolError> {
-    character_designs::Entity::find()
-        .filter(character_designs::COLUMN.book_id.eq(book_id))
-        .filter(character_designs::COLUMN.name.eq(name))
+    character_designs::Entity::find_by_book_name((book_id, name.to_owned()))
         .one(ctx.tx)
         .await
         .map_err(|_| internal())

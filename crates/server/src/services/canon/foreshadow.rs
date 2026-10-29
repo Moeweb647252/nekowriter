@@ -502,16 +502,7 @@ pub async fn recreate_inner(
     let row = foreshadowing::Entity::insert(model)
         .exec_with_returning(tx)
         .await?;
-    let mut restored = Vec::new();
-    for entity_id in unique_ids(entity_ids) {
-        if crate::db::entities::entities::Entity::find_by_id(entity_id)
-            .one(tx)
-            .await?
-            .is_some()
-        {
-            restored.push(entity_id);
-        }
-    }
+    let restored = super::existing_entity_ids(tx, &unique_ids(entity_ids)).await?;
     super::set_linked_entities(tx, super::LinkTable::Foreshadowing, row.id, &restored).await?;
     Ok((row.id, foreshadowing_snapshot(&row, restored)?))
 }

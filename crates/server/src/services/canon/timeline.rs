@@ -799,16 +799,7 @@ pub async fn recreate_inner(
         .exec_with_returning(tx)
         .await?;
     // Join rows are restored when their entities still exist (spec/02 §5.10).
-    let mut restored = Vec::new();
-    for entity_id in unique_ids(entity_ids) {
-        if crate::db::entities::entities::Entity::find_by_id(entity_id)
-            .one(tx)
-            .await?
-            .is_some()
-        {
-            restored.push(entity_id);
-        }
-    }
+    let restored = super::existing_entity_ids(tx, &unique_ids(entity_ids)).await?;
     super::set_linked_entities(tx, super::LinkTable::TimelineEvent, row.id, &restored).await?;
     Ok((row.id, timeline_snapshot(&row, restored)))
 }

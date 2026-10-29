@@ -1767,31 +1767,15 @@ pub async fn patch(
             {
                 return Err(invalid_state(&session, "patch"));
             }
-            let mut changes = agent_sessions::ActiveModel {
-                updated_at: Set(chrono::Utc::now()),
-                ..Default::default()
-            };
-            let mut empty = true;
-            let mut notice: Option<Granularity> = None;
-            if let Some(granularity) = patch.granularity {
-                changes.granularity = Set(Some(granularity));
-                empty = false;
-                let phase = session::phase_of(&session);
-                if matches!(phase, Phase::Drafting | Phase::Revising) {
-                    notice = Some(granularity);
-                }
-            }
-            if let Some(auto_pause) = patch.auto_pause {
-                changes.auto_pause = Set(auto_pause);
-                empty = false;
-            }
-            if let Some(pause_after_outline) = patch.pause_after_outline {
-                changes.pause_after_outline = Set(pause_after_outline);
-                empty = false;
-            }
-            if empty {
+            let notice = patch.granularity.filter(|_| {
+                matches!(
+                    session::phase_of(&session),
+                    Phase::Drafting | Phase::Revising
+                )
+            });
+            let Some(changes) = patch_changes(&patch, chrono::Utc::now()) else {
                 return Err(AppError::validation("nothing to change"));
-            }
+            };
             session::guard_update(tx, session_id, session.status, changes).await?;
             // A granularity change during drafting or revising queues the notice (spec/03 §8).
             // The notice names the open tail when there is one, because the new mode's first
@@ -2300,6 +2284,32 @@ async fn state_prompts(
     session: &agent_sessions::Model,
 ) -> Result<std::sync::Arc<PromptSet>, AppError> {
     state.prompts().for_book(state.db(), session.book_id).await
+}
+
+/// The partial session update of a writer/outline patch. Shared with the SQL-equality test so
+/// the tested statement and the production statement cannot drift.
+pub(crate) fn patch_changes(
+    patch: &SessionPatch,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<agent_sessions::ActiveModel> {
+    let mut changes = agent_sessions::ActiveModel {
+        updated_at: Set(now),
+        ..Default::default()
+    };
+    let mut empty = true;
+    if let Some(granularity) = patch.granularity {
+        changes.granularity = Set(Some(granularity));
+        empty = false;
+    }
+    if let Some(auto_pause) = patch.auto_pause {
+        changes.auto_pause = Set(auto_pause);
+        empty = false;
+    }
+    if let Some(pause_after_outline) = patch.pause_after_outline {
+        changes.pause_after_outline = Set(pause_after_outline);
+        empty = false;
+    }
+    (!empty).then_some(changes)
 }
 
 /// `409 session.invalid_state` with `details.status` and `details.operation` (spec/10 §4).

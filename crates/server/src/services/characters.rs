@@ -428,11 +428,11 @@ async fn find_by_name(
     book_id: i32,
     name: &str,
 ) -> Result<Option<character_designs::Model>, AppError> {
-    Ok(character_designs::Entity::find()
-        .filter(character_designs::COLUMN.book_id.eq(book_id))
-        .filter(character_designs::COLUMN.name.eq(name))
-        .one(conn)
-        .await?)
+    Ok(
+        character_designs::Entity::find_by_book_name((book_id, name.to_owned()))
+            .one(conn)
+            .await?,
+    )
 }
 
 async fn next_rank(conn: &impl ConnectionTrait, book_id: i32) -> Result<i32, AppError> {

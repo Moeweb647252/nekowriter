@@ -161,40 +161,25 @@ pub async fn transition(
 ) -> Result<Vec<ServerEvent>, AppError> {
     let now = Utc::now();
     let from_running = is_running(session);
-    let mut changes = agent_sessions::ActiveModel {
-        status: sea_orm::Set(to),
-        updated_at: sea_orm::Set(now),
-        ..Default::default()
-    };
-    if is_terminal(to) {
-        changes.finished_at = sea_orm::Set(Some(now));
+    // The oldest unreported snapshot wins: keep the stored one when there is one.
+    let snapshot = if from_running
+        && session.view_snapshot.is_none()
+        && matches!(
+            kind_of(session),
+            SessionKind::ChapterOutline
+                | SessionKind::ChapterWrite
+                | SessionKind::ChapterRevise
+                | SessionKind::ChapterReview
+                | SessionKind::ChapterMaintenance
+                | SessionKind::ChapterResync
+                | SessionKind::CanonSeed
+                | SessionKind::Conception
+        ) {
+        capture_view_snapshot(conn, session).await?
     } else {
-        // `finished_at` describes a terminal status only (spec/03 §3). A re-review re-opens a
-        // completed reviewer session (spec/03 §6), so leaving the terminal set must clear the old
-        // completion time instead of reporting a running session as finished.
-        changes.finished_at = sea_orm::Set(None);
-    }
-    if from_running {
-        changes.pause_requested = sea_orm::Set(false);
-        // The oldest unreported snapshot wins: keep the stored one when there is one.
-        if session.view_snapshot.is_none()
-            && matches!(
-                kind_of(session),
-                SessionKind::ChapterOutline
-                    | SessionKind::ChapterWrite
-                    | SessionKind::ChapterRevise
-                    | SessionKind::ChapterReview
-                    | SessionKind::ChapterMaintenance
-                    | SessionKind::ChapterResync
-                    | SessionKind::CanonSeed
-                    | SessionKind::Conception
-            )
-            && let Some(snapshot) = capture_view_snapshot(conn, session).await?
-        {
-            changes.view_snapshot = sea_orm::Set(Some(json::JsonText(snapshot)));
-        }
-    }
-
+        None
+    };
+    let changes = transition_changes(to, now, from_running, snapshot);
     guard_update(conn, session.id, session.status, changes).await?;
     tracing::debug!(
         session_id = session.id,
@@ -228,11 +213,7 @@ pub async fn transition(
         && let Some(chapter_id) = session.chapter_id
     {
         chapters::Entity::update_many()
-            .set(chapters::ActiveModel {
-                canon_status: sea_orm::Set(crate::db::json::CanonStatus::Failed),
-                updated_at: sea_orm::Set(now),
-                ..Default::default()
-            })
+            .set(canon_status_failed_changes(now))
             .filter(chapters::COLUMN.id.eq(chapter_id))
             .filter(
                 chapters::COLUMN
@@ -262,6 +243,71 @@ pub async fn transition(
     Ok(events)
 }
 
+/// The partial session update of [`transition`]. Shared with the SQL-equality test so an extra
+/// column cannot be added to the production path without changing the tested statement.
+pub(crate) fn transition_changes(
+    to: SessionStatus,
+    now: chrono::DateTime<chrono::Utc>,
+    from_running: bool,
+    view_snapshot: Option<ViewSnapshot>,
+) -> agent_sessions::ActiveModel {
+    let mut changes = agent_sessions::ActiveModel {
+        status: sea_orm::Set(to),
+        updated_at: sea_orm::Set(now),
+        ..Default::default()
+    };
+    if is_terminal(to) {
+        changes.finished_at = sea_orm::Set(Some(now));
+    } else {
+        // `finished_at` describes a terminal status only (spec/03 §3). A re-review re-opens a
+        // completed reviewer session (spec/03 §6), so leaving the terminal set must clear the old
+        // completion time instead of reporting a running session as finished.
+        changes.finished_at = sea_orm::Set(None);
+    }
+    if from_running {
+        changes.pause_requested = sea_orm::Set(false);
+        if let Some(snapshot) = view_snapshot {
+            changes.view_snapshot = sea_orm::Set(Some(json::JsonText(snapshot)));
+        }
+    }
+    changes
+}
+
+/// The chapter consequence of a failed/abandoned archivist session.
+pub(crate) fn canon_status_failed_changes(
+    now: chrono::DateTime<chrono::Utc>,
+) -> chapters::ActiveModel {
+    chapters::ActiveModel {
+        canon_status: sea_orm::Set(crate::db::json::CanonStatus::Failed),
+        updated_at: sea_orm::Set(now),
+        ..Default::default()
+    }
+}
+
+/// The partial session update for a stored error.
+pub(crate) fn error_changes(error: &SessionError) -> agent_sessions::ActiveModel {
+    agent_sessions::ActiveModel {
+        error: sea_orm::Set(Some(json::JsonText(error.clone()))),
+        ..Default::default()
+    }
+}
+
+/// The partial session update that clears the stored error.
+pub(crate) fn clear_error_changes() -> agent_sessions::ActiveModel {
+    agent_sessions::ActiveModel {
+        error: sea_orm::Set(None),
+        ..Default::default()
+    }
+}
+
+/// The partial session update of a stored view snapshot.
+pub(crate) fn view_snapshot_changes(snapshot: ViewSnapshot) -> agent_sessions::ActiveModel {
+    agent_sessions::ActiveModel {
+        view_snapshot: sea_orm::Set(Some(json::JsonText(snapshot))),
+        ..Default::default()
+    }
+}
+
 /// Stores the session's error column (spec/03 §5.5, §5.7) without touching the status.
 pub async fn store_error(
     conn: &impl ConnectionTrait,
@@ -272,10 +318,7 @@ pub async fn store_error(
         conn,
         session_id,
         SessionStatus::Running,
-        agent_sessions::ActiveModel {
-            error: sea_orm::Set(Some(json::JsonText(error.clone()))),
-            ..Default::default()
-        },
+        error_changes(error),
     )
     .await?;
     Ok(())
@@ -284,10 +327,7 @@ pub async fn store_error(
 /// Clears the stored error (spec/03 §6: continue and resume clear it).
 pub async fn clear_error(conn: &impl ConnectionTrait, session_id: i32) -> Result<(), AppError> {
     agent_sessions::Entity::update_many()
-        .set(agent_sessions::ActiveModel {
-            error: sea_orm::Set(None),
-            ..Default::default()
-        })
+        .set(clear_error_changes())
         .filter(agent_sessions::COLUMN.id.eq(session_id))
         .exec(conn)
         .await?;
@@ -297,16 +337,24 @@ pub async fn clear_error(conn: &impl ConnectionTrait, session_id: i32) -> Result
 /// Runs one expected-status-guarded `agent_sessions` update and fails with `session.invalid_state`
 /// when it matches no row (spec/03 §14 / D-034). `NotSet` fields are not written; `Set(None)` is
 /// SQL NULL.
+pub(crate) fn guard_update_query(
+    session_id: i32,
+    expected: SessionStatus,
+    changes: agent_sessions::ActiveModel,
+) -> sea_orm::UpdateMany<agent_sessions::Entity> {
+    agent_sessions::Entity::update_many()
+        .set(changes)
+        .filter(agent_sessions::COLUMN.id.eq(session_id))
+        .filter(agent_sessions::COLUMN.status.eq(expected))
+}
+
 pub async fn guard_update(
     conn: &impl ConnectionTrait,
     session_id: i32,
     expected: SessionStatus,
     changes: agent_sessions::ActiveModel,
 ) -> Result<(), AppError> {
-    let result = agent_sessions::Entity::update_many()
-        .set(changes)
-        .filter(agent_sessions::COLUMN.id.eq(session_id))
-        .filter(agent_sessions::COLUMN.status.eq(expected))
+    let result = guard_update_query(session_id, expected, changes)
         .exec(conn)
         .await?;
     if result.rows_affected == 0 {
@@ -600,10 +648,7 @@ pub async fn set_error_running(
         conn,
         session_id,
         SessionStatus::Running,
-        agent_sessions::ActiveModel {
-            error: sea_orm::Set(Some(json::JsonText(error.clone()))),
-            ..Default::default()
-        },
+        error_changes(error),
     )
     .await
 }
@@ -621,12 +666,17 @@ pub async fn inbox_pending(conn: &impl ConnectionTrait, session_id: i32) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::entities::agent_tool_calls;
-    use crate::db::json::{ChapterContent, EmbedState, JsonText, ToolCallStatus, ViewSnapshot};
+    use crate::agent::manager::recovery_changes;
+    use crate::agent::runner::{finalize_changes, persist_assistant_changes};
+    use crate::api::dto::sessions::SessionPatch;
+    use crate::db::entities::{agent_tool_calls, knowledge_chunks, search_docs};
+    use crate::db::json::{
+        ChapterContent, EmbedState, SessionCounters, ToolCallStatus, Usage, ViewSnapshot,
+    };
+    use crate::services::indexer::{chunk_embed_changes, doc_embed_changes};
+    use crate::services::sessions::patch_changes;
     use sea_orm::{DbBackend, QueryTrait};
 
-    /// The SQL a builder produces, with quoting/table qualifiers/values normalized so it can be
-    /// compared with the hand-written statement it replaced.
     fn canonical(sql: &str) -> String {
         let mut without_strings = String::new();
         let mut in_string = false;
@@ -646,17 +696,17 @@ mod tests {
                 without_strings.push(character);
             }
         }
-        let stripped = without_strings
+        without_strings
             .replace("agent_sessions.", "")
             .replace("agent_tool_calls.", "")
             .replace("chapters.", "")
             .replace("search_docs.", "")
-            .replace("knowledge_chunks.", "");
-        stripped
+            .replace("knowledge_chunks.", "")
             .split_whitespace()
             .map(|token| {
-                if token.parse::<i64>().is_ok() {
-                    "?"
+                let core = token.trim_end_matches(',');
+                if core.parse::<i64>().is_ok() {
+                    if token.ends_with(',') { "?," } else { "?" }
                 } else {
                     token
                 }
@@ -665,44 +715,27 @@ mod tests {
             .join(" ")
     }
 
-    #[test]
-    fn guard_update_sql_matches_the_expected_statement() {
-        let sql = agent_sessions::Entity::update_many()
-            .set(agent_sessions::ActiveModel {
-                status: sea_orm::Set(SessionStatus::Completed),
-                updated_at: sea_orm::Set(chrono::Utc::now()),
-                ..Default::default()
-            })
-            .filter(agent_sessions::COLUMN.id.eq(7))
-            .filter(agent_sessions::COLUMN.status.eq(SessionStatus::Running))
+    fn session_sql(changes: agent_sessions::ActiveModel, expected: SessionStatus) -> String {
+        super::guard_update_query(7, expected, changes)
             .build(DbBackend::Sqlite)
-            .to_string();
-        assert_eq!(
-            canonical(&sql),
-            "UPDATE agent_sessions SET status = ?, updated_at = ? WHERE id = ? AND status = ?"
-        );
+            .to_string()
     }
 
     #[test]
-    fn transition_sql_matches_the_expected_statement() {
-        let now = chrono::Utc::now();
-        let sql = agent_sessions::Entity::update_many()
-            .set(agent_sessions::ActiveModel {
-                status: sea_orm::Set(SessionStatus::Completed),
-                updated_at: sea_orm::Set(now),
-                finished_at: sea_orm::Set(Some(now)),
-                pause_requested: sea_orm::Set(false),
-                view_snapshot: sea_orm::Set(Some(JsonText(ViewSnapshot::Chapter {
+    fn guard_update_sql_matches_the_production_transition_builder() {
+        let sql = session_sql(
+            transition_changes(
+                SessionStatus::Completed,
+                chrono::Utc::now(),
+                true,
+                Some(ViewSnapshot::Chapter {
                     content: ChapterContent::default(),
                     outline: String::new(),
                     reference_notes: String::new(),
-                }))),
-                ..Default::default()
-            })
-            .filter(agent_sessions::COLUMN.id.eq(7))
-            .filter(agent_sessions::COLUMN.status.eq(SessionStatus::Running))
-            .build(DbBackend::Sqlite)
-            .to_string();
+                }),
+            ),
+            SessionStatus::Running,
+        );
         assert_eq!(
             canonical(&sql),
             "UPDATE agent_sessions SET status = ?, pause_requested = FALSE, view_snapshot = ?, updated_at = ?, finished_at = ? WHERE id = ? AND status = ?"
@@ -710,12 +743,38 @@ mod tests {
     }
 
     #[test]
-    fn error_clear_sql_matches_the_expected_statement() {
+    fn transition_sql_matches_the_production_builder() {
+        let sql = session_sql(
+            transition_changes(SessionStatus::Completed, chrono::Utc::now(), false, None),
+            SessionStatus::Running,
+        );
+        assert_eq!(
+            canonical(&sql),
+            "UPDATE agent_sessions SET status = ?, updated_at = ?, finished_at = ? WHERE id = ? AND status = ?"
+        );
+    }
+
+    #[test]
+    fn error_set_sql_matches_the_production_builder() {
+        let sql = session_sql(
+            error_changes(&SessionError {
+                code: "agent.test".to_owned(),
+                message: "test".to_owned(),
+                retryable: true,
+                at: chrono::Utc::now(),
+            }),
+            SessionStatus::Running,
+        );
+        assert_eq!(
+            canonical(&sql),
+            "UPDATE agent_sessions SET error = ? WHERE id = ? AND status = ?"
+        );
+    }
+
+    #[test]
+    fn error_clear_sql_matches_the_production_builder() {
         let sql = agent_sessions::Entity::update_many()
-            .set(agent_sessions::ActiveModel {
-                error: sea_orm::Set(None),
-                ..Default::default()
-            })
+            .set(clear_error_changes())
             .filter(agent_sessions::COLUMN.id.eq(7))
             .build(DbBackend::Sqlite)
             .to_string();
@@ -726,13 +785,9 @@ mod tests {
     }
 
     #[test]
-    fn canon_status_cas_sql_matches_the_expected_statement() {
+    fn canon_status_cas_sql_matches_the_production_builder() {
         let sql = chapters::Entity::update_many()
-            .set(chapters::ActiveModel {
-                canon_status: sea_orm::Set(crate::db::json::CanonStatus::Failed),
-                updated_at: sea_orm::Set(chrono::Utc::now()),
-                ..Default::default()
-            })
+            .set(canon_status_failed_changes(chrono::Utc::now()))
             .filter(chapters::COLUMN.id.eq(9))
             .filter(
                 chapters::COLUMN
@@ -748,13 +803,9 @@ mod tests {
     }
 
     #[test]
-    fn manager_recovery_sql_matches_the_expected_statement() {
+    fn manager_recovery_sql_matches_the_production_builder() {
         let sql = agent_tool_calls::Entity::update_many()
-            .set(agent_tool_calls::ActiveModel {
-                status: sea_orm::Set(ToolCallStatus::Pending),
-                started_at: sea_orm::Set(None),
-                ..Default::default()
-            })
+            .set(recovery_changes())
             .filter(
                 agent_tool_calls::COLUMN
                     .status
@@ -769,18 +820,11 @@ mod tests {
     }
 
     #[test]
-    fn indexer_done_sql_matches_the_expected_statement() {
-        let sql = crate::db::entities::search_docs::Entity::update_many()
-            .set(crate::db::entities::search_docs::ActiveModel {
-                embed_state: sea_orm::Set(EmbedState::Done),
-                ..Default::default()
-            })
-            .filter(crate::db::entities::search_docs::COLUMN.id.eq(1))
-            .filter(
-                crate::db::entities::search_docs::COLUMN
-                    .content_hash
-                    .eq("hash"),
-            )
+    fn indexer_done_sql_matches_the_production_builder() {
+        let sql = search_docs::Entity::update_many()
+            .set(doc_embed_changes(EmbedState::Done))
+            .filter(search_docs::COLUMN.id.eq(1))
+            .filter(search_docs::COLUMN.content_hash.eq("hash"))
             .build(DbBackend::Sqlite)
             .to_string();
         assert_eq!(
@@ -790,22 +834,82 @@ mod tests {
     }
 
     #[test]
-    fn indexer_pending_sql_matches_the_expected_statement() {
-        let sql = crate::db::entities::knowledge_chunks::Entity::update_many()
-            .set(crate::db::entities::knowledge_chunks::ActiveModel {
-                embed_state: sea_orm::Set(EmbedState::Pending),
-                ..Default::default()
-            })
-            .filter(
-                crate::db::entities::knowledge_chunks::COLUMN
-                    .embed_state
-                    .ne(EmbedState::Pending),
-            )
+    fn indexer_pending_sql_matches_the_production_builder() {
+        let sql = knowledge_chunks::Entity::update_many()
+            .set(chunk_embed_changes(EmbedState::Pending))
+            .filter(knowledge_chunks::COLUMN.embed_state.ne(EmbedState::Pending))
             .build(DbBackend::Sqlite)
             .to_string();
         assert_eq!(
             canonical(&sql),
             "UPDATE knowledge_chunks SET embed_state = ? WHERE embed_state <> ?"
+        );
+    }
+
+    #[test]
+    fn persist_assistant_sql_matches_the_production_builder() {
+        let sql = session_sql(
+            persist_assistant_changes(
+                SessionCounters::default(),
+                Usage::default(),
+                chrono::Utc::now(),
+            ),
+            SessionStatus::Running,
+        );
+        assert_eq!(
+            canonical(&sql),
+            "UPDATE agent_sessions SET counters = ?, usage = ?, updated_at = ? WHERE id = ? AND status = ?"
+        );
+    }
+
+    #[test]
+    fn finalize_sql_matches_the_production_builder() {
+        let sql = session_sql(
+            finalize_changes(
+                SessionCounters::default(),
+                chrono::Utc::now(),
+                Some(7),
+                Some(Phase::Drafting),
+            ),
+            SessionStatus::Running,
+        );
+        assert_eq!(
+            canonical(&sql),
+            "UPDATE agent_sessions SET phase = ?, held_tool_call_id = ?, counters = ?, updated_at = ? WHERE id = ? AND status = ?"
+        );
+    }
+
+    #[test]
+    fn view_snapshot_sql_matches_the_production_builder() {
+        let sql = session_sql(
+            view_snapshot_changes(ViewSnapshot::Chapter {
+                content: ChapterContent::default(),
+                outline: String::new(),
+                reference_notes: String::new(),
+            }),
+            SessionStatus::Running,
+        );
+        assert_eq!(
+            canonical(&sql),
+            "UPDATE agent_sessions SET view_snapshot = ? WHERE id = ? AND status = ?"
+        );
+    }
+
+    #[test]
+    fn patch_sql_matches_the_production_builder() {
+        let changes = patch_changes(
+            &SessionPatch {
+                granularity: Some(Granularity::Paragraph),
+                auto_pause: Some(true),
+                pause_after_outline: None,
+            },
+            chrono::Utc::now(),
+        )
+        .expect("a non-empty patch");
+        let sql = session_sql(changes, SessionStatus::Held);
+        assert_eq!(
+            canonical(&sql),
+            "UPDATE agent_sessions SET granularity = ?, auto_pause = TRUE, updated_at = ? WHERE id = ? AND status = ?"
         );
     }
 }

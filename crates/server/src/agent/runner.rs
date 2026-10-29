@@ -38,8 +38,8 @@ use crate::db::entities::{
 };
 use crate::db::json::{
     self, Appendix, AppendixKind, ChapterContent, CompletionKind, JsonText, MessageKind,
-    MessageRole, Phase, RequestMeta, SessionError, SessionKind, SessionStatus, StoredBlock,
-    ToolCallStatus, ToolEffects, Usage, ViewSnapshot,
+    MessageRole, Phase, RequestMeta, SessionCounters, SessionError, SessionKind, SessionStatus,
+    StoredBlock, ToolCallStatus, ToolEffects, Usage, ViewSnapshot,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::{DeltaKind, ServerEvent};
@@ -656,6 +656,49 @@ fn classify_llm_error(error: &nekowriter_llm::LlmError) -> SessionError {
 
 /// Persists one assistant turn, its tool calls and the session counters in one transaction
 /// (spec/03 §5.5), then handles the stop reason.
+/// The partial session update written after an assistant message: counters, usage and time.
+pub(crate) fn persist_assistant_changes(
+    counters: SessionCounters,
+    usage: Usage,
+    now: chrono::DateTime<chrono::Utc>,
+) -> agent_sessions::ActiveModel {
+    agent_sessions::ActiveModel {
+        counters: Set(JsonText(counters)),
+        usage: Set(JsonText(usage)),
+        updated_at: Set(now),
+        ..Default::default()
+    }
+}
+
+/// A guarded counters-only update (the nudge and tool-error paths).
+pub(crate) fn counters_changes(counters: SessionCounters) -> agent_sessions::ActiveModel {
+    agent_sessions::ActiveModel {
+        counters: Set(JsonText(counters)),
+        ..Default::default()
+    }
+}
+
+/// The partial session update written when a tool call is finalized.
+pub(crate) fn finalize_changes(
+    counters: SessionCounters,
+    now: chrono::DateTime<chrono::Utc>,
+    held_call_id: Option<i32>,
+    phase: Option<Phase>,
+) -> agent_sessions::ActiveModel {
+    let mut changes = agent_sessions::ActiveModel {
+        counters: Set(JsonText(counters)),
+        updated_at: Set(now),
+        ..Default::default()
+    };
+    if let Some(held_call_id) = held_call_id {
+        changes.held_tool_call_id = Set(Some(held_call_id));
+    }
+    if let Some(phase) = phase {
+        changes.phase = Set(phase);
+    }
+    changes
+}
+
 async fn persist_assistant(
     state: &AppState,
     session: &agent_sessions::Model,
@@ -801,12 +844,7 @@ async fn persist_assistant(
                 tx,
                 session.id,
                 SessionStatus::Running,
-                agent_sessions::ActiveModel {
-                    counters: Set(JsonText(counters)),
-                    usage: Set(JsonText(usage)),
-                    updated_at: Set(now),
-                    ..Default::default()
-                },
+                persist_assistant_changes(counters, usage, now),
             )
             .await?;
             Ok((message, rows))
@@ -1329,10 +1367,7 @@ async fn keep_view_snapshot_outline_in_sync(
         tx,
         session.id,
         session.status,
-        agent_sessions::ActiveModel {
-            view_snapshot: Set(Some(JsonText(snapshot))),
-            ..Default::default()
-        },
+        session::view_snapshot_changes(snapshot),
     )
     .await?;
     Ok(())
@@ -1375,10 +1410,7 @@ async fn keep_view_snapshot_in_sync(
         tx,
         session.id,
         session.status,
-        agent_sessions::ActiveModel {
-            view_snapshot: Set(Some(JsonText(snapshot))),
-            ..Default::default()
-        },
+        session::view_snapshot_changes(snapshot),
     )
     .await?;
     tracing::debug!(
@@ -1532,19 +1564,14 @@ async fn finalize_inner(
     .await?;
 
     // The session row: counters, held call, phase (column-wise and guarded).
-    let mut changes = agent_sessions::ActiveModel {
-        counters: Set(JsonText(counters.clone())),
-        updated_at: Set(now),
-        ..Default::default()
-    };
-    if deferred {
-        changes.held_tool_call_id = Set(Some(call.id));
-    }
     // Deferred effects are applied by the transaction that *finalizes* the call (spec/03 §5.4):
     // a held or awaiting call only stores them, so its phase change must not happen yet.
-    if !deferred && let Some(phase) = outcome.effects.phase_to {
-        changes.phase = Set(phase);
-    }
+    let phase = if deferred {
+        None
+    } else {
+        outcome.effects.phase_to
+    };
+    let changes = finalize_changes(counters.clone(), now, deferred.then_some(call.id), phase);
     session::guard_update(tx, session.id, SessionStatus::Running, changes).await?;
 
     let refreshed = load_call(tx, call.id).await?;
@@ -1591,10 +1618,7 @@ async fn finalize_inner(
                     tx,
                     session.id,
                     SessionStatus::Running,
-                    agent_sessions::ActiveModel {
-                        error: Set(Some(JsonText(error.clone()))),
-                        ..Default::default()
-                    },
+                    session::error_changes(&error),
                 )
                 .await?;
                 let reloaded = session::load(tx, session.id).await?;
@@ -2206,10 +2230,7 @@ pub async fn text_only_inner(
                     tx,
                     session.id,
                     SessionStatus::Running,
-                    agent_sessions::ActiveModel {
-                        counters: Set(JsonText(counters.clone())),
-                        ..Default::default()
-                    },
+                    counters_changes(counters.clone()),
                 )
                 .await?;
                 events.push(ServerEvent::SessionMessage {
@@ -2228,10 +2249,7 @@ pub async fn text_only_inner(
                     tx,
                     session.id,
                     SessionStatus::Running,
-                    agent_sessions::ActiveModel {
-                        error: Set(Some(JsonText(error.clone()))),
-                        ..Default::default()
-                    },
+                    session::error_changes(&error),
                 )
                 .await?;
                 let reloaded = session::load(tx, session.id).await?;

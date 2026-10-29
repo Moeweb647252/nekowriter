@@ -295,12 +295,10 @@ async fn link_design_by_name(tx: &impl ConnectionTrait, row: &entities::Model) -
     if row.track_id.is_some() || row.kind != EntityKind::Character {
         return Ok(());
     }
-    let design = character_designs::Entity::find()
-        .filter(character_designs::COLUMN.book_id.eq(row.book_id))
-        .filter(character_designs::COLUMN.name.eq(row.name.clone()))
-        .filter(character_designs::COLUMN.entity_id.is_null())
+    let design = character_designs::Entity::find_by_book_name((row.book_id, row.name.clone()))
         .one(tx)
-        .await?;
+        .await?
+        .filter(|design| design.entity_id.is_none());
     let Some(design) = design else {
         return Ok(());
     };

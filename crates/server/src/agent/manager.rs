@@ -380,16 +380,21 @@ async fn interrupted_running_sessions(
     Ok((ids, events))
 }
 
+/// The partial `agent_tool_calls` update that resets a crashed call.
+pub(crate) fn recovery_changes() -> crate::db::entities::agent_tool_calls::ActiveModel {
+    crate::db::entities::agent_tool_calls::ActiveModel {
+        status: sea_orm::Set(ToolCallStatus::Pending),
+        started_at: sea_orm::Set(None),
+        ..Default::default()
+    }
+}
+
 /// Every `executing` tool call becomes `pending` again (spec/01 §5 step 8).
 async fn reset_executing_calls(tx: &sea_orm::DatabaseTransaction) -> Result<u64, AppError> {
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
     let result = crate::db::entities::agent_tool_calls::Entity::update_many()
-        .set(crate::db::entities::agent_tool_calls::ActiveModel {
-            status: sea_orm::Set(ToolCallStatus::Pending),
-            started_at: sea_orm::Set(None),
-            ..Default::default()
-        })
+        .set(recovery_changes())
         .filter(
             crate::db::entities::agent_tool_calls::COLUMN
                 .status
