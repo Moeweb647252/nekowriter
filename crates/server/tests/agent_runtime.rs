@@ -5,7 +5,7 @@
 
 mod agent_harness;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use agent_harness::{finish_step, refusal_step, runtime, text_step, tool_step, truncated_step};
 use axum::http::StatusCode;
@@ -265,8 +265,17 @@ async fn test_07_stop_mid_stream_persists_nothing_and_continue_resends_the_same_
     .await;
     let session_id = runtime.start_debug().await;
 
-    // Wait for the kickoff to be sealed and the request to start, then stop.
-    tokio::time::sleep(Duration::from_millis(80)).await;
+    // Wait for the actual provider request to start rather than a fixed sleep: under a loaded
+    // machine, 80 ms can elapse before the request is issued and Stop then runs after the response
+    // already completed, making the assertion below flaky (the third such flake in the project).
+    let deadline = Instant::now() + agent_harness::wait_budget();
+    while runtime.scripted.requests().is_empty() {
+        assert!(
+            Instant::now() <= deadline,
+            "the provider request did not start within the wait budget"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
     let (status, _) = runtime
         .app
         .post(&format!("/api/sessions/{session_id}/stop"), json!({}))

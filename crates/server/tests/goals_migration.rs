@@ -247,6 +247,84 @@ async fn scalar_text(conn: &sea_orm::DatabaseConnection, sql: &str) -> String {
     row.try_get::<String>("", "v").unwrap_or_default()
 }
 
+/// The columns of `change_log`, in table order (`SELECT *` order).
+const CHANGE_LOG_COLUMNS: &[&str] = &[
+    "id",
+    "book_id",
+    "track_id",
+    "chapter_id",
+    "session_id",
+    "actor",
+    "target_type",
+    "target_id",
+    "op",
+    "before",
+    "after",
+    "note",
+    "reverts_id",
+    "reverted_by_id",
+    "created_at",
+];
+
+/// The columns of `setting_proposals`, in table order (`SELECT *` order).
+const SETTING_PROPOSAL_COLUMNS: &[&str] = &[
+    "id",
+    "book_id",
+    "target_type",
+    "target_kind",
+    "target_id",
+    "edits",
+    "rationale",
+    "status",
+    "chapter_id",
+    "session_id",
+    "created_at",
+    "decided_at",
+];
+
+/// Every row of one table, as one canonical JSON string. Comparing the whole string before and
+/// after the migration proves contents (all columns, every row), not just counts.
+async fn table_rows(conn: &sea_orm::DatabaseConnection, table: &str, columns: &[&str]) -> String {
+    let object = columns
+        .iter()
+        .map(|column| format!("'{column}', {column}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT json_group_array(json_object({object})) AS v \
+         FROM (SELECT * FROM {table} ORDER BY id)"
+    );
+    scalar_text(conn, &sql).await
+}
+
+/// Whether a table exists in `sqlite_master`.
+async fn table_exists(conn: &sea_orm::DatabaseConnection, table: &str) -> bool {
+    scalar_i64(
+        conn,
+        &format!(
+            "SELECT count(*) AS n FROM sqlite_master WHERE type = 'table' AND name = '{table}'"
+        ),
+    )
+    .await
+        > 0
+}
+
+/// Whether one column exists on a table.
+async fn column_exists(conn: &sea_orm::DatabaseConnection, table: &str, column: &str) -> bool {
+    let row = conn
+        .query_all_raw(sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Sqlite,
+            format!("PRAGMA table_info(\"{table}\")"),
+        ))
+        .await
+        .expect("PRAGMA table_info");
+    row.iter().any(|row| {
+        row.try_get::<String>("", "name")
+            .map(|name| name == column)
+            .unwrap_or(false)
+    })
+}
+
 #[tokio::test]
 async fn a_fresh_database_accepts_goal_rows_and_computed_systems() {
     let app = TestApp::new().await;
@@ -295,6 +373,19 @@ async fn a_fresh_database_accepts_goal_rows_and_computed_systems() {
           '{{\"entities\":false,\"goals\":true}}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
     ))
     .await;
+    // The stored JSON reads back through the typed wrapper, and the missing keys keep their
+    // all-on defaults (spec/02 §4).
+    let raw = scalar_text(
+        app.db().conn(),
+        "SELECT canon_systems AS v FROM agent_sessions WHERE status = 'idle'",
+    )
+    .await;
+    let stored: CanonSystems = serde_json::from_str(&raw).expect("stored canon_systems JSON");
+    assert!(!stored.entities);
+    assert!(stored.timeline);
+    assert!(stored.memory);
+    assert!(stored.foreshadowing);
+    assert!(stored.goals);
     let (status, body) = app.get("/api/health").await;
     assert_eq!(status, axum::http::StatusCode::OK, "{body}");
 
@@ -330,9 +421,41 @@ async fn a_fresh_database_accepts_goal_rows_and_computed_systems() {
 async fn the_upgrade_keeps_every_row_and_every_revert_link() {
     let (_dir, path) = pre_goals_database().await;
     let db = nekowriter::db::Db::connect(&path).await.expect("reconnect");
+    let before_changes = table_rows(db.conn(), "change_log", CHANGE_LOG_COLUMNS).await;
+    let before_proposals =
+        table_rows(db.conn(), "setting_proposals", SETTING_PROPOSAL_COLUMNS).await;
     nekowriter_migration::up(db.conn())
         .await
         .expect("upgrade to 0006");
+
+    // Every row and every column survived the two rebuilds byte for byte.
+    assert_eq!(
+        table_rows(db.conn(), "change_log", CHANGE_LOG_COLUMNS).await,
+        before_changes,
+        "change_log rows changed during the rebuild"
+    );
+    assert_eq!(
+        table_rows(db.conn(), "setting_proposals", SETTING_PROPOSAL_COLUMNS).await,
+        before_proposals,
+        "setting_proposals rows changed during the rebuild"
+    );
+    // Every proposal type is still its old value, not just present.
+    for (id, target_type) in [
+        (1, "setting_doc"),
+        (2, "character_design"),
+        (3, "new_character"),
+        (4, "setting_doc"),
+    ] {
+        assert_eq!(
+            scalar_text(
+                db.conn(),
+                &format!("SELECT target_type AS v FROM setting_proposals WHERE id = {id}")
+            )
+            .await,
+            target_type,
+            "setting_proposals #{id} target_type"
+        );
+    }
 
     // Every row survived the two rebuilds.
     assert_eq!(
@@ -482,6 +605,9 @@ async fn the_upgrade_keeps_every_row_and_every_revert_link() {
 async fn a_broken_copy_fails_loudly_and_keeps_its_data() {
     let (_dir, path) = pre_goals_database().await;
     let db = nekowriter::db::Db::connect(&path).await.expect("reconnect");
+    let baseline_changes = table_rows(db.conn(), "change_log", CHANGE_LOG_COLUMNS).await;
+    let baseline_proposals =
+        table_rows(db.conn(), "setting_proposals", SETTING_PROPOSAL_COLUMNS).await;
     // An orphan row makes `PRAGMA foreign_key_check` report a row after the rebuild. The FK is off
     // for the insert so the broken copy can exist at all.
     db.conn()
@@ -493,21 +619,33 @@ async fn a_broken_copy_fails_loudly_and_keeps_its_data() {
         )
         .await
         .expect("inject an orphan");
+    let broken_changes = table_rows(db.conn(), "change_log", CHANGE_LOG_COLUMNS).await;
+    assert_ne!(
+        broken_changes, baseline_changes,
+        "the injected orphan must be visible before the migration"
+    );
 
     let failed = nekowriter_migration::up(db.conn()).await;
     assert!(failed.is_err(), "the broken copy must fail loudly");
-    // No data was lost by the failed attempt, and it is not recorded as applied.
+    // The failed attempt rolled everything back: no row changed, no goal table appeared and the
+    // non-idempotent column is absent, so a repaired copy can be retried.
     assert_eq!(
-        scalar_i64(db.conn(), "SELECT count(*) AS n FROM change_log").await,
-        12
+        table_rows(db.conn(), "change_log", CHANGE_LOG_COLUMNS).await,
+        broken_changes,
+        "the failed migration changed change_log rows"
     );
     assert_eq!(
-        scalar_i64(db.conn(), "SELECT count(*) AS n FROM setting_proposals").await,
-        4
+        table_rows(db.conn(), "setting_proposals", SETTING_PROPOSAL_COLUMNS).await,
+        baseline_proposals,
+        "the failed migration changed setting_proposals rows"
     );
-    assert_eq!(
-        scalar_i64(db.conn(), "SELECT count(*) AS n FROM agent_sessions").await,
-        9
+    assert!(
+        !table_exists(db.conn(), "goal_nodes").await,
+        "the failed migration committed the goal tables"
+    );
+    assert!(
+        !column_exists(db.conn(), "agent_sessions", "canon_systems").await,
+        "the failed migration committed the ALTER TABLE"
     );
     assert_eq!(
         scalar_i64(
@@ -516,6 +654,33 @@ async fn a_broken_copy_fails_loudly_and_keeps_its_data() {
         )
         .await,
         0
+    );
+
+    // Repair the injected orphan and retry: the migration must now succeed and keep every row.
+    db.conn()
+        .execute_unprepared("DELETE FROM change_log WHERE book_id = 999")
+        .await
+        .expect("repair the orphan");
+    nekowriter_migration::up(db.conn())
+        .await
+        .expect("retry after repairing the orphan");
+    assert_eq!(
+        table_rows(db.conn(), "change_log", CHANGE_LOG_COLUMNS).await,
+        baseline_changes,
+        "the successful retry changed change_log rows"
+    );
+    assert_eq!(
+        table_rows(db.conn(), "setting_proposals", SETTING_PROPOSAL_COLUMNS).await,
+        baseline_proposals,
+        "the successful retry changed setting_proposals rows"
+    );
+    assert_eq!(
+        scalar_i64(
+            db.conn(),
+            "SELECT count(*) AS n FROM seaql_migrations WHERE version = 'm0006_goals_and_switches'"
+        )
+        .await,
+        1
     );
 }
 

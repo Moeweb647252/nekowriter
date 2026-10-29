@@ -1252,13 +1252,14 @@ fn enum_gate_extraction_handles_column_spellings() {
 fn json_columns_are_typed() {
     use nekowriter::db::entities::{
         agent_messages, agent_sessions, agent_tool_calls, app_settings, books, change_log,
-        chapter_feedback, chapter_versions, chapters, entities, knowledge_entries, model_profiles,
-        providers, review_reports, search_docs, setting_proposals,
+        chapter_feedback, chapter_versions, chapters, entities, goal_nodes, knowledge_entries,
+        model_profiles, providers, review_reports, search_docs, setting_proposals,
     };
     use nekowriter::db::json::{
-        Appendix, BookSettings, ChapterContent, ConceptionState, JsonText, ModelOptions,
-        ModelSnapshot, ProposalEdits, ProviderPayload, RequestMeta, ReviewIssue, RoleModels,
-        SessionCounters, SessionError, Snapshot, StoredBlock, ToolEffects, Usage, ViewSnapshot,
+        Appendix, BookSettings, CanonSystems, ChapterContent, ConceptionState, GoalCondition,
+        JsonText, ModelOptions, ModelSnapshot, ProposalEdits, ProviderPayload, RequestMeta,
+        ReviewIssue, RoleModels, SessionCounters, SessionError, Snapshot, StoredBlock, ToolEffects,
+        Usage, ViewSnapshot,
     };
 
     /// Compile-time type assertion: the field has exactly this type.
@@ -1295,6 +1296,11 @@ fn json_columns_are_typed() {
         view_snapshot,
         Option<JsonText<ViewSnapshot>>
     );
+    typed!(
+        agent_sessions::Model,
+        canon_systems,
+        Option<JsonText<CanonSystems>>
+    );
     typed!(agent_sessions::Model, counters, JsonText<SessionCounters>);
     typed!(agent_sessions::Model, usage, JsonText<Usage>);
     typed!(agent_sessions::Model, error, Option<JsonText<SessionError>>);
@@ -1318,6 +1324,7 @@ fn json_columns_are_typed() {
     typed!(chapter_feedback::Model, issues, JsonText<Vec<ReviewIssue>>);
     typed!(chapter_versions::Model, content, JsonText<ChapterContent>);
     typed!(chapters::Model, content, JsonText<ChapterContent>);
+    typed!(goal_nodes::Model, conditions, JsonText<Vec<GoalCondition>>);
     typed!(entities::Model, aliases, JsonText<Vec<String>>);
     typed!(
         entities::Model,

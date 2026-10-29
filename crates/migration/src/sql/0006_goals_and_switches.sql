@@ -4,13 +4,17 @@
 --   change_log.target_type       += 'goal', 'plan', 'task'
 --   setting_proposals.target_type += 'goal_node', 'new_goal_task'
 -- SQLite cannot alter a CHECK in place, so both are rebuilt with the create/copy/drop/rename
--- procedure of 0004. Neither table is referenced by another table (`change_log` only by itself),
--- but `Db::connect` turns `foreign_keys` on for every connection, and the pragma is a no-op inside
--- a transaction: the file switches it before `BEGIN`, and the migration module declares
--- `use_transaction() = Some(false)`.
+-- procedure of 0004. `PRAGMA foreign_keys = OFF` cannot be used here: it is a no-op inside the
+-- Rust-managed transaction that makes this migration atomic, and a `PRAGMA` on a pooled connection
+-- is not guaranteed to see the same connection as the following statements. Instead the rebuild is
+-- safe with enforcement left on: neither rebuilt table is referenced by another table, and the
+-- only self-reference in `change_log_goals_rebuild` points at itself until the final rename, so
+-- dropping the old `change_log` cannot cascade into the copied rows. The migration module opens a
+-- `DatabaseTransaction`: every statement below, including the guards, runs on one connection and
+-- rolls back together if one fails. That keeps the non-idempotent `ALTER TABLE` retryable.
 --
--- The guards after the rebuild turn a silent loss into a hard failure: both tables and both revert
--- links are counted before and after, and `PRAGMA foreign_key_check` must report no row.
+-- The guards turn a silent loss into a hard failure: both tables and both revert links are
+-- counted before and after, and `PRAGMA foreign_key_check` must report no row.
 --
 -- The four goal tables are created empty, and `agent_sessions.canon_systems` is a nullable JSON
 -- column added with ALTER TABLE (no rebuild). Nothing is back-filled: a `BookSettings` without the
@@ -27,9 +31,6 @@ INSERT INTO goals_rebuild_counts (table_name, before_count) VALUES
   ('change_log_reverted_by_id', (SELECT count(*) FROM change_log WHERE reverted_by_id IS NOT NULL)),
   ('setting_proposals',         (SELECT count(*) FROM setting_proposals));
 
-PRAGMA foreign_keys = OFF;
-BEGIN;
-
 CREATE TABLE change_log_goals_rebuild (
   id              INTEGER PRIMARY KEY,
   book_id         INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
@@ -45,8 +46,8 @@ CREATE TABLE change_log_goals_rebuild (
   before          TEXT CHECK (before IS NULL OR json_valid(before)),
   after           TEXT CHECK (after IS NULL OR json_valid(after)),
   note            TEXT NOT NULL DEFAULT '',
-  reverts_id      INTEGER REFERENCES change_log(id) ON DELETE SET NULL,
-  reverted_by_id  INTEGER REFERENCES change_log(id) ON DELETE SET NULL,
+  reverts_id      INTEGER REFERENCES change_log_goals_rebuild(id) ON DELETE SET NULL,
+  reverted_by_id  INTEGER REFERENCES change_log_goals_rebuild(id) ON DELETE SET NULL,
   created_at      TEXT NOT NULL
 );
 INSERT INTO change_log_goals_rebuild
@@ -128,12 +129,11 @@ CREATE INDEX IF NOT EXISTS goal_node_foreshadowing_target ON goal_node_foreshado
 
 ALTER TABLE agent_sessions ADD COLUMN canon_systems TEXT CHECK (canon_systems IS NULL OR json_valid(canon_systems));
 
-COMMIT;
-PRAGMA foreign_keys = ON;
-
 -- Every row and both revert links must have survived the rebuild. One row per guard, each with a
 -- CHECK(lost = 0): the first mismatch aborts the migration instead of leaving a database that
--- silently lost rows.
+-- silently lost rows. The guards run **inside** the transaction: the ALTER above is not
+-- idempotent, so a failed guard must roll the rebuilt tables, the goal tables and the new column
+-- back together and leave the pre-0006 database retryable.
 CREATE TEMP TABLE goals_rebuild_guard (
   table_name TEXT NOT NULL,
   lost       INTEGER NOT NULL CHECK (lost = 0)
@@ -157,3 +157,4 @@ DROP TABLE goals_rebuild_counts;
 CREATE TEMP TABLE goals_rebuild_fk_guard (bad INTEGER NOT NULL CHECK (bad = 0));
 INSERT INTO goals_rebuild_fk_guard (bad) SELECT count(*) FROM pragma_foreign_key_check;
 DROP TABLE goals_rebuild_fk_guard;
+

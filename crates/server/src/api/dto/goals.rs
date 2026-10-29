@@ -94,14 +94,18 @@ pub struct GoalNodeInput {
     pub chapter_from: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chapter_to: Option<i32>,
-    #[serde(default)]
-    pub conditions: Vec<GoalCondition>,
-    #[serde(default)]
-    pub entity_ids: Vec<i32>,
-    #[serde(default)]
-    pub event_ids: Vec<i32>,
-    #[serde(default)]
-    pub foreshadowing_ids: Vec<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub conditions: Option<Vec<GoalCondition>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub entity_ids: Option<Vec<i32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub event_ids: Option<Vec<i32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub foreshadowing_ids: Option<Vec<i32>>,
 }
 
 /// `GET /books/:id/goals` query (spec/10 §2.4). The link filters return the nodes that link to or

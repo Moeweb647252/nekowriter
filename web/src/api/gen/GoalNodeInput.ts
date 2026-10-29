@@ -7,4 +7,4 @@ import type { GoalStatus } from "./GoalStatus";
  * `POST /books/:id/goals` body (spec/10 §2.4, plan §6). `level` is required; the other fields are
  * optional and default as the schema does.
  */
-export type GoalNodeInput = { track_id?: number | null, level: GoalLevel, parent_id?: number | null, title: string, purpose: string, status?: GoalStatus | null, chapter_from?: number | null, chapter_to?: number | null, conditions: Array<GoalCondition>, entity_ids: Array<number>, event_ids: Array<number>, foreshadowing_ids: Array<number>, };
+export type GoalNodeInput = { track_id?: number | null, level: GoalLevel, parent_id?: number | null, title: string, purpose: string, status?: GoalStatus | null, chapter_from?: number | null, chapter_to?: number | null, conditions?: Array<GoalCondition>, entity_ids?: Array<number>, event_ids?: Array<number>, foreshadowing_ids?: Array<number>, };
