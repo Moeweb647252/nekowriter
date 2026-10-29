@@ -133,6 +133,74 @@ pub struct RecentChapterContext {
     pub partial: bool,
 }
 
+/// `systems` (`vars.systems`) for `block.canon_systems`, `block.memory`, `block.goals` and the
+/// three archivist tasks (D-150).
+#[derive(Debug, Clone, Serialize)]
+pub struct SystemsContext {
+    pub entities: bool,
+    pub timeline: bool,
+    pub memory: bool,
+    pub foreshadowing: bool,
+    pub goals: bool,
+    /// The enabled canon systems in ownership order (`entities`, `timeline`, `memory`,
+    /// `foreshadowing`); templates use it to join only the enabled kinds.
+    pub enabled: Vec<String>,
+}
+
+impl From<&crate::db::json::CanonSystems> for SystemsContext {
+    fn from(systems: &crate::db::json::CanonSystems) -> Self {
+        let mut enabled = Vec::new();
+        if systems.entities {
+            enabled.push("entities".to_owned());
+        }
+        if systems.timeline {
+            enabled.push("timeline".to_owned());
+        }
+        if systems.memory {
+            enabled.push("memory".to_owned());
+        }
+        if systems.foreshadowing {
+            enabled.push("foreshadowing".to_owned());
+        }
+        Self {
+            entities: systems.entities,
+            timeline: systems.timeline,
+            memory: systems.memory,
+            foreshadowing: systems.foreshadowing,
+            goals: systems.goals,
+            enabled,
+        }
+    }
+}
+
+/// `goals` (`vars.goals`) for `block.goals`.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct GoalsContext {
+    /// Relevant nodes in render order: goals, then plans, then tasks under their parents.
+    pub nodes: Vec<GoalNodeContext>,
+    /// Relevant nodes left out by the 30-node cap.
+    pub omitted: i32,
+}
+
+/// One node of `block.goals`.
+#[derive(Debug, Clone, Serialize)]
+pub struct GoalNodeContext {
+    pub id: i32,
+    /// `goal` | `plan` | `task` (the template uses it as the tag name).
+    pub level: String,
+    pub title: String,
+    pub purpose: String,
+    /// `chapters` attribute, e.g. `12–15` (empty when unbounded).
+    pub chapters: String,
+    pub overdue: bool,
+    /// Format `"名字(#12)"`, only when Entities is on (plan §4.5).
+    pub entities: Vec<String>,
+    /// Format `"#3 标题"`, only when Timeline is on.
+    pub events: Vec<String>,
+    /// Format `"#9 标题"`, only when Foreshadowing is on.
+    pub foreshadowing: Vec<String>,
+}
+
 /// `memory` (`vars.memory`) for `block.memory`.
 #[derive(Debug, Clone, Serialize)]
 pub struct MemoryContext {

@@ -358,6 +358,17 @@ pub async fn delete_foreshadowing(
 
 // ───────────────────────────── memory snapshot (spec/06 §4) ─────────────────────────────
 
+/// `GET /api/books/:id/canon/counts` (spec/10 §2.4, D-150): per-system row totals for the
+/// Book settings switches page.
+pub async fn canon_counts(
+    State(state): State<AppState>,
+    Path(book_id): Path<i32>,
+) -> AppResult<Json<crate::api::dto::goals::CanonCountsDto>> {
+    Ok(Json(
+        crate::services::canon::counts::counts(state.db().conn(), book_id).await?,
+    ))
+}
+
 /// `GET /api/books/:id/memory` (spec/10 §2.4): the snapshot plus the exact `block.memory` text.
 pub async fn memory_snapshot(
     State(state): State<AppState>,

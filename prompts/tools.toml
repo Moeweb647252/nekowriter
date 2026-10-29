@@ -411,6 +411,25 @@ additionalProperties = false
 required = ["summary"]
 properties.summary = { type = "string", description = "本章摘要" }
 
+[tools.propose_goal_change]
+description = '''对本书的写作目标提出修改建议（由作者决定是否采纳）。complete 表示某个目标在本章已经达成；drop 表示某个目标已无法达成；create 表示在本章打开了新的任务机会。只在写作目标块存在相关节点时使用。'''
+examples = [ { action = "complete", node = 12, rationale = "林凡在本章终于夺回剑冢，目标已达成。" }, { action = "drop", node = 14, rationale = "苏婉已经离开宗门，这条计划无法继续。" }, { action = "create", parent = 8, title = "查清黑市的剑胚来源", purpose = "顺着本章的线索追查幕后势力。", chapter_from = 13, rationale = "本章出现了黑市剑胚的线索。", entities = ["苏婉"], events = [3], foreshadowing = [9] } ]
+[tools.propose_goal_change.input_schema]
+type = "object"
+additionalProperties = false
+required = ["action", "rationale"]
+properties.action = { type = "string", enum = ["create", "complete", "drop"], description = "建议类型" }
+properties.rationale = { type = "string", description = "建议理由；drop 时说明为何无法达成" }
+properties.node = { type = "integer", minimum = 1, description = "complete 或 drop 的节点编号（目标块中的 id）" }
+properties.parent = { type = "integer", minimum = 1, description = "create 时可选的父计划编号" }
+properties.title = { type = "string", description = "create 的新任务标题" }
+properties.purpose = { type = "string", description = "create 的新任务目的" }
+properties.chapter_from = { type = "integer", minimum = 1, description = "create 的起始章" }
+properties.chapter_to = { type = "integer", minimum = 1, description = "create 的结束章" }
+properties.entities = { type = "array", items = { type = "string", description = "实体名" }, description = "create 时关联的实体名" }
+properties.events = { type = "array", items = { type = "integer", minimum = 1, description = "事件编号" }, description = "create 时关联的事件编号" }
+properties.foreshadowing = { type = "array", items = { type = "integer", minimum = 1, description = "伏笔编号" }, description = "create 时关联的伏笔编号" }
+
 [tools.propose_setting_change]
 description = '''对设定资料提出修改建议（由作者决定是否采纳）。只在正文与设定矛盾，或正文确立了应写入设定的重要内容时使用。edits、append、character 三者只能提供一个。'''
 examples = [ { target = "world", edits = [ { find = "筑基修士可以御剑飞行", replace = "筑基后期修士才能御剑飞行" } ], rationale = "第41章明确筑基中期的林凡无法御剑。" }, { target = "new_character", character = { name = "黑衣人", role_label = "神秘人", summary = "……", profile = "……" }, rationale = "该角色将长期出现。" } ]

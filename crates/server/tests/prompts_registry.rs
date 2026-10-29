@@ -215,8 +215,8 @@ fn every_spec_key_exists_and_every_key_is_documented() {
         archivist.system conception.kickoff researcher.kickoff planner.kickoff writer.kickoff.chapter \
         writer.kickoff.revise writer.kickoff.rollover reviewer.kickoff reviewer.rereview \
         archivist.kickoff.maintenance archivist.kickoff.seed archivist.kickoff.resync \
-        block.settings block.writing_skills block.memory block.recent_chapters \
-        block.chapter_draft block.cast_index block.chapter_diff \
+        block.settings block.canon_systems block.writing_skills block.memory block.recent_chapters \
+        block.goals block.chapter_draft block.cast_index block.chapter_diff \
         block.anchor block.book_brief notice.user_feedback notice.user_message notice.user_edits \
         notice.setting_edits notice.completion_revoked notice.tool_not_allowed \
         notice.output_truncated notice.web_content notice.nudge_generic notice.research_budget \

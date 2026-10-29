@@ -23,8 +23,9 @@ use crate::db::entities::{
     tracks,
 };
 use crate::db::json::{
-    AnchorKind, BookSettings, CanonStatus, ChangeTargetType, ChapterContent, ChapterStatus,
-    EntityKind, EntityStatus, ForeshadowingStatus, JsonText, NoteKind, NoteStatus, TrackKind,
+    AnchorKind, BookSettings, CanonStatus, CanonSystems, ChangeTargetType, ChapterContent,
+    ChapterStatus, EntityKind, EntityStatus, ForeshadowingStatus, JsonText, NoteKind, NoteStatus,
+    TrackKind,
 };
 use crate::error::AppError;
 use crate::prompts::PromptSet;
@@ -238,6 +239,8 @@ pub struct ChapterBrief {
 /// The whole memory snapshot of spec/06 §4.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MemorySnapshot {
+    /// The switches this snapshot was built with (a session's frozen value, or the book's).
+    pub systems: CanonSystems,
     pub chapter: ChapterBrief,
     /// True when no earlier chapter of the position is official yet (spec/06 §4.2).
     pub is_first: bool,
@@ -264,12 +267,24 @@ pub(crate) struct ChapterEntry {
     pub(crate) label: String,
 }
 
-/// Builds the memory snapshot for a target chapter (spec/06 §4).
+/// Builds the memory snapshot for a target chapter with all systems on (spec/06 §4).
 pub async fn snapshot(
     conn: &impl ConnectionTrait,
     prompts: &PromptSet,
     track: &tracks::Model,
     chapter: &chapters::Model,
+) -> Result<MemorySnapshot, AppError> {
+    snapshot_with_systems(conn, prompts, track, chapter, &CanonSystems::default()).await
+}
+
+/// Builds the memory snapshot for a target chapter, skipping the parts of disabled systems
+/// (spec/06 §4.6).
+pub async fn snapshot_with_systems(
+    conn: &impl ConnectionTrait,
+    prompts: &PromptSet,
+    track: &tracks::Model,
+    chapter: &chapters::Model,
+    systems: &CanonSystems,
 ) -> Result<MemorySnapshot, AppError> {
     let settings = book_settings(conn, chapter.book_id).await?;
     let visibility = super::canon::visibility_of_track(chapter.book_id, Some(track));
@@ -283,22 +298,30 @@ pub async fn snapshot(
     let short_start = prior
         .len()
         .saturating_sub(settings.recent_summary_count.max(0) as usize);
-    let recent_summaries = prior[short_start..]
-        .iter()
-        .map(|entry| SummaryItem {
-            chapter_id: entry.chapter.id,
-            label: entry.label.clone(),
-            title: entry.chapter.title.clone(),
-            summary: entry.chapter.summary.clone(),
-        })
-        .collect();
-    let previous_tail = match prior.last() {
-        Some(entry) => Some(TailItem {
-            chapter_id: entry.chapter.id,
-            label: entry.label.clone(),
-            text: tail_text(&content_of(&entry.chapter)?, PREVIOUS_TAIL_LIMIT),
-        }),
-        None => None,
+    let recent_summaries = if systems.memory {
+        prior[short_start..]
+            .iter()
+            .map(|entry| SummaryItem {
+                chapter_id: entry.chapter.id,
+                label: entry.label.clone(),
+                title: entry.chapter.title.clone(),
+                summary: entry.chapter.summary.clone(),
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let previous_tail = if systems.memory {
+        match prior.last() {
+            Some(entry) => Some(TailItem {
+                chapter_id: entry.chapter.id,
+                label: entry.label.clone(),
+                text: tail_text(&content_of(&entry.chapter)?, PREVIOUS_TAIL_LIMIT),
+            }),
+            None => None,
+        }
+    } else {
+        None
     };
     let mid_start = prior
         .len()
@@ -309,22 +332,48 @@ pub async fn snapshot(
         .collect();
 
     Ok(MemorySnapshot {
+        systems: systems.clone(),
         chapter: chapter_brief(prompts, track, chapter, &settings),
-        is_first: prior.is_empty(),
+        is_first: systems.memory && prior.is_empty(),
         window_mid: settings.midterm_window.max(0),
         recent_summaries,
         previous_tail,
-        protagonist: protagonist(conn, prompts, track, chapter).await?,
-        recent_changes: recent_changes(conn, prompts, chapter, &visibility, &window, &labels)
-            .await?,
-        appearances: appearance_counts(conn, prompts, chapter, &visibility, &window, &labels)
-            .await?,
-        absent_important: absent_important(conn, chapter, &visibility, &prior, &window, &labels)
-            .await?,
-        key_notes: key_notes(conn, prompts, &visibility).await?,
-        open_foreshadowing: open_foreshadowing(conn, prompts, &visibility, &labels).await?,
-        cast: cast(conn, prompts, &visibility).await?,
-        counts: counts(conn, &visibility).await?,
+        protagonist: if systems.entities {
+            protagonist(conn, prompts, track, chapter).await?
+        } else {
+            None
+        },
+        recent_changes: if systems.entities {
+            recent_changes(conn, prompts, chapter, &visibility, &window, &labels).await?
+        } else {
+            Vec::new()
+        },
+        appearances: if systems.entities {
+            appearance_counts(conn, prompts, chapter, &visibility, &window, &labels).await?
+        } else {
+            Vec::new()
+        },
+        absent_important: if systems.entities {
+            absent_important(conn, chapter, &visibility, &prior, &window, &labels).await?
+        } else {
+            Vec::new()
+        },
+        key_notes: if systems.memory {
+            key_notes(conn, prompts, &visibility).await?
+        } else {
+            Vec::new()
+        },
+        open_foreshadowing: if systems.foreshadowing {
+            open_foreshadowing(conn, prompts, &visibility, &labels).await?
+        } else {
+            Vec::new()
+        },
+        cast: if systems.entities {
+            cast(conn, prompts, &visibility).await?
+        } else {
+            Vec::new()
+        },
+        counts: counts(conn, &visibility, systems).await?,
         anchor: anchor(conn, prompts, track).await?,
     })
 }
@@ -1118,46 +1167,55 @@ async fn cast(
 async fn counts(
     conn: &impl ConnectionTrait,
     visibility: &Visibility,
+    systems: &CanonSystems,
 ) -> Result<CanonCounts, AppError> {
     let mut counts = CanonCounts::default();
-    let entity_rows = entities::Entity::find()
-        .filter(entities::COLUMN.book_id.eq(visibility.book_id))
-        .filter(visibility.visible_condition(entities::Column::TrackId))
-        .all(conn)
-        .await?;
-    for row in &entity_rows {
-        match row.kind {
-            EntityKind::Character => counts.character += 1,
-            EntityKind::Organization => counts.organization += 1,
-            EntityKind::Location => counts.location += 1,
-            EntityKind::Item => counts.item += 1,
-            EntityKind::Other => counts.other += 1,
+    if systems.entities {
+        let entity_rows = entities::Entity::find()
+            .filter(entities::COLUMN.book_id.eq(visibility.book_id))
+            .filter(visibility.visible_condition(entities::Column::TrackId))
+            .all(conn)
+            .await?;
+        for row in &entity_rows {
+            match row.kind {
+                EntityKind::Character => counts.character += 1,
+                EntityKind::Organization => counts.organization += 1,
+                EntityKind::Location => counts.location += 1,
+                EntityKind::Item => counts.item += 1,
+                EntityKind::Other => counts.other += 1,
+            }
         }
     }
-    counts.event = timeline_events::Entity::find()
-        .filter(timeline_events::COLUMN.book_id.eq(visibility.book_id))
-        .filter(visibility.visible_condition(timeline_events::Column::TrackId))
-        .count(conn)
-        .await? as i32;
-    let note_rows = memory_notes::Entity::find()
-        .filter(memory_notes::COLUMN.book_id.eq(visibility.book_id))
-        .filter(visibility.visible_condition(memory_notes::Column::TrackId))
-        .filter(memory_notes::COLUMN.status.eq(NoteStatus::Active))
-        .all(conn)
-        .await?;
-    for row in &note_rows {
-        match row.kind {
-            NoteKind::Fact => counts.fact += 1,
-            NoteKind::WorldRule => counts.world_rule += 1,
-            NoteKind::Other => counts.note_other += 1,
+    if systems.timeline {
+        counts.event = timeline_events::Entity::find()
+            .filter(timeline_events::COLUMN.book_id.eq(visibility.book_id))
+            .filter(visibility.visible_condition(timeline_events::Column::TrackId))
+            .count(conn)
+            .await? as i32;
+    }
+    if systems.memory {
+        let note_rows = memory_notes::Entity::find()
+            .filter(memory_notes::COLUMN.book_id.eq(visibility.book_id))
+            .filter(visibility.visible_condition(memory_notes::Column::TrackId))
+            .filter(memory_notes::COLUMN.status.eq(NoteStatus::Active))
+            .all(conn)
+            .await?;
+        for row in &note_rows {
+            match row.kind {
+                NoteKind::Fact => counts.fact += 1,
+                NoteKind::WorldRule => counts.world_rule += 1,
+                NoteKind::Other => counts.note_other += 1,
+            }
         }
     }
-    counts.foreshadowing_open = foreshadowing::Entity::find()
-        .filter(foreshadowing::COLUMN.book_id.eq(visibility.book_id))
-        .filter(visibility.visible_condition(foreshadowing::Column::TrackId))
-        .filter(foreshadowing::COLUMN.status.eq(ForeshadowingStatus::Open))
-        .count(conn)
-        .await? as i32;
+    if systems.foreshadowing {
+        counts.foreshadowing_open = foreshadowing::Entity::find()
+            .filter(foreshadowing::COLUMN.book_id.eq(visibility.book_id))
+            .filter(visibility.visible_condition(foreshadowing::Column::TrackId))
+            .filter(foreshadowing::COLUMN.status.eq(ForeshadowingStatus::Open))
+            .count(conn)
+            .await? as i32;
+    }
     Ok(counts)
 }
 
@@ -1242,7 +1300,11 @@ pub async fn view(
 ) -> Result<crate::api::dto::canon::MemoryViewDto, AppError> {
     let prompts = state.prompts().for_book(state.db(), Some(book_id)).await?;
     let (track, chapter) = target_position(state.db().conn(), book_id, query).await?;
-    let mut snapshot = snapshot(state.db().conn(), &prompts, &track, &chapter).await?;
+    let systems = book_settings(state.db().conn(), book_id)
+        .await?
+        .canon_systems;
+    let mut snapshot =
+        snapshot_with_systems(state.db().conn(), &prompts, &track, &chapter, &systems).await?;
     // The Memory page promises to show what the writer receives (PROJECT §6.5): name the chapters
     // `block.recent_chapters` injects in full for the same position (design §7) and apply the same
     // `previous_tail` dedupe the writer's `block.memory` receives.
@@ -1259,9 +1321,6 @@ pub async fn view(
             partial: entry.partial,
         })
         .collect();
-    let systems = book_settings(state.db().conn(), book_id)
-        .await?
-        .canon_systems;
     Ok(crate::api::dto::canon::MemoryViewDto {
         rendered: render_block_memory(&prompts, &snapshot)?,
         snapshot: snapshot_dto(&snapshot),
@@ -1388,6 +1447,7 @@ fn render_block_memory(prompts: &PromptSet, snapshot: &MemorySnapshot) -> Result
             crate::prompts::template_value(&serde_json::json!({
                 "memory": memory_context(snapshot),
                 "chapter": chapter,
+                "systems": crate::prompts::context::SystemsContext::from(&snapshot.systems),
             })),
         )
         .map_err(|err| err.into_app_error())?;

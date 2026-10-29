@@ -218,8 +218,10 @@ async fn the_kickoff_blocks_follow_the_kind_table() {
             SessionKind::ChapterOutline,
             vec![
                 "block.settings",
+                "block.canon_systems",
                 "block.memory",
                 "block.recent_chapters",
+                "block.goals",
                 "planner.kickoff",
             ],
         ),
@@ -227,9 +229,11 @@ async fn the_kickoff_blocks_follow_the_kind_table() {
             SessionKind::ChapterWrite,
             vec![
                 "block.settings",
+                "block.canon_systems",
                 "block.writing_skills",
                 "block.memory",
                 "block.recent_chapters",
+                "block.goals",
                 "block.chapter_draft",
                 "writer.kickoff.chapter",
             ],
@@ -238,8 +242,10 @@ async fn the_kickoff_blocks_follow_the_kind_table() {
             SessionKind::ChapterRevise,
             vec![
                 "block.settings",
+                "block.canon_systems",
                 "block.writing_skills",
                 "block.memory",
+                "block.goals",
                 "block.chapter_draft",
                 "writer.kickoff.revise",
             ],
@@ -248,8 +254,10 @@ async fn the_kickoff_blocks_follow_the_kind_table() {
             SessionKind::ChapterReview,
             vec![
                 "block.settings",
+                "block.canon_systems",
                 "block.writing_skills",
                 "block.memory",
+                "block.goals",
                 "block.chapter_draft",
                 "reviewer.kickoff",
             ],
@@ -258,20 +266,27 @@ async fn the_kickoff_blocks_follow_the_kind_table() {
             SessionKind::ChapterMaintenance,
             vec![
                 "block.settings",
+                "block.canon_systems",
                 "block.memory",
                 "block.cast_index",
+                "block.goals",
                 "block.chapter_draft",
                 "archivist.kickoff.maintenance",
             ],
         ),
         (
             SessionKind::CanonSeed,
-            vec!["block.settings", "archivist.kickoff.seed"],
+            vec![
+                "block.settings",
+                "block.canon_systems",
+                "archivist.kickoff.seed",
+            ],
         ),
         (
             SessionKind::ChapterResync,
             vec![
                 "block.settings",
+                "block.canon_systems",
                 "block.memory",
                 "block.cast_index",
                 "block.chapter_diff",

@@ -126,6 +126,30 @@ fn render_hits(
     Ok(ToolOutcome::text(text))
 }
 
+/// The `search_canon` kinds enabled by a session's frozen systems, in system order. Goals own no
+/// search kind (spec/06 §10.1).
+fn enabled_canon_kinds(systems: &crate::db::json::CanonSystems) -> Vec<String> {
+    let mut enabled = Vec::new();
+    for system in [
+        crate::db::json::CanonSystem::Entities,
+        crate::db::json::CanonSystem::Timeline,
+        crate::db::json::CanonSystem::Memory,
+        crate::db::json::CanonSystem::Foreshadowing,
+    ] {
+        let on = match system {
+            crate::db::json::CanonSystem::Entities => systems.entities,
+            crate::db::json::CanonSystem::Timeline => systems.timeline,
+            crate::db::json::CanonSystem::Memory => systems.memory,
+            crate::db::json::CanonSystem::Foreshadowing => systems.foreshadowing,
+            crate::db::json::CanonSystem::Goals => false,
+        };
+        if on {
+            enabled.extend(system.search_kinds().iter().map(|kind| (*kind).to_owned()));
+        }
+    }
+    enabled
+}
+
 // ───────────────────────────── search_canon ─────────────────────────────
 
 /// `search_canon` (spec/05 §3): hybrid search over the visible book archive, passages excluded.
@@ -161,6 +185,10 @@ impl ToolHandler for SearchCanonTool {
             .limit
             .map(|value| value.clamp(1, CANON_MAX as i64) as usize)
             .unwrap_or(CANON_DEFAULT);
+        // A session only searches the kinds of its frozen systems (spec/06 §10.1). When all four
+        // are on, `None` keeps the pre-D-150 code path byte-identical.
+        let systems = crate::agent::session::canon_systems_of(ctx.session);
+        let enabled = enabled_canon_kinds(&systems);
         let kinds = match input.kinds {
             Some(kinds) => {
                 let mut cleaned = Vec::new();
@@ -169,11 +197,19 @@ impl ToolHandler for SearchCanonTool {
                         return Err(ToolError::new(ToolErrorKind::Validation)
                             .with("errors", vec![format!("unknown search kind {kind}")]));
                     }
-                    cleaned.push(kind);
+                    if enabled.iter().any(|enabled| enabled == &kind) {
+                        cleaned.push(kind);
+                    }
+                }
+                if cleaned.is_empty() {
+                    let outcome =
+                        render_hits(ctx, "canon", query, Value::Array(Vec::new()), false)?;
+                    return Ok(outcome.with_ui(json!({ "query": query, "count": 0 })));
                 }
                 Some(cleaned)
             }
-            None => None,
+            None if enabled.len() == CANON_KINDS.len() => None,
+            None => Some(enabled),
         };
         let Some(book_id) = book_id_of(ctx) else {
             return Err(internal());
@@ -643,5 +679,30 @@ mod tests {
     #[test]
     fn the_search_anchor_is_typed() {
         let _: fn(&Anchor) -> AnchorKindState = |anchor| anchor.kind;
+    }
+
+    #[test]
+    fn a_disabled_system_removes_only_its_search_kinds() {
+        let all = crate::db::json::CanonSystems::default();
+        assert_eq!(
+            enabled_canon_kinds(&all),
+            ["entity", "event", "note", "summary", "foreshadowing"]
+        );
+        let without_memory = crate::db::json::CanonSystems {
+            memory: false,
+            ..all.clone()
+        };
+        assert_eq!(
+            enabled_canon_kinds(&without_memory),
+            ["entity", "event", "foreshadowing"]
+        );
+        let all_off = crate::db::json::CanonSystems {
+            entities: false,
+            timeline: false,
+            memory: false,
+            foreshadowing: false,
+            goals: false,
+        };
+        assert!(enabled_canon_kinds(&all_off).is_empty());
     }
 }

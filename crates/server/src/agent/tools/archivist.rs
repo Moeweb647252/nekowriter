@@ -1248,13 +1248,15 @@ impl ToolHandler for FinishMaintenanceTool {
         }
         let book_id = book_id(ctx)?;
 
-        // `chapter_maintenance` requires recorded appearances and a summary (spec/05 §6).
+        // `chapter_maintenance` requires recorded appearances and a summary only while their
+        // systems are on (spec/06 §6, D-150). A disabled system can never hold the chapter.
+        let systems = crate::agent::session::canon_systems_of(ctx.session);
         if ctx.kind() == crate::db::json::SessionKind::ChapterMaintenance {
             let mut missing = Vec::new();
-            if !session_called(ctx, "record_appearances").await? {
+            if systems.entities && !session_called(ctx, "record_appearances").await? {
                 missing.push("appearances");
             }
-            if !session_called(ctx, "set_chapter_summary").await? {
+            if systems.memory && !session_called(ctx, "set_chapter_summary").await? {
                 missing.push("summary");
             }
             if !missing.is_empty() {
@@ -1268,7 +1270,7 @@ impl ToolHandler for FinishMaintenanceTool {
         // the maintained chapter and this session did not change their `state`, the first call
         // withholds completion once.
         let mut confirm_needed = false;
-        if ctx.kind() == crate::db::json::SessionKind::ChapterMaintenance {
+        if systems.entities && ctx.kind() == crate::db::json::SessionKind::ChapterMaintenance {
             let chapter = chapter_of(ctx)?;
             if let Some(protagonist) = protagonist_of(ctx).await? {
                 // An isolated track cannot write a shared protagonist: their changes become a
@@ -1314,6 +1316,9 @@ impl ToolHandler for FinishMaintenanceTool {
                     "confirm_needed": confirm_needed,
                     "changes": changes,
                     "proposals": proposals,
+                    // Goal proposals are counted once `propose_goal_change` lands (D-150);
+                    // the field exists now so the prompt's branches render in every pack.
+                    "goal_proposals": 0,
                 })),
             )
             .map_err(|_| internal())?
@@ -1321,6 +1326,7 @@ impl ToolHandler for FinishMaintenanceTool {
         let mut outcome = ToolOutcome::text(text).with_ui(json!({
             "changes": changes,
             "proposals": proposals,
+            "goal_proposals": 0,
         }));
         if !confirm_needed {
             outcome = outcome.with_effects(ToolEffects {

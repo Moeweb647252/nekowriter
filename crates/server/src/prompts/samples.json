@@ -305,34 +305,167 @@
     "text": "雨落下来。\n\n他握紧了旧剑。",
     "partial": true
    }
-  ]
+  ],
+  "systems": {
+   "entities": true,
+   "timeline": true,
+   "memory": true,
+   "foreshadowing": true,
+   "goals": true,
+   "enabled": [
+    "entities",
+    "timeline",
+    "memory",
+    "foreshadowing"
+   ]
+  },
+  "goals": {
+   "nodes": [
+    {
+     "id": 8,
+     "level": "plan",
+     "title": "守住剑冢",
+     "purpose": "让林凡在宗门倾覆前守住最后的传承。",
+     "chapters": "第10–15章",
+     "overdue": false,
+     "entities": [
+      "苏婉(#21)"
+     ],
+     "events": [
+      "#3 宗门夜变"
+     ],
+     "foreshadowing": []
+    },
+    {
+     "id": 12,
+     "level": "task",
+     "title": "找回断剑",
+     "purpose": "用断剑证明林凡的继承者身份。",
+     "chapters": "第13章",
+     "overdue": true,
+     "entities": [],
+     "events": [],
+     "foreshadowing": [
+      "#9 黑衣人的剑穗"
+     ]
+    }
+   ],
+   "omitted": 2
+  },
+  "goal_proposals": 0
  },
  "variants": {
   "archivist.kickoff.maintenance": [
-   {},
    {
+    "systems": {
+     "entities": true,
+     "timeline": true,
+     "memory": true,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "timeline",
+      "memory",
+      "foreshadowing"
+     ]
+    },
+    "goals": {
+     "nodes": [],
+     "omitted": 0
+    }
+   },
+   {
+    "systems": {
+     "entities": true,
+     "timeline": true,
+     "memory": true,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "timeline",
+      "memory",
+      "foreshadowing"
+     ]
+    },
+    "goals": {
+     "nodes": [
+      {
+       "id": 8,
+       "level": "plan",
+       "title": "守住剑冢",
+       "purpose": "让林凡在宗门倾覆前守住最后的传承。",
+       "chapters": "第10–15章",
+       "overdue": false,
+       "entities": [
+        "苏婉(#21)"
+       ],
+       "events": [
+        "#3 宗门夜变"
+       ],
+       "foreshadowing": []
+      },
+      {
+       "id": 12,
+       "level": "task",
+       "title": "找回断剑",
+       "purpose": "用断剑证明林凡的继承者身份。",
+       "chapters": "第13章",
+       "overdue": true,
+       "entities": [],
+       "events": [],
+       "foreshadowing": [
+        "#9 黑衣人的剑穗"
+       ]
+      }
+     ],
+     "omitted": 2
+    }
+   },
+   {
+    "systems": {
+     "entities": true,
+     "timeline": true,
+     "memory": true,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "timeline",
+      "memory",
+      "foreshadowing"
+     ]
+    },
+    "goals": {
+     "nodes": [],
+     "omitted": 0
+    },
     "track": {
-     "is_main": false,
-     "kind": "side",
-     "title": "剑冢旧事",
-     "synopsis": "师父年轻时的故事。",
-     "canon_mode": "isolated",
-     "anchor_kind": "after_chapter",
-     "anchor_label": "第12章《剑冢》"
+     "is_main": true,
+     "kind": "main",
+     "title": "",
+     "synopsis": "",
+     "canon_mode": "canon",
+     "anchor_kind": "none",
+     "anchor_label": ""
     }
    }
   ],
   "archivist.kickoff.resync": [
-   {},
    {
-    "track": {
-     "is_main": false,
-     "kind": "side",
-     "title": "剑冢旧事",
-     "synopsis": "师父年轻时的故事。",
-     "canon_mode": "isolated",
-     "anchor_kind": "after_chapter",
-     "anchor_label": "第12章《剑冢》"
+    "systems": {
+     "entities": true,
+     "timeline": true,
+     "memory": true,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "timeline",
+      "memory",
+      "foreshadowing"
+     ]
     }
    }
   ],
@@ -410,7 +543,87 @@
    }
   ],
   "block.memory": [
-   {},
+   {
+    "systems": {
+     "entities": true,
+     "timeline": true,
+     "memory": true,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "timeline",
+      "memory",
+      "foreshadowing"
+     ]
+    }
+   },
+   {
+    "systems": {
+     "entities": false,
+     "timeline": true,
+     "memory": true,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "timeline",
+      "memory",
+      "foreshadowing"
+     ]
+    }
+   },
+   {
+    "systems": {
+     "entities": true,
+     "timeline": false,
+     "memory": true,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "memory",
+      "foreshadowing"
+     ]
+    }
+   },
+   {
+    "systems": {
+     "entities": true,
+     "timeline": true,
+     "memory": false,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "timeline",
+      "foreshadowing"
+     ]
+    }
+   },
+   {
+    "systems": {
+     "entities": true,
+     "timeline": true,
+     "memory": true,
+     "foreshadowing": false,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "timeline",
+      "memory"
+     ]
+    }
+   },
+   {
+    "systems": {
+     "entities": false,
+     "timeline": false,
+     "memory": false,
+     "foreshadowing": false,
+     "goals": true,
+     "enabled": []
+    }
+   },
    {
     "memory": {
      "is_first": true,
@@ -940,6 +1153,14 @@
    {
     "action": "propose_setting_change",
     "target": "世界观",
+    "count": 3,
+    "prev_event": null,
+    "next_event": null,
+    "moved": false
+   },
+   {
+    "action": "propose_goal_change",
+    "target": "目标",
     "count": 3,
     "prev_event": null,
     "next_event": null,
@@ -1673,17 +1894,20 @@
    {
     "confirm_needed": true,
     "changes": 0,
-    "proposals": 0
+    "proposals": 0,
+    "goal_proposals": 0
    },
    {
     "confirm_needed": false,
     "changes": 12,
-    "proposals": 1
+    "proposals": 1,
+    "goal_proposals": 2
    },
    {
     "confirm_needed": false,
     "changes": 3,
-    "proposals": 0
+    "proposals": 0,
+    "goal_proposals": 0
    }
   ],
   "result.finish_research": [
@@ -2596,6 +2820,141 @@
       "partial": false
      }
     ]
+   }
+  ],
+  "block.canon_systems": [
+   {
+    "systems": {
+     "entities": false,
+     "timeline": true,
+     "memory": true,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "timeline",
+      "memory",
+      "foreshadowing"
+     ]
+    }
+   },
+   {
+    "systems": {
+     "entities": true,
+     "timeline": false,
+     "memory": true,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "memory",
+      "foreshadowing"
+     ]
+    }
+   },
+   {
+    "systems": {
+     "entities": true,
+     "timeline": true,
+     "memory": false,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "timeline",
+      "foreshadowing"
+     ]
+    }
+   },
+   {
+    "systems": {
+     "entities": true,
+     "timeline": true,
+     "memory": true,
+     "foreshadowing": false,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "timeline",
+      "memory"
+     ]
+    }
+   },
+   {
+    "systems": {
+     "entities": false,
+     "timeline": false,
+     "memory": false,
+     "foreshadowing": false,
+     "goals": true,
+     "enabled": []
+    }
+   }
+  ],
+  "block.goals": [
+   {
+    "goals": {
+     "nodes": [
+      {
+       "id": 8,
+       "level": "plan",
+       "title": "守住剑冢",
+       "purpose": "让林凡在宗门倾覆前守住最后的传承。",
+       "chapters": "第10–15章",
+       "overdue": false,
+       "entities": [
+        "苏婉(#21)"
+       ],
+       "events": [
+        "#3 宗门夜变"
+       ],
+       "foreshadowing": []
+      },
+      {
+       "id": 12,
+       "level": "task",
+       "title": "找回断剑",
+       "purpose": "用断剑证明林凡的继承者身份。",
+       "chapters": "第13章",
+       "overdue": true,
+       "entities": [],
+       "events": [],
+       "foreshadowing": [
+        "#9 黑衣人的剑穗"
+       ]
+      }
+     ],
+     "omitted": 2
+    },
+    "systems": {
+     "entities": true,
+     "timeline": true,
+     "memory": true,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "timeline",
+      "memory",
+      "foreshadowing"
+     ]
+    }
+   }
+  ],
+  "archivist.kickoff.seed": [
+   {
+    "systems": {
+     "entities": true,
+     "timeline": true,
+     "memory": true,
+     "foreshadowing": true,
+     "goals": true,
+     "enabled": [
+      "entities",
+      "timeline",
+      "memory",
+      "foreshadowing"
+     ]
+    }
    }
   ]
  }

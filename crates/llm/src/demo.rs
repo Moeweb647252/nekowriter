@@ -6,7 +6,7 @@
 //! DECISIONS D-041) and is chosen by `demo_hints.language`.
 
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::retry::LlmError;
 use crate::types::{
@@ -634,6 +634,7 @@ fn maintenance_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
                 .map(|character| character.name.clone())
                 .unwrap_or_default()
         });
+    let frozen = |name: &str| hints.tools.is_empty() || hints.tools.iter().any(|tool| tool == name);
     if target.is_empty() {
         // No corpus character to anchor the canon steps: finish directly.
         return DemoPlan {
@@ -650,12 +651,10 @@ fn maintenance_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
         .map(|name| !name.is_empty())
         .unwrap_or(false);
     let step = hints.step_in_phase as usize;
-    // Step 0 creates the entity when the book has no protagonist yet (no canon_seed in M6).
-    let (offset, create_first) = if has_protagonist {
-        (0, false)
-    } else {
-        (1, true)
-    };
+    // Step 0 creates the entity when the book has no protagonist yet and the Entities tool is
+    // frozen (no canon_seed in M6).
+    let create_first = !has_protagonist && frozen("create_entity");
+    let offset = usize::from(create_first);
     if create_first && step == 0 {
         let first = lang.characters.first().cloned().unwrap_or_default();
         let mut arguments = json!({
@@ -677,12 +676,14 @@ fn maintenance_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
     }
     let stage = step - offset;
     let report = lang.maintenance_report.clone();
-    let tool_plan = match stage {
-        0 => tool(
+    // One entry per possible maintenance step; a disabled system's tool is skipped, so the demo
+    // never calls a tool that was not frozen into the session (plan §4.6).
+    let mut steps: Vec<(&str, Value)> = vec![
+        (
             "record_appearances",
             json!({ "appearances": [ { "entity": target, "role": "pov" } ] }),
         ),
-        1 => tool(
+        (
             "update_entity",
             json!({
                 "entity": target,
@@ -690,29 +691,39 @@ fn maintenance_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
                 "note": lang.entity_note,
             }),
         ),
-        2 => tool(
+        (
             "add_timeline_event",
             json!({
                 "title": lang.timeline_title,
                 "description": lang.timeline_description,
             }),
         ),
-        3 => tool(
+        (
             "set_chapter_summary",
             json!({ "summary": lang.summary_template }),
         ),
-        4 if hints.canon_mode != "isolated" => tool(
+    ];
+    if hints.canon_mode != "isolated" {
+        steps.push((
             "propose_setting_change",
             json!({
                 "target": "world",
                 "append": lang.proposal_text,
                 "rationale": lang.proposal_rationale,
             }),
-        ),
-        _ => tool("finish_maintenance", json!({ "report": report })),
-    };
+        ));
+    }
+    steps.push(("finish_maintenance", json!({ "report": report })));
+    let steps: Vec<(&str, Value)> = steps.into_iter().filter(|(name, _)| frozen(name)).collect();
+    let (name, arguments) = steps
+        .get(stage.min(steps.len().saturating_sub(1)))
+        .cloned()
+        .unwrap_or((
+            "finish_maintenance",
+            json!({ "report": lang.maintenance_report }),
+        ));
     DemoPlan {
-        tools: vec![tool_plan],
+        tools: vec![tool(name, arguments)],
         ..DemoPlan::default()
     }
 }
@@ -731,31 +742,38 @@ fn resync_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
                 .unwrap_or_default()
         });
     let report = lang.maintenance_report.clone();
+    let frozen = |name: &str| hints.tools.is_empty() || hints.tools.iter().any(|tool| tool == name);
     if target.is_empty() {
         return DemoPlan {
             tools: vec![tool("finish_maintenance", json!({ "report": report }))],
             ..DemoPlan::default()
         };
     }
-    match hints.step_in_phase {
-        0 => DemoPlan {
-            tools: vec![tool(
-                "record_appearances",
-                json!({ "appearances": [ { "entity": target, "role": "pov" } ] }),
-            )],
-            ..DemoPlan::default()
-        },
-        1 => DemoPlan {
-            tools: vec![tool(
-                "set_chapter_summary",
-                json!({ "summary": lang.summary_template }),
-            )],
-            ..DemoPlan::default()
-        },
-        _ => DemoPlan {
-            tools: vec![tool("finish_maintenance", json!({ "report": report }))],
-            ..DemoPlan::default()
-        },
+    let mut steps: Vec<(&str, Value)> = Vec::new();
+    if frozen("record_appearances") {
+        steps.push((
+            "record_appearances",
+            json!({ "appearances": [ { "entity": target, "role": "pov" } ] }),
+        ));
+    }
+    if frozen("set_chapter_summary") {
+        steps.push((
+            "set_chapter_summary",
+            json!({ "summary": lang.summary_template }),
+        ));
+    }
+    steps.push(("finish_maintenance", json!({ "report": report })));
+    let step = hints.step_in_phase as usize;
+    let (name, arguments) = steps
+        .get(step.min(steps.len().saturating_sub(1)))
+        .cloned()
+        .unwrap_or((
+            "finish_maintenance",
+            json!({ "report": lang.maintenance_report }),
+        ));
+    DemoPlan {
+        tools: vec![tool(name, arguments)],
+        ..DemoPlan::default()
     }
 }
 
@@ -871,6 +889,15 @@ fn character_argument(lang: &LangCorpus, index: usize, rank: i32) -> serde_json:
 ///
 /// The character designs travel in `demo_hints.characters`; `step_in_phase` walks them.
 fn seed_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
+    if !(hints.tools.is_empty() || hints.tools.iter().any(|tool| tool == "create_entity")) {
+        return DemoPlan {
+            tools: vec![tool(
+                "finish_maintenance",
+                json!({ "report": lang.maintenance_report }),
+            )],
+            ..DemoPlan::default()
+        };
+    }
     let step = hints.step_in_phase as usize;
     if step < hints.characters.len() {
         let character = &hints.characters[step];

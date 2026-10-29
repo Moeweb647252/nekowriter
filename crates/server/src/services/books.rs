@@ -513,7 +513,7 @@ pub async fn next_action(
         .count(conn)
         .await?
         > 0;
-    if !seeded {
+    if !seeded && book.settings.clone().into_inner().canon_systems.entities {
         let designs = character_designs::Entity::find()
             .filter(character_designs::COLUMN.book_id.eq(book.id))
             .count(conn)

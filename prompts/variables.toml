@@ -63,6 +63,22 @@ fields."open_foreshadowing[]" = { en = "id, title, planted_label", zh = "未回�
 fields."cast[]" = { en = "id, name, kind_label, summary", zh = "主要实体" }
 fields.counts = { en = "character, organization, location, item, other, event, fact, world_rule, foreshadowing_open", zh = "档案规模统计" }
 
+[vars.systems]
+en = "The canon systems frozen into this session"
+zh = "本会话冻结的档案系统开关"
+fields.entities = { en = "Entities system on", zh = "实体系统是否启用" }
+fields.timeline = { en = "Timeline system on", zh = "时间线系统是否启用" }
+fields.memory = { en = "Memory system on", zh = "记忆系统是否启用" }
+fields.foreshadowing = { en = "Foreshadowing system on", zh = "伏笔系统是否启用" }
+fields.goals = { en = "Goals system on", zh = "写作目标系统是否启用" }
+fields."enabled[]" = { en = "Enabled canon systems in ownership order: entities, timeline, memory, foreshadowing", zh = "已启用的档案系统（按归属顺序）" }
+
+[vars.goals]
+en = "Writing goals relevant to this chapter"
+zh = "与本章相关的写作目标"
+fields."nodes[]" = { en = "id, level (goal|plan|task), title, purpose, chapters, overdue, entities[], events[], foreshadowing[]", zh = "目标节点：id、level、title、purpose、chapters、overdue、关联项" }
+fields.omitted = { en = "Relevant nodes left out by the 30-node cap", zh = "因 30 个节点上限而未显示的节点数" }
+
 [vars.draft]
 en = "Chapter text"
 zh = "章节正文"

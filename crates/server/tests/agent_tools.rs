@@ -176,9 +176,10 @@ fn the_role_lists_are_the_spec_tables_in_order() {
     assert_eq!(&PLANNER_TOOLS[10..], &["read_draft", "submit_outline"]);
     assert_eq!(REVIEWER_TOOLS.len(), 11);
     assert_eq!(REVIEWER_TOOLS[10], "submit_review");
-    assert_eq!(ARCHIVIST_TOOLS.len(), 21);
+    assert_eq!(ARCHIVIST_TOOLS.len(), 22);
     assert_eq!(ARCHIVIST_TOOLS[7], "create_entity");
-    assert_eq!(ARCHIVIST_TOOLS[20], "finish_maintenance");
+    assert_eq!(ARCHIVIST_TOOLS[19], "propose_goal_change");
+    assert_eq!(ARCHIVIST_TOOLS[21], "finish_maintenance");
     assert_eq!(CONCEPTION_TOOLS.len(), 10);
     assert_eq!(CONCEPTION_TOOLS[0], "ask_user");
     assert_eq!(RESEARCHER_TOOLS.len(), 7);

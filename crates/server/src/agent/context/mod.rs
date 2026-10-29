@@ -23,18 +23,19 @@ use crate::db::entities::{
     setting_docs, tracks,
 };
 use crate::db::json::{
-    self, AgentRole, CanonMode, ChapterContent, CompletionKind, InboxKind, JsonText, MessageKind,
-    MessageRole, Phase, Protocol, RequestMeta, SessionCounters, SessionKind, StoredBlock,
-    ToolCallStatus, TrackKind, Usage, VersionKind,
+    self, AgentRole, CanonMode, CanonSystem, CanonSystems, ChapterContent, CompletionKind,
+    InboxKind, JsonText, MessageKind, MessageRole, Phase, Protocol, RequestMeta, SessionCounters,
+    SessionKind, StoredBlock, ToolCallStatus, TrackKind, Usage, VersionKind,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
 use crate::prompts::PromptSet;
 use crate::prompts::context::{
     BookContext, CastEntryContext, ChapterContext, CharacterContext, DiffChangeContext,
-    DiffContext, DraftContext, FeedbackContext, FeedbackIssueContext, GranularityContext,
-    MemoryContext, MemoryCountsContext, ParagraphContext, PriorReportContext, RecentChapterContext,
-    ScopeContext, SettingsContext, TrackContext, WritingSkillContext,
+    DiffContext, DraftContext, FeedbackContext, FeedbackIssueContext, GoalsContext,
+    GranularityContext, MemoryContext, MemoryCountsContext, ParagraphContext, PriorReportContext,
+    RecentChapterContext, ScopeContext, SettingsContext, SystemsContext, TrackContext,
+    WritingSkillContext,
 };
 use crate::text;
 
@@ -48,8 +49,10 @@ pub fn kickoff_blocks(kind: SessionKind, _redraft: bool) -> Vec<&'static str> {
         SessionKind::Conception => vec!["conception.kickoff"],
         SessionKind::ChapterOutline => vec![
             "block.settings",
+            "block.canon_systems",
             "block.memory",
             "block.recent_chapters",
+            "block.goals",
             "planner.kickoff",
         ],
         SessionKind::Research => vec!["block.book_brief", "researcher.kickoff"],
@@ -58,36 +61,49 @@ pub fn kickoff_blocks(kind: SessionKind, _redraft: bool) -> Vec<&'static str> {
         // (stable-first ordering, design §6.1); recent chapters after memory.
         SessionKind::ChapterWrite => vec![
             "block.settings",
+            "block.canon_systems",
             "block.writing_skills",
             "block.memory",
             "block.recent_chapters",
+            "block.goals",
             "block.chapter_draft",
             "writer.kickoff.chapter",
         ],
         SessionKind::ChapterRevise => vec![
             "block.settings",
+            "block.canon_systems",
             "block.writing_skills",
             "block.memory",
+            "block.goals",
             "block.chapter_draft",
             "writer.kickoff.revise",
         ],
         SessionKind::ChapterReview => vec![
             "block.settings",
+            "block.canon_systems",
             "block.writing_skills",
             "block.memory",
+            "block.goals",
             "block.chapter_draft",
             "reviewer.kickoff",
         ],
         SessionKind::ChapterMaintenance => vec![
             "block.settings",
+            "block.canon_systems",
             "block.memory",
             "block.cast_index",
+            "block.goals",
             "block.chapter_draft",
             "archivist.kickoff.maintenance",
         ],
-        SessionKind::CanonSeed => vec!["block.settings", "archivist.kickoff.seed"],
+        SessionKind::CanonSeed => vec![
+            "block.settings",
+            "block.canon_systems",
+            "archivist.kickoff.seed",
+        ],
         SessionKind::ChapterResync => vec![
             "block.settings",
+            "block.canon_systems",
             "block.memory",
             "block.cast_index",
             "block.chapter_diff",
@@ -100,6 +116,76 @@ pub fn kickoff_blocks(kind: SessionKind, _redraft: bool) -> Vec<&'static str> {
 /// block, shared by every session of the book).
 pub fn block_is_cached(key: &str) -> bool {
     key == "block.settings"
+}
+
+/// The canon system that owns a whole kickoff block (plan §3.1), if any. `block.cast_index`
+/// belongs to Entities; `block.goals` to Goals. A mixed block such as `block.memory` is not owned
+/// by one system and renders its own fragments.
+pub fn system_of_block(key: &str) -> Option<CanonSystem> {
+    match key {
+        "block.cast_index" => Some(CanonSystem::Entities),
+        "block.goals" => Some(CanonSystem::Goals),
+        _ => None,
+    }
+}
+
+/// True when one system is on.
+pub fn system_is_on(systems: &CanonSystems, system: CanonSystem) -> bool {
+    match system {
+        CanonSystem::Entities => systems.entities,
+        CanonSystem::Timeline => systems.timeline,
+        CanonSystem::Memory => systems.memory,
+        CanonSystem::Foreshadowing => systems.foreshadowing,
+        CanonSystem::Goals => systems.goals,
+    }
+}
+
+/// The `systems` template variable of the session's frozen value.
+fn systems_context(session: &agent_sessions::Model) -> SystemsContext {
+    SystemsContext::from(&session::canon_systems_of(session))
+}
+
+/// `block.goals` and the maintenance task: the relevant goal tree of the session's chapter.
+async fn goals_context(
+    conn: &impl ConnectionTrait,
+    session: &agent_sessions::Model,
+) -> Result<GoalsContext, AppError> {
+    let (Some(book_id), Some(track_id), Some(chapter_id)) =
+        (session.book_id, session.track_id, session.chapter_id)
+    else {
+        return Ok(GoalsContext::default());
+    };
+    let Some(track) = tracks::Entity::find_by_id(track_id).one(conn).await? else {
+        return Ok(GoalsContext::default());
+    };
+    let Some(chapter) = chapters::Entity::find_by_id(chapter_id).one(conn).await? else {
+        return Ok(GoalsContext::default());
+    };
+    let selection = crate::services::goals::relevant_nodes(conn, book_id, &track, &chapter).await?;
+    let nodes = selection
+        .nodes
+        .into_iter()
+        .map(|node| crate::prompts::context::GoalNodeContext {
+            id: node.id,
+            level: node.level.as_str().to_owned(),
+            title: node.title,
+            purpose: node.purpose,
+            chapters: match (node.chapter_from, node.chapter_to) {
+                (None, None) => String::new(),
+                (Some(from), None) => format!("{from}-"),
+                (None, Some(to)) => format!("-{to}"),
+                (Some(from), Some(to)) => format!("{from}-{to}"),
+            },
+            overdue: node.chapter_to.is_some_and(|to| to < chapter.ord),
+            entities: Vec::new(),
+            events: Vec::new(),
+            foreshadowing: Vec::new(),
+        })
+        .collect();
+    Ok(GoalsContext {
+        nodes,
+        omitted: selection.omitted,
+    })
 }
 
 /// What a kickoff renders (spec/03 §10).
@@ -165,6 +251,12 @@ pub async fn assemble_kickoff(
     // this list, not `plan.blocks()`, because a caller like `rollover` builds its own list that
     // deliberately leaves `block.recent_chapters` out (design §7, spec/03 §9).
     let mut emitted_blocks = plan.blocks();
+    // A whole block owned by a disabled system is not rendered at all (plan §3.1). `block.memory`
+    // is mixed and handles its fragments in the template.
+    let frozen_systems = session::canon_systems_of(session);
+    emitted_blocks.retain(|key| {
+        system_of_block(key).is_none_or(|system| system_is_on(&frozen_systems, system))
+    });
     // spec/07 §8 step 2: the researcher's kickoff carries the linked book's brief **only when the
     // task belongs to one**. A standalone research task has no book, and an empty brief block would
     // read as a blank book rather than "no book".
@@ -276,8 +368,16 @@ async fn block_context(
                 )
                 .await?,
                 "chapter": chapter,
+                "systems": systems_context(session),
             }))
         }
+        "block.canon_systems" => Ok(json!({
+            "systems": systems_context(session),
+        })),
+        "block.goals" => Ok(json!({
+            "goals": goals_context(conn, session).await?,
+            "systems": systems_context(session),
+        })),
         "block.writing_skills" => Ok(json!({
             "skills": writing_skills_context(conn, session).await?,
         })),
@@ -345,15 +445,19 @@ async fn block_context(
             "book": book_context(conn, prompts, session.book_id).await?,
             "track": track_context(conn, prompts, session.track_id).await?,
             "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
+            "systems": systems_context(session),
+            "goals": goals_context(conn, session).await?,
         })),
         "archivist.kickoff.seed" => Ok(json!({
             "book": book_context(conn, prompts, session.book_id).await?,
             "settings": settings_context(conn, session.book_id).await?,
+            "systems": systems_context(session),
         })),
         "archivist.kickoff.resync" => Ok(json!({
             "book": book_context(conn, prompts, session.book_id).await?,
             "track": track_context(conn, prompts, session.track_id).await?,
             "chapter": chapter_context(conn, prompts, session.chapter_id, session.book_id).await?,
+            "systems": systems_context(session),
         })),
         other => Err(AppError::internal(format!(
             "no kickoff context builder for {other}"
@@ -619,7 +723,10 @@ async fn memory_context(
         return Ok(empty_memory_context());
     };
     // The whole tiered snapshot of spec/06 §4, rendered by `services/memory.rs`.
-    let mut snapshot = crate::services::memory::snapshot(conn, prompts, &track, &chapter).await?;
+    let systems = session::canon_systems_of(session);
+    let mut snapshot =
+        crate::services::memory::snapshot_with_systems(conn, prompts, &track, &chapter, &systems)
+            .await?;
     if dedupe_recent_tail {
         let recent =
             crate::services::memory::recent_chapters(conn, prompts, &track, &chapter).await?;
@@ -1641,8 +1748,10 @@ pub async fn rollover(
             // `previous_tail` here even though the parent is a `chapter_write` session.
             let emitted_blocks = [
                 "block.settings",
+                "block.canon_systems",
                 "block.writing_skills",
                 "block.memory",
+                "block.goals",
                 "block.chapter_draft",
                 "writer.kickoff.rollover",
             ];
@@ -1706,6 +1815,7 @@ pub async fn rollover(
                 usage: sea_orm::Set(JsonText(Usage::default())),
                 error: sea_orm::Set(None),
                 parent_session_id: sea_orm::Set(Some(parent.id)),
+                canon_systems: sea_orm::Set(parent.canon_systems.clone()),
                 created_at: sea_orm::Set(now),
                 updated_at: sea_orm::Set(now),
                 finished_at: sea_orm::Set(None),

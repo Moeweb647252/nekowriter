@@ -19,7 +19,7 @@ use crate::db::entities::{
     research_tasks, setting_docs,
 };
 use crate::db::json::{
-    self, ConceptionCharacterSnapshot, ConceptionDocSnapshot, ConceptionState,
+    self, CanonSystems, ConceptionCharacterSnapshot, ConceptionDocSnapshot, ConceptionState,
     ConceptionTopicSnapshot, Granularity, Phase, ResearchTaskStatus, SessionCounters, SessionError,
     SessionKind, SessionStatus, StoredBlock, Usage, ViewSnapshot,
 };
@@ -69,6 +69,14 @@ pub fn role_of(row: &agent_sessions::Model) -> crate::db::json::AgentRole {
 /// Reads the granularity column, when set.
 pub fn granularity_of(row: &agent_sessions::Model) -> Option<Granularity> {
     row.granularity
+}
+
+/// The canon systems frozen into a session, `None` reading as all five on (spec/02 §2).
+pub fn canon_systems_of(row: &agent_sessions::Model) -> CanonSystems {
+    row.canon_systems
+        .clone()
+        .map(|systems| systems.into_inner())
+        .unwrap_or_default()
 }
 
 /// Loads one session row, or a `not_found` error.

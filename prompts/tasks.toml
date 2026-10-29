@@ -202,7 +202,7 @@ text = '''
 key = "archivist.kickoff.maintenance"
 kind = "task"
 agent = "archivist"
-vars = ["book", "track", "chapter"]
+vars = ["book", "track", "chapter", "systems", "goals"]
 title_en = "Archivist — maintain canon after a chapter"
 title_zh = "档案员 · 章节档案维护"
 text = '''
@@ -212,51 +212,52 @@ text = '''
 {% if not track.is_main %}
 {% include "block.anchor" %}
 {% endif %}
-本章已由作者审定为正式文本（见上方正文）。请根据本章内容更新档案：
-1. record_appearances：记录本章出场或被提及的全部实体及其角色（pov、major、minor、mentioned）。（必做）
-2. 实体：新出现且有意义的人物、组织、地点、物品，用 create_entity 创建；已有实体的**状态、属性或身份**发生变化，用 update_entity 更新，并写明 note。**不要**因为本章剧情而更新 description：description 只在实体被永久重新定义时才动。
+{% set n = namespace(v=1) %}本章已由作者审定为正式文本（见上方正文）。请根据本章内容更新档案：
+{% if systems.entities %}{{ n.v }}. record_appearances：记录本章出场或被提及的全部实体及其角色（pov、major、minor、mentioned）。（必做）
+{% set n.v = n.v + 1 %}{{ n.v }}. 实体：新出现且有意义的人物、组织、地点、物品，用 create_entity 创建；已有实体的**状态、属性或身份**发生变化，用 update_entity 更新，并写明 note。**不要**因为本章剧情而更新 description：description 只在实体被永久重新定义时才动。
    - description 是稳定档案（这是什么、出身背景、长期不变的外貌、性格与能力），不是章节日志，整体保持在约 120 字以内。本章的进展写进 state 与 add_memory_note、add_timeline_event；单项事实（修为、官职、年龄等）写进 attributes；不要把它们追加到 description。
    - 只有永久改变其定位的信息（例如真实身份揭晓、根本性的转变）才用 description_append，且追加后整体仍应控制在约 120 字内。原文已经接近或超过这个长度时，改用 description 重写成更紧凑的版本，而不是继续追加；本次本来就要更新这个实体时，顺手把过长的描述压缩到 120 字以内。
-3. 主角状态：主角（即记忆中“主角当前状态”所示的人物）在本章出场时，用 update_entity 更新其 state，反映本章结尾时的情况。
-{% if track.canon_mode == "isolated" %}   如果该人物属于正史（不是本番外专属的实体），则不能修改；请用 add_memory_note 把其在番外中的状态变化记为番外内的笔记。
-{% endif %}4. 关系：用 set_relation 或 end_relation 记录关系的建立与变化，写明 note。
-5. 时间线：用 add_timeline_event 记录本章的重要事件，按故事时间先后插入正确的位置。
-6. 记忆笔记：用 add_memory_note 记录新确立的事实与世界规则；被推翻的用 retire_memory_note 撤销。
-7. 伏笔：用 add_foreshadowing 记录新埋下的伏笔；用 resolve_foreshadowing 更新已回收的伏笔。
-8. set_chapter_summary：撰写本章摘要（150 到 400 字：发生了什么、涉及谁、结尾停在哪里）。（必做）
-{% if track.canon_mode == "isolated" %}9. 本章属于独立番外，不对设定资料提出修改建议；番外中的变化只记录为番外内的新记录。
-{% else %}9. 如果正文与设定资料矛盾，或确立了应写入设定的重要内容，用 propose_setting_change 提出建议。
-{% endif %}10. 调用 finish_maintenance，简要报告做了哪些更新。
+{% set n.v = n.v + 1 %}{{ n.v }}. 主角状态：主角（即记忆中“主角当前状态”所示的人物）在本章出场时，用 update_entity 更新其 state，反映本章结尾时的情况。
+{% if systems.memory and track.canon_mode == "isolated" %}   如果该人物属于正史（不是本番外专属的实体），则不能修改；请用 add_memory_note 把其在番外中的状态变化记为番外内的笔记。
+{% endif %}{% set n.v = n.v + 1 %}{{ n.v }}. 关系：用 set_relation 或 end_relation 记录关系的建立与变化，写明 note。
+{% endif %}{% if systems.timeline %}{% set n.v = n.v + 1 %}{{ n.v }}. 时间线：用 add_timeline_event 记录本章的重要事件，按故事时间先后插入正确的位置。
+{% endif %}{% if systems.memory %}{% set n.v = n.v + 1 %}{{ n.v }}. 记忆笔记：用 add_memory_note 记录新确立的事实与世界规则；被推翻的用 retire_memory_note 撤销。
+{% endif %}{% set n.v = n.v + 1 %}{% if systems.foreshadowing %}{{ n.v }}. 伏笔：用 add_foreshadowing 记录新埋下的伏笔；用 resolve_foreshadowing 更新已回收的伏笔。
+{% endif %}{% if systems.memory %}{% set n.v = n.v + 1 %}{{ n.v }}. set_chapter_summary：撰写本章摘要（150 到 400 字：发生了什么、涉及谁、结尾停在哪里）。（必做）
+{% endif %}{% if systems.goals and goals.nodes %}{% set n.v = n.v + 1 %}{{ n.v }}. 目标：对照上方的写作目标，若本章完成了某个节点的目的，用 propose_goal_change 提出 complete；若本章使某个节点无法达成，用 drop 并说明原因；若本章在某个计划下打开了新机会，用 create 提出新任务。本章没有推动目标时跳过此步。
+{% endif %}{% set n.v = n.v + 1 %}{% if track.canon_mode == "isolated" %}{{ n.v }}. 本章属于独立番外，不对设定资料提出修改建议；番外中的变化只记录为番外内的新记录。
+{% else %}{{ n.v }}. 如果正文与设定资料矛盾，或确立了应写入设定的重要内容，用 propose_setting_change 提出建议。
+{% endif %}{% set n.v = n.v + 1 %}{{ n.v }}. 调用 finish_maintenance，简要报告做了哪些更新。
 '''
 
 [[prompt]]
 key = "archivist.kickoff.seed"
 kind = "task"
 agent = "archivist"
-vars = ["book"]
+vars = ["book", "systems"]
 title_en = "Archivist — seed canon from the setting materials"
 title_zh = "档案员 · 建立初始档案"
 text = '''
 【建立初始档案】
 本书写作语言：{{ book.writing_language_name }}（所有记录使用该语言）
 
-本书刚刚完成构思，还没有正文。请根据上方的设定资料建立初始档案：
-1. 人物：为人物设定中的每个人物创建实体（kind=character）。排第一位的主角设置 is_protagonist=true；重要度依据排名与定位；summary、description、state（故事开始时的状态）与 attributes（年龄、身份、所属、能力等级等）依据设定填写。
+{% set n = namespace(v=1) %}本书刚刚完成构思，还没有正文。请根据上方的设定资料建立初始档案：
+{% if systems.entities %}{{ n.v }}. 人物：为人物设定中的每个人物创建实体（kind=character）。排第一位的主角设置 is_protagonist=true；重要度依据排名与定位；summary、description、state（故事开始时的状态）与 attributes（年龄、身份、所属、能力等级等）依据设定填写。
    - 把四种字段分开写，不要把它们都堆进 description：summary 是一句话身份；state 是故事开始那一刻的处境；attributes 逐项记录能拆成单项的事实（年龄、身份、所属、修为或能力等级）；description 只放长期成立的档案信息（出身背景、长期不变的外貌、性格与能力），约 120 字（2 到 4 句）以内，不要写成传记。
    - description 不是章节日志：设定资料里属于后续剧情的内容不要提前写进去，逐章的进展留给对应章节的档案维护会话记录。
-2. 组织、地点、物品：世界观与大纲中明确提到、后续会反复出现的势力、地点、重要物品，各自创建实体；它们的 description 同样是稳定档案，保持在约 120 字以内。
-3. 关系：根据设定建立人物之间、人物与组织之间的关系（师徒、亲属、所属、敌对等）。
-4. 世界规则与事实：用 add_memory_note 记录世界观中的核心规则（kind=world_rule）与重要的背景事实（kind=fact），重要的设为高重要度。
-5. 时间线：设定中明确的背景事件（故事开始之前发生的事）按时间先后加入时间线。
-6. 伏笔：大纲中明确规划的悬念，可以用 add_foreshadowing 记录（planned_payoff 写回收方向）。
-只记录设定资料中明确写出的内容，不要补充设定里没有的信息。完成后调用 finish_maintenance。
+{% set n.v = n.v + 1 %}{{ n.v }}. 组织、地点、物品：世界观与大纲中明确提到、后续会反复出现的势力、地点、重要物品，各自创建实体；它们的 description 同样是稳定档案，保持在约 120 字以内。
+{% set n.v = n.v + 1 %}{{ n.v }}. 关系：根据设定建立人物之间、人物与组织之间的关系（师徒、亲属、所属、敌对等）。
+{% endif %}{% if systems.memory %}{% set n.v = n.v + 1 %}{{ n.v }}. 世界规则与事实：用 add_memory_note 记录世界观中的核心规则（kind=world_rule）与重要的背景事实（kind=fact），重要的设为高重要度。
+{% endif %}{% if systems.timeline %}{% set n.v = n.v + 1 %}{{ n.v }}. 时间线：设定中明确的背景事件（故事开始之前发生的事）按时间先后加入时间线。
+{% endif %}{% if systems.foreshadowing %}{% set n.v = n.v + 1 %}{{ n.v }}. 伏笔：大纲中明确规划的悬念，可以用 add_foreshadowing 记录（planned_payoff 写回收方向）。
+{% endif %}只记录设定资料中明确写出的内容，不要补充设定里没有的信息。完成后调用 finish_maintenance。
 '''
 
 [[prompt]]
 key = "archivist.kickoff.resync"
 kind = "task"
 agent = "archivist"
-vars = ["book", "track", "chapter"]
+vars = ["book", "track", "chapter", "systems"]
 title_en = "Archivist — re-sync canon after an edit"
 title_zh = "档案员 · 正文修改后同步档案"
 text = '''
@@ -267,12 +268,12 @@ text = '''
 {% include "block.anchor" %}
 {% endif %}
 作者在本章建档之后修改了正文，变化见上方的“正文变更”。请让档案与新的正文保持一致：
-- 检查变更涉及的实体、关系、时间线事件、记忆笔记与伏笔，必要时更新、结束或撤销；
-- description 是稳定档案，不是章节日志，整体保持约 120 字（2 到 4 句）以内。本章的情节进展用 state、attributes、add_memory_note 与 add_timeline_event 记录，不要追加到 description；只有改动永久改变了某个实体时，才用 description_append，且追加后整体仍应控制在约 120 字内。原文已经接近或超过这个长度时，用 description 改写成更紧凑的版本，而不是继续追加；
-- 上方只列出了变化的段落。需要全文时（重新记录出场、改写摘要），先用 read_chapter（chapter="#{{ chapter.id }}"）阅读本章当前的全文；
-- 出场人物有变化时，重新调用 record_appearances，提供本章完整的出场列表（它会替换原有记录），而不只是变化的部分；
-- 有必要时更新本章摘要（set_chapter_summary，摘要概括全章）；
-- 完成后调用 finish_maintenance。
+{% if systems.enabled %}- 检查变更涉及的{% for s in systems.enabled %}{% if s == "entities" %}实体、关系{% elif s == "timeline" %}时间线事件{% elif s == "memory" %}记忆笔记{% elif s == "foreshadowing" %}伏笔{% endif %}{% if not loop.last %}{% if loop.revindex == 2 %}与{% else %}、{% endif %}{% endif %}{% endfor %}，必要时更新、结束或撤销；
+{% endif %}{% if systems.entities %}- description 是稳定档案，不是章节日志，整体保持约 120 字（2 到 4 句）以内。本章的情节进展用 state、attributes、add_memory_note 与 add_timeline_event 记录，不要追加到 description；只有改动永久改变了某个实体时，才用 description_append，且追加后整体仍应控制在约 120 字内。原文已经接近或超过这个长度时，用 description 改写成更紧凑的版本，而不是继续追加；
+{% endif %}{% if systems.entities or systems.memory %}- 上方只列出了变化的段落。需要全文时（{% if systems.entities %}重新记录出场{% endif %}{% if systems.entities and systems.memory %}、{% endif %}{% if systems.memory %}改写摘要{% endif %}），先用 read_chapter（chapter="#{{ chapter.id }}"）阅读本章当前的全文；
+{% endif %}{% if systems.entities %}- 出场人物有变化时，重新调用 record_appearances，提供本章完整的出场列表（它会替换原有记录），而不只是变化的部分；
+{% endif %}{% if systems.memory %}- 有必要时更新本章摘要（set_chapter_summary，摘要概括全章）；
+{% endif %}- 完成后调用 finish_maintenance。
 不要改动与本次变更无关的记录。
 '''
 

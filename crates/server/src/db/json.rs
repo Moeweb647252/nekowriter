@@ -495,6 +495,37 @@ impl Default for CanonSystems {
     }
 }
 
+impl CanonSystems {
+    /// True when every switch is on (the pre-D-150 behaviour and AC13's baseline state).
+    pub fn all_on(&self) -> bool {
+        self.entities && self.timeline && self.memory && self.foreshadowing && self.goals
+    }
+
+    /// True when at least one of the four systems `canon_seed` can build is on. Goals are
+    /// never seeded (spec/06 §7).
+    pub fn any_seed_system(&self) -> bool {
+        self.entities || self.timeline || self.memory || self.foreshadowing
+    }
+
+    /// True when at least one of the four systems `search_canon` reads is on.
+    pub fn any_search_system(&self) -> bool {
+        self.entities || self.timeline || self.memory || self.foreshadowing
+    }
+}
+
+impl CanonSystem {
+    /// The `search_canon` kinds this system owns (spec/06 §10.1, spec/05 §3). Goals own none.
+    pub fn search_kinds(self) -> &'static [&'static str] {
+        match self {
+            CanonSystem::Entities => &["entity"],
+            CanonSystem::Timeline => &["event"],
+            CanonSystem::Memory => &["note", "summary"],
+            CanonSystem::Foreshadowing => &["foreshadowing"],
+            CanonSystem::Goals => &[],
+        }
+    }
+}
+
 /// `books.settings` (spec/02 §4).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(default, rename_all = "snake_case")]

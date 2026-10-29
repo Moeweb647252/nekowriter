@@ -12,6 +12,7 @@ pub mod change_log;
 pub mod chapters;
 pub mod characters;
 pub mod conception;
+pub mod goals;
 pub mod indexer;
 pub mod knowledge;
 pub mod maintenance;

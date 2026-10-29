@@ -210,6 +210,15 @@ pub async fn finalize(state: &AppState, book_id: i32) -> Result<FinalizeResponse
     //    book); the missing archivist is a warning, not a failure (D-046).
     let mut warnings = Vec::new();
     let mut seed_session_id = None;
+    // With every seedable system off there is nothing to seed: no session and no warning
+    // (spec/08 §5 step 5, spec/06 §7). Goals are never seeded.
+    if !book_dto.settings.canon_systems.any_seed_system() {
+        return Ok(FinalizeResponse {
+            book: book_dto,
+            seed_session_id,
+            warnings,
+        });
+    }
     match resolve_role_model(&warnings_state, book_id, AgentRole::Archivist).await? {
         Some(_) => {
             let (session_id, _) = seed_session(&warnings_state, book_id).await?;

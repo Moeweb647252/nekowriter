@@ -310,6 +310,7 @@ text = '''
   "end_relation": "已结束关系", "record_appearances": "已记录出场", "add_timeline_event": "已加入时间线",
   "update_timeline_event": "已更新时间线事件", "add_memory_note": "已记录笔记", "retire_memory_note": "已撤销笔记",
   "add_foreshadowing": "已记录伏笔", "resolve_foreshadowing": "已更新伏笔", "set_chapter_summary": "已保存本章摘要",
+  "propose_goal_change": "已提交写作目标建议，等待作者决定",
   "propose_setting_change": "已提交设定修改建议，等待作者决定"
 } -%}
 {{ verbs[action] }}{% if target %}：{{ target }}{% endif %}{% if action == "record_appearances" %}（共 {{ count }} 个）{% endif %}{% if action == "add_timeline_event" or moved %}（位置：{% if prev_event %}#{{ prev_event }} 之后{% else %}最前{% endif %}{% if next_event %}，#{{ next_event }} 之前{% endif %}）{% endif %}。
@@ -319,14 +320,14 @@ text = '''
 key = "result.finish_maintenance"
 kind = "result"
 agent = "archivist"
-vars = ["confirm_needed", "changes", "proposals"]
+vars = ["confirm_needed", "changes", "proposals", "goal_proposals"]
 title_en = "Result — maintenance finished"
 title_zh = "工具结果 · 档案维护完成"
 text = '''
 {%- if confirm_needed -%}
 提示：主角在本章出场，但你没有更新主角的当前状态（state）。需要更新的话，请先调用 update_entity；确认无需更新时，再次调用 finish_maintenance。
 {%- else -%}
-档案维护完成：共 {{ changes }} 项更新{% if proposals %}，另有 {{ proposals }} 条设定修改建议等待作者决定{% endif %}。
+档案维护完成：共 {{ changes }} 项更新{% if proposals %}，另有 {{ proposals }} 条设定修改建议等待作者决定{% endif %}{% if goal_proposals %}，另有 {{ goal_proposals }} 条写作目标建议等待作者决定{% endif %}。
 {%- endif -%}
 '''
 

@@ -13,9 +13,7 @@ use serde_json::json;
 
 use crate::agent::runner;
 use crate::agent::session::{self, TransitionCause};
-use crate::agent::tools::registry::{
-    initial_phase, role_enum_of_kind, role_of_kind, tools_for_role,
-};
+use crate::agent::tools::registry::{initial_phase, role_enum_of_kind, role_of_kind};
 use crate::api::dto::sessions::{
     DebugEchoDto, MessagePageDto, ResumeInput, SessionAnswerInput, SessionMessageInput,
     SessionPatch, SessionSnapshotDto,
@@ -296,6 +294,12 @@ pub(crate) async fn create_inner(
         Some(book) => book.settings.clone().into_inner(),
         None => BookSettings::default(),
     };
+    // The book's switches are copied into the session once, at creation (spec/03 §4 step 2,
+    // D-150). Every later runtime decision reads this frozen value, never the book's settings.
+    let frozen_systems = book
+        .as_ref()
+        .map(|_| book_settings.canon_systems.clone())
+        .unwrap_or_default();
     let pause_after_outline_setting = input
         .pause_after_outline
         .unwrap_or(book_settings.pause_after_outline);
@@ -324,13 +328,6 @@ pub(crate) async fn create_inner(
     if let Some(legacy_prompt) = &input.legacy_system_prompt {
         system_prompt.text = legacy_prompt.clone();
     }
-    let tool_names: &[&str] = if input.legacy_planning_fixture {
-        &crate::agent::tools::registry::LEGACY_WRITER_TOOLS
-    } else {
-        tools_for_role(role)
-    };
-    let tools = frozen_tools(&prompts, tool_names, &mut warnings)?;
-
     // 3. Initial fields; writer sessions copy the book's settings unless told otherwise.
     let phase = if input.legacy_planning_fixture && input.kind == SessionKind::ChapterWrite {
         Phase::Planning
@@ -389,6 +386,34 @@ pub(crate) async fn create_inner(
         None => (None, None),
     };
     let track_id = track.as_ref().map(|track| track.id);
+    // The book's switches are copied into the session here, once (spec/03 §4 step 2, D-150).
+    // Every later runtime decision reads this frozen value, never the book's current settings.
+    let has_relevant_goals = match (input.kind, track.as_ref(), input.chapter_id) {
+        (SessionKind::ChapterMaintenance, Some(track), Some(chapter_id))
+            if frozen_systems.goals =>
+        {
+            services::goals::chapter_has_relevant_goals(
+                tx,
+                input.book_id.unwrap_or_default(),
+                track,
+                chapter_id,
+            )
+            .await?
+        }
+        _ => false,
+    };
+    // Freeze the tool definitions after the systems and the goals gate are known.
+    let tool_names: Vec<&str> = if input.legacy_planning_fixture {
+        crate::agent::tools::registry::LEGACY_WRITER_TOOLS.to_vec()
+    } else {
+        crate::agent::tools::registry::tools_for_session(
+            role,
+            input.kind,
+            &frozen_systems,
+            has_relevant_goals,
+        )
+    };
+    let tools = frozen_tools(&prompts, &tool_names, &mut warnings)?;
 
     let base_content_version = match input.chapter_id {
         Some(chapter_id) => chapters::Entity::find_by_id(chapter_id)
@@ -425,6 +450,7 @@ pub(crate) async fn create_inner(
         usage: Set(JsonText(crate::db::json::Usage::default())),
         error: Set(None),
         parent_session_id: Set(None),
+        canon_systems: Set(book.as_ref().map(|_| JsonText(frozen_systems.clone()))),
         created_at: Set(now),
         updated_at: Set(now),
         finished_at: Set(None),

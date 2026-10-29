@@ -219,6 +219,7 @@ pub fn build_app(state: AppState) -> Router {
                 .delete(canon::delete_foreshadowing),
         )
         .route("/books/{book_id}/memory", get(canon::memory_snapshot))
+        .route("/books/{book_id}/canon/counts", get(canon::canon_counts))
         // Writing skills (spec/10 §2.9, design §8).
         .route("/writing-skills", get(skills::list).post(skills::create))
         .route(

@@ -40,8 +40,8 @@ for name, t in tools.items():
 expected = """conception.system researcher.system planner.system writer.system reviewer.system archivist.system
 conception.kickoff researcher.kickoff planner.kickoff writer.kickoff.chapter writer.kickoff.revise
 writer.kickoff.rollover reviewer.kickoff reviewer.rereview archivist.kickoff.maintenance archivist.kickoff.seed
-archivist.kickoff.resync block.settings block.writing_skills block.memory block.recent_chapters
-block.chapter_draft block.cast_index block.chapter_diff
+archivist.kickoff.resync block.settings block.canon_systems block.writing_skills block.memory block.recent_chapters
+block.goals block.chapter_draft block.cast_index block.chapter_diff
 block.anchor block.book_brief notice.user_feedback notice.user_message notice.user_edits notice.setting_edits
 notice.completion_revoked notice.tool_not_allowed notice.output_truncated notice.web_content notice.nudge_generic
 notice.research_budget planner.notice.outline_rejected planner.notice.nudge planner.notice.retrieval_budget
@@ -66,7 +66,7 @@ roles = {
  "planner": "get_entity list_entities get_relations query_timeline list_foreshadowing search_canon search_knowledge read_knowledge_entry search_chapters read_chapter read_draft submit_outline",
  "writer": "get_entity list_entities get_relations query_timeline list_foreshadowing search_canon search_knowledge read_knowledge_entry search_chapters read_chapter submit_outline submit_revision_plan read_draft insert_text insert_paragraphs replace_text rewrite_paragraph delete_paragraphs finish_draft finish_revision",
  "reviewer": "get_entity list_entities get_relations query_timeline list_foreshadowing search_canon search_knowledge read_knowledge_entry search_chapters read_chapter submit_review",
- "archivist": "get_entity list_entities get_relations query_timeline list_foreshadowing search_canon read_chapter create_entity update_entity set_relation end_relation record_appearances add_timeline_event update_timeline_event add_memory_note retire_memory_note add_foreshadowing resolve_foreshadowing set_chapter_summary propose_setting_change finish_maintenance",
+ "archivist": "get_entity list_entities get_relations query_timeline list_foreshadowing search_canon read_chapter create_entity update_entity set_relation end_relation record_appearances add_timeline_event update_timeline_event add_memory_note retire_memory_note add_foreshadowing resolve_foreshadowing set_chapter_summary propose_goal_change propose_setting_change finish_maintenance",
  "conception": "ask_user web_search web_fetch write_setting_doc edit_setting_doc upsert_character remove_character reorder_characters set_research_topics request_review",
  "researcher": "web_search web_fetch search_knowledge read_knowledge_entry save_knowledge_entry update_knowledge_entry finish_research",
 }
@@ -185,8 +185,25 @@ gran = {k: dict(key=k, label=k, revising=False, tail_open=False, last_pid="p9") 
 gran_cases = list(gran.values()) + [dict(gran["paragraph"], tail_open=True), dict(gran["chapter"], revising=True)]
 prior = dict(attempt=1, verdict_label="建议修改", summary="结尾与时间线矛盾。", feedback="请修正 p30。", comment="第二条判断有误：令牌在第30章已归还。")
 
+def systems(**off):
+    value = dict(entities=True, timeline=True, memory=True, foreshadowing=True, goals=True)
+    value.update(off)
+    value["enabled"] = [name for name in ["entities", "timeline", "memory", "foreshadowing"] if value[name]]
+    return value
+
+systems_all = systems()
+systems_cases = [systems_all, systems(entities=False), systems(timeline=False), systems(memory=False),
+                 systems(foreshadowing=False), systems(entities=False, timeline=False, memory=False, foreshadowing=False)]
+goals_sample = dict(nodes=[
+    dict(id=8, level="plan", title="守住剑冢", purpose="让林凡在宗门倾覆前守住最后的传承。", chapters="第10–15章", overdue=False,
+         entities=["苏婉(#21)"], events=["#3 宗门夜变"], foreshadowing=[]),
+    dict(id=12, level="task", title="找回断剑", purpose="用断剑证明林凡的继承者身份。", chapters="第13章", overdue=True,
+         entities=[], events=[], foreshadowing=["#9 黑衣人的剑穗"]),
+], omitted=2)
+goals_empty = dict(nodes=[], omitted=0)
+
 S = dict(book=book, track=track_main, chapter=chapter, settings=settings, memory=memory, draft=draft, feedback=feedback,
-         skills=skills, chapters=chapters,
+         skills=skills, chapters=chapters, systems=systems_all, goals=goals_sample,
          previous_outline="旧章纲", granularity=gran["paragraph"], phase="drafting",
          revision_plan="1. p12：删去重复描写", author_notes=["打斗写得更短。", "苏婉不要哭。"], prior=None,
          review=dict(comment="第二条判断有误。", attempt=1),
@@ -204,8 +221,11 @@ variants = {
   "block.settings": [dict(), dict(settings=settings_empty, book=dict(book, genre=""))],
   "block.writing_skills": [dict()],
   "block.recent_chapters": [dict(), dict(chapters=[dict(number=12, label="第12章", title="", text="雨落下来。", partial=False)])],
-  "block.memory": [dict(), dict(memory=memory_first, chapter=chapter_blank), dict(memory=memory_first, chapter=dict(chapter_blank, number=1, label="第1章")),
-                   dict(memory=dict(memory, protagonist=dict(memory["protagonist"], after_anchor=True, status="active")))],
+  "block.memory": [dict(systems=s) for s in systems_cases] + [
+      dict(memory=memory_first, chapter=chapter_blank), dict(memory=memory_first, chapter=dict(chapter_blank, number=1, label="第1章")),
+      dict(memory=dict(memory, protagonist=dict(memory["protagonist"], after_anchor=True, status="active")))],
+  "block.canon_systems": [dict(systems=s) for s in systems_cases[1:]],
+  "block.goals": [dict(goals=goals_sample, systems=systems_all), dict(goals=goals_empty, systems=systems_all)],
   "block.chapter_draft": [dict(), dict(draft=draft_empty, chapter=chapter_blank)],
   "block.anchor": [dict(track=track_side), dict(track=track_prequel), dict(track=dict(track_side, anchor_kind="after_end", canon_mode="canon"))],
   "block.cast_index": [dict(), dict(cast_index=[])],
@@ -220,8 +240,9 @@ variants = {
                               dict(phase="revising", granularity=dict(gran["chapter"], revising=True), revision_plan="", author_notes=[], chapter=chapter_blank,
                                    feedback=dict(text="改短一些", issues=[]))],
   "reviewer.kickoff": [dict(), dict(track=track_side, chapter=chapter_blank), dict(prior=prior)],
-  "archivist.kickoff.maintenance": [dict(), dict(track=track_side)],
-  "archivist.kickoff.resync": [dict(), dict(track=track_side)],
+  "archivist.kickoff.maintenance": [dict(systems=s, goals=g) for s in systems_cases for g in [goals_empty, goals_sample]] + [dict(track=track_side)],
+  "archivist.kickoff.seed": [dict(systems=s) for s in systems_cases],
+  "archivist.kickoff.resync": [dict(systems=s) for s in systems_cases] + [dict(track=track_side)],
   "researcher.kickoff": [dict(), dict(research=dict(S["research"], requirements="", scope_description="", existing_titles=[]))],
   "conception.kickoff": [dict(), dict(conception=dict(S["conception"], genre="仙侠"))],
   "writer.rules.granularity": [dict(granularity=g) for g in gran_cases],
@@ -253,7 +274,7 @@ variants = {
       ("entity_kind", "character"), ("entity_status", "dead"), ("appearance_role", "pov"), ("note_kind", "world_rule"),
       ("foreshadowing_status", "open"), ("relation_status", "ended"), ("setting_doc", "characters"),
       ("granularity", "free"), ("phase", "drafting"), ("phase", "none"), ("severity", "major"), ("category", "prose"),
-      ("verdict", "revise"), ("target_type", "timeline_event"), ("search_kind", "summary"),
+      ("verdict", "revise"), ("target_type", "goal"), ("goal_level", "plan"), ("search_kind", "summary"),
       ("language", "zh-CN"), ("language", "xx")]],
   "shared.chapter_label": [dict(), dict(track_kind="side", track_title="剑冢旧事", number=2, title="", with_title=True), dict(with_title=False)],
   "result.truncated": [dict(next_offset=6000), dict(next_offset=None)],
@@ -307,8 +328,9 @@ variants = {
                             ("create_entity", "苏婉(#21)", None, None, False), ("record_appearances", "", None, None, False),
                             ("add_timeline_event", "入门(#5)", 4, 6, False), ("add_timeline_event", "入门(#5)", None, None, False),
                             ("update_timeline_event", "入门(#5)", 2, None, True), ("set_chapter_summary", "", None, None, False),
-                            ("propose_setting_change", "世界观", None, None, False)]],
-  "result.finish_maintenance": [dict(confirm_needed=True, changes=0, proposals=0), dict(confirm_needed=False, changes=12, proposals=1), dict(confirm_needed=False, changes=3, proposals=0)],
+                            ("propose_setting_change", "世界观", None, None, False),
+                            ("propose_goal_change", "目标", None, None, False)]],
+  "result.finish_maintenance": [dict(confirm_needed=True, changes=0, proposals=0, goal_proposals=0), dict(confirm_needed=False, changes=12, proposals=1, goal_proposals=2), dict(confirm_needed=False, changes=3, proposals=0, goal_proposals=0)],
   "result.ask_user": [dict(answers=[dict(question="基调？", selected=["热血"], other="再轻松点"), dict(question="结局？", selected=[], other=""),
                                     dict(question="篇幅？", selected=[], other="百万字")])],
   "result.request_review": [dict(items=[dict(doc_label="故事大纲", approved=True, feedback=""), dict(doc_label="世界观", approved=False, feedback="势力太多")],
@@ -377,7 +399,7 @@ for key, entry in meta.items():
         out_norm = re.sub(r"\n{3,}", "\n\n", out.strip())
         if re.search(r"\bNone\b|\bnone\b", out_norm):
             errors.append(f"{key} case {i}: rendered output contains None:\n{out_norm[:400]}")
-        if not out_norm:
+        if not out_norm and key not in {"block.goals", "block.canon_systems"}:
             errors.append(f"{key} case {i}: empty output")
         if "{{" in out_norm or "{%" in out_norm:
             errors.append(f"{key} case {i}: unrendered template syntax")

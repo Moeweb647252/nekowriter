@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::db::json::{AgentRole, Granularity, Phase, SessionKind};
+use crate::db::json::{AgentRole, CanonSystem, CanonSystems, Granularity, Phase, SessionKind};
 
 use super::ToolHandler;
 
@@ -138,7 +138,7 @@ pub const REVIEWER_TOOLS: [&str; 11] = [
 ];
 
 /// The archivist role's fixed tool list (spec/05 §2).
-pub const ARCHIVIST_TOOLS: [&str; 21] = [
+pub const ARCHIVIST_TOOLS: [&str; 22] = [
     "get_entity",
     "list_entities",
     "get_relations",
@@ -158,6 +158,7 @@ pub const ARCHIVIST_TOOLS: [&str; 21] = [
     "add_foreshadowing",
     "resolve_foreshadowing",
     "set_chapter_summary",
+    "propose_goal_change",
     "propose_setting_change",
     "finish_maintenance",
 ];
@@ -201,6 +202,59 @@ pub fn tools_for_role(role: &str) -> &'static [&'static str] {
         "researcher" => &RESEARCHER_TOOLS,
         _ => &[],
     }
+}
+
+/// The canon system that owns a tool (spec/06 §10.1), if any.
+pub fn system_of_tool(tool: &str) -> Option<CanonSystem> {
+    match tool {
+        "get_entity" | "list_entities" | "get_relations" | "create_entity" | "update_entity"
+        | "set_relation" | "end_relation" | "record_appearances" => Some(CanonSystem::Entities),
+        "query_timeline" | "add_timeline_event" | "update_timeline_event" => {
+            Some(CanonSystem::Timeline)
+        }
+        "add_memory_note" | "retire_memory_note" | "set_chapter_summary" => {
+            Some(CanonSystem::Memory)
+        }
+        "list_foreshadowing" | "add_foreshadowing" | "resolve_foreshadowing" => {
+            Some(CanonSystem::Foreshadowing)
+        }
+        "propose_goal_change" => Some(CanonSystem::Goals),
+        _ => None,
+    }
+}
+
+/// True when a tool's owning system is on; tools that belong to no system always pass.
+pub fn tool_enabled(tool: &str, systems: &CanonSystems) -> bool {
+    match system_of_tool(tool) {
+        Some(CanonSystem::Entities) => systems.entities,
+        Some(CanonSystem::Timeline) => systems.timeline,
+        Some(CanonSystem::Memory) => systems.memory,
+        Some(CanonSystem::Foreshadowing) => systems.foreshadowing,
+        Some(CanonSystem::Goals) => systems.goals,
+        None => true,
+    }
+}
+
+/// The frozen tool list for a session: the role's fixed order minus disabled systems
+/// (spec/05 §2, spec/03 §1.2). `search_canon` survives unless all four systems it reads are off;
+/// `propose_goal_change` also needs a maintenance session whose chapter has relevant goals.
+pub fn tools_for_session(
+    role: &str,
+    kind: SessionKind,
+    systems: &CanonSystems,
+    has_relevant_goals: bool,
+) -> Vec<&'static str> {
+    tools_for_role(role)
+        .iter()
+        .copied()
+        .filter(|tool| match *tool {
+            "search_canon" => systems.any_search_system(),
+            "propose_goal_change" => {
+                kind == SessionKind::ChapterMaintenance && systems.goals && has_relevant_goals
+            }
+            other => tool_enabled(other, systems),
+        })
+        .collect()
 }
 
 /// True when `tool` may run in this session (spec/03 §1.2, spec/05 §2).
@@ -427,6 +481,55 @@ mod tests {
         let mut names = writer_frozen();
         names.insert(10, "submit_outline".to_owned());
         names
+    }
+
+    #[test]
+    fn switch_filtering_keeps_the_fixed_order_and_the_archivist_list_grows_to_22() {
+        let all = CanonSystems::default();
+        let full = tools_for_session("archivist", SessionKind::ChapterMaintenance, &all, true);
+        assert_eq!(full.len(), 22);
+        assert_eq!(full[19], "propose_goal_change");
+        assert_eq!(full[20], "propose_setting_change");
+        assert_eq!(full[21], "finish_maintenance");
+
+        let no_entities = CanonSystems {
+            entities: false,
+            ..all.clone()
+        };
+        let filtered = tools_for_session(
+            "archivist",
+            SessionKind::ChapterMaintenance,
+            &no_entities,
+            true,
+        );
+        let expected: Vec<&str> = full
+            .iter()
+            .copied()
+            .filter(|tool| {
+                tool != &"get_entity"
+                    && tool != &"list_entities"
+                    && tool != &"get_relations"
+                    && tool != &"create_entity"
+                    && tool != &"update_entity"
+                    && tool != &"set_relation"
+                    && tool != &"end_relation"
+                    && tool != &"record_appearances"
+            })
+            .collect();
+        assert_eq!(filtered, expected);
+
+        let all_off = CanonSystems {
+            entities: false,
+            timeline: false,
+            memory: false,
+            foreshadowing: false,
+            goals: false,
+        };
+        let bare = tools_for_session("archivist", SessionKind::ChapterMaintenance, &all_off, true);
+        assert!(!bare.contains(&"search_canon"));
+        assert!(!bare.contains(&"propose_goal_change"));
+        assert!(bare.contains(&"propose_setting_change"));
+        assert!(bare.contains(&"finish_maintenance"));
     }
 
     #[test]

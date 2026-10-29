@@ -15,6 +15,7 @@
 //! registry; nothing here writes model-facing text.
 
 pub mod appearance;
+pub mod counts;
 pub mod entity;
 pub mod foreshadow;
 pub mod note;

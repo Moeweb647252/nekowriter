@@ -77,7 +77,7 @@ text = '''
 key = "block.memory"
 kind = "block"
 agent = "shared"
-vars = ["memory", "chapter"]
+vars = ["memory", "chapter", "systems"]
 title_en = "Block — tiered memory"
 title_zh = "上下文 · 分层记忆"
 text = '''
@@ -86,7 +86,7 @@ text = '''
 ## 短期记忆
 当前任务：{{ chapter.label }}{% if chapter.title %}《{{ chapter.title }}》{% endif %}
 
-{% if memory.is_first and chapter.number == 1 %}
+{% if systems.memory %}{% if memory.is_first and chapter.number == 1 %}
 这是本书（本轨道）的第一章，暂无前文。
 {% elif memory.is_first %}
 前面的章节都还没有定稿，记忆中暂无前文；本章并不是本书（本轨道）的第一章。
@@ -96,21 +96,21 @@ text = '''
 {% endfor %}{% if memory.previous_tail %}
 ### 上一章结尾（{{ memory.previous_tail.label }}）
 {{ memory.previous_tail.text }}
-{% endif %}{% endif %}{% if memory.protagonist %}
+{% endif %}{% endif %}{% endif %}{% if systems.entities %}{% if memory.protagonist %}
 ### 主角当前状态：{{ memory.protagonist.name }}(#{{ memory.protagonist.id }}){% if memory.protagonist.status != "active" %}【{{ memory.protagonist.status_label }}】{% endif %}
 
 {% if memory.protagonist.after_anchor %}（这是正文锚点之后的状态，对本番外可能尚不成立，请结合锚点判断。）
 {% endif %}{{ memory.protagonist.state or "（尚无记录）" }}
 {% if memory.protagonist.attributes %}{% for a in memory.protagonist.attributes %}{{ a.key }}：{{ a.value }}{% if not loop.last %}；{% endif %}{% endfor %}
 
-{% endif %}{% endif %}{% if chapter.outline %}
+{% endif %}{% endif %}{% endif %}{% if chapter.outline %}
 ### 本章章纲
 <chapter_outline>
 {{ chapter.outline }}
 </chapter_outline>
 {% endif %}
 
-## 中期记忆（近 {{ memory.window_mid }} 章）
+{% if systems.entities %}## 中期记忆（近 {{ memory.window_mid }} 章）
 {% if memory.recent_changes %}
 ### 近期状态与关系变化
 {% for c in memory.recent_changes %}- {{ c.chapter_label }} · {{ c.target }}：{{ c.note }}
@@ -122,21 +122,21 @@ text = '''
 {% endfor %}{% endif %}{% if memory.absent_important %}
 ### 久未出场的重要人物
 {% for a in memory.absent_important %}- {{ a.name }}(#{{ a.id }})：最近出场于{{ a.last_label }}
-{% endfor %}{% endif %}
+{% endfor %}{% endif %}{% endif %}
 
-## 长期记忆索引（详情请用工具检索）
-{% if memory.key_notes %}
+{% if systems.entities or systems.memory or systems.foreshadowing or systems.timeline %}## 长期记忆索引（详情请用工具检索）
+{% if systems.memory and memory.key_notes %}
 ### 核心事实与世界规则
 {% for n in memory.key_notes %}- [{{ n.kind_label }}#{{ n.id }}] {{ n.content }}
-{% endfor %}{% endif %}{% if memory.open_foreshadowing %}
+{% endfor %}{% endif %}{% if systems.foreshadowing and memory.open_foreshadowing %}
 ### 未回收的伏笔
 {% for f in memory.open_foreshadowing %}- #{{ f.id }} {{ f.title }}（埋于{{ f.planted_label }}）
-{% endfor %}{% endif %}{% if memory.cast %}
+{% endfor %}{% endif %}{% if systems.entities and memory.cast %}
 ### 主要实体
 {% for e in memory.cast %}- #{{ e.id }} {{ e.name }}【{{ e.kind_label }}】{% if e.summary %}— {{ e.summary }}{% endif %}
 
 {% endfor %}{% endif %}
-档案规模：人物 {{ memory.counts.character }}，组织 {{ memory.counts.organization }}，地点 {{ memory.counts.location }}，物品 {{ memory.counts.item }}，其他 {{ memory.counts.other }}；时间线事件 {{ memory.counts.event }}；事实 {{ memory.counts.fact }}，世界规则 {{ memory.counts.world_rule }}；未回收伏笔 {{ memory.counts.foreshadowing_open }}。
+{% if systems.entities or systems.timeline or systems.memory or systems.foreshadowing %}档案规模：{% if systems.entities %}人物 {{ memory.counts.character }}，组织 {{ memory.counts.organization }}，地点 {{ memory.counts.location }}，物品 {{ memory.counts.item }}，其他 {{ memory.counts.other }}{% endif %}{% if systems.timeline %}{% if systems.entities %}；{% endif %}时间线事件 {{ memory.counts.event }}{% endif %}{% if systems.memory %}{% if systems.entities or systems.timeline %}；{% endif %}事实 {{ memory.counts.fact }}，世界规则 {{ memory.counts.world_rule }}{% endif %}{% if systems.foreshadowing %}{% if systems.entities or systems.timeline or systems.memory %}；{% endif %}未回收伏笔 {{ memory.counts.foreshadowing_open }}{% endif %}。{% endif %}{% endif %}
 '''
 
 [[prompt]]
@@ -254,4 +254,48 @@ text = '''
 《{{ book.title }}》{% if book.genre %}（{{ book.genre }}）{% endif %}，写作语言：{{ book.writing_language_name }}
 {% if book.idea %}作品构想：{{ book.idea }}
 {% endif %}请让收集的资料服务于这部作品的创作需要。
+'''
+
+[[prompt]]
+key = "block.canon_systems"
+kind = "block"
+agent = "shared"
+vars = ["systems"]
+title_en = "Block — disabled canon systems"
+title_zh = "上下文 · 未启用的档案系统"
+text = '''
+{% if not systems.entities or not systems.timeline or not systems.memory or not systems.foreshadowing %}# 未启用的档案系统
+
+本书关闭了以下档案系统。它们的记录不会出现在上下文中，相关工具不会出现在工具列表中，search_canon 也不会返回它们的内容；如果某个工具的 entities 参数属于已关闭的实体系统，请保持为空。
+{% if not systems.entities %}
+- 实体：人物、组织、地点、物品、关系与出场记录均不可用。
+{% endif %}{% if not systems.timeline %}
+- 时间线：事件记录与时间顺序查询不可用。
+{% endif %}{% if not systems.memory %}
+- 记忆：章节摘要、笔记与前后文记忆不可用。
+{% endif %}{% if not systems.foreshadowing %}
+- 伏笔：已埋设的伏笔与回收状态不可用。
+{% endif %}{% endif %}
+'''
+
+[[prompt]]
+key = "block.goals"
+kind = "block"
+agent = "shared"
+vars = ["goals", "systems"]
+title_en = "Block — writing goals"
+title_zh = "上下文 · 写作目标"
+text = '''
+{% if goals.nodes %}# 写作目标
+
+以下是作者为本章设置的相关写作目标。每个目标的 purpose 说明它为何存在、要达成什么；大纲与正文必须服务于任务的目的，目的应通过故事实现，绝不在正文中直接说明。审查者会判断本章是否服务于这些目标；档案员按节点编号引用目标。
+
+{% for node in goals.nodes %}<{{ node.level }} id="{{ node.id }}" title="{{ node.title }}"{% if node.chapters %} chapters="{{ node.chapters }}"{% endif %}{% if node.overdue %} overdue="true"{% endif %}>
+<purpose>{{ node.purpose }}</purpose>
+{% if node.entities %}<entities>{{ node.entities | join("、") }}</entities>
+{% endif %}{% if node.events %}<events>{{ node.events | join("、") }}</events>
+{% endif %}{% if node.foreshadowing %}<foreshadowing>{{ node.foreshadowing | join("、") }}</foreshadowing>
+{% endif %}</{{ node.level }}>
+{% endfor %}{% if goals.omitted %}还有 {{ goals.omitted }} 个相关目标未显示。
+{% endif %}{% endif %}
 '''
