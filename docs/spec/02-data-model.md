@@ -58,8 +58,14 @@
   `0005_writing_skills.sql` adds the two writing-skill tables and seeds the built-in
   `basic-writing` row with an empty body (design §4–§5). It touches no existing table, so it runs
   inside the migrator's transaction; the reconciler is deliberately deferred (design §4.2).
-  `0006_goals_and_switches.sql` (D-150) runs outside the migrator's transaction like 0004. With
-  `PRAGMA foreign_keys = OFF` it:
+  `0006_goals_and_switches.sql` (D-150, D-153) runs in one Rust-managed `DatabaseTransaction`
+  (the module declares `use_transaction() = Some(false)` so the migrator does not wrap it) and
+  leaves SQLite foreign-key enforcement on. `PRAGMA foreign_keys = OFF` is not used: it is
+  connection-scoped and the pool does not guarantee the same connection as the following
+  statements. The rebuild is safe with enforcement on because neither rebuilt table is referenced
+  by another table, and `change_log_goals_rebuild`'s two self-references point at itself until the
+  final rename, so dropping the old `change_log` cannot cascade into the copied revert links.
+  Inside that transaction it:
   - rebuilds `change_log`, whose `target_type` CHECK gains `goal`, `plan`, `task`, and recreates its
     three indexes;
   - rebuilds `setting_proposals`, whose `target_type` CHECK gains `goal_node`, `new_goal_task`, and
@@ -67,11 +73,12 @@
   - creates the four goal tables;
   - adds `agent_sessions.canon_systems` with `ALTER TABLE … ADD COLUMN` (no rebuild).
 
-  Neither rebuilt table is referenced by another table (`change_log` only by itself), so the guards
-  count the rows of both tables and the two revert links of `change_log`, then require an empty
-  `PRAGMA foreign_key_check`. Nothing is back-filled: `BookSettings` and `book_defaults` without
-  `canon_systems` load with all five systems on (§4), and sessions created before 0006 have
-  `canon_systems = NULL`, which means all on.
+  The guards count the rows of both tables and the two revert links of `change_log`, then require
+  an empty `PRAGMA foreign_key_check`; they run in the same transaction, so a failed guard rolls
+  back the rebuilt tables, the goal tables and the non-idempotent `ALTER TABLE` together and
+  leaves a byte-identical, retryable pre-0006 database. Nothing is back-filled: `BookSettings` and
+  `book_defaults` without `canon_systems` load with all five systems on (§4), and sessions created
+  before 0006 have `canon_systems = NULL`, which means all on.
 
 ## 2. Schema (0001_init.sql, upgraded by 0002_research_deferred.sql, 0003, 0004, 0005 and 0006)
 

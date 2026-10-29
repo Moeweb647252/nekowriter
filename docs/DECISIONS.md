@@ -3066,3 +3066,34 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   every junction `via` chain and every unique key with `PRAGMA index_list`. A future entity must
   follow the variant-naming rule or its derive fails at compile time.
 - **Spec**: spec/02 §1; plan §2.1, §5, §7; D-151.
+
+### D-153 0006 runs in one Rust-managed transaction instead of `PRAGMA foreign_keys = OFF`
+
+- **Context**: M13 task 13.3 first modelled `0006_goals_and_switches` on 0004's rebuild procedure:
+  `use_transaction() = Some(false)`, `PRAGMA foreign_keys = OFF`, `BEGIN`, the two table rebuilds,
+  the goal tables and the `ALTER TABLE agent_sessions ADD COLUMN canon_systems`, then `COMMIT`, and
+  the count / `pragma_foreign_key_check` guards after the commit. Review found that a guard failure
+  left the new schema committed while `m0006` was unrecorded, so the retry died on
+  `duplicate column name: canon_systems`. The `ALTER` is not idempotent, unlike 0004's repeatable
+  rebuild. `PRAGMA foreign_keys = OFF` cannot safely be used to fix this by moving the guards before
+  the commit: SQLite pragmas are connection-scoped, the `DatabaseConnection` is a pool, and
+  `execute_unprepared` does not guarantee that the pragma and the following statements reach the
+  same pooled connection. Setting it on one connection and beginning the transaction on another
+  either leaves a pool connection with enforcement off or does not disable it at all.
+- **Decision**: run 0006 in one Rust-managed `DatabaseTransaction` and keep SQLite foreign-key
+  enforcement on. The rebuild is safe with enforcement on because neither rebuilt table is
+  referenced by another table, and `change_log_goals_rebuild`'s `reverts_id` / `reverted_by_id`
+  reference the rebuild table **itself** until the final rename; dropping the old `change_log` has
+  no foreign-key action to apply to the copied rows, and the rename rewrites the self-reference to
+  `change_log`. All count guards and `pragma_foreign_key_check` run inside that transaction, so a
+  failed guard rolls back the rebuilt tables, the goal tables and the non-idempotent `ALTER`
+  together. `use_transaction()` stays `Some(false)` only because the module owns its transaction;
+  the migrator must not wrap it. `0001_init.sql` still carries the final schema for fresh databases.
+- **Consequences**: a failed 0006 leaves a byte-identical pre-0006 database and a repaired copy can
+  retry the migration successfully; `goals_migration.rs` proves this with an unrelated orphan
+  (`agent_messages.session_id = 999`) that reaches the late `foreign_key_check` guard after the
+  goal tables and the `ALTER`, and with a `change_log` orphan that fails the rebuild copy first.
+  Future migrations that need a pragma-scoped rebuild and atomic rollback must use a dedicated
+  connection rather than the shared pool; a self-referential rebuild table is the alternative when
+  the only affected foreign keys are the table's own.
+- **Spec**: spec/02 §1; plan §6; D-150.

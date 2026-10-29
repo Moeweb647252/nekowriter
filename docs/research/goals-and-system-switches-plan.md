@@ -641,19 +641,24 @@ off one at a time, all off, and with and without goals. Chinese vocabulary is §
 
 ## 6. Data, API and type changes
 
-**Migration `0006_goals_and_switches`** (`use_transaction() = Some(false)`, modelled on 0004):
+**Migration `0006_goals_and_switches`** (`use_transaction() = Some(false)`; one Rust-managed
+`DatabaseTransaction` with SQLite foreign-key enforcement on — D-153):
 1. Count `change_log` rows, rows with `reverts_id`, rows with `reverted_by_id`, and
    `setting_proposals` rows into a temp table.
-2. `PRAGMA foreign_keys = OFF; BEGIN;`
+2. In that transaction:
    - rebuild `change_log` with `target_type` += `'goal','plan','task'` and recreate its three
-     indexes;
+     indexes. The rebuild table's `reverts_id` / `reverted_by_id` reference the rebuild table itself
+     until the final rename; with enforcement on, dropping the old `change_log` therefore cannot
+     null the copied links (`PRAGMA foreign_keys = OFF` is connection-scoped and the pool does not
+     guarantee the same connection, so it cannot be used inside the one transaction);
    - rebuild `setting_proposals` with `target_type` += `'goal_node','new_goal_task'` and recreate
      its index;
    - create the goal tables (§4.1);
    - `ALTER TABLE agent_sessions ADD COLUMN canon_systems TEXT CHECK (canon_systems IS NULL OR
      json_valid(canon_systems));` (no rebuild).
-3. `COMMIT; PRAGMA foreign_keys = ON;`. Guard the counts with `CHECK (lost = 0)` rows, and
-   `pragma_foreign_key_check` must be empty.
+3. Guard the counts with `CHECK (lost = 0)` rows, and `pragma_foreign_key_check` must be empty.
+   Both run in the same transaction before its commit, so a guard failure rolls back every change
+   above (including the non-idempotent `ALTER`) and a repaired database can retry the migration.
 4. `0001_init.sql` gets the same final schema for fresh databases (spec/02 §1). No row is
    back-filled.
 

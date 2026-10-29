@@ -1,4 +1,4 @@
--- 0006 — writing goals and per-book canon system switches (spec/02 §1–§5, D-150)
+-- 0006 — writing goals and per-book canon system switches (spec/02 §1–§5, D-150, D-153)
 --
 -- Two CHECK-constrained tables gain values:
 --   change_log.target_type       += 'goal', 'plan', 'task'

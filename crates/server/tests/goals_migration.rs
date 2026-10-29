@@ -5,12 +5,14 @@
 //! 1. A fresh database accepts the new `change_log` / `setting_proposals` target types, the goal
 //!    tables and `agent_sessions.canon_systems` (the CHECK constraints of `0001_init.sql`).
 //! 2. A database created **before** 0006 upgrades with every row and every revert link intact.
-//!    `0006_goals_and_switches` rebuilds `change_log` and `setting_proposals` with
-//!    `PRAGMA foreign_keys` off, like 0004; the guards must fail loudly instead of losing rows.
+//!    `0006_goals_and_switches` runs in one Rust-managed transaction with foreign-key enforcement
+//!    on: `change_log_goals_rebuild`'s self-references keep the copied revert links alive across
+//!    the drop/rename, and the guards fail loudly inside that transaction so a failed attempt
+//!    rolls back the goal tables and the non-idempotent ALTER too.
 //!
 //! The fixture holds changes with both revert links, one row of every old proposal type and one
-//! row of every session kind/role; the broken-copy test injects an orphan foreign key and proves
-//! the final `foreign_key_check` fails while the data stays.
+//! row of every session kind/role; the broken-copy tests inject orphan foreign keys and prove the
+//! late `foreign_key_check` guard (and the earlier rebuild copy) fail while the data stays.
 
 use nekowriter::db::json::{BookSettings, CanonSystems, GoalLevel, GoalStatus};
 use nekowriter::testing::TestApp;
@@ -295,6 +297,18 @@ async fn table_rows(conn: &sea_orm::DatabaseConnection, table: &str, columns: &[
          FROM (SELECT * FROM {table} ORDER BY id)"
     );
     scalar_text(conn, &sql).await
+}
+
+/// The DDL of every permanent object, as one canonical JSON string. A failed migration must not
+/// change it at all.
+async fn schema_snapshot(conn: &sea_orm::DatabaseConnection) -> String {
+    scalar_text(
+        conn,
+        "SELECT json_group_array(json_object('type', type, 'name', name, 'sql', sql)) AS v \
+         FROM (SELECT type, name, sql FROM sqlite_master \
+               WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name)",
+    )
+    .await
 }
 
 /// Whether a table exists in `sqlite_master`.
@@ -602,42 +616,49 @@ async fn the_upgrade_keeps_every_row_and_every_revert_link() {
 }
 
 #[tokio::test]
-async fn a_broken_copy_fails_loudly_and_keeps_its_data() {
+async fn a_broken_foreign_key_guard_fails_late_and_can_be_retried() {
     let (_dir, path) = pre_goals_database().await;
     let db = nekowriter::db::Db::connect(&path).await.expect("reconnect");
     let baseline_changes = table_rows(db.conn(), "change_log", CHANGE_LOG_COLUMNS).await;
     let baseline_proposals =
         table_rows(db.conn(), "setting_proposals", SETTING_PROPOSAL_COLUMNS).await;
-    // An orphan row makes `PRAGMA foreign_key_check` report a row after the rebuild. The FK is off
-    // for the insert so the broken copy can exist at all.
+    let baseline_schema = schema_snapshot(db.conn()).await;
+    // An orphan on a table the rebuild does not copy: the `INSERT ... SELECT` statements succeed,
+    // the goal tables and the `ALTER` run, and only the final `pragma_foreign_key_check` guard
+    // reports it. This is the path a guard-moved-outside-the-transaction regression would skip.
     db.conn()
         .execute_unprepared(
             "PRAGMA foreign_keys = OFF; \
-             INSERT INTO change_log(book_id, actor, target_type, target_id, op, created_at) \
-             VALUES (999, 'user', 'entity', 1, 'create', '2026-01-01T00:00:00Z'); \
+             INSERT INTO agent_messages(id, session_id, seq, role, kind, content, created_at) \
+             VALUES (999, 999, 0, 'user', 'notice', '[]', '2026-01-01T00:00:00Z'); \
              PRAGMA foreign_keys = ON;",
         )
         .await
-        .expect("inject an orphan");
-    let broken_changes = table_rows(db.conn(), "change_log", CHANGE_LOG_COLUMNS).await;
-    assert_ne!(
-        broken_changes, baseline_changes,
-        "the injected orphan must be visible before the migration"
-    );
+        .expect("inject an unrelated orphan");
 
-    let failed = nekowriter_migration::up(db.conn()).await;
-    assert!(failed.is_err(), "the broken copy must fail loudly");
+    let error = nekowriter_migration::up(db.conn())
+        .await
+        .expect_err("the broken copy must fail loudly");
+    assert!(
+        error.to_string().contains("bad = 0"),
+        "the late foreign-key guard must fire, got: {error}"
+    );
     // The failed attempt rolled everything back: no row changed, no goal table appeared and the
     // non-idempotent column is absent, so a repaired copy can be retried.
     assert_eq!(
         table_rows(db.conn(), "change_log", CHANGE_LOG_COLUMNS).await,
-        broken_changes,
+        baseline_changes,
         "the failed migration changed change_log rows"
     );
     assert_eq!(
         table_rows(db.conn(), "setting_proposals", SETTING_PROPOSAL_COLUMNS).await,
         baseline_proposals,
         "the failed migration changed setting_proposals rows"
+    );
+    assert_eq!(
+        schema_snapshot(db.conn()).await,
+        baseline_schema,
+        "the failed migration changed the schema"
     );
     assert!(
         !table_exists(db.conn(), "goal_nodes").await,
@@ -658,7 +679,7 @@ async fn a_broken_copy_fails_loudly_and_keeps_its_data() {
 
     // Repair the injected orphan and retry: the migration must now succeed and keep every row.
     db.conn()
-        .execute_unprepared("DELETE FROM change_log WHERE book_id = 999")
+        .execute_unprepared("DELETE FROM agent_messages WHERE id = 999")
         .await
         .expect("repair the orphan");
     nekowriter_migration::up(db.conn())
@@ -681,6 +702,60 @@ async fn a_broken_copy_fails_loudly_and_keeps_its_data() {
         )
         .await,
         1
+    );
+}
+
+/// The copy itself can fail before the guards (SQLite 787): an orphan in `change_log` is selected
+/// into `change_log_goals_rebuild` and rejected there. It must roll back the same way and remain
+/// retryable after the orphan is removed.
+#[tokio::test]
+async fn a_broken_rebuild_copy_also_rolls_back_and_can_be_retried() {
+    let (_dir, path) = pre_goals_database().await;
+    let db = nekowriter::db::Db::connect(&path).await.expect("reconnect");
+    let baseline_changes = table_rows(db.conn(), "change_log", CHANGE_LOG_COLUMNS).await;
+    db.conn()
+        .execute_unprepared(
+            "PRAGMA foreign_keys = OFF; \
+             INSERT INTO change_log(book_id, actor, target_type, target_id, op, created_at) \
+             VALUES (999, 'user', 'entity', 1, 'create', '2026-01-01T00:00:00Z'); \
+             PRAGMA foreign_keys = ON;",
+        )
+        .await
+        .expect("inject a change_log orphan");
+    let broken_changes = table_rows(db.conn(), "change_log", CHANGE_LOG_COLUMNS).await;
+
+    let error = nekowriter_migration::up(db.conn())
+        .await
+        .expect_err("the broken copy must fail loudly");
+    assert!(
+        error.to_string().contains("FOREIGN KEY constraint failed"),
+        "the rebuild copy must fail with SQLite 787, got: {error}"
+    );
+    assert_eq!(
+        table_rows(db.conn(), "change_log", CHANGE_LOG_COLUMNS).await,
+        broken_changes,
+        "the failed copy changed change_log rows"
+    );
+    assert!(
+        !table_exists(db.conn(), "goal_nodes").await,
+        "the failed copy committed the goal tables"
+    );
+    assert!(
+        !column_exists(db.conn(), "agent_sessions", "canon_systems").await,
+        "the failed copy committed the ALTER TABLE"
+    );
+
+    db.conn()
+        .execute_unprepared("DELETE FROM change_log WHERE book_id = 999")
+        .await
+        .expect("repair the orphan");
+    nekowriter_migration::up(db.conn())
+        .await
+        .expect("retry after repairing the orphan");
+    assert_eq!(
+        table_rows(db.conn(), "change_log", CHANGE_LOG_COLUMNS).await,
+        baseline_changes,
+        "the successful retry changed change_log rows"
     );
 }
 

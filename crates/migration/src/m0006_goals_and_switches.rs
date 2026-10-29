@@ -1,7 +1,7 @@
 use sea_orm_migration::prelude::*;
 use sea_orm_migration::sea_orm::{ConnectionTrait, TransactionTrait};
 
-/// The writing-goals tables and the per-book canon system switches (spec/02 §1–§5, D-150).
+/// The writing-goals tables and the per-book canon system switches (spec/02 §1–§5, D-150, D-153).
 ///
 /// The migration runs in a Rust-managed transaction rather than the migrator's. It rebuilds
 /// `change_log` and `setting_proposals` with new CHECK lists; neither table is referenced by
