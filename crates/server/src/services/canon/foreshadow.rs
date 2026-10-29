@@ -32,11 +32,11 @@ pub async fn list(
     // Shared rows by default (spec/06 §2); an isolated track's private hooks are read through
     // the track's own views.
     let mut statement = foreshadowing::Entity::find()
-        .filter(foreshadowing::Column::BookId.eq(book_id))
+        .filter(foreshadowing::COLUMN.book_id.eq(book_id))
         .filter(Visibility::shared(book_id).visible_condition(foreshadowing::Column::TrackId))
-        .order_by_asc(foreshadowing::Column::Id);
+        .order_by_asc(foreshadowing::COLUMN.id);
     if let Some(status) = query.status {
-        statement = statement.filter(foreshadowing::Column::Status.eq(status.as_str()));
+        statement = statement.filter(foreshadowing::COLUMN.status.eq(status.as_str()));
     }
     let rows = statement.all(conn).await?;
     let mut items = Vec::with_capacity(rows.len());

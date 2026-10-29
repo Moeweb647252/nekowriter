@@ -54,16 +54,16 @@ pub async fn list(
         None => Visibility::shared(book_id),
     };
     let mut statement = entities::Entity::find()
-        .filter(entities::Column::BookId.eq(book_id))
+        .filter(entities::COLUMN.book_id.eq(book_id))
         .filter(visibility.visible_condition(entities::Column::TrackId))
-        .order_by_desc(entities::Column::Importance)
-        .order_by_desc(entities::Column::LastChapterId)
-        .order_by_asc(entities::Column::Id);
+        .order_by_desc(entities::COLUMN.importance)
+        .order_by_desc(entities::COLUMN.last_chapter_id)
+        .order_by_asc(entities::COLUMN.id);
     if let Some(kind) = query.kind {
-        statement = statement.filter(entities::Column::Kind.eq(kind.as_str()));
+        statement = statement.filter(entities::COLUMN.kind.eq(kind.as_str()));
     }
     if let Some(status) = query.status {
-        statement = statement.filter(entities::Column::Status.eq(status.as_str()));
+        statement = statement.filter(entities::COLUMN.status.eq(status.as_str()));
     }
     let rows = statement.all(conn).await?;
     let needle = query.q.as_deref().map(str::trim).filter(|q| !q.is_empty());
@@ -109,19 +109,19 @@ pub async fn detail(
         None => Visibility::shared(row.book_id),
     };
     let relation_rows = relations::Entity::find()
-        .filter(relations::Column::BookId.eq(row.book_id))
+        .filter(relations::COLUMN.book_id.eq(row.book_id))
         .filter(relation_visibility.visible_condition(relations::Column::TrackId))
         .filter(
             Condition::any()
-                .add(relations::Column::SourceId.eq(entity_id))
-                .add(relations::Column::TargetId.eq(entity_id)),
+                .add(relations::COLUMN.source_id.eq(entity_id))
+                .add(relations::COLUMN.target_id.eq(entity_id)),
         )
-        .order_by_asc(relations::Column::Id)
+        .order_by_asc(relations::COLUMN.id)
         .all(conn)
         .await?;
     let appearance_rows = appearances::Entity::find()
-        .filter(appearances::Column::EntityId.eq(entity_id))
-        .order_by_asc(appearances::Column::ChapterId)
+        .filter(appearances::COLUMN.entity_id.eq(entity_id))
+        .order_by_asc(appearances::COLUMN.chapter_id)
         .all(conn)
         .await?;
     let changes = super::super::change_log::for_target(
@@ -132,8 +132,8 @@ pub async fn detail(
     )
     .await?;
     let design = character_designs::Entity::find()
-        .filter(character_designs::Column::EntityId.eq(entity_id))
-        .order_by_asc(character_designs::Column::Rank)
+        .filter(character_designs::COLUMN.entity_id.eq(entity_id))
+        .order_by_asc(character_designs::COLUMN.rank)
         .one(conn)
         .await?;
     Ok(EntityDto {
@@ -296,9 +296,9 @@ async fn link_design_by_name(tx: &impl ConnectionTrait, row: &entities::Model) -
         return Ok(());
     }
     let design = character_designs::Entity::find()
-        .filter(character_designs::Column::BookId.eq(row.book_id))
-        .filter(character_designs::Column::Name.eq(row.name.clone()))
-        .filter(character_designs::Column::EntityId.is_null())
+        .filter(character_designs::COLUMN.book_id.eq(row.book_id))
+        .filter(character_designs::COLUMN.name.eq(row.name.clone()))
+        .filter(character_designs::COLUMN.entity_id.is_null())
         .one(tx)
         .await?;
     let Some(design) = design else {
@@ -706,11 +706,11 @@ async fn move_relations(
     source: &entities::Model,
 ) -> CanonResult<()> {
     let rows = relations::Entity::find()
-        .filter(relations::Column::BookId.eq(source.book_id))
+        .filter(relations::COLUMN.book_id.eq(source.book_id))
         .filter(
             Condition::any()
-                .add(relations::Column::SourceId.eq(source.id))
-                .add(relations::Column::TargetId.eq(source.id)),
+                .add(relations::COLUMN.source_id.eq(source.id))
+                .add(relations::COLUMN.target_id.eq(source.id)),
         )
         .all(tx)
         .await?;
@@ -719,15 +719,15 @@ async fn move_relations(
     // `X → A`, so A as the *target* counts too — checking only A as the source let that shape
     // reach the unique index and abort the merge.
     let existing = relations::Entity::find()
-        .filter(relations::Column::BookId.eq(target.book_id))
+        .filter(relations::COLUMN.book_id.eq(target.book_id))
         .filter(
             Condition::any()
-                .add(relations::Column::SourceId.eq(target.id))
-                .add(relations::Column::TargetId.eq(target.id)),
+                .add(relations::COLUMN.source_id.eq(target.id))
+                .add(relations::COLUMN.target_id.eq(target.id)),
         )
-        .filter(relations::Column::SourceId.ne(source.id))
-        .filter(relations::Column::TargetId.ne(source.id))
-        .filter(relations::Column::Status.eq(RelationStatus::Active))
+        .filter(relations::COLUMN.source_id.ne(source.id))
+        .filter(relations::COLUMN.target_id.ne(source.id))
+        .filter(relations::COLUMN.status.eq(RelationStatus::Active))
         .all(tx)
         .await?;
     // The key is the ordered pair alone. `kind` is data on a relation, not part of its identity
@@ -789,15 +789,21 @@ async fn move_appearances(
     source: &entities::Model,
 ) -> CanonResult<()> {
     let rows = appearances::Entity::find()
-        .filter(appearances::Column::EntityId.eq(source.id))
+        .filter(appearances::COLUMN.entity_id.eq(source.id))
         .all(tx)
         .await?;
+    let chapter_ids: Vec<i32> = rows.iter().map(|row| row.chapter_id).collect();
+    let existing_rows = appearances::Entity::find()
+        .filter(appearances::COLUMN.entity_id.eq(target.id))
+        .filter(appearances::COLUMN.chapter_id.is_in(chapter_ids))
+        .all(tx)
+        .await?;
+    let mut existing_by_chapter: std::collections::HashMap<i32, appearances::Model> = existing_rows
+        .into_iter()
+        .map(|row| (row.chapter_id, row))
+        .collect();
     for row in rows {
-        let existing = appearances::Entity::find()
-            .filter(appearances::Column::ChapterId.eq(row.chapter_id))
-            .filter(appearances::Column::EntityId.eq(target.id))
-            .one(tx)
-            .await?;
+        let existing = existing_by_chapter.remove(&row.chapter_id);
         match existing {
             None => {
                 appearances::ActiveModel {
@@ -844,6 +850,7 @@ async fn move_link_rows(
         table = table.table(),
         owner = table.owner_column()
     );
+    // Raw: the link table name is chosen at runtime from the closed `LinkTable` set.
     tx.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Sqlite,
         sql,
@@ -860,12 +867,12 @@ async fn move_design_link(
     source: &entities::Model,
 ) -> CanonResult<()> {
     let designs = character_designs::Entity::find()
-        .filter(character_designs::Column::EntityId.eq(source.id))
-        .order_by_asc(character_designs::Column::Rank)
+        .filter(character_designs::COLUMN.entity_id.eq(source.id))
+        .order_by_asc(character_designs::COLUMN.rank)
         .all(tx)
         .await?;
     let target_linked = character_designs::Entity::find()
-        .filter(character_designs::Column::EntityId.eq(target.id))
+        .filter(character_designs::COLUMN.entity_id.eq(target.id))
         .one(tx)
         .await?
         .is_some();
@@ -895,7 +902,7 @@ async fn move_track_focus(
     source: &entities::Model,
 ) -> CanonResult<()> {
     let rows = tracks::Entity::find()
-        .filter(tracks::Column::FocusEntityId.eq(source.id))
+        .filter(tracks::COLUMN.focus_entity_id.eq(source.id))
         .all(tx)
         .await?;
     for row in rows {
@@ -937,8 +944,8 @@ pub async fn set_protagonist_inner(
     let mut events = Vec::new();
     // The flag moves: whoever held it loses it in the same transaction (one per book, §5 (7)).
     let current = entities::Entity::find()
-        .filter(entities::Column::BookId.eq(existing.book_id))
-        .filter(entities::Column::IsProtagonist.eq(1))
+        .filter(entities::COLUMN.book_id.eq(existing.book_id))
+        .filter(entities::COLUMN.is_protagonist.eq(true))
         .all(tx)
         .await?;
     for row in current {
@@ -1030,10 +1037,10 @@ async fn ensure_protagonist_free(
     except_id: Option<i32>,
 ) -> CanonResult<()> {
     let mut statement = entities::Entity::find()
-        .filter(entities::Column::BookId.eq(book_id))
-        .filter(entities::Column::IsProtagonist.eq(1));
+        .filter(entities::COLUMN.book_id.eq(book_id))
+        .filter(entities::COLUMN.is_protagonist.eq(true));
     if let Some(except_id) = except_id {
-        statement = statement.filter(entities::Column::Id.ne(except_id));
+        statement = statement.filter(entities::COLUMN.id.ne(except_id));
     }
     if let Some(existing) = statement.one(tx).await? {
         return Err(super::conflict(
@@ -1063,10 +1070,10 @@ async fn ensure_name_free(
         .visibility
         .unwrap_or_else(|| Visibility::shared(book_id));
     let mut statement = entities::Entity::find()
-        .filter(entities::Column::BookId.eq(book_id))
+        .filter(entities::COLUMN.book_id.eq(book_id))
         .filter(visibility.visible_condition(entities::Column::TrackId));
     if let Some(except_id) = except_id {
-        statement = statement.filter(entities::Column::Id.ne(except_id));
+        statement = statement.filter(entities::COLUMN.id.ne(except_id));
     }
     let rows = statement.all(tx).await?;
     let wanted: Vec<String> = std::iter::once(name.to_owned())
@@ -1141,14 +1148,29 @@ pub async fn recompute_bounds(
         return Ok(());
     }
     let orders = chapter_orders(tx, book_id).await?;
+    let entity_rows = entities::Entity::find()
+        .filter(entities::COLUMN.id.is_in(unique.clone()))
+        .all(tx)
+        .await?;
+    let entity_by_id: std::collections::HashMap<i32, entities::Model> =
+        entity_rows.into_iter().map(|row| (row.id, row)).collect();
+    let appearance_rows = appearances::Entity::find()
+        .filter(appearances::COLUMN.entity_id.is_in(unique.clone()))
+        .all(tx)
+        .await?;
+    let mut appearances_by_entity: std::collections::HashMap<i32, Vec<appearances::Model>> =
+        std::collections::HashMap::new();
+    for appearance in appearance_rows {
+        appearances_by_entity
+            .entry(appearance.entity_id)
+            .or_default()
+            .push(appearance);
+    }
     for entity_id in unique {
-        let Some(row) = entities::Entity::find_by_id(entity_id).one(tx).await? else {
+        let Some(row) = entity_by_id.get(&entity_id) else {
             continue;
         };
-        let rows = appearances::Entity::find()
-            .filter(appearances::Column::EntityId.eq(entity_id))
-            .all(tx)
-            .await?;
+        let rows = appearances_by_entity.remove(&entity_id).unwrap_or_default();
         let mut first: Option<(i32, super::ChapterOrder)> = None;
         let mut last: Option<(i32, super::ChapterOrder)> = None;
         for appearance in &rows {
@@ -1288,9 +1310,9 @@ pub async fn restore_inner(
     // Restoring the protagonist flag must not collide with another holder (spec/02 §5 (7)).
     if *is_protagonist && !existing.is_protagonist {
         let other = entities::Entity::find()
-            .filter(entities::Column::BookId.eq(existing.book_id))
-            .filter(entities::Column::IsProtagonist.eq(1))
-            .filter(entities::Column::Id.ne(entity_id))
+            .filter(entities::COLUMN.book_id.eq(existing.book_id))
+            .filter(entities::COLUMN.is_protagonist.eq(true))
+            .filter(entities::COLUMN.id.ne(entity_id))
             .one(tx)
             .await?;
         if let Some(other) = other {
@@ -1367,8 +1389,8 @@ pub async fn recreate_inner(
     }
     if *is_protagonist {
         let other = entities::Entity::find()
-            .filter(entities::Column::BookId.eq(book_id))
-            .filter(entities::Column::IsProtagonist.eq(1))
+            .filter(entities::COLUMN.book_id.eq(book_id))
+            .filter(entities::COLUMN.is_protagonist.eq(true))
             .one(tx)
             .await?;
         if let Some(other) = other {
@@ -1418,11 +1440,11 @@ async fn find_by_name(
     name: &str,
 ) -> CanonResult<Option<entities::Model>> {
     let mut statement = entities::Entity::find()
-        .filter(entities::Column::BookId.eq(book_id))
-        .filter(entities::Column::Name.eq(name));
+        .filter(entities::COLUMN.book_id.eq(book_id))
+        .filter(entities::COLUMN.name.eq(name));
     statement = match track_id {
-        Some(track_id) => statement.filter(entities::Column::TrackId.eq(track_id)),
-        None => statement.filter(entities::Column::TrackId.is_null()),
+        Some(track_id) => statement.filter(entities::COLUMN.track_id.eq(track_id)),
+        None => statement.filter(entities::COLUMN.track_id.is_null()),
     };
     Ok(statement.one(conn).await?)
 }

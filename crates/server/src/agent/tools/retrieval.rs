@@ -288,7 +288,7 @@ async fn entities_by_id(
         return Ok(BTreeMap::new());
     }
     let rows = entities::Entity::find()
-        .filter(entities::Column::Id.is_in(ids.to_vec()))
+        .filter(entities::COLUMN.id.is_in(ids.to_vec()))
         .all(ctx.tx)
         .await
         .map_err(|error| canon_error(ctx, canon::CanonError::from(error)))?;
@@ -304,7 +304,7 @@ async fn chapters_by_id(
         return Ok(BTreeMap::new());
     }
     let rows = chapters::Entity::find()
-        .filter(chapters::Column::Id.is_in(ids.to_vec()))
+        .filter(chapters::COLUMN.id.is_in(ids.to_vec()))
         .all(ctx.tx)
         .await
         .map_err(|error| canon_error(ctx, canon::CanonError::from(error)))?;
@@ -389,14 +389,14 @@ impl ToolHandler for GetEntityTool {
         // and only the ones this session may see: a shared entity never leaks another isolated
         // track's private relation (spec/06 §2).
         let relation_rows = relations::Entity::find()
-            .filter(relations::Column::BookId.eq(entity.book_id))
+            .filter(relations::COLUMN.book_id.eq(entity.book_id))
             .filter(visibility.visible_condition(relations::Column::TrackId))
             .filter(
                 sea_orm::Condition::any()
-                    .add(relations::Column::SourceId.eq(entity.id))
-                    .add(relations::Column::TargetId.eq(entity.id)),
+                    .add(relations::COLUMN.source_id.eq(entity.id))
+                    .add(relations::COLUMN.target_id.eq(entity.id)),
             )
-            .order_by_asc(relations::Column::Id)
+            .order_by_asc(relations::COLUMN.id)
             .all(ctx.tx)
             .await
             .map_err(|error| canon_error(ctx, canon::CanonError::from(error)))?;
@@ -458,12 +458,12 @@ impl ToolHandler for GetEntityTool {
 
         // The latest change notes, with chapter labels and anchor marks (spec/05 §3).
         let change_rows = change_log::Entity::find()
-            .filter(change_log::Column::TargetType.eq(ChangeTargetType::Entity))
-            .filter(change_log::Column::TargetId.eq(entity.id))
+            .filter(change_log::COLUMN.target_type.eq(ChangeTargetType::Entity))
+            .filter(change_log::COLUMN.target_id.eq(entity.id))
             .filter(visibility.visible_condition(change_log::Column::TrackId))
-            .filter(change_log::Column::RevertedById.is_null())
-            .filter(change_log::Column::Note.ne(""))
-            .order_by_desc(change_log::Column::Id)
+            .filter(change_log::COLUMN.reverted_by_id.is_null())
+            .filter(change_log::COLUMN.note.ne(""))
+            .order_by_desc(change_log::COLUMN.id)
             .limit(ENTITY_CHANGES as u64)
             .all(ctx.tx)
             .await
@@ -500,7 +500,7 @@ impl ToolHandler for GetEntityTool {
 
         // Appearances: first, last and the mid-term window count (spec/05 §3).
         let appearance_rows = appearances::Entity::find()
-            .filter(appearances::Column::EntityId.eq(entity.id))
+            .filter(appearances::COLUMN.entity_id.eq(entity.id))
             .all(ctx.tx)
             .await
             .map_err(|error| canon_error(ctx, canon::CanonError::from(error)))?;
@@ -531,8 +531,8 @@ impl ToolHandler for GetEntityTool {
         let last_label = label_of_chapter(ctx, entity.last_chapter_id, &mut labels).await?;
 
         let design = character_designs::Entity::find()
-            .filter(character_designs::Column::EntityId.eq(entity.id))
-            .order_by_asc(character_designs::Column::Rank)
+            .filter(character_designs::COLUMN.entity_id.eq(entity.id))
+            .order_by_asc(character_designs::COLUMN.rank)
             .one(ctx.tx)
             .await
             .map_err(|error| canon_error(ctx, canon::CanonError::from(error)))?
@@ -724,14 +724,14 @@ impl ToolHandler for GetRelationsTool {
         let include_ended = input.include_ended.unwrap_or(false);
         let visibility = visibility_of(ctx);
         let rows = relations::Entity::find()
-            .filter(relations::Column::BookId.eq(entity.book_id))
+            .filter(relations::COLUMN.book_id.eq(entity.book_id))
             .filter(visibility.visible_condition(relations::Column::TrackId))
             .filter(
                 sea_orm::Condition::any()
-                    .add(relations::Column::SourceId.eq(entity.id))
-                    .add(relations::Column::TargetId.eq(entity.id)),
+                    .add(relations::COLUMN.source_id.eq(entity.id))
+                    .add(relations::COLUMN.target_id.eq(entity.id)),
             )
-            .order_by_asc(relations::Column::Id)
+            .order_by_asc(relations::COLUMN.id)
             .all(ctx.tx)
             .await
             .map_err(|error| canon_error(ctx, canon::CanonError::from(error)))?;
@@ -848,10 +848,10 @@ impl ToolHandler for QueryTimelineTool {
             .filter(|value| !value.is_empty())
             .map(str::to_lowercase);
         let mut rows = timeline_events::Entity::find()
-            .filter(timeline_events::Column::BookId.eq(book_id))
+            .filter(timeline_events::COLUMN.book_id.eq(book_id))
             .filter(visibility.visible_condition(timeline_events::Column::TrackId))
-            .order_by_asc(timeline_events::Column::Position)
-            .order_by_asc(timeline_events::Column::Id)
+            .order_by_asc(timeline_events::COLUMN.position)
+            .order_by_asc(timeline_events::COLUMN.id)
             .all(ctx.tx)
             .await
             .map_err(|error| canon_error(ctx, canon::CanonError::from(error)))?;
@@ -983,8 +983,8 @@ async fn timeline_links(
     }
     let ids: Vec<i32> = rows.iter().map(|row| row.id).collect();
     let join_rows = timeline_event_entities::Entity::find()
-        .filter(timeline_event_entities::Column::EventId.is_in(ids))
-        .order_by_asc(timeline_event_entities::Column::EntityId)
+        .filter(timeline_event_entities::COLUMN.event_id.is_in(ids))
+        .order_by_asc(timeline_event_entities::COLUMN.entity_id)
         .all(ctx.tx)
         .await
         .map_err(|error| canon_error(ctx, canon::CanonError::from(error)))?;
@@ -998,8 +998,8 @@ async fn timeline_links(
 async fn main_track_id(ctx: &ToolCtx<'_>) -> Option<i32> {
     let visibility = visibility_of(ctx);
     tracks::Entity::find()
-        .filter(tracks::Column::BookId.eq(visibility.book_id))
-        .filter(tracks::Column::Kind.eq(TrackKind::Main))
+        .filter(tracks::COLUMN.book_id.eq(visibility.book_id))
+        .filter(tracks::COLUMN.kind.eq(TrackKind::Main))
         .one(ctx.tx)
         .await
         .ok()
@@ -1053,9 +1053,9 @@ impl ToolHandler for ListForeshadowingTool {
             None => None,
         };
         let mut rows = foreshadowing::Entity::find()
-            .filter(foreshadowing::Column::BookId.eq(visibility.book_id))
+            .filter(foreshadowing::COLUMN.book_id.eq(visibility.book_id))
             .filter(visibility.visible_condition(foreshadowing::Column::TrackId))
-            .filter(foreshadowing::Column::Status.eq(status.as_str()))
+            .filter(foreshadowing::COLUMN.status.eq(status.as_str()))
             .all(ctx.tx)
             .await
             .map_err(|error| canon_error(ctx, canon::CanonError::from(error)))?;
@@ -1065,7 +1065,8 @@ impl ToolHandler for ListForeshadowingTool {
             if !ids.is_empty() {
                 let join_rows = crate::db::entities::foreshadowing_entities::Entity::find()
                     .filter(
-                        crate::db::entities::foreshadowing_entities::Column::ForeshadowingId
+                        crate::db::entities::foreshadowing_entities::COLUMN
+                            .foreshadowing_id
                             .is_in(ids),
                     )
                     .all(ctx.tx)
@@ -1240,9 +1241,7 @@ async fn resolve_chapter(ctx: &ToolCtx<'_>, reference: &str) -> Result<chapters:
             .ok_or_else(not_found)?;
         (track_id, number)
     };
-    let row = chapters::Entity::find()
-        .filter(chapters::Column::TrackId.eq(track_id))
-        .filter(chapters::Column::Ord.eq(number))
+    let row = chapters::Entity::find_by_track_ord((track_id, number))
         .one(ctx.tx)
         .await
         .map_err(|error| canon_error(ctx, canon::CanonError::from(error)))?

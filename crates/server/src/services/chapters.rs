@@ -1,7 +1,10 @@
 //! Chapter service: CRUD, reorder, content writes (PATCH/PUT with `base_version`), submit,
 //! approve, versions and restore (spec/08 §1.1, §1.2, spec/10 §2.2, spec/02 §5 invariants 3–4).
 
-use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, Set};
+use sea_orm::{
+    ColumnTrait, ConnectionTrait, DerivePartialModel, EntityTrait, QueryFilter, QueryOrder,
+    QuerySelect, Set,
+};
 use std::collections::HashSet;
 
 use crate::api::dto::chapters::ChapterWriteResponse;
@@ -22,6 +25,40 @@ use crate::text;
 
 use super::now;
 
+/// The metadata columns of the chapter list; `content` is deliberately not decoded (spec/10 §2.2,
+/// plan §2.7).
+#[derive(DerivePartialModel)]
+#[sea_orm(entity = "chapters::Entity")]
+struct ChapterListItemRow {
+    id: i32,
+    book_id: i32,
+    track_id: i32,
+    ord: i32,
+    title: String,
+    status: ChapterStatus,
+    canon_status: CanonStatus,
+    word_count: i32,
+    outline: String,
+    updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl From<ChapterListItemRow> for ChapterListItemDto {
+    fn from(row: ChapterListItemRow) -> Self {
+        Self {
+            id: row.id,
+            book_id: row.book_id,
+            track_id: row.track_id,
+            number: row.ord,
+            title: row.title,
+            status: row.status,
+            canon_status: row.canon_status,
+            word_count: row.word_count,
+            has_outline: !row.outline.trim().is_empty(),
+            updated_at: row.updated_at,
+        }
+    }
+}
+
 /// `GET /api/tracks/:id/chapters` (spec/10 §2.2: no content).
 pub async fn list(
     conn: &impl ConnectionTrait,
@@ -29,8 +66,22 @@ pub async fn list(
 ) -> Result<Vec<ChapterListItemDto>, AppError> {
     super::tracks::load(conn, track_id).await?;
     let rows = chapters::Entity::find()
-        .filter(chapters::Column::TrackId.eq(track_id))
-        .order_by_asc(chapters::Column::Ord)
+        .filter(chapters::COLUMN.track_id.eq(track_id))
+        .order_by_asc(chapters::COLUMN.ord)
+        .select_only()
+        .columns([
+            chapters::Column::Id,
+            chapters::Column::BookId,
+            chapters::Column::TrackId,
+            chapters::Column::Ord,
+            chapters::Column::Title,
+            chapters::Column::Status,
+            chapters::Column::CanonStatus,
+            chapters::Column::WordCount,
+            chapters::Column::Outline,
+            chapters::Column::UpdatedAt,
+        ])
+        .into_model::<ChapterListItemRow>()
         .all(conn)
         .await?;
     Ok(rows.into_iter().map(ChapterListItemDto::from).collect())
@@ -232,7 +283,7 @@ pub async fn delete_inner(
     // bound, so their `first_chapter_id` / `last_chapter_id` are recomputed (spec/08 §1.1,
     // D-059). The entity ids are read before the cascade removes the rows.
     let appeared: Vec<i32> = appearances::Entity::find()
-        .filter(appearances::Column::ChapterId.eq(chapter_id))
+        .filter(appearances::COLUMN.chapter_id.eq(chapter_id))
         .all(tx)
         .await?
         .into_iter()
@@ -720,9 +771,9 @@ pub(crate) async fn previous_chapter_blocker(
     chapter: &chapters::Model,
 ) -> Result<Option<serde_json::Value>, AppError> {
     let previous = chapters::Entity::find()
-        .filter(chapters::Column::TrackId.eq(chapter.track_id))
-        .filter(chapters::Column::Ord.lt(chapter.ord))
-        .order_by_desc(chapters::Column::Ord)
+        .filter(chapters::COLUMN.track_id.eq(chapter.track_id))
+        .filter(chapters::COLUMN.ord.lt(chapter.ord))
+        .order_by_desc(chapters::COLUMN.ord)
         .one(conn)
         .await?;
     let Some(previous) = previous else {
@@ -875,9 +926,13 @@ async fn abandon_open_writer_sessions(
     chapter_id: i32,
 ) -> Result<Vec<ServerEvent>, AppError> {
     let rows = agent_sessions::Entity::find()
-        .filter(agent_sessions::Column::ChapterId.eq(chapter_id))
-        .filter(agent_sessions::Column::Role.is_in([AgentRole::Planner, AgentRole::Writer]))
-        .filter(agent_sessions::Column::Status.is_in([
+        .filter(agent_sessions::COLUMN.chapter_id.eq(chapter_id))
+        .filter(
+            agent_sessions::COLUMN
+                .role
+                .is_in([AgentRole::Planner, AgentRole::Writer]),
+        )
+        .filter(agent_sessions::COLUMN.status.is_in([
             SessionStatus::Idle.as_str(),
             SessionStatus::Held.as_str(),
             SessionStatus::AwaitingInput.as_str(),
@@ -886,7 +941,7 @@ async fn abandon_open_writer_sessions(
             SessionStatus::Failed.as_str(),
             SessionStatus::Interrupted.as_str(),
         ]))
-        .order_by_asc(agent_sessions::Column::Id)
+        .order_by_asc(agent_sessions::COLUMN.id)
         .all(tx)
         .await?;
     let mut events = Vec::new();
@@ -1204,8 +1259,8 @@ async fn ordered_chapters(
     track_id: i32,
 ) -> Result<Vec<chapters::Model>, AppError> {
     Ok(chapters::Entity::find()
-        .filter(chapters::Column::TrackId.eq(track_id))
-        .order_by_asc(chapters::Column::Ord)
+        .filter(chapters::COLUMN.track_id.eq(track_id))
+        .order_by_asc(chapters::COLUMN.ord)
         .all(conn)
         .await?)
 }
@@ -1234,9 +1289,9 @@ async fn renumber_subsequent(
 ) -> Result<(), AppError> {
     use sea_orm::ActiveModelTrait;
     let rows = chapters::Entity::find()
-        .filter(chapters::Column::TrackId.eq(track_id))
-        .filter(chapters::Column::Ord.gt(removed_ord))
-        .order_by_asc(chapters::Column::Ord)
+        .filter(chapters::COLUMN.track_id.eq(track_id))
+        .filter(chapters::COLUMN.ord.gt(removed_ord))
+        .order_by_asc(chapters::COLUMN.ord)
         .all(tx)
         .await?;
     // Two phases (spec/02 §1): shift every `ord` negative first so no intermediate value
@@ -1267,7 +1322,7 @@ async fn renumber_subsequent(
 /// The tracks anchored to a chapter (spec/08 §1.1 `chapter.is_anchor`).
 async fn anchor_tracks(conn: &impl ConnectionTrait, chapter_id: i32) -> Result<Vec<i32>, AppError> {
     let rows = tracks::Entity::find()
-        .filter(tracks::Column::AnchorChapterId.eq(chapter_id))
+        .filter(tracks::COLUMN.anchor_chapter_id.eq(chapter_id))
         .all(conn)
         .await?;
     Ok(rows.into_iter().map(|row| row.id).collect())
@@ -1413,10 +1468,10 @@ pub async fn open_sessions(
         .map(|status| status.as_str().to_owned())
         .collect();
     let rows = agent_sessions::Entity::find()
-        .filter(agent_sessions::Column::ChapterId.eq(chapter_id))
-        .filter(agent_sessions::Column::Role.is_in(roles))
-        .filter(agent_sessions::Column::Status.is_not_in(closed))
-        .order_by_asc(agent_sessions::Column::Id)
+        .filter(agent_sessions::COLUMN.chapter_id.eq(chapter_id))
+        .filter(agent_sessions::COLUMN.role.is_in(roles))
+        .filter(agent_sessions::COLUMN.status.is_not_in(closed))
+        .order_by_asc(agent_sessions::COLUMN.id)
         .all(conn)
         .await?;
     let mut sessions = Vec::with_capacity(rows.len());

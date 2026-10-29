@@ -54,9 +54,9 @@ pub fn doc_hash(body: &str) -> String {
 pub async fn upsert_doc(conn: &impl ConnectionTrait, doc: NewDoc<'_>) -> Result<(), AppError> {
     let hash = doc_hash(doc.body);
     let existing = search_docs::Entity::find()
-        .filter(search_docs::Column::Kind.eq(doc.kind))
-        .filter(search_docs::Column::RefId.eq(doc.ref_id))
-        .filter(search_docs::Column::RefPart.eq(doc.ref_part))
+        .filter(search_docs::COLUMN.kind.eq(doc.kind))
+        .filter(search_docs::COLUMN.ref_id.eq(doc.ref_id))
+        .filter(search_docs::COLUMN.ref_part.eq(doc.ref_part))
         .one(conn)
         .await?;
     match existing {
@@ -112,8 +112,8 @@ pub async fn delete_ref_docs(
     ref_id: i32,
 ) -> Result<(), AppError> {
     search_docs::Entity::delete_many()
-        .filter(search_docs::Column::Kind.eq(kind))
-        .filter(search_docs::Column::RefId.eq(ref_id))
+        .filter(search_docs::COLUMN.kind.eq(kind))
+        .filter(search_docs::COLUMN.ref_id.eq(ref_id))
         .exec(conn)
         .await?;
     Ok(())
@@ -130,6 +130,7 @@ async fn replace_fts(
     let title_tokens = fts::segment(title);
     let body_tokens = fts::segment(body);
     if let Some(row) = conn
+        // Raw: FTS5 virtual-table inserts/deletes and rowid addressing have no typed API.
         .query_one_raw(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             "SELECT title, body FROM fts_book WHERE rowid = ?",
@@ -143,8 +144,10 @@ async fn replace_fts(
             return Ok(());
         }
     }
+    // Raw: FTS5 virtual-table inserts/deletes and rowid addressing have no typed API.
     conn.execute_unprepared(&format!("DELETE FROM fts_book WHERE rowid = {id}"))
         .await?;
+    // Raw: FTS5 virtual-table inserts/deletes and rowid addressing have no typed API.
     conn.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Sqlite,
         "INSERT INTO fts_book(rowid, title, body) VALUES (?, ?, ?)",
@@ -412,7 +415,7 @@ pub async fn sync_knowledge_entry(
         .await?
     else {
         knowledge_chunks::Entity::delete_many()
-            .filter(knowledge_chunks::Column::EntryId.eq(entry_id))
+            .filter(knowledge_chunks::COLUMN.entry_id.eq(entry_id))
             .exec(conn)
             .await?;
         return Ok(());
@@ -428,8 +431,8 @@ async fn sync_knowledge_chunk_rows(
     chunks: Vec<Chunk>,
 ) -> Result<(), AppError> {
     let existing = knowledge_chunks::Entity::find()
-        .filter(knowledge_chunks::Column::EntryId.eq(entry.id))
-        .order_by_asc(knowledge_chunks::Column::Ord)
+        .filter(knowledge_chunks::COLUMN.entry_id.eq(entry.id))
+        .order_by_asc(knowledge_chunks::COLUMN.ord)
         .all(conn)
         .await?;
     // Match by content hash, one to one, so repeated identical chunks are counted (spec/07 §1.1).
@@ -455,6 +458,7 @@ async fn sync_knowledge_chunk_rows(
     // value collides with a live one (spec/02 §1, like chapter `ord`).
     for (position, (id, changed, _)) in kept.iter().enumerate() {
         if *changed {
+            // Raw: FTS5 virtual-table inserts/deletes and rowid addressing have no typed API.
             conn.execute_unprepared(&format!(
                 "UPDATE knowledge_chunks SET ord = {} WHERE id = {id}",
                 -(position as i64) - 1
@@ -474,6 +478,7 @@ async fn sync_knowledge_chunk_rows(
         let hash = chunk::content_hash(&chunk.heading, &chunk.text);
         match kept_ids.get(&index) {
             Some(id) => {
+                // Raw: FTS5 virtual-table inserts/deletes and rowid addressing have no typed API.
                 conn.execute_unprepared(&format!(
                     "UPDATE knowledge_chunks SET ord = {index}, heading = {}, text = {}, \
                      content_hash = {} WHERE id = {id}",
@@ -507,8 +512,15 @@ async fn sync_knowledge_chunk_rows(
         }
     }
     // The FTS title column carries the entry title for every chunk; a rename updates all rows.
+    let kept_ids: Vec<i32> = kept.iter().map(|(id, _, _)| *id).collect();
+    let kept_rows = knowledge_chunks::Entity::find()
+        .filter(knowledge_chunks::COLUMN.id.is_in(kept_ids))
+        .all(conn)
+        .await?;
+    let rows_by_id: std::collections::HashMap<i32, knowledge_chunks::Model> =
+        kept_rows.into_iter().map(|row| (row.id, row)).collect();
     for (id, _, _) in kept.iter() {
-        let Some(row) = knowledge_chunks::Entity::find_by_id(*id).one(conn).await? else {
+        let Some(row) = rows_by_id.get(id) else {
             continue;
         };
         replace_knowledge_fts(
@@ -539,9 +551,9 @@ struct SyncEntry {
 
 async fn sync_chunk_rows(conn: &impl ConnectionTrait, rows: SyncRows<'_>) -> Result<(), AppError> {
     let existing = search_docs::Entity::find()
-        .filter(search_docs::Column::Kind.eq(rows.kind))
-        .filter(search_docs::Column::RefId.eq(rows.ref_id))
-        .order_by_asc(search_docs::Column::RefPart)
+        .filter(search_docs::COLUMN.kind.eq(rows.kind))
+        .filter(search_docs::COLUMN.ref_id.eq(rows.ref_id))
+        .order_by_asc(search_docs::COLUMN.ref_part)
         .all(conn)
         .await?;
     let mut pool: std::collections::HashMap<String, Vec<search_docs::Model>> =
@@ -560,6 +572,7 @@ async fn sync_chunk_rows(conn: &impl ConnectionTrait, rows: SyncRows<'_>) -> Res
     // Park kept rows on negative `ref_part` values before writing final positions.
     for (position, (id, changed, _)) in kept.iter().enumerate() {
         if *changed {
+            // Raw: FTS5 virtual-table inserts/deletes and rowid addressing have no typed API.
             conn.execute_unprepared(&format!(
                 "UPDATE search_docs SET ref_part = {} WHERE id = {id}",
                 -(position as i64) - 1
@@ -631,6 +644,7 @@ async fn replace_knowledge_fts(
     let title_tokens = fts::segment(title);
     let body_tokens = fts::segment(body);
     if let Some(row) = conn
+        // Raw: FTS5 virtual-table inserts/deletes and rowid addressing have no typed API.
         .query_one_raw(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             "SELECT title, body FROM fts_knowledge WHERE rowid = ?",
@@ -644,8 +658,10 @@ async fn replace_knowledge_fts(
             return Ok(());
         }
     }
+    // Raw: FTS5 virtual-table inserts/deletes and rowid addressing have no typed API.
     conn.execute_unprepared(&format!("DELETE FROM fts_knowledge WHERE rowid = {id}"))
         .await?;
+    // Raw: FTS5 virtual-table inserts/deletes and rowid addressing have no typed API.
     conn.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Sqlite,
         "INSERT INTO fts_knowledge(rowid, title, body) VALUES (?, ?, ?)",

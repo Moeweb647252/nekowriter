@@ -30,14 +30,14 @@ pub async fn list(
     // Shared rows by default (spec/06 §2); an isolated track's private notes are read through
     // the track's own views.
     let mut statement = memory_notes::Entity::find()
-        .filter(memory_notes::Column::BookId.eq(book_id))
+        .filter(memory_notes::COLUMN.book_id.eq(book_id))
         .filter(Visibility::shared(book_id).visible_condition(memory_notes::Column::TrackId))
-        .order_by_asc(memory_notes::Column::Id);
+        .order_by_asc(memory_notes::COLUMN.id);
     if let Some(kind) = query.kind {
-        statement = statement.filter(memory_notes::Column::Kind.eq(kind.as_str()));
+        statement = statement.filter(memory_notes::COLUMN.kind.eq(kind.as_str()));
     }
     if let Some(status) = query.status {
-        statement = statement.filter(memory_notes::Column::Status.eq(status.as_str()));
+        statement = statement.filter(memory_notes::COLUMN.status.eq(status.as_str()));
     }
     let rows = statement.all(conn).await?;
     let mut items = Vec::with_capacity(rows.len());

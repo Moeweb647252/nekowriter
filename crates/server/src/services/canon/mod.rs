@@ -424,7 +424,7 @@ pub async fn chapter_orders(
     book_id: i32,
 ) -> CanonResult<HashMap<i32, ChapterOrder>> {
     let tracks = tracks::Entity::find()
-        .filter(tracks::Column::BookId.eq(book_id))
+        .filter(tracks::COLUMN.book_id.eq(book_id))
         .all(conn)
         .await?;
     let track_info: HashMap<i32, (i32, bool)> = tracks
@@ -441,7 +441,7 @@ pub async fn chapter_orders(
         .collect();
     let mut orders = HashMap::new();
     let rows = chapters::Entity::find()
-        .filter(chapters::Column::BookId.eq(book_id))
+        .filter(chapters::COLUMN.book_id.eq(book_id))
         .all(conn)
         .await?;
     for chapter in rows {
@@ -615,6 +615,7 @@ pub async fn linked_entity_ids(
         table.owner_column()
     );
     let rows = conn
+        // Raw: the link table name is chosen at runtime from the closed `LinkTable` set.
         .query_all_raw(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             sql,
@@ -637,6 +638,7 @@ pub async fn set_linked_entities(
 ) -> CanonResult<()> {
     let owner_column = table.owner_column();
     let delete = format!("DELETE FROM {} WHERE {owner_column} = ?", table.table());
+    // Raw: the link table name is chosen at runtime from the closed `LinkTable` set.
     tx.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Sqlite,
         delete,
@@ -652,6 +654,7 @@ pub async fn set_linked_entities(
             "INSERT OR IGNORE INTO {}({owner_column}, entity_id) VALUES (?, ?)",
             table.table()
         );
+        // Raw: the link table name is chosen at runtime from the closed `LinkTable` set.
         tx.execute_raw(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             insert,
@@ -671,7 +674,7 @@ pub async fn load_visible_entity(
     entity_id: i32,
 ) -> CanonResult<entities::Model> {
     let row = entities::Entity::find_by_id(entity_id)
-        .filter(entities::Column::BookId.eq(visibility.book_id))
+        .filter(entities::COLUMN.book_id.eq(visibility.book_id))
         .one(conn)
         .await?
         .ok_or_else(|| CanonError::not_found(format!("entity #{entity_id}")))?;
@@ -759,6 +762,7 @@ pub async fn fresh_id(
 ) -> CanonResult<i32> {
     // `table` is a compile-time constant at every call site, never user input.
     let row = conn
+        // Raw: the link table name is chosen at runtime from the closed `LinkTable` set.
         .query_one_raw(sea_orm::Statement::from_string(
             sea_orm::DatabaseBackend::Sqlite,
             format!("SELECT max(id) AS value FROM {table}"),
@@ -769,8 +773,12 @@ pub async fn fresh_id(
         None => 0,
     };
     let logged = crate::db::entities::change_log::Entity::find()
-        .filter(crate::db::entities::change_log::Column::TargetType.eq(target_type.as_str()))
-        .order_by_desc(crate::db::entities::change_log::Column::TargetId)
+        .filter(
+            crate::db::entities::change_log::COLUMN
+                .target_type
+                .eq(target_type.as_str()),
+        )
+        .order_by_desc(crate::db::entities::change_log::COLUMN.target_id)
         .one(conn)
         .await?
         .map(|row| row.target_id)
@@ -980,9 +988,9 @@ pub async fn visible_entities(
     visibility: Visibility,
 ) -> CanonResult<Vec<entities::Model>> {
     Ok(entities::Entity::find()
-        .filter(entities::Column::BookId.eq(visibility.book_id))
+        .filter(entities::COLUMN.book_id.eq(visibility.book_id))
         .filter(visibility.visible_condition(entities::Column::TrackId))
-        .order_by_asc(entities::Column::Id)
+        .order_by_asc(entities::COLUMN.id)
         .all(conn)
         .await?)
 }
