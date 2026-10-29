@@ -1,0 +1,54 @@
+---
+source: crates/server/tests/kickoff_baseline.rs
+expression: "kickoff_text(&fixture, session_id).await"
+---
+# 设定资料
+
+本书：《Runtime Book》　类型：xianxia
+本书写作语言：简体中文。正文、章纲、摘要、档案等一切产出都必须使用该语言。
+
+以下是作者审定的设定资料，是本书创作的根本依据。每份文档包在标签中，标签内的标题属于文档本身。
+
+## 一、故事大纲
+<book_outline>
+# 全书大纲
+第一卷：入城
+第二卷：剑冢
+</book_outline>
+
+## 二、人物设定（按重要性排序）
+<character rank="1" name="沈砚" role="主角">
+寡言的游侠
+人物小传 0：沈砚。
+</character>
+<character rank="2" name="阿青" role="配角">
+青云城药铺的学徒
+人物小传 1：阿青。
+</character>
+
+## 三、世界观
+<world_setting>
+# 世界观
+剑气可斩断寻常兵刃。
+剑冢内无法御剑。
+</world_setting>
+
+## 四、主角详细设定
+<protagonist_profile>
+# 主角
+沈砚，寡言的游侠，佩一柄旧剑。
+</protagonist_profile>
+
+【建立初始档案】
+本书写作语言：简体中文（所有记录使用该语言）
+
+本书刚刚完成构思，还没有正文。请根据上方的设定资料建立初始档案：
+1. 人物：为人物设定中的每个人物创建实体（kind=character）。排第一位的主角设置 is_protagonist=true；重要度依据排名与定位；summary、description、state（故事开始时的状态）与 attributes（年龄、身份、所属、能力等级等）依据设定填写。
+   - 把四种字段分开写，不要把它们都堆进 description：summary 是一句话身份；state 是故事开始那一刻的处境；attributes 逐项记录能拆成单项的事实（年龄、身份、所属、修为或能力等级）；description 只放长期成立的档案信息（出身背景、长期不变的外貌、性格与能力），约 120 字（2 到 4 句）以内，不要写成传记。
+   - description 不是章节日志：设定资料里属于后续剧情的内容不要提前写进去，逐章的进展留给对应章节的档案维护会话记录。
+2. 组织、地点、物品：世界观与大纲中明确提到、后续会反复出现的势力、地点、重要物品，各自创建实体；它们的 description 同样是稳定档案，保持在约 120 字以内。
+3. 关系：根据设定建立人物之间、人物与组织之间的关系（师徒、亲属、所属、敌对等）。
+4. 世界规则与事实：用 add_memory_note 记录世界观中的核心规则（kind=world_rule）与重要的背景事实（kind=fact），重要的设为高重要度。
+5. 时间线：设定中明确的背景事件（故事开始之前发生的事）按时间先后加入时间线。
+6. 伏笔：大纲中明确规划的悬念，可以用 add_foreshadowing 记录（planned_payoff 写回收方向）。
+只记录设定资料中明确写出的内容，不要补充设定里没有的信息。完成后调用 finish_maintenance。

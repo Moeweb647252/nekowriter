@@ -1,0 +1,98 @@
+---
+source: crates/server/tests/kickoff_baseline.rs
+expression: "serde_json::to_string_pretty(&roles).expect(\"tools JSON\")"
+---
+{
+  "archivist": [
+    "get_entity",
+    "list_entities",
+    "get_relations",
+    "query_timeline",
+    "list_foreshadowing",
+    "search_canon",
+    "read_chapter",
+    "create_entity",
+    "update_entity",
+    "set_relation",
+    "end_relation",
+    "record_appearances",
+    "add_timeline_event",
+    "update_timeline_event",
+    "add_memory_note",
+    "retire_memory_note",
+    "add_foreshadowing",
+    "resolve_foreshadowing",
+    "set_chapter_summary",
+    "propose_setting_change",
+    "finish_maintenance"
+  ],
+  "conception": [
+    "ask_user",
+    "web_search",
+    "web_fetch",
+    "write_setting_doc",
+    "edit_setting_doc",
+    "upsert_character",
+    "remove_character",
+    "reorder_characters",
+    "set_research_topics",
+    "request_review"
+  ],
+  "planner": [
+    "get_entity",
+    "list_entities",
+    "get_relations",
+    "query_timeline",
+    "list_foreshadowing",
+    "search_canon",
+    "search_knowledge",
+    "read_knowledge_entry",
+    "search_chapters",
+    "read_chapter",
+    "read_draft",
+    "submit_outline"
+  ],
+  "researcher": [
+    "web_search",
+    "web_fetch",
+    "search_knowledge",
+    "read_knowledge_entry",
+    "save_knowledge_entry",
+    "update_knowledge_entry",
+    "finish_research"
+  ],
+  "reviewer": [
+    "get_entity",
+    "list_entities",
+    "get_relations",
+    "query_timeline",
+    "list_foreshadowing",
+    "search_canon",
+    "search_knowledge",
+    "read_knowledge_entry",
+    "search_chapters",
+    "read_chapter",
+    "submit_review"
+  ],
+  "writer": [
+    "get_entity",
+    "list_entities",
+    "get_relations",
+    "query_timeline",
+    "list_foreshadowing",
+    "search_canon",
+    "search_knowledge",
+    "read_knowledge_entry",
+    "search_chapters",
+    "read_chapter",
+    "submit_revision_plan",
+    "read_draft",
+    "insert_text",
+    "insert_paragraphs",
+    "replace_text",
+    "rewrite_paragraph",
+    "delete_paragraphs",
+    "finish_draft",
+    "finish_revision"
+  ]
+}
