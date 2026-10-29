@@ -25,8 +25,8 @@ use crate::db::entities::{
     timeline_event_entities, timeline_events, tracks,
 };
 use crate::db::json::{
-    CanonMode, ChangeTargetType, ChapterStatus, EntityKind, EntityStatus, ForeshadowingStatus,
-    RelationStatus, TrackKind,
+    AnchorKind, CanonMode, ChangeTargetType, ChapterStatus, EntityKind, EntityStatus,
+    ForeshadowingStatus, RelationStatus, TrackKind,
 };
 use crate::prompts::context::{
     AppearanceSummaryContext, ChangeLineContext, DesignLinkContext, RelationLineContext,
@@ -221,6 +221,16 @@ enum AnchorKindState {
     AfterEnd,
 }
 
+/// Maps the stored typed anchor kind to the retrieval marker; exhaustive by construction.
+fn anchor_kind_state(kind: AnchorKind) -> AnchorKindState {
+    match kind {
+        AnchorKind::None => AnchorKindState::None,
+        AnchorKind::BeforeStart => AnchorKindState::BeforeStart,
+        AnchorKind::AfterChapter => AnchorKindState::AfterChapter,
+        AnchorKind::AfterEnd => AnchorKindState::AfterEnd,
+    }
+}
+
 /// Reads the session track's anchor (nothing for the main track).
 async fn anchor_of(ctx: &ToolCtx<'_>) -> Anchor {
     let Some(track) = ctx.track else {
@@ -229,12 +239,7 @@ async fn anchor_of(ctx: &ToolCtx<'_>) -> Anchor {
     if track.kind != TrackKind::Side {
         return Anchor::default();
     }
-    let kind = match track.anchor_kind.as_str() {
-        "before_start" => AnchorKindState::BeforeStart,
-        "after_chapter" => AnchorKindState::AfterChapter,
-        "after_end" => AnchorKindState::AfterEnd,
-        _ => AnchorKindState::None,
-    };
+    let kind = anchor_kind_state(track.anchor_kind);
     let mut anchor = Anchor {
         kind,
         main_ord: None,
@@ -1279,4 +1284,40 @@ pub fn all() -> Vec<std::sync::Arc<dyn ToolHandler>> {
         std::sync::Arc::new(ListForeshadowingTool),
         std::sync::Arc::new(ReadChapterTool),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn anchor_kind_state_covers_every_variant() {
+        assert_eq!(anchor_kind_state(AnchorKind::None), AnchorKindState::None);
+        assert_eq!(
+            anchor_kind_state(AnchorKind::BeforeStart),
+            AnchorKindState::BeforeStart
+        );
+        assert_eq!(
+            anchor_kind_state(AnchorKind::AfterChapter),
+            AnchorKindState::AfterChapter
+        );
+        assert_eq!(
+            anchor_kind_state(AnchorKind::AfterEnd),
+            AnchorKindState::AfterEnd
+        );
+    }
+
+    /// Restoring the old `as_str()` + catch-all match must fail this source guard.
+    #[test]
+    fn anchor_kind_mapping_is_typed() {
+        let source = include_str!("retrieval.rs");
+        let start = source
+            .find("fn anchor_kind_state")
+            .expect("the mapping exists");
+        let end = start + source[start..].find("\n}\n").expect("the mapping ends");
+        assert!(
+            !source[start..end].contains(".as_str()"),
+            "anchor_kind_state must match the typed AnchorKind"
+        );
+    }
 }

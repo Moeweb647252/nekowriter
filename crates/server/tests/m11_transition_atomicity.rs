@@ -66,25 +66,28 @@ async fn a_failed_session_and_its_chapter_consequence_commit_together() {
     // `syncing`, and the moment the session is `failed` the chapter must be `failed` as well.
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        let row = runtime.session_row(session_id).await;
-        let canon = {
+        // One statement observes both writes, so the session status and the chapter consequence
+        // are always from the same committed state (the transition holds one write transaction).
+        let row = {
             use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
-            let row = runtime
+            runtime
                 .app
                 .db()
                 .conn()
                 .query_one_raw(Statement::from_sql_and_values(
                     DatabaseBackend::Sqlite,
-                    "SELECT canon_status FROM chapters WHERE id = ?",
-                    vec![runtime.chapter_id.into()],
+                    "SELECT s.status AS status, c.canon_status AS canon_status \
+                     FROM agent_sessions s JOIN chapters c ON c.id = s.chapter_id \
+                     WHERE s.id = ?",
+                    vec![session_id.into()],
                 ))
                 .await
-                .expect("query the chapter")
-                .expect("the chapter row");
-            row.try_get::<String>("", "canon_status")
-                .expect("canon_status")
+                .expect("query the session and chapter")
+                .expect("the session row")
         };
-        if row.status == SessionStatus::Failed.as_str() {
+        let status: String = row.try_get("", "status").expect("status");
+        let canon: String = row.try_get("", "canon_status").expect("canon_status");
+        if status == SessionStatus::Failed.as_str() {
             assert_eq!(
                 canon, "failed",
                 "a failed session was visible before its chapter consequence committed (spec/01 §7)"
@@ -97,8 +100,7 @@ async fn a_failed_session_and_its_chapter_consequence_commit_together() {
         );
         assert!(
             Instant::now() < deadline,
-            "the session never failed; it is {}",
-            row.status
+            "the session never failed; it is {status}"
         );
         tokio::time::sleep(Duration::from_millis(5)).await;
     }

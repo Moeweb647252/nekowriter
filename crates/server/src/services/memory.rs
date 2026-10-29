@@ -111,7 +111,7 @@ pub struct EntityStateItem {
     pub id: i32,
     pub name: String,
     /// The stored status column (`active`, `dead`, …).
-    pub status: String,
+    pub status: EntityStatus,
     /// Rendered by `shared.label` (`entity_status`).
     pub status_label: String,
     pub state: String,
@@ -214,7 +214,7 @@ pub struct CanonCounts {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnchorInfo {
     /// `before_start` | `after_chapter` | `after_end`.
-    pub kind: String,
+    pub kind: AnchorKind,
     pub chapter_id: Option<i32>,
     /// Rendered by `shared.chapter_label`.
     pub label: String,
@@ -701,7 +701,7 @@ async fn protagonist(
         id: row.id,
         name: row.name,
         status_label: prompts.label("entity_status", row.status.as_str()),
-        status: row.status.as_str().to_owned(),
+        status: row.status,
         state: row.state,
         after_anchor: state_after_anchor(conn, track, row.id).await?,
         attributes: attributes.into_iter().collect(),
@@ -1169,7 +1169,7 @@ async fn anchor(
         None => (None, String::new()),
     };
     Ok(Some(AnchorInfo {
-        kind: track.anchor_kind.as_str().to_owned(),
+        kind: track.anchor_kind,
         chapter_id,
         label,
     }))
@@ -1402,7 +1402,7 @@ pub fn memory_context(snapshot: &MemorySnapshot) -> crate::prompts::context::Mem
             .map(|item| ctx::ProtagonistStateContext {
                 id: item.id,
                 name: item.name.clone(),
-                status: item.status.clone(),
+                status: item.status.as_str().to_owned(),
                 status_label: item.status_label.clone(),
                 state: item.state.clone(),
                 after_anchor: item.after_anchor,
@@ -1533,7 +1533,7 @@ pub fn snapshot_dto(snapshot: &MemorySnapshot) -> crate::api::dto::canon::Memory
             .map(|item| dto::MemoryProtagonistDto {
                 id: item.id,
                 name: item.name.clone(),
-                status: EntityStatus::from_str_opt(&item.status).unwrap_or(EntityStatus::Active),
+                status: item.status,
                 state: item.state.clone(),
                 after_anchor: item.after_anchor,
                 attributes: item.attributes.iter().cloned().collect(),
@@ -1622,8 +1622,7 @@ pub fn snapshot_dto(snapshot: &MemorySnapshot) -> crate::api::dto::canon::Memory
             foreshadowing_open: snapshot.counts.foreshadowing_open,
         },
         anchor: snapshot.anchor.as_ref().map(|anchor| dto::MemoryAnchorDto {
-            kind: crate::db::json::AnchorKind::from_str_opt(&anchor.kind)
-                .unwrap_or(crate::db::json::AnchorKind::None),
+            kind: anchor.kind,
             chapter_id: anchor.chapter_id,
             label: anchor.label.clone(),
         }),
@@ -1669,5 +1668,13 @@ mod tests {
     #[test]
     fn an_empty_chapter_has_an_empty_tail() {
         assert_eq!(tail_text(&content(&[]), 100), "");
+    }
+
+    /// The snapshot's enum fields are typed, so a bogus string cannot be assigned or silently
+    /// coerced to `Active` / `None`.
+    #[test]
+    fn snapshot_enum_fields_are_typed() {
+        let _: fn(&EntityStateItem) -> EntityStatus = |item| item.status;
+        let _: fn(&AnchorInfo) -> AnchorKind = |anchor| anchor.kind;
     }
 }
