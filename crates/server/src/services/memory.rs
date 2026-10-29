@@ -378,7 +378,11 @@ pub(crate) async fn prior_chapters_wanted(
     // `after_chapter` anchor fills from the anchor chapter and everything before it, `after_end`
     // from the whole main story, and `before_start` from nothing (the side story starts before
     // the main story). A side track without an anchor has no position to fill from.
-    if !matches!(track.anchor_kind.as_str(), "after_chapter" | "after_end") {
+    let fills_from_main = match track.anchor_kind {
+        AnchorKind::AfterChapter | AnchorKind::AfterEnd => true,
+        AnchorKind::BeforeStart | AnchorKind::None => false,
+    };
+    if !fills_from_main {
         return Ok(entries);
     }
     let Some(main) = main_track(conn, track.book_id).await? else {
@@ -736,8 +740,8 @@ pub async fn state_after_anchor(
     let Some(chapter) = chapters::Entity::find_by_id(chapter_id).one(conn).await? else {
         return Ok(false);
     };
-    match track.anchor_kind.as_str() {
-        "after_chapter" => {
+    match track.anchor_kind {
+        AnchorKind::AfterChapter => {
             let Some(anchor_id) = track.anchor_chapter_id else {
                 return Ok(false);
             };
@@ -746,13 +750,13 @@ pub async fn state_after_anchor(
             };
             Ok(chapter.track_id == anchor.track_id && chapter.ord > anchor.ord)
         }
-        "before_start" => {
+        AnchorKind::BeforeStart => {
             let Some(main) = main_track(conn, track.book_id).await? else {
                 return Ok(false);
             };
             Ok(chapter.track_id == main.id)
         }
-        _ => Ok(false),
+        AnchorKind::AfterEnd | AnchorKind::None => Ok(false),
     }
 }
 
@@ -825,8 +829,8 @@ async fn change_target(
     conn: &impl ConnectionTrait,
     change: &change_log::Model,
 ) -> Result<String, AppError> {
-    match change.target_type.as_str() {
-        "entity" => {
+    match change.target_type {
+        ChangeTargetType::Entity => {
             let name = entities::Entity::find_by_id(change.target_id)
                 .one(conn)
                 .await?
@@ -837,7 +841,7 @@ async fn change_target(
             }
             Ok(format!("{name}(#{})", change.target_id))
         }
-        "relation" => {
+        ChangeTargetType::Relation => {
             let Some(relation) =
                 crate::db::entities::relations::Entity::find_by_id(change.target_id)
                     .one(conn)
@@ -859,7 +863,13 @@ async fn change_target(
                 _ => Ok(String::new()),
             }
         }
-        _ => Ok(String::new()),
+        ChangeTargetType::AppearanceSet
+        | ChangeTargetType::TimelineEvent
+        | ChangeTargetType::MemoryNote
+        | ChangeTargetType::Foreshadowing
+        | ChangeTargetType::ChapterSummary
+        | ChangeTargetType::SettingDoc
+        | ChangeTargetType::CharacterDesign => Ok(String::new()),
     }
 }
 
@@ -1110,12 +1120,12 @@ async fn counts(
         .all(conn)
         .await?;
     for row in &entity_rows {
-        match row.kind.as_str() {
-            "character" => counts.character += 1,
-            "organization" => counts.organization += 1,
-            "location" => counts.location += 1,
-            "item" => counts.item += 1,
-            _ => counts.other += 1,
+        match row.kind {
+            EntityKind::Character => counts.character += 1,
+            EntityKind::Organization => counts.organization += 1,
+            EntityKind::Location => counts.location += 1,
+            EntityKind::Item => counts.item += 1,
+            EntityKind::Other => counts.other += 1,
         }
     }
     counts.event = timeline_events::Entity::find()
@@ -1130,10 +1140,10 @@ async fn counts(
         .all(conn)
         .await?;
     for row in &note_rows {
-        match row.kind.as_str() {
-            "fact" => counts.fact += 1,
-            "world_rule" => counts.world_rule += 1,
-            _ => counts.note_other += 1,
+        match row.kind {
+            NoteKind::Fact => counts.fact += 1,
+            NoteKind::WorldRule => counts.world_rule += 1,
+            NoteKind::Other => counts.note_other += 1,
         }
     }
     counts.foreshadowing_open = foreshadowing::Entity::find()

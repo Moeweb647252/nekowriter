@@ -16,7 +16,7 @@ use crate::api::dto::research::{
 use crate::db::entities::{
     book_scopes, books, knowledge_entries, knowledge_scopes, research_tasks,
 };
-use crate::db::json::{BookStatus, ResearchTaskStatus, SessionKind};
+use crate::db::json::{BookStatus, ResearchTaskStatus, SessionKind, SessionStatus};
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
 use crate::state::AppState;
@@ -443,10 +443,15 @@ async fn prepare_scope(tx: &impl ConnectionTrait, task_id: i32) -> Result<i32, A
     // un-defer step before every run would add friction without any safety gain (D-138). The run
     // starts the session, which moves the task to `running` through its own transition
     // (spec/07 §8 step 5), so the deferred state never outlives the first run.
-    if !matches!(
-        task.status.as_str(),
-        "draft" | "ready" | "deferred" | "done" | "cancelled"
-    ) {
+    let runnable = match task.status {
+        ResearchTaskStatus::Draft
+        | ResearchTaskStatus::Ready
+        | ResearchTaskStatus::Deferred
+        | ResearchTaskStatus::Done
+        | ResearchTaskStatus::Cancelled => true,
+        ResearchTaskStatus::Running | ResearchTaskStatus::Failed => false,
+    };
+    if !runnable {
         return Err(AppError::new(
             ErrorCode::ResearchInvalidState,
             format!("a {} research task cannot be run", task.status),
@@ -523,7 +528,14 @@ async fn attach_scope(
 
 /// True while the task has a session that has not finished (spec/07 §8 step 1).
 pub fn is_open(task: &research_tasks::Model) -> bool {
-    matches!(task.status.as_str(), "running" | "failed") && task.session_id.is_some()
+    match task.status {
+        ResearchTaskStatus::Running | ResearchTaskStatus::Failed => task.session_id.is_some(),
+        ResearchTaskStatus::Draft
+        | ResearchTaskStatus::Ready
+        | ResearchTaskStatus::Deferred
+        | ResearchTaskStatus::Done
+        | ResearchTaskStatus::Cancelled => false,
+    }
 }
 
 /// Rejects an author write to a draft research topic while the book's conception session runs
@@ -592,7 +604,7 @@ pub async fn on_session_status(
     conn: &impl ConnectionTrait,
     task_id: i32,
     session_id: i32,
-    status: &str,
+    status: SessionStatus,
 ) -> Result<Vec<ServerEvent>, AppError> {
     let Some(task) = research_tasks::Entity::find_by_id(task_id)
         .one(conn)
@@ -605,11 +617,8 @@ pub async fn on_session_status(
     if task.session_id != Some(session_id) {
         return Ok(Vec::new());
     }
-    let next = match status {
-        "abandoned" | "cancelled" => ResearchTaskStatus::Cancelled,
-        "failed" | "interrupted" => ResearchTaskStatus::Failed,
-        "running" => ResearchTaskStatus::Running,
-        _ => return Ok(Vec::new()),
+    let Some(next) = research_status_for_session(status) else {
+        return Ok(Vec::new());
     };
     if task.status == next {
         return Ok(Vec::new());
@@ -623,6 +632,22 @@ pub async fn on_session_status(
     .update(conn)
     .await?;
     Ok(vec![ServerEvent::ResearchUpdated { task: to_dto(row) }])
+}
+
+/// The task status a session status maps to; every other session status leaves the task alone.
+fn research_status_for_session(status: SessionStatus) -> Option<ResearchTaskStatus> {
+    match status {
+        SessionStatus::Running => Some(ResearchTaskStatus::Running),
+        SessionStatus::Failed | SessionStatus::Interrupted => Some(ResearchTaskStatus::Failed),
+        SessionStatus::Abandoned => Some(ResearchTaskStatus::Cancelled),
+        SessionStatus::Idle
+        | SessionStatus::Held
+        | SessionStatus::AwaitingInput
+        | SessionStatus::Paused
+        | SessionStatus::Completed
+        | SessionStatus::Stopped
+        | SessionStatus::Superseded => None,
+    }
 }
 
 /// The existing titles of a scope, capped (spec/07 §8 step 2: at most 200).
@@ -678,4 +703,33 @@ fn field_error(field: &str, message: &str) -> AppError {
         field.to_owned(),
         serde_json::Value::String(message.to_owned()),
     )]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sea_orm::entity::Iterable;
+
+    #[test]
+    fn every_session_status_maps_explicitly() {
+        let expected = |status: SessionStatus| match status {
+            SessionStatus::Running => Some(ResearchTaskStatus::Running),
+            SessionStatus::Failed | SessionStatus::Interrupted => Some(ResearchTaskStatus::Failed),
+            SessionStatus::Abandoned => Some(ResearchTaskStatus::Cancelled),
+            SessionStatus::Idle
+            | SessionStatus::Held
+            | SessionStatus::AwaitingInput
+            | SessionStatus::Paused
+            | SessionStatus::Completed
+            | SessionStatus::Stopped
+            | SessionStatus::Superseded => None,
+        };
+        for status in SessionStatus::iter() {
+            assert_eq!(
+                research_status_for_session(status),
+                expected(status),
+                "the mapping is explicit for {status:?}"
+            );
+        }
+    }
 }

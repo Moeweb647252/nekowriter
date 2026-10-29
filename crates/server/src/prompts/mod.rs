@@ -565,14 +565,14 @@ impl PromptRegistry {
         let mut global = BTreeMap::new();
         let mut book = BTreeMap::new();
         for row in rows {
-            match row.scope.as_str() {
-                "global" => {
+            match row.scope {
+                crate::db::json::PromptScope::Global => {
                     global.insert(row.key, row.content);
                 }
-                "book" if row.book_id == book_id => {
+                crate::db::json::PromptScope::Book if row.book_id == book_id => {
                     book.insert(row.key, row.content);
                 }
-                _ => {}
+                crate::db::json::PromptScope::Book => {}
             }
         }
         let set = Arc::new(PromptSet::new(

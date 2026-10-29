@@ -195,7 +195,13 @@ pub(crate) async fn create_inner(
                 ));
             }
             SessionKind::ChapterWrite if !input.legacy_planning_fixture => {
-                if !matches!(chapter.status.as_str(), "planned" | "drafting") {
+                let agent_writable = match chapter.status {
+                    ChapterStatus::Planned | ChapterStatus::Drafting => true,
+                    ChapterStatus::InReview | ChapterStatus::Revising | ChapterStatus::Official => {
+                        false
+                    }
+                };
+                if !agent_writable {
                     return Err(super::conflict(
                         ErrorCode::ChapterInvalidState,
                         "only a planned or drafting chapter can be written by the agent",

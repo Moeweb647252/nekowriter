@@ -213,7 +213,7 @@ struct Anchor {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-enum AnchorKindState {
+pub(super) enum AnchorKindState {
     #[default]
     None,
     BeforeStart,
@@ -222,7 +222,7 @@ enum AnchorKindState {
 }
 
 /// Maps the stored typed anchor kind to the retrieval marker; exhaustive by construction.
-fn anchor_kind_state(kind: AnchorKind) -> AnchorKindState {
+pub(super) fn anchor_kind_state(kind: AnchorKind) -> AnchorKindState {
     match kind {
         AnchorKind::None => AnchorKindState::None,
         AnchorKind::BeforeStart => AnchorKindState::BeforeStart,

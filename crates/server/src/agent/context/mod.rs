@@ -540,11 +540,10 @@ async fn settings_context(
     let mut world = String::new();
     let mut protagonist = String::new();
     for doc in docs {
-        match doc.kind.as_str() {
-            "outline" => outline = doc.content,
-            "world" => world = doc.content,
-            "protagonist" => protagonist = doc.content,
-            _ => {}
+        match doc.kind {
+            crate::db::json::SettingDocKind::Outline => outline = doc.content,
+            crate::db::json::SettingDocKind::World => world = doc.content,
+            crate::db::json::SettingDocKind::Protagonist => protagonist = doc.content,
         }
     }
     let characters = character_designs::Entity::find()

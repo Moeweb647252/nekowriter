@@ -277,8 +277,7 @@ pub async fn transition(
         && let Some(task_id) = session.research_task_id
     {
         events.extend(
-            crate::services::research::on_session_status(conn, task_id, session.id, to.as_str())
-                .await?,
+            crate::services::research::on_session_status(conn, task_id, session.id, to).await?,
         );
     }
     Ok(events)

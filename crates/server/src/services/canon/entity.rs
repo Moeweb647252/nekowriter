@@ -810,7 +810,9 @@ async fn move_appearances(
             }
             Some(existing) => {
                 // A keeps the more prominent role: pov > major > minor > mentioned.
-                if role_rank(row.role.as_str()) > role_rank(existing.role.as_str()) {
+                if super::appearance::role_rank(row.role)
+                    > super::appearance::role_rank(existing.role)
+                {
                     appearances::ActiveModel {
                         id: Set(existing.id),
                         role: Set(row.role),
@@ -825,16 +827,6 @@ async fn move_appearances(
         }
     }
     Ok(())
-}
-
-/// `pov` is the most prominent role and `mentioned` the least (spec/06 §1.3).
-fn role_rank(role: &str) -> u8 {
-    match role {
-        "pov" => 4,
-        "major" => 3,
-        "minor" => 2,
-        _ => 1,
-    }
 }
 
 /// Moves the join rows of one link table from B to A (deleting B cascades them otherwise).
