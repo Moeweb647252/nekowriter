@@ -667,7 +667,7 @@ pub async fn inbox_pending(conn: &impl ConnectionTrait, session_id: i32) -> Resu
 mod tests {
     use super::*;
     use crate::agent::manager::recovery_changes;
-    use crate::agent::runner::{finalize_changes, persist_assistant_changes};
+    use crate::agent::runner::{counters_changes, finalize_changes, persist_assistant_changes};
     use crate::api::dto::sessions::SessionPatch;
     use crate::db::entities::{agent_tool_calls, knowledge_chunks, search_docs};
     use crate::db::json::{
@@ -843,6 +843,18 @@ mod tests {
         assert_eq!(
             canonical(&sql),
             "UPDATE knowledge_chunks SET embed_state = ? WHERE embed_state <> ?"
+        );
+    }
+
+    #[test]
+    fn counters_sql_matches_the_production_builder() {
+        let sql = session_sql(
+            counters_changes(SessionCounters::default()),
+            SessionStatus::Running,
+        );
+        assert_eq!(
+            canonical(&sql),
+            "UPDATE agent_sessions SET counters = ? WHERE id = ? AND status = ?"
         );
     }
 

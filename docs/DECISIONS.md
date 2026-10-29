@@ -2985,8 +2985,32 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     decoding in plan §9.
 - **Consequences**:
   - A corrupt or shape-mismatched JSON/enum value now fails the read instead of silently becoming
-    a default; the error names the column. Task 14.9 runs `decode_all_rows` on a **copy** of the
-    author's database before shipping and reports the row counts and build times.
+    a default; the error names the column. Task 14.9 ran `decode_all_rows` on a copy of the
+    author's database at `target/tmp/decode-real/nekowriter.db` (the test copies it again before
+    migration); all 36 tables decoded with no error. Row counts: agent_inbox 1, agent_messages 30,
+    agent_sessions 6, agent_tool_calls 19, app_settings 4, appearances 0, book_scopes 0,
+    book_writing_skills 0, books 2, change_log 0, chapter_feedback 0, chapter_versions 2,
+    chapters 1, character_designs 0, entities 0, foreshadowing 0, foreshadowing_entities 0,
+    index_meta 2, knowledge_chunks 0, knowledge_entries 0, knowledge_scopes 0,
+    memory_note_entities 0, memory_notes 0, model_profiles 3, prompt_overrides 0, providers 2,
+    relations 0, research_tasks 0, review_reports 0, search_docs 0, setting_docs 6,
+    setting_proposals 0, timeline_event_entities 0, timeline_events 0, tracks 2,
+    writing_skills 1. The source database and its `-wal`/`-shm` sidecars were SHA-256-verified
+    unchanged (`1c09955b…`, `e3b0c442…`, `fd4c9fda…`).
+  - Smoke items 1–4 and 8 passed with the Demo provider against a copy at
+    `target/tmp/smoke-data`: conception (Demo roles, two questions, one review change, finalize,
+    canon seed: 2 entities, 1 timeline event), research (task done, 2 knowledge entries, keyword
+    hit immediately and vector index 4/4 done), outline/write (outline approved, chapter stayed
+    `planned`; paragraph-autopause held after the first paragraph, an author paragraph edit
+    applied, feedback accepted, writer finished), review/maintenance (reviewer verdict `revise`,
+    edited send-back revision finished, approval, maintenance completed, one change reverted,
+    one proposal accepted), and book prompt overrides (new planner session had
+    `SMOKE_OVERRIDE_PLANNER` and new writer session `SMOKE_OVERRIDE_WRITER`; pre-change sessions
+    10/11 kept the old prompts).
+  - Build comparison: `cargo build -p nekowriter` at pre-M14 `3fe8cfc` was 112.95 s and at
+    `97579bf` 75.02 s, both in fresh `CARGO_TARGET_DIR` directories (`target/tmp/pre-target`,
+    `target/tmp/post-target`) with the shared kache warm and mold active; the difference is not a
+    clean-cache claim.
   - No SQL file, prompt, API response, SSE event or `web/src/api/gen` binding changes; the 13.2
     kickoff snapshots stay byte-identical.
   - `tests/entity_schema.rs` lands before any entity change and grows with each task: table and
