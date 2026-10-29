@@ -28,10 +28,10 @@ use nekowriter::db::entities::writing_skills::WritingSkillAuthor;
 use nekowriter::db::json::{
     AgentRole, AnchorKind, AppearanceRole, BookStatus, CanonMode, CanonStatus, ChangeActor,
     ChangeOp, ChangeTargetType, ChapterStatus, EmbedState, EntityKind, EntityStatus, EntrySource,
-    FeedbackMode, ForeshadowingStatus, Granularity, InboxKind, MessageKind, MessageRole, NoteKind,
-    NoteStatus, Phase, PromptScope, ProposalStatus, ProposalTargetType, Protocol, RelationStatus,
-    ResearchTaskStatus, ReviewVerdict, SearchDocKind, SessionKind, SessionStatus, SettingDocKind,
-    ToolCallStatus, TrackKind, VersionKind,
+    FeedbackMode, ForeshadowingStatus, GoalLevel, GoalStatus, Granularity, InboxKind, MessageKind,
+    MessageRole, NoteKind, NoteStatus, Phase, PromptScope, ProposalStatus, ProposalTargetType,
+    Protocol, RelationStatus, ResearchTaskStatus, ReviewVerdict, SearchDocKind, SessionKind,
+    SessionStatus, SettingDocKind, ToolCallStatus, TrackKind, VersionKind,
 };
 use sea_orm::entity::Iterable;
 use sea_orm::entity::prelude::*;
@@ -59,6 +59,10 @@ macro_rules! for_all_entities {
             entities,
             foreshadowing,
             foreshadowing_entities,
+            goal_node_entities,
+            goal_node_events,
+            goal_node_foreshadowing,
+            goal_nodes,
             index_meta,
             knowledge_chunks,
             knowledge_entries,
@@ -398,10 +402,13 @@ async fn pragma_foreign_keys(conn: &DatabaseConnection, table: &str) -> Vec<Prag
 
 /// The five junction tables. Their two foreign keys become `has_many, via` on both ends instead
 /// of a `has_many` to the junction itself (plan §2.1).
-const JUNCTIONS: [&str; 5] = [
+const JUNCTIONS: [&str; 8] = [
     "book_scopes",
     "book_writing_skills",
     "foreshadowing_entities",
+    "goal_node_entities",
+    "goal_node_events",
+    "goal_node_foreshadowing",
     "memory_note_entities",
     "timeline_event_entities",
 ];
@@ -491,8 +498,8 @@ async fn every_unambiguous_foreign_key_has_a_reverse_has_many() {
         }
     }
     assert_eq!(
-        checked, 60,
-        "the schema has 60 unambiguous foreign keys with a reverse relation"
+        checked, 63,
+        "the schema has 63 unambiguous foreign keys with a reverse relation"
     );
 }
 
@@ -530,8 +537,8 @@ where
 #[tokio::test]
 async fn every_junction_has_via_relations_on_both_ends() {
     use nekowriter::db::entities::{
-        books, entities, foreshadowing, knowledge_scopes, memory_notes, timeline_events,
-        writing_skills,
+        books, entities, foreshadowing, goal_nodes, knowledge_scopes, memory_notes,
+        timeline_events, writing_skills,
     };
 
     assert_many_to_many::<books::Entity, knowledge_scopes::Entity>();
@@ -544,6 +551,12 @@ async fn every_junction_has_via_relations_on_both_ends() {
     assert_many_to_many::<entities::Entity, memory_notes::Entity>();
     assert_many_to_many::<timeline_events::Entity, entities::Entity>();
     assert_many_to_many::<entities::Entity, timeline_events::Entity>();
+    assert_many_to_many::<goal_nodes::Entity, entities::Entity>();
+    assert_many_to_many::<entities::Entity, goal_nodes::Entity>();
+    assert_many_to_many::<goal_nodes::Entity, timeline_events::Entity>();
+    assert_many_to_many::<timeline_events::Entity, goal_nodes::Entity>();
+    assert_many_to_many::<goal_nodes::Entity, foreshadowing::Entity>();
+    assert_many_to_many::<foreshadowing::Entity, goal_nodes::Entity>();
 }
 
 // ── Check 4: unique keys ──────────────────────────────────────────────────────
@@ -988,6 +1001,8 @@ enum_columns! {
     (entities, kind, EntityKind, Kind),
     (entities, status, EntityStatus, Status),
     (foreshadowing, status, ForeshadowingStatus, Status),
+    (goal_nodes, level, GoalLevel, Level),
+    (goal_nodes, status, GoalStatus, Status),
     (knowledge_chunks, embed_state, EmbedState, EmbedState),
     (knowledge_entries, source, EntrySource, Source),
     (memory_notes, kind, NoteKind, Kind),
@@ -1093,8 +1108,8 @@ async fn every_enum_column_matches_its_check_constraint() {
         .collect();
     assert_eq!(
         expected.len(),
-        40,
-        "the schema has 40 CHECK (col IN (...)) enum columns"
+        42,
+        "the schema has 42 CHECK (col IN (...)) enum columns"
     );
 
     let mut seen = BTreeSet::new();
@@ -1331,6 +1346,7 @@ async fn every_json_column_has_a_typed_field_guard() {
         ("agent_messages", "provider_payload"),
         ("agent_messages", "request_meta"),
         ("agent_messages", "usage"),
+        ("agent_sessions", "canon_systems"),
         ("agent_sessions", "model_snapshot"),
         ("agent_sessions", "tools"),
         ("agent_sessions", "view_snapshot"),
@@ -1350,6 +1366,7 @@ async fn every_json_column_has_a_typed_field_guard() {
         ("chapters", "content"),
         ("entities", "aliases"),
         ("entities", "attributes"),
+        ("goal_nodes", "conditions"),
         ("knowledge_entries", "source_urls"),
         ("knowledge_entries", "tags"),
         ("model_profiles", "options"),

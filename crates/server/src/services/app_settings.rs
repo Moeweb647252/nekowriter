@@ -279,6 +279,7 @@ mod tests {
                     midterm_window: 0,
                     recent_chapter_count: 2,
                     auto_maintenance: false,
+                    canon_systems: Default::default(),
                 },
                 true,
             ),

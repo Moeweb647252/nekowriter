@@ -160,9 +160,13 @@ async fn pre_outline_database() -> (tempfile::TempDir, std::path::PathBuf) {
         .await
         .expect("the prompt overrides");
     // Rewind the migration record: only a later file can reach this database, which is why an
-    // edit to 0001 alone would not.
+    // edit to 0001 alone would not. 0006 is rewound too so its `canon_systems` column is added
+    // again after 0004's rebuild; 0005 stays recorded so its seeded row is not inserted twice.
     db.conn()
-        .execute_unprepared("DELETE FROM seaql_migrations WHERE version = 'm0004_outline_sessions'")
+        .execute_unprepared(
+            "DELETE FROM seaql_migrations WHERE version IN \
+             ('m0004_outline_sessions','m0006_goals_and_switches')",
+        )
         .await
         .expect("rewind to 0003");
     // The old CHECK really does refuse the new values; otherwise this test would prove nothing.
@@ -441,6 +445,9 @@ async fn the_upgraded_schema_matches_a_fresh_database() {
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ")
+            // SQLite's ALTER TABLE ADD COLUMN keeps the separating punctuation's whitespace.
+            .replace(" ,", ",")
+            .replace(" )", ")")
     }
 
     async fn schema_dump(

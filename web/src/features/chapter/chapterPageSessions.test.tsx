@@ -122,6 +122,7 @@ const BOOK = {
     recent_summary_count: 5,
     midterm_window: 10,
     auto_maintenance: true,
+    canon_systems: { entities: true, timeline: true, memory: true, foreshadowing: true, goals: true },
   },
   model_overrides: {},
   conception: {},

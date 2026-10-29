@@ -116,6 +116,7 @@ beforeEach(() => {
       recent_chapter_count: 2,
       midterm_window: 10,
       auto_maintenance: true,
+      canon_systems: { entities: true, timeline: true, memory: true, foreshadowing: true, goals: true },
     },
     model_overrides: { conception: null, researcher: null, writer: null, reviewer: null, archivist: null },
     conception: {

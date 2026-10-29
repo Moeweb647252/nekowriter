@@ -22,6 +22,10 @@ pub mod entities;
 
 pub mod foreshadowing;
 pub mod foreshadowing_entities;
+pub mod goal_node_entities;
+pub mod goal_node_events;
+pub mod goal_node_foreshadowing;
+pub mod goal_nodes;
 pub mod index_meta;
 pub mod knowledge_chunks;
 pub mod knowledge_entries;

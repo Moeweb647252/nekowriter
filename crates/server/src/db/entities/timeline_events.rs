@@ -26,6 +26,8 @@ pub struct Model {
     pub chapter: BelongsTo<Option<super::chapters::Entity>>,
     #[sea_orm(has_many, via = "timeline_event_entities")]
     pub entities: HasMany<super::entities::Entity>,
+    #[sea_orm(has_many, via = "goal_node_events")]
+    pub goal_nodes: HasMany<super::goal_nodes::Entity>,
 }
 
 impl ActiveModelBehavior for ActiveModel {}

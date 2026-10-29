@@ -870,7 +870,11 @@ async fn change_target(
         | ChangeTargetType::Foreshadowing
         | ChangeTargetType::ChapterSummary
         | ChangeTargetType::SettingDoc
-        | ChangeTargetType::CharacterDesign => Ok(String::new()),
+        | ChangeTargetType::CharacterDesign
+        // Goal changes never reach model-facing memory (spec/06 §11.6).
+        | ChangeTargetType::Goal
+        | ChangeTargetType::Plan
+        | ChangeTargetType::Task => Ok(String::new()),
     }
 }
 
@@ -1255,10 +1259,14 @@ pub async fn view(
             partial: entry.partial,
         })
         .collect();
+    let systems = book_settings(state.db().conn(), book_id)
+        .await?
+        .canon_systems;
     Ok(crate::api::dto::canon::MemoryViewDto {
         rendered: render_block_memory(&prompts, &snapshot)?,
         snapshot: snapshot_dto(&snapshot),
         recent_chapters,
+        systems,
     })
 }
 

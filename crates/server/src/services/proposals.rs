@@ -10,9 +10,10 @@ use sea_orm::{
 };
 use serde_json::json;
 
+use crate::api::dto::goals::GoalTargetDto;
 use crate::api::dto::proposals::{ProposalDto, ProposalPreviewDto};
 use crate::api::dto::settings_materials::{CharacterInput, CharacterPatch};
-use crate::db::entities::{character_designs, setting_docs, setting_proposals};
+use crate::db::entities::{character_designs, goal_nodes, setting_docs, setting_proposals};
 use crate::db::json::{
     ChangeActor, ChangeOp, ChangeTargetType, FindReplace, ProposalEdits, ProposalStatus,
     ProposalTargetType, SettingDocKind, Snapshot,
@@ -215,6 +216,13 @@ pub async fn accept_inner(
                 Err(error) => return Err(error),
             }
         }
+        ProposalTargetType::GoalNode | ProposalTargetType::NewGoalTask => {
+            // `propose_goal_change` and the goal-proposal accept path land with the goals service
+            // (spec/06 §5, M13 task 13.6). Until then no API path can create such a row.
+            return Err(AppError::internal(
+                "a goal proposal cannot be accepted before the goals service exists",
+            ));
+        }
     }
 
     if !applied {
@@ -310,6 +318,10 @@ pub fn apply_edits(text: &str, edits: &ProposalEdits) -> Result<String, (String,
         ProposalEdits::Append { text: append } => Ok(append_text(text, append)),
         // A new character has no target text to edit.
         ProposalEdits::CreateCharacter { .. } => Ok(text.to_owned()),
+        // Goal edits are applied by the goals service (M13 task 13.6); they edit no setting text.
+        ProposalEdits::SetGoalStatus { .. } | ProposalEdits::CreateGoalTask { .. } => {
+            Ok(text.to_owned())
+        }
     }
 }
 
@@ -386,6 +398,25 @@ pub async fn to_dto(
             ),
             _ => (String::new(), String::new()),
         },
+        // Goal proposals render their own card; the setting preview stays empty (spec/10 §2.8).
+        ProposalTargetType::GoalNode | ProposalTargetType::NewGoalTask => {
+            (String::new(), String::new())
+        }
+    };
+    let goal_target = match target_type_of(row) {
+        ProposalTargetType::GoalNode | ProposalTargetType::NewGoalTask => match row.target_id {
+            Some(id) => goal_nodes::Entity::find_by_id(id)
+                .one(conn)
+                .await?
+                .map(|node| GoalTargetDto {
+                    id: node.id,
+                    level: node.level,
+                    title: node.title,
+                    status: node.status,
+                }),
+            None => None,
+        },
+        _ => None,
     };
     Ok(ProposalDto {
         id: row.id,
@@ -401,6 +432,7 @@ pub async fn to_dto(
         created_at: row.created_at,
         decided_at: row.decided_at,
         preview: ProposalPreviewDto { before, after },
+        goal_target,
     })
 }
 

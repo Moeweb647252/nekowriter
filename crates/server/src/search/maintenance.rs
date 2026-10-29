@@ -702,7 +702,10 @@ pub async fn sync_events(
             ChangeTargetType::Relation
             | ChangeTargetType::AppearanceSet
             | ChangeTargetType::SettingDoc
-            | ChangeTargetType::CharacterDesign => {}
+            | ChangeTargetType::CharacterDesign
+            | ChangeTargetType::Goal
+            | ChangeTargetType::Plan
+            | ChangeTargetType::Task => {}
         }
     }
     Ok(())

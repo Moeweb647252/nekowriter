@@ -198,6 +198,35 @@ string_enum! {
 }
 
 string_enum! {
+    /// One canon system — the keys of [`CanonSystems`] (spec/02 §3, spec/06 §10).
+    CanonSystem {
+        Entities => "entities",
+        Timeline => "timeline",
+        Memory => "memory",
+        Foreshadowing => "foreshadowing",
+        Goals => "goals",
+    }
+}
+
+string_enum! {
+    /// A goal node's level (spec/02 §3, spec/06 §11.1).
+    GoalLevel {
+        Goal => "goal",
+        Plan => "plan",
+        Task => "task",
+    }
+}
+
+string_enum! {
+    GoalStatus {
+        Active => "active",
+        Waiting => "waiting",
+        Done => "done",
+        Dropped => "dropped",
+    }
+}
+
+string_enum! {
     ChangeActor {
         User => "user",
         Agent => "agent",
@@ -337,6 +366,9 @@ string_enum! {
         ChapterSummary => "chapter_summary",
         SettingDoc => "setting_doc",
         CharacterDesign => "character_design",
+        Goal => "goal",
+        Plan => "plan",
+        Task => "task",
     }
 }
 
@@ -354,6 +386,8 @@ string_enum! {
         SettingDoc => "setting_doc",
         CharacterDesign => "character_design",
         NewCharacter => "new_character",
+        GoalNode => "goal_node",
+        NewGoalTask => "new_goal_task",
     }
 }
 
@@ -436,6 +470,31 @@ string_enum! {
 
 // ───────────────────────────── books ─────────────────────────────
 
+/// The per-book canon system switches (spec/02 §4, spec/06 §10). Every field defaults to `true`,
+/// so a row without the object — or with a partial one — loads with the missing systems on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default, rename_all = "snake_case")]
+#[ts(export)]
+pub struct CanonSystems {
+    pub entities: bool,
+    pub timeline: bool,
+    pub memory: bool,
+    pub foreshadowing: bool,
+    pub goals: bool,
+}
+
+impl Default for CanonSystems {
+    fn default() -> Self {
+        Self {
+            entities: true,
+            timeline: true,
+            memory: true,
+            foreshadowing: true,
+            goals: true,
+        }
+    }
+}
+
 /// `books.settings` (spec/02 §4).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(default, rename_all = "snake_case")]
@@ -454,6 +513,8 @@ pub struct BookSettings {
     /// `0` disables the block.
     pub recent_chapter_count: i32,
     pub auto_maintenance: bool,
+    /// The per-book canon system switches (spec/06 §10). Missing on old rows: all on.
+    pub canon_systems: CanonSystems,
 }
 
 impl Default for BookSettings {
@@ -468,6 +529,7 @@ impl Default for BookSettings {
             midterm_window: 10,
             recent_chapter_count: 2,
             auto_maintenance: true,
+            canon_systems: CanonSystems::default(),
         }
     }
 }
@@ -553,6 +615,44 @@ pub struct ConceptionState {
     pub topics_revision: i32,
     pub topics_approved_revision: Option<i32>,
     pub finalized_at: Option<DateTime<Utc>>,
+}
+
+// ───────────────────────────── writing goals ─────────────────────────────
+
+/// `goal_nodes.conditions` (spec/02 §4, spec/06 §11.3). Chapter numbers count in the node's
+/// storyline; the closed set follows plan §4.4.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export)]
+pub enum GoalCondition {
+    ChapterAtLeast {
+        chapter: i32,
+    },
+    ForeshadowingResolved {
+        foreshadowing_id: i32,
+    },
+    EntityStatusIs {
+        entity_id: i32,
+        status: EntityStatus,
+    },
+}
+
+/// A task the archivist proposes (spec/06 §5); created `active` on accept.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub struct NewGoalTask {
+    /// A plan in the same scope; `None` for a standalone task.
+    pub parent_id: Option<i32>,
+    pub title: String,
+    pub purpose: String,
+    pub chapter_from: Option<i32>,
+    pub chapter_to: Option<i32>,
+    pub entity_ids: Vec<i32>,
+    pub event_ids: Vec<i32>,
+    pub foreshadowing_ids: Vec<i32>,
+    /// The proposing session's scope (spec/06 §2).
+    pub track_id: Option<i32>,
 }
 
 // ───────────────────────────── chapters ─────────────────────────────
@@ -911,9 +1011,23 @@ pub struct ReviewIssue {
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[ts(export)]
 pub enum ProposalEdits {
-    Edits { edits: Vec<FindReplace> },
-    Append { text: String },
-    CreateCharacter { character: NewCharacter },
+    Edits {
+        edits: Vec<FindReplace>,
+    },
+    Append {
+        text: String,
+    },
+    CreateCharacter {
+        character: NewCharacter,
+    },
+    /// Target type `goal_node`: the node's new status (spec/06 §5).
+    SetGoalStatus {
+        status: GoalStatus,
+    },
+    /// Target type `new_goal_task`: the task to create (spec/06 §5).
+    CreateGoalTask {
+        task: NewGoalTask,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -1013,6 +1127,21 @@ pub enum Snapshot {
         summary: String,
         profile: String,
         entity_id: Option<i32>,
+    },
+    /// A goal node's `before` / `after` snapshot (goal / plan / task, spec/02 §4, spec/06 §11.6).
+    GoalNode {
+        level: GoalLevel,
+        parent_id: Option<i32>,
+        title: String,
+        purpose: String,
+        status: GoalStatus,
+        conditions: Vec<GoalCondition>,
+        chapter_from: Option<i32>,
+        chapter_to: Option<i32>,
+        entity_ids: Vec<i32>,
+        event_ids: Vec<i32>,
+        foreshadowing_ids: Vec<i32>,
+        track_id: Option<i32>,
     },
 }
 
@@ -1159,8 +1288,37 @@ mod tests {
             midterm_window: 7,
             recent_chapter_count: 1,
             auto_maintenance: false,
+            canon_systems: CanonSystems {
+                entities: true,
+                timeline: false,
+                memory: true,
+                foreshadowing: false,
+                goals: true,
+            },
         };
         assert_eq!(round_trip(&value), value);
+    }
+
+    /// A `BookSettings` without `canon_systems` reads with all five systems on (D-150).
+    #[test]
+    fn book_settings_without_canon_systems_defaults_to_all_on() {
+        let settings: BookSettings = serde_json::from_str("{}").expect("old settings JSON");
+        assert_eq!(settings.canon_systems, CanonSystems::default());
+        assert!(settings.canon_systems.entities);
+        assert!(settings.canon_systems.goals);
+    }
+
+    /// A partial `canon_systems` object reads the missing fields as on (D-150).
+    #[test]
+    fn partial_canon_systems_defaults_the_missing_fields_on() {
+        let settings: BookSettings =
+            serde_json::from_str(r#"{"canon_systems":{"goals":false,"memory":false}}"#)
+                .expect("partial settings JSON");
+        assert!(!settings.canon_systems.goals);
+        assert!(!settings.canon_systems.memory);
+        assert!(settings.canon_systems.entities);
+        assert!(settings.canon_systems.timeline);
+        assert!(settings.canon_systems.foreshadowing);
     }
 
     /// `books.model_overrides`, `app_settings["roles.defaults"]`.
@@ -1465,6 +1623,26 @@ mod tests {
             },
         };
         assert_eq!(round_trip(&character), character);
+
+        let status = ProposalEdits::SetGoalStatus {
+            status: GoalStatus::Dropped,
+        };
+        assert_eq!(round_trip(&status), status);
+
+        let task = ProposalEdits::CreateGoalTask {
+            task: NewGoalTask {
+                parent_id: Some(3),
+                title: "T".to_owned(),
+                purpose: "P".to_owned(),
+                chapter_from: Some(4),
+                chapter_to: None,
+                entity_ids: vec![1],
+                event_ids: vec![],
+                foreshadowing_ids: vec![2],
+                track_id: None,
+            },
+        };
+        assert_eq!(round_trip(&task), task);
     }
 
     /// `change_log.before` / `after` (every snapshot variant, spec/02 §4).
@@ -1548,6 +1726,20 @@ mod tests {
                 summary: "s".to_owned(),
                 profile: "p".to_owned(),
                 entity_id: Some(3),
+            },
+            Snapshot::GoalNode {
+                level: GoalLevel::Task,
+                parent_id: Some(2),
+                title: "T".to_owned(),
+                purpose: "P".to_owned(),
+                status: GoalStatus::Waiting,
+                conditions: vec![GoalCondition::ChapterAtLeast { chapter: 4 }],
+                chapter_from: Some(4),
+                chapter_to: None,
+                entity_ids: vec![1],
+                event_ids: vec![],
+                foreshadowing_ids: vec![2],
+                track_id: None,
             },
         ];
         assert_eq!(round_trip(&snapshots), snapshots);

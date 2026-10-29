@@ -496,6 +496,7 @@ pub async fn next_action(
         session_id: None,
         track_id: None,
         ready_research: None,
+        ready_goals: None,
         research_task_id: None,
     };
     // 1. The book is still being conceived.
@@ -545,6 +546,7 @@ pub async fn next_action(
             ready_research: Some(research.len() as i32),
             // Only a single task gets a direct target: with several, the author has to choose on
             // the research page, so naming one of them would be an arbitrary pick (D-136).
+            ready_goals: None,
             research_task_id: if research.len() == 1 {
                 Some(first.id)
             } else {
@@ -564,6 +566,7 @@ pub async fn next_action(
             session_id: None,
             track_id: Some(track.id),
             ready_research: None,
+            ready_goals: None,
             research_task_id: None,
         }));
     }
@@ -610,6 +613,7 @@ pub async fn next_action(
                 session_id: open.map(|session| session.id),
                 track_id: Some(track.id),
                 ready_research: None,
+                ready_goals: None,
                 research_task_id: None,
             }));
         }
@@ -619,6 +623,7 @@ pub async fn next_action(
             session_id: open.map(|session| session.id),
             track_id: Some(track.id),
             ready_research: None,
+            ready_goals: None,
             research_task_id: None,
         }));
     }
@@ -649,6 +654,7 @@ pub async fn next_action(
             session_id: None,
             track_id: Some(main.id),
             ready_research: None,
+            ready_goals: None,
             research_task_id: None,
         }));
     }
@@ -671,6 +677,7 @@ pub async fn next_action(
             session_id: None,
             track_id: Some(track.id),
             ready_research: None,
+            ready_goals: None,
             research_task_id: None,
         }));
     }
@@ -685,6 +692,7 @@ pub async fn next_action(
         session_id: None,
         track_id,
         ready_research: None,
+        ready_goals: None,
         research_task_id: None,
     }))
 }

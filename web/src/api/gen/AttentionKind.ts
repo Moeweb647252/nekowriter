@@ -3,4 +3,4 @@
 /**
  * One kind of `attention[]` item (spec/08 §7).
  */
-export type AttentionKind = "open_session" | "chapter_in_review" | "canon_unsynced" | "pending_proposals" | "ready_research";
+export type AttentionKind = "open_session" | "chapter_in_review" | "canon_unsynced" | "pending_proposals" | "ready_research" | "ready_goals";

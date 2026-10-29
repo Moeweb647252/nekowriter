@@ -23,6 +23,7 @@ function proposal(overrides: Partial<ProposalDto> = {}): ProposalDto {
     created_at: "2026-01-01T00:00:00Z",
     decided_at: null,
     preview: { before: "before", after: "after" },
+    goal_target: null,
     ...overrides,
   }
 }

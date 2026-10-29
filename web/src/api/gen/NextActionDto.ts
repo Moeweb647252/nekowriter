@@ -18,4 +18,9 @@ ready_research?: number | null,
  * The runnable task's id when there is exactly one, so the card can lead straight to its Run
  * button instead of the list; absent when there are none or several (D-136).
  */
-research_task_id?: number | null, };
+research_task_id?: number | null, 
+/**
+ * How many writing goals are ready or closable, set on `write_outline`, `write_chapter` and
+ * `write_next` when the count is > 0 (spec/08 §7, D-150).
+ */
+ready_goals?: number | null, };

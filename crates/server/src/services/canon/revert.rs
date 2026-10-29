@@ -183,7 +183,8 @@ fn snapshot_track(snapshot: &Snapshot) -> Option<i32> {
         | Snapshot::Relation { track_id, .. }
         | Snapshot::TimelineEvent { track_id, .. }
         | Snapshot::Note { track_id, .. }
-        | Snapshot::Foreshadowing { track_id, .. } => *track_id,
+        | Snapshot::Foreshadowing { track_id, .. }
+        | Snapshot::GoalNode { track_id, .. } => *track_id,
         _ => None,
     }
 }
@@ -211,6 +212,10 @@ async fn inverse_delete(
         }
         ChangeTargetType::SettingDoc | ChangeTargetType::CharacterDesign => {
             return Err(setting_history(target_type));
+        }
+        // Goal history is reverted by the goals service (spec/06 §11.6, M13 task 13.5).
+        ChangeTargetType::Goal | ChangeTargetType::Plan | ChangeTargetType::Task => {
+            return Err(not_revertible(target_type));
         }
     };
     Ok(())
@@ -254,6 +259,10 @@ async fn inverse_restore(
         }
         ChangeTargetType::SettingDoc | ChangeTargetType::CharacterDesign => {
             return Err(setting_history(target_type));
+        }
+        // Goal history is reverted by the goals service (spec/06 §11.6, M13 task 13.5).
+        ChangeTargetType::Goal | ChangeTargetType::Plan | ChangeTargetType::Task => {
+            return Err(not_revertible(target_type));
         }
     };
     // `restore_inner` writes the row; the change row is recorded here, and `record_change` turns
@@ -308,6 +317,10 @@ async fn inverse_recreate(
         }
         ChangeTargetType::SettingDoc | ChangeTargetType::CharacterDesign => {
             return Err(setting_history(target_type));
+        }
+        // Goal history is reverted by the goals service (spec/06 §11.6, M13 task 13.5).
+        ChangeTargetType::Goal | ChangeTargetType::Plan | ChangeTargetType::Task => {
+            return Err(not_revertible(target_type));
         }
     };
     record_revert(

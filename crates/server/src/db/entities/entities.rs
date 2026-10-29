@@ -58,6 +58,8 @@ pub struct Model {
     pub memory_notes: HasMany<super::memory_notes::Entity>,
     #[sea_orm(has_many, via = "foreshadowing_entities")]
     pub foreshadowing: HasMany<super::foreshadowing::Entity>,
+    #[sea_orm(has_many, via = "goal_node_entities")]
+    pub goal_nodes: HasMany<super::goal_nodes::Entity>,
 }
 
 impl ActiveModelBehavior for ActiveModel {}

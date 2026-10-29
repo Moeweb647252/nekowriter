@@ -134,9 +134,11 @@ CREATE TABLE character_designs (
 CREATE TABLE setting_proposals (
   id           INTEGER PRIMARY KEY,
   book_id      INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
-  target_type  TEXT NOT NULL CHECK (target_type IN ('setting_doc','character_design','new_character')),
+  target_type  TEXT NOT NULL CHECK (target_type IN ('setting_doc','character_design','new_character',
+                 'goal_node','new_goal_task')),
   target_kind  TEXT CHECK (target_kind IS NULL OR target_kind IN ('outline','world','protagonist')),
-  target_id    INTEGER,                                 -- character_designs.id
+  target_id    INTEGER,                                 -- character_designs.id; goal_nodes.id (goal_node);
+                                                        -- the parent plan or NULL (new_goal_task)
   edits        TEXT NOT NULL CHECK (json_valid(edits)), -- ProposalEdits
   rationale    TEXT NOT NULL DEFAULT '',
   status       TEXT NOT NULL CHECK (status IN ('pending','accepted','rejected','conflict')),
@@ -279,8 +281,8 @@ CREATE TABLE change_log (
   actor           TEXT NOT NULL CHECK (actor IN ('user','agent','system')),
   target_type     TEXT NOT NULL CHECK (target_type IN ('entity','relation','appearance_set',
                     'timeline_event','memory_note','foreshadowing','chapter_summary',
-                    'setting_doc','character_design')),
-  target_id       INTEGER NOT NULL,   -- appearance_set / chapter_summary: chapter id
+                    'setting_doc','character_design','goal','plan','task')),
+  target_id       INTEGER NOT NULL,   -- appearance_set / chapter_summary: chapter id; goal / plan / task: goal_nodes.id
   op              TEXT NOT NULL CHECK (op IN ('create','update','delete')),
   before          TEXT CHECK (before IS NULL OR json_valid(before)),     -- snapshot (Snapshot*)
   after           TEXT CHECK (after IS NULL OR json_valid(after)),
@@ -292,6 +294,47 @@ CREATE TABLE change_log (
 CREATE INDEX change_log_book ON change_log(book_id, id DESC);
 CREATE INDEX change_log_target ON change_log(target_type, target_id, id DESC);
 CREATE INDEX change_log_chapter ON change_log(chapter_id);
+
+-- ───────────────────────────── Writing goals (spec/02 §2, spec/06 §11) ─────────────────────────────
+CREATE TABLE goal_nodes (
+  id            INTEGER PRIMARY KEY,
+  book_id       INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+  track_id      INTEGER REFERENCES tracks(id) ON DELETE CASCADE,      -- NULL = shared (main story); T = isolated side track T
+  level         TEXT NOT NULL CHECK (level IN ('goal','plan','task')),
+  parent_id     INTEGER REFERENCES goal_nodes(id) ON DELETE CASCADE,  -- services refuse to delete a node with children;
+                                                                       -- CASCADE only acts in a book or track delete
+  title         TEXT NOT NULL CHECK (length(trim(title)) > 0),
+  purpose       TEXT NOT NULL CHECK (length(trim(purpose)) > 0),       -- why the node exists (spec/06 §11.1)
+  status        TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','waiting','done','dropped')),
+  conditions    TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(conditions)),   -- GoalCondition[]
+  chapter_from  INTEGER CHECK (chapter_from IS NULL OR chapter_from >= 1),   -- chapter numbers in the node's storyline
+  chapter_to    INTEGER CHECK (chapter_to IS NULL OR chapter_to >= 1),
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL,
+  CHECK (level <> 'goal' OR parent_id IS NULL),
+  CHECK (chapter_from IS NULL OR chapter_to IS NULL OR chapter_to >= chapter_from),
+  CHECK (status <> 'waiting' OR json_array_length(conditions) > 0)
+);
+CREATE INDEX goal_nodes_book ON goal_nodes(book_id, status);
+CREATE INDEX goal_nodes_parent ON goal_nodes(parent_id);
+CREATE TABLE goal_node_entities (
+  node_id    INTEGER NOT NULL REFERENCES goal_nodes(id) ON DELETE CASCADE,
+  entity_id  INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+  PRIMARY KEY (node_id, entity_id)
+);
+CREATE INDEX goal_node_entities_entity ON goal_node_entities(entity_id);
+CREATE TABLE goal_node_events (
+  node_id    INTEGER NOT NULL REFERENCES goal_nodes(id) ON DELETE CASCADE,
+  event_id   INTEGER NOT NULL REFERENCES timeline_events(id) ON DELETE CASCADE,
+  PRIMARY KEY (node_id, event_id)
+);
+CREATE INDEX goal_node_events_event ON goal_node_events(event_id);
+CREATE TABLE goal_node_foreshadowing (
+  node_id           INTEGER NOT NULL REFERENCES goal_nodes(id) ON DELETE CASCADE,
+  foreshadowing_id  INTEGER NOT NULL REFERENCES foreshadowing(id) ON DELETE CASCADE,
+  PRIMARY KEY (node_id, foreshadowing_id)
+);
+CREATE INDEX goal_node_foreshadowing_target ON goal_node_foreshadowing(foreshadowing_id);
 
 -- ───────────────────────────── Knowledge ─────────────────────────────
 CREATE TABLE knowledge_scopes (
@@ -437,7 +480,9 @@ CREATE TABLE agent_sessions (
   parent_session_id    INTEGER REFERENCES agent_sessions(id) ON DELETE SET NULL,         -- rollover / redo
   created_at           TEXT NOT NULL,
   updated_at           TEXT NOT NULL,
-  finished_at          TEXT
+  finished_at          TEXT,
+  canon_systems        TEXT CHECK (canon_systems IS NULL OR json_valid(canon_systems))   -- CanonSystems frozen at
+                                                        -- creation (spec/03 §4); NULL = all on (rows before 0006)
 );
 CREATE INDEX agent_sessions_book ON agent_sessions(book_id, id DESC);
 CREATE INDEX agent_sessions_chapter ON agent_sessions(chapter_id, id DESC);

@@ -541,6 +541,8 @@ pub struct MemoryViewDto {
     pub snapshot: MemorySnapshotDto,
     pub rendered: String,
     pub recent_chapters: Vec<MemoryRecentChapterDto>,
+    /// The book's `CanonSystems` the text was rendered with (spec/10 §2.4, D-150).
+    pub systems: crate::db::json::CanonSystems,
 }
 
 /// One chapter `block.recent_chapters` injects in full (design §7).

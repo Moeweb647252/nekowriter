@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::api::dto::goals::GoalTargetDto;
 use crate::db::json::{ProposalEdits, ProposalStatus, ProposalTargetType, SettingDocKind};
 
 /// The computed preview of a proposal (spec/10 §2.3).
@@ -40,6 +41,9 @@ pub struct ProposalDto {
     pub created_at: DateTime<Utc>,
     pub decided_at: Option<DateTime<Utc>>,
     pub preview: ProposalPreviewDto,
+    /// The node of a `goal_node` proposal, or the parent plan of a `new_goal_task` proposal;
+    /// `None` for setting proposals (spec/10 §2.8, D-150).
+    pub goal_target: Option<GoalTargetDto>,
 }
 
 /// `GET /books/:id/proposals` query (spec/10 §2.3).

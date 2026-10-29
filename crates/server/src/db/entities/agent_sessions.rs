@@ -3,8 +3,8 @@
 use sea_orm::entity::prelude::*;
 
 use crate::db::json::{
-    AgentRole, Granularity, JsonText, ModelSnapshot, Phase, SessionCounters, SessionError,
-    SessionKind, SessionStatus, Usage, ViewSnapshot,
+    AgentRole, CanonSystems, Granularity, JsonText, ModelSnapshot, Phase, SessionCounters,
+    SessionError, SessionKind, SessionStatus, Usage, ViewSnapshot,
 };
 
 #[sea_orm::model]
@@ -40,6 +40,8 @@ pub struct Model {
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
     pub finished_at: Option<DateTimeUtc>,
+    /// `CanonSystems` frozen at creation (spec/02 §2, spec/03 §4); `None` means all five on.
+    pub canon_systems: Option<JsonText<CanonSystems>>,
     #[sea_orm(belongs_to, from = "book_id", to = "id")]
     pub book: BelongsTo<Option<super::books::Entity>>,
     #[sea_orm(belongs_to, from = "chapter_id", to = "id")]

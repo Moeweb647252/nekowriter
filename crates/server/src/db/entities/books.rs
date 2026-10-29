@@ -56,6 +56,8 @@ pub struct Model {
     pub knowledge_scopes: HasMany<super::knowledge_scopes::Entity>,
     #[sea_orm(has_many, via = "book_writing_skills")]
     pub writing_skills: HasMany<super::writing_skills::Entity>,
+    #[sea_orm(has_many)]
+    pub goal_nodes: HasMany<super::goal_nodes::Entity>,
 }
 
 impl ActiveModelBehavior for ActiveModel {}

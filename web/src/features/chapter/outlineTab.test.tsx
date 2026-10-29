@@ -66,6 +66,7 @@ const SETTINGS = {
   recent_chapter_count: 2,
   midterm_window: 10,
   auto_maintenance: true,
+  canon_systems: { entities: true, timeline: true, memory: true, foreshadowing: true, goals: true },
 }
 
 const HELD_SESSION = {

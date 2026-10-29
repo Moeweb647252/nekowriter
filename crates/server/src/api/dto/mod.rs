@@ -5,6 +5,7 @@ pub mod canon;
 pub mod changes;
 pub mod chapters;
 pub mod content_ops;
+pub mod goals;
 pub mod knowledge;
 pub mod prompts;
 pub mod proposals;
@@ -29,6 +30,7 @@ pub use chapters::{
     ManualVersionInput,
 };
 pub use content_ops::{ContentOp, ContentOpInput};
+pub use goals::{CanonCountsDto, GoalNodeDto, GoalNodeInput, GoalQuery, GoalTargetDto};
 pub use prompts::{
     PromptEntryDto, PromptSaveInput, PromptVariableDocDto, PromptVariableFieldDocDto,
 };

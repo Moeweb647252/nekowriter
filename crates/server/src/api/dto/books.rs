@@ -215,6 +215,10 @@ pub struct NextActionDto {
     /// button instead of the list; absent when there are none or several (D-136).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub research_task_id: Option<i32>,
+    /// How many writing goals are ready or closable, set on `write_outline`, `write_chapter` and
+    /// `write_next` when the count is > 0 (spec/08 §7, D-150).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ready_goals: Option<i32>,
 }
 
 /// One kind of `attention[]` item (spec/08 §7).
@@ -227,6 +231,8 @@ pub enum AttentionKind {
     CanonUnsynced,
     PendingProposals,
     ReadyResearch,
+    /// At least one goal node of the book is ready or closable (spec/08 §7, D-150).
+    ReadyGoals,
 }
 
 /// One entry of `attention[]` (spec/08 §7). Sessions, chapters in review and unsynced canon are

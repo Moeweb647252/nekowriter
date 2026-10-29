@@ -55,6 +55,8 @@ pub struct Model {
     pub search_docs: HasMany<super::search_docs::Entity>,
     #[sea_orm(has_many)]
     pub agent_sessions: HasMany<super::agent_sessions::Entity>,
+    #[sea_orm(has_many)]
+    pub goal_nodes: HasMany<super::goal_nodes::Entity>,
 }
 
 impl ActiveModelBehavior for ActiveModel {}

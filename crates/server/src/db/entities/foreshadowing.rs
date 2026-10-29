@@ -42,6 +42,8 @@ pub struct Model {
     pub resolved_chapter: BelongsTo<Option<super::chapters::Entity>>,
     #[sea_orm(has_many, via = "foreshadowing_entities")]
     pub entities: HasMany<super::entities::Entity>,
+    #[sea_orm(has_many, via = "goal_node_foreshadowing")]
+    pub goal_nodes: HasMany<super::goal_nodes::Entity>,
 }
 
 impl ActiveModelBehavior for ActiveModel {}

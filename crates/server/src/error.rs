@@ -76,6 +76,12 @@ pub enum ErrorCode {
     #[serde(rename = "writing_skill.builtin")]
     #[ts(rename = "writing_skill.builtin")]
     WritingSkillBuiltin,
+    #[serde(rename = "goal.open_children")]
+    #[ts(rename = "goal.open_children")]
+    GoalOpenChildren,
+    #[serde(rename = "goal.has_children")]
+    #[ts(rename = "goal.has_children")]
+    GoalHasChildren,
     #[serde(rename = "prompt.template_invalid")]
     #[ts(rename = "prompt.template_invalid")]
     PromptTemplateInvalid,
@@ -125,6 +131,8 @@ impl ErrorCode {
             ErrorCode::ChangeNotLatest => "change.not_latest",
             ErrorCode::ProposalInvalidState => "proposal.invalid_state",
             ErrorCode::WritingSkillBuiltin => "writing_skill.builtin",
+            ErrorCode::GoalOpenChildren => "goal.open_children",
+            ErrorCode::GoalHasChildren => "goal.has_children",
             ErrorCode::PromptTemplateInvalid => "prompt.template_invalid",
             ErrorCode::ProviderUnavailable => "provider.unavailable",
             ErrorCode::ProviderAuth => "provider.auth",
@@ -159,6 +167,8 @@ impl ErrorCode {
             | ErrorCode::ChangeNotLatest
             | ErrorCode::ProposalInvalidState
             | ErrorCode::WritingSkillBuiltin
+            | ErrorCode::GoalOpenChildren
+            | ErrorCode::GoalHasChildren
             | ErrorCode::SearchNotConfigured => StatusCode::CONFLICT,
             ErrorCode::SettingsLocked | ErrorCode::ChapterLocked => StatusCode::LOCKED,
             ErrorCode::ProviderUnavailable
