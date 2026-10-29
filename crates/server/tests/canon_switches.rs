@@ -559,15 +559,16 @@ async fn canon_counts_and_the_memory_view_report_the_book_systems() {
 async fn block_goals_does_not_render_ancestors_of_capped_tasks() {
     let fixture = fixture().await;
     let book = fixture.runtime.book_id;
-    // A plan beyond the chapter range is the ancestor of task 300. The cap keeps the first 30
-    // tasks (id 1 and ids 2–30), so task 300 and its plan must both disappear.
+    // A plan beyond the chapter range is the ancestor of task 300. Task 1 plus the 28 decoys
+    // (ids 2–29) fill 29 of the 30 slots; task 300's task+plan pair does not fit, so both must
+    // disappear and the two omitted nodes are task 300 and plan 101.
     let mut rows = format!(
         "INSERT INTO goal_nodes(id, book_id, track_id, level, parent_id, title, purpose, status, \
          chapter_from, chapter_to, conditions, created_at, updated_at) VALUES \
          (101, {book}, NULL, 'plan', NULL, '被丢弃任务的计划', '不应渲染', 'active', 99, NULL, '[]', \
           '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');\n"
     );
-    for i in 2..=30 {
+    for i in 2..=29 {
         rows.push_str(&format!(
             "INSERT INTO goal_nodes(id, book_id, track_id, level, parent_id, title, purpose, status, \
              chapter_from, chapter_to, conditions, created_at, updated_at) VALUES \
@@ -592,6 +593,10 @@ async fn block_goals_does_not_render_ancestors_of_capped_tasks() {
     assert!(
         !kickoff.contains("id=\"101\""),
         "the plan of a dropped task leaked without a rendered descendant: {kickoff}"
+    );
+    assert!(
+        kickoff.contains("还有 2 个相关目标未显示"),
+        "the exact omitted count must be 2: {kickoff}"
     );
 }
 
