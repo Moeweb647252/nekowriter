@@ -917,11 +917,6 @@ pub async fn touch(
     Ok(())
 }
 
-/// The canonical status of a chapter, for services that only carry the string column.
-pub fn canon_status_of(raw: &str) -> CanonStatus {
-    CanonStatus::from_str_opt(raw).unwrap_or(CanonStatus::None)
-}
-
 /// Loads the main track of a book.
 pub async fn main_track(
     conn: &impl ConnectionTrait,

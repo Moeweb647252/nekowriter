@@ -44,8 +44,8 @@ pub async fn revert_inner(
         .one(tx)
         .await?
         .ok_or_else(|| CanonError::not_found(format!("change #{change_id}")))?;
-    let target_type = parse_target_type(original.target_type.as_str())?;
-    let op = parse_op(original.op.as_str())?;
+    let target_type = original.target_type;
+    let op = original.op;
     if original.reverts_id.is_some() {
         return Err(CanonError::App(AppError::validation(
             "a revert cannot itself be reverted",
@@ -170,16 +170,6 @@ fn not_latest(later: Vec<i32>) -> CanonError {
         AppError::new(ErrorCode::ChangeNotLatest, "a later change exists")
             .with_details(super::change_log_service::not_latest_details(later)),
     )
-}
-
-fn parse_target_type(raw: &str) -> CanonResult<ChangeTargetType> {
-    ChangeTargetType::from_str_opt(raw)
-        .ok_or_else(|| CanonError::internal(format!("unknown change_log.target_type {raw:?}")))
-}
-
-fn parse_op(raw: &str) -> CanonResult<ChangeOp> {
-    ChangeOp::from_str_opt(raw)
-        .ok_or_else(|| CanonError::internal(format!("unknown change_log.op {raw:?}")))
 }
 
 /// The `track_id` a snapshot carries (`None` for the snapshot kinds that have none).

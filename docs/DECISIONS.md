@@ -2924,7 +2924,7 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   The migration touches no dependency, no SQL file and no API: it brings the *code* to the shape
   SeaORM 2.0 documents. The plan (`docs/research/seaorm-2-migration-plan.md`, M14) rests on facts
   measured against this tree: 36 tables and 82 foreign keys; 14 non-partial unique constraints
-  besides primary keys; 39 CHECK-constrained TEXT columns (38 enums in `db/json.rs` plus
+  besides primary keys; 40 CHECK-constrained TEXT columns (39 enums in `db/json.rs` plus
   `WritingSkillAuthor`); 8 INTEGER 0/1 flags; 31 `json_valid` columns, of which 30 become typed
   (the exception is `app_settings.value`); about 125 enum-to-string conversions in `src`, and
   stringly-built SQL in `agent/session.rs`, `services/sessions.rs`, `agent/manager.rs` and
@@ -2944,18 +2944,23 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     attributes (`indexed`, `default_value`, `on_update`, `on_delete`).
   - **Unique keys**: `unique` / `unique_key` on the 14 non-partial unique constraints; partial
     unique indexes stay SQL-only. The generated finders replace hand-written lookups.
-  - **Enum columns**: the 39 CHECK-constrained TEXT columns become their Rust enums through
+  - **Enum columns**: the 40 CHECK-constrained TEXT columns become their Rust enums through
     `DeriveActiveEnum` added to `string_enum!`; `as_str`/`from_str_opt`/`Display`/`FromStr` stay
     for parsing that is not a column read. **Boolean columns**: the 8 flags become `bool`.
     **JSON columns**: 30 columns become `JsonText<T>`, one wrapper in `db/json.rs` that stores the
-    exact `serde_json::to_string` text `to_json` wrote, so rows written before and after are
-    byte-identical; `app_settings.value` stays `String` because its shape depends on `key`.
+    exact `serde_json::to_string` text `to_json` wrote. `agent_messages.usage`,
+    `agent_sessions.usage` and `agent_sessions.counters` canonicalize `{}` to the full default
+    object on new writes; both forms decode under `#[serde(default)]`, and every other column is
+    byte-identical. `app_settings.value` stays `String` because its shape depends on `key`.
   - **Decoding is strict** (author confirmed): a value that does not match its type fails the
     query (`DbErr::Type` → `500 internal`) and names the column. This removes the silent
     fallbacks (`from_json_or_default`, `from_str_opt(...).unwrap_or(..)`) whose empty
     `ChapterContent` could later be written back over real text. `CHECK` constraints make an
     unknown enum value or invalid JSON syntax impossible; `#[serde(default)]` keeps old rows
-    loading.
+    loading. The no-silent-fallback rule covers column reads; the pre-existing model-option
+    semantic defaults in `services/sessions.rs::model_snapshot_with_ttl`,
+    `agent/context/mod.rs::build_request` and `services/providers.rs::test_request_config` convert
+    an already-decoded value and remain out of scope.
   - **Writes**: stringly SQL becomes typed `update_many().set(partial ActiveModel)` or
     `.col_expr(..)` with typed filters; `guard_columns` becomes `guard_update` and keeps the
     `rows_affected == 0 → session.invalid_state` rule (spec/03 §14, D-034). Static raw statements

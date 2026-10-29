@@ -30,9 +30,9 @@ file, no API, no event, no prompt and no generated TypeScript binding.
 | **Entity format** | All 36 entities use `#[sea_orm::model]` (the dense 2.0 format). The 36 empty `enum Relation {}` blocks are deleted. |
 | **Relation graph** | Complete, in the shape SeaORM's own codegen produces:<br>• a `belongs_to` for every one of the 82 FKs;<br>• a reverse `has_many` on the parent for every FK whose (child, parent) pair is unambiguous;<br>• `has_many, via = "<junction>"` in both directions over the five join tables;<br>• `self_ref` for the three self references;<br>• `relation_enum` names where two FKs share a target. The reverse side of such pairs is omitted, as codegen omits it. |
 | **Unique keys** | `#[sea_orm(unique)]` / `unique_key = ".."` on the 14 non-partial unique constraints. 2.0 then generates `find_by_*`, `filter_by_*` and `delete_by_*`, which replace the hand-written lookups. Partial unique indexes stay SQL-only. |
-| **Enum columns** | The 39 CHECK-constrained `TEXT` columns become their Rust enums, through `DeriveActiveEnum` added to `string_enum!`. spec/02 §1 already requires this; the code does not do it today. |
+| **Enum columns** | The 40 CHECK-constrained `TEXT` columns become their Rust enums, through `DeriveActiveEnum` added to `string_enum!`. spec/02 §1 already requires this; the code does not do it today. |
 | **Boolean columns** | The 8 `INTEGER` 0/1 flags become `bool`. The stored values do not change. |
-| **JSON columns** | 30 of the 31 `json_valid` columns become `JsonText<T>`, one generic wrapper in `db/json.rs` (§2.4). It writes exactly the text `json::to_json` writes today. `app_settings.value` stays `String`, because its shape depends on `key`. |
+| **JSON columns** | 30 of the 31 `json_valid` columns become `JsonText<T>`, one generic wrapper in `db/json.rs` (§2.4). It writes the same text `json::to_json` wrote, except that new `agent_messages.usage`, `agent_sessions.usage` and `agent_sessions.counters` rows canonicalize `{}` to the full default object; both forms decode under `#[serde(default)]`. `app_settings.value` stays `String`, because its shape depends on `key`. |
 | **Decoding** | Strict. A value that does not decode fails the query (→ `500 internal`) and names the column. This removes every silent fallback on column reads. **Author confirms (§9 Q1).** |
 | **Writes** | SQL built from strings becomes typed `update_many().set(partial ActiveModel)` or `.col_expr(..)`, with typed filters: the session state machine, startup recovery, the indexer. |
 | **Reads** | Per-row lookup loops become the Entity/Model Loader or one `is_in` query. List queries that never read `content` use a `DerivePartialModel`. Related-row existence filters use `has_related`. Filters and ordering use the typed `COLUMN` constant everywhere. |
@@ -335,8 +335,9 @@ So one generic wrapper goes in `db/json.rs`, exactly as program 1 ran it:
 
 ```rust
 /// A typed JSON column (spec/02 §1, §4), stored as the exact `serde_json::to_string` text, which is
-/// what `to_json` wrote before D-151: rows written before and after are byte-identical. Decoding
-/// is strict; a value that does not deserialize fails the query and names the column.
+/// what `to_json` wrote before D-151. Three session/usage columns canonicalize `{}` to the full
+/// default object; every other column is byte-identical, and both forms decode. Decoding is strict;
+/// a value that does not deserialize fails the query and names the column.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct JsonText<T>(pub T);
 
@@ -427,10 +428,12 @@ already deserialize into):
 | `search_docs.meta` | `JsonText<serde_json::Value>` (`parse_pids` reads it loosely; typing its shape is not in scope) |
 | `app_settings.value` | **stays `String`**, read with `parse_json` per key |
 
-**One byte-shape caveat:** the old `agent_messages.usage` writer serialized
-`nekowriter_llm::Usage`, which omits `requests` and `last_prompt_tokens`. The typed field is
-`Option<JsonText<Usage>>` (the `json.rs` spec type); `#[serde(default)]` keeps old rows readable,
-and new rows now carry the full spec shape. Every other JSON column stays byte-identical.
+**Byte-shape caveat (three columns):** `agent_messages.usage` used to serialize
+`nekowriter_llm::Usage`, which omits `requests` and `last_prompt_tokens`; new rows carry the full
+spec shape. `agent_sessions.usage` and `agent_sessions.counters` used to be written as `{}`; new
+rows carry the full default object (`Usage::default()` / `SessionCounters::default()`), including
+the rollover children. All three decode both forms under `#[serde(default)]`; no consumer breaks.
+Every other JSON column stays byte-identical.
 
 **Call sites:**
 - `json::to_json(&x).map_err(..)?` in an `ActiveModel` becomes `Set(JsonText(x))`.

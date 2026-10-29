@@ -1152,7 +1152,7 @@ fn the_nullable_enum_has_values() {
 /// literal. Genuine `TEXT` columns (`name`, `note`, …) are allowed and are not in this list.
 #[test]
 fn enum_filter_literals_are_typed() {
-    const ENUM_COLUMNS: [&str; 18] = [
+    const ENUM_COLUMNS: [&str; 19] = [
         "Actor",
         "AnchorKind",
         "Author",
@@ -1169,6 +1169,7 @@ fn enum_filter_literals_are_typed() {
         "Scope",
         "Source",
         "Status",
+        "TargetKind",
         "TargetType",
         "Verdict",
     ];
@@ -1184,18 +1185,49 @@ fn enum_filter_literals_are_typed() {
         String::from_utf8_lossy(&output.stderr)
     );
     for line in String::from_utf8_lossy(&output.stdout).lines() {
-        let Some(after_call) = line.split("Column::").nth(1) else {
+        let Some(column) = enum_column_name(line) else {
             continue;
         };
-        let column = after_call
-            .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
-            .next()
-            .unwrap_or_default();
         assert!(
-            !ENUM_COLUMNS.contains(&column),
+            !ENUM_COLUMNS.contains(&column.as_str()),
             "enum column `{column}` is filtered with a string literal: {line}"
         );
     }
+}
+
+/// The column of a gate line, for both the generated `Column::X` and literal `COLUMN.x` spellings.
+fn enum_column_name(line: &str) -> Option<String> {
+    let after = line
+        .split_once("Column::")
+        .map(|(_, rest)| rest)
+        .or_else(|| line.split_once("COLUMN.").map(|(_, rest)| rest))?;
+    let raw = after
+        .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .next()?;
+    if raw.is_empty() {
+        return None;
+    }
+    let mut name = String::new();
+    for part in raw.split('_') {
+        let mut characters = part.chars();
+        if let Some(first) = characters.next() {
+            name.push(first.to_ascii_uppercase());
+            name.extend(characters);
+        }
+    }
+    Some(name)
+}
+
+#[test]
+fn enum_gate_extraction_handles_column_spellings() {
+    assert_eq!(
+        enum_column_name(r#"    .filter(chapters::Column::TargetKind.eq("outline"))"#),
+        Some("TargetKind".to_owned())
+    );
+    assert_eq!(
+        enum_column_name(r#"    .filter(chapters::COLUMN.target_type.eq("setting_doc"))"#),
+        Some("TargetType".to_owned())
+    );
 }
 
 /// Plan §2.4: every `json_valid` column is a typed `JsonText<T>` field, so a decode failure is a

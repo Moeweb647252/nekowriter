@@ -13,7 +13,9 @@ use serde_json::json;
 
 use crate::agent::runner;
 use crate::agent::session::{self, TransitionCause};
-use crate::agent::tools::registry::{initial_phase, role_of_kind, tools_for_role};
+use crate::agent::tools::registry::{
+    initial_phase, role_enum_of_kind, role_of_kind, tools_for_role,
+};
 use crate::api::dto::sessions::{
     DebugEchoDto, MessagePageDto, ResumeInput, SessionAnswerInput, SessionMessageInput,
     SessionPatch, SessionSnapshotDto,
@@ -133,8 +135,7 @@ pub(crate) async fn create_inner(
     input: CreateSession,
 ) -> Result<(i32, Vec<ServerEvent>, Vec<String>), AppError> {
     let role = role_of_kind(input.kind);
-    let role_enum = AgentRole::from_str_opt(role)
-        .ok_or_else(|| AppError::internal(format!("unknown role {role}")))?;
+    let role_enum = role_enum_of_kind(input.kind);
     let mut warnings = Vec::new();
 
     // One open session per book for the kinds that model a book-wide task (spec/02 §5 invariant
@@ -1927,8 +1928,7 @@ async fn debug_session_inner(
     let now = chrono::Utc::now();
     let session = agent_sessions::ActiveModel {
         book_id: Set(Some(spec.book_id)),
-        role: Set(AgentRole::from_str_opt(role_of_kind(spec.kind))
-            .ok_or_else(|| AppError::internal("unknown debug session role"))?),
+        role: Set(role_enum_of_kind(spec.kind)),
         kind: Set(spec.kind),
         chapter_id: Set(spec.chapter_id),
         track_id: Set(track),

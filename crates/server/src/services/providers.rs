@@ -237,7 +237,7 @@ pub async fn stored_option_mismatches(
         let Some(provider) = providers.iter().find(|row| row.id == profile.provider_id) else {
             continue;
         };
-        let protocol = llm_protocol(parse_protocol(provider.protocol.as_str())?);
+        let protocol = llm_protocol(provider.protocol);
         let options = ModelOptionsDto::from(profile.options.clone().into_inner());
         let unreachable: Vec<String> = options
             .to_model_options()
@@ -343,7 +343,7 @@ async fn provider_dto(
         .await?;
     let extra_headers: BTreeMap<String, String> = row.extra_headers.clone().into_inner();
     // Every profile of this provider shares its protocol, which is what decides `ignored_options`.
-    let protocol = parse_protocol(row.protocol.as_str())?;
+    let protocol = row.protocol;
     let protocols = BTreeMap::from([(row.id, protocol)]);
     Ok(ProviderDto {
         id: row.id,
@@ -386,11 +386,6 @@ fn db_protocol(protocol: nekowriter_llm::Protocol) -> Protocol {
         nekowriter_llm::Protocol::Anthropic => Protocol::Anthropic,
         nekowriter_llm::Protocol::Mock => Protocol::Mock,
     }
-}
-
-fn parse_protocol(value: &str) -> Result<Protocol, AppError> {
-    Protocol::from_str_opt(value)
-        .ok_or_else(|| AppError::internal(format!("unknown provider protocol {value}")))
 }
 
 /// The LLM-layer protocol of a stored protocol value (spec/04 §1). One helper, because the option
@@ -626,9 +621,7 @@ async fn provider_protocols(
     conn: &DatabaseConnection,
 ) -> Result<BTreeMap<i32, Protocol>, AppError> {
     let rows = providers::Entity::find().all(conn).await?;
-    rows.into_iter()
-        .map(|row| Ok((row.id, parse_protocol(row.protocol.as_str())?)))
-        .collect()
+    Ok(rows.into_iter().map(|row| (row.id, row.protocol)).collect())
 }
 
 /// The DTO of one model profile row.
@@ -698,10 +691,7 @@ pub async fn create_model(
                 check_protocol_row_allowed(&provider, demo_enabled)?;
                 // The protocol lives on the provider row, so the cross-protocol check belongs
                 // inside the transaction that reads it (spec/04 §5, D-132).
-                validate_options_protocol(
-                    &input.options,
-                    parse_protocol(provider.protocol.as_str())?,
-                )?;
+                validate_options_protocol(&input.options, provider.protocol)?;
                 ensure_unique_name(tx, input.provider_id, &input.display_name, None).await?;
                 let now = chrono::Utc::now();
                 let active = model_profiles::ActiveModel {
@@ -753,10 +743,7 @@ pub async fn update_model(
             Box::pin(async move {
                 let provider = find_provider(tx, input.provider_id).await?;
                 check_protocol_row_allowed(&provider, demo_enabled)?;
-                validate_options_protocol(
-                    &input.options,
-                    parse_protocol(provider.protocol.as_str())?,
-                )?;
+                validate_options_protocol(&input.options, provider.protocol)?;
                 ensure_unique_name(tx, input.provider_id, &input.display_name, Some(id)).await?;
                 let row = model_profiles::Entity::find_by_id(id)
                     .one(tx)
@@ -1096,7 +1083,7 @@ pub fn client_for(
 pub fn provider_config(
     provider: &providers::Model,
 ) -> Result<nekowriter_llm::ProviderConfig, AppError> {
-    let protocol = parse_protocol(provider.protocol.as_str())?;
+    let protocol = provider.protocol;
     let api_key = match provider.api_key.as_deref() {
         Some(key) if key.starts_with("env:") => {
             let name = &key["env:".len()..];

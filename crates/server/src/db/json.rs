@@ -1033,8 +1033,9 @@ pub fn to_json<T: Serialize>(value: &T) -> Result<String, serde_json::Error> {
 }
 
 /// A typed JSON column (spec/02 §1, §4), stored as the exact `serde_json::to_string` text that
-/// `to_json` wrote before D-151. Decoding is strict: a value that does not deserialize fails the
-/// query and names the column.
+/// `to_json` wrote before D-151. Three session/usage columns canonicalize `{}` to the full default
+/// object; every other column is byte-identical and both forms decode. Decoding is strict: a value
+/// that does not deserialize fails the query and names the column.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct JsonText<T>(pub T);
 
