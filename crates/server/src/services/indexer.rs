@@ -7,7 +7,9 @@
 //! (D-050). A changed or deleted item never gets a stale vector, and a failed batch is marked
 //! `failed` so it retries on a model reload or on Rebuild index (spec/07 §4).
 
-use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
+use sea_orm::{
+    ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set,
+};
 
 use crate::db::entities::{knowledge_chunks, knowledge_entries, search_docs};
 use crate::db::json::EmbedState;
@@ -200,24 +202,28 @@ pub fn doc_embedding_input(title: &str, body: &str) -> String {
 /// (spec/07 §4).
 async fn take_pending(state: &AppState) -> Result<(Vec<PendingDoc>, Vec<PendingChunk>), AppError> {
     let doc_rows = search_docs::Entity::find()
-        .filter(search_docs::Column::EmbedState.eq(EmbedState::Pending))
-        .order_by_asc(search_docs::Column::Id)
+        .filter(search_docs::COLUMN.embed_state.eq(EmbedState::Pending))
+        .order_by_asc(search_docs::COLUMN.id)
         .limit(BATCH_SIZE as u64)
         .all(state.db_conn())
         .await?;
     let chunk_rows = knowledge_chunks::Entity::find()
-        .filter(knowledge_chunks::Column::EmbedState.eq(EmbedState::Pending))
-        .order_by_asc(knowledge_chunks::Column::Id)
+        .filter(knowledge_chunks::COLUMN.embed_state.eq(EmbedState::Pending))
+        .order_by_asc(knowledge_chunks::COLUMN.id)
         .limit(BATCH_SIZE as u64)
         .all(state.db_conn())
         .await?;
+    let entry_ids: Vec<i32> = chunk_rows.iter().map(|row| row.entry_id).collect();
+    let titles: std::collections::HashMap<i32, String> = knowledge_entries::Entity::find()
+        .filter(knowledge_entries::COLUMN.id.is_in(entry_ids))
+        .all(state.db_conn())
+        .await?
+        .into_iter()
+        .map(|entry| (entry.id, entry.title))
+        .collect();
     let mut chunk_items = Vec::with_capacity(chunk_rows.len());
     for row in chunk_rows {
-        let title = knowledge_entries::Entity::find_by_id(row.entry_id)
-            .one(state.db_conn())
-            .await?
-            .map(|entry| entry.title)
-            .unwrap_or_default();
+        let title = titles.get(&row.entry_id).cloned().unwrap_or_default();
         chunk_items.push(PendingChunk {
             id: row.id,
             content_hash: row.content_hash,
@@ -283,20 +289,28 @@ async fn mark_failed(
         Box::pin(async move {
             let mut failed = 0;
             for (id, hash, is_doc) in changes {
-                let sql = if is_doc {
-                    format!(
-                        "UPDATE search_docs SET embed_state = 'failed' \
-                         WHERE id = {id} AND content_hash = '{}'",
-                        hash.replace('\'', "''")
-                    )
+                let result = if is_doc {
+                    search_docs::Entity::update_many()
+                        .set(search_docs::ActiveModel {
+                            embed_state: Set(EmbedState::Failed),
+                            ..Default::default()
+                        })
+                        .filter(search_docs::COLUMN.id.eq(id))
+                        .filter(search_docs::COLUMN.content_hash.eq(hash))
+                        .exec(tx)
+                        .await?
                 } else {
-                    format!(
-                        "UPDATE knowledge_chunks SET embed_state = 'failed' \
-                         WHERE id = {id} AND content_hash = '{}'",
-                        hash.replace('\'', "''")
-                    )
+                    knowledge_chunks::Entity::update_many()
+                        .set(knowledge_chunks::ActiveModel {
+                            embed_state: Set(EmbedState::Failed),
+                            ..Default::default()
+                        })
+                        .filter(knowledge_chunks::COLUMN.id.eq(id))
+                        .filter(knowledge_chunks::COLUMN.content_hash.eq(hash))
+                        .exec(tx)
+                        .await?
                 };
-                failed += tx.execute_unprepared(&sql).await?.rows_affected() as usize;
+                failed += result.rows_affected as usize;
             }
             Ok(failed)
         })
@@ -305,22 +319,28 @@ async fn mark_failed(
 }
 
 async fn mark_doc_done(conn: &impl ConnectionTrait, id: i32, hash: &str) -> Result<(), AppError> {
-    conn.execute_unprepared(&format!(
-        "UPDATE search_docs SET embed_state = 'done' \
-         WHERE id = {id} AND content_hash = '{}'",
-        hash.replace('\'', "''")
-    ))
-    .await?;
+    search_docs::Entity::update_many()
+        .set(search_docs::ActiveModel {
+            embed_state: Set(EmbedState::Done),
+            ..Default::default()
+        })
+        .filter(search_docs::COLUMN.id.eq(id))
+        .filter(search_docs::COLUMN.content_hash.eq(hash))
+        .exec(conn)
+        .await?;
     Ok(())
 }
 
 async fn mark_chunk_done(conn: &impl ConnectionTrait, id: i32, hash: &str) -> Result<(), AppError> {
-    conn.execute_unprepared(&format!(
-        "UPDATE knowledge_chunks SET embed_state = 'done' \
-         WHERE id = {id} AND content_hash = '{}'",
-        hash.replace('\'', "''")
-    ))
-    .await?;
+    knowledge_chunks::Entity::update_many()
+        .set(knowledge_chunks::ActiveModel {
+            embed_state: Set(EmbedState::Done),
+            ..Default::default()
+        })
+        .filter(knowledge_chunks::COLUMN.id.eq(id))
+        .filter(knowledge_chunks::COLUMN.content_hash.eq(hash))
+        .exec(conn)
+        .await?;
     Ok(())
 }
 
@@ -352,11 +372,22 @@ pub fn spawn(state: AppState) {
 pub async fn rebuild(state: &AppState) -> Result<(), AppError> {
     crate::services::write(state.db(), |tx| {
         Box::pin(async move {
-            tx.execute_unprepared(
-                "UPDATE search_docs SET embed_state = 'pending' WHERE embed_state <> 'pending'; \
-                 UPDATE knowledge_chunks SET embed_state = 'pending' WHERE embed_state <> 'pending';",
-            )
-            .await?;
+            search_docs::Entity::update_many()
+                .set(search_docs::ActiveModel {
+                    embed_state: Set(EmbedState::Pending),
+                    ..Default::default()
+                })
+                .filter(search_docs::COLUMN.embed_state.ne(EmbedState::Pending))
+                .exec(tx)
+                .await?;
+            knowledge_chunks::Entity::update_many()
+                .set(knowledge_chunks::ActiveModel {
+                    embed_state: Set(EmbedState::Pending),
+                    ..Default::default()
+                })
+                .filter(knowledge_chunks::COLUMN.embed_state.ne(EmbedState::Pending))
+                .exec(tx)
+                .await?;
             Ok(())
         })
     })

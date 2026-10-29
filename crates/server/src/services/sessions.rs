@@ -910,10 +910,10 @@ pub async fn message_page(
     session::load(conn, session_id).await?;
     let limit = limit.unwrap_or(MESSAGE_PAGE_DEFAULT).clamp(1, 500);
     let mut query = agent_messages::Entity::find()
-        .filter(agent_messages::Column::SessionId.eq(session_id))
-        .order_by_desc(agent_messages::Column::Seq);
+        .filter(agent_messages::COLUMN.session_id.eq(session_id))
+        .order_by_desc(agent_messages::COLUMN.seq);
     if let Some(cursor) = cursor.and_then(|value| value.parse::<i32>().ok()) {
-        query = query.filter(agent_messages::Column::Seq.lt(cursor));
+        query = query.filter(agent_messages::COLUMN.seq.lt(cursor));
     }
     use sea_orm::QuerySelect;
     let rows = query.limit(limit as u64 + 1).all(conn).await?;
@@ -951,16 +951,16 @@ pub async fn list(
     chapter_id: Option<i32>,
 ) -> Result<Vec<crate::api::dto::SessionDto>, AppError> {
     let mut query = agent_sessions::Entity::find()
-        .filter(agent_sessions::Column::BookId.eq(book_id))
-        .order_by_desc(agent_sessions::Column::Id);
+        .filter(agent_sessions::COLUMN.book_id.eq(book_id))
+        .order_by_desc(agent_sessions::COLUMN.id);
     if let Some(kind) = kind {
-        query = query.filter(agent_sessions::Column::Kind.eq(kind.as_str()));
+        query = query.filter(agent_sessions::COLUMN.kind.eq(kind.as_str()));
     }
     if let Some(status) = status {
-        query = query.filter(agent_sessions::Column::Status.eq(status.as_str()));
+        query = query.filter(agent_sessions::COLUMN.status.eq(status.as_str()));
     }
     if let Some(chapter_id) = chapter_id {
-        query = query.filter(agent_sessions::Column::ChapterId.eq(chapter_id));
+        query = query.filter(agent_sessions::COLUMN.chapter_id.eq(chapter_id));
     }
     let rows = query.all(conn).await?;
     let mut sessions = Vec::new();
@@ -992,7 +992,7 @@ pub async fn open_ids_for_book(
     conn: &impl ConnectionTrait,
     book_id: i32,
 ) -> Result<Vec<i32>, AppError> {
-    open_ids(conn, agent_sessions::Column::BookId.eq(book_id)).await
+    open_ids(conn, agent_sessions::COLUMN.book_id.eq(book_id)).await
 }
 
 /// The ids of a track's open sessions, oldest first (spec/08 §1.3, used by the track delete).
@@ -1000,7 +1000,7 @@ pub async fn open_ids_for_track(
     conn: &impl ConnectionTrait,
     track_id: i32,
 ) -> Result<Vec<i32>, AppError> {
-    open_ids(conn, agent_sessions::Column::TrackId.eq(track_id)).await
+    open_ids(conn, agent_sessions::COLUMN.track_id.eq(track_id)).await
 }
 
 async fn open_ids(
@@ -1009,12 +1009,12 @@ async fn open_ids(
 ) -> Result<Vec<i32>, AppError> {
     Ok(agent_sessions::Entity::find()
         .filter(filter)
-        .filter(agent_sessions::Column::Status.is_not_in([
+        .filter(agent_sessions::COLUMN.status.is_not_in([
             SessionStatus::Completed.as_str(),
             SessionStatus::Superseded.as_str(),
             SessionStatus::Abandoned.as_str(),
         ]))
-        .order_by_asc(agent_sessions::Column::Id)
+        .order_by_asc(agent_sessions::COLUMN.id)
         .all(conn)
         .await?
         .into_iter()
@@ -1767,38 +1767,32 @@ pub async fn patch(
             {
                 return Err(invalid_state(&session, "patch"));
             }
-            let mut sets: Vec<&'static str> = Vec::new();
-            let mut values: Vec<sea_orm::Value> = Vec::new();
+            let mut changes = agent_sessions::ActiveModel {
+                updated_at: Set(chrono::Utc::now()),
+                ..Default::default()
+            };
+            let mut empty = true;
             let mut notice: Option<Granularity> = None;
             if let Some(granularity) = patch.granularity {
-                sets.push("granularity = ?");
-                values.push(granularity.as_str().to_owned().into());
+                changes.granularity = Set(Some(granularity));
+                empty = false;
                 let phase = session::phase_of(&session);
                 if matches!(phase, Phase::Drafting | Phase::Revising) {
                     notice = Some(granularity);
                 }
             }
             if let Some(auto_pause) = patch.auto_pause {
-                sets.push("auto_pause = ?");
-                values.push(i32::from(auto_pause).into());
+                changes.auto_pause = Set(auto_pause);
+                empty = false;
             }
             if let Some(pause_after_outline) = patch.pause_after_outline {
-                sets.push("pause_after_outline = ?");
-                values.push(i32::from(pause_after_outline).into());
+                changes.pause_after_outline = Set(pause_after_outline);
+                empty = false;
             }
-            if sets.is_empty() {
+            if empty {
                 return Err(AppError::validation("nothing to change"));
             }
-            sets.push("updated_at = ?");
-            values.push(chrono::Utc::now().into());
-            session::guard_columns(
-                tx,
-                session_id,
-                session.status.as_str(),
-                &sets.join(", "),
-                values,
-            )
-            .await?;
+            session::guard_update(tx, session_id, session.status, changes).await?;
             // A granularity change during drafting or revising queues the notice (spec/03 §8).
             // The notice names the open tail when there is one, because the new mode's first
             // segment continues it (spec/03 §8 "open tail").
@@ -1893,8 +1887,8 @@ async fn debug_session_inner(
             .await?
             .map(|chapter| chapter.track_id),
         None => tracks::Entity::find()
-            .filter(tracks::Column::BookId.eq(spec.book_id))
-            .filter(tracks::Column::Kind.eq(TrackKind::Main))
+            .filter(tracks::COLUMN.book_id.eq(spec.book_id))
+            .filter(tracks::COLUMN.kind.eq(TrackKind::Main))
             .one(tx)
             .await?
             .map(|track| track.id),
@@ -2024,8 +2018,8 @@ async fn debug_echo_inner(
         .await?
         .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
     let track = tracks::Entity::find()
-        .filter(tracks::Column::BookId.eq(book_id))
-        .filter(tracks::Column::Kind.eq(TrackKind::Main))
+        .filter(tracks::COLUMN.book_id.eq(book_id))
+        .filter(tracks::COLUMN.kind.eq(TrackKind::Main))
         .one(tx)
         .await?;
     let profile_id = resolve_model(tx, Some(&book), AgentRole::Writer).await?;
@@ -2119,10 +2113,10 @@ pub async fn open_book_session(
     kind: SessionKind,
 ) -> Result<Option<i32>, AppError> {
     let row = agent_sessions::Entity::find()
-        .filter(agent_sessions::Column::BookId.eq(book_id))
-        .filter(agent_sessions::Column::Kind.eq(kind.as_str()))
-        .filter(agent_sessions::Column::Status.is_in(open_statuses()))
-        .order_by_desc(agent_sessions::Column::Id)
+        .filter(agent_sessions::COLUMN.book_id.eq(book_id))
+        .filter(agent_sessions::COLUMN.kind.eq(kind.as_str()))
+        .filter(agent_sessions::COLUMN.status.is_in(open_statuses()))
+        .order_by_desc(agent_sessions::COLUMN.id)
         .one(conn)
         .await?;
     Ok(row.map(|row| row.id))
@@ -2165,15 +2159,19 @@ async fn open_chapter_session(
     group: &str,
 ) -> Result<Option<i32>, AppError> {
     let mut query = agent_sessions::Entity::find()
-        .filter(agent_sessions::Column::ChapterId.eq(chapter_id))
-        .filter(agent_sessions::Column::Status.is_in(open_statuses()));
+        .filter(agent_sessions::COLUMN.chapter_id.eq(chapter_id))
+        .filter(agent_sessions::COLUMN.status.is_in(open_statuses()));
     query = if group == "chapter_writer" {
-        query.filter(agent_sessions::Column::Role.is_in([AgentRole::Planner, AgentRole::Writer]))
+        query.filter(
+            agent_sessions::COLUMN
+                .role
+                .is_in([AgentRole::Planner, AgentRole::Writer]),
+        )
     } else {
-        query.filter(agent_sessions::Column::Role.eq(group))
+        query.filter(agent_sessions::COLUMN.role.eq(group))
     };
     let row = query
-        .order_by_asc(agent_sessions::Column::Id)
+        .order_by_asc(agent_sessions::COLUMN.id)
         .one(conn)
         .await?;
     Ok(row.map(|row| row.id))

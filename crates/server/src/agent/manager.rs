@@ -10,7 +10,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 use tokio_util::sync::CancellationToken;
 
 use crate::db::json::{SessionError, SessionStatus, ToolCallStatus};
@@ -355,7 +354,11 @@ async fn interrupted_running_sessions(
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
     let rows = crate::db::entities::agent_sessions::Entity::find()
-        .filter(crate::db::entities::agent_sessions::Column::Status.eq(SessionStatus::Running))
+        .filter(
+            crate::db::entities::agent_sessions::COLUMN
+                .status
+                .eq(SessionStatus::Running),
+        )
         .all(tx)
         .await?;
     let mut ids = Vec::new();
@@ -379,17 +382,22 @@ async fn interrupted_running_sessions(
 
 /// Every `executing` tool call becomes `pending` again (spec/01 §5 step 8).
 async fn reset_executing_calls(tx: &sea_orm::DatabaseTransaction) -> Result<u64, AppError> {
-    let result = tx
-        .execute_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            "UPDATE agent_tool_calls SET status = ?, started_at = NULL WHERE status = ?",
-            vec![
-                ToolCallStatus::Pending.as_str().to_owned().into(),
-                ToolCallStatus::Executing.as_str().to_owned().into(),
-            ],
-        ))
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+
+    let result = crate::db::entities::agent_tool_calls::Entity::update_many()
+        .set(crate::db::entities::agent_tool_calls::ActiveModel {
+            status: sea_orm::Set(ToolCallStatus::Pending),
+            started_at: sea_orm::Set(None),
+            ..Default::default()
+        })
+        .filter(
+            crate::db::entities::agent_tool_calls::COLUMN
+                .status
+                .eq(ToolCallStatus::Executing),
+        )
+        .exec(tx)
         .await?;
-    Ok(result.rows_affected())
+    Ok(result.rows_affected)
 }
 
 /// Clears a stale session error before a Continue (spec/03 §6).

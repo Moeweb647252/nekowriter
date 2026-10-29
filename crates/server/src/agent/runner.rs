@@ -192,8 +192,8 @@ pub async fn messages_of(
     session_id: i32,
 ) -> Result<Vec<agent_messages::Model>, AppError> {
     Ok(agent_messages::Entity::find()
-        .filter(agent_messages::Column::SessionId.eq(session_id))
-        .order_by_asc(agent_messages::Column::Seq)
+        .filter(agent_messages::COLUMN.session_id.eq(session_id))
+        .order_by_asc(agent_messages::COLUMN.seq)
         .all(conn)
         .await?)
 }
@@ -204,8 +204,8 @@ pub async fn calls_of(
     message_id: i32,
 ) -> Result<Vec<agent_tool_calls::Model>, AppError> {
     Ok(agent_tool_calls::Entity::find()
-        .filter(agent_tool_calls::Column::MessageId.eq(message_id))
-        .order_by_asc(agent_tool_calls::Column::CallIndex)
+        .filter(agent_tool_calls::COLUMN.message_id.eq(message_id))
+        .order_by_asc(agent_tool_calls::COLUMN.call_index)
         .all(conn)
         .await?)
 }
@@ -216,9 +216,9 @@ async fn first_pending_call(
     session_id: i32,
 ) -> Result<Option<agent_tool_calls::Model>, AppError> {
     Ok(agent_tool_calls::Entity::find()
-        .filter(agent_tool_calls::Column::SessionId.eq(session_id))
-        .filter(agent_tool_calls::Column::Status.eq(ToolCallStatus::Pending))
-        .order_by_asc(agent_tool_calls::Column::Id)
+        .filter(agent_tool_calls::COLUMN.session_id.eq(session_id))
+        .filter(agent_tool_calls::COLUMN.status.eq(ToolCallStatus::Pending))
+        .order_by_asc(agent_tool_calls::COLUMN.id)
         .one(conn)
         .await?)
 }
@@ -241,8 +241,8 @@ pub async fn classify_tail(conn: &impl ConnectionTrait, session_id: i32) -> Resu
 /// The next `seq` of a session's messages (contiguous, spec/02 §5 invariant 6).
 pub async fn next_seq(conn: &impl ConnectionTrait, session_id: i32) -> Result<i32, AppError> {
     let max = agent_messages::Entity::find()
-        .filter(agent_messages::Column::SessionId.eq(session_id))
-        .order_by_desc(agent_messages::Column::Seq)
+        .filter(agent_messages::COLUMN.session_id.eq(session_id))
+        .order_by_desc(agent_messages::COLUMN.seq)
         .one(conn)
         .await?
         .map(|row| row.seq);
@@ -290,9 +290,9 @@ pub async fn pending_inbox_rows(
     session_id: i32,
 ) -> Result<Vec<agent_inbox::Model>, AppError> {
     Ok(agent_inbox::Entity::find()
-        .filter(agent_inbox::Column::SessionId.eq(session_id))
-        .filter(agent_inbox::Column::ConsumedAt.is_null())
-        .order_by_asc(agent_inbox::Column::Id)
+        .filter(agent_inbox::COLUMN.session_id.eq(session_id))
+        .filter(agent_inbox::COLUMN.consumed_at.is_null())
+        .order_by_asc(agent_inbox::COLUMN.id)
         .all(conn)
         .await?)
 }
@@ -797,20 +797,16 @@ async fn persist_assistant(
                 estimated: turn.usage.estimated,
             };
             usage.accumulate(&request_usage);
-            session::guard_columns(
+            session::guard_update(
                 tx,
                 session.id,
-                SessionStatus::Running.as_str(),
-                "counters = ?, usage = ?, updated_at = ?",
-                vec![
-                    json::to_json(&counters)
-                        .map_err(|err| AppError::internal(err.to_string()))?
-                        .into(),
-                    json::to_json(&usage)
-                        .map_err(|err| AppError::internal(err.to_string()))?
-                        .into(),
-                    now.into(),
-                ],
+                SessionStatus::Running,
+                agent_sessions::ActiveModel {
+                    counters: Set(JsonText(counters)),
+                    usage: Set(JsonText(usage)),
+                    updated_at: Set(now),
+                    ..Default::default()
+                },
             )
             .await?;
             Ok((message, rows))
@@ -1329,13 +1325,14 @@ async fn keep_view_snapshot_outline_in_sync(
         outline: outline.to_owned(),
         reference_notes: reference_notes.to_owned(),
     };
-    let stored = JsonText(snapshot);
-    session::guard_columns(
+    session::guard_update(
         tx,
         session.id,
-        session.status.as_str(),
-        "view_snapshot = ?",
-        vec![stored.into()],
+        session.status,
+        agent_sessions::ActiveModel {
+            view_snapshot: Set(Some(JsonText(snapshot))),
+            ..Default::default()
+        },
     )
     .await?;
     Ok(())
@@ -1371,17 +1368,17 @@ async fn keep_view_snapshot_in_sync(
         outline,
         reference_notes,
     };
-    let stored = json::to_json(&snapshot)
-        .map_err(|err| AppError::internal(format!("cannot serialize view snapshot: {err}")))?;
     // Guarded on the status the row actually has: an ordinary call finalizes while the session is
     // still `running`, and the resume that approves a held call finalizes while it is `held` (the
     // status change follows in the same transaction).
-    session::guard_columns(
+    session::guard_update(
         tx,
         session.id,
-        session.status.as_str(),
-        "view_snapshot = ?",
-        vec![stored.into()],
+        session.status,
+        agent_sessions::ActiveModel {
+            view_snapshot: Set(Some(JsonText(snapshot))),
+            ..Default::default()
+        },
     )
     .await?;
     tracing::debug!(
@@ -1535,31 +1532,20 @@ async fn finalize_inner(
     .await?;
 
     // The session row: counters, held call, phase (column-wise and guarded).
-    let mut sets = vec!["counters = ?".to_owned(), "updated_at = ?".to_owned()];
-    let mut values: Vec<sea_orm::Value> = vec![
-        json::to_json(&counters)
-            .map_err(|err| AppError::internal(err.to_string()))?
-            .into(),
-        now.into(),
-    ];
+    let mut changes = agent_sessions::ActiveModel {
+        counters: Set(JsonText(counters.clone())),
+        updated_at: Set(now),
+        ..Default::default()
+    };
     if deferred {
-        sets.push("held_tool_call_id = ?".to_owned());
-        values.push(Some(call.id).into());
+        changes.held_tool_call_id = Set(Some(call.id));
     }
     // Deferred effects are applied by the transaction that *finalizes* the call (spec/03 §5.4):
     // a held or awaiting call only stores them, so its phase change must not happen yet.
     if !deferred && let Some(phase) = outcome.effects.phase_to {
-        sets.push("phase = ?".to_owned());
-        values.push(phase.as_str().to_owned().into());
+        changes.phase = Set(phase);
     }
-    session::guard_columns(
-        tx,
-        session.id,
-        SessionStatus::Running.as_str(),
-        &sets.join(", "),
-        values,
-    )
-    .await?;
+    session::guard_update(tx, session.id, SessionStatus::Running, changes).await?;
 
     let refreshed = load_call(tx, call.id).await?;
     events.push(ServerEvent::SessionToolCall {
@@ -1601,16 +1587,14 @@ async fn finalize_inner(
                     retryable: true,
                     at: now,
                 };
-                session::guard_columns(
+                session::guard_update(
                     tx,
                     session.id,
-                    SessionStatus::Running.as_str(),
-                    "error = ?",
-                    vec![
-                        json::to_json(&error)
-                            .map_err(|err| AppError::internal(err.to_string()))?
-                            .into(),
-                    ],
+                    SessionStatus::Running,
+                    agent_sessions::ActiveModel {
+                        error: Set(Some(JsonText(error.clone()))),
+                        ..Default::default()
+                    },
                 )
                 .await?;
                 let reloaded = session::load(tx, session.id).await?;
@@ -1658,9 +1642,9 @@ pub(crate) async fn run_completion_handler(
     // 2. Every remaining pending call of the same assistant message ends as
     //    `error.after_completion` (spec/03 §5.4, D-025).
     let siblings = agent_tool_calls::Entity::find()
-        .filter(agent_tool_calls::Column::MessageId.eq(call.message_id))
-        .filter(agent_tool_calls::Column::Status.eq(ToolCallStatus::Pending))
-        .order_by_asc(agent_tool_calls::Column::CallIndex)
+        .filter(agent_tool_calls::COLUMN.message_id.eq(call.message_id))
+        .filter(agent_tool_calls::COLUMN.status.eq(ToolCallStatus::Pending))
+        .order_by_asc(agent_tool_calls::COLUMN.call_index)
         .all(tx)
         .await?;
     for sibling in siblings {
@@ -2218,16 +2202,14 @@ pub async fn text_only_inner(
                     }],
                 )
                 .await?;
-                session::guard_columns(
+                session::guard_update(
                     tx,
                     session.id,
-                    SessionStatus::Running.as_str(),
-                    "counters = ?",
-                    vec![
-                        json::to_json(&counters)
-                            .map_err(|err| AppError::internal(err.to_string()))?
-                            .into(),
-                    ],
+                    SessionStatus::Running,
+                    agent_sessions::ActiveModel {
+                        counters: Set(JsonText(counters.clone())),
+                        ..Default::default()
+                    },
                 )
                 .await?;
                 events.push(ServerEvent::SessionMessage {
@@ -2242,16 +2224,14 @@ pub async fn text_only_inner(
                     retryable: true,
                     at: Utc::now(),
                 };
-                session::guard_columns(
+                session::guard_update(
                     tx,
                     session.id,
-                    SessionStatus::Running.as_str(),
-                    "error = ?",
-                    vec![
-                        json::to_json(&error)
-                            .map_err(|err| AppError::internal(err.to_string()))?
-                            .into(),
-                    ],
+                    SessionStatus::Running,
+                    agent_sessions::ActiveModel {
+                        error: Set(Some(JsonText(error.clone()))),
+                        ..Default::default()
+                    },
                 )
                 .await?;
                 let reloaded = session::load(tx, session.id).await?;
