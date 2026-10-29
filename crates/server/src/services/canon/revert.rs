@@ -213,9 +213,10 @@ async fn inverse_delete(
         ChangeTargetType::SettingDoc | ChangeTargetType::CharacterDesign => {
             return Err(setting_history(target_type));
         }
-        // Goal history is reverted by the goals service (spec/06 §11.6, M13 task 13.5).
+        // A goal create reverts by deleting the node; the goals service enforces
+        // `goal.has_children` and records the revert row itself (spec/06 §11.6).
         ChangeTargetType::Goal | ChangeTargetType::Plan | ChangeTargetType::Task => {
-            return Err(not_revertible(target_type));
+            crate::services::goals::delete_inner(tx, write, target_id).await?
         }
     };
     Ok(())
@@ -260,9 +261,11 @@ async fn inverse_restore(
         ChangeTargetType::SettingDoc | ChangeTargetType::CharacterDesign => {
             return Err(setting_history(target_type));
         }
-        // Goal history is reverted by the goals service (spec/06 §11.6, M13 task 13.5).
+        // Goal update reverts restore the stored before snapshot in place; the goals service
+        // records the revert row (spec/06 §11.6).
         ChangeTargetType::Goal | ChangeTargetType::Plan | ChangeTargetType::Task => {
-            return Err(not_revertible(target_type));
+            crate::services::goals::restore_inner(tx, write, target_id, before).await?;
+            return Ok(());
         }
     };
     // `restore_inner` writes the row; the change row is recorded here, and `record_change` turns
@@ -318,9 +321,11 @@ async fn inverse_recreate(
         ChangeTargetType::SettingDoc | ChangeTargetType::CharacterDesign => {
             return Err(setting_history(target_type));
         }
-        // Goal history is reverted by the goals service (spec/06 §11.6, M13 task 13.5).
+        // Goal delete reverts recreate the node with a NEW id; the goals service records the
+        // revert row (spec/06 §11.6).
         ChangeTargetType::Goal | ChangeTargetType::Plan | ChangeTargetType::Task => {
-            return Err(not_revertible(target_type));
+            crate::services::goals::recreate_inner(tx, write, before).await?;
+            return Ok(());
         }
     };
     record_revert(

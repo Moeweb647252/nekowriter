@@ -24,10 +24,12 @@ use crate::api::dto::canon::{
     EntityPatch, EntityQuery, RelationDto,
 };
 use crate::db::entities::{
-    appearances, chapters, character_designs, entities, relations, timeline_event_entities, tracks,
+    appearances, chapters, character_designs, entities, goal_nodes, relations,
+    timeline_event_entities, tracks,
 };
 use crate::db::json::{
-    CanonMode, ChangeOp, ChangeTargetType, EntityKind, EntityStatus, RelationStatus,
+    CanonMode, ChangeOp, ChangeTargetType, EntityKind, EntityStatus, GoalCondition, JsonText,
+    RelationStatus,
 };
 use crate::events::ServerEvent;
 
@@ -600,6 +602,8 @@ pub async fn merge_inner(
     move_link_rows(tx, super::LinkTable::TimelineEvent, into_id, input.from_id).await?;
     move_link_rows(tx, super::LinkTable::MemoryNote, into_id, input.from_id).await?;
     move_link_rows(tx, super::LinkTable::Foreshadowing, into_id, input.from_id).await?;
+    move_goal_links(tx, into_id, input.from_id).await?;
+    rewrite_goal_conditions(tx, target.book_id, into_id, input.from_id).await?;
     move_design_link(tx, &target, &source).await?;
     move_track_focus(tx, &target, &source).await?;
     // The protagonist flag moves with the merge (D-046).
@@ -690,6 +694,56 @@ pub async fn merge_inner(
         ),
     ];
     Ok((detail(tx, into_id, DETAIL_CHANGE_LIMIT).await?, events))
+}
+
+/// Moves B's goal links to A, skipping links A already has (spec/06 §9, plan §4.9). This is
+/// intentionally a bare link move: goal nodes get no per-node change rows from a merge.
+async fn move_goal_links(tx: &impl ConnectionTrait, into_id: i32, from_id: i32) -> CanonResult<()> {
+    tx.execute_raw(sea_orm::Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Sqlite,
+        "INSERT OR IGNORE INTO goal_node_entities(node_id, entity_id) SELECT node_id, ? FROM \
+         goal_node_entities WHERE entity_id = ?",
+        vec![into_id.into(), from_id.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// Rewrites `entity_status_is` conditions from B to A in the same transaction, without writing
+/// per-node change rows (plan §4.9). Conditions that still name B are therefore not left broken.
+async fn rewrite_goal_conditions(
+    tx: &impl ConnectionTrait,
+    book_id: i32,
+    into_id: i32,
+    from_id: i32,
+) -> CanonResult<()> {
+    let nodes = goal_nodes::Entity::find()
+        .filter(goal_nodes::COLUMN.book_id.eq(book_id))
+        .all(tx)
+        .await?;
+    for node in nodes {
+        let mut conditions = node.conditions.0.clone();
+        let mut changed = false;
+        for condition in &mut conditions {
+            if let GoalCondition::EntityStatusIs { entity_id, .. } = condition
+                && *entity_id == from_id
+            {
+                *entity_id = into_id;
+                changed = true;
+            }
+        }
+        if changed {
+            goal_nodes::ActiveModel {
+                id: Set(node.id),
+                conditions: Set(JsonText(conditions)),
+                updated_at: Set(stamp()),
+                ..Default::default()
+            }
+            .update(tx)
+            .await?;
+        }
+    }
+    Ok(())
 }
 
 /// The language-neutral merge note (spec/06 §9, D-032).

@@ -10,6 +10,7 @@ pub mod debug;
 pub mod dto;
 pub mod embedding;
 pub mod events;
+pub mod goals;
 pub mod health;
 pub mod knowledge;
 pub mod prompts;
@@ -65,6 +66,14 @@ pub fn build_app(state: AppState) -> Router {
             post(books::conception_finalize),
         )
         .route("/books/{book_id}/canon/seed", post(books::canon_seed))
+        .route(
+            "/books/{book_id}/goals",
+            get(goals::list).post(goals::create),
+        )
+        .route(
+            "/goals/{goal_id}",
+            patch(goals::patch).delete(goals::delete),
+        )
         .route(
             "/books/{book_id}/tracks",
             get(tracks::list).post(tracks::create),
