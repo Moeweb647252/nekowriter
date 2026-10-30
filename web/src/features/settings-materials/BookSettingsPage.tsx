@@ -64,6 +64,16 @@ const CANON_SYSTEM_PATHS: Record<keyof CanonSystems, string> = {
   goals: "goals",
 }
 
+/** One pluralized noun phrase for the retained-data sentence. */
+function retainedNoun(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  noun: string,
+  count: number,
+): string {
+  const suffix = count === 1 ? "one" : "other"
+  return t(`book:canon_retained.${noun}_${suffix}`, { count })
+}
+
 /** The retained-data sentence of one disabled switch. */
 function retainedText(
   t: (key: string, options?: Record<string, unknown>) => string,
@@ -72,32 +82,38 @@ function retainedText(
 ): string {
   if (counts === undefined) return t("book:canon_retained_loading")
   switch (system) {
-    case "entities":
+    case "entities": {
+      const total =
+        counts.entities.entities + counts.entities.relations + counts.entities.appearances
       return t("book:canon_retained.entities", {
-        entities: t("book:canon_retained.entity", { count: counts.entities.entities }),
-        relations: t("book:canon_retained.relation", { count: counts.entities.relations }),
-        appearances: t("book:canon_retained.appearance", {
-          count: counts.entities.appearances,
-        }),
+        count: total,
+        entities: retainedNoun(t, "entity", counts.entities.entities),
+        relations: retainedNoun(t, "relation", counts.entities.relations),
+        appearances: retainedNoun(t, "appearance", counts.entities.appearances),
       })
+    }
     case "timeline":
       return t("book:canon_retained.timeline", {
-        events: t("book:canon_retained.event", { count: counts.timeline.events }),
+        count: counts.timeline.events,
+        events: retainedNoun(t, "event", counts.timeline.events),
       })
-    case "memory":
+    case "memory": {
+      const total = counts.memory.notes + counts.memory.summaries
       return t("book:canon_retained.memory", {
-        notes: t("book:canon_retained.note", { count: counts.memory.notes }),
-        summaries: t("book:canon_retained.summary", {
-          count: counts.memory.summaries,
-        }),
+        count: total,
+        notes: retainedNoun(t, "note", counts.memory.notes),
+        summaries: retainedNoun(t, "summary", counts.memory.summaries),
       })
+    }
     case "foreshadowing":
       return t("book:canon_retained.foreshadowing", {
-        items: t("book:canon_retained.item", { count: counts.foreshadowing.items }),
+        count: counts.foreshadowing.items,
+        items: retainedNoun(t, "item", counts.foreshadowing.items),
       })
     case "goals":
       return t("book:canon_retained.goals", {
-        nodes: t("book:canon_retained.node", { count: counts.goals.nodes }),
+        count: counts.goals.nodes,
+        nodes: retainedNoun(t, "node", counts.goals.nodes),
       })
   }
 }

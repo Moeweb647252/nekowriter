@@ -500,6 +500,18 @@ describe("canon retained data copy", () => {
     expect(screen.getByText(/1 entity, 1 relation and 1 appearance stay in the book\. Agents stop reading and maintaining them\./)).toBeInTheDocument()
   })
 
+  it("uses a singular verb and pronoun for one timeline event", async () => {
+    canonCounts.timeline.events = 1
+    render(<BookSettingsPage />)
+    const user = userEvent.setup()
+    await user.click(within(screen.getByTestId("canon-system-timeline")).getByRole("switch"))
+    expect(
+      screen.getByText(
+        "1 timeline event stays in the book. Agents stop reading and maintaining it.",
+      ),
+    ).toBeInTheDocument()
+  })
+
   it("shows an unavailable line when the retained-count request fails", async () => {
     canonCountsError = true
     render(<BookSettingsPage />)

@@ -178,7 +178,7 @@ describe("MemoryPage system sections", () => {
     systems = { entities: false, timeline: true, memory: true, foreshadowing: true, goals: true }
     render(<MemoryPage />)
     expect(screen.getByText(/1 timeline event/)).toBeInTheDocument()
-    expect(screen.getByText(/1 facts, 1 world rules/)).toBeInTheDocument()
+    expect(screen.getByText(/1 fact, 1 world rule/)).toBeInTheDocument()
     expect(screen.getByText(/1 open foreshadowing/)).toBeInTheDocument()
     expect(screen.queryByText(/1 characters/)).toBeNull()
   })
@@ -190,5 +190,28 @@ describe("MemoryPage system sections", () => {
     expect(screen.queryByText("Short-term")).toBeNull()
     expect(screen.queryByText("Long-term index")).toBeNull()
     expect(screen.getByRole("heading", { name: "Memory notes" })).toBeInTheDocument()
+  })
+})
+
+
+describe("MemoryPage archive pluralization", () => {
+  it("uses plural forms for 0, 1 and 2 counts", () => {
+    emptySnapshot.counts = {
+      ...emptySnapshot.counts,
+      character: 1,
+      organization: 2,
+      location: 0,
+      item: 2,
+      other: 0,
+      event: 2,
+      fact: 0,
+      world_rule: 1,
+      foreshadowing_open: 2,
+    }
+    render(<MemoryPage />)
+    expect(screen.getByText(/1 character, 2 organizations, 0 locations, 2 items, 0 other/)).toBeInTheDocument()
+    expect(screen.getByText(/2 timeline events/)).toBeInTheDocument()
+    expect(screen.getByText(/0 facts, 1 world rule/)).toBeInTheDocument()
+    expect(screen.getByText(/2 open foreshadowing/)).toBeInTheDocument()
   })
 })

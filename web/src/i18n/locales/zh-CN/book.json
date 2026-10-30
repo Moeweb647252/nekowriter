@@ -283,12 +283,14 @@
   "canon_retained.node_one": "{{count}} 个目标节点",
   "canon_retained.node_other": "{{count}} 个目标节点",
   "canon_retained_unavailable": "无法读取保留数据。",
-  "canon_retained.entity": "实体",
-  "canon_retained.relation": "关系",
-  "canon_retained.appearance": "出场记录",
-  "canon_retained.event": "时间线事件",
-  "canon_retained.note": "记忆笔记",
-  "canon_retained.summary": "章节摘要",
-  "canon_retained.item": "伏笔",
-  "canon_retained.node": "目标节点"
+  "canon_retained.entities_one": "{{entities}}、{{relations}}和{{appearances}}仍保留在书中。智能体将停止读取和维护它们。",
+  "canon_retained.entities_other": "{{entities}}、{{relations}}和{{appearances}}仍保留在书中。智能体将停止读取和维护它们。",
+  "canon_retained.timeline_one": "{{events}}仍保留在书中。智能体将停止读取和维护它。",
+  "canon_retained.timeline_other": "{{events}}仍保留在书中。智能体将停止读取和维护它们。",
+  "canon_retained.memory_one": "{{notes}}和{{summaries}}仍保留在书中。智能体将停止读取和维护它们。",
+  "canon_retained.memory_other": "{{notes}}和{{summaries}}仍保留在书中。智能体将停止读取和维护它们。",
+  "canon_retained.foreshadowing_one": "{{items}}仍保留在书中。智能体将停止读取和维护它。",
+  "canon_retained.foreshadowing_other": "{{items}}仍保留在书中。智能体将停止读取和维护它们。",
+  "canon_retained.goals_one": "{{nodes}}仍保留在书中。智能体将停止读取和维护它。",
+  "canon_retained.goals_other": "{{nodes}}仍保留在书中。智能体将停止读取和维护它们。"
 }

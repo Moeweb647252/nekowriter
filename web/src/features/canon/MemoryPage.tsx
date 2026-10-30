@@ -11,6 +11,16 @@ import { EmptyState } from "@/components/common/EmptyState"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 
+/** One pluralized archive-count phrase (spec/06 §4.6). */
+function memoryCount(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  noun: string,
+  count: number,
+): string {
+  const suffix = count === 1 ? "one" : "other"
+  return t(`canon:memory_counts.${noun}_${suffix}`, { count })
+}
+
 export default function MemoryPage() {
   const { t } = useTranslation()
   const { bookId: rawBookId } = useParams()
@@ -44,32 +54,28 @@ export default function MemoryPage() {
   const countFragments: string[] = []
   if (systems.entities) {
     countFragments.push(
-      t("canon:memory_counts.entities", {
-        character: snapshot.counts.character,
-        organization: snapshot.counts.organization,
-        location: snapshot.counts.location,
-        item: snapshot.counts.item,
-        other: snapshot.counts.other,
-      }),
+      [
+        memoryCount(t, "character", snapshot.counts.character),
+        memoryCount(t, "organization", snapshot.counts.organization),
+        memoryCount(t, "location", snapshot.counts.location),
+        memoryCount(t, "item", snapshot.counts.item),
+        memoryCount(t, "other", snapshot.counts.other),
+      ].join(t("canon:memory_counts_entity_separator")),
     )
   }
   if (systems.timeline) {
-    countFragments.push(t("canon:memory_counts.timeline", { event: snapshot.counts.event }))
+    countFragments.push(memoryCount(t, "event", snapshot.counts.event))
   }
   if (systems.memory) {
     countFragments.push(
-      t("canon:memory_counts.memory", {
-        fact: snapshot.counts.fact,
-        world_rule: snapshot.counts.world_rule,
-      }),
+      [
+        memoryCount(t, "fact", snapshot.counts.fact),
+        memoryCount(t, "world_rule", snapshot.counts.world_rule),
+      ].join(t("canon:memory_counts_memory_separator")),
     )
   }
   if (systems.foreshadowing) {
-    countFragments.push(
-      t("canon:memory_counts.foreshadowing", {
-        foreshadowing_open: snapshot.counts.foreshadowing_open,
-      }),
-    )
+    countFragments.push(memoryCount(t, "foreshadowing_open", snapshot.counts.foreshadowing_open))
   }
 
   return (
@@ -309,7 +315,7 @@ export default function MemoryPage() {
           ) : null}
           {countFragments.length === 0 ? null : (
             <p className="mt-2 text-[0.65rem] text-muted-foreground">
-              {t("canon:memory_counts_label")}{" "}
+              {t("canon:memory_counts_label")}
               {countFragments.join(t("canon:memory_counts_separator"))}
             </p>
           )}

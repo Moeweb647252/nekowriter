@@ -283,12 +283,14 @@
   "canon_retained.node_one": "{{count}} goal node",
   "canon_retained.node_other": "{{count}} goal nodes",
   "canon_retained_unavailable": "Retained data unavailable.",
-  "canon_retained.entity": "entity",
-  "canon_retained.relation": "relation",
-  "canon_retained.appearance": "appearance",
-  "canon_retained.event": "timeline event",
-  "canon_retained.note": "memory note",
-  "canon_retained.summary": "chapter summary",
-  "canon_retained.item": "foreshadowing item",
-  "canon_retained.node": "goal node"
+  "canon_retained.entities_one": "{{entities}}, {{relations}} and {{appearances}} stays in the book. Agents stop reading and maintaining it.",
+  "canon_retained.entities_other": "{{entities}}, {{relations}} and {{appearances}} stay in the book. Agents stop reading and maintaining them.",
+  "canon_retained.timeline_one": "{{events}} stays in the book. Agents stop reading and maintaining it.",
+  "canon_retained.timeline_other": "{{events}} stay in the book. Agents stop reading and maintaining them.",
+  "canon_retained.memory_one": "{{notes}} and {{summaries}} stays in the book. Agents stop reading and maintaining it.",
+  "canon_retained.memory_other": "{{notes}} and {{summaries}} stay in the book. Agents stop reading and maintaining them.",
+  "canon_retained.foreshadowing_one": "{{items}} stays in the book. Agents stop reading and maintaining it.",
+  "canon_retained.foreshadowing_other": "{{items}} stay in the book. Agents stop reading and maintaining them.",
+  "canon_retained.goals_one": "{{nodes}} stays in the book. Agents stop reading and maintaining it.",
+  "canon_retained.goals_other": "{{nodes}} stay in the book. Agents stop reading and maintaining them."
 }
