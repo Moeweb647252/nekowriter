@@ -3097,3 +3097,20 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   connection rather than the shared pool; a self-referential rebuild table is the alternative when
   the only affected foreign keys are the table's own.
 - **Spec**: spec/02 §1; plan §6; D-150.
+
+### D-154 Goal-proposal conflicts use status/parent changes, not a timestamp (M13.6 review)
+
+- **Context**: The first goal-proposal accept path compared the node's `updated_at` with the
+  proposal's `created_at`, so a title, purpose, link or range edit made an otherwise applicable
+  complete/drop proposal conflict. The spec's conflict rule is about the proposal still being
+  applicable: the node must still exist and be open, and its status or parent must not have moved
+  since the proposal was made.
+- **Decision**: On accept, query only later `change_log` rows for the target and compare their
+  `GoalNode` before/after snapshots. A conflict is recorded when `status` or `parent_id` differs;
+  title, purpose, links, conditions and range edits do not conflict. The conflict keeps the
+  existing `200` `ProposalDto { status: "conflict" }` shape, matching the setting-proposal path.
+- **Consequences**: The Proposals page and the Goals page agree about a stale status proposal
+  without making harmless edits throw it away; the rule is deterministic from the history already
+  recorded in the same transaction. Tests cover a title-only edit staying accepted and a
+  status/parent edit becoming conflict.
+- **Spec**: spec/06 §5:304–314; plan §4.7; D-150.

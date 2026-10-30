@@ -308,6 +308,7 @@ async fn goals_context(
         .map(|node| crate::prompts::context::GoalNodeContext {
             id: node.id,
             level: node.level.as_str().to_owned(),
+            parent_id: node.parent_id,
             title: node.title,
             purpose: node.purpose,
             chapters: match (node.chapter_from, node.chapter_to) {

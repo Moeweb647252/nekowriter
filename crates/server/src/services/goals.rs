@@ -505,6 +505,17 @@ pub async fn create_inner(
     book_id: i32,
     input: GoalNodeInput,
 ) -> CanonResult<(GoalNodeDto, Vec<ServerEvent>)> {
+    create_inner_with_note(tx, write, book_id, input, "").await
+}
+
+/// The create used by accepted proposals: the rationale becomes the change note (spec/06 §5).
+pub async fn create_inner_with_note(
+    tx: &impl ConnectionTrait,
+    write: &CanonWrite,
+    book_id: i32,
+    input: GoalNodeInput,
+    note: &str,
+) -> CanonResult<(GoalNodeDto, Vec<ServerEvent>)> {
     crate::services::books::get(tx, book_id).await?;
     let track_id = write.new_row_track().or(input.track_id);
     if let Some(track_id) = track_id {
@@ -565,7 +576,7 @@ pub async fn create_inner(
         ChangeOp::Create,
         None,
         Some(&after),
-        "",
+        note,
         node.track_id,
     )
     .await?;
@@ -846,7 +857,8 @@ pub async fn relevant_nodes(
         .copied()
         .filter(|node| node.level == GoalLevel::Task)
         .collect();
-    tasks.sort_by_key(|node| (node.chapter_from.unwrap_or(i32::MAX), node.id));
+    // NULL `chapter_from` is the earliest position, not the latest (plan §4.5).
+    tasks.sort_by_key(|node| (node.chapter_from.unwrap_or(i32::MIN), node.id));
     let mut chosen: BTreeSet<i32> = BTreeSet::new();
     for task in tasks {
         let mut with_ancestors = BTreeSet::new();

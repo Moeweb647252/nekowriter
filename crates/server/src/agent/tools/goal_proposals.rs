@@ -163,7 +163,7 @@ impl ToolHandler for ProposeGoalChangeTool {
                 if let Some(parent_id) = input.parent {
                     let parent = load_visible_node(ctx, visibility, book_id, parent_id).await?;
                     if parent.level != GoalLevel::Plan
-                        || parent.status != GoalStatus::Active
+                        || !matches!(parent.status, GoalStatus::Active | GoalStatus::Waiting)
                         || parent.track_id != track_id
                     {
                         return Err(ToolError::new(ToolErrorKind::Validation).with(
@@ -276,12 +276,17 @@ async fn load_visible_node(
         .await
         .map_err(|_| ToolError::new(ToolErrorKind::Internal))?
         .ok_or_else(|| {
-            ToolError::new(ToolErrorKind::NotFound).with("target", format!("goal #{node_id}"))
+            ToolError::new(ToolErrorKind::NotFound)
+                .with("what_label", ctx.prompts.label("target_type", "goal"))
+                .with("id", node_id)
         })?;
     if node.book_id != book_id || !visibility.sees(node.track_id) {
-        return Err(
-            ToolError::new(ToolErrorKind::NotFound).with("target", format!("goal #{node_id}"))
-        );
+        return Err(ToolError::new(ToolErrorKind::NotFound)
+            .with(
+                "what_label",
+                ctx.prompts.label("goal_level", node.level.as_str()),
+            )
+            .with("id", node_id));
     }
     Ok(node)
 }
@@ -335,14 +340,14 @@ async fn resolve_entity_names(
         match matches.as_slice() {
             [row] => ids.push(row.id),
             [] => {
-                return Err(
-                    ToolError::new(ToolErrorKind::EntityNotFound).with("name", name.to_owned())
-                );
+                return Err(ToolError::new(ToolErrorKind::EntityNotFound)
+                    .with("query", name.to_owned())
+                    .with("suggestions", Vec::<Value>::new()));
             }
             _ => {
-                return Err(
-                    ToolError::new(ToolErrorKind::EntityAmbiguous).with("name", name.to_owned())
-                );
+                return Err(ToolError::new(ToolErrorKind::EntityAmbiguous)
+                    .with("query", name.to_owned())
+                    .with("candidates", Vec::<Value>::new()));
             }
         }
     }
@@ -376,11 +381,19 @@ async fn validate_link_ids(
                 .filter(|row| row.book_id == book_id)
                 .map(|row| row.track_id),
         };
+        let what_label = match kind {
+            Link::Event => ctx.prompts.label("target_type", "timeline_event"),
+            Link::Foreshadowing => ctx.prompts.label("target_type", "foreshadowing"),
+        };
         let Some(track) = track else {
-            return Err(ToolError::new(ToolErrorKind::NotFound).with("target", format!("#{id}")));
+            return Err(ToolError::new(ToolErrorKind::NotFound)
+                .with("what_label", what_label)
+                .with("id", *id));
         };
         if !visibility.sees(track) {
-            return Err(ToolError::new(ToolErrorKind::NotFound).with("target", format!("#{id}")));
+            return Err(ToolError::new(ToolErrorKind::NotFound)
+                .with("what_label", what_label)
+                .with("id", *id));
         }
     }
     Ok(())

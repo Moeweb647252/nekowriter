@@ -362,7 +362,13 @@ impl ToolOutcome {
             .map(|rendered| rendered.text)
             .unwrap_or_else(|err| {
                 tracing::error!(error = %err, "cannot render result.error");
-                String::new()
+                // A tool error must still tell the model something went wrong. The normally
+                // read-only renderer catches malformed fields above; this fallback is the last
+                // line of defence against a silent `is_error = true` with empty text.
+                format!(
+                    "tool error {}: the structured details could not be rendered",
+                    error.kind.code()
+                )
             });
         Self {
             text,
@@ -521,6 +527,27 @@ mod tests {
         assert_eq!(unique.len(), codes.len(), "codes must be unique");
         assert!(codes.contains(&"after_completion"));
         assert!(codes.contains(&"refusal"));
+    }
+
+    /// A malformed error payload must still produce a non-empty, loud fallback rather than an
+    /// empty `is_error` result (M13.6 R-1).
+    #[test]
+    fn a_malformed_error_payload_still_renders_text() {
+        let prompts = prompts();
+        let outcome = ToolOutcome::error(
+            &prompts,
+            &ToolError::new(ToolErrorKind::NotFound).with("target", "wrong_field"),
+        );
+        assert!(outcome.is_error);
+        assert!(
+            !outcome.text.trim().is_empty(),
+            "fallback must not be empty"
+        );
+        assert!(
+            outcome.text.contains("not_found"),
+            "fallback names the error code: {}",
+            outcome.text
+        );
     }
 
     /// Every `ToolErrorKind` must render a **non-empty** model-facing text.

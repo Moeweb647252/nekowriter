@@ -290,7 +290,7 @@ text = '''
 
 以下是作者为本章设置的相关写作目标。每个目标的 purpose 说明它为何存在、要达成什么；大纲与正文必须服务于任务的目的，目的应通过故事实现，绝不在正文中直接说明。审查者会判断本章是否服务于这些目标；档案员按节点编号引用目标。
 
-{% for node in goals.nodes %}<{{ node.level }} id="{{ node.id }}" title="{{ node.title }}"{% if node.chapters %} chapters="{{ node.chapters }}"{% endif %}{% if node.overdue %} overdue="true"{% endif %}>
+{% for node in goals.nodes %}<{{ node.level }} id="{{ node.id }}"{% if node.parent_id %} parent="{{ node.parent_id }}"{% endif %} title="{{ node.title }}"{% if node.chapters %} chapters="{{ node.chapters }}"{% endif %}{% if node.overdue %} overdue="true"{% endif %}>
 <purpose>{{ node.purpose }}</purpose>
 {% if node.entities %}<entities>{{ node.entities | join("、") }}</entities>
 {% endif %}{% if node.events %}<events>{{ node.events | join("、") }}</events>

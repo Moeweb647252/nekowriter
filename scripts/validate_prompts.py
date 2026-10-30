@@ -195,9 +195,9 @@ systems_all = systems()
 systems_cases = [systems_all, systems(entities=False), systems(timeline=False), systems(memory=False),
                  systems(foreshadowing=False), systems(entities=False, timeline=False, memory=False, foreshadowing=False)]
 goals_sample = dict(nodes=[
-    dict(id=8, level="plan", title="守住剑冢", purpose="让林凡在宗门倾覆前守住最后的传承。", chapters="第10–15章", overdue=False,
+    dict(id=8, level="plan", parent_id=None, title="守住剑冢", purpose="让林凡在宗门倾覆前守住最后的传承。", chapters="第10–15章", overdue=False,
          entities=["苏婉(#21)"], events=["#3 宗门夜变"], foreshadowing=[]),
-    dict(id=12, level="task", title="找回断剑", purpose="用断剑证明林凡的继承者身份。", chapters="第13章", overdue=True,
+    dict(id=12, level="task", parent_id=8, title="找回断剑", purpose="用断剑证明林凡的继承者身份。", chapters="第13章", overdue=True,
          entities=[], events=[], foreshadowing=["#9 黑衣人的剑穗"]),
 ], omitted=2)
 goals_empty = dict(nodes=[], omitted=0)

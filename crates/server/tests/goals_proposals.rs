@@ -100,7 +100,7 @@ async fn accepting_complete_changes_the_node_and_conflicts_after_an_edit() {
     let (status, _) = app
         .patch(
             &format!("/api/goals/{}", second["id"]),
-            json!({ "title": "Changed" }),
+            json!({ "status": "done" }),
         )
         .await;
     assert_eq!(status, 200);
@@ -109,6 +109,35 @@ async fn accepting_complete_changes_the_node_and_conflicts_after_an_edit() {
         .await;
     assert_eq!(status, 200, "conflict response: {body}");
     assert_eq!(body["status"], "conflict");
+
+    // A title-only edit does not invalidate a status proposal (D-154).
+    let third = goal(
+        &app,
+        book_id,
+        json!({ "level": "goal", "title": "I", "purpose": "P" }),
+    )
+    .await;
+    let proposal = insert_proposal(
+        &app,
+        book_id,
+        "goal_node",
+        Some(third["id"].as_i64().unwrap() as i32),
+        json!({ "kind": "set_goal_status", "status": "done" }),
+        chapter_id,
+    )
+    .await;
+    let (status, _) = app
+        .patch(
+            &format!("/api/goals/{}", third["id"]),
+            json!({ "title": "Title only" }),
+        )
+        .await;
+    assert_eq!(status, 200);
+    let (status, body) = app
+        .post(&format!("/api/proposals/{proposal}/accept"), json!({}))
+        .await;
+    assert_eq!(status, 200, "title-only conflict: {body}");
+    assert_eq!(body["status"], "accepted");
 }
 
 #[tokio::test]
@@ -189,6 +218,17 @@ async fn accepting_a_new_task_creates_it_once_and_drops_vanished_links() {
     assert_eq!(created.len(), 1, "exactly one task: {list}");
     assert_eq!(created[0]["parent_id"], plan["id"]);
     assert!(created[0]["entities"].as_array().unwrap().is_empty());
+    let task_id = created[0]["id"].as_i64().unwrap() as i32;
+    let (_, changes) = app
+        .get(&format!("/api/books/{book_id}/changes?target_type=task"))
+        .await;
+    let change = changes["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|change| change["target_id"] == task_id)
+        .expect("task change");
+    assert_eq!(change["note"], "理由");
 
     let (status, body) = app
         .post(&format!("/api/proposals/{proposal}/accept"), json!({}))
@@ -317,7 +357,16 @@ async fn propose_goal_change_creates_a_task_proposal_under_a_plan() {
     let plan = goal(
         &runtime.app,
         runtime.book_id,
-        json!({ "level": "plan", "title": "计划", "purpose": "计划目的" }),
+        json!({ "level": "plan", "title": "计划", "purpose": "计划目的", "status": "waiting",
+                "conditions": [{ "kind": "chapter_at_least", "chapter": 1 }] }),
+    )
+    .await;
+    // Keep the maintenance gate non-empty while the parent plan waits: a task under a waiting
+    // plan is still relevant and renders at top level.
+    goal(
+        &runtime.app,
+        runtime.book_id,
+        json!({ "level": "task", "parent_id": plan["id"], "title": "Gate", "purpose": "P", "chapter_from": 1 }),
     )
     .await;
     review_harness::prepare_in_review(&runtime).await;
@@ -366,5 +415,192 @@ async fn propose_goal_change_creates_a_task_proposal_under_a_plan() {
             .iter()
             .any(|row| row["title"] == "新任务"),
         "task missing: {list}"
+    );
+}
+
+#[tokio::test]
+async fn propose_goal_change_tool_errors_are_always_readable() {
+    let runtime = runtime(vec![
+        step(
+            "propose_goal_change",
+            json!({ "action": "complete", "node": 9999, "rationale": "bad node" }),
+        ),
+        step(
+            "propose_goal_change",
+            json!({ "action": "create", "title": "", "purpose": "P", "rationale": "bad title" }),
+        ),
+        step(
+            "propose_goal_change",
+            json!({ "action": "create", "parent": 1, "title": "T", "purpose": "P", "rationale": "bad parent" }),
+        ),
+        step("finish_maintenance", json!({ "report": "完成" })),
+    ])
+    .await;
+    let (_, book) = runtime
+        .app
+        .get(&format!("/api/books/{}", runtime.book_id))
+        .await;
+    let mut settings = book["settings"].clone();
+    settings["canon_systems"] = json!({
+        "entities": false, "timeline": false, "memory": false,
+        "foreshadowing": false, "goals": true
+    });
+    let (status, body) = runtime
+        .app
+        .patch(
+            &format!("/api/books/{}", runtime.book_id),
+            json!({ "settings": settings }),
+        )
+        .await;
+    assert_eq!(status, 200, "settings: {body}");
+    goal(
+        &runtime.app,
+        runtime.book_id,
+        json!({ "level": "task", "title": "Relevant", "purpose": "P", "chapter_from": 1 }),
+    )
+    .await;
+    review_harness::prepare_in_review(&runtime).await;
+    let (status, body) = runtime
+        .app
+        .post(
+            &format!("/api/chapters/{}/approve", runtime.chapter_id),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, 200, "approve: {body}");
+    let session = body["maintenance_session_id"].as_i64().expect("session") as i32;
+    runtime
+        .wait_status_within(session, SessionStatus::Completed, Duration::from_secs(20))
+        .await;
+    let calls = runtime.calls(session).await;
+    let errors: Vec<_> = calls
+        .iter()
+        .filter(|call| call.name == "propose_goal_change")
+        .collect();
+    assert_eq!(errors.len(), 3, "calls: {calls:?}");
+    for call in errors {
+        assert!(call.is_error, "must fail: {call:?}");
+        let text = call.raw_result_text.as_deref().unwrap_or_default();
+        assert!(!text.trim().is_empty(), "empty error result: {call:?}");
+        assert!(
+            text.contains("9999")
+                || text.contains("父")
+                || text.contains("plan")
+                || text.contains("title")
+                || text.contains("plan"),
+            "unhelpful error: {text}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn accepting_drop_marks_the_node_dropped() {
+    let (app, book_id, _track, chapter_id) = setup().await;
+    let node = goal(
+        &app,
+        book_id,
+        json!({ "level": "goal", "title": "Drop me", "purpose": "P" }),
+    )
+    .await;
+    let proposal = insert_proposal(
+        &app,
+        book_id,
+        "goal_node",
+        Some(node["id"].as_i64().unwrap() as i32),
+        json!({ "kind": "set_goal_status", "status": "dropped" }),
+        chapter_id,
+    )
+    .await;
+    let (status, body) = app
+        .post(&format!("/api/proposals/{proposal}/accept"), json!({}))
+        .await;
+    assert_eq!(status, 200, "drop accept: {body}");
+    assert_eq!(body["status"], "accepted");
+    let (_, list) = app.get(&format!("/api/books/{book_id}/goals")).await;
+    assert_eq!(list[0]["status"], "dropped");
+}
+
+#[tokio::test]
+async fn an_isolated_session_cannot_propose_on_a_shared_goal() {
+    use nekowriter::db::json::{Granularity, SessionKind};
+    use nekowriter::services::sessions::{self, CreateSession};
+
+    let runtime = runtime(vec![
+        step(
+            "propose_goal_change",
+            json!({ "action": "complete", "node": 1, "rationale": "bad shared" }),
+        ),
+        step("finish_maintenance", json!({ "report": "完成" })),
+    ])
+    .await;
+    let (_, book) = runtime
+        .app
+        .get(&format!("/api/books/{}", runtime.book_id))
+        .await;
+    let mut settings = book["settings"].clone();
+    settings["canon_systems"] = json!({
+        "entities": false, "timeline": false, "memory": false,
+        "foreshadowing": false, "goals": true
+    });
+    let (status, body) = runtime
+        .app
+        .patch(
+            &format!("/api/books/{}", runtime.book_id),
+            json!({ "settings": settings }),
+        )
+        .await;
+    assert_eq!(status, 200, "settings: {body}");
+    runtime
+        .app
+        .execute(&format!(
+            "INSERT INTO goal_nodes(id, book_id, track_id, level, parent_id, title, purpose, status, \
+             chapter_from, chapter_to, conditions, created_at, updated_at) VALUES \
+             (1, {}, NULL, 'goal', NULL, 'Shared goal', 'P', 'active', NULL, NULL, '[]', \
+              '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            runtime.book_id
+        ))
+        .await;
+    let (_, side) = runtime
+        .app
+        .post(
+            &format!("/api/books/{}/tracks", runtime.book_id),
+            json!({ "title": "Side", "synopsis": "", "canon_mode": "isolated", "anchor_kind": "before_start" }),
+        )
+        .await;
+    let side_track = side["id"].as_i64().unwrap() as i32;
+    let side_chapter = runtime.app.create_chapter(side_track, "Side chapter").await;
+    let side_chapter_id = side_chapter["id"].as_i64().unwrap() as i32;
+    let (session_id, _) = sessions::create(
+        runtime.app.state(),
+        CreateSession {
+            kind: SessionKind::ChapterMaintenance,
+            book_id: Some(runtime.book_id),
+            chapter_id: Some(side_chapter_id),
+            granularity: Some(Granularity::Paragraph),
+            ..CreateSession::default()
+        },
+    )
+    .await
+    .expect("maintenance session");
+    runtime
+        .wait_status_within(
+            session_id,
+            SessionStatus::Completed,
+            Duration::from_secs(20),
+        )
+        .await;
+    let calls = runtime.calls(session_id).await;
+    let call = calls
+        .iter()
+        .find(|call| call.name == "propose_goal_change")
+        .expect("goal tool call");
+    assert!(
+        call.is_error,
+        "isolated shared proposal must fail: {call:?}"
+    );
+    let text = call.raw_result_text.as_deref().unwrap_or_default();
+    assert!(
+        text.contains("Shared goal") || text.contains("独立"),
+        "error text: {text}"
     );
 }

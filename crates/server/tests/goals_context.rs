@@ -97,6 +97,19 @@ async fn planner_write_and_review_kickoffs_carry_task_with_both_ancestor_purpose
                 "conditions": [{ "kind": "chapter_at_least", "chapter": 1 }] }),
     )
     .await;
+    let waiting_plan = goal(
+        app,
+        book,
+        json!({ "level": "plan", "parent_id": goal_node["id"], "title": "等待计划", "purpose": "等待计划目的", "status": "waiting",
+                "conditions": [{ "kind": "chapter_at_least", "chapter": 1 }] }),
+    )
+    .await;
+    goal(
+        app,
+        book,
+        json!({ "level": "task", "parent_id": waiting_plan["id"], "title": "等待计划任务", "purpose": "等待计划任务目的", "chapter_from": 1 }),
+    )
+    .await;
     let closed_goal = goal(
         app,
         book,
@@ -320,4 +333,64 @@ async fn the_goal_tool_gate_tracks_relevant_nodes_in_both_directions() {
     let goal_tools = frozen_tools(&fixture, goal_session).await;
     assert_eq!(goal_tools.len(), 22);
     assert!(goal_tools.iter().any(|tool| tool == "propose_goal_change"));
+}
+
+#[tokio::test]
+async fn the_goal_block_names_each_tasks_plan_parent() {
+    let fixture = fixture().await;
+    let app = &fixture.runtime.app;
+    let book = fixture.runtime.book_id;
+    let goal_node = goal(
+        app,
+        book,
+        json!({ "level": "goal", "title": "G", "purpose": "G purpose" }),
+    )
+    .await;
+    let plan1 = goal(
+        app,
+        book,
+        json!({ "level": "plan", "parent_id": goal_node["id"], "title": "P1", "purpose": "P1 purpose" }),
+    )
+    .await;
+    let plan2 = goal(
+        app,
+        book,
+        json!({ "level": "plan", "parent_id": goal_node["id"], "title": "P2", "purpose": "P2 purpose" }),
+    )
+    .await;
+    let task1 = goal(
+        app,
+        book,
+        json!({ "level": "task", "parent_id": plan1["id"], "title": "T1", "purpose": "T1 purpose" }),
+    )
+    .await;
+    let task2 = goal(
+        app,
+        book,
+        json!({ "level": "task", "parent_id": plan2["id"], "title": "T2", "purpose": "T2 purpose" }),
+    )
+    .await;
+    let text = kickoff(&fixture, SessionKind::ChapterWrite).await;
+    assert!(
+        text.contains(&format!("<plan id=\"{}\"", plan1["id"])),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("<plan id=\"{}\"", plan2["id"])),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!(
+            "<task id=\"{}\" parent=\"{}\"",
+            task1["id"], plan1["id"]
+        )),
+        "task 1 parent missing:\n{text}"
+    );
+    assert!(
+        text.contains(&format!(
+            "<task id=\"{}\" parent=\"{}\"",
+            task2["id"], plan2["id"]
+        )),
+        "task 2 parent missing:\n{text}"
+    );
 }

@@ -14,8 +14,8 @@ use crate::api::dto::goals::{GoalNodeInput, GoalTargetDto};
 use crate::api::dto::proposals::{ProposalDto, ProposalPreviewDto};
 use crate::api::dto::settings_materials::{CharacterInput, CharacterPatch};
 use crate::db::entities::{
-    character_designs, entities, foreshadowing, goal_nodes, setting_docs, setting_proposals,
-    timeline_events,
+    change_log, character_designs, entities, foreshadowing, goal_nodes, setting_docs,
+    setting_proposals, timeline_events,
 };
 use crate::db::json::{
     ChangeActor, ChangeOp, ChangeTargetType, FindReplace, GoalLevel, GoalStatus, ProposalEdits,
@@ -234,15 +234,18 @@ pub async fn accept_inner(
             else {
                 return mark_conflict(tx, proposal, events).await;
             };
-            // The proposal was made against the node as it was; a later edit is a conflict.
+            // A later status or parent change is a conflict; a title-only edit is not.
             if node.status != GoalStatus::Active && node.status != GoalStatus::Waiting
-                || node.updated_at > proposal.created_at
+                || goal_status_or_parent_changed_since(
+                    tx,
+                    super::goals::target_type(node.level),
+                    node.id,
+                    proposal.created_at,
+                )
+                .await?
             {
                 return mark_conflict(tx, proposal, events).await;
             }
-            // Use the same evaluator as the Goals page for every derived-state decision.
-            let _evaluation =
-                super::goals::evaluate(tx, book_id, std::slice::from_ref(&node)).await?;
             let patch = super::goals::GoalNodePatch {
                 status: Some(status),
                 note: Some(proposal.rationale.clone()),
@@ -263,9 +266,15 @@ pub async fn accept_inner(
                     return mark_conflict(tx, proposal, events).await;
                 };
                 if parent.level != GoalLevel::Plan
-                    || parent.status != GoalStatus::Active
+                    || !matches!(parent.status, GoalStatus::Active | GoalStatus::Waiting)
                     || parent.track_id != task.track_id
-                    || parent.updated_at > proposal.created_at
+                    || goal_status_or_parent_changed_since(
+                        tx,
+                        super::goals::target_type(parent.level),
+                        parent.id,
+                        proposal.created_at,
+                    )
+                    .await?
                 {
                     return mark_conflict(tx, proposal, events).await;
                 }
@@ -304,7 +313,14 @@ pub async fn accept_inner(
                 foreshadowing_ids: Some(foreshadowing_ids),
             };
             let write = super::canon::CanonWrite::author().with_chapter(proposal.chapter_id);
-            let (_, mut changed) = super::goals::create_inner(tx, &write, book_id, input).await?;
+            let (_, mut changed) = super::goals::create_inner_with_note(
+                tx,
+                &write,
+                book_id,
+                input,
+                &proposal.rationale,
+            )
+            .await?;
             events.append(&mut changed);
         }
     }
@@ -327,6 +343,42 @@ pub async fn accept_inner(
     });
     let row = load(tx, proposal.id).await?;
     Ok((to_dto(tx, &row).await?, events))
+}
+
+/// True when a goal node's status or parent changed after the proposal was made. Title,
+/// purpose, links and range edits do not invalidate an otherwise applicable status proposal
+/// (D-154).
+async fn goal_status_or_parent_changed_since(
+    tx: &impl ConnectionTrait,
+    target_type: ChangeTargetType,
+    target_id: i32,
+    since: chrono::DateTime<chrono::Utc>,
+) -> Result<bool, AppError> {
+    let rows = change_log::Entity::find()
+        .filter(change_log::COLUMN.target_type.eq(target_type.as_str()))
+        .filter(change_log::COLUMN.target_id.eq(target_id))
+        .filter(change_log::COLUMN.created_at.gt(since))
+        .all(tx)
+        .await?;
+    for row in rows {
+        let before = row.before.as_ref().and_then(goal_state);
+        let after = row.after.as_ref().and_then(goal_state);
+        match (before, after) {
+            (Some(before), Some(after)) if before != after => return Ok(true),
+            (Some(_), None) | (None, Some(_)) => return Ok(true),
+            _ => {}
+        }
+    }
+    Ok(false)
+}
+
+fn goal_state(snapshot: &crate::db::json::JsonText<Snapshot>) -> Option<(GoalStatus, Option<i32>)> {
+    match &snapshot.0 {
+        Snapshot::GoalNode {
+            status, parent_id, ..
+        } => Some((*status, *parent_id)),
+        _ => None,
+    }
 }
 
 #[derive(Clone, Copy)]

@@ -404,7 +404,8 @@
        "events": [
         "#3 宗门夜变"
        ],
-       "foreshadowing": []
+       "foreshadowing": [],
+       "parent_id": null
       },
       {
        "id": 12,
@@ -417,7 +418,8 @@
        "events": [],
        "foreshadowing": [
         "#9 黑衣人的剑穗"
-       ]
+       ],
+       "parent_id": null
       }
      ],
      "omitted": 2
@@ -469,7 +471,8 @@
        "events": [
         "#3 宗门夜变"
        ],
-       "foreshadowing": []
+       "foreshadowing": [],
+       "parent_id": null
       },
       {
        "id": 12,
@@ -482,7 +485,8 @@
        "events": [],
        "foreshadowing": [
         "#9 黑衣人的剑穗"
-       ]
+       ],
+       "parent_id": null
       }
      ],
      "omitted": 2
@@ -534,7 +538,8 @@
        "events": [
         "#3 宗门夜变"
        ],
-       "foreshadowing": []
+       "foreshadowing": [],
+       "parent_id": null
       },
       {
        "id": 12,
@@ -547,7 +552,8 @@
        "events": [],
        "foreshadowing": [
         "#9 黑衣人的剑穗"
-       ]
+       ],
+       "parent_id": null
       }
      ],
      "omitted": 2
@@ -599,7 +605,8 @@
        "events": [
         "#3 宗门夜变"
        ],
-       "foreshadowing": []
+       "foreshadowing": [],
+       "parent_id": null
       },
       {
        "id": 12,
@@ -612,7 +619,8 @@
        "events": [],
        "foreshadowing": [
         "#9 黑衣人的剑穗"
-       ]
+       ],
+       "parent_id": null
       }
      ],
      "omitted": 2
@@ -664,7 +672,8 @@
        "events": [
         "#3 宗门夜变"
        ],
-       "foreshadowing": []
+       "foreshadowing": [],
+       "parent_id": null
       },
       {
        "id": 12,
@@ -677,7 +686,8 @@
        "events": [],
        "foreshadowing": [
         "#9 黑衣人的剑穗"
-       ]
+       ],
+       "parent_id": null
       }
      ],
      "omitted": 2
@@ -721,7 +731,8 @@
        "events": [
         "#3 宗门夜变"
        ],
-       "foreshadowing": []
+       "foreshadowing": [],
+       "parent_id": null
       },
       {
        "id": 12,
@@ -734,7 +745,8 @@
        "events": [],
        "foreshadowing": [
         "#9 黑衣人的剑穗"
-       ]
+       ],
+       "parent_id": null
       }
      ],
      "omitted": 2
@@ -3337,7 +3349,8 @@
        "events": [
         "#3 宗门夜变"
        ],
-       "foreshadowing": []
+       "foreshadowing": [],
+       "parent_id": null
       },
       {
        "id": 12,
@@ -3350,7 +3363,8 @@
        "events": [],
        "foreshadowing": [
         "#9 黑衣人的剑穗"
-       ]
+       ],
+       "parent_id": null
       }
      ],
      "omitted": 2
@@ -3385,7 +3399,8 @@
        "events": [
         "#3 宗门夜变"
        ],
-       "foreshadowing": []
+       "foreshadowing": [],
+       "parent_id": null
       },
       {
        "id": 12,
@@ -3398,7 +3413,8 @@
        "events": [],
        "foreshadowing": [
         "#9 黑衣人的剑穗"
-       ]
+       ],
+       "parent_id": null
       }
      ],
      "omitted": 2
@@ -3432,7 +3448,8 @@
        "events": [
         "#3 宗门夜变"
        ],
-       "foreshadowing": []
+       "foreshadowing": [],
+       "parent_id": null
       },
       {
        "id": 12,
@@ -3445,7 +3462,8 @@
        "events": [],
        "foreshadowing": [
         "#9 黑衣人的剑穗"
-       ]
+       ],
+       "parent_id": null
       }
      ],
      "omitted": 2
@@ -3479,7 +3497,8 @@
        "events": [
         "#3 宗门夜变"
        ],
-       "foreshadowing": []
+       "foreshadowing": [],
+       "parent_id": null
       },
       {
        "id": 12,
@@ -3492,7 +3511,8 @@
        "events": [],
        "foreshadowing": [
         "#9 黑衣人的剑穗"
-       ]
+       ],
+       "parent_id": null
       }
      ],
      "omitted": 2
@@ -3526,7 +3546,8 @@
        "events": [
         "#3 宗门夜变"
        ],
-       "foreshadowing": []
+       "foreshadowing": [],
+       "parent_id": null
       },
       {
        "id": 12,
@@ -3539,7 +3560,8 @@
        "events": [],
        "foreshadowing": [
         "#9 黑衣人的剑穗"
-       ]
+       ],
+       "parent_id": null
       }
      ],
      "omitted": 2
@@ -3573,7 +3595,8 @@
        "events": [
         "#3 宗门夜变"
        ],
-       "foreshadowing": []
+       "foreshadowing": [],
+       "parent_id": null
       },
       {
        "id": 12,
@@ -3586,7 +3609,8 @@
        "events": [],
        "foreshadowing": [
         "#9 黑衣人的剑穗"
-       ]
+       ],
+       "parent_id": null
       }
      ],
      "omitted": 2

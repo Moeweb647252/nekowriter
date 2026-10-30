@@ -188,6 +188,8 @@ pub struct GoalNodeContext {
     pub id: i32,
     /// `goal` | `plan` | `task` (the template uses it as the tag name).
     pub level: String,
+    /// The parent id, so the flat tag stream still names its tree edges (plan §4.5).
+    pub parent_id: Option<i32>,
     pub title: String,
     pub purpose: String,
     /// `chapters` attribute, e.g. `12–15` (empty when unbounded).

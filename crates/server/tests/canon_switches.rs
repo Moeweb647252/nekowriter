@@ -924,3 +924,33 @@ async fn maintenance_completes_when_required_systems_are_off() {
         assert_eq!(status.as_deref(), Some("synced"));
     }
 }
+
+#[tokio::test]
+async fn rangeless_tasks_are_selected_before_ranged_tasks() {
+    let fixture = fixture().await;
+    let book = fixture.runtime.book_id;
+    let mut rows = String::new();
+    for id in 2..=31 {
+        rows.push_str(&format!(
+            "INSERT INTO goal_nodes(id, book_id, track_id, level, parent_id, title, purpose, status, \
+             chapter_from, chapter_to, conditions, created_at, updated_at) VALUES \
+             ({id}, {book}, NULL, 'task', NULL, '有范围{id}', '目的{id}', 'active', 1, NULL, '[]', \
+             '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');\n"
+        ));
+    }
+    rows.push_str(&format!(
+        "INSERT INTO goal_nodes(id, book_id, track_id, level, parent_id, title, purpose, status, \
+         chapter_from, chapter_to, conditions, created_at, updated_at) VALUES \
+         (500, {book}, NULL, 'task', NULL, '无范围', '无范围目的', 'active', NULL, NULL, '[]', \
+         '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');"
+    ));
+    fixture.runtime.app.execute(&rows).await;
+    let session_id = create(&fixture, SessionKind::ChapterMaintenance).await;
+    let kickoff = kickoff_text(&fixture, session_id).await;
+    assert!(
+        kickoff.contains("id=\"500\""),
+        "rangeless task omitted: {kickoff}"
+    );
+    assert!(kickoff.contains("还有 2 个相关目标未显示"), "{kickoff}");
+    assert_eq!(kickoff.matches("<task").count(), 30, "{kickoff}");
+}

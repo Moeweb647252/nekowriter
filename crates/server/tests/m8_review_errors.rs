@@ -16,20 +16,20 @@ fn prompts() -> nekowriter::prompts::PromptSet {
         .defaults_only()
 }
 
-/// The class-level test asserts every kind renders non-empty text and never falls through to the
-/// internal-error wording. This proves the assertion has teeth: a branch whose fields are wrong
-/// renders nothing, so a call site that drifts from its branch is caught by the same assertion.
+/// A branch whose fields are wrong must at least produce the loud fallback, never an empty
+/// `is_error` result. The class-level test still checks every correct branch separately.
 #[test]
-fn a_wrong_field_renders_empty_so_the_class_test_would_fail() {
+fn a_wrong_field_renders_the_loud_fallback() {
     // `fetch_failed` reads `reason` and `url`; the URL is deliberately missing here.
     let missing_url = ToolError::new(ToolErrorKind::FetchFailed).with("reason", "blocked");
     let outcome = ToolOutcome::error(&prompts(), &missing_url);
     assert!(outcome.is_error);
     assert!(
-        outcome.text.trim().is_empty(),
-        "the strict renderer must yield an empty text, not a fallback: {:?}",
+        !outcome.text.trim().is_empty(),
+        "a malformed error must not be silent: {:?}",
         outcome.text
     );
+    assert!(outcome.text.contains("fetch_failed"), "{:?}", outcome.text);
 
     // A field with the wrong name is the same shape: `entry_exists` reads `title`, not `name`.
     let wrong_name = ToolError::new(ToolErrorKind::EntryExists)
@@ -37,10 +37,11 @@ fn a_wrong_field_renders_empty_so_the_class_test_would_fail() {
         .with("id", 7);
     let outcome = ToolOutcome::error(&prompts(), &wrong_name);
     assert!(
-        outcome.text.trim().is_empty(),
+        !outcome.text.trim().is_empty(),
         "a misnamed field must not silently render: {:?}",
         outcome.text
     );
+    assert!(outcome.text.contains("entry_exists"), "{:?}", outcome.text);
 }
 
 /// Every kind the crate knows, with the fields its branch reads. The list mirrors the class-level
