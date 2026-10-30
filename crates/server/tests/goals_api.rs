@@ -542,7 +542,12 @@ async fn update_revert_falls_back_when_the_parent_leaves_the_scope() {
         )
         .await;
     let side_track = side["id"].as_i64().unwrap() as i32;
-    let parent = create_node(&app, book_id, json!({ "level": "goal", "title": "Parent", "purpose": "P" })).await;
+    let parent = create_node(
+        &app,
+        book_id,
+        json!({ "level": "goal", "title": "Parent", "purpose": "P" }),
+    )
+    .await;
     let child = create_node(
         &app,
         book_id,
@@ -550,7 +555,10 @@ async fn update_revert_falls_back_when_the_parent_leaves_the_scope() {
     )
     .await;
     let (status, _) = app
-        .patch(&format!("/api/goals/{}", child["id"]), json!({ "title": "Changed" }))
+        .patch(
+            &format!("/api/goals/{}", child["id"]),
+            json!({ "title": "Changed" }),
+        )
         .await;
     assert_eq!(status, 200);
     let _ = main_track;
@@ -565,11 +573,17 @@ async fn update_revert_falls_back_when_the_parent_leaves_the_scope() {
         .find(|change| change["op"] == "update")
         .expect("child update");
     let (status, body) = app
-        .post(&format!("/api/changes/{}/revert", update_change["id"]), json!({}))
+        .post(
+            &format!("/api/changes/{}/revert", update_change["id"]),
+            json!({}),
+        )
         .await;
     assert_eq!(status, 200, "parent fallback: {body}");
     let list = get(&app, book_id).await;
-    let restored = list.iter().find(|row| row["id"] == child["id"]).expect("child");
+    let restored = list
+        .iter()
+        .find(|row| row["id"] == child["id"])
+        .expect("child");
     assert_eq!(restored["parent_id"], Value::Null);
 }
 
@@ -578,7 +592,12 @@ async fn update_revert_restores_done_without_open_children_confirmation() {
     let app = TestApp::new().await;
     let book = app.create_book("Restore done").await;
     let book_id = book["id"].as_i64().expect("book") as i32;
-    let goal = create_node(&app, book_id, json!({ "level": "goal", "title": "G", "purpose": "P" })).await;
+    let goal = create_node(
+        &app,
+        book_id,
+        json!({ "level": "goal", "title": "G", "purpose": "P" }),
+    )
+    .await;
     create_node(
         &app,
         book_id,
@@ -593,7 +612,10 @@ async fn update_revert_restores_done_without_open_children_confirmation() {
         .await;
     assert_eq!(status, 200);
     let (status, _) = app
-        .patch(&format!("/api/goals/{}", goal["id"]), json!({ "title": "Done title" }))
+        .patch(
+            &format!("/api/goals/{}", goal["id"]),
+            json!({ "title": "Done title" }),
+        )
         .await;
     assert_eq!(status, 200);
     let update_change = changes_for(&app, book_id, goal["id"].as_i64().unwrap() as i32)
@@ -602,11 +624,17 @@ async fn update_revert_restores_done_without_open_children_confirmation() {
         .find(|change| change["op"] == "update")
         .expect("done update");
     let (status, body) = app
-        .post(&format!("/api/changes/{}/revert", update_change["id"]), json!({}))
+        .post(
+            &format!("/api/changes/{}/revert", update_change["id"]),
+            json!({}),
+        )
         .await;
     assert_eq!(status, 200, "restore done: {body}");
     let list = get(&app, book_id).await;
-    let restored = list.iter().find(|row| row["id"] == goal["id"]).expect("goal");
+    let restored = list
+        .iter()
+        .find(|row| row["id"] == goal["id"])
+        .expect("goal");
     assert_eq!(restored["status"], "done");
 }
 
@@ -623,7 +651,12 @@ async fn delete_revert_keeps_a_surviving_parent_and_link() {
         .await
         .1;
     let entity_id = entity["id"].as_i64().unwrap() as i32;
-    let parent = create_node(&app, book_id, json!({ "level": "goal", "title": "P", "purpose": "P" })).await;
+    let parent = create_node(
+        &app,
+        book_id,
+        json!({ "level": "goal", "title": "P", "purpose": "P" }),
+    )
+    .await;
     let child = create_node(
         &app,
         book_id,
@@ -638,11 +671,17 @@ async fn delete_revert_keeps_a_surviving_parent_and_link() {
         .find(|change| change["op"] == "delete")
         .expect("child delete");
     let (status, body) = app
-        .post(&format!("/api/changes/{}/revert", delete_change["id"]), json!({}))
+        .post(
+            &format!("/api/changes/{}/revert", delete_change["id"]),
+            json!({}),
+        )
         .await;
     assert_eq!(status, 200, "delete revert: {body}");
     let list = get(&app, book_id).await;
-    let recreated = list.iter().find(|row| row["title"] == "C").expect("recreated");
+    let recreated = list
+        .iter()
+        .find(|row| row["title"] == "C")
+        .expect("recreated");
     assert_eq!(recreated["parent_id"], parent["id"]);
     assert_eq!(recreated["entities"][0]["id"], entity_id);
 }
@@ -662,9 +701,7 @@ async fn goal_field_and_condition_limits_are_enforced() {
         json!({ "level": "goal", "title": "T", "purpose": "P", "chapter_from": 3, "chapter_to": 2 }),
         json!({ "level": "goal", "title": "T", "purpose": "P", "conditions": (0..11).map(|i| json!({ "kind": "chapter_at_least", "chapter": i + 1 })).collect::<Vec<_>>() }),
     ] {
-        let (status, response) = app
-            .post(&format!("/api/books/{book_id}/goals"), body)
-            .await;
+        let (status, response) = app.post(&format!("/api/books/{book_id}/goals"), body).await;
         assert_eq!(status, 400, "invalid goal accepted: {response}");
         assert_error(&response, "validation.failed");
     }
