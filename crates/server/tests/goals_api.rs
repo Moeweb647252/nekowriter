@@ -137,9 +137,7 @@ async fn closing_a_node_needs_confirmation_for_open_descendants() {
 }
 
 async fn changes_for(app: &TestApp, book_id: i32, target_id: i32) -> Vec<Value> {
-    let (status, body) = app
-        .get(&format!("/api/books/{book_id}/changes?target_type=goal"))
-        .await;
+    let (status, body) = app.get(&format!("/api/books/{book_id}/changes")).await;
     assert_eq!(status, 200, "changes: {body}");
     body["items"]
         .as_array()
@@ -528,4 +526,159 @@ async fn a_deleted_goal_id_is_not_reused() {
         first_id,
         "a deleted goal id must not be reused"
     );
+}
+
+#[tokio::test]
+async fn update_revert_falls_back_when_the_parent_leaves_the_scope() {
+    let app = TestApp::new().await;
+    let book = app.create_book("Parent fallback").await;
+    let book_id = book["id"].as_i64().expect("book") as i32;
+    let (_, tracks) = app.get(&format!("/api/books/{book_id}/tracks")).await;
+    let main_track = tracks[0]["id"].as_i64().unwrap() as i32;
+    let (_, side) = app
+        .post(
+            &format!("/api/books/{book_id}/tracks"),
+            json!({ "title": "Side", "synopsis": "", "canon_mode": "isolated", "anchor_kind": "before_start" }),
+        )
+        .await;
+    let side_track = side["id"].as_i64().unwrap() as i32;
+    let parent = create_node(&app, book_id, json!({ "level": "goal", "title": "Parent", "purpose": "P" })).await;
+    let child = create_node(
+        &app,
+        book_id,
+        json!({ "level": "plan", "parent_id": parent["id"], "title": "Child", "purpose": "P" }),
+    )
+    .await;
+    let (status, _) = app
+        .patch(&format!("/api/goals/{}", child["id"]), json!({ "title": "Changed" }))
+        .await;
+    assert_eq!(status, 200);
+    let _ = main_track;
+    app.execute(&format!(
+        "UPDATE goal_nodes SET track_id = {side_track} WHERE id = {}",
+        parent["id"]
+    ))
+    .await;
+    let update_change = changes_for(&app, book_id, child["id"].as_i64().unwrap() as i32)
+        .await
+        .into_iter()
+        .find(|change| change["op"] == "update")
+        .expect("child update");
+    let (status, body) = app
+        .post(&format!("/api/changes/{}/revert", update_change["id"]), json!({}))
+        .await;
+    assert_eq!(status, 200, "parent fallback: {body}");
+    let list = get(&app, book_id).await;
+    let restored = list.iter().find(|row| row["id"] == child["id"]).expect("child");
+    assert_eq!(restored["parent_id"], Value::Null);
+}
+
+#[tokio::test]
+async fn update_revert_restores_done_without_open_children_confirmation() {
+    let app = TestApp::new().await;
+    let book = app.create_book("Restore done").await;
+    let book_id = book["id"].as_i64().expect("book") as i32;
+    let goal = create_node(&app, book_id, json!({ "level": "goal", "title": "G", "purpose": "P" })).await;
+    create_node(
+        &app,
+        book_id,
+        json!({ "level": "plan", "parent_id": goal["id"], "title": "Open", "purpose": "P" }),
+    )
+    .await;
+    let (status, _) = app
+        .patch(
+            &format!("/api/goals/{}", goal["id"]),
+            json!({ "status": "done", "confirm_open_children": true }),
+        )
+        .await;
+    assert_eq!(status, 200);
+    let (status, _) = app
+        .patch(&format!("/api/goals/{}", goal["id"]), json!({ "title": "Done title" }))
+        .await;
+    assert_eq!(status, 200);
+    let update_change = changes_for(&app, book_id, goal["id"].as_i64().unwrap() as i32)
+        .await
+        .into_iter()
+        .find(|change| change["op"] == "update")
+        .expect("done update");
+    let (status, body) = app
+        .post(&format!("/api/changes/{}/revert", update_change["id"]), json!({}))
+        .await;
+    assert_eq!(status, 200, "restore done: {body}");
+    let list = get(&app, book_id).await;
+    let restored = list.iter().find(|row| row["id"] == goal["id"]).expect("goal");
+    assert_eq!(restored["status"], "done");
+}
+
+#[tokio::test]
+async fn delete_revert_keeps_a_surviving_parent_and_link() {
+    let app = TestApp::new().await;
+    let book = app.create_book("Delete recreate").await;
+    let book_id = book["id"].as_i64().expect("book") as i32;
+    let entity = app
+        .post(
+            &format!("/api/books/{book_id}/entities"),
+            json!({ "kind": "character", "name": "Linked", "summary": "" }),
+        )
+        .await
+        .1;
+    let entity_id = entity["id"].as_i64().unwrap() as i32;
+    let parent = create_node(&app, book_id, json!({ "level": "goal", "title": "P", "purpose": "P" })).await;
+    let child = create_node(
+        &app,
+        book_id,
+        json!({ "level": "plan", "parent_id": parent["id"], "title": "C", "purpose": "P", "entity_ids": [entity_id] }),
+    )
+    .await;
+    let (status, _) = app.delete(&format!("/api/goals/{}", child["id"])).await;
+    assert_eq!(status, 204);
+    let delete_change = changes_for(&app, book_id, child["id"].as_i64().unwrap() as i32)
+        .await
+        .into_iter()
+        .find(|change| change["op"] == "delete")
+        .expect("child delete");
+    let (status, body) = app
+        .post(&format!("/api/changes/{}/revert", delete_change["id"]), json!({}))
+        .await;
+    assert_eq!(status, 200, "delete revert: {body}");
+    let list = get(&app, book_id).await;
+    let recreated = list.iter().find(|row| row["title"] == "C").expect("recreated");
+    assert_eq!(recreated["parent_id"], parent["id"]);
+    assert_eq!(recreated["entities"][0]["id"], entity_id);
+}
+
+#[tokio::test]
+async fn goal_field_and_condition_limits_are_enforced() {
+    let app = TestApp::new().await;
+    let book = app.create_book("Limits").await;
+    let book_id = book["id"].as_i64().expect("book") as i32;
+    let long_title = "x".repeat(121);
+    let long_purpose = "x".repeat(1001);
+    for body in [
+        json!({ "level": "goal", "title": long_title, "purpose": "P" }),
+        json!({ "level": "goal", "title": "T", "purpose": long_purpose }),
+        json!({ "level": "goal", "title": "\u{3000}", "purpose": "P" }),
+        json!({ "level": "goal", "title": "T", "purpose": "P", "status": "waiting" }),
+        json!({ "level": "goal", "title": "T", "purpose": "P", "chapter_from": 3, "chapter_to": 2 }),
+        json!({ "level": "goal", "title": "T", "purpose": "P", "conditions": (0..11).map(|i| json!({ "kind": "chapter_at_least", "chapter": i + 1 })).collect::<Vec<_>>() }),
+    ] {
+        let (status, response) = app
+            .post(&format!("/api/books/{book_id}/goals"), body)
+            .await;
+        assert_eq!(status, 400, "invalid goal accepted: {response}");
+        assert_error(&response, "validation.failed");
+    }
+    let duplicate = create_node(
+        &app,
+        book_id,
+        json!({
+            "level": "goal", "title": "T", "purpose": "P", "status": "waiting",
+            "conditions": [
+                { "kind": "chapter_at_least", "chapter": 1 },
+                { "kind": "chapter_at_least", "chapter": 1 }
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(duplicate["conditions"].as_array().unwrap().len(), 1);
 }

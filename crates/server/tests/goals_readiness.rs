@@ -29,7 +29,6 @@ async fn chapter_at_least_and_foreshadowing_conditions_become_ready_without_refr
     let (book_id, track_id) = book_with_main(&app).await;
     let chapter = app.create_chapter(track_id, "One").await;
     let chapter_id = chapter["id"].as_i64().expect("chapter") as i32;
-    app.set_chapter_status(chapter_id, "official").await;
     app.execute(&format!(
         "INSERT INTO foreshadowing(id, book_id, track_id, title, description, planned_payoff, 
          status, planted_chapter_id, resolved_chapter_id, resolution, importance, created_at, 
@@ -54,9 +53,20 @@ async fn chapter_at_least_and_foreshadowing_conditions_become_ready_without_refr
         .iter()
         .find(|row| row["id"] == goal["id"])
         .expect("goal");
-    assert_eq!(row["conditions"][0]["satisfied"], true);
+    assert_eq!(
+        row["conditions"][0]["satisfied"], false,
+        "a draft chapter is not approved"
+    );
     assert_eq!(row["conditions"][1]["broken"], false);
     assert_eq!(row["ready"], false, "the hook is still open");
+
+    app.set_chapter_status(chapter_id, "official").await;
+    let list = get(&app, book_id).await;
+    let row = list
+        .iter()
+        .find(|row| row["id"] == goal["id"])
+        .expect("goal");
+    assert_eq!(row["conditions"][0]["satisfied"], true);
 
     app.execute("UPDATE foreshadowing SET status = 'resolved' WHERE id = 1")
         .await;
