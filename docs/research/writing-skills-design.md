@@ -4,8 +4,8 @@ Status: **locked for implementation** (revision 4).
 Revision 4 records the author's final ruling on the last open decision: **option 2 — the prose
 bullets are removed from `writer.system` now**, accepting that a book has no prose rules until the
 author writes and selects their own skill. The upgrade concern is moot: there are no existing books
-(two throwaway test books, zero prompt overrides). Built-in skills are **read-only** and their bodies
-ship **empty**; the author creates their own.
+(two throwaway test books, zero prompt overrides). Built-in skills are **read-only**; the first
+body ships via migration `0007` (D-156), and the author creates any additional skills.
 
 ---
 
@@ -57,7 +57,7 @@ Rulings (revision 3):
 | Fields | a **category** field and an **author** field; **no fixed categories** |
 | Storage | **B** — bodies in the database; the prompt pack is the seed source for built-in rows |
 | Injection | **full**, not on-demand |
-| Built-in content | **bodies ship empty**; built-ins are **read-only** |
+| Built-in content | **the first body ships via `0007` (D-156)**; built-ins stay **read-only** |
 | User content | **the author can create their own skills** |
 | Import/export | out of scope |
 | System prompt | **Option A, applied now** — the six prose bullets leave `writer.system` in this change; the two workflow bullets and the two format bullets stay |
@@ -138,15 +138,15 @@ out of stored `writer.system` overrides) is **not needed and is dropped**. It mu
 
 ### 4.2 Reconciler — deferred
 
-**Do not build the startup reconciler in this change.** Built-in bodies are empty, so there is
-nothing to reconcile; a startup mutation with no payoff is pure risk (it would run on every boot
-against every database for no visible effect).
+**Do not build the startup reconciler in this change.** The first built-in body now ships in
+migration `0007` (D-156), so there is still no startup mutation to perform; a reconciler remains
+deferred until a second built-in body or a pack-driven seed needs one.
 
-The `basic-writing` row is seeded **by the migration**, with an empty body. When a built-in body is
-first shipped, that change must either seed it in its own migration or introduce the reconciler
-described in the review (insert-if-missing, update only `author = 'builtin'` rows, `retired = 1` for
-removed entries, never delete, never touch `book_writing_skills`, run inside `Db::write` after the
-pack loads). Record this in the decision entry so the debt is visible.
+The `basic-writing` row is seeded **by migration `0005`**, with an empty body, and migration `0007`
+fills that body (D-156). A future built-in body must either ship in its own migration or introduce
+the reconciler described in the review (insert-if-missing, update only `author = 'builtin'` rows,
+`retired = 1` for removed entries, never delete, never touch `book_writing_skills`, run inside
+`Db::write` after the pack loads). Record this in the decision entry so the debt is visible.
 
 ---
 
@@ -229,8 +229,9 @@ kickoff that alone crosses the context threshold. The plan must state the full b
 - Skill bodies and chapter texts are wrapped in **XML-style tags** (spec/09 §5.8):
   `<writing_skill name="…" category="…">…</writing_skill>`,
   `<chapter_text number="…" title="…">…</chapter_text>`.
-- If zero skills are selected — the normal case while built-ins are empty — the block renders blank
-  and `assemble_kickoff` drops it. Same for recent chapters when none are eligible.
+- If zero skills are selected — the normal case because the shipped built-in is not selected by
+  default — the block renders blank and `assemble_kickoff` drops it. Same for recent chapters when
+  none are eligible.
 - The skill block states that a body is **instruction text about how to write, not a document about
   the book**, so it is never mistaken for canon.
 - **Keep the chapter summaries.** They are condensed accounts, not copies of the text; dropping them
@@ -321,7 +322,8 @@ renders and name the chapters injected in full.
 
 ## 10. Cost
 
-With the built-in body empty, the only cost in this change is the recent chapters, N = 2:
+With the shipped built-in not selected by default, the only cost in this change is the recent
+chapters, N = 2:
 
 | item | characters |
 |---|---|
@@ -368,7 +370,8 @@ own length on top; the selection UI shows the running total.
 ## 13. Resolved from earlier reviews
 
 1. **Skills block placement** — right after settings, for stable-first ordering, not caching.
-2. **Removing the prose section** — deferred, because built-in bodies ship empty (§5, §14).
+2. **Removing the prose section** — deferred in this change, when built-in bodies were empty;
+   D-156 later filled the first body (§5, §14).
 3. **Reviewer gets skills** — yes; otherwise it grades without the standard the writer had and sends
    contradictory feedback. The reviewer prompt must not grade checklist-style.
 4. **Chapters over the cap** — keep the ending, cut from the front at a paragraph boundary.
@@ -387,7 +390,7 @@ own length on top; the selection UI shows the running total.
 consequence — a book has no prose style rules until the author writes and selects a skill — must be
 recorded in the decision entry.
 
-**Built-in bodies are empty and read-only; user skills are author-created.** The reconciler is
-deferred until a built-in body exists (§4.2).
+**The first built-in body ships in `0007`; built-ins stay read-only, and user skills are
+author-created.** The reconciler remains deferred (§4.2).
 
 This document is locked; implementation follows.

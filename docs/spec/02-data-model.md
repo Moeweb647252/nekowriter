@@ -79,8 +79,11 @@
   leaves a byte-identical, retryable pre-0006 database. Nothing is back-filled: `BookSettings` and
   `book_defaults` without `canon_systems` load with all five systems on (§4), and sessions created
   before 0006 have `canon_systems = NULL`, which means all on.
+  `0007_builtin_basic_writing.sql` (D-156) fills the first built-in body with one `UPDATE` keyed
+  by `key = 'basic-writing'`; it works for both fresh databases and existing ones, and never
+  touches user rows or `book_writing_skills`.
 
-## 2. Schema (0001_init.sql, upgraded by 0002_research_deferred.sql, 0003, 0004, 0005 and 0006)
+## 2. Schema (0001_init.sql, upgraded by 0002_research_deferred.sql, 0003, 0004, 0005, 0006 and 0007)
 
 ```sql
 -- ───────────────────────────── App configuration ─────────────────────────────
