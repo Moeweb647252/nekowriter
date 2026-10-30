@@ -38,6 +38,7 @@ export default function MemoryPage() {
     )
   }
   const snapshot = memory.data.snapshot
+  const systems = memory.data.systems
 
   return (
     <div className="mx-auto max-w-6xl space-y-4 p-6">
@@ -174,6 +175,7 @@ export default function MemoryPage() {
           )}
         </MemoryColumn>
 
+        {systems.entities ? (
         <MemoryColumn title={t("canon:memory_mid_term", { count: snapshot.window_mid })}>
           <p className="text-[0.65rem] text-muted-foreground">
             {t("canon:memory_recent_changes")}
@@ -218,9 +220,10 @@ export default function MemoryPage() {
             </>
           )}
         </MemoryColumn>
+        ) : null}
 
         <MemoryColumn title={t("canon:memory_long_term")}>
-          {snapshot.key_notes.length === 0 ? null : (
+          {systems.memory && snapshot.key_notes.length !== 0 ? (
             <>
               <p className="text-[0.65rem] text-muted-foreground">
                 {t("canon:memory_key_notes")}
@@ -233,8 +236,8 @@ export default function MemoryPage() {
                 ))}
               </ul>
             </>
-          )}
-          {snapshot.open_foreshadowing.length === 0 ? null : (
+          ) : null}
+          {!systems.foreshadowing || snapshot.open_foreshadowing.length === 0 ? null : (
             <>
               <p className="mt-2 text-[0.65rem] text-muted-foreground">
                 {t("canon:memory_open_foreshadowing")}
@@ -251,36 +254,44 @@ export default function MemoryPage() {
               </ul>
             </>
           )}
-          <p className="mt-2 text-[0.65rem] text-muted-foreground">{t("canon:memory_cast")}</p>
-          <ul className="space-y-0.5 text-xs">
-            {snapshot.cast.map((item) => (
-              <li key={item.id}>
-                #{item.id} {item.name}【{t(`canon:kind.${item.kind}`)}】
-                {item.summary === "" ? "" : ` — ${item.summary}`}
-              </li>
-            ))}
-          </ul>
-          <p className="mt-2 text-[0.65rem] text-muted-foreground">
-            {t("canon:memory_counts", {
-              character: snapshot.counts.character,
-              organization: snapshot.counts.organization,
-              location: snapshot.counts.location,
-              item: snapshot.counts.item,
-              other: snapshot.counts.other,
-              event: snapshot.counts.event,
-              fact: snapshot.counts.fact,
-              world_rule: snapshot.counts.world_rule,
-              foreshadowing_open: snapshot.counts.foreshadowing_open,
-            })}
-          </p>
+          {systems.entities ? (
+            <>
+              <p className="mt-2 text-[0.65rem] text-muted-foreground">
+                {t("canon:memory_cast")}
+              </p>
+              <ul className="space-y-0.5 text-xs">
+                {snapshot.cast.map((item) => (
+                  <li key={item.id}>
+                    #{item.id} {item.name}【{t(`canon:kind.${item.kind}`)}】
+                    {item.summary === "" ? "" : ` — ${item.summary}`}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 text-[0.65rem] text-muted-foreground">
+                {t("canon:memory_counts", {
+                  character: snapshot.counts.character,
+                  organization: snapshot.counts.organization,
+                  location: snapshot.counts.location,
+                  item: snapshot.counts.item,
+                  other: snapshot.counts.other,
+                  event: snapshot.counts.event,
+                  fact: snapshot.counts.fact,
+                  world_rule: snapshot.counts.world_rule,
+                  foreshadowing_open: snapshot.counts.foreshadowing_open,
+                })}
+              </p>
+            </>
+          ) : null}
         </MemoryColumn>
       </div>
 
-      <section>
-        <h2 className="mb-1 text-sm font-medium">{t("canon:notes")}</h2>
-        <p className="mb-2 text-xs text-muted-foreground">{t("canon:notes_hint")}</p>
-        <NotesTable bookId={bookId} />
-      </section>
+      {systems.memory ? (
+        <section>
+          <h2 className="mb-1 text-sm font-medium">{t("canon:notes")}</h2>
+          <p className="mb-2 text-xs text-muted-foreground">{t("canon:notes_hint")}</p>
+          <NotesTable bookId={bookId} />
+        </section>
+      ) : null}
 
       <section>
         <h2 className="mb-2 text-sm font-medium">{t("canon:memory_rendered")}</h2>

@@ -46,7 +46,7 @@ import enKnowledge from "@/i18n/locales/en/knowledge.json"
 import enPrompts from "@/i18n/locales/en/prompts.json"
 import enSettings from "@/i18n/locales/en/settings.json"
 
-import { QuickSwitch, bookIdOf } from "./QuickSwitch"
+import { QuickSwitch, bookIdOf, bookPages } from "./QuickSwitch"
 
 /**
  * Two books, one still in conception. `useBooks()` is called with **no status filter** — the server
@@ -122,6 +122,20 @@ const CHAPTERS: ChapterListItemDto[] = [
 // the component under test keeps its own wiring (`useQueries`, `bookIdOf`, navigation).
 vi.mock("@/api/hooks/books", () => ({
   useBooks: () => ({ data: BOOKS, isPending: false, isError: false }),
+  useBook: (bookId: number) => ({
+    data: {
+      id: bookId,
+      settings: {
+        canon_systems: {
+          entities: true,
+          timeline: true,
+          memory: true,
+          foreshadowing: true,
+          goals: true,
+        },
+      },
+    },
+  }),
 }))
 
 vi.mock("@/api/hooks/tracks", () => ({
@@ -383,5 +397,26 @@ describe("the ⌘K / Ctrl+K shortcut in the app shell", () => {
     })
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument()
+  })
+})
+
+
+describe("canon switch filtering of the page list", () => {
+  it("hides exactly the canon pages whose system is off", () => {
+    const t = (key: string) => key
+    const pages = bookPages(t, 1, {
+      entities: false,
+      timeline: true,
+      memory: false,
+      foreshadowing: true,
+      goals: false,
+    })
+    const routes = pages.map((page) => page.to)
+    expect(routes).not.toContain("/books/1/canon/entities")
+    expect(routes).not.toContain("/books/1/canon/memory")
+    expect(routes).toContain("/books/1/canon/timeline")
+    expect(routes).toContain("/books/1/canon/foreshadowing")
+    expect(routes).toContain("/books/1/canon/changes")
+    expect(routes).toContain("/books/1/proposals")
   })
 })

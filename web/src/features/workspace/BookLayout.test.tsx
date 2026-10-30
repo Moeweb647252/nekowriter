@@ -21,7 +21,11 @@ import { render, screen } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { describe, expect, it, vi } from "vitest"
 
-const state = vi.hoisted(() => ({ pathname: "/books/1/conception" }))
+const state = vi.hoisted(() => ({
+  pathname: "/books/1/conception",
+  systems: { entities: true, timeline: true, memory: true, foreshadowing: true, goals: true },
+}))
+const patchMutate = vi.hoisted(() => vi.fn())
 
 /**
  * The shell the layout hands its routed pages. It is captured rather than mocked: the overview's
@@ -61,10 +65,19 @@ vi.mock("@/api/events", () => ({
 
 vi.mock("@/api/hooks/books", () => ({
   useBook: () => ({
-    data: { id: 1, title: "青云劫", status: "conceiving", settings: { granularity: "paragraph" } },
+    data: {
+      id: 1,
+      title: "青云劫",
+      status: "conceiving",
+      settings: {
+        granularity: "paragraph",
+        canon_systems: state.systems,
+      },
+    },
     isPending: false,
     isError: false,
   }),
+  usePatchBook: () => ({ mutate: patchMutate, isPending: false }),
 }))
 
 import BookLayout, { isConceptionStudio } from "@/features/workspace/BookLayout"
@@ -189,5 +202,34 @@ describe("the workspace shell handed to routed pages (D-135)", () => {
     // hint would say "collapsed" on a fresh workspace, which is the case the report is about.
     expect(provided.agentPanelCollapsed).toBe(false)
     view.unmount()
+  })
+})
+
+
+describe("disabled-system page banner", () => {
+  it("shows the off banner and turns the system on through the settings save", async () => {
+    state.pathname = "/books/1/canon/entities"
+    state.systems = {
+      entities: false,
+      timeline: true,
+      memory: true,
+      foreshadowing: true,
+      goals: true,
+    }
+    patchMutate.mockClear()
+    renderLayout()
+    expect(
+      screen.getByText("This system is off for this book: agents neither read nor maintain it."),
+    ).toBeInTheDocument()
+    const user = await import("@testing-library/user-event").then((module) => module.default.setup())
+    await user.click(screen.getByRole("button", { name: "Turn on" }))
+    expect(patchMutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        settings: expect.objectContaining({
+          canon_systems: expect.objectContaining({ entities: true }),
+        }),
+      }),
+      expect.anything(),
+    )
   })
 })

@@ -72,7 +72,16 @@ import type { ChapterListItemDto } from "@/api/gen/ChapterListItemDto"
 import { Navigator } from "@/features/workspace/Navigator"
 
 /** A book in `status`. */
-function book(status: BookDto["status"]): BookDto {
+function book(
+  status: BookDto["status"],
+  systems: BookDto["settings"]["canon_systems"] = {
+    entities: true,
+    timeline: true,
+    memory: true,
+    foreshadowing: true,
+    goals: true,
+  },
+): BookDto {
   return {
     id: 1,
     title: "青云劫",
@@ -90,7 +99,7 @@ function book(status: BookDto["status"]): BookDto {
       recent_chapter_count: 2,
       midterm_window: 10,
       auto_maintenance: true,
-      canon_systems: { entities: true, timeline: true, memory: true, foreshadowing: true, goals: true },
+      canon_systems: systems,
     },
     model_overrides: {},
     conception: { status: "none", revision: 0, topics: [], characters: [] },
@@ -120,8 +129,11 @@ function chapter(
 }
 
 /** Renders the navigator for one book. */
-function renderNavigator(status: BookDto["status"] = "active") {
-  return render(<Navigator book={book(status)} />)
+function renderNavigator(
+  status: BookDto["status"] = "active",
+  systems?: BookDto["settings"]["canon_systems"],
+) {
+  return render(<Navigator book={book(status, systems)} />)
 }
 
 /** Opens the `…` menu of the chapter numbered `number` and returns its Delete item. */
@@ -381,5 +393,24 @@ describe("creating a chapter needs an active book", () => {
 
     await userEvent.setup().click(button)
     expect(state.createMutate).toHaveBeenCalledTimes(1)
+  })
+})
+
+
+describe("canon switch navigation", () => {
+  it("hides the canon entries whose systems are off but keeps Changes and Proposals", () => {
+    const { container } = renderNavigator("active", {
+      entities: false,
+      timeline: true,
+      memory: false,
+      foreshadowing: true,
+      goals: true,
+    })
+    expect(container.querySelector('a[href="/books/1/canon/entities"]')).toBeNull()
+    expect(container.querySelector('a[href="/books/1/canon/memory"]')).toBeNull()
+    expect(container.querySelector('a[href="/books/1/canon/timeline"]')).not.toBeNull()
+    expect(container.querySelector('a[href="/books/1/canon/foreshadowing"]')).not.toBeNull()
+    expect(container.querySelector('a[href="/books/1/canon/changes"]')).not.toBeNull()
+    expect(container.querySelector('a[href="/books/1/proposals"]')).not.toBeNull()
   })
 })

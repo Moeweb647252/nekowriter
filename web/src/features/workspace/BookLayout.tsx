@@ -11,6 +11,8 @@ import { keys } from "@/api/keys"
 import { AgentPanel } from "@/features/agent/AgentPanel"
 import { BookBreadcrumb } from "@/features/workspace/BookBreadcrumb"
 import { Navigator } from "@/features/workspace/Navigator"
+import { SystemOffBanner } from "@/features/canon/SystemOffBanner"
+import { canonPageSystem } from "@/features/workspace/canonVisibility"
 import type { BookShell } from "@/features/workspace/shell"
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -46,6 +48,7 @@ export default function BookLayout() {
   // The conception studio is full width: the agent panel is collapsed by default there, because
   // the studio's own conversation pane is the agent panel (PROJECT §8.7, spec/11 §5.4).
   const isConception = isConceptionStudio(location.pathname)
+  const canonSystem = canonPageSystem(location.pathname)
 
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
     id: LAYOUT_ID,
@@ -157,6 +160,9 @@ export default function BookLayout() {
             >
               <PanelLeft />
             </Button>
+            {canonSystem === null ? null : (
+              <SystemOffBanner book={book.data} system={canonSystem} />
+            )}
             <Outlet context={shell} />
           </div>
         </ResizablePanel>

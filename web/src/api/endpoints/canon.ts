@@ -3,6 +3,7 @@ import { api } from "@/api/client"
 import type { AppearanceDto } from "@/api/gen/AppearanceDto"
 import type { AppearanceInput } from "@/api/gen/AppearanceInput"
 import type { ChangeDto } from "@/api/gen/ChangeDto"
+import type { CanonCountsDto } from "@/api/gen/CanonCountsDto"
 import type { ChangePageDto } from "@/api/gen/ChangePageDto"
 import type { EntityDto } from "@/api/gen/EntityDto"
 import type { EntityInput } from "@/api/gen/EntityInput"
@@ -244,4 +245,10 @@ export function listChanges(bookId: number, params: ChangeQueryParams = {}): Pro
 
 export function revertChange(changeId: number, input: RevertInput = {}): Promise<ChangeDto> {
   return api.post<ChangeDto>(`/changes/${changeId}/revert`, input)
+}
+
+
+/** `GET /books/:id/canon/counts` (spec/10 §2.4): retained rows per canon system. */
+export function getCanonCounts(bookId: number): Promise<CanonCountsDto> {
+  return api.get<CanonCountsDto>(`/books/${bookId}/canon/counts`)
 }

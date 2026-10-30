@@ -11,11 +11,12 @@ import { useLocation, useNavigate } from "react-router"
 import { useTranslation } from "react-i18next"
 import { BookOpen, FileText } from "lucide-react"
 
+import type { CanonSystems } from "@/api/gen/CanonSystems"
 import type { ChapterListItemDto } from "@/api/gen/ChapterListItemDto"
 import type { TrackDto } from "@/api/gen/TrackDto"
 import { keys } from "@/api/keys"
 import * as trackEndpoints from "@/api/endpoints/tracks"
-import { useBooks } from "@/api/hooks/books"
+import { useBook, useBooks } from "@/api/hooks/books"
 import { useTracks } from "@/api/hooks/tracks"
 import {
   CommandDialog,
@@ -27,14 +28,18 @@ import {
   CommandSeparator,
 } from "@/components/ui/command"
 import { formatChapterLabel } from "@/lib/chapterLabel"
+import {
+  isCanonPageVisible,
+  type CanonPageSystem,
+} from "@/features/workspace/canonVisibility"
 
 type QuickSwitchProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
 }
 
-/** One destination: its label and its route. */
-type Destination = { label: string; to: string }
+/** One destination: its label and its route, plus the canon switch that owns it. */
+type Destination = { label: string; to: string; system?: CanonPageSystem }
 
 /** The book id of the current route, when the route is inside a book. */
 export function bookIdOf(pathname: string): number | null {
@@ -47,20 +52,31 @@ export function bookIdOf(pathname: string): number | null {
 }
 
 /** The current book's pages, in navigator order (spec/11 §5.1). */
-export function bookPages(t: (key: string) => string, bookId: number): Destination[] {
-  return [
+export function bookPages(
+  t: (key: string) => string,
+  bookId: number,
+  systems?: CanonSystems,
+): Destination[] {
+  const pages: Destination[] = [
     { label: t("book:overview"), to: `/books/${bookId}` },
     { label: t("book:conception.title"), to: `/books/${bookId}/conception` },
-    { label: t("book:canon"), to: `/books/${bookId}/canon/entities` },
-    { label: t("canon:timeline"), to: `/books/${bookId}/canon/timeline` },
-    { label: t("canon:memory"), to: `/books/${bookId}/canon/memory` },
-    { label: t("canon:foreshadowing"), to: `/books/${bookId}/canon/foreshadowing` },
+    { label: t("book:entities"), to: `/books/${bookId}/canon/entities`, system: "entities" },
+    { label: t("canon:timeline"), to: `/books/${bookId}/canon/timeline`, system: "timeline" },
+    { label: t("canon:memory"), to: `/books/${bookId}/canon/memory`, system: "memory" },
+    {
+      label: t("canon:foreshadowing"),
+      to: `/books/${bookId}/canon/foreshadowing`,
+      system: "foreshadowing",
+    },
     { label: t("book:changes"), to: `/books/${bookId}/canon/changes` },
     { label: t("book:proposals"), to: `/books/${bookId}/proposals` },
     { label: t("book:knowledge"), to: `/books/${bookId}/knowledge` },
     { label: t("book:prompts"), to: `/books/${bookId}/prompts` },
     { label: t("book:book_settings"), to: `/books/${bookId}/book-settings` },
   ]
+  return systems === undefined
+    ? pages
+    : pages.filter((page) => page.system === undefined || isCanonPageVisible(systems, page.system))
 }
 
 export function QuickSwitch({ open, onOpenChange }: QuickSwitchProps) {
@@ -70,6 +86,7 @@ export function QuickSwitch({ open, onOpenChange }: QuickSwitchProps) {
   const bookId = useMemo(() => bookIdOf(location.pathname), [location.pathname])
 
   const books = useBooks()
+  const book = useBook(bookId ?? 0)
   const tracks = useTracks(bookId ?? 0)
   const chapterQueries = useQueries({
     queries: (tracks.data ?? []).map((track: TrackDto) => ({
@@ -87,7 +104,10 @@ export function QuickSwitch({ open, onOpenChange }: QuickSwitchProps) {
     { label: t("common:prompts"), to: "/prompts" },
     { label: t("common:settings"), to: "/settings" },
   ]
-  const pages = bookId === null ? globalPages : [...globalPages, ...bookPages(t, bookId)]
+  const pages =
+    bookId === null
+      ? globalPages
+      : [...globalPages, ...bookPages(t, bookId, book.data?.settings.canon_systems)]
 
   /** Every chapter of the open book, labelled with its track. */
   const chapters: Destination[] = []

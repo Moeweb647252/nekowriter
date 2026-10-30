@@ -58,6 +58,7 @@ export const keys = {
       ["canon", "foreshadowing", bookId, status ?? "all"] as const,
     memory: (bookId: number, position?: string) =>
       ["canon", "memory", bookId, position ?? "default"] as const,
+    counts: (bookId: number) => ["canon", "counts", bookId] as const,
     appearances: (chapterId: number) =>
       ["canon", "appearances", chapterId] as const,
   },

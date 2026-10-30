@@ -51,6 +51,13 @@ vi.mock("react-router", () => ({
 }))
 
 /** The recent-chapter rows the endpoint returns; a test sets them to render the list. */
+let systems = {
+  entities: true,
+  timeline: true,
+  memory: true,
+  foreshadowing: true,
+  goals: true,
+}
 let memoryRecent: Array<{
   chapter_id: number
   number: number
@@ -63,7 +70,12 @@ let memoryRecent: Array<{
 vi.mock("@/api/hooks/useCanon", () => ({
   useMemory: () => ({
     isPending: false,
-    data: { snapshot: emptySnapshot, rendered: "rendered memory", recent_chapters: memoryRecent },
+    data: {
+      snapshot: emptySnapshot,
+      rendered: "rendered memory",
+      recent_chapters: memoryRecent,
+      systems,
+    },
   }),
   useMemoryNotes: () => ({
     isPending: false,
@@ -101,6 +113,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   memoryRecent = []
+  systems = { entities: true, timeline: true, memory: true, foreshadowing: true, goals: true }
 })
 
 describe("MemoryPage", () => {
@@ -127,5 +140,16 @@ describe("MemoryPage", () => {
 
     expect(screen.getByText("Recent chapters injected in full")).toBeInTheDocument()
     expect(screen.getByText("Chapter 12《Prev》（500 characters）")).toBeInTheDocument()
+  })
+})
+
+
+describe("MemoryPage system sections", () => {
+  it("leaves out the entity and memory sections of disabled systems", () => {
+    systems = { entities: false, timeline: true, memory: false, foreshadowing: true, goals: true }
+    render(<MemoryPage />)
+    expect(screen.queryByText(/Mid-term \(last 10 chapters\)/)).toBeNull()
+    expect(screen.queryByRole("heading", { name: "Memory notes" })).toBeNull()
+    expect(screen.getByText("Short-term")).toBeInTheDocument()
   })
 })

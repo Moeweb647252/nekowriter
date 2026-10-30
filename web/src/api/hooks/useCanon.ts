@@ -284,6 +284,15 @@ export function useMemory(
   })
 }
 
+/** The retained rows of every canon system, shown by Book settings while a switch is off. */
+export function useCanonCounts(bookId: number) {
+  return useQuery({
+    queryKey: keys.canon.counts(bookId),
+    queryFn: () => endpoints.getCanonCounts(bookId),
+    enabled: Number.isFinite(bookId) && bookId > 0,
+  })
+}
+
 // ───────────────────────────── changes ─────────────────────────────
 
 export function useChanges(bookId: number, params: ChangeQueryParams = {}) {

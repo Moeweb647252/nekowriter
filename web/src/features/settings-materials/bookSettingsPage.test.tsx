@@ -31,12 +31,26 @@ let skillRows: WritingSkillDto[]
 let rolesDefaults: Record<string, number | null>
 
 vi.mock("react-router", () => ({
+  Link: ({ children, to }: { children: React.ReactNode; to: string }) => (
+    <a href={to}>{children}</a>
+  ),
   useParams: () => ({ bookId: "1" }),
 }))
 
 vi.mock("@/api/hooks/books", () => ({
   useBook: () => ({ isPending: false, isError: false, data: book }),
   usePatchBook: () => ({ mutate: patchBook, isPending: false }),
+}))
+
+const canonCounts = {
+  entities: { entities: 42, relations: 30, appearances: 120 },
+  timeline: { events: 7 },
+  memory: { notes: 11, summaries: 5 },
+  foreshadowing: { items: 3 },
+  goals: { nodes: 2 },
+}
+vi.mock("@/api/hooks/useCanon", () => ({
+  useCanonCounts: () => ({ isPending: false, isError: false, data: canonCounts }),
 }))
 
 vi.mock("@/api/hooks/app-settings", () => ({
@@ -421,5 +435,38 @@ describe("Book settings › outline approval hint (D-146)", () => {
         "When off, the planner's outline is accepted as soon as it is submitted.",
       ),
     ).toBeInTheDocument()
+  })
+})
+
+describe("canon system switches", () => {
+  it("saves switches with the form and shows retained counts plus View data", async () => {
+    const user = userEvent.setup()
+    render(<BookSettingsPage />)
+    const entities = screen.getByTestId("canon-system-entities")
+    await user.click(within(entities).getByRole("switch"))
+    expect(within(entities).getByText(/42 entities/)).toBeInTheDocument()
+    expect(within(entities).getByRole("link", { name: "View data" })).toHaveAttribute(
+      "href",
+      "/books/1/canon/entities",
+    )
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    expect(patchBook).toHaveBeenCalledTimes(1)
+    expect(patchBook.mock.calls[0][0].settings.canon_systems.entities).toBe(false)
+  })
+
+  it("disables each memory window while its owning system is off", () => {
+    book.settings.canon_systems = {
+      entities: false,
+      timeline: true,
+      memory: false,
+      foreshadowing: true,
+      goals: true,
+    }
+    book.settings.recent_chapter_count = 0
+    render(<BookSettingsPage />)
+    expect(screen.getByLabelText("Recent chapter summaries")).toBeDisabled()
+    expect(screen.getByLabelText("Mid-term window (chapters)")).toBeDisabled()
+    expect(screen.getByLabelText("Recent chapters in full")).not.toBeDisabled()
+    expect(screen.getByText(/Memory is off and recent chapters in full is 0/)).toBeInTheDocument()
   })
 })

@@ -64,6 +64,7 @@ import { DeleteChapterDialog } from "@/features/chapter/DeleteChapterDialog"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { isComposing } from "@/lib/hotkeys"
 import { NewSideStoryDialog } from "@/features/workspace/NewSideStoryDialog"
+import { isCanonPageVisible } from "@/features/workspace/canonVisibility"
 import { cn } from "@/lib/utils"
 
 export type NavigatorProps = {
@@ -192,26 +193,34 @@ export function Navigator({ book }: NavigatorProps) {
         label={t("book:characters")}
       />
       <SectionTitle>{t("book:canon")}</SectionTitle>
-      <NavLink
-        to={`/books/${book.id}/canon/entities`}
-        icon={Users}
-        label={t("book:entities")}
-      />
-      <NavLink
-        to={`/books/${book.id}/canon/timeline`}
-        icon={History}
-        label={t("canon:timeline")}
-      />
-      <NavLink
-        to={`/books/${book.id}/canon/memory`}
-        icon={Brain}
-        label={t("canon:memory")}
-      />
-      <NavLink
-        to={`/books/${book.id}/canon/foreshadowing`}
-        icon={Sparkle}
-        label={t("canon:foreshadowing")}
-      />
+      {isCanonPageVisible(book.settings.canon_systems, "entities") ? (
+        <NavLink
+          to={`/books/${book.id}/canon/entities`}
+          icon={Users}
+          label={t("book:entities")}
+        />
+      ) : null}
+      {isCanonPageVisible(book.settings.canon_systems, "timeline") ? (
+        <NavLink
+          to={`/books/${book.id}/canon/timeline`}
+          icon={History}
+          label={t("canon:timeline")}
+        />
+      ) : null}
+      {isCanonPageVisible(book.settings.canon_systems, "memory") ? (
+        <NavLink
+          to={`/books/${book.id}/canon/memory`}
+          icon={Brain}
+          label={t("canon:memory")}
+        />
+      ) : null}
+      {isCanonPageVisible(book.settings.canon_systems, "foreshadowing") ? (
+        <NavLink
+          to={`/books/${book.id}/canon/foreshadowing`}
+          icon={Sparkle}
+          label={t("canon:foreshadowing")}
+        />
+      ) : null}
       <NavLink
         to={`/books/${book.id}/canon/changes`}
         icon={FileClock}
