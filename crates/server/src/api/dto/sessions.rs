@@ -138,6 +138,15 @@ pub struct MessagePageDto {
     pub next_cursor: Option<String>,
 }
 
+/// One unconsumed author message queued in `agent_inbox` (spec/10 §2.7).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct InboxItemDto {
+    pub id: i32,
+    pub kind: String,
+    pub content: String,
+}
+
 /// `GET /api/sessions/:id` (spec/10 §2.7).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -148,6 +157,8 @@ pub struct SessionSnapshotDto {
     pub messages: Vec<MessageWithCallsDto>,
     /// The tool calls of those messages.
     pub tool_calls: Vec<ToolCallDto>,
+    /// Unconsumed author messages, oldest first.
+    pub inbox: Vec<InboxItemDto>,
     pub inbox_pending: i32,
     /// The frozen system prompt and tool list of the session (spec/03 §1.3).
     pub system_prompt: String,

@@ -48,6 +48,7 @@ function outlineSession(status: string) {
     pause_after_outline: true,
     pause_requested: false,
     held_tool_call_id: status === "held" ? 5 : null,
+    inbox: [],
     inbox_pending: 0,
     error: null,
     retrying: null,

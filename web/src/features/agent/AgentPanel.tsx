@@ -119,6 +119,7 @@ export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: 
   const snapshot = useSession(chosenId)
   const session = snapshot.data?.session ?? chosen
   const messages = snapshot.data?.messages ?? []
+  const inbox = snapshot.data?.inbox ?? []
 
   useSessionToasts(session)
 
@@ -317,7 +318,7 @@ export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: 
           <Loader2 aria-hidden="true" className="size-4 animate-spin text-muted-foreground" />
         </div>
       ) : (
-        <ActivityStream session={session} messages={messages} />
+        <ActivityStream session={session} messages={messages} inbox={inbox} />
       )}
       {snapshot.data !== undefined && snapshot.data.next_cursor !== null ? (
         <div className="border-t px-3 py-1">

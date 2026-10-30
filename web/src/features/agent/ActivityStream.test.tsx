@@ -243,6 +243,43 @@ describe("ActivityStream stick-to-bottom", () => {
     await waitFor(() => expect(scrollCalls.scrollToEnd.length).toBeGreaterThan(0))
   })
 
+  it("renders a queued author row and removes it when the snapshot consumes it", () => {
+    const { rerender } = render(
+      <ActivityStream
+        session={session()}
+        messages={[]}
+        inbox={[{ id: 11, kind: "user_message", content: "steer" }]}
+        paneName="conversation"
+      />,
+    )
+    expect(screen.getByText("steer")).toBeInTheDocument()
+    expect(screen.getByText("Queued · not yet seen by the model")).toBeInTheDocument()
+
+    const persisted = {
+      message: {
+        id: 9,
+        seq: 9,
+        role: "user" as const,
+        kind: "user" as const,
+        blocks: [{ type: "text" as const, text: "steer" }],
+        stop_reason: null,
+        usage: null,
+        created_at: "2026-01-01T00:00:00Z",
+      },
+      tool_calls: [],
+    }
+    rerender(
+      <ActivityStream
+        session={session()}
+        messages={[persisted]}
+        inbox={[]}
+        paneName="conversation"
+      />,
+    )
+    expect(screen.getAllByText("steer")).toHaveLength(1)
+    expect(screen.queryByText("Queued · not yet seen by the model")).toBeNull()
+  })
+
   it("names its pane so the caller can address the scroll container", () => {
     render(
       <ActivityStream session={session()} messages={[message(1)]} paneName="conversation" />,

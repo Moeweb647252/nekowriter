@@ -190,6 +190,7 @@ vi.mock("@/api/endpoints/sessions", () => ({
       session: writerSession(server.status),
       messages: [],
       tool_calls: server.status === "held" ? [heldCall()] : [],
+      inbox: [],
       inbox_pending: 0,
       system_prompt: "",
       tool_names: [],

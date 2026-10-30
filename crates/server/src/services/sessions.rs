@@ -15,8 +15,8 @@ use crate::agent::runner;
 use crate::agent::session::{self, TransitionCause};
 use crate::agent::tools::registry::{initial_phase, role_enum_of_kind, role_of_kind};
 use crate::api::dto::sessions::{
-    DebugEchoDto, MessagePageDto, ResumeInput, SessionAnswerInput, SessionMessageInput,
-    SessionPatch, SessionSnapshotDto,
+    DebugEchoDto, InboxItemDto, MessagePageDto, ResumeInput, SessionAnswerInput,
+    SessionMessageInput, SessionPatch, SessionSnapshotDto,
 };
 use crate::db::entities::{
     agent_inbox, agent_messages, agent_sessions, agent_tool_calls, books, chapters, model_profiles,
@@ -915,12 +915,31 @@ pub async fn snapshot(
                 .collect::<Result<_, _>>()?,
         });
     }
+    // Read the pending rows once so `inbox` and `inbox_pending` describe the same instant; the
+    // runner may consume a row between two separate queries.
+    let pending = agent_inbox::Entity::find()
+        .filter(agent_inbox::COLUMN.session_id.eq(session_id))
+        .filter(agent_inbox::COLUMN.consumed_at.is_null())
+        .order_by_asc(agent_inbox::COLUMN.id)
+        .all(conn)
+        .await?;
+    let inbox_pending = pending.len() as i32;
+    let inbox = pending
+        .into_iter()
+        .filter(|item| item.kind == InboxKind::UserMessage)
+        .map(|item| InboxItemDto {
+            id: item.id,
+            kind: item.kind.as_str().to_owned(),
+            content: item.content,
+        })
+        .collect();
     let tools: Vec<nekowriter_llm::ToolDef> = session.tools.clone().into_inner();
     Ok(SessionSnapshotDto {
         session: session::to_dto(conn, &session, Vec::new()).await?,
         messages: items,
         tool_calls,
-        inbox_pending: session::inbox_pending(conn, session_id).await? as i32,
+        inbox,
+        inbox_pending,
         system_prompt: session.system_prompt.clone(),
         tool_names: tools.into_iter().map(|tool| tool.name).collect(),
         next_cursor: None,

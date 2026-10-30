@@ -141,6 +141,58 @@ async fn a_running_session_accepts_message_and_pause_only() {
         .await;
 }
 
+/// A running session exposes queued steering messages until the runner consumes them (spec/10
+/// §2.7). The snapshot must show the inbox row, then the same text as a persisted user message.
+#[tokio::test]
+async fn a_running_session_snapshot_shows_steering_messages_until_consumed() {
+    let runtime = runtime(vec![
+        nekowriter_llm::mock::ScriptStep::new()
+            .text("first reply")
+            .delay(Duration::from_secs(2)),
+        finish_step(),
+    ])
+    .await;
+    let session_id = runtime.start_debug().await;
+    let (status, body) = runtime
+        .app
+        .post(
+            &format!("/api/sessions/{session_id}/message"),
+            json!({ "text": "steer" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "message while running: {body}");
+
+    let (status, snapshot) = runtime
+        .app
+        .get(&format!("/api/sessions/{session_id}"))
+        .await;
+    assert_eq!(status, StatusCode::OK, "snapshot: {snapshot}");
+    assert_eq!(snapshot["inbox_pending"], 1, "{snapshot}");
+    assert_eq!(snapshot["inbox"][0]["kind"], "user_message", "{snapshot}");
+    assert_eq!(snapshot["inbox"][0]["content"], "steer", "{snapshot}");
+
+    runtime
+        .wait_status(session_id, nekowriter::db::json::SessionStatus::Completed)
+        .await;
+    let (status, snapshot) = runtime
+        .app
+        .get(&format!("/api/sessions/{session_id}"))
+        .await;
+    assert_eq!(status, StatusCode::OK, "consumed snapshot: {snapshot}");
+    assert_eq!(snapshot["inbox"], json!([]), "{snapshot}");
+    assert_eq!(snapshot["inbox_pending"], 0, "{snapshot}");
+    let messages = snapshot["messages"].as_array().expect("messages");
+    assert!(
+        messages.iter().any(|item| {
+            item["message"]["role"] == "user"
+                && item["message"]["blocks"]
+                    .as_array()
+                    .is_some_and(|blocks| blocks.iter().any(|block| block["text"] == "steer"))
+        }),
+        "the steering message became a persisted user message: {snapshot}"
+    );
+}
+
 /// An idle session accepts a message, which starts a runner (spec/03 §3, §6).
 #[tokio::test]
 async fn an_idle_session_starts_on_a_message() {

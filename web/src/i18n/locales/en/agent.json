@@ -89,7 +89,8 @@
     "agent": "Agent",
     "thinking": "Thinking…",
     "typing": "Writing…",
-    "load_older": "Load older messages"
+    "load_older": "Load older messages",
+    "queued": "Queued · not yet seen by the model"
   },
   "message_kind": {
     "kickoff": "Task",

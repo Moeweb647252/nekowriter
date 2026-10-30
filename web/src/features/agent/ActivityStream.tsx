@@ -11,6 +11,7 @@ import { useTranslation } from "react-i18next"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { ChevronRight, Loader2 } from "lucide-react"
 
+import type { InboxItemDto } from "@/api/gen/InboxItemDto"
 import type { MessageDto } from "@/api/gen/MessageDto"
 import type { MessageWithCallsDto } from "@/api/gen/MessageWithCallsDto"
 import type { SessionDto } from "@/api/gen/SessionDto"
@@ -23,6 +24,7 @@ import { cn } from "@/lib/utils"
 export type Row =
   | { kind: "message"; key: string; message: MessageDto; calls: ToolCallDto[] }
   | { kind: "live"; key: string; text: string; reasoning: string }
+  | { kind: "queued"; key: string; item: InboxItemDto }
   | { kind: "divider"; key: string; label: string }
 
 /**
@@ -63,16 +65,19 @@ export function tailSignature(rows: Row[]): string {
       return `message:${last.key}:${last.message.blocks
         .map((block) => block.text.length)
         .join(",")}:${last.calls.map((call) => `${call.id}:${call.status}`).join(",")}`
+    case "queued":
+      return `queued:${last.key}:${last.item.content.length}`
     case "divider":
       return `divider:${last.key}`
   }
 }
 
-/** The rows of the stream: persisted messages plus the live buffers of the current step. */
+/** The rows of the stream: persisted messages, the live buffers of the current step and queued author messages. */
 export function buildRows(
   messages: MessageWithCallsDto[],
   live: { seq: number; text: Record<number, string>; reasoning: Record<number, string> } | undefined,
   t: (key: string) => string,
+  inbox: InboxItemDto[] = [],
 ): Row[] {
   const rows: Row[] = []
   for (const item of messages) {
@@ -90,6 +95,11 @@ export function buildRows(
       rows.push({ kind: "live", key: `live-${live.seq}`, text, reasoning })
     }
   }
+  // The author's steering message is queued in the inbox; the model has not seen it yet, so it
+  // belongs below the persisted history and the current live step.
+  for (const item of inbox) {
+    rows.push({ kind: "queued", key: `q-${item.id}`, item })
+  }
   if (rows.length === 0) {
     rows.push({ kind: "divider", key: "empty", label: t("agent:stream.empty") })
   }
@@ -101,9 +111,12 @@ export function ActivityStream({
   messages,
   pendingPreview,
   paneName,
+  inbox = [],
 }: {
   session: SessionDto
   messages: MessageWithCallsDto[]
+  /** Unconsumed author messages from the session snapshot (spec/10 §2.7). */
+  inbox?: InboxItemDto[]
   /** A rendered line for the tool whose arguments are streaming (spec/03 §12). */
   pendingPreview?: string
   /**
@@ -115,7 +128,7 @@ export function ActivityStream({
 }) {
   const { t } = useTranslation()
   const live = useLiveStore((state) => state.streams[session.id])
-  const rows = useMemo(() => buildRows(messages, live, t), [messages, live, t])
+  const rows = useMemo(() => buildRows(messages, live, t, inbox), [messages, live, t, inbox])
   const tail = tailSignature(rows)
   const parentRef = useRef<HTMLDivElement>(null)
   // The view follows new content until the author scrolls up; it re-pins when they return to the
@@ -212,6 +225,24 @@ function RowView({
   if (row.kind === "divider") {
     return (
       <div className="py-6 text-center text-xs text-muted-foreground">{row.label}</div>
+    )
+  }
+
+  if (row.kind === "queued") {
+    return (
+      <div
+        className={cn(
+          "space-y-1 border-l-2 border-dashed border-muted-foreground/40 pl-2 opacity-70",
+        )}
+      >
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span className="font-medium">{t("agent:stream.author")}</span>
+          <span>{t("agent:stream.queued")}</span>
+        </div>
+        <div className="prose prose-sm max-w-none text-sm whitespace-pre-wrap dark:prose-invert">
+          {row.item.content}
+        </div>
+      </div>
     )
   }
 

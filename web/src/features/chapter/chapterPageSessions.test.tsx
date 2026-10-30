@@ -149,6 +149,7 @@ vi.mock("@/api/endpoints/sessions", () => ({
       session: planner(),
       messages: [],
       tool_calls: [],
+      inbox: [],
       inbox_pending: 0,
       system_prompt: "",
       tool_names: [],

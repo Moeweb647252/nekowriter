@@ -122,7 +122,11 @@ export default function ResearchTaskPage() {
               control.mutate({ sessionId, operation: "abandon" }, { onError: showError })
             }}
           />
-          <ActivityStream session={snapshot.data.session} messages={snapshot.data.messages} />
+          <ActivityStream
+            session={snapshot.data.session}
+            messages={snapshot.data.messages}
+            inbox={snapshot.data.inbox}
+          />
         </div>
       ) : null}
 

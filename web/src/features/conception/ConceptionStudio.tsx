@@ -284,7 +284,12 @@ export default function ConceptionStudio() {
               ) : null}
             </div>
           ) : (
-            <ActivityStream session={session} messages={messages} paneName="conversation" />
+            <ActivityStream
+              session={session}
+              messages={messages}
+              inbox={snapshot.data?.inbox ?? []}
+              paneName="conversation"
+            />
           )}
           {awaitCall === null ? null : awaitCall.name === "ask_user" ? (
             /*

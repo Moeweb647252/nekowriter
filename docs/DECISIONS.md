@@ -3151,3 +3151,20 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   path once built-in bodies start changing. `recent_chapters_context`'s blank-body test now blanks
   the row itself so the "blank body injects nothing" rule stays covered.
 - **Spec**: design §4.2, §5; D-148.
+
+
+### D-157 Queued steering messages are visible in the session stream
+
+- **Context**: `send_message` while a session is running writes only an `agent_inbox` row; the
+  runner converts it into a real `MessageKind::User` message at the next step boundary. The
+  snapshot already exposed `inbox_pending`, but the web client rendered nothing, so the composer
+  cleared and the author could not tell whether the steering message had been sent.
+- **Decision**: add `InboxItemDto { id, kind, content }` and `SessionSnapshotDto.inbox`, holding
+  unconsumed `user_message` inbox rows in arrival order. `ActivityStream` renders them as dimmed,
+  labelled queued rows after the persisted messages and the live buffer, because the model has not
+  seen them yet. The snapshot reads the pending rows once so `inbox` and `inbox_pending` are
+  consistent; the rows disappear when the runner consumes them and the real user message arrives.
+- **Consequences**: the wire type grows and every session panel gains the queued rows. The row is
+  transient by design and must not be duplicated when the real message appears; the server's
+  single pending-row read prevents the count and list from disagreeing during consumption.
+- **Spec**: spec/10 §2.7.

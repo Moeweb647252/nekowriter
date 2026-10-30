@@ -213,6 +213,36 @@ describe("stream rows", () => {
     }
   })
 
+  it("orders queued author messages after persisted messages and the live buffer", () => {
+    const messages: MessageWithCallsDto[] = [
+      {
+        message: {
+          id: 1,
+          seq: 0,
+          role: "user",
+          kind: "kickoff",
+          blocks: [{ type: "text", text: "task" }],
+          stop_reason: null,
+          usage: null,
+          created_at: "2026-01-01T00:00:00Z",
+        },
+        tool_calls: [],
+      },
+    ]
+    const rows = buildRows(
+      messages,
+      { seq: 2, text: { 0: "streaming" }, reasoning: {} },
+      tPlain,
+      [
+        { id: 11, kind: "user_message", content: "steer one" },
+        { id: 12, kind: "user_message", content: "steer two" },
+      ],
+    )
+    expect(rows.map((row) => row.kind)).toEqual(["message", "live", "queued", "queued"])
+    expect(rows[2].kind === "queued" ? rows[2].item.content : "").toBe("steer one")
+    expect(rows[3].kind === "queued" ? rows[3].item.content : "").toBe("steer two")
+  })
+
   it("shows an empty divider when nothing happened yet", () => {
     const rows = buildRows([], undefined, tPlain)
     expect(rows).toHaveLength(1)
