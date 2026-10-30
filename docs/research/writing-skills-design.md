@@ -158,8 +158,8 @@ pack loads). Record this in the decision entry so the debt is visible.
 | `name` | 基础写作 / Basic Writing |
 | `category` | 写作 / Writing |
 | `author` | `builtin` |
-| `body` | **empty** |
-| `enabled_by_default` | `false` (it has no content, so selecting it would do nothing) |
+| `body` | the shipped "老手语感" text (D-156; migration `0007`) |
+| `enabled_by_default` | `false` (a book opts in per book, like every other skill) |
 
 ### 5.1 What happens to `# 正文写作要求` in this change
 

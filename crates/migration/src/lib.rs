@@ -13,6 +13,7 @@ mod m0003_relation_pair_unique;
 mod m0004_outline_sessions;
 mod m0005_writing_skills;
 mod m0006_goals_and_switches;
+mod m0007_builtin_basic_writing;
 
 pub struct Migrator;
 
@@ -26,6 +27,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0004_outline_sessions::Migration),
             Box::new(m0005_writing_skills::Migration),
             Box::new(m0006_goals_and_switches::Migration),
+            Box::new(m0007_builtin_basic_writing::Migration),
         ]
     }
 }

@@ -456,8 +456,11 @@ async fn selecting_only_the_empty_builtin_renders_no_skills_block() {
         .expect("the seeded built-in")["id"]
         .as_i64()
         .expect("id") as i32;
-    // The seeded built-in has `body = ""`: selecting it keeps the selection but injects nothing
-    // (design §5, D-148), so `assemble_kickoff` must drop the blank skills block.
+    // A blank body injects nothing: selecting the skill keeps the selection but the block is
+    // dropped (design §5, D-148). The seeded built-in now ships content (D-156), so blank it here
+    // to keep the rule under test.
+    app.execute("UPDATE writing_skills SET body = '' WHERE key = 'basic-writing'")
+        .await;
     let (status, body) = app
         .put(
             &format!("/api/books/{book_id}/writing-skills"),

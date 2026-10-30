@@ -3132,3 +3132,22 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   searchable picker must preserve the same scope filtering and keep the goal dialog's private-track
   behavior; the dialog tests and this entry are the baseline for that work.
 - **Spec**: spec/11 §5.5; spec/06 §11.2.
+
+### D-156 The first built-in writing-skill body ships in its own migration
+
+- **Context**: D-148 seeded `basic-writing` with a literal empty body and deliberately deferred
+  the startup reconciler (design §4.2), recording that the first real built-in body must either be
+  seeded in its own migration or arrive with the reconciler. The author wrote the first body
+  ("基础写作能力：老手语感", from a 十日终焉 craft pass) and asked for it in the **built-in** skill,
+  not as a user row.
+- **Decision**: migration `0007_builtin_basic_writing` updates the single `basic-writing` row by
+  `key` with the body and its description. It runs inside the migrator's transaction, never touches
+  user rows or `book_writing_skills`, and is idempotent for fresh databases because `0005` seeds the
+  row first. The reconciler stays deferred: one shipped skill does not justify a startup mutation.
+  `enabled_by_default` stays `false`; a book opts in per book like every other skill.
+- **Consequences**: every database gets the body on its next start; an author who already wrote
+  their own skill keeps it alongside. The body lives in SQL, so editing it later needs a new
+  migration — acceptable for built-in content, and the reason the reconciler remains the intended
+  path once built-in bodies start changing. `recent_chapters_context`'s blank-body test now blanks
+  the row itself so the "blank body injects nothing" rule stays covered.
+- **Spec**: design §4.2, §5; D-148.

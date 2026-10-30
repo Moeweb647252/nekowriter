@@ -30,13 +30,19 @@ async fn book(app: &TestApp, title: &str) -> i32 {
 }
 
 #[tokio::test]
-async fn the_migration_seeds_an_empty_read_only_basic_writing_skill() {
+async fn the_migration_seeds_the_read_only_basic_writing_skill() {
     let app = TestApp::new().await;
     let skill = builtin_skill(&app).await;
     assert_eq!(skill["name"], "基础写作 / Basic Writing");
     assert_eq!(skill["category"], "写作 / Writing");
     assert_eq!(skill["author"], "builtin");
-    assert_eq!(skill["body"], "");
+    // The body ships with the first built-in skill (D-156); before that it was empty.
+    let body = skill["body"].as_str().expect("body");
+    assert!(body.starts_with("### 1. 呼吸与落段"), "{body}");
+    assert_eq!(
+        skill["description"],
+        "剥离机器的工整感，用带着企图的观察、错位的对话交锋、单行短句的呼吸节奏与粗粝的生理反馈，写出真人的掌控力。"
+    );
     assert_eq!(skill["enabled_by_default"], false);
     assert_eq!(skill["retired"], false);
     assert_eq!(skill["selected"], false);
