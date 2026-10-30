@@ -21,7 +21,10 @@ use sea_orm::{
 };
 
 use crate::api::dto::tracks::{TrackDto, TrackInput, TrackPatch};
-use crate::db::entities::{appearances, chapters, entities, goal_nodes, tracks};
+use crate::db::entities::{
+    appearances, change_log, chapters, entities, foreshadowing, goal_nodes, memory_notes,
+    relations, timeline_events, tracks,
+};
 use crate::db::json::{AnchorKind, CanonMode, ChapterStatus, EntityKind, TrackKind};
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
@@ -209,20 +212,66 @@ pub async fn update_inner(
                     serde_json::json!({ "canon_mode": current.as_str() }),
                 ));
             }
-            // Canon-mode side tracks have no private nodes (spec/02 §5 invariant 8,
-            // spec/06 §11.2): switching away from isolated would strand them outside shared canon.
+            // Canon-mode side tracks have no private canon (spec/02 §5 invariant 8,
+            // spec/06 §11.2): switching away from isolated would strand those rows outside
+            // shared canon, and goal history is data too (invariant 14).
             if *canon_mode == CanonMode::Canon && current == CanonMode::Isolated {
-                let private_goals = goal_nodes::Entity::find()
+                let private_entities = entities::Entity::find()
+                    .filter(entities::COLUMN.track_id.eq(track_id))
+                    .count(tx)
+                    .await?;
+                let private_relations = relations::Entity::find()
+                    .filter(relations::COLUMN.track_id.eq(track_id))
+                    .count(tx)
+                    .await?;
+                let private_timeline_events = timeline_events::Entity::find()
+                    .filter(timeline_events::COLUMN.track_id.eq(track_id))
+                    .count(tx)
+                    .await?;
+                let private_memory_notes = memory_notes::Entity::find()
+                    .filter(memory_notes::COLUMN.track_id.eq(track_id))
+                    .count(tx)
+                    .await?;
+                let private_foreshadowing = foreshadowing::Entity::find()
+                    .filter(foreshadowing::COLUMN.track_id.eq(track_id))
+                    .count(tx)
+                    .await?;
+                let private_goal_nodes = goal_nodes::Entity::find()
                     .filter(goal_nodes::COLUMN.track_id.eq(track_id))
                     .count(tx)
                     .await?;
-                if private_goals > 0 {
+                let private_goal_changes = change_log::Entity::find()
+                    .filter(change_log::COLUMN.track_id.eq(track_id))
+                    .filter(
+                        change_log::COLUMN
+                            .target_type
+                            .is_in(vec!["goal", "plan", "task"]),
+                    )
+                    .count(tx)
+                    .await?;
+                let total = private_entities
+                    + private_relations
+                    + private_timeline_events
+                    + private_memory_notes
+                    + private_foreshadowing
+                    + private_goal_nodes
+                    + private_goal_changes;
+                if total > 0 {
                     return Err(super::conflict(
                         ErrorCode::TrackModeLocked,
-                        "the track has private goal nodes; its canon mode cannot change",
+                        "the track has private canon rows; its canon mode cannot change",
                         serde_json::json!({
                             "canon_mode": current.as_str(),
-                            "private_goal_nodes": private_goals,
+                            "private_entities": private_entities,
+                            "private_relations": private_relations,
+                            "private_timeline_events": private_timeline_events,
+                            "private_events": private_timeline_events,
+                            "private_memory_notes": private_memory_notes,
+                            "private_notes": private_memory_notes,
+                            "private_foreshadowing": private_foreshadowing,
+                            "private_hooks": private_foreshadowing,
+                            "private_goal_nodes": private_goal_nodes,
+                            "private_goal_changes": private_goal_changes,
                         }),
                     ));
                 }

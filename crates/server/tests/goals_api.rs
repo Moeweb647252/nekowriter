@@ -860,6 +860,23 @@ async fn canon_mode_tracks_cannot_hold_private_goals_and_cannot_switch_with_them
         .await;
     assert_eq!(status, 409, "switch with private goals: {body}");
     assert_error(&body, "track.mode_locked");
+    assert_eq!(body["error"]["details"]["private_goal_nodes"], 1);
+
+    let (_, clean) = app
+        .post(
+            &format!("/api/books/{book_id}/tracks"),
+            json!({ "title": "Clean", "synopsis": "", "canon_mode": "isolated", "anchor_kind": "before_start" }),
+        )
+        .await;
+    let clean_id = clean["id"].as_i64().unwrap() as i32;
+    let (status, body) = app
+        .patch(
+            &format!("/api/tracks/{clean_id}"),
+            json!({ "canon_mode": "canon" }),
+        )
+        .await;
+    assert_eq!(status, 200, "clean switch: {body}");
+    assert_eq!(body["canon_mode"], "canon");
 }
 
 #[tokio::test]
@@ -900,7 +917,16 @@ async fn goal_ids_are_unique_across_levels() {
         json!({ "level": "plan", "parent_id": goal["id"], "title": "P", "purpose": "P" }),
     )
     .await;
+    let task = create_node(
+        &app,
+        book_id,
+        json!({ "level": "task", "parent_id": plan["id"], "title": "T", "purpose": "P" }),
+    )
+    .await;
     let plan_id = plan["id"].as_i64().unwrap();
+    let task_id = task["id"].as_i64().unwrap();
+    let (status, _) = app.delete(&format!("/api/goals/{task_id}")).await;
+    assert_eq!(status, 204);
     let (status, _) = app.delete(&format!("/api/goals/{plan_id}")).await;
     assert_eq!(status, 204);
     let next = create_node(
@@ -910,6 +936,7 @@ async fn goal_ids_are_unique_across_levels() {
     )
     .await;
     assert_ne!(next["id"].as_i64().unwrap(), plan_id);
+    assert_ne!(next["id"].as_i64().unwrap(), task_id);
 }
 
 #[tokio::test]
@@ -979,4 +1006,259 @@ async fn reverting_a_link_removal_does_not_restore_an_invisible_target() {
         .find(|row| row["id"] == goal["id"])
         .expect("goal");
     assert!(row["entities"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn canon_mode_switch_counts_all_private_tables_and_allows_a_clean_track() {
+    let app = TestApp::new().await;
+    let book = app.create_book("All private rows").await;
+    let book_id = book["id"].as_i64().expect("book") as i32;
+    let (_, track) = app
+        .post(
+            &format!("/api/books/{book_id}/tracks"),
+            json!({ "title": "Private", "synopsis": "", "canon_mode": "isolated", "anchor_kind": "before_start" }),
+        )
+        .await;
+    let track_id = track["id"].as_i64().unwrap() as i32;
+    let a = app
+        .post(
+            &format!("/api/books/{book_id}/entities"),
+            json!({ "kind": "character", "name": "A", "summary": "" }),
+        )
+        .await
+        .1;
+    let b = app
+        .post(
+            &format!("/api/books/{book_id}/entities"),
+            json!({ "kind": "character", "name": "B", "summary": "" }),
+        )
+        .await
+        .1;
+    let a_id = a["id"].as_i64().unwrap() as i32;
+    let b_id = b["id"].as_i64().unwrap() as i32;
+    let private_entity = app
+        .post(
+            &format!("/api/books/{book_id}/entities"),
+            json!({ "kind": "character", "name": "Private", "summary": "", "track_id": track_id }),
+        )
+        .await;
+    assert_eq!(
+        private_entity.0, 201,
+        "private entity: {}",
+        private_entity.1
+    );
+    // Timeline, memory, foreshadowing and relation create endpoints are author/shared-only;
+    // private rows are written by an isolated agent session. Insert them directly here so the
+    // guard sees every private table.
+    app.execute(&format!(
+        "INSERT INTO relations(book_id, track_id, source_id, target_id, kind, inverse_kind, \
+         description, status, created_at, updated_at) VALUES \
+         ({book_id}, {track_id}, {a_id}, {b_id}, 'ally', '', '', 'active', \
+          '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+    ))
+    .await;
+    app.execute(&format!(
+        "INSERT INTO timeline_events(book_id, track_id, position, title, created_at, updated_at) \
+         VALUES ({book_id}, {track_id}, 1.0, 'Private event', \
+                 '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+    ))
+    .await;
+    app.execute(&format!(
+        "INSERT INTO memory_notes(book_id, track_id, kind, content, created_at, updated_at) \
+         VALUES ({book_id}, {track_id}, 'fact', 'Private fact', \
+                 '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+    ))
+    .await;
+    app.execute(&format!(
+        "INSERT INTO foreshadowing(book_id, track_id, title, created_at, updated_at) \
+         VALUES ({book_id}, {track_id}, 'Private hook', \
+                 '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+    ))
+    .await;
+    create_node(
+        &app,
+        book_id,
+        json!({ "level": "goal", "title": "Private goal", "purpose": "P", "track_id": track_id }),
+    )
+    .await;
+
+    let (status, body) = app
+        .patch(
+            &format!("/api/tracks/{track_id}"),
+            json!({ "canon_mode": "canon" }),
+        )
+        .await;
+    assert_eq!(status, 409, "private rows: {body}");
+    assert_error(&body, "track.mode_locked");
+    let details = &body["error"]["details"];
+    for key in [
+        "private_entities",
+        "private_relations",
+        "private_timeline_events",
+        "private_memory_notes",
+        "private_foreshadowing",
+        "private_goal_nodes",
+        "private_goal_changes",
+    ] {
+        assert_eq!(details[key], 1, "count {key}: {body}");
+    }
+
+    let (_, clean) = app
+        .post(
+            &format!("/api/books/{book_id}/tracks"),
+            json!({ "title": "Clean", "synopsis": "", "canon_mode": "isolated", "anchor_kind": "before_start" }),
+        )
+        .await;
+    let clean_id = clean["id"].as_i64().unwrap() as i32;
+    let (status, body) = app
+        .patch(
+            &format!("/api/tracks/{clean_id}"),
+            json!({ "canon_mode": "canon" }),
+        )
+        .await;
+    assert_eq!(status, 200, "clean switch: {body}");
+    assert_eq!(body["canon_mode"], "canon");
+}
+
+#[tokio::test]
+async fn canon_mode_switch_refuses_private_goal_history_after_the_node_is_deleted() {
+    let app = TestApp::new().await;
+    let book = app.create_book("Private goal history").await;
+    let book_id = book["id"].as_i64().expect("book") as i32;
+    let (_, track) = app
+        .post(
+            &format!("/api/books/{book_id}/tracks"),
+            json!({ "title": "Private", "synopsis": "", "canon_mode": "isolated", "anchor_kind": "before_start" }),
+        )
+        .await;
+    let track_id = track["id"].as_i64().unwrap() as i32;
+    let goal = create_node(
+        &app,
+        book_id,
+        json!({ "level": "goal", "title": "Private goal", "purpose": "P", "track_id": track_id }),
+    )
+    .await;
+    let (status, _) = app.delete(&format!("/api/goals/{}", goal["id"])).await;
+    assert_eq!(status, 204);
+    let (status, body) = app
+        .patch(
+            &format!("/api/tracks/{track_id}"),
+            json!({ "canon_mode": "canon" }),
+        )
+        .await;
+    assert_eq!(status, 409, "private goal history: {body}");
+    assert_error(&body, "track.mode_locked");
+    assert_eq!(body["error"]["details"]["private_goal_nodes"], 0);
+    assert_eq!(body["error"]["details"]["private_goal_changes"], 2);
+}
+
+#[tokio::test]
+async fn canon_mode_switch_refuses_each_private_table_individually() {
+    let app = TestApp::new().await;
+    let book = app.create_book("Each private table").await;
+    let book_id = book["id"].as_i64().expect("book") as i32;
+    let a = app
+        .post(
+            &format!("/api/books/{book_id}/entities"),
+            json!({ "kind": "character", "name": "A", "summary": "" }),
+        )
+        .await
+        .1;
+    let b = app
+        .post(
+            &format!("/api/books/{book_id}/entities"),
+            json!({ "kind": "character", "name": "B", "summary": "" }),
+        )
+        .await
+        .1;
+    let a_id = a["id"].as_i64().unwrap() as i32;
+    let b_id = b["id"].as_i64().unwrap() as i32;
+    let cases = [
+        ("entities", "private_entities"),
+        ("relations", "private_relations"),
+        ("timeline_events", "private_timeline_events"),
+        ("memory_notes", "private_memory_notes"),
+        ("foreshadowing", "private_foreshadowing"),
+        ("goal_nodes", "private_goal_nodes"),
+        ("goal_changes", "private_goal_changes"),
+    ];
+    for (kind, key) in cases {
+        let (_, track) = app
+            .post(
+                &format!("/api/books/{book_id}/tracks"),
+                json!({ "title": kind, "synopsis": "", "canon_mode": "isolated", "anchor_kind": "before_start" }),
+            )
+            .await;
+        let track_id = track["id"].as_i64().unwrap() as i32;
+        match kind {
+            "entities" => {
+                app.post(
+                    &format!("/api/books/{book_id}/entities"),
+                    json!({ "kind": "character", "name": "Private", "summary": "", "track_id": track_id }),
+                )
+                .await;
+            }
+            "relations" => {
+                app.execute(&format!(
+                    "INSERT INTO relations(book_id, track_id, source_id, target_id, kind, inverse_kind, \
+                     description, status, created_at, updated_at) VALUES \
+                     ({book_id}, {track_id}, {a_id}, {b_id}, 'ally', '', '', 'active', \
+                      '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+                ))
+                .await;
+            }
+            "timeline_events" => {
+                app.execute(&format!(
+                    "INSERT INTO timeline_events(book_id, track_id, position, title, created_at, updated_at) \
+                     VALUES ({book_id}, {track_id}, 1.0, 'E', '2026-01-01T00:00:00Z', \
+                             '2026-01-01T00:00:00Z')"
+                ))
+                .await;
+            }
+            "memory_notes" => {
+                app.execute(&format!(
+                    "INSERT INTO memory_notes(book_id, track_id, kind, content, created_at, updated_at) \
+                     VALUES ({book_id}, {track_id}, 'fact', 'F', '2026-01-01T00:00:00Z', \
+                             '2026-01-01T00:00:00Z')"
+                ))
+                .await;
+            }
+            "foreshadowing" => {
+                app.execute(&format!(
+                    "INSERT INTO foreshadowing(book_id, track_id, title, created_at, updated_at) \
+                     VALUES ({book_id}, {track_id}, 'H', '2026-01-01T00:00:00Z', \
+                             '2026-01-01T00:00:00Z')"
+                ))
+                .await;
+            }
+            "goal_nodes" => {
+                create_node(
+                    &app,
+                    book_id,
+                    json!({ "level": "goal", "title": "G", "purpose": "P", "track_id": track_id }),
+                )
+                .await;
+            }
+            "goal_changes" => {
+                let goal = create_node(
+                    &app,
+                    book_id,
+                    json!({ "level": "goal", "title": "History", "purpose": "P", "track_id": track_id }),
+                )
+                .await;
+                let (status, _) = app.delete(&format!("/api/goals/{}", goal["id"])).await;
+                assert_eq!(status, 204);
+            }
+            _ => unreachable!(),
+        }
+        let (status, body) = app
+            .patch(
+                &format!("/api/tracks/{track_id}"),
+                json!({ "canon_mode": "canon" }),
+            )
+            .await;
+        assert_eq!(status, 409, "{kind}: {body}");
+        let expected = if kind == "goal_changes" { 2 } else { 1 };
+        assert_eq!(body["error"]["details"][key], expected, "{kind}: {body}");
+    }
 }
