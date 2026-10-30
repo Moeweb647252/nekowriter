@@ -15,7 +15,7 @@
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder};
 
 use crate::api::dto::changes::ChangeDto;
-use crate::db::entities::change_log;
+use crate::db::entities::{change_log, tracks};
 use crate::db::json::{ChangeOp, ChangeTargetType, JsonText, Snapshot};
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
@@ -66,6 +66,28 @@ pub async fn revert_inner(
     //    `before` is the target's state before the revert, `after` its state afterwards.
     let before = original.before.clone().map(JsonText::into_inner);
     let after = original.after.clone().map(JsonText::into_inner);
+    // A stale private history row must not land a private row on a track that has already
+    // switched to canon (invariant 8). Refuse the revert rather than re-creating outside scope.
+    if matches!(op, ChangeOp::Update | ChangeOp::Delete)
+        && let Some(track_id) = before.as_ref().and_then(snapshot_track)
+    {
+        let track = tracks::Entity::find_by_id(track_id)
+            .one(tx)
+            .await?
+            .ok_or_else(|| CanonError::not_found(format!("track #{track_id}")))?;
+        if !crate::services::tracks::is_isolated(&track) {
+            return Err(CanonError::App(
+                AppError::new(
+                    ErrorCode::TrackModeLocked,
+                    "a private row cannot be restored on a canon-mode track",
+                )
+                .with_details(serde_json::json!({
+                    "track_id": track_id,
+                    "canon_mode": track.canon_mode.as_str(),
+                })),
+            ));
+        }
+    }
     let write = revert_write(original.book_id, original.track_id)
         .with_chapter(original.chapter_id)
         .as_revert(original.id);

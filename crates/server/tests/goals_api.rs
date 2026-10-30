@@ -1098,9 +1098,10 @@ async fn canon_mode_switch_counts_all_private_tables_and_allows_a_clean_track() 
         "private_memory_notes",
         "private_foreshadowing",
         "private_goal_nodes",
-        "private_goal_changes",
+        "private_change_log",
     ] {
-        assert_eq!(details[key], 1, "count {key}: {body}");
+        let expected = if key == "private_change_log" { 2 } else { 1 };
+        assert_eq!(details[key], expected, "count {key}: {body}");
     }
 
     let (_, clean) = app
@@ -1149,7 +1150,7 @@ async fn canon_mode_switch_refuses_private_goal_history_after_the_node_is_delete
     assert_eq!(status, 409, "private goal history: {body}");
     assert_error(&body, "track.mode_locked");
     assert_eq!(body["error"]["details"]["private_goal_nodes"], 0);
-    assert_eq!(body["error"]["details"]["private_goal_changes"], 2);
+    assert_eq!(body["error"]["details"]["private_change_log"], 2);
 }
 
 #[tokio::test]
@@ -1180,7 +1181,7 @@ async fn canon_mode_switch_refuses_each_private_table_individually() {
         ("memory_notes", "private_memory_notes"),
         ("foreshadowing", "private_foreshadowing"),
         ("goal_nodes", "private_goal_nodes"),
-        ("goal_changes", "private_goal_changes"),
+        ("goal_changes", "private_change_log"),
     ];
     for (kind, key) in cases {
         let (_, track) = app
@@ -1260,5 +1261,96 @@ async fn canon_mode_switch_refuses_each_private_table_individually() {
         assert_eq!(status, 409, "{kind}: {body}");
         let expected = if kind == "goal_changes" { 2 } else { 1 };
         assert_eq!(body["error"]["details"][key], expected, "{kind}: {body}");
+    }
+}
+
+#[tokio::test]
+async fn deleting_a_private_entity_blocks_canon_switch_and_stale_revert() {
+    let app = TestApp::new().await;
+    let book = app.create_book("Deleted private entity").await;
+    let book_id = book["id"].as_i64().expect("book") as i32;
+    let (_, track) = app
+        .post(
+            &format!("/api/books/{book_id}/tracks"),
+            json!({ "title": "Private", "synopsis": "", "canon_mode": "isolated", "anchor_kind": "before_start" }),
+        )
+        .await;
+    let track_id = track["id"].as_i64().unwrap() as i32;
+    let entity = app
+        .post(
+            &format!("/api/books/{book_id}/entities"),
+            json!({ "kind": "character", "name": "Private", "summary": "", "track_id": track_id }),
+        )
+        .await
+        .1;
+    let entity_id = entity["id"].as_i64().unwrap() as i32;
+    let (status, _) = app.delete(&format!("/api/entities/{entity_id}")).await;
+    assert_eq!(status, 204);
+    let delete_change = changes_for(&app, book_id, entity_id)
+        .await
+        .into_iter()
+        .find(|change| change["op"] == "delete" && change["target_type"] == "entity")
+        .expect("entity delete change");
+
+    let (status, body) = app
+        .patch(
+            &format!("/api/tracks/{track_id}"),
+            json!({ "canon_mode": "canon" }),
+        )
+        .await;
+    assert_eq!(status, 409, "deleted private entity history: {body}");
+    assert_eq!(body["error"]["details"]["private_entities"], 0);
+    assert_eq!(body["error"]["details"]["private_change_log"], 2);
+
+    // Simulate a stale pre-fix row: force the track to canon, then try the old delete revert.
+    app.execute(&format!(
+        "UPDATE tracks SET canon_mode = 'canon' WHERE id = {track_id}"
+    ))
+    .await;
+    let (status, body) = app
+        .post(
+            &format!("/api/changes/{}/revert", delete_change["id"]),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, 409, "stale private revert: {body}");
+    assert_error(&body, "track.mode_locked");
+    let (status, _) = app.get(&format!("/api/entities/{entity_id}")).await;
+    assert_eq!(status, 404, "the stale revert must not recreate the row");
+}
+
+#[tokio::test]
+async fn canon_mode_switch_counts_private_change_history_for_every_canon_type() {
+    let app = TestApp::new().await;
+    let book = app.create_book("Private history types").await;
+    let book_id = book["id"].as_i64().expect("book") as i32;
+    for target_type in [
+        "entity",
+        "relation",
+        "timeline_event",
+        "memory_note",
+        "foreshadowing",
+    ] {
+        let (_, track) = app
+            .post(
+                &format!("/api/books/{book_id}/tracks"),
+                json!({ "title": target_type, "synopsis": "", "canon_mode": "isolated", "anchor_kind": "before_start" }),
+            )
+            .await;
+        let track_id = track["id"].as_i64().unwrap() as i32;
+        app.execute(&format!(
+            "INSERT INTO change_log(book_id, track_id, actor, target_type, target_id, op, note, \
+             created_at) VALUES ({book_id}, {track_id}, 'user', '{target_type}', 1, 'create', '', \
+             '2026-01-01T00:00:00Z')"
+        ))
+        .await;
+        let (status, body) = app
+            .patch(
+                &format!("/api/tracks/{track_id}"),
+                json!({ "canon_mode": "canon" }),
+            )
+            .await;
+        assert_eq!(status, 409, "{target_type} history: {body}");
+        assert_eq!(body["error"]["details"]["private_change_log"], 1);
     }
 }

@@ -240,13 +240,10 @@ pub async fn update_inner(
                     .filter(goal_nodes::COLUMN.track_id.eq(track_id))
                     .count(tx)
                     .await?;
-                let private_goal_changes = change_log::Entity::find()
+                // Every private change-log row, not just goal targets: histories of deleted
+                // canon rows are data too, and future target types must be covered by default.
+                let private_change_log = change_log::Entity::find()
                     .filter(change_log::COLUMN.track_id.eq(track_id))
-                    .filter(
-                        change_log::COLUMN
-                            .target_type
-                            .is_in(vec!["goal", "plan", "task"]),
-                    )
                     .count(tx)
                     .await?;
                 let total = private_entities
@@ -255,7 +252,7 @@ pub async fn update_inner(
                     + private_memory_notes
                     + private_foreshadowing
                     + private_goal_nodes
-                    + private_goal_changes;
+                    + private_change_log;
                 if total > 0 {
                     return Err(super::conflict(
                         ErrorCode::TrackModeLocked,
@@ -265,13 +262,10 @@ pub async fn update_inner(
                             "private_entities": private_entities,
                             "private_relations": private_relations,
                             "private_timeline_events": private_timeline_events,
-                            "private_events": private_timeline_events,
                             "private_memory_notes": private_memory_notes,
-                            "private_notes": private_memory_notes,
                             "private_foreshadowing": private_foreshadowing,
-                            "private_hooks": private_foreshadowing,
                             "private_goal_nodes": private_goal_nodes,
-                            "private_goal_changes": private_goal_changes,
+                            "private_change_log": private_change_log,
                         }),
                     ));
                 }
