@@ -357,19 +357,30 @@ impl ToolOutcome {
         for (key, value) in &error.fields {
             fields.insert(key.clone(), value.clone());
         }
-        let text = prompts
+        let text = match prompts
             .render_value("result.error", crate::prompts::template_value(&fields))
-            .map(|rendered| rendered.text)
-            .unwrap_or_else(|err| {
+        {
+            Ok(rendered) => rendered.text,
+            Err(err) => {
                 tracing::error!(error = %err, "cannot render result.error");
-                // A tool error must still tell the model something went wrong. The normally
-                // read-only renderer catches malformed fields above; this fallback is the last
-                // line of defence against a silent `is_error = true` with empty text.
-                format!(
-                    "tool error {}: the structured details could not be rendered",
-                    error.kind.code()
-                )
-            });
+                // The normally read-only renderer caught malformed fields; render the shipped
+                // fallback branch instead. If even that pack is broken, keep only the stable code
+                // (never an English model-facing sentence in Rust).
+                match prompts.render_value(
+                    "result.error",
+                    crate::prompts::template_value(&serde_json::json!({
+                        "code": error.kind.code(),
+                        "details_available": false,
+                    })),
+                ) {
+                    Ok(rendered) => rendered.text,
+                    Err(fallback_err) => {
+                        tracing::error!(error = %fallback_err, "cannot render result.error fallback");
+                        error.kind.code().to_owned()
+                    }
+                }
+            }
+        };
         Self {
             text,
             is_error: true,
@@ -553,8 +564,8 @@ mod tests {
     /// Every `ToolErrorKind` must render a **non-empty** model-facing text.
     ///
     /// The renderer is strict (`UndefinedBehavior::Strict`): a branch that reaches a variable its
-    /// fields do not carry throws, and [`ToolOutcome::error`] then returns `String::new()` — an
-    /// error the model cannot read, with `is_error = true` and no explanation. This test would have
+    /// fields do not carry throws, and [`ToolOutcome::error`] then renders the shipped fallback
+    /// branch (or at worst the stable code) so the model still sees an explanation. This test would have
     /// caught that class (a tool passing `entry_id` where the branch reads `title`), so it renders
     /// every kind with representative fields and asserts the branch's own wording appears.
     #[test]

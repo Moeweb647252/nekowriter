@@ -3111,6 +3111,8 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   existing `200` `ProposalDto { status: "conflict" }` shape, matching the setting-proposal path.
 - **Consequences**: The Proposals page and the Goals page agree about a stale status proposal
   without making harmless edits throw it away; the rule is deterministic from the history already
-  recorded in the same transaction. Tests cover a title-only edit staying accepted and a
-  status/parent edit becoming conflict.
+  recorded in the same transaction. Tests cover a title-only edit staying accepted, an
+  `active → waiting` edit becoming conflict, and a reparent edit becoming conflict. `block.goals`
+  encodes the tree as flat tags with `parent="<id>"` rather than nested tags: goal-node ids are
+  one global namespace and parent depth is fixed goal→plan→task, so every edge is recoverable.
 - **Spec**: spec/06 §5:304–314; plan §4.7; D-150.

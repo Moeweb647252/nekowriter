@@ -163,6 +163,18 @@ async fn planner_write_and_review_kickoffs_carry_task_with_both_ancestor_purpose
             1,
             "{kind:?}"
         );
+        assert!(
+            text.contains("等待计划任务目的"),
+            "{kind:?} missing the active task under a waiting plan: {text}"
+        );
+        assert!(
+            !text.contains(&format!("<plan id=\"{}\"", waiting_plan["id"])),
+            "{kind:?} rendered the waiting plan as an ancestor: {text}"
+        );
+        assert!(
+            !text.contains("等待计划目的"),
+            "{kind:?} leaked the waiting plan purpose: {text}"
+        );
         sessions::abandon(fixture.runtime.app.state(), session_id)
             .await
             .expect("abandon");

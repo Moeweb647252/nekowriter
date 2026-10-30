@@ -1,10 +1,9 @@
 //! M8 review: the model-facing error-text class (spec/09 §2, spec/05 §1.5).
 //!
-//! The renderer is strict: `result.error` branches read named fields, and a `ToolError` that
-//! carries a field the branch does not read (or omits one it does) renders to an EMPTY text, so
-//! the model gets no explanation at all. This file pins the mechanism the class-level test in
-//! `agent/tools/mod.rs` relies on, and checks every M8 `ToolError` construction through the real
-//! prompt pack.
+//! The renderer is strict: `result.error` branches read named fields. A `ToolError` with a
+//! malformed field set falls back to the shipped `details_available=false` branch (or, if even
+//! that fails, the stable code), so the model still gets an explanation. This file checks every
+//! M8 `ToolError` construction through the real prompt pack.
 
 use nekowriter::agent::tools::{ToolError, ToolErrorKind, ToolOutcome};
 use nekowriter::prompts::PromptRegistry;
@@ -88,7 +87,7 @@ fn every_m8_error_kind_renders_its_own_text() {
         assert!(outcome.is_error, "{}", case.kind.code());
         assert!(
             !outcome.text.trim().is_empty(),
-            "{} rendered an empty text: its fields do not match result.error",
+            "{} fell through to an empty result.error text",
             case.kind.code()
         );
         assert!(
@@ -186,7 +185,7 @@ fn the_web_result_templates_render_the_arguments_the_tools_pass() {
             .unwrap_or_else(|error| panic!("{key} did not render: {error}"));
         assert!(
             !rendered.text.trim().is_empty(),
-            "{key} rendered an empty text"
+            "{key} rendered an empty result"
         );
     }
 }

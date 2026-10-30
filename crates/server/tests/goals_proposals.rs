@@ -229,6 +229,7 @@ async fn accepting_a_new_task_creates_it_once_and_drops_vanished_links() {
         .find(|change| change["target_id"] == task_id)
         .expect("task change");
     assert_eq!(change["note"], "理由");
+    assert_eq!(change["chapter_id"], chapter_id);
 
     let (status, body) = app
         .post(&format!("/api/proposals/{proposal}/accept"), json!({}))
@@ -649,4 +650,324 @@ async fn rejecting_a_goal_proposal_and_accepting_a_closed_node() {
         .await;
     assert_eq!(status, 200, "closed: {body}");
     assert_eq!(body["status"], "conflict");
+}
+
+#[tokio::test]
+async fn propose_goal_change_names_missing_links_and_entities() {
+    let runtime = runtime(vec![
+        step(
+            "propose_goal_change",
+            json!({ "action": "create", "parent": 9999, "title": "T", "purpose": "P", "rationale": "parent" }),
+        ),
+        step(
+            "propose_goal_change",
+            json!({ "action": "create", "title": "T", "purpose": "P", "events": [9999], "rationale": "event" }),
+        ),
+        step(
+            "propose_goal_change",
+            json!({ "action": "create", "title": "T", "purpose": "P", "foreshadowing": [9999], "rationale": "hook" }),
+        ),
+        step(
+            "propose_goal_change",
+            json!({ "action": "create", "title": "T", "purpose": "P", "entities": ["NOPE"], "rationale": "entity" }),
+        ),
+        step("finish_maintenance", json!({ "report": "完成" })),
+    ])
+    .await;
+    let (_, book) = runtime
+        .app
+        .get(&format!("/api/books/{}", runtime.book_id))
+        .await;
+    let mut settings = book["settings"].clone();
+    settings["canon_systems"] = json!({
+        "entities": false, "timeline": false, "memory": false,
+        "foreshadowing": false, "goals": true
+    });
+    let (status, body) = runtime
+        .app
+        .patch(
+            &format!("/api/books/{}", runtime.book_id),
+            json!({ "settings": settings }),
+        )
+        .await;
+    assert_eq!(status, 200, "settings: {body}");
+    goal(
+        &runtime.app,
+        runtime.book_id,
+        json!({ "level": "task", "title": "Relevant", "purpose": "P", "chapter_from": 1 }),
+    )
+    .await;
+    review_harness::prepare_in_review(&runtime).await;
+    let (status, body) = runtime
+        .app
+        .post(
+            &format!("/api/chapters/{}/approve", runtime.chapter_id),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, 200, "approve: {body}");
+    let session = body["maintenance_session_id"].as_i64().expect("session") as i32;
+    runtime
+        .wait_status_within(session, SessionStatus::Completed, Duration::from_secs(20))
+        .await;
+    let calls = runtime.calls(session).await;
+    let errors: Vec<_> = calls
+        .iter()
+        .filter(|call| call.name == "propose_goal_change")
+        .collect();
+    assert_eq!(errors.len(), 4, "{calls:?}");
+    let texts: Vec<&str> = errors
+        .iter()
+        .map(|call| call.raw_result_text.as_deref().unwrap_or_default())
+        .collect();
+    assert!(texts[0].contains("找不到目标 #9999"), "{}", texts[0]);
+    assert!(texts[1].contains("找不到时间线事件 #9999"), "{}", texts[1]);
+    assert!(texts[2].contains("找不到伏笔 #9999"), "{}", texts[2]);
+    assert!(texts[3].contains("找不到实体「NOPE」"), "{}", texts[3]);
+}
+
+#[tokio::test]
+async fn a_reparent_or_active_to_waiting_change_conflicts_a_status_proposal() {
+    let (app, book_id, _track, chapter_id) = setup().await;
+    let goal_node = goal(
+        &app,
+        book_id,
+        json!({ "level": "goal", "title": "G", "purpose": "P" }),
+    )
+    .await;
+    let plan1 = goal(
+        &app,
+        book_id,
+        json!({ "level": "plan", "parent_id": goal_node["id"], "title": "P1", "purpose": "P" }),
+    )
+    .await;
+    let plan2 = goal(
+        &app,
+        book_id,
+        json!({ "level": "plan", "parent_id": goal_node["id"], "title": "P2", "purpose": "P" }),
+    )
+    .await;
+    let task = goal(
+        &app,
+        book_id,
+        json!({ "level": "task", "parent_id": plan1["id"], "title": "T", "purpose": "P" }),
+    )
+    .await;
+    let proposal = insert_proposal(
+        &app,
+        book_id,
+        "goal_node",
+        Some(task["id"].as_i64().unwrap() as i32),
+        json!({ "kind": "set_goal_status", "status": "done" }),
+        chapter_id,
+    )
+    .await;
+    let (status, _) = app
+        .patch(
+            &format!("/api/goals/{}", task["id"]),
+            json!({ "parent_id": plan2["id"] }),
+        )
+        .await;
+    assert_eq!(status, 200);
+    let (status, body) = app
+        .post(&format!("/api/proposals/{proposal}/accept"), json!({}))
+        .await;
+    assert_eq!(status, 200, "reparent conflict: {body}");
+    assert_eq!(body["status"], "conflict");
+
+    let waiting = goal(
+        &app,
+        book_id,
+        json!({ "level": "goal", "title": "W", "purpose": "P" }),
+    )
+    .await;
+    let proposal = insert_proposal(
+        &app,
+        book_id,
+        "goal_node",
+        Some(waiting["id"].as_i64().unwrap() as i32),
+        json!({ "kind": "set_goal_status", "status": "done" }),
+        chapter_id,
+    )
+    .await;
+    let (status, _) = app
+        .patch(
+            &format!("/api/goals/{}", waiting["id"]),
+            json!({ "status": "waiting", "conditions": [{ "kind": "chapter_at_least", "chapter": 1 }] }),
+        )
+        .await;
+    assert_eq!(status, 200);
+    let (status, body) = app
+        .post(&format!("/api/proposals/{proposal}/accept"), json!({}))
+        .await;
+    assert_eq!(status, 200, "active-to-waiting conflict: {body}");
+    assert_eq!(body["status"], "conflict");
+}
+
+#[tokio::test]
+async fn a_closed_plan_cannot_accept_a_new_task_proposal() {
+    let (app, book_id, _track, chapter_id) = setup().await;
+    let closed_plan = goal(
+        &app,
+        book_id,
+        json!({ "level": "plan", "title": "Closed plan", "purpose": "P", "status": "done" }),
+    )
+    .await;
+    let task = json!({
+        "parent_id": closed_plan["id"], "title": "T", "purpose": "P",
+        "chapter_from": 1, "chapter_to": null,
+        "entity_ids": [], "event_ids": [], "foreshadowing_ids": [], "track_id": null
+    });
+    let proposal = insert_proposal(
+        &app,
+        book_id,
+        "new_goal_task",
+        Some(closed_plan["id"].as_i64().unwrap() as i32),
+        json!({ "kind": "create_goal_task", "task": task }),
+        chapter_id,
+    )
+    .await;
+    let (status, body) = app
+        .post(&format!("/api/proposals/{proposal}/accept"), json!({}))
+        .await;
+    assert_eq!(status, 200, "closed plan accept: {body}");
+    assert_eq!(body["status"], "conflict");
+}
+
+#[tokio::test]
+async fn the_tool_maps_drop_to_a_dropped_status_proposal() {
+    let runtime = runtime(vec![
+        step(
+            "propose_goal_change",
+            json!({ "action": "drop", "node": 1, "rationale": "unreachable" }),
+        ),
+        step("finish_maintenance", json!({ "report": "完成" })),
+    ])
+    .await;
+    let (_, book) = runtime
+        .app
+        .get(&format!("/api/books/{}", runtime.book_id))
+        .await;
+    let mut settings = book["settings"].clone();
+    settings["canon_systems"] = json!({
+        "entities": false, "timeline": false, "memory": false,
+        "foreshadowing": false, "goals": true
+    });
+    let (status, body) = runtime
+        .app
+        .patch(
+            &format!("/api/books/{}", runtime.book_id),
+            json!({ "settings": settings }),
+        )
+        .await;
+    assert_eq!(status, 200, "settings: {body}");
+    goal(
+        &runtime.app,
+        runtime.book_id,
+        json!({ "level": "task", "title": "Relevant", "purpose": "P", "chapter_from": 1 }),
+    )
+    .await;
+    review_harness::prepare_in_review(&runtime).await;
+    let (status, body) = runtime
+        .app
+        .post(
+            &format!("/api/chapters/{}/approve", runtime.chapter_id),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, 200, "approve: {body}");
+    let session = body["maintenance_session_id"].as_i64().expect("session") as i32;
+    runtime
+        .wait_status_within(session, SessionStatus::Completed, Duration::from_secs(20))
+        .await;
+    let calls = runtime.calls(session).await;
+    assert!(
+        calls
+            .iter()
+            .filter(|call| call.name == "propose_goal_change")
+            .all(|call| !call.is_error),
+        "calls: {calls:?}"
+    );
+    let (_, pending) = runtime
+        .app
+        .get(&format!(
+            "/api/books/{}/proposals?status=pending",
+            runtime.book_id
+        ))
+        .await;
+    assert_eq!(pending.as_array().unwrap().len(), 1, "{pending}");
+    assert_eq!(pending[0]["edits"]["kind"], "set_goal_status");
+    assert_eq!(pending[0]["edits"]["status"], "dropped");
+}
+
+#[tokio::test]
+async fn a_closed_plan_is_rejected_by_the_goal_tool() {
+    let runtime = runtime(vec![
+        step(
+            "propose_goal_change",
+            json!({ "action": "create", "parent": 777, "title": "T", "purpose": "P", "rationale": "closed" }),
+        ),
+        step("finish_maintenance", json!({ "report": "完成" })),
+    ])
+    .await;
+    let (_, book) = runtime
+        .app
+        .get(&format!("/api/books/{}", runtime.book_id))
+        .await;
+    let mut settings = book["settings"].clone();
+    settings["canon_systems"] = json!({
+        "entities": false, "timeline": false, "memory": false,
+        "foreshadowing": false, "goals": true
+    });
+    let (status, body) = runtime
+        .app
+        .patch(
+            &format!("/api/books/{}", runtime.book_id),
+            json!({ "settings": settings }),
+        )
+        .await;
+    assert_eq!(status, 200, "settings: {body}");
+    runtime
+        .app
+        .execute(&format!(
+            "INSERT INTO goal_nodes(id, book_id, track_id, level, parent_id, title, purpose, status, \
+             chapter_from, chapter_to, conditions, created_at, updated_at) VALUES \
+             (777, {}, NULL, 'plan', NULL, 'Closed plan', 'P', 'done', NULL, NULL, '[]', \
+              '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            runtime.book_id
+        ))
+        .await;
+    goal(
+        &runtime.app,
+        runtime.book_id,
+        json!({ "level": "task", "title": "Relevant", "purpose": "P", "chapter_from": 1 }),
+    )
+    .await;
+    review_harness::prepare_in_review(&runtime).await;
+    let (status, body) = runtime
+        .app
+        .post(
+            &format!("/api/chapters/{}/approve", runtime.chapter_id),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, 200, "approve: {body}");
+    let session = body["maintenance_session_id"].as_i64().expect("session") as i32;
+    runtime
+        .wait_status_within(session, SessionStatus::Completed, Duration::from_secs(20))
+        .await;
+    let calls = runtime.calls(session).await;
+    let call = calls
+        .iter()
+        .find(|call| call.name == "propose_goal_change")
+        .expect("goal tool call");
+    assert!(call.is_error, "closed plan accepted: {call:?}");
+    assert!(
+        !call
+            .raw_result_text
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .is_empty()
+    );
 }

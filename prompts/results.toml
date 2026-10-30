@@ -8,7 +8,9 @@ vars = ["code"]
 title_en = "Result — tool errors"
 title_zh = "工具结果 · 错误信息"
 text = '''
-{%- if code == "invalid_json" -%}
+{%- if details_available is defined and not details_available -%}
+工具执行失败（错误代码：{{ code }}），结构化错误详情无法生成。请重试或换一种方式继续。
+{%- elif code == "invalid_json" -%}
 工具参数不是合法的 JSON，没有执行。收到的参数开头为：{{ raw }}
 {%- elif code == "validation" -%}
 工具参数不符合要求，没有执行：{% for e in errors %}{{ e }}{% if not loop.last %}；{% endif %}{% endfor %}

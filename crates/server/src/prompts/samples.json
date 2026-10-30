@@ -2307,6 +2307,10 @@
    },
    {
     "code": "internal"
+   },
+   {
+    "code": "not_found",
+    "details_available": false
    }
   ],
   "result.finish_maintenance": [

@@ -441,7 +441,7 @@ at top level.
   says why the node exists and what it is for. The outline and the prose must serve the purposes of
   the tasks. A purpose is achieved through the story and never stated in the prose. The reviewer
   judges whether the chapter serves them. The archivist refers to nodes by id.
-- The tree in nested tags, `<goal>` / `<plan>` / `<task>`, each with `id`, `title`, and a
+- The tree in flat tags with `parent="<id>"` (a presentation deviation from nested tags; ids are global and depth is fixed), `<goal>` / `<plan>` / `<task>`, each with `id`, `title`, and a
   `chapters` range plus an `overdue` flag when present, and a `<purpose>` child (spec/09 §5.8:
   author-written text is tagged).
 - Links on one line each, **only for enabled systems** (entity names `名字(#id)`, events `#id

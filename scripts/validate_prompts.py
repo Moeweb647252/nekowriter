@@ -371,6 +371,7 @@ error_cases = [
   dict(code="mutually_exclusive", fields=["content", "edits"]), dict(code="mutually_exclusive", fields=["move_after", "move_before"]),
   dict(code="tool_not_allowed", tool="get_entity", phase_label="正文阶段", allowed=["insert_text"]), dict(code="output_truncated"),
   dict(code="after_completion"), dict(code="refusal"), dict(code="internal"),
+  dict(code="not_found", details_available=False),
 ]
 variants["result.error"] = error_cases
 
