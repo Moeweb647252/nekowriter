@@ -249,8 +249,7 @@ pub fn tools_for_session(
         .iter()
         .copied()
         .filter(|tool| registry.has(tool))
-        // `propose_goal_change` has no handler yet; it stays out of every frozen list until
-        // 13.6 registers it (the prompt key already exists, the gate below is ready for it).
+        // `propose_goal_change` is frozen only for a maintenance session with relevant goals.
         .filter(|tool| match *tool {
             "search_canon" => systems.any_search_system(),
             "propose_goal_change" => {

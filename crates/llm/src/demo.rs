@@ -83,6 +83,9 @@ pub struct LangCorpus {
     pub research_report: String,
     #[serde(default)]
     pub proposal_rationale: String,
+    /// A goal-specific rationale for the Demo's optional `propose_goal_change` step.
+    #[serde(default)]
+    pub goal_rationale: String,
     #[serde(default)]
     pub summary_template: String,
     #[serde(default)]
@@ -711,7 +714,7 @@ fn maintenance_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
             json!({
                 "action": "complete",
                 "node": task_id,
-                "rationale": lang.proposal_rationale,
+                "rationale": lang.goal_rationale,
             }),
         ));
     }

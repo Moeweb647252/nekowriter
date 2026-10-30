@@ -604,3 +604,49 @@ async fn an_isolated_session_cannot_propose_on_a_shared_goal() {
         "error text: {text}"
     );
 }
+
+#[tokio::test]
+async fn rejecting_a_goal_proposal_and_accepting_a_closed_node() {
+    let (app, book_id, _track, chapter_id) = setup().await;
+    let node = goal(
+        &app,
+        book_id,
+        json!({ "level": "goal", "title": "R", "purpose": "P" }),
+    )
+    .await;
+    let rejected = insert_proposal(
+        &app,
+        book_id,
+        "goal_node",
+        Some(node["id"].as_i64().unwrap() as i32),
+        json!({ "kind": "set_goal_status", "status": "done" }),
+        chapter_id,
+    )
+    .await;
+    let (status, body) = app
+        .post(&format!("/api/proposals/{rejected}/reject"), json!({}))
+        .await;
+    assert_eq!(status, 200, "reject: {body}");
+    assert_eq!(body["status"], "rejected");
+
+    let closed = goal(
+        &app,
+        book_id,
+        json!({ "level": "goal", "title": "Closed", "purpose": "P", "status": "done" }),
+    )
+    .await;
+    let proposal = insert_proposal(
+        &app,
+        book_id,
+        "goal_node",
+        Some(closed["id"].as_i64().unwrap() as i32),
+        json!({ "kind": "set_goal_status", "status": "dropped" }),
+        chapter_id,
+    )
+    .await;
+    let (status, body) = app
+        .post(&format!("/api/proposals/{proposal}/accept"), json!({}))
+        .await;
+    assert_eq!(status, 200, "closed: {body}");
+    assert_eq!(body["status"], "conflict");
+}

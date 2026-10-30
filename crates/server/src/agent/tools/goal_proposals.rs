@@ -194,6 +194,8 @@ impl ToolHandler for ProposeGoalChangeTool {
                     foreshadowing_ids: input.foreshadowing,
                     track_id,
                 };
+                let target_title = task.title.clone();
+                let parent_id = task.parent_id;
                 let edits = ProposalEdits::CreateGoalTask { task };
                 let row = proposals::create_inner(
                     ctx.tx,
@@ -215,7 +217,7 @@ impl ToolHandler for ProposeGoalChangeTool {
                     proposal_id: row.id,
                     status: ProposalStatus::Pending,
                 });
-                Ok(result(ctx, row.id, "create", None, "new task"))
+                Ok(result(ctx, row.id, "create", parent_id, &target_title))
             }
             other => Err(ToolError::new(ToolErrorKind::Validation)
                 .with("errors", vec![format!("unknown action {other:?}")])),

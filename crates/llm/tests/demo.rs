@@ -186,6 +186,10 @@ fn corpus_parses_for_both_languages() {
             !corpus.proposal_rationale.is_empty(),
             "{language}: proposal rationale"
         );
+        assert!(
+            !corpus.goal_rationale.is_empty(),
+            "{language}: goal rationale"
+        );
     }
 }
 
