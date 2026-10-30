@@ -15,7 +15,7 @@ use crate::api::dto::goals::{
     GoalNodeDto, GoalNodeInput, GoalQuery,
 };
 use crate::db::entities::{
-    chapters, entities, foreshadowing, goal_node_entities, goal_node_events,
+    change_log, chapters, entities, foreshadowing, goal_node_entities, goal_node_events,
     goal_node_foreshadowing, goal_nodes, timeline_events, tracks,
 };
 use crate::db::json::{
@@ -1395,17 +1395,33 @@ pub async fn restore_inner(
             "a goal snapshot changed level or scope",
         ));
     }
+    let cutoff = revert_cutoff(tx, write).await?;
     let parent = parent_if_valid(tx, current.book_id, *parent_id, *track_id, *level).await?;
-    let entity_ids =
-        surviving_links(tx, current.book_id, *track_id, entity_ids, LinkKind::Entity).await?;
-    let event_ids =
-        surviving_links(tx, current.book_id, *track_id, event_ids, LinkKind::Event).await?;
+    let entity_ids = surviving_links(
+        tx,
+        current.book_id,
+        *track_id,
+        entity_ids,
+        LinkKind::Entity,
+        cutoff,
+    )
+    .await?;
+    let event_ids = surviving_links(
+        tx,
+        current.book_id,
+        *track_id,
+        event_ids,
+        LinkKind::Event,
+        cutoff,
+    )
+    .await?;
     let foreshadowing_ids = surviving_links(
         tx,
         current.book_id,
         *track_id,
         foreshadowing_ids,
         LinkKind::Foreshadowing,
+        cutoff,
     )
     .await?;
     let before_current = snapshot(tx, &current).await?;
@@ -1468,15 +1484,19 @@ pub async fn recreate_inner(
         .visibility
         .map(|visibility| visibility.book_id)
         .ok_or_else(|| CanonError::internal("a goal revert needs a book"))?;
+    let cutoff = revert_cutoff(tx, write).await?;
     let parent = parent_if_valid(tx, book_id, *parent_id, *track_id, *level).await?;
-    let entity_ids = surviving_links(tx, book_id, *track_id, entity_ids, LinkKind::Entity).await?;
-    let event_ids = surviving_links(tx, book_id, *track_id, event_ids, LinkKind::Event).await?;
+    let entity_ids =
+        surviving_links(tx, book_id, *track_id, entity_ids, LinkKind::Entity, cutoff).await?;
+    let event_ids =
+        surviving_links(tx, book_id, *track_id, event_ids, LinkKind::Event, cutoff).await?;
     let foreshadowing_ids = surviving_links(
         tx,
         book_id,
         *track_id,
         foreshadowing_ids,
         LinkKind::Foreshadowing,
+        cutoff,
     )
     .await?;
     let new_id = super::canon::fresh_id(tx, "goal_nodes", target_type(*level)).await?;
@@ -1540,33 +1560,48 @@ async fn parent_if_valid(
     Ok((expected == Some(parent.level)).then_some(parent))
 }
 
+async fn revert_cutoff(
+    tx: &impl ConnectionTrait,
+    write: &CanonWrite,
+) -> CanonResult<Option<chrono::DateTime<chrono::Utc>>> {
+    let Some(revert) = write.revert else {
+        return Ok(None);
+    };
+    Ok(change_log::Entity::find_by_id(revert.of_change)
+        .one(tx)
+        .await?
+        .map(|change| change.created_at))
+}
+
 async fn surviving_links(
     tx: &impl ConnectionTrait,
     book_id: i32,
     track_id: Option<i32>,
     ids: &[i32],
     kind: LinkKind,
+    cutoff: Option<chrono::DateTime<chrono::Utc>>,
 ) -> CanonResult<Vec<i32>> {
     let mut out = Vec::new();
     for id in dedupe_ids(ids.to_vec()) {
-        let (exists, row_track) = match kind {
+        let (exists, row_track, row_created_at) = match kind {
             LinkKind::Entity => entities::Entity::find_by_id(id)
                 .one(tx)
                 .await?
-                .map(|row| (row.book_id == book_id, row.track_id))
-                .unwrap_or((false, None)),
+                .map(|row| (row.book_id == book_id, row.track_id, row.created_at))
+                .unwrap_or((false, None, chrono::DateTime::<chrono::Utc>::MIN_UTC)),
             LinkKind::Event => timeline_events::Entity::find_by_id(id)
                 .one(tx)
                 .await?
-                .map(|row| (row.book_id == book_id, row.track_id))
-                .unwrap_or((false, None)),
+                .map(|row| (row.book_id == book_id, row.track_id, row.created_at))
+                .unwrap_or((false, None, chrono::DateTime::<chrono::Utc>::MIN_UTC)),
             LinkKind::Foreshadowing => foreshadowing::Entity::find_by_id(id)
                 .one(tx)
                 .await?
-                .map(|row| (row.book_id == book_id, row.track_id))
-                .unwrap_or((false, None)),
+                .map(|row| (row.book_id == book_id, row.track_id, row.created_at))
+                .unwrap_or((false, None, chrono::DateTime::<chrono::Utc>::MIN_UTC)),
         };
-        if exists && visible(track_id, row_track) {
+        let existed = cutoff.is_none_or(|cutoff| row_created_at <= cutoff);
+        if exists && existed && visible(track_id, row_track) {
             out.push(id);
         }
     }
