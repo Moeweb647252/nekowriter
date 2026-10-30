@@ -74,21 +74,31 @@ function retainedText(
   switch (system) {
     case "entities":
       return t("book:canon_retained.entities", {
-        entities: counts.entities.entities,
-        relations: counts.entities.relations,
-        appearances: counts.entities.appearances,
+        entities: t("book:canon_retained.entity", { count: counts.entities.entities }),
+        relations: t("book:canon_retained.relation", { count: counts.entities.relations }),
+        appearances: t("book:canon_retained.appearance", {
+          count: counts.entities.appearances,
+        }),
       })
     case "timeline":
-      return t("book:canon_retained.timeline", { events: counts.timeline.events })
+      return t("book:canon_retained.timeline", {
+        events: t("book:canon_retained.event", { count: counts.timeline.events }),
+      })
     case "memory":
       return t("book:canon_retained.memory", {
-        notes: counts.memory.notes,
-        summaries: counts.memory.summaries,
+        notes: t("book:canon_retained.note", { count: counts.memory.notes }),
+        summaries: t("book:canon_retained.summary", {
+          count: counts.memory.summaries,
+        }),
       })
     case "foreshadowing":
-      return t("book:canon_retained.foreshadowing", { items: counts.foreshadowing.items })
+      return t("book:canon_retained.foreshadowing", {
+        items: t("book:canon_retained.item", { count: counts.foreshadowing.items }),
+      })
     case "goals":
-      return t("book:canon_retained.goals", { nodes: counts.goals.nodes })
+      return t("book:canon_retained.goals", {
+        nodes: t("book:canon_retained.node", { count: counts.goals.nodes }),
+      })
   }
 }
 
@@ -358,7 +368,11 @@ export default function BookSettingsPage() {
                 </p>
                 {enabled ? null : (
                   <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                    <span>{retainedText(t, system, canonCounts.data)}</span>
+                    <span>
+                      {canonCounts.isError
+                        ? t("book:canon_retained_unavailable")
+                        : retainedText(t, system, canonCounts.data)}
+                    </span>
                     <Link
                       className="underline"
                       to={`/books/${bookId}/canon/${CANON_SYSTEM_PATHS[system]}`}

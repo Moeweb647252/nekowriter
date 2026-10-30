@@ -6,7 +6,10 @@ import { usePatchBook } from "@/api/hooks/books"
 import { keys } from "@/api/keys"
 import { Button } from "@/components/ui/button"
 import type { BookDto } from "@/api/gen/BookDto"
-import type { CanonPageSystem } from "@/features/workspace/canonVisibility"
+import {
+  isCanonPageVisible,
+  type CanonPageSystem,
+} from "@/features/workspace/canonVisibility"
 
 export function SystemOffBanner({
   book,
@@ -18,7 +21,7 @@ export function SystemOffBanner({
   const { t } = useTranslation()
   const patch = usePatchBook(book.id)
   const queryClient = useQueryClient()
-  if (book.settings.canon_systems[system]) return null
+  if (isCanonPageVisible(book.settings.canon_systems, system)) return null
 
   const turnOn = () => {
     const settings = book.settings

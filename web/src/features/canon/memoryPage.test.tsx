@@ -51,6 +51,8 @@ vi.mock("react-router", () => ({
 }))
 
 /** The recent-chapter rows the endpoint returns; a test sets them to render the list. */
+const createNote = vi.fn()
+const patchNote = vi.fn()
 let systems = {
   entities: true,
   timeline: true,
@@ -95,8 +97,8 @@ vi.mock("@/api/hooks/useCanon", () => ({
       },
     ],
   }),
-  useCreateMemoryNote: () => ({ mutate: vi.fn() }),
-  usePatchMemoryNote: () => ({ mutate: vi.fn() }),
+  useCreateMemoryNote: () => ({ mutate: createNote }),
+  usePatchMemoryNote: () => ({ mutate: patchNote }),
   useDeleteMemoryNote: () => ({ mutate: vi.fn() }),
 }))
 
@@ -114,6 +116,12 @@ beforeAll(() => {
 beforeEach(() => {
   memoryRecent = []
   systems = { entities: true, timeline: true, memory: true, foreshadowing: true, goals: true }
+  emptySnapshot.counts.fact = 1
+  emptySnapshot.counts.world_rule = 1
+  emptySnapshot.counts.event = 1
+  emptySnapshot.counts.foreshadowing_open = 1
+  createNote.mockClear()
+  patchNote.mockClear()
 })
 
 describe("MemoryPage", () => {
@@ -145,11 +153,42 @@ describe("MemoryPage", () => {
 
 
 describe("MemoryPage system sections", () => {
-  it("leaves out the entity and memory sections of disabled systems", () => {
-    systems = { entities: false, timeline: true, memory: false, foreshadowing: true, goals: true }
+  it("keeps the notes editor and data available while Memory is off", async () => {
+    systems = { entities: true, timeline: true, memory: false, foreshadowing: true, goals: true }
     render(<MemoryPage />)
-    expect(screen.queryByText(/Mid-term \(last 10 chapters\)/)).toBeNull()
-    expect(screen.queryByRole("heading", { name: "Memory notes" })).toBeNull()
-    expect(screen.getByText("Short-term")).toBeInTheDocument()
+    expect(screen.getByRole("heading", { name: "Memory notes" })).toBeInTheDocument()
+    expect(screen.getByText("The sword was a gift.")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Add note" })).toBeInTheDocument()
+    const input = screen.getByPlaceholderText("What must stay true?")
+    const user = (await import("@testing-library/user-event")).default.setup()
+    await user.type(input, "A new note")
+    await user.click(screen.getByRole("button", { name: "Add note" }))
+    expect(createNote).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "A new note", kind: "fact" }),
+      expect.anything(),
+    )
+    await user.click(screen.getByRole("button", { name: "Retire" }))
+    expect(patchNote).toHaveBeenCalledWith(
+      { id: 5, patch: { status: "retired" } },
+      expect.anything(),
+    )
+  })
+
+  it("renders each archive-count fragment under its own system flag", () => {
+    systems = { entities: false, timeline: true, memory: true, foreshadowing: true, goals: true }
+    render(<MemoryPage />)
+    expect(screen.getByText(/1 timeline event/)).toBeInTheDocument()
+    expect(screen.getByText(/1 facts, 1 world rules/)).toBeInTheDocument()
+    expect(screen.getByText(/1 open foreshadowing/)).toBeInTheDocument()
+    expect(screen.queryByText(/1 characters/)).toBeNull()
+  })
+
+  it("renders one empty state when every source system is off", () => {
+    systems = { entities: false, timeline: false, memory: false, foreshadowing: false, goals: true }
+    render(<MemoryPage />)
+    expect(screen.getByText("No memory systems are on")).toBeInTheDocument()
+    expect(screen.queryByText("Short-term")).toBeNull()
+    expect(screen.queryByText("Long-term index")).toBeNull()
+    expect(screen.getByRole("heading", { name: "Memory notes" })).toBeInTheDocument()
   })
 })

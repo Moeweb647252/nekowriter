@@ -39,6 +39,38 @@ export default function MemoryPage() {
   }
   const snapshot = memory.data.snapshot
   const systems = memory.data.systems
+  const allSystemsOff =
+    !systems.entities && !systems.timeline && !systems.memory && !systems.foreshadowing
+  const countFragments: string[] = []
+  if (systems.entities) {
+    countFragments.push(
+      t("canon:memory_counts.entities", {
+        character: snapshot.counts.character,
+        organization: snapshot.counts.organization,
+        location: snapshot.counts.location,
+        item: snapshot.counts.item,
+        other: snapshot.counts.other,
+      }),
+    )
+  }
+  if (systems.timeline) {
+    countFragments.push(t("canon:memory_counts.timeline", { event: snapshot.counts.event }))
+  }
+  if (systems.memory) {
+    countFragments.push(
+      t("canon:memory_counts.memory", {
+        fact: snapshot.counts.fact,
+        world_rule: snapshot.counts.world_rule,
+      }),
+    )
+  }
+  if (systems.foreshadowing) {
+    countFragments.push(
+      t("canon:memory_counts.foreshadowing", {
+        foreshadowing_open: snapshot.counts.foreshadowing_open,
+      }),
+    )
+  }
 
   return (
     <div className="mx-auto max-w-6xl space-y-4 p-6">
@@ -121,6 +153,12 @@ export default function MemoryPage() {
         )}
       </div>
 
+      {allSystemsOff ? (
+        <EmptyState
+          title={t("canon:memory_all_off_title")}
+          description={t("canon:memory_all_off_hint")}
+        />
+      ) : (
       <div className="grid gap-3 md:grid-cols-3">
         <MemoryColumn title={t("canon:memory_short_term")}>
           {snapshot.is_first ? (
@@ -267,31 +305,23 @@ export default function MemoryPage() {
                   </li>
                 ))}
               </ul>
-              <p className="mt-2 text-[0.65rem] text-muted-foreground">
-                {t("canon:memory_counts", {
-                  character: snapshot.counts.character,
-                  organization: snapshot.counts.organization,
-                  location: snapshot.counts.location,
-                  item: snapshot.counts.item,
-                  other: snapshot.counts.other,
-                  event: snapshot.counts.event,
-                  fact: snapshot.counts.fact,
-                  world_rule: snapshot.counts.world_rule,
-                  foreshadowing_open: snapshot.counts.foreshadowing_open,
-                })}
-              </p>
             </>
           ) : null}
+          {countFragments.length === 0 ? null : (
+            <p className="mt-2 text-[0.65rem] text-muted-foreground">
+              {t("canon:memory_counts_label")}{" "}
+              {countFragments.join(t("canon:memory_counts_separator"))}
+            </p>
+          )}
         </MemoryColumn>
       </div>
+      )}
 
-      {systems.memory ? (
-        <section>
-          <h2 className="mb-1 text-sm font-medium">{t("canon:notes")}</h2>
-          <p className="mb-2 text-xs text-muted-foreground">{t("canon:notes_hint")}</p>
-          <NotesTable bookId={bookId} />
-        </section>
-      ) : null}
+      <section>
+        <h2 className="mb-1 text-sm font-medium">{t("canon:notes")}</h2>
+        <p className="mb-2 text-xs text-muted-foreground">{t("canon:notes_hint")}</p>
+        <NotesTable bookId={bookId} />
+      </section>
 
       <section>
         <h2 className="mb-2 text-sm font-medium">{t("canon:memory_rendered")}</h2>

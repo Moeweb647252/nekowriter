@@ -42,15 +42,20 @@ vi.mock("@/api/hooks/books", () => ({
   usePatchBook: () => ({ mutate: patchBook, isPending: false }),
 }))
 
-const canonCounts = {
+let canonCounts = {
   entities: { entities: 42, relations: 30, appearances: 120 },
   timeline: { events: 7 },
   memory: { notes: 11, summaries: 5 },
   foreshadowing: { items: 3 },
   goals: { nodes: 2 },
 }
+let canonCountsError = false
 vi.mock("@/api/hooks/useCanon", () => ({
-  useCanonCounts: () => ({ isPending: false, isError: false, data: canonCounts }),
+  useCanonCounts: () => ({
+    isPending: false,
+    isError: canonCountsError,
+    data: canonCountsError ? undefined : canonCounts,
+  }),
 }))
 
 vi.mock("@/api/hooks/app-settings", () => ({
@@ -111,6 +116,14 @@ beforeAll(() => {
 beforeEach(() => {
   patchBook.mockClear()
   replaceSkills.mockClear()
+  canonCountsError = false
+  canonCounts = {
+    entities: { entities: 42, relations: 30, appearances: 120 },
+    timeline: { events: 7 },
+    memory: { notes: 11, summaries: 5 },
+    foreshadowing: { items: 3 },
+    goals: { nodes: 2 },
+  }
   skillRows = []
   rolesDefaults = { conception: 8, researcher: 8, writer: 7, reviewer: 8, archivist: 8 }
   book = {
@@ -468,5 +481,30 @@ describe("canon system switches", () => {
     expect(screen.getByLabelText("Mid-term window (chapters)")).toBeDisabled()
     expect(screen.getByLabelText("Recent chapters in full")).not.toBeDisabled()
     expect(screen.getByText(/Memory is off and recent chapters in full is 0/)).toBeInTheDocument()
+  })
+})
+
+
+describe("canon retained data copy", () => {
+  it("uses plural forms and the agents-stop sentence", async () => {
+    canonCounts = {
+      entities: { entities: 1, relations: 1, appearances: 1 },
+      timeline: { events: 1 },
+      memory: { notes: 1, summaries: 1 },
+      foreshadowing: { items: 1 },
+      goals: { nodes: 1 },
+    }
+    render(<BookSettingsPage />)
+    const user = userEvent.setup()
+    await user.click(within(screen.getByTestId("canon-system-entities")).getByRole("switch"))
+    expect(screen.getByText(/1 entity, 1 relation and 1 appearance stay in the book\. Agents stop reading and maintaining them\./)).toBeInTheDocument()
+  })
+
+  it("shows an unavailable line when the retained-count request fails", async () => {
+    canonCountsError = true
+    render(<BookSettingsPage />)
+    const user = userEvent.setup()
+    await user.click(within(screen.getByTestId("canon-system-entities")).getByRole("switch"))
+    expect(screen.getByText("Retained data unavailable.")).toBeInTheDocument()
   })
 })
