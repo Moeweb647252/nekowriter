@@ -174,7 +174,7 @@
   "memory_counts.item_one": "{{count}} item",
   "memory_counts.item_other": "{{count}} items",
   "memory_counts.other_one": "{{count}} other",
-  "memory_counts.other_other": "{{count}} other",
+  "memory_counts.other_other": "{{count}} others",
   "memory_counts.event_one": "{{count}} timeline event",
   "memory_counts.event_other": "{{count}} timeline events",
   "memory_counts.fact_one": "{{count}} fact",

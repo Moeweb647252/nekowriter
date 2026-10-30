@@ -202,14 +202,14 @@ describe("MemoryPage archive pluralization", () => {
       organization: 2,
       location: 0,
       item: 2,
-      other: 0,
+      other: 2,
       event: 2,
       fact: 0,
       world_rule: 1,
       foreshadowing_open: 2,
     }
     render(<MemoryPage />)
-    expect(screen.getByText(/1 character, 2 organizations, 0 locations, 2 items, 0 other/)).toBeInTheDocument()
+    expect(screen.getByText(/1 character, 2 organizations, 0 locations, 2 items, 2 others/)).toBeInTheDocument()
     expect(screen.getByText(/2 timeline events/)).toBeInTheDocument()
     expect(screen.getByText(/0 facts, 1 world rule/)).toBeInTheDocument()
     expect(screen.getByText(/2 open foreshadowing/)).toBeInTheDocument()

@@ -13,6 +13,7 @@ import i18n from "i18next"
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 
 import enBook from "@/i18n/locales/en/book.json"
+import zhBook from "@/i18n/locales/zh-CN/book.json"
 import enSettings from "@/i18n/locales/en/settings.json"
 import enSkills from "@/i18n/locales/en/skills.json"
 import type { BookDto } from "@/api/gen/BookDto"
@@ -98,6 +99,9 @@ beforeAll(() => {
   // The shared test setup ships a subset of the namespaces; this page needs `settings` too.
   if (!i18n.hasResourceBundle("en", "book")) {
     i18n.addResourceBundle("en", "book", enBook)
+  }
+  if (!i18n.hasResourceBundle("zh-CN", "book")) {
+    i18n.addResourceBundle("zh-CN", "book", zhBook)
   }
   if (!i18n.hasResourceBundle("en", "settings")) {
     i18n.addResourceBundle("en", "settings", enSettings)
@@ -518,5 +522,42 @@ describe("canon retained data copy", () => {
     const user = userEvent.setup()
     await user.click(within(screen.getByTestId("canon-system-entities")).getByRole("switch"))
     expect(screen.getByText("Retained data unavailable.")).toBeInTheDocument()
+  })
+})
+
+
+describe("compound retained sentences", () => {
+  it("keeps compound subjects plural when one fragment is non-zero", async () => {
+    canonCounts.entities = { entities: 1, relations: 0, appearances: 0 }
+    canonCounts.memory = { notes: 1, summaries: 0 }
+    const user = userEvent.setup()
+    render(<BookSettingsPage />)
+    await user.click(within(screen.getByTestId("canon-system-entities")).getByRole("switch"))
+    expect(
+      screen.getByText(
+        "1 entity, 0 relations and 0 appearances stay in the book. Agents stop reading and maintaining them.",
+      ),
+    ).toBeInTheDocument()
+    await user.click(within(screen.getByTestId("canon-system-memory")).getByRole("switch"))
+    expect(
+      screen.getByText(
+        "1 memory note and 0 chapter summaries stay in the book. Agents stop reading and maintaining them.",
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it("selects the zh-CN singular sentence explicitly", async () => {
+    await i18n.changeLanguage("zh-CN")
+    canonCounts.timeline.events = 1
+    try {
+      render(<BookSettingsPage />)
+      const user = userEvent.setup()
+      await user.click(within(screen.getByTestId("canon-system-timeline")).getByRole("switch"))
+      expect(
+        screen.getByText("1 个时间线事件仍保留在书中。智能体将停止读取和维护它。"),
+      ).toBeInTheDocument()
+    } finally {
+      await i18n.changeLanguage("en")
+    }
   })
 })

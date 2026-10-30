@@ -74,6 +74,20 @@ function retainedNoun(
   return t(`book:canon_retained.${noun}_${suffix}`, { count })
 }
 
+/** One explicitly selected sentence variant; zh-CN has no i18next `one` category. */
+function retainedSentence(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  sentence: string,
+  count: number,
+  options: Record<string, unknown>,
+): string {
+  // The entity and memory sentences are compound subjects even when their total is one
+  // (for example "1 entity, 0 relations and 0 appearances"), so they stay plural.
+  const suffix =
+    sentence === "entities" || sentence === "memory" ? "other" : count === 1 ? "one" : "other"
+  return t(`book:canon_retained.${sentence}_${suffix}`, { ...options, count })
+}
+
 /** The retained-data sentence of one disabled switch. */
 function retainedText(
   t: (key: string, options?: Record<string, unknown>) => string,
@@ -85,34 +99,29 @@ function retainedText(
     case "entities": {
       const total =
         counts.entities.entities + counts.entities.relations + counts.entities.appearances
-      return t("book:canon_retained.entities", {
-        count: total,
+      return retainedSentence(t, "entities", total, {
         entities: retainedNoun(t, "entity", counts.entities.entities),
         relations: retainedNoun(t, "relation", counts.entities.relations),
         appearances: retainedNoun(t, "appearance", counts.entities.appearances),
       })
     }
     case "timeline":
-      return t("book:canon_retained.timeline", {
-        count: counts.timeline.events,
+      return retainedSentence(t, "timeline", counts.timeline.events, {
         events: retainedNoun(t, "event", counts.timeline.events),
       })
     case "memory": {
       const total = counts.memory.notes + counts.memory.summaries
-      return t("book:canon_retained.memory", {
-        count: total,
+      return retainedSentence(t, "memory", total, {
         notes: retainedNoun(t, "note", counts.memory.notes),
         summaries: retainedNoun(t, "summary", counts.memory.summaries),
       })
     }
     case "foreshadowing":
-      return t("book:canon_retained.foreshadowing", {
-        count: counts.foreshadowing.items,
+      return retainedSentence(t, "foreshadowing", counts.foreshadowing.items, {
         items: retainedNoun(t, "item", counts.foreshadowing.items),
       })
     case "goals":
-      return t("book:canon_retained.goals", {
-        count: counts.goals.nodes,
+      return retainedSentence(t, "goals", counts.goals.nodes, {
         nodes: retainedNoun(t, "node", counts.goals.nodes),
       })
   }
