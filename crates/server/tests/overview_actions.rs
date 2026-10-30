@@ -610,9 +610,11 @@ async fn a_planned_chapter_without_an_outline_is_outlined_next() {
 #[tokio::test]
 async fn an_open_outline_session_points_at_its_chapter_and_session() {
     let (app, book_id, _, chapter_id) = app_with_book().await;
+    ready_goal(&app, book_id, "Ready goal").await;
     insert_outline_session(&app, chapter_id, "held").await;
     let body = overview(&app, book_id).await;
     assert_eq!(body["next_action"]["kind"], "write_outline", "{body}");
+    assert_eq!(body["next_action"]["ready_goals"], 1, "{body}");
     assert_eq!(body["next_action"]["chapter"]["id"], chapter_id);
     let session_id = body["next_action"]["session_id"]
         .as_i64()
@@ -765,4 +767,60 @@ async fn the_library_attention_count_includes_the_ready_goal_row() {
         .expect("book card");
     assert_eq!(card["attention_count"], expected, "{card}");
     assert_eq!(attention_count(&overview, "ready_goals"), 1, "{overview}");
+}
+
+#[tokio::test]
+async fn ready_goals_count_closable_and_private_track_nodes() {
+    let (app, book_id, _track, _chapter_id) = app_with_book().await;
+    let (status, entity) = app
+        .post(
+            &format!("/api/books/{book_id}/entities"),
+            json!({ "kind": "character", "name": "Goal target", "summary": "" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "entity: {entity}");
+    let entity_id = entity["id"].as_i64().expect("entity") as i32;
+
+    // A closable shared plan: active with one done child and no open child.
+    let plan = app
+        .post(
+            &format!("/api/books/{book_id}/goals"),
+            json!({ "level": "plan", "title": "Closable plan", "purpose": "P" }),
+        )
+        .await
+        .1;
+    let plan_id = plan["id"].as_i64().expect("plan") as i32;
+    let (status, _) = app
+        .post(
+            &format!("/api/books/{book_id}/goals"),
+            json!({ "level": "task", "parent_id": plan_id, "title": "Done child", "purpose": "P", "status": "done" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    // A private waiting task on another track is in the book-wide count too.
+    let (status, side) = app
+        .post(
+            &format!("/api/books/{book_id}/tracks"),
+            json!({ "title": "Side", "synopsis": "", "canon_mode": "isolated", "anchor_kind": "before_start" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "side: {side}");
+    let side_track = side["id"].as_i64().expect("side track") as i32;
+    let (status, _) = app
+        .post(
+            &format!("/api/books/{book_id}/goals"),
+            json!({
+                "level": "task", "title": "Private ready", "purpose": "P", "status": "waiting",
+                "track_id": side_track,
+                "conditions": [{ "kind": "entity_status_is", "entity_id": entity_id, "status": "active" }]
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let body = overview(&app, book_id).await;
+    assert_eq!(body["next_action"]["kind"], "write_outline", "{body}");
+    assert_eq!(body["next_action"]["ready_goals"], 2, "{body}");
+    assert_eq!(attention_count(&body, "ready_goals"), 2, "{body}");
 }
