@@ -14,8 +14,8 @@ use crate::api::dto::books::{
     StatusCountDto, TrackProgressDto,
 };
 use crate::db::entities::{
-    agent_sessions, books, chapters, character_designs, entities as canon_entities, research_tasks,
-    setting_docs, setting_proposals, tracks,
+    agent_sessions, books, chapters, character_designs, entities as canon_entities, goal_nodes,
+    research_tasks, setting_docs, setting_proposals, tracks,
 };
 use crate::db::json::{
     AgentRole, AnchorKind, BookSettings, BookStatus, CanonMode, CanonStatus, ChapterStatus,
@@ -382,6 +382,21 @@ async fn ordered_chapters(
     Ok(ordered)
 }
 
+/// The count shown by the ready-goals attention row and next-action hint: every goal node of
+/// the book, any scope, whose derived state is `ready` or `closable` (spec/08 §7, plan §4.10).
+/// The derived flags come from the one goals evaluator, never a local query.
+async fn ready_goal_count(conn: &impl ConnectionTrait, book_id: i32) -> Result<i32, AppError> {
+    let nodes = goal_nodes::Entity::find()
+        .filter(goal_nodes::COLUMN.book_id.eq(book_id))
+        .all(conn)
+        .await?;
+    let evaluations = super::goals::evaluate(conn, book_id, &nodes).await?;
+    Ok(evaluations
+        .values()
+        .filter(|evaluation| evaluation.ready || evaluation.closable)
+        .count() as i32)
+}
+
 /// Everything that needs the author, in the order of spec/08 §7: open sessions, chapters in
 /// review, canon that is not synced, then the pending-proposal and ready-research counts.
 pub async fn attention(
@@ -482,6 +497,25 @@ pub async fn attention(
         });
     }
 
+    let book = books::Entity::find_by_id(book_id)
+        .one(conn)
+        .await?
+        .ok_or_else(|| AppError::not_found(format!("book #{book_id}")))?;
+    if book.settings.clone().into_inner().canon_systems.goals {
+        let ready_goals = ready_goal_count(conn, book_id).await?;
+        if ready_goals > 0 {
+            items.push(AttentionItemDto {
+                kind: AttentionKind::ReadyGoals,
+                count: ready_goals,
+                session_id: None,
+                session_kind: None,
+                session_status: None,
+                chapter: None,
+                track_id: None,
+            });
+        }
+    }
+
     Ok(items)
 }
 
@@ -504,6 +538,12 @@ pub async fn next_action(
         return Ok(Some(action(NextActionKind::ContinueConception)));
     }
     let ordered = ordered_chapters(conn, book.id).await?;
+    let ready_goals = if book.settings.clone().into_inner().canon_systems.goals {
+        let count = ready_goal_count(conn, book.id).await?;
+        (count > 0).then_some(count)
+    } else {
+        None
+    };
 
     // 2. The canon was never seeded and the materials to seed it exist.
     let seeded = agent_sessions::Entity::find()
@@ -613,7 +653,7 @@ pub async fn next_action(
                 session_id: open.map(|session| session.id),
                 track_id: Some(track.id),
                 ready_research: None,
-                ready_goals: None,
+                ready_goals,
                 research_task_id: None,
             }));
         }
@@ -677,7 +717,7 @@ pub async fn next_action(
             session_id: None,
             track_id: Some(track.id),
             ready_research: None,
-            ready_goals: None,
+            ready_goals,
             research_task_id: None,
         }));
     }
@@ -692,7 +732,7 @@ pub async fn next_action(
         session_id: None,
         track_id,
         ready_research: None,
-        ready_goals: None,
+        ready_goals,
         research_task_id: None,
     }))
 }

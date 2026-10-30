@@ -658,3 +658,111 @@ async fn a_planned_chapter_outranks_creating_the_next_one() {
     assert_eq!(body["next_action"]["kind"], "write_chapter", "{body}");
     assert_eq!(body["next_action"]["chapter"]["id"], second_id);
 }
+
+// ───────────────────────────── ready goals (spec/08 §7, plan §4.10) ─────────────────────────────
+
+/// Creates a waiting task whose single entity-status condition is already satisfied.
+async fn ready_goal(app: &TestApp, book_id: i32, title: &str) -> Value {
+    let (status, entity) = app
+        .post(
+            &format!("/api/books/{book_id}/entities"),
+            json!({ "kind": "character", "name": "Goal target", "summary": "" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "entity: {entity}");
+    let entity_id = entity["id"].as_i64().expect("entity id") as i32;
+    let (status, goal) = app
+        .post(
+            &format!("/api/books/{book_id}/goals"),
+            json!({
+                "level": "task", "title": title, "purpose": "P", "status": "waiting",
+                "conditions": [{ "kind": "entity_status_is", "entity_id": entity_id, "status": "active" }]
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "goal: {goal}");
+    goal
+}
+
+#[tokio::test]
+async fn a_ready_goal_gives_a_row_and_a_hint_on_write_kinds() {
+    let (app, book_id, _track, chapter_id) = app_with_book().await;
+    ready_goal(&app, book_id, "Ready goal").await;
+    let body = overview(&app, book_id).await;
+    assert_eq!(body["next_action"]["kind"], "write_outline", "{body}");
+    assert_eq!(body["next_action"]["ready_goals"], 1, "{body}");
+    assert_eq!(attention_count(&body, "ready_goals"), 1, "{body}");
+
+    app.execute(&format!(
+        "UPDATE chapters SET outline = 'Outline' WHERE id = {chapter_id}"
+    ))
+    .await;
+    let body = overview(&app, book_id).await;
+    assert_eq!(body["next_action"]["kind"], "write_chapter", "{body}");
+    assert_eq!(body["next_action"]["ready_goals"], 1, "{body}");
+
+    official(&app, chapter_id, "synced").await;
+    let body = overview(&app, book_id).await;
+    assert_eq!(body["next_action"]["kind"], "write_next", "{body}");
+    assert_eq!(body["next_action"]["ready_goals"], 1, "{body}");
+}
+
+#[tokio::test]
+async fn a_review_kind_has_the_row_but_no_goal_hint() {
+    let (app, book_id, _track, chapter_id) = app_with_book().await;
+    ready_goal(&app, book_id, "Ready goal").await;
+    app.execute(&format!(
+        "UPDATE chapters SET status = 'in_review' WHERE id = {chapter_id}"
+    ))
+    .await;
+    let body = overview(&app, book_id).await;
+    assert_eq!(body["next_action"]["kind"], "review_chapter", "{body}");
+    assert_eq!(attention_count(&body, "ready_goals"), 1, "{body}");
+    assert!(
+        body["next_action"].get("ready_goals").is_none(),
+        "the review action must not carry the write hint: {body}"
+    );
+}
+
+#[tokio::test]
+async fn goals_off_removes_the_row_and_the_hint() {
+    let (app, book_id, _track, _chapter_id) = app_with_book().await;
+    ready_goal(&app, book_id, "Ready goal").await;
+    let (_, book) = app.get(&format!("/api/books/{book_id}")).await;
+    let mut settings = book["settings"].clone();
+    settings["canon_systems"]["goals"] = json!(false);
+    let (status, body) = app
+        .patch(
+            &format!("/api/books/{book_id}"),
+            json!({ "settings": settings }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "settings: {body}");
+    let body = overview(&app, book_id).await;
+    assert_eq!(body["next_action"]["kind"], "write_outline", "{body}");
+    assert!(body["next_action"].get("ready_goals").is_none(), "{body}");
+    assert_eq!(attention_count(&body, "ready_goals"), 0, "{body}");
+}
+
+#[tokio::test]
+async fn the_library_attention_count_includes_the_ready_goal_row() {
+    let (app, book_id, _track, _chapter_id) = app_with_book().await;
+    ready_goal(&app, book_id, "Ready goal").await;
+    let overview = overview(&app, book_id).await;
+    let expected: i64 = overview["attention"]
+        .as_array()
+        .expect("attention")
+        .iter()
+        .map(|item| item["count"].as_i64().unwrap_or(0))
+        .sum();
+    let (status, books) = app.get("/api/books").await;
+    assert_eq!(status, StatusCode::OK, "books: {books}");
+    let card = books
+        .as_array()
+        .expect("book list")
+        .iter()
+        .find(|book| book["id"] == book_id)
+        .expect("book card");
+    assert_eq!(card["attention_count"], expected, "{card}");
+    assert_eq!(attention_count(&overview, "ready_goals"), 1, "{overview}");
+}
