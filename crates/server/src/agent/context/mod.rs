@@ -1767,6 +1767,29 @@ async fn demo_hints(
             .collect(),
         None => Vec::new(),
     };
+    let goal_task_id = match (session.kind.as_str(), session.track_id, session.chapter_id) {
+        ("chapter_maintenance", Some(track_id), Some(chapter_id)) => {
+            let track = tracks::Entity::find_by_id(track_id).one(conn).await?;
+            let chapter = chapters::Entity::find_by_id(chapter_id).one(conn).await?;
+            match (track, chapter) {
+                (Some(track), Some(chapter)) => crate::services::goals::relevant_nodes(
+                    conn,
+                    session
+                        .book_id
+                        .ok_or_else(|| AppError::internal("maintenance session has no book"))?,
+                    &track,
+                    &chapter,
+                )
+                .await?
+                .nodes
+                .into_iter()
+                .find(|node| node.level == crate::db::json::GoalLevel::Task)
+                .map(|node| node.id),
+                _ => None,
+            }
+        }
+        _ => None,
+    };
     Ok(nekowriter_llm::DemoHints {
         kind: session.kind.as_str().to_owned(),
         phase: session.phase.as_str().to_owned(),
@@ -1781,6 +1804,7 @@ async fn demo_hints(
         saved_entries,
         characters,
         approved_docs,
+        goal_task_id,
     })
 }
 

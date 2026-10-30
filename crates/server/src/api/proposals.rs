@@ -19,13 +19,30 @@ pub async fn list(
     ))
 }
 
+/// `POST /api/proposals/:id/accept` body (spec/10 §2.3, plan §4.7).
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct AcceptProposalInput {
+    #[serde(default)]
+    pub confirm_open_children: bool,
+}
+
 /// `POST /api/proposals/:id/accept` (spec/10 §2.3).
 pub async fn accept(
     State(state): State<AppState>,
     Path(proposal_id): Path<i32>,
+    body: Option<Json<AcceptProposalInput>>,
 ) -> AppResult<Json<ProposalDto>> {
+    let confirm_open_children = body
+        .map(|Json(body)| body.confirm_open_children)
+        .unwrap_or(false);
     Ok(Json(
-        service::accept(state.db(), state.events(), proposal_id).await?,
+        service::accept(
+            state.db(),
+            state.events(),
+            proposal_id,
+            confirm_open_children,
+        )
+        .await?,
     ))
 }
 

@@ -18,6 +18,7 @@ fn hints(kind: &str, phase: &str, language: &str) -> DemoHints {
         saved_entries: 0,
         characters: Vec::new(),
         approved_docs: Vec::new(),
+        goal_task_id: None,
     }
 }
 

@@ -397,6 +397,9 @@ impl ToolRegistry {
         for handler in super::proposals::all() {
             handlers.insert(handler.name().to_owned(), handler);
         }
+        for handler in super::goal_proposals::all() {
+            handlers.insert(handler.name().to_owned(), handler);
+        }
         // The two web tools of M8 (spec/05 §7–§8). They are the only path to the network.
         for handler in super::web::all() {
             handlers.insert(handler.name().to_owned(), handler);
@@ -497,12 +500,21 @@ mod tests {
             true,
             &ToolRegistry::new(),
         );
-        // `propose_goal_change` is gated but has no handler until 13.6, so it is not frozen.
-        assert!(!ToolRegistry::new().has("propose_goal_change"));
-        assert_eq!(full.len(), 21);
-        assert!(!full.contains(&"propose_goal_change"));
-        assert_eq!(full[19], "propose_setting_change");
-        assert_eq!(full[20], "finish_maintenance");
+        assert!(ToolRegistry::new().has("propose_goal_change"));
+        assert_eq!(full.len(), 22);
+        assert_eq!(full[19], "propose_goal_change");
+        assert_eq!(full[20], "propose_setting_change");
+        assert_eq!(full[21], "finish_maintenance");
+
+        let without_relevant_goals = tools_for_session(
+            "archivist",
+            SessionKind::ChapterMaintenance,
+            &all,
+            false,
+            &ToolRegistry::new(),
+        );
+        assert_eq!(without_relevant_goals.len(), 21);
+        assert!(!without_relevant_goals.contains(&"propose_goal_change"));
 
         let no_entities = CanonSystems {
             entities: false,

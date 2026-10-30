@@ -1298,7 +1298,7 @@ impl ToolHandler for FinishMaintenanceTool {
             .await
             .map_err(|_| internal())?
             .len();
-        let proposals = crate::db::entities::setting_proposals::Entity::find()
+        let proposal_rows = crate::db::entities::setting_proposals::Entity::find()
             .filter(
                 crate::db::entities::setting_proposals::COLUMN
                     .session_id
@@ -1306,8 +1306,18 @@ impl ToolHandler for FinishMaintenanceTool {
             )
             .all(ctx.tx)
             .await
-            .map_err(|_| internal())?
-            .len();
+            .map_err(|_| internal())?;
+        let proposals = proposal_rows
+            .iter()
+            .filter(|row| {
+                !matches!(
+                    row.target_type,
+                    crate::db::json::ProposalTargetType::GoalNode
+                        | crate::db::json::ProposalTargetType::NewGoalTask
+                )
+            })
+            .count();
+        let goal_proposals = proposal_rows.len() - proposals;
         let text = ctx
             .prompts
             .render_value(
@@ -1316,9 +1326,7 @@ impl ToolHandler for FinishMaintenanceTool {
                     "confirm_needed": confirm_needed,
                     "changes": changes,
                     "proposals": proposals,
-                    // Goal proposals are counted once `propose_goal_change` lands (D-150);
-                    // the field exists now so the prompt's branches render in every pack.
-                    "goal_proposals": 0,
+                    "goal_proposals": goal_proposals,
                 })),
             )
             .map_err(|_| internal())?
@@ -1326,7 +1334,7 @@ impl ToolHandler for FinishMaintenanceTool {
         let mut outcome = ToolOutcome::text(text).with_ui(json!({
             "changes": changes,
             "proposals": proposals,
-            "goal_proposals": 0,
+            "goal_proposals": goal_proposals,
         }));
         if !confirm_needed {
             outcome = outcome.with_effects(ToolEffects {

@@ -653,6 +653,10 @@ pub struct DemoHints {
     /// plan revises exactly the documents the author asked to change (spec/04 §7.2).
     #[serde(default)]
     pub approved_docs: Vec<String>,
+    /// The first relevant task id of a maintenance chapter, so the Demo proposes `complete` for
+    /// it when `propose_goal_change` is frozen (spec/04 §7.2, plan §4.6).
+    #[serde(default)]
+    pub goal_task_id: Option<i32>,
 }
 
 /// One character design the Demo provider seeds canon from (spec/04 §7.2).

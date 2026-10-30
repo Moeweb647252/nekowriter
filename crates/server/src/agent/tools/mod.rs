@@ -8,6 +8,7 @@
 
 pub mod archivist;
 pub mod conception;
+pub mod goal_proposals;
 pub mod proposals;
 pub mod registry;
 pub mod research;

@@ -10,13 +10,16 @@ use sea_orm::{
 };
 use serde_json::json;
 
-use crate::api::dto::goals::GoalTargetDto;
+use crate::api::dto::goals::{GoalNodeInput, GoalTargetDto};
 use crate::api::dto::proposals::{ProposalDto, ProposalPreviewDto};
 use crate::api::dto::settings_materials::{CharacterInput, CharacterPatch};
-use crate::db::entities::{character_designs, goal_nodes, setting_docs, setting_proposals};
+use crate::db::entities::{
+    character_designs, entities, foreshadowing, goal_nodes, setting_docs, setting_proposals,
+    timeline_events,
+};
 use crate::db::json::{
-    ChangeActor, ChangeOp, ChangeTargetType, FindReplace, ProposalEdits, ProposalStatus,
-    ProposalTargetType, SettingDocKind, Snapshot,
+    ChangeActor, ChangeOp, ChangeTargetType, FindReplace, GoalLevel, GoalStatus, ProposalEdits,
+    ProposalStatus, ProposalTargetType, SettingDocKind, Snapshot,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::{ServerEvent, SettingsKind};
@@ -83,9 +86,10 @@ pub async fn accept(
     db: &crate::db::Db,
     events: &crate::events::EventBus,
     proposal_id: i32,
+    confirm_open_children: bool,
 ) -> Result<ProposalDto, AppError> {
     let (dto, published) = super::write(db, move |tx| {
-        Box::pin(async move { accept_inner(tx, proposal_id).await })
+        Box::pin(async move { accept_inner(tx, proposal_id, confirm_open_children).await })
     })
     .await?;
     events.publish_all(published);
@@ -95,6 +99,7 @@ pub async fn accept(
 pub async fn accept_inner(
     tx: &sea_orm::DatabaseTransaction,
     proposal_id: i32,
+    confirm_open_children: bool,
 ) -> Result<(ProposalDto, Vec<ServerEvent>), AppError> {
     let proposal = load(tx, proposal_id).await?;
     if proposal.status != ProposalStatus::Pending {
@@ -216,12 +221,91 @@ pub async fn accept_inner(
                 Err(error) => return Err(error),
             }
         }
-        ProposalTargetType::GoalNode | ProposalTargetType::NewGoalTask => {
-            // `propose_goal_change` and the goal-proposal accept path land with the goals service
-            // (spec/06 §5, M13 task 13.6). Until then no API path can create such a row.
-            return Err(AppError::internal(
-                "a goal proposal cannot be accepted before the goals service exists",
-            ));
+        ProposalTargetType::GoalNode => {
+            let edits = edits_of(&proposal)?;
+            let ProposalEdits::SetGoalStatus { status } = edits else {
+                return Err(AppError::internal(
+                    "a goal-node proposal has no status edit",
+                ));
+            };
+            let Some(node) = goal_nodes::Entity::find_by_id(proposal.target_id.unwrap_or_default())
+                .one(tx)
+                .await?
+            else {
+                return mark_conflict(tx, proposal, events).await;
+            };
+            // The proposal was made against the node as it was; a later edit is a conflict.
+            if node.status != GoalStatus::Active && node.status != GoalStatus::Waiting
+                || node.updated_at > proposal.created_at
+            {
+                return mark_conflict(tx, proposal, events).await;
+            }
+            // Use the same evaluator as the Goals page for every derived-state decision.
+            let _evaluation =
+                super::goals::evaluate(tx, book_id, std::slice::from_ref(&node)).await?;
+            let patch = super::goals::GoalNodePatch {
+                status: Some(status),
+                note: Some(proposal.rationale.clone()),
+                confirm_open_children: Some(confirm_open_children),
+                ..super::goals::GoalNodePatch::default()
+            };
+            let write = super::canon::CanonWrite::author().with_chapter(proposal.chapter_id);
+            let (_, mut changed) = super::goals::update_inner(tx, &write, node.id, patch).await?;
+            events.append(&mut changed);
+        }
+        ProposalTargetType::NewGoalTask => {
+            let edits = edits_of(&proposal)?;
+            let ProposalEdits::CreateGoalTask { task } = edits else {
+                return Err(AppError::internal("a new-task proposal has no task edit"));
+            };
+            if let Some(parent_id) = task.parent_id {
+                let Some(parent) = goal_nodes::Entity::find_by_id(parent_id).one(tx).await? else {
+                    return mark_conflict(tx, proposal, events).await;
+                };
+                if parent.level != GoalLevel::Plan
+                    || parent.status != GoalStatus::Active
+                    || parent.track_id != task.track_id
+                    || parent.updated_at > proposal.created_at
+                {
+                    return mark_conflict(tx, proposal, events).await;
+                }
+            }
+            let entity_ids = surviving_link_ids(
+                tx,
+                book_id,
+                task.track_id,
+                &task.entity_ids,
+                LinkKind::Entity,
+            )
+            .await?;
+            let event_ids =
+                surviving_link_ids(tx, book_id, task.track_id, &task.event_ids, LinkKind::Event)
+                    .await?;
+            let foreshadowing_ids = surviving_link_ids(
+                tx,
+                book_id,
+                task.track_id,
+                &task.foreshadowing_ids,
+                LinkKind::Foreshadowing,
+            )
+            .await?;
+            let input = GoalNodeInput {
+                track_id: task.track_id,
+                level: GoalLevel::Task,
+                parent_id: task.parent_id,
+                title: task.title,
+                purpose: task.purpose,
+                status: Some(GoalStatus::Active),
+                chapter_from: task.chapter_from,
+                chapter_to: task.chapter_to,
+                conditions: None,
+                entity_ids: Some(entity_ids),
+                event_ids: Some(event_ids),
+                foreshadowing_ids: Some(foreshadowing_ids),
+            };
+            let write = super::canon::CanonWrite::author().with_chapter(proposal.chapter_id);
+            let (_, mut changed) = super::goals::create_inner(tx, &write, book_id, input).await?;
+            events.append(&mut changed);
         }
     }
 
@@ -243,6 +327,49 @@ pub async fn accept_inner(
     });
     let row = load(tx, proposal.id).await?;
     Ok((to_dto(tx, &row).await?, events))
+}
+
+#[derive(Clone, Copy)]
+enum LinkKind {
+    Entity,
+    Event,
+    Foreshadowing,
+}
+
+async fn surviving_link_ids(
+    tx: &impl ConnectionTrait,
+    book_id: i32,
+    track_id: Option<i32>,
+    ids: &[i32],
+    kind: LinkKind,
+) -> Result<Vec<i32>, AppError> {
+    let mut out = Vec::new();
+    for id in ids {
+        let row_track = match kind {
+            LinkKind::Entity => entities::Entity::find_by_id(*id)
+                .one(tx)
+                .await?
+                .filter(|row| row.book_id == book_id)
+                .map(|row| row.track_id),
+            LinkKind::Event => timeline_events::Entity::find_by_id(*id)
+                .one(tx)
+                .await?
+                .filter(|row| row.book_id == book_id)
+                .map(|row| row.track_id),
+            LinkKind::Foreshadowing => foreshadowing::Entity::find_by_id(*id)
+                .one(tx)
+                .await?
+                .filter(|row| row.book_id == book_id)
+                .map(|row| row.track_id),
+        };
+        if let Some(row_track) = row_track
+            && (track_id.is_none() && row_track.is_none()
+                || track_id.is_some() && (row_track.is_none() || row_track == track_id))
+        {
+            out.push(*id);
+        }
+    }
+    Ok(out)
 }
 
 /// Marks the proposal `conflict`, applies nothing, and returns it (spec/06 §5, D-044).

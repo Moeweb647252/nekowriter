@@ -703,6 +703,18 @@ fn maintenance_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
             json!({ "summary": lang.summary_template }),
         ),
     ];
+    if let Some(task_id) = hints.goal_task_id
+        && frozen("propose_goal_change")
+    {
+        steps.push((
+            "propose_goal_change",
+            json!({
+                "action": "complete",
+                "node": task_id,
+                "rationale": lang.proposal_rationale,
+            }),
+        ));
+    }
     if hints.canon_mode != "isolated" {
         steps.push((
             "propose_setting_change",
