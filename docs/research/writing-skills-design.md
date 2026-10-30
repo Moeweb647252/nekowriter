@@ -55,7 +55,7 @@ Rulings (revision 3):
 | What a skill is | 「支撑整个写作能力的提示词」 — the prompt underpinning the writing capability |
 | Selection | a book selects **0–n** skills |
 | Fields | a **category** field and an **author** field; **no fixed categories** |
-| Storage | **B** — bodies in the database; the prompt pack is the seed source for built-in rows |
+| Storage | **B** — bodies in the database; migrations seed built-in rows (`0007`, D-156) and the prompt-pack reconciler stays deferred (§4.2) |
 | Injection | **full**, not on-demand |
 | Built-in content | **the first body ships via `0007` (D-156)**; built-ins stay **read-only** |
 | User content | **the author can create their own skills** |
