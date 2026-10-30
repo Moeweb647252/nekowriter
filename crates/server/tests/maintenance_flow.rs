@@ -150,6 +150,21 @@ async fn maintenance_writes_every_canon_row_and_completes_synced() {
         );
         assert_eq!(call.status, "done", "{} status", call.name);
     }
+    let (_, session) = runtime
+        .app
+        .get(&format!("/api/sessions/{session_id}"))
+        .await;
+    let appearance = session["tool_calls"]
+        .as_array()
+        .expect("tool calls")
+        .iter()
+        .find(|call| call["name"] == "record_appearances")
+        .expect("record_appearances ran");
+    assert_eq!(
+        appearance["ui"]["count"],
+        json!(2),
+        "record_appearances carries the real appearance count: {appearance}"
+    );
     let changes = count(
         &runtime,
         "change_log",

@@ -217,11 +217,13 @@ fn canon_outcome_with(
         )
         .map_err(|_| internal())?
         .text;
+    let count = extra.get("count").cloned().unwrap_or(Value::Null);
     Ok(ToolOutcome::text(text).with_ui(json!({
         "change_ids": change_ids(events),
         "target_type": target_type,
         "target_id": target_id,
         "name": name,
+        "count": count,
     })))
 }
 

@@ -244,7 +244,9 @@
       "summary_target": "结束了与 {{target}} 的关系"
     },
     "record_appearances": {
-      "summary": "记录了 {{count}} 条出场"
+      "summary": "记录了 {{count}} 条出场",
+      "summary_one": "记录了 {{count}} 条出场",
+      "summary_other": "记录了 {{count}} 条出场"
     },
     "add_timeline_event": {
       "summary": "加入了一个时间线事件",

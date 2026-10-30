@@ -244,7 +244,9 @@
       "summary_target": "Ended the relation with {{target}}"
     },
     "record_appearances": {
-      "summary": "Recorded {{count}} appearances"
+      "summary": "Recorded {{count}} appearances",
+      "summary_one": "Recorded {{count}} appearance",
+      "summary_other": "Recorded {{count}} appearances"
     },
     "add_timeline_event": {
       "summary": "Added a timeline event",

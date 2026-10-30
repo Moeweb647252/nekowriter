@@ -501,6 +501,13 @@ describe("tool renderer registry", () => {
     )
   })
 
+  it("renders the real appearance count for record_appearances", () => {
+    const renderer = toolRenderer("record_appearances")
+    for (const count of [0, 1, 2]) {
+      expect(renderer.summary({ count }, t)).toContain(`"count":${count}`)
+    }
+  })
+
   it("handles an empty or malformed ui payload", () => {
     const renderer = toolRenderer("list_entities")
     expect(renderer.summary(null, t)).toContain("agent:tools.list_entities.summary")
