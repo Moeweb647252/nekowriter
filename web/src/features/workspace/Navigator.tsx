@@ -38,11 +38,13 @@ import {
   Settings,
   Sparkle,
   Sparkles,
+  Target,
   Trash2,
   Users,
 } from "lucide-react"
 
 import { useProposals } from "@/api/hooks/reviews"
+import { useGoals } from "@/api/hooks/goals"
 import { useChapters, useCreateChapter, useReorderChapters, useTracks } from "@/api/hooks/tracks"
 import type { BookDto } from "@/api/gen/BookDto"
 import type { ChapterListItemDto } from "@/api/gen/ChapterListItemDto"
@@ -115,6 +117,13 @@ function NavLink({ to, icon: Icon, label, badge, end }: NavLinkProps) {
       )}
     </RouterNavLink>
   )
+}
+
+/** The Goals entry with its ready/closable badge (spec/11 §5.1, spec/06 §11.3). */
+function GoalsNavLink({ bookId, label }: { bookId: number; label: string }) {
+  const goals = useGoals(bookId)
+  const badge = (goals.data ?? []).filter((node) => node.ready || node.closable).length
+  return <NavLink to={`/books/${bookId}/canon/goals`} icon={Target} label={label} badge={badge} />
 }
 
 /** The navigator of one book. */
@@ -220,6 +229,9 @@ export function Navigator({ book }: NavigatorProps) {
           icon={Sparkle}
           label={t("canon:foreshadowing")}
         />
+      ) : null}
+      {isCanonPageVisible(book.settings.canon_systems, "goals") ? (
+        <GoalsNavLink bookId={book.id} label={t("canon:goals")} />
       ) : null}
       <NavLink
         to={`/books/${book.id}/canon/changes`}

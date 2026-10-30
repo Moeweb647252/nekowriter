@@ -68,6 +68,7 @@ export function bookPages(
       to: `/books/${bookId}/canon/foreshadowing`,
       system: "foreshadowing",
     },
+    { label: t("canon:goals"), to: `/books/${bookId}/canon/goals`, system: "goals" },
     { label: t("book:changes"), to: `/books/${bookId}/canon/changes` },
     { label: t("book:proposals"), to: `/books/${bookId}/proposals` },
     { label: t("book:knowledge"), to: `/books/${bookId}/knowledge` },

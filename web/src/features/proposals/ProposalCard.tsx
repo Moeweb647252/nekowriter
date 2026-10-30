@@ -64,6 +64,27 @@ export function ProposalCard({ proposal, bookId, unspaced, compact = false }: Pr
         </span>
       </header>
       <p className="text-xs text-muted-foreground">{proposal.rationale}</p>
+      {proposal.target_type === "goal_node" && proposal.edits.kind === "set_goal_status" ? (
+        <p className="text-xs">
+          {t("book:proposal.goal_status_change", {
+            title: proposal.goal_target?.title ?? "",
+            status: t(`canon:goal_status.${proposal.edits.status}`),
+          })}
+        </p>
+      ) : null}
+      {proposal.target_type === "new_goal_task" && proposal.edits.kind === "create_goal_task" ? (
+        <div className="space-y-0.5 text-xs">
+          <p className="font-medium">{proposal.edits.task.title}</p>
+          {proposal.edits.task.purpose === "" ? null : (
+            <p className="text-muted-foreground">{proposal.edits.task.purpose}</p>
+          )}
+          {proposal.goal_target === null ? null : (
+            <p className="text-muted-foreground">
+              {t("book:proposal.new_goal_task_parent", { title: proposal.goal_target.title })}
+            </p>
+          )}
+        </div>
+      ) : null}
       {proposal.preview.before === "" && proposal.preview.after === "" ? null : (
         <div className="max-h-64 overflow-y-auto rounded bg-muted/40 p-2">
           <DiffView

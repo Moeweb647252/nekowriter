@@ -414,6 +414,7 @@ describe("canon switch filtering of the page list", () => {
     const routes = pages.map((page) => page.to)
     expect(routes).not.toContain("/books/1/canon/entities")
     expect(routes).not.toContain("/books/1/canon/memory")
+    expect(routes).not.toContain("/books/1/canon/goals")
     expect(routes).toContain("/books/1/canon/timeline")
     expect(routes).toContain("/books/1/canon/foreshadowing")
     expect(routes).toContain("/books/1/canon/changes")

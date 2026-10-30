@@ -101,6 +101,10 @@ function label(
       return item.count === 1
         ? t("book:attention.ready_research_one", { count: item.count })
         : t("book:attention.ready_research_other", { count: item.count })
+    case "ready_goals":
+      return item.count === 1
+        ? t("book:attention.ready_goals_one", { count: item.count })
+        : t("book:attention.ready_goals_other", { count: item.count })
     default:
       return t("book:attention_title")
   }
@@ -113,6 +117,9 @@ function target(item: AttentionItemDto, bookId: number): string {
   }
   if (item.kind === "ready_research") {
     return "/research"
+  }
+  if (item.kind === "ready_goals") {
+    return `/books/${bookId}/canon/goals?filter=ready`
   }
   if (item.chapter !== null && item.chapter !== undefined) {
     return `/books/${bookId}/chapters/${item.chapter.id}`

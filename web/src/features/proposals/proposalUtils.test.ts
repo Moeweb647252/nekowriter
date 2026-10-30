@@ -69,5 +69,36 @@ describe("proposalUtils", () => {
         }),
       ),
     ).toEqual({ key: "book:proposal.new_character", name: "柳照" })
+    expect(
+      targetLabel(
+        proposal({
+          target_type: "goal_node",
+          target_kind: null,
+          goal_target: { id: 3, level: "plan", title: "Take the sword", status: "active" },
+        }),
+      ),
+    ).toEqual({ key: "book:proposal.goal_node", name: "Take the sword" })
+    expect(
+      targetLabel(
+        proposal({
+          target_type: "new_goal_task",
+          target_kind: null,
+          edits: {
+            kind: "create_goal_task",
+            task: {
+              parent_id: null,
+              title: "A new task",
+              purpose: "why",
+              chapter_from: null,
+              chapter_to: null,
+              entity_ids: [],
+              event_ids: [],
+              foreshadowing_ids: [],
+              track_id: null,
+            },
+          },
+        }),
+      ),
+    ).toEqual({ key: "book:proposal.new_goal_task", name: "A new task" })
   })
 })

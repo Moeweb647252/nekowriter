@@ -18,6 +18,7 @@ import {
   PenLine,
   Search,
   Sparkles,
+  Target,
   Users,
   Wrench,
 } from "lucide-react"
@@ -310,6 +311,25 @@ const REGISTRY: Record<string, ToolRenderer> = {
       return target === undefined
         ? t("agent:tools.propose_setting_change.summary")
         : t("agent:tools.propose_setting_change.summary_target", { target })
+    },
+  },
+  propose_goal_change: {
+    icon: Target,
+    summary: (ui, t) => {
+      const data = payload(ui)
+      const action = str(data, "action")
+      const nodeId = num(data, "node_id")
+      if (action === "complete") {
+        return nodeId === undefined
+          ? t("agent:tools.propose_goal_change.summary_complete")
+          : t("agent:tools.propose_goal_change.summary_complete_node", { id: nodeId })
+      }
+      if (action === "drop") {
+        return nodeId === undefined
+          ? t("agent:tools.propose_goal_change.summary_drop")
+          : t("agent:tools.propose_goal_change.summary_drop_node", { id: nodeId })
+      }
+      return t("agent:tools.propose_goal_change.summary_create")
     },
   },
   finish_maintenance: {

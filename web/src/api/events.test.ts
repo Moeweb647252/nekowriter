@@ -31,6 +31,8 @@ function seededClient(): QueryClient {
   client.setQueryData(keys.proposals.list(1, "pending"), [])
   client.setQueryData(keys.proposals.list(1), [])
   client.setQueryData(keys.chapters.detail(9), {})
+  client.setQueryData(keys.tracks.chapters(3), [])
+  client.setQueryData(keys.canon.goals(1, "shared|all|||"), [])
   return client
 }
 
@@ -88,6 +90,27 @@ describe("applyServerEvent", () => {
     expect(isInvalidated(client, keys.proposals.list(1, undefined))).toBe(true)
     expect(isInvalidated(client, keys.books.overview(1))).toBe(true)
     expect(isInvalidated(client, keys.chapters.detail(9))).toBe(false)
+  })
+
+  it("invalidates goal lists on chapter.updated because approval can make a chapter_at_least condition ready", () => {
+    const client = seededClient()
+    applyServerEvent(client, "chapter.updated", {
+      chapter: {
+        id: 44,
+        book_id: 1,
+        track_id: 3,
+        number: 12,
+        title: "Approved",
+        status: "official",
+        canon_status: "synced",
+        word_count: 100,
+        has_outline: true,
+        updated_at: "2026-01-01T00:00:00Z",
+      },
+      outline_changed: false,
+    })
+    expect(isInvalidated(client, keys.canon.goals(1, "shared|all|||"))).toBe(true)
+    expect(isInvalidated(client, keys.tracks.chapters(3))).toBe(true)
   })
 })
 

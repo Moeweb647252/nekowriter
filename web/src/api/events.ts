@@ -312,6 +312,9 @@ export function applyServerEvent(
       if (data === null) {
         return
       }
+      // A chapter becoming official can satisfy `chapter_at_least`; the evaluator is only as
+      // fresh as its next read, so every goal list (and the overview row) is invalidated.
+      void queryClient.invalidateQueries({ queryKey: keys.canon.goalsAll })
       const chapter = payloadRecord(data.chapter)
       if (chapter === null) {
         return

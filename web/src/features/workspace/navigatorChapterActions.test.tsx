@@ -41,6 +41,10 @@ vi.mock("@/api/hooks/reviews", () => ({
   useProposals: () => ({ data: [] }),
 }))
 
+vi.mock("@/api/hooks/goals", () => ({
+  useGoals: () => ({ data: [], isPending: false, isError: false }),
+}))
+
 vi.mock("@/api/hooks/tracks", () => ({
   useTracks: () => ({
     data: [

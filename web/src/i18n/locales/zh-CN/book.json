@@ -241,7 +241,9 @@
     "defer_research": "全部推迟（{{count}}）",
     "defer_research_hint": "暂时不做：推迟这些任务，先继续写作。之后可以在资料收集列表里恢复。",
     "write_outline": "写细纲：{{chapter}}",
-    "write_chapter": "写正文：{{chapter}}"
+    "write_chapter": "写正文：{{chapter}}",
+    "ready_goals_one": "{{count}} 个可行动目标",
+    "ready_goals_other": "{{count}} 个可行动目标"
   },
   "attention_title": "需要你来处理",
   "attention_empty": "现在没有需要处理的事情。",
@@ -252,7 +254,9 @@
     "pending_proposals_one": "{{count}} 条待处理的设定提议",
     "pending_proposals_other": "{{count}} 条待处理的设定提议",
     "ready_research_one": "{{count}} 个资料任务可以开始",
-    "ready_research_other": "{{count}} 个资料任务可以开始"
+    "ready_research_other": "{{count}} 个资料任务可以开始",
+    "ready_goals_one": "{{count}} 个可行动目标",
+    "ready_goals_other": "{{count}} 个可行动目标"
   },
   "no_chapter": "这本书",
   "usage_title": "Token 用量",
@@ -287,5 +291,9 @@
   "canon_retained.foreshadowing_one": "{{items}}仍保留在书中。智能体将停止读取和维护它。",
   "canon_retained.foreshadowing_other": "{{items}}仍保留在书中。智能体将停止读取和维护它们。",
   "canon_retained.goals_one": "{{nodes}}仍保留在书中。智能体将停止读取和维护它。",
-  "canon_retained.goals_other": "{{nodes}}仍保留在书中。智能体将停止读取和维护它们。"
+  "canon_retained.goals_other": "{{nodes}}仍保留在书中。智能体将停止读取和维护它们。",
+  "proposal.goal_node": "目标节点",
+  "proposal.new_goal_task": "新目标情节点",
+  "proposal.goal_status_change": "{{title}} → {{status}}",
+  "proposal.new_goal_task_parent": "位于 {{title}} 下"
 }

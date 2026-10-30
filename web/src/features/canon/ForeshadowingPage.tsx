@@ -25,6 +25,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { GoalsReferencedBy } from "@/features/canon/GoalsReferencedBy"
 
 const STATUSES: ForeshadowingStatus[] = ["open", "resolved", "abandoned"]
 
@@ -210,6 +211,7 @@ function ForeshadowingRow({
         {item.resolution === "" ? null : (
           <p className="text-xs text-muted-foreground">{item.resolution}</p>
         )}
+        <GoalsReferencedBy bookId={bookId} foreshadowingId={item.id} />
       </div>
       {item.status !== "open" ? null : resolving ? (
         <form

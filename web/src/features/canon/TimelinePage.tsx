@@ -35,6 +35,7 @@ import {
   useChapterIndex,
   type ChapterIndex,
 } from "@/features/canon/chapterIndex"
+import { GoalsReferencedBy } from "@/features/canon/GoalsReferencedBy"
 import { useErrorToast } from "@/components/common/ErrorToast"
 import { EmptyState } from "@/components/common/EmptyState"
 import { Button } from "@/components/ui/button"
@@ -275,6 +276,7 @@ function TimelineRow({
             ))}
           </div>
         )}
+        <GoalsReferencedBy bookId={bookId} eventId={event.id} />
       </div>
       <Button
         size="sm"

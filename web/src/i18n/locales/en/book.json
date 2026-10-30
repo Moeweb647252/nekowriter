@@ -241,7 +241,9 @@
     "defer_research": "Defer all ({{count}})",
     "defer_research_hint": "Not now: postpone these tasks and keep writing. Resume them from the research list.",
     "write_outline": "Outline {{chapter}}",
-    "write_chapter": "Write {{chapter}}"
+    "write_chapter": "Write {{chapter}}",
+    "ready_goals_one": "{{count}} ready goal",
+    "ready_goals_other": "{{count}} ready goals"
   },
   "attention_title": "Needs you",
   "attention_empty": "Nothing needs you right now.",
@@ -252,7 +254,9 @@
     "pending_proposals_one": "{{count}} pending proposal",
     "pending_proposals_other": "{{count}} pending proposals",
     "ready_research_one": "{{count}} research task is ready to run",
-    "ready_research_other": "{{count}} research tasks are ready to run"
+    "ready_research_other": "{{count}} research tasks are ready to run",
+    "ready_goals_one": "{{count}} ready goal",
+    "ready_goals_other": "{{count}} ready goals"
   },
   "no_chapter": "This book",
   "usage_title": "Token usage",
@@ -287,5 +291,9 @@
   "canon_retained.foreshadowing_one": "{{items}} stays in the book. Agents stop reading and maintaining it.",
   "canon_retained.foreshadowing_other": "{{items}} stay in the book. Agents stop reading and maintaining them.",
   "canon_retained.goals_one": "{{nodes}} stays in the book. Agents stop reading and maintaining it.",
-  "canon_retained.goals_other": "{{nodes}} stay in the book. Agents stop reading and maintaining them."
+  "canon_retained.goals_other": "{{nodes}} stay in the book. Agents stop reading and maintaining them.",
+  "proposal.goal_node": "Goal node",
+  "proposal.new_goal_task": "New goal task",
+  "proposal.goal_status_change": "{{title}} → {{status}}",
+  "proposal.new_goal_task_parent": "Under {{title}}"
 }

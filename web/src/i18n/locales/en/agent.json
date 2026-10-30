@@ -338,6 +338,13 @@
     },
     "test_slow": {
       "summary": "Slow test call ({{chars}} chars)"
+    },
+    "propose_goal_change": {
+      "summary_complete": "Proposed completing a goal",
+      "summary_complete_node": "Proposed completing goal #{{id}}",
+      "summary_drop": "Proposed dropping a goal",
+      "summary_drop_node": "Proposed dropping goal #{{id}}",
+      "summary_create": "Proposed a new goal task"
     }
   }
 }

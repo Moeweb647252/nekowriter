@@ -115,7 +115,24 @@ export function NextActionCard({ bookId, status, action, tracks }: NextActionPro
       </CardHeader>
       <CardContent className="space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-base font-medium">{label}</p>
+          <div className="space-y-1">
+            <p className="text-base font-medium">{label}</p>
+            {action.ready_goals !== null &&
+            action.ready_goals !== undefined &&
+            action.ready_goals > 0 &&
+            (action.kind === "write_outline" ||
+              action.kind === "write_chapter" ||
+              action.kind === "write_next") ? (
+              <Link
+                to={`/books/${bookId}/canon/goals?filter=ready`}
+                className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+              >
+                {action.ready_goals === 1
+                  ? t("book:next_action.ready_goals_one", { count: action.ready_goals })
+                  : t("book:next_action.ready_goals_other", { count: action.ready_goals })}
+              </Link>
+            ) : null}
+          </div>
           <ActionButton
             bookId={bookId}
             status={status}

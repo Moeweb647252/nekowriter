@@ -469,6 +469,7 @@ describe("tool renderer registry", () => {
       "resolve_foreshadowing",
       "set_chapter_summary",
       "propose_setting_change",
+      "propose_goal_change",
       "finish_maintenance",
       "ask_user",
       "web_search",
@@ -488,6 +489,16 @@ describe("tool renderer registry", () => {
     for (const name of required) {
       expect(registered.has(name), `no renderer for ${name}`).toBe(true)
     }
+  })
+
+  it("summarizes a goal proposal with its action and node", () => {
+    const renderer = toolRenderer("propose_goal_change")
+    expect(renderer.summary({ action: "complete", node_id: 12 }, t)).toContain(
+      "agent:tools.propose_goal_change.summary_complete_node",
+    )
+    expect(renderer.summary({ action: "create" }, t)).toBe(
+      "agent:tools.propose_goal_change.summary_create",
+    )
   })
 
   it("handles an empty or malformed ui payload", () => {

@@ -81,6 +81,18 @@ vi.mock("@/features/canon/chapterIndex", async (importOriginal) => {
   }
 })
 
+vi.mock("@/api/hooks/books", () => ({
+  useBook: () => ({
+    data: { settings: { canon_systems: { goals: false } } },
+    isPending: false,
+    isError: false,
+  }),
+}))
+
+vi.mock("@/api/hooks/goals", () => ({
+  useGoals: () => ({ data: [], isPending: false, isError: false }),
+}))
+
 import ForeshadowingPage from "@/features/canon/ForeshadowingPage"
 
 beforeAll(() => {

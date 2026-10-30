@@ -28,5 +28,17 @@ export function targetLabel(proposal: ProposalDto): { key: string; name?: string
   if (proposal.target_type === "character_design") {
     return { key: "book:proposal.character_design" }
   }
+  if (proposal.target_type === "goal_node") {
+    return { key: "book:proposal.goal_node", name: proposal.goal_target?.title }
+  }
+  if (proposal.target_type === "new_goal_task") {
+    return {
+      key: "book:proposal.new_goal_task",
+      name:
+        proposal.edits.kind === "create_goal_task"
+          ? proposal.edits.task.title
+          : proposal.goal_target?.title,
+    }
+  }
   return { key: "book:proposal.new_character", name: newCharacterName(proposal) }
 }

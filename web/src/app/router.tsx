@@ -206,6 +206,13 @@ export const routes: RouteObject[] = [
             },
           },
           {
+            path: "canon/goals",
+            lazy: async () => {
+              const module = await import("@/features/canon/GoalsPage")
+              return { Component: module.default }
+            },
+          },
+          {
             path: "canon/changes",
             lazy: async () => {
               const module = await import("@/features/canon/ChangesPage")

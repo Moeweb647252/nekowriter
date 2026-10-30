@@ -114,6 +114,7 @@ function useProposalSettle(bookId: number) {
       queryKey: keys.settings.characters(bookId),
     })
     void queryClient.invalidateQueries({ queryKey: keys.changes.all })
+    void queryClient.invalidateQueries({ queryKey: keys.canon.goalsAll })
     void queryClient.invalidateQueries({
       queryKey: keys.books.overview(bookId),
     })

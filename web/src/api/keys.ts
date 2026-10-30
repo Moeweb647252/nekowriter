@@ -59,6 +59,10 @@ export const keys = {
     memory: (bookId: number, position?: string) =>
       ["canon", "memory", bookId, position ?? "default"] as const,
     counts: (bookId: number) => ["canon", "counts", bookId] as const,
+    /** Every goal list, invalidated by chapter.approved readiness changes and goal writes. */
+    goalsAll: ["canon", "goals"] as const,
+    goals: (bookId: number, filter?: string) =>
+      ["canon", "goals", bookId, filter ?? "all"] as const,
     appearances: (chapterId: number) =>
       ["canon", "appearances", chapterId] as const,
   },

@@ -338,6 +338,13 @@
     },
     "test_slow": {
       "summary": "慢速测试调用（{{chars}} 个字符）"
+    },
+    "propose_goal_change": {
+      "summary_complete": "建议完成一个写作目标",
+      "summary_complete_node": "建议完成写作目标 #{{id}}",
+      "summary_drop": "建议放弃一个写作目标",
+      "summary_drop_node": "建议放弃写作目标 #{{id}}",
+      "summary_create": "建议新建一个目标情节点"
     }
   }
 }

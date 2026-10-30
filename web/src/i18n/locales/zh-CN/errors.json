@@ -35,5 +35,7 @@
   "agent.no_tool_call": "智能体应当调用工具，却只回复了文字，会话已暂停。请给出更明确的指令后继续。",
   "model.missing_provider": "这个模型的服务商已被删除。请在“设置 › 智能体角色”里改选其他模型，然后继续。",
   "prompt.override_failed": "提示词覆盖没能生效，已改用默认提示词。",
-  "chapter.outline_missing": "本章还没有细纲，请先写细纲。"
+  "chapter.outline_missing": "本章还没有细纲，请先写细纲。",
+  "goal.open_children": "此目标仍有未关闭的后代节点。",
+  "goal.has_children": "此目标有子节点；请先移动或删除它们。"
 }

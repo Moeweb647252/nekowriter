@@ -21,6 +21,7 @@ import {
 import { useTracks } from "@/api/hooks/tracks"
 import { useErrorToast } from "@/components/common/ErrorToast"
 import { ChangeList } from "@/features/canon/ChangeList"
+import { GoalsReferencedBy } from "@/features/canon/GoalsReferencedBy"
 import {
   chapterRefLabel,
   useChapterIndex,
@@ -150,6 +151,8 @@ export function EntityDetail({ bookId, entityId }: EntityDetailProps) {
 
       <RelationsEditor bookId={bookId} entity={data} />
       <Appearances entity={data} chapterIndex={chapterIndex} />
+
+      <GoalsReferencedBy bookId={bookId} entityId={entityId} />
 
       <section>
         <h3 className="mb-1 text-xs font-medium text-muted-foreground">
