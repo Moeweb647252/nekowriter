@@ -352,6 +352,7 @@ export function GoalNodeDialog({
                     {condition.kind === "foreshadowing_resolved" ? (
                       <ForeshadowingPicker
                         bookId={bookId}
+                        trackId={scopeTrack ?? undefined}
                         label={t("canon:goal_dialog.condition_foreshadowing")}
                         value={condition.foreshadowing_id}
                         onChange={(value) =>

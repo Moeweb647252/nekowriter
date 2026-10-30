@@ -313,7 +313,9 @@ Per PROJECT §8.8–§8.12. Shared pieces: `Markdown` (react-markdown + remark-g
 `EntityPicker` (a combobox over `GET entities?q=`), `KeyValueEditor` (attributes),
 `TimelineList` (dnd-kit sortable with `restrictToVerticalAxis`-style constraint and keyboard
 sensor), `PromptEditor` (monospace textarea, variable docs side panel, "diff vs default" via
-`DiffView`).
+`DiffView`). The Goals dialog's pickers are native selects over the full list for the MVP, not
+searchable comboboxes (D-155); a shared searchable picker is a follow-up that must keep the
+dialog's scope.
 
 **Bulk defer of research tasks** (D-140) lives in one shared place,
 `features/research/useBulkDefer.ts` (`useDeferReadyResearchTasks`), used by `ResearchTaskList`

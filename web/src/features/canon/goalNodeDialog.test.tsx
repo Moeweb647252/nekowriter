@@ -10,6 +10,7 @@ import type { GoalNodeDto } from "@/api/gen/GoalNodeDto"
 
 const createMutate = vi.hoisted(() => vi.fn())
 const patchMutate = vi.hoisted(() => vi.fn())
+const foreshadowingQuery = vi.hoisted(() => vi.fn())
 
 vi.mock("@/api/hooks/goals", () => ({
   useCreateGoal: () => ({ mutate: createMutate, isPending: false }),
@@ -18,7 +19,10 @@ vi.mock("@/api/hooks/goals", () => ({
 }))
 vi.mock("@/api/hooks/useCanon", () => ({
   useEntities: () => ({ data: [] }),
-  useForeshadowing: () => ({ data: [] }),
+  useForeshadowing: (bookId: number, status?: string, trackId?: number) => {
+    foreshadowingQuery(bookId, status, trackId)
+    return { data: [{ id: 9, title: "Private hook", status: "open" }] }
+  },
   useTimeline: () => ({ data: [] }),
 }))
 vi.mock("@/components/common/ErrorToast", () => ({ useErrorToast: () => vi.fn() }))
@@ -132,5 +136,21 @@ describe("goal dialog scope and links", () => {
     expect(screen.getByText("The gate")).toBeInTheDocument()
     expect(screen.getByText("Broken hilt")).toBeInTheDocument()
     expect(screen.getAllByRole("button", { name: "Remove link" })).toHaveLength(3)
+  })
+})
+
+
+describe("foreshadowing condition scope", () => {
+  it("passes the private node's scope to the condition picker", async () => {
+    foreshadowingQuery.mockClear()
+    const privateNode: GoalNodeDto = { ...node, id: 12, track_id: 2, level: "task" }
+    const user = userEvent.setup()
+    render(<GoalNodeDialog bookId={1} nodes={[privateNode]} open onOpenChange={vi.fn()} node={privateNode} />)
+    const before = foreshadowingQuery.mock.calls.length
+    await user.click(screen.getByRole("button", { name: "Add condition" }))
+    await user.selectOptions(screen.getByLabelText("Condition kind"), "foreshadowing_resolved")
+    expect(foreshadowingQuery.mock.calls.length).toBeGreaterThan(before)
+    expect(foreshadowingQuery.mock.calls.some((call) => call[2] === 2)).toBe(true)
+    expect(screen.getAllByRole("option", { name: "Private hook" }).length).toBeGreaterThan(0)
   })
 })

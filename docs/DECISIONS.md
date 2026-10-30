@@ -3116,3 +3116,19 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   encodes the tree as flat tags with `parent="<id>"` rather than nested tags: goal-node ids are
   one global namespace and parent depth is fixed goal→plan→task, so every edge is recoverable.
 - **Spec**: spec/06 §5:304–314; plan §4.7; D-150.
+
+### D-155 Goals dialog pickers stay native selects for the MVP
+
+- **Context**: spec/11 §5.5 describes a shared `EntityPicker` as a combobox over `GET entities?q=`,
+  and the Goals dialog also needs event and foreshadowing pickers. The picker is feature-specific:
+  it was introduced with the Goals dialog (`1318799`) and its only consumer is `GoalNodeDialog`, so
+  using native selects is a deliberate MVP deviation, not a pre-existing shared-component gap.
+- **Decision**: ship native selects over the full, scope-filtered canon lists for the Goals dialog
+  MVP. Keep the dialog's scope rules: a private node's pickers add its isolated track's private
+  rows, while shared nodes see shared canon. A shared searchable `EntityPicker` and matching event
+  and foreshadowing pickers are a follow-up, not part of this task.
+- **Consequences**: large canon books load the full list into each picker and do not use
+  server-side `q` search, so the pickers may become slow or unwieldy as a book grows. Any follow-up
+  searchable picker must preserve the same scope filtering and keep the goal dialog's private-track
+  behavior; the dialog tests and this entry are the baseline for that work.
+- **Spec**: spec/11 §5.5; spec/06 §11.2.
