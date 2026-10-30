@@ -236,10 +236,11 @@ export function useDeleteMemoryNote(bookId: number) {
 
 // ───────────────────────────── foreshadowing ─────────────────────────────
 
-export function useForeshadowing(bookId: number, status?: string) {
+export function useForeshadowing(bookId: number, status?: string, trackId?: number) {
+  const filter = `${status ?? "all"}|${trackId ?? "shared"}`
   return useQuery({
-    queryKey: keys.canon.foreshadowing(bookId, status),
-    queryFn: () => endpoints.listForeshadowing(bookId, status),
+    queryKey: keys.canon.foreshadowing(bookId, filter),
+    queryFn: () => endpoints.listForeshadowing(bookId, status, trackId),
     enabled: Number.isFinite(bookId) && bookId > 0,
   })
 }

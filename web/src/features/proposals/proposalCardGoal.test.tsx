@@ -6,9 +6,12 @@ import { beforeAll, describe, expect, it, vi } from "vitest"
 import enBook from "@/i18n/locales/en/book.json"
 import enCanon from "@/i18n/locales/en/canon.json"
 import type { ProposalDto } from "@/api/gen/ProposalDto"
+import { ApiError } from "@/api/client"
+
+const acceptMutate = vi.hoisted(() => vi.fn())
 
 vi.mock("@/api/hooks/reviews", () => ({
-  useAcceptProposal: () => ({ mutate: vi.fn(), isPending: false }),
+  useAcceptProposal: () => ({ mutate: acceptMutate, isPending: false }),
   useRejectProposal: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 vi.mock("@/components/common/ErrorToast", () => ({ useErrorToast: () => vi.fn() }))
@@ -70,8 +73,36 @@ describe("ProposalCard goal renderers", () => {
     }
     render(<ProposalCard proposal={proposal} bookId={1} unspaced={false} />)
     expect(screen.getByText("New goal task")).toBeInTheDocument()
-    expect(screen.getAllByText("Find the sword").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("Find the sword")).toHaveLength(1)
     expect(screen.getByText("The clue matters.")).toBeInTheDocument()
     expect(screen.getByText("Under The plan")).toBeInTheDocument()
+  })
+})
+
+
+describe("ProposalCard goal open-children confirmation", () => {
+  it("turns accepting a status proposal into a confirmation and resends with the flag", async () => {
+    const user = (await import("@testing-library/user-event")).default.setup()
+    acceptMutate.mockImplementationOnce((_variables: unknown, options: { onError?: (error: unknown) => void }) => {
+      options.onError?.(
+        new ApiError(409, "goal.open_children", "open children", {
+          children: [{ id: 10, level: "task", title: "Still open", status: "waiting" }],
+        }),
+      )
+    })
+    const proposal: ProposalDto = {
+      ...base,
+      target_type: "goal_node",
+      edits: { kind: "set_goal_status", status: "done" },
+      goal_target: { id: 4, level: "task", title: "Take the sword", status: "active" },
+    }
+    render(<ProposalCard proposal={proposal} bookId={1} unspaced={false} />)
+    await user.click(screen.getByRole("button", { name: "Accept" }))
+    expect(screen.getByText("Still open")).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Close anyway" }))
+    expect(acceptMutate.mock.calls[1][0]).toEqual({
+      proposalId: 1,
+      confirmOpenChildren: true,
+    })
   })
 })

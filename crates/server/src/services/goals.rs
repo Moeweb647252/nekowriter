@@ -8,11 +8,10 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter,
     QueryOrder, Set,
 };
-use serde::Deserialize;
 
 use crate::api::dto::goals::{
     GoalConditionStateDto, GoalEntityLinkDto, GoalEventLinkDto, GoalForeshadowingLinkDto,
-    GoalNodeDto, GoalNodeInput, GoalQuery,
+    GoalNodeDto, GoalNodeInput, GoalNodePatch, GoalQuery,
 };
 use crate::db::entities::{
     change_log, chapters, entities, foreshadowing, goal_node_entities, goal_node_events,
@@ -37,50 +36,6 @@ pub const GOAL_NODE_CAP: usize = 30;
 pub struct GoalSelection {
     pub nodes: Vec<goal_nodes::Model>,
     pub omitted: i32,
-}
-
-/// A PATCH body for one goal node. `parent_id`/`chapter_from`/`chapter_to` use an outer `None`
-/// for "leave unchanged" and `Some(None)` for "clear".
-#[derive(Debug, Clone, Default, serde::Deserialize)]
-pub struct GoalNodePatch {
-    #[serde(default)]
-    pub level: Option<GoalLevel>,
-    #[serde(default, deserialize_with = "deserialize_some")]
-    pub track_id: Option<Option<i32>>,
-    #[serde(default, deserialize_with = "deserialize_some")]
-    pub parent_id: Option<Option<i32>>,
-    #[serde(default)]
-    pub title: Option<String>,
-    #[serde(default)]
-    pub purpose: Option<String>,
-    #[serde(default)]
-    pub status: Option<GoalStatus>,
-    #[serde(default, deserialize_with = "deserialize_some")]
-    pub chapter_from: Option<Option<i32>>,
-    #[serde(default, deserialize_with = "deserialize_some")]
-    pub chapter_to: Option<Option<i32>>,
-    #[serde(default)]
-    pub conditions: Option<Vec<GoalCondition>>,
-    #[serde(default)]
-    pub entity_ids: Option<Vec<i32>>,
-    #[serde(default)]
-    pub event_ids: Option<Vec<i32>>,
-    #[serde(default)]
-    pub foreshadowing_ids: Option<Vec<i32>>,
-    #[serde(default)]
-    pub note: Option<String>,
-    #[serde(default)]
-    pub confirm_open_children: Option<bool>,
-}
-
-/// `Option<Option<T>>` with wire semantics: an absent field is `None` (leave unchanged), while
-/// an explicit JSON `null` is `Some(None)` (clear). Without this, serde collapses both to `None`.
-fn deserialize_some<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
-where
-    T: serde::Deserialize<'de>,
-    D: serde::Deserializer<'de>,
-{
-    Option::<T>::deserialize(deserializer).map(Some)
 }
 
 /// The derived state of one condition (spec/06 §11.3).

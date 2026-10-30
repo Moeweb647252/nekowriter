@@ -108,6 +108,52 @@ pub struct GoalNodeInput {
     pub foreshadowing_ids: Option<Vec<i32>>,
 }
 
+/// A PATCH body for one goal node (spec/10 §2.4). An absent nullable field leaves it unchanged;
+/// an explicit `null` clears it. `confirm_open_children` is the second half of the 409
+/// `goal.open_children` handshake.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(optional_fields = nullable)]
+#[ts(export)]
+pub struct GoalNodePatch {
+    #[serde(default)]
+    pub level: Option<GoalLevel>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub track_id: Option<Option<i32>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub parent_id: Option<Option<i32>>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub purpose: Option<String>,
+    #[serde(default)]
+    pub status: Option<GoalStatus>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub chapter_from: Option<Option<i32>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub chapter_to: Option<Option<i32>>,
+    #[serde(default)]
+    pub conditions: Option<Vec<GoalCondition>>,
+    #[serde(default)]
+    pub entity_ids: Option<Vec<i32>>,
+    #[serde(default)]
+    pub event_ids: Option<Vec<i32>>,
+    #[serde(default)]
+    pub foreshadowing_ids: Option<Vec<i32>>,
+    #[serde(default)]
+    pub note: Option<String>,
+    #[serde(default)]
+    pub confirm_open_children: Option<bool>,
+}
+
+/// `Option<Option<T>>` with wire semantics: absent means leave unchanged, explicit `null` clears.
+fn deserialize_some<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
+
 /// `GET /books/:id/goals` query (spec/10 §2.4). The link filters return the nodes that link to or
 /// wait on the row ("Referenced by").
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]

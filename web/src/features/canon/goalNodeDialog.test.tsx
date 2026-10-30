@@ -93,3 +93,44 @@ describe("GoalNodeDialog", () => {
     )
   })
 })
+
+describe("goal dialog scope and links", () => {
+  it("takes a child's scope from its parent instead of the page track filter", async () => {
+    createMutate.mockClear()
+    const user = userEvent.setup()
+    render(
+      <GoalNodeDialog
+        bookId={1}
+        nodes={[node]}
+        open
+        onOpenChange={vi.fn()}
+        parentId={node.id}
+        trackId={5}
+      />,
+    )
+    await user.type(screen.getByLabelText("Title"), "Child")
+    await user.type(screen.getByLabelText("Purpose"), "Child purpose")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    expect(createMutate.mock.calls[0][0]).toEqual(
+      expect.objectContaining({ parent_id: node.id, track_id: null, level: "task" }),
+    )
+  })
+
+  it("hides the change note when creating and shows names with remove controls when editing", () => {
+    const view = render(<GoalNodeDialog bookId={1} nodes={[]} open onOpenChange={vi.fn()} />)
+    expect(screen.queryByLabelText("Change note")).toBeNull()
+    view.unmount()
+
+    const linked = {
+      ...node,
+      entities: [{ id: 7, name: "Jade Pendant" }],
+      events: [{ id: 8, title: "The gate" }],
+      foreshadowing: [{ id: 9, title: "Broken hilt", status: "open" as const }],
+    }
+    render(<GoalNodeDialog bookId={1} nodes={[linked]} open onOpenChange={vi.fn()} node={linked} />)
+    expect(screen.getByText("Jade Pendant")).toBeInTheDocument()
+    expect(screen.getByText("The gate")).toBeInTheDocument()
+    expect(screen.getByText("Broken hilt")).toBeInTheDocument()
+    expect(screen.getAllByRole("button", { name: "Remove link" })).toHaveLength(3)
+  })
+})

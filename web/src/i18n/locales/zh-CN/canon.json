@@ -262,5 +262,6 @@
   "goal_range.from": "从第 {{from}} 章开始",
   "goal_range.to": "到第 {{to}} 章",
   "no_ready_goals": "没有可行动目标",
-  "no_ready_goals_hint": "目前没有已满足条件或可关闭的目标。"
+  "no_ready_goals_hint": "目前没有已满足条件或可关闭的目标。",
+  "goal_dialog.remove_link": "移除关联"
 }

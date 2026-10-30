@@ -29,11 +29,15 @@ pub async fn list(
     query: &ForeshadowingQuery,
 ) -> CanonResult<Vec<ForeshadowingDto>> {
     super::super::books::get(conn, book_id).await?;
-    // Shared rows by default (spec/06 §2); an isolated track's private hooks are read through
-    // the track's own views.
+    // Shared rows by default (spec/06 §2); a track filter adds that isolated track's private
+    // hooks, exactly as the entity and timeline lists do.
+    let visibility = match query.track_id {
+        Some(track_id) => Visibility::isolated(book_id, track_id),
+        None => Visibility::shared(book_id),
+    };
     let mut statement = foreshadowing::Entity::find()
         .filter(foreshadowing::COLUMN.book_id.eq(book_id))
-        .filter(Visibility::shared(book_id).visible_condition(foreshadowing::Column::TrackId))
+        .filter(visibility.visible_condition(foreshadowing::Column::TrackId))
         .order_by_asc(foreshadowing::COLUMN.id);
     if let Some(status) = query.status {
         statement = statement.filter(foreshadowing::COLUMN.status.eq(status.as_str()));

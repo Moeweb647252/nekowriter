@@ -182,9 +182,15 @@ export function deleteMemoryNote(noteId: number): Promise<void> {
 export function listForeshadowing(
   bookId: number,
   status?: string,
+  trackId?: number,
 ): Promise<ForeshadowingDto[]> {
-  const suffix = status === undefined ? "" : `?status=${status}`
-  return api.get<ForeshadowingDto[]>(`/books/${bookId}/foreshadowing${suffix}`)
+  const query = new URLSearchParams()
+  if (status !== undefined) query.set("status", status)
+  if (trackId !== undefined) query.set("track_id", String(trackId))
+  const suffix = query.toString()
+  return api.get<ForeshadowingDto[]>(
+    `/books/${bookId}/foreshadowing${suffix === "" ? "" : `?${suffix}`}`,
+  )
 }
 
 export function createForeshadowing(

@@ -4,4 +4,8 @@ import type { ForeshadowingStatus } from "./ForeshadowingStatus";
 /**
  * `GET /books/:id/foreshadowing` query.
  */
-export type ForeshadowingQuery = { status?: ForeshadowingStatus | null, };
+export type ForeshadowingQuery = { status?: ForeshadowingStatus | null, 
+/**
+ * Include an isolated track's private rows (spec/06 §2 track filter).
+ */
+track_id?: number | null, };

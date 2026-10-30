@@ -295,5 +295,8 @@
   "proposal.goal_node": "Goal node",
   "proposal.new_goal_task": "New goal task",
   "proposal.goal_status_change": "{{title}} → {{status}}",
-  "proposal.new_goal_task_parent": "Under {{title}}"
+  "proposal.new_goal_task_parent": "Under {{title}}",
+  "change_target.goal": "Goal",
+  "change_target.plan": "Plan",
+  "change_target.task": "Task"
 }

@@ -10,7 +10,7 @@ import type { GoalNodeDto } from "@/api/gen/GoalNodeDto"
 import type { GoalStatus } from "@/api/gen/GoalStatus"
 import type { GoalNodePatch } from "@/api/endpoints/goals"
 import { useCreateGoal, usePatchGoal } from "@/api/hooks/goals"
-import { isApiError } from "@/api/hooks/errors"
+import { useEntities, useForeshadowing, useTimeline } from "@/api/hooks/useCanon"
 import { useErrorToast } from "@/components/common/ErrorToast"
 import { ConfirmDialog } from "@/components/common/ConfirmDialog"
 import { Button } from "@/components/ui/button"
@@ -26,7 +26,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { EntityPicker, EventPicker, ForeshadowingPicker } from "@/features/canon/EntityPicker"
-import { conditionsOf } from "@/features/canon/goalUtils"
+import { conditionsOf, openChildrenFromError, type GoalOpenChild } from "@/features/canon/goalUtils"
 
 const STATUSES: GoalStatus[] = ["active", "waiting", "done", "dropped"]
 const ENTITY_STATUSES: EntityStatus[] = [
@@ -38,29 +38,7 @@ const ENTITY_STATUSES: EntityStatus[] = [
   "unknown",
 ]
 
-type OpenChild = { id: number; level: GoalLevel; title: string; status: GoalStatus }
-
-function parseOpenChildren(error: unknown): OpenChild[] {
-  if (!isApiError(error) || error.code !== "goal.open_children") return []
-  const raw = error.details?.["children"]
-  if (!Array.isArray(raw)) return []
-  return raw.flatMap((row): OpenChild[] => {
-    if (typeof row !== "object" || row === null) return []
-    const child = row as Record<string, unknown>
-    if (
-      typeof child.id !== "number" ||
-      typeof child.title !== "string" ||
-      (child.level !== "goal" && child.level !== "plan" && child.level !== "task") ||
-      (child.status !== "active" &&
-        child.status !== "waiting" &&
-        child.status !== "done" &&
-        child.status !== "dropped")
-    ) {
-      return []
-    }
-    return [{ id: child.id, level: child.level, title: child.title, status: child.status }]
-  })
-}
+type OpenChild = GoalOpenChild
 
 function childLevel(parent: GoalNodeDto | undefined): GoalLevel {
   return parent?.level === "goal" ? "plan" : parent?.level === "plan" ? "task" : "goal"
@@ -110,7 +88,12 @@ export function GoalNodeDialog({
   const fixedLevel = node?.level ?? childLevel(parent)
   const levelEditable = node === null && parent === undefined
   const [level, setLevel] = useState<GoalLevel>(fixedLevel)
-  const scopeTrack = node?.track_id ?? parent?.track_id ?? trackId
+  // A child's scope is the parent's scope, even when the page's track filter is a side track.
+  // Only a root creation falls back to the filter (spec/06 §11.2).
+  const scopeTrack = node?.track_id ?? (parent === undefined ? trackId : parent.track_id)
+  const entityChoices = useEntities(bookId, { trackId: scopeTrack ?? undefined })
+  const eventChoices = useTimeline(bookId, scopeTrack ?? undefined)
+  const hookChoices = useForeshadowing(bookId, undefined, scopeTrack ?? undefined)
   // The page mounts this dialog only while open, so props are the initial values; closing
   // unmounts it and the next open starts from the newly selected node.
   const [title, setTitle] = useState(node?.title ?? "")
@@ -128,6 +111,19 @@ export function GoalNodeDialog({
   const [eventPick, setEventPick] = useState<number | undefined>(undefined)
   const [hookPick, setHookPick] = useState<number | undefined>(undefined)
   const [openChildren, setOpenChildren] = useState<OpenChild[]>([])
+
+  const entityName = (id: number) =>
+    node?.entities.find((link) => link.id === id)?.name ??
+    entityChoices.data?.find((entity) => entity.id === id)?.name ??
+    `#${id}`
+  const eventName = (id: number) =>
+    node?.events.find((link) => link.id === id)?.title ??
+    eventChoices.data?.find((event) => event.id === id)?.title ??
+    `#${id}`
+  const hookName = (id: number) =>
+    node?.foreshadowing.find((link) => link.id === id)?.title ??
+    hookChoices.data?.find((hook) => hook.id === id)?.title ??
+    `#${id}`
 
   const parentCandidates = nodes.filter(
     (candidate) =>
@@ -173,7 +169,7 @@ export function GoalNodeDialog({
             onSaved?.()
           },
           onError: (error) => {
-            const children = parseOpenChildren(error)
+            const children = openChildrenFromError(error)
             if (children.length > 0) {
               setOpenChildren(children)
               return
@@ -370,6 +366,7 @@ export function GoalNodeDialog({
                       <>
                         <EntityPicker
                           bookId={bookId}
+                          trackId={scopeTrack ?? undefined}
                           label={t("canon:goal_dialog.condition_entity")}
                           value={condition.entity_id}
                           onChange={(value) =>
@@ -418,38 +415,79 @@ export function GoalNodeDialog({
           <section className="space-y-2">
             <Label>{t("canon:goal_dialog.links")}</Label>
             <div className="flex flex-wrap items-center gap-2">
-              <EntityPicker bookId={bookId} label={t("canon:goal_dialog.link_entity")} value={entityPick} onChange={setEntityPick} />
+              <EntityPicker
+                bookId={bookId}
+                trackId={scopeTrack ?? undefined}
+                label={t("canon:goal_dialog.link_entity")}
+                value={entityPick}
+                onChange={setEntityPick}
+              />
               <Button type="button" size="sm" variant="outline" disabled={entityPick === undefined} onClick={() => { if (entityPick !== undefined) { setEntityIds((current) => current.includes(entityPick) ? current : [...current, entityPick]); setEntityPick(undefined) } }}>
                 <Plus className="size-3.5" />{t("canon:goal_dialog.add_link")}
               </Button>
             </div>
             <div className="flex flex-wrap gap-1">
-              {entityIds.map((id) => <span key={id} className="rounded-full bg-muted px-2 py-0.5 text-xs">{t("canon:entity_ref", { id })}</span>)}
+              {entityIds.map((id) => (
+                <span key={id} className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs">
+                  {entityName(id)}
+                  <button type="button" aria-label={t("canon:goal_dialog.remove_link")} onClick={() => setEntityIds((current) => current.filter((item) => item !== id))}>
+                    ×
+                  </button>
+                </span>
+              ))}
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <EventPicker bookId={bookId} label={t("canon:goal_dialog.link_event")} value={eventPick} onChange={setEventPick} />
+              <EventPicker
+                bookId={bookId}
+                trackId={scopeTrack ?? undefined}
+                label={t("canon:goal_dialog.link_event")}
+                value={eventPick}
+                onChange={setEventPick}
+              />
               <Button type="button" size="sm" variant="outline" disabled={eventPick === undefined} onClick={() => { if (eventPick !== undefined) { setEventIds((current) => current.includes(eventPick) ? current : [...current, eventPick]); setEventPick(undefined) } }}>
                 <Plus className="size-3.5" />{t("canon:goal_dialog.add_link")}
               </Button>
             </div>
             <div className="flex flex-wrap gap-1">
-              {eventIds.map((id) => <span key={id} className="rounded-full bg-muted px-2 py-0.5 text-xs">{t("canon:event_ref", { id })}</span>)}
+              {eventIds.map((id) => (
+                <span key={id} className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs">
+                  {eventName(id)}
+                  <button type="button" aria-label={t("canon:goal_dialog.remove_link")} onClick={() => setEventIds((current) => current.filter((item) => item !== id))}>
+                    ×
+                  </button>
+                </span>
+              ))}
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <ForeshadowingPicker bookId={bookId} label={t("canon:goal_dialog.link_foreshadowing")} value={hookPick} onChange={setHookPick} />
+              <ForeshadowingPicker
+                bookId={bookId}
+                trackId={scopeTrack ?? undefined}
+                label={t("canon:goal_dialog.link_foreshadowing")}
+                value={hookPick}
+                onChange={setHookPick}
+              />
               <Button type="button" size="sm" variant="outline" disabled={hookPick === undefined} onClick={() => { if (hookPick !== undefined) { setHookIds((current) => current.includes(hookPick) ? current : [...current, hookPick]); setHookPick(undefined) } }}>
                 <Plus className="size-3.5" />{t("canon:goal_dialog.add_link")}
               </Button>
             </div>
             <div className="flex flex-wrap gap-1">
-              {hookIds.map((id) => <span key={id} className="rounded-full bg-muted px-2 py-0.5 text-xs">{t("canon:foreshadowing_ref", { id })}</span>)}
+              {hookIds.map((id) => (
+                <span key={id} className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs">
+                  {hookName(id)}
+                  <button type="button" aria-label={t("canon:goal_dialog.remove_link")} onClick={() => setHookIds((current) => current.filter((item) => item !== id))}>
+                    ×
+                  </button>
+                </span>
+              ))}
             </div>
           </section>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="goal-note">{t("canon:goal_dialog.change_note")}</Label>
-            <Textarea id="goal-note" rows={2} value={note} onChange={(event) => setNote(event.target.value)} />
-          </div>
+          {node === null ? null : (
+            <div className="space-y-1.5">
+              <Label htmlFor="goal-note">{t("canon:goal_dialog.change_note")}</Label>
+              <Textarea id="goal-note" rows={2} value={note} onChange={(event) => setNote(event.target.value)} />
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>{t("common:cancel")}</Button>

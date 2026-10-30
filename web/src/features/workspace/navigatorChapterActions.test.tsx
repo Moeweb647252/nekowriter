@@ -24,6 +24,8 @@ const state = vi.hoisted(() => ({
   chapters: [] as unknown[],
   /** The side track's chapter rows; empty unless a test needs one. */
   sideChapters: [] as unknown[],
+  /** Goal nodes used by the navigator badge. */
+  goals: [] as unknown[],
 }))
 
 vi.mock("react-router", () => ({
@@ -42,7 +44,7 @@ vi.mock("@/api/hooks/reviews", () => ({
 }))
 
 vi.mock("@/api/hooks/goals", () => ({
-  useGoals: () => ({ data: [], isPending: false, isError: false }),
+  useGoals: () => ({ data: state.goals, isPending: false, isError: false }),
 }))
 
 vi.mock("@/api/hooks/tracks", () => ({
@@ -416,5 +418,27 @@ describe("canon switch navigation", () => {
     expect(container.querySelector('a[href="/books/1/canon/foreshadowing"]')).not.toBeNull()
     expect(container.querySelector('a[href="/books/1/canon/changes"]')).not.toBeNull()
     expect(container.querySelector('a[href="/books/1/proposals"]')).not.toBeNull()
+  })
+})
+
+
+describe("Goals navigator badge", () => {
+  it("shows the ready/closable count and hides the entry while Goals is off", () => {
+    state.goals = [{ ready: true }, { closable: true }, { ready: false, closable: false }]
+    const { container, unmount } = renderNavigator()
+    const goalLink = container.querySelector('a[href="/books/1/canon/goals"]')
+    expect(goalLink).not.toBeNull()
+    expect(goalLink).toHaveTextContent("2")
+    unmount()
+
+    state.goals = []
+    const off = renderNavigator("active", {
+      entities: true,
+      timeline: true,
+      memory: true,
+      foreshadowing: true,
+      goals: false,
+    })
+    expect(off.container.querySelector('a[href="/books/1/canon/goals"]')).toBeNull()
   })
 })

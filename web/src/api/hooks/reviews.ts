@@ -122,10 +122,17 @@ function useProposalSettle(bookId: number) {
 }
 
 /** Accept a proposal: a stale `find` returns `conflict` and applies nothing (D-044). */
+export type AcceptProposalVariables =
+  | number
+  | { proposalId: number; confirmOpenChildren?: boolean }
+
 export function useAcceptProposal(bookId: number) {
   const settle = useProposalSettle(bookId)
   return useMutation({
-    mutationFn: (proposalId: number) => endpoints.acceptProposal(proposalId),
+    mutationFn: (variables: AcceptProposalVariables) =>
+      typeof variables === "number"
+        ? endpoints.acceptProposal(variables)
+        : endpoints.acceptProposal(variables.proposalId, variables.confirmOpenChildren ?? false),
     onSuccess: settle,
   })
 }

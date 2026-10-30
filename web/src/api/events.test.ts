@@ -110,6 +110,7 @@ describe("applyServerEvent", () => {
       outline_changed: false,
     })
     expect(isInvalidated(client, keys.canon.goals(1, "shared|all|||"))).toBe(true)
+    expect(isInvalidated(client, keys.books.overview(1))).toBe(true)
     expect(isInvalidated(client, keys.tracks.chapters(3))).toBe(true)
   })
 })

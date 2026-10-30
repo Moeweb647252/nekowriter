@@ -33,12 +33,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { EmptyState } from "@/components/common/EmptyState"
+import { ConfirmDialog } from "@/components/common/ConfirmDialog"
+import { useErrorToast } from "@/components/common/ErrorToast"
 import { Skeleton } from "@/components/ui/skeleton"
 import { GoalNodeDialog } from "@/features/canon/GoalNodeDialog"
 import {
   conditionSentence,
   hasClosedAncestor,
+  openChildrenFromError,
   pathLabel,
+  type GoalOpenChild,
 } from "@/features/canon/goalUtils"
 import { ProposalCard } from "@/features/proposals/ProposalCard"
 import { cn } from "@/lib/utils"
@@ -61,18 +65,20 @@ export default function GoalsPage() {
   const goals = useGoals(bookId, { track_id: trackId })
   const tracks = useTracks(bookId)
   const mainTrack = (tracks.data ?? []).find((track) => track.kind === "main")
-  const chapters = useChapters(mainTrack?.id ?? 0)
+  const mainTrackId = mainTrack?.id ?? 0
   const proposals = useProposals(bookId, "pending")
   const patch = usePatchGoal(bookId)
   const remove = useDeleteGoal(bookId)
+  const showError = useErrorToast()
+  const [pendingStatus, setPendingStatus] = useState<{
+    node: GoalNodeDto
+    status: GoalNodeDto["status"]
+  } | null>(null)
+  const [openChildren, setOpenChildren] = useState<GoalOpenChild[]>([])
   const nodes = goals.data ?? []
   const isolatedTracks = (tracks.data ?? []).filter(
     (track) => track.kind === "side" && track.canon_mode === "isolated",
   )
-  const latestOfficial = (chapters.data ?? [])
-    .filter((chapter) => chapter.status === "official")
-    .reduce((latest, chapter) => Math.max(latest, chapter.number), 0)
-
   const visibleNodes = nodes.filter((node) => node.status !== "dropped")
   const readyNodes = visibleNodes.filter((node) => node.ready || node.closable)
   const droppedNodes = nodes.filter((node) => node.status === "dropped")
@@ -87,7 +93,20 @@ export default function GoalsPage() {
   }
 
   const setStatus = (node: GoalNodeDto, status: GoalNodeDto["status"]) => {
-    patch.mutate({ id: node.id, patch: { status } })
+    patch.mutate(
+      { id: node.id, patch: { status } },
+      {
+        onError: (error) => {
+          const children = openChildrenFromError(error)
+          if (children.length > 0) {
+            setPendingStatus({ node, status })
+            setOpenChildren(children)
+            return
+          }
+          showError(error)
+        },
+      },
+    )
   }
 
   const markDone = (node: GoalNodeDto) => setStatus(node, "done")
@@ -97,7 +116,12 @@ export default function GoalsPage() {
   const openEdit = (node: GoalNodeDto) =>
     setDialog({ parentId: node.parent_id, trackId: node.track_id, node })
 
-  const renderRow = (node: GoalNodeDto, depth: number, path?: string) => {
+  const renderRow = (
+    node: GoalNodeDto,
+    depth: number,
+    path?: string,
+    includeChildren = true,
+  ) => {
     const row = (
       <GoalRow
         key={node.id}
@@ -105,13 +129,13 @@ export default function GoalsPage() {
         depth={depth}
         path={path}
         nodes={nodes}
-        latestOfficial={latestOfficial}
+        mainTrackId={mainTrackId}
         onEdit={() => openEdit(node)}
         onAddChild={node.level === "task" ? undefined : () => openCreate(node.id)}
         onActivate={() => setStatus(node, "active")}
         onMarkDone={() => markDone(node)}
         onDrop={() => setStatus(node, "dropped")}
-        onDelete={() => remove.mutate(node.id)}
+        onDelete={() => remove.mutate(node.id, { onError: showError })}
         focused={focusedNodeId === node.id}
       />
     )
@@ -119,15 +143,19 @@ export default function GoalsPage() {
       (proposal) =>
         proposal.target_type === "goal_node" && proposal.goal_target?.id === node.id,
     )
-    const children = nodes
-      .filter((candidate) => candidate.parent_id === node.id && candidate.status !== "dropped")
-      .sort((left, right) => left.id - right.id)
-    const childProposals = pendingProposals.filter(
-      (proposal) =>
-        proposal.target_type === "new_goal_task" &&
-        proposal.edits.kind === "create_goal_task" &&
-        proposal.edits.task.parent_id === node.id,
-    )
+    const children = includeChildren
+      ? nodes
+          .filter((candidate) => candidate.parent_id === node.id && candidate.status !== "dropped")
+          .sort((left, right) => left.id - right.id)
+      : []
+    const childProposals = includeChildren
+      ? pendingProposals.filter(
+          (proposal) =>
+            proposal.target_type === "new_goal_task" &&
+            proposal.edits.kind === "create_goal_task" &&
+            proposal.edits.task.parent_id === node.id,
+        )
+      : []
     return (
       <li key={node.id}>
         {row}
@@ -207,7 +235,7 @@ export default function GoalsPage() {
           <EmptyState title={t("canon:no_ready_goals")} description={t("canon:no_ready_goals_hint")} />
         ) : (
           <ul className="space-y-2">
-            {readyNodes.map((node) => renderRow(node, 0, pathLabel(nodes, node.id)))}
+            {readyNodes.map((node) => renderRow(node, 0, pathLabel(nodes, node.id), false))}
           </ul>
         )
       ) : (
@@ -237,6 +265,46 @@ export default function GoalsPage() {
         </details>
       )}
 
+      <ConfirmDialog
+        open={pendingStatus !== null && openChildren.length > 0}
+        onOpenChange={(next) => {
+          if (!next) {
+            setPendingStatus(null)
+            setOpenChildren([])
+          }
+        }}
+        title={t("canon:goal_dialog.open_children_title")}
+        description={t("canon:goal_dialog.open_children_body")}
+        confirmLabel={t("canon:goal_dialog.open_children_confirm")}
+        pending={patch.isPending}
+        details={
+          <ul className="list-disc pl-4">
+            {openChildren.map((child) => (
+              <li key={child.id}>{child.title}</li>
+            ))}
+          </ul>
+        }
+        onConfirm={() => {
+          if (pendingStatus === null) return
+          patch.mutate(
+            {
+              id: pendingStatus.node.id,
+              patch: {
+                status: pendingStatus.status,
+                confirm_open_children: true,
+              },
+            },
+            {
+              onSuccess: () => {
+                setPendingStatus(null)
+                setOpenChildren([])
+              },
+              onError: showError,
+            },
+          )
+        }}
+      />
+
       {dialog === null ? null : (
         <GoalNodeDialog
           key={dialog.node?.id ?? `new-${dialog.parentId ?? "root"}-${dialog.trackId ?? "shared"}`}
@@ -265,7 +333,7 @@ function GoalRow({
   depth,
   path,
   nodes,
-  latestOfficial,
+  mainTrackId,
   onEdit,
   onAddChild,
   onActivate,
@@ -278,7 +346,7 @@ function GoalRow({
   depth: number
   path?: string
   nodes: GoalNodeDto[]
-  latestOfficial: number
+  mainTrackId: number
   onEdit: () => void
   onAddChild?: () => void
   onActivate: () => void
@@ -288,6 +356,10 @@ function GoalRow({
   focused?: boolean
 }) {
   const { t } = useTranslation()
+  const trackChapters = useChapters(node.track_id ?? mainTrackId)
+  const latestOfficial = (trackChapters.data ?? [])
+    .filter((chapter) => chapter.status === "official")
+    .reduce((latest, chapter) => Math.max(latest, chapter.number), 0)
   const closedAncestor = hasClosedAncestor(nodes, node)
   return (
     <div

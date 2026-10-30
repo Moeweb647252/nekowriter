@@ -8,9 +8,9 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 
-use crate::api::dto::goals::{GoalNodeDto, GoalNodeInput, GoalQuery};
+use crate::api::dto::goals::{GoalNodeDto, GoalNodeInput, GoalNodePatch, GoalQuery};
 use crate::error::AppResult;
-use crate::services::goals::{self, GoalNodePatch};
+use crate::services::goals;
 use crate::state::AppState;
 
 /// `GET /api/books/:id/goals` (spec/10 §2.4).

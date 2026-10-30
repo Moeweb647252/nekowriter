@@ -295,5 +295,8 @@
   "proposal.goal_node": "目标节点",
   "proposal.new_goal_task": "新目标情节点",
   "proposal.goal_status_change": "{{title}} → {{status}}",
-  "proposal.new_goal_task_parent": "位于 {{title}} 下"
+  "proposal.new_goal_task_parent": "位于 {{title}} 下",
+  "change_target.goal": "目标",
+  "change_target.plan": "阶段计划",
+  "change_target.task": "情节点"
 }

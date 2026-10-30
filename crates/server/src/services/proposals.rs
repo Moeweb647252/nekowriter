@@ -246,11 +246,11 @@ pub async fn accept_inner(
             {
                 return mark_conflict(tx, proposal, events).await;
             }
-            let patch = super::goals::GoalNodePatch {
+            let patch = crate::api::dto::goals::GoalNodePatch {
                 status: Some(status),
                 note: Some(proposal.rationale.clone()),
                 confirm_open_children: Some(confirm_open_children),
-                ..super::goals::GoalNodePatch::default()
+                ..crate::api::dto::goals::GoalNodePatch::default()
             };
             let write = super::canon::CanonWrite::author().with_chapter(proposal.chapter_id);
             let (_, mut changed) = super::goals::update_inner(tx, &write, node.id, patch).await?;

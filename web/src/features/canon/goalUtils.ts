@@ -38,7 +38,7 @@ export function conditionSentence(t: TFunction, state: GoalConditionStateDto): s
     case "entity_status_is":
       return t("canon:goal_condition.entity_status_is", {
         target: label,
-        status: t(`canon:status.${condition.status}`),
+        status: t(`canon:status.${condition.status}`).toLocaleLowerCase(),
       })
   }
 }
@@ -53,4 +53,34 @@ export function pathLabel(nodes: GoalNodeDto[], nodeId: number): string {
 /** The conditions of a node as editable wire values. */
 export function conditionsOf(node: GoalNodeDto | null | undefined): GoalCondition[] {
   return node?.conditions.map((state) => state.condition) ?? []
+}
+
+export type GoalOpenChild = { id: number; level: "goal" | "plan" | "task"; title: string; status: string }
+
+/** Parse the `details.children` payload of a `goal.open_children` refusal. */
+export function openChildrenFromError(error: unknown): GoalOpenChild[] {
+  if (
+    typeof error !== "object" ||
+    error === null ||
+    (error as { code?: unknown }).code !== "goal.open_children"
+  ) {
+    return []
+  }
+  const details = (error as { details?: unknown }).details
+  if (typeof details !== "object" || details === null) return []
+  const raw = (details as Record<string, unknown>)["children"]
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap((row): GoalOpenChild[] => {
+    if (typeof row !== "object" || row === null) return []
+    const child = row as Record<string, unknown>
+    if (
+      typeof child.id !== "number" ||
+      typeof child.title !== "string" ||
+      (child.level !== "goal" && child.level !== "plan" && child.level !== "task") ||
+      typeof child.status !== "string"
+    ) {
+      return []
+    }
+    return [{ id: child.id, level: child.level, title: child.title, status: child.status }]
+  })
 }

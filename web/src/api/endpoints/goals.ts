@@ -3,27 +3,9 @@ import { api } from "@/api/client"
 import type { GoalNodeDto } from "@/api/gen/GoalNodeDto"
 import type { GoalNodeInput } from "@/api/gen/GoalNodeInput"
 import type { GoalQuery } from "@/api/gen/GoalQuery"
-import type { GoalCondition } from "@/api/gen/GoalCondition"
-import type { GoalLevel } from "@/api/gen/GoalLevel"
-import type { GoalStatus } from "@/api/gen/GoalStatus"
+import type { GoalNodePatch } from "@/api/gen/GoalNodePatch"
 
-/** `PATCH /goals/:id` (spec/10 §2.4). `null` on a nullable field clears it. */
-export type GoalNodePatch = {
-  level?: GoalLevel
-  track_id?: number | null
-  parent_id?: number | null
-  title?: string
-  purpose?: string
-  status?: GoalStatus
-  chapter_from?: number | null
-  chapter_to?: number | null
-  conditions?: GoalCondition[]
-  entity_ids?: number[]
-  event_ids?: number[]
-  foreshadowing_ids?: number[]
-  note?: string
-  confirm_open_children?: boolean
-}
+export type { GoalNodePatch } from "@/api/gen/GoalNodePatch"
 
 function queryString(query: GoalQuery): string {
   const params = new URLSearchParams()

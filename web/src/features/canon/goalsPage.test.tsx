@@ -5,6 +5,7 @@ import i18n from "i18next"
 import { beforeAll, describe, expect, it, vi } from "vitest"
 
 import enCanon from "@/i18n/locales/en/canon.json"
+import { ApiError } from "@/api/client"
 import type { GoalNodeDto } from "@/api/gen/GoalNodeDto"
 
 const patchMutate = vi.hoisted(() => vi.fn())
@@ -154,7 +155,10 @@ describe("GoalsPage", () => {
     expect(screen.getAllByText("Ready").length).toBeGreaterThan(0)
     expect(screen.getByText("All children are closed")).toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Mark done" }))
-    expect(patchMutate).toHaveBeenCalledWith({ id: 1, patch: { status: "done" } })
+    expect(patchMutate).toHaveBeenCalledWith(
+      { id: 1, patch: { status: "done" } },
+      expect.anything(),
+    )
   })
 
   it("puts dropped nodes in a collapsed section", () => {
@@ -167,5 +171,30 @@ describe("GoalsPage", () => {
     render(<GoalsPage />)
     await user.click(screen.getByRole("button", { name: /Ready/ }))
     expect(screen.getByText("The heroine grows › Choose the sword")).toBeInTheDocument()
+    expect(screen.queryByText("Take it")).toBeNull()
+  })
+})
+
+
+describe("row-menu open children", () => {
+  it("opens the confirmation and resends Mark done with confirm_open_children", async () => {
+    patchMutate.mockImplementationOnce((_variables: unknown, options: { onError?: (error: unknown) => void }) => {
+      options.onError?.(
+        new ApiError(409, "goal.open_children", "open children", {
+          children: [{ id: 12, level: "task", title: "Open child", status: "waiting" }],
+        }),
+      )
+    })
+    patchMutate.mockImplementationOnce(() => undefined)
+    const user = userEvent.setup()
+    render(<GoalsPage />)
+    await user.click(screen.getByRole("button", { name: "Mark done" }))
+    expect(screen.getByText("Open child")).toBeInTheDocument()
+    expect(screen.getByText("Close this node anyway?")).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Close anyway" }))
+    expect(patchMutate.mock.calls[1][0]).toEqual({
+      id: 1,
+      patch: { status: "done", confirm_open_children: true },
+    })
   })
 })

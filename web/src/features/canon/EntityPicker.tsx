@@ -55,9 +55,10 @@ export function EventPicker({
   onChange,
   label,
   disabled = false,
-}: Omit<PickerProps, "kind" | "trackId">) {
+  trackId,
+}: Omit<PickerProps, "kind">) {
   const { t } = useTranslation()
-  const events = useTimeline(bookId)
+  const events = useTimeline(bookId, trackId)
   return (
     <select
       value={value ?? ""}
@@ -85,9 +86,10 @@ export function ForeshadowingPicker({
   onChange,
   label,
   disabled = false,
-}: Omit<PickerProps, "kind" | "trackId">) {
+  trackId,
+}: Omit<PickerProps, "kind">) {
   const { t } = useTranslation()
-  const hooks = useForeshadowing(bookId)
+  const hooks = useForeshadowing(bookId, undefined, trackId)
   return (
     <select
       value={value ?? ""}

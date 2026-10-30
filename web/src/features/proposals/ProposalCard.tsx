@@ -6,10 +6,13 @@
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 import { Check, X } from "lucide-react"
+import { useState } from "react"
 
 import { useAcceptProposal, useRejectProposal } from "@/api/hooks/reviews"
 import { useErrorToast } from "@/components/common/ErrorToast"
+import { ConfirmDialog } from "@/components/common/ConfirmDialog"
 import { DiffView } from "@/components/common/DiffView"
+import { openChildrenFromError, type GoalOpenChild } from "@/features/canon/goalUtils"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { formatDateTime } from "@/lib/format"
@@ -30,18 +33,31 @@ export function ProposalCard({ proposal, bookId, unspaced, compact = false }: Pr
   const accept = useAcceptProposal(bookId)
   const reject = useRejectProposal(bookId)
   const target = targetLabel(proposal)
+  const [openChildren, setOpenChildren] = useState<GoalOpenChild[]>([])
 
-  const onAccept = () =>
-    accept.mutate(proposal.id, {
-      onSuccess: (result) => {
-        if (result.status === "conflict") {
-          toast.warning(t("book:proposal.conflict_toast"))
-          return
-        }
-        toast.success(t("book:proposal.accepted_toast"))
+  const acceptNow = (confirmOpenChildren = false) =>
+    accept.mutate(
+      { proposalId: proposal.id, confirmOpenChildren },
+      {
+        onSuccess: (result) => {
+          setOpenChildren([])
+          if (result.status === "conflict") {
+            toast.warning(t("book:proposal.conflict_toast"))
+            return
+          }
+          toast.success(t("book:proposal.accepted_toast"))
+        },
+        onError: (error) => {
+          const children = openChildrenFromError(error)
+          if (children.length > 0) {
+            setOpenChildren(children)
+            return
+          }
+          showError(error)
+        },
       },
-      onError: showError,
-    })
+    )
+  const onAccept = () => acceptNow(false)
 
   const onReject = () =>
     reject.mutate(proposal.id, {
@@ -74,7 +90,6 @@ export function ProposalCard({ proposal, bookId, unspaced, compact = false }: Pr
       ) : null}
       {proposal.target_type === "new_goal_task" && proposal.edits.kind === "create_goal_task" ? (
         <div className="space-y-0.5 text-xs">
-          <p className="font-medium">{proposal.edits.task.title}</p>
           {proposal.edits.task.purpose === "" ? null : (
             <p className="text-muted-foreground">{proposal.edits.task.purpose}</p>
           )}
@@ -114,6 +129,22 @@ export function ProposalCard({ proposal, bookId, unspaced, compact = false }: Pr
           </Button>
         ) : null}
       </div>
+      <ConfirmDialog
+        open={openChildren.length > 0}
+        onOpenChange={(next) => { if (!next) setOpenChildren([]) }}
+        title={t("canon:goal_dialog.open_children_title")}
+        description={t("canon:goal_dialog.open_children_body")}
+        confirmLabel={t("canon:goal_dialog.open_children_confirm")}
+        pending={accept.isPending}
+        details={
+          <ul className="list-disc pl-4">
+            {openChildren.map((child) => (
+              <li key={child.id}>{child.title}</li>
+            ))}
+          </ul>
+        }
+        onConfirm={() => acceptNow(true)}
+      />
     </article>
   )
 }

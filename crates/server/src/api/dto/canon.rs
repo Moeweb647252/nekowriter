@@ -527,6 +527,9 @@ pub struct ForeshadowingPatch {
 pub struct ForeshadowingQuery {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<ForeshadowingStatus>,
+    /// Include an isolated track's private rows (spec/06 §2 track filter).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_id: Option<i32>,
 }
 
 // ───────────────────────────── memory snapshot (spec/06 §4) ─────────────────────────────

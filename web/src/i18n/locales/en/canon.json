@@ -262,5 +262,6 @@
   "goal_range.from": "From chapter {{from}}",
   "goal_range.to": "Through chapter {{to}}",
   "no_ready_goals": "No ready goals",
-  "no_ready_goals_hint": "No goal is ready or closable right now."
+  "no_ready_goals_hint": "No goal is ready or closable right now.",
+  "goal_dialog.remove_link": "Remove link"
 }

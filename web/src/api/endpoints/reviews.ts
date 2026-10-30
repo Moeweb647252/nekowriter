@@ -45,8 +45,13 @@ export function listProposals(bookId: number, status?: string): Promise<Proposal
 }
 
 /** `POST /proposals/:id/accept` (spec/10 §2.3): a stale `find` comes back as `conflict`. */
-export function acceptProposal(proposalId: number): Promise<ProposalDto> {
-  return api.post<ProposalDto>(`/proposals/${proposalId}/accept`)
+export function acceptProposal(
+  proposalId: number,
+  confirmOpenChildren = false,
+): Promise<ProposalDto> {
+  return api.post<ProposalDto>(`/proposals/${proposalId}/accept`, {
+    confirm_open_children: confirmOpenChildren,
+  })
 }
 
 /** `POST /proposals/:id/reject` (spec/10 §2.3). */
