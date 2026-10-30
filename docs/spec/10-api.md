@@ -142,7 +142,7 @@ carries `{ status, operation }`; a task with an open session reports
 | Method | Path | Body / query | Response |
 |---|---|---|---|
 | GET | `/books/:id/sessions` | `?kind&status&chapter_id` | `SessionDto[]` |
-| GET | `/sessions/:id` | | `SessionSnapshotDto { session, messages (last 200), tool_calls (of those messages), inbox (unconsumed author messages, oldest first), inbox_pending, system_prompt, tool_names, next_cursor }` (the frozen prompt and tool list are shown in the session info popover) |
+| GET | `/sessions/:id` | | `SessionSnapshotDto { session, messages (last 200), tool_calls (of those messages), inbox (unconsumed author messages, oldest first), inbox_pending (count of every unconsumed inbox row, including notices), system_prompt, tool_names, next_cursor }` (the frozen prompt and tool list are shown in the session info popover) |
 | GET | `/sessions/:id/messages` | `?cursor&limit` (the cursor from the snapshot or the previous page; older first) | `{ items: { message, tool_calls }[], next_cursor }` for scrollback |
 | POST | `/sessions/:id/pause` · `/resume` `{feedback?}` · `/stop` · `/continue` · `/abandon` | | `SessionDto` (validated against spec/03 §3; e.g. `stop` only while `running`) |
 | POST | `/sessions/:id/message` | `{ text }` | `SessionDto` |

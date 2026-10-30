@@ -3162,9 +3162,12 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
 - **Decision**: add `InboxItemDto { id, kind, content }` and `SessionSnapshotDto.inbox`, holding
   unconsumed `user_message` inbox rows in arrival order. `ActivityStream` renders them as dimmed,
   labelled queued rows after the persisted messages and the live buffer, because the model has not
-  seen them yet. The snapshot reads the pending rows once so `inbox` and `inbox_pending` are
-  consistent; the rows disappear when the runner consumes them and the real user message arrives.
+  seen them yet. `inbox` contains only unconsumed `user_message` rows; `inbox_pending` counts
+  every unconsumed inbox row, including notices, so a notice-only queue has `inbox_pending = 1`
+  with an empty `inbox`. The snapshot reads the pending rows once so both fields describe the same
+  instant; the queued rows disappear when the runner consumes them and the real message arrives.
 - **Consequences**: the wire type grows and every session panel gains the queued rows. The row is
   transient by design and must not be duplicated when the real message appears; the server's
-  single pending-row read prevents the count and list from disagreeing during consumption.
+  single pending-row read prevents the count and the author-message list from disagreeing during
+  consumption, while notices remain counted only in `inbox_pending`.
 - **Spec**: spec/10 §2.7.

@@ -158,6 +158,7 @@ describe("ActivityStream stick-to-bottom", () => {
       <ActivityStream
         session={session()}
         messages={[message(1)]}
+        inbox={[]}
         pendingPreview={undefined}
         paneName="conversation"
       />,
@@ -179,7 +180,7 @@ describe("ActivityStream stick-to-bottom", () => {
 
   it("stops following while the author is scrolled up and re-pins at the bottom", async () => {
     render(
-      <ActivityStream session={session()} messages={[message(1)]} paneName="conversation" />,
+      <ActivityStream session={session()} messages={[message(1)]} inbox={[]} paneName="conversation" />,
     )
     const pane = scrollPane()
 
@@ -221,6 +222,7 @@ describe("ActivityStream stick-to-bottom", () => {
       <ActivityStream
         session={session()}
         messages={[{ message: message(1).message, tool_calls: [call] }]}
+        inbox={[]}
         paneName="conversation"
       />,
     )
@@ -237,6 +239,7 @@ describe("ActivityStream stick-to-bottom", () => {
             tool_calls: [{ ...call, status: "done", result_text: "hi", sealed: true }],
           },
         ]}
+        inbox={[]}
         paneName="conversation"
       />,
     )
@@ -282,7 +285,7 @@ describe("ActivityStream stick-to-bottom", () => {
 
   it("names its pane so the caller can address the scroll container", () => {
     render(
-      <ActivityStream session={session()} messages={[message(1)]} paneName="conversation" />,
+      <ActivityStream session={session()} messages={[message(1)]} inbox={[]} paneName="conversation" />,
     )
     expect(screen.getByTestId("stream").getAttribute("data-scroll-pane")).toBe("conversation")
   })

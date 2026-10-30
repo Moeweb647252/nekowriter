@@ -141,36 +141,83 @@ async fn a_running_session_accepts_message_and_pause_only() {
         .await;
 }
 
+/// Inserts a notice into the same inbox queue, bypassing the API (which only accepts steering
+/// messages).
+async fn insert_notice(runtime: &agent_harness::Runtime, session_id: i32, content: &str) {
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+    runtime
+        .app
+        .state()
+        .db_conn()
+        .execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "INSERT INTO agent_inbox (session_id, kind, content, created_at) \
+             VALUES (?, 'notice', ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+            vec![session_id.into(), content.into()],
+        ))
+        .await
+        .expect("insert notice");
+}
+
 /// A running session exposes queued steering messages until the runner consumes them (spec/10
-/// §2.7). The snapshot must show the inbox row, then the same text as a persisted user message.
+/// §2.7). The inbox contains only author messages, while `inbox_pending` counts every row.
 #[tokio::test]
 async fn a_running_session_snapshot_shows_steering_messages_until_consumed() {
     let runtime = runtime(vec![
         nekowriter_llm::mock::ScriptStep::new()
             .text("first reply")
-            .delay(Duration::from_secs(2)),
+            .delay(Duration::from_secs(5)),
         finish_step(),
     ])
     .await;
     let session_id = runtime.start_debug().await;
+    let initial = runtime.session_row(session_id).await;
+    assert_eq!(initial.status, "running", "a new session starts running");
     let (status, body) = runtime
         .app
-        .post(
-            &format!("/api/sessions/{session_id}/message"),
-            json!({ "text": "steer" }),
-        )
+        .post(&format!("/api/sessions/{session_id}/pause"), json!({}))
         .await;
-    assert_eq!(status, StatusCode::OK, "message while running: {body}");
+    assert_eq!(status, StatusCode::OK, "pause: {body}");
+    runtime
+        .wait_status(session_id, nekowriter::db::json::SessionStatus::Paused)
+        .await;
+    for text in ["steer one", "steer two"] {
+        let (status, body) = runtime
+            .app
+            .post(
+                &format!("/api/sessions/{session_id}/message"),
+                json!({ "text": text }),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "message {text}: {body}");
+    }
+    insert_notice(&runtime, session_id, "notice only").await;
 
     let (status, snapshot) = runtime
         .app
         .get(&format!("/api/sessions/{session_id}"))
         .await;
     assert_eq!(status, StatusCode::OK, "snapshot: {snapshot}");
-    assert_eq!(snapshot["inbox_pending"], 1, "{snapshot}");
-    assert_eq!(snapshot["inbox"][0]["kind"], "user_message", "{snapshot}");
-    assert_eq!(snapshot["inbox"][0]["content"], "steer", "{snapshot}");
+    assert_eq!(
+        snapshot["inbox_pending"], 3,
+        "every unconsumed row counts: {snapshot}"
+    );
+    let inbox = snapshot["inbox"].as_array().expect("inbox");
+    assert_eq!(
+        inbox.len(),
+        2,
+        "notices are not author messages: {snapshot}"
+    );
+    assert_eq!(inbox[0]["kind"], "user_message", "{snapshot}");
+    assert_eq!(inbox[0]["content"], "steer one", "{snapshot}");
+    assert_eq!(inbox[1]["kind"], "user_message", "{snapshot}");
+    assert_eq!(inbox[1]["content"], "steer two", "{snapshot}");
 
+    let (status, body) = runtime
+        .app
+        .post(&format!("/api/sessions/{session_id}/resume"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::OK, "resume: {body}");
     runtime
         .wait_status(session_id, nekowriter::db::json::SessionStatus::Completed)
         .await;
@@ -182,14 +229,30 @@ async fn a_running_session_snapshot_shows_steering_messages_until_consumed() {
     assert_eq!(snapshot["inbox"], json!([]), "{snapshot}");
     assert_eq!(snapshot["inbox_pending"], 0, "{snapshot}");
     let messages = snapshot["messages"].as_array().expect("messages");
+    let mut author_texts = Vec::new();
+    for item in messages {
+        if item["message"]["role"] != "user" {
+            continue;
+        }
+        if let Some(blocks) = item["message"]["blocks"].as_array() {
+            for block in blocks {
+                if let Some(text) = block["text"].as_str() {
+                    author_texts.push(text);
+                }
+            }
+        }
+    }
+    let first = author_texts
+        .iter()
+        .position(|text| *text == "steer one")
+        .expect("first steering text persisted");
+    let second = author_texts
+        .iter()
+        .position(|text| *text == "steer two")
+        .expect("second steering text persisted");
     assert!(
-        messages.iter().any(|item| {
-            item["message"]["role"] == "user"
-                && item["message"]["blocks"]
-                    .as_array()
-                    .is_some_and(|blocks| blocks.iter().any(|block| block["text"] == "steer"))
-        }),
-        "the steering message became a persisted user message: {snapshot}"
+        first < second,
+        "both steering texts persisted in event order: {author_texts:?}"
     );
 }
 

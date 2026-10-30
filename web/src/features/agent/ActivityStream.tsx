@@ -111,12 +111,12 @@ export function ActivityStream({
   messages,
   pendingPreview,
   paneName,
-  inbox = [],
+  inbox,
 }: {
   session: SessionDto
   messages: MessageWithCallsDto[]
   /** Unconsumed author messages from the session snapshot (spec/10 §2.7). */
-  inbox?: InboxItemDto[]
+  inbox: InboxItemDto[]
   /** A rendered line for the tool whose arguments are streaming (spec/03 §12). */
   pendingPreview?: string
   /**
