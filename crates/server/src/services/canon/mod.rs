@@ -773,11 +773,18 @@ pub async fn fresh_id(
         Some(row) => row.try_get::<Option<i64>>("", "value")?.unwrap_or(0),
         None => 0,
     };
+    // Goal ids are one namespace over all three levels; otherwise a deleted plan id could be
+    // handed to a new goal (proposal.goal_target looks up by id alone in 13.6).
+    let target_types: Vec<&str> = if table == "goal_nodes" {
+        vec!["goal", "plan", "task"]
+    } else {
+        vec![target_type.as_str()]
+    };
     let logged = crate::db::entities::change_log::Entity::find()
         .filter(
             crate::db::entities::change_log::COLUMN
                 .target_type
-                .eq(target_type.as_str()),
+                .is_in(target_types),
         )
         .order_by_desc(crate::db::entities::change_log::COLUMN.target_id)
         .one(conn)

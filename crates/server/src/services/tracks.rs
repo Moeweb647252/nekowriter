@@ -21,7 +21,7 @@ use sea_orm::{
 };
 
 use crate::api::dto::tracks::{TrackDto, TrackInput, TrackPatch};
-use crate::db::entities::{appearances, chapters, entities, tracks};
+use crate::db::entities::{appearances, chapters, entities, goal_nodes, tracks};
 use crate::db::json::{AnchorKind, CanonMode, ChapterStatus, EntityKind, TrackKind};
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
@@ -208,6 +208,24 @@ pub async fn update_inner(
                     "the track has an official chapter; its canon mode cannot change",
                     serde_json::json!({ "canon_mode": current.as_str() }),
                 ));
+            }
+            // Canon-mode side tracks have no private nodes (spec/02 §5 invariant 8,
+            // spec/06 §11.2): switching away from isolated would strand them outside shared canon.
+            if *canon_mode == CanonMode::Canon && current == CanonMode::Isolated {
+                let private_goals = goal_nodes::Entity::find()
+                    .filter(goal_nodes::COLUMN.track_id.eq(track_id))
+                    .count(tx)
+                    .await?;
+                if private_goals > 0 {
+                    return Err(super::conflict(
+                        ErrorCode::TrackModeLocked,
+                        "the track has private goal nodes; its canon mode cannot change",
+                        serde_json::json!({
+                            "canon_mode": current.as_str(),
+                            "private_goal_nodes": private_goals,
+                        }),
+                    ));
+                }
             }
             active.canon_mode = Set(*canon_mode);
         }

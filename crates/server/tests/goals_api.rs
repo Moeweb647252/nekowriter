@@ -719,3 +719,264 @@ async fn goal_field_and_condition_limits_are_enforced() {
     .await;
     assert_eq!(duplicate["conditions"].as_array().unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn reverting_a_link_removal_does_not_bind_a_reused_entity_id() {
+    let app = TestApp::new().await;
+    let book = app.create_book("Link cutoff").await;
+    let book_id = book["id"].as_i64().expect("book") as i32;
+    let entity = app
+        .post(
+            &format!("/api/books/{book_id}/entities"),
+            json!({ "kind": "character", "name": "Original", "summary": "" }),
+        )
+        .await
+        .1;
+    let entity_id = entity["id"].as_i64().unwrap() as i32;
+    let goal = create_node(
+        &app,
+        book_id,
+        json!({ "level": "goal", "title": "Linked", "purpose": "P", "entity_ids": [entity_id] }),
+    )
+    .await;
+    let (status, _) = app
+        .patch(
+            &format!("/api/goals/{}", goal["id"]),
+            json!({ "entity_ids": [] }),
+        )
+        .await;
+    assert_eq!(status, 200);
+    let (status, _) = app.delete(&format!("/api/entities/{entity_id}")).await;
+    assert_eq!(status, 204);
+    let replacement = app
+        .post(
+            &format!("/api/books/{book_id}/entities"),
+            json!({ "kind": "character", "name": "Replacement", "summary": "" }),
+        )
+        .await
+        .1;
+    assert_eq!(replacement["id"].as_i64().unwrap() as i32, entity_id);
+    let update_change = changes_for(&app, book_id, goal["id"].as_i64().unwrap() as i32)
+        .await
+        .into_iter()
+        .find(|change| change["op"] == "update")
+        .expect("link-clearing update");
+    let (status, body) = app
+        .post(
+            &format!("/api/changes/{}/revert", update_change["id"]),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, 200, "revert link removal: {body}");
+    let list = get(&app, book_id).await;
+    let row = list
+        .iter()
+        .find(|row| row["id"] == goal["id"])
+        .expect("goal");
+    assert!(row["entities"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn one_sided_range_and_present_track_id_are_guarded() {
+    let app = TestApp::new().await;
+    let book = app.create_book("One sided").await;
+    let book_id = book["id"].as_i64().expect("book") as i32;
+    let goal = create_node(
+        &app,
+        book_id,
+        json!({ "level": "goal", "title": "G", "purpose": "P", "chapter_from": 3, "chapter_to": 4 }),
+    )
+    .await;
+    let (status, body) = app
+        .patch(
+            &format!("/api/goals/{}", goal["id"]),
+            json!({ "chapter_from": null }),
+        )
+        .await;
+    assert_eq!(status, 200, "clear only from: {body}");
+    assert_eq!(body["chapter_from"], Value::Null);
+    assert_eq!(body["chapter_to"], 4);
+    let (status, body) = app
+        .patch(
+            &format!("/api/goals/{}", goal["id"]),
+            json!({ "chapter_to": 0 }),
+        )
+        .await;
+    assert_eq!(status, 400);
+    assert_eq!(
+        body["error"]["details"]["fields"]["chapter_to"],
+        "chapter numbers start at 1"
+    );
+    let (status, body) = app
+        .patch(
+            &format!("/api/goals/{}", goal["id"]),
+            json!({ "track_id": 1 }),
+        )
+        .await;
+    assert_eq!(status, 400, "present non-null track id: {body}");
+    assert_error(&body, "validation.failed");
+}
+
+#[tokio::test]
+async fn canon_mode_tracks_cannot_hold_private_goals_and_cannot_switch_with_them() {
+    let app = TestApp::new().await;
+    let book = app.create_book("Canon mode goals").await;
+    let book_id = book["id"].as_i64().expect("book") as i32;
+    let (status, canon) = app
+        .post(
+            &format!("/api/books/{book_id}/tracks"),
+            json!({ "title": "Canon side", "synopsis": "", "canon_mode": "canon", "anchor_kind": "before_start" }),
+        )
+        .await;
+    assert_eq!(status, 201, "canon track: {canon}");
+    let canon_track = canon["id"].as_i64().unwrap() as i32;
+    let (status, body) = app
+        .post(
+            &format!("/api/books/{book_id}/goals"),
+            json!({ "level": "goal", "title": "Private", "purpose": "P", "track_id": canon_track }),
+        )
+        .await;
+    assert_eq!(status, 400, "canon-mode private goal: {body}");
+    assert_error(&body, "validation.failed");
+
+    let (_, isolated) = app
+        .post(
+            &format!("/api/books/{book_id}/tracks"),
+            json!({ "title": "Isolated side", "synopsis": "", "canon_mode": "isolated", "anchor_kind": "before_start" }),
+        )
+        .await;
+    let isolated_track = isolated["id"].as_i64().unwrap() as i32;
+    create_node(
+        &app,
+        book_id,
+        json!({ "level": "goal", "title": "Private goal", "purpose": "P", "track_id": isolated_track }),
+    )
+    .await;
+    let (status, body) = app
+        .patch(
+            &format!("/api/tracks/{isolated_track}"),
+            json!({ "canon_mode": "canon" }),
+        )
+        .await;
+    assert_eq!(status, 409, "switch with private goals: {body}");
+    assert_error(&body, "track.mode_locked");
+}
+
+#[tokio::test]
+async fn writing_a_missing_condition_target_is_rejected() {
+    let app = TestApp::new().await;
+    let book = app.create_book("Missing target").await;
+    let book_id = book["id"].as_i64().expect("book") as i32;
+    let goal = create_node(
+        &app,
+        book_id,
+        json!({ "level": "goal", "title": "G", "purpose": "P" }),
+    )
+    .await;
+    let (status, body) = app
+        .patch(
+            &format!("/api/goals/{}", goal["id"]),
+            json!({ "conditions": [{ "kind": "entity_status_is", "entity_id": 9999, "status": "active" }] }),
+        )
+        .await;
+    assert_eq!(status, 404, "missing condition target: {body}");
+    assert_error(&body, "not_found");
+}
+
+#[tokio::test]
+async fn goal_ids_are_unique_across_levels() {
+    let app = TestApp::new().await;
+    let book = app.create_book("Cross-level ids").await;
+    let book_id = book["id"].as_i64().expect("book") as i32;
+    let goal = create_node(
+        &app,
+        book_id,
+        json!({ "level": "goal", "title": "G", "purpose": "P" }),
+    )
+    .await;
+    let plan = create_node(
+        &app,
+        book_id,
+        json!({ "level": "plan", "parent_id": goal["id"], "title": "P", "purpose": "P" }),
+    )
+    .await;
+    let plan_id = plan["id"].as_i64().unwrap();
+    let (status, _) = app.delete(&format!("/api/goals/{plan_id}")).await;
+    assert_eq!(status, 204);
+    let next = create_node(
+        &app,
+        book_id,
+        json!({ "level": "goal", "title": "G2", "purpose": "P" }),
+    )
+    .await;
+    assert_ne!(next["id"].as_i64().unwrap(), plan_id);
+}
+
+#[tokio::test]
+async fn reverting_a_link_removal_does_not_restore_an_invisible_target() {
+    let app = TestApp::new().await;
+    let book = app.create_book("Link visibility").await;
+    let book_id = book["id"].as_i64().expect("book") as i32;
+    let (_, t1) = app
+        .post(
+            &format!("/api/books/{book_id}/tracks"),
+            json!({ "title": "T1", "synopsis": "", "canon_mode": "isolated", "anchor_kind": "before_start" }),
+        )
+        .await;
+    let (_, t2) = app
+        .post(
+            &format!("/api/books/{book_id}/tracks"),
+            json!({ "title": "T2", "synopsis": "", "canon_mode": "isolated", "anchor_kind": "before_start" }),
+        )
+        .await;
+    let track1 = t1["id"].as_i64().unwrap() as i32;
+    let track2 = t2["id"].as_i64().unwrap() as i32;
+    let entity = app
+        .post(
+            &format!("/api/books/{book_id}/entities"),
+            json!({ "kind": "character", "name": "Shared", "summary": "" }),
+        )
+        .await
+        .1;
+    let entity_id = entity["id"].as_i64().unwrap() as i32;
+    let goal = create_node(
+        &app,
+        book_id,
+        json!({ "level": "goal", "title": "Private", "purpose": "P", "track_id": track1, "entity_ids": [entity_id] }),
+    )
+    .await;
+    let (status, _) = app
+        .patch(
+            &format!("/api/goals/{}", goal["id"]),
+            json!({ "entity_ids": [] }),
+        )
+        .await;
+    assert_eq!(status, 200);
+    app.execute(&format!(
+        "UPDATE entities SET track_id = {track2} WHERE id = {entity_id}"
+    ))
+    .await;
+    let update_change = changes_for(&app, book_id, goal["id"].as_i64().unwrap() as i32)
+        .await
+        .into_iter()
+        .find(|change| change["op"] == "update")
+        .expect("link-clearing update");
+    let (status, body) = app
+        .post(
+            &format!("/api/changes/{}/revert", update_change["id"]),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, 200, "revert invisible link: {body}");
+    let (status, list) = app
+        .get(&format!("/api/books/{book_id}/goals?track_id={track1}"))
+        .await;
+    assert_eq!(status, 200);
+    let row = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == goal["id"])
+        .expect("goal");
+    assert!(row["entities"].as_array().unwrap().is_empty());
+}

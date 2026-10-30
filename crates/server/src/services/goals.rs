@@ -1043,9 +1043,15 @@ fn validate_status_conditions(status: GoalStatus, conditions: &[GoalCondition]) 
 }
 
 fn validate_range(from: Option<i32>, to: Option<i32>) -> CanonResult<()> {
-    if from.is_some_and(|from| from < 1) || to.is_some_and(|to| to < 1) {
+    if from.is_some_and(|from| from < 1) {
         return Err(CanonError::field(
             "chapter_from",
+            "chapter numbers start at 1",
+        ));
+    }
+    if to.is_some_and(|to| to < 1) {
+        return Err(CanonError::field(
+            "chapter_to",
             "chapter numbers start at 1",
         ));
     }
