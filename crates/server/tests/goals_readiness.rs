@@ -153,7 +153,10 @@ async fn entity_merge_moves_goal_links_and_rewrites_conditions_without_goal_chan
         book_id,
         json!({
             "level": "goal", "title": "链接", "purpose": "目的", "status": "waiting",
-            "conditions": [{ "kind": "entity_status_is", "entity_id": source_id, "status": "active" }],
+            "conditions": [
+                { "kind": "entity_status_is", "entity_id": target_id, "status": "active" },
+                { "kind": "entity_status_is", "entity_id": source_id, "status": "active" }
+            ],
             "entity_ids": [source_id]
         }),
     )
@@ -189,5 +192,72 @@ async fn entity_merge_moves_goal_links_and_rewrites_conditions_without_goal_chan
         .find(|row| row["id"] == goal["id"])
         .expect("goal");
     assert_eq!(row["entities"][0]["id"], target_id);
+    assert_eq!(row["conditions"].as_array().unwrap().len(), 1);
     assert_eq!(row["conditions"][0]["condition"]["entity_id"], target_id);
+}
+
+#[tokio::test]
+async fn private_scopes_see_shared_rows_but_not_other_tracks() {
+    let app = TestApp::new().await;
+    let (book_id, _) = book_with_main(&app).await;
+    let (_, t1) = app
+        .post(
+            &format!("/api/books/{book_id}/tracks"),
+            json!({ "title": "T1", "synopsis": "", "canon_mode": "isolated", "anchor_kind": "before_start" }),
+        )
+        .await;
+    let (_, t2) = app
+        .post(
+            &format!("/api/books/{book_id}/tracks"),
+            json!({ "title": "T2", "synopsis": "", "canon_mode": "isolated", "anchor_kind": "before_start" }),
+        )
+        .await;
+    let track1 = t1["id"].as_i64().unwrap() as i32;
+    let track2 = t2["id"].as_i64().unwrap() as i32;
+    let shared_entity = app
+        .post(
+            &format!("/api/books/{book_id}/entities"),
+            json!({ "kind": "character", "name": "Shared", "summary": "" }),
+        )
+        .await
+        .1;
+    let private_entity = app
+        .post(
+            &format!("/api/books/{book_id}/entities"),
+            json!({ "kind": "character", "name": "Private2", "summary": "", "track_id": track2 }),
+        )
+        .await
+        .1;
+    let shared_id = shared_entity["id"].as_i64().unwrap() as i32;
+    let private_id = private_entity["id"].as_i64().unwrap() as i32;
+
+    // A private-T goal may link shared canon.
+    create(
+        &app,
+        book_id,
+        json!({ "level": "goal", "title": "T1", "purpose": "P", "track_id": track1, "entity_ids": [shared_id] }),
+    )
+    .await;
+    // It may not link another track's private canon.
+    let (status, body) = app
+        .post(
+            &format!("/api/books/{book_id}/goals"),
+            json!({ "level": "goal", "title": "Bad", "purpose": "P", "track_id": track1, "entity_ids": [private_id] }),
+        )
+        .await;
+    assert!(
+        status == 400 || status == 404,
+        "other-track link: {status} {body}"
+    );
+    // A shared goal may not link a private row.
+    let (status, body) = app
+        .post(
+            &format!("/api/books/{book_id}/goals"),
+            json!({ "level": "goal", "title": "Bad shared", "purpose": "P", "entity_ids": [private_id] }),
+        )
+        .await;
+    assert!(
+        status == 400 || status == 404,
+        "shared link: {status} {body}"
+    );
 }

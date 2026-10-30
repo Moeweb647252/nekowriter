@@ -361,3 +361,171 @@ async fn reparenting_moves_a_plan_and_level_scope_are_immutable() {
     assert_eq!(status, 400, "level change: {body}");
     assert_error(&body, "validation.failed");
 }
+
+#[tokio::test]
+async fn goal_list_visibility_is_shared_by_default_and_shared_plus_track_when_filtered() {
+    let app = TestApp::new().await;
+    let book = app.create_book("Visibility").await;
+    let book_id = book["id"].as_i64().expect("book") as i32;
+    let (_, tracks) = app.get(&format!("/api/books/{book_id}/tracks")).await;
+    let main_track = tracks[0]["id"].as_i64().expect("main track") as i32;
+    let (status, isolated) = app
+        .post(
+            &format!("/api/books/{book_id}/tracks"),
+            json!({ "title": "Side", "synopsis": "", "canon_mode": "isolated", "anchor_kind": "before_start" }),
+        )
+        .await;
+    assert_eq!(status, 201, "isolated track: {isolated}");
+    let side_track = isolated["id"].as_i64().expect("side track") as i32;
+    let shared = create_node(
+        &app,
+        book_id,
+        json!({ "level": "goal", "title": "Shared", "purpose": "P" }),
+    )
+    .await;
+    let private = create_node(
+        &app,
+        book_id,
+        json!({ "level": "goal", "title": "Private", "purpose": "P", "track_id": side_track }),
+    )
+    .await;
+
+    let (status, list) = app.get(&format!("/api/books/{book_id}/goals")).await;
+    assert_eq!(status, 200);
+    assert_eq!(list.as_array().unwrap().len(), 1);
+    assert_eq!(list[0]["id"], shared["id"]);
+
+    let (status, list) = app
+        .get(&format!("/api/books/{book_id}/goals?track_id={side_track}"))
+        .await;
+    assert_eq!(status, 200);
+    let ids: Vec<i64> = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["id"].as_i64().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        vec![
+            shared["id"].as_i64().unwrap(),
+            private["id"].as_i64().unwrap()
+        ]
+    );
+
+    // A private node must not use a shared parent.
+    let (status, body) = app
+        .post(
+            &format!("/api/books/{book_id}/goals"),
+            json!({ "level": "plan", "parent_id": shared["id"], "track_id": side_track, "title": "bad", "purpose": "P" }),
+        )
+        .await;
+    assert_eq!(status, 400, "shared parent for private child: {body}");
+    assert_error(&body, "validation.failed");
+    let _ = main_track;
+}
+
+#[tokio::test]
+async fn patch_clears_nullable_fields_and_rejects_any_track_id() {
+    let app = TestApp::new().await;
+    let book = app.create_book("Patch clears").await;
+    let book_id = book["id"].as_i64().expect("book") as i32;
+    let goal = create_node(&app, book_id, json!({ "level": "goal", "title": "G", "purpose": "P", "chapter_from": 1, "chapter_to": 2 })).await;
+    let plan = create_node(
+        &app,
+        book_id,
+        json!({ "level": "plan", "parent_id": goal["id"], "title": "Plan", "purpose": "P", "chapter_from": 3, "chapter_to": 4 }),
+    )
+    .await;
+    let (status, body) = app
+        .patch(
+            &format!("/api/goals/{}", plan["id"]),
+            json!({ "parent_id": null, "chapter_from": null, "chapter_to": null }),
+        )
+        .await;
+    assert_eq!(status, 200, "clear nullable fields: {body}");
+    assert_eq!(body["parent_id"], Value::Null);
+    assert_eq!(body["chapter_from"], Value::Null);
+    assert_eq!(body["chapter_to"], Value::Null);
+
+    let (status, body) = app
+        .patch(
+            &format!("/api/goals/{}", plan["id"]),
+            json!({ "title": "Only title" }),
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(body["title"], "Only title");
+    assert_eq!(body["parent_id"], Value::Null);
+
+    let (status, body) = app
+        .patch(
+            &format!("/api/goals/{}", plan["id"]),
+            json!({ "track_id": null }),
+        )
+        .await;
+    assert_eq!(status, 400, "null track id must be rejected: {body}");
+    assert_error(&body, "validation.failed");
+}
+
+#[tokio::test]
+async fn a_broken_condition_target_does_not_block_unrelated_edits() {
+    let app = TestApp::new().await;
+    let book = app.create_book("Broken edit").await;
+    let book_id = book["id"].as_i64().expect("book") as i32;
+    let entity = app
+        .post(
+            &format!("/api/books/{book_id}/entities"),
+            json!({ "kind": "character", "name": "Gone", "summary": "" }),
+        )
+        .await
+        .1;
+    let entity_id = entity["id"].as_i64().unwrap() as i32;
+    let goal = create_node(
+        &app,
+        book_id,
+        json!({
+            "level": "goal", "title": "Before", "purpose": "P", "status": "waiting",
+            "conditions": [{ "kind": "entity_status_is", "entity_id": entity_id, "status": "active" }]
+        }),
+    )
+    .await;
+    app.execute(&format!("DELETE FROM entities WHERE id = {entity_id}"))
+        .await;
+    let (status, body) = app
+        .patch(
+            &format!("/api/goals/{}", goal["id"]),
+            json!({ "title": "After", "note": "rename" }),
+        )
+        .await;
+    assert_eq!(status, 200, "unrelated edit after broken target: {body}");
+    assert_eq!(body["title"], "After");
+    assert_eq!(body["conditions"][0]["broken"], true);
+}
+
+#[tokio::test]
+async fn a_deleted_goal_id_is_not_reused() {
+    let app = TestApp::new().await;
+    let book = app.create_book("Fresh ids").await;
+    let book_id = book["id"].as_i64().expect("book") as i32;
+    let first = create_node(
+        &app,
+        book_id,
+        json!({ "level": "goal", "title": "First", "purpose": "P" }),
+    )
+    .await;
+    let first_id = first["id"].as_i64().unwrap();
+    let (status, _) = app.delete(&format!("/api/goals/{first_id}")).await;
+    assert_eq!(status, 204);
+    let second = create_node(
+        &app,
+        book_id,
+        json!({ "level": "goal", "title": "Second", "purpose": "P" }),
+    )
+    .await;
+    assert_ne!(
+        second["id"].as_i64().unwrap(),
+        first_id,
+        "a deleted goal id must not be reused"
+    );
+}

@@ -8,6 +8,7 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter,
     QueryOrder, Set,
 };
+use serde::Deserialize;
 
 use crate::api::dto::goals::{
     GoalConditionStateDto, GoalEntityLinkDto, GoalEventLinkDto, GoalForeshadowingLinkDto,
@@ -25,7 +26,7 @@ use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
 
 use super::canon::{
-    CanonError, CanonResult, CanonWrite, ChangeWrite, changed_event, record_change,
+    CanonError, CanonResult, CanonWrite, ChangeWrite, Visibility, changed_event, record_change,
 };
 
 /// The cap of `block.goals` (plan §4.5).
@@ -44,9 +45,9 @@ pub struct GoalSelection {
 pub struct GoalNodePatch {
     #[serde(default)]
     pub level: Option<GoalLevel>,
-    #[serde(default)]
-    pub track_id: Option<i32>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub track_id: Option<Option<i32>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
     pub parent_id: Option<Option<i32>>,
     #[serde(default)]
     pub title: Option<String>,
@@ -54,9 +55,9 @@ pub struct GoalNodePatch {
     pub purpose: Option<String>,
     #[serde(default)]
     pub status: Option<GoalStatus>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_some")]
     pub chapter_from: Option<Option<i32>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_some")]
     pub chapter_to: Option<Option<i32>>,
     #[serde(default)]
     pub conditions: Option<Vec<GoalCondition>>,
@@ -70,6 +71,16 @@ pub struct GoalNodePatch {
     pub note: Option<String>,
     #[serde(default)]
     pub confirm_open_children: Option<bool>,
+}
+
+/// `Option<Option<T>>` with wire semantics: an absent field is `None` (leave unchanged), while
+/// an explicit JSON `null` is `Some(None)` (clear). Without this, serde collapses both to `None`.
+fn deserialize_some<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
 }
 
 /// The derived state of one condition (spec/06 §11.3).
@@ -102,9 +113,12 @@ pub async fn list(
         .order_by_asc(goal_nodes::COLUMN.id)
         .all(conn)
         .await?;
-    if let Some(track_id) = query.track_id {
-        nodes.retain(|node| node.track_id == Some(track_id));
-    }
+    // Spec/06 §2: no filter means shared canon only; a track filter means shared OR that track.
+    let visibility = match query.track_id {
+        Some(track_id) => Visibility::isolated(book_id, track_id),
+        None => Visibility::shared(book_id),
+    };
+    nodes.retain(|node| visibility.sees(node.track_id));
     if let Some(status) = query.status {
         nodes.retain(|node| node.status == status);
     }
@@ -519,7 +533,9 @@ pub async fn create_inner(
     .await?;
     validate_condition_targets(tx, book_id, track_id, &conditions).await?;
     let timestamp = Utc::now();
+    let new_id = super::canon::fresh_id(tx, "goal_nodes", target_type(input.level)).await?;
     let node = goal_nodes::ActiveModel {
+        id: Set(new_id),
         book_id: Set(book_id),
         track_id: Set(track_id),
         level: Set(input.level),
@@ -532,7 +548,6 @@ pub async fn create_inner(
         chapter_to: Set(input.chapter_to),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),
-        ..Default::default()
     }
     .insert(tx)
     .await?;
@@ -597,9 +612,7 @@ pub async fn update_inner(
     {
         return Err(CanonError::field("level", "level cannot change"));
     }
-    if let Some(track_id) = patch.track_id
-        && Some(track_id) != existing.track_id
-    {
+    if patch.track_id.is_some() {
         return Err(CanonError::field("track_id", "track_id cannot change"));
     }
     let title = match patch.title {
@@ -611,6 +624,7 @@ pub async fn update_inner(
         None => existing.purpose.clone(),
     };
     let status = patch.status.unwrap_or(existing.status);
+    let conditions_written = patch.conditions.is_some();
     let conditions = match patch.conditions {
         Some(conditions) => clean_conditions(conditions)?,
         None => existing.conditions.0.clone(),
@@ -650,7 +664,9 @@ pub async fn update_inner(
         foreshadowing_ids.clone(),
     )
     .await?;
-    validate_condition_targets(tx, existing.book_id, existing.track_id, &conditions).await?;
+    if conditions_written {
+        validate_condition_targets(tx, existing.book_id, existing.track_id, &conditions).await?;
+    }
     if matches!(status, GoalStatus::Done | GoalStatus::Dropped)
         && !matches!(existing.status, GoalStatus::Done | GoalStatus::Dropped)
         && patch.confirm_open_children != Some(true)

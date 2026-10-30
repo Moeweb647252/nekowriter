@@ -733,6 +733,11 @@ async fn rewrite_goal_conditions(
             }
         }
         if changed {
+            // B→A can make a condition identical to one already on A: dedupe and enforce the
+            // §11.3 cap before storing the rewritten list.
+            let mut seen = HashSet::new();
+            conditions.retain(|condition| seen.insert(format!("{condition:?}")));
+            conditions.truncate(10);
             goal_nodes::ActiveModel {
                 id: Set(node.id),
                 conditions: Set(JsonText(conditions)),
