@@ -1,5 +1,5 @@
 /** The GoalNodeDialog fields and the open-children confirmation (spec/11 §5.5). */
-import { render, screen } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import i18n from "i18next"
 import { beforeAll, describe, expect, it, vi } from "vitest"
@@ -21,7 +21,12 @@ vi.mock("@/api/hooks/useCanon", () => ({
   useEntities: () => ({ data: [] }),
   useForeshadowing: (bookId: number, status?: string, trackId?: number) => {
     foreshadowingQuery(bookId, status, trackId)
-    return { data: [{ id: 9, title: "Private hook", status: "open" }] }
+    return {
+      data:
+        trackId === 2
+          ? [{ id: 9, title: "Private hook", status: "open" }]
+          : [{ id: 10, title: "Shared hook", status: "open" }],
+    }
   },
   useTimeline: () => ({ data: [] }),
 }))
@@ -146,11 +151,15 @@ describe("foreshadowing condition scope", () => {
     const privateNode: GoalNodeDto = { ...node, id: 12, track_id: 2, level: "task" }
     const user = userEvent.setup()
     render(<GoalNodeDialog bookId={1} nodes={[privateNode]} open onOpenChange={vi.fn()} node={privateNode} />)
-    const before = foreshadowingQuery.mock.calls.length
     await user.click(screen.getByRole("button", { name: "Add condition" }))
     await user.selectOptions(screen.getByLabelText("Condition kind"), "foreshadowing_resolved")
-    expect(foreshadowingQuery.mock.calls.length).toBeGreaterThan(before)
-    expect(foreshadowingQuery.mock.calls.some((call) => call[2] === 2)).toBe(true)
-    expect(screen.getAllByRole("option", { name: "Private hook" }).length).toBeGreaterThan(0)
+    const conditionRow = screen.getByLabelText("Condition kind").closest("li")
+    expect(conditionRow).not.toBeNull()
+    const conditionPicker = within(conditionRow as HTMLElement).getByRole("combobox", {
+      name: "Foreshadowing",
+    })
+    expect(within(conditionPicker).getAllByRole("option", { name: "Private hook" })).toHaveLength(1)
+    expect(within(conditionPicker).queryByRole("option", { name: "Shared hook" })).toBeNull()
+    expect(screen.getAllByRole("option", { name: "Private hook" })).toHaveLength(2)
   })
 })
