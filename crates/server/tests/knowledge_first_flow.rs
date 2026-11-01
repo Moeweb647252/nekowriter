@@ -313,3 +313,213 @@ async fn old_request_shape_still_starts_conception_immediately() {
     assert_eq!(sessions(&runtime, book_id, "conception").await.len(), 1);
     assert_eq!(check_task_count(&runtime.app, book_id).await, 0);
 }
+
+#[tokio::test]
+async fn an_abandoned_conception_session_prevents_auto_start() {
+    let runtime = runtime(vec![
+        ScriptStep::new()
+            .delay(Duration::from_secs(2))
+            .tool("finish_research", json!({ "report": "done" })),
+        ScriptStep::new().text("manual conception"),
+    ])
+    .await;
+    let book = create_book(&runtime, "Abandoned conception", true, true).await;
+    let book_id = book["book"]["id"].as_i64().unwrap() as i32;
+    let check_session = book["session_id"].as_i64().unwrap() as i32;
+    let (status, manual) = runtime
+        .app
+        .post(&format!("/api/books/{book_id}/conception/start"), json!({}))
+        .await;
+    assert_eq!(status, 200, "{manual}");
+    let manual_session = manual["session_id"].as_i64().unwrap() as i32;
+    let (status, body) = runtime
+        .app
+        .post(
+            &format!("/api/sessions/{manual_session}/abandon"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    runtime.wait_any_status(check_session).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let conception = sessions(&runtime, book_id, "conception").await;
+    assert_eq!(conception.len(), 1, "{conception:?}");
+    assert_eq!(conception[0].1, "abandoned");
+}
+
+#[tokio::test]
+async fn failed_check_starts_nothing() {
+    let runtime = runtime(vec![ScriptStep::new().delay(Duration::from_secs(20))]).await;
+    let book = create_book(&runtime, "Failed check", true, true).await;
+    let book_id = book["book"]["id"].as_i64().unwrap() as i32;
+    let check_session = book["session_id"].as_i64().unwrap() as i32;
+    runtime
+        .app
+        .execute(&format!(
+            "UPDATE agent_sessions SET status = 'failed' WHERE id = {check_session}"
+        ))
+        .await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(sessions(&runtime, book_id, "conception").await.is_empty());
+}
+
+#[tokio::test]
+async fn missing_researcher_with_auto_off_leaves_nothing_running() {
+    let runtime = runtime(Vec::new()).await;
+    let (_, settings) = runtime.app.get("/api/app-settings").await;
+    let mut roles = settings["roles_defaults"].clone();
+    roles["researcher"] = Value::Null;
+    let (status, body) = runtime
+        .app
+        .patch("/api/app-settings", json!({ "roles_defaults": roles }))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let book = create_book(&runtime, "No researcher off", true, false).await;
+    let book_id = book["book"]["id"].as_i64().unwrap() as i32;
+    assert_eq!(check_task_count(&runtime.app, book_id).await, 0);
+    assert!(sessions(&runtime, book_id, "conception").await.is_empty());
+}
+
+#[tokio::test]
+async fn conception_search_knowledge_sees_only_visible_scopes() {
+    let runtime = runtime(vec![
+        ScriptStep::new()
+            .delay(Duration::from_secs(1))
+            .tool("search_knowledge", json!({ "query": "tea" })),
+        ScriptStep::new().text("done"),
+    ])
+    .await;
+    let (_, visible) = runtime
+        .app
+        .post(
+            "/api/knowledge/scopes",
+            json!({ "name": "Visible scope", "description": "" }),
+        )
+        .await;
+    let visible_id = visible["id"].as_i64().unwrap() as i32;
+    let (_, hidden) = runtime
+        .app
+        .post(
+            "/api/knowledge/scopes",
+            json!({ "name": "Hidden scope", "description": "" }),
+        )
+        .await;
+    let hidden_id = hidden["id"].as_i64().unwrap() as i32;
+    for (scope_id, title, content) in [
+        (visible_id, "Visible tea", "tea in the visible scope"),
+        (hidden_id, "Hidden tea", "tea in the hidden scope"),
+    ] {
+        let (status, body) = runtime
+            .app
+            .post(
+                &format!("/api/knowledge/scopes/{scope_id}/entries"),
+                json!({ "title": title, "content": content }),
+            )
+            .await;
+        assert_eq!(status, 201, "{body}");
+    }
+    let (status, book) = runtime
+        .app
+        .post(
+            "/api/books",
+            json!({
+                "title": "Conception search",
+                "idea": "idea",
+                "genre": "xianxia",
+                "writing_language": "zh-CN",
+                "start_conception": true,
+            }),
+        )
+        .await;
+    assert_eq!(status, 201, "{book}");
+    let book_id = book["book"]["id"].as_i64().unwrap() as i32;
+    let session_id = book["session_id"].as_i64().unwrap() as i32;
+    let (status, _) = runtime
+        .app
+        .put(
+            &format!("/api/books/{book_id}/scopes"),
+            json!({ "excluded_scope_ids": [hidden_id] }),
+        )
+        .await;
+    assert_eq!(status, 200);
+    runtime.wait_any_status(session_id).await;
+    let snapshot = runtime
+        .app
+        .get(&format!("/api/sessions/{session_id}"))
+        .await
+        .1;
+    let search = snapshot["tool_calls"]
+        .as_array()
+        .expect("tool calls")
+        .iter()
+        .find(|call| call["name"] == "search_knowledge")
+        .expect("search call");
+    let text = search["result_text"].as_str().unwrap_or_default();
+    assert!(text.contains("Visible tea"), "{text}");
+    assert!(!text.contains("Hidden tea"), "{text}");
+}
+
+#[tokio::test]
+async fn missing_researcher_and_conception_warns_once() {
+    let runtime = runtime(Vec::new()).await;
+    let (_, settings) = runtime.app.get("/api/app-settings").await;
+    let mut roles = settings["roles_defaults"].clone();
+    roles["researcher"] = Value::Null;
+    roles["conception"] = Value::Null;
+    let (status, body) = runtime
+        .app
+        .patch("/api/app-settings", json!({ "roles_defaults": roles }))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let book = create_book(&runtime, "Both missing", true, true).await;
+    let warnings = book["warnings"].as_array().unwrap();
+    assert_eq!(
+        warnings
+            .iter()
+            .filter(|warning| *warning == "model.missing_role")
+            .count(),
+        1,
+        "{warnings:?}"
+    );
+    let book_id = book["book"]["id"].as_i64().unwrap() as i32;
+    assert!(sessions(&runtime, book_id, "conception").await.is_empty());
+    assert_eq!(check_task_count(&runtime.app, book_id).await, 0);
+}
+
+#[tokio::test]
+async fn rerunning_a_check_after_abandoned_conception_starts_nothing() {
+    let runtime = runtime(vec![
+        ScriptStep::new()
+            .delay(Duration::from_secs(2))
+            .tool("finish_research", json!({ "report": "first" })),
+        ScriptStep::new().text("manual conception"),
+        ScriptStep::new().tool("finish_research", json!({ "report": "second" })),
+    ])
+    .await;
+    let book = create_book(&runtime, "Re-run after abandoned", true, true).await;
+    let book_id = book["book"]["id"].as_i64().unwrap() as i32;
+    let first_check = book["session_id"].as_i64().unwrap() as i32;
+    let (status, manual) = runtime
+        .app
+        .post(&format!("/api/books/{book_id}/conception/start"), json!({}))
+        .await;
+    assert_eq!(status, 200, "{manual}");
+    let manual_id = manual["session_id"].as_i64().unwrap() as i32;
+    let (status, body) = runtime
+        .app
+        .post(&format!("/api/sessions/{manual_id}/abandon"), json!({}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    runtime.wait_any_status(first_check).await;
+    let (status, second) = runtime
+        .app
+        .post(&format!("/api/books/{book_id}/knowledge-check"), json!({}))
+        .await;
+    assert_eq!(status, 201, "{second}");
+    let second_check = second["session_id"].as_i64().unwrap() as i32;
+    runtime.wait_any_status(second_check).await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    let conception = sessions(&runtime, book_id, "conception").await;
+    assert_eq!(conception.len(), 1, "{conception:?}");
+    assert_eq!(conception[0].1, "abandoned");
+}

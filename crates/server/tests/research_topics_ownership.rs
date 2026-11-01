@@ -69,6 +69,20 @@ async fn kickoff_text(runtime: &Runtime, session_id: i32) -> String {
         .join("\n")
 }
 
+async fn tool_ui(runtime: &Runtime, session_id: i32, name: &str) -> serde_json::Value {
+    let (_, session) = runtime
+        .app
+        .get(&format!("/api/sessions/{session_id}"))
+        .await;
+    session["tool_calls"]
+        .as_array()
+        .expect("tool calls")
+        .iter()
+        .find(|call| call["name"] == name)
+        .unwrap_or_else(|| panic!("no {name} call"))["ui"]
+        .clone()
+}
+
 async fn insert_agent_draft(app: &nekowriter::testing::TestApp, book_id: i32, topic: &str) -> i32 {
     app.execute(&format!(
         "INSERT INTO research_tasks(book_id, kind, origin, scope_name, topic, requirements, language, status, created_at, updated_at) \
@@ -101,6 +115,13 @@ async fn author_drafts_survive_set_research_topics_and_are_in_the_kickoff() {
         .await;
     let author_before = create_author_task(&runtime.app, book_id, "Author before").await;
     let _agent_draft = insert_agent_draft(&runtime.app, book_id, "Agent old").await;
+    // A run agent task is not a draft, so it must survive the replacement too.
+    runtime
+        .app
+        .execute(&format!(
+            "INSERT INTO research_tasks(book_id, kind, origin, scope_name, topic, requirements, language, status, created_at, updated_at)              VALUES ({book_id}, 'topic', 'conception', 'Background', 'Agent already run', '', 'en', 'done', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ))
+        .await;
 
     let (status, started) = runtime
         .app
@@ -109,6 +130,15 @@ async fn author_drafts_survive_set_research_topics_and_are_in_the_kickoff() {
     assert_eq!(status, 200, "{started}");
     let session = started["session_id"].as_i64().unwrap() as i32;
     runtime.wait_any_status(session).await;
+    let ui = tool_ui(&runtime, session, "set_research_topics").await;
+    assert!(
+        ui["kept"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|task| task["topic"] == "Author before"),
+        "the result's kept[] names the protected author draft: {ui}"
+    );
     let (status, body) = runtime
         .app
         .post(&format!("/api/sessions/{session}/abandon"), json!({}))
@@ -122,13 +152,10 @@ async fn author_drafts_survive_set_research_topics_and_are_in_the_kickoff() {
     );
     assert!(!after.iter().any(|row| row.4 == "Agent old"));
     assert!(after.iter().any(|row| row.4 == "Agent replacement"));
+    assert!(after.iter().any(|row| row.4 == "Agent already run"));
 
     // One more author task while the conception session is idle; a later kickoff lists both.
     let author_idle = create_author_task(&runtime.app, book_id, "Author while idle").await;
-    println!(
-        "before second kickoff rows: {:?}",
-        rows(&runtime.app, book_id).await
-    );
     let (status, body) = runtime
         .app
         .post(&format!("/api/books/{book_id}/conception/start"), json!({}))
@@ -150,7 +177,14 @@ async fn author_drafts_survive_set_research_topics_and_are_in_the_kickoff() {
 
 #[tokio::test]
 async fn adopted_agent_draft_survives_and_is_reported_as_an_edit() {
-    let runtime = runtime(vec![text_step("idle")]).await;
+    let runtime = runtime(vec![
+        text_step("idle"),
+        tools_step(&[("set_research_topics", json!({
+            "topics": [{ "topic": "Agent after adoption", "requirements": "", "scope": "Background" }]
+        }))]),
+        text_step("done"),
+    ])
+    .await;
     let book = runtime.app.create_book("Adoption").await;
     let book_id = book["id"].as_i64().unwrap() as i32;
     runtime
@@ -185,7 +219,7 @@ async fn adopted_agent_draft_survives_and_is_reported_as_an_edit() {
         .app
         .patch(
             &format!("/api/research-tasks/{agent}"),
-            json!({ "requirements": "adopted by author" }),
+            json!({ "topic": "Adopted topic", "requirements": "adopted by author" }),
         )
         .await;
     assert_eq!(status, 200, "{body}");
@@ -195,9 +229,18 @@ async fn adopted_agent_draft_survives_and_is_reported_as_an_edit() {
             .unwrap();
     let prompts = PromptRegistry::embedded().expect("pack").defaults_only();
     let report = nekowriter::agent::report::conception_report(&snapshot, &current, &prompts);
+    let topic_edit = report
+        .items
+        .iter()
+        .find(|item| item["kind"] == "topics")
+        .expect("an adoption must be a setting edit");
     assert!(
-        report.items.iter().any(|item| item["kind"] == "topics"),
-        "an adoption must be a setting edit: {report:?}"
+        topic_edit["topics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|topic| topic["topic"] == "Adopted topic"),
+        "the changed topic is the edited row, not a delete+insert: {topic_edit:?}"
     );
     let adopted = rows(&runtime.app, book_id).await;
     assert!(
@@ -205,6 +248,26 @@ async fn adopted_agent_draft_survives_and_is_reported_as_an_edit() {
             .iter()
             .any(|row| row.0 == agent && row.2 == "author")
     );
+    let (status, body) = runtime
+        .app
+        .post(&format!("/api/sessions/{session}/abandon"), json!({}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let (status, started) = runtime
+        .app
+        .post(&format!("/api/books/{book_id}/conception/start"), json!({}))
+        .await;
+    assert_eq!(status, 200, "{started}");
+    let next_session = started["session_id"].as_i64().unwrap() as i32;
+    runtime.wait_any_status(next_session).await;
+    let after = rows(&runtime.app, book_id).await;
+    assert!(
+        after
+            .iter()
+            .any(|row| row.0 == agent && row.2 == "author" && row.4 == "Adopted topic"),
+        "the adopted task survives later set_research_topics calls: {after:?}"
+    );
+    assert!(after.iter().any(|row| row.4 == "Agent after adoption"));
 }
 
 #[tokio::test]

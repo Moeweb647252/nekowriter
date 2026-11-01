@@ -753,6 +753,7 @@ pub enum ViewSnapshot {
     Conception {
         docs: BTreeMap<String, ConceptionDocSnapshot>,
         characters: Vec<ConceptionCharacterSnapshot>,
+        #[serde(default, deserialize_with = "deserialize_conception_topics")]
         topics: Vec<ConceptionTopicSnapshot>,
     },
 }
@@ -777,7 +778,7 @@ pub struct ConceptionCharacterSnapshot {
     pub profile: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub struct ConceptionTopicSnapshot {
@@ -786,6 +787,39 @@ pub struct ConceptionTopicSnapshot {
     pub requirements: String,
     pub scope: String,
     pub origin: ResearchTaskOrigin,
+}
+
+/// Older snapshots predate `id`/`origin`; keep reading them and assign stable sequential ids.
+fn deserialize_conception_topics<'de, D>(
+    deserializer: D,
+) -> Result<Vec<ConceptionTopicSnapshot>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    struct RawTopic {
+        #[serde(default)]
+        id: Option<i32>,
+        topic: String,
+        #[serde(default)]
+        requirements: String,
+        #[serde(default)]
+        scope: String,
+        #[serde(default)]
+        origin: Option<ResearchTaskOrigin>,
+    }
+    let raw = Vec::<RawTopic>::deserialize(deserializer)?;
+    Ok(raw
+        .into_iter()
+        .enumerate()
+        .map(|(index, topic)| ConceptionTopicSnapshot {
+            id: topic.id.unwrap_or((index + 1) as i32),
+            topic: topic.topic,
+            requirements: topic.requirements,
+            scope: topic.scope,
+            origin: topic.origin.unwrap_or(ResearchTaskOrigin::Conception),
+        })
+        .collect())
 }
 
 /// `agent_messages.content` (spec/02 §4).
@@ -1818,6 +1852,28 @@ mod tests {
 
         let arbitrary = json!({"pids": ["p3", "p7"]});
         assert_eq!(round_trip(&arbitrary), arbitrary);
+    }
+
+    /// Pre-M15 conception snapshots have no topic id/origin; they must keep loading and the
+    /// missing ids become stable sequential ids.
+    #[test]
+    fn legacy_conception_snapshot_topics_deserialize() {
+        let value = json!({
+            "kind": "conception",
+            "docs": {},
+            "characters": [],
+            "topics": [
+                { "topic": "old one", "requirements": "r", "scope": "s" },
+                { "topic": "old two", "requirements": "", "scope": "s2" }
+            ]
+        });
+        let snapshot: ViewSnapshot = serde_json::from_value(value).expect("legacy snapshot");
+        let ViewSnapshot::Conception { topics, .. } = snapshot else {
+            panic!("conception snapshot");
+        };
+        assert_eq!(topics[0].id, 1);
+        assert_eq!(topics[0].origin, ResearchTaskOrigin::Conception);
+        assert_eq!(topics[1].id, 2);
     }
 
     /// Strict decoding: invalid JSON is a query error, never a silent default (spec/02 §4).

@@ -7,8 +7,13 @@
 //! old attachment table and leave the new exclusion table empty. A fresh database is compared
 //! against the upgraded one so the edited `0001` and the migration path cannot diverge.
 
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use nekowriter::config::Config;
 use nekowriter::db::Db;
-use sea_orm::{ConnectionTrait, DbBackend, Statement};
+use nekowriter::state::AppState;
+use sea_orm::{ConnectionTrait, DbBackend, EntityTrait, Statement};
+use tower::ServiceExt;
 
 const OLD_RESEARCH_TASKS: &str = r#"
 DROP TABLE IF EXISTS research_tasks;
@@ -70,11 +75,13 @@ VALUES
 
 INSERT INTO agent_sessions
   (id, book_id, role, kind, research_task_id, model_snapshot, system_prompt, tools, status, phase,
-   counters, usage, created_at, updated_at)
+   counters, usage, view_snapshot, created_at, updated_at)
 VALUES
-  (1, 1, 'researcher', 'research', 1, '{}', '', '[]', 'running', 'none', '{}', '{}',
+  (1, 1, 'researcher', 'research', 1, '{"provider_id":0,"protocol":"mock","base_url":"","extra_headers":{},"model":"","context_window":0,"max_output_tokens":0,"options":null}', '', '[]', 'running', 'none', '{}', '{}', NULL,
+   '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+  (2, 1, 'conception', 'conception', NULL, '{"provider_id":0,"protocol":"mock","base_url":"","extra_headers":{},"model":"","context_window":0,"max_output_tokens":0,"options":null}', '', '[]', 'completed', 'none', '{}', '{}',
+   '{"kind":"conception","docs":{},"characters":[],"topics":[{"topic":"Legacy topic","requirements":"old req","scope":"Legacy scope"}]}',
    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
-
 
 UPDATE research_tasks SET session_id = 1 WHERE id = 1;
 
@@ -485,6 +492,55 @@ async fn migration_upgrades_a_pre_0008_database_and_preserves_research_tasks() {
             expected.14
         );
     }
+}
+
+#[tokio::test]
+async fn a_legacy_view_snapshot_survives_the_upgrade_and_reads_through_the_api() {
+    let (dir, old) = pre_0008_database().await;
+    nekowriter_migration::up(old.conn())
+        .await
+        .expect("upgrade old database");
+    let row = nekowriter::db::entities::agent_sessions::Entity::find_by_id(2)
+        .one(old.conn())
+        .await
+        .expect("session row loads")
+        .expect("session 2");
+    let snapshot = row
+        .view_snapshot
+        .as_ref()
+        .expect("legacy snapshot")
+        .0
+        .clone();
+    let nekowriter::db::json::ViewSnapshot::Conception { topics, .. } = snapshot else {
+        panic!("conception snapshot");
+    };
+    assert_eq!(topics[0].topic, "Legacy topic");
+    assert_eq!(topics[0].id, 1, "old topics get a sequential default id");
+    assert_eq!(
+        topics[0].origin,
+        nekowriter::db::json::ResearchTaskOrigin::Conception
+    );
+
+    let config = Config {
+        bind: "127.0.0.1:0".parse().expect("bind"),
+        data_dir: Some(dir.path().to_path_buf()),
+        web_dir: None,
+        enable_demo_provider: false,
+        allow_remote: false,
+    };
+    let state = AppState::new(old.clone(), config, old.vec_version().await.expect("vec"));
+    let app = nekowriter::api::build_app(state);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/sessions/2")
+                .header("host", "localhost")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
 #[tokio::test]
