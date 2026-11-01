@@ -117,6 +117,23 @@ async fn exclusion_count(runtime: &agent_write_harness::Runtime, scope_id: i32) 
     row.try_get("", "n").expect("count")
 }
 
+async fn excluded_scope_ids(runtime: &agent_write_harness::Runtime, book_id: i32) -> Vec<i32> {
+    let rows = runtime
+        .app
+        .state()
+        .db_conn()
+        .query_all_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT scope_id FROM book_scope_exclusions WHERE book_id = ? ORDER BY scope_id",
+            vec![book_id.into()],
+        ))
+        .await
+        .expect("query exclusions");
+    rows.iter()
+        .map(|row| row.try_get("", "scope_id").expect("scope id"))
+        .collect()
+}
+
 async fn create_task(
     runtime: &agent_write_harness::Runtime,
     book_id: i32,
@@ -208,23 +225,34 @@ async fn an_exclusion_hides_a_scope_from_api_kickoff_and_search() {
 }
 
 #[tokio::test]
-async fn unknown_exclusion_ids_are_404_and_change_nothing() {
+async fn unknown_exclusion_ids_in_a_mixed_list_are_404_and_change_nothing() {
     let runtime = runtime(Vec::new()).await;
-    let visible = scope(&runtime, "Visible", "Stay visible").await;
-    put_exclusions(&runtime, runtime.book_id, &[visible]).await;
+    let first = scope(&runtime, "First", "Initially excluded").await;
+    let second = scope(&runtime, "Second", "Would be newly excluded").await;
+    put_exclusions(&runtime, runtime.book_id, &[first]).await;
+    assert_eq!(
+        excluded_scope_ids(&runtime, runtime.book_id).await,
+        vec![first],
+        "the initial stored set is exactly [a]"
+    );
 
     let (status, body) = runtime
         .app
         .put(
             &format!("/api/books/{}/scopes", runtime.book_id),
-            json!({ "excluded_scope_ids": [999_999] }),
+            json!({ "excluded_scope_ids": [second, 999_999] }),
         )
         .await;
-    assert_eq!(status, 404, "unknown id: {body}");
+    assert_eq!(status, 404, "unknown id in a mixed list: {body}");
+    assert_eq!(
+        excluded_scope_ids(&runtime, runtime.book_id).await,
+        vec![first],
+        "the stored set is still exactly [a]"
+    );
     let scopes = get_scopes(&runtime, runtime.book_id).await;
     assert!(
-        scopes.iter().all(|item| item["id"] != visible),
-        "the existing exclusion stayed in place: {scopes:?}"
+        scopes.iter().any(|item| item["id"] == second),
+        "the valid b in the rejected list was not applied: {scopes:?}"
     );
 }
 
@@ -234,12 +262,22 @@ async fn run_clears_the_target_scope_exclusion() {
     let target = scope(&runtime, "Run target", "Target of a book task").await;
     let task = create_task(&runtime, runtime.book_id, "Run target").await;
     put_exclusions(&runtime, runtime.book_id, &[target]).await;
+    assert_eq!(
+        exclusion_count(&runtime, target).await,
+        1,
+        "the Run target starts excluded"
+    );
 
     let (status, body) = runtime
         .app
         .post(&format!("/api/research-tasks/{task}/run"), json!({}))
         .await;
     assert_eq!(status, 201, "run: {body}");
+    assert_eq!(
+        exclusion_count(&runtime, target).await,
+        0,
+        "Run deletes the exclusion row"
+    );
     assert!(
         get_scopes(&runtime, runtime.book_id)
             .await
@@ -312,6 +350,11 @@ async fn finalize_clears_a_topic_scope_exclusion() {
         "the task is a conception draft"
     );
     put_exclusions(&runtime, book_id, &[scope_id]).await;
+    assert_eq!(
+        exclusion_count(&runtime, scope_id).await,
+        1,
+        "the finalize target starts excluded"
+    );
 
     let (status, body) = runtime
         .app
@@ -321,6 +364,11 @@ async fn finalize_clears_a_topic_scope_exclusion() {
         )
         .await;
     assert_eq!(status, 200, "finalize: {body}");
+    assert_eq!(
+        exclusion_count(&runtime, scope_id).await,
+        0,
+        "Finalize deletes the exclusion row"
+    );
     assert!(
         get_scopes(&runtime, book_id)
             .await

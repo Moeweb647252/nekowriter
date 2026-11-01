@@ -126,11 +126,13 @@ async fn detaching_a_scope_keeps_its_rows() {
     let book_id = book["id"].as_i64().expect("book id") as i32;
     let scope_id = scope(&app, "History").await;
     entry(&app, scope_id, "Tea", "# Tea\n\nSong tea houses.").await;
-    app.put(
-        &format!("/api/books/{book_id}/scopes"),
-        json!({ "scope_ids": [scope_id] }),
-    )
-    .await;
+    let (status, body) = app
+        .put(
+            &format!("/api/books/{book_id}/scopes"),
+            json!({ "excluded_scope_ids": [] }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "clear initial exclusions: {body}");
     indexer::run_once(app.state()).await.expect("indexer");
     assert_eq!(
         count(&app, "SELECT count(*) AS c FROM vec_knowledge").await,

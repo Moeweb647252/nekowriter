@@ -75,8 +75,6 @@ fn urlencode(text: &str) -> String {
 #[tokio::test]
 async fn keyword_then_vector_search_and_the_embedding_status() {
     let app = TestApp::new().await;
-    let book = app.create_book("Knowledge Book").await;
-    let book_id = book["id"].as_i64().expect("book id") as i32;
     let history = scope(&app, "Song life").await;
     entry(
         &app,
@@ -93,13 +91,8 @@ async fn keyword_then_vector_search_and_the_embedding_status() {
         "A sword spirit guards the sealed hall.",
     )
     .await;
-    let (status, body) = app
-        .put(
-            &format!("/api/books/{book_id}/scopes"),
-            json!({ "excluded_scope_ids": [other] }),
-        )
-        .await;
-    assert_eq!(status, 200, "attach scope: {body}");
+    // `hits` calls the global `/api/knowledge/search`, which is not book-scoped; there is no
+    // book exclusion setup that could affect these assertions, so this test does not fake one.
 
     // FTS: `ancient` is a token in the indexed text, so it is found before any embedding.
     let keyword = hits(&app, "ancient").await;
