@@ -55,6 +55,10 @@ export default function ResearchTaskPage() {
     return <Skeleton className="m-6 h-64" />
   }
 
+  // Preparation tasks are the knowledge check: their "topic" is a fixed title and neither their
+  // topic nor their scope is editable from this page (spec/11 §5.5, D-158).
+  const isPreparation = task.data.kind === "preparation"
+
   // A task with an open session is being edited by the researcher (spec/10 §2.5).
   const open = task.data.session_id !== undefined && ["running", "failed"].includes(task.data.status)
   const draftTopic = topic ?? task.data.topic
@@ -67,14 +71,19 @@ export default function ResearchTaskPage() {
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <h2 className="truncate text-base font-semibold">{task.data.topic}</h2>
+            <h2 className="truncate text-base font-semibold">
+              {isPreparation ? t("knowledge:research.knowledge_check") : task.data.topic}
+            </h2>
             <StatusBadge status={task.data.status} variant="canon" />
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
             {t("knowledge:research.entries_count", { n: task.data.entries_created })}
             {" · "}
-            {t("knowledge:research.scope_name")}: {task.data.scope_name}
-            {task.data.scope_id === undefined ? ` (${t("knowledge:research.scope_not_resolved")})` : ""}
+            {t("knowledge:research.scope_name")}:{" "}
+            {task.data.scope_name === "" ? "—" : task.data.scope_name}
+            {!isPreparation && task.data.scope_id === undefined
+              ? ` (${t("knowledge:research.scope_not_resolved")})`
+              : ""}
           </p>
         </div>
         {open ? (
@@ -142,27 +151,32 @@ export default function ResearchTaskPage() {
         </p>
       ) : null}
 
-      <div className="space-y-1">
-        <Label htmlFor="research-topic">{t("knowledge:research.topic")}</Label>
-        <Input
-          id="research-topic"
-          value={draftTopic}
-          disabled={open}
-          onChange={(event) => setTopic(event.target.value)}
-        />
-      </div>
-      <div className="space-y-1">
-        <Label htmlFor="research-requirements">{t("knowledge:research.requirements")}</Label>
-        <Textarea
-          id="research-requirements"
-          rows={2}
-          value={draftRequirements}
-          disabled={open}
-          onChange={(event) => setRequirements(event.target.value)}
-        />
-      </div>
+      {isPreparation ? null : (
+        <>
+          <div className="space-y-1">
+            <Label htmlFor="research-topic">{t("knowledge:research.topic")}</Label>
+            <Input
+              id="research-topic"
+              value={draftTopic}
+              disabled={open}
+              onChange={(event) => setTopic(event.target.value)}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="research-requirements">{t("knowledge:research.requirements")}</Label>
+            <Textarea
+              id="research-requirements"
+              rows={2}
+              value={draftRequirements}
+              disabled={open}
+              onChange={(event) => setRequirements(event.target.value)}
+            />
+          </div>
+        </>
+      )}
 
       <div className="flex items-center gap-2">
+        {isPreparation ? null : (
         <Button
           size="sm"
           disabled={!dirty || patch.isPending || open}
@@ -182,6 +196,7 @@ export default function ResearchTaskPage() {
           {patch.isPending ? <Spinner /> : null}
           {t("common:save")}
         </Button>
+        )}
         {task.data.status === "ready" ? (
           <Button
             size="sm"
@@ -220,7 +235,7 @@ export default function ResearchTaskPage() {
             {t("knowledge:research.resume")}
           </Button>
         ) : null}
-        {task.data.status === "draft" ? (
+        {!isPreparation && task.data.status === "draft" ? (
           <Button
             size="sm"
             variant="outline"

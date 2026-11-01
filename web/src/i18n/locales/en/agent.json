@@ -13,7 +13,8 @@
     "chapter_maintenance": "Maintenance",
     "canon_seed": "Seeding canon",
     "chapter_resync": "Re-syncing canon",
-    "chapter_outline": "Outlining"
+    "chapter_outline": "Outlining",
+    "knowledge_check": "Knowledge check"
   },
   "chapter_number": "Chapter {{number}}",
   "session_info": "Session info",

@@ -6,6 +6,8 @@ import type { BookOverviewDto } from "@/api/gen/BookOverviewDto"
 import type { BookPatch } from "@/api/gen/BookPatch"
 import type { BookSummaryDto } from "@/api/gen/BookSummaryDto"
 import type { CreateBookResponse } from "@/api/gen/CreateBookResponse"
+import type { KnowledgeCheckInput } from "@/api/gen/KnowledgeCheckInput"
+import type { KnowledgeCheckResponse } from "@/api/gen/KnowledgeCheckResponse"
 
 export function listBooks(status?: string): Promise<BookSummaryDto[]> {
   const query = status === undefined ? "" : `?status=${encodeURIComponent(status)}`
@@ -18,6 +20,14 @@ export function createBook(input: BookInput): Promise<CreateBookResponse> {
 
 export function getBook(bookId: number): Promise<BookDto> {
   return api.get<BookDto>(`/books/${bookId}`)
+}
+
+/** `POST /books/:id/knowledge-check` (spec/10 §2.2, D-158). */
+export function startKnowledgeCheck(
+  bookId: number,
+  input: KnowledgeCheckInput,
+): Promise<KnowledgeCheckResponse> {
+  return api.post<KnowledgeCheckResponse>(`/books/${bookId}/knowledge-check`, input)
 }
 
 export function patchBook(bookId: number, patch: BookPatch): Promise<BookDto> {

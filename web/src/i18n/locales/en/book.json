@@ -221,7 +221,18 @@
       "protagonist": "The protagonist's detailed profile."
     },
     "continue": "Continue conception",
-    "start": "Start conception"
+    "start": "Start conception",
+    "added_by_you": "Added by you",
+    "knowledge_check": {
+      "title": "Knowledge check",
+      "open_task": "Open the check",
+      "start_now": "Start conception now",
+      "still_running_confirm": "The knowledge check is still running and keeps running. Start conception now?",
+      "check_first": "Check knowledge first",
+      "no_report": "The check has not written a report yet.",
+      "entries_created": "Entries created: {{count}}",
+      "open_knowledge": "Open Book › Knowledge"
+    }
   },
   "next_action_title": "Next step",
   "next_action": {

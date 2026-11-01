@@ -45,7 +45,7 @@
   "delete_entry": "删除条目",
   "delete_entry_confirm": "删除条目「{{title}}」？",
   "book_scopes_title": "知识范围",
-  "book_scopes_hint": "写手与审稿可以检索这些范围。资料收集任务使用自己的目标范围。",
+  "book_scopes_hint": "本书的智能体会读取所有已勾选的范围；新建范围会自动勾选。",
   "book_scopes_saved": "已保存",
   "open_global": "打开知识库",
   "research": {
@@ -98,10 +98,18 @@
     "language_required": "不属于任何书的任务需要填写语言。",
     "created_entries": "本任务创建的条目",
     "language_book_hint": "任务使用该书的语言。",
-    "abandon_confirm": "放弃这次资料收集？任务会标记为已取消，已保存的条目会保留在范围里。"
+    "abandon_confirm": "放弃这次资料收集？任务会标记为已取消，已保存的条目会保留在范围里。",
+    "knowledge_check": "知识检查"
   },
   "scope_not_found": "这个知识范围已经不存在了。",
   "scope_not_found_hint": "请在左侧另选一个范围，或新建一个。",
   "entry_not_found": "这条知识已经不存在了。",
-  "entry_not_found_hint": "它已被删除，或它所属的范围已被移除。请另选一条。"
+  "entry_not_found_hint": "它已被删除，或它所属的范围已被移除。请另选一条。",
+  "check_knowledge": "知识检查",
+  "check_dialog_title": "先做知识检查",
+  "check_focus": "关注点（可选）",
+  "check_focus_placeholder": "希望知识检查重点关注什么？",
+  "check_start": "开始检查",
+  "check_disabled_open": "已经有知识检查在运行。",
+  "scope_creation_hint": "新范围默认对所有作品可见，除非某部作品取消勾选。"
 }

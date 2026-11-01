@@ -502,6 +502,14 @@ export function applyServerEvent(
           queryKey: keys.sessions.detail(sessionId),
         })
       }
+      // The book session list feeds the studio's session choice (and the conception studio's
+      // pre-session state): an auto-started conception session must replace that pane without a
+      // reload. `session.tool_call` carries no full session, so this only applies to
+      // `session.updated`.
+      const bookId = session?.book_id
+      if (typeof bookId === "number") {
+        void queryClient.invalidateQueries({ queryKey: keys.sessions.list(bookId) })
+      }
       // `ChapterDto.open_sessions` is this client's only handle on a chapter's writer session, and
       // it is cached under the chapter's own key (spec/10 §2.8). A session that the *agent* drives
       // into `held` — `auto_pause`, or `pause_after_outline` — produces no client mutation, so

@@ -56,6 +56,9 @@ export function RoleIcon({ role, className }: { role: SessionDto["role"]; classN
  * data (spec/11 §9, D-054).
  */
 export function sessionTitle(session: SessionDto, t: (key: string, options?: Record<string, unknown>) => string): string {
+  if (session.research_task_kind === "preparation") {
+    return t("agent:session_title.knowledge_check")
+  }
   const base = t(`agent:session_title.${session.kind}`)
   if (session.chapter_number !== null) {
     return `${base} · ${t("agent:chapter_number", { number: session.chapter_number })}`

@@ -1,37 +1,80 @@
 /** Book › Knowledge (PROJECT §8.10): the scopes this book's writer and reviewer may search. */
-import { useState } from "react"
-import { Link, useParams } from "react-router"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { Link, useNavigate, useParams } from "react-router"
 import { useTranslation } from "react-i18next"
 import { BookOpen, ExternalLink } from "lucide-react"
 
 import { useBookScopes, usePutBookScopes, useScopes } from "@/api/hooks/knowledge"
+import { useResearchTasks, useStartKnowledgeCheck } from "@/api/hooks/research"
 import { useErrorToast } from "@/components/common/ErrorToast"
 import { EmptyState } from "@/components/common/EmptyState"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Textarea } from "@/components/ui/textarea"
 import { NewResearchTaskDialog } from "@/features/research/NewResearchTaskDialog"
 import { ResearchTaskList } from "@/features/research/ResearchTaskList"
+import { latestPreparationTask, knowledgeCheckOpen } from "@/features/research/researchTask"
 
 export default function BookKnowledgePage() {
   const { t } = useTranslation()
   const { bookId: rawBookId } = useParams()
   const bookId = Number(rawBookId)
+  const navigate = useNavigate()
   const showError = useErrorToast()
   const scopes = useScopes()
   const attached = useBookScopes(bookId)
   const save = usePutBookScopes(bookId)
-  // The attached set is the initial selection; a toggle overrides it (derived state).
+  // The attached set is the initial selection; a toggle overrides it (derived state). `knownIds`
+  // keeps the scopes that were already loaded: a scope created after the page loaded must not be
+  // sent as unchecked, because it is visible by default (D-158).
   const [selection, setSelection] = useState<number[] | null>(null)
+  const knownIds = useRef<Set<number> | null>(null)
   const [saved, setSaved] = useState(false)
   const [creating, setCreating] = useState(false)
+  const [checking, setChecking] = useState(false)
+  const [checkFocus, setCheckFocus] = useState("")
+  const checkTasks = useResearchTasks({ bookId })
+  const startCheck = useStartKnowledgeCheck(bookId)
+  const all = scopes.data ?? []
+  const attachedIds = useMemo(
+    () => attached.data?.map((scope) => scope.id) ?? [],
+    [attached.data],
+  )
+  const selected = selection ?? attachedIds
+  const checkTask = latestPreparationTask(checkTasks.data ?? [])
+  const checkIsOpen = knowledgeCheckOpen(checkTask)
+
+  useEffect(() => {
+    if (scopes.data === undefined) {
+      return
+    }
+    const ids = scopes.data.map((scope) => scope.id)
+    if (knownIds.current === null) {
+      knownIds.current = new Set(ids)
+      return
+    }
+    const added = ids.filter((id) => !knownIds.current?.has(id))
+    if (added.length === 0) {
+      return
+    }
+    knownIds.current = new Set([...knownIds.current, ...added])
+    setSelection((previous) => [
+      ...new Set([...(previous ?? attachedIds), ...added]),
+    ])
+  }, [scopes.data, attachedIds])
 
   if (scopes.isPending || attached.isPending || attached.data === undefined) {
     return <Skeleton className="m-6 h-64" />
   }
-
-  const all = scopes.data ?? []
-  const selected = selection ?? attached.data.map((scope) => scope.id)
 
   return (
     <div className="mx-auto max-w-2xl space-y-4 p-6">
@@ -89,7 +132,13 @@ export default function BookKnowledgePage() {
           disabled={save.isPending}
           onClick={() =>
             save.mutate(
-              all.filter((scope) => !selected.includes(scope.id)).map((scope) => scope.id),
+              all
+                .filter(
+                  (scope) =>
+                    knownIds.current?.has(scope.id) === true &&
+                    !selected.includes(scope.id),
+                )
+                .map((scope) => scope.id),
               {
               onSuccess: () => setSaved(true),
               onError: showError,
@@ -101,6 +150,23 @@ export default function BookKnowledgePage() {
         </Button>
         {saved ? (
           <span className="text-xs text-muted-foreground">{t("knowledge:book_scopes_saved")}</span>
+        ) : null}
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={checkIsOpen || startCheck.isPending}
+          title={checkIsOpen ? t("knowledge:check_disabled_open") : undefined}
+          onClick={() => {
+            setCheckFocus("")
+            setChecking(true)
+          }}
+        >
+          {t("knowledge:check_knowledge")}
+        </Button>
+        {checkIsOpen ? (
+          <span className="text-xs text-muted-foreground">
+            {t("knowledge:check_disabled_open")}
+          </span>
         ) : null}
         <Button asChild variant="link" size="sm" className="ml-auto">
           <Link to="/knowledge">
@@ -116,6 +182,67 @@ export default function BookKnowledgePage() {
         onOpenChange={setCreating}
         bookId={bookId}
       />
+      <KnowledgeCheckDialog
+        open={checking}
+        focus={checkFocus}
+        pending={startCheck.isPending}
+        onFocusChange={setCheckFocus}
+        onClose={() => setChecking(false)}
+        onSubmit={() => {
+          startCheck.mutate(checkFocus.trim(), {
+            onSuccess: (response) => {
+              setChecking(false)
+              void navigate(`/research/${response.task.id}`)
+            },
+            onError: showError,
+          })
+        }}
+      />
     </div>
+  )
+}
+
+function KnowledgeCheckDialog({
+  open,
+  focus,
+  pending,
+  onFocusChange,
+  onClose,
+  onSubmit,
+}: {
+  open: boolean
+  focus: string
+  pending: boolean
+  onFocusChange: (value: string) => void
+  onClose: () => void
+  onSubmit: () => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <Dialog open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t("knowledge:check_dialog_title")}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-1">
+          <Label htmlFor="knowledge-check-focus">{t("knowledge:check_focus")}</Label>
+          <Textarea
+            id="knowledge-check-focus"
+            rows={3}
+            value={focus}
+            placeholder={t("knowledge:check_focus_placeholder")}
+            onChange={(event) => onFocusChange(event.target.value)}
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>
+            {t("common:cancel")}
+          </Button>
+          <Button disabled={pending} onClick={onSubmit}>
+            {pending ? t("common:saving") : t("knowledge:check_start")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

@@ -46,8 +46,10 @@ export function NewBookDialog({ open, onOpenChange }: NewBookDialogProps) {
   const [idea, setIdea] = useState("")
   const [genre, setGenre] = useState("")
   const [language, setLanguage] = useState<string>(i18n.language.startsWith("zh") ? "zh-CN" : "en")
-  // Conception is on by default (PROJECT §8.3 / F2 step 1).
+  // Conception is on by default (PROJECT §8.3 / F2 step 1). The knowledge check runs before it
+  // and auto-starts conception unless the author unchecks the second box.
   const [startConception, setStartConception] = useState(true)
+  const [autoStartConception, setAutoStartConception] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const reset = () => {
@@ -56,6 +58,7 @@ export function NewBookDialog({ open, onOpenChange }: NewBookDialogProps) {
     setGenre("")
     setError(null)
     setStartConception(true)
+    setAutoStartConception(true)
   }
 
   return (
@@ -131,6 +134,18 @@ export function NewBookDialog({ open, onOpenChange }: NewBookDialogProps) {
               {t("library:start_conception")}
             </Label>
           </div>
+          {startConception ? (
+            <div className="ml-6 flex items-center gap-2">
+              <Checkbox
+                id="book-auto-start-conception"
+                checked={autoStartConception}
+                onCheckedChange={(checked) => setAutoStartConception(checked === true)}
+              />
+              <Label htmlFor="book-auto-start-conception" className="text-sm font-normal">
+                {t("library:auto_start_conception")}
+              </Label>
+            </div>
+          ) : null}
           {error === null ? null : <p className="text-sm text-status-failed">{error}</p>}
         </div>
         <DialogFooter>
@@ -148,19 +163,20 @@ export function NewBookDialog({ open, onOpenChange }: NewBookDialogProps) {
                   genre,
                   writing_language: language,
                   start_conception: startConception,
-                  knowledge_check: false,
-                  auto_start_conception: true,
+                  knowledge_check: startConception,
+                  auto_start_conception: autoStartConception,
                 },
                 {
                   onSuccess: (response) => {
                     onOpenChange(false)
                     reset()
-                    // A book created with conception opens the studio; without it (or when no
-                    // conception model is configured) the overview is the right landing page.
+                    // A conceiving book opens the studio even before it has a conception
+                    // session: the studio owns the knowledge-check states. Every other status
+                    // opens the overview.
                     const target =
-                      response.session_id === null
-                        ? `/books/${response.book.id}`
-                        : `/books/${response.book.id}/conception`
+                      response.book.status === "conceiving"
+                        ? `/books/${response.book.id}/conception`
+                        : `/books/${response.book.id}`
                     void navigate(target)
                   },
                   onError: (cause) => {

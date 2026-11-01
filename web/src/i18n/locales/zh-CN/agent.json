@@ -13,7 +13,8 @@
     "chapter_maintenance": "档案维护",
     "canon_seed": "建立档案",
     "chapter_resync": "档案同步",
-    "chapter_outline": "细纲"
+    "chapter_outline": "细纲",
+    "knowledge_check": "知识检查"
   },
   "chapter_number": "第{{number}}章",
   "session_info": "会话信息",

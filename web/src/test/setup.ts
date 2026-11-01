@@ -8,6 +8,7 @@ import enBook from "@/i18n/locales/en/book.json"
 import enChapter from "@/i18n/locales/en/chapter.json"
 import enCommon from "@/i18n/locales/en/common.json"
 import enErrors from "@/i18n/locales/en/errors.json"
+import enKnowledge from "@/i18n/locales/en/knowledge.json"
 import enLibrary from "@/i18n/locales/en/library.json"
 import enSkills from "@/i18n/locales/en/skills.json"
 
@@ -39,12 +40,13 @@ if (!i18n.isInitialized) {
         common: enCommon,
         errors: enErrors,
         library: enLibrary,
+        knowledge: enKnowledge,
         skills: enSkills,
       },
     },
     lng: "en",
     fallbackLng: "en",
-    ns: ["agent", "book", "chapter", "common", "errors", "library", "skills"],
+    ns: ["agent", "book", "chapter", "common", "errors", "knowledge", "library", "skills"],
     defaultNS: "common",
     interpolation: { escapeValue: false },
   })

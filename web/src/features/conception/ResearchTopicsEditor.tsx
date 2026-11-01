@@ -8,6 +8,7 @@ import { useTranslation } from "react-i18next"
 import { Plus, Trash2 } from "lucide-react"
 
 import type { ResearchTaskDto } from "@/api/gen/ResearchTaskDto"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -157,6 +158,11 @@ function TopicRow({
             setState((previous) => ({ ...previous, scope_name: event.target.value }))
           }
         />
+        {topic.origin === "author" ? (
+          <Badge variant="outline" data-testid="added-by-you" className="shrink-0 text-[0.65rem]">
+            {t("book:conception.added_by_you")}
+          </Badge>
+        ) : null}
         {editable ? (
           <>
             <Button

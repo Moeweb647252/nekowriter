@@ -699,6 +699,11 @@ function ScopeDialog({
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
+          {scope === undefined ? (
+            <p className="text-xs text-muted-foreground">
+              {t("knowledge:scope_creation_hint")}
+            </p>
+          ) : null}
           <div className="space-y-1">
             <Label htmlFor="scope-name">{t("knowledge:scope_name")}</Label>
             <Input id="scope-name" value={name} onChange={(event) => setName(event.target.value)} />

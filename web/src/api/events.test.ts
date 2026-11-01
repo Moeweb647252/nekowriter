@@ -31,6 +31,7 @@ function seededClient(): QueryClient {
   client.setQueryData(keys.proposals.list(1, "pending"), [])
   client.setQueryData(keys.proposals.list(1), [])
   client.setQueryData(keys.chapters.detail(9), {})
+  client.setQueryData(keys.sessions.list(1), [])
   client.setQueryData(keys.tracks.chapters(3), [])
   client.setQueryData(keys.canon.goals(1, "shared|all|||"), [])
   return client
@@ -187,6 +188,7 @@ describe("delta coalescing", () => {
     })
 
     expect(isInvalidated(client, keys.chapters.detail(9))).toBe(true)
+    expect(isInvalidated(client, keys.sessions.list(1))).toBe(true)
   })
 
   it("does not invalidate a chapter for a session.updated without a chapter", () => {

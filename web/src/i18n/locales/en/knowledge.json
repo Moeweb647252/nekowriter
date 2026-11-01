@@ -45,7 +45,7 @@
   "delete_entry": "Delete entry",
   "delete_entry_confirm": "Delete the entry \"{{title}}\"?",
   "book_scopes_title": "Knowledge scopes",
-  "book_scopes_hint": "The writer and reviewer may search these scopes. Research sessions use their own target scope.",
+  "book_scopes_hint": "Agents in this book read every checked scope. New scopes are checked automatically.",
   "book_scopes_saved": "Saved",
   "open_global": "Open the knowledge base",
   "research": {
@@ -98,10 +98,18 @@
     "language_required": "A language is required for a task without a book.",
     "created_entries": "Entries this task created",
     "language_book_hint": "The task uses the book's language.",
-    "abandon_confirm": "Abandon this research run? The task is cancelled; saved entries stay in the scope."
+    "abandon_confirm": "Abandon this research run? The task is cancelled; saved entries stay in the scope.",
+    "knowledge_check": "Knowledge check"
   },
   "scope_not_found": "This scope no longer exists.",
   "scope_not_found_hint": "Pick another scope on the left, or create a new one.",
   "entry_not_found": "This entry no longer exists.",
-  "entry_not_found_hint": "It was deleted, or its scope was removed. Pick another entry."
+  "entry_not_found_hint": "It was deleted, or its scope was removed. Pick another entry.",
+  "check_knowledge": "Check knowledge",
+  "check_dialog_title": "Check knowledge first",
+  "check_focus": "Focus (optional)",
+  "check_focus_placeholder": "What should the check focus on?",
+  "check_start": "Start check",
+  "check_disabled_open": "A knowledge check is already open.",
+  "scope_creation_hint": "A new scope is visible to every book unless that book unchecks it."
 }

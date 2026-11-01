@@ -381,6 +381,14 @@ describe("session title", () => {
     )
     expect(title).toBe("agent:session_title.conception")
   })
+
+  it("uses the knowledge-check title for a preparation research session", () => {
+    const title = sessionTitle(
+      session({ kind: "research", research_task_kind: "preparation", research_topic: null }),
+      tPlain,
+    )
+    expect(title).toBe("agent:session_title.knowledge_check")
+  })
 })
 
 describe("composer state machine", () => {

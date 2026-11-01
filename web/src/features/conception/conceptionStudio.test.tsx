@@ -15,6 +15,7 @@ import type { SessionDto } from "@/api/gen/SessionDto"
 import { TooltipProvider } from "@/components/ui/tooltip"
 
 const startConception = vi.fn()
+const startKnowledgeCheck = vi.fn()
 const answerSession = vi.fn()
 const showError = vi.fn()
 const sessionControl = vi.fn()
@@ -23,6 +24,7 @@ const resume = vi.fn()
 const state = vi.hoisted(() => ({
   sessions: [] as unknown[],
   snapshot: undefined as unknown,
+  checkSnapshot: undefined as unknown,
   docs: [] as unknown[],
   characters: [] as unknown[],
   topics: [] as unknown[],
@@ -31,6 +33,9 @@ const state = vi.hoisted(() => ({
 vi.mock("react-router", () => ({
   useParams: () => ({ bookId: "1" }),
   useNavigate: () => vi.fn(),
+  Link: ({ to, children }: { to: string; children: React.ReactNode }) => (
+    <a href={to}>{children}</a>
+  ),
 }))
 
 const conceivingBook = {
@@ -50,7 +55,10 @@ const conceivingBook = {
 
 vi.mock("@/api/hooks/sessions", () => ({
   useBookSessions: () => ({ data: state.sessions, isPending: false }),
-  useSession: () => ({ data: state.snapshot, isPending: false }),
+  useSession: (sessionId: number | null) => ({
+    data: sessionId === 11 ? state.checkSnapshot : state.snapshot,
+    isPending: false,
+  }),
   useAnswerSession: () => ({ mutate: answerSession, isPending: false }),
   useSendSessionMessage: () => ({ mutate: vi.fn(), isPending: false }),
   useSessionControl: () => ({ mutate: sessionControl, isPending: false }),
@@ -71,6 +79,7 @@ vi.mock("@/api/hooks/research", () => ({
   useCreateResearchTask: () => ({ mutate: vi.fn(), isPending: false }),
   usePatchResearchTask: () => ({ mutate: vi.fn(), isPending: false }),
   useDeleteResearchTask: () => ({ mutate: vi.fn(), isPending: false }),
+  useStartKnowledgeCheck: () => ({ mutate: startKnowledgeCheck, isPending: false }),
 }))
 
 vi.mock("@/api/hooks/books", () => ({
@@ -152,10 +161,12 @@ describe("ConceptionStudio", () => {
   beforeEach(() => {
     state.sessions = []
     state.snapshot = undefined
+    state.checkSnapshot = undefined
     state.docs = []
     state.characters = []
     state.topics = []
     sessionControl.mockClear()
+    startKnowledgeCheck.mockClear()
     resume.mockClear()
     answerSession.mockClear()
   })
@@ -409,4 +420,109 @@ describe("ConceptionStudio", () => {
       })
     })
   })
+
+
+/** A preparation task shown by the studio before a conception session exists. */
+function preparationTask(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: 21,
+    book_id: 1,
+    scope_id: null,
+    scope_name: "History",
+    topic: "Knowledge check",
+    kind: "preparation",
+    origin: "author",
+    requirements: "",
+    language: "en",
+    status: "running",
+    session_id: 11,
+    report: "",
+    entries_created: 0,
+    entries: [],
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    ...overrides,
+  }
+}
+
+function checkSession(status: string) {
+  return conceptionSession({
+    id: 11,
+    role: "researcher",
+    kind: "research",
+    research_task_kind: "preparation",
+    status: status as SessionDto["status"],
+  })
+}
+
+describe("knowledge-check states before conception", () => {
+  it("shows the open check stream, task link, and a confirmed Start conception now", async () => {
+    const user = userEvent.setup()
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true)
+    const task = preparationTask()
+    state.topics = [task]
+    state.checkSnapshot = {
+      session: checkSession("running"),
+      messages: [],
+      system_prompt: "",
+      tool_names: [],
+    }
+
+    renderStudio()
+    expect(screen.getByText("Knowledge check")).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Open the check" })).toHaveAttribute(
+      "href",
+      "/research/21",
+    )
+    await user.click(screen.getByRole("button", { name: "Start conception now" }))
+    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(startConception).toHaveBeenCalledTimes(1)
+    confirm.mockRestore()
+  })
+
+  it("shows the report, entries and Start conception when the check is done", () => {
+    state.topics = [
+      preparationTask({ status: "done", session_id: null, report: "The report", entries_created: 3 }),
+    ]
+    renderStudio()
+    expect(screen.getByText("The report")).toBeInTheDocument()
+    expect(screen.getByText("Entries created: 3")).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Open Book › Knowledge" })).toHaveAttribute(
+      "href",
+      "/books/1/knowledge",
+    )
+    expect(screen.getByRole("button", { name: "Start conception" })).toBeInTheDocument()
+  })
+
+  it("shows the failed status and Start conception", () => {
+    state.topics = [preparationTask({ status: "failed", session_id: null })]
+    renderStudio()
+    expect(screen.getByText("Failed")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Start conception" })).toBeInTheDocument()
+  })
+
+  it("offers Start conception and Check knowledge first when there is no check", async () => {
+    const user = userEvent.setup()
+    renderStudio()
+    expect(screen.getByText(/No conception session yet/)).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Check knowledge first" }))
+    expect(startKnowledgeCheck).toHaveBeenCalledTimes(1)
+  })
+
+  it("swaps to the conception session when the session list changes", () => {
+    const view = renderStudio()
+    expect(screen.getByText(/No conception session yet/)).toBeInTheDocument()
+    const session = conceptionSession({ status: "idle" })
+    state.sessions = [session]
+    state.snapshot = { session, messages: [], system_prompt: "", tool_names: [] }
+    view.rerender(
+      <TooltipProvider>
+        <ConceptionStudio />
+      </TooltipProvider>,
+    )
+    expect(screen.queryByText(/No conception session yet/)).not.toBeInTheDocument()
+    expect(screen.getByText("Conception studio")).toBeInTheDocument()
+  })
+})
+
 })

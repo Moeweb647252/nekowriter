@@ -2,6 +2,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 import * as endpoints from "@/api/endpoints/research"
+import { startKnowledgeCheck } from "@/api/endpoints/books"
 import { keys } from "@/api/keys"
 import type { ResearchTaskCreate } from "@/api/gen/ResearchTaskCreate"
 import type { ResearchTaskPatch } from "@/api/gen/ResearchTaskPatch"
@@ -38,6 +39,22 @@ export function useResearchTask(taskId: number) {
   return useQuery({
     queryKey: keys.research.detail(taskId),
     queryFn: () => endpoints.getResearchTask(taskId),
+  })
+}
+
+/** Starts a knowledge check for a book (spec/08 §5, D-158). */
+export function useStartKnowledgeCheck(bookId: number) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (requirements: string) =>
+      startKnowledgeCheck(bookId, { requirements }),
+    onSuccess: (response) => {
+      void queryClient.invalidateQueries({ queryKey: keys.research.all })
+      void queryClient.invalidateQueries({ queryKey: keys.sessions.list(bookId) })
+      void queryClient.invalidateQueries({ queryKey: keys.books.detail(bookId) })
+      void queryClient.invalidateQueries({ queryKey: keys.books.all })
+      return response
+    },
   })
 }
 

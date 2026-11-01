@@ -93,9 +93,13 @@ export function ResearchTaskList({
                     aria-hidden="true"
                   />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[13px] font-medium">{task.topic}</span>
+                    <span className="block truncate text-[13px] font-medium">
+                      {task.kind === "preparation"
+                        ? t("knowledge:research.knowledge_check")
+                        : task.topic}
+                    </span>
                     <span className="block truncate text-xs text-muted-foreground">
-                      {task.scope_name} ·{" "}
+                      {task.scope_name === "" ? "—" : task.scope_name} ·{" "}
                       {t("knowledge:research.entries_count", { n: task.entries_created })}
                     </span>
                   </span>
