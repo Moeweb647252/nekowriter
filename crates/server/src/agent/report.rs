@@ -1039,6 +1039,35 @@ mod tests {
     }
 
     #[test]
+    fn a_replaced_topic_with_the_same_text_is_still_an_edit() {
+        let before = conception_snapshot(
+            &[],
+            &[],
+            &[CurrentTopic {
+                id: 1,
+                topic: "same topic".to_owned(),
+                requirements: "same".to_owned(),
+                scope: "same scope".to_owned(),
+                origin: crate::db::json::ResearchTaskOrigin::Conception,
+            }],
+        );
+        let current = ConceptionState {
+            topics: vec![CurrentTopic {
+                id: 2,
+                topic: "same topic".to_owned(),
+                requirements: "same".to_owned(),
+                scope: "same scope".to_owned(),
+                origin: crate::db::json::ResearchTaskOrigin::Conception,
+            }],
+            ..ConceptionState::default()
+        };
+        assert!(
+            !conception_report(&before, &current, &prompts()).is_empty(),
+            "the id, not only the text, identifies a topic row"
+        );
+    }
+
+    #[test]
     fn an_unchanged_conception_state_reports_nothing() {
         let snapshot = conception_snapshot(&[("outline", 1, "same")], &[], &[]);
         let mut current = ConceptionState::default();

@@ -511,7 +511,7 @@ async fn a_legacy_view_snapshot_survives_the_upgrade_and_reads_through_the_api()
         .expect("legacy snapshot")
         .0
         .clone();
-    let nekowriter::db::json::ViewSnapshot::Conception { topics, .. } = snapshot else {
+    let nekowriter::db::json::ViewSnapshot::Conception { ref topics, .. } = snapshot else {
         panic!("conception snapshot");
     };
     assert_eq!(topics[0].topic, "Legacy topic");
@@ -519,6 +519,13 @@ async fn a_legacy_view_snapshot_survives_the_upgrade_and_reads_through_the_api()
     assert_eq!(
         topics[0].origin,
         nekowriter::db::json::ResearchTaskOrigin::Conception
+    );
+    let encoded = serde_json::to_string(&snapshot).expect("serialize snapshot");
+    let decoded: nekowriter::db::json::ViewSnapshot =
+        serde_json::from_str(&encoded).expect("round-trip snapshot");
+    assert_eq!(
+        decoded, snapshot,
+        "a new save keeps the normalized snapshot"
     );
 
     let config = Config {
@@ -531,9 +538,21 @@ async fn a_legacy_view_snapshot_survives_the_upgrade_and_reads_through_the_api()
     let state = AppState::new(old.clone(), config, old.vec_version().await.expect("vec"));
     let app = nekowriter::api::build_app(state);
     let response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/api/sessions/2")
+                .header("host", "localhost")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/books/1/sessions")
                 .header("host", "localhost")
                 .body(Body::empty())
                 .expect("request"),
