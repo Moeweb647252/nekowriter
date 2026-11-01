@@ -2519,3 +2519,50 @@ fn message_usage(usage: &nekowriter_llm::Usage) -> crate::db::json::Usage {
         estimated: usage.estimated,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::advance_conception_snapshot;
+    use crate::db::json::{ConceptionDocSnapshot, ViewSnapshot};
+    use std::collections::BTreeMap;
+
+    fn conception(content: &str) -> ViewSnapshot {
+        let mut docs = BTreeMap::new();
+        docs.insert(
+            "outline".to_owned(),
+            ConceptionDocSnapshot {
+                revision: 1,
+                content: content.to_owned(),
+            },
+        );
+        ViewSnapshot::Conception {
+            docs,
+            characters: Vec::new(),
+            topics: Vec::new(),
+        }
+    }
+
+    /// The guard is the whole point of the helper: an author edit between turns leaves the
+    /// snapshot stale, so advancing the agent's write must not swallow it.
+    #[test]
+    fn a_stale_author_slice_is_not_advanced() {
+        let mut snapshot = conception("old");
+        assert!(!advance_conception_snapshot(
+            &mut snapshot,
+            &conception("author edit"),
+            &conception("agent write"),
+        ));
+        assert_eq!(snapshot, conception("old"));
+    }
+
+    #[test]
+    fn an_unchanged_slice_advances_to_the_agent_write() {
+        let mut snapshot = conception("old");
+        assert!(advance_conception_snapshot(
+            &mut snapshot,
+            &conception("old"),
+            &conception("agent write"),
+        ));
+        assert_eq!(snapshot, conception("agent write"));
+    }
+}

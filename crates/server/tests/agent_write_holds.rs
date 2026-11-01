@@ -224,7 +224,6 @@ async fn test_03_auto_pause_holds_each_insert_and_feedback_sticks_to_its_call() 
         1,
         "approving the held call applied its write"
     );
-
     // Second insert: approve WITH feedback; only this call's result carries it.
     let (second, _) = held_call(&runtime, session_id).await;
     assert_ne!(second.id, first.id);
@@ -245,6 +244,10 @@ async fn test_03_auto_pause_holds_each_insert_and_feedback_sticks_to_its_call() 
     let second = runtime.call_by_id(second.id).await;
     let first_text = first.result_text.clone().unwrap_or_default();
     let second_text = second.result_text.clone().unwrap_or_default();
+    assert!(
+        !first_text.contains("【用户修改了正文】"),
+        "the agent's own approved insert must not be reported as an author edit: {first_text}"
+    );
     assert!(
         !first_text.contains("第二段写得太急"),
         "feedback does not leak into an earlier call: {first_text}"

@@ -304,6 +304,11 @@ async fn author_edits_while_awaiting_review_are_reported_in_the_answer_result() 
     // The answer's result carries the edit report: the sealed text of the answered call.
     let sealed = wait_for_sealed(&runtime, session_id, "request_review").await;
     let result = sealed.result_text.clone().unwrap_or_default();
+    assert_eq!(
+        result.matches("【用户修改了设定】").count(),
+        1,
+        "the author edit report appears exactly once: {result}"
+    );
     assert!(
         result.contains("【用户修改了设定】"),
         "the edit report is appended to the answer: {result}"

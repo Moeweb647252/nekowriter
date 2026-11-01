@@ -3268,6 +3268,10 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     reported while real author edits still are. Regression tests
     `agent_writes_after_an_idle_turn_are_not_reported_as_author_edits` and
     `author_edits_while_idle_are_reported_after_the_next_agent_write`.
+  - **Known gap (pre-existing, not fixed here)**: `services/proposals.rs::accept_inner` writes
+    `setting_docs` and `character_designs` without `ensure_editable`, so an author can change
+    materials while a conception session is `running`; that is out of scope for M15 and is
+    recorded for a later milestone.
   - **Lead's browser smoke** (fresh Demo DB on port 18082, by the Lead, after the API smoke):
     observed the new-book dialog's auto-start checkbox default-on and hidden when conception is
     off; landing on `/books/:id/conception`; the check-done pane with report, entries created,
