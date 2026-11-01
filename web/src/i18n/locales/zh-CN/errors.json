@@ -1,6 +1,7 @@
 {
   "network": "无法连接服务器，它正在运行吗？",
   "internal": "服务器出错了。",
+  "validation.invalid_fields": "部分字段不合法。",
   "validation.failed": "输入内容不合法。",
   "not_found": "这个对象已经不存在了。",
   "host.forbidden": "请求因安全原因被拒绝。",

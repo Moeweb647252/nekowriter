@@ -1,6 +1,7 @@
 {
   "network": "Cannot reach the server. Is it running?",
   "internal": "Something went wrong on the server.",
+  "validation.invalid_fields": "Some fields are not valid.",
   "validation.failed": "The input is not valid.",
   "not_found": "This item no longer exists.",
   "host.forbidden": "The request was blocked for security reasons.",

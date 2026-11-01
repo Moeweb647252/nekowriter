@@ -297,6 +297,7 @@ type ContentOpInput =                                                    // auth
 | Code | HTTP | Meaning |
 |---|---|---|
 | `validation.failed` | 400 | invalid input; `details.fields` |
+| `validation.invalid_fields` | 422 | invalid field for this resource; `details.fields`; a knowledge-check PATCH accepts `requirements` only |
 | `not_found` | 404 | |
 | `host.forbidden` | 403 | Host or Origin guard (spec/01 §10) |
 | `conflict.version` | 409 | stale `base_version` / `base_revision` |

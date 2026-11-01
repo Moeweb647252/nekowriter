@@ -17,6 +17,7 @@ import { registeredTools, toolRenderer } from "@/features/agent/toolRenderers"
 /** The values of a generated string-union type, read from the `ErrorCode.ts` module. */
 const ALL_ERROR_CODES: ErrorCode[] = [
   "validation.failed",
+  "validation.invalid_fields",
   "not_found",
   "host.forbidden",
   "conflict.version",

@@ -3208,6 +3208,10 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     adopts a conception task.
   - Migration 0008 drops `book_scopes` (every book sees every scope), adds `kind` and `origin`,
     and back-fills `origin = 'conception'` for existing drafts.
+  - If the author excludes the scope a running check already targets, `save_knowledge_entry` and
+    `update_knowledge_entry` refuse it with `scope_excluded`; the target does not become a back
+    door around K7. The check can still finish, and it must call `set_target_scope` again to pick
+    another visible scope before saving more.
 - **Consequences**:
   - A new conception book costs one more researcher session before conception. A sufficient
     base makes it short, and the author can start conception early.

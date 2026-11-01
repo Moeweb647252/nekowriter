@@ -122,6 +122,38 @@ async fn target_scope(ctx: &ToolCtx<'_>, tool: &str) -> Result<(i32, String), To
     Ok((scope.id, scope.name))
 }
 
+/// Refuses a target the author has excluded while the session is already running (K7/D-158).
+async fn ensure_target_scope_visible(
+    ctx: &ToolCtx<'_>,
+    scope_id: i32,
+    scope_name: &str,
+) -> Result<(), ToolError> {
+    let Some(task_id) = ctx.session.research_task_id else {
+        return Ok(());
+    };
+    let Some(task) = research_tasks::Entity::find_by_id(task_id)
+        .one(ctx.tx)
+        .await
+        .map_err(|_| internal())?
+    else {
+        return Ok(());
+    };
+    let Some(book_id) = task.book_id else {
+        return Ok(());
+    };
+    let excluded = book_scope_exclusions::Entity::find()
+        .filter(book_scope_exclusions::COLUMN.book_id.eq(book_id))
+        .filter(book_scope_exclusions::COLUMN.scope_id.eq(scope_id))
+        .one(ctx.tx)
+        .await
+        .map_err(|_| internal())?
+        .is_some();
+    if excluded {
+        return Err(ToolError::new(ToolErrorKind::ScopeExcluded).with("name", scope_name));
+    }
+    Ok(())
+}
+
 /// Maps a knowledge-service error onto the tool error of spec/05 §8.
 ///
 /// `title` is the title the call tried to use, so `entry_exists` can name it.
@@ -253,7 +285,7 @@ impl ToolHandler for SetTargetScopeTool {
             .map_err(|error| knowledge_error(ctx, error, &name))?;
             (dto, true, events)
         };
-        research_tasks::ActiveModel {
+        let updated = research_tasks::ActiveModel {
             id: Set(task.id),
             scope_id: Set(Some(scope.id)),
             scope_name: Set(scope.name.clone()),
@@ -264,6 +296,10 @@ impl ToolHandler for SetTargetScopeTool {
         .await
         .map_err(|_| internal())?;
         ctx.events.extend(events);
+        ctx.events
+            .push(crate::events::ServerEvent::ResearchUpdated {
+                task: crate::services::research::to_dto(updated),
+            });
         let text = ctx
             .prompts
             .render(
@@ -323,6 +359,7 @@ impl ToolHandler for SaveKnowledgeEntryTool {
     ) -> Result<ToolOutcome, ToolError> {
         let input: SaveEntryInput = decode(input)?;
         let (scope_id, scope_name) = target_scope(ctx, "save_knowledge_entry").await?;
+        ensure_target_scope_visible(ctx, scope_id, &scope_name).await?;
         let title = input.title.trim().to_owned();
         if title.is_empty() {
             return Err(validation(vec!["title must not be empty".to_owned()]));
@@ -438,6 +475,7 @@ impl ToolHandler for UpdateKnowledgeEntryTool {
     ) -> Result<ToolOutcome, ToolError> {
         let input: UpdateEntryInput = decode(input)?;
         let (scope_id, scope_name) = target_scope(ctx, "update_knowledge_entry").await?;
+        ensure_target_scope_visible(ctx, scope_id, &scope_name).await?;
         // The target scope only: an entry of another scope is invisible, not merely read-only.
         let existing = knowledge_entries::Entity::find_by_id(input.entry_id)
             .filter(knowledge_entries::COLUMN.scope_id.eq(scope_id))
@@ -562,30 +600,24 @@ impl ToolHandler for FinishResearchTool {
                 .ok_or_else(|| ToolError::new(ToolErrorKind::NoKnowledgeScope))?,
             None => return Err(ToolError::new(ToolErrorKind::NoKnowledgeScope)),
         };
-        let scope_id = if task.kind == ResearchTaskKind::Preparation {
-            task.scope_id
-        } else {
-            Some(target_scope(ctx, "finish_research").await?.0)
-        };
         // The entries **this session** saved or updated (spec/05 §8). An entry counts when the
         // task owns it and its `updated_at` is not older than this session: saves create it inside
         // the session and updates touch it, while entries left over from an earlier run are older
-        // than the session and are not claimed by it. The task's stored `entries_created` still
-        // accumulates across every run (spec/07 §8 step 5, `services::research::finish`).
-        let entries = match (task.id, scope_id) {
-            (task_id, Some(scope_id)) => knowledge_entries::Entity::find()
-                .filter(knowledge_entries::COLUMN.research_task_id.eq(task_id))
-                .filter(knowledge_entries::COLUMN.scope_id.eq(scope_id))
-                .filter(
-                    knowledge_entries::COLUMN
-                        .updated_at
-                        .gte(ctx.session.created_at),
-                )
-                .count(ctx.tx)
-                .await
-                .map_err(|_| internal())?,
-            _ => 0,
-        };
+        // than the session and are not claimed by it. A preparation task may switch targets, so
+        // its count spans every scope it wrote; a topic task keeps the current scope filter.
+        // The task's stored `entries_created` still accumulates across every run (spec/07 §8).
+        let mut find = knowledge_entries::Entity::find()
+            .filter(knowledge_entries::COLUMN.research_task_id.eq(task.id))
+            .filter(
+                knowledge_entries::COLUMN
+                    .updated_at
+                    .gte(ctx.session.created_at),
+            );
+        if task.kind == ResearchTaskKind::Topic {
+            let (scope_id, _scope_name) = target_scope(ctx, "finish_research").await?;
+            find = find.filter(knowledge_entries::COLUMN.scope_id.eq(scope_id));
+        }
+        let entries = find.count(ctx.tx).await.map_err(|_| internal())?;
         let text = ctx
             .prompts
             .render("result.finish_research", &json!({ "entries": entries }))

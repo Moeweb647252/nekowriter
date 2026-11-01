@@ -587,3 +587,149 @@ async fn creating_and_deleting_a_check_while_conception_runs_is_not_settings_loc
         .await;
     assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
 }
+
+#[tokio::test]
+async fn finish_after_a_target_switch_counts_entries_in_both_scopes() {
+    let runtime = runtime(vec![
+        ScriptStep::new().tool("set_target_scope", json!({ "name": "First target" })),
+        ScriptStep::new().tool(
+            "save_knowledge_entry",
+            json!({
+                "title": "First entry", "content": "first", "source_urls": []
+            }),
+        ),
+        ScriptStep::new().tool("set_target_scope", json!({ "name": "Second target" })),
+        ScriptStep::new().tool(
+            "save_knowledge_entry",
+            json!({
+                "title": "Second entry", "content": "second", "source_urls": []
+            }),
+        ),
+        ScriptStep::new().tool("finish_research", json!({ "report": "both targets" })),
+    ])
+    .await;
+    scope(&runtime, "First target", "first").await;
+    scope(&runtime, "Second target", "second").await;
+    let (task_id, session_id) = start_check(&runtime, runtime.book_id, "").await;
+    wait(&runtime, session_id).await;
+    let session = runtime
+        .app
+        .get(&format!("/api/sessions/{session_id}"))
+        .await
+        .1;
+    let finish = session["tool_calls"]
+        .as_array()
+        .expect("tool calls")
+        .iter()
+        .find(|call| call["name"] == "finish_research")
+        .expect("finish call");
+    assert!(
+        finish["result_text"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("2 个条目"),
+        "{finish}"
+    );
+    assert_eq!(finish["ui"]["entries"], 2, "{finish}");
+    let (_, task) = runtime
+        .app
+        .get(&format!("/api/research-tasks/{task_id}"))
+        .await;
+    assert_eq!(task["entries_created"], 2, "{task}");
+}
+
+#[tokio::test]
+async fn set_target_scope_publishes_research_updated_before_finish() {
+    use nekowriter::db::json::ResearchTaskStatus;
+    use nekowriter::events::{EventEnvelope, ServerEvent};
+    use tokio::sync::broadcast::error::TryRecvError;
+
+    let runtime = runtime(vec![
+        ScriptStep::new().tool("set_target_scope", json!({ "name": "Existing target" })),
+        ScriptStep::new().tool("finish_research", json!({ "report": "done" })),
+    ])
+    .await;
+    let mut receiver = runtime.app.events().subscribe();
+    scope(&runtime, "Existing target", "existing").await;
+    let (task_id, session_id) = start_check(&runtime, runtime.book_id, "").await;
+    wait(&runtime, session_id).await;
+
+    let mut saw_target = false;
+    let mut saw_finish = false;
+    loop {
+        match receiver.try_recv() {
+            Ok(EventEnvelope {
+                event: ServerEvent::ResearchUpdated { task },
+                ..
+            }) if task.id == task_id => {
+                match task.status {
+                    ResearchTaskStatus::Running if task.scope_name == "Existing target" => {
+                        saw_target = true;
+                    }
+                    ResearchTaskStatus::Done => saw_finish = true,
+                    _ => {}
+                }
+                if saw_target && saw_finish {
+                    break;
+                }
+            }
+            Ok(_) => {}
+            Err(TryRecvError::Empty) => break,
+            Err(TryRecvError::Lagged(_)) => continue,
+            Err(TryRecvError::Closed) => break,
+        }
+    }
+    assert!(
+        saw_target,
+        "set_target_scope must emit research.updated with the new target"
+    );
+    assert!(
+        saw_finish,
+        "finish must still emit its own research.updated"
+    );
+}
+
+#[tokio::test]
+async fn excluding_a_running_target_refuses_save_until_it_is_switched() {
+    let runtime = runtime(vec![
+        ScriptStep::new().tool("set_target_scope", json!({ "name": "Running target" })),
+        ScriptStep::new().delay(Duration::from_secs(2)).tool(
+            "save_knowledge_entry",
+            json!({
+                "title": "Blocked entry", "content": "blocked", "source_urls": []
+            }),
+        ),
+        ScriptStep::new().tool("finish_research", json!({ "report": "stopped" })),
+    ])
+    .await;
+    let target = scope(&runtime, "Running target", "running").await;
+    let (task_id, session_id) = start_check(&runtime, runtime.book_id, "").await;
+    // Wait until the agent has selected the target, then the author unchecks it while the session
+    // is still running.
+    for _ in 0..200 {
+        let (_, task) = runtime
+            .app
+            .get(&format!("/api/research-tasks/{task_id}"))
+            .await;
+        if task["scope_name"] == "Running target" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let (status, _) = runtime
+        .app
+        .put(
+            &format!("/api/books/{}/scopes", runtime.book_id),
+            json!({ "excluded_scope_ids": [target] }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    wait(&runtime, session_id).await;
+    let calls = call(&runtime, session_id).await;
+    let save = calls
+        .iter()
+        .find(|call| call.0 == "save_knowledge_entry")
+        .expect("save call");
+    assert!(save.2, "the excluded target must refuse the save: {save:?}");
+    assert!(save.1.contains("排除"), "{save:?}");
+}

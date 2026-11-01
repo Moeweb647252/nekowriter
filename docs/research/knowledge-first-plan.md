@@ -402,8 +402,9 @@ UPDATE research_tasks SET origin = 'conception' WHERE status = 'draft';
   `CreateBookResponse.research_task_id`, `ConceptionState.start_after_knowledge_check`,
   `BookScopesInput.excluded_scope_ids`. New `KnowledgeCheckInput { requirements }` and
   `KnowledgeCheckResponse { task, session_id }`.
-- New tool error kinds `scope_excluded` and `target_scope_unset`. There are no new HTTP error
-  codes.
+- New tool error kinds `scope_excluded` and `target_scope_unset`. The one new HTTP error code is
+  `validation.invalid_fields` (422) for preparation-task PATCH fields; the existing
+  `validation.failed` remains 400 for other validation errors.
 - Regenerate the bindings (`cargo test -p nekowriter export_bindings`), and commit
   `web/src/api/gen`.
 
