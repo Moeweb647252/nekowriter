@@ -3291,7 +3291,7 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
 - **Context**: The author asked for a cleanup of things nothing uses. A survey at `2880a77` (plan
   `docs/research/codebase-cleanup-plan.md` §2) found:
   - ten unused dependency entries across the four crates, and 20 redundant `[[test]]` sections;
-  - 31 Rust functions referenced nowhere, two of them behind `#[allow(dead_code)]`;
+  - 33 Rust functions referenced nowhere, two of them behind `#[allow(dead_code)]`;
   - the D-146 legacy planning branch, whose removal condition (no open `chapter_write`/`planning`
     session on the author's database) task 12.7 had already measured as met;
   - a prompt variable and an error code that are never used;

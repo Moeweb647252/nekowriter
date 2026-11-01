@@ -571,17 +571,6 @@ pub fn to_dto(row: &relations::Model) -> CanonResult<RelationDto> {
 
 // ───────────────────────────── revert support (spec/06 §3) ─────────────────────────────
 
-/// The current snapshot of a relation, when it still exists.
-pub async fn snapshot_now(
-    conn: &impl ConnectionTrait,
-    relation_id: i32,
-) -> CanonResult<Option<crate::db::json::Snapshot>> {
-    match relations::Entity::find_by_id(relation_id).one(conn).await? {
-        Some(row) => Ok(Some(relation_snapshot(&row)?)),
-        None => Ok(None),
-    }
-}
-
 /// Restores a relation from a `before` snapshot (the revert of an update).
 pub async fn restore_inner(
     tx: &impl ConnectionTrait,

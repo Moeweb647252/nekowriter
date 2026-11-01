@@ -1319,17 +1319,6 @@ pub fn entity_label(name: &str, id: i32) -> String {
 
 // ───────────────────────────── revert support (spec/06 §3) ─────────────────────────────
 
-/// The current snapshot of an entity, when it still exists.
-pub async fn snapshot_now(
-    conn: &impl ConnectionTrait,
-    entity_id: i32,
-) -> CanonResult<Option<crate::db::json::Snapshot>> {
-    match entities::Entity::find_by_id(entity_id).one(conn).await? {
-        Some(row) => Ok(Some(entity_snapshot(&row)?)),
-        None => Ok(None),
-    }
-}
-
 /// Restores an entity from a `before` snapshot (the revert of an update).
 pub async fn restore_inner(
     tx: &impl ConnectionTrait,

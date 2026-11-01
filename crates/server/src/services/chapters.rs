@@ -17,7 +17,7 @@ use crate::api::dto::chapters::{ChapterOutlineInput, ChapterWriteInput};
 use crate::db::entities::{agent_sessions, appearances, chapter_versions, chapters, tracks};
 use crate::db::json::{
     AgentRole, AnchorKind, BookStatus, CanonStatus, ChangeActor, ChapterContent, ChapterStatus,
-    SessionStatus, Snapshot, TrackKind, VersionKind,
+    SessionStatus, TrackKind, VersionKind,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::{BookOp, ContentActor, ServerEvent};
@@ -1231,13 +1231,6 @@ fn restore_ops(
         current.tail_open,
         restored.tail_open,
     )
-}
-
-/// A JSON snapshot of a chapter summary change (spec/02 §4 `SnapshotChapterSummary`).
-pub fn summary_snapshot(summary: &str) -> Snapshot {
-    Snapshot::ChapterSummary {
-        summary: summary.to_owned(),
-    }
 }
 
 // ───────────────────────────── helpers ─────────────────────────────

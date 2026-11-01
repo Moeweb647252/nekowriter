@@ -392,21 +392,6 @@ async fn ensure_entities_visible(
 
 // ───────────────────────────── revert support (spec/06 §3) ─────────────────────────────
 
-/// The current snapshot of a foreshadowing item, when it still exists.
-pub async fn snapshot_now(
-    conn: &impl ConnectionTrait,
-    item_id: i32,
-) -> CanonResult<Option<crate::db::json::Snapshot>> {
-    match foreshadowing::Entity::find_by_id(item_id).one(conn).await? {
-        Some(row) => {
-            let ids =
-                super::linked_entity_ids(conn, super::LinkTable::Foreshadowing, item_id).await?;
-            Ok(Some(foreshadowing_snapshot(&row, ids)?))
-        }
-        None => Ok(None),
-    }
-}
-
 /// Restores a foreshadowing item from a `before` snapshot (the revert of an update).
 pub async fn restore_inner(
     tx: &impl ConnectionTrait,

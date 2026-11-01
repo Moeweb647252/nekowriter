@@ -360,20 +360,6 @@ async fn ensure_entities_visible(
 
 // ───────────────────────────── revert support (spec/06 §3) ─────────────────────────────
 
-/// The current snapshot of a memory note, when it still exists.
-pub async fn snapshot_now(
-    conn: &impl ConnectionTrait,
-    note_id: i32,
-) -> CanonResult<Option<crate::db::json::Snapshot>> {
-    match memory_notes::Entity::find_by_id(note_id).one(conn).await? {
-        Some(row) => {
-            let ids = super::linked_entity_ids(conn, super::LinkTable::MemoryNote, note_id).await?;
-            Ok(Some(note_snapshot(&row, ids)?))
-        }
-        None => Ok(None),
-    }
-}
-
 /// Restores a memory note from a `before` snapshot (the revert of an update).
 pub async fn restore_inner(
     tx: &impl ConnectionTrait,

@@ -745,11 +745,3 @@ pub struct MemoryQuery {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct RevertInput {}
-
-/// The actor a canon write records (spec/06 §3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WriteActor {
-    User,
-    Agent,
-    System,
-}

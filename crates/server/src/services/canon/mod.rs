@@ -813,13 +813,6 @@ pub async fn restore_summary_inner(
     Ok(())
 }
 
-/// The snapshot of a chapter summary (spec/02 §4 `SnapshotChapterSummary`).
-pub fn summary_snapshot(summary: &str) -> Snapshot {
-    Snapshot::ChapterSummary {
-        summary: summary.to_owned(),
-    }
-}
-
 /// The subset of `ids` that still exist, in input order. One `is_in` query replaces a per-id
 /// existence loop (§2.7).
 pub(crate) async fn existing_entity_ids(

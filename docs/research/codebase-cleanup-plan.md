@@ -35,7 +35,7 @@ Rules for every task:
 | # | Decision |
 |---|---|
 | C1 | Remove the ten unused dependency entries (§2.1) and the workspace entries no crate uses any more. Remove the 20 redundant `[[test]]` sections of `crates/server/Cargo.toml`, which Cargo's auto-discovery already covers. |
-| C2 | Delete the 31 Rust functions that have no reference anywhere in `crates/` (§2.3). |
+| C2 | Delete the 33 Rust functions that have no reference anywhere in `crates/` (§2.3). |
 | C3 | Delete the legacy planning branch (D-146). Its removal condition (the §2.12 query of the session-split plan returns 0 on the author's database) was met at task 12.7 and is re-checked first (§5, 16.4). `Phase::Planning` stays as a historical enum value. |
 | C4 | Delete the prompt variable `previous_outline` (documented and sampled, used by no template), and the error code `embedding.unavailable` (never returned, because embedding failures degrade to keyword search, spec/07 §4). |
 | C5 | Web: delete four unused files, the dead exports, `src/assets/react.svg` and the Vite template `web/README.md`, plus the i18n keys proven unused. Keep exports used inside their own file or by tests. |
@@ -76,8 +76,8 @@ Rules for every task:
 
 ### 2.3 Rust functions with no reference
 
-These are 31 functions whose name occurs exactly once in `crates/` (their definition), in source
-or tests, excluding trait impls:
+These are 33 functions whose name occurs exactly once in `crates/` (their definition), in source
+or tests, excluding trait impls (21 rows in the table below):
 
 | File | Functions |
 |---|---|
