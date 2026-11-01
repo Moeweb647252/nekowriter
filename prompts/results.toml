@@ -38,6 +38,10 @@ text = '''
 {{ label }}尚未定稿，不能读取。
 {%- elif code == "no_knowledge_scope" -%}
 本书没有可检索的知识库范围。
+{%- elif code == "scope_excluded" -%}
+「{{ name }}」已被作者从本书排除，不能作为目标知识范围，请选择其他范围。
+{%- elif code == "target_scope_unset" -%}
+还没有选择目标知识范围，请先调用 set_target_scope。
 {%- elif code == "scope_not_found" -%}
 没有名为「{{ name }}」的可检索知识范围。可以检索的范围：{{ available | join("、") }}。
 {%- elif code == "not_found" -%}

@@ -818,9 +818,10 @@ fn goal_json_types_round_trip() {
     assert_eq!(GoalStatus::Waiting.as_str(), "waiting");
 }
 
-/// The upgraded pre-0006 schema must be object-for-object identical to a fresh database built from
-/// the edited `0001` (plus 0005, whose tables 0001 does not carry): a future edit to only one side
-/// fails this test.
+/// The upgraded pre-0006 schema must be object-for-object identical to the full fresh migration
+/// path. The direct 0001-vs-chain guard for the tables 0006 rebuilds lives in
+/// `knowledge_first_migration::edited_0001_matches_the_chain_for_directly_created_tables`; this
+/// test keeps the end-to-end migration path honest.
 #[tokio::test]
 async fn the_upgraded_schema_matches_a_fresh_database() {
     fn normalize_schema_sql(sql: &str) -> String {
@@ -883,13 +884,13 @@ async fn the_upgraded_schema_matches_a_fresh_database() {
     assert_eq!(
         upgraded.keys().collect::<Vec<_>>(),
         fresh.keys().collect::<Vec<_>>(),
-        "0006 must leave the same object set as the edited 0001"
+        "0006 must leave the same object set as the fresh migration path"
     );
     for (name, object) in &upgraded {
         assert_eq!(
             Some(object),
             fresh.get(name),
-            "0006 and 0001 disagree about {name}"
+            "0006 and the fresh migration path disagree about {name}"
         );
     }
 }

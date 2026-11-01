@@ -512,6 +512,8 @@ mod tests {
             ToolErrorKind::ChapterNotFound,
             ToolErrorKind::ChapterNotOfficial,
             ToolErrorKind::NoKnowledgeScope,
+            ToolErrorKind::ScopeExcluded,
+            ToolErrorKind::TargetScopeUnset,
             ToolErrorKind::ScopeNotFound,
             ToolErrorKind::NotFound,
             ToolErrorKind::EntryExists,
@@ -537,7 +539,7 @@ mod tests {
         .iter()
         .map(|kind| kind.code())
         .collect();
-        assert_eq!(codes.len(), 35);
+        assert_eq!(codes.len(), 37);
         let unique: std::collections::BTreeSet<&str> = codes.iter().copied().collect();
         assert_eq!(unique.len(), codes.len(), "codes must be unique");
         assert!(codes.contains(&"after_completion"));
@@ -613,6 +615,8 @@ mod tests {
             ToolError::new(ToolErrorKind::ChapterNotFound).with("query", "12"),
             ToolError::new(ToolErrorKind::ChapterNotOfficial).with("label", "第12章"),
             ToolError::new(ToolErrorKind::NoKnowledgeScope),
+            ToolError::new(ToolErrorKind::ScopeExcluded).with("name", "宋代社会"),
+            ToolError::new(ToolErrorKind::TargetScopeUnset),
             ToolError::new(ToolErrorKind::ScopeNotFound)
                 .with("name", "宋代社会")
                 .with("available", vec!["背景设定".to_owned()]),

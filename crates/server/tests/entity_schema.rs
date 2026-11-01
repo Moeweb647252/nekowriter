@@ -403,8 +403,7 @@ async fn pragma_foreign_keys(conn: &DatabaseConnection, table: &str) -> Vec<Prag
 
 /// The junction tables. Their two foreign keys become `has_many, via` on both ends instead
 /// of a `has_many` to the junction itself (plan §2.1).
-const JUNCTIONS: [&str; 8] = [
-    "book_scope_exclusions",
+const JUNCTIONS: [&str; 7] = [
     "book_writing_skills",
     "foreshadowing_entities",
     "goal_node_entities",
@@ -499,8 +498,8 @@ async fn every_unambiguous_foreign_key_has_a_reverse_has_many() {
         }
     }
     assert_eq!(
-        checked, 63,
-        "the schema has 63 unambiguous foreign keys with a reverse relation"
+        checked, 65,
+        "the schema has 65 unambiguous foreign keys with a reverse relation"
     );
 }
 
@@ -534,13 +533,31 @@ where
     );
 }
 
+/// A plain `has_many` (not a junction `via`) must point from the parent to the child on its
+/// foreign key.
+fn assert_plain_has_many<A, B>(to_column: &str)
+where
+    A: EntityTrait + Related<B>,
+    B: EntityTrait,
+{
+    let relation = <A as Related<B>>::to();
+    assert_eq!(relation.rel_type, RelationType::HasMany);
+    assert_eq!(table_name_of(&relation.from_tbl), A::default().table_name());
+    assert_eq!(table_name_of(&relation.to_tbl), B::default().table_name());
+    assert_eq!(columns_of(&relation.from_col), ["id"]);
+    assert_eq!(columns_of(&relation.to_col), [to_column]);
+}
+
 /// Check 3c: each junction table has a `via` relation on both ends.
 #[tokio::test]
 async fn every_junction_has_via_relations_on_both_ends() {
     use nekowriter::db::entities::{
-        books, entities, foreshadowing, goal_nodes, memory_notes, timeline_events, writing_skills,
+        book_scope_exclusions, books, entities, foreshadowing, goal_nodes, knowledge_scopes,
+        memory_notes, timeline_events, writing_skills,
     };
 
+    assert_plain_has_many::<books::Entity, book_scope_exclusions::Entity>("book_id");
+    assert_plain_has_many::<knowledge_scopes::Entity, book_scope_exclusions::Entity>("scope_id");
     assert_many_to_many::<books::Entity, writing_skills::Entity>();
     assert_many_to_many::<writing_skills::Entity, books::Entity>();
     assert_many_to_many::<foreshadowing::Entity, entities::Entity>();

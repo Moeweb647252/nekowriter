@@ -64,6 +64,8 @@ VALUES
   (6, 1, 1, 'History', 'Failed topic', '', 'zh-CN', 'failed', NULL, '', 0,
    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
   (7, 1, 1, 'History', 'Cancelled topic', '', 'zh-CN', 'cancelled', NULL, '', 0,
+   '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+  (8, 2, 3, 'Private', 'Book two draft', 'book2 requirements', 'en', 'draft', NULL, '', 0,
    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
 
 INSERT INTO agent_sessions
@@ -135,9 +137,52 @@ async fn pre_0008_database() -> (tempfile::TempDir, Db) {
     (dir, db)
 }
 
-/// A stable description of table columns, foreign keys and index names — the parts entity_schema
-/// compares — used to compare the fresh and upgraded paths.
-async fn schema_shape(conn: &sea_orm::DatabaseConnection) -> Vec<String> {
+/// SQLite preserves comments and whitespace differently after a rebuild; compare the statements
+/// themselves. `IF NOT EXISTS` is normalized because 0001 omits it and the migration uses it.
+fn normalize_schema_sql(sql: &str) -> String {
+    let without_comments: String = sql
+        .lines()
+        .map(|line| line.split("--").next().unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n");
+    without_comments
+        .replace('"', "")
+        .replace("IF NOT EXISTS ", "")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace(" ,", ",")
+        .replace(" )", ")")
+}
+
+/// The full object list and SQL from `sqlite_master`, as in `goals_migration::schema_dump`.
+async fn schema_dump(
+    conn: &sea_orm::DatabaseConnection,
+) -> std::collections::BTreeMap<String, (String, String)> {
+    conn.query_all_raw(Statement::from_string(
+        DbBackend::Sqlite,
+        "SELECT type, name, sql FROM sqlite_master \
+         WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' \
+           AND name <> 'seaql_migrations' ORDER BY type, name",
+    ))
+    .await
+    .expect("schema dump")
+    .into_iter()
+    .map(|row| {
+        (
+            row.try_get::<String>("", "name").unwrap_or_default(),
+            (
+                row.try_get::<String>("", "type").unwrap_or_default(),
+                normalize_schema_sql(&row.try_get::<String>("", "sql").unwrap_or_default()),
+            ),
+        )
+    })
+    .collect()
+}
+
+/// Everything `schema_dump`'s SQL does not expose directly: defaults and nullability, FK actions,
+/// index columns and partial-index flags, plus trigger SQL (already in `schema_dump`).
+async fn schema_details(conn: &sea_orm::DatabaseConnection) -> Vec<String> {
     let tables = conn
         .query_all_raw(Statement::from_string(
             DbBackend::Sqlite,
@@ -146,7 +191,7 @@ async fn schema_shape(conn: &sea_orm::DatabaseConnection) -> Vec<String> {
         ))
         .await
         .expect("tables");
-    let mut shape = Vec::new();
+    let mut details = Vec::new();
     for table in tables {
         let name: String = table.try_get("", "name").expect("name");
         let columns = conn
@@ -157,11 +202,14 @@ async fn schema_shape(conn: &sea_orm::DatabaseConnection) -> Vec<String> {
             .await
             .expect("columns");
         for column in columns {
-            shape.push(format!(
-                "{name}.column:{}:{}:{}:{}",
+            details.push(format!(
+                "{name}.column:{}:{}:{}:{}:{}",
                 column.try_get::<String>("", "name").expect("column"),
                 column.try_get::<String>("", "type").expect("type"),
                 column.try_get::<i64>("", "notnull").expect("notnull"),
+                column
+                    .try_get::<String>("", "dflt_value")
+                    .unwrap_or_default(),
                 column.try_get::<i64>("", "pk").expect("pk"),
             ));
         }
@@ -173,11 +221,13 @@ async fn schema_shape(conn: &sea_orm::DatabaseConnection) -> Vec<String> {
             .await
             .expect("foreign keys");
         for key in foreign_keys {
-            shape.push(format!(
-                "{name}.fk:{}:{}:{}",
+            details.push(format!(
+                "{name}.fk:{}:{}:{}:{}:{}",
                 key.try_get::<String>("", "from").expect("from"),
                 key.try_get::<String>("", "table").expect("table"),
                 key.try_get::<String>("", "to").expect("to"),
+                key.try_get::<String>("", "on_update").expect("on_update"),
+                key.try_get::<String>("", "on_delete").expect("on_delete"),
             ));
         }
         let indexes = conn
@@ -188,14 +238,29 @@ async fn schema_shape(conn: &sea_orm::DatabaseConnection) -> Vec<String> {
             .await
             .expect("indexes");
         for index in indexes {
-            shape.push(format!(
-                "{name}.index:{}:{}",
-                index.try_get::<String>("", "name").expect("index name"),
+            let index_name: String = index.try_get("", "name").expect("index name");
+            details.push(format!(
+                "{name}.index:{index_name}:{}:{}",
                 index.try_get::<i64>("", "unique").expect("unique"),
+                index.try_get::<i64>("", "partial").expect("partial"),
             ));
+            let info = conn
+                .query_all_raw(Statement::from_string(
+                    DbBackend::Sqlite,
+                    format!("PRAGMA index_info(\"{index_name}\")"),
+                ))
+                .await
+                .expect("index info");
+            for column in info {
+                details.push(format!(
+                    "{name}.index-column:{index_name}:{}:{}",
+                    column.try_get::<i64>("", "seqno").expect("seqno"),
+                    column.try_get::<String>("", "name").unwrap_or_default(),
+                ));
+            }
         }
     }
-    shape
+    details
 }
 
 #[tokio::test]
@@ -208,7 +273,7 @@ async fn migration_upgrades_a_pre_0008_database_and_preserves_research_tasks() {
         .expect("the 0008 migration applies");
 
     let after = scalar(db.conn(), "SELECT count(*) AS n FROM research_tasks").await;
-    assert_eq!(before, 7);
+    assert_eq!(before, 8);
     assert_eq!(after, before, "the research_tasks count guard holds");
     assert!(
         !table_exists(db.conn(), "book_scopes").await,
@@ -237,25 +302,188 @@ async fn migration_upgrades_a_pre_0008_database_and_preserves_research_tasks() {
         .conn()
         .query_all_raw(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT id, status, kind, origin FROM research_tasks ORDER BY id",
+            "SELECT id, book_id, scope_id, scope_name, topic, kind, origin, requirements, language, \
+             status, session_id, report, entries_created, created_at, updated_at \
+             FROM research_tasks ORDER BY id",
         ))
         .await
         .expect("tasks");
     let expected = [
-        (1, "draft", "topic", "conception"),
-        (2, "ready", "topic", "author"),
-        (3, "deferred", "topic", "author"),
-        (4, "running", "topic", "author"),
-        (5, "done", "topic", "author"),
-        (6, "failed", "topic", "author"),
-        (7, "cancelled", "topic", "author"),
+        (
+            1,
+            Some(1),
+            Some(1),
+            "History",
+            "Draft topic",
+            "topic",
+            "conception",
+            "",
+            "zh-CN",
+            "draft",
+            Some(1),
+            "",
+            0,
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T00:00:00Z",
+        ),
+        (
+            2,
+            Some(1),
+            Some(1),
+            "History",
+            "Ready topic",
+            "topic",
+            "author",
+            "",
+            "zh-CN",
+            "ready",
+            None,
+            "",
+            0,
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T00:00:00Z",
+        ),
+        (
+            3,
+            Some(1),
+            Some(1),
+            "History",
+            "Deferred topic",
+            "topic",
+            "author",
+            "",
+            "zh-CN",
+            "deferred",
+            None,
+            "",
+            0,
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T00:00:00Z",
+        ),
+        (
+            4,
+            Some(1),
+            Some(1),
+            "History",
+            "Running topic",
+            "topic",
+            "author",
+            "",
+            "zh-CN",
+            "running",
+            None,
+            "",
+            0,
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T00:00:00Z",
+        ),
+        (
+            5,
+            Some(1),
+            Some(1),
+            "History",
+            "Done topic",
+            "topic",
+            "author",
+            "",
+            "zh-CN",
+            "done",
+            None,
+            "done",
+            1,
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T00:00:00Z",
+        ),
+        (
+            6,
+            Some(1),
+            Some(1),
+            "History",
+            "Failed topic",
+            "topic",
+            "author",
+            "",
+            "zh-CN",
+            "failed",
+            None,
+            "",
+            0,
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T00:00:00Z",
+        ),
+        (
+            7,
+            Some(1),
+            Some(1),
+            "History",
+            "Cancelled topic",
+            "topic",
+            "author",
+            "",
+            "zh-CN",
+            "cancelled",
+            None,
+            "",
+            0,
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T00:00:00Z",
+        ),
+        (
+            8,
+            Some(2),
+            Some(3),
+            "Private",
+            "Book two draft",
+            "topic",
+            "conception",
+            "book2 requirements",
+            "en",
+            "draft",
+            None,
+            "",
+            0,
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T00:00:00Z",
+        ),
     ];
     assert_eq!(rows.len(), expected.len());
-    for (row, (id, status, kind, origin)) in rows.iter().zip(expected) {
-        assert_eq!(row.try_get::<i32>("", "id").unwrap(), id);
-        assert_eq!(row.try_get::<String>("", "status").unwrap(), status);
-        assert_eq!(row.try_get::<String>("", "kind").unwrap(), kind);
-        assert_eq!(row.try_get::<String>("", "origin").unwrap(), origin);
+    for (row, expected) in rows.iter().zip(expected) {
+        assert_eq!(row.try_get::<i32>("", "id").unwrap(), expected.0);
+        assert_eq!(
+            row.try_get::<Option<i32>>("", "book_id").unwrap(),
+            expected.1
+        );
+        assert_eq!(
+            row.try_get::<Option<i32>>("", "scope_id").unwrap(),
+            expected.2
+        );
+        assert_eq!(row.try_get::<String>("", "scope_name").unwrap(), expected.3);
+        assert_eq!(row.try_get::<String>("", "topic").unwrap(), expected.4);
+        assert_eq!(row.try_get::<String>("", "kind").unwrap(), expected.5);
+        assert_eq!(row.try_get::<String>("", "origin").unwrap(), expected.6);
+        assert_eq!(
+            row.try_get::<String>("", "requirements").unwrap(),
+            expected.7
+        );
+        assert_eq!(row.try_get::<String>("", "language").unwrap(), expected.8);
+        assert_eq!(row.try_get::<String>("", "status").unwrap(), expected.9);
+        assert_eq!(
+            row.try_get::<Option<i32>>("", "session_id").unwrap(),
+            expected.10
+        );
+        assert_eq!(row.try_get::<String>("", "report").unwrap(), expected.11);
+        assert_eq!(
+            row.try_get::<i32>("", "entries_created").unwrap(),
+            expected.12
+        );
+        assert_eq!(
+            row.try_get::<String>("", "created_at").unwrap(),
+            expected.13
+        );
+        assert_eq!(
+            row.try_get::<String>("", "updated_at").unwrap(),
+            expected.14
+        );
     }
 }
 
@@ -265,7 +493,8 @@ async fn fresh_and_upgraded_databases_have_the_same_schema_shape() {
     nekowriter_migration::up(old.conn())
         .await
         .expect("upgrade old database");
-    let old_shape = schema_shape(old.conn()).await;
+    let old_dump = schema_dump(old.conn()).await;
+    let old_details = schema_details(old.conn()).await;
 
     let fresh_dir = tempfile::tempdir().expect("fresh dir");
     let fresh = Db::connect(&fresh_dir.path().join("fresh.db"))
@@ -274,10 +503,56 @@ async fn fresh_and_upgraded_databases_have_the_same_schema_shape() {
     nekowriter_migration::up(fresh.conn())
         .await
         .expect("migrate fresh database");
-    let fresh_shape = schema_shape(fresh.conn()).await;
+    let fresh_dump = schema_dump(fresh.conn()).await;
+    let fresh_details = schema_details(fresh.conn()).await;
 
     assert_eq!(
-        fresh_shape, old_shape,
-        "the edited 0001 and the 0008 upgrade path must reach the same schema"
+        fresh_dump.keys().collect::<Vec<_>>(),
+        old_dump.keys().collect::<Vec<_>>(),
+        "the edited 0001 and the 0008 upgrade path must have the same objects"
     );
+    for (name, object) in &fresh_dump {
+        assert_eq!(
+            Some(object),
+            old_dump.get(name),
+            "the edited 0001 and the 0008 upgrade path disagree about {name}"
+        );
+    }
+    assert_eq!(
+        fresh_details, old_details,
+        "the edited 0001 and the 0008 upgrade path disagree about defaults, FK actions or index columns"
+    );
+}
+
+/// F4 guard: the edited `0001` must match the full chain for the tables it owns directly. This is
+/// deliberately a different comparison from the fresh/upgraded parity check: a one-sided edit to
+/// `change_log`'s CHECK in 0001 must fail here even though every migration path rebuilds the table.
+#[tokio::test]
+async fn edited_0001_matches_the_chain_for_directly_created_tables() {
+    let raw_dir = tempfile::tempdir().expect("raw dir");
+    let raw = Db::connect(&raw_dir.path().join("raw.db"))
+        .await
+        .expect("connect raw");
+    raw.conn()
+        .execute_unprepared(include_str!("../../migration/src/sql/0001_init.sql"))
+        .await
+        .expect("apply edited 0001");
+    let raw_dump = schema_dump(raw.conn()).await;
+
+    let chain_dir = tempfile::tempdir().expect("chain dir");
+    let chain = Db::connect(&chain_dir.path().join("chain.db"))
+        .await
+        .expect("connect chain");
+    nekowriter_migration::up(chain.conn())
+        .await
+        .expect("migrate chain");
+    let chain_dump = schema_dump(chain.conn()).await;
+
+    for name in ["change_log", "setting_proposals", "agent_sessions"] {
+        assert_eq!(
+            raw_dump.get(name),
+            chain_dump.get(name),
+            "0001 and the migration chain disagree about {name}"
+        );
+    }
 }

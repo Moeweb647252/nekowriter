@@ -426,8 +426,10 @@ fn tool_effects_and_role_models_round_trip_with_the_new_fields() {
     assert_eq!(raw["planner"], json!(7));
 }
 
-/// The upgraded pre-0004 schema must be object-for-object identical to a fresh database built
-/// from the edited `0001` (F15): a future edit to only one side fails this test.
+/// The upgraded pre-0004 schema must be object-for-object identical to the full fresh migration
+/// path. The direct 0001-vs-chain guard for the tables 0004 rebuilds lives in
+/// `knowledge_first_migration::edited_0001_matches_the_chain_for_directly_created_tables`; this
+/// test keeps the end-to-end migration path honest.
 #[tokio::test]
 async fn the_upgraded_schema_matches_a_fresh_database() {
     use sea_orm::ConnectionTrait;
@@ -496,13 +498,13 @@ async fn the_upgraded_schema_matches_a_fresh_database() {
     assert_eq!(
         upgraded.keys().collect::<Vec<_>>(),
         fresh.keys().collect::<Vec<_>>(),
-        "the 0004 rebuild must leave the same object set as the edited 0001"
+        "the 0004 rebuild must leave the same object set as the fresh migration path"
     );
     for (name, object) in &upgraded {
         assert_eq!(
             Some(object),
             fresh.get(name),
-            "the 0004 rebuild changed {name}"
+            "the 0004 rebuild changed {name} on the fresh migration path"
         );
     }
 }
