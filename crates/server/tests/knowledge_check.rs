@@ -733,3 +733,109 @@ async fn excluding_a_running_target_refuses_save_until_it_is_switched() {
     assert!(save.2, "the excluded target must refuse the save: {save:?}");
     assert!(save.1.contains("排除"), "{save:?}");
 }
+
+#[tokio::test]
+async fn excluding_a_running_target_refuses_update_until_it_is_switched() {
+    let runtime = runtime(vec![
+        ScriptStep::new().tool("set_target_scope", json!({ "name": "Update target" })),
+        ScriptStep::new().delay(Duration::from_secs(2)).tool(
+            "update_knowledge_entry",
+            json!({ "entry_id": 1, "content": "changed" }),
+        ),
+        ScriptStep::new().tool("finish_research", json!({ "report": "stopped" })),
+    ])
+    .await;
+    let target = scope(&runtime, "Update target", "update").await;
+    let entry_id = entry(&runtime, target, "Existing entry", "original").await;
+    // The script above uses entry id 1; this test creates the first entry in a fresh database.
+    assert_eq!(entry_id, 1);
+    let (task_id, session_id) = start_check(&runtime, runtime.book_id, "").await;
+    for _ in 0..200 {
+        let (_, task) = runtime
+            .app
+            .get(&format!("/api/research-tasks/{task_id}"))
+            .await;
+        if task["scope_name"] == "Update target" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let (status, _) = runtime
+        .app
+        .put(
+            &format!("/api/books/{}/scopes", runtime.book_id),
+            json!({ "excluded_scope_ids": [target] }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    wait(&runtime, session_id).await;
+    let calls = call(&runtime, session_id).await;
+    let update = calls
+        .iter()
+        .find(|call| call.0 == "update_knowledge_entry")
+        .expect("update call");
+    assert!(
+        update.2,
+        "the excluded target must refuse the update: {update:?}"
+    );
+    assert!(update.1.contains("排除"), "{update:?}");
+}
+
+#[tokio::test]
+async fn a_topic_session_can_finish_after_its_target_is_excluded() {
+    let runtime = runtime(vec![
+        ScriptStep::new()
+            .delay(Duration::from_secs(2))
+            .tool("finish_research", json!({ "report": "topic done" })),
+    ])
+    .await;
+    let target = scope(&runtime, "Topic target", "topic").await;
+    let (status, task) = runtime
+        .app
+        .post(
+            "/api/research-tasks",
+            json!({ "book_id": runtime.book_id, "scope_name": "Topic target", "topic": "Topic", "language": "en" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{task}");
+    let task_id = task["id"].as_i64().unwrap() as i32;
+    let (status, run) = runtime
+        .app
+        .post(&format!("/api/research-tasks/{task_id}/run"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{run}");
+    let session_id = run["session_id"].as_i64().unwrap() as i32;
+    for _ in 0..200 {
+        let (_, task) = runtime
+            .app
+            .get(&format!("/api/research-tasks/{task_id}"))
+            .await;
+        if task["scope_id"] == target {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let (status, _) = runtime
+        .app
+        .put(
+            &format!("/api/books/{}/scopes", runtime.book_id),
+            json!({ "excluded_scope_ids": [target] }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    wait(&runtime, session_id).await;
+    let calls = call(&runtime, session_id).await;
+    let finish = calls
+        .iter()
+        .find(|call| call.0 == "finish_research")
+        .expect("finish call");
+    assert!(
+        !finish.2,
+        "a topic session must still be able to finish: {finish:?}"
+    );
+    let (_, task) = runtime
+        .app
+        .get(&format!("/api/research-tasks/{task_id}"))
+        .await;
+    assert_eq!(task["status"], "done", "{task}");
+}

@@ -613,6 +613,9 @@ impl ToolHandler for FinishResearchTool {
                     .updated_at
                     .gte(ctx.session.created_at),
             );
+        // Topic sessions cannot switch targets (the scope is resolved once at Run), so this
+        // branch is defensive against malformed/legacy rows; the API cannot reach a topic whose
+        // entries span two scopes.
         if task.kind == ResearchTaskKind::Topic {
             let (scope_id, _scope_name) = target_scope(ctx, "finish_research").await?;
             find = find.filter(knowledge_entries::COLUMN.scope_id.eq(scope_id));

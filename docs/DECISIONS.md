@@ -3211,7 +3211,9 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   - If the author excludes the scope a running check already targets, `save_knowledge_entry` and
     `update_knowledge_entry` refuse it with `scope_excluded`; the target does not become a back
     door around K7. The check can still finish, and it must call `set_target_scope` again to pick
-    another visible scope before saving more.
+    another visible scope before saving more. The same refusal applies to a topic research session,
+    which cannot switch targets: its only remaining allowed action is `finish_research`, and that
+    still completes normally.
 - **Consequences**:
   - A new conception book costs one more researcher session before conception. A sufficient
     base makes it short, and the author can start conception early.
