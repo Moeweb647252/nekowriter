@@ -464,9 +464,11 @@ async fn conception_snapshot(
         .await?
         .into_iter()
         .map(|row| ConceptionTopicSnapshot {
+            id: row.id,
             topic: row.topic,
             requirements: row.requirements,
             scope: row.scope_name,
+            origin: row.origin,
         })
         .collect();
     Ok(ViewSnapshot::Conception {

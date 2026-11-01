@@ -167,6 +167,9 @@ fields.title = { en = "Title", zh = "书名" }
 fields.idea = { en = "Rough idea", zh = "初步想法" }
 fields.genre = { en = "Genre (may be empty)", zh = "类型（可能为空）" }
 fields.writing_language_name = { en = "Writing language display name", zh = "写作语言名称" }
+fields."scopes[]" = { en = "Visible knowledge scopes: name, description, entry_count", zh = "可检索的知识范围：name、description、entry_count" }
+fields.knowledge_report = { en = "The latest completed knowledge-check report (may be empty)", zh = "最近一次知识检查的报告（可能为空）" }
+fields."research_tasks[]" = { en = "Topic tasks the conception agent must not replace: topic, requirements, scope_name, status", zh = "构思代理不能删除或替换的资料主题：topic、requirements、scope_name、status" }
 
 [vars.cast_index]
 en = "Entity index for maintenance: id, name, kind_label, status, status_label, aliases (list), summary"

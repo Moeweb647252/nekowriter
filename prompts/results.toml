@@ -376,7 +376,7 @@ text = '''
 key = "result.conception_write"
 kind = "result"
 agent = "conception"
-vars = ["action", "doc_label", "revision", "chars", "name", "rank", "order", "count", "created"]
+vars = ["action", "doc_label", "revision", "chars", "name", "rank", "order", "count", "created", "kept"]
 title_en = "Result — setting material written"
 title_zh = "工具结果 · 设定已保存"
 text = '''
@@ -392,7 +392,8 @@ text = '''
 人物排序已更新：{{ order | join(" > ") }}。
 {%- elif action == "set_research_topics" -%}
 已设置 {{ count }} 个资料收集主题。
-{%- endif -%}
+{% if kept %}保留了作者已有的主题：{% for t in kept %}{{ t.topic }}{% if t.scope_name %}（{{ t.scope_name }}）{% endif %}{% if not loop.last %}、{% endif %}{% endfor %}。
+{% endif %}{%- endif -%}
 '''
 
 [[prompt]]

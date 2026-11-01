@@ -17,7 +17,18 @@ text = '''
 作者的初步想法：
 {{ conception.idea }}
 
-请开始构思。建议的顺序：先判断想法中缺少哪些关键信息，用 ask_user 向作者提问；必要时调研；然后起草故事大纲、人物设定、世界观、主角详细设定与资料收集主题，并用 request_review 请作者审阅。
+【已有知识】
+{% if conception.scopes %}{% for s in conception.scopes %}- 《{{ s.name }}》{% if s.description %}：{{ s.description }}{% endif %}（{{ s.entry_count }} 条）
+{% endfor %}{% else %}知识库目前为空。
+{% endif %}{% if conception.knowledge_report %}
+【知识检查报告】
+{{ conception.knowledge_report }}
+{% endif %}{% if conception.research_tasks %}
+【已有的资料主题（不要重复）】
+{% for t in conception.research_tasks %}- {{ t.topic }}{% if t.requirements %}：{{ t.requirements }}{% endif %}（{{ t.scope_name }}，{{ t.status }}）
+{% endfor %}{% endif %}
+开始构思前，请先查看上面的知识清单；需要事实时用 search_knowledge / read_knowledge_entry 检索，只有知识库缺少的内容才用 web_search / web_fetch 调研。
+请开始构思。建议的顺序：先判断想法中缺少哪些关键信息，用 ask_user 向作者提问；然后起草故事大纲、人物设定、世界观、主角详细设定与资料收集主题，并用 request_review 请作者审阅。
 '''
 
 [[prompt]]

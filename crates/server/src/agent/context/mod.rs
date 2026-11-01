@@ -12,7 +12,8 @@
 use std::collections::BTreeMap;
 
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
+    ColumnTrait, Condition, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
+    QuerySelect,
 };
 use serde_json::{Value, json};
 
@@ -33,11 +34,12 @@ use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
 use crate::prompts::PromptSet;
 use crate::prompts::context::{
-    BookContext, CastEntryContext, ChapterContext, CharacterContext, DiffChangeContext,
-    DiffContext, DraftContext, FeedbackContext, FeedbackIssueContext, GoalsContext,
-    GranularityContext, MemoryContext, MemoryCountsContext, ParagraphContext, PrepContext,
-    PrepScopeContext, PriorReportContext, RecentChapterContext, ScopeContext, SettingsContext,
-    SystemsContext, TrackContext, WritingSkillContext,
+    BookContext, CastEntryContext, ChapterContext, CharacterContext, ConceptionContext,
+    ConceptionResearchTaskContext, ConceptionScopeContext, DiffChangeContext, DiffContext,
+    DraftContext, FeedbackContext, FeedbackIssueContext, GoalsContext, GranularityContext,
+    MemoryContext, MemoryCountsContext, ParagraphContext, PrepContext, PrepScopeContext,
+    PriorReportContext, RecentChapterContext, ScopeContext, SettingsContext, SystemsContext,
+    TrackContext, WritingSkillContext,
 };
 use crate::text;
 
@@ -1525,25 +1527,101 @@ async fn conception_context(
     conn: &impl ConnectionTrait,
     prompts: &PromptSet,
     book_id: Option<i32>,
-) -> Result<Value, AppError> {
+) -> Result<ConceptionContext, AppError> {
     let Some(book_id) = book_id else {
-        return Ok(json!({
-            "title": "",
-            "idea": "",
-            "genre": "",
-            "writing_language_name": prompts.label("language", "en"),
-        }));
+        return Ok(ConceptionContext {
+            title: String::new(),
+            idea: String::new(),
+            genre: String::new(),
+            writing_language_name: prompts.label("language", "en"),
+            scopes: Vec::new(),
+            knowledge_report: String::new(),
+            research_tasks: Vec::new(),
+        });
     };
     let book = books::Entity::find_by_id(book_id)
         .one(conn)
         .await?
         .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
-    Ok(json!({
-        "title": book.title,
-        "idea": book.idea,
-        "genre": book.genre,
-        "writing_language_name": prompts.label("language", &book.writing_language),
-    }))
+    let visible_ids = crate::services::knowledge::visible_scope_ids(conn, book_id).await?;
+    let visible_scopes = if visible_ids.is_empty() {
+        Vec::new()
+    } else {
+        knowledge_scopes::Entity::find()
+            .filter(knowledge_scopes::COLUMN.id.is_in(visible_ids))
+            .order_by_asc(knowledge_scopes::COLUMN.name)
+            .all(conn)
+            .await?
+    };
+    let mut scopes = Vec::with_capacity(visible_scopes.len());
+    for scope in visible_scopes {
+        let entry_count = knowledge_entries::Entity::find()
+            .filter(knowledge_entries::COLUMN.scope_id.eq(scope.id))
+            .count(conn)
+            .await? as i64;
+        scopes.push(ConceptionScopeContext {
+            name: scope.name,
+            description: scope.description,
+            entry_count,
+        });
+    }
+    let knowledge_report = research_tasks::Entity::find()
+        .filter(research_tasks::COLUMN.book_id.eq(book_id))
+        .filter(
+            research_tasks::COLUMN
+                .kind
+                .eq(crate::db::json::ResearchTaskKind::Preparation),
+        )
+        .filter(
+            research_tasks::COLUMN
+                .status
+                .eq(crate::db::json::ResearchTaskStatus::Done),
+        )
+        .order_by_desc(research_tasks::COLUMN.id)
+        .one(conn)
+        .await?
+        .map(|task| task.report)
+        .unwrap_or_default();
+    let research_tasks = research_tasks::Entity::find()
+        .filter(research_tasks::COLUMN.book_id.eq(book_id))
+        .filter(
+            research_tasks::COLUMN
+                .kind
+                .eq(crate::db::json::ResearchTaskKind::Topic),
+        )
+        .filter(
+            Condition::any()
+                .add(
+                    research_tasks::COLUMN
+                        .origin
+                        .eq(crate::db::json::ResearchTaskOrigin::Author),
+                )
+                .add(
+                    research_tasks::COLUMN
+                        .status
+                        .ne(crate::db::json::ResearchTaskStatus::Draft),
+                ),
+        )
+        .order_by_asc(research_tasks::COLUMN.id)
+        .all(conn)
+        .await?
+        .into_iter()
+        .map(|task| ConceptionResearchTaskContext {
+            topic: task.topic,
+            requirements: task.requirements,
+            scope_name: task.scope_name,
+            status: task.status.as_str().to_owned(),
+        })
+        .collect();
+    Ok(ConceptionContext {
+        title: book.title,
+        idea: book.idea,
+        genre: book.genre,
+        writing_language_name: prompts.label("language", &book.writing_language),
+        scopes,
+        knowledge_report,
+        research_tasks,
+    })
 }
 
 /// `researcher.kickoff` (spec/07 §8).

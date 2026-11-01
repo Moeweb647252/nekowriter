@@ -84,7 +84,10 @@ fn book_id(ctx: &ToolCtx<'_>) -> Result<i32, ToolError> {
 /// Renders `result.conception_write` and returns the same fields as the `ui` payload
 /// (spec/05 §1.5–§1.6). Every template variable is provided because the template branches on
 /// `action` and strict-undefined rendering rejects a missing one.
-fn conception_outcome(ctx: &ToolCtx<'_>, fields: Value) -> Result<ToolOutcome, ToolError> {
+fn conception_outcome(ctx: &ToolCtx<'_>, mut fields: Value) -> Result<ToolOutcome, ToolError> {
+    if let Some(object) = fields.as_object_mut() {
+        object.entry("kept").or_insert_with(|| json!([]));
+    }
     let text = ctx
         .prompts
         .render_value(
@@ -933,19 +936,28 @@ impl ToolHandler for SetResearchTopicsTool {
             }
         }
         let book_id = book_id(ctx)?;
-        let drafts = research_tasks::Entity::find()
+        let all_topics = research_tasks::Entity::find()
             .filter(research_tasks::COLUMN.book_id.eq(book_id))
             .filter(research_tasks::COLUMN.kind.eq(ResearchTaskKind::Topic))
-            .filter(
-                research_tasks::COLUMN
-                    .origin
-                    .eq(ResearchTaskOrigin::Conception),
-            )
-            .filter(research_tasks::COLUMN.status.eq(ResearchTaskStatus::Draft))
             .order_by_asc(research_tasks::COLUMN.id)
             .all(ctx.tx)
             .await
             .map_err(|_| internal())?;
+        let mut drafts = Vec::new();
+        let mut kept = Vec::new();
+        for task in all_topics {
+            if task.origin == ResearchTaskOrigin::Conception
+                && task.status == ResearchTaskStatus::Draft
+            {
+                drafts.push(task);
+            } else if task.origin == ResearchTaskOrigin::Author
+                && task.status == ResearchTaskStatus::Draft
+            {
+                // The result names the author's drafts left in place (spec/05 §7); the kickoff
+                // separately lists every protected topic task.
+                kept.push(task);
+            }
+        }
         let now = chrono::Utc::now();
         for task in &drafts {
             research_tasks::Entity::delete_by_id(task.id)
@@ -996,6 +1008,17 @@ impl ToolHandler for SetResearchTopicsTool {
         bump_topics_revision(ctx.tx, book_id)
             .await
             .map_err(|_| internal())?;
+        let kept: Vec<Value> = kept
+            .iter()
+            .map(|task| {
+                json!({
+                    "topic": task.topic,
+                    "requirements": task.requirements,
+                    "scope_name": task.scope_name,
+                    "status": task.status.as_str(),
+                })
+            })
+            .collect();
         conception_outcome(
             ctx,
             json!({
@@ -1008,6 +1031,7 @@ impl ToolHandler for SetResearchTopicsTool {
                 "order": [],
                 "count": input.topics.len(),
                 "created": false,
+                "kept": kept,
             }),
         )
     }

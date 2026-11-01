@@ -43,17 +43,51 @@ pub async fn create(
     state: &crate::state::AppState,
     input: crate::api::dto::books::BookInput,
 ) -> Result<CreateBookResponse, AppError> {
+    let start_conception = input.start_conception;
+    let knowledge_check = input.knowledge_check;
+    let auto_start_conception = input.auto_start_conception;
     let db = state.db().clone();
     let (mut response, published) = super::write(&db, move |tx| {
         Box::pin(async move { create_inner(tx, input).await })
     })
     .await?;
     state.events().publish_all(published);
-    if response.book.status == BookStatus::Conceiving {
-        let (session_id, warnings) =
-            super::conception::start_for_new_book(state, response.book.id).await?;
-        response.session_id = session_id;
-        response.warnings.extend(warnings);
+    if response.book.status == BookStatus::Conceiving && start_conception {
+        if knowledge_check {
+            match super::research::start_knowledge_check_for_book_with_auto(
+                state,
+                response.book.id,
+                String::new(),
+                Some(auto_start_conception),
+            )
+            .await
+            {
+                Ok((task, session_id, warnings)) => {
+                    response.research_task_id = Some(task.id);
+                    response.session_id = Some(session_id);
+                    response.warnings.extend(warnings);
+                    response.book = super::books::get(state.db().conn(), response.book.id).await?;
+                }
+                Err(error) if error.code == ErrorCode::ModelMissingRole => {
+                    response.warnings.push("model.missing_role".to_owned());
+                    // The check could not start; fall through to the old rows of the create
+                    // table (spec/08 §5): auto-start on starts conception immediately, off does
+                    // nothing.
+                    if auto_start_conception {
+                        let (session_id, warnings) =
+                            super::conception::start_for_new_book(state, response.book.id).await?;
+                        response.session_id = session_id;
+                        response.warnings.extend(warnings);
+                    }
+                }
+                Err(error) => return Err(error),
+            }
+        } else if auto_start_conception {
+            let (session_id, warnings) =
+                super::conception::start_for_new_book(state, response.book.id).await?;
+            response.session_id = session_id;
+            response.warnings.extend(warnings);
+        }
     }
     Ok(response)
 }

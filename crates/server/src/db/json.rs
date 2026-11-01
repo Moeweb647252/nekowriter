@@ -781,9 +781,11 @@ pub struct ConceptionCharacterSnapshot {
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub struct ConceptionTopicSnapshot {
+    pub id: i32,
     pub topic: String,
     pub requirements: String,
     pub scope: String,
+    pub origin: ResearchTaskOrigin,
 }
 
 /// `agent_messages.content` (spec/02 §4).
@@ -1455,9 +1457,11 @@ mod tests {
                 profile: "prof".to_owned(),
             }],
             topics: vec![ConceptionTopicSnapshot {
+                id: 1,
                 topic: "t".to_owned(),
                 requirements: "r".to_owned(),
                 scope: "s".to_owned(),
+                origin: ResearchTaskOrigin::Conception,
             }],
         };
         assert_eq!(round_trip(&conception), conception);

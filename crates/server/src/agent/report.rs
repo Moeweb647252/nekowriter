@@ -328,9 +328,11 @@ pub struct CurrentCharacter {
 /// One current research topic.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CurrentTopic {
+    pub id: i32,
     pub topic: String,
     pub requirements: String,
     pub scope: String,
+    pub origin: crate::db::json::ResearchTaskOrigin,
 }
 
 /// The current setting materials the conception report compares against.
@@ -452,9 +454,11 @@ pub fn conception_report(
         .iter()
         .map(|topic| {
             (
+                topic.id,
                 topic.topic.clone(),
                 topic.requirements.clone(),
                 topic.scope.clone(),
+                topic.origin,
             )
         })
         .collect::<Vec<_>>()
@@ -463,9 +467,11 @@ pub fn conception_report(
             .iter()
             .map(|topic| {
                 (
+                    topic.id,
                     topic.topic.clone(),
                     topic.requirements.clone(),
                     topic.scope.clone(),
+                    topic.origin,
                 )
             })
             .collect::<Vec<_>>();
@@ -573,9 +579,11 @@ pub async fn current_conception_state(
         .await?
         .into_iter()
         .map(|row| CurrentTopic {
+            id: row.id,
             topic: row.topic,
             requirements: row.requirements,
             scope: row.scope_name,
+            origin: row.origin,
         })
         .collect();
     Ok(ConceptionState {
@@ -867,9 +875,11 @@ mod tests {
             topics: topics
                 .iter()
                 .map(|topic| crate::db::json::ConceptionTopicSnapshot {
+                    id: topic.id,
                     topic: topic.topic.clone(),
                     requirements: topic.requirements.clone(),
                     scope: topic.scope.clone(),
+                    origin: topic.origin,
                 })
                 .collect(),
         }
@@ -999,16 +1009,20 @@ mod tests {
             &[],
             &[],
             &[CurrentTopic {
+                id: 1,
                 topic: "旧主题".to_owned(),
                 requirements: "".to_owned(),
                 scope: "背景".to_owned(),
+                origin: crate::db::json::ResearchTaskOrigin::Conception,
             }],
         );
         let current = ConceptionState {
             topics: vec![CurrentTopic {
+                id: 2,
                 topic: "城门规制".to_owned(),
                 requirements: "细节".to_owned(),
                 scope: "背景设定".to_owned(),
+                origin: crate::db::json::ResearchTaskOrigin::Conception,
             }],
             ..ConceptionState::default()
         };

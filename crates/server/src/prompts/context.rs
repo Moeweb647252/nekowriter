@@ -417,6 +417,26 @@ pub struct ConceptionContext {
     pub idea: String,
     pub genre: String,
     pub writing_language_name: String,
+    pub scopes: Vec<ConceptionScopeContext>,
+    pub knowledge_report: String,
+    pub research_tasks: Vec<ConceptionResearchTaskContext>,
+}
+
+/// One visible scope in the conception knowledge section.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConceptionScopeContext {
+    pub name: String,
+    pub description: String,
+    pub entry_count: i64,
+}
+
+/// One protected topic task listed to the conception agent.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConceptionResearchTaskContext {
+    pub topic: String,
+    pub requirements: String,
+    pub scope_name: String,
+    pub status: String,
 }
 
 /// `diff` (`vars.diff`) for `block.chapter_diff`.

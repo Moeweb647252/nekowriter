@@ -19,7 +19,7 @@ use crate::db::json::{
     SessionStatus,
 };
 use crate::error::{AppError, ErrorCode};
-use crate::events::ServerEvent;
+use crate::events::{BookOp, ServerEvent};
 use crate::state::AppState;
 
 use super::now;
@@ -196,17 +196,54 @@ pub async fn start_knowledge_check_for_book(
     book_id: i32,
     requirements: String,
 ) -> Result<(ResearchTaskDto, i32), AppError> {
+    let (task, session_id, _warnings) =
+        start_knowledge_check_for_book_with_auto(state, book_id, requirements, None).await?;
+    Ok((task, session_id))
+}
+
+/// Starts a check for book creation and records the dialog's auto-start choice in the same
+/// transaction as the task and session (spec/08 §5, §4.5). `None` leaves the stored flag alone,
+/// which is what the standalone endpoint does.
+pub async fn start_knowledge_check_for_book_with_auto(
+    state: &AppState,
+    book_id: i32,
+    requirements: String,
+    auto_start: Option<bool>,
+) -> Result<(ResearchTaskDto, i32, Vec<String>), AppError> {
     let db = state.db().clone();
     let state_owned = state.clone();
-    let (task, session_id, _warnings, events) = super::write(&db, move |tx| {
-        Box::pin(
-            async move { start_knowledge_check(&state_owned, tx, book_id, requirements).await },
-        )
+    let (task, session_id, warnings, events) = super::write(&db, move |tx| {
+        Box::pin(async move {
+            let (task, session_id, warnings, mut events) =
+                start_knowledge_check(&state_owned, tx, book_id, requirements).await?;
+            if let Some(auto_start) = auto_start {
+                let book = books::Entity::find_by_id(book_id)
+                    .one(tx)
+                    .await?
+                    .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
+                let mut conception: crate::db::json::ConceptionState =
+                    book.conception.clone().into_inner();
+                conception.start_after_knowledge_check = auto_start;
+                books::ActiveModel {
+                    id: Set(book_id),
+                    conception: Set(crate::db::json::JsonText(conception)),
+                    updated_at: Set(now()),
+                    ..Default::default()
+                }
+                .update(tx)
+                .await?;
+                events.push(ServerEvent::BookUpdated {
+                    book_id,
+                    op: BookOp::Update,
+                });
+            }
+            Ok((task, session_id, warnings, events))
+        })
     })
     .await?;
     state.events().publish_all(events);
     state.manager().spawn(state.clone(), session_id);
-    Ok((task, session_id))
+    Ok((task, session_id, warnings))
 }
 
 /// The in-transaction service used by the endpoint and by book creation (spec/07 §8.1). A

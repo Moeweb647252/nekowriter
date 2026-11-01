@@ -164,8 +164,10 @@ pub const ARCHIVIST_TOOLS: [&str; 22] = [
 ];
 
 /// The conception role's fixed tool list (spec/05 §2).
-pub const CONCEPTION_TOOLS: [&str; 10] = [
+pub const CONCEPTION_TOOLS: [&str; 12] = [
     "ask_user",
+    "search_knowledge",
+    "read_knowledge_entry",
     "web_search",
     "web_fetch",
     "write_setting_doc",

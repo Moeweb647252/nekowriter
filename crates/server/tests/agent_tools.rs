@@ -180,8 +180,10 @@ fn the_role_lists_are_the_spec_tables_in_order() {
     assert_eq!(ARCHIVIST_TOOLS[7], "create_entity");
     assert_eq!(ARCHIVIST_TOOLS[19], "propose_goal_change");
     assert_eq!(ARCHIVIST_TOOLS[21], "finish_maintenance");
-    assert_eq!(CONCEPTION_TOOLS.len(), 10);
+    assert_eq!(CONCEPTION_TOOLS.len(), 12);
     assert_eq!(CONCEPTION_TOOLS[0], "ask_user");
+    assert_eq!(CONCEPTION_TOOLS[1], "search_knowledge");
+    assert_eq!(CONCEPTION_TOOLS[2], "read_knowledge_entry");
     assert_eq!(RESEARCHER_TOOLS.len(), 8);
     assert_eq!(RESEARCHER_TOOLS[4], "set_target_scope");
     assert_eq!(RESEARCHER_TOOLS[7], "finish_research");

@@ -67,7 +67,7 @@ roles = {
  "writer": "get_entity list_entities get_relations query_timeline list_foreshadowing search_canon search_knowledge read_knowledge_entry search_chapters read_chapter submit_outline submit_revision_plan read_draft insert_text insert_paragraphs replace_text rewrite_paragraph delete_paragraphs finish_draft finish_revision",
  "reviewer": "get_entity list_entities get_relations query_timeline list_foreshadowing search_canon search_knowledge read_knowledge_entry search_chapters read_chapter submit_review",
  "archivist": "get_entity list_entities get_relations query_timeline list_foreshadowing search_canon read_chapter create_entity update_entity set_relation end_relation record_appearances add_timeline_event update_timeline_event add_memory_note retire_memory_note add_foreshadowing resolve_foreshadowing set_chapter_summary propose_goal_change propose_setting_change finish_maintenance",
- "conception": "ask_user web_search web_fetch write_setting_doc edit_setting_doc upsert_character remove_character reorder_characters set_research_topics request_review",
+ "conception": "ask_user search_knowledge read_knowledge_entry web_search web_fetch write_setting_doc edit_setting_doc upsert_character remove_character reorder_characters set_research_topics request_review",
  "researcher": "web_search web_fetch search_knowledge read_knowledge_entry set_target_scope save_knowledge_entry update_knowledge_entry finish_research",
 }
 all_role_tools = set(itertools.chain.from_iterable(v.split() for v in roles.values()))
@@ -213,7 +213,10 @@ S = dict(book=book, track=track_main, chapter=chapter, settings=settings, memory
                    scopes=[dict(name="宋代社会", description="宋代社会生活", entry_count=2, titles=["宋代酒楼", "宋代服饰"], more=0),
                            dict(name="杂项", description="", entry_count=0, titles=[], more=0)],
                    excluded_names=["明代史料"], max_tool_calls=40, max_entries=25),
-         conception=dict(title="青云劫", idea="少年身怀剑灵", genre="", writing_language_name="简体中文"),
+         conception=dict(title="青云劫", idea="少年身怀剑灵", genre="", writing_language_name="简体中文",
+                         scopes=[dict(name="宋代社会", description="宋代社会生活", entry_count=2),
+                                 dict(name="杂项", description="", entry_count=0)],
+                         knowledge_report="", research_tasks=[]),
          cast_index=[dict(id=12, name="林凡", kind_label="人物", status="active", status_label="活跃", aliases=["凡哥", "林师弟"], summary="外门弟子"),
                      dict(id=13, name="老剑", kind_label="物品", status="destroyed", status_label="已损毁", aliases=[], summary="")],
          diff=dict(changes=[dict(op="insert", pid="p9", after=None, old="", new="新段"), dict(op="delete", pid="p3", after=None, old="旧段", new=""),
@@ -249,7 +252,12 @@ variants = {
   "archivist.kickoff.resync": [dict(systems=s) for s in systems_cases] + [dict(track=track_side)],
   "researcher.kickoff": [dict(), dict(research=dict(S["research"], requirements="", scope_description="", existing_titles=[]))],
   "researcher.kickoff.prep": [dict(), dict(prep=dict(S["prep"], scopes=[], excluded_names=[]))],
-  "conception.kickoff": [dict(), dict(conception=dict(S["conception"], genre="仙侠"))],
+  "conception.kickoff": [
+      dict(conception=dict(S["conception"], genre="仙侠", scopes=[], knowledge_report="", research_tasks=[])),
+      dict(conception=dict(S["conception"], genre="仙侠")),
+      dict(conception=dict(S["conception"], knowledge_report="已有知识足够支撑设定，新增了两条背景条目。",
+                           research_tasks=[dict(topic="宋代市井", requirements="茶馆", scope_name="宋代社会", status="draft")])),
+  ],
   "writer.rules.granularity": [dict(granularity=g) for g in gran_cases],
   "writer.notice.outline_accepted": [dict(granularity=g) for g in gran_cases],
   "writer.notice.revision_plan_accepted": [dict(granularity=dict(g, revising=True)) for g in gran_cases],
@@ -341,7 +349,7 @@ variants = {
   "result.request_review": [dict(items=[dict(doc_label="故事大纲", approved=True, feedback=""), dict(doc_label="世界观", approved=False, feedback="势力太多")],
                                  general="整体不错", all_approved=False),
                             dict(items=[dict(doc_label="故事大纲", approved=True, feedback="")], general="", all_approved=True)],
-  "result.conception_write": [dict(action=a, doc_label="世界观", revision=3, chars=2000, name="林凡", rank=1, order=["林凡", "苏婉"], count=4, created=c)
+  "result.conception_write": [dict(action=a, doc_label="世界观", revision=3, chars=2000, name="林凡", rank=1, order=["林凡", "苏婉"], count=4, created=c, kept=[])
                               for a, c in [("write_setting_doc", False), ("edit_setting_doc", False), ("upsert_character", True), ("upsert_character", False),
                                            ("remove_character", False), ("reorder_characters", False), ("set_research_topics", False)]],
   "result.web_search": [dict(query="宋代", hits=[dict(title="宋代茶馆", url="https://a", published="2020-01-01", snippet="……"), dict(title="b", url="https://b", published="", snippet="……")]),

@@ -232,7 +232,21 @@
    "title": "青云劫",
    "idea": "少年身怀剑灵",
    "genre": "",
-   "writing_language_name": "简体中文"
+   "writing_language_name": "简体中文",
+   "scopes": [
+    {
+     "name": "宋代社会",
+     "description": "宋代社会生活",
+     "entry_count": 2
+    },
+    {
+     "name": "杂项",
+     "description": "",
+     "entry_count": 0
+    }
+   ],
+   "knowledge_report": "",
+   "research_tasks": []
   },
   "cast_index": [
    {
@@ -1277,13 +1291,66 @@
    }
   ],
   "conception.kickoff": [
-   {},
    {
     "conception": {
      "title": "青云劫",
      "idea": "少年身怀剑灵",
      "genre": "仙侠",
-     "writing_language_name": "简体中文"
+     "writing_language_name": "简体中文",
+     "scopes": [],
+     "knowledge_report": "",
+     "research_tasks": []
+    }
+   },
+   {
+    "conception": {
+     "title": "青云劫",
+     "idea": "少年身怀剑灵",
+     "genre": "仙侠",
+     "writing_language_name": "简体中文",
+     "scopes": [
+      {
+       "name": "宋代社会",
+       "description": "宋代社会生活",
+       "entry_count": 2
+      },
+      {
+       "name": "杂项",
+       "description": "",
+       "entry_count": 0
+      }
+     ],
+     "knowledge_report": "",
+     "research_tasks": []
+    }
+   },
+   {
+    "conception": {
+     "title": "青云劫",
+     "idea": "少年身怀剑灵",
+     "genre": "",
+     "writing_language_name": "简体中文",
+     "scopes": [
+      {
+       "name": "宋代社会",
+       "description": "宋代社会生活",
+       "entry_count": 2
+      },
+      {
+       "name": "杂项",
+       "description": "",
+       "entry_count": 0
+      }
+     ],
+     "knowledge_report": "已有知识足够支撑设定，新增了两条背景条目。",
+     "research_tasks": [
+      {
+       "topic": "宋代市井",
+       "requirements": "茶馆",
+       "scope_name": "宋代社会",
+       "status": "draft"
+      }
+     ]
     }
    }
   ],
@@ -1659,7 +1726,8 @@
      "苏婉"
     ],
     "count": 4,
-    "created": false
+    "created": false,
+    "kept": []
    },
    {
     "action": "edit_setting_doc",
@@ -1673,7 +1741,8 @@
      "苏婉"
     ],
     "count": 4,
-    "created": false
+    "created": false,
+    "kept": []
    },
    {
     "action": "upsert_character",
@@ -1687,7 +1756,8 @@
      "苏婉"
     ],
     "count": 4,
-    "created": true
+    "created": true,
+    "kept": []
    },
    {
     "action": "upsert_character",
@@ -1701,7 +1771,8 @@
      "苏婉"
     ],
     "count": 4,
-    "created": false
+    "created": false,
+    "kept": []
    },
    {
     "action": "remove_character",
@@ -1715,7 +1786,8 @@
      "苏婉"
     ],
     "count": 4,
-    "created": false
+    "created": false,
+    "kept": []
    },
    {
     "action": "reorder_characters",
@@ -1729,7 +1801,8 @@
      "苏婉"
     ],
     "count": 4,
-    "created": false
+    "created": false,
+    "kept": []
    },
    {
     "action": "set_research_topics",
@@ -1743,7 +1816,8 @@
      "苏婉"
     ],
     "count": 4,
-    "created": false
+    "created": false,
+    "kept": []
    }
   ],
   "result.draft_edit": [

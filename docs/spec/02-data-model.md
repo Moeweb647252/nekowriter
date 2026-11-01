@@ -816,7 +816,7 @@ type ViewSnapshot =
   | { kind: "conception";                                                                     // conception
       docs: Record<SettingDocKind, { revision: number; content: string }>;
       characters: { id: number; rank: number; name: string; role_label: string; summary: string; profile: string }[];
-      topics: { topic: string; requirements: string; scope: string }[] };
+      topics: { id: number; topic: string; requirements: string; scope: string; origin: ResearchTaskOrigin }[] };
 
 // agent_messages.content
 type StoredBlock =

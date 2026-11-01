@@ -28,6 +28,8 @@ expression: "serde_json::to_string_pretty(&roles).expect(\"tools JSON\")"
   ],
   "conception": [
     "ask_user",
+    "search_knowledge",
+    "read_knowledge_entry",
     "web_search",
     "web_fetch",
     "write_setting_doc",
