@@ -2523,7 +2523,10 @@ fn message_usage(usage: &nekowriter_llm::Usage) -> crate::db::json::Usage {
 #[cfg(test)]
 mod tests {
     use super::advance_conception_snapshot;
-    use crate::db::json::{ConceptionDocSnapshot, ViewSnapshot};
+    use crate::db::json::{
+        ConceptionCharacterSnapshot, ConceptionDocSnapshot, ConceptionTopicSnapshot,
+        ResearchTaskOrigin, ViewSnapshot,
+    };
     use std::collections::BTreeMap;
 
     fn conception(content: &str) -> ViewSnapshot {
@@ -2539,6 +2542,35 @@ mod tests {
             docs,
             characters: Vec::new(),
             topics: Vec::new(),
+        }
+    }
+
+    fn character_snapshot(profile: &str) -> ViewSnapshot {
+        ViewSnapshot::Conception {
+            docs: BTreeMap::new(),
+            characters: vec![ConceptionCharacterSnapshot {
+                id: 1,
+                rank: 1,
+                name: "A".to_owned(),
+                role_label: "lead".to_owned(),
+                summary: "summary".to_owned(),
+                profile: profile.to_owned(),
+            }],
+            topics: Vec::new(),
+        }
+    }
+
+    fn topic_snapshot(topic: &str) -> ViewSnapshot {
+        ViewSnapshot::Conception {
+            docs: BTreeMap::new(),
+            characters: Vec::new(),
+            topics: vec![ConceptionTopicSnapshot {
+                id: Some(1),
+                topic: topic.to_owned(),
+                requirements: String::new(),
+                scope: "scope".to_owned(),
+                origin: ResearchTaskOrigin::Conception,
+            }],
         }
     }
 
@@ -2564,5 +2596,49 @@ mod tests {
             &conception("agent write"),
         ));
         assert_eq!(snapshot, conception("agent write"));
+    }
+
+    #[test]
+    fn a_stale_character_slice_is_not_advanced() {
+        let mut snapshot = character_snapshot("old");
+        assert!(!advance_conception_snapshot(
+            &mut snapshot,
+            &character_snapshot("author edit"),
+            &character_snapshot("agent write"),
+        ));
+        assert_eq!(snapshot, character_snapshot("old"));
+    }
+
+    #[test]
+    fn an_unchanged_character_slice_advances_to_the_agent_write() {
+        let mut snapshot = character_snapshot("old");
+        assert!(advance_conception_snapshot(
+            &mut snapshot,
+            &character_snapshot("old"),
+            &character_snapshot("agent write"),
+        ));
+        assert_eq!(snapshot, character_snapshot("agent write"));
+    }
+
+    #[test]
+    fn a_stale_topic_slice_is_not_advanced() {
+        let mut snapshot = topic_snapshot("old");
+        assert!(!advance_conception_snapshot(
+            &mut snapshot,
+            &topic_snapshot("author edit"),
+            &topic_snapshot("agent write"),
+        ));
+        assert_eq!(snapshot, topic_snapshot("old"));
+    }
+
+    #[test]
+    fn an_unchanged_topic_slice_advances_to_the_agent_write() {
+        let mut snapshot = topic_snapshot("old");
+        assert!(advance_conception_snapshot(
+            &mut snapshot,
+            &topic_snapshot("old"),
+            &topic_snapshot("agent write"),
+        ));
+        assert_eq!(snapshot, topic_snapshot("agent write"));
     }
 }
