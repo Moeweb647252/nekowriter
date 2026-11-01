@@ -545,8 +545,8 @@ end of the settings block (shared by every session of the book); see spec/04 §3
 
 | Kind | Kickoff blocks (in order) |
 |---|---|
-| conception | `conception.kickoff` |
-| research | `block.book_brief` (only if linked to a book) · `researcher.kickoff` |
+| conception | `conception.kickoff` (its `conception` variable carries the visible knowledge scopes, the latest knowledge check's report, and the research topics the agent must keep, D-158) |
+| research | `block.book_brief` (only if linked to a book) · `researcher.kickoff`; a knowledge check (`kind = 'preparation'`, spec/07 §8.1): `block.book_brief` · `researcher.kickoff.prep` |
 | chapter_outline | `block.settings`⁎ · `block.canon_systems` · `block.memory` · `block.recent_chapters` · `block.goals` · `planner.kickoff` |
 | chapter_write | `block.settings`⁎ · `block.canon_systems` · `block.writing_skills` · `block.memory` · `block.recent_chapters` · `block.goals` · `block.chapter_draft` · `writer.kickoff.chapter` (a redraft's feedback comes through the task's `feedback` variable) |
 | chapter_revise | `block.settings`⁎ · `block.canon_systems` · `block.writing_skills` · `block.memory` · `block.goals` · `block.chapter_draft` · `writer.kickoff.revise` |
@@ -771,3 +771,12 @@ With `ScriptedProvider` (spec/04 §7) and a temp database:
     track's private nodes.
 31. `propose_goal_change` is frozen only into a `chapter_maintenance` session whose chapter has
     relevant goal nodes with Goals on. Otherwise the archivist freezes the pre-0006 21 tools.
+32. Knowledge first (`knowledge_first_flow.rs`, D-158): a book created with `knowledge_check` runs
+    the check before any conception session. Completing the check starts exactly one conception
+    session when `start_after_knowledge_check` is set and the book never had one, and none
+    otherwise (auto-start off, the check failed or abandoned, or conception started by hand). The
+    started session's kickoff carries the visible scopes and the check's report, and its frozen
+    tools include `search_knowledge` and `read_knowledge_entry`.
+33. Ownership (`research_topics_ownership.rs`): `set_research_topics` deletes only the agent's own
+    drafts. An author task, created at any time or adopted by a PATCH, survives and is listed in
+    the next kickoff or in the tool's `kept[]`.

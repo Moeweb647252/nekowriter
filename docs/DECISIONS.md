@@ -3171,3 +3171,57 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   single pending-row read prevents the count and the author-message list from disagreeing during
   consumption, while notices remain counted only in `inbox_pending`.
 - **Spec**: spec/10 §2.7.
+
+
+### D-158 Knowledge first: a knowledge check before conception, opt-out scopes, protected topics
+
+- **Context**: The author asked for three changes. (1) Knowledge accumulation comes before every
+  other stage: an agent first checks whether the existing knowledge base can support conceiving
+  the book, fills the gaps, and only then does conception start. Today, conception has no
+  knowledge tools, and research runs mainly after finalize. (2) A book's agents see every
+  knowledge scope by default, and the author can uncheck scopes. Today visibility is opt-in
+  (`book_scopes`). (3) The New book dialog gets a checkbox for starting conception
+  automatically. While the plan was written, the author decided that the checkbox defaults to on,
+  that every existing book sees every scope after the upgrade, and that the conception agent must
+  not delete research tasks the author created. Today `set_research_topics` deletes every `draft`
+  task of the book, and every task created for a conceiving book is a draft.
+- **Decision** (plan `docs/research/knowledge-first-plan.md`, K1–K9):
+  - A conception book first runs a **knowledge check**: a `research_tasks` row with
+    `kind = 'preparation'`, run as an ordinary `research` session with the researcher role and
+    budget. There is no new session kind (no `agent_sessions` rebuild), no new role and no new
+    model setting.
+  - Its kickoff (`researcher.kickoff.prep`) inventories the visible scopes. Its knowledge tools
+    span them. One new tool, `set_target_scope`, frozen only for checks, picks or creates the
+    scope it writes to. An excluded scope is refused (`scope_excluded`).
+  - The check's report reaches conception. Conception gains `search_knowledge` and
+    `read_knowledge_entry` (12 tools), and its kickoff lists the visible scopes, the report, and
+    the topics it must keep.
+  - `ConceptionState.start_after_knowledge_check` records the dialog's choice. Completing the
+    check starts conception once, only if the book never had a conception session.
+  - The API defaults (`knowledge_check: false`, `auto_start_conception: true`) keep old requests
+    unchanged; the web client always sends `knowledge_check: true`.
+  - Visibility is **opt-out**: `book_scope_exclusions` replaces `book_scopes`, and a new scope is
+    visible to every book. Agents never clear an exclusion. The author's Run on a book-linked task
+    and Finalize do, for their target scope, as attaching did before.
+  - `research_tasks.origin` (`author` | `conception`) records ownership. `set_research_topics`
+    replaces only `conception` drafts and reports the author drafts it kept. An author PATCH
+    adopts a conception task.
+  - Migration 0008 drops `book_scopes` (every book sees every scope), adds `kind` and `origin`,
+    and back-fills `origin = 'conception'` for existing drafts.
+- **Consequences**:
+  - A new conception book costs one more researcher session before conception. A sufficient
+    base makes it short, and the author can start conception early.
+  - Under opt-out, `block.settings` and a keyword-less `search_knowledge` grow with the global
+    library, and an unrelated book sees another book's subject scopes until the author unchecks
+    them. That is accepted for the MVP, without a cap.
+  - Two baseline snapshots change by design: the conception kickoff and the conception tool list.
+    Topic research sessions keep their seven tools and their kickoff byte for byte.
+  - An existing draft created by the author before 0008 is back-filled as `conception` (who
+    created it was not recorded), so it is protected only once the author edits it. The pre-ship
+    report counts these drafts.
+  - The overview's next-action rules are unchanged: a conceiving book still shows
+    `continue_conception`, and the studio renders the check's states.
+- **Spec**: PROJECT §2, §4, §5, §6.1, §6.2, §6.11, F2, F3, F10, §8.7, §8.10, §10 (29–32), §11;
+  spec/02 §1, §2, §3, §4, §5 (18–20); spec/03 §10, §15 (32–33); spec/05 §2, §3, §7, §8, §9;
+  spec/07 §1, §8, §8.1; spec/08 §1.4, §5; spec/09 §2; spec/10 §2.2, §2.5, §2.8; spec/11 §5.0, §5.4,
+  §5.5, §9.

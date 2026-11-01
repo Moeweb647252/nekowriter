@@ -163,6 +163,19 @@ needed. Real providers are tested when the author supplies keys.
       list.
     - Approve: maintenance skips the step and the chapter syncs.
     - Turn Foreshadowing on again. The entry and the data are back.
+12. Knowledge first (M15, plan §8):
+    - On the global Knowledge page, create a scope with one entry. Create a book with conception
+      and auto-start on. The studio shows the knowledge check, whose kickoff lists the scope. The
+      check sets a target scope and saves an entry, and when it finishes, conception starts by
+      itself. The conception kickoff shows the scopes and the report, and its tool list has
+      `search_knowledge`.
+    - In Book › Knowledge every scope is checked. Uncheck one and save. The next session's
+      `block.settings` no longer lists it.
+    - Create a second book with auto-start off. After the check, the studio shows the report and
+      **Start conception**, and nothing starts by itself.
+    - In that book, add a research topic in the Research topics tab, then start conception and let
+      the agent set its topics. Your topic is still there, marked "Added by you".
+    - Create another scope. Both books see it without any action.
 
 ## M12 — Outline and write sessions
 
@@ -210,3 +223,18 @@ prompts, `web/src/api/gen`, API responses, events and the 13.2 kickoff snapshots
 | 14.7 | **Reads** (§2.7): loaders for the §1.7 loops, `is_in` batching, partial models for the `chapters`/`chapter_versions` list queries, `has_related`, generated finders. | 07, 08 §7 | Each converted function keeps its output, including order, as proven by its existing tests or a new one written **before** the change. `overview_actions.rs` and the agent-context snapshots are unchanged. |
 | 14.8 | **`COLUMN` sweep** (§2.8): mechanical, `src` and `tests`. | — | No behavior change. `grep` shows `Column::` only where §2.8 allows it. |
 | 14.9 | **Pre-ship**: run `decode_all_rows` on a **copy** of the author's database; run smoke items 1–4 and 8 with the Demo provider; compare `cargo build -p nekowriter` times before M14 and after it. | PLAN §M11.5 | Every row decodes (any failure is reported with its table, id and column, and is not "fixed" in code). The checklist passes. The build times and row counts are in the final message and in D-151's consequences. |
+
+## M15 — Knowledge first
+
+Plan: `docs/research/knowledge-first-plan.md` (D-158). The spec sections it lists in §7 are already
+amended; the code catches up task by task. Execute in order, one commit per task.
+
+| # | Task | Spec | Tests / acceptance |
+|---|---|---|---|
+| 15.1 | **Docs**: done with the plan (D-158). Re-read the amended sections before 15.2, and fix any that a code fact contradicts (note it in D-158). | plan §7 | `check.sh` green (docs only) |
+| 15.2 | **Schema and types**: migration `0008` plus the `0001` edit (`book_scope_exclusions`, `book_scopes` dropped, `research_tasks.kind` and `.origin` with the draft back-fill); entities; `ResearchTaskKind`, `ResearchTaskOrigin`; `ConceptionState.start_after_knowledge_check`; the DTO fields; bindings. | 02 §1–§5; 10 §2.2, §2.5, §2.8 | `knowledge_first_migration.rs` per plan §6 (AC2); `entity_schema.rs` on fresh and upgraded databases; JSON defaults |
+| 15.3 | **Opt-out visibility**: `visible_scope_ids`, `PUT /books/:id/scopes {excluded_scope_ids}`, `include_scope` in run and finalize, `settings_context`; rewrite the "not attached ⇒ invisible" tests. | 07 §1; 08 §5 | `knowledge_visibility.rs` per plan §6 (AC1) |
+| 15.4 | **Knowledge check backend**: task rules, `POST /books/:id/knowledge-check`, `researcher.kickoff.prep` (context, variables, samples, validator), `set_target_scope`, `scope_excluded` and `target_scope_unset`, `tools_for_session(preparation)`, visibility in checks, `finish_research` without a target, `SessionDto.research_task_kind`, the Demo arm. | 07 §8.1; 05 §2, §8; 09 §2; 10 §2.2, §2.5 | `knowledge_check.rs` per plan §6 (AC4, AC8); prompt snapshots |
+| 15.5 | **Creation, auto-start, conception knowledge, protected tasks**: `BookInput` handling; the auto-start hook; conception tools (12) and kickoff variables (`scopes`, `knowledge_report`, `research_tasks`); `conception.system` and `conception.kickoff`; `origin` on create, PATCH and `set_research_topics`; `kept[]`. | 08 §5; 05 §7; 03 §10, §15 (32–33) | `knowledge_first_flow.rs` and `research_topics_ownership.rs` per plan §6 (AC3, AC5–AC7, AC10, AC11); `kickoff_baseline` changes only for the conception kickoff and tool list |
+| 15.6 | **Web**: the New book dialog checkbox and landing; the studio's pre-conception states; Book › Knowledge (unchecking, Check knowledge); "Knowledge check" labels and session title; "Added by you"; the scope hint; both locales. | 11 §5.0, §5.4, §5.5, §9; PROJECT §8.7, §8.10 | Vitest per spec/11 §9 (AC9); `i18n:check` |
+| 15.7 | **Smoke and pre-ship**: smoke item 12 with the Demo provider. Run `0008` on a **copy** of the author's database, and report per book the scopes that become visible, the research task counts before and after, and the drafts back-filled as `conception` per conceiving book. | PLAN §M11.5 | the checklist passes; the report is in the final message and in D-158's consequences |

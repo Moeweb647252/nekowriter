@@ -168,6 +168,11 @@ message and a retry.
   visible for a conceiving book — it may already own a chapter created before D-130 gated chapter
   creation on finalize — so the conceiving block is added, not substituted. Clicking its title or
   its "Open" menu item goes to the same studio; every other status keeps opening the overview.
+- `NewBookDialog` (D-158): under "Start with the conception agent", an indented checkbox "Start
+  conception automatically after the knowledge check" (default on, rendered only while conception
+  is on). With conception on, the request sends `start_conception: true`, `knowledge_check: true`
+  and `auto_start_conception`. Landing: a `conceiving` book opens `/books/:id/conception`, any
+  other book `/books/:id`. The landing no longer depends on `session_id`.
 
 ### 5.1 Workspace
 - `BookLayout`: `ResizablePanelGroup` (shadcn wrapper over react-resizable-panels v4
@@ -308,6 +313,21 @@ Two panes: conversation (the same `ActivityStream` and `Composer` components) an
 not running. `CharacterRankList` uses dnd-kit sortable (reorder → `POST characters/reorder`).
 "Finalize book" lives in the documents pane footer.
 
+**Before conception** (D-158). While the book has no conception session, the conversation pane
+shows the latest knowledge check, chosen from the research tasks the studio already loads
+(`kind === "preparation"`):
+
+| State | Pane |
+|---|---|
+| Check open (running, held, paused, failed…) | A "Knowledge check" header with the session status; the check's `ActivityStream`; a link to the research task page (steering, pause and stop live there); **Start conception now**, which asks first ("the check is still running and keeps running") |
+| Check done | The report (`Markdown`), the number of entries created, a link to Book › Knowledge, and **Start conception** (primary) |
+| Check cancelled | The status, a link to the task, and **Start conception** |
+| No check | Today's "no session" text with **Start conception**, plus **Check knowledge first** (`POST /books/:id/knowledge-check`) |
+
+The pane follows `session.updated` and `research.updated` without a reload, so auto-start swaps it
+to the conception session. With a conception session the studio is unchanged. The Research topics
+tab shows `kind === "topic"` drafts and labels `origin === "author"` rows "Added by you".
+
 ### 5.5 Canon, settings materials, knowledge, prompts, settings
 Per PROJECT §8.8–§8.12. Shared pieces: `Markdown` (react-markdown + remark-gfm, no raw HTML),
 `EntityPicker` (a combobox over `GET entities?q=`), `KeyValueEditor` (attributes),
@@ -316,6 +336,20 @@ sensor), `PromptEditor` (monospace textarea, variable docs side panel, "diff vs 
 `DiffView`). The Goals dialog's pickers are native selects over the full list for the MVP, not
 searchable comboboxes (D-155); a shared searchable picker is a follow-up that must keep the
 dialog's scope.
+
+**Book › Knowledge** (`BookKnowledgePage`, D-158) lists every scope (`useScopes`) with a checkbox
+that is checked when the scope is in the book's visible list (`useBookScopes`). Save sends the
+**unchecked** ids as `excluded_scope_ids`. A scope created after the page loaded is in neither
+list, so it is not sent and stays visible. The hint says that agents in this book read every
+checked scope and that new scopes are checked automatically. A **Check knowledge** button opens a
+small dialog (optional focus) and calls `POST /books/:id/knowledge-check`, then navigates to the
+task page. It is disabled, with the reason, while a check is open. The global scope-creation
+dialog has a one-line hint that a new scope is visible to every book unless a book unchecks it.
+
+**Knowledge checks in research lists**: `ResearchTaskList`, the task page and `/research` show a
+`preparation` task as "Knowledge check" with its target scope or "—", and without topic or scope
+editing. `SessionHeader` titles a research session whose `research_task_kind` is `preparation`
+with `agent:session_title.knowledge_check`.
 
 **Bulk defer of research tasks** (D-140) lives in one shared place,
 `features/research/useBulkDefer.ts` (`useDeferReadyResearchTasks`), used by `ResearchTaskList`
@@ -475,3 +509,13 @@ test imports the file by relative path).
   - `chapter.updated` invalidates the goal keys and the overview;
   - every `ErrorCode` (`goal.*`) and the `propose_goal_change` tool renderer have keys in both
     locales.
+- Knowledge first (D-158):
+  - `NewBookDialog` hides the auto-start box while conception is off, sends both fields, and
+    lands on the studio for a `conceiving` book;
+  - `BookKnowledgePage` starts with every visible scope checked, sends the unchecked ids as
+    `excluded_scope_ids`, and does not send a scope missing from the loaded list;
+  - the studio's four pre-conception states, the confirmation of **Start conception now**, and
+    the swap to the conception session on `session.updated`;
+  - the "Added by you" label on author topics;
+  - the "Knowledge check" title in the research list and in `SessionHeader`;
+  - every new string has keys in both locales.

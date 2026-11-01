@@ -162,8 +162,8 @@ listing the candidates with ids.
 | writer | `get_entity`, `list_entities`, `get_relations`, `query_timeline`, `list_foreshadowing`, `search_canon`, `search_knowledge`, `read_knowledge_entry`, `search_chapters`, `read_chapter`, `submit_revision_plan`, `read_draft`, `insert_text`, `insert_paragraphs`, `replace_text`, `rewrite_paragraph`, `delete_paragraphs`, `finish_draft`, `finish_revision` |
 | reviewer | `get_entity`, `list_entities`, `get_relations`, `query_timeline`, `list_foreshadowing`, `search_canon`, `search_knowledge`, `read_knowledge_entry`, `search_chapters`, `read_chapter`, `submit_review` |
 | archivist | `get_entity`, `list_entities`, `get_relations`, `query_timeline`, `list_foreshadowing`, `search_canon`, `read_chapter`, `create_entity`, `update_entity`, `set_relation`, `end_relation`, `record_appearances`, `add_timeline_event`, `update_timeline_event`, `add_memory_note`, `retire_memory_note`, `add_foreshadowing`, `resolve_foreshadowing`, `set_chapter_summary`, `propose_goal_change`, `propose_setting_change`, `finish_maintenance` |
-| conception | `ask_user`, `web_search`, `web_fetch`, `write_setting_doc`, `edit_setting_doc`, `upsert_character`, `remove_character`, `reorder_characters`, `set_research_topics`, `request_review` |
-| researcher | `web_search`, `web_fetch`, `search_knowledge`, `read_knowledge_entry`, `save_knowledge_entry`, `update_knowledge_entry`, `finish_research` |
+| conception | `ask_user`, `search_knowledge`, `read_knowledge_entry`, `web_search`, `web_fetch`, `write_setting_doc`, `edit_setting_doc`, `upsert_character`, `remove_character`, `reorder_characters`, `set_research_topics`, `request_review` |
+| researcher | `web_search`, `web_fetch`, `search_knowledge`, `read_knowledge_entry`, `set_target_scope`, `save_knowledge_entry`, `update_knowledge_entry`, `finish_research` |
 
 **RETRIEVAL** = the first ten writer tools (`get_entity` … `read_chapter`).
 **DRAFT_EDIT** = `insert_text`, `insert_paragraphs`, `replace_text`, `rewrite_paragraph`,
@@ -183,7 +183,10 @@ that list, in that order, minus:
 
 - `search_canon`, only when Entities, Timeline, Memory and Foreshadowing are all off;
 - `propose_goal_change`, unless the session is `chapter_maintenance`, Goals is on, and the
-  chapter has relevant goal nodes (the `block.goals` set, spec/06 §11.5).
+  chapter has relevant goal nodes (the `block.goals` set, spec/06 §11.5);
+- `set_target_scope`, unless the session is a research session whose task is a knowledge check
+  (`kind = 'preparation'`, spec/07 §8.1, D-158). A topic research session therefore freezes the
+  pre-D-158 seven tools in the same order.
 
 A book with all five systems on and no relevant goal nodes therefore freezes exactly the pre-D-150
 lists (the archivist's 21 tools). The map lives once in `agent/tools/registry.rs`;
@@ -214,7 +217,7 @@ researcher sessions allow all of their tools.
 | `query_timeline` | `entity`, `query`, `around_event` (id), `from_chapter`, `to_chapter` (numbers in the main track), `limit` (20, max 50), `order` (`chronological` \| `recent_first`) | Ordered events: `[#id] (story_time) 标题 — 描述 · 第N章 · 涉及：A、B`. With `around_event`: the 5 events before and after it. Anchor marking as above | `{count}` |
 | `list_foreshadowing` | `status` (`open`), `entity`, `limit` (20, max 50) | `[#id] 标题 — 描述 · 埋设于第N章 · 计划回收：…` | `{count}` |
 | `search_canon` | `query`*, `kinds` (subset of `entity`,`note`,`foreshadowing`,`event`,`summary`), `limit` (8, max 20) | Hybrid search (spec/07 §5) over visible search docs except passages: `【类型】标题(#ref) — snippet`. The kinds searched are the requested ones (or all) **intersected with the enabled kinds of the session's frozen `canon_systems`**: `entity` needs Entities, `event` Timeline, `note` and `summary` Memory, `foreshadowing` Foreshadowing. An empty intersection gives the ordinary empty result; `block.canon_systems` has told the model which systems are off | `{query, count}` |
-| `search_knowledge` | `query`*, `scope` (name), `limit` (6, max 15) | Hybrid search over the book's visible scopes (researcher: its target scope only), or over the one named by `scope`, which must be one of them (`error.scope_not_found`, listing the visible names). `[条目#id]《标题》（范围）— snippet ≤400 chars`. No visible scope → `error.no_knowledge_scope` | `{query, count}` |
+| `search_knowledge` | `query`*, `scope` (name), `limit` (6, max 15) | Hybrid search over the book's visible scopes (spec/07 §1: every scope the author did not uncheck; a topic research session: its target scope only; a knowledge check: the book's visible scopes), or over the one named by `scope`, which must be one of them (`error.scope_not_found`, listing the visible names). `[条目#id]《标题》（范围）— snippet ≤400 chars`. No visible scope → `error.no_knowledge_scope` | `{query, count}` |
 | `read_knowledge_entry` | `entry_id`*, `offset` (0) | Title, scope, sources, content from `offset`, ≤ 6,000 characters, plus a continuation hint. The scope must be visible | `{entry_id, title}` |
 | `search_chapters` | `query`*, `limit` (6, max 15) | Hybrid search over official-chapter passages in visible tracks: `第N章《标题》 p12–p15：snippet`. Main-story passages after a side story's anchor are marked | `{query, count}` |
 | `read_chapter` | `chapter`* (`"12"` = number in the session's track, `"main 12"` = main track, `"#345"` = id), `from_pid`, `max_chars` (8,000, max 20,000) | Official text with pids. Non-official chapters → `error.chapter_not_official`; chapters of other isolated tracks are not visible (`error.chapter_not_found`) | `{chapter_id, track_id, number}` |
@@ -288,8 +291,17 @@ goal_proposals: n}`.
 | `upsert_character` | `name`*, `new_name`, `role_label`, `summary`, `profile`, `rank` | Creates or updates a character design. A new design goes last unless `rank` is given; `rank` moves it (others shift) | `{character_id, name, rank}` |
 | `remove_character` | `name`* | Deletes the character design | `{name}` |
 | `reorder_characters` | `names`* (the complete order) | Must be a permutation of all names | `{order}` |
-| `set_research_topics` | `topics`* (array of `{topic, requirements, scope}`) | Replaces the book's research tasks in status `draft` with these | `{count}` |
+| `set_research_topics` | `topics`* (array of `{topic, requirements, scope}`) | Replaces **the agent's own** draft topics: deletes the book's `draft` tasks with `kind = 'topic'` and `origin = 'conception'`, then inserts these as `conception` drafts. It never deletes or edits an `author` task (one the author created, or a conception draft the author edited) in any status, nor a task that has run (D-158). The result lists the author's drafts it kept (`kept[]`, their topics), so the model does not repeat them | `{count, kept}` |
 | `request_review` | `message`* | `await_input: request_review`. The answer payload is `{docs: {outline?, world?, protagonist?, characters?, research_topics?: {approved: bool, feedback?: string}}, general?: string}`. Approved items record their revision (`setting_docs.approved_revision`, `ConceptionState`). Rendered with `result.request_review` | `{message}` |
+
+**Knowledge** (D-158): `search_knowledge` and `read_knowledge_entry` behave as in §3, over the
+book's visible scopes. The kickoff lists those scopes, carries the latest knowledge check's report
+(spec/07 §8.1), and lists the research topics `set_research_topics` would keep, so conception
+builds on what is known and only proposes research for what is missing.
+
+**Ownership of research topics.** `origin` records who owns a task. Every task the author creates
+through the API is `author`. An author PATCH of a `conception` task sets it to `author` in the same
+write, because editing adopts it, and no agent tool turns it back.
 
 Every conception write records `change_log` rows (`actor: agent`; research topics are tasks,
 not canon, so they have none) and emits `settings.changed` with the matching kind
@@ -303,13 +315,19 @@ the same way.
 | Tool | Parameters | Behavior | `ui` |
 |---|---|---|---|
 | `web_search`, `web_fetch` | as in §7 | | |
-| `search_knowledge` | as in §3 | Restricted to the task's target scope (to avoid duplicates) | |
-| `read_knowledge_entry` | as in §3 | Target scope only | |
+| `search_knowledge` | as in §3 | A topic task: restricted to its target scope (to avoid duplicates). A knowledge check: the book's visible scopes | |
+| `read_knowledge_entry` | as in §3 | A topic task: target scope only. A knowledge check: the book's visible scopes | |
+| `set_target_scope` | `name`*, `description` | Knowledge checks only (§2). Sets the scope that `save_knowledge_entry` and `update_knowledge_entry` write to; may be called again to switch, and saved entries stay where they are. An existing scope the author excluded for the book → `error.scope_excluded`. An existing visible scope is used as is (`description` ignored: an agent never rewrites a shared description). A new name needs `description` (else `error.validation`); the scope is created (visible to every book, `knowledge.changed`) | `{scope, created, entry_count}` |
 | `save_knowledge_entry` | `title`*, `content`*, `source_urls`* (≥1 URL; `[]` allowed only when `content` states the source is general knowledge), `tags` | Creates an entry in the target scope (`source: research`, `research_task_id`). A title already used in the scope → `error.entry_exists` (suggest `update_knowledge_entry`). Chunks the entry in the same transaction (keyword search works at once); embedding follows asynchronously | `{entry_id, title}` |
 | `update_knowledge_entry` | `entry_id`*, `title`, `content` (replace), `edits` (`{find, replace}`), `source_urls_add`, `tags` | Target scope only; `content` and `edits` are mutually exclusive (`error.mutually_exclusive`); each `find` must match the content exactly once, and all edits apply or none (`error.find_failed`, whose `doc_label` is the `target_type` label of `knowledge_entry`); re-chunks like `save_knowledge_entry` | `{entry_id, title}` |
-| `finish_research` | `report`* | Stores the report on the task (`done`; `entries_created` counts the entries this task has created over all its runs). The result reports how many entries this session saved or updated. Effects: `complete: research` | `{entries: n}` (this session) |
+| `finish_research` | `report`* | Stores the report on the task (`done`; `entries_created` counts the entries this task has created over all its runs). A knowledge check may finish without a target scope. The result reports how many entries this session saved or updated. Effects: `complete: research` | `{entries: n}` (this session) |
 
-Research budget (shown in the kickoff, enforced softly): 40 tool calls and 25 entries per task.
+In a knowledge check, `save_knowledge_entry` and `update_knowledge_entry` before any
+`set_target_scope` return `error.target_scope_unset` (call `set_target_scope` first) instead of
+`error.no_knowledge_scope`.
+
+Research budget (shown in the kickoff, enforced softly): 40 tool calls and 25 entries per task,
+the same for a knowledge check.
 Past the budget, every result gets `notice.research_budget`.
 
 ## 9. Required tests
@@ -329,3 +347,8 @@ Past the budget, every result gets `notice.research_budget`.
   `sentence` and `paragraph`; the short-completion confirmation.
 - `prepare` runs outside the transaction (a scripted slow web provider plus a concurrent write
   from another session both succeed).
+- Knowledge (D-158): a topic research session freezes exactly the old seven researcher tools and a
+  knowledge check freezes eight; `set_target_scope` happy paths (existing, new, switch), a new
+  name without a description, an excluded name; `error.target_scope_unset`; conception's
+  `search_knowledge` never returns an excluded scope; `set_research_topics` keeps every `author`
+  task and reports the kept drafts.

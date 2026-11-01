@@ -43,10 +43,11 @@
 | Method | Path | Body / query | Response |
 |---|---|---|---|
 | GET | `/books` | `?status=` — `conceiving`/`active`/`archived` filters exactly; omitted, empty or `all` returns every status | `BookSummaryDto[]` (counts, words, latest activity, attention count). The library calls it unfiltered and hides archived rows itself (D-129) |
-| POST | `/books` | `{ title, idea, genre, writing_language, start_conception }` | `{ book: BookDto, session_id?, warnings }` |
+| POST | `/books` | `{ title, idea, genre, writing_language, start_conception, knowledge_check?, auto_start_conception? }` — `knowledge_check` defaults to `false` and `auto_start_conception` to `true`; both are ignored without `start_conception` (spec/08 §5, D-158) | `{ book: BookDto, session_id, research_task_id, warnings }` (`session_id`: the knowledge check's session, or the conception session when no check ran, or `null`; `research_task_id`: the check's task or `null`) |
 | GET / PATCH / DELETE | `/books/:id` | PATCH: title, genre, writing_language, settings, model_overrides, status (archive) | `BookDto` |
 | GET | `/books/:id/overview` | | `BookOverviewDto` (spec/08 §7) |
-| POST | `/books/:id/conception/start` | | `{ session_id }` (the open session or a new one; spec/08 §5) |
+| POST | `/books/:id/conception/start` | | `{ session_id }` (the open session or a new one; allowed while a knowledge check is open; spec/08 §5) |
+| POST | `/books/:id/knowledge-check` | `{ requirements? }` | `201 { task: ResearchTaskDto, session_id }` (spec/07 §8.1). `409 book.invalid_state` unless the book is `conceiving` or `active`; `409 research.invalid_state` with `details.session_id` while a check is open; no researcher model → the same error as `run`, and no row is written |
 | POST | `/books/:id/conception/finalize` | | `{ book, seed_session_id?, warnings }` |
 | POST | `/books/:id/canon/seed` | | `{ session_id }` (the open session or a new one; spec/08 §5) |
 | GET / POST | `/books/:id/tracks` | `TrackInput` | `TrackDto[]` / `TrackDto` |
@@ -118,9 +119,9 @@
 | GET / POST | `/knowledge/scopes/:id/entries` | `?q&cursor` / `EntryInput` | page / `EntryDto` |
 | GET / PATCH / DELETE | `/knowledge/entries/:id` | | `EntryDto` |
 | GET | `/knowledge/search` | `?q&scope_ids=1,2&limit` | `KnowledgeHitDto[]` |
-| GET / PUT | `/books/:id/scopes` | `{ scope_ids }` | `ScopeDto[]` |
-| GET / POST | `/research-tasks` | `?book_id&status` / `{ book_id?, scope_name, topic, requirements, language? }` (created as `draft` while the book is conceiving, otherwise `ready`; `language` is required without a book and ignored with one) | `ResearchTaskDto[]` / `ResearchTaskDto` |
-| GET / PATCH / DELETE | `/research-tasks/:id` | PATCH: topic, requirements, scope_name, `status: ready` (confirms a draft); not while its session is open | `ResearchTaskDto` (with the report and the created entries when done) |
+| GET / PUT | `/books/:id/scopes` | PUT: `{ excluded_scope_ids }` replaces the book's exclusion set (unknown id → 404, nothing changes) | `ScopeDto[]`: the scopes **visible** to the book, by name (every scope minus its exclusions, spec/07 §1, D-158) |
+| GET / POST | `/research-tasks` | `?book_id&status` / `{ book_id?, scope_name, topic, requirements, language? }` (created as `draft` while the book is conceiving, otherwise `ready`, always with `origin: author` and `kind: topic`; `language` is required without a book and ignored with one) | `ResearchTaskDto[]` / `ResearchTaskDto` |
+| GET / PATCH / DELETE | `/research-tasks/:id` | PATCH: topic, requirements, scope_name, `status: ready` (confirms a draft); not while its session is open. A PATCH of a `conception` task sets `origin: author`. A knowledge check accepts `requirements` only (`topic` or `scope_name` → `422 validation.invalid_fields`) | `ResearchTaskDto` (with `kind`, `origin`, and the report and the created entries when done) |
 | POST | `/research-tasks/:id/run` | | `{ session_id }` |
 | POST | `/research-tasks/:id/defer` | `ready` → `deferred`; idempotent, a repeat call returns the current row (spec/07 §8, D-138) | `ResearchTaskDto` |
 | POST | `/research-tasks/:id/resume` | `deferred` → `ready`; idempotent in the same way | `ResearchTaskDto` |
@@ -157,6 +158,7 @@ type SessionDto = {
   id: number; book_id: number | null; role: AgentRole; kind: SessionKind;
   chapter_id: number | null; track_id: number | null; research_task_id: number | null;
   chapter_number: number | null; research_topic: string | null;   // data for the UI-composed title
+  research_task_kind: ResearchTaskKind | null;   // "preparation" → the "Knowledge check" title (D-158)
   model_label: string; status: SessionStatus; phase: Phase; granularity: Granularity | null;
   auto_pause: boolean; pause_after_outline: boolean; pause_requested: boolean;
   held_tool_call_id: number | null; base_content_version: number | null;

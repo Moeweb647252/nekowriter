@@ -82,8 +82,21 @@
   `0007_builtin_basic_writing.sql` (D-156) fills the first built-in body with one `UPDATE` keyed
   by `key = 'basic-writing'`; it works for both fresh databases and existing ones, and never
   touches user rows or `book_writing_skills`.
+  `0008_knowledge_first.sql` (D-158) runs in one Rust-managed transaction like 0006. It:
+  - creates `book_scope_exclusions` and its index (`IF NOT EXISTS`);
+  - drops `book_scopes` (`IF EXISTS`). Every existing book then sees every scope, which is the
+    author's choice for existing data;
+  - adds `research_tasks.kind` (default `topic`) and `research_tasks.origin` (default `author`)
+    with `ALTER TABLE … ADD COLUMN`;
+  - back-fills `origin = 'conception'` for every `draft` row (who created an old draft is not
+    recorded; in-flight conceptions keep their replace behavior).
 
-## 2. Schema (0001_init.sql, upgraded by 0002_research_deferred.sql, 0003, 0004, 0005, 0006 and 0007)
+  A row-count guard on `research_tasks` runs in the same transaction. The `ALTER`s succeed on a
+  fresh database although 0001 has both columns, because 0002 rebuilds `research_tasks` from an
+  explicit column list, the same mechanism that lets 0006 add `agent_sessions.canon_systems` after
+  0004.
+
+## 2. Schema (0001_init.sql, upgraded by 0002_research_deferred.sql, 0003, 0004, 0005, 0006, 0007 and 0008)
 
 ```sql
 -- ───────────────────────────── App configuration ─────────────────────────────
@@ -434,18 +447,22 @@ CREATE TABLE knowledge_scopes (
   updated_at   TEXT NOT NULL
 );
 
-CREATE TABLE book_scopes (
+-- Opt-out visibility (spec/07 §1, D-158): a book's agents see every scope except these.
+CREATE TABLE book_scope_exclusions (
   book_id   INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
   scope_id  INTEGER NOT NULL REFERENCES knowledge_scopes(id) ON DELETE CASCADE,
   PRIMARY KEY (book_id, scope_id)
 );
+CREATE INDEX book_scope_exclusions_scope ON book_scope_exclusions(scope_id);
 
 CREATE TABLE research_tasks (
   id               INTEGER PRIMARY KEY,
   book_id          INTEGER REFERENCES books(id) ON DELETE CASCADE,
   scope_id         INTEGER REFERENCES knowledge_scopes(id) ON DELETE SET NULL,
-  scope_name       TEXT NOT NULL,                       -- target scope name (resolved/created on run)
-  topic            TEXT NOT NULL,
+  scope_name       TEXT NOT NULL,                       -- target scope name (resolved/created on run; '' for a preparation task until set_target_scope)
+  topic            TEXT NOT NULL,                       -- '' for a preparation task
+  kind             TEXT NOT NULL DEFAULT 'topic' CHECK (kind IN ('topic','preparation')),     -- preparation = knowledge check (spec/07 §8.1)
+  origin           TEXT NOT NULL DEFAULT 'author' CHECK (origin IN ('author','conception')),  -- who owns the task (spec/05 §7)
   requirements     TEXT NOT NULL DEFAULT '',
   language         TEXT NOT NULL,                       -- BCP-47 language of the entries (spec/07 §8)
   status           TEXT NOT NULL CHECK (status IN ('draft','ready','deferred','running','done','failed','cancelled')),
@@ -726,6 +743,8 @@ The migration seeds `('basic-writing', '基础写作 / Basic Writing', '写作 /
 | GoalConditionKind | `chapter_at_least`, `foreshadowing_resolved`, `entity_status_is` |
 | CanonSystem | `entities`, `timeline`, `memory`, `foreshadowing`, `goals` (not a column; the keys of `CanonSystems`, spec/06 §10) |
 | ResearchTaskStatus | `draft`, `ready`, `deferred`, `running`, `done`, `failed`, `cancelled` |
+| ResearchTaskKind | `topic`, `preparation` (the knowledge check, spec/07 §8.1) |
+| ResearchTaskOrigin | `author`, `conception` |
 | EntrySource | `manual`, `research` |
 | SearchDocKind / EmbedState | `entity`,`note`,`foreshadowing`,`event`,`summary`,`passage` / `pending`,`done`,`failed` |
 | MessageRole / MessageKind | `user`,`assistant` / `kickoff`,`user`,`notice`,`nudge`,`assistant` |
@@ -778,6 +797,10 @@ type ConceptionState = {
   characters_revision: number; characters_approved_revision?: number;
   topics_revision: number;     topics_approved_revision?: number;
   finalized_at?: string;
+  // Set at creation when a knowledge check started and the author left "start conception
+  // automatically" on; cleared when the check's completion starts conception (spec/08 §5).
+  // Absent (old rows) reads false.
+  start_after_knowledge_check: boolean;
 };
 
 // chapters.content, chapter_versions.content
@@ -942,3 +965,10 @@ type SnapshotGoalNode = { level, parent_id, title, purpose, status, conditions, 
     goal.has_children`).
 17. `agent_sessions.canon_systems` is written once, at creation (a rollover child copies its
     parent's), and never changed.
+18. A research task with `kind = 'preparation'` has a `book_id`, is never `draft`, and at most one
+    per book is open (`running` or `failed` with a session). Its `topic` is empty.
+19. An agent deletes only `draft` research tasks with `kind = 'topic'` and `origin = 'conception'`
+    (`set_research_topics`). An `author` task is never deleted or edited by an agent, and an
+    author PATCH of a `conception` task sets `origin = 'author'`.
+20. A book's visible scopes are every `knowledge_scopes` row without a `book_scope_exclusions`
+    row for that book (spec/07 §1).

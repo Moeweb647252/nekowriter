@@ -12,10 +12,20 @@
   KNN query (§3) and a separate name the author has to choose among.
 - **Entries** (`knowledge_entries`): title, Markdown content, source URLs, tags,
   `source = manual | research`.
-- **Book visibility** (`book_scopes`): the scopes a book's writer and reviewer may search. The
-  settings block lists them (name + description). Research sessions see only their target scope.
-- Deleting a scope deletes its entries (with a typed confirmation in the UI). Detaching a scope
-  from a book only removes visibility. An entry's scope is fixed once created (moving entries
+- **Book visibility is opt-out** (`book_scope_exclusions`, D-158): a book's agents (planner,
+  writer, reviewer, conception, and the book's knowledge check) see **every** scope except those
+  the author unchecked for the book. A scope is visible to every book from the moment it is
+  created; nothing has to be attached. `knowledge::visible_scope_ids(book)` is the one rule, and
+  the settings block, the conception kickoff, the knowledge check's inventory, `search_knowledge`
+  and `read_knowledge_entry` all use it, so a model never learns a scope it cannot search. A topic
+  research session sees only its target scope (§8); a knowledge check sees the book's visible
+  scopes (§8.1).
+- **Exclusions belong to the author.** An agent never clears one: `set_target_scope` refuses an
+  excluded scope. Two author actions clear the exclusion of their own target scope, because they
+  ask for knowledge in that scope for this book: **Run** on a book-linked research task (§8 step 2)
+  and **Finalize** (spec/08 §5).
+- Deleting a scope deletes its entries (with a typed confirmation in the UI) and its exclusion
+  rows. Unchecking a scope for a book only removes visibility. An entry's scope is fixed once created (moving entries
   between scopes is not part of the MVP), so `knowledge_chunks.scope_id` and the vector
   partition never change.
 
@@ -234,13 +244,18 @@ Markdown. The key is `deepseek_api_key`, the same secret the DeepSeek search pro
 ## 8. Research workflow (researcher agent)
 
 1. The author creates a task (topic, requirements, target scope name, optional book) or reviews
-   one created by conception (`draft` → `ready` when the author confirms it in the UI).
+   one created by conception (`draft` → `ready` when the author confirms it in the UI). A task the
+   author creates or edits has `origin = 'author'`, and the conception agent never deletes it
+   (spec/05 §7, D-158). This section describes `kind = 'topic'` tasks. The knowledge check is
+   §8.1.
 2. **Run** (`POST /research-tasks/:id/run`): allowed when the task has no open session (status
    `draft`, which Run confirms, `ready`, `deferred`, `done`, or `cancelled`); a `running` or
    `failed` task still has its session, which the author continues or abandons first
-   (`409 research.invalid_state`). Resolve or create the scope by name (attach it to the linked
-   book). Start a `research` session. A `deferred` task runs directly: "not now" is not a lock,
-   and the run moves it to `running` in step 5, so the state never outlives the first run. Kickoff (`researcher.kickoff`): topic, requirements, scope
+   (`409 research.invalid_state`). Resolve or create the scope by name, and make it visible to the
+   linked book (an exclusion of that scope for the book is removed, §1). Start a `research`
+   session. A `deferred` task runs directly: "not now" is not a lock, and the run moves it to
+   `running` in step 5, so the state never outlives the first run. Kickoff
+   (`researcher.kickoff`): topic, requirements, scope
    name and description, the titles of existing entries in the scope (≤ 200), the budget, and
    the linked book's brief (`block.book_brief`: title, genre, idea, writing language), so
    research serves the story.
@@ -284,3 +299,46 @@ Markdown. The key is `deepseek_api_key`, the same secret the DeepSeek search pro
    request at a time. There is no batch endpoint: the calls are idempotent, and a loop keeps a
    mid-way failure attributable to one task. A partial batch is reported (how many moved, which
    tasks did not), never swallowed; the card's "Go" link stays its primary action.
+
+### 8.1 Knowledge check (D-158)
+
+Knowledge comes before conception. A **knowledge check** (`research_tasks.kind = 'preparation'`)
+asks the researcher whether the knowledge visible to a book can support conceiving it, and has
+it fill the gaps. A book created with the conception agent runs one first (spec/08 §5), and its
+report is handed to the conception agent. The author can also start one from Book › Knowledge at
+any time while the book is `conceiving` or `active`.
+
+1. **The task.** It always has a `book_id`, `topic = ''` (the UI shows the localized name
+   "Knowledge check"), the author's optional focus in `requirements`, the book's writing language,
+   `origin = 'author'`, and `scope_name = ''` / `scope_id = NULL` until the agent picks a target.
+   It is never `draft`: `POST /books/:id/knowledge-check` creates the row and starts its session in
+   one transaction, so a failure (no researcher model) leaves no row. At most one check per book
+   is open (`running`, or `failed` with its session); a second one is refused with
+   `409 research.invalid_state` and `details.session_id`. A check is not a setting material: the
+   `settings.locked` rule, `topics_revision` and the conception view snapshot ignore it, and
+   `set_research_topics` and finalize never touch it. PATCH accepts `requirements` only
+   (`topic` or `scope_name` → `422 validation.invalid_fields`). DELETE, run (re-run), defer and
+   resume follow §8 unchanged. A re-run keeps the last target until the agent switches it.
+2. **The session.** It is an ordinary `research` session with the researcher role and its budget
+   (40 tool calls, 25 entries). The kickoff is `block.book_brief` plus
+   `researcher.kickoff.prep`, which contains:
+   - the author's focus;
+   - the inventory of every scope visible to the book (name, description, entry count, and up to
+     50 entry titles per scope and 300 in total, with the number left out);
+   - the names of the scopes the author excluded;
+   - the budget.
+3. **The work.**
+   - Judge what conceiving this title, idea and genre needs: real-world facts and genre
+     knowledge.
+   - Verify coverage with `search_knowledge` / `read_knowledge_entry`, which span the book's
+     visible scopes, not just the target.
+   - Fill only the gaps. `set_target_scope` picks an existing broad scope on the subject, or
+     creates one with a description following the one-to-two scope budget (§1). Then search, fetch
+     and save, or update a thin entry of the target scope.
+   - Never duplicate an entry. A sufficient base may get no new entry at all.
+4. **The report.** `finish_research(report)` covers what was already sufficient, what was added,
+   and what is still missing or needs the author's decision. A check may finish without a target
+   scope. The task becomes `done` with `entries_created` as in §8 step 4. The conception kickoff
+   carries the report of the book's latest `done` check (spec/05 §7).
+5. **What happens next** is decided by `ConceptionState.start_after_knowledge_check`
+   (spec/08 §5). The check itself never starts or changes anything else.
