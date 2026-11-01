@@ -524,6 +524,84 @@ async fn fresh_and_upgraded_databases_have_the_same_schema_shape() {
     );
 }
 
+/// The order-insensitive semantic shape of `research_tasks`: `0001` puts `kind`/`origin` inline,
+/// while the chain appends them with `ALTER TABLE` in 0008, so column order and full table SQL
+/// cannot be compared byte-for-byte. Compare the column map and the normalized CHECK fragments.
+async fn research_tasks_semantics(
+    conn: &sea_orm::DatabaseConnection,
+) -> (
+    std::collections::BTreeMap<String, (String, String, String)>,
+    Vec<String>,
+) {
+    let sql: String = conn
+        .query_one_raw(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'research_tasks'",
+        ))
+        .await
+        .expect("research_tasks sql")
+        .expect("research_tasks exists")
+        .try_get("", "sql")
+        .expect("sql");
+    let mut columns = std::collections::BTreeMap::new();
+    for column in conn
+        .query_all_raw(Statement::from_string(
+            DbBackend::Sqlite,
+            "PRAGMA table_info(\"research_tasks\")",
+        ))
+        .await
+        .expect("research_tasks columns")
+    {
+        columns.insert(
+            column.try_get::<String>("", "name").expect("name"),
+            (
+                column.try_get::<String>("", "type").expect("type"),
+                column
+                    .try_get::<i64>("", "notnull")
+                    .expect("notnull")
+                    .to_string(),
+                column
+                    .try_get::<String>("", "dflt_value")
+                    .unwrap_or_default(),
+            ),
+        );
+    }
+    let normalized = normalize_schema_sql(&sql);
+    let mut checks = Vec::new();
+    let bytes = normalized.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        let Some(relative) = normalized[index..].find("CHECK") else {
+            break;
+        };
+        let start = index + relative;
+        let after = start + "CHECK".len();
+        let Some(open_relative) = normalized[after..].find('(') else {
+            break;
+        };
+        let open = after + open_relative;
+        let mut depth = 0i32;
+        let mut end = open;
+        for (position, byte) in normalized[open..].bytes().enumerate() {
+            match byte {
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = open + position + 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        checks.push(normalized[start..end].to_owned());
+        index = end;
+    }
+    checks.sort();
+    (columns, checks)
+}
+
 /// F4 guard: the edited `0001` must match the full chain for the tables it owns directly. This is
 /// deliberately a different comparison from the fresh/upgraded parity check: a one-sided edit to
 /// `change_log`'s CHECK in 0001 must fail here even though every migration path rebuilds the table.
@@ -555,4 +633,9 @@ async fn edited_0001_matches_the_chain_for_directly_created_tables() {
             "0001 and the migration chain disagree about {name}"
         );
     }
+    assert_eq!(
+        research_tasks_semantics(raw.conn()).await,
+        research_tasks_semantics(chain.conn()).await,
+        "0001 and the migration chain disagree semantically about research_tasks"
+    );
 }

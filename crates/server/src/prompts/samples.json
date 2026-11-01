@@ -2311,6 +2311,16 @@
    {
     "code": "not_found",
     "details_available": false
+   },
+   {
+    "code": "scope_excluded",
+    "name": "宋代社会"
+   },
+   {
+    "code": "target_scope_unset"
+   },
+   {
+    "code": "refusal"
    }
   ],
   "result.finish_maintenance": [

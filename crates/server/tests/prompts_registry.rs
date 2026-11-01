@@ -3,6 +3,7 @@
 //! Two layers: unit-level tests of the registry (resolution order, rendering, validation) and
 //! API tests of `GET/PUT/DELETE /api/prompts` through the real router.
 
+use nekowriter::agent::tools::ToolErrorKind;
 use nekowriter::api::build_app;
 use nekowriter::db::Db;
 use nekowriter::prompts::{PromptRegistry, PromptSource};
@@ -12,6 +13,64 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 // ───────────────────────────── pack coverage ─────────────────────────────
+
+/// Every `ToolErrorKind` must have a `result.error` sample, otherwise `validate_override` can
+/// accept an override that breaks a branch the shipped validator never renders.
+#[test]
+fn result_error_samples_cover_every_tool_error_kind() {
+    let registry = PromptRegistry::embedded().expect("pack");
+    let samples = registry.sample_contexts("result.error");
+    let actual: std::collections::BTreeSet<&str> = samples
+        .iter()
+        .filter_map(|sample| sample["code"].as_str())
+        .collect();
+    let expected: std::collections::BTreeSet<&str> = [
+        ToolErrorKind::InvalidJson,
+        ToolErrorKind::Validation,
+        ToolErrorKind::EntityNotFound,
+        ToolErrorKind::EntityAmbiguous,
+        ToolErrorKind::EntityExists,
+        ToolErrorKind::PidNotFound,
+        ToolErrorKind::TextNotFound,
+        ToolErrorKind::TextAmbiguous,
+        ToolErrorKind::Granularity,
+        ToolErrorKind::DraftEmpty,
+        ToolErrorKind::IsolatedReadonly,
+        ToolErrorKind::ChapterNotFound,
+        ToolErrorKind::ChapterNotOfficial,
+        ToolErrorKind::NoKnowledgeScope,
+        ToolErrorKind::ScopeExcluded,
+        ToolErrorKind::TargetScopeUnset,
+        ToolErrorKind::ScopeNotFound,
+        ToolErrorKind::NotFound,
+        ToolErrorKind::EntryExists,
+        ToolErrorKind::FindFailed,
+        ToolErrorKind::MaintenanceIncomplete,
+        ToolErrorKind::SearchNotConfigured,
+        ToolErrorKind::SearchFailed,
+        ToolErrorKind::FetchFailed,
+        ToolErrorKind::UnsupportedContentType,
+        ToolErrorKind::CharacterNotFound,
+        ToolErrorKind::CharacterExists,
+        ToolErrorKind::ReorderMismatch,
+        ToolErrorKind::RelationNotFound,
+        ToolErrorKind::SeedOnly,
+        ToolErrorKind::ExactlyOne,
+        ToolErrorKind::MutuallyExclusive,
+        ToolErrorKind::ToolNotAllowed,
+        ToolErrorKind::OutputTruncated,
+        ToolErrorKind::AfterCompletion,
+        ToolErrorKind::Refusal,
+        ToolErrorKind::Internal,
+    ]
+    .iter()
+    .map(|kind| kind.code())
+    .collect();
+    assert_eq!(
+        actual, expected,
+        "result.error samples and ToolErrorKind drift"
+    );
+}
 
 /// The entity `description` ceiling of D-142 is carried by every prompt that can write it: the
 /// three archivist kickoffs, the archivist system prompt, and both entity-write tool schemas.
