@@ -19,10 +19,8 @@ nekowriter-migration = { path = "crates/migration" }
 tokio = { version = "1.54", features = ["full"] }
 axum = { version = "0.8.9", features = ["macros"] }
 tower = "0.5"
-tower-http = { version = "0.7", features = ["trace", "fs", "set-header"] }
 futures = "0.3"
 tokio-util = "0.7"
-tokio-stream = { version = "0.1", features = ["sync"] }
 
 # Persistence
 sea-orm = { version = "2.0.4", default-features = false, features = [
@@ -80,7 +78,6 @@ dom_smoothie = "0.18"
 htmd = "0.5"
 encoding_rs = "0.8"
 url = "2"
-ipnet = "2"
 
 # Dev
 tempfile = "3"

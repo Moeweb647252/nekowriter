@@ -28,16 +28,13 @@ nekowriter-migration.workspace = true
 tokio.workspace = true
 axum.workspace = true
 tower.workspace = true
-tower-http.workspace = true
 futures.workspace = true
 tokio-util.workspace = true
-tokio-stream.workspace = true
 
 sea-orm.workspace = true
 sqlite-vec.workspace = true
 
 reqwest.workspace = true
-eventsource-stream.workspace = true
 
 serde.workspace = true
 serde_json.workspace = true
@@ -68,7 +65,6 @@ dom_smoothie.workspace = true
 htmd.workspace = true
 encoding_rs.workspace = true
 url.workspace = true
-ipnet.workspace = true
 tempfile = { workspace = true, optional = true }
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
@@ -78,86 +74,5 @@ libsqlite3-sys = { version = "0.37", default-features = false }
 nekowriter = { path = ".", features = ["testing"] }
 tempfile.workspace = true
 insta.workspace = true
-pretty_assertions.workspace = true
 wiremock.workspace = true
 tokio.workspace = true
-
-[[test]]
-name = "api_health"
-path = "tests/api_health.rs"
-
-[[test]]
-name = "api_books"
-path = "tests/api_books.rs"
-
-[[test]]
-name = "api_chapters"
-path = "tests/api_chapters.rs"
-
-[[test]]
-name = "prompts_registry"
-path = "tests/prompts_registry.rs"
-
-[[test]]
-name = "providers_api"
-path = "tests/providers_api.rs"
-
-[[test]]
-name = "agent_runtime"
-path = "tests/agent_runtime.rs"
-
-[[test]]
-name = "agent_control"
-path = "tests/agent_control.rs"
-
-[[test]]
-name = "agent_tools"
-path = "tests/agent_tools.rs"
-
-[[test]]
-name = "agent_status_table"
-path = "tests/agent_status_table.rs"
-
-[[test]]
-name = "agent_creation"
-path = "tests/agent_creation.rs"
-
-[[test]]
-name = "api_chapter_sessions"
-path = "tests/api_chapter_sessions.rs"
-
-[[test]]
-name = "search_index"
-path = "tests/search_index.rs"
-
-[[test]]
-name = "search_ranking"
-path = "tests/search_ranking.rs"
-
-[[test]]
-name = "knowledge_api"
-path = "tests/knowledge_api.rs"
-
-[[test]]
-name = "search_tools"
-path = "tests/search_tools.rs"
-
-[[test]]
-name = "search_end_to_end"
-path = "tests/search_end_to_end.rs"
-
-[[test]]
-name = "web_search_providers"
-path = "tests/web_search_providers.rs"
-
-[[test]]
-name = "web_fetch_guard"
-path = "tests/web_fetch_guard.rs"
-
-[[test]]
-name = "research_tools"
-path = "tests/research_tools.rs"
-
-[[test]]
-name = "research_tasks"
-path = "tests/research_tasks.rs"
