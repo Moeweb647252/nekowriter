@@ -412,6 +412,22 @@ string_enum! {
 }
 
 string_enum! {
+    /// What a research task is for (spec/02 §3, D-158).
+    ResearchTaskKind {
+        Topic => "topic",
+        Preparation => "preparation",
+    }
+}
+
+string_enum! {
+    /// Who owns a research task (spec/02 §3, D-158).
+    ResearchTaskOrigin {
+        Author => "author",
+        Conception => "conception",
+    }
+}
+
+string_enum! {
     EntrySource {
         Manual => "manual",
         Research => "research",
@@ -646,6 +662,9 @@ pub struct ConceptionState {
     pub topics_revision: i32,
     pub topics_approved_revision: Option<i32>,
     pub finalized_at: Option<DateTime<Utc>>,
+    /// Set at creation when a knowledge check started and the author left auto-start on; cleared
+    /// when the check's completion starts conception (spec/08 §5, D-158). Absent old rows read false.
+    pub start_after_knowledge_check: bool,
 }
 
 // ───────────────────────────── writing goals ─────────────────────────────
@@ -1376,8 +1395,15 @@ mod tests {
             topics_revision: 4,
             topics_approved_revision: None,
             finalized_at: Some(DateTime::from_timestamp_millis(1_767_225_600_000).expect("ts")),
+            start_after_knowledge_check: false,
         };
         assert_eq!(round_trip(&value), value);
+    }
+
+    #[test]
+    fn conception_state_without_the_new_field_reads_false() {
+        let old: ConceptionState = serde_json::from_str("{}").expect("old row");
+        assert!(!old.start_after_knowledge_check);
     }
 
     /// `chapters.content`, `chapter_versions.content`.

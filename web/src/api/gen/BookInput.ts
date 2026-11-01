@@ -13,4 +13,13 @@ writing_language: string,
  * carries the conception session's id when a conception model is configured; otherwise the
  * book is still created and `warnings` reports `model.missing_role` (D-069).
  */
-start_conception: boolean, };
+start_conception: boolean, 
+/**
+ * Run a knowledge check before conception (spec/08 §5, D-158). Defaults off for API
+ * backward compatibility; the web client always sends `true`.
+ */
+knowledge_check: boolean, 
+/**
+ * After a successful knowledge check, start conception automatically (default on).
+ */
+auto_start_conception: boolean, };

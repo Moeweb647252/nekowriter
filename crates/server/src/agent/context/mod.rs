@@ -18,9 +18,9 @@ use crate::agent::tools::research::{
     MAX_ENTRIES as MAX_RESEARCH_ENTRIES, MAX_TOOL_CALLS as MAX_RESEARCH_TOOL_CALLS,
 };
 use crate::db::entities::{
-    agent_messages, agent_sessions, agent_tool_calls, book_scopes, books, chapter_versions,
-    chapters, character_designs, entities, knowledge_scopes, research_tasks, review_reports,
-    setting_docs, tracks,
+    agent_messages, agent_sessions, agent_tool_calls, books, chapter_versions, chapters,
+    character_designs, entities, knowledge_scopes, research_tasks, review_reports, setting_docs,
+    tracks,
 };
 use crate::db::json::{
     self, AgentRole, CanonMode, CanonSystem, CanonSystems, ChapterContent, CompletionKind,
@@ -809,16 +809,9 @@ async fn settings_context(
         })
         .collect();
     // The scopes the book's writer and reviewer may search (spec/07 §1: "the settings block lists
-    // them (name + description)"); the attached set is exactly what `visible_scope_ids` gates the
-    // tools with, so the model never learns a scope it cannot search.
-    let scope_ids: Vec<i32> = book_scopes::Entity::find()
-        .filter(book_scopes::COLUMN.book_id.eq(book_id))
-        .order_by_asc(book_scopes::COLUMN.scope_id)
-        .all(conn)
-        .await?
-        .into_iter()
-        .map(|row| row.scope_id)
-        .collect();
+    // them (name + description)"); `visible_scope_ids` is exactly the set the tools gate on, so
+    // the model never learns a scope it cannot search.
+    let scope_ids = crate::services::knowledge::visible_scope_ids(conn, book_id).await?;
     let scopes = if scope_ids.is_empty() {
         Vec::new()
     } else {

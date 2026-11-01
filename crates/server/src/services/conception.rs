@@ -14,7 +14,7 @@ use serde_json::json;
 
 use crate::api::dto::books::BookDto;
 use crate::db::entities::{
-    agent_sessions, book_scopes, books, knowledge_scopes, research_tasks, setting_docs, tracks,
+    agent_sessions, books, knowledge_scopes, research_tasks, setting_docs, tracks,
 };
 use crate::db::json::{
     AgentRole, BookStatus, ConceptionState, JsonText, ResearchTaskStatus, SessionKind,
@@ -420,28 +420,13 @@ async fn find_or_create_scope(
     Ok(created.id)
 }
 
-/// Adds the book ↔ scope link when it is missing (spec/07 §1).
+/// Includes a scope for the book when an author action targets it (spec/03 §6, D-158).
 async fn attach_scope(
     tx: &impl ConnectionTrait,
     book_id: i32,
     scope_id: i32,
 ) -> Result<(), AppError> {
-    let exists = book_scopes::Entity::find()
-        .filter(book_scopes::COLUMN.book_id.eq(book_id))
-        .filter(book_scopes::COLUMN.scope_id.eq(scope_id))
-        .one(tx)
-        .await?;
-    if exists.is_some() {
-        return Ok(());
-    }
-    book_scopes::ActiveModel {
-        book_id: Set(book_id),
-        scope_id: Set(scope_id),
-    }
-    .insert(tx)
-    .await
-    .map_err(AppError::from)?;
-    Ok(())
+    super::knowledge::include_scope(tx, book_id, scope_id).await
 }
 
 /// `POST /api/books/:id/canon/seed` (spec/08 §5): the open seed session, or a new one.

@@ -3,4 +3,9 @@
 /**
  * `books.conception` (spec/02 §4).
  */
-export type ConceptionState = { session_id: number | null, characters_revision: number, characters_approved_revision: number | null, topics_revision: number, topics_approved_revision: number | null, finalized_at: string | null, };
+export type ConceptionState = { session_id: number | null, characters_revision: number, characters_approved_revision: number | null, topics_revision: number, topics_approved_revision: number | null, finalized_at: string | null, 
+/**
+ * Set at creation when a knowledge check started and the author left auto-start on; cleared
+ * when the check's completion starts conception (spec/08 §5, D-158). Absent old rows read false.
+ */
+start_after_knowledge_check: boolean, };

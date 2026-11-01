@@ -3,4 +3,8 @@
 /**
  * `PUT /api/books/:id/scopes`.
  */
-export type BookScopesInput = { scope_ids: Array<number>, };
+export type BookScopesInput = { 
+/**
+ * Scope ids the book unchecks; every other scope stays visible (spec/10 §2.5, D-158).
+ */
+excluded_scope_ids: Array<number>, };

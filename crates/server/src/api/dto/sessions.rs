@@ -10,7 +10,8 @@ use ts_rs::TS;
 
 use crate::db::json::{
     AgentRole, Appendix, Granularity, MessageKind, PendingContent, PendingOutline, Phase,
-    SessionCounters, SessionError, SessionKind, SessionStatus, ToolCallStatus, Usage,
+    ResearchTaskKind, SessionCounters, SessionError, SessionKind, SessionStatus, ToolCallStatus,
+    Usage,
 };
 
 /// One session row (spec/10 §2.8).
@@ -28,6 +29,8 @@ pub struct SessionDto {
     /// The chapter's number in its track, for the UI-composed title (D-054).
     pub chapter_number: Option<i32>,
     pub research_topic: Option<String>,
+    /// The task kind when the session belongs to a research task (spec/10 §2.8, D-158).
+    pub research_task_kind: Option<ResearchTaskKind>,
     pub model_label: String,
     pub status: SessionStatus,
     pub phase: Phase,

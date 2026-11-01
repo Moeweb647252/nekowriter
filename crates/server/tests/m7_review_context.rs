@@ -51,13 +51,13 @@ async fn kickoff_text(runtime: &agent_write_harness::Runtime, session_id: i32) -
 #[tokio::test]
 async fn the_kickoff_settings_block_lists_the_attached_scopes() {
     let runtime = runtime(Vec::new()).await;
-    let attached = scope(&runtime.app, "Song life", "Song dynasty daily life").await;
-    scope(&runtime.app, "Hidden lore", "Not attached to this book").await;
+    let _attached = scope(&runtime.app, "Song life", "Song dynasty daily life").await;
+    let hidden = scope(&runtime.app, "Hidden lore", "Not attached to this book").await;
     let (status, body) = runtime
         .app
         .put(
             &format!("/api/books/{}/scopes", runtime.book_id),
-            json!({ "scope_ids": [attached] }),
+            json!({ "excluded_scope_ids": [hidden] }),
         )
         .await;
     assert_eq!(status, 200, "attach: {body}");

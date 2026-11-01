@@ -30,8 +30,9 @@ use nekowriter::db::json::{
     ChangeOp, ChangeTargetType, ChapterStatus, EmbedState, EntityKind, EntityStatus, EntrySource,
     FeedbackMode, ForeshadowingStatus, GoalLevel, GoalStatus, Granularity, InboxKind, MessageKind,
     MessageRole, NoteKind, NoteStatus, Phase, PromptScope, ProposalStatus, ProposalTargetType,
-    Protocol, RelationStatus, ResearchTaskStatus, ReviewVerdict, SearchDocKind, SessionKind,
-    SessionStatus, SettingDocKind, ToolCallStatus, TrackKind, VersionKind,
+    Protocol, RelationStatus, ResearchTaskKind, ResearchTaskOrigin, ResearchTaskStatus,
+    ReviewVerdict, SearchDocKind, SessionKind, SessionStatus, SettingDocKind, ToolCallStatus,
+    TrackKind, VersionKind,
 };
 use sea_orm::entity::Iterable;
 use sea_orm::entity::prelude::*;
@@ -48,7 +49,7 @@ macro_rules! for_all_entities {
             agent_tool_calls,
             app_settings,
             appearances,
-            book_scopes,
+            book_scope_exclusions,
             book_writing_skills,
             books,
             change_log,
@@ -400,10 +401,10 @@ async fn pragma_foreign_keys(conn: &DatabaseConnection, table: &str) -> Vec<Prag
         .collect()
 }
 
-/// The five junction tables. Their two foreign keys become `has_many, via` on both ends instead
+/// The junction tables. Their two foreign keys become `has_many, via` on both ends instead
 /// of a `has_many` to the junction itself (plan §2.1).
 const JUNCTIONS: [&str; 8] = [
-    "book_scopes",
+    "book_scope_exclusions",
     "book_writing_skills",
     "foreshadowing_entities",
     "goal_node_entities",
@@ -537,12 +538,9 @@ where
 #[tokio::test]
 async fn every_junction_has_via_relations_on_both_ends() {
     use nekowriter::db::entities::{
-        books, entities, foreshadowing, goal_nodes, knowledge_scopes, memory_notes,
-        timeline_events, writing_skills,
+        books, entities, foreshadowing, goal_nodes, memory_notes, timeline_events, writing_skills,
     };
 
-    assert_many_to_many::<books::Entity, knowledge_scopes::Entity>();
-    assert_many_to_many::<knowledge_scopes::Entity, books::Entity>();
     assert_many_to_many::<books::Entity, writing_skills::Entity>();
     assert_many_to_many::<writing_skills::Entity, books::Entity>();
     assert_many_to_many::<foreshadowing::Entity, entities::Entity>();
@@ -713,7 +711,7 @@ VALUES (1, 1, 1, 1, 'Chapter 1', 'drafting', '', '', '', '',
     '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
 INSERT INTO knowledge_scopes (id, name, description, created_at, updated_at)
 VALUES (1, 'Scope', '', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
-INSERT INTO book_scopes (book_id, scope_id) VALUES (1, 1);
+INSERT INTO book_scope_exclusions (book_id, scope_id) VALUES (1, 1);
 INSERT INTO entities (id, book_id, kind, name, aliases, summary, description, state, attributes,
     importance, status, is_protagonist, created_at, updated_at)
 VALUES (1, 1, 'character', 'Hero', '[]', '', '', '', '{}', 1, 'active', 0,
@@ -821,23 +819,23 @@ async fn smoke_parent_session_self_reference() {
     assert_eq!(columns_of(&def.to_col), ["id"]);
 }
 
-/// The Entity Loader over a `has_many` and an M-N relation.
+/// The Entity Loader over two `has_many` relations.
 #[tokio::test]
-async fn smoke_entity_loader_with_tracks_and_knowledge_scopes() {
-    use nekowriter::db::entities::{books, knowledge_scopes, tracks};
+async fn smoke_entity_loader_with_tracks_and_scope_exclusions() {
+    use nekowriter::db::entities::{book_scope_exclusions, books, tracks};
 
     let (_dir, db) = smoke_db().await;
     let loaded = books::Entity::load()
         .with(tracks::Entity)
-        .with(knowledge_scopes::Entity)
+        .with(book_scope_exclusions::Entity)
         .all(db.conn())
         .await
         .expect("entity loader");
     assert_eq!(loaded.len(), 1);
     assert_eq!(loaded[0].tracks.len(), 1);
     assert_eq!(loaded[0].tracks[0].title, "Main");
-    assert_eq!(loaded[0].knowledge_scopes.len(), 1);
-    assert_eq!(loaded[0].knowledge_scopes[0].name, "Scope");
+    assert_eq!(loaded[0].book_scope_exclusions.len(), 1);
+    assert_eq!(loaded[0].book_scope_exclusions[0].scope_id, 1);
 }
 
 /// `entities` → `timeline_events` through the `timeline_event_entities` junction.
@@ -1011,6 +1009,8 @@ enum_columns! {
     (providers, protocol, Protocol, Protocol),
     (relations, status, RelationStatus, Status),
     (research_tasks, status, ResearchTaskStatus, Status),
+    (research_tasks, kind, ResearchTaskKind, Kind),
+    (research_tasks, origin, ResearchTaskOrigin, Origin),
     (review_reports, verdict, ReviewVerdict, Verdict),
     (search_docs, kind, SearchDocKind, Kind),
     (search_docs, embed_state, EmbedState, EmbedState),
@@ -1108,8 +1108,8 @@ async fn every_enum_column_matches_its_check_constraint() {
         .collect();
     assert_eq!(
         expected.len(),
-        42,
-        "the schema has 42 CHECK (col IN (...)) enum columns"
+        44,
+        "the schema has 44 CHECK (col IN (...)) enum columns"
     );
 
     let mut seen = BTreeSet::new();

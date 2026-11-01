@@ -13,9 +13,7 @@ use sea_orm::{
 use crate::api::dto::research::{
     ResearchTaskCreate, ResearchTaskDto, ResearchTaskEntryDto, ResearchTaskPatch, ResearchTaskQuery,
 };
-use crate::db::entities::{
-    book_scopes, books, knowledge_entries, knowledge_scopes, research_tasks,
-};
+use crate::db::entities::{books, knowledge_entries, knowledge_scopes, research_tasks};
 use crate::db::json::{BookStatus, ResearchTaskStatus, SessionKind, SessionStatus};
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
@@ -502,26 +500,13 @@ async fn resolve_scope(tx: &impl ConnectionTrait, name: &str) -> Result<i32, App
     Ok(row.id)
 }
 
-/// Adds the book ↔ scope link when it is missing (spec/07 §1).
+/// Includes a scope for the book when an author action targets it (spec/03 §6, D-158).
 async fn attach_scope(
     tx: &impl ConnectionTrait,
     book_id: i32,
     scope_id: i32,
 ) -> Result<(), AppError> {
-    let exists = book_scopes::Entity::find()
-        .filter(book_scopes::COLUMN.book_id.eq(book_id))
-        .filter(book_scopes::COLUMN.scope_id.eq(scope_id))
-        .count(tx)
-        .await?;
-    if exists == 0 {
-        book_scopes::Entity::insert(book_scopes::ActiveModel {
-            book_id: Set(book_id),
-            scope_id: Set(scope_id),
-        })
-        .exec(tx)
-        .await?;
-    }
-    Ok(())
+    super::knowledge::include_scope(tx, book_id, scope_id).await
 }
 
 // ───────────────────────────── the runtime side ─────────────────────────────
@@ -686,6 +671,8 @@ pub fn to_dto(row: research_tasks::Model) -> ResearchTaskDto {
         scope_id: row.scope_id,
         scope_name: row.scope_name,
         topic: row.topic,
+        kind: row.kind,
+        origin: row.origin,
         requirements: row.requirements,
         language: row.language,
         status: row.status,

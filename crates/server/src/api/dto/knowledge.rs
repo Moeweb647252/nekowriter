@@ -145,5 +145,6 @@ pub struct KnowledgeSearchQuery {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct BookScopesInput {
-    pub scope_ids: Vec<i32>,
+    /// Scope ids the book unchecks; every other scope stays visible (spec/10 §2.5, D-158).
+    pub excluded_scope_ids: Vec<i32>,
 }

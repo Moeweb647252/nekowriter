@@ -345,18 +345,22 @@ CREATE TABLE knowledge_scopes (
   updated_at   TEXT NOT NULL
 );
 
-CREATE TABLE book_scopes (
+-- Opt-out visibility (spec/07 §1, D-158): a book's agents see every scope except these.
+CREATE TABLE book_scope_exclusions (
   book_id   INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
   scope_id  INTEGER NOT NULL REFERENCES knowledge_scopes(id) ON DELETE CASCADE,
   PRIMARY KEY (book_id, scope_id)
 );
+CREATE INDEX book_scope_exclusions_scope ON book_scope_exclusions(scope_id);
 
 CREATE TABLE research_tasks (
   id               INTEGER PRIMARY KEY,
   book_id          INTEGER REFERENCES books(id) ON DELETE CASCADE,
   scope_id         INTEGER REFERENCES knowledge_scopes(id) ON DELETE SET NULL,
-  scope_name       TEXT NOT NULL,                       -- target scope name (resolved/created on run)
-  topic            TEXT NOT NULL,
+  scope_name       TEXT NOT NULL,                       -- target scope name (resolved/created on run; '' for a preparation task until set_target_scope)
+  topic            TEXT NOT NULL,                       -- '' for a preparation task
+  kind             TEXT NOT NULL DEFAULT 'topic' CHECK (kind IN ('topic','preparation')),     -- preparation = knowledge check (spec/07 §8.1)
+  origin           TEXT NOT NULL DEFAULT 'author' CHECK (origin IN ('author','conception')),  -- who owns the task (spec/05 §7)
   requirements     TEXT NOT NULL DEFAULT '',
   language         TEXT NOT NULL,                       -- BCP-47 language of the entries (spec/07 §8)
   status           TEXT NOT NULL CHECK (status IN ('draft','ready','deferred','running','done','failed','cancelled')),

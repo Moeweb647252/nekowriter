@@ -488,12 +488,15 @@ pub async fn to_dto(
             .map(|chapter| chapter.ord),
         None => None,
     };
-    let research_topic = match row.research_task_id {
-        Some(task_id) => research_tasks::Entity::find_by_id(task_id)
+    let (research_topic, research_task_kind) = match row.research_task_id {
+        Some(task_id) => match research_tasks::Entity::find_by_id(task_id)
             .one(conn)
             .await?
-            .map(|task| task.topic),
-        None => None,
+        {
+            Some(task) => (Some(task.topic), Some(task.kind)),
+            None => (None, None),
+        },
+        None => (None, None),
     };
     let child_session_id = child_session(conn, row.id).await?.map(|child| child.id);
 
@@ -507,6 +510,7 @@ pub async fn to_dto(
         research_task_id: row.research_task_id,
         chapter_number,
         research_topic,
+        research_task_kind,
         model_label,
         status: status_of(row),
         phase: phase_of(row),

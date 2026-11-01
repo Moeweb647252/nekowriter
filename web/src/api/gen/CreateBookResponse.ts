@@ -11,4 +11,8 @@ export type CreateBookResponse = { book: BookDto,
  * Always present (`null` when no session started): the generated TypeScript type declares
  * `number | null`, and the New book dialog's landing decision tests it against `null`.
  */
-session_id: number | null, warnings: Array<string>, };
+session_id: number | null, 
+/**
+ * The knowledge check's task id, or `null` when no check ran (spec/10 §2.2, D-158).
+ */
+research_task_id: number | null, warnings: Array<string>, };

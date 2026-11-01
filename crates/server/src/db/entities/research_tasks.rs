@@ -2,7 +2,7 @@
 
 use sea_orm::entity::prelude::*;
 
-use crate::db::json::ResearchTaskStatus;
+use crate::db::json::{ResearchTaskKind, ResearchTaskOrigin, ResearchTaskStatus};
 
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
@@ -14,6 +14,8 @@ pub struct Model {
     pub scope_id: Option<i32>,
     pub scope_name: String,
     pub topic: String,
+    pub kind: ResearchTaskKind,
+    pub origin: ResearchTaskOrigin,
     pub requirements: String,
     pub language: String,
     pub status: ResearchTaskStatus,

@@ -80,7 +80,7 @@ async fn read_knowledge_entry_reports_invisible_entries_as_not_found() {
         .app
         .put(
             &format!("/api/books/{}/scopes", runtime.book_id),
-            json!({ "scope_ids": [visible] }),
+            json!({ "excluded_scope_ids": [hidden] }),
         )
         .await;
 
@@ -126,7 +126,7 @@ async fn search_knowledge_limits_a_research_session_to_its_target_scope() {
     let target = scope(&app, "Target").await;
     app.put(
         &format!("/api/books/{book_id}/scopes"),
-        json!({ "scope_ids": [attached] }),
+        json!({ "excluded_scope_ids": [target] }),
     )
     .await;
     entry(&app, attached, "Attached entry", "the attached sword lore").await;
@@ -159,7 +159,7 @@ async fn knowledge_hits_are_cut_to_four_hundred_characters() {
         .app
         .put(
             &format!("/api/books/{}/scopes", runtime.book_id),
-            json!({ "scope_ids": [scope_id] }),
+            json!({ "excluded_scope_ids": [] }),
         )
         .await;
     indexer::run_once(runtime.app.state())

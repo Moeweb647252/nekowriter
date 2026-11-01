@@ -486,22 +486,11 @@ async fn the_upgraded_schema_matches_a_fresh_database() {
     let fresh = nekowriter::db::Db::connect(&fresh_dir.path().join("fresh.db"))
         .await
         .expect("fresh connect");
-    // Build the fresh side from the edited 0001 itself, not through the migrator: applying 0004
-    // there too would overwrite `agent_sessions` and hide a 0001 edit (F15).
-    fresh
-        .conn()
-        .execute_unprepared(include_str!("../../migration/src/sql/0001_init.sql"))
+    // Compare against the final fresh path: 0001 now carries the 0008 additions too, so the
+    // whole migration chain must reach the same shape on both paths.
+    nekowriter_migration::up(fresh.conn())
         .await
-        .expect("apply the edited 0001");
-    // Later migrations define objects the 0004 rebuild does not touch; apply their SQL verbatim so
-    // the comparison stays about the 0001/0004 object set rather than the migration tail.
-    fresh
-        .conn()
-        .execute_unprepared(include_str!(
-            "../../migration/src/sql/0005_writing_skills.sql"
-        ))
-        .await
-        .expect("apply the writing-skills schema");
+        .expect("migrate the fresh database");
     let fresh = schema_dump(fresh.conn()).await;
 
     assert_eq!(

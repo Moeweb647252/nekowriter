@@ -67,6 +67,8 @@ function task(overrides: Partial<ResearchTaskDto> = {}): ResearchTaskDto {
     scope_id: 1,
     scope_name: "明初历史",
     topic: "宝钞与财政",
+    kind: "topic",
+    origin: "author",
     requirements: "",
     language: "zh-CN",
     status: "ready",

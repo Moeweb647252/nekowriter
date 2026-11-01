@@ -310,48 +310,50 @@ async fn knowledge_search_returns_hybrid_hits_with_snippets() {
 }
 
 #[tokio::test]
-async fn book_scopes_attach_and_detach_visibility() {
+async fn book_scopes_use_opt_out_exclusions() {
     let app = TestApp::new().await;
     let book = app.create_book("Knowledge Book").await;
     let book_id = book["id"].as_i64().expect("book id") as i32;
     let first = create_scope(&app, "History").await;
-    let second = create_scope(&app, "Lore").await;
+    let _second = create_scope(&app, "Lore").await;
 
+    // Opt-out visibility: every new scope is visible to every book without an action.
     let (status, scopes) = app.get(&format!("/api/books/{book_id}/scopes")).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(scopes.as_array().expect("scopes").len(), 0);
+    assert_eq!(scopes.as_array().expect("scopes").len(), 2);
 
+    // Excluding one scope hides only it; the entries stay.
     let (status, scopes) = app
         .put(
             &format!("/api/books/{book_id}/scopes"),
-            serde_json::json!({ "scope_ids": [first, second] }),
+            serde_json::json!({ "excluded_scope_ids": [first] }),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{scopes}");
-    assert_eq!(scopes.as_array().expect("scopes").len(), 2);
-
-    // Detaching only removes visibility (spec/07 §1): the entries stay.
-    let (status, scopes) = app
-        .put(
-            &format!("/api/books/{book_id}/scopes"),
-            serde_json::json!({ "scope_ids": [second] }),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK);
     assert_eq!(scopes.as_array().expect("scopes").len(), 1);
     assert_eq!(scopes[0]["name"], "Lore");
     assert_eq!(count_rows(&app, "knowledge_entries").await, 0);
+
+    // Clearing the exclusions makes every scope visible again.
+    let (status, scopes) = app
+        .put(
+            &format!("/api/books/{book_id}/scopes"),
+            serde_json::json!({ "excluded_scope_ids": [] }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(scopes.as_array().expect("scopes").len(), 2);
 
     // An unknown scope id is a 404 before anything is replaced.
     let (status, body) = app
         .put(
             &format!("/api/books/{book_id}/scopes"),
-            serde_json::json!({ "scope_ids": [999] }),
+            serde_json::json!({ "excluded_scope_ids": [999] }),
         )
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     let (_, scopes) = app.get(&format!("/api/books/{book_id}/scopes")).await;
-    assert_eq!(scopes.as_array().expect("scopes").len(), 1, "unchanged");
+    assert_eq!(scopes.as_array().expect("scopes").len(), 2, "unchanged");
 }
 
 #[tokio::test]

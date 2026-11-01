@@ -76,6 +76,17 @@ pub struct BookInput {
     /// book is still created and `warnings` reports `model.missing_role` (D-069).
     #[serde(default)]
     pub start_conception: bool,
+    /// Run a knowledge check before conception (spec/08 §5, D-158). Defaults off for API
+    /// backward compatibility; the web client always sends `true`.
+    #[serde(default)]
+    pub knowledge_check: bool,
+    /// After a successful knowledge check, start conception automatically (default on).
+    #[serde(default = "default_auto_start_conception")]
+    pub auto_start_conception: bool,
+}
+
+fn default_auto_start_conception() -> bool {
+    true
 }
 
 /// `PATCH /books/:id` body. Omitted fields are unchanged.
@@ -108,6 +119,8 @@ pub struct CreateBookResponse {
     /// Always present (`null` when no session started): the generated TypeScript type declares
     /// `number | null`, and the New book dialog's landing decision tests it against `null`.
     pub session_id: Option<i32>,
+    /// The knowledge check's task id, or `null` when no check ran (spec/10 §2.2, D-158).
+    pub research_task_id: Option<i32>,
     pub warnings: Vec<String>,
 }
 
@@ -128,6 +141,7 @@ impl Default for CreateBookResponse {
                 updated_at: chrono::Utc::now(),
             },
             session_id: None,
+            research_task_id: None,
             warnings: Vec::new(),
         }
     }

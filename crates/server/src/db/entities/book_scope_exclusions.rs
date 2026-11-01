@@ -1,9 +1,9 @@
-//! `book_scopes` join table entity (spec/02 §2).
+//! `book_scope_exclusions` table entity (spec/02 §2, D-158).
 use sea_orm::entity::prelude::*;
 
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
-#[sea_orm(table_name = "book_scopes")]
+#[sea_orm(table_name = "book_scope_exclusions")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub book_id: i32,

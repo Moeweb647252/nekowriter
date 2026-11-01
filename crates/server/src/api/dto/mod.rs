@@ -36,7 +36,8 @@ pub use prompts::{
 };
 pub use proposals::{ProposalDto, ProposalPreviewDto, ProposalQuery};
 pub use research::{
-    ResearchRunResponse, ResearchTaskCreate, ResearchTaskDto, ResearchTaskPatch, ResearchTaskQuery,
+    KnowledgeCheckInput, KnowledgeCheckResponse, ResearchRunResponse, ResearchTaskCreate,
+    ResearchTaskDto, ResearchTaskPatch, ResearchTaskQuery,
 };
 pub use reviews::{
     ChapterFeedbackDto, RereviewInput, ReviewReportDto, ReviewSessionResponse, ReviewsResponse,

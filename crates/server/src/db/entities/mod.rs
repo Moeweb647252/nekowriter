@@ -6,7 +6,7 @@ pub mod agent_sessions;
 pub mod agent_tool_calls;
 pub mod app_settings;
 pub mod appearances;
-pub mod book_scopes;
+pub mod book_scope_exclusions;
 pub mod book_writing_skills;
 pub mod books;
 pub mod change_log;

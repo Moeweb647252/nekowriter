@@ -14,7 +14,7 @@ use crate::api::dto::knowledge::{
     BookScopesInput, EntryDto, EntryInput, EntryPageDto, EntryPatch, EntryQuery, EntrySummaryDto,
     KnowledgeHitDto, KnowledgeSearchQuery, ScopeDto, ScopeInput, ScopePatch,
 };
-use crate::db::entities::{book_scopes, knowledge_entries, knowledge_scopes};
+use crate::db::entities::{book_scope_exclusions, knowledge_entries, knowledge_scopes};
 use crate::db::json::{ChangeOp, EntrySource};
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
@@ -559,27 +559,41 @@ async fn resolve_scope_ids(
 
 // ───────────────────────────── book visibility ─────────────────────────────
 
-/// `GET /api/books/:id/scopes` (spec/10 §2.5).
+/// `GET /api/books/:id/scopes` (spec/10 §2.5): every scope minus this book's exclusions.
 pub async fn book_scopes(
     conn: &impl ConnectionTrait,
     book_id: i32,
 ) -> Result<Vec<ScopeDto>, AppError> {
     super::books::get(conn, book_id).await?;
-    let rows = book_scopes::Entity::find()
-        .filter(book_scopes::COLUMN.book_id.eq(book_id))
+    let excluded = excluded_scope_ids(conn, book_id).await?;
+    let scopes = knowledge_scopes::Entity::find()
+        .order_by_asc(knowledge_scopes::COLUMN.name)
         .all(conn)
         .await?;
-    let mut items = Vec::with_capacity(rows.len());
-    for row in rows {
-        let scope = load_scope(conn, row.scope_id).await?;
-        items.push(to_scope_dto(conn, &scope).await?);
+    let mut items = Vec::with_capacity(scopes.len());
+    for scope in scopes {
+        if !excluded.contains(&scope.id) {
+            items.push(to_scope_dto(conn, &scope).await?);
+        }
     }
-    items.sort_by(|left, right| left.name.cmp(&right.name));
     Ok(items)
 }
 
-/// `PUT /api/books/:id/scopes` — replaces the visible scope set; detaching only removes
-/// visibility (spec/07 §1).
+/// The scope ids a book excludes (spec/02 §3, D-158).
+async fn excluded_scope_ids(
+    conn: &impl ConnectionTrait,
+    book_id: i32,
+) -> Result<std::collections::HashSet<i32>, AppError> {
+    Ok(book_scope_exclusions::Entity::find()
+        .filter(book_scope_exclusions::COLUMN.book_id.eq(book_id))
+        .all(conn)
+        .await?
+        .into_iter()
+        .map(|row| row.scope_id)
+        .collect())
+}
+
+/// `PUT /api/books/:id/scopes` — replaces the book's excluded scope set (spec/10 §2.5).
 pub async fn set_book_scopes(
     db: &crate::db::Db,
     events: &crate::events::EventBus,
@@ -600,50 +614,60 @@ pub async fn set_book_scopes_inner(
     input: BookScopesInput,
 ) -> Result<(Vec<ScopeDto>, Vec<ServerEvent>), AppError> {
     super::books::get(tx, book_id).await?;
-    let mut ids: Vec<i32> = input.scope_ids;
+    let mut ids: Vec<i32> = input.excluded_scope_ids;
     ids.sort_unstable();
     ids.dedup();
     for scope_id in &ids {
         load_scope(tx, *scope_id).await?;
     }
-    book_scopes::Entity::delete_many()
-        .filter(book_scopes::COLUMN.book_id.eq(book_id))
+    book_scope_exclusions::Entity::delete_many()
+        .filter(book_scope_exclusions::COLUMN.book_id.eq(book_id))
         .exec(tx)
         .await?;
     for scope_id in &ids {
-        book_scopes::Entity::insert(book_scopes::ActiveModel {
+        book_scope_exclusions::ActiveModel {
             book_id: Set(book_id),
             scope_id: Set(*scope_id),
-        })
-        .exec(tx)
+        }
+        .insert(tx)
         .await?;
     }
-    let mut items = Vec::with_capacity(ids.len());
-    for scope_id in &ids {
-        let scope = load_scope(tx, *scope_id).await?;
-        items.push(to_scope_dto(tx, &scope).await?);
-    }
-    items.sort_by(|left, right| left.name.cmp(&right.name));
+    let visible = book_scopes(tx, book_id).await?;
     // The book configuration changed; the library and the book invalidate on this event.
     let events = vec![ServerEvent::BookUpdated {
         book_id,
         op: crate::events::BookOp::Update,
     }];
-    Ok((items, events))
+    Ok((visible, events))
 }
 
-/// The ids of the scopes a book's writer and reviewer may search (research sessions use their own
-/// target scope instead, spec/07 §1).
+/// Removes an exclusion when an author action targets a scope (spec/03 §6, D-158).
+pub async fn include_scope(
+    tx: &impl ConnectionTrait,
+    book_id: i32,
+    scope_id: i32,
+) -> Result<(), AppError> {
+    book_scope_exclusions::Entity::delete_many()
+        .filter(book_scope_exclusions::COLUMN.book_id.eq(book_id))
+        .filter(book_scope_exclusions::COLUMN.scope_id.eq(scope_id))
+        .exec(tx)
+        .await?;
+    Ok(())
+}
+
+/// The ids of the scopes a book's writer and reviewer may search (spec/07 §1): every scope
+/// without an exclusion row, ordered by id.
 pub async fn visible_scope_ids(
     conn: &impl ConnectionTrait,
     book_id: i32,
 ) -> Result<Vec<i32>, AppError> {
-    Ok(book_scopes::Entity::find()
-        .filter(book_scopes::COLUMN.book_id.eq(book_id))
-        .order_by_asc(book_scopes::COLUMN.scope_id)
+    let excluded = excluded_scope_ids(conn, book_id).await?;
+    Ok(knowledge_scopes::Entity::find()
+        .order_by_asc(knowledge_scopes::COLUMN.id)
         .all(conn)
         .await?
         .into_iter()
-        .map(|row| row.scope_id)
+        .filter(|scope| !excluded.contains(&scope.id))
+        .map(|scope| scope.id)
         .collect())
 }

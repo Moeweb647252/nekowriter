@@ -88,10 +88,13 @@ export default function BookKnowledgePage() {
         <Button
           disabled={save.isPending}
           onClick={() =>
-            save.mutate(selected, {
+            save.mutate(
+              all.filter((scope) => !selected.includes(scope.id)).map((scope) => scope.id),
+              {
               onSuccess: () => setSaved(true),
               onError: showError,
-            })
+              },
+            )
           }
         >
           {t("common:save")}

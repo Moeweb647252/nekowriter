@@ -115,8 +115,8 @@ export function useBookScopes(bookId: number) {
 export function usePutBookScopes(bookId: number) {
   const invalidate = useKnowledgeInvalidator()
   return useMutation({
-    mutationFn: (scopeIds: number[]) =>
-      endpoints.putBookScopes(bookId, { scope_ids: scopeIds }),
+    mutationFn: (excludedScopeIds: number[]) =>
+      endpoints.putBookScopes(bookId, { excluded_scope_ids: excludedScopeIds }),
     onSuccess: invalidate,
   })
 }

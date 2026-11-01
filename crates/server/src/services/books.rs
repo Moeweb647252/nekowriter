@@ -140,6 +140,7 @@ pub async fn create_inner(
         CreateBookResponse {
             book: dto,
             session_id: None,
+            research_task_id: None,
             warnings: Vec::new(),
         },
         vec![ServerEvent::BookUpdated {

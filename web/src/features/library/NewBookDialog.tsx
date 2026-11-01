@@ -148,6 +148,8 @@ export function NewBookDialog({ open, onOpenChange }: NewBookDialogProps) {
                   genre,
                   writing_language: language,
                   start_conception: startConception,
+                  knowledge_check: false,
+                  auto_start_conception: true,
                 },
                 {
                   onSuccess: (response) => {

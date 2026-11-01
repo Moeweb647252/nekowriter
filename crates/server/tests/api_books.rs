@@ -4,8 +4,20 @@
 //! against the real router and a migrated temporary database.
 
 use axum::http::StatusCode;
+use nekowriter::api::dto::books::BookInput;
 use nekowriter::testing::{TestApp, assert_error, assert_error_detail};
 use serde_json::json;
+
+#[test]
+fn book_input_defaults_match_the_backward_compatible_contract() {
+    let input: BookInput = serde_json::from_value(json!({
+        "title": "Old request",
+        "writing_language": "en"
+    }))
+    .expect("the old request shape still decodes");
+    assert!(!input.knowledge_check);
+    assert!(input.auto_start_conception);
+}
 
 #[tokio::test]
 async fn create_book_makes_the_main_track_and_three_setting_docs() {

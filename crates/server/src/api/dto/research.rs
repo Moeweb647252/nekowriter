@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::db::json::ResearchTaskStatus;
+use crate::db::json::{ResearchTaskKind, ResearchTaskOrigin, ResearchTaskStatus};
 
 /// One entry a research task created (spec/10 §2.5: the task carries "the created entries when
 /// done", which the task page lists).
@@ -26,6 +26,8 @@ pub struct ResearchTaskDto {
     pub scope_id: Option<i32>,
     pub scope_name: String,
     pub topic: String,
+    pub kind: ResearchTaskKind,
+    pub origin: ResearchTaskOrigin,
     pub requirements: String,
     pub language: String,
     pub status: ResearchTaskStatus,
@@ -40,6 +42,22 @@ pub struct ResearchTaskDto {
     pub entries: Vec<ResearchTaskEntryDto>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// `POST /api/books/:id/knowledge-check` (spec/10 §2.2, D-158).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct KnowledgeCheckInput {
+    #[serde(default)]
+    pub requirements: String,
+}
+
+/// The knowledge-check response: the preparation task and the research session it started.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct KnowledgeCheckResponse {
+    pub task: ResearchTaskDto,
+    pub session_id: i32,
 }
 
 /// `POST /api/research-tasks` (spec/10 §2.5).

@@ -111,10 +111,19 @@ async fn create_entry(app: &TestApp, scope_id: i32, title: &str, content: &str) 
 }
 
 async fn attach_scopes(app: &TestApp, book_id: i32, scope_ids: Vec<i32>) {
+    let (status, body) = app.get("/api/knowledge/scopes").await;
+    assert_eq!(status, 200, "list scopes: {body}");
+    let excluded: Vec<i32> = body
+        .as_array()
+        .expect("scopes")
+        .iter()
+        .map(|scope| scope["id"].as_i64().expect("scope id") as i32)
+        .filter(|scope_id| !scope_ids.contains(scope_id))
+        .collect();
     let (status, body) = app
         .put(
             &format!("/api/books/{book_id}/scopes"),
-            json!({ "scope_ids": scope_ids }),
+            json!({ "excluded_scope_ids": excluded }),
         )
         .await;
     assert_eq!(status, 200, "attach scopes: {body}");
@@ -294,6 +303,13 @@ async fn read_knowledge_entry_pages_from_an_offset() {
         "Not attached to this book.",
     )
     .await;
+    runtime
+        .app
+        .put(
+            &format!("/api/books/{}/scopes", runtime.book_id),
+            json!({ "excluded_scope_ids": [other] }),
+        )
+        .await;
     let calls = run_writer(&runtime).await;
     let reads: Vec<_> = calls
         .iter()

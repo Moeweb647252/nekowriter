@@ -96,7 +96,7 @@ async fn keyword_then_vector_search_and_the_embedding_status() {
     let (status, body) = app
         .put(
             &format!("/api/books/{book_id}/scopes"),
-            json!({ "scope_ids": [history] }),
+            json!({ "excluded_scope_ids": [other] }),
         )
         .await;
     assert_eq!(status, 200, "attach scope: {body}");
@@ -162,7 +162,7 @@ async fn the_writer_only_searches_the_books_attached_scopes() {
         .app
         .put(
             &format!("/api/books/{}/scopes", runtime.book_id),
-            json!({ "scope_ids": [attached] }),
+            json!({ "excluded_scope_ids": [hidden] }),
         )
         .await;
     assert_eq!(status, 200, "attach scope: {body}");

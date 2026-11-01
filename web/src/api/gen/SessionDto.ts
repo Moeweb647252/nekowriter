@@ -2,6 +2,7 @@
 import type { AgentRole } from "./AgentRole";
 import type { Granularity } from "./Granularity";
 import type { Phase } from "./Phase";
+import type { ResearchTaskKind } from "./ResearchTaskKind";
 import type { RetryingDto } from "./RetryingDto";
 import type { SessionCounters } from "./SessionCounters";
 import type { SessionError } from "./SessionError";
@@ -16,7 +17,11 @@ export type SessionDto = { id: number, book_id?: number | null, role: AgentRole,
 /**
  * The chapter's number in its track, for the UI-composed title (D-054).
  */
-chapter_number?: number | null, research_topic?: string | null, model_label: string, status: SessionStatus, phase: Phase, granularity?: Granularity | null, auto_pause: boolean, pause_after_outline: boolean, pause_requested: boolean, held_tool_call_id?: number | null, base_content_version?: number | null, error?: SessionError | null, usage: Usage, counters: SessionCounters, parent_session_id?: number | null, 
+chapter_number?: number | null, research_topic?: string | null, 
+/**
+ * The task kind when the session belongs to a research task (spec/10 §2.8, D-158).
+ */
+research_task_kind?: ResearchTaskKind | null, model_label: string, status: SessionStatus, phase: Phase, granularity?: Granularity | null, auto_pause: boolean, pause_after_outline: boolean, pause_requested: boolean, held_tool_call_id?: number | null, base_content_version?: number | null, error?: SessionError | null, usage: Usage, counters: SessionCounters, parent_session_id?: number | null, 
 /**
  * `parent_session_id` of the child session, when this one was superseded by a rollover.
  */

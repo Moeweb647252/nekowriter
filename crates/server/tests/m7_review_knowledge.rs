@@ -92,7 +92,7 @@ async fn knowledge_search_ignores_unattached_scopes_and_their_vectors() {
     entry(&app, hidden, "Sword vault", "The sword vault is sealed.").await;
     app.put(
         &format!("/api/books/{book_id}/scopes"),
-        json!({ "scope_ids": [attached] }),
+        json!({ "excluded_scope_ids": [hidden] }),
     )
     .await;
     indexer::run_once(app.state()).await.expect("indexer");
@@ -140,7 +140,7 @@ async fn detaching_a_scope_keeps_its_rows() {
     let (status, body) = app
         .put(
             &format!("/api/books/{book_id}/scopes"),
-            json!({ "scope_ids": [] }),
+            json!({ "excluded_scope_ids": [scope_id] }),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
