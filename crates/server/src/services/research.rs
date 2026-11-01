@@ -472,7 +472,7 @@ async fn prepare_scope(tx: &impl ConnectionTrait, task_id: i32) -> Result<i32, A
     };
     // The linked book must be able to search the scope the researcher writes into (spec/07 §8).
     if let Some(book_id) = task.book_id {
-        attach_scope(tx, book_id, scope_id).await?;
+        super::knowledge::include_scope(tx, book_id, scope_id).await?;
     }
     Ok(scope_id)
 }
@@ -498,15 +498,6 @@ async fn resolve_scope(tx: &impl ConnectionTrait, name: &str) -> Result<i32, App
     .exec_with_returning(tx)
     .await?;
     Ok(row.id)
-}
-
-/// Includes a scope for the book when an author action targets it (spec/03 §6, D-158).
-async fn attach_scope(
-    tx: &impl ConnectionTrait,
-    book_id: i32,
-    scope_id: i32,
-) -> Result<(), AppError> {
-    super::knowledge::include_scope(tx, book_id, scope_id).await
 }
 
 // ───────────────────────────── the runtime side ─────────────────────────────

@@ -642,7 +642,7 @@ pub async fn set_book_scopes_inner(
 }
 
 /// Removes an exclusion when an author action targets a scope (spec/03 §6, D-158).
-pub async fn include_scope(
+pub(crate) async fn include_scope(
     tx: &impl ConnectionTrait,
     book_id: i32,
     scope_id: i32,

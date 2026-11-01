@@ -397,7 +397,7 @@ async fn find_or_create_scope(
         .one(tx)
         .await?
     {
-        attach_scope(tx, book_id, row.id).await?;
+        super::knowledge::include_scope(tx, book_id, row.id).await?;
         return Ok(row.id);
     }
     let topics: Vec<&str> = drafts
@@ -416,17 +416,8 @@ async fn find_or_create_scope(
     .insert(tx)
     .await
     .map_err(AppError::from)?;
-    attach_scope(tx, book_id, created.id).await?;
+    super::knowledge::include_scope(tx, book_id, created.id).await?;
     Ok(created.id)
-}
-
-/// Includes a scope for the book when an author action targets it (spec/03 §6, D-158).
-async fn attach_scope(
-    tx: &impl ConnectionTrait,
-    book_id: i32,
-    scope_id: i32,
-) -> Result<(), AppError> {
-    super::knowledge::include_scope(tx, book_id, scope_id).await
 }
 
 /// `POST /api/books/:id/canon/seed` (spec/08 §5): the open seed session, or a new one.
