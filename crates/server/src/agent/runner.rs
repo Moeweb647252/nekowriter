@@ -2055,7 +2055,7 @@ async fn mark_inbox_consumed(
 }
 
 /// The rendered edit report of a session's stored view snapshot (spec/03 §7).
-async fn edit_report_text(
+pub(crate) async fn edit_report_text(
     tx: &sea_orm::DatabaseTransaction,
     session: &agent_sessions::Model,
     prompts: &PromptSet,

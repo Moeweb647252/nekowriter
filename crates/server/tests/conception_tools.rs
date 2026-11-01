@@ -501,3 +501,27 @@ async fn conception_writes_emit_settings_events() {
         "a topics write emits settings.changed(research_topics): {kinds:?}"
     );
 }
+
+#[tokio::test]
+async fn agent_writes_after_an_answer_are_not_reported_as_author_edits() {
+    let runtime = runtime(vec![
+        ask_step(),
+        tools_step(&[(
+            "write_setting_doc",
+            json!({ "doc": "outline", "content": "# 大纲\n\n第一幕：入城。" }),
+        )]),
+        text_step("继续。"),
+    ])
+    .await;
+    let book = create_conceiving_book(&runtime, "Agent writes after answer").await;
+    let session_id = book["session_id"].as_i64().expect("session") as i32;
+    let call_id = wait_for_form(&runtime, session_id).await;
+    answer_ok(&runtime, session_id, call_id, ask_answer()).await;
+
+    let call = wait_for_sealed(&runtime, session_id, "write_setting_doc").await;
+    let result = call.result_text.unwrap_or_default();
+    assert!(
+        !result.contains("【用户修改了设定】"),
+        "the agent's own post-answer write must not be reported as an author edit: {result}"
+    );
+}

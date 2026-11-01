@@ -3229,6 +3229,37 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     `continue_conception`, and the studio renders the four check states (open, done, failed or
     cancelled, no check). The check-open `ActivityStream` uses a bounded flex pane so a long
     check scrolls instead of being clipped.
+  - **Pre-ship 0008** (2026-11-01, real `nekowriter_migration::up`, copies only; neither the live
+    DB nor the historical backup was written):
+    - **Live copy** (the true current state; the author deleted every book themselves):
+      0 books, 0 scopes, 0 research tasks, 0 sessions; the source is
+      `~/.local/share/nekowriter/nekowriter.db`. There are no per-book rows; its pre-ship
+      numbers are 0/0 newly visible and 0/0 research tasks before/after. It upgrades cleanly
+      with nothing to lose.
+    - **Historical backup**: `/home/misaka/Code/nekowriter/target/tmp/db-backup-skill/nekowriter.db` (2 books, 0 scopes,
+      0 research tasks, 6 `chapter_write` sessions, 30 messages, 19 tool calls). Per book the
+      newly-visible scope count is **book 1: 0**, **book 2: 0** (all scope ids minus that
+      book's `book_scopes` rows; there are no scopes at all, so this is explicitly zero rather
+      than skipped). Research tasks before/after: **0/0**; no drafts were back-filled as
+      `conception`.
+    - After migration both copies keep the same row counts (live 0/0/0/0/0/0/0; backup
+      2 books / 0 scopes / 0 research tasks / 6 sessions / 30 messages / 19 tool calls /
+      0 entries), `book_scopes` is gone, `book_scope_exclusions` is empty, every task's `kind`
+      is `topic`, and the origin split is empty. All **6** backup sessions load through the
+      real repository + `to_dto` path; all `view_snapshot` values are `NULL` in these fixtures,
+      so no legacy snapshot row is present (the 15.5 migration test covers that decoder
+      separately).
+  - **Demo smoke item 12** (fresh temp DB, free port, `mock://demo`): scope + entry, book with
+    auto-start on → check ran and saved one entry, conception auto-started once with the scope
+    list, report and `search_knowledge`/`read_knowledge_entry` frozen; excluding a scope removed
+    it from the next conception kickoff; auto-start off left no conception session until
+    `conception/start`; a later scope was visible to both books; and an author topic survived
+    `set_research_topics` with `kept[]`/`origin=author`.
+  - **Defect found by the smoke and fixed**: answering a form computed the author edit report at
+    seal time after the resumed agent's writes, so the agent's own documents appeared as
+    `notice.setting_edits`. The answer transaction now computes the report before resuming and
+    clears the consumed snapshot; `conception_tools.rs` regression test
+    `agent_writes_after_an_answer_are_not_reported_as_author_edits`.
 - **Spec**: PROJECT §2, §4, §5, §6.1, §6.2, §6.11, F2, F3, F10, §8.7, §8.10, §10 (29–32), §11;
   spec/02 §1, §2, §3, §4, §5 (18–20); spec/03 §10, §15 (32–33); spec/05 §2, §3, §7, §8, §9;
   spec/07 §1, §8, §8.1; spec/08 §1.4, §5; spec/09 §2; spec/10 §2.2, §2.5, §2.8; spec/11 §5.0, §5.4,

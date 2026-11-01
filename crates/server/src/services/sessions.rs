@@ -1627,6 +1627,10 @@ async fn answer_inner(
         .clone()
         .map(|value| value.into_inner())
         .unwrap_or_default();
+    // Report author edits here, before the resumed agent writes anything. Sealing after the
+    // next step would compare the old snapshot with the agent's own new documents and claim the
+    // author changed them (found by the M15 Demo smoke).
+    let edit_report = crate::agent::runner::edit_report_text(tx, &session, &prompts).await?;
     // This is the transaction that finalizes the call, so the full recorded `ToolEffects` apply
     // here — the phase change with its acceptance notice, and the completion with its handler
     // (spec/03 §5.4 has no exception for the answer path). The appendix order stays canonical:
@@ -1669,6 +1673,13 @@ async fn answer_inner(
             .await?;
         }
     }
+    if let Some(report) = edit_report {
+        answer_appendices.push(crate::db::json::Appendix {
+            kind: crate::db::json::AppendixKind::EditReport,
+            text: report,
+            inbox_id: None,
+        });
+    }
     agent_tool_calls::ActiveModel {
         id: Set(call.id),
         status: Set(ToolCallStatus::Done),
@@ -1676,6 +1687,15 @@ async fn answer_inner(
         appendices: Set(JsonText(answer_appendices)),
         effects: Set(Some(JsonText(crate::db::json::ToolEffects::default()))),
         finished_at: Set(Some(chrono::Utc::now())),
+        ..Default::default()
+    }
+    .update(tx)
+    .await?;
+    // The answer consumed the snapshot (the report is in its appendices); clearing it keeps the
+    // agent's own resumed writes out of the next edit report.
+    agent_sessions::ActiveModel {
+        id: Set(session_id),
+        view_snapshot: Set(None),
         ..Default::default()
     }
     .update(tx)
