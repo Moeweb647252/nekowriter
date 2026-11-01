@@ -92,6 +92,19 @@ describe("BookKnowledgePage", () => {
     expect(save.mock.calls[0][0]).toEqual([2])
   })
 
+  it("lets the author uncheck a scope that arrived after the page loaded", async () => {
+    const view = render(<BookKnowledgePage />)
+    state.scopes = [scope(1), scope(2), scope(3)]
+    view.rerender(<BookKnowledgePage />)
+    await waitFor(() => expect(screen.getAllByRole("checkbox")).toHaveLength(3))
+    const checks = screen.getAllByRole("checkbox")
+    await waitFor(() => expect(checks[2]).toBeChecked())
+    await userEvent.click(checks[2])
+    expect(checks[2]).not.toBeChecked()
+    await userEvent.click(screen.getByRole("button", { name: "Save" }))
+    expect(save.mock.calls[0][0]).toEqual([2, 3])
+  })
+
   it("never sends a book-known scope that is absent from the loaded list", async () => {
     // The visible list includes a scope the page did not load into `useScopes` (for example a
     // second tab created it); the stale save must leave it alone rather than write an exclusion.

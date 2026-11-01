@@ -19,6 +19,7 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import i18n from "i18next"
 import zhAgent from "@/i18n/locales/zh-CN/agent.json"
 import zhBook from "@/i18n/locales/zh-CN/book.json"
+import zhChapter from "@/i18n/locales/zh-CN/chapter.json"
 
 const startConception = vi.fn()
 const startKnowledgeCheck = vi.fn()
@@ -520,9 +521,11 @@ describe("knowledge-check states before conception", () => {
     expect(screen.getByText("Running")).toBeInTheDocument()
     const stream = screen.getByTestId("stream")
     expect(stream).toBeInTheDocument()
-    expect(stream.parentElement?.className).toContain("flex")
-    expect(stream.parentElement?.className).toContain("flex-col")
-    expect(stream.parentElement?.className).toContain("h-[24rem]")
+    const wrapperClasses = stream.parentElement?.className.split(/\s+/) ?? []
+    expect(wrapperClasses).toContain("flex")
+    expect(wrapperClasses).toContain("flex-col")
+    expect(wrapperClasses).toContain("h-[24rem]")
+    expect(wrapperClasses).toContain("overflow-hidden")
     expect(screen.getByText("the check is inventorying the scopes")).toBeInTheDocument()
     expect(screen.getByRole("link", { name: "Open the check" })).toHaveAttribute(
       "href",
@@ -562,13 +565,18 @@ describe("knowledge-check states before conception", () => {
     if (!i18n.hasResourceBundle("zh-CN", "book")) {
       i18n.addResourceBundle("zh-CN", "book", zhBook)
     }
+    if (!i18n.hasResourceBundle("zh-CN", "chapter")) {
+      i18n.addResourceBundle("zh-CN", "chapter", zhChapter)
+    }
     state.topics = [preparationTask({ status: "cancelled", session_id: null })]
     const english = renderStudio()
     expect(screen.getAllByText("Cancelled").length).toBeGreaterThan(0)
+    expect(screen.getByTitle("Cancelled")).toBeInTheDocument()
     english.unmount()
     await i18n.changeLanguage("zh-CN")
     const chinese = renderStudio()
     expect(screen.getAllByText("已取消").length).toBeGreaterThan(0)
+    expect(screen.getByTitle("已取消")).toBeInTheDocument()
     chinese.unmount()
     await i18n.changeLanguage("en")
   })

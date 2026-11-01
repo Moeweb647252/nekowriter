@@ -50,13 +50,28 @@ export default function BookKnowledgePage() {
   const checkIsOpen = knowledgeCheckOpen(checkTask)
 
   useEffect(() => {
-    if (scopes.data !== undefined && knownIds === null) {
+    if (scopes.data === undefined) {
+      return
+    }
+    const ids = scopes.data.map((scope) => scope.id)
+    if (knownIds === null) {
       // Capture the scopes that were loaded with the page. A scope that arrives later is
       // visible by default and must never be sent as an exclusion by a stale save (D-158).
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setKnownIds(new Set(scopes.data.map((scope) => scope.id)))
+      setKnownIds(new Set(ids))
+      return
     }
-  }, [scopes.data, knownIds])
+    const added = ids.filter((id) => !knownIds.has(id))
+    if (added.length === 0) {
+      return
+    }
+    // A late scope is visible by default: select it so the author can still uncheck it. The
+    // `knownIds` guard keeps it out of a stale save if the author never sees this update.
+    setKnownIds(new Set([...knownIds, ...added]))
+    setSelection((previous) => [
+      ...new Set([...(previous ?? attached.data?.map((scope) => scope.id) ?? []), ...added]),
+    ])
+  }, [scopes.data, knownIds, attached.data])
 
   if (scopes.isPending || attached.isPending || attached.data === undefined) {
     return <Skeleton className="m-6 h-64" />
@@ -86,10 +101,7 @@ export default function BookKnowledgePage() {
               className="flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 hover:bg-accent"
             >
               <Checkbox
-                checked={
-                  selected.includes(scope.id) ||
-                  (knownIds !== null && !knownIds.has(scope.id))
-                }
+                checked={selected.includes(scope.id)}
                 onCheckedChange={(checked) => {
                   setSaved(false)
                   setSelection(
