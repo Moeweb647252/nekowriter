@@ -2249,6 +2249,9 @@ async fn set_status(
         id: Set(session.id),
         status: Set(to),
         updated_at: Set(now),
+        // Keep the edit-report snapshot across an idle -> running transition. Clearing it here
+        // would hide author edits, while leaving it is what the report path expects.
+        view_snapshot: Set(session.view_snapshot.clone()),
         ..Default::default()
     };
     if clear_pause {

@@ -1118,10 +1118,36 @@ async fn step_tool(
                         state: &state,
                         events: Vec::new(),
                     };
+                    // A conception session's edit report compares the stored snapshot with the
+                    // current materials when the call is sealed. Capture the materials before and
+                    // after the handler so the agent's own write can advance the snapshot and is
+                    // not reported as an author edit (spec/03 §7).
+                    let view_before = if session::kind_of(&session) == SessionKind::Conception {
+                        session::capture_view_snapshot(tx, &session).await?
+                    } else {
+                        None
+                    };
                     let handled = handler
                         .execute(&mut tool_ctx, input.unwrap_or(Value::Null), prepared)
                         .await;
                     domain_events = std::mem::take(&mut tool_ctx.events);
+                    if let Some(before) = view_before
+                        && let Some(after) = session::capture_view_snapshot(tx, &session).await?
+                        && let Some(mut snapshot) = session::load(tx, session.id)
+                            .await?
+                            .view_snapshot
+                            .as_ref()
+                            .map(|value| value.0.clone())
+                        && advance_conception_snapshot(&mut snapshot, &before, &after)
+                    {
+                        session::guard_update(
+                            tx,
+                            session.id,
+                            SessionStatus::Running,
+                            session::view_snapshot_changes(snapshot),
+                        )
+                        .await?;
+                    }
                     match handled {
                         Ok(outcome) => outcome,
                         Err(error) => ToolOutcome::error(&prompts, &error),
@@ -1433,6 +1459,57 @@ async fn keep_view_snapshot_in_sync(
         "advanced the view snapshot past the agent's own write"
     );
     Ok(())
+}
+
+/// Advances a conception snapshot past the agent's own write (spec/03 §7).
+///
+/// The chapter helper has the same rule: only the slices the agent changed move, and only while
+/// the snapshot still equals the state immediately before the write. If the author edited a slice
+/// while the session was idle, the snapshot differs there and the edit stays reportable.
+fn advance_conception_snapshot(
+    snapshot: &mut ViewSnapshot,
+    before: &ViewSnapshot,
+    after: &ViewSnapshot,
+) -> bool {
+    let (
+        ViewSnapshot::Conception {
+            docs,
+            characters,
+            topics,
+        },
+        ViewSnapshot::Conception {
+            docs: before_docs,
+            characters: before_characters,
+            topics: before_topics,
+        },
+        ViewSnapshot::Conception {
+            docs: after_docs,
+            characters: after_characters,
+            topics: after_topics,
+        },
+    ) = (snapshot, before, after)
+    else {
+        return false;
+    };
+    let mut changed = false;
+    for (kind, before_doc) in before_docs {
+        if docs.get(kind) == Some(before_doc)
+            && let Some(after_doc) = after_docs.get(kind)
+            && docs.get(kind) != Some(after_doc)
+        {
+            docs.insert(kind.clone(), after_doc.clone());
+            changed = true;
+        }
+    }
+    if characters == before_characters && characters != after_characters {
+        *characters = after_characters.clone();
+        changed = true;
+    }
+    if topics == before_topics && topics != after_topics {
+        *topics = after_topics.clone();
+        changed = true;
+    }
+    changed
 }
 
 /// Applies the call's deferred effects and writes its final status (spec/03 §5.4).

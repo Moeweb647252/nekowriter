@@ -3230,7 +3230,9 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     cancelled, no check). The check-open `ActivityStream` uses a bounded flex pane so a long
     check scrolls instead of being clipped.
   - **Pre-ship 0008** (2026-11-01, real `nekowriter_migration::up`, copies only; neither the live
-    DB nor the historical backup was written):
+    DB nor the historical backup was written). Both sources were at **m0006**, so `up` applied
+    **m0007 + m0008**; m0007 is a single `UPDATE` on the seeded `basic-writing` row and changes
+    none of the counts reported below.
     - **Live copy** (the true current state; the author deleted every book themselves):
       0 books, 0 scopes, 0 research tasks, 0 sessions; the source is
       `~/.local/share/nekowriter/nekowriter.db`. There are no per-book rows; its pre-ship
@@ -3255,11 +3257,24 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     it from the next conception kickoff; auto-start off left no conception session until
     `conception/start`; a later scope was visible to both books; and an author topic survived
     `set_research_topics` with `kept[]`/`origin=author`.
-  - **Defect found by the smoke and fixed**: answering a form computed the author edit report at
+  - **Defects found by the smoke and fixed**: answering a form computed the author edit report at
     seal time after the resumed agent's writes, so the agent's own documents appeared as
     `notice.setting_edits`. The answer transaction now computes the report before resuming and
     clears the consumed snapshot; `conception_tools.rs` regression test
-    `agent_writes_after_an_answer_are_not_reported_as_author_edits`.
+    `agent_writes_after_an_answer_are_not_reported_as_author_edits`. A second path, an idle turn
+    followed by an author message, kept the snapshot across the idle -> running transition; the
+    tool transaction now advances the conception snapshot after each agent write (documents,
+    characters and research topics), guarded by the pre-write slice, so those writes are not
+    reported while real author edits still are. Regression tests
+    `agent_writes_after_an_idle_turn_are_not_reported_as_author_edits` and
+    `author_edits_while_idle_are_reported_after_the_next_agent_write`.
+  - **Lead's browser smoke** (fresh Demo DB on port 18082, by the Lead, after the API smoke):
+    observed the new-book dialog's auto-start checkbox default-on and hidden when conception is
+    off; landing on `/books/:id/conception`; the check-done pane with report, entries created,
+    "Open Book › Knowledge" and Start conception; the no-check pane with Start conception and
+    "Check knowledge first"; the research list showing "Knowledge check" with its target scope;
+    and the "Added by you" label on an author topic that survived `set_research_topics` (its
+    `kept[]` contained it). No additional browser artifacts were invented here.
 - **Spec**: PROJECT §2, §4, §5, §6.1, §6.2, §6.11, F2, F3, F10, §8.7, §8.10, §10 (29–32), §11;
   spec/02 §1, §2, §3, §4, §5 (18–20); spec/03 §10, §15 (32–33); spec/05 §2, §3, §7, §8, §9;
   spec/07 §1, §8, §8.1; spec/08 §1.4, §5; spec/09 §2; spec/10 §2.2, §2.5, §2.8; spec/11 §5.0, §5.4,

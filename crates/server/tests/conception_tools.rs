@@ -525,3 +525,149 @@ async fn agent_writes_after_an_answer_are_not_reported_as_author_edits() {
         "the agent's own post-answer write must not be reported as an author edit: {result}"
     );
 }
+
+/// Waits for the session to reach `idle`.
+async fn wait_for_idle(runtime: &Runtime, session_id: i32) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        if runtime.session_row(session_id).await.status == "idle" {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "session {session_id} never reached idle"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
+/// Waits for the `nth` sealed call with `name` (1-based among calls with that name).
+async fn wait_for_nth_sealed(
+    runtime: &Runtime,
+    session_id: i32,
+    name: &str,
+    nth: usize,
+) -> CallRow {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let calls = runtime.calls(session_id).await;
+        if let Some(row) = calls
+            .iter()
+            .filter(|call| call.name == name && call.sealed)
+            .nth(nth.saturating_sub(1))
+        {
+            return row.clone();
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "session {session_id} never sealed call {nth} of {name}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
+#[tokio::test]
+async fn agent_writes_after_an_idle_turn_are_not_reported_as_author_edits() {
+    let runtime = runtime(vec![
+        tools_step(&[(
+            "write_setting_doc",
+            json!({ "doc": "outline", "content": "# 大纲\n\n第一幕：入城。" }),
+        )]),
+        text_step("先写大纲。"),
+        tools_step(&[(
+            "write_setting_doc",
+            json!({ "doc": "world", "content": "# 世界观\n\n剑气折损心脉。" }),
+        )]),
+        text_step("再写世界观。"),
+    ])
+    .await;
+    let book = create_conceiving_book(&runtime, "Idle agent writes").await;
+    let session_id = book["session_id"].as_i64().expect("session") as i32;
+    wait_for_sealed(&runtime, session_id, "write_setting_doc").await;
+    wait_for_idle(&runtime, session_id).await;
+
+    let (status, body) = runtime
+        .app
+        .post(
+            &format!("/api/sessions/{session_id}/message"),
+            json!({ "text": "继续写世界观。" }),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let second = wait_for_nth_sealed(&runtime, session_id, "write_setting_doc", 2).await;
+    let result = second.result_text.unwrap_or_default();
+    assert!(
+        !result.contains("【用户修改了设定】"),
+        "the agent's own post-idle write must not be reported as an author edit: {result}"
+    );
+}
+
+#[tokio::test]
+async fn author_edits_while_idle_are_reported_after_the_next_agent_write() {
+    let runtime = runtime(vec![
+        tools_step(&[(
+            "write_setting_doc",
+            json!({ "doc": "outline", "content": "# 大纲\n\n第一幕：入城。" }),
+        )]),
+        text_step("先写大纲。"),
+        tools_step(&[(
+            "write_setting_doc",
+            json!({ "doc": "world", "content": "# 世界观\n\n剑气折损心脉。" }),
+        )]),
+        text_step("再写世界观。"),
+    ])
+    .await;
+    let book = create_conceiving_book(&runtime, "Idle author edit").await;
+    let book_id = book["book"]["id"].as_i64().expect("book") as i32;
+    let session_id = book["session_id"].as_i64().expect("session") as i32;
+    wait_for_sealed(&runtime, session_id, "write_setting_doc").await;
+    wait_for_idle(&runtime, session_id).await;
+
+    let (_, revision, _) = setting_doc(&runtime, book_id, "outline").await;
+    let (status, body) = runtime
+        .app
+        .put(
+            &format!("/api/books/{book_id}/setting-docs/outline"),
+            json!({
+                "content": "# 大纲\n\n第一幕：雨夜入城。\n第二幕：登楼。",
+                "base_revision": revision,
+                "note": "",
+            }),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let (status, body) = runtime
+        .app
+        .post(
+            &format!("/api/sessions/{session_id}/message"),
+            json!({ "text": "继续写世界观。" }),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let _second = wait_for_nth_sealed(&runtime, session_id, "write_setting_doc", 2).await;
+    let (_, snapshot) = runtime
+        .app
+        .get(&format!("/api/sessions/{session_id}"))
+        .await;
+    let transcript = snapshot["messages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|message| {
+            message["message"]["blocks"]
+                .as_array()
+                .into_iter()
+                .flatten()
+        })
+        .filter_map(|block| block["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        transcript.contains("【用户修改了设定】"),
+        "the author's idle edit must still be reported: {transcript}"
+    );
+    assert!(
+        transcript.contains("雨夜入城"),
+        "the report names the author's edit: {transcript}"
+    );
+}
