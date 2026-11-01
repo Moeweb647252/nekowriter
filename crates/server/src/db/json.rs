@@ -512,11 +512,6 @@ impl Default for CanonSystems {
 }
 
 impl CanonSystems {
-    /// True when every switch is on (the pre-D-150 behaviour and AC13's baseline state).
-    pub fn all_on(&self) -> bool {
-        self.entities && self.timeline && self.memory && self.foreshadowing && self.goals
-    }
-
     /// True when at least one of the four systems `canon_seed` can build is on. Goals are
     /// never seeded (spec/06 §7).
     pub fn any_seed_system(&self) -> bool {

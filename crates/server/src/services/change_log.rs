@@ -5,7 +5,6 @@
 //! change note, an agent's note, a proposal's rationale, or the merge form `#B → #A`); the UI
 //! derives localized labels from `actor`, `op`, `target_type` and `reverts_id` (DECISIONS D-032).
 
-use chrono::{DateTime, Utc};
 use sea_orm::{
     ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set,
 };
@@ -13,7 +12,7 @@ use serde_json::Value;
 
 use crate::api::dto::changes::{ChangeDto, ChangePageDto, ChangeQuery};
 use crate::db::entities::change_log;
-use crate::db::json::{ChangeActor, ChangeOp, ChangeTargetType, JsonText, Snapshot, to_json};
+use crate::db::json::{ChangeActor, ChangeOp, ChangeTargetType, JsonText, Snapshot};
 use crate::error::AppError;
 
 use super::now;
@@ -170,14 +169,6 @@ pub fn character_snapshot(row: &crate::db::entities::character_designs::Model) -
     }
 }
 
-/// Which columns the change row needs to describe what happened to a target.
-pub fn snapshot_json(snapshot: Option<&Snapshot>) -> Result<Option<String>, AppError> {
-    snapshot
-        .map(to_json)
-        .transpose()
-        .map_err(|err| AppError::internal(format!("cannot serialize a snapshot: {err}")))
-}
-
 /// Maps a change row to its DTO.
 pub fn to_dto(row: &change_log::Model) -> Result<ChangeDto, AppError> {
     Ok(ChangeDto {
@@ -224,9 +215,4 @@ pub async fn mark_reverted(
     active.reverted_by_id = Set(Some(revert_id));
     active.update(tx).await?;
     Ok(())
-}
-
-/// Formats a change row's timestamp for logs.
-pub fn changed_at(row: &change_log::Model) -> DateTime<Utc> {
-    row.created_at
 }

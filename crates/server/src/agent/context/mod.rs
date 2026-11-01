@@ -9,8 +9,6 @@
 //! same bytes (spec/03 §15 test 14: append-only history proves a previous step's request is a
 //! byte-identical prefix of the current one).
 
-use std::collections::BTreeMap;
-
 use sea_orm::{
     ColumnTrait, Condition, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
     QuerySelect,
@@ -27,8 +25,8 @@ use crate::db::entities::{
 };
 use crate::db::json::{
     self, AgentRole, CanonMode, CanonSystem, CanonSystems, ChapterContent, CompletionKind,
-    InboxKind, JsonText, MessageKind, MessageRole, Phase, Protocol, RequestMeta, SessionCounters,
-    SessionKind, StoredBlock, ToolCallStatus, TrackKind, Usage, VersionKind,
+    InboxKind, JsonText, MessageRole, Phase, Protocol, RequestMeta, SessionCounters, SessionKind,
+    StoredBlock, TrackKind, Usage,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
@@ -2283,15 +2281,6 @@ pub async fn apply_completion(
     Ok(events)
 }
 
-/// The version kinds the completion handlers save (re-exported for the milestones).
-pub fn completion_version_kind(completion: CompletionKind) -> Option<VersionKind> {
-    match completion {
-        CompletionKind::Draft => Some(VersionKind::Draft),
-        CompletionKind::Revision => Some(VersionKind::Revision),
-        _ => None,
-    }
-}
-
 /// Stored `request_meta` of a message, when present.
 pub fn request_meta(message: &agent_messages::Model) -> Option<RequestMeta> {
     message.request_meta.clone().map(|value| value.into_inner())
@@ -2301,46 +2290,6 @@ pub fn request_meta(message: &agent_messages::Model) -> Option<RequestMeta> {
 pub fn frozen_tool_names(session: &agent_sessions::Model) -> Vec<String> {
     let tools: Vec<nekowriter_llm::ToolDef> = session.tools.clone().into_inner();
     tools.into_iter().map(|tool| tool.name).collect()
-}
-
-/// True when the session's frozen tool list contains the tool (spec/03 §1.2).
-pub fn freezes_tool(session: &agent_sessions::Model, name: &str) -> bool {
-    frozen_tool_names(session).iter().any(|tool| tool == name)
-}
-
-/// The completion kinds that produce a version (spec/08 §1.1).
-pub fn version_kind_label(kind: VersionKind) -> &'static str {
-    kind.as_str()
-}
-
-/// A chapter version row's content, for the completion handlers.
-pub async fn latest_version_kind(
-    conn: &impl ConnectionTrait,
-    chapter_id: i32,
-) -> Result<Option<VersionKind>, AppError> {
-    let row = chapter_versions::Entity::find()
-        .filter(chapter_versions::COLUMN.chapter_id.eq(chapter_id))
-        .order_by_desc(chapter_versions::COLUMN.id)
-        .one(conn)
-        .await?;
-    Ok(row.map(|row| row.kind))
-}
-
-/// The calls of a message that are still unresolved (used by tests and the debug endpoint).
-pub async fn unresolved_calls(
-    conn: &impl ConnectionTrait,
-    message_id: i32,
-) -> Result<Vec<agent_tool_calls::Model>, AppError> {
-    Ok(agent_tool_calls::Entity::find()
-        .filter(agent_tool_calls::COLUMN.message_id.eq(message_id))
-        .filter(agent_tool_calls::COLUMN.status.is_in([
-            ToolCallStatus::Pending.as_str(),
-            ToolCallStatus::Executing.as_str(),
-            ToolCallStatus::Held.as_str(),
-            ToolCallStatus::AwaitingInput.as_str(),
-        ]))
-        .all(conn)
-        .await?)
 }
 
 /// The number of pending inbox rows of a session (spec/10 §2.7 `inbox_pending`).
@@ -2359,26 +2308,6 @@ pub async fn inbox_pending(conn: &impl ConnectionTrait, session_id: i32) -> Resu
         )
         .count(conn)
         .await? as i64)
-}
-
-/// The message kinds that count as an author message (spec/03 §5.3).
-pub fn is_author_kind(kind: &str) -> bool {
-    kind == MessageKind::User.as_str() || kind == MessageKind::Kickoff.as_str()
-}
-
-/// A `BTreeMap` of the book's setting docs, keyed by kind (used by tests).
-pub async fn setting_docs_map(
-    conn: &impl ConnectionTrait,
-    book_id: i32,
-) -> Result<BTreeMap<String, String>, AppError> {
-    let docs = setting_docs::Entity::find()
-        .filter(setting_docs::COLUMN.book_id.eq(book_id))
-        .all(conn)
-        .await?;
-    Ok(docs
-        .into_iter()
-        .map(|doc| (doc.kind.as_str().to_owned(), doc.content))
-        .collect())
 }
 
 /// Error code helper for a missing model role (spec/03 §4 step 1).

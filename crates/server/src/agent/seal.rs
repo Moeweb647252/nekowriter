@@ -35,18 +35,6 @@ pub fn compose(raw_result_text: Option<&str>, appendices: &[Appendix]) -> String
     parts.join("\n\n")
 }
 
-/// Appends one appendix to a list (the caller decides the kind).
-pub fn push_appendix(appendices: &mut Vec<Appendix>, kind: AppendixKind, text: String) {
-    if text.trim().is_empty() {
-        return;
-    }
-    appendices.push(Appendix {
-        kind,
-        text,
-        inbox_id: None,
-    });
-}
-
 /// The `AppendixKind` of an inbox row: author messages are `inbox` items too, but the canonical
 /// order treats every inbox item the same (spec/03 §5.3 slot 4).
 pub fn inbox_appendix(text: String, inbox_id: i32) -> Appendix {

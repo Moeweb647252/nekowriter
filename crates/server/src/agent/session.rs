@@ -300,7 +300,8 @@ pub(crate) fn error_changes(error: &SessionError) -> agent_sessions::ActiveModel
     }
 }
 
-/// The partial session update that clears the stored error.
+/// The partial session update that clears the stored error (the SQL equality test only).
+#[cfg(test)]
 pub(crate) fn clear_error_changes() -> agent_sessions::ActiveModel {
     agent_sessions::ActiveModel {
         error: sea_orm::Set(None),
@@ -314,32 +315,6 @@ pub(crate) fn view_snapshot_changes(snapshot: ViewSnapshot) -> agent_sessions::A
         view_snapshot: sea_orm::Set(Some(json::JsonText(snapshot))),
         ..Default::default()
     }
-}
-
-/// Stores the session's error column (spec/03 §5.5, §5.7) without touching the status.
-pub async fn store_error(
-    conn: &impl ConnectionTrait,
-    session_id: i32,
-    error: &SessionError,
-) -> Result<(), AppError> {
-    guard_update(
-        conn,
-        session_id,
-        SessionStatus::Running,
-        error_changes(error),
-    )
-    .await?;
-    Ok(())
-}
-
-/// Clears the stored error (spec/03 §6: continue and resume clear it).
-pub async fn clear_error(conn: &impl ConnectionTrait, session_id: i32) -> Result<(), AppError> {
-    agent_sessions::Entity::update_many()
-        .set(clear_error_changes())
-        .filter(agent_sessions::COLUMN.id.eq(session_id))
-        .exec(conn)
-        .await?;
-    Ok(())
 }
 
 /// Runs one expected-status-guarded `agent_sessions` update and fails with `session.invalid_state`

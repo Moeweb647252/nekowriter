@@ -20,12 +20,11 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::db::entities::{
-    agent_sessions, books, character_designs, research_tasks,
-    setting_docs::ActiveModel as SettingDocActive,
+    books, character_designs, research_tasks, setting_docs::ActiveModel as SettingDocActive,
 };
 use crate::db::json::{
     AwaitInputKind, ConceptionState, ResearchTaskKind, ResearchTaskOrigin, ResearchTaskStatus,
-    SessionKind, SettingDocKind,
+    SettingDocKind,
 };
 use crate::error::AppError;
 use crate::events::ServerEvent;
@@ -1231,30 +1230,6 @@ pub async fn store_conception_state(
     .update(tx)
     .await?;
     Ok(())
-}
-
-/// The id of the book's open conception session, when there is one (spec/02 §5 invariant 5).
-pub async fn open_conception_session(
-    tx: &impl ConnectionTrait,
-    book_id: i32,
-) -> Result<Option<i32>, AppError> {
-    let row = agent_sessions::Entity::find()
-        .filter(agent_sessions::COLUMN.book_id.eq(book_id))
-        .filter(agent_sessions::COLUMN.kind.eq(SessionKind::Conception))
-        .filter(agent_sessions::COLUMN.status.is_in([
-            "idle",
-            "running",
-            "held",
-            "awaiting_input",
-            "paused",
-            "stopped",
-            "failed",
-            "interrupted",
-        ]))
-        .order_by_desc(agent_sessions::COLUMN.id)
-        .one(tx)
-        .await?;
-    Ok(row.map(|row| row.id))
 }
 
 /// The conception role's handlers (spec/05 §2).

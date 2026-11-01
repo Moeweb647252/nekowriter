@@ -24,8 +24,7 @@ use crate::api::dto::canon::{
     EntityPatch, EntityQuery, RelationDto,
 };
 use crate::db::entities::{
-    appearances, chapters, character_designs, entities, goal_nodes, relations,
-    timeline_event_entities, tracks,
+    appearances, chapters, character_designs, entities, goal_nodes, relations, tracks,
 };
 use crate::db::json::{
     CanonMode, ChangeOp, ChangeTargetType, EntityKind, EntityStatus, GoalCondition, JsonText,
@@ -1316,12 +1315,6 @@ fn appearance_dto(row: &appearances::Model) -> CanonResult<AppearanceDto> {
 /// `Name(#12)`, the form every tool and change note uses for an entity (spec/05 §1.5).
 pub fn entity_label(name: &str, id: i32) -> String {
     format!("{name}(#{id})")
-}
-
-/// Unused-import guard for the join-table entity of the timeline links merged above.
-#[allow(dead_code)]
-fn _join_tables() -> &'static str {
-    std::any::type_name::<timeline_event_entities::Entity>()
 }
 
 // ───────────────────────────── revert support (spec/06 §3) ─────────────────────────────

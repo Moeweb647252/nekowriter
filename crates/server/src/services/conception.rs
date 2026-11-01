@@ -13,12 +13,10 @@ use sea_orm::{
 use serde_json::json;
 
 use crate::api::dto::books::BookDto;
-use crate::db::entities::{
-    agent_sessions, books, knowledge_scopes, research_tasks, setting_docs, tracks,
-};
+use crate::db::entities::{agent_sessions, books, knowledge_scopes, research_tasks, setting_docs};
 use crate::db::json::{
     AgentRole, BookStatus, ConceptionState, JsonText, ResearchTaskKind, ResearchTaskStatus,
-    SessionKind, SessionStatus, SettingDocKind, TrackKind,
+    SessionKind, SessionStatus, SettingDocKind,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::{BookOp, ServerEvent};
@@ -594,14 +592,4 @@ async fn seed_session(state: &AppState, book_id: i32) -> Result<(i32, Vec<String
         },
     )
     .await
-}
-
-/// True when a book still has a main track (used by the API layer's guards).
-pub async fn has_main_track(conn: &impl ConnectionTrait, book_id: i32) -> Result<bool, AppError> {
-    Ok(tracks::Entity::find()
-        .filter(tracks::COLUMN.book_id.eq(book_id))
-        .filter(tracks::COLUMN.kind.eq(TrackKind::Main))
-        .one(conn)
-        .await?
-        .is_some())
 }

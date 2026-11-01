@@ -24,10 +24,7 @@ use crate::db::json::{
 use crate::events::ServerEvent;
 use crate::text;
 
-use super::{
-    Prepared, ToolCtx, ToolError, ToolErrorKind, ToolHandler, ToolKind, ToolOutcome,
-    resolve::EntityResolver,
-};
+use super::{Prepared, ToolCtx, ToolError, ToolErrorKind, ToolHandler, ToolKind, ToolOutcome};
 
 /// The maximum length of one sentence under `sentence` granularity (spec/03 §8).
 pub const SENTENCE_LIMIT: usize = 400;
@@ -1282,25 +1279,6 @@ fn map_text_error(error: text::TextError) -> ToolError {
             .with("reason", "empty"),
         text::TextError::PidExhausted => ToolError::new(ToolErrorKind::Internal),
     }
-}
-
-/// The error the model gets for a granularity violation (spec/03 §8 `error.granularity`).
-pub fn granularity_error(
-    prompts: &crate::prompts::PromptSet,
-    mode: Granularity,
-    reason: &str,
-    tool: &str,
-) -> ToolError {
-    ToolError::new(ToolErrorKind::Granularity)
-        .with("mode", mode.as_str())
-        .with("mode_label", prompts.label("granularity", mode.as_str()))
-        .with("tool", tool.to_owned())
-        .with("reason", reason.to_owned())
-}
-
-/// Builds a resolver over the book's visible entities (used by `read_chapter`, M5).
-pub fn resolver_for(entities: Vec<super::resolve::VisibleEntity>) -> EntityResolver {
-    EntityResolver::new(entities)
 }
 
 /// Re-export so the tests can build a content row the same way the tools do.

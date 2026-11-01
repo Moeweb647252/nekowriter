@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::db::json::{AgentRole, CanonSystem, CanonSystems, Granularity, Phase, SessionKind};
+use crate::db::json::{AgentRole, CanonSystem, CanonSystems, Phase, SessionKind};
 
 use super::ToolHandler;
 
@@ -449,14 +449,6 @@ impl ToolRegistry {
     pub fn is_empty(&self) -> bool {
         self.handlers.is_empty()
     }
-}
-
-/// True when a granularity value is valid for a writer session (spec/03 §8).
-pub fn is_writer_granularity(granularity: Granularity) -> bool {
-    matches!(
-        granularity,
-        Granularity::Sentence | Granularity::Paragraph | Granularity::Free | Granularity::Chapter
-    )
 }
 
 #[cfg(test)]

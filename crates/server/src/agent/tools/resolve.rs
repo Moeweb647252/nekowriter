@@ -13,7 +13,6 @@
 use serde::Serialize;
 
 use super::{ToolError, ToolErrorKind};
-use crate::prompts::PromptSet;
 
 /// One visible entity, as the resolver sees it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -169,11 +168,6 @@ fn parse_id(reference: &str) -> Option<i32> {
 fn shared_chars(left: &str, right: &str) -> usize {
     let right: Vec<char> = right.chars().collect();
     left.chars().filter(|ch| right.contains(ch)).count()
-}
-
-/// Renders the resolution failure through `result.error` so a caller can return it directly.
-pub fn render_error(prompts: &PromptSet, error: &ToolError) -> String {
-    super::ToolOutcome::error(prompts, error).text
 }
 
 #[cfg(test)]
