@@ -3226,7 +3226,9 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     created it was not recorded), so it is protected only once the author edits it. The pre-ship
     report counts these drafts.
   - The overview's next-action rules are unchanged: a conceiving book still shows
-    `continue_conception`, and the studio renders the check's states.
+    `continue_conception`, and the studio renders the four check states (open, done, failed or
+    cancelled, no check). The check-open `ActivityStream` uses a bounded flex pane so a long
+    check scrolls instead of being clipped.
 - **Spec**: PROJECT §2, §4, §5, §6.1, §6.2, §6.11, F2, F3, F10, §8.7, §8.10, §10 (29–32), §11;
   spec/02 §1, §2, §3, §4, §5 (18–20); spec/03 §10, §15 (32–33); spec/05 §2, §3, §7, §8, §9;
   spec/07 §1, §8, §8.1; spec/08 §1.4, §5; spec/09 §2; spec/10 §2.2, §2.5, §2.8; spec/11 §5.0, §5.4,

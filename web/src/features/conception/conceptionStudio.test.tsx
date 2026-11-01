@@ -7,12 +7,18 @@
  *   (Pause/Stop while running, Continue when held) must be reachable from this route rather than
  *   only from the agent panel of the book workspace.
  */
-import { render, screen } from "@testing-library/react"
+import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+
+import { applyServerEvent } from "@/api/events"
 
 import type { SessionDto } from "@/api/gen/SessionDto"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import i18n from "i18next"
+import zhAgent from "@/i18n/locales/zh-CN/agent.json"
+import zhBook from "@/i18n/locales/zh-CN/book.json"
 
 const startConception = vi.fn()
 const startKnowledgeCheck = vi.fn()
@@ -53,17 +59,26 @@ const conceivingBook = {
   settings: { granularity: "paragraph" },
 }
 
-vi.mock("@/api/hooks/sessions", () => ({
-  useBookSessions: () => ({ data: state.sessions, isPending: false }),
-  useSession: (sessionId: number | null) => ({
-    data: sessionId === 11 ? state.checkSnapshot : state.snapshot,
-    isPending: false,
-  }),
-  useAnswerSession: () => ({ mutate: answerSession, isPending: false }),
-  useSendSessionMessage: () => ({ mutate: vi.fn(), isPending: false }),
-  useSessionControl: () => ({ mutate: sessionControl, isPending: false }),
-  useResumeSession: () => ({ mutate: resume, isPending: false }),
-}))
+vi.mock("@/api/hooks/sessions", async () => {
+  const { useQuery } = await import("@tanstack/react-query")
+  const { keys } = await import("@/api/keys")
+  return {
+    useBookSessions: (bookId: number) =>
+      useQuery({
+        queryKey: keys.sessions.list(bookId),
+        queryFn: async () => state.sessions,
+        initialData: state.sessions,
+      }),
+    useSession: (sessionId: number | null) => ({
+      data: sessionId === 11 ? state.checkSnapshot : state.snapshot,
+      isPending: false,
+    }),
+    useAnswerSession: () => ({ mutate: answerSession, isPending: false }),
+    useSendSessionMessage: () => ({ mutate: vi.fn(), isPending: false }),
+    useSessionControl: () => ({ mutate: sessionControl, isPending: false }),
+    useResumeSession: () => ({ mutate: resume, isPending: false }),
+  }
+})
 
 vi.mock("@/api/hooks/settings-materials", () => ({
   useSettingDocs: () => ({ data: state.docs, isPending: false }),
@@ -95,14 +110,32 @@ vi.mock("@/components/common/ErrorToast", () => ({
   useErrorToast: () => showError,
 }))
 
+// jsdom has no layout, so the real virtualizer reports no visible rows. Render every row so the
+// check-open assertions can see the scripted message.
+vi.mock("@tanstack/react-virtual", () => ({
+  useVirtualizer: ({ count }: { count: number }) => ({
+    getTotalSize: () => count * 120,
+    getVirtualItems: () =>
+      Array.from({ length: count }, (_, index) => ({ index, start: index * 120 })),
+    measureElement: () => undefined,
+    scrollToEnd: () => undefined,
+  }),
+}))
+
 import ConceptionStudio from "@/features/conception/ConceptionStudio"
 
 /** The application wraps routed pages in the providers of `app/providers.tsx`. */
-function renderStudio() {
+function makeClient() {
+  return new QueryClient({ defaultOptions: { queries: { retry: false } } })
+}
+
+function renderStudio(client: QueryClient = makeClient()) {
   return render(
-    <TooltipProvider>
-      <ConceptionStudio />
-    </TooltipProvider>,
+    <QueryClientProvider client={client}>
+      <TooltipProvider>
+        <ConceptionStudio />
+      </TooltipProvider>
+    </QueryClientProvider>,
   )
 }
 
@@ -463,13 +496,34 @@ describe("knowledge-check states before conception", () => {
     state.topics = [task]
     state.checkSnapshot = {
       session: checkSession("running"),
-      messages: [],
+      messages: [
+        {
+          message: {
+            id: 1,
+            seq: 0,
+            role: "assistant",
+            kind: "assistant",
+            blocks: [{ type: "text", text: "the check is inventorying the scopes" }],
+            stop_reason: null,
+            usage: null,
+            created_at: "2026-01-01T00:00:00Z",
+          },
+          tool_calls: [],
+        },
+      ],
       system_prompt: "",
       tool_names: [],
     }
 
     renderStudio()
     expect(screen.getByText("Knowledge check")).toBeInTheDocument()
+    expect(screen.getByText("Running")).toBeInTheDocument()
+    const stream = screen.getByTestId("stream")
+    expect(stream).toBeInTheDocument()
+    expect(stream.parentElement?.className).toContain("flex")
+    expect(stream.parentElement?.className).toContain("flex-col")
+    expect(stream.parentElement?.className).toContain("h-[24rem]")
+    expect(screen.getByText("the check is inventorying the scopes")).toBeInTheDocument()
     expect(screen.getByRole("link", { name: "Open the check" })).toHaveAttribute(
       "href",
       "/research/21",
@@ -501,6 +555,24 @@ describe("knowledge-check states before conception", () => {
     expect(screen.getByRole("button", { name: "Start conception" })).toBeInTheDocument()
   })
 
+  it("localizes a cancelled check in both locales", async () => {
+    if (!i18n.hasResourceBundle("zh-CN", "agent")) {
+      i18n.addResourceBundle("zh-CN", "agent", zhAgent)
+    }
+    if (!i18n.hasResourceBundle("zh-CN", "book")) {
+      i18n.addResourceBundle("zh-CN", "book", zhBook)
+    }
+    state.topics = [preparationTask({ status: "cancelled", session_id: null })]
+    const english = renderStudio()
+    expect(screen.getAllByText("Cancelled").length).toBeGreaterThan(0)
+    english.unmount()
+    await i18n.changeLanguage("zh-CN")
+    const chinese = renderStudio()
+    expect(screen.getAllByText("已取消").length).toBeGreaterThan(0)
+    chinese.unmount()
+    await i18n.changeLanguage("en")
+  })
+
   it("offers Start conception and Check knowledge first when there is no check", async () => {
     const user = userEvent.setup()
     renderStudio()
@@ -509,19 +581,27 @@ describe("knowledge-check states before conception", () => {
     expect(startKnowledgeCheck).toHaveBeenCalledTimes(1)
   })
 
-  it("swaps to the conception session when the session list changes", () => {
-    const view = renderStudio()
+  it("swaps to the conception session on a real session.updated event", async () => {
+    const client = makeClient()
+    const view = renderStudio(client)
     expect(screen.getByText(/No conception session yet/)).toBeInTheDocument()
     const session = conceptionSession({ status: "idle" })
     state.sessions = [session]
     state.snapshot = { session, messages: [], system_prompt: "", tool_names: [] }
-    view.rerender(
-      <TooltipProvider>
-        <ConceptionStudio />
-      </TooltipProvider>,
-    )
-    expect(screen.queryByText(/No conception session yet/)).not.toBeInTheDocument()
-    expect(screen.getByText("Conception studio")).toBeInTheDocument()
+    applyServerEvent(client, "session.updated", {
+      session: {
+        id: session.id,
+        book_id: 1,
+        role: "conception",
+        kind: "conception",
+        chapter_id: null,
+        status: "idle",
+      },
+    })
+    await waitFor(() => {
+      expect(screen.queryByText(/No conception session yet/)).not.toBeInTheDocument()
+    })
+    expect(view.getByText("Conception studio")).toBeInTheDocument()
   })
 })
 

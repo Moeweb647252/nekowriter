@@ -35,7 +35,8 @@
     "abandoned": "Abandoned",
     "pausing": "Pausing…",
     "stopping": "Stopping…",
-    "retrying": "Retrying in {{seconds}} s"
+    "retrying": "Retrying in {{seconds}} s",
+    "cancelled": "Cancelled"
   },
   "controls": {
     "pause": "Pause",

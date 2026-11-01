@@ -35,7 +35,8 @@
     "abandoned": "已放弃",
     "pausing": "正在暂停…",
     "stopping": "正在停止…",
-    "retrying": "{{seconds}} 秒后重试"
+    "retrying": "{{seconds}} 秒后重试",
+    "cancelled": "已取消"
   },
   "controls": {
     "pause": "暂停",

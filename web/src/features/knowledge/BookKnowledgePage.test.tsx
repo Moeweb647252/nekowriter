@@ -92,6 +92,16 @@ describe("BookKnowledgePage", () => {
     expect(save.mock.calls[0][0]).toEqual([2])
   })
 
+  it("never sends a book-known scope that is absent from the loaded list", async () => {
+    // The visible list includes a scope the page did not load into `useScopes` (for example a
+    // second tab created it); the stale save must leave it alone rather than write an exclusion.
+    state.scopes = [scope(1), scope(2)]
+    state.visible = [scope(1), scope(3)]
+    render(<BookKnowledgePage />)
+    await userEvent.click(screen.getByRole("button", { name: "Save" }))
+    expect(save.mock.calls[0][0]).toEqual([2])
+  })
+
   it("disables Check knowledge while a check is open", () => {
     state.tasks = [prep()]
     render(<BookKnowledgePage />)

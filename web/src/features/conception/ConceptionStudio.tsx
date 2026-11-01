@@ -529,7 +529,7 @@ function BeforeConception({
             <Loader2 className="size-4 animate-spin text-muted-foreground" aria-hidden="true" />
           </div>
         ) : (
-          <div className="min-h-[16rem] flex-1 overflow-hidden rounded-md border">
+          <div className="flex h-[24rem] flex-col overflow-hidden rounded-md border">
             <ActivityStream
               session={session}
               messages={checkSnapshot?.messages ?? []}

@@ -1,5 +1,5 @@
 /** Book › Knowledge (PROJECT §8.10): the scopes this book's writer and reviewer may search. */
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
 import { useTranslation } from "react-i18next"
 import { BookOpen, ExternalLink } from "lucide-react"
@@ -37,7 +37,7 @@ export default function BookKnowledgePage() {
   // keeps the scopes that were already loaded: a scope created after the page loaded must not be
   // sent as unchecked, because it is visible by default (D-158).
   const [selection, setSelection] = useState<number[] | null>(null)
-  const knownIds = useRef<Set<number> | null>(null)
+  const [knownIds, setKnownIds] = useState<Set<number> | null>(null)
   const [saved, setSaved] = useState(false)
   const [creating, setCreating] = useState(false)
   const [checking, setChecking] = useState(false)
@@ -45,32 +45,18 @@ export default function BookKnowledgePage() {
   const checkTasks = useResearchTasks({ bookId })
   const startCheck = useStartKnowledgeCheck(bookId)
   const all = scopes.data ?? []
-  const attachedIds = useMemo(
-    () => attached.data?.map((scope) => scope.id) ?? [],
-    [attached.data],
-  )
-  const selected = selection ?? attachedIds
+  const selected = selection ?? attached.data?.map((scope) => scope.id) ?? []
   const checkTask = latestPreparationTask(checkTasks.data ?? [])
   const checkIsOpen = knowledgeCheckOpen(checkTask)
 
   useEffect(() => {
-    if (scopes.data === undefined) {
-      return
+    if (scopes.data !== undefined && knownIds === null) {
+      // Capture the scopes that were loaded with the page. A scope that arrives later is
+      // visible by default and must never be sent as an exclusion by a stale save (D-158).
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setKnownIds(new Set(scopes.data.map((scope) => scope.id)))
     }
-    const ids = scopes.data.map((scope) => scope.id)
-    if (knownIds.current === null) {
-      knownIds.current = new Set(ids)
-      return
-    }
-    const added = ids.filter((id) => !knownIds.current?.has(id))
-    if (added.length === 0) {
-      return
-    }
-    knownIds.current = new Set([...knownIds.current, ...added])
-    setSelection((previous) => [
-      ...new Set([...(previous ?? attachedIds), ...added]),
-    ])
-  }, [scopes.data, attachedIds])
+  }, [scopes.data, knownIds])
 
   if (scopes.isPending || attached.isPending || attached.data === undefined) {
     return <Skeleton className="m-6 h-64" />
@@ -100,7 +86,10 @@ export default function BookKnowledgePage() {
               className="flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 hover:bg-accent"
             >
               <Checkbox
-                checked={selected.includes(scope.id)}
+                checked={
+                  selected.includes(scope.id) ||
+                  (knownIds !== null && !knownIds.has(scope.id))
+                }
                 onCheckedChange={(checked) => {
                   setSaved(false)
                   setSelection(
@@ -135,7 +124,7 @@ export default function BookKnowledgePage() {
               all
                 .filter(
                   (scope) =>
-                    knownIds.current?.has(scope.id) === true &&
+                    knownIds?.has(scope.id) === true &&
                     !selected.includes(scope.id),
                 )
                 .map((scope) => scope.id),
