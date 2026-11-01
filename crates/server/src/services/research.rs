@@ -14,15 +14,23 @@ use crate::api::dto::research::{
     ResearchTaskCreate, ResearchTaskDto, ResearchTaskEntryDto, ResearchTaskPatch, ResearchTaskQuery,
 };
 use crate::db::entities::{books, knowledge_entries, knowledge_scopes, research_tasks};
-use crate::db::json::{BookStatus, ResearchTaskStatus, SessionKind, SessionStatus};
+use crate::db::json::{
+    BookStatus, ResearchTaskKind, ResearchTaskOrigin, ResearchTaskStatus, SessionKind,
+    SessionStatus,
+};
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
 use crate::state::AppState;
 
-use super::{now, sessions};
+use super::now;
+use super::sessions::{self, CreateSession};
 
 /// The number of existing titles a researcher kickoff carries (spec/07 §8 step 2: ≤ 200).
 pub const MAX_EXISTING_TITLES: usize = 200;
+
+/// The knowledge-check inventory caps (spec/07 §8.1): at most 50 titles per scope and 300 total.
+pub const MAX_PREP_TITLES_PER_SCOPE: usize = 50;
+pub const MAX_PREP_TITLES_TOTAL: usize = 300;
 
 // ───────────────────────────── reads ─────────────────────────────
 
@@ -161,6 +169,8 @@ async fn create_inner(
     let timestamp = now();
     let row = research_tasks::Entity::insert(research_tasks::ActiveModel {
         book_id: Set(input.book_id),
+        kind: Set(ResearchTaskKind::Topic),
+        origin: Set(ResearchTaskOrigin::Author),
         scope_name: Set(scope_name),
         topic: Set(topic),
         requirements: Set(input.requirements.trim().to_owned()),
@@ -176,6 +186,110 @@ async fn create_inner(
         task: to_dto(row.clone()),
     }];
     Ok((to_dto(row), events, Vec::new()))
+}
+
+/// `POST /api/books/:id/knowledge-check` (spec/10 §2.2, spec/07 §8.1): create the preparation
+/// task and its researcher session in **one** transaction. The outer wrapper publishes the
+/// transaction's events and only then spawns the session.
+pub async fn start_knowledge_check_for_book(
+    state: &AppState,
+    book_id: i32,
+    requirements: String,
+) -> Result<(ResearchTaskDto, i32), AppError> {
+    let db = state.db().clone();
+    let state_owned = state.clone();
+    let (task, session_id, _warnings, events) = super::write(&db, move |tx| {
+        Box::pin(
+            async move { start_knowledge_check(&state_owned, tx, book_id, requirements).await },
+        )
+    })
+    .await?;
+    state.events().publish_all(events);
+    state.manager().spawn(state.clone(), session_id);
+    Ok((task, session_id))
+}
+
+/// The in-transaction service used by the endpoint and by book creation (spec/07 §8.1). A
+/// missing researcher model therefore rolls the task row back with the session.
+pub async fn start_knowledge_check(
+    state: &AppState,
+    tx: &sea_orm::DatabaseTransaction,
+    book_id: i32,
+    requirements: String,
+) -> Result<(ResearchTaskDto, i32, Vec<String>, Vec<ServerEvent>), AppError> {
+    let book = books::Entity::find_by_id(book_id)
+        .one(tx)
+        .await?
+        .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
+    if !matches!(book.status, BookStatus::Conceiving | BookStatus::Active) {
+        return Err(AppError::new(
+            ErrorCode::BookInvalidState,
+            "a knowledge check needs a conceiving or active book",
+        )
+        .with_details(serde_json::json!({ "status": book.status.as_str() })));
+    }
+
+    let preparations = research_tasks::Entity::find()
+        .filter(research_tasks::COLUMN.book_id.eq(book_id))
+        .filter(
+            research_tasks::COLUMN
+                .kind
+                .eq(ResearchTaskKind::Preparation),
+        )
+        .order_by_desc(research_tasks::COLUMN.id)
+        .all(tx)
+        .await?;
+    if let Some(open) = preparations.iter().find(|task| is_open(task)) {
+        return Err(AppError::new(
+            ErrorCode::ResearchInvalidState,
+            "the book already has an open knowledge check",
+        )
+        .with_details(serde_json::json!({ "session_id": open.session_id })));
+    }
+
+    let timestamp = now();
+    let task = research_tasks::Entity::insert(research_tasks::ActiveModel {
+        book_id: Set(Some(book_id)),
+        kind: Set(ResearchTaskKind::Preparation),
+        origin: Set(ResearchTaskOrigin::Author),
+        scope_name: Set(String::new()),
+        topic: Set(String::new()),
+        requirements: Set(requirements.trim().to_owned()),
+        language: Set(book.writing_language.clone()),
+        // The task and its session are one transaction; `sessions::create_inner` sets the final
+        // `running` status and session_id.
+        status: Set(ResearchTaskStatus::Running),
+        created_at: Set(timestamp),
+        updated_at: Set(timestamp),
+        ..Default::default()
+    })
+    .exec_with_returning(tx)
+    .await?;
+    let (session_id, events, warnings) = sessions::create_inner(
+        state,
+        tx,
+        CreateSession {
+            kind: SessionKind::Research,
+            book_id: Some(book_id),
+            chapter_id: None,
+            research_task_id: Some(task.id),
+            granularity: None,
+            auto_pause: None,
+            pause_after_outline: None,
+            redraft: false,
+            guidance: None,
+            kickoff_extra: None,
+            pending_comment: None,
+            legacy_planning_fixture: false,
+            legacy_system_prompt: None,
+            legacy_kickoff_text: None,
+            chapter_guard: false,
+            force_previous: false,
+        },
+    )
+    .await?;
+    let task = load(tx, task.id).await?;
+    Ok((to_dto(task), session_id, warnings, events))
 }
 
 /// `PATCH /api/research-tasks/:id` (spec/10 §2.5).
@@ -204,7 +318,33 @@ async fn patch_inner(
     if is_open(&existing) {
         return Err(open_session_error(&existing));
     }
-    ensure_topics_editable(tx, &existing).await?;
+    if existing.kind == ResearchTaskKind::Topic {
+        ensure_topics_editable(tx, &existing).await?;
+    }
+    if existing.kind == ResearchTaskKind::Preparation {
+        let mut fields = serde_json::Map::new();
+        if input.topic.is_some() {
+            fields.insert(
+                "topic".to_owned(),
+                serde_json::Value::String("a preparation task has no topic".to_owned()),
+            );
+        }
+        if input.scope_name.is_some() {
+            fields.insert(
+                "scope_name".to_owned(),
+                serde_json::Value::String(
+                    "a preparation task chooses its scope with set_target_scope".to_owned(),
+                ),
+            );
+        }
+        if !fields.is_empty() {
+            return Err(
+                AppError::new(ErrorCode::ValidationInvalidFields, "invalid input").with_details(
+                    serde_json::json!({ "fields": serde_json::Value::Object(fields) }),
+                ),
+            );
+        }
+    }
     let mut active = research_tasks::ActiveModel {
         id: Set(task_id),
         updated_at: Set(now()),
@@ -229,6 +369,10 @@ async fn patch_inner(
             ));
         }
         active.scope_name = Set(scope_name);
+    }
+    if existing.kind == ResearchTaskKind::Topic && existing.origin == ResearchTaskOrigin::Conception
+    {
+        active.origin = Set(ResearchTaskOrigin::Author);
     }
     if let Some(status) = input.status {
         // The only status the author may set is `ready`, which confirms a draft (spec/10 §2.5).
@@ -380,7 +524,9 @@ async fn delete_inner(
     if is_open(&existing) {
         return Err(open_session_error(&existing));
     }
-    ensure_topics_editable(tx, &existing).await?;
+    if existing.kind == ResearchTaskKind::Topic {
+        ensure_topics_editable(tx, &existing).await?;
+    }
     research_tasks::Entity::delete_by_id(task_id)
         .exec(tx)
         .await?;
@@ -416,7 +562,7 @@ pub async fn run(state: &AppState, task_id: i32) -> Result<i32, AppError> {
             pause_after_outline: None,
             redraft: false,
             guidance: None,
-            kickoff_extra: Some(serde_json::json!({ "scope_id": scope_id })),
+            kickoff_extra: scope_id.map(|scope_id| serde_json::json!({ "scope_id": scope_id })),
             pending_comment: None,
             legacy_planning_fixture: false,
             legacy_system_prompt: None,
@@ -431,7 +577,7 @@ pub async fn run(state: &AppState, task_id: i32) -> Result<i32, AppError> {
 
 /// The scope of a run: the existing one by name, or a new one attached to the linked book
 /// (spec/07 §8 step 2).
-async fn prepare_scope(tx: &impl ConnectionTrait, task_id: i32) -> Result<i32, AppError> {
+async fn prepare_scope(tx: &impl ConnectionTrait, task_id: i32) -> Result<Option<i32>, AppError> {
     let task = load(tx, task_id).await?;
     // Running is refused while a session is open (spec/07 §8 step 1).
     if is_open(&task) {
@@ -455,6 +601,11 @@ async fn prepare_scope(tx: &impl ConnectionTrait, task_id: i32) -> Result<i32, A
             format!("a {} research task cannot be run", task.status),
         ));
     }
+    // A preparation task's target belongs to the agent's `set_target_scope`; a re-run keeps the
+    // previous target and never resolves a scope from an empty name (spec/07 §8.1).
+    if task.kind == ResearchTaskKind::Preparation {
+        return Ok(task.scope_id);
+    }
     let scope_id = match task.scope_id {
         Some(scope_id) => scope_id,
         None => {
@@ -474,7 +625,7 @@ async fn prepare_scope(tx: &impl ConnectionTrait, task_id: i32) -> Result<i32, A
     if let Some(book_id) = task.book_id {
         super::knowledge::include_scope(tx, book_id, scope_id).await?;
     }
-    Ok(scope_id)
+    Ok(Some(scope_id))
 }
 
 /// Finds a scope by name, or creates it (spec/07 §8 step 2).

@@ -178,11 +178,12 @@ pub const CONCEPTION_TOOLS: [&str; 10] = [
 ];
 
 /// The researcher role's fixed tool list (spec/05 §2).
-pub const RESEARCHER_TOOLS: [&str; 7] = [
+pub const RESEARCHER_TOOLS: [&str; 8] = [
     "web_search",
     "web_fetch",
     "search_knowledge",
     "read_knowledge_entry",
+    "set_target_scope",
     "save_knowledge_entry",
     "update_knowledge_entry",
     "finish_research",
@@ -243,6 +244,7 @@ pub fn tools_for_session(
     kind: SessionKind,
     systems: &CanonSystems,
     has_relevant_goals: bool,
+    preparation: bool,
     registry: &ToolRegistry,
 ) -> Vec<&'static str> {
     tools_for_role(role)
@@ -255,6 +257,9 @@ pub fn tools_for_session(
             "propose_goal_change" => {
                 kind == SessionKind::ChapterMaintenance && systems.goals && has_relevant_goals
             }
+            // The check is the only research session that may pick a target scope (spec/05 §2,
+            // D-158); a topic session must keep the pre-D-158 seven-tool baseline.
+            "set_target_scope" if kind != SessionKind::Research || !preparation => false,
             other => tool_enabled(other, systems),
         })
         .collect()
@@ -497,6 +502,7 @@ mod tests {
             SessionKind::ChapterMaintenance,
             &all,
             true,
+            false,
             &ToolRegistry::new(),
         );
         assert!(ToolRegistry::new().has("propose_goal_change"));
@@ -509,6 +515,7 @@ mod tests {
             "archivist",
             SessionKind::ChapterMaintenance,
             &all,
+            false,
             false,
             &ToolRegistry::new(),
         );
@@ -524,6 +531,7 @@ mod tests {
             SessionKind::ChapterMaintenance,
             &no_entities,
             true,
+            false,
             &ToolRegistry::new(),
         );
         let expected: Vec<&str> = full
@@ -554,6 +562,7 @@ mod tests {
             SessionKind::ChapterMaintenance,
             &all_off,
             true,
+            false,
             &ToolRegistry::new(),
         );
         assert!(!bare.contains(&"search_canon"));

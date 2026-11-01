@@ -620,6 +620,16 @@ properties.message = { type = "string", description = "给作者的说明：这�
 
 # ───────────────────────────── Researcher ─────────────────────────────
 
+[tools.set_target_scope]
+description = '''选择知识检查要写入的知识范围。优先使用同主题的现有范围；没有合适的范围时，用 description 新建一个范围。作者排除的范围不能使用。'''
+examples = [ { name = "宋代社会", description = "宋代社会生活与制度" }, { name = "已有范围" } ]
+[tools.set_target_scope.input_schema]
+type = "object"
+additionalProperties = false
+required = ["name"]
+properties.name = { type = "string", description = "知识范围名称" }
+properties.description = { type = "string", description = "新建范围时必填；使用现有范围时忽略" }
+
 [tools.save_knowledge_entry]
 description = '''在目标知识范围中保存一个新条目。一个条目只讲一个主题，标题清楚具体，写明来源。'''
 examples = [ { title = "宋代茶馆的布局与经营", content = "## 概述\n……\n## 写作参考\n……", source_urls = ["https://example.com/a"], tags = ["宋代", "市井"] } ]

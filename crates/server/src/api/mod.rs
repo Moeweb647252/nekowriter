@@ -282,6 +282,10 @@ pub fn build_app(state: AppState) -> Router {
             "/books/{book_id}/scopes",
             get(knowledge::list_book_scopes).put(knowledge::put_book_scopes),
         )
+        .route(
+            "/books/{book_id}/knowledge-check",
+            post(books::knowledge_check),
+        )
         .route("/events", get(events::stream))
         .route("/providers", get(providers::list).post(providers::create))
         .route("/provider-presets", get(providers::presets))

@@ -81,6 +81,11 @@ pub struct LangCorpus {
     pub maintenance_report: String,
     #[serde(default)]
     pub research_report: String,
+    /// The knowledge check's demo scope name and description (spec/07 §8.1).
+    #[serde(default)]
+    pub prep_scope_name: String,
+    #[serde(default)]
+    pub prep_scope_description: String,
     #[serde(default)]
     pub proposal_rationale: String,
     /// A goal-specific rationale for the Demo's optional `propose_goal_change` step.
@@ -343,7 +348,13 @@ pub fn choose_action(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
         "canon_seed" => seed_plan(hints, lang),
         // M8: two knowledge entries saved from the corpus, then `finish_research` (spec/04 §7.2 —
         // no network: the demo researcher works from its own material).
-        "research" => research_plan(hints, lang),
+        "research" => {
+            if hints.tools.iter().any(|tool| tool == "set_target_scope") {
+                prep_plan(hints, lang)
+            } else {
+                research_plan(hints, lang)
+            }
+        }
         // M9: ask (2 questions) → the documents, the cast and the topics → request_review →
         // revise what was not approved → a closing message (spec/04 §7.2).
         "conception" => conception_plan(hints, lang),
@@ -623,6 +634,62 @@ fn research_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
             json!({ "report": lang.research_report }),
         )],
         ..DemoPlan::default()
+    }
+}
+
+/// The knowledge-check demo (spec/07 §8.1): search the inventory, create a target scope, save
+/// one corpus entry, then report. The `tools` hint carries `set_target_scope` only for a
+/// preparation session, so the ordinary research arm above stays unchanged.
+fn prep_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
+    let query = lang
+        .research_topics
+        .first()
+        .map(|topic| topic.topic.as_str())
+        .unwrap_or("background");
+    let scope_name = if lang.prep_scope_name.is_empty() {
+        "Background"
+    } else {
+        lang.prep_scope_name.as_str()
+    };
+    let scope_description = if lang.prep_scope_description.is_empty() {
+        "Background material for the book."
+    } else {
+        lang.prep_scope_description.as_str()
+    };
+    match hints.step_in_phase {
+        0 => DemoPlan {
+            tools: vec![tool("search_knowledge", json!({ "query": query }))],
+            ..DemoPlan::default()
+        },
+        1 => DemoPlan {
+            tools: vec![tool(
+                "set_target_scope",
+                json!({ "name": scope_name, "description": scope_description }),
+            )],
+            ..DemoPlan::default()
+        },
+        2 => lang
+            .knowledge_entries
+            .first()
+            .map(|entry| DemoPlan {
+                tools: vec![tool(
+                    "save_knowledge_entry",
+                    json!({
+                        "title": entry.title,
+                        "content": entry.content,
+                        "source_urls": entry.source_urls,
+                    }),
+                )],
+                ..DemoPlan::default()
+            })
+            .unwrap_or_default(),
+        _ => DemoPlan {
+            tools: vec![tool(
+                "finish_research",
+                json!({ "report": lang.research_report }),
+            )],
+            ..DemoPlan::default()
+        },
     }
 }
 

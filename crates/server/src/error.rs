@@ -16,6 +16,9 @@ pub enum ErrorCode {
     #[serde(rename = "validation.failed")]
     #[ts(rename = "validation.failed")]
     ValidationFailed,
+    #[serde(rename = "validation.invalid_fields")]
+    #[ts(rename = "validation.invalid_fields")]
+    ValidationInvalidFields,
     #[serde(rename = "not_found")]
     #[ts(rename = "not_found")]
     NotFound,
@@ -111,6 +114,7 @@ impl ErrorCode {
     pub fn as_str(self) -> &'static str {
         match self {
             ErrorCode::ValidationFailed => "validation.failed",
+            ErrorCode::ValidationInvalidFields => "validation.invalid_fields",
             ErrorCode::NotFound => "not_found",
             ErrorCode::HostForbidden => "host.forbidden",
             ErrorCode::ConflictVersion => "conflict.version",
@@ -149,6 +153,7 @@ impl ErrorCode {
             ErrorCode::ValidationFailed | ErrorCode::PromptTemplateInvalid => {
                 StatusCode::BAD_REQUEST
             }
+            ErrorCode::ValidationInvalidFields => StatusCode::UNPROCESSABLE_ENTITY,
             ErrorCode::NotFound => StatusCode::NOT_FOUND,
             ErrorCode::HostForbidden => StatusCode::FORBIDDEN,
             ErrorCode::ConflictVersion

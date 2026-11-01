@@ -352,7 +352,35 @@
    ],
    "omitted": 2
   },
-  "goal_proposals": 0
+  "goal_proposals": 0,
+  "prep": {
+   "requirements": "想先确认宋代生活的基础",
+   "language_name": "简体中文",
+   "scopes": [
+    {
+     "name": "宋代社会",
+     "description": "宋代社会生活",
+     "entry_count": 2,
+     "titles": [
+      "宋代酒楼",
+      "宋代服饰"
+     ],
+     "more": 0
+    },
+    {
+     "name": "杂项",
+     "description": "",
+     "entry_count": 0,
+     "titles": [],
+     "more": 0
+    }
+   ],
+   "excluded_names": [
+    "明代史料"
+   ],
+   "max_tool_calls": 40,
+   "max_entries": 25
+  }
  },
  "variants": {
   "archivist.kickoff.maintenance": [
@@ -3739,6 +3767,31 @@
      "goals": true,
      "enabled": []
     }
+   }
+  ],
+  "researcher.kickoff.prep": [
+   {},
+   {
+    "prep": {
+     "requirements": "想先确认宋代生活的基础",
+     "language_name": "简体中文",
+     "scopes": [],
+     "excluded_names": [],
+     "max_tool_calls": 40,
+     "max_entries": 25
+    }
+   }
+  ],
+  "result.target_scope": [
+   {
+    "scope": "宋代社会",
+    "created": false,
+    "entry_count": 2
+   },
+   {
+    "scope": "宋代生活",
+    "created": true,
+    "entry_count": 0
    }
   ]
  }

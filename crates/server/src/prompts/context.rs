@@ -557,3 +557,25 @@ pub struct DesignLinkContext {
     pub role_label: String,
     pub summary: String,
 }
+
+/// `prep` (`vars.prep`) for the knowledge-check kickoff (spec/07 §8.1).
+#[derive(Debug, Clone, Serialize)]
+pub struct PrepContext {
+    pub requirements: String,
+    pub language_name: String,
+    pub scopes: Vec<PrepScopeContext>,
+    pub excluded_names: Vec<String>,
+    pub max_tool_calls: i32,
+    pub max_entries: i32,
+}
+
+/// One visible scope in the knowledge-check inventory.
+#[derive(Debug, Clone, Serialize)]
+pub struct PrepScopeContext {
+    pub name: String,
+    pub description: String,
+    pub entry_count: i64,
+    pub titles: Vec<String>,
+    /// Titles left out by the per-scope and total caps.
+    pub more: i64,
+}

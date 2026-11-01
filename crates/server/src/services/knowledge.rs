@@ -201,7 +201,7 @@ async fn load_scope(
         .ok_or_else(|| AppError::not_found(format!("knowledge scope #{scope_id}")))
 }
 
-async fn find_scope_by_name(
+pub(crate) async fn find_scope_by_name(
     conn: &impl ConnectionTrait,
     name: &str,
 ) -> Result<Option<knowledge_scopes::Model>, AppError> {

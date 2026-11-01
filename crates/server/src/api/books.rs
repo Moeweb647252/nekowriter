@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::api::dto::books::{
     BookDto, BookInput, BookOverviewDto, BookPatch, BookSummaryDto, CreateBookResponse,
 };
+use crate::api::dto::research::{KnowledgeCheckInput, KnowledgeCheckResponse};
 use crate::db::json::BookStatus;
 use crate::error::AppResult;
 use crate::services::books as service;
@@ -73,6 +74,24 @@ pub async fn overview(
     Path(book_id): Path<i32>,
 ) -> AppResult<Json<BookOverviewDto>> {
     Ok(Json(service::overview(state.db().conn(), book_id).await?))
+}
+
+/// `POST /api/books/:id/knowledge-check` (spec/07 §8.1, spec/10 §2.2).
+pub async fn knowledge_check(
+    State(state): State<AppState>,
+    Path(book_id): Path<i32>,
+    Json(input): Json<KnowledgeCheckInput>,
+) -> AppResult<(StatusCode, Json<KnowledgeCheckResponse>)> {
+    let (task, session_id) = crate::services::research::start_knowledge_check_for_book(
+        &state,
+        book_id,
+        input.requirements,
+    )
+    .await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(KnowledgeCheckResponse { task, session_id }),
+    ))
 }
 
 /// `POST /api/books/:id/conception/start` (spec/08 §5, spec/10 §2.2): the open session or a new

@@ -17,8 +17,8 @@ use crate::db::entities::{
     agent_sessions, books, knowledge_scopes, research_tasks, setting_docs, tracks,
 };
 use crate::db::json::{
-    AgentRole, BookStatus, ConceptionState, JsonText, ResearchTaskStatus, SessionKind,
-    SessionStatus, SettingDocKind, TrackKind,
+    AgentRole, BookStatus, ConceptionState, JsonText, ResearchTaskKind, ResearchTaskStatus,
+    SessionKind, SessionStatus, SettingDocKind, TrackKind,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::{BookOp, ServerEvent};
@@ -351,6 +351,7 @@ async fn finalize_inner(
     // and a language-neutral separator, so no wording is generated in code (D-054).
     let drafts = research_tasks::Entity::find()
         .filter(research_tasks::COLUMN.book_id.eq(book_id))
+        .filter(research_tasks::COLUMN.kind.eq(ResearchTaskKind::Topic))
         .filter(research_tasks::COLUMN.status.eq(ResearchTaskStatus::Draft))
         .order_by_asc(research_tasks::COLUMN.id)
         .all(tx)

@@ -641,3 +641,38 @@ fn the_seed_plan_creates_one_entity_per_design() {
     let finish = choose_action(&hints, lang);
     assert_eq!(finish.tools[0].1, "finish_maintenance");
 }
+
+/// The knowledge-check demo (spec/07 §8.1): search first, create a target scope, save one entry,
+/// then finish. The presence of `set_target_scope` in the frozen tools distinguishes it from the
+/// ordinary research arm.
+#[test]
+fn the_knowledge_check_demo_searches_targets_saves_and_finishes() {
+    let provider = DemoProvider::new();
+    let mut hints = hints("research", "none", "zh-CN");
+    hints.tools = vec![
+        "search_knowledge".to_owned(),
+        "set_target_scope".to_owned(),
+        "save_knowledge_entry".to_owned(),
+        "finish_research".to_owned(),
+    ];
+    let lang = provider.lang(Some(&hints));
+
+    hints.step_in_phase = 0;
+    let plan = choose_action(&hints, lang);
+    assert_eq!(plan.tools[0].1, "search_knowledge");
+    hints.step_in_phase = 1;
+    let plan = choose_action(&hints, lang);
+    assert_eq!(plan.tools[0].1, "set_target_scope");
+    assert!(
+        plan.tools[0].2["description"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
+    hints.step_in_phase = 2;
+    let plan = choose_action(&hints, lang);
+    assert_eq!(plan.tools[0].1, "save_knowledge_entry");
+    hints.step_in_phase = 3;
+    let plan = choose_action(&hints, lang);
+    assert_eq!(plan.tools[0].1, "finish_research");
+    assert!(!lang.research_report.is_empty());
+}

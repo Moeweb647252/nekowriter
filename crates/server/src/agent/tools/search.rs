@@ -540,9 +540,18 @@ async fn visible_scopes(ctx: &ToolCtx<'_>) -> Result<Vec<knowledge_scopes::Model
             .await
             .map_err(|_| internal())?
             .ok_or_else(|| ToolError::new(ToolErrorKind::NoKnowledgeScope))?;
-        match task.scope_id {
-            Some(scope_id) => vec![scope_id],
-            None => return Err(ToolError::new(ToolErrorKind::NoKnowledgeScope)),
+        if task.kind == crate::db::json::ResearchTaskKind::Preparation {
+            let Some(book_id) = book_id_of(ctx) else {
+                return Err(ToolError::new(ToolErrorKind::NoKnowledgeScope));
+            };
+            crate::services::knowledge::visible_scope_ids(ctx.tx, book_id)
+                .await
+                .map_err(|_| internal())?
+        } else {
+            match task.scope_id {
+                Some(scope_id) => vec![scope_id],
+                None => return Err(ToolError::new(ToolErrorKind::NoKnowledgeScope)),
+            }
         }
     } else {
         let Some(book_id) = book_id_of(ctx) else {

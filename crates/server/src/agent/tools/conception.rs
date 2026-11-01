@@ -24,7 +24,8 @@ use crate::db::entities::{
     setting_docs::ActiveModel as SettingDocActive,
 };
 use crate::db::json::{
-    AwaitInputKind, ConceptionState, ResearchTaskStatus, SessionKind, SettingDocKind,
+    AwaitInputKind, ConceptionState, ResearchTaskKind, ResearchTaskOrigin, ResearchTaskStatus,
+    SessionKind, SettingDocKind,
 };
 use crate::error::AppError;
 use crate::events::ServerEvent;
@@ -934,6 +935,12 @@ impl ToolHandler for SetResearchTopicsTool {
         let book_id = book_id(ctx)?;
         let drafts = research_tasks::Entity::find()
             .filter(research_tasks::COLUMN.book_id.eq(book_id))
+            .filter(research_tasks::COLUMN.kind.eq(ResearchTaskKind::Topic))
+            .filter(
+                research_tasks::COLUMN
+                    .origin
+                    .eq(ResearchTaskOrigin::Conception),
+            )
             .filter(research_tasks::COLUMN.status.eq(ResearchTaskStatus::Draft))
             .order_by_asc(research_tasks::COLUMN.id)
             .all(ctx.tx)
@@ -954,6 +961,8 @@ impl ToolHandler for SetResearchTopicsTool {
         for topic in &input.topics {
             let row = research_tasks::ActiveModel {
                 book_id: Set(Some(book_id)),
+                kind: Set(ResearchTaskKind::Topic),
+                origin: Set(ResearchTaskOrigin::Conception),
                 scope_name: Set(topic.scope.trim().to_owned()),
                 topic: Set(topic.topic.trim().to_owned()),
                 requirements: Set(topic.requirements.trim().to_owned()),

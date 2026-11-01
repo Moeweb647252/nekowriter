@@ -403,6 +403,14 @@ pub(crate) async fn create_inner(
         _ => false,
     };
     // Freeze the tool definitions after the systems and the goals gate are known.
+    let preparation = match (input.kind, input.research_task_id) {
+        (SessionKind::Research, Some(task_id)) => research_tasks::Entity::find_by_id(task_id)
+            .one(tx)
+            .await?
+            .map(|task| task.kind == crate::db::json::ResearchTaskKind::Preparation)
+            .unwrap_or(false),
+        _ => false,
+    };
     let tool_names: Vec<&str> = if input.legacy_planning_fixture {
         crate::agent::tools::registry::LEGACY_WRITER_TOOLS.to_vec()
     } else {
@@ -411,6 +419,7 @@ pub(crate) async fn create_inner(
             input.kind,
             &frozen_systems,
             has_relevant_goals,
+            preparation,
             state.tool_registry(),
         )
     };

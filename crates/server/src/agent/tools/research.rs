@@ -10,8 +10,10 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::api::dto::knowledge::{EntryInput, EntryPatch};
-use crate::db::entities::{knowledge_entries, knowledge_scopes, research_tasks};
-use crate::db::json::CompletionKind;
+use crate::db::entities::{
+    book_scope_exclusions, knowledge_entries, knowledge_scopes, research_tasks,
+};
+use crate::db::json::{CompletionKind, ResearchTaskKind};
 use crate::services::knowledge;
 
 use crate::db::json::ToolEffects;
@@ -107,6 +109,9 @@ async fn target_scope(ctx: &ToolCtx<'_>, tool: &str) -> Result<(i32, String), To
         .map_err(|_| internal())?
         .ok_or_else(|| ToolError::new(ToolErrorKind::NoKnowledgeScope))?;
     let Some(scope_id) = task.scope_id else {
+        if task.kind == ResearchTaskKind::Preparation {
+            return Err(ToolError::new(ToolErrorKind::TargetScopeUnset));
+        }
         return Err(ToolError::new(ToolErrorKind::NoKnowledgeScope));
     };
     let scope = knowledge_scopes::Entity::find_by_id(scope_id)
@@ -152,6 +157,130 @@ fn knowledge_error(ctx: &ToolCtx<'_>, error: crate::error::AppError, title: &str
             validation(errors)
         }
         _ => internal(),
+    }
+}
+
+// ───────────────────────────── set_target_scope ─────────────────────────────
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SetTargetScopeInput {
+    name: String,
+    #[serde(default)]
+    description: Option<String>,
+}
+
+/// `set_target_scope` (spec/05 §8, spec/07 §8.1): choose the scope a preparation task writes into.
+pub struct SetTargetScopeTool;
+
+#[async_trait::async_trait]
+impl ToolHandler for SetTargetScopeTool {
+    fn name(&self) -> &'static str {
+        "set_target_scope"
+    }
+
+    fn kind(&self) -> ToolKind {
+        ToolKind::Knowledge
+    }
+
+    async fn prepare(&self, _ctx: &PrepareCtx<'_>, _input: &Value) -> Result<Prepared, ToolError> {
+        Ok(Prepared::None)
+    }
+
+    async fn execute(
+        &self,
+        ctx: &mut ToolCtx<'_>,
+        input: Value,
+        _prepared: Prepared,
+    ) -> Result<ToolOutcome, ToolError> {
+        let input: SetTargetScopeInput = decode(input)?;
+        let name = input.name.trim().to_owned();
+        if name.is_empty() {
+            return Err(validation(vec!["name must not be empty".to_owned()]));
+        }
+        let Some(task_id) = ctx.session.research_task_id else {
+            return Err(ToolError::new(ToolErrorKind::NoKnowledgeScope));
+        };
+        let task = research_tasks::Entity::find_by_id(task_id)
+            .one(ctx.tx)
+            .await
+            .map_err(|_| internal())?
+            .ok_or_else(|| ToolError::new(ToolErrorKind::NoKnowledgeScope))?;
+        if task.kind != ResearchTaskKind::Preparation {
+            return Err(ToolError::new(ToolErrorKind::NoKnowledgeScope));
+        }
+        let Some(book_id) = task.book_id else {
+            return Err(ToolError::new(ToolErrorKind::NoKnowledgeScope));
+        };
+
+        let existing = knowledge::find_scope_by_name(ctx.tx, &name)
+            .await
+            .map_err(|_| internal())?;
+        let (scope, created, events) = if let Some(scope) = existing {
+            let excluded = book_scope_exclusions::Entity::find()
+                .filter(book_scope_exclusions::COLUMN.book_id.eq(book_id))
+                .filter(book_scope_exclusions::COLUMN.scope_id.eq(scope.id))
+                .one(ctx.tx)
+                .await
+                .map_err(|_| internal())?
+                .is_some();
+            if excluded {
+                return Err(ToolError::new(ToolErrorKind::ScopeExcluded).with("name", scope.name));
+            }
+            let dto = knowledge::to_scope_dto(ctx.tx, &scope)
+                .await
+                .map_err(|_| internal())?;
+            (dto, false, Vec::new())
+        } else {
+            let Some(description) = input.description.as_deref().map(str::trim) else {
+                return Err(validation(vec![
+                    "description is required when creating a scope".to_owned(),
+                ]));
+            };
+            if description.is_empty() {
+                return Err(validation(vec![
+                    "description is required when creating a scope".to_owned(),
+                ]));
+            }
+            let (dto, events) = knowledge::create_scope_inner(
+                ctx.tx,
+                crate::api::dto::knowledge::ScopeInput {
+                    name: name.clone(),
+                    description: description.to_owned(),
+                },
+            )
+            .await
+            .map_err(|error| knowledge_error(ctx, error, &name))?;
+            (dto, true, events)
+        };
+        research_tasks::ActiveModel {
+            id: Set(task.id),
+            scope_id: Set(Some(scope.id)),
+            scope_name: Set(scope.name.clone()),
+            updated_at: Set(chrono::Utc::now()),
+            ..Default::default()
+        }
+        .update(ctx.tx)
+        .await
+        .map_err(|_| internal())?;
+        ctx.events.extend(events);
+        let text = ctx
+            .prompts
+            .render(
+                "result.target_scope",
+                &json!({
+                    "scope": scope.name,
+                    "created": created,
+                    "entry_count": scope.entry_count,
+                }),
+            )
+            .map_err(|_| internal())?
+            .text;
+        Ok(ToolOutcome::text(text).with_ui(json!({
+            "scope": scope.name,
+            "created": created,
+            "entry_count": scope.entry_count,
+        })))
     }
 }
 
@@ -423,15 +552,28 @@ impl ToolHandler for FinishResearchTool {
         if report.is_empty() {
             return Err(validation(vec!["report must not be empty".to_owned()]));
         }
-        // The task's own scope must exist before a task can be reported done (spec/05 §1.4).
-        let (scope_id, _scope_name) = target_scope(ctx, "finish_research").await?;
+        // A preparation task may finish without a target (spec/07 §8.1); a topic task still
+        // needs its scope before it can be reported done (spec/05 §1.4).
+        let task = match ctx.session.research_task_id {
+            Some(task_id) => research_tasks::Entity::find_by_id(task_id)
+                .one(ctx.tx)
+                .await
+                .map_err(|_| internal())?
+                .ok_or_else(|| ToolError::new(ToolErrorKind::NoKnowledgeScope))?,
+            None => return Err(ToolError::new(ToolErrorKind::NoKnowledgeScope)),
+        };
+        let scope_id = if task.kind == ResearchTaskKind::Preparation {
+            task.scope_id
+        } else {
+            Some(target_scope(ctx, "finish_research").await?.0)
+        };
         // The entries **this session** saved or updated (spec/05 §8). An entry counts when the
         // task owns it and its `updated_at` is not older than this session: saves create it inside
         // the session and updates touch it, while entries left over from an earlier run are older
         // than the session and are not claimed by it. The task's stored `entries_created` still
         // accumulates across every run (spec/07 §8 step 5, `services::research::finish`).
-        let entries = match ctx.session.research_task_id {
-            Some(task_id) => knowledge_entries::Entity::find()
+        let entries = match (task.id, scope_id) {
+            (task_id, Some(scope_id)) => knowledge_entries::Entity::find()
                 .filter(knowledge_entries::COLUMN.research_task_id.eq(task_id))
                 .filter(knowledge_entries::COLUMN.scope_id.eq(scope_id))
                 .filter(
@@ -442,7 +584,7 @@ impl ToolHandler for FinishResearchTool {
                 .count(ctx.tx)
                 .await
                 .map_err(|_| internal())?,
-            None => 0,
+            _ => 0,
         };
         let text = ctx
             .prompts
@@ -466,6 +608,7 @@ impl ToolHandler for FinishResearchTool {
 /// The researcher's write tools (spec/05 §8).
 pub fn all() -> Vec<std::sync::Arc<dyn ToolHandler>> {
     vec![
+        std::sync::Arc::new(SetTargetScopeTool),
         std::sync::Arc::new(SaveKnowledgeEntryTool),
         std::sync::Arc::new(UpdateKnowledgeEntryTool),
         std::sync::Arc::new(FinishResearchTool),

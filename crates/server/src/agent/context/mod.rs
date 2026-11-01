@@ -11,16 +11,18 @@
 
 use std::collections::BTreeMap;
 
-use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder};
+use sea_orm::{
+    ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
+};
 use serde_json::{Value, json};
 
 use crate::agent::tools::research::{
     MAX_ENTRIES as MAX_RESEARCH_ENTRIES, MAX_TOOL_CALLS as MAX_RESEARCH_TOOL_CALLS,
 };
 use crate::db::entities::{
-    agent_messages, agent_sessions, agent_tool_calls, books, chapter_versions, chapters,
-    character_designs, entities, knowledge_scopes, research_tasks, review_reports, setting_docs,
-    tracks,
+    agent_messages, agent_sessions, agent_tool_calls, book_scope_exclusions, books,
+    chapter_versions, chapters, character_designs, entities, knowledge_entries, knowledge_scopes,
+    research_tasks, review_reports, setting_docs, tracks,
 };
 use crate::db::json::{
     self, AgentRole, CanonMode, CanonSystem, CanonSystems, ChapterContent, CompletionKind,
@@ -33,9 +35,9 @@ use crate::prompts::PromptSet;
 use crate::prompts::context::{
     BookContext, CastEntryContext, ChapterContext, CharacterContext, DiffChangeContext,
     DiffContext, DraftContext, FeedbackContext, FeedbackIssueContext, GoalsContext,
-    GranularityContext, MemoryContext, MemoryCountsContext, ParagraphContext, PriorReportContext,
-    RecentChapterContext, ScopeContext, SettingsContext, SystemsContext, TrackContext,
-    WritingSkillContext,
+    GranularityContext, MemoryContext, MemoryCountsContext, ParagraphContext, PrepContext,
+    PrepScopeContext, PriorReportContext, RecentChapterContext, ScopeContext, SettingsContext,
+    SystemsContext, TrackContext, WritingSkillContext,
 };
 use crate::text;
 
@@ -44,7 +46,7 @@ use super::session;
 /// The kickoff blocks of every session kind, in order (spec/03 §10 table).
 ///
 /// `block.settings` carries a cache breakpoint (`cache: true`).
-pub fn kickoff_blocks(kind: SessionKind, _redraft: bool) -> Vec<&'static str> {
+pub fn kickoff_blocks(kind: SessionKind, _redraft: bool, preparation: bool) -> Vec<&'static str> {
     match kind {
         SessionKind::Conception => vec!["conception.kickoff"],
         SessionKind::ChapterOutline => vec![
@@ -55,6 +57,9 @@ pub fn kickoff_blocks(kind: SessionKind, _redraft: bool) -> Vec<&'static str> {
             "block.goals",
             "planner.kickoff",
         ],
+        SessionKind::Research if preparation => {
+            vec!["block.book_brief", "researcher.kickoff.prep"]
+        }
         SessionKind::Research => vec!["block.book_brief", "researcher.kickoff"],
         // A write session always drafts from the accepted outline; a redraft is the same kickoff
         // with its `feedback` branch filled (D-146). Writing skills sit right after settings
@@ -343,16 +348,21 @@ async fn goals_context(
 pub struct KickoffPlan {
     pub kind: SessionKind,
     pub redraft: bool,
+    pub preparation: bool,
 }
 
 impl KickoffPlan {
-    pub fn new(kind: SessionKind, redraft: bool) -> Self {
-        Self { kind, redraft }
+    pub fn new(kind: SessionKind, redraft: bool, preparation: bool) -> Self {
+        Self {
+            kind,
+            redraft,
+            preparation,
+        }
     }
 
     /// The top-level kickoff blocks of spec/03 §10.
     pub fn blocks(self) -> Vec<&'static str> {
-        kickoff_blocks(self.kind, self.redraft)
+        kickoff_blocks(self.kind, self.redraft, self.preparation)
     }
 
     /// True when a `block.chapter_draft` renders the chapter's outline somewhere in the kickoff
@@ -390,7 +400,19 @@ pub async fn assemble_kickoff(
     redraft: bool,
     extra: Option<&Value>,
 ) -> Result<Vec<StoredBlock>, AppError> {
-    let plan = KickoffPlan::new(session::kind_of(session), redraft);
+    let preparation = if session::kind_of(session) == SessionKind::Research {
+        match session.research_task_id {
+            Some(task_id) => research_tasks::Entity::find_by_id(task_id)
+                .one(conn)
+                .await?
+                .map(|task| task.kind == crate::db::json::ResearchTaskKind::Preparation)
+                .unwrap_or(false),
+            None => false,
+        }
+    } else {
+        false
+    };
+    let plan = KickoffPlan::new(session::kind_of(session), redraft, preparation);
     // The actual emitted block list, before `block.memory` renders: its dedupe decision must read
     // this list, not `plan.blocks()`, because a caller like `rollover` builds its own list that
     // deliberately leaves `block.recent_chapters` out (design §7, spec/03 §9).
@@ -550,6 +572,9 @@ async fn block_context(
         })),
         "researcher.kickoff" => Ok(json!({
             "research": research_context(conn, prompts, session.research_task_id).await?,
+        })),
+        "researcher.kickoff.prep" => Ok(json!({
+            "prep": prep_context(conn, prompts, session.research_task_id).await?,
         })),
         "planner.kickoff" => Ok(json!({
             "book": book_context(conn, prompts, session.book_id).await?,
@@ -1572,6 +1597,99 @@ async fn research_context(
     }))
 }
 
+/// `researcher.kickoff.prep` (spec/07 §8.1): the visible inventory with capped titles, the
+/// excluded names and the research budget.
+async fn prep_context(
+    conn: &impl ConnectionTrait,
+    prompts: &PromptSet,
+    research_task_id: Option<i32>,
+) -> Result<PrepContext, AppError> {
+    use crate::services::research::{MAX_PREP_TITLES_PER_SCOPE, MAX_PREP_TITLES_TOTAL};
+    let Some(task_id) = research_task_id else {
+        return Ok(PrepContext {
+            requirements: String::new(),
+            language_name: prompts.label("language", "en"),
+            scopes: Vec::new(),
+            excluded_names: Vec::new(),
+            max_tool_calls: MAX_RESEARCH_TOOL_CALLS,
+            max_entries: MAX_RESEARCH_ENTRIES,
+        });
+    };
+    let task = research_tasks::Entity::find_by_id(task_id)
+        .one(conn)
+        .await?
+        .ok_or_else(|| AppError::not_found(format!("research task {task_id}")))?;
+    let Some(book_id) = task.book_id else {
+        return Ok(PrepContext {
+            requirements: task.requirements,
+            language_name: prompts.label("language", &task.language),
+            scopes: Vec::new(),
+            excluded_names: Vec::new(),
+            max_tool_calls: MAX_RESEARCH_TOOL_CALLS,
+            max_entries: MAX_RESEARCH_ENTRIES,
+        });
+    };
+    let visible_ids = crate::services::knowledge::visible_scope_ids(conn, book_id).await?;
+    let visible = knowledge_scopes::Entity::find()
+        .filter(knowledge_scopes::COLUMN.id.is_in(visible_ids))
+        .order_by_asc(knowledge_scopes::COLUMN.name)
+        .all(conn)
+        .await?;
+    let excluded_ids: Vec<i32> = book_scope_exclusions::Entity::find()
+        .filter(book_scope_exclusions::COLUMN.book_id.eq(book_id))
+        .all(conn)
+        .await?
+        .into_iter()
+        .map(|row| row.scope_id)
+        .collect();
+    let excluded_names = knowledge_scopes::Entity::find()
+        .filter(knowledge_scopes::COLUMN.id.is_in(excluded_ids))
+        .order_by_asc(knowledge_scopes::COLUMN.name)
+        .all(conn)
+        .await?
+        .into_iter()
+        .map(|scope| scope.name)
+        .collect();
+    let mut remaining = MAX_PREP_TITLES_TOTAL;
+    let mut scopes = Vec::with_capacity(visible.len());
+    for scope in visible {
+        let entry_count = knowledge_entries::Entity::find()
+            .filter(knowledge_entries::COLUMN.scope_id.eq(scope.id))
+            .count(conn)
+            .await? as i64;
+        let take = remaining.min(MAX_PREP_TITLES_PER_SCOPE);
+        let titles: Vec<String> = if take == 0 {
+            Vec::new()
+        } else {
+            knowledge_entries::Entity::find()
+                .filter(knowledge_entries::COLUMN.scope_id.eq(scope.id))
+                .order_by_asc(knowledge_entries::COLUMN.title)
+                .limit(take as u64)
+                .all(conn)
+                .await?
+                .into_iter()
+                .map(|entry| entry.title)
+                .collect()
+        };
+        remaining = remaining.saturating_sub(titles.len());
+        scopes.push(PrepScopeContext {
+            name: scope.name,
+            description: scope.description,
+            entry_count,
+            more: entry_count - titles.len() as i64,
+            titles,
+        });
+    }
+    Ok(PrepContext {
+        requirements: task.requirements,
+        language_name: prompts.label("language", &task.language),
+        scopes,
+        excluded_names,
+        max_tool_calls: MAX_RESEARCH_TOOL_CALLS,
+        max_entries: MAX_RESEARCH_ENTRIES,
+    })
+}
+
 // ───────────────────────────── request building ─────────────────────────────
 
 /// Builds the provider request of one session **from persisted state only** (spec/03 §11).
@@ -1903,6 +2021,7 @@ pub async fn rollover(
             let plan = KickoffPlan {
                 kind,
                 redraft: false,
+                preparation: false,
             };
             // The rollover block list is its own: it deliberately excludes
             // `block.recent_chapters` (design §7, session-kind table), so `block.memory` must keep

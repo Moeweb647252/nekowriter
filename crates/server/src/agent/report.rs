@@ -562,6 +562,11 @@ pub async fn current_conception_state(
         .collect();
     let topics = research_tasks::Entity::find()
         .filter(research_tasks::COLUMN.book_id.eq(book_id))
+        .filter(
+            research_tasks::COLUMN
+                .kind
+                .eq(crate::db::json::ResearchTaskKind::Topic),
+        )
         .filter(research_tasks::COLUMN.status.eq(ResearchTaskStatus::Draft))
         .order_by_asc(research_tasks::COLUMN.id)
         .all(conn)

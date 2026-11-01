@@ -294,11 +294,14 @@ async fn the_kickoff_blocks_follow_the_kind_table() {
             ],
         ),
     ] {
-        assert_eq!(kickoff_blocks(kind, false), expected, "{kind:?}");
+        assert_eq!(kickoff_blocks(kind, false, false), expected, "{kind:?}");
         // A redraft uses the same drafting kickoff; its feedback comes through the task variable
         // (D-146).
         if kind == SessionKind::ChapterWrite {
-            assert_eq!(kickoff_blocks(kind, true), kickoff_blocks(kind, false));
+            assert_eq!(
+                kickoff_blocks(kind, true, false),
+                kickoff_blocks(kind, false, false)
+            );
         }
     }
     // Only `block.settings` carries a cache breakpoint (spec/03 §10). A skills block after the

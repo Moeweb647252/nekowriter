@@ -38,7 +38,7 @@ for name, t in tools.items():
 
 # ---------- expected keys from spec/09 §2 ----------
 expected = """conception.system researcher.system planner.system writer.system reviewer.system archivist.system
-conception.kickoff researcher.kickoff planner.kickoff writer.kickoff.chapter writer.kickoff.revise
+conception.kickoff researcher.kickoff researcher.kickoff.prep planner.kickoff writer.kickoff.chapter writer.kickoff.revise
 writer.kickoff.rollover reviewer.kickoff reviewer.rereview archivist.kickoff.maintenance archivist.kickoff.seed
 archivist.kickoff.resync block.settings block.canon_systems block.writing_skills block.memory block.recent_chapters
 block.goals block.chapter_draft block.cast_index block.chapter_diff
@@ -53,7 +53,7 @@ result.error result.truncated result.entity_card result.entity_list result.relat
 result.foreshadowing_list result.search_hits result.knowledge_entry result.chapter_text result.draft_text
 result.draft_edit result.writer_control result.submit_review result.canon_write result.finish_maintenance
 result.ask_user result.request_review result.conception_write result.web_search result.web_fetch
-result.knowledge_write result.finish_research shared.label shared.chapter_label""".split()
+result.knowledge_write result.target_scope result.finish_research shared.label shared.chapter_label""".split()
 for k in expected:
     if k not in templates:
         errors.append(f"missing expected key {k}")
@@ -68,7 +68,7 @@ roles = {
  "reviewer": "get_entity list_entities get_relations query_timeline list_foreshadowing search_canon search_knowledge read_knowledge_entry search_chapters read_chapter submit_review",
  "archivist": "get_entity list_entities get_relations query_timeline list_foreshadowing search_canon read_chapter create_entity update_entity set_relation end_relation record_appearances add_timeline_event update_timeline_event add_memory_note retire_memory_note add_foreshadowing resolve_foreshadowing set_chapter_summary propose_goal_change propose_setting_change finish_maintenance",
  "conception": "ask_user web_search web_fetch write_setting_doc edit_setting_doc upsert_character remove_character reorder_characters set_research_topics request_review",
- "researcher": "web_search web_fetch search_knowledge read_knowledge_entry save_knowledge_entry update_knowledge_entry finish_research",
+ "researcher": "web_search web_fetch search_knowledge read_knowledge_entry set_target_scope save_knowledge_entry update_knowledge_entry finish_research",
 }
 all_role_tools = set(itertools.chain.from_iterable(v.split() for v in roles.values()))
 for t in all_role_tools:
@@ -209,6 +209,10 @@ S = dict(book=book, track=track_main, chapter=chapter, settings=settings, memory
          review=dict(comment="第二条判断有误。", attempt=1),
          research=dict(topic="宋代市井", requirements="茶馆布局", scope_name="宋代社会", scope_description="宋代社会生活",
                        language_name="简体中文", existing_titles=["宋代酒楼"], max_tool_calls=40, max_entries=25),
+         prep=dict(requirements="想先确认宋代生活的基础", language_name="简体中文",
+                   scopes=[dict(name="宋代社会", description="宋代社会生活", entry_count=2, titles=["宋代酒楼", "宋代服饰"], more=0),
+                           dict(name="杂项", description="", entry_count=0, titles=[], more=0)],
+                   excluded_names=["明代史料"], max_tool_calls=40, max_entries=25),
          conception=dict(title="青云劫", idea="少年身怀剑灵", genre="", writing_language_name="简体中文"),
          cast_index=[dict(id=12, name="林凡", kind_label="人物", status="active", status_label="活跃", aliases=["凡哥", "林师弟"], summary="外门弟子"),
                      dict(id=13, name="老剑", kind_label="物品", status="destroyed", status_label="已损毁", aliases=[], summary="")],
@@ -244,6 +248,7 @@ variants = {
   "archivist.kickoff.seed": [dict(systems=s) for s in systems_cases],
   "archivist.kickoff.resync": [dict(systems=s) for s in systems_cases] + [dict(track=track_side)],
   "researcher.kickoff": [dict(), dict(research=dict(S["research"], requirements="", scope_description="", existing_titles=[]))],
+  "researcher.kickoff.prep": [dict(), dict(prep=dict(S["prep"], scopes=[], excluded_names=[]))],
   "conception.kickoff": [dict(), dict(conception=dict(S["conception"], genre="仙侠"))],
   "writer.rules.granularity": [dict(granularity=g) for g in gran_cases],
   "writer.notice.outline_accepted": [dict(granularity=g) for g in gran_cases],
@@ -344,6 +349,7 @@ variants = {
   "result.web_fetch": [dict(url="https://a", title="标题", offset=0, end=8000, total=20000, next_offset=8000, body="正文"),
                        dict(url="https://a", title="", offset=0, end=100, total=100, next_offset=None, body="正文")],
   "result.knowledge_write": [dict(action="created", id=7, title="宋代茶馆", scope="宋代社会"), dict(action="updated", id=7, title="宋代茶馆", scope="宋代社会")],
+  "result.target_scope": [dict(scope="宋代社会", created=False, entry_count=2), dict(scope="宋代生活", created=True, entry_count=0)],
   "result.finish_research": [dict(entries=5)],
 }
 error_cases = [

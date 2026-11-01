@@ -438,6 +438,17 @@ text = '''
 '''
 
 [[prompt]]
+key = "result.target_scope"
+kind = "result"
+agent = "shared"
+vars = ["scope", "created", "entry_count"]
+title_en = "Result — target scope"
+title_zh = "工具结果 · 目标知识范围"
+text = '''
+{% if created %}已新建知识范围《{{ scope }}》，当前有 {{ entry_count }} 个条目。{% else %}已将目标知识范围设为《{{ scope }}》，当前有 {{ entry_count }} 个条目。{% endif %}
+'''
+
+[[prompt]]
 key = "result.finish_research"
 kind = "result"
 agent = "researcher"
