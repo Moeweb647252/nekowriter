@@ -253,9 +253,8 @@ message and a retry.
 - `outlineState(chapter, calls)` (`features/chapter/outlineState.ts`) is the single derivation —
   `missing | in_progress | awaiting_approval | accepted` — shared by the header and the Outline
   tab, the `pendingDraftView` pattern of D-141 applied to the outline, so they cannot disagree.
-  The Outline tab renders one state per the states in PROJECT §8.5; a held `submit_outline` in a
-  legacy `chapter_write` session keeps the pre-split editable-fields path (save the fields, then
-  resume). `useWriterState` keeps filtering `chapter_write | chapter_revise` for the dock; a
+  The Outline tab renders one state per the states in PROJECT §8.5 (the pre-split held-outline
+  path was removed with the legacy branch, D-159). `useWriterState` keeps filtering `chapter_write | chapter_revise` for the dock; a
   sibling `openOutlineSession(chapter)` serves the Outline tab.
 
 ### 5.3 Agent panel (`features/agent`)
@@ -285,9 +284,19 @@ message and a retry.
     the same `resume`. A write hold that staged nothing (a call from before D-139) stays in the
     panel, since the dock would have no text to show;
   - `ActivityStream` (virtualized with `@tanstack/react-virtual`; sticks to the bottom unless the
-    author scrolled up; scrolling to the top loads older messages with `next_cursor`): messages,
-    live text and reasoning buffers, tool cards, appendices shown under their tool card as
-    `NoticeItem`s;
+    author scrolled up): messages, live text and reasoning buffers, tool cards, appendices shown
+    under their tool card as `NoticeItem`s. Text is shown **as delivered** to the model, so an
+    author message carries its 【用户留言】 header once consumed (D-160), while its queued row
+    shows the raw text.
+    **Scrollback** (D-161) lives here, so the agent panel, the conception studio and the research
+    task page all get it:
+    - the snapshot's `next_cursor` feeds an infinite query over `GET /sessions/:id/messages`;
+    - a **Load older messages** row sits at the top while a cursor remains, and scrolling to within
+      one row of the top loads the next page by itself;
+    - pages are prepended, de-duplicated by message id, and anchored so the first visible row
+      does not move;
+    - the stream shows loading, retry and "start of the conversation" states;
+    - switching sessions drops the pages;
   - `Composer` (state-dependent label and endpoint: `message` / `resume` with feedback / disabled;
     disabled with `agent:composer.disabled_review` while `HeldCallReview` owns the decision, so a
     held call never has two differently-worded reject paths; for a write hold it is disabled with
@@ -330,12 +339,29 @@ tab shows `kind === "topic"` drafts and labels `origin === "author"` rows "Added
 
 ### 5.5 Canon, settings materials, knowledge, prompts, settings
 Per PROJECT §8.8–§8.12. Shared pieces: `Markdown` (react-markdown + remark-gfm, no raw HTML),
-`EntityPicker` (a combobox over `GET entities?q=`), `KeyValueEditor` (attributes),
+`features/canon/EntityPicker` (the goal dialog's list pickers, D-155), `KeyValueEditor` (attributes),
 `TimelineList` (dnd-kit sortable with `restrictToVerticalAxis`-style constraint and keyboard
 sensor), `PromptEditor` (monospace textarea, variable docs side panel, "diff vs default" via
 `DiffView`). The Goals dialog's pickers are native selects over the full list for the MVP, not
 searchable comboboxes (D-155); a shared searchable picker is a follow-up that must keep the
 dialog's scope.
+
+**Manual canon editing** (D-161, PROJECT §8.8):
+- `EntityCreateDialog` opens from the Entities filter bar's **+ Entity**. Its fields are kind*,
+  name*, aliases, summary, importance, status, storyline (shared, or an **isolated** side track
+  → `track_id`) and a change note. On success it opens the new entity.
+- `EntityMergeDialog` opens from the detail header's **⋯ › Merge another entity into this one…**.
+  It picks B with `features/canon/EntityPicker` (A excluded) and lists what moves (spec/06 §9). It
+  warns that a merge cannot be reverted as a whole and explains the shared-into-isolated refusal.
+  Its destructive confirm names both entities, and the route moves to A if it showed B.
+- **Relation rows edit in place**: kind, inverse kind, description, status
+  (`canon:relation_status.*`), since/until chapter and a change note. The labels follow the
+  stored source → target, and only changed fields are sent.
+- **Full history**: when the detail shows `DETAIL_CHANGE_LIMIT` (20) recent changes, **Show full
+  history** loads `GET /entities/:id/history` (latest 100) into the same `ChangeList`.
+- `TimelineEventDialog` opens from a row's **Edit**. It holds the insert form's fields (no
+  position: drag and drop and Move reorder), sends only changed fields, and contains the
+  **Referenced by** section.
 
 **Book › Knowledge** (`BookKnowledgePage`, D-158) lists every scope (`useScopes`) with a checkbox
 that is checked when the scope is in the book's visible list (`useBookScopes`). Save sends the
@@ -519,3 +545,13 @@ test imports the file by relative path).
   - the "Added by you" label on author topics;
   - the "Knowledge check" title in the research list and in `SessionHeader`;
   - every new string has keys in both locales.
+- Feature gaps (D-161):
+  - `ActivityStream` scrollback: the top row appears with a cursor, pages prepend in order without
+    duplicates, and the start, error and session-switch states;
+  - `EntityCreateDialog`: required fields, isolated tracks only, navigation;
+  - `EntityMergeDialog`: A excluded, warning, refusal explanation, route replacement;
+  - relation inline edit: changed fields only, note, ended label, cancel;
+  - full-history toggle at 20 rows and its reset;
+  - `TimelineEventDialog`: pre-fill, changed fields only, no position fields, Referenced-by gated
+    by Goals.
+

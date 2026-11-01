@@ -78,7 +78,7 @@ small embedding model locally.
 | **Knowledge check** | A research task of its own kind: the research agent checks whether the knowledge visible to a book can support conceiving it, and fills the gaps. It runs before conception, and its report goes to the conception agent |
 | **Agent role** | Planner, Conception, Researcher, Writer, Reviewer, Archivist (see §5) |
 | **Session** | One persisted agent conversation working on one task (e.g. "write chapter 12"). It has a status, a phase, and a full transcript |
-| **Phase** | A stage inside a session that decides which tools are allowed. Planner sessions are phase-free; a write session drafts; a revise session runs `revision_planning` → `revising`. `planning` exists only in write sessions started before the outline split |
+| **Phase** | A stage inside a session that decides which tools are allowed. Planner sessions are phase-free; a write session drafts; a revise session runs `revision_planning` → `revising`. `planning` appears only in historical write sessions that ended before the outline split |
 | **Granularity** | How much text one `insert_text` call may add: `sentence`, `paragraph`, `free` (any size, with `paragraph_end`/`chapter_end` flags), or `chapter`. At sentence and paragraph level it also limits `insert_paragraphs` and `rewrite_paragraph` to one paragraph |
 | **Hold** | A tool call that has been executed but whose result is withheld until the author resumes. The model request has already finished, so a hold costs nothing and survives restarts |
 | **Pause** | An author request to hold at the next tool boundary |
@@ -653,8 +653,6 @@ guidance. Its state is derived, never stored:
   approve".
 - **accepted**: the editable fields as before, plus **Redo the outline** when the chapter is not
   official and has no open session.
-- **legacy**: a held `submit_outline` in a `chapter_write` session keeps the pre-split path — the
-  fields are editable and are saved, then the call resumes.
 
 **Review tab**:
 ```
@@ -743,14 +741,23 @@ version first.
   **Start conception** and **Check knowledge first**.
 
 ### 8.8 Canon pages
-- **Entities**: a filter bar (kind chips, status, track, search) above a dense table (name,
-  kind, summary, importance, last seen), and a detail pane on the right: header (name, kind,
-  status, importance stars), aliases (tags), summary, description (Markdown), current state
-  (highlighted box), attributes (key/value grid), relations (with an "add relation" combobox),
-  appearances (chapter chips), and history (change log entries).
+- **Entities**: a filter bar (kind chips, status, track, search, **+ Entity**) above a dense
+  table (name, kind, summary, importance, last seen), and a detail pane on the right:
+  - a header (name, kind, status, importance stars) whose **⋯** menu offers **Merge another entity
+    into this one…** (with a warning that a merge cannot be reverted as a whole);
+  - aliases (tags), summary, description (Markdown), current state (highlighted box), attributes
+    (key/value grid);
+  - relations, with an "add relation" combobox; each relation row edits in place (kind, inverse
+    kind, description, active or ended);
+  - appearances (chapter chips);
+  - history: the latest change log entries, with **Show full history**.
+
+  **+ Entity** asks for kind, name, aliases, summary, importance, status and the storyline (shared,
+  or an isolated side story).
 - **Timeline**: a vertical list with a rail. Each row has story time (left), title and
-  description, entity chips, chapter link, and a track badge. Drag handles reorder rows. The
-  "+ Add" between rows inserts at that position.
+  description, entity chips, chapter link, a track badge, and **Edit** (a dialog with the same
+  fields; position changes only by dragging). Drag handles reorder rows. The "+ Add" between rows
+  inserts at that position.
 - **Memory**: a context selector ("Next chapter of: Main story" or a specific chapter) and three
   columns: Short-term, Mid-term, Long-term index, rendered exactly as the writer receives them.
   Below: the facts and world rules table.

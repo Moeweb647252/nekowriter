@@ -731,7 +731,7 @@ The migration seeds `('basic-writing', '基础写作 / Basic Writing', '写作 /
 | AgentRole | `conception`, `researcher`, `planner`, `writer`, `reviewer`, `archivist` |
 | SessionKind | `conception`, `research`, `chapter_outline`, `chapter_write`, `chapter_revise`, `chapter_review`, `chapter_maintenance`, `canon_seed`, `chapter_resync` |
 | SessionStatus | `idle`, `running`, `held`, `awaiting_input`, `paused`, `completed`, `stopped`, `failed`, `interrupted`, `superseded`, `abandoned` |
-| Phase | `none`, `planning` (legacy only: a `chapter_write` session started before the outline split), `drafting`, `revision_planning`, `revising` |
+| Phase | `none`, `planning` (historical rows only: `chapter_write` sessions that ended before the outline split; no runtime path, D-159), `drafting`, `revision_planning`, `revising` |
 | Granularity | `sentence`, `paragraph`, `free`, `chapter` |
 | ToolCallStatus | `pending`, `executing`, `held`, `awaiting_input`, `done`, `error` |
 | ReviewVerdict / IssueSeverity | `pass`,`revise` / `critical`,`major`,`minor` |
@@ -862,7 +862,7 @@ type Appendix = {
 
 // agent_tool_calls.effects — applied when the call is finalized (not when executed)
 type ToolEffects = {
-  phase_to?: Phase;                    // e.g. submit_revision_plan → "revising"; legacy submit_outline → "drafting"
+  phase_to?: Phase;                    // e.g. submit_revision_plan → "revising"
   complete?: "draft" | "revision" | "review" | "maintenance" | "research" | "outline";
   await_input?: "ask_user" | "request_review";
   pending_content?: PendingContent;    // a staging writer call's text (spec/03 §5.2)

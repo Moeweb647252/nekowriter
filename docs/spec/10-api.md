@@ -322,7 +322,6 @@ type ContentOpInput =                                                    // auth
 | `goal.open_children` | 409 | setting `done`/`dropped` on a goal node (or accepting such a proposal) while it has `active` or `waiting` descendants, without `confirm_open_children`; `details.children: [{id, level, title, status}]` |
 | `goal.has_children` | 409 | deleting a goal node with children, or reverting its `create`; `details.children_count` |
 | `provider.unavailable` · `provider.auth` · `provider.bad_request` | 502 | provider tests and remote models (the connection test reports the same codes inside its 200 `error` field, spec/04 §8); the web search test maps a rejected key to `provider.auth` and other failures to `provider.unavailable` |
-| `embedding.unavailable` | 503 | |
 | `search.not_configured` | 409 | search test without a provider |
 | `internal` | 500 | |
 

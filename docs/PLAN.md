@@ -176,6 +176,15 @@ needed. Real providers are tested when the author supplies keys.
     - In that book, add a research topic in the Research topics tab, then start conception and let
       the agent set its topics. Your topic is still there, marked "Added by you".
     - Create another scope. Both books see it without any action.
+13. Feature gaps (M18, plan §4):
+    - Create an entity "Test sword" (item, shared), then a second one "The sword". Merge "The
+      sword" into "Test sword": its name becomes an alias, and the Changes page shows the merge
+      notes.
+    - Edit a relation's description and end it. The row shows "ended", and the entity history
+      shows the change with your note.
+    - Edit a timeline event's story time and linked entities. Its position is unchanged.
+    - On an entity with more than 20 changes, **Show full history** lists the older ones.
+    - Open a long session and scroll to the top. Older messages load without the view jumping.
 
 ## M12 — Outline and write sessions
 
@@ -238,3 +247,44 @@ amended; the code catches up task by task. Execute in order, one commit per task
 | 15.5 | **Creation, auto-start, conception knowledge, protected tasks**: `BookInput` handling; the auto-start hook; conception tools (12) and kickoff variables (`scopes`, `knowledge_report`, `research_tasks`); `conception.system` and `conception.kickoff`; `origin` on create, PATCH and `set_research_topics`; `kept[]`. | 08 §5; 05 §7; 03 §10, §15 (32–33) | `knowledge_first_flow.rs` and `research_topics_ownership.rs` per plan §6 (AC3, AC5–AC7, AC10, AC11); `kickoff_baseline` changes only for the conception kickoff and tool list |
 | 15.6 | **Web**: the New book dialog checkbox and landing; the studio's pre-conception states; Book › Knowledge (unchecking, Check knowledge); "Knowledge check" labels and session title; "Added by you"; the scope hint; both locales. | 11 §5.0, §5.4, §5.5, §9; PROJECT §8.7, §8.10 | Vitest per spec/11 §9 (AC9); `i18n:check` |
 | 15.7 | **Smoke and pre-ship**: smoke item 12 with the Demo provider. Run `0008` on a **copy** of the author's database, and report per book the scopes that become visible, the research task counts before and after, and the drafts back-filled as `conception` per conceiving book. | PLAN §M11.5 | the checklist passes; the report is in the final message and in D-158's consequences |
+
+## M16 — Codebase cleanup
+
+Plan: `docs/research/codebase-cleanup-plan.md` (D-159). The spec sections it lists in §8 are
+already amended. It runs after M15; if M15 has not started, M16 may go first, but the two are
+never interleaved. **No behavior change**: kickoff baselines, kept prompts, API (minus the
+never-returned `embedding.unavailable`) and schema stay identical. Every deletion is re-proven by
+the plan's §4 finders when its task starts.
+
+| # | Task | Spec | Tests / acceptance |
+|---|---|---|---|
+| 16.1 | **Docs**: done with the plan (D-159). Re-read the amended sections before 16.2. | plan §8 | `check.sh` green (docs only) |
+| 16.2 | **Dependencies and manifests**: the unused entries of plan §2.1, the workspace entries left unused, `async-trait` in the migration crate through the workspace, and the redundant `[[test]]` sections. | 01 §2 | the §4.1 finder is empty; `cargo build --workspace --all-targets` and the release build with `embed-web` pass |
+| 16.3 | **Rust functions** of plan §2.3 and what they alone used. | — | the §4.2 finder is empty; no `#[allow(dead_code)]` in `crates/*/src`; `kickoff_baseline` unchanged |
+| 16.4 | **The legacy planning branch** (plan §2.4). First run its query on a **copy** of the author's database; if it is not 0, stop and revert the legacy amendments. | 02 §3; 03 §1, §4, §5, §15; 04 §7.2; 05 §2; 09 §2; 11 §5.2 | the plan's grep gate; every legacy test deleted or ported (listed in the commit); the unknown-key override test; `prompts_registry` loses only the three keys; smoke items 3–5 with the Demo provider |
+| 16.5 | **Prompt variable `previous_outline` and error code `embedding.unavailable`**. | 09 §2; 10 §4 | the validator passes; the `gen` diff is one `ErrorCode` member |
+| 16.6 | **Web**: unused files, dead exports, template leftovers, and proven-unused i18n keys (re-run after 16.4). The plan §3.1 hooks stay; M18 uses them. | 11 §5.5 | the §4.3 finders report only what the plan keeps; web typecheck, lint, test, i18n, build pass |
+| 16.7 | **Sweep and report**: stale mentions in `NOTES.md`, `README.md`, `docs/`; the final counts in D-159. | — | the report is in the final message |
+
+## M17 — Steering messages carry their header
+
+Plan: `docs/research/steering-header-fix-plan.md` (D-160). It is independent of M15 and M16 and
+may run before either.
+
+| # | Task | Spec | Tests / acceptance |
+|---|---|---|---|
+| 17.1 | **Render `notice.user_message` when a `user_message` inbox row is consumed**: one helper for the three paths (sealing appendix, user message after an empty batch, text-only handling); `agent_inbox.content` stays raw; raw fallback on a render failure; the rollover test comment becomes an assertion. Write the tests first, and they must fail on the current code. | 03 §5.3, §5.6; 11 §5.3 | `steering_header.rs` (plan §4: paths A–C, paused feedback, notices untouched, overrides, rollover, several messages); `kickoff_baseline` and `prompts_registry` unchanged; Demo smoke: a message sent mid-write shows 【用户留言】 in the next tool card's appendix |
+
+## M18 — Close the feature gaps (web)
+
+Plan: `docs/research/feature-gaps-plan.md` (D-161). Web only: no server, schema or prompt change.
+
+| # | Task | Spec | Tests / acceptance |
+|---|---|---|---|
+| 18.1 | **Docs**: done with the plan (D-161). | plan §5 | `check.sh` green (docs only) |
+| 18.2 | **G6 scrollback** in `ActivityStream`; remove the dead `AgentPanel` button. | 11 §5.3 | Vitest per plan §3; manual: a session over 200 messages scrolls back to its kickoff |
+| 18.3 | **G1 create entity** and **G2 merge**. | PROJECT §8.8; 11 §5.5; 06 §9 | Vitest per plan §3; manual merge with a shared chapter |
+| 18.4 | **G4 relation edit** and **G5 full history**. | PROJECT §8.8; 11 §5.5 | Vitest per plan §3 |
+| 18.5 | **G3 timeline event edit**. | PROJECT §8.8; 11 §5.5 | Vitest per plan §3 |
+| 18.6 | **Wrap-up**: `i18n:check`; smoke item 13 with the Demo provider. | PLAN §M11.5 | the checklist passes |
+

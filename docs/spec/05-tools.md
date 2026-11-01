@@ -102,8 +102,8 @@ At session creation, for each tool in the role's list (§2): take the definition
   reported as a setting change. With no goal proposals the text is unchanged.
 - `result.writer_control` also receives `staged` (boolean). For `submit_outline` in a
   `chapter_outline` session it is true and the result says the outline was submitted and takes
-  effect when the author accepts it — never that it was saved. For a legacy `chapter_write` /
-  `planning` session it is false and the result describes the immediate save.
+  effect when the author accepts it — never that it was saved. It is false for every other
+  writer-control tool.
 - Errors that the tables below do not name: an unknown or invisible id (`event_id`,
   `after_event`, `before_event`, `around_event`, `move_after`, `move_before`, `note_id`,
   `foreshadowing_id`, `entry_id`) → `error.not_found` with the `target_type` label as
@@ -194,14 +194,14 @@ lists (the archivist's 21 tools). The map lives once in `agent/tools/registry.rs
 
 | Writer phase | Permitted |
 |---|---|
-| `planning` (legacy only) | RETRIEVAL, `read_draft`, `submit_outline` |
+| `planning` (historical rows only, D-159) | nothing: no session runs in it |
 | `drafting` | `read_draft`, DRAFT_EDIT, `finish_draft` |
 | `revision_planning` | RETRIEVAL, `read_draft`, `submit_revision_plan` |
 | `revising` | `read_draft`, DRAFT_EDIT, `finish_revision` |
 
 A `chapter_outline` session is **phase-free**: its frozen planner list is its gate, so it permits
 all twelve tools (retrieval, `read_draft`, `submit_outline`). The writer list has no
-`submit_outline`; only a legacy `chapter_write` session (frozen before the split) still has it.
+`submit_outline`; only historical `chapter_write` rows (frozen before the split) list it.
 
 Archivist by session kind: `canon_seed` forbids `record_appearances`, `set_chapter_summary`,
 `read_chapter`; the other kinds allow all of their tools. Reviewer, conception, planner, and

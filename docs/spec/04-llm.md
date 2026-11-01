@@ -286,7 +286,6 @@ history:
 | Kind / phase | Behavior |
 |---|---|
 | chapter_outline | `get_entity` on the protagonist (if any), then `submit_outline` with a three-scene outline |
-| chapter_write / planning | legacy only (a session started before the outline split): `get_entity` on the protagonist (if any), then `submit_outline` with a three-scene outline |
 | chapter_write / drafting | `insert_text` with text from a small built-in Chinese and English corpus, matching the granularity (sentence, paragraph, free chunk, or chapter); `chapter_end` after ~8 paragraphs, and `finish_draft` when that completion is withheld as short |
 | chapter_revise | `submit_revision_plan`, then one `replace_text` on the first current paragraph (the pid and the exact `old` text come from the draft the request carries, D-077), then `finish_revision` |
 | chapter_review | `submit_review` (verdict `revise` on attempt 1, `pass` on later attempts) with one issue on `p2` |

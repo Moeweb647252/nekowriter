@@ -15,7 +15,6 @@ while it waits.
 | `research` | researcher | `none` | `finish_research` |
 | `chapter_outline` | planner | `none` (phase-free, like `chapter_review`) | `submit_outline` → `complete: outline` |
 | `chapter_write` | writer | `drafting` | `insert_text(chapter_end=true)` or `finish_draft` |
-| `chapter_write`, legacy (open at the upgrade) | writer | `planning` → `drafting` | as before |
 | `chapter_revise` | writer | `revision_planning` → `revising` | `finish_revision` |
 | `chapter_review` | reviewer | `none` | `submit_review` (re-review continues the same session unless the text changed, §6) |
 | `chapter_maintenance` | archivist | `none` | `finish_maintenance` |
@@ -25,11 +24,10 @@ while it waits.
 A **redraft** is a `chapter_write` session whose kickoff carries the author's feedback. A
 **rollover** continuation (§9) is a new session of the same kind and phase.
 
-`planning` is a **legacy** phase: new code never creates a `chapter_write` session in it. A
-`chapter_write` session already open in `planning` at the upgrade finishes under its frozen prompt
-(§2.12 of the implementation plan): it keeps the planning permission arm, the immediate outline
-write in `submit_outline`, the writer acceptance/rejection notices, the planning nudge key and the
-Demo provider's planning arm.
+`planning` is a **historical** phase. Only `chapter_write` sessions that ended before the outline
+split (D-146) carry it, and they are never resumed: the compatibility branch that let open ones
+finish was removed once none was left (D-159). Their rows still decode and render, and a call
+that would run in `planning` is not permitted.
 
 ### 1.2 Fixed tool lists, phase-gated permissions
 
@@ -40,9 +38,8 @@ to a tool that is not permitted in the current phase is answered with an error r
 (`error.tool_not_allowed`, listing the permitted tools), and the call has no effect.
 
 The planner's list is retrieval plus `read_draft` and `submit_outline`; the writer's list excludes
-`submit_outline`. A `chapter_write` session created before the split froze the old 20-tool list
-that still contains `submit_outline`; that frozen list plus the legacy `planning` phase is what
-lets it finish (§1.1).
+`submit_outline`. Historical `chapter_write` sessions froze the old 20-tool list with
+`submit_outline`; it stays in their rows for rendering only (§1.1).
 
 **Canon system switches** (spec/06 §10) narrow the list, never reorder it. A session freezes its
 role's list minus the tools of the canon systems that are off in its `canon_systems` (§4 step 2).
@@ -144,7 +141,7 @@ transaction:
    the kickoff blocks and fragments, `search_canon`'s kinds, `finish_maintenance`'s required steps)
    reads the session's frozen `canon_systems`, never the book's current settings.
 3. **Initial fields**: phase (`drafting` for `chapter_write`, `revision_planning` for
-   `chapter_revise`, `none` otherwise — `planning` only exists in legacy rows). Write and revise
+   `chapter_revise`, `none` otherwise — `planning` only exists in historical rows). Write and revise
    sessions copy `granularity` and `auto_pause` from book settings, or from the start request when
    given; their `pause_after_outline` is stored as 0. An outline session copies
    `pause_after_outline` (from the request or the book settings) and stores no granularity,
@@ -292,6 +289,15 @@ a blank line, in this **canonical order**:
 4. **Inbox items** in arrival order: steering messages (`notice.user_message`) and runtime
    notices (e.g. `writer.notice.granularity`).
 
+`render(item)` (D-160): an `InboxKind::Notice` row's `content` is already rendered when it is
+queued, and is delivered as is. A `user_message` row keeps the author's **raw** text in
+`agent_inbox.content`, which is what the queued rows of D-157 show and what a rollover moves. It
+is rendered as `notice.user_message {text}` with the session's `PromptSet` at the moment it is
+consumed. This applies to every consumption path: the last call's appendix here, the user message
+built when nothing is left to seal, and §5.6. The rendered text is persisted once and never
+recomputed. If rendering fails after the registry's own fallback, the raw text is delivered and a
+warning is logged; the author's words are never dropped.
+
 `seal_latest_batch(s)` runs right before a model request:
 ```text
   report ← edit_report(s.view_snapshot, current state) if s.view_snapshot is set     # §7
@@ -344,8 +350,7 @@ Every call therefore has a sealed result even in a completed session, which a re
   applies it exactly once, and feedback discards it along with the other revoked effects.
 - **Revoking deferred effects**: when the author gives feedback on a held call whose effects
   include `complete`, `phase_to` or a staged write/outline, the effects are cleared before
-  finalizing, and the matching revoke notice is appended (`writer.notice.outline_rejected` for a
-  legacy `submit_outline`, `planner.notice.outline_rejected` for an outline session's
+  finalizing, and the matching revoke notice is appended (`planner.notice.outline_rejected` for
   `submit_outline`, `writer.notice.revision_plan_rejected` for `submit_revision_plan`,
   `notice.completion_revoked` for any other completion), followed by the feedback. The agent keeps
   working in the same phase. A staged outline is discarded with the effects; a staged content
@@ -384,7 +389,8 @@ step_model(s):
 handle_text_only(s):
   pending ← edit report (if view_snapshot is set and differs, §7) + pending inbox items
   if pending: insert user message (kind = user if any author message else notice) composed of the
-              rendered sections; consume inbox; clear view_snapshot; return   (loop continues → NeedsModel)
+              rendered sections (author messages through notice.user_message, §5.3 render(item));
+              consume inbox; clear view_snapshot; return   (loop continues → NeedsModel)
   match s.kind:
     conception → transition(s, idle)                      # the author replies when ready
     otherwise  → if counters.consecutive_nudges < 2:
@@ -393,8 +399,8 @@ handle_text_only(s):
 ```
 
 Nudge keys by session kind and phase: `chapter_outline` → `planner.notice.nudge`; writer
-`planning` (legacy only) → `writer.notice.nudge_planning`, `drafting` →
-`writer.notice.nudge_drafting`, `revision_planning` → `writer.notice.nudge_revision_planning`,
+`drafting` → `writer.notice.nudge_drafting`, `revision_planning` →
+`writer.notice.nudge_revision_planning`,
 `revising` → `writer.notice.nudge_revising`; reviewer, archivist, and researcher sessions get
 `notice.nudge_generic`.
 
@@ -695,8 +701,7 @@ With `ScriptedProvider` (spec/04 §7) and a temp database:
 2. Held outline + feedback → the phase stays phase-free; the result contains
    `planner.notice.outline_rejected`, the edit report when the author edited meanwhile, and the
    feedback, in that order, with no `notice.completion_revoked`; the staged outline is discarded
-   and resubmission works. The legacy `chapter_write`/`planning` variant keeps the writer
-   rejection notice and the `planning` phase.
+   and resubmission works.
 3. Auto-pause: each insert holds; approve continues. Feedback is appended to that call's result
    only.
 4. Pause request during streaming → holds after the call completes. Pause with a text-only
@@ -745,10 +750,9 @@ With `ScriptedProvider` (spec/04 §7) and a temp database:
 24. `POST /chapters/:id/write` on a chapter whose outline is empty or whitespace-only →
     `409 chapter.outline_missing`; the redraft send-back answers the same when the chapter has no
     outline.
-25. Legacy planning session (fixture row `chapter_write`/`planning` with the old 20-tool list):
-    plans, holds, approves (the writer acceptance notice), drafts and completes. Feedback on its
-    held outline gives the legacy `writer.notice.outline_rejected`. A plain drafting rollover has
-    no redraft sentence in its kickoff; a redraft rollover keeps the feedback its chain addresses.
+25. Rollover of a drafting session: a plain drafting rollover has no redraft sentence in its
+    kickoff; a redraft rollover keeps the feedback its chain addresses. (The legacy planning
+    session this test also covered was removed with its branch, D-159.)
 26. Baseline (`kickoff_baseline.rs`, committed before D-150's code): the kickoff of every chapter
     kind and the frozen tool list of every role, for an all-on fixture book with canon data and no
     goal nodes, match their snapshots byte for byte.

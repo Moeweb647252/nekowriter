@@ -37,14 +37,13 @@ note it in `docs/DECISIONS.md`.
 | tokio | 1.54 | `full` |
 | axum | 0.8.9 | defaults + `macros` |
 | tower | 0.5 | |
-| tower-http | 0.7 | `trace`, `fs`, `set-header` |
 | sea-orm | 2.0.4 | `default-features = false`, features `macros`, `with-json`, `with-chrono`, `sqlx-sqlite`, `runtime-tokio`, `sqlite-use-returning-for-3_35` |
 | sea-orm-migration | 2.0.4 | `default-features = false` (the default `cli` feature is not needed), features `sqlx-sqlite`, `runtime-tokio` |
 | libsqlite3-sys | same version that `sqlx-sqlite` resolves (currently 0.37.x; check `cargo tree -i libsqlite3-sys`) | no features; only used for `sqlite3_auto_extension` |
 | sqlite-vec | 0.1.9 | statically linked extension |
 | fastembed | 7.5 | `default-features = false`, features `onnx`, `ort-download-binaries-rustls-tls`, `hf-hub-rustls-tls` |
 | reqwest | 0.13 | defaults (rustls) + `json`, `stream` |
-| eventsource-stream | 0.2 | parse provider SSE streams |
+| eventsource-stream | 0.2 | parse provider SSE streams (`nekowriter-llm` only) |
 | serde / serde_json | 1 | |
 | toml | 1.1 | parse the prompt pack |
 | minijinja | 3.0 | `serde`, `json`, `loop_controls` |
@@ -53,11 +52,11 @@ note it in `docs/DECISIONS.md`.
 | thiserror | 2 | library errors |
 | anyhow | 1 | binaries and tests only |
 | tracing / tracing-subscriber | 0.1 / 0.3 | `env-filter`, `fmt`, `json` |
-| futures / tokio-util / tokio-stream | 0.3 / 0.7 / 0.1 | `CancellationToken` (tokio-util, no features); `BroadcastStream` (tokio-stream feature `sync`) |
+| futures / tokio-util | 0.3 / 0.7 | `CancellationToken` (tokio-util, no features); the SSE endpoint builds its stream with `futures::stream::unfold` over the broadcast receiver |
 | clap | 4 | `derive`, `env` |
 | directories | 6 | data dir |
 | dotenvy | 0.15 | dev `.env` |
-| rust-embed | 8 | prompts (always) and web dist (feature `embed-web`) |
+| rust-embed | 8 | web dist only (feature `embed-web`); the prompt pack is embedded with `include_str!` |
 | jieba-rs | 0.11 | default dict |
 | unicode-segmentation | 1.13 | UAX #29 word count |
 | similar | 3 | paragraph alignment, text diffs |
@@ -67,7 +66,7 @@ note it in `docs/DECISIONS.md`.
 | dom_smoothie | 0.18 | Readability-style main content extraction |
 | htmd | 0.5 | HTML → Markdown |
 | encoding_rs | 0.8 | non-UTF-8 pages (GBK, Big5, Shift_JIS…) |
-| url / ipnet | 2 / 2 | URL handling, SSRF guard |
+| url | 2 | URL handling; the SSRF guard classifies addresses with `std::net` |
 | Dev: tempfile, insta, pretty_assertions, wiremock | 3 / 1.49 / 1.4 / 0.6 | tests |
 
 ### 2.2 Frontend (Node ≥ 22.22, pnpm; npm/npx are not installed here, so use `pnpm dlx`)

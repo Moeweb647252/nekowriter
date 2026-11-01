@@ -3284,3 +3284,95 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   spec/02 §1, §2, §3, §4, §5 (18–20); spec/03 §10, §15 (32–33); spec/05 §2, §3, §7, §8, §9;
   spec/07 §1, §8, §8.1; spec/08 §1.4, §5; spec/09 §2; spec/10 §2.2, §2.5, §2.8; spec/11 §5.0, §5.4,
   §5.5, §9.
+
+
+### D-159 Codebase cleanup: remove what nothing uses, keep historical shapes and feature gaps
+
+- **Context**: The author asked for a cleanup of things nothing uses. A survey at `2880a77` (plan
+  `docs/research/codebase-cleanup-plan.md` §2) found:
+  - ten unused dependency entries across the four crates, and 20 redundant `[[test]]` sections;
+  - 31 Rust functions referenced nowhere, two of them behind `#[allow(dead_code)]`;
+  - the D-146 legacy planning branch, whose removal condition (no open `chapter_write`/`planning`
+    session on the author's database) task 12.7 had already measured as met;
+  - a prompt variable and an error code that are never used;
+  - four unused web files, a handful of dead exports, Vite template leftovers, and 23 candidate
+    i18n keys;
+  - stale spec facts (spec/01's dependency table, spec/11's `EntityPicker`, spec/09 calling
+    `writer.notice.retrieval_budget` legacy although the runner renders it for every non-planner
+    session).
+- **Decision** (plan C1–C7): remove those in milestone M16 with no behavior change.
+  - The kickoff baselines, the prompts that are kept, the API (except the never-returned
+    `embedding.unavailable`) and the schema stay identical, and there is no migration.
+  - Every deletion is re-proven by the plan's finders when its task starts.
+  - Historical shapes stay: `Phase::Planning`, the `chapter_write` kind, the `submit_outline`
+    renderer and `phase_to`, because old rows decode strictly (D-151).
+  - The legacy branch is removed only after the §2.4 query returns 0 again on a copy of the
+    author's database. Legacy test cases are deleted when they pin the branch, and ported when they
+    only used a legacy session as a vehicle.
+  - Overrides of the removed keys stay inert, as for `writer.kickoff.redraft`.
+- **Consequences**:
+  - A smaller dependency tree and less code. M15's new session call sites lose their
+    `legacy_*` fields too.
+  - The survey also found hooks that are unused because their feature's UI is missing:
+    - entity create and merge (F7);
+    - editing a timeline event (F7);
+    - loading older session messages (spec/11 §5.3).
+
+    It also found a bug: inbox steering messages are appended raw, without `notice.user_message`,
+    although spec/03 §5.3 and `writer.system` say they carry the 【用户留言】 header. Neither is
+    cleanup. The hooks and the key stay. The bug is M17 (D-160) and the gaps are M18 (D-161).
+  - 16.7 appends the final counts here.
+- **Spec**: spec/01 §2; spec/02 §3, §4; spec/03 §1.1, §1.2, §4, §5.4, §5.6, §15 (2, 25);
+  spec/04 §7.2; spec/05 §1.5, §2; spec/09 §2; spec/10 §4; spec/11 §5.2, §5.5; PROJECT §4, §8.5;
+  D-146.
+
+
+### D-160 Steering messages are rendered with `notice.user_message` when consumed
+
+- **Context**: The M16 survey found that `notice.user_message` (the 【用户留言】 header) has never
+  been rendered, from M3 (`1d2a058`) on. All three consumption paths deliver the inbox row's raw
+  `content`: the last tool result's appendix at sealing, the user message built when nothing is
+  left to seal, and the text-only handling. Yet spec/03 §5.3's pseudo-code says `render(item)`,
+  and `writer.system` tells the model that author messages arrive under that header. Appended to a
+  tool result, an author instruction is indistinguishable from tool output. Runtime `notice` rows
+  are fine, because they are rendered when queued.
+- **Decision** (plan `docs/research/steering-header-fix-plan.md`):
+  - Render every `user_message` row as `notice.user_message {text}` with the session's
+    `PromptSet` when it is consumed, through one helper shared by the three paths. The rendered
+    text is persisted once, as the appendix or the user-message block, and never recomputed.
+  - `agent_inbox.content` stays raw, so D-157's queued rows, rollover moves and `author_notes`
+    keep the author's words.
+  - If rendering fails after the registry's fallback, deliver the raw text and log a warning.
+- **Consequences**:
+  - Author messages are marked for the model as the writer's system prompt promises.
+  - The activity stream shows the header on consumed author messages, as it already shows
+    【用户反馈】 on feedback appendices: the stream shows what the model saw.
+  - Already sealed results are not rewritten (append-only).
+  - No template, kickoff, schema or API change.
+- **Spec**: spec/03 §5.3, §5.6; spec/11 §5.3.
+
+
+### D-161 Close the six feature gaps the cleanup survey found (web only)
+
+- **Context**: The M16 survey found six client hooks with no caller. Each one backs a spec'd
+  feature whose UI was never built, while its server endpoint exists and is tested:
+  - entity create (F7);
+  - entity merge (F7, spec/06 §9);
+  - timeline event edit (F7, and the "timeline edit dialogs" of spec/11 §5.5);
+  - relation edit (F7);
+  - an entity's full history beyond the detail's latest 20 changes (§8.8);
+  - session scrollback beyond the snapshot's last 200 messages (spec/11 §5.3), where `AgentPanel`
+    even shows a "Load older" button with no handler.
+- **Decision** (plan `docs/research/feature-gaps-plan.md`, G1–G6): build them in the web client
+  only.
+  - The new pieces are `EntityCreateDialog` (isolated tracks only for private rows),
+    `EntityMergeDialog` (the spec/06 §9 warning, refusal explained), relation inline edit, a
+    full-history toggle, and `TimelineEventDialog` (no position fields).
+  - Scrollback moves into `ActivityStream` as an infinite query, with a top row and auto-load near
+    the top, so the agent panel, the conception studio and the research task page all get it.
+  - The dead bottom button goes.
+  - The cleanup plan keeps the six hooks and `canon:relation_status.active`.
+- **Consequences**: F7 and §8.8 are complete. Long sessions are readable from their kickoff. No
+  server, schema or prompt change, and the existing endpoints' tests stay the contract.
+- **Spec**: PROJECT §8.8; spec/11 §5.3, §5.5, §9.
+
