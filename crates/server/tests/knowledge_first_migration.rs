@@ -71,6 +71,8 @@ VALUES
   (7, 1, 1, 'History', 'Cancelled topic', '', 'zh-CN', 'cancelled', NULL, '', 0,
    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
   (8, 2, 3, 'Private', 'Book two draft', 'book2 requirements', 'en', 'draft', NULL, '', 0,
+   '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+  (9, 1, 1, 'History', 'Second draft topic', 'second requirements', 'zh-CN', 'draft', NULL, '', 0,
    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
 
 INSERT INTO agent_sessions
@@ -80,7 +82,7 @@ VALUES
   (1, 1, 'researcher', 'research', 1, '{"provider_id":0,"protocol":"mock","base_url":"","extra_headers":{},"model":"","context_window":0,"max_output_tokens":0,"options":null}', '', '[]', 'running', 'none', '{}', '{}', NULL,
    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
   (2, 1, 'conception', 'conception', NULL, '{"provider_id":0,"protocol":"mock","base_url":"","extra_headers":{},"model":"","context_window":0,"max_output_tokens":0,"options":null}', '', '[]', 'completed', 'none', '{}', '{}',
-   '{"kind":"conception","docs":{},"characters":[],"topics":[{"topic":"Legacy topic","requirements":"old req","scope":"Legacy scope"}]}',
+   '{"kind":"conception","docs":{},"characters":[],"topics":[{"topic":"Draft topic","requirements":"","scope":"History"},{"topic":"Second draft topic","requirements":"second requirements","scope":"History"}]}',
    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
 
 UPDATE research_tasks SET session_id = 1 WHERE id = 1;
@@ -280,7 +282,7 @@ async fn migration_upgrades_a_pre_0008_database_and_preserves_research_tasks() {
         .expect("the 0008 migration applies");
 
     let after = scalar(db.conn(), "SELECT count(*) AS n FROM research_tasks").await;
-    assert_eq!(before, 8);
+    assert_eq!(before, 9);
     assert_eq!(after, before, "the research_tasks count guard holds");
     assert!(
         !table_exists(db.conn(), "book_scopes").await,
@@ -452,6 +454,23 @@ async fn migration_upgrades_a_pre_0008_database_and_preserves_research_tasks() {
             "2026-01-01T00:00:00Z",
             "2026-01-01T00:00:00Z",
         ),
+        (
+            9,
+            Some(1),
+            Some(1),
+            "History",
+            "Second draft topic",
+            "topic",
+            "conception",
+            "second requirements",
+            "zh-CN",
+            "draft",
+            None,
+            "",
+            0,
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T00:00:00Z",
+        ),
     ];
     assert_eq!(rows.len(), expected.len());
     for (row, expected) in rows.iter().zip(expected) {
@@ -514,11 +533,35 @@ async fn a_legacy_view_snapshot_survives_the_upgrade_and_reads_through_the_api()
     let nekowriter::db::json::ViewSnapshot::Conception { ref topics, .. } = snapshot else {
         panic!("conception snapshot");
     };
-    assert_eq!(topics[0].topic, "Legacy topic");
-    assert_eq!(topics[0].id, 1, "old topics get a sequential default id");
+    assert_eq!(topics.len(), 2);
+    assert_eq!(topics[0].topic, "Draft topic");
+    assert_eq!(topics[1].topic, "Second draft topic");
+    assert_eq!(topics[0].id, None, "legacy topics have no real id");
     assert_eq!(
         topics[0].origin,
         nekowriter::db::json::ResearchTaskOrigin::Conception
+    );
+    let current = nekowriter::agent::report::current_conception_state(old.conn(), 1)
+        .await
+        .expect("current conception state");
+    let prompts = nekowriter::prompts::PromptRegistry::embedded()
+        .expect("pack")
+        .defaults_only();
+    let report = nekowriter::agent::report::conception_report(&snapshot, &current, &prompts);
+    assert!(
+        report.is_empty(),
+        "an unchanged legacy snapshot must not look like an author edit: {report:?}"
+    );
+    old.write_unprepared("UPDATE research_tasks SET requirements = 'author changed' WHERE id = 9")
+        .await
+        .expect("author edit");
+    let current = nekowriter::agent::report::current_conception_state(old.conn(), 1)
+        .await
+        .expect("edited conception state");
+    let report = nekowriter::agent::report::conception_report(&snapshot, &current, &prompts);
+    assert!(
+        !report.is_empty(),
+        "a genuine author edit still shows in notice.setting_edits"
     );
     let encoded = serde_json::to_string(&snapshot).expect("serialize snapshot");
     let decoded: nekowriter::db::json::ViewSnapshot =

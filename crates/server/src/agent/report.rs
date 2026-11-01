@@ -450,31 +450,26 @@ pub fn conception_report(
     }
 
     // Research topics: the current list, when it changed.
-    let topics_changed = topics
-        .iter()
-        .map(|topic| {
-            (
-                topic.id,
-                topic.topic.clone(),
-                topic.requirements.clone(),
-                topic.scope.clone(),
-                topic.origin,
-            )
-        })
-        .collect::<Vec<_>>()
-        != current
-            .topics
+    let topics_changed = topics.len() != current.topics.len()
+        || topics
             .iter()
-            .map(|topic| {
-                (
-                    topic.id,
-                    topic.topic.clone(),
-                    topic.requirements.clone(),
-                    topic.scope.clone(),
-                    topic.origin,
-                )
-            })
-            .collect::<Vec<_>>();
+            .zip(&current.topics)
+            .any(|(before, after)| match before.id {
+                // M15 snapshots keep id keying, so replacing a task with the same text is an edit.
+                Some(id) => {
+                    id != after.id
+                        || before.topic != after.topic
+                        || before.requirements != after.requirements
+                        || before.scope != after.scope
+                        || before.origin != after.origin
+                }
+                // Pre-M15 snapshots have no reliable ids; compare their content only.
+                None => {
+                    before.topic != after.topic
+                        || before.requirements != after.requirements
+                        || before.scope != after.scope
+                }
+            });
     if topics_changed {
         let rendered: Vec<Value> = current
             .topics
@@ -875,7 +870,7 @@ mod tests {
             topics: topics
                 .iter()
                 .map(|topic| crate::db::json::ConceptionTopicSnapshot {
-                    id: topic.id,
+                    id: Some(topic.id),
                     topic: topic.topic.clone(),
                     requirements: topic.requirements.clone(),
                     scope: topic.scope.clone(),

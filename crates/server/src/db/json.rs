@@ -782,7 +782,8 @@ pub struct ConceptionCharacterSnapshot {
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub struct ConceptionTopicSnapshot {
-    pub id: i32,
+    /// `None` on pre-M15 snapshots; such rows compare by content instead of id.
+    pub id: Option<i32>,
     pub topic: String,
     pub requirements: String,
     pub scope: String,
@@ -811,9 +812,8 @@ where
     let raw = Vec::<RawTopic>::deserialize(deserializer)?;
     Ok(raw
         .into_iter()
-        .enumerate()
-        .map(|(index, topic)| ConceptionTopicSnapshot {
-            id: topic.id.unwrap_or((index + 1) as i32),
+        .map(|topic| ConceptionTopicSnapshot {
+            id: topic.id,
             topic: topic.topic,
             requirements: topic.requirements,
             scope: topic.scope,
@@ -1491,7 +1491,7 @@ mod tests {
                 profile: "prof".to_owned(),
             }],
             topics: vec![ConceptionTopicSnapshot {
-                id: 1,
+                id: Some(1),
                 topic: "t".to_owned(),
                 requirements: "r".to_owned(),
                 scope: "s".to_owned(),
@@ -1871,9 +1871,30 @@ mod tests {
         let ViewSnapshot::Conception { topics, .. } = snapshot else {
             panic!("conception snapshot");
         };
-        assert_eq!(topics[0].id, 1);
+        assert_eq!(topics[0].id, None);
         assert_eq!(topics[0].origin, ResearchTaskOrigin::Conception);
-        assert_eq!(topics[1].id, 2);
+        assert_eq!(topics[1].id, None);
+    }
+
+    /// A mixed legacy snapshot must not synthesize an id that an explicit row already uses.
+    #[test]
+    fn mixed_legacy_conception_snapshot_ids_are_unique() {
+        let value = json!({
+            "kind": "conception",
+            "docs": {},
+            "characters": [],
+            "topics": [
+                { "id": 7, "topic": "explicit", "requirements": "", "scope": "s", "origin": "author" },
+                { "topic": "legacy", "requirements": "", "scope": "s" }
+            ]
+        });
+        let snapshot: ViewSnapshot = serde_json::from_value(value).expect("mixed snapshot");
+        let ViewSnapshot::Conception { topics, .. } = snapshot else {
+            panic!("conception snapshot");
+        };
+        assert_eq!(topics[0].id, Some(7));
+        assert_eq!(topics[1].id, None);
+        assert_ne!(topics[0].id, topics[1].id);
     }
 
     /// Strict decoding: invalid JSON is a query error, never a silent default (spec/02 §4).
