@@ -9,5 +9,3 @@ rust-version.workspace = true
 sea-orm.workspace = true
 async-trait.workspace = true
 sea-orm-migration.workspace = true
-
-[dev-dependencies]

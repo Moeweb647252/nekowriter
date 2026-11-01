@@ -43,8 +43,6 @@ minijinja.workspace = true
 ts-rs.workspace = true
 chrono.workspace = true
 
-fastembed.workspace = true
-
 thiserror.workspace = true
 anyhow.workspace = true
 tracing.workspace = true

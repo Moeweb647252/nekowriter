@@ -2707,7 +2707,6 @@ dependencies = [
  "dom_smoothie",
  "dotenvy",
  "encoding_rs",
- "fastembed",
  "futures",
  "htmd",
  "insta",
