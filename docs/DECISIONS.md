@@ -3532,7 +3532,8 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     `high` produced the `model.effort_unsupported` warning and the next session used `max`.
   - **Known follow-up — research-session warnings (19.7 reviewer, out of inventory).**
     `POST /research-tasks/:id/run` and `POST /books/:id/knowledge-check` start research sessions
-    whose DTOs have no `warnings` field (spec/10 §2.5 defines them that way) and whose services
+    whose DTOs have no `warnings` field (spec/10 §2.5 defines the research-task response and
+    §2.2 the knowledge-check response that way) and whose services
     discard `_warnings`, so a researcher's stale effort is silently downgraded with no toast. The
     auto-started conception session's warnings are likewise discarded (`conception.rs`'s
     `start_after_knowledge_check`). This is a known follow-up, not an M19 blocker.
