@@ -42,7 +42,6 @@ const ALL_ERROR_CODES: ErrorCode[] = [
   "provider.unavailable",
   "provider.auth",
   "provider.bad_request",
-  "embedding.unavailable",
   "search.not_configured",
   "internal",
 ]

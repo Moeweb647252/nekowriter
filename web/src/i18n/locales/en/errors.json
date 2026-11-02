@@ -22,7 +22,6 @@
   "track.mode_locked": "The canon mode cannot change any more.",
   "session.invalid_state": "The session is not in a state that allows this.",
   "search.not_configured": "No web search provider is configured.",
-  "embedding.unavailable": "The embedding model is not available.",
   "provider.unavailable": "The provider cannot be reached.",
   "provider.auth": "The provider rejected the API key.",
   "provider.bad_request": "The provider rejected the request.",

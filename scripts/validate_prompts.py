@@ -203,7 +203,7 @@ goals_empty = dict(nodes=[], omitted=0)
 
 S = dict(book=book, track=track_main, chapter=chapter, settings=settings, memory=memory, draft=draft, feedback=feedback,
          skills=skills, chapters=chapters, systems=systems_all, goals=goals_sample,
-         previous_outline="旧章纲", granularity=gran["paragraph"], phase="drafting",
+         granularity=gran["paragraph"], phase="drafting",
          revision_plan="1. p12：删去重复描写", author_notes=["打斗写得更短。", "苏婉不要哭。"], prior=None,
          review=dict(comment="第二条判断有误。", attempt=1),
          research=dict(topic="宋代市井", requirements="茶馆布局", scope_name="宋代社会", scope_description="宋代社会生活",

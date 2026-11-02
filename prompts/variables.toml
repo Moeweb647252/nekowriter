@@ -98,10 +98,6 @@ zh = "作者的修改意见（续写时为会话正在处理的意见，可能�
 fields.text = { en = "Feedback text", zh = "意见正文" }
 fields."issues[]" = { en = "The issues the author ticked: severity_label, category_label, pids (list, in the reviewed version), quote, problem, suggestion", zh = "作者勾选的相关问题：severity_label、category_label、pids（列表，对应作者审阅的版本）、quote、problem、suggestion" }
 
-[vars.previous_outline]
-en = "The outline of the previous version (redraft)"
-zh = "上一版章纲（重写时）"
-
 [vars.granularity]
 en = "Drafting granularity"
 zh = "写作粒度"
