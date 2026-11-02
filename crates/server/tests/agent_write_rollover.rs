@@ -130,9 +130,9 @@ async fn test_13_rollover_carries_the_draft_author_notes_and_the_inbox() {
         "feedback on the parent's last held call appears in author_notes: {kickoff_text}"
     );
     // The steering message moved as an inbox item instead of being duplicated in `author_notes`
-    // (spec/03 §9 step 2). The child consumes it at its first sealing, so it appears in the
-    // child's message stream (a user message carrying `notice.user_message`) and never in the
-    // kickoff's `author_notes`.
+    // (spec/03 §9 step 2) and keeps its raw text there (D-160). The child consumes it at its first
+    // sealing, so it appears in the child's message stream as a user message carrying the rendered
+    // `notice.user_message` header, and never in the kickoff's `author_notes`.
     assert!(
         !kickoff_text.contains("别忘了城楼上的那个人。"),
         "an unconsumed item is not also copied into author_notes: {kickoff_text}"
@@ -144,6 +144,20 @@ async fn test_13_rollover_carries_the_draft_author_notes_and_the_inbox() {
     );
     agent_write_harness::wait_for_delivered_message(&runtime, child_id, "别忘了城楼上的那个人。")
         .await;
+    let child_messages = runtime.messages(child_id).await;
+    let delivered = child_messages
+        .iter()
+        .find(|message| message.text().contains("别忘了城楼上的那个人。"))
+        .expect("the child consumed the moved inbox item");
+    assert_eq!(
+        delivered.kind, "user",
+        "the moved message is a user message"
+    );
+    assert!(
+        delivered.text().contains("【用户留言】"),
+        "the child delivers the moved author message under its header: {}",
+        delivered.text()
+    );
 
     // The child runs to completion and keeps writing.
     agent_write_harness::resume_until_done(&runtime, child_id, None).await;

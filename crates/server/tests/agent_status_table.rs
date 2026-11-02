@@ -242,14 +242,16 @@ async fn a_running_session_snapshot_shows_steering_messages_until_consumed() {
             }
         }
     }
+    // The stream shows what the model saw: a consumed author message carries the
+    // `notice.user_message` header (D-160), while its queued row above showed the raw text.
     let first = author_texts
         .iter()
-        .position(|text| *text == "steer one")
-        .expect("first steering text persisted");
+        .position(|text| *text == "【用户留言】\nsteer one")
+        .expect("first steering text persisted rendered");
     let second = author_texts
         .iter()
-        .position(|text| *text == "steer two")
-        .expect("second steering text persisted");
+        .position(|text| *text == "【用户留言】\nsteer two")
+        .expect("second steering text persisted rendered");
     assert!(
         first < second,
         "both steering texts persisted in event order: {author_texts:?}"

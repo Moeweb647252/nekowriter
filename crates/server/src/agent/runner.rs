@@ -1975,6 +1975,18 @@ async fn reset_call_to_pending_and_stop(
 
 // ───────────────────────────── sealing ─────────────────────────────
 
+/// The delivered text of one consumed inbox row (D-160).
+///
+/// An author message is rendered through `notice.user_message` with the session's `PromptSet` at
+/// the moment it is consumed; a runtime notice was already rendered when it was queued and is
+/// delivered as is. Every consumption path goes through this function so they cannot drift again.
+fn inbox_item_text(prompts: &PromptSet, item: &agent_inbox::Model) -> String {
+    match item.kind {
+        json::InboxKind::UserMessage => seal::author_message_text(prompts, &item.content),
+        json::InboxKind::Notice => item.content.clone(),
+    }
+}
+
 /// `seal_latest_batch(s)` (spec/03 §5.3), in its own transaction.
 async fn seal_latest_batch(
     ctx: &RunnerCtx,
@@ -2034,7 +2046,10 @@ pub async fn seal_inner(
                     });
                 }
                 for item in &items {
-                    appendices.push(seal::inbox_appendix(item.content.clone(), item.id));
+                    appendices.push(seal::inbox_appendix(
+                        inbox_item_text(prompts, item),
+                        item.id,
+                    ));
                 }
             }
             let composed = seal::compose(call.raw_result_text.as_deref(), &appendices);
@@ -2064,7 +2079,7 @@ pub async fn seal_inner(
             sections.push(report.clone());
         }
         for item in &items {
-            sections.push(item.content.clone());
+            sections.push(inbox_item_text(prompts, item));
         }
         let author = items
             .iter()
@@ -2246,7 +2261,7 @@ pub async fn text_only_inner(
             sections.push(report.clone());
         }
         for item in &items {
-            sections.push(item.content.clone());
+            sections.push(inbox_item_text(prompts, item));
         }
         let author = items
             .iter()

@@ -11,7 +11,37 @@
 //! Within a kind, arrival order is preserved. `result_text` is written once and never modified
 //! afterwards (append-only history, spec/03 §1.3).
 
+use serde_json::json;
+
 use crate::db::json::{Appendix, AppendixKind};
+use crate::prompts::PromptSet;
+
+/// The delivered text of an author message (D-160, spec/03 §5.3 slot 4).
+///
+/// The inbox row keeps the author's **raw** text (`agent_inbox.content`); only the delivered copy
+/// is rendered through `notice.user_message` with the session's `PromptSet`, at the moment the row
+/// is consumed. The rendered text is persisted once and never recomputed (spec/03 §1.3).
+///
+/// A broken override already falls back to the shipped default inside the registry (with the
+/// `prompt.override_failed` warning); if the default itself cannot render, the raw text is
+/// delivered and the failure is logged. The author's words are never dropped.
+pub fn author_message_text(prompts: &PromptSet, content: &str) -> String {
+    match prompts.render("notice.user_message", &json!({ "text": content })) {
+        Ok(rendered) => {
+            // The registry logs its `prompt.override_failed` warning itself; a consumed row has
+            // no session warning channel, and the default text is what gets delivered.
+            let _ = rendered.warnings();
+            rendered.text
+        }
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                "notice.user_message failed to render; delivering the raw author text"
+            );
+            content.to_owned()
+        }
+    }
+}
 
 /// Composes the delivered text of a sealed tool call (spec/03 §5.3).
 ///
