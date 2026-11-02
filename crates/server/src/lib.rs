@@ -91,19 +91,20 @@ pub async fn prepare_state(
     // left `executing` becomes `pending`. A session the previous process left running has no
     // runner, and the control API refuses to continue anything but stopped/failed/interrupted, so
     // skipping this strands it beyond Abandon.
-    // A model profile whose options its provider's protocol cannot send is a silent no-op on the
-    // wire (D-132): the Anthropic `effort` on an OpenAI-protocol provider sends no reasoning
-    // parameter at all, and the turn still succeeds. The settings page reports it per profile, and
-    // this line makes it visible to anyone reading the log without opening Settings.
+    // A model profile whose options or effort levels its provider's protocol cannot send is a
+    // silent no-op on the wire (D-132, D-162): an option the adapter ignores or a level it cannot
+    // place changes no request, and the turn still succeeds. The settings page reports both per
+    // profile, and this line makes them visible to anyone reading the log without opening Settings.
     match crate::services::providers::stored_option_mismatches(state.db().conn()).await {
         Ok(mismatches) => {
-            for (id, profile, provider, options) in mismatches {
+            for (id, profile, provider, options, effort_levels) in mismatches {
                 tracing::warn!(
                     profile_id = id,
                     profile = %profile,
                     provider = %provider,
                     options = ?options,
-                    "this model profile sets options its provider's protocol cannot send; they are ignored when calling the model. Open Settings > Models and remove or replace them."
+                    effort_levels = ?effort_levels,
+                    "this model profile sets options or effort levels its provider's protocol cannot send; they are ignored when calling the model. Open Settings > Models and remove or replace them."
                 );
             }
         }

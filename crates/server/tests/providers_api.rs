@@ -8,7 +8,7 @@ use nekowriter::db::json::{JsonText, Protocol};
 use nekowriter::testing::{TestApp, assert_error};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-use wiremock::matchers::{bearer_token, body_string_contains, method, path};
+use wiremock::matchers::{bearer_token, body_string_contains, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 // ───────────────────────────── helpers ─────────────────────────────
@@ -762,6 +762,164 @@ async fn model_profile_crud_and_validation() {
     );
 }
 
+/// The effort-level validation table of spec/04 §5.1 (D-162): every failure names its field.
+#[tokio::test]
+async fn model_profile_effort_validation_table() {
+    async fn post(
+        app: &TestApp,
+        provider_id: i64,
+        display_name: &str,
+        effort_levels: Value,
+        default_effort: Value,
+        options: Value,
+    ) -> (axum::http::StatusCode, Value) {
+        app.post(
+            "/api/model-profiles",
+            json!({
+                "provider_id": provider_id,
+                "display_name": display_name,
+                "model": "m",
+                "context_window": 1000,
+                "max_output_tokens": 100,
+                "effort_levels": effort_levels,
+                "default_effort": default_effort,
+                "options": options,
+            }),
+        )
+        .await
+    }
+
+    let app = TestApp::new().await;
+    let anthropic = create_anthropic_provider_named(&app, "Anthropic").await;
+    let openai = create_openai_provider_named(&app, "OpenAI").await;
+    let demo = create_demo_provider(&app).await;
+    let demo_id = demo["id"].as_i64().expect("demo id");
+
+    // (case, provider, levels, default, expected field)
+    let rejected: [(&str, i64, Value, Value, &str); 6] = [
+        (
+            "Anthropic does not know ultra",
+            anthropic,
+            json!(["low", "ultra"]),
+            json!("low"),
+            "effort_levels",
+        ),
+        (
+            "duplicates",
+            openai,
+            json!(["low", "low"]),
+            Value::Null,
+            "effort_levels",
+        ),
+        (
+            "more than 8 levels",
+            openai,
+            json!(["l1", "l2", "l3", "l4", "l5", "l6", "l7", "l8", "l9"]),
+            Value::Null,
+            "effort_levels",
+        ),
+        (
+            "pattern violation",
+            openai,
+            json!(["high effort"]),
+            Value::Null,
+            "effort_levels",
+        ),
+        (
+            "the mock protocol takes none",
+            demo_id,
+            json!(["low"]),
+            Value::Null,
+            "effort_levels",
+        ),
+        (
+            "default is not one of the levels",
+            openai,
+            json!(["low", "high"]),
+            json!("max"),
+            "default_effort",
+        ),
+    ];
+    for (case, provider_id, levels, default, field) in rejected {
+        let (status, body) = post(&app, provider_id, case, levels, default, json!({})).await;
+        assert_eq!(status, 400, "{case}: {body}");
+        assert_error(&body, "validation.failed");
+        assert!(
+            body["error"]["details"]["fields"][field].is_string(),
+            "{case} must name {field}: {body}"
+        );
+    }
+
+    // `extra_body` is merged last, so a nested reasoning_effort override is refused even though
+    // the top-level option no longer exists (spec/04 §1, D-162).
+    let (status, body) = post(
+        &app,
+        openai,
+        "extra body override",
+        json!(["low", "high"]),
+        Value::Null,
+        json!({ "extra_body": { "reasoning_effort": "low" } }),
+    )
+    .await;
+    assert_eq!(status, 400, "{body}");
+    assert_error(&body, "validation.failed");
+    assert!(
+        body["error"]["details"]["fields"]["extra_body"].is_string(),
+        "extra_body must be named: {body}"
+    );
+
+    // Anthropic levels are stored in canonical order whatever order they arrive in.
+    let (status, profile) = post(
+        &app,
+        anthropic,
+        "Canonical",
+        json!(["max", "low", "medium"]),
+        json!("medium"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, 201, "{profile}");
+    assert_eq!(
+        profile["effort_levels"],
+        json!(["low", "medium", "max"]),
+        "Anthropic levels are stored low → max"
+    );
+    assert_eq!(profile["default_effort"], "medium");
+
+    // OpenAI keeps the entry order (it is the display order).
+    let (status, profile) = post(
+        &app,
+        openai,
+        "Entry order",
+        json!(["high", "low"]),
+        Value::Null,
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, 201, "{profile}");
+    assert_eq!(profile["effort_levels"], json!(["high", "low"]));
+
+    // PATCH is subject to the same validation, not only POST.
+    let profile_id = profile["id"].as_i64().expect("id");
+    let (status, body) = app
+        .patch(
+            &format!("/api/model-profiles/{profile_id}"),
+            json!({
+                "provider_id": openai,
+                "display_name": "Entry order",
+                "model": "m",
+                "context_window": 1000,
+                "max_output_tokens": 100,
+                "effort_levels": ["low", "low"],
+                "default_effort": null,
+                "options": {},
+            }),
+        )
+        .await;
+    assert_eq!(status, 400, "{body}");
+    assert!(body["error"]["details"]["fields"]["effort_levels"].is_string());
+}
+
 #[tokio::test]
 async fn deleting_a_provider_cascades_its_model_profiles() {
     let app = TestApp::new().await;
@@ -886,6 +1044,112 @@ async fn test_connection_uses_the_saved_profile_options() {
     // The request stays tiny (spec/04 §8).
     assert!(sent["tools"].is_null());
     assert_eq!(sent["messages"][1]["content"], "ping");
+}
+
+/// The connection test must send the saved `default_effort` in the protocol's wire field
+/// (spec/04 §8, §5.1, D-162) — not only the profile's other options.
+#[tokio::test]
+async fn test_connection_sends_the_openai_default_effort() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(sse_text("pong")),
+        )
+        .mount(&server)
+        .await;
+    let app = TestApp::new().await;
+    let provider = create_openai_provider(&app, &server.uri(), "sk-test").await;
+    let provider_id = provider["id"].as_i64().expect("id");
+    let (status, profile) = app
+        .post(
+            "/api/model-profiles",
+            json!({
+                "provider_id": provider_id,
+                "display_name": "Effort model",
+                "model": "gpt-test",
+                "context_window": 128000,
+                "max_output_tokens": 16384,
+                "effort_levels": ["low", "medium", "high"],
+                "default_effort": "medium",
+                "options": {},
+            }),
+        )
+        .await;
+    assert_eq!(status, 201, "{profile}");
+
+    let (status, body) = app
+        .post(&format!("/api/providers/{provider_id}/test"), json!({}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["ok"], true, "{body}");
+    let received = server.received_requests().await.expect("requests");
+    let sent: Value = serde_json::from_slice(&received[0].body).expect("body");
+    assert_eq!(
+        sent["reasoning_effort"], "medium",
+        "the saved default effort reaches reasoning_effort: {sent}"
+    );
+}
+
+/// The Anthropic side of the same rule: `default_effort` becomes `output_config.effort`.
+#[tokio::test]
+async fn test_connection_sends_the_anthropic_default_effort() {
+    const ANTHROPIC_SSE: &str = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1}}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(header("x-api-key", "sk-ant-test"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(ANTHROPIC_SSE),
+        )
+        .mount(&server)
+        .await;
+    let app = TestApp::new().await;
+    let (status, provider) = app
+        .post(
+            "/api/providers",
+            json!({
+                "name": "Anthropic test",
+                "protocol": "anthropic",
+                "base_url": server.uri(),
+                "api_key": "sk-ant-test",
+            }),
+        )
+        .await;
+    assert_eq!(status, 201, "{provider}");
+    let provider_id = provider["id"].as_i64().expect("id");
+    let (status, profile) = app
+        .post(
+            "/api/model-profiles",
+            json!({
+                "provider_id": provider_id,
+                "display_name": "Claude",
+                "model": "claude-test",
+                "context_window": 200000,
+                "max_output_tokens": 16384,
+                "effort_levels": ["low", "medium", "high", "xhigh", "max"],
+                "default_effort": "high",
+                "options": {},
+            }),
+        )
+        .await;
+    assert_eq!(status, 201, "{profile}");
+
+    let (status, body) = app
+        .post(&format!("/api/providers/{provider_id}/test"), json!({}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["ok"], true, "{body}");
+    let received = server.received_requests().await.expect("requests");
+    let sent: Value = serde_json::from_slice(&received[0].body).expect("body");
+    assert_eq!(
+        sent["output_config"]["effort"], "high",
+        "the saved default effort reaches output_config.effort: {sent}"
+    );
 }
 
 #[tokio::test]
@@ -1500,11 +1764,12 @@ async fn an_already_stored_mismatch_is_readable_and_reported() {
         .await
         .expect("scan");
     assert_eq!(mismatches.len(), 1, "{mismatches:?}");
-    let (mismatch_id, profile_name, provider_name, options) = &mismatches[0];
+    let (mismatch_id, profile_name, provider_name, options, effort_levels) = &mismatches[0];
     assert_eq!(*mismatch_id, id);
     assert_eq!(profile_name, "DeepSeek V4 Pro");
     assert_eq!(provider_name, "Magpie");
     assert_eq!(options, &vec!["thinking_display".to_owned()]);
+    assert!(effort_levels.is_empty(), "{effort_levels:?}");
 
     // And the fix is one PATCH through the UI: remove the stranded option and keep the rest.
     let (status, fixed) = app
@@ -1532,6 +1797,81 @@ async fn an_already_stored_mismatch_is_readable_and_reported() {
     assert!(fixed["options"].get("effort").is_none(), "{fixed}");
 }
 
+/// A provider protocol switch can strand stored effort levels. Reads must keep working (the fix is
+/// a PATCH), the DTO reports the stranded levels, and the startup scan logs them next to the
+/// option mismatches (spec/04 §5.1, D-162).
+#[tokio::test]
+async fn ignored_effort_levels_report_a_protocol_switch_and_the_startup_scan() {
+    let app = TestApp::new().await;
+    let provider_id = create_openai_provider_named(&app, "Switch me").await;
+    let (status, profile) = app
+        .post(
+            "/api/model-profiles",
+            json!({
+                "provider_id": provider_id,
+                "display_name": "OpenAI levels",
+                "model": "test-model",
+                "context_window": 128000,
+                "max_output_tokens": 16384,
+                "effort_levels": ["low", "ultra"],
+                "default_effort": "low",
+                "options": {},
+            }),
+        )
+        .await;
+    assert_eq!(status, 201, "{profile}");
+    let profile_id = profile["id"].as_i64().expect("id");
+
+    // Move the provider to Anthropic: `ultra` is a legal OpenAI token but not in Anthropic's
+    // closed set, and `low` still is. The switch is a provider PATCH, exactly how the author
+    // reaches this state.
+    let (status, switched) = app
+        .patch(
+            &format!("/api/providers/{provider_id}"),
+            json!({
+                "name": "Switch me",
+                "protocol": "anthropic",
+                "base_url": "https://api.anthropic.test",
+                "api_key": "sk-ant-test",
+                "extra_headers": {},
+            }),
+        )
+        .await;
+    assert_eq!(status, 200, "{switched}");
+
+    // The read does not fail; it reports the stranded level and leaves the stored list intact.
+    for (status, body) in [
+        app.get(&format!("/api/model-profiles/{profile_id}")).await,
+        app.get("/api/model-profiles").await,
+    ] {
+        assert_eq!(status, 200, "{body}");
+        let row = if body.is_array() {
+            body[0].clone()
+        } else {
+            body.clone()
+        };
+        assert_eq!(row["effort_levels"], json!(["low", "ultra"]), "{body}");
+        assert_eq!(row["default_effort"], "low", "{body}");
+        assert_eq!(
+            row["ignored_effort_levels"],
+            json!(["ultra"]),
+            "only the level the new protocol cannot send is reported: {body}"
+        );
+    }
+
+    // The startup scan carries both vectors so its single log line can name them next to each
+    // other; this is the diagnostic path the author sees without opening Settings.
+    let mismatches = nekowriter::services::providers::stored_option_mismatches(app.db().conn())
+        .await
+        .expect("scan");
+    let row = mismatches
+        .iter()
+        .find(|(id, _, _, _, _)| *id == profile_id as i32)
+        .unwrap_or_else(|| panic!("the switched profile must be reported: {mismatches:?}"));
+    assert!(row.3.is_empty(), "no option mismatch: {row:?}");
+    assert_eq!(row.4, vec!["ultra".to_owned()], "{row:?}");
+}
+
 /// The option table the settings page renders comes from the adapters (`crates/llm`), so the UI
 /// cannot drift from what the request body can carry.
 #[tokio::test]
@@ -1547,17 +1887,14 @@ async fn the_option_specs_endpoint_publishes_the_protocol_table() {
             .unwrap_or_else(|| panic!("missing spec {key}"))
     };
 
-    // The pair the bug report is about.
-    assert_eq!(spec("effort")["protocols"], json!(["anthropic"]));
-    assert_eq!(
-        spec("effort")["values"],
-        json!(["low", "medium", "high", "xhigh", "max"])
-    );
-    assert_eq!(spec("effort")["kind"], "choice");
-    assert_eq!(spec("reasoning_effort")["protocols"], json!(["openai"]));
-    // Free-form on purpose: gateways accept values OpenAI does not document.
-    assert_eq!(spec("reasoning_effort")["kind"], "text");
-    assert_eq!(spec("reasoning_effort")["values"], json!([]));
+    // Thinking effort is not a profile option (D-162): neither removed wire key is published, so
+    // the settings form cannot offer a field the write path refuses.
+    for key in ["effort", "reasoning_effort"] {
+        assert!(
+            specs.iter().all(|spec| spec["key"] != key),
+            "{key} must not be in the served option table: {body}"
+        );
+    }
 
     // Read by both adapters (verified in `crates/llm/tests/model_options.rs`).
     for key in ["reasoning_replay", "cache_ttl"] {
@@ -1603,10 +1940,8 @@ async fn the_option_specs_endpoint_publishes_the_protocol_table() {
     let mut expected = vec![
         "cache_ttl",
         "eager_input_streaming",
-        "effort",
         "extra_body",
         "max_tokens_field",
-        "reasoning_effort",
         "reasoning_replay",
         "refusal_fallback",
         "send_parallel_tool_calls",
@@ -1640,9 +1975,10 @@ async fn every_shipped_preset_only_carries_options_its_protocol_can_send() {
     for preset in &presets {
         let options = options_of(preset);
         let protocol = protocol_of(preset);
-        // Only a *set* field can strand; the preset DTO omits unset ones.
+        // Only a *set* field can strand; the preset DTO omits unset ones. Presets may carry only
+        // profile options (`PROFILE`), never the two role-effort wire carriers (D-162).
         for key in options.keys() {
-            let known = nekowriter_llm::ModelOptionKey::ALL
+            let known = nekowriter_llm::ModelOptionKey::PROFILE
                 .into_iter()
                 .find(|candidate| candidate.as_str() == key);
             let Some(key) = known else {
@@ -1671,6 +2007,26 @@ async fn every_shipped_preset_only_carries_options_its_protocol_can_send() {
             assert!(
                 preset.effort_levels.contains(default),
                 "preset {:?} defaults to {default:?}, which is not one of its levels",
+                preset.key
+            );
+        }
+    }
+
+    // Only the two real-provider presets ship levels; every other preset sends none (spec/04 §8).
+    for preset in &presets {
+        if !matches!(
+            preset.key,
+            nekowriter::services::providers::PresetKey::Anthropic
+                | nekowriter::services::providers::PresetKey::Openai
+        ) {
+            assert!(
+                preset.effort_levels.is_empty(),
+                "preset {:?} must ship no effort levels",
+                preset.key
+            );
+            assert!(
+                preset.default_effort.is_none(),
+                "preset {:?} must have no default effort",
                 preset.key
             );
         }

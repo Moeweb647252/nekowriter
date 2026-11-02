@@ -240,15 +240,17 @@ fn preset_definitions() -> Vec<PresetDefinition> {
     ]
 }
 
-/// Stored model profiles whose options their provider's protocol cannot send (D-132).
+/// Stored model profiles whose options or effort levels their provider's protocol cannot send
+/// (D-132, D-162).
 ///
-/// Returned as `(profile id, profile name, provider name, unreachable option keys)` so the startup
-/// log can name the row the author has to fix. The API reports the same set per profile in
-/// `ModelProfileDto::ignored_options`; this scan exists for the case where the author never opens
-/// Settings, which is how the original mismatch stayed invisible for weeks.
+/// Returned as `(profile id, profile name, provider name, unreachable option keys, ignored effort
+/// levels)` so the startup log can name the row the author has to fix. The API reports the same set
+/// per profile in `ModelProfileDto::ignored_options` / `ignored_effort_levels`; this scan exists
+/// for the case where the author never opens Settings, which is how the original mismatch stayed
+/// invisible for weeks. Reads never fail on a mismatch; only this diagnostic is emitted.
 pub async fn stored_option_mismatches(
     conn: &DatabaseConnection,
-) -> Result<Vec<(i32, String, String, Vec<String>)>, AppError> {
+) -> Result<Vec<(i32, String, String, Vec<String>, Vec<String>)>, AppError> {
     let profiles = model_profiles::Entity::find()
         .order_by_asc(model_profiles::COLUMN.id)
         .all(conn)
@@ -271,12 +273,14 @@ pub async fn stored_option_mismatches(
                     .collect()
             })
             .unwrap_or_default();
-        if !unreachable.is_empty() {
+        let ignored_levels = ignored_effort_levels(&profile.effort_levels, Some(provider.protocol));
+        if !unreachable.is_empty() || !ignored_levels.is_empty() {
             mismatches.push((
                 profile.id,
                 profile.display_name,
                 provider.name.clone(),
                 unreachable,
+                ignored_levels,
             ));
         }
     }
@@ -292,7 +296,7 @@ pub async fn stored_option_mismatches(
 /// a deviation worth reporting.
 pub fn option_specs() -> Vec<ModelOptionSpecDto> {
     use nekowriter_llm::ModelOptionKey;
-    ModelOptionKey::ALL
+    ModelOptionKey::PROFILE
         .into_iter()
         .map(|key| ModelOptionSpecDto {
             key: key.as_str().to_owned(),
@@ -754,6 +758,11 @@ pub async fn create_model(
                 // The protocol lives on the provider row, so the cross-protocol check belongs
                 // inside the transaction that reads it (spec/04 §5, D-132).
                 validate_options_protocol(&input.options, provider.protocol)?;
+                let effort_levels = validate_effort_levels(
+                    &input.effort_levels,
+                    input.default_effort.as_deref(),
+                    provider.protocol,
+                )?;
                 ensure_unique_name(tx, input.provider_id, &input.display_name, None).await?;
                 let now = chrono::Utc::now();
                 let active = model_profiles::ActiveModel {
@@ -765,7 +774,7 @@ pub async fn create_model(
                     options: Set(JsonText(crate::db::json::ModelOptions::from(
                         input.options.clone(),
                     ))),
-                    effort_levels: Set(JsonText(input.effort_levels.clone())),
+                    effort_levels: Set(JsonText(effort_levels)),
                     default_effort: Set(input.default_effort.clone()),
                     created_at: Set(now),
                     updated_at: Set(now),
@@ -808,6 +817,11 @@ pub async fn update_model(
                 let provider = find_provider(tx, input.provider_id).await?;
                 check_protocol_row_allowed(&provider, demo_enabled)?;
                 validate_options_protocol(&input.options, provider.protocol)?;
+                let effort_levels = validate_effort_levels(
+                    &input.effort_levels,
+                    input.default_effort.as_deref(),
+                    provider.protocol,
+                )?;
                 ensure_unique_name(tx, input.provider_id, &input.display_name, Some(id)).await?;
                 let row = model_profiles::Entity::find_by_id(id)
                     .one(tx)
@@ -822,7 +836,7 @@ pub async fn update_model(
                 active.options = Set(JsonText(crate::db::json::ModelOptions::from(
                     input.options.clone(),
                 )));
-                active.effort_levels = Set(JsonText(input.effort_levels.clone()));
+                active.effort_levels = Set(JsonText(effort_levels));
                 active.default_effort = Set(input.default_effort.clone());
                 active.updated_at = Set(chrono::Utc::now());
                 active.update(tx).await?;
@@ -879,6 +893,17 @@ fn validate_model_fields(input: &ModelProfileInput) -> Result<(), AppError> {
             "the maximum output cannot exceed the context window",
         ));
     }
+    // `extra_body` is merged last (spec/04 §1), so a `reasoning_effort` override would silently
+    // shadow the role's resolved level (D-162). The top-level option is gone; the nested copy must
+    // be refused on the same grounds.
+    if let Some(extra_body) = &input.options.extra_body
+        && extra_body.contains_key("reasoning_effort")
+    {
+        return Err(field_error(
+            "extra_body",
+            "extra_body must not contain reasoning_effort: it is merged last and would override the role's thinking effort",
+        ));
+    }
     // The options blob has to survive a round trip through `ModelOptions` (spec/04 §5): the type
     // is the closed set the adapters switch on, so an unknown value such as `effort: "ultra"`
     // must be rejected here. Storing it would make the session-side deserialization fail and
@@ -889,6 +914,84 @@ fn validate_model_fields(input: &ModelProfileInput) -> Result<(), AppError> {
     serde_json::from_value::<nekowriter_llm::ModelOptions>(options)
         .map_err(|err| field_error("options", format!("the model options are not valid: {err}")))?;
     Ok(())
+}
+
+/// Validates and canonicalizes a model profile's thinking-effort levels (spec/04 §5.1, D-162).
+///
+/// Rules: at most 8 levels; each matches `^[A-Za-z0-9_-]{1,32}$`; no duplicates. On Anthropic
+/// every level must be in the closed set and the stored order is always canonical (low → max)
+/// whatever order arrived; OpenAI keeps the entry order (it is the display order); the mock
+/// protocol takes no levels. `default_effort` must be one of the resulting levels.
+fn validate_effort_levels(
+    levels: &[String],
+    default_effort: Option<&str>,
+    protocol: Protocol,
+) -> Result<Vec<String>, AppError> {
+    if levels.len() > 8 {
+        return Err(field_error(
+            "effort_levels",
+            "a model profile accepts at most 8 effort levels",
+        ));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for level in levels {
+        if !nekowriter_llm::EffortRule::is_valid_level(level) {
+            return Err(field_error(
+                "effort_levels",
+                format!(
+                    "{level:?} is not a valid effort level: use 1-32 characters from A-Z, a-z, 0-9, '_' and '-'"
+                ),
+            ));
+        }
+        if !seen.insert(level.as_str()) {
+            return Err(field_error(
+                "effort_levels",
+                format!("duplicate effort level {level:?}"),
+            ));
+        }
+    }
+    let canonical = match protocol {
+        Protocol::Openai => levels.to_vec(),
+        Protocol::Anthropic => {
+            let rule =
+                nekowriter_llm::EffortRule::for_protocol(nekowriter_llm::Protocol::Anthropic);
+            let closed = rule.levels();
+            for level in levels {
+                if !closed.contains(&level.as_str()) {
+                    return Err(field_error(
+                        "effort_levels",
+                        format!(
+                            "{level:?} is not an Anthropic effort level; use one of {}",
+                            closed.join(", ")
+                        ),
+                    ));
+                }
+            }
+            closed
+                .iter()
+                .filter(|candidate| levels.iter().any(|level| level == *candidate))
+                .map(|level| (*level).to_owned())
+                .collect()
+        }
+        Protocol::Mock => {
+            if !levels.is_empty() {
+                return Err(field_error(
+                    "effort_levels",
+                    "the Demo provider takes no effort levels",
+                ));
+            }
+            Vec::new()
+        }
+    };
+    if let Some(default) = default_effort
+        && !canonical.iter().any(|level| level == default)
+    {
+        return Err(field_error(
+            "default_effort",
+            "the default effort must be one of the model's effort levels",
+        ));
+    }
+    Ok(canonical)
 }
 
 /// Refuses an option the provider's protocol cannot send (spec/04 §5, D-132).
@@ -940,7 +1043,13 @@ fn alternative_hint(key: nekowriter_llm::ModelOptionKey, protocol: Protocol) -> 
         // Everything else: name the options this protocol *can* send, so the message is actionable
         // without a second lookup.
         _ => {
-            let reachable = ModelOptionKey::reachable(llm_protocol(protocol));
+            // The hint names the profile options the protocol accepts. `reachable` is derived
+            // from `ALL`, which still carries the two role-effort wire keys; those are not profile
+            // options any more (D-162), so filter through `PROFILE` before naming them.
+            let reachable: Vec<ModelOptionKey> = ModelOptionKey::reachable(llm_protocol(protocol))
+                .into_iter()
+                .filter(|key| ModelOptionKey::PROFILE.contains(key))
+                .collect();
             if reachable.is_empty() {
                 "this protocol sends no model options at all".to_owned()
             } else {
@@ -1047,11 +1156,11 @@ pub async fn test_connection(
 /// The model id and the `ModelOptions` a connection test uses (spec/04 §8).
 ///
 /// The test reports on the *saved* configuration, so a named model borrows its profile's options
-/// and an unnamed one borrows the provider's first profile. Sending the defaults instead would
-/// report a false failure for a correct profile: the OpenAI preset needs
-/// `max_tokens_field: max_completion_tokens`, and Anthropic would silently get the default effort.
-/// A model without a profile is still testable — the caller may name any id — but then there are
-/// no options to borrow.
+/// and `default_effort`, and an unnamed one borrows the provider's first profile. Sending only the
+/// defaults would report a false failure for a correct profile: the OpenAI preset needs
+/// `max_tokens_field: max_completion_tokens`, and the profile's default effort has to land in the
+/// protocol's wire field (spec/04 §5.1, D-162). A model without a profile is still testable — the
+/// caller may name any id — but then there are no options or default effort to borrow.
 async fn test_request_config(
     state: &AppState,
     provider_id: i32,
@@ -1067,13 +1176,26 @@ async fn test_request_config(
         Some(model_id) => rows.iter().find(|row| row.model == model_id),
         None => rows.first(),
     };
-    let options = borrowed
+    let mut options = borrowed
         .map(|row| {
             ModelOptionsDto::from(row.options.clone().into_inner())
                 .to_model_options()
                 .unwrap_or_default()
         })
         .unwrap_or_default();
+    // The saved `default_effort` goes into the protocol's wire field: `reasoning_effort` for
+    // OpenAI-compatible providers, `output_config.effort` (via `ModelOptions::effort`) for
+    // Anthropic. A level that no longer parses (only possible after a hand-edited row) is not sent;
+    // the test then reports on the rest of the saved configuration.
+    if let Some(row) = borrowed
+        && let Some(default_effort) = row.default_effort.as_deref()
+    {
+        match provider.protocol {
+            Protocol::Openai => options.reasoning_effort = Some(default_effort.to_owned()),
+            Protocol::Anthropic => options.effort = nekowriter_llm::Effort::parse(default_effort),
+            Protocol::Mock => {}
+        }
+    }
     if let Some(model_id) = requested {
         return Ok((model_id, options));
     }

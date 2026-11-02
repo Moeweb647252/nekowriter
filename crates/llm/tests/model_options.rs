@@ -403,6 +403,24 @@ fn effort_rule_follows_the_protocol() {
     assert_eq!(EffortRule::for_protocol(Protocol::Mock).wire_key(), None);
 }
 
+/// The Anthropic wire names parse to their enum values and nothing else does (session creation
+/// writes a validated profile default into the snapshot through this).
+#[test]
+fn effort_parses_the_anthropic_wire_names() {
+    for (name, effort) in [
+        ("low", Effort::Low),
+        ("medium", Effort::Medium),
+        ("high", Effort::High),
+        ("xhigh", Effort::Xhigh),
+        ("max", Effort::Max),
+    ] {
+        assert_eq!(Effort::parse(name), Some(effort), "{name}");
+        assert_eq!(effort.as_str(), name);
+    }
+    assert_eq!(Effort::parse("ultra"), None);
+    assert_eq!(Effort::parse(""), None);
+}
+
 /// `Free` accepts exactly `^[A-Za-z0-9_-]{1,32}$`; `Closed` accepts exactly its canonical list;
 /// `None` accepts nothing. The same rule decides the role-effort save validation and the
 /// per-session resolution, so its boundaries are pinned here.

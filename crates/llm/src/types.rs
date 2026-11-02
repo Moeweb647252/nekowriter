@@ -602,6 +602,21 @@ impl Effort {
             Effort::Max => "max",
         }
     }
+
+    /// Parses one of the Anthropic wire names; `None` for anything else.
+    ///
+    /// Session creation uses this to write a validated profile default into the snapshot; a
+    /// failure counts as an unsupported level (spec/03 §4, spec/04 §5.1).
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "low" => Some(Effort::Low),
+            "medium" => Some(Effort::Medium),
+            "high" => Some(Effort::High),
+            "xhigh" => Some(Effort::Xhigh),
+            "max" => Some(Effort::Max),
+            _ => None,
+        }
+    }
 }
 
 /// How a protocol accepts the thinking effort (spec/04 §5.1, D-162).

@@ -769,6 +769,45 @@ async fn guard_two_fires_on_a_stranded_json_null_and_the_migration_is_retryable(
     assert_migrated(&db).await;
 }
 
+/// Guard 2's nested clause: `extra_body.reasoning_effort` is merged last (spec/04 §1), so a stored
+/// override left behind would shadow the role's level. The trigger recreates the nested key after
+/// the migration's `json_remove`; only the `extra_body` OR line of guard 2 catches it.
+#[tokio::test]
+async fn guard_two_fires_on_a_stranded_extra_body_override_and_the_migration_is_retryable() {
+    let (_dir, db) = pre_0009_database().await;
+    db.conn()
+        .execute_unprepared(
+            "CREATE TRIGGER role_effort_guard2_nested AFTER UPDATE OF options ON model_profiles
+             WHEN json_type(NEW.options, '$.extra_body.reasoning_effort') IS NULL
+             BEGIN
+               UPDATE model_profiles
+               SET options = json_set(options, '$.extra_body.reasoning_effort', 'low')
+               WHERE id = NEW.id;
+             END;",
+        )
+        .await
+        .expect("install the nested-override trigger");
+    let baseline = baseline(&db).await;
+
+    let error = nekowriter_migration::up(db.conn())
+        .await
+        .expect_err("a stranded extra_body override must fail the options guard");
+    assert!(
+        error.to_string().contains("stranded = 0"),
+        "the options guard must fire, got: {error}"
+    );
+    assert_rolled_back(&db, &baseline).await;
+
+    db.conn()
+        .execute_unprepared("DROP TRIGGER role_effort_guard2_nested")
+        .await
+        .expect("repair the trigger");
+    nekowriter_migration::up(db.conn())
+        .await
+        .expect("retry after repairing the trigger");
+    assert_migrated(&db).await;
+}
+
 /// Guard 3: a default that is not one of its levels must abort the migration and roll back.
 #[tokio::test]
 async fn guard_three_fires_on_an_out_of_range_default_and_the_migration_is_retryable() {
