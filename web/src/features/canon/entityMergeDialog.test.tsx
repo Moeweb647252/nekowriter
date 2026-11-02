@@ -12,7 +12,8 @@ const navigate = vi.hoisted(() => vi.fn())
 const toastSuccess = vi.hoisted(() => vi.fn())
 
 const state = vi.hoisted(() => ({
-  entities: [] as unknown[],
+  shared: [] as unknown[],
+  sources: [] as unknown[],
   source: undefined as unknown,
 }))
 
@@ -20,7 +21,8 @@ vi.mock("react-router", () => ({ useNavigate: () => navigate }))
 vi.mock("sonner", () => ({ toast: { success: toastSuccess } }))
 vi.mock("@/api/hooks/useCanon", () => ({
   useMergeEntity: () => ({ mutate: mergeMutate, isPending: false }),
-  useEntities: () => ({ data: state.entities }),
+  useEntities: () => ({ data: state.shared }),
+  useMergeSourceEntities: () => ({ data: state.sources }),
   useEntity: (id: number | undefined) => ({ data: id === 9 ? state.source : undefined }),
 }))
 vi.mock("@/components/common/ErrorToast", () => ({ useErrorToast: () => vi.fn() }))
@@ -83,10 +85,17 @@ beforeEach(() => {
   mergeMutate.mockReset()
   navigate.mockReset()
   toastSuccess.mockReset()
-  state.entities = [
+  // `useEntities` is shared-only, like the list endpoint without a track scope.
+  state.shared = [
+    { id: 9, track_id: null, kind: "item", name: "Bran" },
+    { id: 11, track_id: null, kind: "location", name: "Cave" },
+  ]
+  state.sources = [
     { id: 5, track_id: 3, kind: "character", name: "Aria" },
     { id: 9, track_id: null, kind: "item", name: "Bran" },
     { id: 11, track_id: null, kind: "location", name: "Cave" },
+    { id: 13, track_id: 3, kind: "item", name: "Private relic" },
+    { id: 15, track_id: 4, kind: "item", name: "Other track relic" },
   ]
   state.source = source
 })
@@ -96,16 +105,46 @@ function renderDialog() {
 }
 
 describe("EntityMergeDialog", () => {
-  it("excludes the target entity from the source list", () => {
+  it("excludes the target entity and other tracks' private entities", () => {
     renderDialog()
     const group = screen.getByRole("radiogroup", { name: "Entity to merge in" })
     const choices = within(group)
       .getAllByRole("radio")
       .map((choice) => choice.textContent)
-    expect(choices).toHaveLength(2)
+    expect(choices).toHaveLength(3)
     expect(choices[0]).toContain("Bran")
     expect(choices[1]).toContain("Cave")
+    expect(choices[2]).toContain("Private relic")
     expect(within(group).queryByText("Aria")).toBeNull()
+    expect(within(group).queryByText("Other track relic")).toBeNull()
+  })
+
+  it("offers a private entity as a source for a shared target", () => {
+    render(
+      <EntityMergeDialog
+        bookId={1}
+        target={{ ...target, track_id: null } as EntityDto}
+        open
+        onOpenChange={vi.fn()}
+      />,
+    )
+    const group = screen.getByRole("radiogroup", { name: "Entity to merge in" })
+    const names = within(group)
+      .getAllByRole("radio")
+      .map((choice) => choice.textContent)
+    // A shared target can absorb a private entity from any isolated track (spec/06 §9).
+    expect(names.some((name) => name?.includes("Private relic"))).toBe(true)
+    expect(names.some((name) => name?.includes("Other track relic"))).toBe(true)
+  })
+
+  it("names the source from the picker before its detail loads", async () => {
+    state.source = undefined
+    renderDialog()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("radio", { name: /Bran/ }))
+    expect(
+      screen.getByRole("button", { name: "Merge «Bran» into «Aria»" }),
+    ).toBeInTheDocument()
   })
 
   it("shows the union warning and the shared-into-isolated explanation", async () => {

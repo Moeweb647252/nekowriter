@@ -2,6 +2,7 @@
 import { useTranslation } from "react-i18next"
 
 import type { EntityKind } from "@/api/gen/EntityKind"
+import type { EntityListItemDto } from "@/api/gen/EntityListItemDto"
 import type { ForeshadowingDto } from "@/api/gen/ForeshadowingDto"
 import type { TimelineEventDto } from "@/api/gen/TimelineEventDto"
 import { useEntities, useForeshadowing, useTimeline } from "@/api/hooks/useCanon"
@@ -17,6 +18,11 @@ type PickerProps = {
   trackId?: number
   /** Omit one entity from the choices (the merge target). */
   excludeId?: number
+  /**
+   * Overrides the query result. The merge dialog passes the cross-canon union of the shared list
+   * and every isolated track, which one `useEntities` query cannot express (spec/06 §9).
+   */
+  entities?: EntityListItemDto[]
   /**
    * `select` is the compact picker of the goal dialog. `list` renders the same choices as a
    * radio list with the kind and the shared/private track badge, for the merge dialog.
@@ -34,11 +40,14 @@ export function EntityPicker({
   kind,
   trackId,
   excludeId,
+  entities,
   variant = "select",
 }: PickerProps) {
   const { t } = useTranslation()
-  const entities = useEntities(bookId, { kind, trackId })
-  const choices = (entities.data ?? []).filter((entity) => entity.id !== excludeId)
+  const fetched = useEntities(bookId, { kind, trackId })
+  const choices = (entities ?? fetched.data ?? []).filter(
+    (entity) => entity.id !== excludeId,
+  )
   if (variant === "list") {
     return (
       <div

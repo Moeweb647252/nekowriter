@@ -175,3 +175,9 @@ Shared rules:
 - Merging across books, undoing a merge, or bulk operations.
 - Editing a timeline event's position in the dialog.
 - Paging the entity history beyond the endpoint's 100 rows. The Changes page covers the rest.
+
+## 7. Known follow-ups
+- **Per-row appearance count in the merge picker (18.3-F1).** `EntityListItemDto` carries no
+  appearance count, so the picker cannot render one from the list query; the dialog shows the
+  selected entity's count from its `EntityDto` detail instead. A per-row count needs a
+  server-side aggregate on the entity list (a server change outside M18's web-only scope).

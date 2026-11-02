@@ -6,7 +6,7 @@ import { AlertTriangle } from "lucide-react"
 import { toast } from "sonner"
 
 import type { EntityDto } from "@/api/gen/EntityDto"
-import { useEntity, useMergeEntity } from "@/api/hooks/useCanon"
+import { useEntity, useMergeEntity, useMergeSourceEntities } from "@/api/hooks/useCanon"
 import { useErrorToast } from "@/components/common/ErrorToast"
 import { Button } from "@/components/ui/button"
 import {
@@ -37,14 +37,30 @@ export function EntityMergeDialog({
   const navigate = useNavigate()
   const showError = useErrorToast()
   const merge = useMergeEntity(bookId)
+  // A merge may move a private entity into a shared one, so the sources are the union over the
+  // shared list and every isolated track (one canon-scoped list query cannot express that).
+  const sources = useMergeSourceEntities(bookId)
+  const candidates = (sources.data ?? []).filter(
+    (entity) =>
+      entity.id !== target.id &&
+      // A private target can only absorb shared rows and the private rows of its own canon;
+      // another track's private rows would point back at a row that track cannot see.
+      (target.track_id === null ||
+        entity.track_id === null ||
+        entity.track_id === target.track_id),
+  )
   const [fromId, setFromId] = useState<number | undefined>(undefined)
-  // The detail carries the appearance count the list DTO does not: show it for the chosen B.
+  // The chosen row already carries the name; the detail query is only for the appearance count
+  // the list DTO lacks, so the confirm never waits on it (18.3-S2).
+  const selected = candidates.find((entity) => entity.id === fromId)
   const source = useEntity(fromId)
-  const sourceName = source.data?.name
+  const sourceName = selected?.name
+  const sourceTrackId =
+    selected === undefined ? source.data?.track_id : selected.track_id
   // A shared entity cannot move into an isolated track's private entity (spec/06 §9); the
-  // server stays the authority, but the dialog warns before the request once B is loaded.
+  // server stays the authority, but the dialog warns before the request.
   const sharedIntoPrivate =
-    target.track_id !== null && source.data !== undefined && source.data.track_id === null
+    target.track_id !== null && sourceTrackId === null
 
   const submit = () => {
     if (fromId === undefined) {
@@ -90,27 +106,30 @@ export function EntityMergeDialog({
               value={fromId}
               onChange={setFromId}
               label={t("canon:entity_merge.pick")}
+              entities={candidates}
               excludeId={target.id}
               variant="list"
             />
           </div>
 
-          {source.data === undefined ? null : (
+          {selected === undefined ? null : (
             <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 p-2 text-xs">
-              <span className="font-medium">{source.data.name}</span>
+              <span className="font-medium">{selected.name}</span>
               <span className="text-muted-foreground">
-                {t(`canon:kind.${source.data.kind}`)}
+                {t(`canon:kind.${selected.kind}`)}
               </span>
               <span className="rounded bg-muted px-1 text-[0.65rem] text-muted-foreground">
-                {source.data.track_id === null
+                {selected.track_id === null
                   ? t("canon:track_shared")
                   : t("canon:private_badge")}
               </span>
-              <span className="text-muted-foreground">
-                {t("canon:entity_merge.appearances", {
-                  count: source.data.appearances.length,
-                })}
-              </span>
+              {source.data === undefined ? null : (
+                <span className="text-muted-foreground">
+                  {t("canon:entity_merge.appearances", {
+                    count: source.data.appearances.length,
+                  })}
+                </span>
+              )}
             </div>
           )}
 

@@ -32,6 +32,18 @@ export type EntityCreateDialogProps = {
   onOpenChange: (open: boolean) => void
 }
 
+/** The fields this dialog renders; a `details.fields` key outside this set falls back to a toast. */
+const INLINE_FIELDS = new Set([
+  "kind",
+  "name",
+  "aliases",
+  "summary",
+  "importance",
+  "status",
+  "track_id",
+  "note",
+])
+
 /** The `details.fields` payload of a validation refusal, when present (spec/10 §4). */
 function fieldNamesOf(error: unknown): string[] {
   const fields = errorDetails(error)?.fields
@@ -74,6 +86,10 @@ export function EntityCreateDialog({ bookId, open, onOpenChange }: EntityCreateD
   }
 
   const canSubmit = kind !== "" && name.trim() !== "" && !create.isPending
+  const fieldError = (field: string) =>
+    fieldErrors.includes(field) ? (
+      <p className="text-xs text-destructive">{t("errors:validation.invalid_fields")}</p>
+    ) : null
 
   const submit = () => {
     if (!canSubmit) {
@@ -102,9 +118,7 @@ export function EntityCreateDialog({ bookId, open, onOpenChange }: EntityCreateD
         void navigate(`/books/${bookId}/canon/entities/${entity.id}`)
       },
       onError: (error) => {
-        const fields = fieldNamesOf(error).filter(
-          (field) => field === "kind" || field === "name",
-        )
+        const fields = fieldNamesOf(error).filter((field) => INLINE_FIELDS.has(field))
         if (fields.length > 0) {
           setFieldErrors(fields)
           return
@@ -141,11 +155,7 @@ export function EntityCreateDialog({ bookId, open, onOpenChange }: EntityCreateD
                 </option>
               ))}
             </select>
-            {fieldErrors.includes("kind") ? (
-              <p className="text-xs text-destructive">
-                {t("errors:validation.invalid_fields")}
-              </p>
-            ) : null}
+            {fieldError("kind")}
           </div>
 
           <div className="space-y-1.5">
@@ -158,11 +168,7 @@ export function EntityCreateDialog({ bookId, open, onOpenChange }: EntityCreateD
                 setFieldErrors((current) => current.filter((field) => field !== "name"))
               }}
             />
-            {fieldErrors.includes("name") ? (
-              <p className="text-xs text-destructive">
-                {t("errors:validation.invalid_fields")}
-              </p>
-            ) : null}
+            {fieldError("name")}
           </div>
 
           <div className="space-y-1.5">
@@ -208,6 +214,7 @@ export function EntityCreateDialog({ bookId, open, onOpenChange }: EntityCreateD
                 ))}
               </div>
             )}
+            {fieldError("aliases")}
           </div>
 
           <div className="space-y-1.5">
@@ -218,6 +225,7 @@ export function EntityCreateDialog({ bookId, open, onOpenChange }: EntityCreateD
               value={summary}
               onChange={(event) => setSummary(event.target.value)}
             />
+            {fieldError("summary")}
           </div>
 
           <div className="space-y-1.5">
@@ -246,6 +254,7 @@ export function EntityCreateDialog({ bookId, open, onOpenChange }: EntityCreateD
                 </button>
               ))}
             </div>
+            {fieldError("importance")}
           </div>
 
           <div className="space-y-1.5">
@@ -262,6 +271,7 @@ export function EntityCreateDialog({ bookId, open, onOpenChange }: EntityCreateD
                 </option>
               ))}
             </select>
+            {fieldError("status")}
           </div>
 
           <div className="space-y-1.5">
@@ -282,6 +292,7 @@ export function EntityCreateDialog({ bookId, open, onOpenChange }: EntityCreateD
             <p className="text-xs text-muted-foreground">
               {t("canon:entity_create.storyline_hint")}
             </p>
+            {fieldError("track_id")}
           </div>
 
           <div className="space-y-1.5">
@@ -292,6 +303,7 @@ export function EntityCreateDialog({ bookId, open, onOpenChange }: EntityCreateD
               value={note}
               onChange={(event) => setNote(event.target.value)}
             />
+            {fieldError("note")}
           </div>
         </div>
 

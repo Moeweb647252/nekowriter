@@ -4,12 +4,14 @@ import userEvent from "@testing-library/user-event"
 import i18n from "i18next"
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 
+import { ApiError } from "@/api/client"
 import enCanon from "@/i18n/locales/en/canon.json"
 import type { EntityDto } from "@/api/gen/EntityDto"
 import type { TrackDto } from "@/api/gen/TrackDto"
 
 const createMutate = vi.hoisted(() => vi.fn())
 const navigate = vi.hoisted(() => vi.fn())
+const showError = vi.hoisted(() => vi.fn())
 
 vi.mock("react-router", () => ({ useNavigate: () => navigate }))
 vi.mock("@/api/hooks/useCanon", () => ({
@@ -24,7 +26,7 @@ vi.mock("@/api/hooks/tracks", () => ({
     ] as unknown as TrackDto[],
   }),
 }))
-vi.mock("@/components/common/ErrorToast", () => ({ useErrorToast: () => vi.fn() }))
+vi.mock("@/components/common/ErrorToast", () => ({ useErrorToast: () => showError }))
 
 import { EntityCreateDialog } from "@/features/canon/EntityCreateDialog"
 
@@ -35,6 +37,7 @@ beforeAll(() => {
 beforeEach(() => {
   createMutate.mockReset()
   navigate.mockReset()
+  showError.mockReset()
 })
 
 function renderDialog() {
@@ -66,6 +69,33 @@ describe("EntityCreateDialog", () => {
     await user.selectOptions(screen.getByLabelText("Kind"), "item")
     await user.click(save)
     expect(createMutate).toHaveBeenCalledTimes(1)
+  })
+
+  it("requires a name once a kind is chosen", async () => {
+    renderDialog()
+    const user = userEvent.setup()
+    await user.selectOptions(screen.getByLabelText("Kind"), "item")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    expect(createMutate).not.toHaveBeenCalled()
+  })
+
+  it("renders a server field error inline on the named field", async () => {
+    createMutate.mockImplementation(
+      (_input: unknown, options: { onError?: (error: unknown) => void }) => {
+        options.onError?.(
+          new ApiError(400, "validation.invalid_fields", "invalid input", {
+            fields: { track_id: "not this track" },
+          }),
+        )
+      },
+    )
+    renderDialog()
+    const user = await fillRequired()
+    await user.selectOptions(screen.getByLabelText("Storyline"), "3")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(screen.getByText("Some fields are not valid.")).toBeInTheDocument()
+    expect(showError).not.toHaveBeenCalled()
   })
 
   it("offers only isolated side tracks as a storyline", () => {

@@ -3430,6 +3430,10 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     500 messages, so a one-message slide triggers a 500-message page whose per-message
     `calls_of` lookups are an N+1 server read. Both need a dedicated fix (an error surface, and a
     smaller limit or a batched tool-call load), not an inline workaround here.
+  - **Accepted deviation (18.3 review).** Plan §2.2 asks the merge picker to show every candidate
+    row's appearance count, but `EntityListItemDto` has no count field; a per-row count needs a
+    server-side aggregate outside M18's web-only scope. The dialog shows the selected entity's
+    count from its detail DTO instead.
 - **Spec**: PROJECT §8.8; spec/10 §2.7; spec/11 §5.3, §5.5, §9.
 
 
