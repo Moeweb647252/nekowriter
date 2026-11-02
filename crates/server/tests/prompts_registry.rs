@@ -1232,12 +1232,13 @@ async fn a_removed_prompt_override_is_inert_and_does_not_break_startup() {
         .await
         .expect("body");
     let entries: Value = serde_json::from_slice(&body).expect("json");
+    let listed = entries.as_array().expect("array");
     assert!(
-        entries
-            .as_array()
-            .expect("array")
-            .iter()
-            .all(|entry| entry["key"] != REMOVED_KEY),
+        !listed.is_empty(),
+        "the prompt list is not empty: {entries}"
+    );
+    assert!(
+        listed.iter().all(|entry| entry["key"] != REMOVED_KEY),
         "the API omits the removed key: {entries}"
     );
 }

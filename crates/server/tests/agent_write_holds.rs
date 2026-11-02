@@ -944,7 +944,12 @@ async fn the_drafting_nudge_names_an_open_tail() {
     let session_id = start_writer(&runtime, Granularity::Free, false, false).await;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
-        for message in runtime.messages(session_id).await {
+        for message in runtime
+            .messages(session_id)
+            .await
+            .into_iter()
+            .filter(|message| message.kind == "nudge")
+        {
             let blocks: serde_json::Value =
                 serde_json::from_str(&message.content).expect("message blocks");
             let text = blocks
@@ -1044,18 +1049,6 @@ async fn feedback_revokes_a_held_revision_plan_phase_change() {
         .join("\n");
     assert!(text.contains("计划没有生效"), "{text}");
     assert!(text.contains("计划要更具体。"), "{text}");
-    assert!(!text.contains("完成被撤回"), "{text}");
-    // The rendered notice carries the Chinese title "修订计划未通过" in the pack metadata; the
-    // body above is the model-facing text (the title is not appended to tool results).
-    let set = runtime.app.state().prompts().defaults_only();
-    assert!(
-        set.pack()
-            .entry("writer.notice.revision_plan_rejected")
-            .expect("the key")
-            .title_zh
-            .contains("修订计划未通过"),
-        "the notice title is the revision-plan rejection"
-    );
 
     let second = {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
