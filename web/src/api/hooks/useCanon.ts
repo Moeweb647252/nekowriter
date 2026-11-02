@@ -1,10 +1,11 @@
 /** Canon queries and mutations (spec/11 §4.1, spec/10 §2.4). */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
 
 import * as endpoints from "@/api/endpoints/canon"
 import type { ChangeQueryParams } from "@/api/endpoints/canon"
 import { keys } from "@/api/keys"
 import type { EntityInput } from "@/api/gen/EntityInput"
+import type { EntityListItemDto } from "@/api/gen/EntityListItemDto"
 import type { EntityPatch } from "@/api/gen/EntityPatch"
 import type { ForeshadowingInput } from "@/api/gen/ForeshadowingInput"
 import type { ForeshadowingPatch } from "@/api/gen/ForeshadowingPatch"
@@ -14,6 +15,7 @@ import type { RelationInput } from "@/api/gen/RelationInput"
 import type { RelationPatch } from "@/api/gen/RelationPatch"
 import type { TimelineEventInput } from "@/api/gen/TimelineEventInput"
 import type { TimelineEventPatch } from "@/api/gen/TimelineEventPatch"
+import { useTracks } from "@/api/hooks/tracks"
 
 /** Everything a canon write can invalidate (spec/10 §3 `canon.changed`). */
 function useCanonInvalidator(bookId: number) {
@@ -41,6 +43,53 @@ export function useEntities(
     queryFn: () => endpoints.listEntities(bookId, params),
     enabled: Number.isFinite(bookId) && bookId > 0,
   })
+}
+
+/**
+ * Every entity a merge can use as its source (spec/06 §9).
+ *
+ * The list endpoint is canon-scoped: no `track_id` means shared only, while `track_id=T` adds
+ * track T's private rows to the shared ones. A merge may move a private entity into a shared one,
+ * so the union over the shared list and every isolated track is what the picker must show.
+ */
+export function useMergeSourceEntities(bookId: number) {
+  const tracks = useTracks(bookId)
+  const isolated = (tracks.data ?? []).filter(
+    (track) => track.kind === "side" && track.canon_mode === "isolated",
+  )
+  const queries = useQueries({
+    queries: [
+      {
+        queryKey: keys.canon.entities(bookId, "merge|shared"),
+        queryFn: () => endpoints.listEntities(bookId),
+        enabled: Number.isFinite(bookId) && bookId > 0,
+      },
+      ...isolated.map((track) => ({
+        queryKey: keys.canon.entities(bookId, `merge|track:${track.id}`),
+        queryFn: () => endpoints.listEntities(bookId, { trackId: track.id }),
+        enabled: Number.isFinite(bookId) && bookId > 0,
+      })),
+    ],
+  })
+  const items: EntityListItemDto[] = []
+  const seen = new Set<number>()
+  for (const query of queries) {
+    for (const item of query.data ?? []) {
+      if (seen.has(item.id)) {
+        continue
+      }
+      seen.add(item.id)
+      items.push(item)
+    }
+  }
+  items.sort(
+    (left, right) =>
+      right.importance - left.importance || left.name.localeCompare(right.name),
+  )
+  return {
+    data: items,
+    isPending: tracks.isPending || queries.some((query) => query.isPending),
+  }
 }
 
 export function useEntity(entityId: number | undefined) {
@@ -96,7 +145,8 @@ export function useSetProtagonist(bookId: number) {
 
 export function useEntityHistory(entityId: number | undefined) {
   return useQuery({
-    queryKey: ["canon", "entity-history", entityId ?? 0],
+    // Under the entity key: invalidating the entity family also refreshes its full history.
+    queryKey: [...keys.canon.entity(entityId ?? 0), "history"] as const,
     queryFn: () => endpoints.entityHistory(entityId ?? 0),
     enabled: entityId !== undefined && entityId > 0,
   })

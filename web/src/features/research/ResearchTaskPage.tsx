@@ -135,6 +135,7 @@ export default function ResearchTaskPage() {
             session={snapshot.data.session}
             messages={snapshot.data.messages}
             inbox={snapshot.data.inbox}
+            nextCursor={snapshot.data.next_cursor}
           />
         </div>
       ) : null}

@@ -15,6 +15,8 @@ use crate::db::json::{
     NoteStatus, RelationStatus,
 };
 
+use super::deserialize_some;
+
 // ───────────────────────────── entities ─────────────────────────────
 
 /// One row of the entity table (spec/06 §1.1).
@@ -244,9 +246,17 @@ pub struct RelationPatch {
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<RelationStatus>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_some",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub since_chapter_id: Option<Option<i32>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_some",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub until_chapter_id: Option<Option<i32>>,
     /// The author's change note (spec/06 §3); optional, empty when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -342,7 +352,11 @@ pub struct TimelineEventPatch {
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub story_time: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_some",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub chapter_id: Option<Option<i32>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entity_ids: Option<Vec<i32>>,

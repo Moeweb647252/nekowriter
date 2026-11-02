@@ -9,7 +9,7 @@
  */
 import { useCallback, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
-import { ChevronDown, Loader2 } from "lucide-react"
+import { Loader2 } from "lucide-react"
 
 import { useChapter } from "@/api/hooks/chapters"
 import { useBookSessions, useSession } from "@/api/hooks/sessions"
@@ -318,16 +318,13 @@ export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: 
           <Loader2 aria-hidden="true" className="size-4 animate-spin text-muted-foreground" />
         </div>
       ) : (
-        <ActivityStream session={session} messages={messages} inbox={inbox} />
+        <ActivityStream
+          session={session}
+          messages={messages}
+          inbox={inbox}
+          nextCursor={snapshot.data?.next_cursor}
+        />
       )}
-      {snapshot.data !== undefined && snapshot.data.next_cursor !== null ? (
-        <div className="border-t px-3 py-1">
-          <Button variant="ghost" size="sm" className="w-full text-xs">
-            <ChevronDown aria-hidden="true" />
-            {t("agent:stream.load_older")}
-          </Button>
-        </div>
-      ) : null}
       <Composer
         session={session}
         busy={busy}

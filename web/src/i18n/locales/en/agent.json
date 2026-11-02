@@ -92,6 +92,9 @@
     "thinking": "Thinking…",
     "typing": "Writing…",
     "load_older": "Load older messages",
+    "loading_older": "Loading older messages…",
+    "load_older_error": "Couldn't load older messages.",
+    "start": "Start of the conversation",
     "queued": "Queued · not yet seen by the model"
   },
   "message_kind": {

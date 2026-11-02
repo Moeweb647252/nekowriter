@@ -92,6 +92,9 @@
     "thinking": "思考中…",
     "typing": "正在输入…",
     "load_older": "加载更早的消息",
+    "loading_older": "正在加载更早的消息…",
+    "load_older_error": "无法加载更早的消息。",
+    "start": "对话的开始",
     "queued": "排队中 · 尚未被模型看到"
   },
   "message_kind": {

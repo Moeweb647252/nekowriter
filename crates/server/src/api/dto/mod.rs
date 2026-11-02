@@ -1,5 +1,17 @@
 //! Request and response DTOs (spec/01 §4: separate from entities, exported with ts-rs).
 
+use serde::Deserialize;
+
+/// `Option<Option<T>>` with PATCH wire semantics: an absent field leaves the column unchanged,
+/// an explicit `null` clears it (spec/10 §2.4). Shared by every patch DTO with nullable fields.
+pub(crate) fn deserialize_some<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
+
 pub mod books;
 pub mod canon;
 pub mod changes;

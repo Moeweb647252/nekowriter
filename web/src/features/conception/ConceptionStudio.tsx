@@ -304,6 +304,7 @@ export default function ConceptionStudio() {
               session={session}
               messages={messages}
               inbox={snapshot.data?.inbox ?? []}
+              nextCursor={snapshot.data?.next_cursor}
               paneName="conversation"
             />
           )}
@@ -467,7 +468,9 @@ function BeforeConception({
   book: BookDto
   check: ResearchTaskDto | undefined
   checkSession: SessionDto | undefined
-  checkSnapshot: { messages: MessageWithCallsDto[]; inbox: unknown[] } | undefined
+  checkSnapshot:
+    | { messages: MessageWithCallsDto[]; inbox: unknown[]; next_cursor?: string | null }
+    | undefined
   startPending: boolean
   checkPending: boolean
   onStart: () => void
@@ -534,6 +537,7 @@ function BeforeConception({
               session={session}
               messages={checkSnapshot?.messages ?? []}
               inbox={[]}
+              nextCursor={checkSnapshot?.next_cursor}
               paneName="knowledge-check"
             />
           </div>

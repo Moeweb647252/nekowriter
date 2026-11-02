@@ -5,8 +5,13 @@
  *
  * Live deltas and previews arrive through the `live` store (spec/11 §4.3); a persisted message
  * replaces the matching buffers (the store drops them when the message event arrives).
+ *
+ * Scrollback (D-161) also lives here, so the agent panel, the conception studio and the research
+ * task page all get it: the snapshot carries the last 200 messages plus a cursor for the page
+ * before them, and the stream pages older messages in from the top without moving the reading
+ * position.
  */
-import { useEffect, useMemo, useRef } from "react"
+import { useCallback, useEffect, useMemo, useRef } from "react"
 import { useTranslation } from "react-i18next"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { ChevronRight, Loader2 } from "lucide-react"
@@ -16,12 +21,22 @@ import type { MessageDto } from "@/api/gen/MessageDto"
 import type { MessageWithCallsDto } from "@/api/gen/MessageWithCallsDto"
 import type { SessionDto } from "@/api/gen/SessionDto"
 import type { ToolCallDto } from "@/api/gen/ToolCallDto"
+import { useOlderMessages } from "@/api/hooks/sessions"
+import { useErrorToast } from "@/components/common/ErrorToast"
+import { Button } from "@/components/ui/button"
 import { useLiveStore } from "@/stores/live"
 import { ToolCallCard } from "@/features/agent/ToolCallCard"
 import { cn } from "@/lib/utils"
 
+/** Scrolling within one estimated row of the top loads the next older page (spec/11 §5.3). */
+export const AUTO_LOAD_TOP_PX = 120
+
+/** The scrollback row's state: more pages, loading, a failed page, or the start of the session. */
+export type HistoryState = "more" | "loading" | "error" | "start"
+
 /** One rendered row of the stream. */
 export type Row =
+  | { kind: "history"; key: string; state: HistoryState }
   | { kind: "message"; key: string; message: MessageDto; calls: ToolCallDto[] }
   | { kind: "live"; key: string; text: string; reasoning: string }
   | { kind: "queued"; key: string; item: InboxItemDto }
@@ -67,19 +82,65 @@ export function tailSignature(rows: Row[]): string {
         .join(",")}:${last.calls.map((call) => `${call.id}:${call.status}`).join(",")}`
     case "queued":
       return `queued:${last.key}:${last.item.content.length}`
+    case "history":
+      return `history:${last.state}`
     case "divider":
       return `divider:${last.key}`
   }
 }
 
-/** The rows of the stream: persisted messages, the live buffers of the current step and queued author messages. */
+/**
+ * Merge the infinite query's pages, the re-fetched window gap and the snapshot's messages, oldest
+ * first, dropping repeated message ids. `pages` arrive newest page first (the page just before the
+ * snapshot, then older ones), so reversing them gives chronological order; `gap` covers messages
+ * that slid out of the snapshot window after the pages were fetched; a duplicate can only be an
+ * overlap between those ranges, and either copy renders the same row.
+ */
+export function mergeHistoryPages(
+  pages: MessageWithCallsDto[][],
+  gap: MessageWithCallsDto[],
+  snapshot: MessageWithCallsDto[],
+): MessageWithCallsDto[] {
+  const seen = new Set<number>()
+  const merged: MessageWithCallsDto[] = []
+  for (const page of [...pages].reverse()) {
+    for (const item of page) {
+      if (seen.has(item.message.id)) {
+        continue
+      }
+      seen.add(item.message.id)
+      merged.push(item)
+    }
+  }
+  for (const item of gap) {
+    if (seen.has(item.message.id)) {
+      continue
+    }
+    seen.add(item.message.id)
+    merged.push(item)
+  }
+  for (const item of snapshot) {
+    if (seen.has(item.message.id)) {
+      continue
+    }
+    seen.add(item.message.id)
+    merged.push(item)
+  }
+  return merged
+}
+
+/** The rows of the stream: scrollback, persisted messages, the live buffers and queued messages. */
 export function buildRows(
   messages: MessageWithCallsDto[],
   live: { seq: number; text: Record<number, string>; reasoning: Record<number, string> } | undefined,
   t: (key: string) => string,
   inbox: InboxItemDto[] = [],
+  history: HistoryState | undefined = undefined,
 ): Row[] {
   const rows: Row[] = []
+  if (history !== undefined) {
+    rows.push({ kind: "history", key: "history", state: history })
+  }
   for (const item of messages) {
     rows.push({
       kind: "message",
@@ -112,11 +173,14 @@ export function ActivityStream({
   pendingPreview,
   paneName,
   inbox,
+  nextCursor,
 }: {
   session: SessionDto
   messages: MessageWithCallsDto[]
   /** Unconsumed author messages from the session snapshot (spec/10 §2.7). */
   inbox: InboxItemDto[]
+  /** The snapshot's scrollback cursor (spec/10 §2.7, spec/11 §5.3). */
+  nextCursor?: string | null
   /** A rendered line for the tool whose arguments are streaming (spec/03 §12). */
   pendingPreview?: string
   /**
@@ -127,20 +191,105 @@ export function ActivityStream({
   paneName?: string
 }) {
   const { t } = useTranslation()
+  const reportError = useErrorToast()
   const live = useLiveStore((state) => state.streams[session.id])
-  const rows = useMemo(() => buildRows(messages, live, t, inbox), [messages, live, t, inbox])
+  const initialCursor = nextCursor ?? undefined
+  const older = useOlderMessages(session.id, initialCursor)
+  const olderPages = useMemo(
+    () => (older.data?.pages ?? []).map((page) => page.items),
+    [older.data],
+  )
+  const olderPageCount = older.data?.pages.length ?? 0
+  // Messages that slid out of the snapshot window after the pages were cached; the hook repairs
+  // that range so the transcript never loses its old boundary (F3). Without a page chain there is
+  // no cached range to bridge, and the query's placeholder data must never leak across sessions.
+  const gapItems = useMemo(
+    () => (older.data === undefined ? [] : (older.gapItems ?? [])),
+    [older.data, older.gapItems],
+  )
+  const gapCount = gapItems.length
+  const mergedMessages = useMemo(
+    () => mergeHistoryPages(olderPages, gapItems, messages),
+    [olderPages, gapItems, messages],
+  )
+
+  // A cursor exists while the snapshot window is truncated, and later while a page returned one.
+  const hasMore =
+    older.data === undefined ? initialCursor !== undefined : older.hasNextPage
+  const historyState: HistoryState | undefined =
+    messages.length === 0 && olderPages.length === 0 && !hasMore
+      ? undefined
+      : older.isFetchingNextPage
+        ? "loading"
+        : older.isFetchNextPageError
+          ? "error"
+          : hasMore
+            ? "more"
+            : "start"
+  const rows = useMemo(
+    () => buildRows(mergedMessages, live, t, inbox, historyState),
+    [mergedMessages, live, t, inbox, historyState],
+  )
   const tail = tailSignature(rows)
   const parentRef = useRef<HTMLDivElement>(null)
   // The view follows new content until the author scrolls up; it re-pins when they return to the
   // bottom (PROJECT §8.6: "auto-scroll unless the author scrolled up").
   const stick = useRef(true)
+  // Scrolling fires many times per gesture; the ref stops a second page request while the first
+  // is still in flight, before React Query's own `isFetchingNextPage` has re-rendered.
+  const fetchingOlder = useRef(false)
+  // Where the reading position was when the page request started, and how tall the content was.
+  // After the page commits, the height it added above the snapshot is added to `scrollTop`, so
+  // the first previously visible row stays where it was.
+  const anchor = useRef<{ scrollTop: number; totalSize: number } | null>(null)
+  // The gap repair is triggered by a snapshot update, not a click: remember where the first
+  // snapshot row sat on screen when the cursor moved, and put it back when the gap rows land.
+  const gapAnchor = useRef<{ key: string; visualOffset: number } | null>(null)
+  const previousCursor = useRef(initialCursor)
+  const previousGapCount = useRef(0)
+  const previousSessionId = useRef(session.id)
 
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 120,
     overscan: 8,
+    // Measure by row key, not index: prepending a page shifts every index, and index-keyed
+    // measurements would give the new top rows the old top rows' heights.
+    getItemKey: (index) => rows[index]?.key ?? index,
   })
+
+  const fetchOlder = older.fetchNextPage
+  const loadOlder = useCallback(() => {
+    if (fetchingOlder.current) {
+      return
+    }
+    if (!hasMore && !older.isFetchNextPageError) {
+      return
+    }
+    const element = parentRef.current
+    if (element !== null) {
+      anchor.current = { scrollTop: element.scrollTop, totalSize: virtualizer.getTotalSize() }
+    }
+    fetchingOlder.current = true
+    void fetchOlder().finally(() => {
+      fetchingOlder.current = false
+    })
+  }, [fetchOlder, hasMore, older.isFetchNextPageError, virtualizer])
+  // The scroll listener is attached once; this ref keeps it pointed at the current loader.
+  const loadOlderRef = useRef(loadOlder)
+  useEffect(() => {
+    loadOlderRef.current = loadOlder
+  }, [loadOlder])
+
+  // A failed page shows its inline retry row and reports the localized error once, through the
+  // same toast every other screen uses (spec/11 §4.1).
+  const scrollbackError = older.isFetchNextPageError ? older.error : null
+  useEffect(() => {
+    if (scrollbackError !== null) {
+      reportError(scrollbackError)
+    }
+  }, [scrollbackError, reportError])
 
   useEffect(() => {
     const element = parentRef.current
@@ -149,10 +298,90 @@ export function ActivityStream({
     }
     const onScroll = () => {
       stick.current = isNearBottom(element)
+      // Reaching the top of the loaded history loads the next page (spec/11 §5.3). The loader
+      // itself ignores the call when no cursor remains or a request is already running.
+      if (element.scrollTop <= AUTO_LOAD_TOP_PX) {
+        loadOlderRef.current()
+      }
     }
     element.addEventListener("scroll", onScroll, { passive: true })
     return () => element.removeEventListener("scroll", onScroll)
   }, [])
+
+  // After an older page commits, the content above the snapshot got taller. Adding that height to
+  // `scrollTop` keeps the row the author was reading at the same screen position (spec/11 §5.3:
+  // "anchored so the first visible row does not move").
+  useEffect(() => {
+    const pending = anchor.current
+    if (pending === null) {
+      return
+    }
+    anchor.current = null
+    const element = parentRef.current
+    if (element === null) {
+      return
+    }
+    const added = virtualizer.getTotalSize() - pending.totalSize
+    if (added > 0) {
+      element.scrollTop = pending.scrollTop + added
+    }
+  }, [olderPageCount, virtualizer])
+
+  // A pending scroll anchor belongs to the session it was captured in. Reset the cursor and gap
+  // tracking with it, so the switch itself is never mistaken for a window slide.
+  useEffect(() => {
+    if (previousSessionId.current === session.id) {
+      return
+    }
+    previousSessionId.current = session.id
+    previousCursor.current = initialCursor
+    previousGapCount.current = gapCount
+    anchor.current = null
+    gapAnchor.current = null
+  }, [session.id, initialCursor, gapCount])
+
+  // The snapshot window slid while a page chain was cached. Record the first snapshot row's
+  // screen position before the repair rows are inserted above it.
+  useEffect(() => {
+    const cursorChanged = previousCursor.current !== initialCursor
+    previousCursor.current = initialCursor
+    if (!cursorChanged || older.data === undefined) {
+      return
+    }
+    const element = parentRef.current
+    const first = messages[0]
+    if (element === null || first === undefined) {
+      return
+    }
+    const key = `m-${first.message.id}`
+    const index = rows.findIndex((row) => row.key === key)
+    const offset = index < 0 ? undefined : virtualizer.getOffsetForIndex(index, "start")
+    if (offset === undefined) {
+      return
+    }
+    gapAnchor.current = { key, visualOffset: element.scrollTop - offset[0] }
+  }, [initialCursor, messages, older.data, rows, virtualizer])
+
+  // When the repaired rows commit, restore that row to the same screen position so the insertion
+  // above it does not drag the reading position down.
+  useEffect(() => {
+    const grew = gapCount !== previousGapCount.current
+    previousGapCount.current = gapCount
+    if (!grew) {
+      return
+    }
+    const pending = gapAnchor.current
+    gapAnchor.current = null
+    const element = parentRef.current
+    if (pending === null || element === null) {
+      return
+    }
+    const index = rows.findIndex((row) => row.key === pending.key)
+    const offset = index < 0 ? undefined : virtualizer.getOffsetForIndex(index, "start")
+    if (offset !== undefined) {
+      element.scrollTop = offset[0] + pending.visualOffset
+    }
+  }, [gapCount, rows, virtualizer])
 
   // Follow the tail. This runs on every row append **and** on every growth of the last row's
   // content (`tail`), which is what streaming produces: the typing indicator and its growing text
@@ -202,7 +431,12 @@ export function ActivityStream({
               }}
               className="pb-2"
             >
-              <RowView row={row} sessionId={session.id} pendingPreview={pendingPreview} />
+              <RowView
+                row={row}
+                sessionId={session.id}
+                pendingPreview={pendingPreview}
+                onLoadOlder={loadOlder}
+              />
             </div>
           )
         })}
@@ -215,12 +449,49 @@ function RowView({
   row,
   sessionId,
   pendingPreview,
+  onLoadOlder,
 }: {
   row: Row
   sessionId: number
   pendingPreview?: string
+  onLoadOlder: () => void
 }) {
   const { t } = useTranslation()
+
+  if (row.kind === "history") {
+    if (row.state === "loading") {
+      return (
+        <div className="flex items-center justify-center gap-2 py-3 text-xs text-muted-foreground">
+          <Loader2 aria-hidden="true" className="size-3 animate-spin" />
+          {t("agent:stream.loading_older")}
+        </div>
+      )
+    }
+    if (row.state === "error") {
+      return (
+        <div className="flex items-center justify-center gap-2 py-3 text-xs text-muted-foreground">
+          {t("agent:stream.load_older_error")}
+          <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={onLoadOlder}>
+            {t("common:retry")}
+          </Button>
+        </div>
+      )
+    }
+    if (row.state === "more") {
+      return (
+        <div className="flex justify-center py-2">
+          <Button variant="ghost" size="sm" className="text-xs" onClick={onLoadOlder}>
+            {t("agent:stream.load_older")}
+          </Button>
+        </div>
+      )
+    }
+    return (
+      <div className="py-4 text-center text-xs text-muted-foreground">
+        {t("agent:stream.start")}
+      </div>
+    )
+  }
 
   if (row.kind === "divider") {
     return (

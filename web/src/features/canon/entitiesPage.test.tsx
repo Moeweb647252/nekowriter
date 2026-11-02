@@ -6,6 +6,7 @@
  * old rendering "Chapter 3" is exactly the visible symptom.
  */
 import { render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { beforeAll, describe, expect, it, vi } from "vitest"
 import i18n from "i18next"
 
@@ -53,10 +54,16 @@ vi.mock("@/api/hooks/useCanon", () => ({
     ],
   }),
   useSetProtagonist: () => ({ mutate: vi.fn() }),
+  useCreateEntity: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 vi.mock("@/api/hooks/tracks", () => ({
-  useTracks: () => ({ data: [{ id: 1, kind: "main", title: "" }] }),
+  useTracks: () => ({
+    data: [
+      { id: 1, kind: "main", title: "", canon_mode: "canon" },
+      { id: 3, kind: "side", title: "Side", canon_mode: "isolated" },
+    ],
+  }),
 }))
 
 vi.mock("@/features/canon/chapterIndex", async (importOriginal) => {
@@ -76,5 +83,12 @@ describe("EntitiesPage", () => {
     render(<EntitiesPage />)
     expect(screen.getByText("Chapter 1")).toBeInTheDocument()
     expect(screen.queryByText("Chapter 3")).not.toBeInTheDocument()
+  })
+
+  it("opens the create dialog from the filter bar", async () => {
+    const user = userEvent.setup()
+    render(<EntitiesPage />)
+    await user.click(screen.getByRole("button", { name: "New entity" }))
+    expect(screen.getByLabelText("Kind")).toBeInTheDocument()
   })
 })

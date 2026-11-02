@@ -1215,6 +1215,160 @@ async fn setting_the_protagonist_moves_the_flag() {
     assert_eq!(protagonists, 1, "at most one protagonist per book");
 }
 
+/// A relation PATCH can clear its nullable chapters: explicit `null` writes NULL, while an
+/// omitted field leaves the column alone (spec/10 §2.4, spec/06 §1.2). This is the server half of
+/// G4's clear control (D-161).
+#[tokio::test]
+async fn a_relation_patch_sets_and_clears_its_chapters() {
+    let app = TestApp::new().await;
+    let (book_id, track_id) = book(&app).await;
+    let first_chapter = id_of(&app.create_chapter(track_id, "One").await);
+    let second_chapter = id_of(&app.create_chapter(track_id, "Two").await);
+    let source = create_entity(&app, book_id, "character", "Lin Fan").await;
+    let target = create_entity(&app, book_id, "character", "Zhang San").await;
+    let (status, relation) = app
+        .post(
+            &format!("/api/books/{book_id}/relations"),
+            json!({
+                "source_id": id_of(&source),
+                "target_id": id_of(&target),
+                "kind": "ally",
+                "since_chapter_id": first_chapter,
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{relation}");
+    let relation_id = id_of(&relation);
+
+    // Control: an explicit value still writes the column.
+    let (status, body) = app
+        .patch(
+            &format!("/api/relations/{relation_id}"),
+            json!({ "since_chapter_id": second_chapter }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, row) = app.get(&format!("/api/relations/{relation_id}")).await;
+    assert_eq!(status, StatusCode::OK, "{row}");
+    assert_eq!(
+        row["since_chapter_id"].as_i64(),
+        Some(i64::from(second_chapter)),
+        "a value sets since_chapter_id: {row}"
+    );
+
+    // An explicit null clears it; without deserialize_some it would decode as an absent field and
+    // the PATCH would return 200 without writing anything.
+    let (status, body) = app
+        .patch(
+            &format!("/api/relations/{relation_id}"),
+            json!({ "since_chapter_id": null }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, row) = app.get(&format!("/api/relations/{relation_id}")).await;
+    assert_eq!(status, StatusCode::OK, "{row}");
+    assert!(
+        row["since_chapter_id"].is_null(),
+        "an explicit null clears since_chapter_id: {row}"
+    );
+
+    // Same for until_chapter_id.
+    let (status, body) = app
+        .patch(
+            &format!("/api/relations/{relation_id}"),
+            json!({ "until_chapter_id": first_chapter }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (_, row) = app.get(&format!("/api/relations/{relation_id}")).await;
+    assert_eq!(
+        row["until_chapter_id"].as_i64(),
+        Some(i64::from(first_chapter)),
+        "a value sets until_chapter_id: {row}"
+    );
+    let (status, body) = app
+        .patch(
+            &format!("/api/relations/{relation_id}"),
+            json!({ "until_chapter_id": null }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (_, row) = app.get(&format!("/api/relations/{relation_id}")).await;
+    assert!(
+        row["until_chapter_id"].is_null(),
+        "an explicit null clears until_chapter_id: {row}"
+    );
+}
+
+/// A timeline event PATCH can clear its chapter: explicit `null` writes NULL and records a
+/// change, while an omitted field leaves the column alone (spec/10 §2.4, spec/06 §1.4). Same
+/// defect class as the relation chapters (18.4 review).
+#[tokio::test]
+async fn a_timeline_event_patch_sets_and_clears_its_chapter() {
+    let app = TestApp::new().await;
+    let (book_id, track_id) = book(&app).await;
+    let first_chapter = id_of(&app.create_chapter(track_id, "One").await);
+    let second_chapter = id_of(&app.create_chapter(track_id, "Two").await);
+    let (status, event) = app
+        .post(
+            &format!("/api/books/{book_id}/timeline"),
+            json!({ "title": "Battle", "chapter_id": first_chapter }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{event}");
+    let event_id = id_of(&event);
+    assert_eq!(
+        change_log_of(&app, ChangeTargetType::TimelineEvent, event_id)
+            .await
+            .len(),
+        1,
+        "the create change"
+    );
+
+    // Control: a value still sets the chapter.
+    let (status, body) = app
+        .patch(
+            &format!("/api/timeline-events/{event_id}"),
+            json!({ "chapter_id": second_chapter }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (_, row) = app.get(&format!("/api/timeline-events/{event_id}")).await;
+    assert_eq!(
+        row["chapter_id"].as_i64(),
+        Some(i64::from(second_chapter)),
+        "a value sets chapter_id: {row}"
+    );
+    assert_eq!(
+        change_log_of(&app, ChangeTargetType::TimelineEvent, event_id)
+            .await
+            .len(),
+        2,
+        "the value patch records a change"
+    );
+
+    // An explicit null clears it; without deserialize_some it decodes as absent (200, no write).
+    let (status, body) = app
+        .patch(
+            &format!("/api/timeline-events/{event_id}"),
+            json!({ "chapter_id": null }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (_, row) = app.get(&format!("/api/timeline-events/{event_id}")).await;
+    assert!(
+        row["chapter_id"].is_null(),
+        "an explicit null clears chapter_id: {row}"
+    );
+    assert_eq!(
+        change_log_of(&app, ChangeTargetType::TimelineEvent, event_id)
+            .await
+            .len(),
+        3,
+        "the clear records a real change row"
+    );
+}
+
 // ───────────────────────────── helpers ─────────────────────────────
 
 /// The typed `before` snapshot of a change row, as JSON (spec/02 §4).

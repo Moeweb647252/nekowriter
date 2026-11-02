@@ -5,6 +5,7 @@
  * page, and the event's entities as chips.
  */
 import { render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { beforeAll, describe, expect, it, vi } from "vitest"
 import i18n from "i18next"
 
@@ -51,6 +52,7 @@ vi.mock("@/api/hooks/useCanon", () => ({
   useCreateTimelineEvent: () => ({ mutate: vi.fn() }),
   useDeleteTimelineEvent: () => ({ mutate: vi.fn() }),
   useMoveTimelineEvent: () => ({ mutate: vi.fn() }),
+  usePatchTimelineEvent: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 vi.mock("@/api/hooks/tracks", () => ({
@@ -105,5 +107,14 @@ describe("TimelinePage", () => {
       "/books/1/chapters/3",
     )
     expect(screen.getByText("Lin Fan")).toBeInTheDocument()
+  })
+
+  it("opens the edit dialog from a row's Edit action", async () => {
+    render(<TimelinePage />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: "Edit" }))
+    expect(
+      screen.getByRole("heading", { name: "Edit timeline event" }),
+    ).toBeInTheDocument()
   })
 })

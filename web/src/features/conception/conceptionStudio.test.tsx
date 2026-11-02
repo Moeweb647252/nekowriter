@@ -78,6 +78,14 @@ vi.mock("@/api/hooks/sessions", async () => {
     useSendSessionMessage: () => ({ mutate: vi.fn(), isPending: false }),
     useSessionControl: () => ({ mutate: sessionControl, isPending: false }),
     useResumeSession: () => ({ mutate: resume, isPending: false }),
+    useOlderMessages: () => ({
+      data: undefined,
+      hasNextPage: false,
+      isFetchingNextPage: false,
+      isFetchNextPageError: false,
+      error: null,
+      fetchNextPage: vi.fn(),
+    }),
   }
 })
 

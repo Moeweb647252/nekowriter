@@ -1,19 +1,24 @@
 /** The entity detail pane (PROJECT §8.8): header, aliases, summary, description, state,
  * attributes, relations, appearances and history. */
 import { useState } from "react"
+import { Link } from "react-router"
 import { useTranslation } from "react-i18next"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { Plus, Trash2 } from "lucide-react"
+import { MoreHorizontal, Plus, Trash2 } from "lucide-react"
 
 import type { EntityDto } from "@/api/gen/EntityDto"
 import type { EntityPatch } from "@/api/gen/EntityPatch"
 import type { RelationDto } from "@/api/gen/RelationDto"
+import type { RelationPatch } from "@/api/gen/RelationPatch"
+import type { RelationStatus } from "@/api/gen/RelationStatus"
 import {
   useDeleteEntity,
   useEntities,
   useEntity,
+  useEntityHistory,
   usePatchEntity,
+  usePatchRelation,
   useCreateRelation,
   useDeleteRelation,
   useSetProtagonist,
@@ -21,6 +26,7 @@ import {
 import { useTracks } from "@/api/hooks/tracks"
 import { useErrorToast } from "@/components/common/ErrorToast"
 import { ChangeList } from "@/features/canon/ChangeList"
+import { EntityMergeDialog } from "@/features/canon/EntityMergeDialog"
 import { GoalsReferencedBy } from "@/features/canon/GoalsReferencedBy"
 import {
   chapterRefLabel,
@@ -29,7 +35,14 @@ import {
 } from "@/features/canon/chapterIndex"
 import { Importance } from "@/features/canon/EntitiesPage"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { isComposing } from "@/lib/hotkeys"
 import { Textarea } from "@/components/ui/textarea"
@@ -49,6 +62,7 @@ export function EntityDetail({ bookId, entityId }: EntityDetailProps) {
   const patch = usePatchEntity(bookId)
   const remove = useDeleteEntity(bookId)
   const protagonist = useSetProtagonist(bookId)
+  const [mergeOpen, setMergeOpen] = useState(false)
 
   if (entity.isPending) {
     return <Skeleton className="m-4 h-64" />
@@ -85,6 +99,18 @@ export function EntityDetail({ bookId, entityId }: EntityDetailProps) {
             >
               {t("canon:make_protagonist")}
             </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="ghost" aria-label={t("canon:entity_actions")}>
+                  <MoreHorizontal className="size-3.5" aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => setMergeOpen(true)}>
+                  {t("canon:entity_merge.action")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button
               size="sm"
               variant="ghost"
@@ -149,18 +175,96 @@ export function EntityDetail({ bookId, entityId }: EntityDetailProps) {
         onChange={(attributes) => save({ attributes })}
       />
 
-      <RelationsEditor bookId={bookId} entity={data} />
+      <RelationsEditor
+        bookId={bookId}
+        entity={data}
+        chapterIndex={chapterIndex}
+      />
       <Appearances entity={data} chapterIndex={chapterIndex} />
 
       <GoalsReferencedBy bookId={bookId} entityId={entityId} />
 
-      <section>
-        <h3 className="mb-1 text-xs font-medium text-muted-foreground">
+      <HistorySection
+        bookId={bookId}
+        entityId={entityId}
+        recentChanges={data.recent_changes}
+      />
+
+      {mergeOpen ? (
+        <EntityMergeDialog
+          bookId={bookId}
+          target={data}
+          open
+          onOpenChange={setMergeOpen}
+        />
+      ) : null}
+    </div>
+  )
+}
+
+/** The detail pane's history preview length; more rows mean the preview is truncated (spec/08 §8.8). */
+export const DETAIL_CHANGE_LIMIT = 20
+
+/** The entity history preview and the full-history toggle (spec/06 §3, spec/11 §5.5, D-161). */
+export function HistorySection({
+  bookId,
+  entityId,
+  recentChanges,
+}: {
+  bookId: number
+  entityId: number
+  recentChanges: EntityDto["recent_changes"]
+}) {
+  const { t } = useTranslation()
+  // The expansion resets on every entity switch, including A → B → A: remembering A would
+  // silently re-open its history on the way back (plan §2.5).
+  const [expandedFor, setExpandedFor] = useState<number | null>(null)
+  const [previousEntityId, setPreviousEntityId] = useState(entityId)
+  if (previousEntityId !== entityId) {
+    setPreviousEntityId(entityId)
+    setExpandedFor(null)
+  }
+  const expanded = expandedFor === entityId
+  const history = useEntityHistory(expanded ? entityId : undefined)
+  return (
+    <section>
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <h3 className="text-xs font-medium text-muted-foreground">
           {t("canon:history")}
         </h3>
-        <ChangeList bookId={bookId} changes={data.recent_changes} compact />
-      </section>
-    </div>
+        {!expanded && recentChanges.length === DETAIL_CHANGE_LIMIT ? (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setExpandedFor(entityId)}
+          >
+            {t("canon:show_full_history")}
+          </Button>
+        ) : null}
+      </div>
+      {expanded ? (
+        history.isPending ? (
+          <Skeleton className="h-24" />
+        ) : (
+          <>
+            <ChangeList bookId={bookId} changes={history.data ?? []} compact />
+            {history.data !== undefined && history.data.length >= 100 ? (
+              <p className="mt-2 text-xs text-muted-foreground">
+                {t("canon:history_capped", { count: 100 })}{" "}
+                <Link
+                  to={`/books/${bookId}/canon/changes`}
+                  className="text-primary underline-offset-2 hover:underline"
+                >
+                  {t("canon:history_capped_link")}
+                </Link>
+              </p>
+            ) : null}
+          </>
+        )
+      ) : (
+        <ChangeList bookId={bookId} changes={recentChanges} compact />
+      )}
+    </section>
   )
 }
 
@@ -337,7 +441,15 @@ export function AttributesEditor({
 }
 
 /** The relations list with an add-relation row (PROJECT §8.8). */
-function RelationsEditor({ bookId, entity }: { bookId: number; entity: EntityDto }) {
+export function RelationsEditor({
+  bookId,
+  entity,
+  chapterIndex,
+}: {
+  bookId: number
+  entity: EntityDto
+  chapterIndex: ChapterIndex
+}) {
   const { t } = useTranslation()
   const showError = useErrorToast()
   const create = useCreateRelation(bookId)
@@ -361,8 +473,10 @@ function RelationsEditor({ bookId, entity }: { bookId: number; entity: EntityDto
           entity.relations.map((relation) => (
             <RelationRow
               key={relation.id}
+              bookId={bookId}
               entity={entity}
               relation={relation}
+              chapterIndex={chapterIndex}
               nameOf={nameOf}
               onDelete={() => remove.mutate(relation.id, { onError: showError })}
             />
@@ -424,23 +538,228 @@ function RelationsEditor({ bookId, entity }: { bookId: number; entity: EntityDto
 
 /** One relation, phrased from this entity's perspective (spec/06 §1.2). */
 function RelationRow({
+  bookId,
   entity,
   relation,
+  chapterIndex,
   nameOf,
   onDelete,
 }: {
+  bookId: number
   entity: EntityDto
   relation: RelationDto
+  chapterIndex: ChapterIndex
   nameOf: (id: number) => string
   onDelete: () => void
 }) {
   const { t } = useTranslation()
+  const showError = useErrorToast()
+  const patch = usePatchRelation(bookId)
+  const [editing, setEditing] = useState(false)
+  // The form edits the stored kind names as they are; the row's label follows the source →
+  // target direction (spec/06 §1.2, spec/11 §5.5).
+  const [kind, setKind] = useState(relation.kind)
+  const [inverseKind, setInverseKind] = useState(relation.inverse_kind)
+  const [description, setDescription] = useState(relation.description)
+  const [status, setStatus] = useState<RelationStatus>(relation.status)
+  const [since, setSince] = useState(
+    relation.since_chapter_id === null ? "" : String(relation.since_chapter_id),
+  )
+  const [until, setUntil] = useState(
+    relation.until_chapter_id === null ? "" : String(relation.until_chapter_id),
+  )
+  const [note, setNote] = useState("")
+
   const isSource = relation.source_id === entity.id
-  const kind = isSource || relation.inverse_kind === "" ? relation.kind : relation.inverse_kind
+  const shownKind =
+    isSource || relation.inverse_kind === "" ? relation.kind : relation.inverse_kind
   const other = isSource ? relation.target_id : relation.source_id
+  const chapterOptions = Array.from(chapterIndex.values()).sort((left, right) => {
+    if (left.trackKind !== right.trackKind) {
+      return left.trackKind === "main" ? -1 : 1
+    }
+    if (left.trackId !== right.trackId) {
+      return left.trackId - right.trackId
+    }
+    return left.number - right.number
+  })
+
+  const startEdit = () => {
+    setKind(relation.kind)
+    setInverseKind(relation.inverse_kind)
+    setDescription(relation.description)
+    setStatus(relation.status)
+    setSince(
+      relation.since_chapter_id === null ? "" : String(relation.since_chapter_id),
+    )
+    setUntil(
+      relation.until_chapter_id === null ? "" : String(relation.until_chapter_id),
+    )
+    setNote("")
+    setEditing(true)
+  }
+
+  const save = () => {
+    const next: RelationPatch = {}
+    if (kind !== relation.kind) {
+      next.kind = kind
+    }
+    if (inverseKind !== relation.inverse_kind) {
+      next.inverse_kind = inverseKind
+    }
+    if (description !== relation.description) {
+      next.description = description
+    }
+    if (status !== relation.status) {
+      next.status = status
+    }
+    if (since !== (relation.since_chapter_id === null ? "" : String(relation.since_chapter_id))) {
+      next.since_chapter_id = since === "" ? null : Number(since)
+    }
+    if (until !== (relation.until_chapter_id === null ? "" : String(relation.until_chapter_id))) {
+      next.until_chapter_id = until === "" ? null : Number(until)
+    }
+    if (note.trim() !== "") {
+      next.note = note.trim()
+    }
+    if (Object.keys(next).length === 0) {
+      setEditing(false)
+      return
+    }
+    patch.mutate(
+      { id: relation.id, patch: next },
+      {
+        onSuccess: () => setEditing(false),
+        onError: showError,
+      },
+    )
+  }
+
+  if (editing) {
+    return (
+      <div className="space-y-2 rounded-md border p-2 text-sm">
+        <p className="text-xs text-muted-foreground">
+          {t("canon:relation_edit.perspective", {
+            source: nameOf(relation.source_id),
+            target: nameOf(relation.target_id),
+          })}
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-1">
+            <Label htmlFor={`relation-kind-${relation.id}`}>
+              {t("canon:relation_edit.kind")}
+            </Label>
+            <Input
+              id={`relation-kind-${relation.id}`}
+              value={kind}
+              onChange={(event) => setKind(event.target.value)}
+              className="h-7 text-xs"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor={`relation-inverse-${relation.id}`}>
+              {t("canon:relation_edit.inverse_kind")}
+            </Label>
+            <Input
+              id={`relation-inverse-${relation.id}`}
+              value={inverseKind}
+              onChange={(event) => setInverseKind(event.target.value)}
+              className="h-7 text-xs"
+            />
+          </div>
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor={`relation-description-${relation.id}`}>
+            {t("canon:relation_edit.description")}
+          </Label>
+          <Textarea
+            id={`relation-description-${relation.id}`}
+            rows={2}
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+          />
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          <div className="space-y-1">
+            <Label htmlFor={`relation-status-${relation.id}`}>
+              {t("canon:relation_edit.status")}
+            </Label>
+            <select
+              id={`relation-status-${relation.id}`}
+              value={status}
+              onChange={(event) => setStatus(event.target.value as RelationStatus)}
+              className="h-7 w-full rounded-md border bg-background px-2 text-xs"
+            >
+              {(["active", "ended"] as RelationStatus[]).map((value) => (
+                <option key={value} value={value}>
+                  {t(`canon:relation_status.${value}`)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor={`relation-since-${relation.id}`}>
+              {t("canon:relation_edit.since")}
+            </Label>
+            <select
+              id={`relation-since-${relation.id}`}
+              value={since}
+              onChange={(event) => setSince(event.target.value)}
+              className="h-7 w-full rounded-md border bg-background px-2 text-xs"
+            >
+              <option value="">{t("canon:relation_edit.no_chapter")}</option>
+              {chapterOptions.map((chapter) => (
+                <option key={chapter.id} value={chapter.id}>
+                  {chapterRefLabel(t, chapterIndex, chapter.id)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor={`relation-until-${relation.id}`}>
+              {t("canon:relation_edit.until")}
+            </Label>
+            <select
+              id={`relation-until-${relation.id}`}
+              value={until}
+              onChange={(event) => setUntil(event.target.value)}
+              className="h-7 w-full rounded-md border bg-background px-2 text-xs"
+            >
+              <option value="">{t("canon:relation_edit.no_chapter")}</option>
+              {chapterOptions.map((chapter) => (
+                <option key={chapter.id} value={chapter.id}>
+                  {chapterRefLabel(t, chapterIndex, chapter.id)}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor={`relation-note-${relation.id}`}>
+            {t("canon:relation_edit.change_note")}
+          </Label>
+          <Textarea
+            id={`relation-note-${relation.id}`}
+            rows={2}
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+          />
+        </div>
+        <div className="flex justify-end gap-1">
+          <Button size="sm" variant="outline" onClick={() => setEditing(false)}>
+            {t("common:cancel")}
+          </Button>
+          <Button size="sm" onClick={save}>
+            {t("common:save")}
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex items-center gap-2 text-sm">
-      <span className="text-muted-foreground">{kind}</span>
+      <span className="text-muted-foreground">{shownKind}</span>
       <span className="truncate">{nameOf(other)}</span>
       {relation.status === "ended" ? (
         <span className="text-xs text-muted-foreground">
@@ -451,6 +770,13 @@ function RelationRow({
         size="sm"
         variant="ghost"
         className="ml-auto"
+        onClick={startEdit}
+      >
+        {t("canon:relation_edit.edit")}
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
         aria-label={t("canon:remove_relation")}
         onClick={onDelete}
       >
