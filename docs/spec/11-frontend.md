@@ -261,7 +261,9 @@ message and a retry.
 - `AgentPanel`: chooses the session (pinned, or the chapter's open session, or the book's most
   recently updated), fetches `SessionSnapshotDto`, and renders:
   - `SessionHeader` (role icon: Sparkles / Search / ListTree (planner) / PenLine / ClipboardCheck
-    / Archive; title; status; model; a session switcher dropdown);
+    / Archive; title; status; model, followed by " · {effort}" when `SessionDto.effort` is set —
+    `settings:value.effort.<v>` with the raw value as the fallback (D-162); a session switcher
+    dropdown);
   - `SessionControls` (by status, PROJECT §8.6), `GranularityControl`, `AutoPauseSwitch`
     (writer only, PATCH session);
   - `HeldCallReview` (a `held` session only): resolves `SessionDto.held_tool_call_id` against the
@@ -459,6 +461,43 @@ now-stranded values and shows an "Options removed" notice (`settings:option_clea
 dropping them silently; a stored mismatch (written before the rule existed) is flagged in the table
 and in the dialog, with a one-click removal that PATCHes exactly those fields away.
 
+**Thinking effort** (spec/04 §5.1, D-162) is not one of those options. The served table no longer
+lists `reasoning_effort` or `effort`, and the dialog has its own **Thinking effort** section
+after the protocol options.
+- **Levels** follow the protocol:
+  - `anthropic`: five checkboxes in canonical order (`settings:value.effort.*`);
+  - `openai`: a chip input. Enter or **Add** appends a level, × removes one, and the order is the
+    entry order. Client checks mirror the server (pattern, no duplicates, at most 8);
+  - `mock`: a note replaces the section.
+- **Default level**: a select with "None — the provider decides" plus the levels. It resets to
+  None when its level is removed.
+- **Protocol switch**: switching the provider to another protocol removes the levels the new
+  protocol cannot send, and the "Options removed" notice names them.
+- **Stored mismatch**: `ignored_effort_levels` is flagged in the table and in the dialog like
+  `ignored_options`. Its fix PATCH removes those levels, and clears the default if it was one of
+  them.
+- **Whole profile**: every PATCH sends the whole profile, the levels and default included.
+- **Table**: a **Thinking effort** column shows the levels joined with " · " and marks the default
+  ("high (default)"); "—" means none.
+
+**Settings › Agent roles** has one row per role (`AGENT_ROLES`): a model select and an effort
+select.
+- **Entries**: the effort select lists the role's resolved model's levels.
+- **Unset label**: "Same as Writer" when the planner follows the writer's model; otherwise "Model
+  default ({level})" when the model has a default; otherwise "Provider default".
+- **Disabled**: it reads "No effort levels" when the model has none or no model resolves.
+- **Stale value**: a stored effort that is not a level of the resolved model stays selected as
+  "{level} (not supported)", and a hint names what sessions use instead.
+- **Model change**: changing a role's model keeps its effort. **Clear all roles** clears both.
+- **Patch**: `roles_defaults` is PATCHed whole.
+
+**Book settings › Model overrides per role** gives each row an effort select whose unset entry is
+"Global setting ({effective level})". It locks with the model select and saves with the form, as
+part of the whole `model_overrides` object.
+
+Both pages derive the labels from `resolveRoleEffort` in `features/settings/roleModels.ts`, which
+mirrors spec/03 §4 step 1. The `model.effort_unsupported` creation warning shows as a toast.
+
 ## 6. i18n
 
 - `i18n/index.ts`: i18next with bundled resources (all namespaces imported statically),
@@ -554,4 +593,22 @@ test imports the file by relative path).
   - full-history toggle at 20 rows and its reset;
   - `TimelineEventDialog`: pre-fill, changed fields only, no position fields, Referenced-by gated
     by Goals.
+- Thinking effort (D-162):
+  - the Models dialog:
+    - the Anthropic checkboxes, the OpenAI chips (a duplicate and a pattern violation are
+      refused) and the mock note;
+    - the default resets when its level is removed;
+    - the protocol-switch notice;
+    - the mismatch fix carries the remaining levels;
+    - neither old effort option is offered;
+  - Agent roles:
+    - an effort select per row and the three unset labels;
+    - the disabled state and the stale marker;
+    - Clear all clears the efforts;
+    - the PATCH carries the whole object;
+  - Book settings: an effort select per row, the "Global setting ({level})" label, saving with
+    `model_overrides`;
+  - `resolveRoleEffort`: the resolution cases of the plan, mirrored from the server test;
+  - `SessionHeader` shows the effort;
+  - `model.effort_unsupported` has an `errors:` key in both locales.
 

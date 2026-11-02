@@ -132,6 +132,18 @@ transaction:
    Copy the profile and provider into `model_snapshot` (without the API key; the key is resolved
    from `providers` at every call so key rotation works). Resolve `cache_ttl: "auto"` here
    (spec/04 §3), so the TTL never changes within a session.
+   **Resolve the thinking effort** (spec/04 §5.1, D-162). The candidates are
+   `book.model_overrides.efforts[role]` → `roles.defaults.efforts[role]`, and when the planner's
+   model came from a writer entry, also `book.model_overrides.efforts.writer` →
+   `roles.defaults.efforts.writer`. The first candidate that is one of the profile's
+   `effort_levels` and that the protocol can send wins. Otherwise the profile's `default_effort`
+   applies when it is sendable, and otherwise there is none. A set candidate that is skipped adds
+   the warning `model.effort_unsupported`, and the session still starts. A planner on its own model
+   never inherits the writer's effort. The level is written into `model_snapshot.options`
+   (`reasoning_effort` for `openai`, `effort` for `anthropic`, nothing for `mock`), so it is frozen
+   with the snapshot and a rollover child inherits it (§9). A changed setting reaches only new
+   sessions, because an effort change mid-session would invalidate the provider's cache. Every
+   creation path, the debug sessions included, uses this one resolver.
 2. **Freeze prompts and canon systems**: copy the book's `settings.canon_systems` into
    `agent_sessions.canon_systems` (a rollover child copies its parent's, §9; a session without a
    book stores NULL, which means all on). Render the role's system prompt (`<role>.system`) and

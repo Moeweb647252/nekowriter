@@ -81,7 +81,7 @@ set, plus the extra headers.
   "parallel_tool_calls": <req.parallel_tool_calls>,     // sent only when options.send_parallel_tool_calls (default true)
   "max_tokens": <max_output_tokens>,                    // or "max_completion_tokens" per options.max_tokens_field
   "temperature": <t>,                                   // only when options.temperature is set
-  "reasoning_effort": "<e>"                             // only when options.reasoning_effort is set
+  "reasoning_effort": "<e>"                             // only when options.reasoning_effort is set: the role's resolved level (§5.1)
   /* …options.extra_body merged last (shallow) */
 }
 ```
@@ -129,7 +129,7 @@ set, plus the extra headers.
   "tools": [ { "name", "description", "input_schema": <schema>, "eager_input_streaming": true } ],
   "tool_choice": { "type": "auto", "disable_parallel_tool_use": <!req.parallel_tool_calls> },
   "thinking": { "type": "adaptive", "display": "<summarized|omitted>" },
-  "output_config": { "effort": "<low|medium|high|xhigh|max>" },
+  "output_config": { "effort": "<low|medium|high|xhigh|max>" },   // only when options.effort is set: the role's resolved level (§5.1)
   "cache_control": { "type": "ephemeral", "ttl": "1h" },       // top-level automatic caching of the growing tail; omit "ttl" for 5m
   "messages": [ … ],
   "fallbacks": "default"                                         // only with refusal_fallback
@@ -143,6 +143,10 @@ Rules from the current API (API version `2026-10-21`):
   Fable 5.1) reject it. Use `auto` and steer through prompts and nudges (spec/03 §5.6).
 - `thinking: {type: "adaptive"}` is valid on all current models. Do not send `budget_tokens` or
   `{type: "disabled"}`, which several current models reject. Effort is the depth control.
+- `output_config` is sent **only** when the snapshot carries an effort (D-162). An omitted effort
+  defaults to `high` on most models but to `medium` on Opus 5.5 and Haiku 5.5, and some models
+  (Sonnet 4.5, Haiku 4.5) reject the parameter. A profile with no effort levels therefore sends
+  none, and migration 0009 made the old implicit `high` explicit (spec/02 §1).
 - `eager_input_streaming: true` on every tool, so long `insert_text` arguments stream
   immediately. The client must then validate the input itself, which the server already does
   (spec/03 §5.2). Set it false for proxies that reject the field (`options.eager_input_streaming`).
@@ -221,13 +225,13 @@ test.
 |---|---|---|---|
 | `reasoning_replay` | **both** | `openai.rs`: echoes `reasoning_content` on replayed assistant turns when `always`; `anthropic.rs`: replays the stored content blocks verbatim regardless | `never` |
 | `cache_ttl` | **both** | resolved by the server into `CacheHints.ttl`, then used for the Anthropic `cache_control` breakpoints; OpenAI relies on automatic prefix caching and sends nothing for it | `auto` (§3 Caching) |
-| `reasoning_effort` | openai | `reasoning_effort` in the body — free-form string because gateways accept different values | — |
+| `reasoning_effort` | openai | `reasoning_effort` in the body. **Not a profile option** (D-162): the session writes the role's resolved level here (§5.1) | — |
 | `max_tokens_field` | openai | name of the field that carries the output cap: `max_tokens` or `max_completion_tokens` | `max_tokens` |
 | `send_parallel_tool_calls` | openai | whether `parallel_tool_calls` is sent at all | `true` |
 | `stream_usage` | openai | whether `stream_options.include_usage` is sent | `true` |
 | `temperature` | openai | `temperature` in the body. The Anthropic adapter must **never** send it (§3) | — |
 | `extra_body` | openai | raw JSON merged into the body **last (shallow)**, so it wins over every field above (§1) | — |
-| `effort` | anthropic | `output_config.effort` | `high` |
+| `effort` | anthropic | `output_config.effort`, sent only when set. **Not a profile option** (D-162): the session writes the role's resolved level here (§5.1) | — (omitted) |
 | `thinking_display` | anthropic | `thinking.display` | `summarized` |
 | `refusal_fallback` | anthropic | the `anthropic-beta` header plus `fallbacks: "default"` | `false` |
 | `eager_input_streaming` | anthropic | `eager_input_streaming` on every tool | `true` |
@@ -256,6 +260,58 @@ succeeded (D-132). Therefore:
   TypeScript copy, so the UI cannot offer a field the wire cannot carry.
 - A value equal to the option's default is not "set" and is neither refused nor reported; profiles
   are stored with every field serialized, so treating defaults as deviations would flag every row.
+
+`reasoning_effort` and `effort` stay in `ModelOptions` and in the wire test, which iterates
+`ModelOptionKey::ALL`, because the snapshot carries the resolved level in them. They are not
+profile options: `ModelOptionKey::PROFILE` (`ALL` without them) is what
+`GET /provider-presets/options` publishes and what a profile's `options` may hold.
+`ModelOptionsDto` has neither field and denies unknown fields, so a stale client that sends one
+gets a 400 rather than a silent drop. `options.extra_body` may not contain `reasoning_effort`
+(`400 validation.failed`, `details.fields.extra_body`), because it is merged last (§1) and would
+override the role's level unseen.
+
+### 5.1 Thinking effort (D-162)
+
+**Thinking effort** is the protocol-neutral setting. The **model profile** declares which levels
+exist, and the **role** chooses one. The protocol decides the wire field:
+
+| Protocol | Wire field | Allowed levels (`EffortRule`) |
+|---|---|---|
+| `openai` | `reasoning_effort` | `Free`: any string matching `^[A-Za-z0-9_-]{1,32}$` (gateways differ) |
+| `anthropic` | `output_config.effort` | `Closed`: `low`, `medium`, `high`, `xhigh`, `max` |
+| `mock` | none | `None`: the Demo provider ignores every option (§5) |
+
+**The model profile** has two fields: `model_profiles.effort_levels` and
+`model_profiles.default_effort` (spec/02 §2).
+- **`effort_levels`** lists the levels this model accepts, in display order. An empty list means
+  that no effort is ever sent.
+- **`default_effort`** is the level a role that chooses none gets. `NULL` means that nothing is
+  sent and the provider decides.
+
+The levels belong to the model because they differ per model even within one protocol. Opus 4.6
+has no `xhigh`, Opus 4.5 accepts only `low`–`high`, and Haiku 4.5 rejects the parameter.
+
+**Validation** on `POST` / `PATCH /model-profiles` returns `400 validation.failed` with
+`details.fields.effort_levels` or `default_effort`:
+- at most 8 levels, each matching the rule, with no duplicates;
+- on `anthropic`, the levels are stored in canonical order;
+- on `mock`, the list is empty;
+- the default must be one of the levels.
+
+**Stored mismatch.** After a provider protocol change, the stored levels that the new protocol
+cannot send are listed in `ModelProfileDto.ignored_effort_levels`, and the startup scan logs them.
+They are reported, never a failed read, like `ignored_options`.
+
+**The role** chooses `RoleModels.efforts[role]`, globally and per book (spec/02 §4). The session
+resolves the level once, at creation (spec/03 §4 step 1), and writes it into
+`model_snapshot.options`:
+- `openai` → `reasoning_effort`;
+- `anthropic` → `effort`;
+- `mock` → nothing.
+
+It is frozen there for the session and its rollover chain, because a top-level effort change
+between requests invalidates the provider's message cache. A choice that the resolved model does
+not list is skipped, with the warning `model.effort_unsupported`.
 
 ## 6. Retry policy (used by the runtime)
 
@@ -305,8 +361,8 @@ language) picks the variant.
 
 | Preset | Protocol | Base URL | Defaults |
 |---|---|---|---|
-| Anthropic | anthropic | `https://api.anthropic.com` | Suggested models: `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5` (context 1,000,000; max output 128,000; options `effort: high`). `refusal_fallback` stays off for Haiku 5.5, which has no server-side fallback |
-| OpenAI | openai | `https://api.openai.com/v1` | `max_tokens_field: max_completion_tokens` |
+| Anthropic | anthropic | `https://api.anthropic.com` | Suggested models: `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5` (context 1,000,000; max output 128,000; effort levels `low, medium, high, xhigh, max`, default `high`). `refusal_fallback` stays off for Haiku 5.5, which has no server-side fallback |
+| OpenAI | openai | `https://api.openai.com/v1` | `max_tokens_field: max_completion_tokens`; effort levels `low, medium, high`, no default |
 | DeepSeek | openai | `https://api.deepseek.com` | `reasoning_replay: always` |
 | OpenRouter | openai | `https://openrouter.ai/api/v1` | `reasoning_replay: always` |
 | Qwen (DashScope) | openai | `https://dashscope.aliyuncs.com/compatible-mode/v1` | |
@@ -319,7 +375,9 @@ language) picks the variant.
 
 Every preset's `options` must be sendable by that preset's own protocol: a preset that shipped a
 field its protocol cannot send would be a default defect, inherited by every install. That is
-pinned by a test over the whole preset table, not by inspection (§5, D-132).
+pinned by a test over the whole preset table, not by inspection (§5, D-132). The same test checks
+each preset's `effort_levels` and `default_effort` against its protocol's `EffortRule` (§5.1).
+Presets not listed with levels have none.
 
 **Fetch models**: OpenAI-compatible `GET {base}/models` → `data[].id`. Anthropic
 `GET {base}/v1/models` → `data[]` with `id`, `display_name`, `max_input_tokens`, `max_tokens`,
@@ -328,7 +386,8 @@ UI shows "type the model id".
 
 **Test connection**: one streamed request (`max_output_tokens: 32`, user text "ping", no tools)
 that reports success with latency and the response text, or the classified error with the
-provider's message.
+provider's message. It uses the saved configuration: the profile's options and its
+`default_effort` (§5.1), placed in the protocol's wire field.
 
 ## 9. Required tests (`crates/llm/tests`)
 
@@ -348,4 +407,7 @@ provider's message.
   assert it reaches the wire exactly for the protocols the table lists. Also: `extra_body` merges
   last and overrides built-in fields; the OpenAI body never carries `output_config`/`fallbacks`
   and the Anthropic body never carries `reasoning_effort`/`temperature`.
+- Thinking effort (§5.1): `ModelOptionKey::PROFILE` is `ALL` without `reasoning_effort` and
+  `effort`; `EffortRule::for_protocol` and `wire_key` for all three protocols; the Anthropic body
+  has no `output_config` when `effort` is unset and `output_config.effort` when it is set.
 - Error classification table tests, including `retry-after` parsing.

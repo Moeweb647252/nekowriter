@@ -185,6 +185,15 @@ needed. Real providers are tested when the author supplies keys.
     - Edit a timeline event's story time and linked entities. Its position is unchanged.
     - On an entity with more than 20 changes, **Show full history** lists the older ones.
     - Open a long session and scroll to the top. Older messages load without the view jumping.
+14. Thinking effort per role (M19, plan §5):
+    - Demo: the Demo model's dialog shows the "no effort levels" note, and the Agent roles effort
+      select of a role on the Demo model is disabled.
+    - With a real provider (when a key is available): give the model the levels `low`, `high`,
+      `max` with default `high`; set the reviewer to `low` and the writer to `max`. Write and review
+      a chapter: the session headers show "max" and "low".
+    - Override the writer to `high` in Book settings. The next write session shows "high".
+    - Remove `high` from the model. The next write session shows the unsupported toast and uses
+      `max`, the global choice.
 
 ## M12 — Outline and write sessions
 
@@ -288,3 +297,18 @@ Plan: `docs/research/feature-gaps-plan.md` (D-161). Web only: no server, schema 
 | 18.5 | **G3 timeline event edit**. | PROJECT §8.8; 11 §5.5 | Vitest per plan §3 |
 | 18.6 | **Wrap-up**: `i18n:check`; smoke item 13 with the Demo provider. | PLAN §M11.5 | the checklist passes |
 
+## M19 — Thinking effort per role
+
+Plan: `docs/research/role-effort-plan.md` (D-162). It depends on nothing after M14 and may run
+before or after M15–M18.
+
+| # | Task | Spec | Tests / acceptance |
+|---|---|---|---|
+| 19.1 | **Docs**: done with the plan (D-162). | plan §6 | `check.sh` green (docs only) |
+| 19.2 | **`crates/llm`**: `EffortRule` (`for_protocol`, `wire_key`), `ModelOptionKey::PROFILE`; the Anthropic adapter sends `output_config` only when `effort` is set. | 04 §3, §5, §5.1 | plan §4.1: `model_options.rs`, `anthropic_stream.rs` |
+| 19.3 | **Schema and types**: `0009_role_effort.sql` and its module (Rust-managed transaction, guards); `model_profiles.effort_levels` / `default_effort` on the entity; `RoleModels.efforts`; `ModelOptionsDto` without the two keys and with `deny_unknown_fields`; `ModelProfileInput` / `ModelProfileDto` / `ProviderPresetDto` / `SessionDto` fields; regenerate the bindings. | 02 §1, §2, §4; 10 §2.1, §2.8 | plan §4.2 `role_effort_migration.rs`; `entity_schema.rs`; JSON round trips, including old `RoleModels` JSON without `efforts` |
+| 19.4 | **Model profiles**: level validation per `EffortRule`; `options` and `extra_body` refusals; presets; the served option table; `ignored_effort_levels` and the startup scan; test connection with `default_effort`. | 04 §5, §5.1, §8; 10 §2.1 | plan §4.3 |
+| 19.5 | **Roles and sessions**: save validation of `efforts` (app settings and book PATCH); the one resolver for every creation path; the snapshot field per protocol; `model.effort_unsupported`; `SessionDto.effort`. | 03 §4; 04 §5.1; 10 §1, §2.8 | plan §4.4 `role_effort.rs` (cases 1–11, old JSON, wiremock wire checks) |
+| 19.6 | **Web: Settings › Models**: the Thinking effort section, the table column, the protocol-switch and mismatch handling; drop the two old option fields and their i18n keys. | 11 §5.5 | plan §4.5 |
+| 19.7 | **Web: Agent roles, Book settings, SessionHeader**: the effort selects, `resolveRoleEffort`, the header label, the warning toast; both locales. | 11 §5.3, §5.5; PROJECT §8.6, §8.12 | plan §4.5; `i18n:check` |
+| 19.8 | **Smoke and pre-ship**: run `0009` on a **copy** of the author's database; report per profile the options before and after, the new levels and default, and every dropped cross-protocol key; run smoke item 14. | PLAN §M11.5 | the checklist passes; the report is in the final message and in D-162's consequences |

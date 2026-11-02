@@ -93,8 +93,8 @@ small embedding model locally.
 
 ## 5. Agent roles
 
-All built-in prompts are Chinese. Every role can use a different model, configured globally and
-overridable per book.
+All built-in prompts are Chinese. Every role can use a different model and a different thinking
+effort (one of the levels its model lists), configured globally and overridable per book (D-162).
 
 | Role | Chinese name | Responsibility | Typical tools | Runs when |
 |---|---|---|---|---|
@@ -295,9 +295,12 @@ Each flow lists what the author does, what the system does, and where it happens
    exact error.
 3. **Settings › Models › Add model**: choose a provider and either type the model id or pick from
    **Fetch models** (when the provider lists models). Set the context window and max output
-   tokens; presets pre-fill known values. Protocol options (reasoning replay, effort, cache TTL)
-   have sensible defaults.
-4. **Settings › Agent roles**: assign a default model to each role. One model may serve all roles.
+   tokens; presets pre-fill known values. Protocol options (reasoning replay, cache TTL) have
+   sensible defaults. **Thinking effort** lists the levels the model accepts (the Anthropic preset
+   fills all five, `high` as the default) and marks one as the default.
+4. **Settings › Agent roles**: assign a default model to each role, and optionally a thinking
+   effort from that model's levels. One model may serve all roles at different efforts; a role
+   without an effort uses the model's default level.
 5. **Settings › Web search**: choose Tavily (API key) or SearXNG (base URL), or none. Conception and
    research need search; without it their search tool returns a clear error.
 6. **Settings › Embeddings**: shows the active local model and its download state. The first use
@@ -682,8 +685,8 @@ version first.
 ### 8.6 Agent panel
 - **Header**: role icon (Conception ✦ Sparkles, Researcher 🔎 Search, Planner 🌳 ListTree,
   Writer ✒ PenLine, Reviewer ✓ ClipboardCheck, Archivist 🗃 Archive), session title, status badge,
-  model name, and an info popover (Lucide `Info`) showing the session's frozen system prompt and
-  tool list.
+  model name with the session's frozen thinking effort ("Opus 5.5 · High"), and an info popover
+  (Lucide `Info`) showing the session's frozen system prompt and tool list.
 - **Controls** (by status):
   - running: **Pause** (shows "Pausing…" until held), **Stop** (shows "Stopping…" for the moment
     the runner needs to stop).
@@ -824,9 +827,14 @@ Source badges: **D** default, **G** global override, **B** book override.
   key is write-only: a stored key is shown masked (`sk-…abcd`) and is replaced only by typing a
   new one.
 - **Models**: a table and a form (provider, model id with Fetch, display name, context window,
-  max output tokens, protocol options).
-- **Agent roles**: six selects (Conception, Researcher, Planner, Writer, Reviewer, Archivist).
-  The planner's unset option reads "Same as Writer" and follows the writer's model.
+  max output tokens, protocol options, **thinking effort**: the levels the model accepts, as five
+  checkboxes for Anthropic or typed chips for OpenAI-compatible providers, and an optional default
+  level; the Demo takes none).
+- **Agent roles**: six rows (Conception, Researcher, Planner, Writer, Reviewer, Archivist), each
+  with a model select and an effort select listing that model's levels. The planner's unset model
+  reads "Same as Writer" and follows the writer's model, and then its unset effort follows the
+  writer's too. Any other unset effort reads "Model default ({level})" or "Provider default". A
+  stored effort the model does not list is marked "(not supported)" with what sessions use instead.
 - **Web search**: provider radio and its fields, and a **Test query** button.
 - **Embeddings**: model select (three supported), status (not downloaded, downloading, ready,
   failed + message), the model cache path, index stats (documents, embedded, pending),
@@ -839,8 +847,9 @@ Source badges: **D** default, **G** global override, **B** book override.
   turned off says how much data the book keeps and offers **View data**; a footnote says nothing is
   deleted and running sessions are unaffected; a warning when Memory is off and recent chapters
   are 0), memory windows (recent summaries N, mid-term window M; disabled while their system is
-  off), auto-maintenance, model overrides per role (six rows; the planner's hint names its
-  effective model — "Default: {model}", otherwise "Follows the Writer: {model}", or "none"), and
+  off), auto-maintenance, model overrides per role (six rows, each a model and an effort select
+  whose unset entry follows the global setting; the planner's hint names its effective model —
+  "Default: {model}", otherwise "Follows the Writer: {model}", or "none"), and
   visible knowledge scopes (shortcut).
 
 ### 8.13 Interaction details

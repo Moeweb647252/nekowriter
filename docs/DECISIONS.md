@@ -3376,3 +3376,61 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   server, schema or prompt change, and the existing endpoints' tests stay the contract.
 - **Spec**: PROJECT §8.8; spec/11 §5.3, §5.5, §9.
 
+
+### D-162 Thinking effort is chosen per role; the model profile lists its levels
+
+- **Context**:
+  - The thinking effort lived in `model_profiles.options` under two protocol names:
+    `reasoning_effort` (OpenAI-compatible, free-form) and `effort` (Anthropic, always sent, with
+    an implicit `high` when unset). Every role on one profile therefore shared one level. Running
+    the archivist cheaply and the writer deeply on the same model meant two profiles of that model.
+  - **Levels differ per model, even within one protocol.** Opus 4.6 has no `xhigh`, Opus 4.5 takes
+    only `low`–`high`, and Sonnet 4.5 and Haiku 4.5 reject the parameter.
+  - **An omitted Anthropic effort is not `high` everywhere.** It is `medium` on Opus 5.5 and
+    Haiku 5.5.
+  - **A top-level effort change between requests invalidates the message cache.**
+  - The author asked for the setting to move to the role, with the model declaring its levels.
+    They chose (2026-11-02) that a role without a choice uses the model's default level, that books
+    can override the effort per role, and that existing profiles get only the level they use today.
+- **Decision** (plan `docs/research/role-effort-plan.md`):
+  - **The model declares its levels.** `model_profiles` gains `effort_levels` (the levels this
+    model accepts, in display order; empty = no parameter is sent) and `default_effort` (one of
+    them, or `NULL` = the provider decides). They are validated per protocol by `EffortRule`:
+    free-form tokens on `openai`, the closed set on `anthropic`, none on `mock`. A stored mismatch
+    after a protocol change is reported in `ignored_effort_levels`.
+  - **The role chooses.** `RoleModels` gains `efforts`, globally (`roles.defaults`) and per book
+    (`books.model_overrides`). At session creation the first chosen level that the resolved model
+    lists wins. The order is book → global, then the writer's entries when the planner follows the
+    writer's model, then the model's default. A skipped choice warns
+    (`model.effort_unsupported`). The level is frozen into `model_snapshot.options` under the
+    protocol's wire field, so it never changes within a session or a rollover chain.
+  - **Profiles stop storing either key.** `ModelOptions` keeps both as the wire carrier;
+    `ModelOptionKey::PROFILE` excludes them from the served option table, and `ModelOptionsDto`
+    drops them and refuses unknown fields. `extra_body.reasoning_effort` is refused, because it
+    would override the role unseen.
+  - **The Anthropic adapter sends `output_config` only when an effort is set.**
+  - **Migration 0009** adds the columns (0001 is not edited, because nothing rebuilds
+    `model_profiles`). It moves each profile's protocol-matching value into `[v]` with default `v`;
+    an Anthropic profile without one gets `[high]`, the old implicit value. It removes both keys
+    from `options`, because a cross-protocol key never reached the wire. It makes `high` explicit
+    in Anthropic snapshots that lacked an effort, so in-flight sessions keep their level and cache.
+- **Consequences**:
+  - **Same model, different roles.** One profile can serve every role at a different level. The
+    session header shows the frozen level.
+  - **Nothing changes on the wire at upgrade.** Roles start with no choice, and each profile's
+    default reproduces its old value. On the author's database, profiles #3 and #4 become `[max]`
+    with default `max`, and all six roles keep sending `reasoning_effort: "max"`. Other levels
+    appear once the author adds them to the model.
+  - **The Anthropic preset** fills all five levels with default `high`, so a new profile behaves as
+    before. A model that rejects `effort` can now be configured with an empty list; before, it
+    always failed.
+  - **A stale choice never blocks a session.** It falls through and warns.
+  - **Dropped values.** A cross-protocol effort key, which was always inert, is dropped. The
+    pre-ship report lists each one.
+- **Spec**:
+  - PROJECT §5, F1, §8.6, §8.12;
+  - spec/02 §1, §2, §4;
+  - spec/03 §4;
+  - spec/04 §2, §3, §5, §5.1, §8, §9;
+  - spec/10 §1, §2.1, §2.8;
+  - spec/11 §5.3, §5.5, §9.

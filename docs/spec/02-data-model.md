@@ -95,8 +95,26 @@
   fresh database although 0001 has both columns, because 0002 rebuilds `research_tasks` from an
   explicit column list, the same mechanism that lets 0006 add `agent_sessions.canon_systems` after
   0004.
+  `0009_role_effort.sql` (D-162) runs in one Rust-managed transaction like 0008. **0001 is not
+  edited for it**: no later file rebuilds `model_profiles`, so a column added to 0001 would make
+  the `ALTER` fail on a fresh database, and 0009 is the only source of the two columns. It:
+  - adds `model_profiles.effort_levels` (default `'[]'`) and `model_profiles.default_effort`
+    (nullable) with `ALTER TABLE … ADD COLUMN`;
+  - moves each profile's effort into them. A profile on the OpenAI protocol whose
+    `options.reasoning_effort` is a non-blank string gets `[v]` with default `v`. A profile on the
+    Anthropic protocol gets `[coalesce(options.effort, 'high')]` with the same default, because the
+    adapter sent `high` when the field was unset. Every other profile gets `[]` and `NULL`;
+  - removes `reasoning_effort` and `effort` from every profile's `options`. A cross-protocol key
+    (D-132) never reached the wire, so this changes no request;
+  - sets `$.options.effort = 'high'` in every Anthropic `agent_sessions.model_snapshot` whose effort
+    is null. That is the value the adapter sent implicitly, so an in-flight session keeps its level
+    and its cache. The snapshot is frozen configuration, not message history (spec/03 §1.3).
 
-## 2. Schema (0001_init.sql, upgraded by 0002_research_deferred.sql, 0003, 0004, 0005, 0006, 0007 and 0008)
+  Guards in the same transaction require an unchanged `model_profiles` row count, no `options`
+  holding either key, and every non-null `default_effort` among its `effort_levels`. Roles get no
+  effort and resolve to the profile's default, so every request stays byte-identical.
+
+## 2. Schema (0001_init.sql, upgraded by 0002_research_deferred.sql, 0003, 0004, 0005, 0006, 0007, 0008 and 0009)
 
 ```sql
 -- ───────────────────────────── App configuration ─────────────────────────────
@@ -124,9 +142,14 @@ CREATE TABLE model_profiles (
   model              TEXT NOT NULL,                     -- API model id
   context_window     INTEGER NOT NULL CHECK (context_window > 0),
   max_output_tokens  INTEGER NOT NULL CHECK (max_output_tokens > 0),
-  options            TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(options)),   -- ModelOptions
+  options            TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(options)),   -- ModelOptions (no effort keys, D-162)
   created_at         TEXT NOT NULL,
   updated_at         TEXT NOT NULL,
+  -- added by 0009 (not in 0001, see §1): the thinking-effort levels this model accepts, in display
+  -- order (string[]; empty = no effort parameter is sent), and the level a role without a choice
+  -- uses (one of effort_levels; NULL = the provider decides). spec/04 §5.1.
+  effort_levels      TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(effort_levels)),
+  default_effort     TEXT,
   UNIQUE (provider_id, display_name)
 );
 
@@ -789,7 +812,11 @@ type GoalCondition =
 
 // books.model_overrides and app_settings["roles.defaults"]
 // planner is optional; an unset planner resolves through the writer's entries (spec/03 §4).
-type RoleModels = Partial<Record<AgentRole, number /* model_profile_id */>>;
+// efforts: the thinking effort chosen per role, one of the resolved model's effort_levels
+// (spec/04 §5.1, D-162); absent in rows written before 0009, which load as {}.
+type RoleModels = Partial<Record<AgentRole, number /* model_profile_id */>> & {
+  efforts: Partial<Record<AgentRole, string>>;
+};
 
 // books.conception
 type ConceptionState = {
@@ -834,7 +861,9 @@ type ProviderPayload =
 type ModelSnapshot = {
   provider_id: number; protocol: Protocol; base_url: string; extra_headers: Record<string,string>;
   model: string; context_window: number; max_output_tokens: number;
-  options: ModelOptions;               // cache_ttl "auto" is resolved to "5m" or "1h" here (spec/04 §3)
+  options: ModelOptions;               // cache_ttl "auto" is resolved to "5m" or "1h" here (spec/04 §3);
+                                       // the role's resolved effort lands in reasoning_effort (openai)
+                                       // or effort (anthropic), spec/03 §4, spec/04 §5.1
 };
 
 type SessionCounters = {

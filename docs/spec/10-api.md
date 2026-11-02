@@ -17,7 +17,9 @@
   `409 conflict.version` with the current version.
 - **Warnings**: mutation responses and `SessionDto.warnings` may include `warnings: string[]`
   (codes the UI localizes: `model.missing_role`, `context.large_kickoff`,
-  `prompt.override_failed`).
+  `prompt.override_failed`, `model.effort_unsupported` — a role's chosen thinking effort is not a
+  level of its resolved model, so the next candidate or the model's default applied; spec/03 §4,
+  D-162).
 - **Errors**: `{ "error": { "code": "chapter.locked", "message": "…", "details": {…} } }` (§4).
 
 ## 2. Endpoints
@@ -26,7 +28,7 @@
 | Method | Path | Body / query | Response |
 |---|---|---|---|
 | GET | `/health` | | `{ ok, version, vec_version, embedding: IndexStatusDto }` |
-| GET / PATCH | `/app-settings` | `AppSettingsPatch` (roles.defaults, book_defaults, search, embedding) | `AppSettingsDto` (secrets masked) |
+| GET / PATCH | `/app-settings` | `AppSettingsPatch` (roles.defaults, book_defaults, search, embedding). `roles_defaults` (`RoleModels`, including `efforts`) is replaced as a unit; an effort value not matching `^[A-Za-z0-9_-]{1,32}$` is `400 validation.failed` (`details.fields["efforts.<role>"]`), and it is not checked against a model (D-162) | `AppSettingsDto` (secrets masked) |
 | POST | `/app-settings/search/test` | `{ query }` | `{ hits: SearchHitDto[] }` |
 | GET / POST | `/providers` | `ProviderInput {name, protocol, base_url, api_key?, extra_headers}` | `ProviderDto[]` / `ProviderDto` (key masked) |
 | PATCH / DELETE | `/providers/:id` | partial `ProviderInput` (omitted `api_key` = unchanged) | `ProviderDto` / 204 |
@@ -34,7 +36,7 @@
 | GET | `/providers/:id/remote-models` | | `RemoteModelDto[]` |
 | GET | `/provider-presets` | | `ProviderPresetDto[]` (spec/04 §8; Demo only when enabled) |
 | GET | `/provider-presets/options` | | `ModelOptionSpecDto[]` — the `options` field → protocol table the settings form renders (spec/04 §5, D-132) |
-| GET / POST | `/model-profiles` | `ModelProfileInput`; an option the provider's protocol cannot send is `400 validation.failed` (spec/04 §5) | `ModelProfileDto[]` / `ModelProfileDto`, including `ignored_options` for a stored mismatch (reported, never a failed read) |
+| GET / POST | `/model-profiles` | `ModelProfileInput`; an option the provider's protocol cannot send is `400 validation.failed` (spec/04 §5), and so is an invalid `effort_levels` / `default_effort` (spec/04 §5.1) | `ModelProfileDto[]` / `ModelProfileDto`, including `ignored_options` and `ignored_effort_levels` for a stored mismatch (reported, never a failed read) |
 | PATCH / DELETE | `/model-profiles/:id` | | |
 | GET | `/embedding/status` | | `IndexStatusDto` |
 | POST | `/embedding/rebuild` | | 202 |
@@ -44,7 +46,7 @@
 |---|---|---|---|
 | GET | `/books` | `?status=` — `conceiving`/`active`/`archived` filters exactly; omitted, empty or `all` returns every status | `BookSummaryDto[]` (counts, words, latest activity, attention count). The library calls it unfiltered and hides archived rows itself (D-129) |
 | POST | `/books` | `{ title, idea, genre, writing_language, start_conception, knowledge_check?, auto_start_conception? }` — `knowledge_check` defaults to `false` and `auto_start_conception` to `true`; both are ignored without `start_conception` (spec/08 §5, D-158) | `{ book: BookDto, session_id, research_task_id, warnings }` (`session_id`: the knowledge check's session, or the conception session when no check ran, or `null`; `research_task_id`: the check's task or `null`) |
-| GET / PATCH / DELETE | `/books/:id` | PATCH: title, genre, writing_language, settings, model_overrides, status (archive) | `BookDto` |
+| GET / PATCH / DELETE | `/books/:id` | PATCH: title, genre, writing_language, settings, model_overrides (`RoleModels` including `efforts`, replaced as a unit and validated like `roles_defaults`), status (archive) | `BookDto` |
 | GET | `/books/:id/overview` | | `BookOverviewDto` (spec/08 §7) |
 | POST | `/books/:id/conception/start` | | `{ session_id }` (the open session or a new one; allowed while a knowledge check is open; spec/08 §5) |
 | POST | `/books/:id/knowledge-check` | `{ requirements? }` | `201 { task: ResearchTaskDto, session_id }` (spec/07 §8.1). `409 book.invalid_state` unless the book is `conceiving` or `active`; `409 research.invalid_state` with `details.session_id` while a check is open; no researcher model → the same error as `run`, and no row is written |
@@ -159,7 +161,9 @@ type SessionDto = {
   chapter_id: number | null; track_id: number | null; research_task_id: number | null;
   chapter_number: number | null; research_topic: string | null;   // data for the UI-composed title
   research_task_kind: ResearchTaskKind | null;   // "preparation" → the "Knowledge check" title (D-158)
-  model_label: string; status: SessionStatus; phase: Phase; granularity: Granularity | null;
+  model_label: string;
+  effort: string | null;            // the frozen thinking effort from model_snapshot (spec/04 §5.1, D-162)
+  status: SessionStatus; phase: Phase; granularity: Granularity | null;
   auto_pause: boolean; pause_after_outline: boolean; pause_requested: boolean;
   held_tool_call_id: number | null; base_content_version: number | null;
   error: SessionError | null; usage: Usage;
@@ -222,6 +226,21 @@ type CanonCountsDto = {
   foreshadowing: { items: number };
   goals: { nodes: number };
 };
+type ModelProfileInput = {
+  provider_id: number; display_name: string; model: string;
+  context_window: number; max_output_tokens: number;
+  options: ModelOptionsDto;          // no reasoning_effort/effort; unknown fields are refused (spec/04 §5)
+  effort_levels: string[];           // the levels this model accepts, display order (spec/04 §5.1)
+  default_effort: string | null;     // one of effort_levels; null = the provider decides
+};
+type ModelProfileDto = ModelProfileInput & {
+  id: number;
+  ignored_options: string[];         // stored options the provider's protocol cannot send (D-132)
+  ignored_effort_levels: string[];   // stored levels the provider's protocol cannot send (D-162)
+  created_at: string; updated_at: string;
+};
+// ProviderPresetDto gains `effort_levels: string[]` and `default_effort: string | null` (spec/04 §8).
+// RoleModels (spec/02 §4) carries `efforts: Partial<Record<AgentRole, string>>` next to the ids.
 // ProposalDto gains `goal_target: { id: number; level: GoalLevel; title: string; status: GoalStatus } | null`
 // (the node of a goal_node proposal, or the parent plan of a new_goal_task proposal).
 // BookOverviewDto: AttentionKind gains `ready_goals` (one row with its count); NextActionDto gains
