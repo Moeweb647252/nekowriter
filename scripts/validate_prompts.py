@@ -45,9 +45,8 @@ block.goals block.chapter_draft block.cast_index block.chapter_diff
 block.anchor block.book_brief notice.user_feedback notice.user_message notice.user_edits notice.setting_edits
 notice.completion_revoked notice.tool_not_allowed notice.output_truncated notice.web_content notice.nudge_generic
 notice.research_budget planner.notice.outline_rejected planner.notice.nudge planner.notice.retrieval_budget
-writer.notice.outline_accepted writer.notice.outline_rejected
 writer.notice.revision_plan_accepted writer.notice.revision_plan_rejected writer.notice.granularity
-writer.notice.nudge_planning writer.notice.nudge_drafting writer.notice.nudge_revision_planning
+writer.notice.nudge_drafting writer.notice.nudge_revision_planning
 writer.notice.nudge_revising writer.notice.retrieval_budget writer.rules.granularity
 result.error result.truncated result.entity_card result.entity_list result.relations result.timeline
 result.foreshadowing_list result.search_hits result.knowledge_entry result.chapter_text result.draft_text
@@ -64,7 +63,7 @@ for k in meta:
 # ---------- role tool lists from spec/05 §2 ----------
 roles = {
  "planner": "get_entity list_entities get_relations query_timeline list_foreshadowing search_canon search_knowledge read_knowledge_entry search_chapters read_chapter read_draft submit_outline",
- "writer": "get_entity list_entities get_relations query_timeline list_foreshadowing search_canon search_knowledge read_knowledge_entry search_chapters read_chapter submit_outline submit_revision_plan read_draft insert_text insert_paragraphs replace_text rewrite_paragraph delete_paragraphs finish_draft finish_revision",
+ "writer": "get_entity list_entities get_relations query_timeline list_foreshadowing search_canon search_knowledge read_knowledge_entry search_chapters read_chapter submit_revision_plan read_draft insert_text insert_paragraphs replace_text rewrite_paragraph delete_paragraphs finish_draft finish_revision",
  "reviewer": "get_entity list_entities get_relations query_timeline list_foreshadowing search_canon search_knowledge read_knowledge_entry search_chapters read_chapter submit_review",
  "archivist": "get_entity list_entities get_relations query_timeline list_foreshadowing search_canon read_chapter create_entity update_entity set_relation end_relation record_appearances add_timeline_event update_timeline_event add_memory_note retire_memory_note add_foreshadowing resolve_foreshadowing set_chapter_summary propose_goal_change propose_setting_change finish_maintenance",
  "conception": "ask_user search_knowledge read_knowledge_entry web_search web_fetch write_setting_doc edit_setting_doc upsert_character remove_character reorder_characters set_research_topics request_review",
@@ -204,7 +203,7 @@ goals_empty = dict(nodes=[], omitted=0)
 
 S = dict(book=book, track=track_main, chapter=chapter, settings=settings, memory=memory, draft=draft, feedback=feedback,
          skills=skills, chapters=chapters, systems=systems_all, goals=goals_sample,
-         previous_outline="旧章纲", granularity=gran["paragraph"], phase="drafting",
+         granularity=gran["paragraph"], phase="drafting",
          revision_plan="1. p12：删去重复描写", author_notes=["打斗写得更短。", "苏婉不要哭。"], prior=None,
          review=dict(comment="第二条判断有误。", attempt=1),
          research=dict(topic="宋代市井", requirements="茶馆布局", scope_name="宋代社会", scope_description="宋代社会生活",
@@ -259,7 +258,6 @@ variants = {
                            research_tasks=[dict(topic="宋代市井", requirements="茶馆", scope_name="宋代社会", status="draft")])),
   ],
   "writer.rules.granularity": [dict(granularity=g) for g in gran_cases],
-  "writer.notice.outline_accepted": [dict(granularity=g) for g in gran_cases],
   "writer.notice.revision_plan_accepted": [dict(granularity=dict(g, revising=True)) for g in gran_cases],
   "writer.notice.granularity": [dict(granularity=g) for g in gran_cases],
   "writer.notice.nudge_drafting": [dict(granularity=g) for g in gran_cases],

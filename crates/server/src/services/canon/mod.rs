@@ -335,18 +335,6 @@ impl CanonWrite {
 
 // ───────────────────────────── labels ─────────────────────────────
 
-/// The prompt set of a book, for callers that only have a connection.
-pub async fn prompts_for(
-    state: &crate::state::AppState,
-    book_id: Option<i32>,
-) -> CanonResult<std::sync::Arc<crate::prompts::PromptSet>> {
-    state
-        .prompts()
-        .for_book(state.db(), book_id)
-        .await
-        .map_err(CanonError::from)
-}
-
 /// A chapter's full label, rendered by `shared.chapter_label` (spec/05 §1.5).
 pub async fn chapter_label(
     conn: &impl ConnectionTrait,
@@ -371,30 +359,6 @@ pub async fn chapter_label(
         i64::from(chapter.ord),
         &chapter.title,
         true,
-    ))
-}
-
-/// A chapter's label without the title, for lines that append `《title》` themselves.
-pub async fn chapter_label_bare(
-    conn: &impl ConnectionTrait,
-    prompts: &crate::prompts::PromptSet,
-    chapter_id: i32,
-) -> CanonResult<String> {
-    let Some(chapter) = chapters::Entity::find_by_id(chapter_id).one(conn).await? else {
-        return Ok(String::new());
-    };
-    let Some(track) = tracks::Entity::find_by_id(chapter.track_id)
-        .one(conn)
-        .await?
-    else {
-        return Ok(String::new());
-    };
-    Ok(prompts.chapter_label(
-        track.kind.as_str(),
-        &track.title,
-        i64::from(chapter.ord),
-        &chapter.title,
-        false,
     ))
 }
 
@@ -847,13 +811,6 @@ pub async fn restore_summary_inner(
     .update(tx)
     .await?;
     Ok(())
-}
-
-/// The snapshot of a chapter summary (spec/02 §4 `SnapshotChapterSummary`).
-pub fn summary_snapshot(summary: &str) -> Snapshot {
-    Snapshot::ChapterSummary {
-        summary: summary.to_owned(),
-    }
 }
 
 /// The subset of `ids` that still exist, in input order. One `is_in` query replaces a per-id

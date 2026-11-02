@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::db::json::{
-    AnchorKind, AppearanceRole, ChangeActor, EntityKind, EntityStatus, ForeshadowingStatus,
-    NoteKind, NoteStatus, RelationStatus,
+    AnchorKind, AppearanceRole, EntityKind, EntityStatus, ForeshadowingStatus, NoteKind,
+    NoteStatus, RelationStatus,
 };
 
 // ───────────────────────────── entities ─────────────────────────────
@@ -745,21 +745,3 @@ pub struct MemoryQuery {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct RevertInput {}
-
-/// The actor a canon write records (spec/06 §3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WriteActor {
-    User,
-    Agent,
-    System,
-}
-
-impl WriteActor {
-    pub fn change_actor(self) -> ChangeActor {
-        match self {
-            WriteActor::User => ChangeActor::User,
-            WriteActor::Agent => ChangeActor::Agent,
-            WriteActor::System => ChangeActor::System,
-        }
-    }
-}

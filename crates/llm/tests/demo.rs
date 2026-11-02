@@ -45,8 +45,8 @@ fn planning_submits_an_outline_in_the_book_language() {
     let provider = DemoProvider::new();
     for language in ["zh-CN", "en"] {
         let plan = choose_action(
-            &hints("chapter_write", "planning", language),
-            provider.lang(Some(&hints("chapter_write", "planning", language))),
+            &hints("chapter_outline", "none", language),
+            provider.lang(Some(&hints("chapter_outline", "none", language))),
         );
         assert!(
             plan.text.is_none(),
@@ -80,7 +80,7 @@ fn other_kinds_reply_with_text_for_now() {
 #[tokio::test]
 async fn streams_events_and_reports_estimated_usage() {
     let provider = DemoProvider::new();
-    let planning_request = request(Some(hints("chapter_write", "planning", "zh-CN")));
+    let planning_request = request(Some(hints("chapter_outline", "none", "zh-CN")));
     let mut events = Vec::new();
     let turn = provider
         .run(&planning_request, &mut |event| events.push(event))
@@ -113,7 +113,7 @@ async fn streams_events_and_reports_estimated_usage() {
 fn corpus_parses_for_both_languages() {
     let provider = DemoProvider::new();
     for language in ["zh-CN", "en"] {
-        let hints = hints("chapter_write", "planning", language);
+        let hints = hints("chapter_outline", "none", language);
         let corpus = provider.lang(Some(&hints));
         assert!(!corpus.sentences.is_empty(), "{language}: sentences");
         assert!(!corpus.paragraphs.is_empty(), "{language}: paragraphs");
@@ -308,7 +308,7 @@ fn maintenance_walks_the_procedure_and_skips_the_proposal_when_isolated() {
 #[test]
 fn planning_starts_with_get_entity_when_the_book_has_a_protagonist() {
     let provider = DemoProvider::new();
-    let mut with_protagonist = hints("chapter_write", "planning", "zh-CN");
+    let mut with_protagonist = hints("chapter_outline", "none", "zh-CN");
     with_protagonist.protagonist = Some("沈砚".to_owned());
     let lang = provider.lang(Some(&with_protagonist));
     let first = choose_action(&with_protagonist, lang);
@@ -328,7 +328,7 @@ fn planning_starts_with_get_entity_when_the_book_has_a_protagonist() {
 #[test]
 fn planning_without_a_protagonist_goes_straight_to_the_outline() {
     let provider = DemoProvider::new();
-    let h = hints("chapter_write", "planning", "zh-CN");
+    let h = hints("chapter_outline", "none", "zh-CN");
     let plan = choose_action(&h, provider.lang(Some(&h)));
     assert_eq!(plan.tools.len(), 1);
     assert_eq!(plan.tools[0].1, "submit_outline");
@@ -339,7 +339,7 @@ fn planning_without_a_protagonist_goes_straight_to_the_outline() {
 fn planning_carries_notes_and_a_title() {
     let provider = DemoProvider::new();
     for language in ["zh-CN", "en"] {
-        let h = hints("chapter_write", "planning", language);
+        let h = hints("chapter_outline", "none", language);
         let lang = provider.lang(Some(&h));
         let plan = choose_action(&h, lang);
         let arguments = &plan.tools[0].2;

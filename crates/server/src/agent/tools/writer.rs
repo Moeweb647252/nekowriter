@@ -11,7 +11,6 @@
 //! call discards it. Model-facing text is rendered from `prompts/results.toml`; nothing English
 //! reaches the model.
 
-use sea_orm::{ActiveModelTrait, EntityTrait, Set};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -19,15 +18,11 @@ use crate::api::dto::ContentOp;
 use crate::db::entities::chapters;
 use crate::db::json::{
     ChapterContent, CompletionKind, Granularity, Paragraph, PendingContent, PendingOutline,
-    SessionKind, ToolEffects,
+    ToolEffects,
 };
-use crate::events::ServerEvent;
 use crate::text;
 
-use super::{
-    Prepared, ToolCtx, ToolError, ToolErrorKind, ToolHandler, ToolKind, ToolOutcome,
-    resolve::EntityResolver,
-};
+use super::{Prepared, ToolCtx, ToolError, ToolErrorKind, ToolHandler, ToolKind, ToolOutcome};
 
 /// The maximum length of one sentence under `sentence` granularity (spec/03 §8).
 pub const SENTENCE_LIMIT: usize = 400;
@@ -319,7 +314,7 @@ fn pid_index(content: &ChapterContent, pid: &str) -> Result<usize, ToolError> {
 
 // ───────────────────────────── submit_outline ─────────────────────────────
 
-/// `submit_outline` (spec/05 §4): save the outline and notes, enter drafting.
+/// `submit_outline` (spec/05 §4): stage the outline and notes for the author's approval.
 pub struct SubmitOutlineTool;
 
 #[async_trait::async_trait]
@@ -343,76 +338,7 @@ impl ToolHandler for SubmitOutlineTool {
         _prepared: Prepared,
     ) -> Result<ToolOutcome, ToolError> {
         let input: SubmitOutlineInput = decode(input)?;
-        // D-146: the outline session stages its proposal; a legacy `chapter_write`/`planning`
-        // session (started before the split) keeps the immediate write and the phase change.
-        if crate::agent::session::kind_of(ctx.session) == SessionKind::ChapterOutline {
-            return stage_outline(ctx, input).await;
-        }
-        let chapter = chapter_of(ctx)?.clone();
-        // The title is only set when the author has not set one (spec/05 §4).
-        let set_title = chapter.title.trim().is_empty()
-            && input
-                .title
-                .as_deref()
-                .map(str::trim)
-                .is_some_and(|title| !title.is_empty());
-        let title = if set_title {
-            input
-                .title
-                .as_deref()
-                .map(str::trim)
-                .unwrap_or_default()
-                .to_owned()
-        } else {
-            chapter.title.clone()
-        };
-        chapters::ActiveModel {
-            id: Set(chapter.id),
-            outline: Set(input.outline.clone()),
-            reference_notes: Set(input.reference_notes.clone()),
-            title: Set(title.clone()),
-            updated_at: Set(chrono::Utc::now()),
-            ..Default::default()
-        }
-        .update(ctx.tx)
-        .await
-        .map_err(|_| ToolError::new(ToolErrorKind::Internal))?;
-        let row = chapters::Entity::find_by_id(chapter.id)
-            .one(ctx.tx)
-            .await
-            .map_err(|_| ToolError::new(ToolErrorKind::Internal))?
-            .ok_or_else(|| ToolError::new(ToolErrorKind::Internal))?;
-        ctx.emit(ServerEvent::ChapterUpdated {
-            chapter: crate::api::dto::ChapterListItemDto::from(row),
-            outline_changed: true,
-        });
-        let (target_min, target_max) = targets(ctx);
-        let text = ctx
-            .prompts
-            .render_value(
-                "result.writer_control",
-                crate::prompts::template_value(&json!({
-                    "action": "submit_outline",
-                    "word_count": chapter.word_count,
-                    "target_min": target_min,
-                    "target_max": target_max,
-                    "confirm_needed": false,
-                    "title_set": set_title,
-                    "title": title,
-                    "staged": false,
-                })),
-            )
-            .map_err(|_| ToolError::new(ToolErrorKind::Internal))?
-            .text;
-        Ok(ToolOutcome::text(text)
-            .with_ui(json!({
-                "outline_chars": input.outline.chars().count(),
-                "notes_chars": input.reference_notes.chars().count(),
-            }))
-            .with_effects(ToolEffects {
-                phase_to: Some(crate::db::json::Phase::Drafting),
-                ..ToolEffects::default()
-            }))
+        stage_outline(ctx, input).await
     }
 }
 
@@ -1282,25 +1208,6 @@ fn map_text_error(error: text::TextError) -> ToolError {
             .with("reason", "empty"),
         text::TextError::PidExhausted => ToolError::new(ToolErrorKind::Internal),
     }
-}
-
-/// The error the model gets for a granularity violation (spec/03 §8 `error.granularity`).
-pub fn granularity_error(
-    prompts: &crate::prompts::PromptSet,
-    mode: Granularity,
-    reason: &str,
-    tool: &str,
-) -> ToolError {
-    ToolError::new(ToolErrorKind::Granularity)
-        .with("mode", mode.as_str())
-        .with("mode_label", prompts.label("granularity", mode.as_str()))
-        .with("tool", tool.to_owned())
-        .with("reason", reason.to_owned())
-}
-
-/// Builds a resolver over the book's visible entities (used by `read_chapter`, M5).
-pub fn resolver_for(entities: Vec<super::resolve::VisibleEntity>) -> EntityResolver {
-    EntityResolver::new(entities)
 }
 
 /// Re-export so the tests can build a content row the same way the tools do.

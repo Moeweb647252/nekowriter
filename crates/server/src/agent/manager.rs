@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::db::json::{SessionError, SessionStatus, ToolCallStatus};
+use crate::db::json::{SessionStatus, ToolCallStatus};
 use crate::error::AppError;
 use crate::state::AppState;
 
@@ -403,15 +403,6 @@ async fn reset_executing_calls(tx: &sea_orm::DatabaseTransaction) -> Result<u64,
         .exec(tx)
         .await?;
     Ok(result.rows_affected)
-}
-
-/// Clears a stale session error before a Continue (spec/03 §6).
-pub async fn clear_session_error(
-    conn: &impl sea_orm::ConnectionTrait,
-    session_id: i32,
-    error: &SessionError,
-) -> Result<(), AppError> {
-    session::store_error(conn, session_id, error).await
 }
 
 /// Waits until the runner that owned `exited` has left the handle map. Returns false when it did

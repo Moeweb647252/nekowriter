@@ -97,9 +97,6 @@ pub enum ErrorCode {
     #[serde(rename = "provider.bad_request")]
     #[ts(rename = "provider.bad_request")]
     ProviderBadRequest,
-    #[serde(rename = "embedding.unavailable")]
-    #[ts(rename = "embedding.unavailable")]
-    EmbeddingUnavailable,
     #[serde(rename = "search.not_configured")]
     #[ts(rename = "search.not_configured")]
     SearchNotConfigured,
@@ -141,7 +138,6 @@ impl ErrorCode {
             ErrorCode::ProviderUnavailable => "provider.unavailable",
             ErrorCode::ProviderAuth => "provider.auth",
             ErrorCode::ProviderBadRequest => "provider.bad_request",
-            ErrorCode::EmbeddingUnavailable => "embedding.unavailable",
             ErrorCode::SearchNotConfigured => "search.not_configured",
             ErrorCode::Internal => "internal",
         }
@@ -179,7 +175,6 @@ impl ErrorCode {
             ErrorCode::ProviderUnavailable
             | ErrorCode::ProviderAuth
             | ErrorCode::ProviderBadRequest => StatusCode::BAD_GATEWAY,
-            ErrorCode::EmbeddingUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }

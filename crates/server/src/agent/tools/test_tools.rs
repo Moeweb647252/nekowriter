@@ -229,7 +229,6 @@ impl ToolHandler for TestAskTool {
     ) -> Result<ToolOutcome, ToolError> {
         let input: TestInput = decode(input)?;
         let phase = input.phase.as_deref().and_then(|raw| match raw {
-            "planning" => Some(crate::db::json::Phase::Planning),
             "drafting" => Some(crate::db::json::Phase::Drafting),
             "revision_planning" => Some(crate::db::json::Phase::RevisionPlanning),
             "revising" => Some(crate::db::json::Phase::Revising),
@@ -281,7 +280,7 @@ pub fn schemas() -> Vec<(&'static str, serde_json::Value)> {
             "text": { "type": "string", "description": "answer placeholder" },
             "phase": {
                 "type": "string",
-                "enum": ["planning", "drafting", "revision_planning", "revising"],
+                "enum": ["drafting", "revision_planning", "revising"],
                 "description": "deferred phase change",
             },
             "complete": { "type": "boolean", "description": "deferred completion" },

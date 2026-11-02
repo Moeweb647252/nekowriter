@@ -3,7 +3,7 @@
 //! The text delivered for a tool call is `raw_result_text` followed by its appendices, separated
 //! by a blank line, in the canonical order:
 //!
-//! 1. effect notices about the call itself (`writer.notice.outline_accepted`, …);
+//! 1. effect notices about the call itself (`writer.notice.revision_plan_accepted`, …);
 //! 2. the edit report (`notice.user_edits` / `notice.setting_edits`);
 //! 3. author feedback given on a held call (`notice.user_feedback`);
 //! 4. inbox items in arrival order (`notice.user_message` and runtime notices).
@@ -33,18 +33,6 @@ pub fn compose(raw_result_text: Option<&str>, appendices: &[Appendix]) -> String
         }
     }
     parts.join("\n\n")
-}
-
-/// Appends one appendix to a list (the caller decides the kind).
-pub fn push_appendix(appendices: &mut Vec<Appendix>, kind: AppendixKind, text: String) {
-    if text.trim().is_empty() {
-        return;
-    }
-    appendices.push(Appendix {
-        kind,
-        text,
-        inbox_id: None,
-    });
 }
 
 /// The `AppendixKind` of an inbox row: author messages are `inbox` items too, but the canonical

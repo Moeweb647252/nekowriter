@@ -186,33 +186,6 @@ text = '''
 '''
 
 [[prompt]]
-key = "writer.notice.outline_accepted"
-kind = "notice"
-agent = "writer"
-vars = ["granularity"]
-title_en = "Writer — outline accepted, drafting begins (sessions started before the outline split)"
-title_zh = "写手 · 章纲通过，进入正文阶段（拆分前的会话）"
-text = '''
-【系统通知】章纲已确认，现在进入【正文阶段】。
-- 检索工具已停用，请依据章纲、参考要点和已经掌握的资料写作。
-- 可用工具：insert_text、insert_paragraphs、replace_text、rewrite_paragraph、delete_paragraphs、read_draft、finish_draft。
-- {% include "writer.rules.granularity" %}
-
-- 全章写完后，在最后一次 insert_text 中设置 chapter_end=true，或调用 finish_draft。
-'''
-
-[[prompt]]
-key = "writer.notice.outline_rejected"
-kind = "notice"
-agent = "writer"
-vars = []
-title_en = "Writer — outline needs changes (sessions started before the outline split)"
-title_zh = "写手 · 章纲未通过（拆分前的会话）"
-text = '''
-【系统通知】作者没有通过这份章纲，你仍处于【规划阶段】。请按下方作者的意见修改（必要时继续查阅资料），然后重新调用 submit_outline，提交完整的章纲与参考要点。
-'''
-
-[[prompt]]
 key = "writer.notice.revision_plan_accepted"
 kind = "notice"
 agent = "writer"
@@ -249,17 +222,6 @@ title_zh = "写手 · 写作粒度已调整"
 text = '''
 【系统通知】作者调整了写作粒度，从下一次调用开始生效。
 {% include "writer.rules.granularity" %}
-'''
-
-[[prompt]]
-key = "writer.notice.nudge_planning"
-kind = "notice"
-agent = "writer"
-vars = []
-title_en = "Writer — nudge (planning, sessions started before the outline split)"
-title_zh = "写手 · 提醒（规划阶段，拆分前的会话）"
-text = '''
-【系统通知】你目前处于【规划阶段】。请继续用检索工具查阅需要的信息，准备好后调用 submit_outline 提交章纲与参考要点。不要直接在回复中写正文。
 '''
 
 [[prompt]]

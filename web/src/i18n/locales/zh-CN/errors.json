@@ -22,7 +22,6 @@
   "track.mode_locked": "正史模式已不能再修改。",
   "session.invalid_state": "会话当前状态不允许这个操作。",
   "search.not_configured": "还没有配置网页搜索服务。",
-  "embedding.unavailable": "向量模型不可用。",
   "provider.unavailable": "无法连接到服务商。",
   "provider.auth": "服务商拒绝了 API Key。",
   "provider.bad_request": "服务商拒绝了这次请求。",

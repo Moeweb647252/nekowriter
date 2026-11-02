@@ -684,24 +684,6 @@ pub async fn to_dto(
 
 // ───────────────────────────── revert support (spec/06 §3) ─────────────────────────────
 
-/// The current snapshot of a timeline event, when it still exists.
-pub async fn snapshot_now(
-    conn: &impl ConnectionTrait,
-    event_id: i32,
-) -> CanonResult<Option<crate::db::json::Snapshot>> {
-    match timeline_events::Entity::find_by_id(event_id)
-        .one(conn)
-        .await?
-    {
-        Some(row) => {
-            let ids =
-                super::linked_entity_ids(conn, super::LinkTable::TimelineEvent, event_id).await?;
-            Ok(Some(timeline_snapshot(&row, ids)))
-        }
-        None => Ok(None),
-    }
-}
-
 /// Restores a timeline event from a `before` snapshot (the revert of an update).
 pub async fn restore_inner(
     tx: &impl ConnectionTrait,

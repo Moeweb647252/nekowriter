@@ -17,7 +17,6 @@ use std::collections::HashMap;
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Mutex;
-use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
@@ -908,23 +907,6 @@ pub async fn fetch(
     // even when the page redirected (spec/07 §7 step 7).
     cache.put(url, document.clone());
     Ok(document)
-}
-
-/// Polls a resolver future to completion (used only by the resolver unit test).
-#[allow(dead_code)]
-fn poll_resolving(resolving: Resolving) -> Result<Vec<SocketAddr>, BoxError> {
-    use std::future::Future;
-    use std::pin::Pin;
-    let mut future = resolving;
-    let mut context = Context::from_waker(futures::task::noop_waker_ref());
-    loop {
-        match Pin::new(&mut future).poll(&mut context) {
-            Poll::Ready(result) => {
-                return result.map(|addrs| addrs.collect::<Vec<SocketAddr>>());
-            }
-            Poll::Pending => std::thread::yield_now(),
-        }
-    }
 }
 
 #[cfg(test)]

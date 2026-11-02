@@ -16,8 +16,8 @@ use crate::api::dto::chapters::{
 use crate::api::dto::chapters::{ChapterOutlineInput, ChapterWriteInput};
 use crate::db::entities::{agent_sessions, appearances, chapter_versions, chapters, tracks};
 use crate::db::json::{
-    AgentRole, AnchorKind, BookStatus, CanonStatus, ChangeActor, ChangeOp, ChangeTargetType,
-    ChapterContent, ChapterStatus, SessionStatus, Snapshot, TrackKind, VersionKind,
+    AgentRole, AnchorKind, BookStatus, CanonStatus, ChangeActor, ChapterContent, ChapterStatus,
+    SessionStatus, TrackKind, VersionKind,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::{BookOp, ContentActor, ServerEvent};
@@ -617,7 +617,7 @@ async fn write_content(
     ))
 }
 
-/// `POST /api/chapters/:id/write` (spec/08 §1.1): start a `chapter_write` session in planning.
+/// `POST /api/chapters/:id/write` (spec/08 §1.1): start a `chapter_write` session in drafting.
 ///
 /// Preconditions: the chapter is `planned` or `drafting`, it has no open writer session, and the
 /// previous chapter of the track is `official` with `canon_status = synced` — unless `force`, which
@@ -680,9 +680,6 @@ pub async fn write(
             guidance: input.guidance,
             kickoff_extra: None,
             pending_comment: None,
-            legacy_planning_fixture: false,
-            legacy_system_prompt: None,
-            legacy_kickoff_text: None,
             chapter_guard: true,
             force_previous: input.force,
         },
@@ -750,9 +747,6 @@ pub async fn outline(
             guidance: input.guidance,
             kickoff_extra: None,
             pending_comment: None,
-            legacy_planning_fixture: false,
-            legacy_system_prompt: None,
-            legacy_kickoff_text: None,
             chapter_guard: true,
             force_previous: input.force,
         },
@@ -1233,13 +1227,6 @@ fn restore_ops(
     )
 }
 
-/// A JSON snapshot of a chapter summary change (spec/02 §4 `SnapshotChapterSummary`).
-pub fn summary_snapshot(summary: &str) -> Snapshot {
-    Snapshot::ChapterSummary {
-        summary: summary.to_owned(),
-    }
-}
-
 // ───────────────────────────── helpers ─────────────────────────────
 
 /// Loads a chapter row or reports `not_found`.
@@ -1480,67 +1467,6 @@ pub async fn open_sessions(
         sessions.push(crate::agent::session::to_dto(conn, row, Vec::new()).await?);
     }
     Ok(sessions)
-}
-
-/// Records a `chapter_summary` change when maintenance writes a summary (M6 calls this).
-pub async fn record_summary_change(
-    tx: &impl ConnectionTrait,
-    chapter: &chapters::Model,
-    before: &str,
-    after: &str,
-    actor: ChangeActor,
-    note: &str,
-) -> Result<(), AppError> {
-    if before == after {
-        return Ok(());
-    }
-    let before = summary_snapshot(before);
-    let after = summary_snapshot(after);
-    super::change_log::record(
-        tx,
-        super::change_log::NewChange {
-            book_id: chapter.book_id,
-            track_id: Some(chapter.track_id),
-            chapter_id: Some(chapter.id),
-            session_id: None,
-            actor,
-            target_type: ChangeTargetType::ChapterSummary,
-            target_id: chapter.id,
-            op: ChangeOp::Update,
-            before: Some(&before),
-            after: Some(&after),
-            note,
-            reverts_id: None,
-        },
-    )
-    .await?;
-    crate::search::maintenance::sync_chapter_summary(tx, chapter.id).await?;
-    crate::search::index::wake();
-    Ok(())
-}
-
-/// True when the track's kind is `main` (used by rules that differ per track).
-pub async fn track_is_main(conn: &impl ConnectionTrait, track_id: i32) -> Result<bool, AppError> {
-    let track = super::tracks::load(conn, track_id).await?;
-    Ok(track.kind == TrackKind::Main)
-}
-
-/// Convenience for tests and future services: a chapter's full text as a paragraph list.
-pub fn paragraph_texts(content: &ChapterContent) -> Vec<&str> {
-    content
-        .paragraphs
-        .iter()
-        .map(|paragraph| paragraph.text.as_str())
-        .collect()
-}
-
-/// Reads a chapter version's content for the diff view (UIs fetch it through the API).
-pub async fn version_content(
-    conn: &impl ConnectionTrait,
-    version_id: i32,
-) -> Result<ChapterContent, AppError> {
-    let row = super::versions::load(conn, version_id).await?;
-    Ok(row.content.clone().into_inner())
 }
 
 #[cfg(test)]

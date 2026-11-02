@@ -237,26 +237,6 @@ fn frozen(role: &str) -> Vec<String> {
 #[test]
 fn the_writer_permission_matrix_is_complete() {
     let writer = frozen("writer");
-    // The planning row is legacy-only: a session started before the split froze the old 20-tool
-    // list, `submit_outline` included (D-146).
-    let legacy: Vec<String> = nekowriter::agent::tools::registry::LEGACY_WRITER_TOOLS
-        .iter()
-        .map(|name| (*name).to_owned())
-        .collect();
-    let planning = [
-        "get_entity",
-        "list_entities",
-        "get_relations",
-        "query_timeline",
-        "list_foreshadowing",
-        "search_canon",
-        "search_knowledge",
-        "read_knowledge_entry",
-        "search_chapters",
-        "read_chapter",
-        "submit_outline",
-        "read_draft",
-    ];
     let drafting = [
         "read_draft",
         "insert_text",
@@ -290,7 +270,6 @@ fn the_writer_permission_matrix_is_complete() {
         "finish_revision",
     ];
     for (phase, allowed, frozen_tools) in [
-        (Phase::Planning, planning.as_slice(), legacy.as_slice()),
         (Phase::Drafting, drafting.as_slice(), writer.as_slice()),
         (
             Phase::RevisionPlanning,

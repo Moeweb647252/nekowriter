@@ -6,7 +6,6 @@ import { useCallback } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
-import type { ApiError } from "@/api/client"
 import { isApiError } from "@/api/hooks/errors"
 
 /** Returns a function that reports any thrown error as a localized toast. */
@@ -40,9 +39,4 @@ export function useWarningToasts() {
     },
     [t],
   )
-}
-
-/** Localizes one error code. */
-export function errorMessage(t: (key: string, options?: unknown) => string, error: ApiError): string {
-  return t(`errors:${error.code}`, { defaultValue: error.message })
 }

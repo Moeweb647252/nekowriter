@@ -1,7 +1,5 @@
 /** Canon endpoints (spec/10 §2.4). */
 import { api } from "@/api/client"
-import type { AppearanceDto } from "@/api/gen/AppearanceDto"
-import type { AppearanceInput } from "@/api/gen/AppearanceInput"
 import type { ChangeDto } from "@/api/gen/ChangeDto"
 import type { CanonCountsDto } from "@/api/gen/CanonCountsDto"
 import type { ChangePageDto } from "@/api/gen/ChangePageDto"
@@ -73,14 +71,6 @@ export function entityHistory(entityId: number): Promise<ChangeDto[]> {
 
 // ───────────────────────────── relations ─────────────────────────────
 
-export function listRelations(
-  bookId: number,
-  entityId?: number,
-): Promise<RelationDto[]> {
-  const suffix = entityId === undefined ? "" : `?entity_id=${entityId}`
-  return api.get<RelationDto[]>(`/books/${bookId}/relations${suffix}`)
-}
-
 export function createRelation(bookId: number, input: RelationInput): Promise<RelationDto> {
   return api.post<RelationDto>(`/books/${bookId}/relations`, input)
 }
@@ -94,19 +84,6 @@ export function patchRelation(
 
 export function deleteRelation(relationId: number): Promise<void> {
   return api.delete<void>(`/relations/${relationId}`)
-}
-
-// ───────────────────────────── appearances ─────────────────────────────
-
-export function chapterAppearances(chapterId: number): Promise<AppearanceDto[]> {
-  return api.get<AppearanceDto[]>(`/chapters/${chapterId}/appearances`)
-}
-
-export function putAppearances(
-  chapterId: number,
-  appearances: AppearanceInput[],
-): Promise<AppearanceDto[]> {
-  return api.put<AppearanceDto[]>(`/chapters/${chapterId}/appearances`, appearances)
 }
 
 // ───────────────────────────── timeline ─────────────────────────────

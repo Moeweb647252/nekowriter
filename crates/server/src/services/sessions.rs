@@ -61,9 +61,6 @@ impl Default for CreateSession {
             guidance: None,
             kickoff_extra: None,
             pending_comment: None,
-            legacy_planning_fixture: false,
-            legacy_system_prompt: None,
-            legacy_kickoff_text: None,
             chapter_guard: false,
             force_previous: false,
         }
@@ -91,18 +88,9 @@ pub struct CreateSession {
     /// The author's re-review comment: `submit_review` copies it into the report's
     /// `user_comment` and clears it (spec/03 §6, spec/05 §5).
     pub pending_comment: Option<String>,
-    /// Test-only: create a `chapter_write` session in the legacy `planning` phase with the old
-    /// 20-tool list, as a session started before the outline split has (D-146). Production
-    /// callers never set it.
-    pub legacy_planning_fixture: bool,
-    /// Test-only: the exact frozen system prompt of a pre-split session (F3). `None` renders the
-    /// current pack.
-    pub legacy_system_prompt: Option<String>,
-    /// Test-only: the exact frozen kickoff text of a pre-split session (F3).
-    pub legacy_kickoff_text: Option<String>,
     /// Set by the chapter start endpoints (`chapters::outline` / `write`) so the chapter's status
     /// and outline preconditions are rechecked inside this transaction (R3-03). Direct service
-    /// callers (tests, legacy fixtures) leave it off.
+    /// callers (tests) leave it off.
     pub chapter_guard: bool,
     /// `chapters::write` / `outline`'s `force`: skip the previous-chapter recheck inside the
     /// creation transaction (M5-03).
@@ -176,7 +164,7 @@ pub(crate) async fn create_inner(
     // The API preconditions for chapter sessions are reads on a different connection from this
     // insertion. An approve can commit `status = official` in that window (R3-03), so the
     // chapter row is re-read here, inside the creation transaction. `write` needs the same
-    // outline precondition; a legacy planning fixture is exempt because it predates the split.
+    // outline precondition.
     if input.chapter_guard
         && let Some(chapter_id) = input.chapter_id
     {
@@ -192,7 +180,7 @@ pub(crate) async fn create_inner(
                     json!({ "status": chapter.status }),
                 ));
             }
-            SessionKind::ChapterWrite if !input.legacy_planning_fixture => {
+            SessionKind::ChapterWrite => {
                 let agent_writable = match chapter.status {
                     ChapterStatus::Planned | ChapterStatus::Drafting => true,
                     ChapterStatus::InReview | ChapterStatus::Revising | ChapterStatus::Official => {
@@ -319,32 +307,19 @@ pub(crate) async fn create_inner(
 
     // 2. Freeze the prompts: the role's system prompt and tool definitions through the registry.
     let prompts = state.prompts().for_book(state.db(), input.book_id).await?;
-    let mut system_prompt = prompts
+    let system_prompt = prompts
         .render(&format!("{role}.system"), &json!({}))
         .map_err(|err| err.into_app_error())?;
     warnings.extend(system_prompt.warnings());
-    // The legacy fixture can carry the exact pre-split prompt, so the test proves the frozen
-    // prompt rather than the current pack (F3, D-146).
-    if let Some(legacy_prompt) = &input.legacy_system_prompt {
-        system_prompt.text = legacy_prompt.clone();
-    }
     // 3. Initial fields; writer sessions copy the book's settings unless told otherwise.
-    let phase = if input.legacy_planning_fixture && input.kind == SessionKind::ChapterWrite {
-        Phase::Planning
-    } else {
-        initial_phase(input.kind)
-    };
+    let phase = initial_phase(input.kind);
     let (granularity, auto_pause, pause_after_outline) = match input.kind {
         // The write session is drafting-only: `pause_after_outline` belongs to the outline
-        // session, so the column is stored as 0 and does nothing here (D-146). The legacy test
-        // fixture of a pre-split session keeps the value it had.
+        // session, so the column is stored as 0 and does nothing here (D-146).
         SessionKind::ChapterWrite => (
             Some(input.granularity.unwrap_or(book_settings.granularity)),
             input.auto_pause.unwrap_or(book_settings.auto_pause),
-            input.legacy_planning_fixture
-                && input
-                    .pause_after_outline
-                    .unwrap_or(book_settings.pause_after_outline),
+            false,
         ),
         SessionKind::ChapterRevise => (
             Some(input.granularity.unwrap_or(book_settings.granularity)),
@@ -411,18 +386,14 @@ pub(crate) async fn create_inner(
             .unwrap_or(false),
         _ => false,
     };
-    let tool_names: Vec<&str> = if input.legacy_planning_fixture {
-        crate::agent::tools::registry::LEGACY_WRITER_TOOLS.to_vec()
-    } else {
-        crate::agent::tools::registry::tools_for_session(
-            role,
-            input.kind,
-            &frozen_systems,
-            has_relevant_goals,
-            preparation,
-            state.tool_registry(),
-        )
-    };
+    let tool_names: Vec<&str> = crate::agent::tools::registry::tools_for_session(
+        role,
+        input.kind,
+        &frozen_systems,
+        has_relevant_goals,
+        preparation,
+        state.tool_registry(),
+    );
     let tools = frozen_tools(&prompts, &tool_names, &mut warnings)?;
 
     let base_content_version = match input.chapter_id {
@@ -501,23 +472,15 @@ pub(crate) async fn create_inner(
         None
     };
 
-    // 4. Kickoff: the block list of the kind, persisted as `seq 0`, kind `kickoff`. The legacy
-    // fixture can carry the exact pre-split kickoff text (F3, D-146).
-    let blocks = if let Some(legacy_kickoff) = &input.legacy_kickoff_text {
-        vec![StoredBlock::Text {
-            text: legacy_kickoff.clone(),
-            cache: None,
-        }]
-    } else {
-        crate::agent::context::assemble_kickoff(
-            tx,
-            &prompts,
-            &session,
-            input.redraft,
-            input.kickoff_extra.as_ref(),
-        )
-        .await?
-    };
+    // 4. Kickoff: the block list of the kind, persisted as `seq 0`, kind `kickoff`.
+    let blocks = crate::agent::context::assemble_kickoff(
+        tx,
+        &prompts,
+        &session,
+        input.redraft,
+        input.kickoff_extra.as_ref(),
+    )
+    .await?;
     let kickoff = runner::insert_kickoff(tx, session.id, blocks).await?;
     events_for_new_session(&mut warnings, &session, &kickoff);
 
@@ -1174,7 +1137,7 @@ async fn resume_inner(
                     .clone()
                     .map(|value| value.into_inner())
                     .unwrap_or_default();
-                if effects.complete.is_some() && rejected_notice(&held.name, &session).is_none() {
+                if effects.complete.is_some() && rejected_notice(&held.name).is_none() {
                     let rendered = prompts
                         .render("notice.completion_revoked", &json!({}))
                         .map_err(|err| err.into_app_error())?;
@@ -1184,7 +1147,7 @@ async fn resume_inner(
                         inbox_id: None,
                     });
                 }
-                if let Some(notice) = rejected_notice(&held.name, &session) {
+                if let Some(notice) = rejected_notice(&held.name) {
                     let rendered = prompts
                         .render(notice, &json!({}))
                         .map_err(|err| err.into_app_error())?;
@@ -1345,17 +1308,9 @@ fn phase_notice(tool: &str) -> Option<&'static str> {
 }
 
 /// The rejection notice of a held call whose effects were revoked (spec/03 §5.4).
-fn rejected_notice(tool: &str, session: &agent_sessions::Model) -> Option<&'static str> {
+fn rejected_notice(tool: &str) -> Option<&'static str> {
     match tool {
-        // The outline session has its own notice; a legacy planning session keeps the writer's
-        // (spec/03 §5.4, D-146).
-        "submit_outline" => {
-            if session::kind_of(session) == SessionKind::ChapterOutline {
-                Some("planner.notice.outline_rejected")
-            } else {
-                Some("writer.notice.outline_rejected")
-            }
-        }
+        "submit_outline" => Some("planner.notice.outline_rejected"),
         "submit_revision_plan" => Some("writer.notice.revision_plan_rejected"),
         _ => None,
     }

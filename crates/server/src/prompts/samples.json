@@ -197,7 +197,6 @@
     }
    ]
   },
-  "previous_outline": "旧章纲",
   "granularity": {
    "key": "paragraph",
    "label": "paragraph",
@@ -3120,62 +3119,6 @@
    }
   ],
   "writer.notice.nudge_drafting": [
-   {
-    "granularity": {
-     "key": "sentence",
-     "label": "sentence",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "paragraph",
-     "label": "paragraph",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "free",
-     "label": "free",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "chapter",
-     "label": "chapter",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "paragraph",
-     "label": "paragraph",
-     "revising": false,
-     "tail_open": true,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "chapter",
-     "label": "chapter",
-     "revising": true,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   }
-  ],
-  "writer.notice.outline_accepted": [
    {
     "granularity": {
      "key": "sentence",

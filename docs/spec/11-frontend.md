@@ -9,8 +9,8 @@ pnpm dlx shadcn@4.22.1 init -t vite -n web --preset nova --base radix --no-monor
 rm -rf web/.git                      # the Vite template initializes a nested repository; remove it
 cd web
 pnpm dlx shadcn@4.22.1 add alert alert-dialog badge breadcrumb button card checkbox collapsible \
-  command dialog dropdown-menu empty input kbd label popover progress radio-group resizable \
-  scroll-area select separator sheet skeleton sonner spinner switch table tabs textarea toggle \
+  command dialog dropdown-menu empty input label popover progress radio-group resizable \
+  scroll-area select skeleton sonner spinner switch table tabs textarea toggle \
   toggle-group tooltip
 pnpm add motion zustand @tanstack/react-query react-router i18next react-i18next \
   react-markdown remark-gfm diff @tanstack/react-virtual \

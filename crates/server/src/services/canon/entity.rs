@@ -24,8 +24,7 @@ use crate::api::dto::canon::{
     EntityPatch, EntityQuery, RelationDto,
 };
 use crate::db::entities::{
-    appearances, chapters, character_designs, entities, goal_nodes, relations,
-    timeline_event_entities, tracks,
+    appearances, chapters, character_designs, entities, goal_nodes, relations, tracks,
 };
 use crate::db::json::{
     CanonMode, ChangeOp, ChangeTargetType, EntityKind, EntityStatus, GoalCondition, JsonText,
@@ -1318,24 +1317,7 @@ pub fn entity_label(name: &str, id: i32) -> String {
     format!("{name}(#{id})")
 }
 
-/// Unused-import guard for the join-table entity of the timeline links merged above.
-#[allow(dead_code)]
-fn _join_tables() -> &'static str {
-    std::any::type_name::<timeline_event_entities::Entity>()
-}
-
 // ───────────────────────────── revert support (spec/06 §3) ─────────────────────────────
-
-/// The current snapshot of an entity, when it still exists.
-pub async fn snapshot_now(
-    conn: &impl ConnectionTrait,
-    entity_id: i32,
-) -> CanonResult<Option<crate::db::json::Snapshot>> {
-    match entities::Entity::find_by_id(entity_id).one(conn).await? {
-        Some(row) => Ok(Some(entity_snapshot(&row)?)),
-        None => Ok(None),
-    }
-}
 
 /// Restores an entity from a `before` snapshot (the revert of an update).
 pub async fn restore_inner(

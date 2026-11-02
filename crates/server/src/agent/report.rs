@@ -27,7 +27,6 @@ use crate::error::AppError;
 use crate::prompts::PromptSet;
 use crate::prompts::context::{
     DeletedParagraphContext, EditCountsContext, InsertedParagraphContext, ModifiedParagraphContext,
-    ParagraphContext,
 };
 
 /// The maximum length of an old paragraph quoted in the report (spec/03 §7).
@@ -510,18 +509,6 @@ fn diff_lines(before: &str, after: &str) -> Vec<Value> {
         }));
     }
     lines
-}
-
-/// The paragraph texts of a draft, as `block.chapter_draft` sees them.
-pub fn paragraph_contexts(content: &ChapterContent) -> Vec<ParagraphContext> {
-    content
-        .paragraphs
-        .iter()
-        .map(|paragraph| ParagraphContext {
-            pid: paragraph.pid.clone(),
-            text: paragraph.text.clone(),
-        })
-        .collect()
 }
 
 /// Reads the current setting materials for the conception edit report (spec/03 §7).

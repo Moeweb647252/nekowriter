@@ -8,8 +8,8 @@
 use std::collections::BTreeMap;
 
 use sea_orm::{
-    ActiveModelTrait, ConnectionTrait, DatabaseConnection, EntityTrait, PaginatorTrait,
-    QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
+    Set,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -915,15 +915,6 @@ async fn ensure_unique_name(
         .with_details(serde_json::json!({ "id": existing.id })));
     }
     Ok(())
-}
-
-/// Counts the models of a provider (settings UI).
-pub async fn model_count(conn: &DatabaseConnection, provider_id: i32) -> Result<u64, AppError> {
-    let count = model_profiles::Entity::find()
-        .filter(model_profiles::COLUMN.provider_id.eq(provider_id))
-        .count(conn)
-        .await?;
-    Ok(count)
 }
 
 // ───────────────────────────── connection and models ─────────────────────────────

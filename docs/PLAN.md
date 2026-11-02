@@ -262,7 +262,7 @@ amended; the code catches up task by task. Execute in order, one commit per task
 Plan: `docs/research/codebase-cleanup-plan.md` (D-159). The spec sections it lists in §8 are
 already amended. It runs after M15; if M15 has not started, M16 may go first, but the two are
 never interleaved. **No behavior change**: kickoff baselines, kept prompts, API (minus the
-never-returned `embedding.unavailable`) and schema stay identical. Every deletion is re-proven by
+never-returned error code) and schema stay identical. Every deletion is re-proven by
 the plan's §4 finders when its task starts.
 
 | # | Task | Spec | Tests / acceptance |
@@ -271,7 +271,7 @@ the plan's §4 finders when its task starts.
 | 16.2 | **Dependencies and manifests**: the unused entries of plan §2.1, the workspace entries left unused, `async-trait` in the migration crate through the workspace, and the redundant `[[test]]` sections. | 01 §2 | the §4.1 finder is empty; `cargo build --workspace --all-targets` and the release build with `embed-web` pass |
 | 16.3 | **Rust functions** of plan §2.3 and what they alone used. | — | the §4.2 finder is empty; no `#[allow(dead_code)]` in `crates/*/src`; `kickoff_baseline` unchanged |
 | 16.4 | **The legacy planning branch** (plan §2.4). First run its query on a **copy** of the author's database; if it is not 0, stop and revert the legacy amendments. | 02 §3; 03 §1, §4, §5, §15; 04 §7.2; 05 §2; 09 §2; 11 §5.2 | the plan's grep gate; every legacy test deleted or ported (listed in the commit); the unknown-key override test; `prompts_registry` loses only the three keys; smoke items 3–5 with the Demo provider |
-| 16.5 | **Prompt variable `previous_outline` and error code `embedding.unavailable`**. | 09 §2; 10 §4 | the validator passes; the `gen` diff is one `ErrorCode` member |
+| 16.5 | **Unused prompt variable and error code**. | 09 §2; 10 §4 | the validator passes; the `gen` diff is one `ErrorCode` member |
 | 16.6 | **Web**: unused files, dead exports, template leftovers, and proven-unused i18n keys (re-run after 16.4). The plan §3.1 hooks stay; M18 uses them. | 11 §5.5 | the §4.3 finders report only what the plan keeps; web typecheck, lint, test, i18n, build pass |
 | 16.7 | **Sweep and report**: stale mentions in `NOTES.md`, `README.md`, `docs/`; the final counts in D-159. | — | the report is in the final message |
 

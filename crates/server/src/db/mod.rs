@@ -79,14 +79,6 @@ impl Db {
         })
     }
 
-    /// Wraps an existing SeaORM connection (tests).
-    pub fn from_connection(conn: DatabaseConnection) -> Self {
-        Self {
-            conn,
-            write_lock: Arc::new(Mutex::new(())),
-        }
-    }
-
     /// The underlying connection for read-only queries.
     pub fn conn(&self) -> &DatabaseConnection {
         &self.conn

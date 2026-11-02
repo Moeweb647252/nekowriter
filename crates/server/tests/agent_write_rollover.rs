@@ -6,10 +6,9 @@
 
 mod agent_write_harness;
 
-use agent_write_harness::{
-    chapter_content, runtime, start_legacy_writer_on, start_writer, start_writer_on,
-};
-use nekowriter::db::json::{Granularity, Phase, SessionStatus};
+use agent_write_harness::{chapter_content, runtime, start_writer, start_writer_on};
+use nekowriter::db::json::{Granularity, Phase, SessionKind, SessionStatus};
+use nekowriter::services::sessions::{self, CreateSession};
 use nekowriter_llm::mock::ScriptStep;
 use serde_json::json;
 
@@ -169,17 +168,20 @@ async fn an_ineligible_session_overflowing_fails_without_rolling_over() {
     .await;
     let chapter = app.app.create_chapter(app.track_id, "第二章").await;
     let chapter_id = chapter["id"].as_i64().expect("id") as i32;
-    // A legacy planning session is a writer that cannot roll over (phase `planning`), which is
-    // exactly the ineligible case this test pins.
-    let session_id = start_legacy_writer_on(
-        &app,
-        chapter_id,
-        Granularity::Paragraph,
-        false,
-        false,
-        false,
+    // A revise session in `revision_planning` cannot roll over, which is exactly the ineligible
+    // case this test pins (it used the legacy planning phase before M16).
+    let (session_id, _) = sessions::create(
+        app.app.state(),
+        CreateSession {
+            kind: SessionKind::ChapterRevise,
+            book_id: Some(app.book_id),
+            chapter_id: Some(chapter_id),
+            granularity: Some(Granularity::Paragraph),
+            ..CreateSession::default()
+        },
     )
-    .await;
+    .await
+    .expect("create revise session");
     let row = agent_write_harness::wait_for_status(&app, session_id, "failed").await;
     let error = row.error().expect("a session error");
     assert_eq!(error.code, "provider.context_overflow");

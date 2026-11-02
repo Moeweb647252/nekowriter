@@ -3290,8 +3290,10 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
 
 - **Context**: The author asked for a cleanup of things nothing uses. A survey at `2880a77` (plan
   `docs/research/codebase-cleanup-plan.md` §2) found:
-  - ten unused dependency entries across the four crates, and 20 redundant `[[test]]` sections;
-  - 31 Rust functions referenced nowhere, two of them behind `#[allow(dead_code)]`;
+  - 13 unused dependency entries across the four crates (plan §2.1 lists 12 entries, with
+    `tokio-util` and `tempfile` each appearing twice; the finder review then found `fastembed`),
+    and 20 redundant `[[test]]` sections;
+  - 33 Rust functions referenced nowhere, two of them behind `#[allow(dead_code)]`;
   - the D-146 legacy planning branch, whose removal condition (no open `chapter_write`/`planning`
     session on the author's database) task 12.7 had already measured as met;
   - a prompt variable and an error code that are never used;
@@ -3321,7 +3323,49 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     It also found a bug: inbox steering messages are appended raw, without `notice.user_message`,
     although spec/03 §5.3 and `writer.system` say they carry the 【用户留言】 header. Neither is
     cleanup. The hooks and the key stay. The bug is M17 (D-160) and the gaps are M18 (D-161).
-  - 16.7 appends the final counts here.
+  - **Final counts (16.7)**:
+    - **Dependencies**: 13 unused crate dependency entries removed, plus three unused
+      `[workspace.dependencies]` entries (`tower-http`, `tokio-stream`, `ipnet`). The 20 redundant
+      `[[test]]` sections went with Cargo auto-discovery.
+    - **Functions and types**: 42 removed (the 16.3 finder's 33 + `store_error`, then the 16.3
+      orphan sweep's `WriteActor`, two `summary_snapshot` and five `snapshot_now`).
+    - **Files**: 8 removed (5 web files including `react.svg`; `legacy_planning_session.rs` and two
+      legacy fixtures). `web/README.md` was replaced with a pointer to the root README rather than
+      deleted.
+    - **Web exports**: 10 removed (the seven from the plan plus `errorMessage`, `useRelations` and
+      `listRelations`). Six §3.1 hooks and the test-only `registeredTools` stay.
+    - **i18n**: 22 unused web keys removed from both locales, plus the three legacy prompt-pack
+      keys and the never-returned `embedding.unavailable` error-code translation.
+    - **Tests**: the 16.4 delta is 12 legacy Rust cases deleted plus 4 port groups (writer tool UI,
+      ineligible rollover, five Demo planning cases, prompt-include resolution); `935ae0b` later
+      added 4 restoration tests (the revision-plan acceptance notice, the nudge proof, the
+      phase-change revocation proof, and the historical-row render test). The legacy Outline-tab
+      Vitest case was also deleted. No test was weakened.
+    - **16.4 pre-check**: on a copy, the removal query returned **0** on both the live database
+      (0 sessions) and the historical backup (6 `chapter_write`/`drafting` sessions);
+      `prompt_overrides` had **0** rows in both.
+    - **Bundle**: from the M16 start (`43a62a4`, 1,884,971 bytes) to the final build
+      (1,877,902 bytes) the whole milestone is **-7,069 bytes**. The 16.6+16.7 share, measured from
+      `d255676` (1,884,473 bytes), is **-6,571 bytes**; the main chunk in that window went
+      450.99 -> 449.39 kB.
+  - **Known remainders, deliberately kept**: `[workspace.dependencies] nekowriter` (unused since
+    `c65b0ec`, outside the §2.1 list); `canon:relation_status.active` (the one §4.3 i18n candidate
+    kept for M18's G4 relation edit); `web/public/vite.svg` (still used by `index.html`; plan §2.6
+    says not to touch it); seven pre-existing orphaned `pub` types (`prompts/context.rs` six,
+    `embed/fake.rs` `EmbedderMap`) and three orphaned `pub` consts (`AUTHOR_BUILTIN`, `AUTHOR_USER`,
+    `CAST_INDEX_LIMIT`) — a gap is not dead code under rule 4; §4.2's duplicate-name blind spot
+    (`pub` items and same-name duplicates can hide unreferenced functions); and the web
+    `ALL_ERROR_CODES` being a hand-maintained array standing in for the generated TS union, so
+    deleting an array entry alone cannot fail the test. The 16.3 test-shape nit remains:
+    `error_clear_sql_matches_the_production_builder` asserts a `#[cfg(test)]`-only helper's SQL and
+    never covered a live path.
+  - **Pre-existing test gap**: the positive half of spec/03 §15 test 25 (a redraft rollover keeps
+    its chain's feedback) has no test. It predates M16; 16.4 recorded it as "noted and not fixed".
+  - **Environment observation (unproven, watch it)**: the review's first `check.sh` exited 101 on
+    the SQLite tests `deleting_a_chapter…` and `deleting_a_search_doc…` with "no such table",
+    reproduced once in five group runs; no M16-touched code is involved. Same class as the earlier
+    `research_deferred` flake. Do not hunt it now; if it recurs, capture `RUST_BACKTRACE=1` and the
+    failing test binary's mtime/hash.
 - **Spec**: spec/01 §2; spec/02 §3, §4; spec/03 §1.1, §1.2, §4, §5.4, §5.6, §15 (2, 25);
   spec/04 §7.2; spec/05 §1.5, §2; spec/09 §2; spec/10 §4; spec/11 §5.2, §5.5; PROJECT §4, §8.5;
   D-146.

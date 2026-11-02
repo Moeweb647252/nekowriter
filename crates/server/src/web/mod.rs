@@ -256,14 +256,6 @@ pub enum WebError {
 }
 
 impl WebError {
-    /// The `reason` code of a failed search, when it has one.
-    pub fn search_reason(&self) -> Option<SearchFailure> {
-        match self {
-            WebError::Search { reason, .. } => Some(*reason),
-            _ => None,
-        }
-    }
-
     /// The HTTP status of a failed call, when the failure was a status.
     pub fn status(&self) -> Option<u16> {
         match self {

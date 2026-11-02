@@ -28,9 +28,7 @@
 
 mod agent_write_harness;
 
-use agent_write_harness::{
-    chapter_content, chapter_row, runtime, start_legacy_writer, start_writer, start_writer_on,
-};
+use agent_write_harness::{chapter_content, chapter_row, runtime, start_writer, start_writer_on};
 use nekowriter::db::json::{Granularity, SessionStatus};
 use nekowriter::services::sessions::{self, CreateSession};
 use nekowriter_llm::mock::ScriptStep;
@@ -427,9 +425,6 @@ async fn revising_ignores_chapter_end_and_hints_at_finish_revision() {
             guidance: None,
             kickoff_extra: None,
             pending_comment: None,
-            legacy_planning_fixture: false,
-            legacy_system_prompt: None,
-            legacy_kickoff_text: None,
             chapter_guard: false,
             force_previous: false,
         },
@@ -865,67 +860,6 @@ async fn replace_and_delete_are_not_limited_by_granularity() {
 
 // ─────────────────────── notices name the open tail ───────────────────────
 
-/// spec/03 §8: "The notices say so whenever the tail is open."
-///
-/// The `outline_accepted` notice is rendered by the transaction that finalizes `submit_outline`.
-/// The tail state it reads must be the chapter's current tail, not the session's stored
-/// `view_snapshot`: that column is only written when a session *leaves* `running` (spec/03 §3), so
-/// on this path it is still `NULL` and the hint would silently disappear.
-#[tokio::test]
-async fn the_outline_accepted_notice_names_an_open_tail() {
-    let runtime = runtime(vec![
-        // The first session writes one paragraph and leaves it open, then is abandoned.
-        insert("开头的一段，还没写完", json!({ "paragraph_end": false })),
-        // The second (legacy) session plans first, then drafts the rest of the chapter.
-        agent_write_harness::outline_step(),
-        insert("，接着写完了。", json!({})),
-        finish_pair()[0].clone(),
-        finish_pair()[1].clone(),
-    ])
-    .await;
-    // `auto_pause` holds the write so the first session stops with the tail open. The mode must be
-    // one that honours `paragraph_end` (`paragraph` always closes, spec/03 §8).
-    let first = start_writer(&runtime, Granularity::Free, true, false).await;
-    agent_write_harness::wait_for_status(&runtime, first, "held").await;
-    // The held write is staged, not applied (D-139), so approving it is what creates the open tail
-    // the fixture needs.
-    let (status, body) = agent_write_harness::resume_raw(&runtime, first, None).await;
-    assert_eq!(status, 200, "approve the first write: {body}");
-    let content = chapter_content(&runtime, runtime.chapter_id).await;
-    assert!(content.tail_open, "the fixture has an open tail");
-    let pid = content
-        .paragraphs
-        .last()
-        .map(|paragraph| paragraph.pid.clone())
-        .unwrap_or_default();
-    let (status, body) = runtime
-        .app
-        .post(&format!("/api/sessions/{first}/abandon"), json!({}))
-        .await;
-    assert_eq!(status, 200, "abandon the first session: {body}");
-
-    // The second session is the legacy planning branch (the writer acceptance notice it carries
-    // exists only there now), with the open tail in front of it.
-    let second = start_legacy_writer(&runtime, Granularity::Paragraph, false, false).await;
-    runtime.wait_status(second, SessionStatus::Completed).await;
-
-    let notice = runtime
-        .calls(second)
-        .await
-        .into_iter()
-        .filter_map(|call| call.result_text.clone())
-        .find(|text| text.contains("章纲已确认"))
-        .expect("the accepted notice was delivered");
-    assert!(
-        notice.contains("尚未写完"),
-        "the accepted notice says the tail is open: {notice}"
-    );
-    assert!(
-        notice.contains(&pid),
-        "and names the open pid {pid}: {notice}"
-    );
-}
-
 /// spec/03 §8: "In `revising`, `chapter_end` is ignored, and the result appends a hint to call
 /// `finish_revision`."
 ///
@@ -963,9 +897,6 @@ async fn revising_ignores_the_implied_chapter_end_of_chapter_mode() {
             guidance: None,
             kickoff_extra: None,
             pending_comment: None,
-            legacy_planning_fixture: false,
-            legacy_system_prompt: None,
-            legacy_kickoff_text: None,
             chapter_guard: false,
             force_previous: false,
         },
@@ -1092,5 +1023,74 @@ async fn inserting_after_the_open_tail_closes_it() {
         !content.tail_open,
         "the last paragraph is the complete inserted one, so the tail is closed: {:?}",
         content.paragraphs
+    );
+}
+
+/// The revision-plan acceptance notice is rendered from the live chapter, not the session's stale
+/// view snapshot, so it names the chapter's open tail (spec/03 §5.3, §8).
+#[tokio::test]
+async fn the_revision_plan_acceptance_notice_names_an_open_tail() {
+    let runtime = runtime(vec![
+        ScriptStep::new().tool(
+            "submit_revision_plan",
+            json!({ "plan": "把 p1 补完，再加一段收束。" }),
+        ),
+        ScriptStep::new().tool("finish_revision", json!({ "summary": "按意见改完。" })),
+    ])
+    .await;
+    // An in-review chapter with a real open tail: the fixture writes through the API, then marks
+    // the last paragraph open and the chapter in review (the state send-back expects).
+    runtime
+        .app
+        .put_text(runtime.chapter_id, 0, "开头这一段还没有写完")
+        .await;
+    let mut content = chapter_content(&runtime, runtime.chapter_id).await;
+    content.tail_open = true;
+    let serialized = serde_json::to_string(&content)
+        .expect("content JSON")
+        .replace('\'', "''");
+    runtime
+        .app
+        .execute(&format!(
+            "UPDATE chapters SET content = '{serialized}', status = 'in_review' WHERE id = {}",
+            runtime.chapter_id
+        ))
+        .await;
+    let content = chapter_content(&runtime, runtime.chapter_id).await;
+    assert!(content.tail_open, "the fixture left the tail open");
+    let pid = content
+        .paragraphs
+        .last()
+        .map(|paragraph| paragraph.pid.clone())
+        .expect("a paragraph");
+
+    let (status, body) = runtime
+        .app
+        .post(
+            &format!("/api/chapters/{}/send-back", runtime.chapter_id),
+            json!({ "feedback": "按意见修改。", "mode": "revise" }),
+        )
+        .await;
+    assert!(status.is_success(), "send back: {status} {body}");
+    let revise = body["session_id"].as_i64().expect("the revise session id") as i32;
+    runtime.wait_status(revise, SessionStatus::Completed).await;
+
+    let calls = runtime.calls(revise).await;
+    let plan = calls
+        .iter()
+        .find(|call| call.name == "submit_revision_plan")
+        .expect("the revision plan call");
+    let appendices: Vec<serde_json::Value> =
+        serde_json::from_str(&plan.appendices).expect("appendices");
+    let notice = appendices
+        .iter()
+        .filter(|appendix| appendix["kind"] == "effect_notice")
+        .filter_map(|appendix| appendix["text"].as_str())
+        .find(|text| text.contains("修订计划已记录"))
+        .expect("the acceptance notice");
+    assert!(notice.contains("当前写作粒度"), "{notice}");
+    assert!(
+        notice.contains(&format!("末段 {pid} 尚未写完")),
+        "the live chapter's open tail is named: {notice}"
     );
 }

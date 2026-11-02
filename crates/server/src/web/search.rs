@@ -8,7 +8,7 @@
 use std::time::Duration;
 
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::json;
 
 use super::{DEFAULT_RESULTS, FetchBackend, MAX_RESULTS_CAP, SearchHit, WEB_TIMEOUT};
 
@@ -458,24 +458,6 @@ struct SearxResult {
     content: String,
     #[serde(default, rename = "publishedDate")]
     published_date: Option<String>,
-}
-
-/// Parses the response of a provider into hits (used by the provider tests).
-pub fn hits_from_value(value: &Value) -> Vec<SearchHit> {
-    let response: SearxResponse = match serde_json::from_value(value.clone()) {
-        Ok(response) => response,
-        Err(_) => return Vec::new(),
-    };
-    response
-        .results
-        .into_iter()
-        .map(|hit| SearchHit {
-            title: hit.title,
-            url: hit.url,
-            snippet: hit.content,
-            published: hit.published_date,
-        })
-        .collect()
 }
 
 /// The default request timeout, re-exported for the provider tests.
