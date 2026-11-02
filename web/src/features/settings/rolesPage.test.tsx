@@ -67,14 +67,14 @@ beforeAll(() => {
   Element.prototype.hasPointerCapture = () => false
   Element.prototype.setPointerCapture = vi.fn()
   Element.prototype.releasePointerCapture = vi.fn()
-  rolesDefaults = {}
+  rolesDefaults = { efforts: {} }
 })
 
 const t = (key: string) => i18n.t(key) as string
 
 describe("RolesPage model pickers (PROJECT §8.12)", () => {
   it("renders 'Not set' as the selected value, not as a hint", () => {
-    rolesDefaults = {}
+    rolesDefaults = { efforts: {} }
     render(<RolesPage />)
 
     const trigger = screen.getByLabelText(t("settings:role.writer"))
@@ -86,7 +86,7 @@ describe("RolesPage model pickers (PROJECT §8.12)", () => {
   })
 
   it("shows the assigned model, provider-qualified", () => {
-    rolesDefaults = { writer: 7, researcher: 8 }
+    rolesDefaults = { writer: 7, researcher: 8, efforts: {} }
     render(<RolesPage />)
 
     expect(screen.getByLabelText(t("settings:role.writer"))).toHaveTextContent(
@@ -104,7 +104,7 @@ describe("RolesPage model pickers (PROJECT §8.12)", () => {
   })
 
   it("labels the planner's unset option as following the writer", () => {
-    rolesDefaults = {}
+    rolesDefaults = { efforts: {} }
     render(<RolesPage />)
     const trigger = screen.getByLabelText(t("settings:role.planner"))
     expect(trigger).toHaveTextContent(t("settings:role_planner_unset"))
@@ -112,7 +112,7 @@ describe("RolesPage model pickers (PROJECT §8.12)", () => {
 
   it("writes null when a role is returned to 'Not set'", async () => {
     patchMutate.mockClear()
-    rolesDefaults = { writer: 7 }
+    rolesDefaults = { writer: 7, efforts: {} }
     const user = userEvent.setup()
     render(<RolesPage />)
 
@@ -126,7 +126,7 @@ describe("RolesPage model pickers (PROJECT §8.12)", () => {
 
   it("writes the model id when a role is assigned", async () => {
     patchMutate.mockClear()
-    rolesDefaults = {}
+    rolesDefaults = { efforts: {} }
     const user = userEvent.setup()
     render(<RolesPage />)
 
@@ -141,8 +141,25 @@ describe("RolesPage model pickers (PROJECT §8.12)", () => {
     expect(patchMutate.mock.calls[0][0].roles_defaults.writer).toBeNull()
   })
 
+  it("round-trips the stored per-role efforts when a model changes", async () => {
+    patchMutate.mockClear()
+    // The model PATCH replaces `roles_defaults` as a unit, so the loaded efforts must ride along.
+    rolesDefaults = { writer: 7, efforts: { writer: "max", reviewer: "low" } }
+    const user = userEvent.setup()
+    render(<RolesPage />)
+
+    await user.click(screen.getByLabelText(t("settings:role.writer")))
+    await user.click(await screen.findByRole("option", { name: "DeepSeek · Review model" }))
+
+    expect(patchMutate).toHaveBeenCalledTimes(1)
+    expect(patchMutate.mock.calls[0][0].roles_defaults.efforts).toEqual({
+      writer: "max",
+      reviewer: "low",
+    })
+  })
+
   it("never renders a blank role trigger", () => {
-    rolesDefaults = { conception: 7, researcher: null, writer: 8, reviewer: null, archivist: 7 }
+    rolesDefaults = { conception: 7, researcher: null, writer: 8, reviewer: null, archivist: 7, efforts: {} }
     render(<RolesPage />)
 
     for (const role of [

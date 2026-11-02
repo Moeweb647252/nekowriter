@@ -173,12 +173,27 @@ pub struct ModelProfileInput {
     #[serde(default)]
     pub options: ModelOptionsDto,
     /// The thinking-effort levels this model accepts, in display order (spec/04 §5.1, D-162).
-    /// Required in TypeScript so every caller is found; an omitted JSON field defaults to empty.
-    #[serde(default)]
+    /// Required, like the TypeScript type: an omitted field is a 400 through the extractor
+    /// envelope, never a silent reset of the stored levels (the D-132 lesson).
     pub effort_levels: Vec<String>,
     /// The level a role that chooses none gets; one of `effort_levels`, or `NULL` when the
-    /// provider decides (spec/04 §5.1, D-162).
+    /// provider decides (spec/04 §5.1, D-162). Required to be present; an explicit `null` is
+    /// valid and means the provider decides.
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub default_effort: Option<String>,
+}
+
+/// Requires a nullable field to be present while still accepting an explicit `null`.
+///
+/// Serde reads a missing `Option<T>` field as `None`; for a whole-object profile PATCH that would
+/// silently reset the stored `default_effort`. A custom deserializer makes absence a missing-field
+/// error, which `rewrite_extractor_rejection` turns into the documented `400 validation.failed`.
+fn deserialize_required_option<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Option::<T>::deserialize(deserializer)
 }
 
 /// `GET /api/provider-presets` (spec/04 §8). The values are editable defaults.

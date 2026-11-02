@@ -227,7 +227,7 @@ describe("role model labels (PROJECT §8.12)", () => {
   })
 
   it("normalizes the optional RoleModels into one entry per role", () => {
-    expect(roleSelection({ writer: 7 })).toEqual({
+    expect(roleSelection({ writer: 7, efforts: {} })).toEqual({
       conception: null,
       researcher: null,
       planner: null,

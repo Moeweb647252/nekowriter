@@ -13,8 +13,8 @@ export type RoleModels = { conception?: number | null, researcher?: number | nul
  */
 planner?: number | null, writer?: number | null, reviewer?: number | null, archivist?: number | null, 
 /**
- * The thinking effort chosen per role (spec/04 §5.1, D-162). Absent in rows written before
- * 0009; they load as `{}` and nothing is rewritten. Optional in the TS type so a request
- * that does not touch roles can omit it; the server always serializes it.
+ * The thinking effort chosen per role (spec/04 §5.1, D-162). Rows written before 0009 lack
+ * it and load as `{}`; every API response serializes it (required by spec/02 §4), and a
+ * request that replaces the object must carry the loaded map so a save cannot erase it.
  */
-efforts?: RoleEfforts | null, };
+efforts: RoleEfforts, };

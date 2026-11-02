@@ -47,7 +47,7 @@ INSERT INTO model_profiles
    created_at, updated_at)
 VALUES
   (1, 1, 'OpenAI explicit', 'gpt-test', 128000, 16384,
-   '{"reasoning_replay":"always","reasoning_effort":"max","max_tokens_field":"max_completion_tokens","cache_ttl":"1h"}',
+   '{"reasoning_replay":"always","reasoning_effort":"max","max_tokens_field":"max_completion_tokens","cache_ttl":"1h","extra_body":{"reasoning_effort":"low","top_k":40}}',
    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
   (2, 1, 'OpenAI stranded', 'gpt-test-2', 128000, 16384,
    '{"effort":"high","thinking_display":"omitted"}',
@@ -275,6 +275,12 @@ fn options_without_effort_keys(value: &serde_json::Value) -> serde_json::Value {
     if let Some(object) = options.as_object_mut() {
         object.remove("reasoning_effort");
         object.remove("effort");
+        if let Some(extra) = object
+            .get_mut("extra_body")
+            .and_then(|body| body.as_object_mut())
+        {
+            extra.remove("reasoning_effort");
+        }
     }
     options
 }
@@ -381,6 +387,15 @@ async fn migration_backfills_every_profile_and_removes_the_old_keys() {
             "profile {} lost an unrelated option",
             expected.0
         );
+        if expected.0 == 1 {
+            // `extra_body` keeps its other keys but loses the reasoning_effort override, which
+            // would otherwise be merged last and shadow the role's level (spec/04 §1).
+            assert_eq!(
+                options["extra_body"],
+                serde_json::json!({ "top_k": 40 }),
+                "the nested reasoning_effort override must be dropped"
+            );
+        }
     }
 }
 
@@ -605,4 +620,188 @@ async fn a_broken_copy_fails_loudly_and_can_be_retried() {
         .try_get("", "effort_levels")
         .expect("levels");
     assert_eq!(levels, r#"["max"]"#, "the retry back-filled the levels");
+}
+
+/// The pre-migration state a failed guard must leave untouched: schema objects, column details,
+/// profile rows and session snapshots. Captured after any test trigger is installed, so the
+/// trigger itself is part of the expected state.
+struct Baseline {
+    schema: std::collections::BTreeMap<String, (String, String)>,
+    details: Vec<String>,
+    profiles: Vec<(String, String)>,
+    sessions: Vec<(String, String)>,
+}
+
+async fn baseline(db: &Db) -> Baseline {
+    Baseline {
+        schema: schema_dump(db.conn()).await,
+        details: schema_details(db.conn()).await,
+        profiles: table_rows(db.conn(), "model_profiles", PRE_PROFILE_COLUMNS).await,
+        sessions: table_rows(db.conn(), "agent_sessions", SESSION_COLUMNS).await,
+    }
+}
+
+async fn assert_rolled_back(db: &Db, baseline: &Baseline) {
+    assert_eq!(
+        schema_dump(db.conn()).await,
+        baseline.schema,
+        "the failed migration changed the schema"
+    );
+    assert_eq!(
+        schema_details(db.conn()).await,
+        baseline.details,
+        "the failed migration changed the columns"
+    );
+    assert_eq!(
+        table_rows(db.conn(), "model_profiles", PRE_PROFILE_COLUMNS).await,
+        baseline.profiles,
+        "the failed migration changed profile rows"
+    );
+    assert_eq!(
+        table_rows(db.conn(), "agent_sessions", SESSION_COLUMNS).await,
+        baseline.sessions,
+        "the failed migration changed session snapshots"
+    );
+    assert_eq!(
+        scalar(
+            db.conn(),
+            "SELECT count(*) AS n FROM seaql_migrations WHERE version = 'm0009_role_effort'"
+        )
+        .await,
+        0,
+        "the failed migration must not be recorded"
+    );
+}
+
+async fn assert_migrated(db: &Db) {
+    assert_eq!(
+        column_count(db.conn(), "model_profiles", "effort_levels").await,
+        1,
+        "effort_levels exists exactly once after the retry"
+    );
+    assert_eq!(
+        column_count(db.conn(), "model_profiles", "default_effort").await,
+        1,
+        "default_effort exists exactly once after the retry"
+    );
+    assert_eq!(
+        scalar(
+            db.conn(),
+            "SELECT count(*) AS n FROM seaql_migrations WHERE version = 'm0009_role_effort'"
+        )
+        .await,
+        1,
+        "the retry is recorded once"
+    );
+}
+
+/// Guard 1: a row lost during the back-fill must abort the migration. The trigger deletes the
+/// profile being updated, which is not something the back-fill can produce on its own; the guard
+/// exists to turn a future copy/rebuild mistake into a rollback instead of silent data loss.
+#[tokio::test]
+async fn guard_one_fires_on_row_loss_and_the_migration_is_retryable() {
+    let (_dir, db) = pre_0009_database().await;
+    db.conn()
+        .execute_unprepared(
+            "CREATE TRIGGER role_effort_guard1_row_loss AFTER UPDATE ON model_profiles
+             BEGIN
+               DELETE FROM model_profiles WHERE id = NEW.id;
+             END;",
+        )
+        .await
+        .expect("install the row-loss trigger");
+    let baseline = baseline(&db).await;
+
+    let error = nekowriter_migration::up(db.conn())
+        .await
+        .expect_err("a lost profile must fail the row-count guard");
+    assert!(
+        error.to_string().contains("lost = 0"),
+        "the profile-count guard must fire, got: {error}"
+    );
+    assert_rolled_back(&db, &baseline).await;
+
+    db.conn()
+        .execute_unprepared("DROP TRIGGER role_effort_guard1_row_loss")
+        .await
+        .expect("repair the trigger");
+    nekowriter_migration::up(db.conn())
+        .await
+        .expect("retry after repairing the trigger");
+    assert_migrated(&db).await;
+}
+
+/// Guard 2: a key that survives the `json_remove` must abort the migration. The trigger stores a
+/// JSON `null` under `$.effort`; only the `json_type` form of the guard sees it, because
+/// `json_extract` returns SQL NULL for both "missing" and "stored null".
+#[tokio::test]
+async fn guard_two_fires_on_a_stranded_json_null_and_the_migration_is_retryable() {
+    let (_dir, db) = pre_0009_database().await;
+    db.conn()
+        .execute_unprepared(
+            "CREATE TRIGGER role_effort_guard2_stranded AFTER UPDATE OF options ON model_profiles
+             WHEN json_type(NEW.options, '$.effort') IS NULL
+             BEGIN
+               UPDATE model_profiles SET options = json_set(options, '$.effort', NULL)
+               WHERE id = NEW.id;
+             END;",
+        )
+        .await
+        .expect("install the stranded-key trigger");
+    let baseline = baseline(&db).await;
+
+    let error = nekowriter_migration::up(db.conn())
+        .await
+        .expect_err("a stranded key must fail the options guard");
+    assert!(
+        error.to_string().contains("stranded = 0"),
+        "the options guard must fire, got: {error}"
+    );
+    assert_rolled_back(&db, &baseline).await;
+
+    db.conn()
+        .execute_unprepared("DROP TRIGGER role_effort_guard2_stranded")
+        .await
+        .expect("repair the trigger");
+    nekowriter_migration::up(db.conn())
+        .await
+        .expect("retry after repairing the trigger");
+    assert_migrated(&db).await;
+}
+
+/// Guard 3: a default that is not one of its levels must abort the migration and roll back.
+#[tokio::test]
+async fn guard_three_fires_on_an_out_of_range_default_and_the_migration_is_retryable() {
+    let (_dir, db) = pre_0009_database().await;
+    db.conn()
+        .execute_unprepared(
+            "CREATE TRIGGER role_effort_guard3_bad_default AFTER UPDATE OF effort_levels
+             ON model_profiles
+             WHEN NEW.effort_levels <> '[]'
+             BEGIN
+               UPDATE model_profiles SET effort_levels = '[]'
+               WHERE id = NEW.id AND default_effort IS NOT NULL;
+             END;",
+        )
+        .await
+        .expect("install the bad-default trigger");
+    let baseline = baseline(&db).await;
+
+    let error = nekowriter_migration::up(db.conn())
+        .await
+        .expect_err("an out-of-range default must fail the default guard");
+    assert!(
+        error.to_string().contains("invalid = 0"),
+        "the default guard must fire, got: {error}"
+    );
+    assert_rolled_back(&db, &baseline).await;
+
+    db.conn()
+        .execute_unprepared("DROP TRIGGER role_effort_guard3_bad_default")
+        .await
+        .expect("repair the trigger");
+    nekowriter_migration::up(db.conn())
+        .await
+        .expect("retry after repairing the trigger");
+    assert_migrated(&db).await;
 }

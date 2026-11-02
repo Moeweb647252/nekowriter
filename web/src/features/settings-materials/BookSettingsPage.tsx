@@ -40,6 +40,7 @@ import type { BookStatus } from "@/api/gen/BookStatus"
 import type { Granularity } from "@/api/gen/Granularity"
 import type { CanonSystems } from "@/api/gen/CanonSystems"
 import type { CanonCountsDto } from "@/api/gen/CanonCountsDto"
+import type { RoleEfforts } from "@/api/gen/RoleEfforts"
 
 const GRANULARITIES: Granularity[] = ["sentence", "paragraph", "free", "chapter"]
 
@@ -136,6 +137,9 @@ type BookDraft = {
   settings: BookSettings
   /** One entry per role: `null` means "use the global default" for that role. */
   overrides: RoleSelection
+  /** The book's per-role efforts, carried through unedited until the effort select lands (19.7):
+   * `model_overrides` is replaced as a unit, so dropping this would erase the stored choices. */
+  efforts: RoleEfforts
 }
 const LANGUAGES = ["zh-CN", "en", "ja", "ko", "fr", "de", "es", "ru"] as const
 
@@ -178,6 +182,7 @@ export default function BookSettingsPage() {
     language: book.data.writing_language,
     settings: book.data.settings,
     overrides: roleSelection(book.data.model_overrides),
+    efforts: book.data.model_overrides.efforts,
   }
   const current = draft !== null && draft.key === saved.key ? draft : saved
   const setTitle = (title: string) => setDraft({ ...current, title })
@@ -194,6 +199,7 @@ export default function BookSettingsPage() {
     })
   const settings = current.settings
   const overrides = current.overrides
+  const efforts = current.efforts
   const title = current.title
   const genre = current.genre
   const language = current.language
@@ -207,8 +213,9 @@ export default function BookSettingsPage() {
         writing_language: language,
         settings,
         // The whole object every time: a patch that carried only the edited role would silently
-        // clear the siblings, because the server replaces `books.model_overrides` as a unit.
-        model_overrides: overrides,
+        // clear the siblings, because the server replaces `books.model_overrides` as a unit. The
+        // per-role efforts ride along unchanged for the same reason (D-162).
+        model_overrides: { ...overrides, efforts },
       },
       { onError: showError },
     )

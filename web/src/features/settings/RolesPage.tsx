@@ -56,10 +56,14 @@ export default function RolesPage() {
   // One entry per role (`null` = not set) and the shared provider-qualified model label, so this
   // page and the per-book overrides in Book settings cannot drift apart.
   const currentRoles: RoleSelection = roleSelection(settings.data.roles_defaults)
+  // The role efforts are not editable here yet (19.7), but the PATCH replaces `roles_defaults` as
+  // a unit: sending the loaded map back unchanged is what keeps a model edit from erasing it.
+  const currentEfforts = settings.data.roles_defaults.efforts
 
   const setRole = (role: AgentRole, value: string) => {
     const next: RoleModels = {
       ...currentRoles,
+      efforts: currentEfforts,
       [role]: value === ROLE_UNSET ? null : Number(value),
     }
     patch.mutate({ roles_defaults: next }, { onError: showError })
@@ -120,6 +124,8 @@ export default function RolesPage() {
                     writer: null,
                     reviewer: null,
                     archivist: null,
+                    // "Clear all roles" clears the efforts too (spec/04 §5.1, D-162).
+                    efforts: {},
                   },
                 },
                 { onError: showError },

@@ -104,14 +104,17 @@
     `options.reasoning_effort` is a non-blank string gets `[v]` with default `v`. A profile on the
     Anthropic protocol gets `[coalesce(options.effort, 'high')]` with the same default, because the
     adapter sent `high` when the field was unset. Every other profile gets `[]` and `NULL`;
-  - removes `reasoning_effort` and `effort` from every profile's `options`. A cross-protocol key
-    (D-132) never reached the wire, so this changes no request;
+  - removes `reasoning_effort` and `effort` from every profile's `options`, and
+    `reasoning_effort` from any `options.extra_body`: `extra_body` is merged last (spec/04 §1), so
+    a leftover override would shadow the role's resolved level. A cross-protocol key (D-132) never
+    reached the wire, so this changes no request;
   - sets `$.options.effort = 'high'` in every Anthropic `agent_sessions.model_snapshot` whose effort
     is null. That is the value the adapter sent implicitly, so an in-flight session keeps its level
     and its cache. The snapshot is frozen configuration, not message history (spec/03 §1.3).
 
   Guards in the same transaction require an unchanged `model_profiles` row count, no `options`
-  holding either key, and every non-null `default_effort` among its `effort_levels`. Roles get no
+  holding either key (top-level or in `extra_body`), and every non-null `default_effort` among its
+  `effort_levels`. Roles get no
   effort and resolve to the profile's default, so every request stays byte-identical.
 
 ## 2. Schema (0001_init.sql, upgraded by 0002_research_deferred.sql, 0003, 0004, 0005, 0006, 0007, 0008 and 0009)

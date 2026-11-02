@@ -50,7 +50,7 @@ function book(status: BookStatus): BookDto {
       auto_maintenance: true,
       canon_systems: { entities: true, timeline: true, memory: true, foreshadowing: true, goals: true },
     },
-    model_overrides: {},
+    model_overrides: { efforts: {} },
     conception: {
       session_id: null,
       characters_revision: 0,

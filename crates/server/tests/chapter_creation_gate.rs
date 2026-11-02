@@ -130,6 +130,8 @@ async fn assign_writer_model(app: &TestApp) {
                 "model": "demo-model",
                 "context_window": 200_000,
                 "max_output_tokens": 8_192,
+                "effort_levels": [],
+                "default_effort": null,
                 "options": {},
             }),
         )

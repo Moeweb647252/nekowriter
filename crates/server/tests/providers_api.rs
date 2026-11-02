@@ -410,6 +410,8 @@ async fn deleting_a_provider_assigned_to_a_role_leaves_the_role_to_report_a_miss
                 "model": "demo-model",
                 "context_window": 200000,
                 "max_output_tokens": 16384,
+                "effort_levels": [],
+                "default_effort": null,
                 "options": {},
             }),
         )
@@ -424,6 +426,17 @@ async fn deleting_a_provider_assigned_to_a_role_leaves_the_role_to_report_a_miss
         .await;
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["roles_defaults"]["writer"], model_id);
+
+    // `efforts` is an object (spec/02 §4), never `null`: the TS type and the Rust deserializer
+    // agree, so a null attempt is a 400 rather than a silently discarded value.
+    let (status, body) = app
+        .patch(
+            "/api/app-settings",
+            json!({ "roles_defaults": { "efforts": null } }),
+        )
+        .await;
+    assert_eq!(status, 400, "{body}");
+    assert_error(&body, "validation.failed");
 
     // Deletion is allowed (D-048: a session whose provider vanished fails with
     // model.missing_provider); the role default keeps the now dangling model id, and starting a
@@ -457,6 +470,8 @@ async fn model_profile_crud_and_validation() {
                 "model": "demo-model",
                 "context_window": 200000,
                 "max_output_tokens": 16384,
+                "effort_levels": [],
+                "default_effort": null,
                 "options": { "reasoning_replay": "always" },
             }),
         )
@@ -483,6 +498,8 @@ async fn model_profile_crud_and_validation() {
                 "model": "bad",
                 "context_window": 1000,
                 "max_output_tokens": 2000,
+                "effort_levels": [],
+                "default_effort": null,
                 "options": {},
             }),
         )
@@ -509,6 +526,8 @@ async fn model_profile_crud_and_validation() {
                     "model": "demo-model",
                     "context_window": 1000,
                     "max_output_tokens": 100,
+                    "effort_levels": [],
+                    "default_effort": null,
                     "options": options,
                 }),
             )
@@ -533,6 +552,8 @@ async fn model_profile_crud_and_validation() {
                     "model": "demo-model",
                     "context_window": 1000,
                     "max_output_tokens": 100,
+                    "effort_levels": [],
+                    "default_effort": null,
                     "options": { field: "high" },
                 }),
             )
@@ -543,6 +564,33 @@ async fn model_profile_crud_and_validation() {
             .as_str()
             .unwrap_or_else(|| panic!("{field} must be named in the rejection: {body}"));
         assert!(detail.contains(field), "{field}: {detail}");
+    }
+
+    // The two effort fields are required in the input, not defaulted: a stale client that omits
+    // one gets a 400 instead of silently resetting the stored levels/default (D-162, §2.7). This
+    // is the whole-object PATCH trap the D-132 lesson warns about.
+    for missing in ["effort_levels", "default_effort"] {
+        let mut payload = json!({
+            "provider_id": provider_id,
+            "display_name": format!("Stale profile {missing}"),
+            "model": "demo-model",
+            "context_window": 1000,
+            "max_output_tokens": 100,
+            "options": {},
+            "effort_levels": [],
+            "default_effort": null,
+        });
+        payload
+            .as_object_mut()
+            .expect("payload object")
+            .remove(missing);
+        let (status, body) = app.post("/api/model-profiles", payload).await;
+        assert_eq!(status, 400, "missing {missing}: {body}");
+        assert_error(&body, "validation.failed");
+        let detail = body["error"]["details"]["fields"]["body"]
+            .as_str()
+            .unwrap_or_else(|| panic!("missing {missing} must be named: {body}"));
+        assert!(detail.contains(missing), "missing {missing}: {detail}");
     }
 
     // Valid options survive a round trip unchanged, so the check above rejects only what the
@@ -655,6 +703,8 @@ async fn model_profile_crud_and_validation() {
                 "model": "other",
                 "context_window": 1000,
                 "max_output_tokens": 100,
+                "effort_levels": [],
+                "default_effort": null,
                 "options": {},
             }),
         )
@@ -673,6 +723,8 @@ async fn model_profile_crud_and_validation() {
                 "model": "demo-model",
                 "context_window": 200000,
                 "max_output_tokens": 8192,
+                "effort_levels": [],
+                "default_effort": null,
                 "options": { "send_parallel_tool_calls": false },
             }),
         )
@@ -692,6 +744,8 @@ async fn model_profile_crud_and_validation() {
                 "model": "x",
                 "context_window": 1000,
                 "max_output_tokens": 100,
+                "effort_levels": [],
+                "default_effort": null,
                 "options": {},
             }),
         )
@@ -721,6 +775,8 @@ async fn deleting_a_provider_cascades_its_model_profiles() {
             "model": "demo-model",
             "context_window": 200000,
             "max_output_tokens": 16384,
+            "effort_levels": [],
+            "default_effort": null,
             "options": {},
         }),
     )
@@ -809,6 +865,8 @@ async fn test_connection_uses_the_saved_profile_options() {
                 "model": "gpt-test",
                 "context_window": 400000,
                 "max_output_tokens": 128000,
+                "effort_levels": [],
+                "default_effort": null,
                 "options": { "max_tokens_field": "max_completion_tokens" },
             }),
         )
@@ -988,6 +1046,8 @@ async fn app_settings_carry_role_defaults_and_mask_the_search_key() {
                 "model": "demo-model",
                 "context_window": 200000,
                 "max_output_tokens": 16384,
+                "effort_levels": [],
+                "default_effort": null,
                 "options": {},
             }),
         )
@@ -1146,6 +1206,8 @@ async fn the_removed_effort_options_are_refused_and_cross_protocol_options_still
                     "model": "deepseek-v4-pro",
                     "context_window": 200000,
                     "max_output_tokens": 16384,
+                    "effort_levels": [],
+                    "default_effort": null,
                     "options": { field: "high" },
                 }),
             )

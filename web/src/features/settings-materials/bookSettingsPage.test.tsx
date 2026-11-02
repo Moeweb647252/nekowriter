@@ -17,6 +17,7 @@ import zhBook from "@/i18n/locales/zh-CN/book.json"
 import enSettings from "@/i18n/locales/en/settings.json"
 import enSkills from "@/i18n/locales/en/skills.json"
 import type { BookDto } from "@/api/gen/BookDto"
+import type { RoleModels } from "@/api/gen/RoleModels"
 import type { WritingSkillDto } from "@/api/gen/WritingSkillDto"
 
 const patchBook = vi.fn()
@@ -29,7 +30,7 @@ let book: BookDto
 let skillRows: WritingSkillDto[]
 
 /** The global role defaults the page compares each row against. */
-let rolesDefaults: Record<string, number | null>
+let rolesDefaults: RoleModels
 
 vi.mock("react-router", () => ({
   Link: ({ children, to }: { children: React.ReactNode; to: string }) => (
@@ -129,7 +130,7 @@ beforeEach(() => {
     goals: { nodes: 2 },
   }
   skillRows = []
-  rolesDefaults = { conception: 8, researcher: 8, writer: 7, reviewer: 8, archivist: 8 }
+  rolesDefaults = { conception: 8, researcher: 8, writer: 7, reviewer: 8, archivist: 8 , efforts: {}}
   book = {
     id: 1,
     title: "青云劫",
@@ -149,7 +150,7 @@ beforeEach(() => {
       auto_maintenance: true,
       canon_systems: { entities: true, timeline: true, memory: true, foreshadowing: true, goals: true },
     },
-    model_overrides: { conception: null, researcher: null, writer: null, reviewer: null, archivist: null },
+    model_overrides: { conception: null, researcher: null, writer: null, reviewer: null, archivist: null, efforts: {} },
     conception: {
       session_id: null,
       characters_revision: 0,
@@ -193,6 +194,7 @@ describe("Book settings › model overrides", () => {
       writer: 7,
       reviewer: null,
       archivist: null,
+      efforts: {},
     }
     render(<BookSettingsPage />)
 
@@ -203,7 +205,7 @@ describe("Book settings › model overrides", () => {
   })
 
   it("displays what the global default resolves to for every role", () => {
-    rolesDefaults = { conception: 8, researcher: null, writer: 7, reviewer: 8, archivist: null }
+    rolesDefaults = { conception: 8, researcher: null, writer: 7, reviewer: 8, archivist: null , efforts: {}}
     render(<BookSettingsPage />)
 
     expect(screen.getByTestId("model-override-row-conception")).toHaveTextContent(
@@ -228,6 +230,7 @@ describe("Book settings › model overrides", () => {
       writer: 99,
       reviewer: null,
       archivist: null,
+      efforts: {},
     }
     render(<BookSettingsPage />)
 
@@ -250,6 +253,7 @@ describe("Book settings › model overrides", () => {
       writer: 99,
       reviewer: null,
       archivist: null,
+      efforts: {},
     }
     render(<BookSettingsPage />)
 
@@ -271,6 +275,7 @@ describe("Book settings › model overrides", () => {
       writer: null,
       reviewer: 8,
       archivist: null,
+      efforts: { researcher: "low" },
     }
     render(<BookSettingsPage />)
 
@@ -291,6 +296,9 @@ describe("Book settings › model overrides", () => {
       writer: 7,
       reviewer: 8,
       archivist: null,
+      // The loaded per-role efforts ride along: a unit replacement that dropped them would erase
+      // the author's choices (D-162). Mutation: sending `{}` here fails this assertion.
+      efforts: { researcher: "low" },
     })
     // And nothing else is invented: the patch carries the form's other fields too, but no second
     // save path exists.
@@ -305,6 +313,7 @@ describe("Book settings › model overrides", () => {
       writer: 7,
       reviewer: 8,
       archivist: null,
+      efforts: {},
     }
     render(<BookSettingsPage />)
 
@@ -424,6 +433,7 @@ describe("Book settings › planner model hint (D-146)", () => {
       writer: 7,
       reviewer: null,
       archivist: null,
+      efforts: {},
     }
     book.model_overrides = {
       conception: null,
@@ -432,13 +442,14 @@ describe("Book settings › planner model hint (D-146)", () => {
       writer: null,
       reviewer: null,
       archivist: null,
+      efforts: {},
     }
     const { unmount } = render(<BookSettingsPage />)
     const row = screen.getByTestId("model-override-row-planner")
     expect(within(row).getByText("Follows the Writer: Anthropic · Writer model")).toBeInTheDocument()
     unmount()
 
-    rolesDefaults = { ...rolesDefaults, planner: 8 }
+    rolesDefaults = { ...rolesDefaults, planner: 8 , efforts: {}}
     render(<BookSettingsPage />)
     const withGlobal = screen.getByTestId("model-override-row-planner")
     expect(within(withGlobal).getByText("Default: DeepSeek · Review model")).toBeInTheDocument()

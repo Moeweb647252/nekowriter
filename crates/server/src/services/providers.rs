@@ -694,20 +694,38 @@ fn model_profile_dto(
         effort_levels: row.effort_levels.clone().into_inner(),
         default_effort: row.default_effort.clone(),
         ignored_options,
-        ignored_effort_levels: match protocols.get(&row.provider_id) {
-            Some(protocol) => {
-                let rule = nekowriter_llm::EffortRule::for_protocol(llm_protocol(*protocol));
-                row.effort_levels
-                    .iter()
-                    .filter(|level| !rule.accepts(level))
-                    .cloned()
-                    .collect()
-            }
-            None => Vec::new(),
-        },
+        ignored_effort_levels: ignored_effort_levels(
+            &row.effort_levels,
+            protocols.get(&row.provider_id).copied(),
+        ),
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
+}
+
+/// Stored effort levels the provider's current protocol cannot send (spec/04 §5.1, D-162).
+///
+/// OpenAI's `reasoning_effort` is free-form at the wire level, so the plan's wording is "none": a
+/// pattern-failing legacy token is a save-validation concern, not a value the protocol cannot
+/// carry, and it is never reported here. Anthropic reports everything outside its closed set, and
+/// the mock protocol reports every stored level because it sends no options at all.
+fn ignored_effort_levels(levels: &[String], protocol: Option<Protocol>) -> Vec<String> {
+    let Some(protocol) = protocol else {
+        // A profile whose provider vanished is a transient read; report nothing rather than
+        // guess a protocol.
+        return Vec::new();
+    };
+    match llm_protocol(protocol) {
+        nekowriter_llm::Protocol::Openai => Vec::new(),
+        protocol => {
+            let rule = nekowriter_llm::EffortRule::for_protocol(protocol);
+            levels
+                .iter()
+                .filter(|level| !rule.accepts(level))
+                .cloned()
+                .collect()
+        }
+    }
 }
 
 /// `GET /api/model-profiles/:id`.
@@ -1157,4 +1175,34 @@ pub fn provider_config(
         api_key,
         extra_headers,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `ignored_effort_levels` follows the plan's wording: OpenAI's free-form wire field can carry
+    /// any token, so nothing is reported there; Anthropic reports values outside its closed set,
+    /// and the mock protocol (which sends no options) reports every stored level.
+    #[test]
+    fn ignored_effort_levels_follow_the_protocol_rule() {
+        let levels = vec!["max".to_owned(), "not a token".to_owned()];
+        assert!(
+            ignored_effort_levels(&levels, Some(Protocol::Openai)).is_empty(),
+            "OpenAI can carry any string, so no stored level is a protocol mismatch"
+        );
+        assert_eq!(
+            ignored_effort_levels(&levels, Some(Protocol::Anthropic)),
+            vec!["not a token".to_owned()]
+        );
+        assert_eq!(
+            ignored_effort_levels(&levels, Some(Protocol::Mock)),
+            levels,
+            "the mock protocol sends no options, so every level is unsendable"
+        );
+        assert!(
+            ignored_effort_levels(&levels, None).is_empty(),
+            "a profile without a provider reports nothing rather than guessing"
+        );
+    }
 }

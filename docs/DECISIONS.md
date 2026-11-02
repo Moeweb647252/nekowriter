@@ -3425,8 +3425,9 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     before. A model that rejects `effort` can now be configured with an empty list; before, it
     always failed.
   - **A stale choice never blocks a session.** It falls through and warns.
-  - **Dropped values.** A cross-protocol effort key, which was always inert, is dropped. The
-    pre-ship report lists each one.
+  - **Dropped values.** A cross-protocol effort key, which was always inert, is dropped, and so is
+    `options.extra_body.reasoning_effort`: `extra_body` is merged last, so a leftover override
+    would silently shadow the role's resolved level. The pre-ship report lists each one.
 - **Spec**:
   - PROJECT §5, F1, §8.6, §8.12;
   - spec/02 §1, §2, §4;

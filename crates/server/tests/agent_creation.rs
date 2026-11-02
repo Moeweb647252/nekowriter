@@ -39,6 +39,8 @@ async fn app_without_writer_role() -> TestApp {
                 "model": "demo-model",
                 "context_window": 200_000,
                 "max_output_tokens": 8_192,
+                "effort_levels": [],
+                "default_effort": null,
             }),
         )
         .await;
@@ -105,6 +107,8 @@ async fn the_book_override_wins_over_the_role_default() {
                 "model": "default-model",
                 "context_window": 100_000,
                 "max_output_tokens": 4_096,
+                "effort_levels": [],
+                "default_effort": null,
             }),
         )
         .await;
@@ -117,6 +121,8 @@ async fn the_book_override_wins_over_the_role_default() {
                 "model": "book-model",
                 "context_window": 200_000,
                 "max_output_tokens": 8_192,
+                "effort_levels": [],
+                "default_effort": null,
             }),
         )
         .await;
@@ -507,6 +513,8 @@ async fn a_large_kickoff_warns_but_starts_the_session() {
                 "model": "tiny",
                 "context_window": 120,
                 "max_output_tokens": 16,
+                "effort_levels": [],
+                "default_effort": null,
             }),
         )
         .await;

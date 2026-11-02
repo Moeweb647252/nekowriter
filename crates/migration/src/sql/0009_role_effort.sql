@@ -37,10 +37,15 @@ SET effort_levels = json_array(coalesce(json_extract(options, '$.effort'), 'high
     default_effort = coalesce(json_extract(options, '$.effort'), 'high')
 WHERE provider_id IN (SELECT id FROM providers WHERE protocol = 'anthropic');
 
--- Both keys leave `options` on every profile. A key its protocol could not send (D-132) never
--- reached the wire, so dropping it changes no request.
+-- Both top-level keys and `extra_body.reasoning_effort` leave `options` on every profile.
+-- `extra_body` is merged last (spec/04 §1), so a profile keeping that key would silently override
+-- the role's resolved level. A key its protocol could not send (D-132) never reached the wire, so
+-- dropping it changes no request.
 UPDATE model_profiles
-SET options = json_remove(options, '$.reasoning_effort', '$.effort');
+SET options = json_remove(
+  json_remove(options, '$.reasoning_effort', '$.effort'),
+  '$.extra_body.reasoning_effort'
+);
 
 -- The snapshot is frozen configuration, not message history (spec/03 §1.3). An in-flight
 -- Anthropic session keeps the effort the old adapter sent implicitly, and with it its prompt
@@ -60,15 +65,17 @@ INSERT INTO role_effort_profile_guard (lost)
 DROP TABLE role_effort_profile_guard;
 DROP TABLE role_effort_profile_count;
 
--- Guard 2: no profile's options still holds either key (json_type distinguishes a stored JSON
--- null from a missing path, which json_extract would conflate).
+-- Guard 2: no profile's options still holds either key, at the top level or inside `extra_body`
+-- (json_type distinguishes a stored JSON null from a missing path, which json_extract would
+-- conflate).
 CREATE TEMP TABLE role_effort_options_guard (
   stranded INTEGER NOT NULL CHECK (stranded = 0)
 );
 INSERT INTO role_effort_options_guard (stranded)
   SELECT count(*) FROM model_profiles
   WHERE json_type(options, '$.reasoning_effort') IS NOT NULL
-     OR json_type(options, '$.effort') IS NOT NULL;
+     OR json_type(options, '$.effort') IS NOT NULL
+     OR json_type(options, '$.extra_body.reasoning_effort') IS NOT NULL;
 DROP TABLE role_effort_options_guard;
 
 -- Guard 3: every non-null default is one of its own levels.
