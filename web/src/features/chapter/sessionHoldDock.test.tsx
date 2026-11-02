@@ -245,7 +245,6 @@ vi.mock("@/api/endpoints/books", () => ({
 vi.mock("@/components/common/ErrorToast", () => ({
   useErrorToast: () => () => {},
   useWarningToasts: () => () => {},
-  errorMessage: () => "",
 }))
 
 vi.mock("@/features/chapter/HistoryTab", () => ({ HistoryTab: () => null }))

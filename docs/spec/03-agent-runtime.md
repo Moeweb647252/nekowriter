@@ -323,7 +323,7 @@ carries what the author did meanwhile, and no history is edited.
 ```text
 finalize(s, tc):            # inside step_tool's transaction, or its own when a held/awaiting call is resumed/answered
   apply tc.effects:
-    phase_to   → s.phase ← phase_to; tc.appendices += phase notice (outline_accepted / revision_plan_accepted)
+    phase_to   → s.phase ← phase_to; tc.appendices += phase notice (revision_plan_accepted)
     complete   → run the completion handler for s.kind (spec/08): e.g. finish_draft → chapter in_review +
                  'draft' version; finish_revision → in_review + 'revision' version; submit_review → report
                  visible; finish_maintenance → canon_status synced or stale (spec/06 §6); finish_research

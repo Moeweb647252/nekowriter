@@ -48,8 +48,6 @@ export const keys = {
     entities: (bookId: number, filters?: string) =>
       ["canon", "entities", bookId, filters ?? "all"] as const,
     entity: (entityId: number) => ["canon", "entity", entityId] as const,
-    relations: (bookId: number, entityId?: number) =>
-      ["canon", "relations", bookId, entityId ?? "all"] as const,
     timeline: (bookId: number, trackId?: number) =>
       ["canon", "timeline", bookId, trackId ?? "all"] as const,
     notes: (bookId: number, filters?: string) =>

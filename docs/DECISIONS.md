@@ -3321,7 +3321,34 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     It also found a bug: inbox steering messages are appended raw, without `notice.user_message`,
     although spec/03 §5.3 and `writer.system` say they carry the 【用户留言】 header. Neither is
     cleanup. The hooks and the key stay. The bug is M17 (D-160) and the gaps are M18 (D-161).
-  - 16.7 appends the final counts here.
+  - **Final counts (16.7)**:
+    - **Dependencies**: 13 unused crate dependency entries removed, plus three unused
+      `[workspace.dependencies]` entries (`tower-http`, `tokio-stream`, `ipnet`). The 20 redundant
+      `[[test]]` sections went with Cargo auto-discovery.
+    - **Functions and types**: 42 removed (the 16.3 finder's 33 + `store_error`, then the 16.3
+      orphan sweep's `WriteActor`, two `summary_snapshot` and five `snapshot_now`).
+    - **Files**: 8 removed (5 web files including `react.svg`; `legacy_planning_session.rs` and two
+      legacy fixtures). `web/README.md` was replaced with a pointer to the root README rather than
+      deleted.
+    - **Web exports**: 10 removed (the seven from the plan plus `errorMessage`, `useRelations` and
+      `listRelations`). Six §3.1 hooks and the test-only `registeredTools` stay.
+    - **i18n**: 22 unused web keys removed from both locales, plus the three legacy prompt-pack
+      keys and the never-returned `embedding.unavailable` error-code translation.
+    - **Tests**: 12 legacy Rust cases deleted and 4 port groups kept the general mechanisms (writer
+      tool UI, ineligible rollover, five Demo planning cases, prompt-include resolution); the
+      legacy Outline-tab Vitest case was deleted. No test was weakened.
+    - **16.4 pre-check**: on a copy, the removal query returned **0** on both the live database
+      (0 sessions) and the historical backup (6 `chapter_write`/`drafting` sessions);
+      `prompt_overrides` had **0** rows in both.
+    - **Bundle**: 1,884,473 -> 1,877,902 bytes (**-6,571 bytes**), main chunk 450.99 -> 449.39 kB.
+  - **Known remainders, deliberately kept**: `[workspace.dependencies] nekowriter` (unused since
+    `c65b0ec`, outside the §2.1 list); seven pre-existing orphaned `pub` types (`prompts/context.rs`
+    six, `embed/fake.rs` `EmbedderMap`) and three orphaned `pub` consts (`AUTHOR_BUILTIN`,
+    `AUTHOR_USER`, `CAST_INDEX_LIMIT`) — a gap is not dead code under rule 4; §4.2's duplicate-name
+    blind spot (`pub` items and same-name duplicates can hide unreferenced functions); and
+    `ALL_ERROR_CODES` being a manually maintained runtime list rather than a TS union (O-3). The
+    16.3 test-shape nit remains: `error_clear_sql_matches_the_production_builder` asserts a
+    `#[cfg(test)]`-only helper's SQL and never covered a live path.
 - **Spec**: spec/01 §2; spec/02 §3, §4; spec/03 §1.1, §1.2, §4, §5.4, §5.6, §15 (2, 25);
   spec/04 §7.2; spec/05 §1.5, §2; spec/09 §2; spec/10 §4; spec/11 §5.2, §5.5; PROJECT §4, §8.5;
   D-146.
