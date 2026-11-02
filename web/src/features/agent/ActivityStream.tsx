@@ -45,13 +45,33 @@ const THINKING_CLOSE = "</thinking>"
  * stored blocks are never rewritten (append-only history, spec/03 §1.3), and text with no tags is
  * returned unchanged. An unterminated open tag is the streaming case: everything after it is
  * reasoning until the close arrives, which then streams as normal text.
+ *
+ * `streaming` also hides a trailing partial opening tag (`<think` without the `>` yet) until enough
+ * characters arrive to complete it, so a live row never flashes raw tag text for a frame.
  */
-export function splitThinkingSegments(text: string): ThinkingSegment[] {
+export function splitThinkingSegments(text: string, streaming = false): ThinkingSegment[] {
   const segments: ThinkingSegment[] = []
   let cursor = 0
   while (cursor < text.length) {
     const open = text.indexOf(THINKING_OPEN, cursor)
     if (open < 0) {
+      if (streaming) {
+        // A suffix that is a proper prefix of `<thinking>` is a tag still arriving; hold it back
+        // rather than render it as prose for one frame.
+        for (
+          let length = Math.min(THINKING_OPEN.length - 1, text.length - cursor);
+          length > 0;
+          length -= 1
+        ) {
+          if (THINKING_OPEN.startsWith(text.slice(text.length - length))) {
+            const before = text.slice(cursor, text.length - length)
+            if (before !== "") {
+              segments.push({ kind: "text", text: before })
+            }
+            return segments
+          }
+        }
+      }
       segments.push({ kind: "text", text: text.slice(cursor) })
       break
     }
@@ -87,9 +107,32 @@ function ThinkingBlock({ text }: { text: string }) {
   )
 }
 
-/** A text block whose literal `<thinking>` segments render through the reasoning block. */
-function TextWithThinking({ text }: { text: string }) {
-  const segments = splitThinkingSegments(text).filter((segment) => segment.text !== "")
+/**
+ * A text block whose literal `<thinking>` segments render through the reasoning block.
+ *
+ * The split recovers leaked reasoning from a **model**; the author's own text must render verbatim,
+ * so `splitReasoning` is a required, explicit switch at every call site (assistant messages and the
+ * live streaming row pass true; author messages pass false).
+ */
+function TextWithThinking({
+  text,
+  splitReasoning,
+  streaming = false,
+}: {
+  text: string
+  splitReasoning: boolean
+  streaming?: boolean
+}) {
+  if (!splitReasoning) {
+    return (
+      <div className="prose prose-sm max-w-none text-sm whitespace-pre-wrap dark:prose-invert">
+        {text}
+      </div>
+    )
+  }
+  const segments = splitThinkingSegments(text, streaming).filter(
+    (segment) => segment.text !== "",
+  )
   if (segments.length === 0) {
     return null
   }
@@ -602,7 +645,9 @@ function RowView({
           <Loader2 aria-hidden="true" className="ml-1 inline size-3 animate-spin" />
         </span>
         {row.reasoning === "" ? null : <ThinkingBlock text={row.reasoning} />}
-        {row.text === "" ? null : <TextWithThinking text={row.text} />}
+        {row.text === ""
+          ? null
+          : <TextWithThinking text={row.text} splitReasoning streaming />}
         {pendingPreview === undefined || pendingPreview === "" ? null : (
           <pre className="rounded border border-dashed bg-muted/30 p-2 text-xs whitespace-pre-wrap">
             {pendingPreview}
@@ -630,7 +675,11 @@ function RowView({
         block.type === "reasoning" ? (
           <ThinkingBlock key={`r-${index}`} text={block.text} />
         ) : (
-          <TextWithThinking key={`t-${index}`} text={block.text} />
+          <TextWithThinking
+            key={`t-${index}`}
+            text={block.text}
+            splitReasoning={!isAuthor}
+          />
         ),
       )}
       {calls.length === 0

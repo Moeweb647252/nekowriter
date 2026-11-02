@@ -95,13 +95,13 @@ function session(): SessionDto {
   }
 }
 
-function textMessage(text: string): MessageWithCallsDto {
+function textMessage(text: string, role: "user" | "assistant" = "assistant"): MessageWithCallsDto {
   return {
     message: {
       id: 1,
       seq: 1,
-      role: "assistant",
-      kind: "assistant",
+      role,
+      kind: role,
       blocks: [{ type: "text", text }],
       stop_reason: null,
       usage: null,
@@ -138,6 +138,14 @@ describe("literal thinking tags", () => {
     ])
   })
 
+  it("renders the author's literal tags verbatim", () => {
+    renderStream([textMessage("<thinking>a</thinking>b", "user")])
+
+    expect(screen.getByText("<thinking>a</thinking>b")).toBeInTheDocument()
+    expect(document.querySelector("details")).toBeNull()
+    expect(screen.queryByText("Thinking…")).toBeNull()
+  })
+
   it("renders a closed segment as reasoning and leaves the rest as text", () => {
     renderStream([textMessage("before <thinking>why</thinking> after")])
 
@@ -159,6 +167,23 @@ describe("literal thinking tags", () => {
     expect(screen.getByText("c")).toBeInTheDocument()
     expect(screen.getByText("e")).toBeInTheDocument()
     expect(streamText()).not.toContain("<thinking>")
+  })
+
+  it("holds a partially streamed opening tag back instead of showing it as text", () => {
+    expect(splitThinkingSegments("prefix <think", true)).toEqual([
+      { kind: "text", text: "prefix " },
+    ])
+    expect(splitThinkingSegments("prefix <think")).toEqual([
+      { kind: "text", text: "prefix <think" },
+    ])
+
+    act(() => {
+      useLiveStore.getState().applyDelta(7, 3, "text", 0, "prefix <think")
+    })
+    renderStream([])
+
+    expect(streamText()).not.toContain("<think")
+    expect(screen.getByText("prefix")).toBeInTheDocument()
   })
 
   it("treats an unterminated streaming open tag as reasoning", () => {
