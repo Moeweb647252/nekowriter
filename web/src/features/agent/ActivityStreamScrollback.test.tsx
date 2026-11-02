@@ -202,13 +202,30 @@ describe("ActivityStream scrollback", () => {
     })
     renderStream({ messages: [message(101), message(102)], nextCursor: "101" })
     const pane = scrollPane()
+    // A non-zero start: `scrollTop = added` would also pass from 0, but not from mid-history.
+    pane.scrollTop = 500
 
     await userEvent.click(screen.getByRole("button", { name: "Load older messages" }))
     await waitFor(() => expect(screen.getByText("message 98")).toBeInTheDocument())
 
     // The three new rows are 120px each in the mocked virtualizer, so the offset moves by 360px:
     // the content at the top of the viewport stays there instead of jumping to the new page.
-    expect(pane.scrollTop).toBe(360)
+    expect(pane.scrollTop).toBe(860)
+  })
+
+  it("orders a second older page before the first when prepending", async () => {
+    getMessages
+      .mockResolvedValueOnce({ items: run(51, 100), next_cursor: "51" })
+      .mockResolvedValueOnce({ items: run(1, 50), next_cursor: null })
+    renderStream({ messages: run(101, 300), nextCursor: "101" })
+
+    await userEvent.click(screen.getByRole("button", { name: "Load older messages" }))
+    await waitFor(() => expect(screen.getByText("message 51")).toBeInTheDocument())
+    await userEvent.click(screen.getByRole("button", { name: "Load older messages" }))
+    await waitFor(() => expect(screen.getByText("message 1")).toBeInTheDocument())
+
+    expect(messageOrder()).toHaveLength(300)
+    expect(messageOrder().slice(0, 3)).toEqual(["message 1", "message 2", "message 3"])
   })
 
   it("drops duplicate message ids when a page overlaps the snapshot", async () => {
@@ -285,19 +302,86 @@ describe("ActivityStream scrollback", () => {
     await waitFor(() => expect(screen.getByText("message 99")).toBeInTheDocument())
   })
 
-  it("pages a full snapshot window back to the kickoff when the server leaves the cursor empty", async () => {
-    // The snapshot holds the last 200 messages (51..250); the page before it is the kickoff run.
+  it("pages a full snapshot window back to the kickoff", async () => {
+    // The snapshot holds the last 200 messages (51..250) and reports the cursor 51; the page
+    // before it is the kickoff run.
     getMessages.mockResolvedValueOnce({ items: run(1, 50), next_cursor: null })
-    renderStream({ messages: run(51, 250) })
+    renderStream({ messages: run(51, 250), nextCursor: "51" })
 
-    // The snapshot's `next_cursor` is null, so the cursor is derived from the oldest message's
-    // seq (51); the messages endpoint accepts it as "everything older".
     await userEvent.click(screen.getByRole("button", { name: "Load older messages" }))
     await waitFor(() => expect(getMessages).toHaveBeenCalledWith(7, "51"))
     await waitFor(() => expect(screen.getByText("message 1")).toBeInTheDocument())
     expect(messageOrder()).toHaveLength(250)
     expect(messageOrder()[0]).toBe("message 1")
     expect(screen.getByText("Start of the conversation")).toBeInTheDocument()
+  })
+
+  it("offers no scrollback for a complete 200-message history", async () => {
+    renderStream({ messages: run(1, 200), nextCursor: null })
+
+    expect(screen.queryByRole("button", { name: "Load older messages" })).toBeNull()
+    expect(screen.getByText("Start of the conversation")).toBeInTheDocument()
+
+    // Scrolling to the top must not invent a request: there is nothing older.
+    const pane = scrollPane()
+    act(() => {
+      pane.scrollTop = 0
+      pane.dispatchEvent(new Event("scroll"))
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(getMessages).not.toHaveBeenCalled()
+  })
+
+  it("keeps the oldest message reachable when a live message slides a full window", async () => {
+    // A complete 200-message history has no cursor and loads nothing.
+    const { client, rerender } = renderStream({ messages: run(1, 200), nextCursor: null })
+    expect(getMessages).not.toHaveBeenCalled()
+
+    // The 201st live message slides the window to 2..201; the server now reports cursor 2.
+    getMessages.mockResolvedValueOnce({ items: [message(1)], next_cursor: null })
+    rerender(
+      <QueryClientProvider client={client}>
+        <ActivityStream
+          session={session()}
+          messages={run(2, 201)}
+          inbox={[]}
+          nextCursor="2"
+        />
+      </QueryClientProvider>,
+    )
+
+    await userEvent.click(screen.getByRole("button", { name: "Load older messages" }))
+    await waitFor(() => expect(getMessages).toHaveBeenCalledWith(7, "2"))
+    await waitFor(() => expect(screen.getByText("message 1")).toBeInTheDocument())
+  })
+
+  it("re-fetches the window gap when a live message slides the snapshot after paging", async () => {
+    getMessages
+      // The page loaded before the slide: it ends at seq 100, below the old cursor 101.
+      .mockResolvedValueOnce({ items: run(1, 100), next_cursor: null })
+      // The repair request from the new cursor 102 returns the slid-out boundary message 101.
+      .mockResolvedValueOnce({ items: run(2, 101), next_cursor: null })
+    const { client, rerender } = renderStream({ messages: run(101, 300), nextCursor: "101" })
+
+    await userEvent.click(screen.getByRole("button", { name: "Load older messages" }))
+    await waitFor(() => expect(screen.getByText("message 1")).toBeInTheDocument())
+
+    rerender(
+      <QueryClientProvider client={client}>
+        <ActivityStream
+          session={session()}
+          messages={run(102, 301)}
+          inbox={[]}
+          nextCursor="102"
+        />
+      </QueryClientProvider>,
+    )
+
+    await waitFor(() => expect(screen.getByText("message 101")).toBeInTheDocument())
+    expect(messageOrder()).toHaveLength(301)
+    expect(messageOrder().map((text) => Number(text.slice("message ".length)))).toEqual(
+      Array.from({ length: 301 }, (_, index) => index + 1),
+    )
   })
 
   it("clears the loaded pages when the session switches", async () => {

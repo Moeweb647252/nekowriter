@@ -1,8 +1,15 @@
 /** Session queries and mutations (spec/11 §4.1, §5.3). */
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query"
 
 import * as endpoints from "@/api/endpoints/sessions"
 import { keys } from "@/api/keys"
+import type { MessageWithCallsDto } from "@/api/gen/MessageWithCallsDto"
 import type { ResumeInput } from "@/api/gen/ResumeInput"
 import type { SessionAnswerInput } from "@/api/gen/SessionAnswerInput"
 import type { SessionMessageInput } from "@/api/gen/SessionMessageInput"
@@ -47,15 +54,62 @@ export function useBookSessions(bookId: number) {
  * `fetchNextPage` from the top button or the near-top scroll trigger, so opening a session never
  * fetches history the author has not asked for. Switching sessions changes the key (the session
  * id), which drops the loaded pages from the view.
+ *
+ * The page chain is anchored at the snapshot cursor that existed when its first page was
+ * fetched. If a live message later makes the snapshot's 200-message window slide, the messages
+ * between that anchor and the new cursor are in neither the cached pages nor the new snapshot;
+ * `gapItems` re-fetches that range so no row disappears from the transcript.
  */
 export function useOlderMessages(sessionId: number | null, initialCursor: string | undefined) {
-  return useInfiniteQuery({
+  const pages = useInfiniteQuery({
     queryKey: [...keys.sessions.detail(sessionId ?? 0), "messages"] as const,
     queryFn: ({ pageParam }) => endpoints.getMessages(sessionId ?? 0, pageParam),
     initialPageParam: initialCursor,
     getNextPageParam: (page) => page.next_cursor ?? undefined,
     enabled: false,
   })
+  const anchorCursor = pages.data?.pageParams[0] as string | undefined
+  const gap = useQuery({
+    queryKey: [
+      ...keys.sessions.detail(sessionId ?? 0),
+      "messages-gap",
+      anchorCursor ?? "start",
+      initialCursor ?? "end",
+    ] as const,
+    queryFn: async (): Promise<MessageWithCallsDto[]> => {
+      if (anchorCursor === undefined || initialCursor === undefined) {
+        return []
+      }
+      const anchorSeq = Number(anchorCursor)
+      const items: MessageWithCallsDto[] = []
+      let cursor: string | undefined = initialCursor
+      // The endpoint caps a page at 500; walk backwards until the anchor is crossed so a large
+      // window slide (offline reconnect, a burst of messages) still closes the whole gap.
+      while (cursor !== undefined) {
+        const page = await endpoints.getMessages(sessionId ?? 0, cursor, 500)
+        for (const item of page.items) {
+          if (item.message.seq >= anchorSeq) {
+            items.push(item)
+          }
+        }
+        const next = page.next_cursor ?? undefined
+        if (next === undefined || Number(next) <= anchorSeq) {
+          break
+        }
+        cursor = next
+      }
+      items.sort((left, right) => left.message.seq - right.message.seq)
+      return items
+    },
+    enabled:
+      sessionId !== null &&
+      sessionId > 0 &&
+      anchorCursor !== undefined &&
+      initialCursor !== undefined &&
+      anchorCursor !== initialCursor,
+    placeholderData: keepPreviousData,
+  })
+  return { ...pages, gapItems: gap.data ?? [] }
 }
 
 /** One control operation; the response replaces the cached session. */

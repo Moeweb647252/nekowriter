@@ -28,9 +28,6 @@ import { useLiveStore } from "@/stores/live"
 import { ToolCallCard } from "@/features/agent/ToolCallCard"
 import { cn } from "@/lib/utils"
 
-/** How many messages the session snapshot keeps (spec/10 §2.7: "the last 200"). */
-export const SNAPSHOT_MESSAGE_LIMIT = 200
-
 /** Scrolling within one estimated row of the top loads the next older page (spec/11 §5.3). */
 export const AUTO_LOAD_TOP_PX = 120
 
@@ -93,38 +90,15 @@ export function tailSignature(rows: Row[]): string {
 }
 
 /**
- * The cursor the first older page starts at (spec/10 §2.7: `GET /sessions/:id/messages?cursor=`).
- *
- * The snapshot's own `next_cursor` is the contract. The server currently returns `None` there
- * even when the 200-message window is truncated, so a full window also yields the cursor from its
- * oldest message's `seq` — the exact value the messages endpoint accepts as "everything older".
- * That fallback is harmless once the server fills the field and is what keeps scrollback reachable
- * today.
- */
-export function historyCursor(
-  nextCursor: string | null | undefined,
-  messages: MessageWithCallsDto[],
-): string | undefined {
-  if (nextCursor !== null && nextCursor !== undefined) {
-    return nextCursor
-  }
-  if (messages.length >= SNAPSHOT_MESSAGE_LIMIT) {
-    const oldest = messages[0]
-    if (oldest !== undefined) {
-      return String(oldest.message.seq)
-    }
-  }
-  return undefined
-}
-
-/**
- * Merge the infinite query's pages before the snapshot's messages, oldest first, dropping repeated
- * message ids. `pages` arrive newest page first (the page just before the snapshot, then older
- * ones), so reversing them gives chronological order; a duplicate can only be an overlap with the
- * live window, and either copy renders the same row.
+ * Merge the infinite query's pages, the re-fetched window gap and the snapshot's messages, oldest
+ * first, dropping repeated message ids. `pages` arrive newest page first (the page just before the
+ * snapshot, then older ones), so reversing them gives chronological order; `gap` covers messages
+ * that slid out of the snapshot window after the pages were fetched; a duplicate can only be an
+ * overlap between those ranges, and either copy renders the same row.
  */
 export function mergeHistoryPages(
   pages: MessageWithCallsDto[][],
+  gap: MessageWithCallsDto[],
   snapshot: MessageWithCallsDto[],
 ): MessageWithCallsDto[] {
   const seen = new Set<number>()
@@ -137,6 +111,13 @@ export function mergeHistoryPages(
       seen.add(item.message.id)
       merged.push(item)
     }
+  }
+  for (const item of gap) {
+    if (seen.has(item.message.id)) {
+      continue
+    }
+    seen.add(item.message.id)
+    merged.push(item)
   }
   for (const item of snapshot) {
     if (seen.has(item.message.id)) {
@@ -212,16 +193,23 @@ export function ActivityStream({
   const { t } = useTranslation()
   const reportError = useErrorToast()
   const live = useLiveStore((state) => state.streams[session.id])
-  const initialCursor = historyCursor(nextCursor, messages)
+  const initialCursor = nextCursor ?? undefined
   const older = useOlderMessages(session.id, initialCursor)
   const olderPages = useMemo(
     () => (older.data?.pages ?? []).map((page) => page.items),
     [older.data],
   )
   const olderPageCount = older.data?.pages.length ?? 0
+  // Messages that slid out of the snapshot window after the pages were cached; the hook repairs
+  // that range so the transcript never loses its old boundary (F3). Without a page chain there is
+  // no cached range to bridge, and the query's placeholder data must never leak across sessions.
+  const gapItems = useMemo(
+    () => (older.data === undefined ? [] : (older.gapItems ?? [])),
+    [older.data, older.gapItems],
+  )
   const mergedMessages = useMemo(
-    () => mergeHistoryPages(olderPages, messages),
-    [olderPages, messages],
+    () => mergeHistoryPages(olderPages, gapItems, messages),
+    [olderPages, gapItems, messages],
   )
 
   // A cursor exists while the snapshot window is truncated, and later while a page returned one.
