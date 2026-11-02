@@ -569,6 +569,7 @@ function BeforeConception({
             <SessionStatusBadge status={session.status} />
           )}
         </div>
+        <SessionErrorNotice error={session?.error ?? null} />
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <Link
             to={`/research/${check.id}`}
@@ -636,6 +637,7 @@ function BeforeConception({
           {t("book:conception.knowledge_check.open_task")}
         </Link>
       </div>
+      <SessionErrorNotice error={checkSession?.error ?? null} />
       {terminal ? (
         <>
           {check.report === "" ? (

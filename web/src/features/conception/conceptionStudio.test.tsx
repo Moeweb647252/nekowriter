@@ -655,6 +655,48 @@ describe("knowledge-check states before conception", () => {
     expect(screen.queryByRole("button", { name: "Continue" })).toBeNull()
   })
 
+  it("shows a failed check's localized session error", () => {
+    state.topics = [preparationTask({ status: "failed" })]
+    state.checkSnapshot = checkSnapshot(
+      checkSession("failed", {
+        error: {
+          code: "provider.bad_request",
+          message: "provider error: the raw provider message",
+          retryable: false,
+          at: "2026-01-01T00:00:00Z",
+        },
+      }),
+    )
+    renderStudio()
+
+    expect(screen.getByRole("alert")).toHaveTextContent("The provider rejected the request.")
+  })
+
+  it("falls back to the raw message for an unknown session error code", () => {
+    state.topics = [preparationTask({ status: "failed" })]
+    state.checkSnapshot = checkSnapshot(
+      checkSession("failed", {
+        error: {
+          code: "provider.unknown_code",
+          message: "raw unknown-code message",
+          retryable: false,
+          at: "2026-01-01T00:00:00Z",
+        },
+      }),
+    )
+    renderStudio()
+
+    expect(screen.getByRole("alert")).toHaveTextContent("raw unknown-code message")
+  })
+
+  it("shows no error notice on a clean done check", () => {
+    state.topics = [preparationTask({ status: "done" })]
+    state.checkSnapshot = checkSnapshot(checkSession("completed"))
+    renderStudio()
+
+    expect(screen.queryByRole("alert")).toBeNull()
+  })
+
   it("shows the report, entries and Start conception when the check is done", () => {
     state.topics = [
       preparationTask({ status: "done", session_id: null, report: "The report", entries_created: 3 }),
