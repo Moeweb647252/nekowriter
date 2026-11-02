@@ -91,11 +91,15 @@ beforeEach(() => {
   state.goals = true
 })
 
-function renderDialog() {
+function eventWith(overrides: Partial<TimelineEventDto>): TimelineEventDto {
+  return { ...event, ...overrides }
+}
+
+function renderDialog(overrides: Partial<TimelineEventDto> = {}) {
   render(
     <TimelineEventDialog
       bookId={1}
-      event={event}
+      event={eventWith(overrides)}
       chapterIndex={chapterIndex}
       open
       onOpenChange={vi.fn()}
@@ -216,6 +220,42 @@ describe("TimelineEventDialog", () => {
     expect(patchMutate.mock.calls[0][0]).toEqual({
       id: 9,
       patch: { chapter_id: null },
+    })
+  })
+
+  it("omits the chapter while it stays null", async () => {
+    renderDialog({ chapter_id: null })
+    const user = userEvent.setup()
+    await user.clear(screen.getByLabelText("Description"))
+    await user.type(screen.getByLabelText("Description"), "Still null")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(patchMutate.mock.calls[0][0]).toEqual({
+      id: 9,
+      patch: { description: "Still null" },
+    })
+  })
+
+  it("does not send entities when only their selection order changed", async () => {
+    renderDialog({ entity_ids: [2, 3] })
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: "Remove Bran" }))
+    await user.selectOptions(screen.getByLabelText("Linked entities"), "2")
+    await user.click(screen.getByRole("button", { name: "Add" }))
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(patchMutate).not.toHaveBeenCalled()
+  })
+
+  it("clears all linked entities", async () => {
+    renderDialog()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: "Remove Bran" }))
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(patchMutate.mock.calls[0][0]).toEqual({
+      id: 9,
+      patch: { entity_ids: [] },
     })
   })
 
