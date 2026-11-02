@@ -249,12 +249,17 @@ Markdown. The key is `deepseek_api_key`, the same secret the DeepSeek search pro
    (spec/05 §7, D-158). This section describes `kind = 'topic'` tasks. The knowledge check is
    §8.1.
 2. **Run** (`POST /research-tasks/:id/run`): allowed when the task has no open session (status
-   `draft`, which Run confirms, `ready`, `deferred`, `done`, or `cancelled`); a `running` or
-   `failed` task still has its session, which the author continues or abandons first
-   (`409 research.invalid_state`). Resolve or create the scope by name, and make it visible to the
-   linked book (an exclusion of that scope for the book is removed, §1). Start a `research`
-   session. A `deferred` task runs directly: "not now" is not a lock, and the run moves it to
-   `running` in step 5, so the state never outlives the first run. Kickoff
+   `draft`, which Run confirms, `ready`, `deferred`, `done`, or `cancelled`). A **failed** task
+   that still has its session is continued **on that same session**: the endpoint sets it back to
+   `running` and the runner rebuilds the provider request from the stored messages and sealed
+   tool results, so already-fetched material stays in context and no second session is created.
+   A `running` task, or a `failed` task without a session, is refused
+   (`409 research.invalid_state`); the author can only continue a failed session that still
+   exists. For a new session, resolve or create the scope by name, and make it visible to the
+   linked book (an exclusion of that scope for the book is removed, §1); a continued session
+   already has its scope. Start a `research` session. A `deferred` task runs directly: "not now"
+   is not a lock, and the run moves it to `running` in step 5, so the state never outlives the
+   first run. Kickoff
    (`researcher.kickoff`): topic, requirements, scope
    name and description, the titles of existing entries in the scope (≤ 200), the budget, and
    the linked book's brief (`block.book_brief`: title, genre, idea, writing language), so

@@ -3593,4 +3593,4 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     status mapping, so running/failed/completed/cancelled stay consistent with the session.
   - The 120-second gateway limit remains a provider/transport limitation; this decision does not
     shorten an individual model request.
-- **Spec**: spec/03 §3, §6; spec/07 §8 step 5; spec/10 §2.5; spec/11 §5.5.
+- **Spec**: spec/03 §3, §6; spec/07 §8 step 5; spec/10 §2.5; spec/11 §5.4.

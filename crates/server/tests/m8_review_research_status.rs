@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use axum::http::StatusCode;
 use nekowriter::db::json::SessionStatus;
-use nekowriter_llm::mock::ScriptStep;
+use nekowriter_llm::mock::{ScriptStep, ScriptedProvider};
 use serde_json::json;
 
 #[path = "agent_harness/mod.rs"]
@@ -288,6 +288,28 @@ async fn a_failed_research_task_continues_its_own_session_without_losing_materia
         "the fetched tool result disappeared after Continue"
     );
 
+    // The provider request, not just the database, must still carry the sealed result. Dropping
+    // every `Message::ToolResults` in `build_request` would otherwise leave this test green while
+    // destroying the feature's whole value.
+    let continued_request = runtime
+        .scripted
+        .requests()
+        .last()
+        .cloned()
+        .expect("the continued turn sent a provider request");
+    let has_gate_result = continued_request.messages.iter().any(|message| {
+        matches!(
+            message,
+            nekowriter_llm::Message::ToolResults { results }
+                if results.iter().any(|result| result.content.contains("Gate rules"))
+        )
+    });
+    assert!(
+        has_gate_result,
+        "the continued provider request lost the sealed tool result: {:?}",
+        continued_request.messages
+    );
+
     runtime
         .wait_status_within(
             session_id,
@@ -306,4 +328,125 @@ async fn a_failed_research_task_continues_its_own_session_without_losing_materia
         Some(1),
         "Continue must not duplicate the entry: {after_entries}"
     );
+}
+
+/// The motivating shape of D-163: the provider returns `provider.bad_request` *after* a tool
+/// result was fetched, so the failed turn persists no assistant message. Continue must still send
+/// that sealed result in the next provider request.
+#[tokio::test]
+async fn a_bad_request_failure_continues_with_the_fetched_material() {
+    let mut runtime = runtime(Vec::new()).await;
+    let first = ScriptedProvider::new(vec![tool_step(
+        "save_knowledge_entry",
+        json!({
+            "title": "Gate rules",
+            "content": "the gate closes at dusk",
+            "source_urls": ["https://example.com/gates"],
+        }),
+    )])
+    .fail_when_exhausted(nekowriter_llm::LlmError::BadRequest(
+        "FastAIToken: the proxy read timed out".to_owned(),
+    ));
+    let first_handle = runtime.app.set_provider(first);
+    let task_id = book_task(&runtime, "Bad request scope").await;
+
+    let (status, body) = runtime
+        .app
+        .post(&format!("/api/research-tasks/{task_id}/run"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "run: {body}");
+    let session_id = body["session_id"].as_i64().expect("session id") as i32;
+    runtime
+        .wait_status_within(session_id, SessionStatus::Failed, Duration::from_secs(20))
+        .await;
+
+    let row = runtime.session_row(session_id).await;
+    assert!(
+        row.error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("provider.bad_request"),
+        "the motivating failure is a provider bad request: {:?}",
+        row.error
+    );
+    let failed_requests = first_handle.requests();
+    assert_eq!(
+        failed_requests.len(),
+        2,
+        "one request produced the tool call, the next failed: {failed_requests:?}"
+    );
+    let before_messages = runtime.messages(session_id).await;
+    assert_eq!(
+        before_messages.len(),
+        2,
+        "the failed call added no assistant message after the tool call: {before_messages:?}"
+    );
+    assert_eq!(
+        before_messages.last().map(|message| message.role.as_str()),
+        Some("assistant")
+    );
+    assert_eq!(
+        runtime.calls(session_id).await.len(),
+        1,
+        "the fetched call is the only persisted call"
+    );
+
+    // Replace the exhausted provider with the continuation's script; the same app/session is used.
+    let next = ScriptedProvider::new(vec![
+        ScriptStep::new()
+            .tool(
+                "finish_research",
+                json!({ "report": "continued after bad request" }),
+            )
+            .delay(Duration::from_secs(5)),
+    ]);
+    let next_handle = runtime.app.set_provider(next);
+    let (status, body) = runtime
+        .app
+        .post(&format!("/api/research-tasks/{task_id}/run"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "continue: {body}");
+    assert_eq!(body["session_id"], session_id, "the same session continues");
+    let (_, task) = runtime
+        .app
+        .get(&format!("/api/research-tasks/{task_id}"))
+        .await;
+    assert_eq!(task["status"], "running", "{task}");
+
+    // The runner starts asynchronously: wait for its first request rather than racing the spawn.
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let continued_request = loop {
+        if let Some(request) = next_handle.requests().last().cloned() {
+            break request;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the continued turn sent no provider request"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    let has_gate_result = continued_request.messages.iter().any(|message| {
+        matches!(
+            message,
+            nekowriter_llm::Message::ToolResults { results }
+                if results.iter().any(|result| result.content.contains("Gate rules"))
+        )
+    });
+    assert!(
+        has_gate_result,
+        "the resumed request after provider.bad_request lost the fetched result: {:?}",
+        continued_request.messages
+    );
+    runtime
+        .wait_status_within(
+            session_id,
+            SessionStatus::Completed,
+            Duration::from_secs(20),
+        )
+        .await;
+    let (_, task) = runtime
+        .app
+        .get(&format!("/api/research-tasks/{task_id}"))
+        .await;
+    assert_eq!(task["status"], "done", "{task}");
 }
