@@ -96,19 +96,29 @@ function renderLayout() {
 }
 
 /**
- * The main panel's two layers: the frame `BookLayout` renders around the outlet, and the library's
- * own scroll wrapper that receives the panel's `className` and `style` props.
+ * The main panel's layers: the frame `BookLayout` renders around the routed page, the flex slot the
+ * studio's page resolves its height against (only the studio adds it), and the library's own scroll
+ * wrapper that receives the panel's `className` and `style` props.
  */
-function mainPanel(container: HTMLElement): { frame: HTMLElement; scroller: HTMLElement } {
-  const frame = screen.getByTestId("outlet").parentElement
+function mainPanel(container: HTMLElement): {
+  frame: HTMLElement
+  content: HTMLElement
+  scroller: HTMLElement
+} {
+  const content = screen.getByTestId("outlet").parentElement
+  if (content === null) {
+    throw new Error("the outlet has no wrapper")
+  }
+  const studioSlot = content.classList.contains("min-h-0") && content.classList.contains("flex-1")
+  const frame = studioSlot ? content.parentElement : content
   const scroller = frame?.parentElement
   if (frame === null || scroller === null || scroller === undefined) {
-    throw new Error("the outlet has no wrapper")
+    throw new Error("the outlet has no frame")
   }
   expect(container.contains(scroller)).toBe(true)
   // Both belong to the main panel, not to the nav panel.
   expect(scroller.closest("#main")).not.toBeNull()
-  return { frame, scroller }
+  return { frame, content, scroller }
 }
 
 describe("BookLayout height chain", () => {
@@ -127,11 +137,14 @@ describe("BookLayout height chain", () => {
     state.pathname = "/books/1/conception"
     const { container } = renderLayout()
 
-    const { frame, scroller } = mainPanel(container)
+    const { frame, content, scroller } = mainPanel(container)
     // `h-full` is the definite height the studio's own `h-full` root resolves against. It replaces
     // `min-h-full`, which would let the content grow instead of bounding it.
     expect(frame.classList.contains("h-full")).toBe(true)
     expect(frame.classList.contains("min-h-full")).toBe(false)
+    expect(frame.classList.contains("flex")).toBe(true)
+    expect(content.classList.contains("min-h-0")).toBe(true)
+    expect(content.classList.contains("flex-1")).toBe(true)
 
     // The panel itself must not scroll: the studio owns one scrollbar per pane, not a third one
     // around both (that third one is what let the composer scroll out of view).
@@ -152,6 +165,7 @@ describe("BookLayout height chain", () => {
       // `min-h-full` lets the content grow past the panel, which is what page scrolling needs.
       expect(frame.classList.contains("min-h-full"), pathname).toBe(true)
       expect(frame.classList.contains("h-full"), pathname).toBe(false)
+      expect(frame.classList.contains("flex"), pathname).toBe(false)
       // No inline override, so react-resizable-panels' own `overflow: auto` stands.
       expect(scroller.style.overflow, pathname).toBe("auto")
 

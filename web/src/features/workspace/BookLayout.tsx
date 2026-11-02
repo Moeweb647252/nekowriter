@@ -62,6 +62,10 @@ export default function BookLayout() {
   // the hint cannot disagree with what is on screen; the store's `agentPanelCollapsed` field was
   // never written by anything and would drift. `expandAgentPanel` is the other direction.
   const [agentPanelCollapsed, setAgentPanelCollapsed] = useState(false)
+  // Below 1024px the navigator can be collapsed, and the only way to reopen it is the toggle.
+  // The panel reports its own size (0 px is collapsed), so a redundant toggle is never rendered
+  // over page content while the navigator is already visible (spec/11 §5.1).
+  const [navigatorCollapsed, setNavigatorCollapsed] = useState(false)
   const expandAgentPanel = useCallback(() => {
     agentRef.current?.expand()
   }, [agentRef])
@@ -127,6 +131,9 @@ export default function BookLayout() {
           minSize="200px"
           collapsible
           className="min-h-0"
+          // 0 px is a collapsible panel's collapsed size (react-resizable-panels defaults
+          // `collapsedSize` to 0), so this is the panel reporting its own state.
+          onResize={(size) => setNavigatorCollapsed(size.inPixels === 0)}
         >
           <Navigator book={book.data} />
         </ResizablePanel>
@@ -138,9 +145,10 @@ export default function BookLayout() {
           - every other route is a page: the wrapper keeps `min-h-full` (content height) and the
             panel scrolls the whole page, which is what `ChapterPage`'s `flex min-h-full flex-col`
             and the canon/settings-materials pages are built for;
-          - the studio owns its height: the wrapper is exactly the panel's height (`h-full`,
-            `overflow: hidden`) so `ConceptionStudio`'s `flex h-full min-h-0 flex-col` resolves and
-            its conversation pane and document pane become the only two scroll containers.
+          - the studio owns its height: the frame is exactly the panel's height (`h-full`,
+            `overflow: hidden`) and the routed page gets a `min-h-0 flex-1` slot below the toggle
+            strip, so `ConceptionStudio`'s `flex h-full min-h-0 flex-col` resolves and its
+            conversation pane and document pane become the only two scroll containers.
         */}
         <ResizablePanel
           id="main"
@@ -150,20 +158,49 @@ export default function BookLayout() {
           // style can take the studio's outer scrollbar away. Other routes keep it.
           style={isConception ? { overflow: "hidden" } : undefined}
         >
-          <div className={isConception ? "relative h-full" : "relative min-h-full"}>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="absolute top-2 left-2 z-10 hidden [@media(max-width:1023px)]:inline-flex"
-              aria-label={t("book:sidebar_toggle")}
-              onClick={() => navigatorRef.current?.expand()}
-            >
-              <PanelLeft />
-            </Button>
-            {canonSystem === null ? null : (
-              <SystemOffBanner book={book.data} system={canonSystem} />
+          <div
+            className={
+              isConception
+                ? "flex h-full min-h-0 flex-col"
+                : "relative min-h-full"
+            }
+          >
+            {/*
+              The navigator toggle is in flow, never an overlay: below 1024px it pushes the page
+              down instead of covering its first line. The strip is display-none at >=1024px, so
+              the desktop layout keeps exactly the height and DOM it had, and it is only rendered
+              while the navigator is actually collapsed.
+            */}
+            {navigatorCollapsed ? (
+              <div
+                data-testid="navigator-toggle-strip"
+                className="flex shrink-0 items-center px-2 py-1 [@media(min-width:1024px)]:hidden"
+              >
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={t("book:sidebar_toggle")}
+                  onClick={() => navigatorRef.current?.expand()}
+                >
+                  <PanelLeft />
+                </Button>
+              </div>
+            ) : null}
+            {isConception ? (
+              <div className="relative min-h-0 flex-1">
+                {canonSystem === null ? null : (
+                  <SystemOffBanner book={book.data} system={canonSystem} />
+                )}
+                <Outlet context={shell} />
+              </div>
+            ) : (
+              <>
+                {canonSystem === null ? null : (
+                  <SystemOffBanner book={book.data} system={canonSystem} />
+                )}
+                <Outlet context={shell} />
+              </>
             )}
-            <Outlet context={shell} />
           </div>
         </ResizablePanel>
         {isConception ? null : (
