@@ -332,7 +332,8 @@ shows the latest knowledge check, chosen from the research tasks the studio alre
 |---|---|
 | Check open (any status except done, failed or cancelled) | A "Knowledge check" header with the session status; the check's `ActivityStream` in a bounded flex pane; a link to the research task page (steering, pause and stop live there); **Start conception now**, which asks first ("the check is still running and keeps running") |
 | Check done | The report (`Markdown`), the number of entries created, a link to Book › Knowledge, and **Start conception** (primary when auto-start was off) |
-| Check failed or cancelled | The status, a link to the task, and **Start conception** |
+| Check failed and the task still has a session | The status, a link to the task, **Continue** (zh-CN 继续) — continues that task on its existing research session, keeping the material it already fetched — and **Start conception** (different from continuing the check) |
+| Check cancelled, or failed without a session | The status, a link to the task, and **Start conception** |
 | No check | Today's "no session" text with **Start conception**, plus **Check knowledge first** (`POST /books/:id/knowledge-check`) |
 
 The pane follows `session.updated` and `research.updated` without a reload, so auto-start swaps it

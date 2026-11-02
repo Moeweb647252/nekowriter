@@ -33,6 +33,7 @@ import {
   useDeleteResearchTask,
   usePatchResearchTask,
   useResearchTasks,
+  useRunResearchTask,
   useStartKnowledgeCheck,
 } from "@/api/hooks/research"
 import { latestPreparationTask, knowledgeCheckOpen } from "@/features/research/researchTask"
@@ -146,6 +147,7 @@ export default function ConceptionStudio() {
   const finalize = useFinalizeConception(bookId)
   const start = useStartConception(bookId)
   const startKnowledgeCheck = useStartKnowledgeCheck(bookId)
+  const continueKnowledgeCheck = useRunResearchTask(bookId)
   // One document hook per kind (the endpoint is per kind); `saveDoc` picks the right one.
   const putOutline = usePutSettingDoc(bookId, "outline")
   const putWorld = usePutSettingDoc(bookId, "world")
@@ -330,6 +332,7 @@ export default function ConceptionStudio() {
                   { onError: showError },
                 )
               }
+              continuePending={continueKnowledgeCheck.isPending}
               onStart={() =>
                 start.mutate(undefined, {
                   onSuccess: ({ warnings }) => showWarnings(warnings ?? []),
@@ -337,6 +340,9 @@ export default function ConceptionStudio() {
                 })
               }
               onCheck={() => startKnowledgeCheck.mutate("", { onError: showError })}
+              onContinueCheck={(taskId) =>
+                continueKnowledgeCheck.mutate(taskId, { onError: showError })
+              }
             />
           ) : (
             <ActivityStream
@@ -506,8 +512,10 @@ function BeforeConception({
   onContinue,
   onFeedback,
   onAbandon,
+  continuePending,
   onStart,
   onCheck,
+  onContinueCheck,
 }: {
   bookId: number
   book: BookDto
@@ -524,8 +532,10 @@ function BeforeConception({
   onContinue: (session: SessionDto) => void
   onFeedback: (session: SessionDto, feedback: string) => void
   onAbandon: (session: SessionDto) => void
+  continuePending: boolean
   onStart: () => void
   onCheck: () => void
+  onContinueCheck: (taskId: number) => void
 }) {
   const { t } = useTranslation()
   const startButton = (
@@ -667,6 +677,18 @@ function BeforeConception({
         </p>
       )}
       <div className="mt-auto flex flex-wrap items-center gap-2">
+        {check.status === "failed" && check.session_id != null ? (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={continuePending}
+            onClick={() => onContinueCheck(check.id)}
+          >
+            {continuePending
+              ? t("common:saving")
+              : t("book:conception.knowledge_check.continue")}
+          </Button>
+        ) : null}
         {startButton}
       </div>
     </div>
