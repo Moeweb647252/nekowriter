@@ -308,7 +308,11 @@ export default function ModelsPage() {
         onOpenChange={() => setClearing(null)}
         title={t("settings:option_mismatch")}
         description={t("settings:option_mismatch_confirm", {
-          options: optionList(clearing?.ignored_options ?? []),
+          options: repairSummary(
+            t,
+            clearing?.ignored_options ?? [],
+            clearing?.ignored_effort_levels ?? [],
+          ),
           protocol: protocolLabel(t, providerProtocol(providerList, clearing?.provider_id ?? 0)),
         })}
         confirmLabel={t("settings:option_mismatch_fix")}
@@ -351,7 +355,11 @@ export default function ModelsPage() {
         title={t("settings:effort_mismatch_title")}
         description={t("settings:effort_mismatch_confirm", {
           model: clearingEffort?.display_name ?? "",
-          levels: clearingEffort?.ignored_effort_levels.join(", ") ?? "",
+          levels: repairSummary(
+            t,
+            clearingEffort?.ignored_options ?? [],
+            clearingEffort?.ignored_effort_levels ?? [],
+          ),
           protocol: protocolLabel(
             t,
             providerProtocol(providerList, clearingEffort?.provider_id ?? 0),
@@ -485,8 +493,8 @@ function ModelDialog({
       context_window: Number(draft.context_window) || 0,
       max_output_tokens: Number(draft.max_output_tokens) || 0,
       options: draft.options,
-      // Taken from the loaded profile when editing and left empty when creating: no effort UI
-      // exists yet, and a save must not silently drop stored levels (D-162).
+      // The dialog owns both fields; a save carries the loaded levels and default through
+      // untouched unless the author edits them (D-162).
       effort_levels: draft.effort_levels,
       default_effort: draft.default_effort,
     }
@@ -767,6 +775,18 @@ function providerChoices(providers: readonly ProviderDto[]): ProviderChoice[] {
     name: provider.name,
     protocol: provider.protocol,
   }))
+}
+
+/** Names everything a one-click repair will remove: both stranded kinds, not just one. */
+function repairSummary(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  options: readonly string[],
+  effortLevels: readonly string[],
+): string {
+  return [
+    ...options.map((key) => t(optionLabelKey(key), { defaultValue: key })),
+    ...effortLevels.map((level) => t("settings:effort.removed_level", { level })),
+  ].join(", ")
 }
 
 /** The table cell: levels joined with " · ", the default marked, "—" when empty. */

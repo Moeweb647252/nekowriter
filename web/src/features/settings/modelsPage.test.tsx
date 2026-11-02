@@ -783,8 +783,17 @@ describe("ModelsPage Thinking effort (D-162)", () => {
     const { user, dialog } = await openEffortAddDialog()
     expect(within(dialog).getByTestId("thinking-effort")).toBeInTheDocument()
 
+    expect(
+      within(dialog).getByText(
+        tv("settings:effort.count", { current: 0, max: 5 }),
+      ),
+    ).toBeInTheDocument()
     const boxes = within(dialog).getAllByRole("checkbox")
-    expect(boxes.map((box) => box.getAttribute("aria-label") ?? box.textContent)).toHaveLength(5)
+    expect(boxes).toHaveLength(5)
+    const labels = ["low", "medium", "high", "xhigh", "max"].map((level) =>
+      t(`settings:value.effort.${level}`),
+    )
+    expect(boxes.map((box) => box.closest("label")?.textContent?.trim())).toEqual(labels)
     for (const level of ["low", "medium", "high", "xhigh", "max"]) {
       expect(within(dialog).getByRole("checkbox", { name: t(`settings:value.effort.${level}`) })).toBeInTheDocument()
     }
@@ -801,6 +810,11 @@ describe("ModelsPage Thinking effort (D-162)", () => {
     await user.click(within(dialog).getByRole("combobox", { name: /Provider|提供商/ }))
     await user.click(await screen.findByRole("option", { name: /Magpie/ }))
 
+    expect(within(dialog).getByLabelText(t("settings:effort.level_input"))).toHaveAttribute(
+      "placeholder",
+      t("settings:effort.placeholder"),
+    )
+    expect(t("settings:effort.placeholder")).not.toMatch(/suggestion/i)
     await addOpenAiLevel(user, dialog, "high")
     await addOpenAiLevel(user, dialog, "low")
     expect(within(dialog).getByTestId("effort-level-high")).toHaveTextContent("high")
@@ -896,6 +910,25 @@ describe("ModelsPage Thinking effort (D-162)", () => {
     )
   })
 
+  it("resets an Anthropic default when its checkbox is unchecked", async () => {
+    const { user, dialog } = await openEffortAddDialog()
+    const low = within(dialog).getByRole("checkbox", { name: t("settings:value.effort.low") })
+    const high = within(dialog).getByRole("checkbox", { name: t("settings:value.effort.high") })
+    await user.click(low)
+    await user.click(high)
+
+    await user.click(within(dialog).getByLabelText(t("settings:effort.default")))
+    await user.click(await screen.findByRole("option", { name: t("settings:value.effort.high") }))
+    expect(within(dialog).getByLabelText(t("settings:effort.default"))).toHaveTextContent("High")
+
+    await user.click(high)
+    expect(high).not.toBeChecked()
+    expect(within(dialog).getByLabelText(t("settings:effort.default"))).toHaveTextContent(
+      t("settings:effort.default_none"),
+    )
+    expect(low).toBeChecked()
+  })
+
   it("removes the levels a protocol switch cannot send and names them in the notice", async () => {
     const switched: ModelProfileDto = {
       ...MISMATCHED,
@@ -958,6 +991,39 @@ describe("ModelsPage Thinking effort (D-162)", () => {
     expect(within(dialog).queryByLabelText(t("settings:effort.level_input"))).not.toBeInTheDocument()
   })
 
+  it("shows and fixes a stored effort mismatch in the mock edit dialog", async () => {
+    PATCHED.length = 0
+    const demo: ProviderDto = {
+      ...PROVIDERS[0],
+      id: 9,
+      name: "Demo",
+      protocol: "mock",
+      base_url: "mock://demo",
+    }
+    const mockModel: ModelProfileDto = {
+      ...MISMATCHED,
+      id: 14,
+      provider_id: 9,
+      options: {},
+      effort_levels: ["low"],
+      default_effort: "low",
+      ignored_options: [],
+      ignored_effort_levels: ["low"],
+    }
+    const { user, dialog } = await openEffortEditDialog(mockModel, [demo, ...PROVIDERS])
+    expect(within(dialog).getByTestId("effort-mock-note")).toBeInTheDocument()
+    const alert = await within(dialog).findByTestId("ignored-effort-alert")
+    expect(alert).toHaveTextContent("low")
+
+    await user.click(
+      within(alert).getByRole("button", { name: t("settings:effort.ignored_fix") }),
+    )
+    await user.click(within(dialog).getByRole("button", { name: t("common:save") }))
+    expect(PATCHED).toHaveLength(1)
+    expect(PATCHED[0].effort_levels).toEqual([])
+    expect(PATCHED[0].default_effort).toBeNull()
+  })
+
   it("carries the edited levels and default in the PATCH and round-trips them", async () => {
     PATCHED.length = 0
     const { user, dialog } = await openEffortEditDialog(MISMATCHED)
@@ -1009,6 +1075,22 @@ describe("ModelsPage Thinking effort table (D-162)", () => {
       `max (${t("settings:effort.default_marker")})`,
     )
     expect(screen.getByTestId("ignored-efforts-8")).toHaveTextContent("max")
+  })
+
+  it("shows multiple levels joined with the default marker", async () => {
+    const multi: ModelProfileDto = {
+      ...MISMATCHED,
+      id: 13,
+      effort_levels: ["low", "high"],
+      default_effort: "high",
+      ignored_effort_levels: [],
+      ignored_options: [],
+    }
+    setData([multi], PROVIDERS)
+    render(<ModelsPage />)
+    expect(await screen.findByTestId("effort-levels-13")).toHaveTextContent(
+      `low · high (${t("settings:effort.default_marker")})`,
+    )
   })
 
   it("fixes stored ignored effort levels in one PATCH, clearing the ignored default", async () => {
@@ -1066,6 +1148,8 @@ describe("ModelsPage Thinking effort table (D-162)", () => {
     render(<ModelsPage />)
     await user.click(await screen.findByTestId("ignored-options-12"))
     const confirmation = await screen.findByRole("alertdialog")
+    expect(confirmation).toHaveTextContent(t("settings:option.thinking_display"))
+    expect(confirmation).toHaveTextContent(tv("settings:effort.removed_level", { level: "max" }))
     await user.click(
       within(confirmation).getByRole("button", { name: t("settings:option_mismatch_fix") }),
     )
@@ -1091,6 +1175,8 @@ describe("ModelsPage Thinking effort table (D-162)", () => {
     render(<ModelsPage />)
     await user.click(await screen.findByTestId("ignored-efforts-12"))
     const confirmation = await screen.findByRole("alertdialog")
+    expect(confirmation).toHaveTextContent(t("settings:option.thinking_display"))
+    expect(confirmation).toHaveTextContent(tv("settings:effort.removed_level", { level: "max" }))
     await user.click(
       within(confirmation).getByRole("button", { name: t("settings:effort_mismatch_fix") }),
     )

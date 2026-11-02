@@ -57,6 +57,8 @@ export function ThinkingEffortSection({
   ]
   const protocolName =
     protocol === null ? "" : t(`settings:protocol.${protocol}`, { defaultValue: protocol })
+  // A closed set counts against its own size; OpenAI's free-form list uses the server cap.
+  const maxLevels = protocol === "anthropic" ? ANTHROPIC_EFFORT_LEVELS.length : MAX_EFFORT_LEVELS
 
   const toggleAnthropic = (level: string, checked: boolean) => {
     setError(null)
@@ -88,12 +90,32 @@ export function ThinkingEffortSection({
     onChange(remaining, unsendable.includes(defaultEffort ?? "") ? null : defaultEffort)
   }
 
+  const ignoredAlert =
+    unsendable.length === 0 ? null : (
+      <Alert variant="destructive" data-testid="ignored-effort-alert">
+        <TriangleAlert />
+        <AlertTitle>{t("settings:effort.ignored_title")}</AlertTitle>
+        <AlertDescription>
+          <p>
+            {t("settings:effort.ignored_body", {
+              protocol: protocolName,
+              levels: unsendable.join(", "),
+            })}
+          </p>
+          <Button variant="outline" size="sm" className="mt-2" onClick={removeUnsupported}>
+            {t("settings:effort.ignored_fix")}
+          </Button>
+        </AlertDescription>
+      </Alert>
+    )
+
   if (protocol === "mock") {
     return (
       <div className="space-y-2" data-testid="thinking-effort">
         <p className="text-xs text-muted-foreground" data-testid="effort-mock-note">
           {t("settings:effort.mock_note")}
         </p>
+        {ignoredAlert}
       </div>
     )
   }
@@ -126,31 +148,15 @@ export function ThinkingEffortSection({
       )}
 
       <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <span>{t("settings:effort.count", { current: levels.length, max: MAX_EFFORT_LEVELS })}</span>
+        <span>{t("settings:effort.count", { current: levels.length, max: maxLevels })}</span>
         {error === null ? null : (
           <span role="alert" data-testid="effort-error" className="text-status-failed">
-            {t(`settings:effort.error.${error}`, { max: MAX_EFFORT_LEVELS })}
+            {t(`settings:effort.error.${error}`, { max: maxLevels })}
           </span>
         )}
       </div>
 
-      {unsendable.length === 0 ? null : (
-        <Alert variant="destructive" data-testid="ignored-effort-alert">
-          <TriangleAlert />
-          <AlertTitle>{t("settings:effort.ignored_title")}</AlertTitle>
-          <AlertDescription>
-            <p>
-              {t("settings:effort.ignored_body", {
-                protocol: protocolName,
-                levels: unsendable.join(", "),
-              })}
-            </p>
-            <Button variant="outline" size="sm" className="mt-2" onClick={removeUnsupported}>
-              {t("settings:effort.ignored_fix")}
-            </Button>
-          </AlertDescription>
-        </Alert>
-      )}
+      {ignoredAlert}
 
       {levels.length === 0 ? null : (
         <div className="space-y-1.5">

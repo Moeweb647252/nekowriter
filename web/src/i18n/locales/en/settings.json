@@ -158,7 +158,7 @@
   "effort.title": "Thinking effort",
   "effort.hint": "Agent roles choose one of these levels. A role that chooses none uses the default.",
   "effort.mock_note": "The Demo provider takes no effort levels.",
-  "effort.placeholder": "Type a level or pick a suggestion",
+  "effort.placeholder": "Type a level",
   "effort.add": "Add",
   "effort.levels": "Effort levels",
   "effort.count": "{{current}} of {{max}} levels",
