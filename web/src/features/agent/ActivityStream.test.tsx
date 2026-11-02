@@ -45,6 +45,20 @@ vi.mock("@tanstack/react-virtual", () => ({
   }),
 }))
 
+// Scrollback has its own file (`ActivityStreamScrollback.test.tsx`); these tests only cover the
+// stick-to-bottom rule, so the infinite query is kept inert.
+vi.mock("@/api/hooks/sessions", () => ({
+  useOlderMessages: () => ({
+    data: undefined,
+    hasNextPage: false,
+    isFetchingNextPage: false,
+    isFetchNextPageError: false,
+    error: null,
+    fetchNextPage: vi.fn(),
+  }),
+}))
+vi.mock("@/components/common/ErrorToast", () => ({ useErrorToast: () => vi.fn() }))
+
 import { ActivityStream } from "@/features/agent/ActivityStream"
 import { useLiveStore } from "@/stores/live"
 

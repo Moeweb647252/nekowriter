@@ -51,6 +51,14 @@ vi.mock("@/api/hooks/sessions", () => ({
   useSessionControl: () => ({ mutate: vi.fn(), isPending: false }),
   usePatchSession: () => ({ mutate: vi.fn(), isPending: false }),
   useStartDebugSession: () => ({ mutate: vi.fn(), isPending: false }),
+  useOlderMessages: () => ({
+    data: undefined,
+    hasNextPage: false,
+    isFetchingNextPage: false,
+    isFetchNextPageError: false,
+    error: null,
+    fetchNextPage: vi.fn(),
+  }),
 }))
 
 vi.mock("@/api/hooks/chapters", () => ({

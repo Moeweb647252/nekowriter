@@ -1,5 +1,5 @@
 /** Session queries and mutations (spec/11 §4.1, §5.3). */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 import * as endpoints from "@/api/endpoints/sessions"
 import { keys } from "@/api/keys"
@@ -39,12 +39,22 @@ export function useBookSessions(bookId: number) {
   })
 }
 
-/** Scrollback: older messages by cursor (spec/11 §5.3). */
-export function useOlderMessages(sessionId: number | null, cursor: string | undefined) {
-  return useQuery({
-    queryKey: [...keys.sessions.detail(sessionId ?? 0), "messages", cursor ?? "start"] as const,
-    queryFn: () => endpoints.getMessages(sessionId ?? 0, cursor),
-    enabled: sessionId !== null && sessionId > 0 && cursor !== undefined,
+/**
+ * Scrollback: older messages by cursor (spec/11 §5.3).
+ *
+ * The first page starts at the snapshot's `next_cursor` and later pages continue from each
+ * response's own cursor. It is an on-demand query: `enabled` stays false, and the stream calls
+ * `fetchNextPage` from the top button or the near-top scroll trigger, so opening a session never
+ * fetches history the author has not asked for. Switching sessions changes the key (the session
+ * id), which drops the loaded pages from the view.
+ */
+export function useOlderMessages(sessionId: number | null, initialCursor: string | undefined) {
+  return useInfiniteQuery({
+    queryKey: [...keys.sessions.detail(sessionId ?? 0), "messages"] as const,
+    queryFn: ({ pageParam }) => endpoints.getMessages(sessionId ?? 0, pageParam),
+    initialPageParam: initialCursor,
+    getNextPageParam: (page) => page.next_cursor ?? undefined,
+    enabled: false,
   })
 }
 

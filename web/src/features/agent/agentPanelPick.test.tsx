@@ -86,6 +86,14 @@ vi.mock("@/api/hooks/sessions", () => ({
   useSessionControl: () => ({ mutate: controlMutate, isPending: false }),
   usePatchSession: () => ({ mutate: vi.fn(), isPending: false }),
   useStartDebugSession: () => ({ mutate: vi.fn(), isPending: false }),
+  useOlderMessages: () => ({
+    data: undefined,
+    hasNextPage: false,
+    isFetchingNextPage: false,
+    isFetchNextPageError: false,
+    error: null,
+    fetchNextPage: vi.fn(),
+  }),
 }))
 vi.mock("@/components/common/ErrorToast", () => ({
   useErrorToast: () => vi.fn(),
