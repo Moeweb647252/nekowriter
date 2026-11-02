@@ -622,7 +622,7 @@ function BeforeConception({
         </p>
       )}
       <div className="mt-auto flex flex-wrap items-center gap-2">
-        {check.status === "failed" && check.session_id !== null ? (
+        {check.status === "failed" && check.session_id != null ? (
           <Button
             size="sm"
             variant="outline"

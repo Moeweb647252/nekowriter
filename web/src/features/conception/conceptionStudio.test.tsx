@@ -615,6 +615,15 @@ describe("knowledge-check states before conception", () => {
     expect(runResearchTask.mock.calls[0][0]).toBe(21)
   })
 
+  it("does not offer Continue when a failed task has no session", () => {
+    const task = preparationTask({ status: "failed" }) as Record<string, unknown>
+    delete task.session_id
+    state.topics = [task]
+    renderStudio()
+    expect(screen.getByRole("button", { name: "Start conception" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument()
+  })
+
   it("localizes a cancelled check in both locales", async () => {
     if (!i18n.hasResourceBundle("zh-CN", "agent")) {
       i18n.addResourceBundle("zh-CN", "agent", zhAgent)
