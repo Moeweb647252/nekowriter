@@ -26,6 +26,7 @@ const startKnowledgeCheck = vi.fn()
 const answerSession = vi.fn()
 const showError = vi.fn()
 const warningToast = vi.fn()
+const finalize = vi.fn()
 const sessionControl = vi.fn()
 const resume = vi.fn()
 
@@ -104,7 +105,7 @@ vi.mock("@/api/hooks/books", () => ({
 }))
 
 vi.mock("@/api/hooks/conception", () => ({
-  useFinalizeConception: () => ({ mutate: vi.fn(), isPending: false }),
+  useFinalizeConception: () => ({ mutate: finalize, isPending: false }),
   useStartConception: () => ({ mutate: startConception, isPending: false }),
 }))
 
@@ -203,6 +204,7 @@ describe("ConceptionStudio", () => {
     state.topics = []
     sessionControl.mockClear()
     warningToast.mockClear()
+    finalize.mockClear()
     startKnowledgeCheck.mockClear()
     resume.mockClear()
     answerSession.mockClear()
@@ -219,6 +221,30 @@ describe("ConceptionStudio", () => {
     const button = screen.getByRole("button", { name: "Start conception" })
     await userEvent.click(button)
     expect(startConception).toHaveBeenCalledTimes(1)
+    expect(warningToast).toHaveBeenCalledWith(["model.effort_unsupported"])
+  })
+
+  it("surfaces warnings from a successful finalize seed", async () => {
+    state.docs = [
+      { kind: "outline", content: "# Outline", revision: 1, approved_revision: 1 },
+      { kind: "world", content: "# World", revision: 1, approved_revision: 1 },
+      { kind: "protagonist", content: "# Hero", revision: 1, approved_revision: 1 },
+    ]
+    state.characters = [{ id: 1 }]
+    finalize.mockImplementation(
+      (_input: unknown, options?: { onSuccess?: (response: unknown) => void }) => {
+        options?.onSuccess?.({ book: { id: 1 }, warnings: ["model.effort_unsupported"] })
+      },
+    )
+    renderStudio()
+    await userEvent.click(screen.getByRole("button", { name: "Finalize book" }))
+    // The fixture has unapproved revisions, so the confirmation gate appears first.
+    const confirmation = screen.queryByRole("alertdialog")
+    if (confirmation !== null) {
+      await userEvent.click(
+        screen.getByRole("button", { name: i18n.t("common:confirm") as string }),
+      )
+    }
     expect(warningToast).toHaveBeenCalledWith(["model.effort_unsupported"])
   })
 

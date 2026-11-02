@@ -94,6 +94,20 @@ vi.mock("@/api/hooks/providers", () => ({
         effort_levels: ["low", "ultra"],
         default_effort: "low",
       },
+      {
+        id: 13,
+        provider_id: 1,
+        display_name: "Default high model",
+        effort_levels: ["low", "medium", "high", "max"],
+        default_effort: "high",
+      },
+      {
+        id: 14,
+        provider_id: 1,
+        display_name: "No default model",
+        effort_levels: ["low"],
+        default_effort: null,
+      },
     ],
   }),
   useProviders: () => ({
@@ -287,6 +301,40 @@ describe("Book settings › model overrides", () => {
     // The model map is still part of the same unit.
     expect(body.model_overrides.writer).toBeNull()
     expect(body.model_overrides.reviewer).toBeNull()
+  })
+
+  it("names the effective fallback when it differs from the model default", () => {
+    book.model_overrides = {
+      conception: null,
+      researcher: null,
+      planner: null,
+      writer: 13,
+      reviewer: null,
+      archivist: null,
+      efforts: { writer: "ultra" },
+    }
+    rolesDefaults = { ...rolesDefaults, efforts: { writer: "low" } }
+    render(<BookSettingsPage />)
+
+    const row = screen.getByTestId("model-override-row-writer")
+    expect(row).toHaveTextContent("Sessions will use low instead.")
+  })
+
+  it("names the provider default when a stale effort has no fallback", () => {
+    book.model_overrides = {
+      conception: null,
+      researcher: null,
+      planner: null,
+      writer: 14,
+      reviewer: null,
+      archivist: null,
+      efforts: { writer: "ultra" },
+    }
+    rolesDefaults = { ...rolesDefaults, efforts: {} }
+    render(<BookSettingsPage />)
+
+    const row = screen.getByTestId("model-override-row-writer")
+    expect(row).toHaveTextContent("Sessions will use the provider default.")
   })
 
   it("labels Global setting with the book-context fallback", () => {
