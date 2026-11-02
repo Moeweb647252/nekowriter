@@ -38,5 +38,6 @@
   "prompt.override_failed": "A prompt override could not be used and the default was used instead.",
   "chapter.outline_missing": "This chapter has no outline yet. Write the outline first.",
   "goal.open_children": "This goal still has open descendants.",
-  "goal.has_children": "This goal has children; move or delete them first."
+  "goal.has_children": "This goal has children; move or delete them first.",
+  "model.effort_unsupported": "The chosen thinking effort is not available on this model; the session will use the next choice or the model default."
 }

@@ -309,5 +309,7 @@
   "proposal.new_goal_task_parent": "Under {{title}}",
   "change_target.goal": "Goal",
   "change_target.plan": "Plan",
-  "change_target.task": "Task"
+  "change_target.task": "Task",
+  "model_global_setting": "Global setting ({{level}})",
+  "model_global_setting_provider_default": "Global setting (Provider default)"
 }

@@ -73,16 +73,28 @@ vi.mock("@/api/hooks/providers", () => ({
     isPending: false,
     isError: false,
     data: [
-      { id: 7, provider_id: 1, display_name: "Writer model" },
-      { id: 8, provider_id: 2, display_name: "Review model" },
+      {
+        id: 7,
+        provider_id: 1,
+        display_name: "Writer model",
+        effort_levels: ["low", "high", "max"],
+        default_effort: "high",
+      },
+      {
+        id: 8,
+        provider_id: 2,
+        display_name: "Review model",
+        effort_levels: ["low", "medium"],
+        default_effort: "low",
+      },
     ],
   }),
   useProviders: () => ({
     isPending: false,
     isError: false,
     data: [
-      { id: 1, name: "Anthropic" },
-      { id: 2, name: "DeepSeek" },
+      { id: 1, name: "Anthropic", protocol: "anthropic" },
+      { id: 2, name: "DeepSeek", protocol: "openai" },
     ],
   }),
 }))
@@ -183,7 +195,7 @@ describe("Book settings › model overrides", () => {
     // With no override the select shows "Use the global default".
     for (const role of ["conception", "researcher", "planner", "writer", "reviewer", "archivist"]) {
       const row = screen.getByTestId(`model-override-row-${role}`)
-      expect(within(row).getByRole("combobox")).toHaveTextContent("Use the global default")
+      expect(within(row).getAllByRole("combobox")[0]).toHaveTextContent("Use the global default")
     }
   })
 
@@ -199,9 +211,9 @@ describe("Book settings › model overrides", () => {
     render(<BookSettingsPage />)
 
     const writer = screen.getByTestId("model-override-row-writer")
-    expect(within(writer).getByRole("combobox")).toHaveTextContent("Anthropic · Writer model")
+    expect(within(writer).getAllByRole("combobox")[0]).toHaveTextContent("Anthropic · Writer model")
     const reviewer = screen.getByTestId("model-override-row-reviewer")
-    expect(within(reviewer).getByRole("combobox")).toHaveTextContent("Use the global default")
+    expect(within(reviewer).getAllByRole("combobox")[0]).toHaveTextContent("Use the global default")
   })
 
   it("displays what the global default resolves to for every role", () => {
@@ -236,10 +248,38 @@ describe("Book settings › model overrides", () => {
 
     const writer = screen.getByTestId("model-override-row-writer")
     // Not a blank select: the trigger names the missing model and the row explains it.
-    expect(within(writer).getByRole("combobox")).toHaveTextContent("Missing model")
+    expect(within(writer).getAllByRole("combobox")[0]).toHaveTextContent("Missing model")
     expect(writer).toHaveTextContent(
       "The model set here no longer exists. Pick another model or the global default.",
     )
+  })
+
+  it("shows the global setting label and saves an effort in the whole override map", async () => {
+    const user = userEvent.setup()
+    book.model_overrides = {
+      conception: null,
+      researcher: null,
+      planner: null,
+      writer: null,
+      reviewer: null,
+      archivist: null,
+      efforts: {},
+    }
+    render(<BookSettingsPage />)
+
+    const writer = screen.getByTestId("model-override-row-writer")
+    const effort = within(writer).getAllByRole("combobox")[1]
+    expect(effort).toHaveTextContent("Global setting (high)")
+
+    await user.click(effort)
+    await user.click(await screen.findByRole("option", { name: "max" }))
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    const [body] = patchBook.mock.calls[0] as [{ model_overrides: RoleModels }]
+    expect(body.model_overrides.efforts).toEqual({ writer: "max" })
+    // The model map is still part of the same unit.
+    expect(body.model_overrides.writer).toBeNull()
+    expect(body.model_overrides.reviewer).toBeNull()
   })
 
   it("lets a stale override be cleared back to the global default", async () => {
@@ -258,7 +298,7 @@ describe("Book settings › model overrides", () => {
     render(<BookSettingsPage />)
 
     await user.click(
-      within(screen.getByTestId("model-override-row-writer")).getByRole("combobox"),
+      within(screen.getByTestId("model-override-row-writer")).getAllByRole("combobox")[0],
     )
     await user.click(await screen.findByRole("option", { name: "Use the global default" }))
     await user.click(screen.getByRole("button", { name: "Save" }))
@@ -280,7 +320,7 @@ describe("Book settings › model overrides", () => {
     render(<BookSettingsPage />)
 
     await user.click(
-      within(screen.getByTestId("model-override-row-writer")).getByRole("combobox"),
+      within(screen.getByTestId("model-override-row-writer")).getAllByRole("combobox")[0],
     )
     await user.click(await screen.findByRole("option", { name: "Anthropic · Writer model" }))
     await user.click(screen.getByRole("button", { name: "Save" }))
@@ -318,7 +358,7 @@ describe("Book settings › model overrides", () => {
     render(<BookSettingsPage />)
 
     await user.click(
-      within(screen.getByTestId("model-override-row-writer")).getByRole("combobox"),
+      within(screen.getByTestId("model-override-row-writer")).getAllByRole("combobox")[0],
     )
     await user.click(await screen.findByRole("option", { name: "Use the global default" }))
     await user.click(screen.getByRole("button", { name: "Save" }))
@@ -334,9 +374,11 @@ describe("Book settings › model overrides", () => {
     render(<BookSettingsPage />)
 
     for (const role of ["conception", "researcher", "planner", "writer", "reviewer", "archivist"]) {
-      expect(
-        within(screen.getByTestId(`model-override-row-${role}`)).getByRole("combobox"),
-      ).toBeDisabled()
+      const selects = within(screen.getByTestId(`model-override-row-${role}`)).getAllByRole(
+        "combobox",
+      )
+      expect(selects[0]).toBeDisabled()
+      expect(selects[1]).toBeDisabled()
     }
     expect(
       screen.getByText(
@@ -350,7 +392,7 @@ describe("Book settings › model overrides", () => {
     render(<BookSettingsPage />)
 
     expect(
-      within(screen.getByTestId("model-override-row-writer")).getByRole("combobox"),
+      within(screen.getByTestId("model-override-row-writer")).getAllByRole("combobox")[0],
     ).toBeDisabled()
     expect(
       screen.getByText("This book is archived. Unarchive it to change its roles."),

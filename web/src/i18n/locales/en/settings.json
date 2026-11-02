@@ -180,5 +180,13 @@
   "effort_mismatch_fixed": "The unsupported effort levels were removed.",
   "role_planner_unset": "Same as Writer",
   "effort.level_input": "Effort level",
-  "effort.removed_level": "effort level {{level}}"
+  "effort.removed_level": "effort level {{level}}",
+  "role_effort": "Effort",
+  "role_effort_same_as_writer": "Same as Writer",
+  "role_effort_model_default": "Model default ({{level}})",
+  "role_effort_provider_default": "Provider default",
+  "role_effort_no_levels": "No effort levels",
+  "role_effort_stale": "{{level}} (not supported)",
+  "role_effort_stale_hint": "Sessions will use {{level}} instead.",
+  "role_effort_stale_hint_none": "Sessions will use the provider default."
 }

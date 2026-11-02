@@ -309,5 +309,7 @@
   "proposal.new_goal_task_parent": "位于 {{title}} 下",
   "change_target.goal": "目标",
   "change_target.plan": "阶段计划",
-  "change_target.task": "情节点"
+  "change_target.task": "情节点",
+  "model_global_setting": "全局设置（{{level}}）",
+  "model_global_setting_provider_default": "全局设置（提供商默认）"
 }

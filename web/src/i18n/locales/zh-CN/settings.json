@@ -180,5 +180,13 @@
   "effort_mismatch_fixed": "已移除不支持的思考强度级别。",
   "role_planner_unset": "同写手",
   "effort.level_input": "思考强度级别",
-  "effort.removed_level": "思考强度 {{level}}"
+  "effort.removed_level": "思考强度 {{level}}",
+  "role_effort": "思考强度",
+  "role_effort_same_as_writer": "与 Writer 相同",
+  "role_effort_model_default": "模型默认（{{level}}）",
+  "role_effort_provider_default": "提供商默认",
+  "role_effort_no_levels": "没有思考强度级别",
+  "role_effort_stale": "{{level}}（不支持）",
+  "role_effort_stale_hint": "会话将改用 {{level}}。",
+  "role_effort_stale_hint_none": "会话将使用提供商默认值。"
 }
