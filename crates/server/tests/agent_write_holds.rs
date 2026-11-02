@@ -7,8 +7,9 @@ mod agent_write_harness;
 
 use agent_write_harness::{chapter_content, chapter_row, phase_of, runtime, start_writer};
 use axum::http::StatusCode;
-use nekowriter::db::json::{Granularity, Phase, SessionStatus, ToolCallStatus};
+use nekowriter::db::json::{Granularity, Phase, SessionKind, SessionStatus, ToolCallStatus};
 use nekowriter::events::ServerEvent;
+use nekowriter::services::sessions::{self, CreateSession};
 use nekowriter_llm::mock::{ScriptStep, chunk_text};
 use serde_json::json;
 use tokio::sync::broadcast::error::TryRecvError;
@@ -932,5 +933,154 @@ async fn a_held_write_exposes_its_pending_text_in_the_session_snapshot() {
             .await
             .paragraphs
             .is_empty()
+    );
+}
+
+/// A text-only reply in a drafting session names the open tail in its nudge (spec/03 §5.6, §8).
+#[tokio::test]
+async fn the_drafting_nudge_names_an_open_tail() {
+    let runtime = runtime(vec![ScriptStep::new().text("我先想想，再继续写。")]).await;
+    let pid = agent_write_harness::open_tail(&runtime, runtime.chapter_id, "开头还没有写完").await;
+    let session_id = start_writer(&runtime, Granularity::Free, false, false).await;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        for message in runtime.messages(session_id).await {
+            let blocks: serde_json::Value =
+                serde_json::from_str(&message.content).expect("message blocks");
+            let text = blocks
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|block| block["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            if text.contains("尚未写完") && text.contains(&pid) {
+                assert!(
+                    text.contains("当前写作粒度"),
+                    "the nudge carries the granularity hint: {text}"
+                );
+                return;
+            }
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the nudge never named the open tail"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+}
+
+/// Feedback revokes a held `submit_revision_plan`'s deferred phase change and appends the
+/// revision-plan rejection notice (spec/03 §5.4).
+#[tokio::test]
+async fn feedback_revokes_a_held_revision_plan_phase_change() {
+    let runtime = runtime(vec![
+        ScriptStep::new()
+            .tool(
+                "submit_revision_plan",
+                json!({ "plan": "第一版修订计划。" }),
+            )
+            .delay_per_event(std::time::Duration::from_millis(150)),
+        ScriptStep::new()
+            .tool(
+                "submit_revision_plan",
+                json!({ "plan": "按反馈改过的修订计划。" }),
+            )
+            .delay(std::time::Duration::from_millis(200)),
+        ScriptStep::new().tool("finish_revision", json!({ "summary": "改完。" })),
+    ])
+    .await;
+    runtime
+        .app
+        .put_text(runtime.chapter_id, 0, "第一段正文。")
+        .await;
+    let (session_id, _) = sessions::create(
+        runtime.app.state(),
+        CreateSession {
+            kind: SessionKind::ChapterRevise,
+            book_id: Some(runtime.book_id),
+            chapter_id: Some(runtime.chapter_id),
+            granularity: Some(Granularity::Paragraph),
+            ..CreateSession::default()
+        },
+    )
+    .await
+    .expect("create revise session");
+
+    // Let the model stream begin, then pause so the resulting call holds with its deferred
+    // phase change.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let (status, body) = runtime
+        .app
+        .post(&format!("/api/sessions/{session_id}/pause"), json!({}))
+        .await;
+    assert!(
+        status == StatusCode::OK || status == StatusCode::CONFLICT,
+        "pause during the plan stream: {status} {body}"
+    );
+    let (first, _) = held_call(&runtime, session_id).await;
+    assert_eq!(first.name, "submit_revision_plan");
+    assert_eq!(
+        first.effects().phase_to,
+        Some(Phase::Revising),
+        "the held plan carries the deferred phase change"
+    );
+
+    let (status, body) = resume(&runtime, session_id, Some("计划要更具体。")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    // The revoked call leaves the session in revision planning while the resubmission is pending.
+    assert_eq!(
+        phase_of(&runtime, session_id).await,
+        Phase::RevisionPlanning,
+        "feedback revoked the phase change"
+    );
+    let first = runtime.call_by_id(first.id).await;
+    let appendices: Vec<serde_json::Value> =
+        serde_json::from_str(&first.appendices).expect("appendices");
+    let text = appendices
+        .iter()
+        .filter_map(|appendix| appendix["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("计划没有生效"), "{text}");
+    assert!(text.contains("计划要更具体。"), "{text}");
+    assert!(!text.contains("完成被撤回"), "{text}");
+    // The rendered notice carries the Chinese title "修订计划未通过" in the pack metadata; the
+    // body above is the model-facing text (the title is not appended to tool results).
+    let set = runtime.app.state().prompts().defaults_only();
+    assert!(
+        set.pack()
+            .entry("writer.notice.revision_plan_rejected")
+            .expect("the key")
+            .title_zh
+            .contains("修订计划未通过"),
+        "the notice title is the revision-plan rejection"
+    );
+
+    let second = {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if let Some(call) = runtime
+                .calls(session_id)
+                .await
+                .into_iter()
+                .filter(|call| call.name == "submit_revision_plan" && call.sealed)
+                .nth(1)
+            {
+                break call;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the resubmitted plan never sealed"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    };
+    assert!(
+        second
+            .result_text
+            .unwrap_or_default()
+            .contains("修订计划已记录"),
+        "the resubmission carries the acceptance notice"
     );
 }

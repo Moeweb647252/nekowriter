@@ -617,7 +617,7 @@ async fn write_content(
     ))
 }
 
-/// `POST /api/chapters/:id/write` (spec/08 §1.1): start a `chapter_write` session in planning.
+/// `POST /api/chapters/:id/write` (spec/08 §1.1): start a `chapter_write` session in drafting.
 ///
 /// Preconditions: the chapter is `planned` or `drafting`, it has no open writer session, and the
 /// previous chapter of the track is `official` with `canon_status = synced` — unless `force`, which

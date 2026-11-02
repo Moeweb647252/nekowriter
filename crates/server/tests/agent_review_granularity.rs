@@ -1025,3 +1025,72 @@ async fn inserting_after_the_open_tail_closes_it() {
         content.paragraphs
     );
 }
+
+/// The revision-plan acceptance notice is rendered from the live chapter, not the session's stale
+/// view snapshot, so it names the chapter's open tail (spec/03 §5.3, §8).
+#[tokio::test]
+async fn the_revision_plan_acceptance_notice_names_an_open_tail() {
+    let runtime = runtime(vec![
+        ScriptStep::new().tool(
+            "submit_revision_plan",
+            json!({ "plan": "把 p1 补完，再加一段收束。" }),
+        ),
+        ScriptStep::new().tool("finish_revision", json!({ "summary": "按意见改完。" })),
+    ])
+    .await;
+    // An in-review chapter with a real open tail: the fixture writes through the API, then marks
+    // the last paragraph open and the chapter in review (the state send-back expects).
+    runtime
+        .app
+        .put_text(runtime.chapter_id, 0, "开头这一段还没有写完")
+        .await;
+    let mut content = chapter_content(&runtime, runtime.chapter_id).await;
+    content.tail_open = true;
+    let serialized = serde_json::to_string(&content)
+        .expect("content JSON")
+        .replace('\'', "''");
+    runtime
+        .app
+        .execute(&format!(
+            "UPDATE chapters SET content = '{serialized}', status = 'in_review' WHERE id = {}",
+            runtime.chapter_id
+        ))
+        .await;
+    let content = chapter_content(&runtime, runtime.chapter_id).await;
+    assert!(content.tail_open, "the fixture left the tail open");
+    let pid = content
+        .paragraphs
+        .last()
+        .map(|paragraph| paragraph.pid.clone())
+        .expect("a paragraph");
+
+    let (status, body) = runtime
+        .app
+        .post(
+            &format!("/api/chapters/{}/send-back", runtime.chapter_id),
+            json!({ "feedback": "按意见修改。", "mode": "revise" }),
+        )
+        .await;
+    assert!(status.is_success(), "send back: {status} {body}");
+    let revise = body["session_id"].as_i64().expect("the revise session id") as i32;
+    runtime.wait_status(revise, SessionStatus::Completed).await;
+
+    let calls = runtime.calls(revise).await;
+    let plan = calls
+        .iter()
+        .find(|call| call.name == "submit_revision_plan")
+        .expect("the revision plan call");
+    let appendices: Vec<serde_json::Value> =
+        serde_json::from_str(&plan.appendices).expect("appendices");
+    let notice = appendices
+        .iter()
+        .filter(|appendix| appendix["kind"] == "effect_notice")
+        .filter_map(|appendix| appendix["text"].as_str())
+        .find(|text| text.contains("修订计划已记录"))
+        .expect("the acceptance notice");
+    assert!(notice.contains("当前写作粒度"), "{notice}");
+    assert!(
+        notice.contains(&format!("末段 {pid} 尚未写完")),
+        "the live chapter's open tail is named: {notice}"
+    );
+}

@@ -90,7 +90,7 @@ pub struct CreateSession {
     pub pending_comment: Option<String>,
     /// Set by the chapter start endpoints (`chapters::outline` / `write`) so the chapter's status
     /// and outline preconditions are rechecked inside this transaction (R3-03). Direct service
-    /// callers (tests, legacy fixtures) leave it off.
+    /// callers (tests) leave it off.
     pub chapter_guard: bool,
     /// `chapters::write` / `outline`'s `force`: skip the previous-chapter recheck inside the
     /// creation transaction (M5-03).
@@ -164,7 +164,7 @@ pub(crate) async fn create_inner(
     // The API preconditions for chapter sessions are reads on a different connection from this
     // insertion. An approve can commit `status = official` in that window (R3-03), so the
     // chapter row is re-read here, inside the creation transaction. `write` needs the same
-    // outline precondition; a legacy planning fixture is exempt because it predates the split.
+    // outline precondition.
     if input.chapter_guard
         && let Some(chapter_id) = input.chapter_id
     {

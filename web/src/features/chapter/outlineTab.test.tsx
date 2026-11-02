@@ -12,10 +12,6 @@ const patchChapter = vi.hoisted(() => ({
   mutateAsync: vi.fn(async () => ({})),
   isPending: false,
 }))
-const writerState = vi.hoisted(() => ({
-  current: { session: undefined as SessionDto | undefined, heldOutline: undefined as unknown },
-}))
-
 vi.mock("@/api/hooks/chapters", () => ({
   usePatchChapter: () => patchChapter,
   useWriteOutlineChapter: () => ({ mutate: vi.fn(), isPending: false }),
@@ -23,9 +19,6 @@ vi.mock("@/api/hooks/chapters", () => ({
 vi.mock("@/api/hooks/sessions", () => ({
   useResumeSession: () => resume,
   useSession: () => ({ data: undefined }),
-}))
-vi.mock("@/features/chapter/useWriterState", () => ({
-  useWriterState: () => writerState.current,
 }))
 vi.mock("@/features/chapter/OutlineDialog", () => ({ OutlineDialog: () => null }))
 vi.mock("@/components/common/ErrorToast", () => ({ useErrorToast: () => vi.fn() }))
@@ -82,7 +75,6 @@ beforeEach(() => {
   resume.mutate.mockReset()
   patchChapter.mutate.mockReset()
   patchChapter.mutateAsync.mockClear()
-  writerState.current = { session: undefined, heldOutline: undefined }
 })
 
 describe("OutlineTab", () => {

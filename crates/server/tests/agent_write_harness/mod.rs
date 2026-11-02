@@ -28,6 +28,28 @@ pub async fn accept_outline(runtime: &Runtime, chapter_id: i32) {
         .await;
 }
 
+/// Leaves the chapter with one open tail paragraph, returning its pid (a fixture for notices that
+/// read the live tail).
+pub async fn open_tail(runtime: &Runtime, chapter_id: i32, text: &str) -> String {
+    runtime.app.put_text(chapter_id, 0, text).await;
+    let mut content = chapter_content(runtime, chapter_id).await;
+    content.tail_open = true;
+    let serialized = serde_json::to_string(&content)
+        .expect("content JSON")
+        .replace('\'', "''");
+    runtime
+        .app
+        .execute(&format!(
+            "UPDATE chapters SET content = '{serialized}' WHERE id = {chapter_id}"
+        ))
+        .await;
+    content
+        .paragraphs
+        .last()
+        .map(|paragraph| paragraph.pid.clone())
+        .expect("open_tail needs at least one paragraph")
+}
+
 /// Starts a shipped `chapter_write` session (drafting, 19-tool list) for the harness chapter.
 pub async fn start_writer(
     runtime: &Runtime,

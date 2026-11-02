@@ -1214,4 +1214,30 @@ async fn a_removed_prompt_override_is_inert_and_does_not_break_startup() {
         set.render(REMOVED_KEY, &json!({})).is_err(),
         "the removed key is not renderable"
     );
+
+    // The app starts with the retired row already in the database, and the API omits it.
+    let restarted = build_app(test_state(_dir.path(), db.clone()));
+    let response = restarted
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/api/prompts")
+                .header("host", "127.0.0.1:7878")
+                .body(axum::body::Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), 200);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body");
+    let entries: Value = serde_json::from_slice(&body).expect("json");
+    assert!(
+        entries
+            .as_array()
+            .expect("array")
+            .iter()
+            .all(|entry| entry["key"] != REMOVED_KEY),
+        "the API omits the removed key: {entries}"
+    );
 }
