@@ -3,34 +3,26 @@
 import { useState } from "react"
 import { useNavigate, useParams } from "react-router"
 import { useTranslation } from "react-i18next"
-import { Star, UserRound, Users } from "lucide-react"
+import { Plus, Star, UserRound, Users } from "lucide-react"
 
 import type { EntityListItemDto } from "@/api/gen/EntityListItemDto"
 import type { EntityKind } from "@/api/gen/EntityKind"
 import type { EntityStatus } from "@/api/gen/EntityStatus"
 import { useEntities, useSetProtagonist } from "@/api/hooks/useCanon"
 import { useTracks } from "@/api/hooks/tracks"
+import { EntityCreateDialog } from "@/features/canon/EntityCreateDialog"
 import { EntityDetail } from "@/features/canon/EntityDetail"
 import {
   chapterRefLabel,
   useChapterIndex,
   type ChapterIndex,
 } from "@/features/canon/chapterIndex"
+import { ENTITY_KINDS, ENTITY_STATUSES } from "@/features/canon/entityOptions"
 import { EmptyState } from "@/components/common/EmptyState"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
-
-const KINDS: EntityKind[] = ["character", "organization", "location", "item", "other"]
-const STATUSES: EntityStatus[] = [
-  "active",
-  "inactive",
-  "dead",
-  "destroyed",
-  "missing",
-  "unknown",
-]
 
 export default function EntitiesPage() {
   const { t } = useTranslation()
@@ -42,6 +34,7 @@ export default function EntitiesPage() {
   const [status, setStatus] = useState<EntityStatus | undefined>(undefined)
   const [query, setQuery] = useState("")
   const [trackId, setTrackId] = useState<number | undefined>(undefined)
+  const [createOpen, setCreateOpen] = useState(false)
 
   const entities = useEntities(bookId, { kind, status, q: query, trackId })
   const tracks = useTracks(bookId)
@@ -74,7 +67,7 @@ export default function EntitiesPage() {
               onClick={() => setKind(undefined)}
               label={t("canon:all_kinds")}
             />
-            {KINDS.map((value) => (
+            {ENTITY_KINDS.map((value) => (
               <FilterChip
                 key={value}
                 active={kind === value}
@@ -92,7 +85,7 @@ export default function EntitiesPage() {
             aria-label={t("canon:filter_status")}
           >
             <option value="">{t("canon:all_statuses")}</option>
-            {STATUSES.map((value) => (
+            {ENTITY_STATUSES.map((value) => (
               <option key={value} value={value}>
                 {t(`canon:status.${value}`)}
               </option>
@@ -115,6 +108,14 @@ export default function EntitiesPage() {
               ))}
             </select>
           )}
+          <Button
+            size="sm"
+            className="ml-auto"
+            onClick={() => setCreateOpen(true)}
+          >
+            <Plus className="size-3.5" aria-hidden="true" />
+            {t("canon:entity_create.action")}
+          </Button>
         </header>
 
         {rows.length === 0 ? (
@@ -164,6 +165,13 @@ export default function EntitiesPage() {
           <EntityDetail bookId={bookId} entityId={selectedId} />
         )}
       </aside>
+      {createOpen ? (
+        <EntityCreateDialog
+          bookId={bookId}
+          open
+          onOpenChange={setCreateOpen}
+        />
+      ) : null}
     </div>
   )
 }

@@ -4,7 +4,7 @@ import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { Plus, Trash2 } from "lucide-react"
+import { MoreHorizontal, Plus, Trash2 } from "lucide-react"
 
 import type { EntityDto } from "@/api/gen/EntityDto"
 import type { EntityPatch } from "@/api/gen/EntityPatch"
@@ -21,6 +21,7 @@ import {
 import { useTracks } from "@/api/hooks/tracks"
 import { useErrorToast } from "@/components/common/ErrorToast"
 import { ChangeList } from "@/features/canon/ChangeList"
+import { EntityMergeDialog } from "@/features/canon/EntityMergeDialog"
 import { GoalsReferencedBy } from "@/features/canon/GoalsReferencedBy"
 import {
   chapterRefLabel,
@@ -29,6 +30,12 @@ import {
 } from "@/features/canon/chapterIndex"
 import { Importance } from "@/features/canon/EntitiesPage"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { isComposing } from "@/lib/hotkeys"
@@ -49,6 +56,7 @@ export function EntityDetail({ bookId, entityId }: EntityDetailProps) {
   const patch = usePatchEntity(bookId)
   const remove = useDeleteEntity(bookId)
   const protagonist = useSetProtagonist(bookId)
+  const [mergeOpen, setMergeOpen] = useState(false)
 
   if (entity.isPending) {
     return <Skeleton className="m-4 h-64" />
@@ -85,6 +93,18 @@ export function EntityDetail({ bookId, entityId }: EntityDetailProps) {
             >
               {t("canon:make_protagonist")}
             </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="ghost" aria-label={t("canon:entity_actions")}>
+                  <MoreHorizontal className="size-3.5" aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => setMergeOpen(true)}>
+                  {t("canon:entity_merge.action")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button
               size="sm"
               variant="ghost"
@@ -160,6 +180,15 @@ export function EntityDetail({ bookId, entityId }: EntityDetailProps) {
         </h3>
         <ChangeList bookId={bookId} changes={data.recent_changes} compact />
       </section>
+
+      {mergeOpen ? (
+        <EntityMergeDialog
+          bookId={bookId}
+          target={data}
+          open
+          onOpenChange={setMergeOpen}
+        />
+      ) : null}
     </div>
   )
 }
