@@ -298,6 +298,38 @@ export default function ConceptionStudio() {
               checkSnapshot={checkSnapshot.data}
               startPending={start.isPending}
               checkPending={startKnowledgeCheck.isPending}
+              controlsBusy={busy}
+              onPause={(session) =>
+                control.mutate(
+                  { sessionId: session.id, operation: "pause" },
+                  { onError: showError },
+                )
+              }
+              onStop={(session) =>
+                control.mutate(
+                  { sessionId: session.id, operation: "stop" },
+                  { onError: showError },
+                )
+              }
+              onContinue={(session) => {
+                if (session.status === "held" || session.status === "paused") {
+                  resume.mutate({ sessionId: session.id }, { onError: showError })
+                } else {
+                  control.mutate(
+                    { sessionId: session.id, operation: "continue" },
+                    { onError: showError },
+                  )
+                }
+              }}
+              onFeedback={(session, feedback) =>
+                resume.mutate({ sessionId: session.id, feedback }, { onError: showError })
+              }
+              onAbandon={(session) =>
+                control.mutate(
+                  { sessionId: session.id, operation: "abandon" },
+                  { onError: showError },
+                )
+              }
               onStart={() =>
                 start.mutate(undefined, {
                   onSuccess: ({ warnings }) => showWarnings(warnings ?? []),
@@ -468,6 +500,12 @@ function BeforeConception({
   checkSnapshot,
   startPending,
   checkPending,
+  controlsBusy,
+  onPause,
+  onStop,
+  onContinue,
+  onFeedback,
+  onAbandon,
   onStart,
   onCheck,
 }: {
@@ -480,6 +518,12 @@ function BeforeConception({
     | undefined
   startPending: boolean
   checkPending: boolean
+  controlsBusy: boolean
+  onPause: (session: SessionDto) => void
+  onStop: (session: SessionDto) => void
+  onContinue: (session: SessionDto) => void
+  onFeedback: (session: SessionDto, feedback: string) => void
+  onAbandon: (session: SessionDto) => void
   onStart: () => void
   onCheck: () => void
 }) {
@@ -539,7 +583,16 @@ function BeforeConception({
             <Loader2 className="size-4 animate-spin text-muted-foreground" aria-hidden="true" />
           </div>
         ) : (
-          <div className="flex h-[24rem] flex-col overflow-hidden rounded-md border">
+          <div className="flex h-[24rem] shrink-0 flex-col overflow-hidden rounded-md border">
+            <SessionControls
+              session={session}
+              busy={controlsBusy}
+              onPause={() => onPause(session)}
+              onStop={() => onStop(session)}
+              onContinue={() => onContinue(session)}
+              onFeedback={(feedback) => onFeedback(session, feedback)}
+              onAbandon={() => onAbandon(session)}
+            />
             <ActivityStream
               session={session}
               messages={checkSnapshot?.messages ?? []}

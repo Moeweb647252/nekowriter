@@ -522,17 +522,53 @@ function preparationTask(overrides: Partial<Record<string, unknown>> = {}) {
   }
 }
 
-function checkSession(status: string) {
+function checkSession(status: string, overrides: Partial<SessionDto> = {}) {
   return conceptionSession({
     id: 11,
     role: "researcher",
     kind: "research",
     research_task_kind: "preparation",
     status: status as SessionDto["status"],
+    ...overrides,
   })
 }
 
+/** The snapshot the check pane reads; its messages are empty unless a test needs the stream. */
+function checkSnapshot(session: SessionDto, text = "") {
+  return {
+    session,
+    messages:
+      text === ""
+        ? []
+        : [
+            {
+              message: {
+                id: 1,
+                seq: 0,
+                role: "assistant",
+                kind: "assistant",
+                blocks: [{ type: "text", text }],
+                stop_reason: null,
+                usage: null,
+                created_at: "2026-01-01T00:00:00Z",
+              },
+              tool_calls: [],
+            },
+          ],
+    system_prompt: "",
+    tool_names: [],
+  }
+}
+
 describe("knowledge-check states before conception", () => {
+  beforeEach(() => {
+    state.topics = []
+    state.checkSnapshot = undefined
+    state.sessions = []
+    sessionControl.mockClear()
+    resume.mockClear()
+  })
+
   it("shows the open check stream, task link, and a confirmed Start conception now", async () => {
     const user = userEvent.setup()
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true)
@@ -578,6 +614,45 @@ describe("knowledge-check states before conception", () => {
     expect(confirm).toHaveBeenCalledTimes(1)
     expect(startConception).toHaveBeenCalledTimes(1)
     confirm.mockRestore()
+  })
+
+  it("shows pause and stop while the check is running, and calls their operations", async () => {
+    state.topics = [preparationTask()]
+    state.checkSnapshot = checkSnapshot(checkSession("running"))
+    renderStudio()
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole("button", { name: "Pause" }))
+    expect(sessionControl).toHaveBeenCalledWith(
+      { sessionId: 11, operation: "pause" },
+      expect.anything(),
+    )
+    await user.click(screen.getByRole("button", { name: "Stop" }))
+    expect(sessionControl).toHaveBeenCalledWith(
+      { sessionId: 11, operation: "stop" },
+      expect.anything(),
+    )
+  })
+
+  it("continues a paused check by resuming the session", async () => {
+    state.topics = [preparationTask({ status: "paused" })]
+    state.checkSnapshot = checkSnapshot(checkSession("paused"))
+    renderStudio()
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole("button", { name: "Continue" }))
+    expect(resume).toHaveBeenCalledWith({ sessionId: 11 }, expect.anything())
+    expect(sessionControl).not.toHaveBeenCalled()
+  })
+
+  it("renders no run controls once the check is terminal", () => {
+    state.topics = [preparationTask({ status: "done" })]
+    state.checkSnapshot = checkSnapshot(checkSession("completed"))
+    renderStudio()
+
+    expect(screen.queryByRole("button", { name: "Pause" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Stop" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Continue" })).toBeNull()
   })
 
   it("shows the report, entries and Start conception when the check is done", () => {
