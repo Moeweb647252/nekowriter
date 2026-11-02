@@ -3416,9 +3416,16 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     the top, so the agent panel, the conception studio and the research task page all get it.
   - The dead bottom button goes.
   - The cleanup plan keeps the six hooks and `canon:relation_status.active`.
-- **Consequences**: F7 and §8.8 are complete. Long sessions are readable from their kickoff. No
-  server, schema or prompt change, and the existing endpoints' tests stay the contract.
-- **Spec**: PROJECT §8.8; spec/11 §5.3, §5.5, §9.
+- **Consequences**: F7 and §8.8 are complete. Long sessions are readable from their kickoff.
+  - **One server change was necessary (18.2 review).** `SessionSnapshotDto.next_cursor` had been
+    hardcoded `None`, so the scrollback input that spec/10 §2.7 documents never existed. The
+    snapshot now returns the oldest `seq` of a truncated 200-message window (strictly more than
+    200 messages; exactly 200 is a complete history with no cursor), in its own commit with its
+    own test. The fix removes two web compensations: a `>= 200` cursor guess that misfired on an
+    exactly-200-message session, and the boundary gap left when a live message slid the snapshot
+    window past cached older pages.
+  - No schema or prompt change, and the existing endpoints' tests stay the contract.
+- **Spec**: PROJECT §8.8; spec/10 §2.7; spec/11 §5.3, §5.5, §9.
 
 
 ### D-162 Thinking effort is chosen per role; the model profile lists its levels

@@ -8,7 +8,7 @@ mod agent_harness;
 
 use std::time::Duration;
 
-use agent_harness::{finish_step, runtime, tool_step};
+use agent_harness::{Runtime, finish_step, runtime, tool_step};
 use axum::http::StatusCode;
 use nekowriter::db::json::Granularity;
 use nekowriter::testing::assert_error;
@@ -500,5 +500,87 @@ async fn the_message_page_is_cursor_paginated() {
             .all(|item| item["message"]["seq"].as_i64().unwrap_or(i64::MAX)
                 < cursor.parse::<i64>().unwrap_or(0)),
         "a page holds only older messages: {older_items:?}"
+    );
+}
+
+/// Replaces a session's messages with `count` synthetic assistant messages, `seq` 0..count.
+async fn seed_messages(runtime: &Runtime, session_id: i32, count: usize) {
+    runtime
+        .app
+        .execute(&format!(
+            "DELETE FROM agent_messages WHERE session_id = {session_id}"
+        ))
+        .await;
+    let values = (0..count)
+        .map(|seq| {
+            format!(
+                "({session_id}, {seq}, 'assistant', 'assistant', \
+                 '[{{\"type\":\"text\",\"text\":\"m{seq}\"}}]', '2026-01-01T00:00:00Z')"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    runtime
+        .app
+        .execute(&format!(
+            "INSERT INTO agent_messages (session_id, seq, role, kind, content, created_at) \
+             VALUES {values}"
+        ))
+        .await;
+}
+
+/// The snapshot reports the scrollback cursor only when its 200-message window is truncated
+/// (spec/10 §2.7). The cursor is the decimal `seq` of the oldest returned message, which is
+/// exactly the `seq < cursor` boundary of the message page; a complete 200-message history has
+/// no cursor.
+#[tokio::test]
+async fn the_snapshot_reports_a_scrollback_cursor_only_when_truncated() {
+    let runtime = runtime(vec![finish_step(), finish_step()]).await;
+    let session_id = runtime.start_debug().await;
+    runtime
+        .wait_status(session_id, nekowriter::db::json::SessionStatus::Completed)
+        .await;
+    seed_messages(&runtime, session_id, 201).await;
+
+    let (status, body) = runtime
+        .app
+        .get(&format!("/api/sessions/{session_id}"))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let messages = body["messages"].as_array().expect("messages");
+    assert_eq!(messages.len(), 200, "the window is the last 200 messages");
+    assert_eq!(
+        messages[0]["message"]["seq"].as_i64(),
+        Some(1),
+        "the oldest message in the window is seq 1"
+    );
+    assert_eq!(body["next_cursor"].as_str(), Some("1"), "{body}");
+
+    // The cursor starts the page just before the window: message 0 and nothing else.
+    let (status, older) = runtime
+        .app
+        .get(&format!("/api/sessions/{session_id}/messages?cursor=1"))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{older}");
+    let items = older["items"].as_array().expect("items");
+    assert_eq!(items.len(), 1, "{older}");
+    assert_eq!(items[0]["message"]["seq"].as_i64(), Some(0));
+    assert!(older["next_cursor"].is_null(), "{older}");
+
+    // Exactly 200 messages is a complete history: there is nothing before the window.
+    let full_session = runtime.start_debug().await;
+    runtime
+        .wait_status(full_session, nekowriter::db::json::SessionStatus::Completed)
+        .await;
+    seed_messages(&runtime, full_session, 200).await;
+    let (status, body) = runtime
+        .app
+        .get(&format!("/api/sessions/{full_session}"))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["messages"].as_array().expect("messages").len(), 200);
+    assert!(
+        body["next_cursor"].is_null(),
+        "a complete window has no cursor: {body}"
     );
 }

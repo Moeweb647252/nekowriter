@@ -864,6 +864,9 @@ pub async fn snapshot(
 ) -> Result<SessionSnapshotDto, AppError> {
     let session = session::load(conn, session_id).await?;
     let all = runner::messages_of(conn, session_id).await?;
+    // The window is truncated only when there is at least one message outside it: exactly
+    // `SNAPSHOT_MESSAGE_LIMIT` messages is a complete history, not a truncated one.
+    let truncated = all.len() > SNAPSHOT_MESSAGE_LIMIT;
     let tail: Vec<agent_messages::Model> = all
         .into_iter()
         .rev()
@@ -914,7 +917,14 @@ pub async fn snapshot(
         inbox_pending,
         system_prompt: session.system_prompt.clone(),
         tool_names: tools.into_iter().map(|tool| tool.name).collect(),
-        next_cursor: None,
+        // The cursor for `GET /messages?cursor=` is the oldest `seq` in the returned window:
+        // that endpoint returns `seq < cursor`, so this is the message just before the snapshot
+        // (spec/10 §2.7).
+        next_cursor: if truncated {
+            tail.first().map(|message| message.seq.to_string())
+        } else {
+            None
+        },
     })
 }
 
