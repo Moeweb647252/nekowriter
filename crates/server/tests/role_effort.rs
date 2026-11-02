@@ -421,6 +421,42 @@ async fn case_8_planner_on_writer_model_uses_its_own_effort() {
     assert_eq!(warning_count(&warnings), 0, "{warnings:?}");
 }
 
+/// Case 12 (F03): the book's writer effort is inherited by a planner that follows the writer's
+/// model, and it beats the global writer effort.
+#[tokio::test]
+async fn case_12_planner_inherits_the_book_writer_effort() {
+    let app = app().await;
+    let provider_id = openai_provider(&app).await;
+    let profile_id = profile(
+        &app,
+        provider_id,
+        "Writer",
+        json!(["low", "high"]),
+        Value::Null,
+    )
+    .await;
+    set_roles(
+        &app,
+        json!({ "writer": profile_id, "efforts": { "writer": "low" } }),
+    )
+    .await;
+    let (book_id, chapter_id) = book_and_chapter(&app, "One").await;
+    set_book_overrides(
+        &app,
+        book_id,
+        json!({ "writer": profile_id, "efforts": { "writer": "high" } }),
+    )
+    .await;
+    let (session_id, warnings) = create_outline(&app, book_id, chapter_id).await;
+
+    assert_eq!(
+        snapshot(&app, session_id).await["options"]["reasoning_effort"],
+        "high",
+        "the book's writer effort is inherited by the planner"
+    );
+    assert_eq!(warning_count(&warnings), 0, "{warnings:?}");
+}
+
 // ───────────────────────────── 9: the wire field per protocol ─────────────────────────────
 
 /// 9. The same level lands in `reasoning_effort` on OpenAI, `effort` on Anthropic, and nowhere on
@@ -579,6 +615,110 @@ async fn case_11_setting_changes_do_not_touch_a_running_session() {
     assert_eq!(session_effort(&app, session_id).await, "low");
 }
 
+/// Case 13 (F01a): a non-null profile default must not override an explicit role choice.
+#[tokio::test]
+async fn case_13_role_choice_beats_the_profile_default() {
+    let app = app().await;
+    let provider_id = openai_provider(&app).await;
+    let profile_id = profile(
+        &app,
+        provider_id,
+        "Default high",
+        json!(["low", "high"]),
+        json!("high"),
+    )
+    .await;
+    set_roles(
+        &app,
+        json!({ "writer": profile_id, "efforts": { "writer": "low" } }),
+    )
+    .await;
+    let (book_id, chapter_id) = book_and_chapter(&app, "One").await;
+    let (session_id, warnings) = create_write(&app, book_id, chapter_id).await;
+
+    assert_eq!(
+        snapshot(&app, session_id).await["options"]["reasoning_effort"],
+        "low",
+        "the role choice wins over the profile default"
+    );
+    assert_eq!(warning_count(&warnings), 0, "{warnings:?}");
+}
+
+/// Case 14 (F01b): a stale role choice falls through to the profile default, with the warning.
+#[tokio::test]
+async fn case_14_stale_choice_falls_through_to_the_profile_default() {
+    let app = app().await;
+    let provider_id = openai_provider(&app).await;
+    let profile_id = profile(
+        &app,
+        provider_id,
+        "Default medium",
+        json!(["low", "medium"]),
+        json!("medium"),
+    )
+    .await;
+    set_roles(
+        &app,
+        json!({ "writer": profile_id, "efforts": { "writer": "max" } }),
+    )
+    .await;
+    let (book_id, chapter_id) = book_and_chapter(&app, "One").await;
+    let (session_id, warnings) = create_write(&app, book_id, chapter_id).await;
+
+    assert_eq!(
+        snapshot(&app, session_id).await["options"]["reasoning_effort"],
+        "medium",
+        "the default applies after the stale choice"
+    );
+    assert_eq!(warning_count(&warnings), 1, "{warnings:?}");
+}
+
+/// Case 15 (F02): the candidate must be sendable by the **current** protocol, not merely listed
+/// on the profile. A protocol switch can leave a stored level in `effort_levels` that the new
+/// protocol rejects; it falls through to the default and warns.
+#[tokio::test]
+async fn case_15_candidate_must_be_sendable_by_the_current_protocol() {
+    let app = app().await;
+    let provider_id = openai_provider(&app).await;
+    let profile_id = profile(
+        &app,
+        provider_id,
+        "Switched",
+        json!(["low", "ultra"]),
+        json!("low"),
+    )
+    .await;
+    // The provider is switched to Anthropic after the levels were saved. `ultra` is a legal
+    // free-form OpenAI token but not an Anthropic level.
+    let (status, body) = app
+        .patch(
+            &format!("/api/providers/{provider_id}"),
+            json!({
+                "name": "OpenAI",
+                "protocol": "anthropic",
+                "base_url": "https://api.anthropic.test",
+                "api_key": "sk-ant-test",
+                "extra_headers": {},
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    set_roles(
+        &app,
+        json!({ "writer": profile_id, "efforts": { "writer": "ultra" } }),
+    )
+    .await;
+    let (book_id, chapter_id) = book_and_chapter(&app, "One").await;
+    let (session_id, warnings) = create_write(&app, book_id, chapter_id).await;
+
+    let snapshot = snapshot(&app, session_id).await;
+    assert_eq!(
+        snapshot["options"]["effort"], "low",
+        "the unsendable candidate falls through to the default: {snapshot}"
+    );
+    assert_eq!(warning_count(&warnings), 1, "{warnings:?}");
+}
+
 /// The test-only debug creation paths call the same resolver as production creation
 /// (spec/03 §4: every creation path uses this one resolver).
 #[tokio::test]
@@ -608,6 +748,75 @@ async fn debug_sessions_use_the_same_resolver() {
     assert_eq!(
         snapshot(&app, session_id).await["options"]["reasoning_effort"],
         "high"
+    );
+
+    // The second test-only creation path (`create_debug_session`, used by the runtime harness)
+    // must use the same resolver.
+    let debug_session_id = nekowriter::services::sessions::create_debug_session(
+        app.state(),
+        nekowriter::services::sessions::DebugSessionSpec {
+            book_id,
+            chapter_id: None,
+            kind: SessionKind::ChapterWrite,
+            phase: nekowriter::db::json::Phase::Drafting,
+            granularity: Some(nekowriter::db::json::Granularity::Paragraph),
+            auto_pause: false,
+            pause_after_outline: false,
+        },
+    )
+    .await
+    .expect("create debug session");
+    assert_eq!(
+        snapshot(&app, debug_session_id).await["options"]["reasoning_effort"],
+        "high",
+        "create_debug_session uses the same resolver"
+    );
+}
+
+/// Case 16 (F05): the warning travels on the creation `session.updated` event's `SessionDto`,
+/// not only in the service return value the API turns into `warnings`.
+#[tokio::test]
+async fn case_16_session_updated_carries_the_effort_warning() {
+    let app = app().await;
+    let provider_id = openai_provider(&app).await;
+    let profile_id = profile(
+        &app,
+        provider_id,
+        "Warning DTO",
+        json!(["low"]),
+        Value::Null,
+    )
+    .await;
+    set_roles(
+        &app,
+        json!({ "writer": profile_id, "efforts": { "writer": "max" } }),
+    )
+    .await;
+    let (book_id, chapter_id) = book_and_chapter(&app, "One").await;
+    let mut events = app.events().subscribe();
+    let (session_id, _warnings) = create_write(&app, book_id, chapter_id).await;
+
+    let mut found = false;
+    while let Ok(envelope) = events.try_recv() {
+        if let nekowriter::events::ServerEvent::SessionUpdated { session, warnings } =
+            envelope.event
+            && session.id == session_id
+        {
+            assert!(
+                session.warnings.iter().any(|warning| warning == WARNING),
+                "the session DTO carries the warning: {:?}",
+                session.warnings
+            );
+            assert!(
+                warnings.iter().any(|warning| warning == WARNING),
+                "the event payload carries the warning: {warnings:?}"
+            );
+            found = true;
+        }
+    }
+    assert!(
+        found,
+        "the creation session.updated event must be published"
     );
 }
 
