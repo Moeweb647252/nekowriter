@@ -3432,9 +3432,36 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     is populated only on the creation response/event; showing warnings again when a session is
     opened is a follow-up, not part of 19.7. An already-open canon-seed session likewise returns
     no new warning.
-  - **Dropped values.** A cross-protocol effort key, which was always inert, is dropped, and so is
-    `options.extra_body.reasoning_effort`: `extra_body` is merged last, so a leftover override
-    would silently shadow the role's resolved level. The pre-ship report lists each one.
+  - **19.8 real-data migration (2026-11-03, copy).** The live database was copied with SQLite's
+    backup API; the original was not modified. The copy went from 6 to 9 `seaql_migrations`
+    records (`m0007_builtin_basic_writing`, `m0008_knowledge_first`, `m0009_role_effort`).
+    `PRAGMA user_version` is not maintained by this app (0 before and after); the migration record
+    is the schema version. `prompt_overrides` stayed 0 and `agent_sessions` stayed 0. No Anthropic
+    session existed, so there were no `options.effort` NULL→`high` back-fill rows to list.
+
+    | Profile | Protocol | Options before | Options after | Dropped | Levels / default |
+    | --- | --- | --- | --- | --- | --- |
+    | Demo model | mock | `{}` | `{}` | none | `[]` / `NULL` |
+    | DeepSeek V4.1 Flash | openai | `reasoning_replay=always, cache_ttl=1h, reasoning_effort=max, max_tokens_field=max_tokens, send_parallel_tool_calls=true, stream_usage=true` | `reasoning_replay=always, cache_ttl=1h, max_tokens_field=max_tokens, send_parallel_tool_calls=true, stream_usage=true` | `reasoning_effort` | `[max]` / `max` |
+    | GPT 6.1 Terra | openai | `reasoning_replay=always, reasoning_effort=max, max_tokens_field=max_tokens, send_parallel_tool_calls=true, stream_usage=true` | `reasoning_replay=always, max_tokens_field=max_tokens, send_parallel_tool_calls=true, stream_usage=true` | `reasoning_effort` | `[max]` / `max` |
+
+    `extra_body` was absent in every before and after options object. No value was dropped as
+    cross-protocol: all three profiles were mock/OpenAI, and the two removed `reasoning_effort`
+    values became the profiles' levels. The reopened Models page showed all three profiles with
+    these levels/defaults (`—`, `max (default)`, `max (default)`) and no ignored options or effort
+    levels.
+  - **Smoke item 14 (2026-11-03, copy).** Demo provider: the Demo model dialog showed "The Demo
+    provider takes no effort levels.", and with a role assigned the Demo model the Roles page
+    effort select was disabled with "No effort levels". The Magpie provider had a key: a profile
+    with `[low, high, max]`/`high`, reviewer `low` and writer `max` produced sessions with
+    `SessionDto.effort` `low` and `max`; a book override to `high` produced `high`; removing
+    `high` produced the `model.effort_unsupported` warning and the next session used `max`.
+  - **Known follow-up — research-session warnings (19.7 reviewer, out of inventory).**
+    `POST /research-tasks/:id/run` and `POST /books/:id/knowledge-check` start research sessions
+    whose DTOs have no `warnings` field (spec/10 §2.5 defines them that way) and whose services
+    discard `_warnings`, so a researcher's stale effort is silently downgraded with no toast. The
+    auto-started conception session's warnings are likewise discarded (`conception.rs`'s
+    `start_after_knowledge_check`). This is a known follow-up, not an M19 blocker.
   - **Startup-log coverage (accepted gap).** `stored_option_mismatches` is tested, including the
     effort levels it returns, but the single `tracing::warn!` line in `lib.rs` that consumes the
     tuple is reviewed rather than asserted. Capturing one log line would need a tracing test
