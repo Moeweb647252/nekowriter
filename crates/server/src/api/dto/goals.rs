@@ -10,6 +10,8 @@ use ts_rs::TS;
 
 use crate::db::json::{ForeshadowingStatus, GoalCondition, GoalLevel, GoalStatus};
 
+use super::deserialize_some;
+
 /// One goal node (spec/10 §2.8). The position in the tree comes from `parent_id`; `ready` and
 /// `closable` are derived, never stored.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -143,15 +145,6 @@ pub struct GoalNodePatch {
     pub note: Option<String>,
     #[serde(default)]
     pub confirm_open_children: Option<bool>,
-}
-
-/// `Option<Option<T>>` with wire semantics: absent means leave unchanged, explicit `null` clears.
-fn deserialize_some<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
-where
-    T: serde::Deserialize<'de>,
-    D: serde::Deserializer<'de>,
-{
-    Option::<T>::deserialize(deserializer).map(Some)
 }
 
 /// `GET /books/:id/goals` query (spec/10 §2.4). The link filters return the nodes that link to or
