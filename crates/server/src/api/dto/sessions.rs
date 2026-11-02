@@ -32,6 +32,9 @@ pub struct SessionDto {
     /// The task kind when the session belongs to a research task (spec/10 §2.8, D-158).
     pub research_task_kind: Option<ResearchTaskKind>,
     pub model_label: String,
+    /// The frozen thinking effort from `model_snapshot` (spec/04 §5.1, D-162): the value in the
+    /// protocol's wire field, or `None` when the model takes no effort parameter.
+    pub effort: Option<String>,
     pub status: SessionStatus,
     pub phase: Phase,
     pub granularity: Option<Granularity>,

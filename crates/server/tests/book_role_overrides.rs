@@ -157,6 +157,8 @@ async fn the_patch_round_trips_every_role_through_the_book_dto() {
         "writer": models.book,
         "reviewer": null,
         "archivist": null,
+        // Old rows and requests without efforts read as the empty choice set (D-162).
+        "efforts": {},
     });
     let (status, body) = app
         .patch(

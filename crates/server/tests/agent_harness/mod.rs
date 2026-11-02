@@ -78,6 +78,8 @@ pub async fn runtime(steps: Vec<ScriptStep>) -> Runtime {
         context_window: 200_000,
         max_output_tokens: 8_192,
         options: Default::default(),
+        effort_levels: Vec::new(),
+        default_effort: None,
     };
     let (status, profile) = app
         .post(

@@ -18,6 +18,12 @@ pub struct Model {
     pub context_window: i32,
     pub max_output_tokens: i32,
     pub options: JsonText<ModelOptions>,
+    /// The thinking-effort levels this model accepts, in display order; empty means the model
+    /// takes no effort parameter (spec/04 §5.1, D-162).
+    pub effort_levels: JsonText<Vec<String>>,
+    /// The level a role that chooses none gets; one of `effort_levels`, or `NULL` when the
+    /// provider decides (spec/04 §5.1, D-162).
+    pub default_effort: Option<String>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
     #[sea_orm(belongs_to, from = "provider_id", to = "id")]

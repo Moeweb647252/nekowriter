@@ -77,6 +77,10 @@ type ModelDraft = {
   context_window: string
   max_output_tokens: string
   options: ModelOptionsDto
+  /** Carried through unedited until the Thinking effort UI lands (D-162): a save must not wipe
+   * the profile's levels or default. */
+  effort_levels: string[]
+  default_effort: string | null
 }
 
 const EMPTY_DRAFT: ModelDraft = {
@@ -86,6 +90,8 @@ const EMPTY_DRAFT: ModelDraft = {
   context_window: "128000",
   max_output_tokens: "16384",
   options: {},
+  effort_levels: [],
+  default_effort: null,
 }
 
 /** A draft option value as the form holds it: every field of `ModelOptionsDto` is optional and
@@ -259,6 +265,10 @@ export default function ModelsPage() {
             context_window: clearing.context_window,
             max_output_tokens: clearing.max_output_tokens,
             options: removeOptionKeys(clearing.options, clearing.ignored_options),
+            // The effort configuration is not part of this repair: carry it through so a fix does
+            // not wipe the levels (D-162).
+            effort_levels: clearing.effort_levels,
+            default_effort: clearing.default_effort ?? null,
           }
           patchModel.mutate(
             { id: clearing.id, input },
@@ -319,6 +329,8 @@ function ModelDialog({
           context_window: String(model.context_window),
           max_output_tokens: String(model.max_output_tokens),
           options: model.options,
+          effort_levels: [...model.effort_levels],
+          default_effort: model.default_effort ?? null,
         },
   )
   const [remote, setRemote] = useState<RemoteModelDto[]>([])
@@ -362,6 +374,10 @@ function ModelDialog({
       context_window: Number(draft.context_window) || 0,
       max_output_tokens: Number(draft.max_output_tokens) || 0,
       options: draft.options,
+      // Taken from the loaded profile when editing and left empty when creating: no effort UI
+      // exists yet, and a save must not silently drop stored levels (D-162).
+      effort_levels: draft.effort_levels,
+      default_effort: draft.default_effort,
     }
     if (editing) {
       patchModel.mutate({ id: model.id, input }, { onSuccess: onClose, onError: showError })
@@ -637,9 +653,7 @@ function optionCount(
 function assignOption(options: ModelOptionsDto, key: OptionKey, value: OptionValue): void {
   switch (key) {
     case "reasoning_replay":
-    case "reasoning_effort":
     case "max_tokens_field":
-    case "effort":
     case "thinking_display":
     case "cache_ttl":
       options[key] = String(value)

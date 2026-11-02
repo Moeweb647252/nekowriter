@@ -63,15 +63,15 @@ struct PresetDefinition {
     context_window: i32,
     max_output_tokens: i32,
     options: ModelOptionsDto,
+    /// The thinking-effort levels this preset's model accepts, in display order (spec/04 §8,
+    /// D-162). Only the two real-provider presets ship levels; every other preset sends none.
+    effort_levels: &'static [&'static str],
+    default_effort: Option<&'static str>,
     requires_key: bool,
     demo_only: bool,
 }
 
 fn preset_definitions() -> Vec<PresetDefinition> {
-    let anthropic_options = ModelOptionsDto {
-        effort: Some("high".to_owned()),
-        ..ModelOptionsDto::default()
-    };
     let replay_options = || ModelOptionsDto {
         reasoning_replay: Some("always".to_owned()),
         ..ModelOptionsDto::default()
@@ -85,7 +85,9 @@ fn preset_definitions() -> Vec<PresetDefinition> {
             models: &["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
             context_window: 1_000_000,
             max_output_tokens: 128_000,
-            options: anthropic_options,
+            options: ModelOptionsDto::default(),
+            effort_levels: &["low", "medium", "high", "xhigh", "max"],
+            default_effort: Some("high"),
             requires_key: true,
             demo_only: false,
         },
@@ -101,6 +103,8 @@ fn preset_definitions() -> Vec<PresetDefinition> {
                 max_tokens_field: Some("max_completion_tokens".to_owned()),
                 ..ModelOptionsDto::default()
             },
+            effort_levels: &["low", "medium", "high"],
+            default_effort: None,
             requires_key: true,
             demo_only: false,
         },
@@ -113,6 +117,8 @@ fn preset_definitions() -> Vec<PresetDefinition> {
             context_window: 128_000,
             max_output_tokens: 64_000,
             options: replay_options(),
+            effort_levels: &[],
+            default_effort: None,
             requires_key: true,
             demo_only: false,
         },
@@ -125,6 +131,8 @@ fn preset_definitions() -> Vec<PresetDefinition> {
             context_window: 1_000_000,
             max_output_tokens: 64_000,
             options: replay_options(),
+            effort_levels: &[],
+            default_effort: None,
             requires_key: true,
             demo_only: false,
         },
@@ -137,6 +145,8 @@ fn preset_definitions() -> Vec<PresetDefinition> {
             context_window: 262_144,
             max_output_tokens: 32_768,
             options: ModelOptionsDto::default(),
+            effort_levels: &[],
+            default_effort: None,
             requires_key: true,
             demo_only: false,
         },
@@ -149,6 +159,8 @@ fn preset_definitions() -> Vec<PresetDefinition> {
             context_window: 262_144,
             max_output_tokens: 32_768,
             options: replay_options(),
+            effort_levels: &[],
+            default_effort: None,
             requires_key: true,
             demo_only: false,
         },
@@ -161,6 +173,8 @@ fn preset_definitions() -> Vec<PresetDefinition> {
             context_window: 200_000,
             max_output_tokens: 32_768,
             options: ModelOptionsDto::default(),
+            effort_levels: &[],
+            default_effort: None,
             requires_key: true,
             demo_only: false,
         },
@@ -176,6 +190,8 @@ fn preset_definitions() -> Vec<PresetDefinition> {
                 send_parallel_tool_calls: Some(false),
                 ..ModelOptionsDto::default()
             },
+            effort_levels: &[],
+            default_effort: None,
             requires_key: false,
             demo_only: false,
         },
@@ -188,6 +204,8 @@ fn preset_definitions() -> Vec<PresetDefinition> {
             context_window: 32_768,
             max_output_tokens: 8_192,
             options: ModelOptionsDto::default(),
+            effort_levels: &[],
+            default_effort: None,
             requires_key: false,
             demo_only: false,
         },
@@ -200,6 +218,8 @@ fn preset_definitions() -> Vec<PresetDefinition> {
             context_window: 128_000,
             max_output_tokens: 16_384,
             options: ModelOptionsDto::default(),
+            effort_levels: &[],
+            default_effort: None,
             requires_key: false,
             demo_only: false,
         },
@@ -212,6 +232,8 @@ fn preset_definitions() -> Vec<PresetDefinition> {
             context_window: 200_000,
             max_output_tokens: 16_384,
             options: ModelOptionsDto::default(),
+            effort_levels: &[],
+            default_effort: None,
             requires_key: false,
             demo_only: true,
         },
@@ -301,6 +323,12 @@ pub fn presets(demo_enabled: bool) -> Vec<ProviderPresetDto> {
             context_window: preset.context_window,
             max_output_tokens: preset.max_output_tokens,
             options: preset.options,
+            effort_levels: preset
+                .effort_levels
+                .iter()
+                .map(|level| (*level).to_owned())
+                .collect(),
+            default_effort: preset.default_effort.map(str::to_owned),
             requires_key: preset.requires_key,
         })
         .collect()
@@ -373,7 +401,10 @@ fn unreachable_dto() -> ModelProfileDto {
         context_window: 0,
         max_output_tokens: 0,
         options: ModelOptionsDto::default(),
+        effort_levels: Vec::new(),
+        default_effort: None,
         ignored_options: Vec::new(),
+        ignored_effort_levels: Vec::new(),
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
     }
@@ -660,7 +691,20 @@ fn model_profile_dto(
         context_window: row.context_window,
         max_output_tokens: row.max_output_tokens,
         options,
+        effort_levels: row.effort_levels.clone().into_inner(),
+        default_effort: row.default_effort.clone(),
         ignored_options,
+        ignored_effort_levels: match protocols.get(&row.provider_id) {
+            Some(protocol) => {
+                let rule = nekowriter_llm::EffortRule::for_protocol(llm_protocol(*protocol));
+                row.effort_levels
+                    .iter()
+                    .filter(|level| !rule.accepts(level))
+                    .cloned()
+                    .collect()
+            }
+            None => Vec::new(),
+        },
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
@@ -703,6 +747,8 @@ pub async fn create_model(
                     options: Set(JsonText(crate::db::json::ModelOptions::from(
                         input.options.clone(),
                     ))),
+                    effort_levels: Set(JsonText(input.effort_levels.clone())),
+                    default_effort: Set(input.default_effort.clone()),
                     created_at: Set(now),
                     updated_at: Set(now),
                     ..Default::default()
@@ -758,6 +804,8 @@ pub async fn update_model(
                 active.options = Set(JsonText(crate::db::json::ModelOptions::from(
                     input.options.clone(),
                 )));
+                active.effort_levels = Set(JsonText(input.effort_levels.clone()));
+                active.default_effort = Set(input.default_effort.clone());
                 active.updated_at = Set(chrono::Utc::now());
                 active.update(tx).await?;
                 Ok(())

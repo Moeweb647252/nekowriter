@@ -582,6 +582,9 @@ impl Default for BookSettings {
 }
 
 /// `books.model_overrides` and `app_settings["roles.defaults"]`.
+///
+/// Holds both per-role choices: the model profile id and the thinking effort (spec/02 §4,
+/// spec/04 §5.1, D-162). Old rows without `efforts` load with every effort unset.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
 #[serde(default, rename_all = "snake_case")]
 #[ts(export)]
@@ -594,6 +597,12 @@ pub struct RoleModels {
     pub writer: Option<i32>,
     pub reviewer: Option<i32>,
     pub archivist: Option<i32>,
+    /// The thinking effort chosen per role (spec/04 §5.1, D-162). Absent in rows written before
+    /// 0009; they load as `{}` and nothing is rewritten. Optional in the TS type so a request
+    /// that does not touch roles can omit it; the server always serializes it.
+    #[serde(default)]
+    #[ts(as = "Option<RoleEfforts>")]
+    pub efforts: RoleEfforts,
 }
 
 impl RoleModels {
@@ -609,6 +618,54 @@ impl RoleModels {
     }
 
     pub fn set(&mut self, role: AgentRole, value: Option<i32>) {
+        match role {
+            AgentRole::Conception => self.conception = value,
+            AgentRole::Researcher => self.researcher = value,
+            AgentRole::Planner => self.planner = value,
+            AgentRole::Writer => self.writer = value,
+            AgentRole::Reviewer => self.reviewer = value,
+            AgentRole::Archivist => self.archivist = value,
+        }
+    }
+}
+
+/// The per-role thinking effort choices (spec/02 §4, spec/04 §5.1, D-162).
+///
+/// One `Option<String>` per role, mirroring [`RoleModels`]. The value is not checked against a
+/// model when saved: the role's model can change later, and session creation skips a level the
+/// resolved model does not list, with the `model.effort_unsupported` warning.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(default, rename_all = "snake_case")]
+#[ts(export)]
+#[ts(optional_fields = nullable)]
+pub struct RoleEfforts {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conception: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub researcher: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub planner: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub writer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reviewer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archivist: Option<String>,
+}
+
+impl RoleEfforts {
+    pub fn get(&self, role: AgentRole) -> Option<&str> {
+        match role {
+            AgentRole::Conception => self.conception.as_deref(),
+            AgentRole::Researcher => self.researcher.as_deref(),
+            AgentRole::Planner => self.planner.as_deref(),
+            AgentRole::Writer => self.writer.as_deref(),
+            AgentRole::Reviewer => self.reviewer.as_deref(),
+            AgentRole::Archivist => self.archivist.as_deref(),
+        }
+    }
+
+    pub fn set(&mut self, role: AgentRole, value: Option<String>) {
         match role {
             AgentRole::Conception => self.conception = value,
             AgentRole::Researcher => self.researcher = value,
@@ -1417,8 +1474,40 @@ mod tests {
             writer: Some(3),
             reviewer: Some(4),
             archivist: None,
+            efforts: RoleEfforts {
+                conception: None,
+                researcher: Some("low".to_owned()),
+                planner: None,
+                writer: Some("max".to_owned()),
+                reviewer: None,
+                archivist: None,
+            },
         };
         assert_eq!(round_trip(&value), value);
+    }
+
+    /// Rows written before 0009 have no `efforts` object at all; they load with every role unset
+    /// and serialize the empty group back without touching the model ids (spec/02 §4, D-162).
+    #[test]
+    fn role_models_without_efforts_load_with_every_effort_unset() {
+        let old: RoleModels =
+            serde_json::from_str(r#"{"writer":3,"reviewer":4}"#).expect("old roles JSON");
+        assert_eq!(old.writer, Some(3));
+        assert_eq!(old.reviewer, Some(4));
+        assert_eq!(old.efforts, RoleEfforts::default());
+        assert!(old.efforts.get(AgentRole::Writer).is_none());
+        assert!(old.efforts.get(AgentRole::Planner).is_none());
+        let stored = serde_json::to_value(&old).expect("serialize roles");
+        assert_eq!(stored["efforts"], serde_json::json!({}));
+        assert_eq!(stored["writer"], serde_json::json!(3));
+
+        // A stored effort loads by role and round-trips.
+        let mut with_effort = old.clone();
+        with_effort
+            .efforts
+            .set(AgentRole::Writer, Some("high".to_owned()));
+        assert_eq!(with_effort.efforts.get(AgentRole::Writer), Some("high"));
+        assert_eq!(round_trip(&with_effort), with_effort);
     }
 
     /// `books.conception`.

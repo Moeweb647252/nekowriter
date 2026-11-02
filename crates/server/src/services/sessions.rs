@@ -2432,6 +2432,8 @@ mod tests {
             context_window: 100_000,
             max_output_tokens: 4_096,
             options: JsonText(Default::default()),
+            effort_levels: JsonText(Vec::new()),
+            default_effort: None,
             created_at: now,
             updated_at: now,
         }

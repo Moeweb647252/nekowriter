@@ -4,5 +4,11 @@ import type { JsonValue } from "./serde_json/JsonValue";
 /**
  * `model_profiles.options` (spec/04 §5) as the API carries it. Every field is optional so the UI
  * can send only what it changed.
+ *
+ * The two thinking-effort fields (`reasoning_effort`, `effort`) are **not** profile options
+ * (D-162): the role chooses the level, the model profile declares the allowed levels, and the
+ * session writes the resolved value into `model_snapshot.options`. `deny_unknown_fields` makes a
+ * stale client that still sends one get a 400 through the extractor-rejection envelope instead of
+ * a silent drop — the D-132 lesson.
  */
-export type ModelOptionsDto = { reasoning_replay?: string | null, cache_ttl?: string | null, reasoning_effort?: string | null, max_tokens_field?: string | null, send_parallel_tool_calls?: boolean | null, stream_usage?: boolean | null, temperature?: number | null, extra_body?: { [key in string]: JsonValue } | null, effort?: string | null, thinking_display?: string | null, refusal_fallback?: boolean | null, eager_input_streaming?: boolean | null, };
+export type ModelOptionsDto = { reasoning_replay?: string | null, cache_ttl?: string | null, max_tokens_field?: string | null, send_parallel_tool_calls?: boolean | null, stream_usage?: boolean | null, temperature?: number | null, extra_body?: { [key in string]: JsonValue } | null, thinking_display?: string | null, refusal_fallback?: boolean | null, eager_input_streaming?: boolean | null, };

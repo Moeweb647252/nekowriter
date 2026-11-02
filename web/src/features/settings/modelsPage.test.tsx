@@ -56,17 +56,18 @@ beforeAll(() => {
 
 // ───────────────────────────── the served table ─────────────────────────────
 
-/** The option table exactly as the server publishes it (pinned by the Rust tests). */
+/** The option table exactly as the server publishes it (pinned by the Rust tests).
+ *
+ * Thinking effort is not one of these options any more (D-162): it lives in the profile's
+ * `effort_levels` / `default_effort` fields and the role selects. */
 const SPECS: ModelOptionSpecDto[] = [
   { key: "reasoning_replay", protocols: ["openai", "anthropic"], kind: "choice", values: ["never", "always"], default_value: "never" },
   { key: "cache_ttl", protocols: ["openai", "anthropic"], kind: "choice", values: ["auto", "5m", "1h"], default_value: "auto" },
-  { key: "reasoning_effort", protocols: ["openai"], kind: "text", values: [], default_value: null },
   { key: "max_tokens_field", protocols: ["openai"], kind: "choice", values: ["max_tokens", "max_completion_tokens"], default_value: "max_tokens" },
   { key: "send_parallel_tool_calls", protocols: ["openai"], kind: "boolean", values: [], default_value: null },
   { key: "stream_usage", protocols: ["openai"], kind: "boolean", values: [], default_value: null },
   { key: "temperature", protocols: ["openai"], kind: "number", values: [], default_value: null },
   { key: "extra_body", protocols: ["openai"], kind: "json", values: [], default_value: null },
-  { key: "effort", protocols: ["anthropic"], kind: "choice", values: ["low", "medium", "high", "xhigh", "max"], default_value: null },
   { key: "thinking_display", protocols: ["anthropic"], kind: "choice", values: ["summarized", "omitted"], default_value: null },
   { key: "refusal_fallback", protocols: ["anthropic"], kind: "boolean", values: [], default_value: null },
   { key: "eager_input_streaming", protocols: ["anthropic"], kind: "boolean", values: [], default_value: null },
@@ -97,7 +98,8 @@ const PROVIDERS: ProviderDto[] = [
   },
 ]
 
-/** The author's profile #4 exactly as their database stores it. */
+/** The author's profile #4 shape: an OpenAI-protocol profile holding an Anthropic-only option,
+ * plus the thinking-effort configuration a save must round-trip (D-162). */
 const MISMATCHED: ModelProfileDto = {
   id: 4,
   provider_id: 2,
@@ -108,11 +110,13 @@ const MISMATCHED: ModelProfileDto = {
   options: {
     reasoning_replay: "always",
     max_tokens_field: "max_tokens",
-    effort: "high",
     thinking_display: "omitted",
     cache_ttl: "1h",
   },
-  ignored_options: ["effort", "thinking_display"],
+  effort_levels: ["max"],
+  default_effort: "max",
+  ignored_options: ["thinking_display"],
+  ignored_effort_levels: [],
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
 }
@@ -187,11 +191,11 @@ describe("model options by protocol (D-132)", () => {
   it("classifies every option by the protocol that can send it", () => {
     const openai = optionsForProtocol(SPECS, "openai").map((spec) => spec.key)
     const anthropic = optionsForProtocol(SPECS, "anthropic").map((spec) => spec.key)
-    // The whole point: the two reasoning controls never appear together.
-    expect(openai).toContain("reasoning_effort")
-    expect(openai).not.toContain("effort")
-    expect(anthropic).toContain("effort")
-    expect(anthropic).not.toContain("reasoning_effort")
+    // A protocol-only control never appears under the other protocol.
+    expect(openai).toContain("max_tokens_field")
+    expect(openai).not.toContain("thinking_display")
+    expect(anthropic).toContain("thinking_display")
+    expect(anthropic).not.toContain("max_tokens_field")
     // Both adapters read these.
     for (const key of ["reasoning_replay", "cache_ttl"]) {
       expect(openai).toContain(key)
@@ -212,8 +216,8 @@ describe("model options by protocol (D-132)", () => {
   it("offers no option for the demo (mock) protocol", () => {
     // The Demo provider sends no request at all, so every option would be inert there.
     expect(optionsForProtocol(SPECS, "mock")).toEqual([])
-    expect(unreachableOptionKeys({ reasoning_effort: "high" }, SPECS, "mock")).toEqual([
-      "reasoning_effort",
+    expect(unreachableOptionKeys({ thinking_display: "omitted" }, SPECS, "mock")).toEqual([
+      "thinking_display",
     ])
   })
 
@@ -226,7 +230,6 @@ describe("model options by protocol (D-132)", () => {
 
   it("names the options a profile stores but its protocol cannot send", () => {
     expect(unreachableOptionKeys(MISMATCHED.options, SPECS, "openai")).toEqual([
-      "effort",
       "thinking_display",
     ])
     // The same options are fine on Anthropic.
@@ -239,8 +242,7 @@ describe("model options by protocol (D-132)", () => {
 
   it("clears the stranded options when the protocol changes, and reports them", () => {
     const { options, removed } = clearUnreachableOptions(MISMATCHED.options, SPECS, "openai")
-    expect(removed).toEqual(["effort", "thinking_display"])
-    expect(options.effort).toBeUndefined()
+    expect(removed).toEqual(["thinking_display"])
     expect(options.thinking_display).toBeUndefined()
     // Everything the new protocol can send survives untouched.
     expect(options.reasoning_replay).toBe("always")
@@ -248,18 +250,17 @@ describe("model options by protocol (D-132)", () => {
 
     // Anthropic → OpenAI strands the OpenAI-only fields; OpenAI → Anthropic the other way round.
     const { removed: openaiRemoved } = clearUnreachableOptions(
-      { reasoning_effort: "high", temperature: 0.5 },
+      { max_tokens_field: "max_completion_tokens", temperature: 0.5 },
       SPECS,
       "anthropic",
     )
-    expect(openaiRemoved).toEqual(["reasoning_effort", "temperature"])
+    expect(openaiRemoved).toEqual(["max_tokens_field", "temperature"])
     // A no-op change reports nothing.
     expect(clearUnreachableOptions({}, SPECS, "openai").removed).toEqual([])
   })
 
   it("removes only known option keys", () => {
-    const cleaned = removeOptionKeys(MISMATCHED.options, ["effort", "thinking_display", "bogus"])
-    expect(cleaned.effort).toBeUndefined()
+    const cleaned = removeOptionKeys(MISMATCHED.options, ["thinking_display", "bogus"])
     expect(cleaned.thinking_display).toBeUndefined()
     expect(cleaned.reasoning_replay).toBe("always")
   })
@@ -285,10 +286,12 @@ describe("ModelsPage protocol handling", () => {
 
     const dialog = await screen.findByRole("dialog")
     // The default provider is the first row (Anthropic): the Anthropic control is there.
-    expect(within(dialog).getByLabelText(t("settings:option.effort"))).toBeInTheDocument()
+    expect(
+      within(dialog).getByLabelText(t("settings:option.thinking_display")),
+    ).toBeInTheDocument()
     // The OpenAI control is not, because no OpenAI protocol receives it.
     expect(
-      within(dialog).queryByLabelText(t("settings:option.reasoning_effort")),
+      within(dialog).queryByLabelText(t("settings:option.temperature")),
     ).not.toBeInTheDocument()
     // Free-form fields are not rendered as bare identifiers.
     expect(within(dialog).queryByText("reasoning_replay")).not.toBeInTheDocument()
@@ -297,9 +300,11 @@ describe("ModelsPage protocol handling", () => {
     await user.click(within(dialog).getByRole("combobox", { name: /Provider|提供商/ }))
     await user.click(await screen.findByRole("option", { name: /Magpie/ }))
     expect(
-      within(dialog).getByLabelText(t("settings:option.reasoning_effort")),
+      within(dialog).getByLabelText(t("settings:option.temperature")),
     ).toBeInTheDocument()
-    expect(within(dialog).queryByLabelText(t("settings:option.effort"))).not.toBeInTheDocument()
+    expect(
+      within(dialog).queryByLabelText(t("settings:option.thinking_display")),
+    ).not.toBeInTheDocument()
   })
 
   it("says what a provider switch removed instead of dropping it silently", async () => {
@@ -310,15 +315,17 @@ describe("ModelsPage protocol handling", () => {
     const dialog = await screen.findByRole("dialog")
 
     // Configure an Anthropic-only option, then switch to the OpenAI provider.
-    const effort = within(dialog).getByLabelText(t("settings:option.effort"))
-    await user.click(effort)
-    await user.click(await screen.findByRole("option", { name: t("settings:value.effort.high") }))
+    const thinkingDisplay = within(dialog).getByLabelText(t("settings:option.thinking_display"))
+    await user.click(thinkingDisplay)
+    await user.click(
+      await screen.findByRole("option", { name: t("settings:value.thinking_display.omitted") }),
+    )
     await user.click(within(dialog).getByRole("combobox", { name: /Provider|提供商/ }))
     await user.click(await screen.findByRole("option", { name: /Magpie/ }))
 
     const notice = await within(dialog).findByTestId("cleared-options-alert")
     expect(notice).toHaveTextContent(t("settings:option_cleared_title"))
-    expect(notice).toHaveTextContent(t("settings:option.effort"))
+    expect(notice).toHaveTextContent(t("settings:option.thinking_display"))
   })
 
   it("reports an already-stored mismatch and fixes it in one action", async () => {
@@ -329,7 +336,6 @@ describe("ModelsPage protocol handling", () => {
 
     // The table flags it instead of rendering a profile that looks fine.
     const badge = await screen.findByTestId("ignored-options-4")
-    expect(badge).toHaveTextContent(t("settings:option.effort"))
     expect(badge).toHaveTextContent(t("settings:option.thinking_display"))
 
     // The badge opens the repair confirmation, which names the fields and the protocol.
@@ -339,13 +345,15 @@ describe("ModelsPage protocol handling", () => {
     expect(confirm).toHaveTextContent(t("settings:protocol.openai"))
     await user.click(within(confirm).getByRole("button", { name: t("settings:option_mismatch_fix") }))
 
-    // One PATCH: the inert options are gone, everything the protocol can send is kept.
+    // One PATCH: the inert options are gone, everything the protocol can send is kept, and the
+    // thinking-effort configuration is carried through unedited (D-162).
     expect(PATCHED).toHaveLength(1)
     const sent = PATCHED[0]
-    expect(sent.options.effort).toBeUndefined()
     expect(sent.options.thinking_display).toBeUndefined()
     expect(sent.options.reasoning_replay).toBe("always")
     expect(sent.options.cache_ttl).toBe("1h")
+    expect(sent.effort_levels).toEqual(["max"])
+    expect(sent.default_effort).toBe("max")
     expect(sent.provider_id).toBe(2)
     expect(sent.model).toBe("deepseek-v4-pro")
   })
@@ -359,17 +367,22 @@ describe("ModelsPage protocol handling", () => {
     const dialog = await screen.findByRole("dialog")
 
     const alert = await within(dialog).findByTestId("ignored-options-alert")
-    expect(alert).toHaveTextContent(t("settings:option.effort"))
+    expect(alert).toHaveTextContent(t("settings:option.thinking_display"))
     // The dialog does not offer the field, because the protocol cannot send it.
-    expect(within(dialog).queryByLabelText(t("settings:option.effort"))).not.toBeInTheDocument()
+    expect(
+      within(dialog).queryByLabelText(t("settings:option.thinking_display")),
+    ).not.toBeInTheDocument()
 
     await user.click(
       within(alert).getByRole("button", { name: t("settings:option_mismatch_fix") }),
     )
     await user.click(within(dialog).getByRole("button", { name: t("common:save") }))
     expect(PATCHED).toHaveLength(1)
-    expect(PATCHED[0].options.effort).toBeUndefined()
+    expect(PATCHED[0].options.thinking_display).toBeUndefined()
     expect(PATCHED[0].options.reasoning_replay).toBe("always")
+    // The edit path round-trips the loaded effort configuration.
+    expect(PATCHED[0].effort_levels).toEqual(["max"])
+    expect(PATCHED[0].default_effort).toBe("max")
   })
 
   it("labels every option in both locales, with a hint that explains it", async () => {
@@ -398,7 +411,7 @@ describe("ModelsPage protocol handling", () => {
       }
     }
     // The Anthropic-only options carry the Anthropic provider context.
-    expect(within(dialog).getByText(t("settings:option.effort_hint"))).toBeInTheDocument()
+    expect(within(dialog).getByText(t("settings:option.thinking_display_hint"))).toBeInTheDocument()
   })
 })
 
@@ -463,7 +476,6 @@ describe("ModelsPage option defaults are visible (D-133)", () => {
     expect(triggerText(dialog, t("settings:option.reasoning_replay"))).toBe("Default: Never")
     expect(triggerText(dialog, t("settings:option.cache_ttl"))).toBe("Default: Automatic")
     // An option with no default says so rather than rendering an empty control.
-    expect(triggerText(dialog, t("settings:option.effort"))).toBe("Not set")
     expect(triggerText(dialog, t("settings:option.thinking_display"))).toBe("Not set")
   })
 
@@ -531,7 +543,9 @@ describe("ModelsPage option defaults are visible (D-133)", () => {
     // Sent as `""` or as the sentinel it would be rejected or stored as a bogus option value.
     expect(sent.options).not.toHaveProperty("reasoning_replay")
     expect(sent.options).not.toHaveProperty("cache_ttl")
-    expect(sent.options).not.toHaveProperty("effort")
+    // A new profile starts with no effort levels and no default (D-162).
+    expect(sent.effort_levels).toEqual([])
+    expect(sent.default_effort).toBeNull()
     expect(JSON.stringify(sent.options)).not.toContain(DEFAULT_OPTION_VALUE)
     expect(JSON.stringify(sent.options)).not.toContain('""')
   })
@@ -578,23 +592,29 @@ describe("ModelsPage option defaults are visible (D-133)", () => {
 
   it("still round-trips a real choice and displays it", async () => {
     PATCHED.length = 0
-    // An Anthropic-protocol profile: `effort` belongs to it, and the stored values are reachable.
+    // An Anthropic-protocol profile: `thinking_display` belongs to it and the stored value is
+    // reachable.
     setData([{ ...MISMATCHED, id: 5, provider_id: 1, ignored_options: [] }], PROVIDERS)
     const user = userEvent.setup()
     render(<ModelsPage />)
     await user.click(await screen.findByRole("button", { name: "Edit" }))
     const dialog = await screen.findByRole("dialog")
 
-    const label = t("settings:option.effort")
+    const label = t("settings:option.thinking_display")
     await user.click(within(dialog).getByLabelText(label))
-    await user.click(await screen.findByRole("option", { name: t("settings:value.effort.high") }))
-    expect(triggerText(dialog, label)).toBe(t("settings:value.effort.high"))
+    await user.click(
+      await screen.findByRole("option", { name: t("settings:value.thinking_display.summarized") }),
+    )
+    expect(triggerText(dialog, label)).toBe(t("settings:value.thinking_display.summarized"))
 
     await user.click(within(dialog).getByRole("button", { name: t("common:save") }))
     expect(PATCHED).toHaveLength(1)
-    expect(PATCHED[0].options.effort).toBe("high")
+    expect(PATCHED[0].options.thinking_display).toBe("summarized")
     // A selected value is the value itself, never the sentinel.
     expect(PATCHED[0].options.reasoning_replay).toBe("always")
+    // The effort configuration is still carried through.
+    expect(PATCHED[0].effort_levels).toEqual(["max"])
+    expect(PATCHED[0].default_effort).toBe("max")
   })
 
   it("shows and round-trips a boolean option, which shared the bug", async () => {
@@ -682,14 +702,10 @@ describe("the default-option sentinel (D-133)", () => {
  * have one, using the same `ModelOptionSpecDto` shape the server sends.
  */
 describe("free-form option kinds show a published default as a placeholder", () => {
-  /** The shipped table with a default published for the two free-form kinds it does not have one
-   * for. Replaced rather than appended, so each key appears exactly once. */
+  /** The shipped table with a default published for the free-form number kind it does not have
+   * one for. Replaced rather than appended, so each key appears exactly once. */
   const SPECS_WITH_DEFAULTS: ModelOptionSpecDto[] = SPECS.map((spec) =>
-    spec.key === "temperature"
-      ? { ...spec, default_value: "0.7" }
-      : spec.key === "reasoning_effort"
-        ? { ...spec, default_value: "medium" }
-        : spec,
+    spec.key === "temperature" ? { ...spec, default_value: "0.7" } : spec,
   )
 
   it("shows the default in the placeholder without filling the input", async () => {
@@ -710,12 +726,6 @@ describe("free-form option kinds show a published default as a placeholder", () 
     )
     // …but the field itself stays empty, because an empty input means "omit the field".
     expect(temperature).toHaveValue("")
-    const effort = within(dialog).getByLabelText(t("settings:option.reasoning_effort"))
-    expect(effort).toHaveAttribute(
-      "placeholder",
-      tv("settings:option_default_named", { value: "medium" }),
-    )
-    expect(effort).toHaveValue("")
   })
 
   it("leaves the placeholder empty when the table publishes no default", async () => {

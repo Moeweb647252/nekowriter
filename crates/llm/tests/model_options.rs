@@ -409,7 +409,7 @@ fn effort_rule_follows_the_protocol() {
 #[test]
 fn effort_rule_enforces_the_level_pattern_and_canonical_order() {
     let openai = EffortRule::for_protocol(Protocol::Openai);
-    for level in ["low", "max", "x-high_1", "A9_-"] {
+    for level in ["a", "low", "max", "x-high_1", "A9_-"] {
         assert!(EffortRule::is_valid_level(level), "{level}");
         assert!(openai.accepts(level), "{level}");
     }

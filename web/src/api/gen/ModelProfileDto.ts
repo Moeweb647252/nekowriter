@@ -10,10 +10,25 @@ export type ModelProfileDto = { id: number, provider_id: number, display_name: s
  */
 model: string, context_window: number, max_output_tokens: number, options: ModelOptionsDto, 
 /**
+ * The thinking-effort levels this model accepts, in display order (spec/04 §5.1, D-162).
+ * Empty means the model takes no effort parameter.
+ */
+effort_levels: Array<string>, 
+/**
+ * The level a role that chooses none gets; one of `effort_levels`, or `NULL` when the
+ * provider decides (spec/04 §5.1, D-162).
+ */
+default_effort?: string | null, 
+/**
  * Options this profile sets that its provider's protocol cannot send (spec/04 §5, D-132).
  *
  * A **stored** mismatch is reported here instead of failing the read: the author's database
  * already holds one (an Anthropic `effort` on an OpenAI-protocol provider), and failing the
  * read would lock them out of the page that has to fix it. Writing such a profile is refused.
  */
-ignored_options: Array<string>, created_at: string, updated_at: string, };
+ignored_options: Array<string>, 
+/**
+ * Stored effort levels the provider's current protocol cannot send (spec/04 §5.1, D-162).
+ * Reported like `ignored_options`, never a failed read.
+ */
+ignored_effort_levels: Array<string>, created_at: string, updated_at: string, };
