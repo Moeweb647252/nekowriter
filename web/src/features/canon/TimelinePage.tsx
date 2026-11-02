@@ -36,6 +36,7 @@ import {
   type ChapterIndex,
 } from "@/features/canon/chapterIndex"
 import { GoalsReferencedBy } from "@/features/canon/GoalsReferencedBy"
+import { TimelineEventDialog } from "@/features/canon/TimelineEventDialog"
 import { useErrorToast } from "@/components/common/ErrorToast"
 import { EmptyState } from "@/components/common/EmptyState"
 import { Button } from "@/components/ui/button"
@@ -220,18 +221,20 @@ function TimelineRow({
   const { t } = useTranslation()
   const showError = useErrorToast()
   const remove = useDeleteTimelineEvent(bookId)
+  const [editing, setEditing] = useState(false)
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: event.id,
   })
   return (
-    <div
-      ref={setNodeRef}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={cn(
-        "group flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-accent/40",
-        isDragging && "opacity-60",
-      )}
-    >
+    <>
+      <div
+        ref={setNodeRef}
+        style={{ transform: CSS.Transform.toString(transform), transition }}
+        className={cn(
+          "group flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-accent/40",
+          isDragging && "opacity-60",
+        )}
+      >
       <button
         type="button"
         className="mt-0.5 cursor-grab text-muted-foreground opacity-0 group-hover:opacity-100"
@@ -282,12 +285,31 @@ function TimelineRow({
         size="sm"
         variant="ghost"
         className="opacity-0 group-hover:opacity-100"
+        aria-label={t("canon:timeline_event_dialog.edit")}
+        onClick={() => setEditing(true)}
+      >
+        {t("canon:timeline_event_dialog.edit")}
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="opacity-0 group-hover:opacity-100"
         aria-label={t("canon:delete_event")}
         onClick={() => remove.mutate(event.id, { onError: showError })}
       >
         <Trash2 className="size-3" aria-hidden="true" />
       </Button>
-    </div>
+      </div>
+      {editing ? (
+        <TimelineEventDialog
+          bookId={bookId}
+          event={event}
+          chapterIndex={chapterIndex}
+          open
+          onOpenChange={setEditing}
+        />
+      ) : null}
+    </>
   )
 }
 
