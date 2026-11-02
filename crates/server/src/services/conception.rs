@@ -221,7 +221,8 @@ pub async fn finalize(state: &AppState, book_id: i32) -> Result<FinalizeResponse
     }
     match resolve_role_model(&warnings_state, book_id, AgentRole::Archivist).await? {
         Some(_) => {
-            let (session_id, _) = seed_session(&warnings_state, book_id).await?;
+            let (session_id, seed_warnings) = seed_session(&warnings_state, book_id).await?;
+            warnings.extend(seed_warnings);
             seed_session_id = Some(session_id);
         }
         None => warnings.push("model.missing_role".to_owned()),
@@ -533,7 +534,7 @@ async fn start_after_knowledge_check(
 }
 
 /// `POST /api/books/:id/canon/seed` (spec/08 §5): the open seed session, or a new one.
-pub async fn seed(state: &AppState, book_id: i32) -> Result<i32, AppError> {
+pub async fn seed(state: &AppState, book_id: i32) -> Result<(i32, Vec<String>), AppError> {
     {
         let db = state.db().clone();
         super::write(&db, move |tx| {
@@ -555,14 +556,14 @@ pub async fn seed(state: &AppState, book_id: i32) -> Result<i32, AppError> {
         .await?;
     }
     if let Some(open) = open_seed_session(state.db().conn(), book_id).await? {
-        return Ok(open);
+        return Ok((open, Vec::new()));
     }
     match seed_session(state, book_id).await {
-        Ok((session_id, _warnings)) => Ok(session_id),
+        Ok((session_id, warnings)) => Ok((session_id, warnings)),
         // Same creation race as `conception/start`: the open seed session is the answer (D-047).
         Err(error) if error.code == ErrorCode::SessionInvalidState => {
             match open_seed_session(state.db().conn(), book_id).await? {
-                Some(open) => Ok(open),
+                Some(open) => Ok((open, Vec::new())),
                 None => Err(error),
             }
         }

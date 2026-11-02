@@ -642,3 +642,89 @@ async fn finalize_does_not_seed_when_all_seedable_systems_are_off() {
     let count: i64 = row.try_get("", "value").expect("count");
     assert_eq!(count, 0);
 }
+
+/// O2: finalize's seed session can carry the stale-effort warning; the finalize response must
+/// forward it instead of discarding the seed result.
+#[tokio::test]
+async fn finalize_surfaces_the_seed_sessions_effort_warning() {
+    const WARNING: &str = "model.effort_unsupported";
+    let runtime = runtime(vec![]).await;
+    let book = create_conceiving_book(&runtime, "Finalize warning").await;
+    let book_id = book["book"]["id"].as_i64().expect("book id") as i32;
+    let session_id = book["session_id"].as_i64().expect("session") as i32;
+    let _ = runtime.wait_any_status(session_id).await;
+    complete_materials(&runtime, book_id).await;
+
+    let (status, provider) = runtime
+        .app
+        .post(
+            "/api/providers",
+            json!({
+                "name": "Finalize OpenAI",
+                "protocol": "openai",
+                "base_url": "http://127.0.0.1:9/v1",
+                "extra_headers": {},
+            }),
+        )
+        .await;
+    assert_eq!(status, 201, "{provider}");
+    let provider_id = provider["id"].as_i64().expect("provider id");
+    let (status, profile) = runtime
+        .app
+        .post(
+            "/api/model-profiles",
+            json!({
+                "provider_id": provider_id,
+                "display_name": "Finalize archivist",
+                "model": "finalize-archivist",
+                "context_window": 128000,
+                "max_output_tokens": 16384,
+                "options": {},
+                "effort_levels": ["low", "ultra"],
+                "default_effort": "low",
+            }),
+        )
+        .await;
+    assert_eq!(status, 201, "{profile}");
+    let profile_id = profile["id"].as_i64().expect("profile id");
+    let (status, body) = runtime
+        .app
+        .patch(
+            &format!("/api/providers/{provider_id}"),
+            json!({
+                "name": "Finalize OpenAI",
+                "protocol": "anthropic",
+                "base_url": "https://api.anthropic.test",
+                "api_key": "sk-ant-test",
+                "extra_headers": {},
+            }),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let (_, settings) = runtime.app.get("/api/app-settings").await;
+    let mut roles = settings["roles_defaults"].clone();
+    roles["archivist"] = json!(profile_id);
+    roles["efforts"] = json!({ "archivist": "ultra" });
+    let (status, body) = runtime
+        .app
+        .patch("/api/app-settings", json!({ "roles_defaults": roles }))
+        .await;
+    assert_eq!(status, 200, "{body}");
+
+    let (status, body) = runtime
+        .app
+        .post(
+            &format!("/api/books/{book_id}/conception/finalize"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert!(
+        body["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .any(|warning| warning == WARNING),
+        "finalize forwards the seed warning: {body}"
+    );
+}

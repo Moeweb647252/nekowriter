@@ -1008,3 +1008,124 @@ async fn the_anthropic_wire_request_carries_the_resolved_output_config_effort() 
 async fn app_with_real_provider() -> TestApp {
     TestApp::new().await
 }
+
+/// O2: the canon-seed endpoint must not fabricate an empty warning list. A stored level that the
+/// current protocol cannot send makes the seed session warn, and that warning travels out of
+/// `services::conception::seed` and `POST /api/books/:id/canon/seed`.
+#[tokio::test]
+async fn canon_seed_returns_the_seed_sessions_effort_warning() {
+    let app = app().await;
+    let provider_id = openai_provider(&app).await;
+    let profile_id = profile(
+        &app,
+        provider_id,
+        "Archivist",
+        json!(["low", "ultra"]),
+        json!("low"),
+    )
+    .await;
+    // The profile was saved under OpenAI, then the provider switched to Anthropic: `ultra` is
+    // still in the levels but is unsendable by the new protocol.
+    let (status, body) = app
+        .patch(
+            &format!("/api/providers/{provider_id}"),
+            json!({
+                "name": "OpenAI",
+                "protocol": "anthropic",
+                "base_url": "https://api.anthropic.test",
+                "api_key": "sk-ant-test",
+                "extra_headers": {},
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    set_roles(
+        &app,
+        json!({ "archivist": profile_id, "efforts": { "archivist": "ultra" } }),
+    )
+    .await;
+    let book = app.create_book("Seed warning").await;
+    let book_id = book["id"].as_i64().expect("book id") as i32;
+
+    let (status, body) = app
+        .post(&format!("/api/books/{book_id}/canon/seed"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        body["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .any(|warning| warning == WARNING),
+        "the seed response carries the effort warning: {body}"
+    );
+}
+
+/// O3: review and maintenance endpoints must carry the creation warning they already compute;
+/// otherwise a reviewer/archivist stale effort is silently downgraded in the UI.
+#[tokio::test]
+async fn review_and_maintenance_responses_carry_effort_warnings() {
+    let app = app().await;
+    let provider_id = openai_provider(&app).await;
+    let profile_id = profile(
+        &app,
+        provider_id,
+        "Review and archive",
+        json!(["low", "ultra"]),
+        json!("low"),
+    )
+    .await;
+    let (status, body) = app
+        .patch(
+            &format!("/api/providers/{provider_id}"),
+            json!({
+                "name": "OpenAI",
+                "protocol": "anthropic",
+                "base_url": "https://api.anthropic.test",
+                "api_key": "sk-ant-test",
+                "extra_headers": {},
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    set_roles(
+        &app,
+        json!({
+            "reviewer": profile_id,
+            "archivist": profile_id,
+            "efforts": { "reviewer": "ultra", "archivist": "ultra" },
+        }),
+    )
+    .await;
+
+    let (_book_id, chapter_id) = book_and_chapter(&app, "Review warning").await;
+    app.execute(&format!(
+        "UPDATE chapters SET status = 'in_review' WHERE id = {chapter_id}"
+    ))
+    .await;
+    let review = nekowriter::services::reviews::ask_reviewer(app.state(), chapter_id)
+        .await
+        .expect("start reviewer session");
+    assert!(
+        review.warnings.iter().any(|warning| warning == WARNING),
+        "the review response carries the warning: {:?}",
+        review.warnings
+    );
+
+    let (_book_id, chapter_id) = book_and_chapter(&app, "Maintenance warning").await;
+    app.execute(&format!(
+        "UPDATE chapters SET status = 'official', canon_status = 'pending' WHERE id = {chapter_id}"
+    ))
+    .await;
+    let maintenance = nekowriter::services::maintenance::maintain(app.state(), chapter_id)
+        .await
+        .expect("start maintenance session");
+    assert!(
+        maintenance
+            .warnings
+            .iter()
+            .any(|warning| warning == WARNING),
+        "the maintenance response carries the warning: {:?}",
+        maintenance.warnings
+    );
+}

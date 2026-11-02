@@ -57,11 +57,15 @@ pub struct ReviewsResponse {
     pub feedback: Vec<ChapterFeedbackDto>,
 }
 
-/// `{ session_id }` responses of the review/maintenance endpoints (spec/10 §2.2).
+/// `{ session_id, warnings }` responses of the review/maintenance endpoints (spec/10 §2.2).
+///
+/// `warnings` carries creation warnings (`model.effort_unsupported`, `context.large_kickoff`)
+/// from the session the endpoint started; an existing open session returns an empty list.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct ReviewSessionResponse {
     pub session_id: i32,
+    pub warnings: Vec<String>,
 }
 
 /// `POST /review-reports/:id/rereview` body (spec/03 §6).

@@ -123,10 +123,10 @@ pub async fn canon_seed(
     State(state): State<AppState>,
     Path(book_id): Path<i32>,
 ) -> AppResult<Json<CanonSeedResponse>> {
-    let session_id = crate::services::conception::seed(&state, book_id).await?;
+    let (session_id, warnings) = crate::services::conception::seed(&state, book_id).await?;
     Ok(Json(CanonSeedResponse {
         session_id,
-        warnings: Vec::new(),
+        warnings,
     }))
 }
 

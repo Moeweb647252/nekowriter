@@ -3428,6 +3428,10 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   - **The book row's "Global setting" label uses the book-context fallback:** with a book model
     override in place, leaving the effort unset resolves the global effort choice against that
     book model, so the label must name that result rather than the global-only result.
+  - **Opening an existing session does not replay its creation warnings.** `SessionDto.warnings`
+    is populated only on the creation response/event; showing warnings again when a session is
+    opened is a follow-up, not part of 19.7. An already-open canon-seed session likewise returns
+    no new warning.
   - **Dropped values.** A cross-protocol effort key, which was always inert, is dropped, and so is
     `options.extra_body.reasoning_effort`: `extra_body` is merged last, so a leftover override
     would silently shadow the role's resolved level. The pre-ship report lists each one.
