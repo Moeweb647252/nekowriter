@@ -1300,6 +1300,75 @@ async fn a_relation_patch_sets_and_clears_its_chapters() {
     );
 }
 
+/// A timeline event PATCH can clear its chapter: explicit `null` writes NULL and records a
+/// change, while an omitted field leaves the column alone (spec/10 §2.4, spec/06 §1.4). Same
+/// defect class as the relation chapters (18.4 review).
+#[tokio::test]
+async fn a_timeline_event_patch_sets_and_clears_its_chapter() {
+    let app = TestApp::new().await;
+    let (book_id, track_id) = book(&app).await;
+    let first_chapter = id_of(&app.create_chapter(track_id, "One").await);
+    let second_chapter = id_of(&app.create_chapter(track_id, "Two").await);
+    let (status, event) = app
+        .post(
+            &format!("/api/books/{book_id}/timeline"),
+            json!({ "title": "Battle", "chapter_id": first_chapter }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{event}");
+    let event_id = id_of(&event);
+    assert_eq!(
+        change_log_of(&app, ChangeTargetType::TimelineEvent, event_id)
+            .await
+            .len(),
+        1,
+        "the create change"
+    );
+
+    // Control: a value still sets the chapter.
+    let (status, body) = app
+        .patch(
+            &format!("/api/timeline-events/{event_id}"),
+            json!({ "chapter_id": second_chapter }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (_, row) = app.get(&format!("/api/timeline-events/{event_id}")).await;
+    assert_eq!(
+        row["chapter_id"].as_i64(),
+        Some(i64::from(second_chapter)),
+        "a value sets chapter_id: {row}"
+    );
+    assert_eq!(
+        change_log_of(&app, ChangeTargetType::TimelineEvent, event_id)
+            .await
+            .len(),
+        2,
+        "the value patch records a change"
+    );
+
+    // An explicit null clears it; without deserialize_some it decodes as absent (200, no write).
+    let (status, body) = app
+        .patch(
+            &format!("/api/timeline-events/{event_id}"),
+            json!({ "chapter_id": null }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (_, row) = app.get(&format!("/api/timeline-events/{event_id}")).await;
+    assert!(
+        row["chapter_id"].is_null(),
+        "an explicit null clears chapter_id: {row}"
+    );
+    assert_eq!(
+        change_log_of(&app, ChangeTargetType::TimelineEvent, event_id)
+            .await
+            .len(),
+        3,
+        "the clear records a real change row"
+    );
+}
+
 // ───────────────────────────── helpers ─────────────────────────────
 
 /// The typed `before` snapshot of a change row, as JSON (spec/02 §4).

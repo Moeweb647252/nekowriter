@@ -3439,6 +3439,13 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     as `ChangeTargetType::Relation` and therefore appear on the Changes page, not in the entity
     history. Whether the entity history should include its relations' changes is a product
     decision for a later task; M18 does not change the endpoint.
+  - **Server-side nullable-clear fix (18.4 review).** `RelationPatch.since_chapter_id` and
+    `until_chapter_id` now use `deserialize_some`, so an explicit `null` clears the column instead
+    of decoding as an omitted field; an API test PATCHes null and GETs the DTO.
+  - **Known follow-up (18.5 review).** The same null-vs-absent defect still sits in
+    `MemoryNotePatch.chapter_id` (`api/dto/canon.rs:445`) and `ForeshadowingPatch.planted_chapter_id`
+    / `resolved_chapter_id` (`:524`, `:526`); both need the same `deserialize_some` treatment and a
+    server test. The timeline event's `chapter_id` was fixed alongside this task.
 - **Spec**: PROJECT §8.8; spec/10 §2.7; spec/11 §5.3, §5.5, §9.
 
 

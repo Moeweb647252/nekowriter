@@ -352,7 +352,11 @@ pub struct TimelineEventPatch {
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub story_time: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_some",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub chapter_id: Option<Option<i32>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entity_ids: Option<Vec<i32>>,
