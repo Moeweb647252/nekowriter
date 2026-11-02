@@ -84,7 +84,7 @@ describe("HistorySection", () => {
     )
   })
 
-  it("resets the expanded history when the entity changes", async () => {
+  it("resets the expanded history when the entity changes, including returning to it", async () => {
     const { rerender } = render(
       <HistorySection bookId={1} entityId={1} recentChanges={changes(20)} />,
     )
@@ -93,6 +93,10 @@ describe("HistorySection", () => {
     expect(screen.getByTestId("change-list")).toHaveTextContent("100")
 
     rerender(<HistorySection bookId={1} entityId={2} recentChanges={changes(20)} />)
+    expect(screen.getByTestId("change-list")).toHaveTextContent("20")
+
+    // A → B → A: A must not remember that it was expanded.
+    rerender(<HistorySection bookId={1} entityId={1} recentChanges={changes(20)} />)
     expect(screen.getByTestId("change-list")).toHaveTextContent("20")
     expect(screen.getByRole("button", { name: "Show full history" })).toBeInTheDocument()
   })

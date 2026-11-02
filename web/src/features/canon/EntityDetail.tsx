@@ -216,9 +216,14 @@ export function HistorySection({
   recentChanges: EntityDto["recent_changes"]
 }) {
   const { t } = useTranslation()
-  // The expanded history belongs to one entity; switching entities leaves it collapsed without
-  // needing a reset effect.
+  // The expansion resets on every entity switch, including A → B → A: remembering A would
+  // silently re-open its history on the way back (plan §2.5).
   const [expandedFor, setExpandedFor] = useState<number | null>(null)
+  const [previousEntityId, setPreviousEntityId] = useState(entityId)
+  if (previousEntityId !== entityId) {
+    setPreviousEntityId(entityId)
+    setExpandedFor(null)
+  }
   const expanded = expandedFor === entityId
   const history = useEntityHistory(expanded ? entityId : undefined)
   return (

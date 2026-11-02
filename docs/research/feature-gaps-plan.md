@@ -148,8 +148,8 @@ Shared rules:
 ## 4. Smoke item 13 (append to PLAN §M11.5)
 1. Create an entity "Test sword" (item, shared), then a second one "The sword". Merge "The sword"
    into "Test sword": its name becomes an alias, and the Changes page shows the merge notes.
-2. Edit a relation's description and end it. The row shows "ended", and the entity history shows
-   the change with your note.
+2. Edit a relation's description and end it. The row shows "ended", and the Changes page shows
+   the relation change with your note (the entity history lists entity changes only).
 3. Edit a timeline event's story time and linked entities. Its position is unchanged.
 4. On an entity with more than 20 changes, **Show full history** lists the older ones.
 5. Open a long session (for example a research run) and scroll to the top. The older messages

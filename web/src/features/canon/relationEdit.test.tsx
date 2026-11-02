@@ -40,7 +40,7 @@ const relation: RelationDto = {
   inverse_kind: "ally",
   description: "",
   status: "active",
-  since_chapter_id: null,
+  since_chapter_id: 4,
   until_chapter_id: null,
   created_at: "",
   updated_at: "",
@@ -84,6 +84,17 @@ const chapterIndex = new Map([
       trackTitle: "",
     },
   ],
+  [
+    5,
+    {
+      id: 5,
+      number: 2,
+      title: "Two",
+      trackId: 1,
+      trackKind: "main" as const,
+      trackTitle: "",
+    },
+  ],
 ])
 
 beforeAll(() => {
@@ -111,6 +122,108 @@ describe("relation editing", () => {
       { id: 9, patch: { description: "sworn allies", note: "after the duel" } },
       expect.any(Object),
     )
+  })
+
+  it("does not request a patch when nothing changed", async () => {
+    renderEditor()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: "Edit" }))
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(patchMutate).not.toHaveBeenCalled()
+  })
+
+  it("saves a description without an unchanged since chapter and omits an empty note", async () => {
+    renderEditor()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: "Edit" }))
+    await user.type(screen.getByLabelText("Description"), "sworn allies")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(patchMutate.mock.calls[0][0]).toEqual({
+      id: 9,
+      patch: { description: "sworn allies" },
+    })
+  })
+
+  it("clears the since chapter to null", async () => {
+    renderEditor()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: "Edit" }))
+    await user.selectOptions(screen.getByLabelText("Since chapter"), "")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(patchMutate.mock.calls[0][0]).toEqual({
+      id: 9,
+      patch: { since_chapter_id: null },
+    })
+  })
+
+  it("saves a changed kind only", async () => {
+    renderEditor()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: "Edit" }))
+    await user.clear(screen.getByLabelText("Kind"))
+    await user.type(screen.getByLabelText("Kind"), "rival")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(patchMutate.mock.calls[0][0]).toEqual({
+      id: 9,
+      patch: { kind: "rival" },
+    })
+  })
+
+  it("saves a changed inverse kind only", async () => {
+    renderEditor()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: "Edit" }))
+    await user.clear(screen.getByLabelText("Inverse kind"))
+    await user.type(screen.getByLabelText("Inverse kind"), "rivaled")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(patchMutate.mock.calls[0][0]).toEqual({
+      id: 9,
+      patch: { inverse_kind: "rivaled" },
+    })
+  })
+
+  it("saves a changed status only", async () => {
+    renderEditor()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: "Edit" }))
+    await user.selectOptions(screen.getByLabelText("Status"), "ended")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(patchMutate.mock.calls[0][0]).toEqual({
+      id: 9,
+      patch: { status: "ended" },
+    })
+  })
+
+  it("saves a changed since chapter only", async () => {
+    renderEditor()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: "Edit" }))
+    await user.selectOptions(screen.getByLabelText("Since chapter"), "5")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(patchMutate.mock.calls[0][0]).toEqual({
+      id: 9,
+      patch: { since_chapter_id: 5 },
+    })
+  })
+
+  it("saves a changed until chapter only", async () => {
+    renderEditor()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: "Edit" }))
+    await user.selectOptions(screen.getByLabelText("Until chapter"), "5")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(patchMutate.mock.calls[0][0]).toEqual({
+      id: 9,
+      patch: { until_chapter_id: 5 },
+    })
   })
 
   it("shows the ended label and offers both status labels", async () => {

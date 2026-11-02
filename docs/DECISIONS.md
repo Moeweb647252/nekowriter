@@ -3434,6 +3434,11 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     row's appearance count, but `EntityListItemDto` has no count field; a per-row count needs a
     server-side aggregate outside M18's web-only scope. The dialog shows the selected entity's
     count from its detail DTO instead.
+  - **Known follow-up (18.4 review).** The entity detail's full history calls
+    `GET /entities/:id/history`, which filters `ChangeTargetType::Entity`; relation edits are logged
+    as `ChangeTargetType::Relation` and therefore appear on the Changes page, not in the entity
+    history. Whether the entity history should include its relations' changes is a product
+    decision for a later task; M18 does not change the endpoint.
 - **Spec**: PROJECT §8.8; spec/10 §2.7; spec/11 §5.3, §5.5, §9.
 
 
