@@ -398,6 +398,25 @@ impl ModelOptionKey {
         ModelOptionKey::EagerInputStreaming,
     ];
 
+    /// The options a model profile may hold (spec/04 §5, D-162).
+    ///
+    /// [`Self::ALL`] minus `reasoning_effort` and `effort`: those two stay in `ModelOptions` as
+    /// the wire carriers for the thinking effort a role chooses, but they are not profile
+    /// options. [`Self::ALL`] is kept for the adapter wire test; this list is what
+    /// `GET /provider-presets/options` publishes and what a profile's `options` may hold.
+    pub const PROFILE: [ModelOptionKey; 10] = [
+        ModelOptionKey::ReasoningReplay,
+        ModelOptionKey::CacheTtl,
+        ModelOptionKey::MaxTokensField,
+        ModelOptionKey::SendParallelToolCalls,
+        ModelOptionKey::StreamUsage,
+        ModelOptionKey::Temperature,
+        ModelOptionKey::ExtraBody,
+        ModelOptionKey::ThinkingDisplay,
+        ModelOptionKey::RefusalFallback,
+        ModelOptionKey::EagerInputStreaming,
+    ];
+
     /// The JSON field name in `model_profiles.options` (spec/04 §5).
     pub fn as_str(self) -> &'static str {
         match self {
@@ -474,7 +493,7 @@ impl ModelOptionKey {
         match self {
             ModelOptionKey::ReasoningReplay => &["never", "always"],
             ModelOptionKey::MaxTokensField => &["max_tokens", "max_completion_tokens"],
-            ModelOptionKey::Effort => &["low", "medium", "high", "xhigh", "max"],
+            ModelOptionKey::Effort => EffortRule::ANTHROPIC_LEVELS,
             ModelOptionKey::ThinkingDisplay => &["summarized", "omitted"],
             ModelOptionKey::CacheTtl => &["auto", "5m", "1h"],
             // Free-form or non-scalar: the UI edits these with the matching widget.
@@ -581,6 +600,76 @@ impl Effort {
             Effort::High => "high",
             Effort::Xhigh => "xhigh",
             Effort::Max => "max",
+        }
+    }
+}
+
+/// How a protocol accepts the thinking effort (spec/04 §5.1, D-162).
+///
+/// The protocol owns both halves of the rule: the body field the level lands in, and the levels
+/// it accepts. Validating a level through this type keeps save-time validation, the stored
+/// mismatch report, session creation and the test connection on one source of truth, instead of
+/// each repeating the protocol's rules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EffortRule {
+    /// The protocol has no effort parameter; nothing is sent (mock).
+    None,
+    /// Any level matching [`EffortRule::is_valid_level`] (OpenAI-compatible gateways differ).
+    Free,
+    /// A closed set of levels in canonical order, lowest first (Anthropic).
+    Closed(&'static [&'static str]),
+}
+
+impl EffortRule {
+    /// The Anthropic levels, lowest first (spec/04 §5.1).
+    pub const ANTHROPIC_LEVELS: &'static [&'static str] =
+        &["low", "medium", "high", "xhigh", "max"];
+
+    /// Whether `level` matches the free-form token pattern `^[A-Za-z0-9_-]{1,32}$`.
+    ///
+    /// This is the one pattern shared by the OpenAI protocol's levels and the role-effort save
+    /// validation (spec/04 §5.1, spec/03 §4). It is checked as ASCII rather than through a regex
+    /// engine so the rule cannot drift between the two call sites.
+    pub fn is_valid_level(level: &str) -> bool {
+        let bytes = level.as_bytes();
+        (1..=32).contains(&bytes.len())
+            && bytes
+                .iter()
+                .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_' || *byte == b'-')
+    }
+
+    /// The rule for a protocol (spec/04 §5.1).
+    pub fn for_protocol(protocol: Protocol) -> Self {
+        match protocol {
+            Protocol::Openai => EffortRule::Free,
+            Protocol::Anthropic => EffortRule::Closed(Self::ANTHROPIC_LEVELS),
+            Protocol::Mock => EffortRule::None,
+        }
+    }
+
+    /// The provider body field the level lands in, or `None` when the protocol takes no effort.
+    pub fn wire_key(self) -> Option<&'static str> {
+        match self {
+            EffortRule::None => None,
+            EffortRule::Free => Some("reasoning_effort"),
+            EffortRule::Closed(_) => Some("output_config.effort"),
+        }
+    }
+
+    /// The closed levels in canonical order, or an empty slice for a free-form or absent rule.
+    pub fn levels(self) -> &'static [&'static str] {
+        match self {
+            EffortRule::Closed(levels) => levels,
+            EffortRule::Free | EffortRule::None => &[],
+        }
+    }
+
+    /// Whether this protocol accepts `level`.
+    pub fn accepts(self, level: &str) -> bool {
+        match self {
+            EffortRule::None => false,
+            EffortRule::Free => EffortRule::is_valid_level(level),
+            EffortRule::Closed(levels) => levels.contains(&level),
         }
     }
 }
