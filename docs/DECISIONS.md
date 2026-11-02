@@ -3392,6 +3392,8 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   - The activity stream shows the header on consumed author messages, as it already shows
     【用户反馈】 on feedback appendices: the stream shows what the model saw.
   - Already sealed results are not rewritten (append-only).
+  - An empty or whitespace-only render of `notice.user_message` is treated as a render failure, so
+    an author message can never be delivered empty.
   - No template, kickoff, schema or API change.
 - **Spec**: spec/03 §5.3, §5.6; spec/11 §5.3.
 

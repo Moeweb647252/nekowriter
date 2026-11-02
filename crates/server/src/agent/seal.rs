@@ -23,14 +23,24 @@ use crate::prompts::PromptSet;
 /// is consumed. The rendered text is persisted once and never recomputed (spec/03 §1.3).
 ///
 /// A broken override already falls back to the shipped default inside the registry (with the
-/// `prompt.override_failed` warning); if the default itself cannot render, the raw text is
-/// delivered and the failure is logged. The author's words are never dropped.
+/// `prompt.override_failed` warning); if the default itself cannot render, or the effective
+/// template renders empty (a notice override may be saved empty), the raw text is delivered and
+/// the failure is logged. The author's words are never dropped.
 pub fn author_message_text(prompts: &PromptSet, content: &str) -> String {
     match prompts.render("notice.user_message", &json!({ "text": content })) {
         Ok(rendered) => {
             // The registry logs its `prompt.override_failed` warning itself; a consumed row has
             // no session warning channel, and the default text is what gets delivered.
             let _ = rendered.warnings();
+            if rendered.text.trim().is_empty() {
+                // An empty render is a failure, not a successful notice: on paths B and C an
+                // empty block is dropped, which would silently swallow the author's message.
+                tracing::warn!(
+                    key = "notice.user_message",
+                    "notice.user_message rendered empty; delivering the raw author text"
+                );
+                return content.to_owned();
+            }
             rendered.text
         }
         Err(err) => {

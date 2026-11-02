@@ -556,6 +556,69 @@ async fn a_broken_override_delivers_the_default_header_and_reports_the_fallback(
     );
 }
 
+/// An empty override of `notice.user_message` is a render failure, not a successful empty
+/// notice: the raw author message is delivered instead of a block that `text_blocks` would drop.
+#[tokio::test]
+async fn an_empty_override_falls_back_to_the_raw_author_message() {
+    let runtime = runtime(vec![
+        agent_harness::text_step("a conception reply"),
+        agent_harness::text_step("another reply"),
+    ])
+    .await;
+    // Notice-kind overrides may be saved with empty content (only `tool.*` has a length rule).
+    let (status, body) = runtime
+        .app
+        .put(
+            "/api/prompts/notice.user_message",
+            json!({
+                "scope": "book",
+                "book_id": runtime.book_id,
+                "content": "  \n ",
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "save empty override: {body}");
+    assert_eq!(body["source"], "book", "the empty override is effective");
+
+    let session_id = sessions::create(
+        runtime.app.state(),
+        CreateSession {
+            kind: SessionKind::Conception,
+            book_id: Some(runtime.book_id),
+            ..CreateSession::default()
+        },
+    )
+    .await
+    .expect("create conception session")
+    .0;
+    runtime.wait_status(session_id, SessionStatus::Idle).await;
+    let text = "别把这段删掉。";
+    let (status, body) = runtime
+        .app
+        .post(
+            &format!("/api/sessions/{session_id}/message"),
+            json!({ "text": text }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "message: {body}");
+    runtime.wait_status(session_id, SessionStatus::Idle).await;
+
+    let messages = runtime.messages(session_id).await;
+    let user = messages
+        .iter()
+        .find(|message| message.kind == "user")
+        .expect("the author message must not disappear");
+    assert_eq!(
+        text_blocks(user),
+        vec![text.to_owned()],
+        "an empty render falls back to the raw author text"
+    );
+    assert!(
+        delivered_in_requests(&runtime, text),
+        "the next provider request carries the raw author message"
+    );
+}
+
 // ───────────────────────────── several messages in one batch ─────────────────────────────
 
 /// Several steering messages consumed by one sealing keep arrival order and each gets its own
