@@ -13,7 +13,10 @@ vi.mock("@/api/hooks/chapters", () => ({
   useWriteChapter: () => ({ mutate: writeMutate, isPending: false }),
   useWriteOutlineChapter: () => ({ mutate: vi.fn(), isPending: false }),
 }))
-vi.mock("@/components/common/ErrorToast", () => ({ useErrorToast: () => vi.fn() }))
+vi.mock("@/components/common/ErrorToast", () => ({
+  useErrorToast: () => vi.fn(),
+  useWarningToasts: () => vi.fn(),
+}))
 
 import { WriteDialog } from "@/features/chapter/WriteDialog"
 import { TooltipProvider } from "@/components/ui/tooltip"

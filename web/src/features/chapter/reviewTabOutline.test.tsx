@@ -54,7 +54,7 @@ vi.mock("@/api/hooks/reviews", () => ({
 vi.mock("@/api/hooks/chapters", () => ({
   useWriteOutlineChapter: () => ({ mutate: writeOutlineMutate, isPending: false }),
 }))
-vi.mock("@/components/common/ErrorToast", () => ({ useErrorToast: () => vi.fn() }))
+vi.mock("@/components/common/ErrorToast", () => ({ useErrorToast: () => vi.fn(), useWarningToasts: () => vi.fn() }))
 
 import { ReviewTab } from "@/features/chapter/ReviewTab"
 

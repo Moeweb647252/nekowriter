@@ -7,7 +7,7 @@ import { useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import { useWriteOutlineChapter } from "@/api/hooks/chapters"
-import { useErrorToast } from "@/components/common/ErrorToast"
+import { useErrorToast, useWarningToasts } from "@/components/common/ErrorToast"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -49,6 +49,7 @@ export function OutlineDialog({
 }: OutlineDialogProps) {
   const { t } = useTranslation()
   const showError = useErrorToast()
+  const showWarnings = useWarningToasts()
   const write = useWriteOutlineChapter(chapterId, bookId)
   const [draftGuidance, setDraftGuidance] = useState(guidance)
   // Same last-seen-server-value rule as WriteDialog: the outline dialog is permanently mounted,
@@ -87,7 +88,8 @@ export function OutlineDialog({
       force,
     }
     write.mutate(input, {
-      onSuccess: ({ session_id }) => {
+      onSuccess: ({ session_id, warnings }) => {
+        showWarnings(warnings ?? [])
         setNotReady(null)
         onOpenChange(false)
         onStarted(session_id)

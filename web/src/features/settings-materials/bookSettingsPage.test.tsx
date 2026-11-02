@@ -87,6 +87,13 @@ vi.mock("@/api/hooks/providers", () => ({
         effort_levels: ["low", "medium"],
         default_effort: "low",
       },
+      {
+        id: 12,
+        provider_id: 1,
+        display_name: "Protocol mismatch model",
+        effort_levels: ["low", "ultra"],
+        default_effort: "low",
+      },
     ],
   }),
   useProviders: () => ({
@@ -280,6 +287,44 @@ describe("Book settings › model overrides", () => {
     // The model map is still part of the same unit.
     expect(body.model_overrides.writer).toBeNull()
     expect(body.model_overrides.reviewer).toBeNull()
+  })
+
+  it("labels Global setting with the book-context fallback", () => {
+    // Global writer model default is high; the book writer model override defaults to low.
+    book.model_overrides = {
+      conception: null,
+      researcher: null,
+      planner: null,
+      writer: 12,
+      reviewer: null,
+      archivist: null,
+      efforts: {},
+    }
+    render(<BookSettingsPage />)
+
+    const effort = within(screen.getByTestId("model-override-row-writer")).getAllByRole(
+      "combobox",
+    )[1]
+    expect(effort).toHaveTextContent("Global setting (low)")
+  })
+
+  it("renders one stale effort item and names the effective fallback", () => {
+    book.model_overrides = {
+      conception: null,
+      researcher: null,
+      planner: null,
+      writer: 12,
+      reviewer: null,
+      archivist: null,
+      efforts: { writer: "ultra" },
+    }
+    render(<BookSettingsPage />)
+
+    const row = screen.getByTestId("model-override-row-writer")
+    const effort = within(row).getAllByRole("combobox")[1]
+    expect(effort).toHaveTextContent("ultra (not supported)")
+    expect(effort).not.toHaveTextContent("ultra (not supported)ultra")
+    expect(row).toHaveTextContent("Sessions will use low instead.")
   })
 
   it("lets a stale override be cleared back to the global default", async () => {

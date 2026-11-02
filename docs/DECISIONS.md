@@ -3425,6 +3425,9 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     before. A model that rejects `effort` can now be configured with an empty list; before, it
     always failed.
   - **A stale choice never blocks a session.** It falls through and warns.
+  - **The book row's "Global setting" label uses the book-context fallback:** with a book model
+    override in place, leaving the effort unset resolves the global effort choice against that
+    book model, so the label must name that result rather than the global-only result.
   - **Dropped values.** A cross-protocol effort key, which was always inert, is dropped, and so is
     `options.extra_body.reasoning_effort`: `extra_body` is merged last, so a leftover override
     would silently shadow the role's resolved level. The pre-ship report lists each one.

@@ -23,7 +23,7 @@ import type { BookStatus } from "@/api/gen/BookStatus"
 import type { NextActionDto } from "@/api/gen/NextActionDto"
 import type { NextActionKind } from "@/api/gen/NextActionKind"
 import type { TrackProgressDto } from "@/api/gen/TrackProgressDto"
-import { useErrorToast } from "@/components/common/ErrorToast"
+import { useErrorToast, useWarningToasts } from "@/components/common/ErrorToast"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { formatChapterLabel, trackName } from "@/lib/chapterLabel"
@@ -283,6 +283,7 @@ function SeedCanonButton({
 }) {
   const { t } = useTranslation()
   const showError = useErrorToast()
+  const showWarnings = useWarningToasts()
   const seed = useSeedCanon(bookId)
   return (
     <Button
@@ -292,7 +293,10 @@ function SeedCanonButton({
         seed.mutate(undefined, {
           // spec/08 §5: the endpoint answers the open `canon_seed` session or starts one, so the
           // id is the session the panel has to show either way.
-          onSuccess: (response) => onStarted(response.session_id),
+          onSuccess: (response) => {
+            showWarnings(response.warnings ?? [])
+            onStarted(response.session_id)
+          },
           onError: showError,
         })
       }

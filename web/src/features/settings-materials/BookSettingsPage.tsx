@@ -588,9 +588,14 @@ export default function BookSettingsPage() {
                 models: modelList,
                 providers: providerList,
               })
-              const globalResolved = resolveRoleEffort({
+              // "Global setting" means what this row resolves to when the effort is unset, so
+              // resolve with this role's book effort removed while keeping the book's model
+              // override and every other role's choices.
+              const bookContextEfforts: RoleEfforts = { ...current.efforts }
+              delete bookContextEfforts[role]
+              const bookContext = resolveRoleEffort({
                 role,
-                book: null,
+                book: { ...currentRoleModels, efforts: bookContextEfforts },
                 global: globalRoleModels,
                 models: modelList,
                 providers: providerList,
@@ -599,9 +604,9 @@ export default function BookSettingsPage() {
               const noLevels = resolved.model === null || resolved.levels.length === 0
               const stale = resolved.stale
               const globalLabel =
-                globalResolved.effectiveEffort !== null
+                bookContext.effectiveEffort !== null
                   ? t("book:model_global_setting", {
-                      level: globalResolved.effectiveEffort,
+                      level: bookContext.effectiveEffort,
                     })
                   : t("book:model_global_setting_provider_default")
               return (
@@ -661,11 +666,13 @@ export default function BookSettingsPage() {
                               {t("settings:role_effort_stale", { level: storedEffort })}
                             </SelectItem>
                           ) : null}
-                          {resolved.levels.map((level) => (
-                            <SelectItem key={level} value={level}>
-                              {level}
-                            </SelectItem>
-                          ))}
+                          {resolved.levels
+                            .filter((level) => !(stale && level === storedEffort))
+                            .map((level) => (
+                              <SelectItem key={level} value={level}>
+                                {level}
+                              </SelectItem>
+                            ))}
                         </>
                       )}
                     </SelectContent>
@@ -691,6 +698,15 @@ export default function BookSettingsPage() {
                       })
                     )}
                   </p>
+                  {stale ? (
+                    <p className="col-span-2 text-xs text-muted-foreground">
+                      {resolved.effectiveEffort !== null
+                        ? t("settings:role_effort_stale_hint", {
+                            level: resolved.effectiveEffort,
+                          })
+                        : t("settings:role_effort_stale_hint_none")}
+                    </p>
+                  ) : null}
                   {missing ? (
                     <>
                       <span aria-hidden="true" />

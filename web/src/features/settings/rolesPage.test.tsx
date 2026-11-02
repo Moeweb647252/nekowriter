@@ -68,6 +68,13 @@ vi.mock("@/api/hooks/providers", () => ({
         effort_levels: [],
         default_effort: null,
       },
+      {
+        id: 12,
+        provider_id: 1,
+        display_name: "Protocol mismatch model",
+        effort_levels: ["low", "ultra"],
+        default_effort: "low",
+      },
     ],
   }),
   useProviders: () => ({
@@ -218,6 +225,15 @@ describe("RolesPage model pickers (PROJECT §8.12)", () => {
     const row = screen.getByTestId("role-writer")
     expect(within(row).getAllByRole("combobox")[1]).toHaveTextContent("ultra (not supported)")
     expect(row).toHaveTextContent("Sessions will use high instead.")
+  })
+
+  it("renders one stale item when the protocol cannot send a level still in effort_levels", () => {
+    rolesDefaults = { writer: 12, efforts: { writer: "ultra" } }
+    render(<RolesPage />)
+
+    const trigger = within(screen.getByTestId("role-writer")).getAllByRole("combobox")[1]
+    expect(trigger).toHaveTextContent("ultra (not supported)")
+    expect(trigger).not.toHaveTextContent("ultra (not supported)ultra")
   })
 
   it("PATCHes the whole object when an effort is changed", async () => {

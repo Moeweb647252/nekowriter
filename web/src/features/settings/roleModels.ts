@@ -86,18 +86,6 @@ export function formatModelLabel(
     : `${provider.name} · ${model.display_name}`
 }
 
-/** Normalizes the API's optional per-role efforts into one entry per role. */
-export function roleEfforts(efforts: RoleEfforts | null | undefined): Record<AgentRole, string | null> {
-  return {
-    conception: efforts?.conception ?? null,
-    researcher: efforts?.researcher ?? null,
-    planner: efforts?.planner ?? null,
-    writer: efforts?.writer ?? null,
-    reviewer: efforts?.reviewer ?? null,
-    archivist: efforts?.archivist ?? null,
-  }
-}
-
 /** The inputs of the pure role-effort resolver (mirrors spec/03 §4 step 1 and plan §4.4). */
 export type RoleEffortInputs = {
   role: AgentRole
@@ -122,7 +110,8 @@ export type RoleEffortResolution = {
   effectiveEffort: string | null
   /** True only when the planner has no own model and follows the writer. */
   modelFromWriter: boolean
-  /** True when `storedEffort` is not one of the resolved model's levels. */
+  /** True when `storedEffort` is not one of the resolved model's levels, or is not sendable
+   * by the model's protocol. */
   stale: boolean
 }
 

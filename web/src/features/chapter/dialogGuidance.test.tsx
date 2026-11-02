@@ -9,12 +9,16 @@ import type { BookSettings } from "@/api/gen/BookSettings"
 
 const writeMutate = vi.fn()
 const outlineMutate = vi.fn()
+const warningToast = vi.fn()
 
 vi.mock("@/api/hooks/chapters", () => ({
   useWriteChapter: () => ({ mutate: writeMutate, isPending: false }),
   useWriteOutlineChapter: () => ({ mutate: outlineMutate, isPending: false }),
 }))
-vi.mock("@/components/common/ErrorToast", () => ({ useErrorToast: () => vi.fn() }))
+vi.mock("@/components/common/ErrorToast", () => ({
+  useErrorToast: () => vi.fn(),
+  useWarningToasts: () => warningToast,
+}))
 
 import { OutlineDialog } from "@/features/chapter/OutlineDialog"
 import { WriteDialog } from "@/features/chapter/WriteDialog"
@@ -42,6 +46,7 @@ const GUIDANCE_LABEL = "What should this chapter do?"
 beforeEach(() => {
   writeMutate.mockReset()
   outlineMutate.mockReset()
+  warningToast.mockReset()
 })
 
 describe("guidance follows the last seen server value (R2-01)", () => {
@@ -165,6 +170,60 @@ describe("guidance follows the last seen server value (R2-01)", () => {
     ).toBeInTheDocument()
   })
 })
+
+  it("shows model.effort_unsupported returned by a successful write start", async () => {
+    const user = userEvent.setup()
+    writeMutate.mockImplementation(
+      (_input: unknown, options: { onSuccess: (response: unknown) => void }) => {
+        options.onSuccess({
+          session_id: 1,
+          warnings: ["model.effort_unsupported"],
+        })
+      },
+    )
+    render(
+      <TooltipProvider>
+        <WriteDialog
+          chapterId={1}
+          bookId={1}
+          settings={SETTINGS}
+          guidance=""
+          open
+          onOpenChange={() => {}}
+          onStarted={() => {}}
+          onWriteOutline={() => {}}
+          hasOutline
+        />
+      </TooltipProvider>,
+    )
+    await user.click(screen.getByRole("button", { name: "Start writing" }))
+    expect(warningToast).toHaveBeenCalledWith(["model.effort_unsupported"])
+  })
+
+  it("shows model.effort_unsupported returned by a successful outline start", async () => {
+    const user = userEvent.setup()
+    outlineMutate.mockImplementation(
+      (_input: unknown, options: { onSuccess: (response: unknown) => void }) => {
+        options.onSuccess({
+          session_id: 1,
+          warnings: ["model.effort_unsupported"],
+        })
+      },
+    )
+    render(
+      <OutlineDialog
+        chapterId={1}
+        bookId={1}
+        settings={SETTINGS}
+        guidance=""
+        open
+        onOpenChange={() => {}}
+        onStarted={() => {}}
+      />,
+    )
+    await user.click(screen.getByRole("button", { name: "Start planning" }))
+    expect(warningToast).toHaveBeenCalledWith(["model.effort_unsupported"])
+  })
 
 describe("OutlineDialog previous_not_ready latch (R2-02)", () => {
   it("clears the warning when the dialog is reopened", async () => {

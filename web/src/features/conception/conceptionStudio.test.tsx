@@ -25,6 +25,7 @@ const startConception = vi.fn()
 const startKnowledgeCheck = vi.fn()
 const answerSession = vi.fn()
 const showError = vi.fn()
+const warningToast = vi.fn()
 const sessionControl = vi.fn()
 const resume = vi.fn()
 
@@ -109,6 +110,7 @@ vi.mock("@/api/hooks/conception", () => ({
 
 vi.mock("@/components/common/ErrorToast", () => ({
   useErrorToast: () => showError,
+  useWarningToasts: () => warningToast,
 }))
 
 // jsdom has no layout, so the real virtualizer reports no visible rows. Render every row so the
@@ -200,17 +202,24 @@ describe("ConceptionStudio", () => {
     state.characters = []
     state.topics = []
     sessionControl.mockClear()
+    warningToast.mockClear()
     startKnowledgeCheck.mockClear()
     resume.mockClear()
     answerSession.mockClear()
   })
 
-  it("offers Start conception for a conceiving book", async () => {
+  it("offers Start conception for a conceiving book and surfaces its warnings", async () => {
+    startConception.mockImplementation(
+      (_input: unknown, options?: { onSuccess?: (response: unknown) => void }) => {
+        options?.onSuccess?.({ warnings: ["model.effort_unsupported"] })
+      },
+    )
     renderStudio()
     expect(screen.getByText(/No conception session yet/)).toBeInTheDocument()
     const button = screen.getByRole("button", { name: "Start conception" })
     await userEvent.click(button)
     expect(startConception).toHaveBeenCalledTimes(1)
+    expect(warningToast).toHaveBeenCalledWith(["model.effort_unsupported"])
   })
 
   it("offers Pause and Stop while the conception session runs", async () => {

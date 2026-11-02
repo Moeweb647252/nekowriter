@@ -182,7 +182,7 @@
   "effort.level_input": "思考强度级别",
   "effort.removed_level": "思考强度 {{level}}",
   "role_effort": "思考强度",
-  "role_effort_same_as_writer": "与 Writer 相同",
+  "role_effort_same_as_writer": "与写手相同",
   "role_effort_model_default": "模型默认（{{level}}）",
   "role_effort_provider_default": "提供商默认",
   "role_effort_no_levels": "没有思考强度级别",

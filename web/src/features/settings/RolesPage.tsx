@@ -175,11 +175,13 @@ export default function RolesPage() {
                             {t("settings:role_effort_stale", { level: storedEffort })}
                           </SelectItem>
                         ) : null}
-                        {resolved.levels.map((level) => (
-                          <SelectItem key={level} value={level}>
-                            {level}
-                          </SelectItem>
-                        ))}
+                        {resolved.levels
+                          .filter((level) => !(stale && level === storedEffort))
+                          .map((level) => (
+                            <SelectItem key={level} value={level}>
+                              {level}
+                            </SelectItem>
+                          ))}
                       </>
                     )}
                   </SelectContent>
