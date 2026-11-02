@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 import * as endpoints from "@/api/endpoints/reviews"
 import { keys } from "@/api/keys"
+import { useWarningToasts } from "@/components/common/ErrorToast"
 import type { ChapterDto } from "@/api/gen/ChapterDto"
 import type { SendBackInput } from "@/api/gen/SendBackInput"
 
@@ -47,15 +48,20 @@ function useReviewSettle(chapterId: number, bookId: number) {
 /** Ask the reviewer: starts or reuses `chapter_review` (spec/08 §1.1). */
 export function useStartReview(chapterId: number, bookId: number) {
   const settle = useReviewSettle(chapterId, bookId)
+  const showWarnings = useWarningToasts()
   return useMutation({
     mutationFn: () => endpoints.startReview(chapterId),
-    onSuccess: settle,
+    onSuccess: (response) => {
+      showWarnings(response.warnings ?? [])
+      settle()
+    },
   })
 }
 
 /** Discuss a report: the comment becomes a re-review (spec/03 §6). */
 export function useRereview(chapterId: number, bookId: number) {
   const settle = useReviewSettle(chapterId, bookId)
+  const showWarnings = useWarningToasts()
   return useMutation({
     mutationFn: ({
       reportId,
@@ -64,34 +70,49 @@ export function useRereview(chapterId: number, bookId: number) {
       reportId: number
       comment: string
     }) => endpoints.rereview(reportId, comment),
-    onSuccess: settle,
+    onSuccess: (response) => {
+      showWarnings(response.warnings ?? [])
+      settle()
+    },
   })
 }
 
 /** Send the chapter back in revise or redraft mode (spec/08 §1.1). */
 export function useSendBack(chapterId: number, bookId: number) {
   const settle = useReviewSettle(chapterId, bookId)
+  const showWarnings = useWarningToasts()
   return useMutation({
     mutationFn: (input: SendBackInput) => endpoints.sendBack(chapterId, input),
-    onSuccess: settle,
+    onSuccess: (response) => {
+      showWarnings(response.warnings ?? [])
+      settle()
+    },
   })
 }
 
 /** Retry maintenance (spec/08 §1.1). */
 export function useMaintainChapter(chapterId: number, bookId: number) {
   const settle = useReviewSettle(chapterId, bookId)
+  const showWarnings = useWarningToasts()
   return useMutation({
     mutationFn: () => endpoints.maintainChapter(chapterId),
-    onSuccess: settle,
+    onSuccess: (response) => {
+      showWarnings(response.warnings ?? [])
+      settle()
+    },
   })
 }
 
 /** Re-sync canon after an author edit (spec/06 §8). */
 export function useResyncChapter(chapterId: number, bookId: number) {
   const settle = useReviewSettle(chapterId, bookId)
+  const showWarnings = useWarningToasts()
   return useMutation({
     mutationFn: () => endpoints.resyncChapter(chapterId),
-    onSuccess: settle,
+    onSuccess: (response) => {
+      showWarnings(response.warnings ?? [])
+      settle()
+    },
   })
 }
 

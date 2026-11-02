@@ -11,7 +11,7 @@ import { useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import { useWriteChapter } from "@/api/hooks/chapters"
-import { useErrorToast } from "@/components/common/ErrorToast"
+import { useErrorToast, useWarningToasts } from "@/components/common/ErrorToast"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -64,6 +64,7 @@ export function WriteDialog({
 }: WriteDialogProps) {
   const { t } = useTranslation()
   const showError = useErrorToast()
+  const showWarnings = useWarningToasts()
   const write = useWriteChapter(chapterId, bookId)
   const [draftGuidance, setDraftGuidance] = useState(guidance)
   // The dialog is mounted permanently by `ChapterHeader`: adopt a guidance value changed by the
@@ -116,7 +117,8 @@ export function WriteDialog({
       force,
     }
     write.mutate(input, {
-      onSuccess: ({ session_id }) => {
+      onSuccess: ({ session_id, warnings }) => {
+        showWarnings(warnings ?? [])
         setNotReady(null)
         setOutlineMissing(false)
         onOpenChange(false)

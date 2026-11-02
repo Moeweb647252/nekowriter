@@ -93,12 +93,16 @@ async fn pre_deferred_database() -> (tempfile::TempDir, std::path::PathBuf) {
         .expect("the pre-deferred schema and its rows");
     // Rewind the migration record to `m0001_init` only: that is the state a database created
     // before the deferred status existed is in, and the reason an edit to `0001` can never reach
-    // it — the migrator runs pending files only. The later additive tables are absent in that
-    // state too, so drop the ones `0005` created; otherwise the replayed migrator would meet its
-    // `CREATE TABLE` on an already-migrated database.
+    // it — the migrator runs pending files only. The later additive tables and columns are absent
+    // in that state too, so drop the ones later migrations created; otherwise the replayed
+    // migrator would meet its `CREATE TABLE` / `ADD COLUMN` on an already-migrated database.
+    // 0009 is the only later migration that alters `model_profiles` (no rebuild recreates it), so
+    // its two columns have to be removed here.
     db.conn()
         .execute_unprepared(
             "DROP TABLE IF EXISTS book_writing_skills; DROP TABLE IF EXISTS writing_skills; \
+             ALTER TABLE model_profiles DROP COLUMN effort_levels; \
+             ALTER TABLE model_profiles DROP COLUMN default_effort; \
              DELETE FROM seaql_migrations WHERE version <> 'm0001_init'",
         )
         .await

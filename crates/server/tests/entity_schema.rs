@@ -1351,6 +1351,7 @@ fn json_columns_are_typed() {
     typed!(knowledge_entries::Model, source_urls, JsonText<Vec<String>>);
     typed!(knowledge_entries::Model, tags, JsonText<Vec<String>>);
     typed!(model_profiles::Model, options, JsonText<ModelOptions>);
+    typed!(model_profiles::Model, effort_levels, JsonText<Vec<String>>);
     typed!(
         providers::Model,
         extra_headers,
@@ -1394,6 +1395,7 @@ async fn every_json_column_has_a_typed_field_guard() {
         ("knowledge_entries", "source_urls"),
         ("knowledge_entries", "tags"),
         ("model_profiles", "options"),
+        ("model_profiles", "effort_levels"),
         ("providers", "extra_headers"),
         ("review_reports", "issues"),
         ("search_docs", "meta"),

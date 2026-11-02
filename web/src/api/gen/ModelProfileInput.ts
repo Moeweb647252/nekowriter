@@ -4,4 +4,16 @@ import type { ModelOptionsDto } from "./ModelOptionsDto";
 /**
  * `POST /api/model-profiles` and `PATCH /api/model-profiles/:id`.
  */
-export type ModelProfileInput = { provider_id: number, display_name: string, model: string, context_window: number, max_output_tokens: number, options: ModelOptionsDto, };
+export type ModelProfileInput = { provider_id: number, display_name: string, model: string, context_window: number, max_output_tokens: number, options: ModelOptionsDto, 
+/**
+ * The thinking-effort levels this model accepts, in display order (spec/04 §5.1, D-162).
+ * Required, like the TypeScript type: an omitted field is a 400 through the extractor
+ * envelope, never a silent reset of the stored levels (the D-132 lesson).
+ */
+effort_levels: Array<string>, 
+/**
+ * The level a role that chooses none gets; one of `effort_levels`, or `NULL` when the
+ * provider decides (spec/04 §5.1, D-162). Required to be present; an explicit `null` is
+ * valid and means the provider decides.
+ */
+default_effort: string | null, };

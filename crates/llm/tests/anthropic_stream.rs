@@ -231,8 +231,43 @@ fn body_never_contains_sampling_parameters() {
     assert_eq!(body["tool_choice"]["type"], "auto");
     assert_eq!(body["tool_choice"]["disable_parallel_tool_use"], true);
     assert_eq!(body["thinking"]["type"], "adaptive");
-    assert_eq!(body["output_config"]["effort"], "high");
     assert_eq!(body["tools"][0]["eager_input_streaming"], true);
+}
+
+/// D-162: the adapter used to send `output_config: { effort: "high" }` on every request. An
+/// omitted effort must now mean nothing at all — the API's own default is `high` on most models
+/// but `medium` on Opus 5.5 and Haiku 5.5, and some models reject the parameter — so the body
+/// must carry no `output_config` when `ModelOptions::effort` is unset.
+#[test]
+fn output_config_is_sent_only_when_effort_is_set() {
+    let body = build_body(&request(), &ModelOptions::default());
+    assert!(
+        body.get("output_config").is_none(),
+        "an unset effort must send no output_config: {body}"
+    );
+
+    let options = ModelOptions {
+        effort: Some(Effort::Xhigh),
+        ..ModelOptions::default()
+    };
+    let body = build_body(&request(), &options);
+    assert_eq!(
+        body["output_config"]["effort"], "xhigh",
+        "a set effort reaches output_config.effort: {body}"
+    );
+    assert_eq!(
+        body["thinking"]["type"], "adaptive",
+        "the thinking block is independent of the effort: {body}"
+    );
+
+    // The connection test (`ChatRequest::ping`) uses default options: it must not send effort
+    // either, because the profile's `default_effort` is applied by the server (spec/04 §8).
+    let ping = ChatRequest::ping("claude-test", "");
+    let body = build_body(&ping, &ModelOptions::default());
+    assert!(
+        body.get("output_config").is_none(),
+        "the ping request must not invent an effort: {body}"
+    );
 }
 
 #[test]

@@ -69,6 +69,17 @@ export function sessionTitle(session: SessionDto, t: (key: string, options?: Rec
   return base
 }
 
+/** The effort part of the header subtitle: " · High" or nothing when no effort is frozen. */
+export function sessionEffortLabel(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  effort: string | null | undefined,
+): string | null {
+  if (effort === null || effort === undefined) {
+    return null
+  }
+  return t(`settings:value.effort.${effort}`, { defaultValue: effort })
+}
+
 export function SessionHeader({
   session,
   sessions,
@@ -88,6 +99,7 @@ export function SessionHeader({
 }) {
   const { t } = useTranslation()
   const title = sessionTitle(session, t)
+  const effort = sessionEffortLabel(t, session.effort)
 
   return (
     <div className="flex items-center gap-2 border-b px-3 py-2">
@@ -96,7 +108,10 @@ export function SessionHeader({
         <div className="truncate text-sm font-medium" title={title}>
           {title}
         </div>
-        <div className="truncate text-xs text-muted-foreground">{session.model_label}</div>
+        <div className="truncate text-xs text-muted-foreground">
+          {session.model_label}
+          {effort === null ? null : ` · ${effort}`}
+        </div>
       </div>
       <SessionStatusBadge
         status={session.status}

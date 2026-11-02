@@ -37,5 +37,6 @@
   "prompt.override_failed": "提示词覆盖没能生效，已改用默认提示词。",
   "chapter.outline_missing": "本章还没有细纲，请先写细纲。",
   "goal.open_children": "此目标仍有未关闭的后代节点。",
-  "goal.has_children": "此目标有子节点；请先移动或删除它们。"
+  "goal.has_children": "此目标有子节点；请先移动或删除它们。",
+  "model.effort_unsupported": "所选思考强度在这个模型上不可用；会话会使用下一个选择或模型默认值。"
 }

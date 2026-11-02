@@ -17,7 +17,10 @@ vi.mock("@/api/hooks/reviews", () => ({
 vi.mock("@/api/hooks/tracks", () => ({
   useCreateChapter: () => ({ mutate: vi.fn(), isPending: false }),
 }))
-vi.mock("@/components/common/ErrorToast", () => ({ useErrorToast: () => vi.fn() }))
+vi.mock("@/components/common/ErrorToast", () => ({
+  useErrorToast: () => vi.fn(),
+  useWarningToasts: () => vi.fn(),
+}))
 vi.mock("@/features/workspace/shell", () => ({ useBookShell: () => undefined }))
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }))
 

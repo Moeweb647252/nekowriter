@@ -915,6 +915,8 @@ async fn configure_models(app: &TestApp) {
                 "model": "demo-model",
                 "context_window": 200000,
                 "max_output_tokens": 8192,
+                "effort_levels": [],
+                "default_effort": null,
                 "options": {},
             }),
         )

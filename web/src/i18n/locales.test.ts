@@ -56,6 +56,7 @@ const ALL_WARNING_CODES = [
   "model.missing_role",
   "context.large_kickoff",
   "prompt.override_failed",
+  "model.effort_unsupported",
   "conception.unavailable",
 ]
 

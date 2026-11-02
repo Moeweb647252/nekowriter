@@ -5,8 +5,8 @@ use serde_json::{Map, Value, json};
 use crate::retry::LlmError;
 use crate::sse;
 use crate::types::{
-    AssistantTurn, ChatRequest, Effort, Message, ModelOptions, ProviderConfig, ProviderPayload,
-    StopReason, StreamEvent, ThinkingDisplay, ToolCallOut, Usage,
+    AssistantTurn, ChatRequest, Message, ModelOptions, ProviderConfig, ProviderPayload, StopReason,
+    StreamEvent, ThinkingDisplay, ToolCallOut, Usage,
 };
 
 /// The Anthropic API version this client targets (spec/04 §3; DECISIONS D-005).
@@ -307,12 +307,16 @@ pub fn build_body(req: &ChatRequest, options: &ModelOptions) -> Value {
                 .as_str(),
         }),
     );
-    body.insert(
-        "output_config".to_owned(),
-        json!({
-            "effort": options.effort.unwrap_or(Effort::High).as_str(),
-        }),
-    );
+    // `output_config` is sent only when the snapshot carries an effort (D-162). An omitted effort
+    // means the provider's own default, which is `high` on most models but `medium` on Opus 5.5
+    // and Haiku 5.5, and some models (Sonnet 4.5, Haiku 4.5) reject the parameter entirely; the
+    // old implicit `high` made an empty level list impossible to express.
+    if let Some(effort) = options.effort {
+        body.insert(
+            "output_config".to_owned(),
+            json!({ "effort": effort.as_str() }),
+        );
+    }
     body.insert("cache_control".to_owned(), cache_control(ttl));
     body.insert("messages".to_owned(), Value::Array(messages));
     if options.refusal_fallback.unwrap_or(false) {

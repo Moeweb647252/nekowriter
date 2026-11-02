@@ -87,9 +87,10 @@ vi.mock("@/components/common/ErrorToast", () => ({
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }))
 
 const errorToast = vi.hoisted(() => vi.fn())
+const warningToast = vi.hoisted(() => vi.fn())
 vi.mock("@/components/common/ErrorToast", () => ({
   useErrorToast: () => errorToast,
-  useWarningToasts: () => vi.fn(),
+  useWarningToasts: () => warningToast,
 }))
 
 /** The agent-panel half of the workspace shell; `null` is a page rendered outside a workspace. */
@@ -295,6 +296,7 @@ beforeEach(() => {
   mutations.resync.mockReset()
   mutations.maintain.mockReset()
   mutations.createChapter.mockReset()
+  warningToast.mockClear()
   researchApi.list.mockReset()
   researchApi.defer.mockReset()
   // By default the book has no runnable tasks cached, so only the tests about the batch see the
@@ -452,7 +454,10 @@ describe("canon seeding points at the agent panel (D-135)", () => {
 
     // The endpoint answers the session it started (or the open one, spec/08 §5).
     act(() => {
-      optionsOf<{ session_id: number }>(mutations.seed).onSuccess?.({ session_id: 42 })
+      optionsOf<{ session_id: number; warnings: string[] }>(mutations.seed).onSuccess?.({
+        session_id: 42,
+        warnings: ["model.effort_unsupported"],
+      })
     })
 
     // `AgentPanel` chooses `pinnedSession[bookId]` first (:84-87), so this *is* the panel moving.
@@ -461,6 +466,8 @@ describe("canon seeding points at the agent panel (D-135)", () => {
     expect(screen.getByRole("status")).toHaveTextContent(SEED_STARTED)
     // The toast is the transient half of the same message.
     expect(toast.success).toHaveBeenCalledWith(SEED_STARTED)
+    // Creation warnings are surfaced too; a warning nobody sees is not a warning.
+    expect(warningToast).toHaveBeenCalledWith(["model.effort_unsupported"])
   })
 
   it("pins the re-sync session the same way", async () => {

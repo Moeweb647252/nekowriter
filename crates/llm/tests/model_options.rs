@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use nekowriter_llm::anthropic::build_body as anthropic_body;
 use nekowriter_llm::openai::build_body as openai_body;
 use nekowriter_llm::types::{
-    CacheHints, CacheTtl, CacheTtlOption, ChatRequest, Effort, MaxTokensField, Message,
+    CacheHints, CacheTtl, CacheTtlOption, ChatRequest, Effort, EffortRule, MaxTokensField, Message,
     ModelOptionKey, ModelOptions, Protocol, ReasoningReplay, TextBlock, ThinkingDisplay, ToolDef,
 };
 
@@ -378,6 +378,107 @@ fn the_table_views_agree() {
     }
     assert_eq!(ModelOptionKey::reachable(Protocol::Openai).len(), 8);
     assert_eq!(ModelOptionKey::reachable(Protocol::Anthropic).len(), 6);
+}
+
+/// The thinking-effort rule (spec/04 §5.1, D-162) is one source of truth for a protocol's wire
+/// field and its levels: free-form tokens on `openai`, the canonical closed set on `anthropic`,
+/// none on `mock`.
+#[test]
+fn effort_rule_follows_the_protocol() {
+    assert_eq!(EffortRule::for_protocol(Protocol::Openai), EffortRule::Free);
+    assert_eq!(
+        EffortRule::for_protocol(Protocol::Anthropic),
+        EffortRule::Closed(&["low", "medium", "high", "xhigh", "max"])
+    );
+    assert_eq!(EffortRule::for_protocol(Protocol::Mock), EffortRule::None);
+
+    assert_eq!(
+        EffortRule::for_protocol(Protocol::Openai).wire_key(),
+        Some("reasoning_effort")
+    );
+    assert_eq!(
+        EffortRule::for_protocol(Protocol::Anthropic).wire_key(),
+        Some("output_config.effort")
+    );
+    assert_eq!(EffortRule::for_protocol(Protocol::Mock).wire_key(), None);
+}
+
+/// The Anthropic wire names parse to their enum values and nothing else does (session creation
+/// writes a validated profile default into the snapshot through this).
+#[test]
+fn effort_parses_the_anthropic_wire_names() {
+    for (name, effort) in [
+        ("low", Effort::Low),
+        ("medium", Effort::Medium),
+        ("high", Effort::High),
+        ("xhigh", Effort::Xhigh),
+        ("max", Effort::Max),
+    ] {
+        assert_eq!(Effort::parse(name), Some(effort), "{name}");
+        assert_eq!(effort.as_str(), name);
+    }
+    assert_eq!(Effort::parse("ultra"), None);
+    assert_eq!(Effort::parse(""), None);
+}
+
+/// `Free` accepts exactly `^[A-Za-z0-9_-]{1,32}$`; `Closed` accepts exactly its canonical list;
+/// `None` accepts nothing. The same rule decides the role-effort save validation and the
+/// per-session resolution, so its boundaries are pinned here.
+#[test]
+fn effort_rule_enforces_the_level_pattern_and_canonical_order() {
+    let openai = EffortRule::for_protocol(Protocol::Openai);
+    for level in ["a", "low", "max", "x-high_1", "A9_-"] {
+        assert!(EffortRule::is_valid_level(level), "{level}");
+        assert!(openai.accepts(level), "{level}");
+    }
+    assert!(EffortRule::is_valid_level(&"a".repeat(32)));
+    for level in ["", "high effort", "high!", "思考", "a.b"] {
+        assert!(!EffortRule::is_valid_level(level), "{level}");
+        assert!(!openai.accepts(level), "{level}");
+    }
+    assert!(!EffortRule::is_valid_level(&"a".repeat(33)));
+
+    let anthropic = EffortRule::for_protocol(Protocol::Anthropic);
+    assert_eq!(
+        anthropic.levels(),
+        &["low", "medium", "high", "xhigh", "max"],
+        "the Anthropic set is stored lowest first, whatever order a caller uses"
+    );
+    for level in ["low", "medium", "high", "xhigh", "max"] {
+        assert!(anthropic.accepts(level), "{level}");
+    }
+    for level in ["ultra", "none", "LOW", "", " high"] {
+        assert!(!anthropic.accepts(level), "{level}");
+    }
+
+    let mock = EffortRule::for_protocol(Protocol::Mock);
+    assert!(mock.levels().is_empty());
+    assert!(!mock.accepts("high"), "the mock protocol takes no effort");
+}
+
+/// A model profile may hold every option except the two effort wire carriers, which belong to
+/// the role's resolved effort (spec/04 §5, D-162). `ALL` stays complete for the adapter wire test.
+#[test]
+fn profile_options_exclude_the_effort_wire_fields() {
+    let expected: Vec<ModelOptionKey> = ModelOptionKey::ALL
+        .into_iter()
+        .filter(|key| {
+            !matches!(
+                key,
+                ModelOptionKey::ReasoningEffort | ModelOptionKey::Effort
+            )
+        })
+        .collect();
+    assert_eq!(ModelOptionKey::PROFILE.to_vec(), expected);
+    assert_eq!(
+        ModelOptionKey::PROFILE.len(),
+        ModelOptionKey::ALL.len() - 2,
+        "PROFILE is ALL minus exactly the two effort keys"
+    );
+    assert!(!ModelOptionKey::PROFILE.contains(&ModelOptionKey::ReasoningEffort));
+    assert!(!ModelOptionKey::PROFILE.contains(&ModelOptionKey::Effort));
+    assert!(ModelOptionKey::ALL.contains(&ModelOptionKey::ReasoningEffort));
+    assert!(ModelOptionKey::ALL.contains(&ModelOptionKey::Effort));
 }
 
 /// The set of options a value actually sets drives both validation and the mismatch report, so a

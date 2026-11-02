@@ -12,8 +12,14 @@ use crate::services::providers::PresetKey;
 
 /// `model_profiles.options` (spec/04 §5) as the API carries it. Every field is optional so the UI
 /// can send only what it changed.
+///
+/// The two thinking-effort fields (`reasoning_effort`, `effort`) are **not** profile options
+/// (D-162): the role chooses the level, the model profile declares the allowed levels, and the
+/// session writes the resolved value into `model_snapshot.options`. `deny_unknown_fields` makes a
+/// stale client that still sends one get a 400 through the extractor-rejection envelope instead of
+/// a silent drop — the D-132 lesson.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
-#[serde(default, rename_all = "snake_case")]
+#[serde(default, rename_all = "snake_case", deny_unknown_fields)]
 #[ts(export)]
 #[ts(optional_fields = nullable)]
 pub struct ModelOptionsDto {
@@ -25,8 +31,6 @@ pub struct ModelOptionsDto {
     pub cache_ttl: Option<String>,
     // OpenAI-compatible only.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasoning_effort: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens_field: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub send_parallel_tool_calls: Option<bool>,
@@ -37,8 +41,6 @@ pub struct ModelOptionsDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extra_body: Option<BTreeMap<String, serde_json::Value>>,
     // Anthropic only.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_display: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -52,13 +54,11 @@ impl From<crate::db::json::ModelOptions> for ModelOptionsDto {
         Self {
             reasoning_replay: value.reasoning_replay,
             cache_ttl: value.cache_ttl,
-            reasoning_effort: value.reasoning_effort,
             max_tokens_field: value.max_tokens_field,
             send_parallel_tool_calls: value.send_parallel_tool_calls,
             stream_usage: value.stream_usage,
             temperature: value.temperature,
             extra_body: value.extra_body,
-            effort: value.effort,
             thinking_display: value.thinking_display,
             refusal_fallback: value.refusal_fallback,
             eager_input_streaming: value.eager_input_streaming,
@@ -71,16 +71,15 @@ impl From<ModelOptionsDto> for crate::db::json::ModelOptions {
         Self {
             reasoning_replay: value.reasoning_replay,
             cache_ttl: value.cache_ttl,
-            reasoning_effort: value.reasoning_effort,
             max_tokens_field: value.max_tokens_field,
             send_parallel_tool_calls: value.send_parallel_tool_calls,
             stream_usage: value.stream_usage,
             temperature: value.temperature,
             extra_body: value.extra_body,
-            effort: value.effort,
             thinking_display: value.thinking_display,
             refusal_fallback: value.refusal_fallback,
             eager_input_streaming: value.eager_input_streaming,
+            ..crate::db::json::ModelOptions::default()
         }
     }
 }
@@ -143,12 +142,21 @@ pub struct ModelProfileDto {
     pub context_window: i32,
     pub max_output_tokens: i32,
     pub options: ModelOptionsDto,
+    /// The thinking-effort levels this model accepts, in display order (spec/04 §5.1, D-162).
+    /// Empty means the model takes no effort parameter.
+    pub effort_levels: Vec<String>,
+    /// The level a role that chooses none gets; one of `effort_levels`, or `NULL` when the
+    /// provider decides (spec/04 §5.1, D-162).
+    pub default_effort: Option<String>,
     /// Options this profile sets that its provider's protocol cannot send (spec/04 §5, D-132).
     ///
     /// A **stored** mismatch is reported here instead of failing the read: the author's database
     /// already holds one (an Anthropic `effort` on an OpenAI-protocol provider), and failing the
     /// read would lock them out of the page that has to fix it. Writing such a profile is refused.
     pub ignored_options: Vec<String>,
+    /// Stored effort levels the provider's current protocol cannot send (spec/04 §5.1, D-162).
+    /// Reported like `ignored_options`, never a failed read.
+    pub ignored_effort_levels: Vec<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -164,6 +172,28 @@ pub struct ModelProfileInput {
     pub max_output_tokens: i32,
     #[serde(default)]
     pub options: ModelOptionsDto,
+    /// The thinking-effort levels this model accepts, in display order (spec/04 §5.1, D-162).
+    /// Required, like the TypeScript type: an omitted field is a 400 through the extractor
+    /// envelope, never a silent reset of the stored levels (the D-132 lesson).
+    pub effort_levels: Vec<String>,
+    /// The level a role that chooses none gets; one of `effort_levels`, or `NULL` when the
+    /// provider decides (spec/04 §5.1, D-162). Required to be present; an explicit `null` is
+    /// valid and means the provider decides.
+    #[serde(deserialize_with = "deserialize_required_option")]
+    pub default_effort: Option<String>,
+}
+
+/// Requires a nullable field to be present while still accepting an explicit `null`.
+///
+/// Serde reads a missing `Option<T>` field as `None`; for a whole-object profile PATCH that would
+/// silently reset the stored `default_effort`. A custom deserializer makes absence a missing-field
+/// error, which `rewrite_extractor_rejection` turns into the documented `400 validation.failed`.
+fn deserialize_required_option<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Option::<T>::deserialize(deserializer)
 }
 
 /// `GET /api/provider-presets` (spec/04 §8). The values are editable defaults.
@@ -179,6 +209,10 @@ pub struct ProviderPresetDto {
     pub context_window: i32,
     pub max_output_tokens: i32,
     pub options: ModelOptionsDto,
+    /// The thinking-effort levels this model accepts, in display order (spec/04 §8, D-162).
+    pub effort_levels: Vec<String>,
+    /// The level a role that chooses none gets (spec/04 §8, D-162).
+    pub default_effort: Option<String>,
     /// True when the provider needs an API key (Ollama and LM Studio do not).
     pub requires_key: bool,
 }

@@ -84,13 +84,14 @@ pub async fn ask_reviewer(
     {
         return Ok(ReviewSessionResponse {
             session_id: session.id,
+            warnings: Vec::new(),
         });
     }
     // "otherwise abandons that session (if any) and starts chapter_review".
     for session in open {
         sessions::abandon_if_open(state, session.id).await?;
     }
-    let (session_id, _warnings) = match sessions::create(
+    let (session_id, warnings) = match sessions::create(
         state,
         CreateSession {
             kind: SessionKind::ChapterReview,
@@ -123,7 +124,10 @@ pub async fn ask_reviewer(
         }
         Err(error) => return Err(error),
     };
-    Ok(ReviewSessionResponse { session_id })
+    Ok(ReviewSessionResponse {
+        session_id,
+        warnings,
+    })
 }
 
 /// `POST /api/review-reports/:id/rereview` (spec/03 §6).
@@ -169,7 +173,7 @@ pub async fn rereview(
     if chapter.content_version != report.content_version {
         // The text changed since that report: a new session carries the previous report and the
         // comment in its kickoff (spec/03 §6, D-046).
-        let (session_id, _warnings) = sessions::create(
+        let (session_id, warnings) = sessions::create(
             state,
             CreateSession {
                 kind: SessionKind::ChapterReview,
@@ -183,7 +187,10 @@ pub async fn rereview(
             },
         )
         .await?;
-        return Ok(ReviewSessionResponse { session_id });
+        return Ok(ReviewSessionResponse {
+            session_id,
+            warnings,
+        });
     }
 
     // Same text: continue the completed session with the rendered re-review request (spec/03 §6).
@@ -257,7 +264,10 @@ pub async fn rereview(
     });
     state.events().publish_all(events);
     state.manager().spawn(state.clone(), session_id);
-    Ok(ReviewSessionResponse { session_id })
+    Ok(ReviewSessionResponse {
+        session_id,
+        warnings: Vec::new(),
+    })
 }
 
 /// `POST /api/chapters/:id/send-back` (spec/08 §1.1): store the feedback, then start the revision
@@ -334,7 +344,7 @@ pub async fn send_back(
     let mode = input.mode;
     let state_owned = state.clone();
     let feedback_for_row = feedback_text.clone();
-    let (session_id, events) = crate::services::write(state.db(), move |tx| {
+    let (session_id, events, warnings) = crate::services::write(state.db(), move |tx| {
         Box::pin(async move {
             // The `require_in_review` above is a read on a different connection; an approve can
             // commit `official` before this transaction. Re-read and revalidate here, before the
@@ -384,7 +394,7 @@ pub async fn send_back(
                     ..CreateSession::default()
                 },
             };
-            let (session_id, events, _warnings) =
+            let (session_id, events, warnings) =
                 sessions::create_inner(&state_owned, tx, input).await?;
             chapter_feedback::ActiveModel {
                 id: Set(row.id),
@@ -393,7 +403,7 @@ pub async fn send_back(
             }
             .update(tx)
             .await?;
-            Ok((session_id, events))
+            Ok((session_id, events, warnings))
         })
     })
     .await?;
@@ -404,7 +414,10 @@ pub async fn send_back(
         sessions::abandon_if_open(state, reviewer.id).await?;
     }
     state.manager().spawn(state.clone(), session_id);
-    Ok(ReviewSessionResponse { session_id })
+    Ok(ReviewSessionResponse {
+        session_id,
+        warnings,
+    })
 }
 
 /// The chapter's open reviewer sessions, oldest first (spec/03 §3: open = not terminal).

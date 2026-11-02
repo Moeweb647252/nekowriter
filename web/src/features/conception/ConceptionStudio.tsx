@@ -39,7 +39,7 @@ import { latestPreparationTask, knowledgeCheckOpen } from "@/features/research/r
 export { latestPreparationTask, knowledgeCheckOpen }
 import { useBook } from "@/api/hooks/books"
 import { useFinalizeConception, useStartConception } from "@/api/hooks/conception"
-import { useErrorToast } from "@/components/common/ErrorToast"
+import { useErrorToast, useWarningToasts } from "@/components/common/ErrorToast"
 import { ConfirmDialog } from "@/components/common/ConfirmDialog"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -110,6 +110,7 @@ export default function ConceptionStudio() {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const showError = useErrorToast()
+  const showWarnings = useWarningToasts()
 
   const book = useBook(bookId)
   const sessions = useBookSessions(bookId)
@@ -192,6 +193,7 @@ export default function ConceptionStudio() {
   const doFinalize = () =>
     finalize.mutate(undefined, {
       onSuccess: (response) => {
+        showWarnings(response.warnings ?? [])
         setConfirmFinalize(false)
         void navigate(`/books/${response.book.id}`)
       },
@@ -296,7 +298,12 @@ export default function ConceptionStudio() {
               checkSnapshot={checkSnapshot.data}
               startPending={start.isPending}
               checkPending={startKnowledgeCheck.isPending}
-              onStart={() => start.mutate(undefined, { onError: showError })}
+              onStart={() =>
+                start.mutate(undefined, {
+                  onSuccess: ({ warnings }) => showWarnings(warnings ?? []),
+                  onError: showError,
+                })
+              }
               onCheck={() => startKnowledgeCheck.mutate("", { onError: showError })}
             />
           ) : (

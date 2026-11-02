@@ -15,6 +15,7 @@ mod m0005_writing_skills;
 mod m0006_goals_and_switches;
 mod m0007_builtin_basic_writing;
 mod m0008_knowledge_first;
+mod m0009_role_effort;
 
 pub struct Migrator;
 
@@ -30,6 +31,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0006_goals_and_switches::Migration),
             Box::new(m0007_builtin_basic_writing::Migration),
             Box::new(m0008_knowledge_first::Migration),
+            Box::new(m0009_role_effort::Migration),
         ]
     }
 }

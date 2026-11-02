@@ -9,7 +9,7 @@ import { useTranslation } from "react-i18next"
 import { useNavigate } from "react-router"
 
 import { useCreateBook } from "@/api/hooks/books"
-import { useErrorToast } from "@/components/common/ErrorToast"
+import { useErrorToast, useWarningToasts } from "@/components/common/ErrorToast"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -41,6 +41,7 @@ export function NewBookDialog({ open, onOpenChange }: NewBookDialogProps) {
   const { t, i18n } = useTranslation()
   const navigate = useNavigate()
   const showError = useErrorToast()
+  const showWarnings = useWarningToasts()
   const createBook = useCreateBook()
   const [title, setTitle] = useState("")
   const [idea, setIdea] = useState("")
@@ -168,6 +169,7 @@ export function NewBookDialog({ open, onOpenChange }: NewBookDialogProps) {
                 },
                 {
                   onSuccess: (response) => {
+                    showWarnings(response.warnings ?? [])
                     onOpenChange(false)
                     reset()
                     // A conceiving book opens the studio even before it has a conception

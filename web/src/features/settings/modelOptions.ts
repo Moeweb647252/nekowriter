@@ -43,17 +43,18 @@ export function fromOptionSelection(selection: string): string | undefined {
   return selection === DEFAULT_OPTION_VALUE || selection === "" ? undefined : selection
 }
 
-/** The option keys this UI edits, in the order the server publishes them. */
+/** The option keys this UI edits, in the order the server publishes them.
+ *
+ * Thinking effort is not one of them (D-162): it has its own model-profile fields
+ * (`effort_levels` / `default_effort`) and role selects, not a `ModelOptions` key. */
 export const OPTION_KEYS = [
   "reasoning_replay",
   "cache_ttl",
-  "reasoning_effort",
   "max_tokens_field",
   "send_parallel_tool_calls",
   "stream_usage",
   "temperature",
   "extra_body",
-  "effort",
   "thinking_display",
   "refusal_fallback",
   "eager_input_streaming",

@@ -36,7 +36,7 @@ vi.mock("@/api/hooks/books", () => ({
   usePatchBook: () => ({ mutate: vi.fn(), isPending: false }),
   useDeleteBook: () => ({ mutate: vi.fn(), isPending: false }),
 }))
-vi.mock("@/components/common/ErrorToast", () => ({ useErrorToast: () => vi.fn() }))
+vi.mock("@/components/common/ErrorToast", () => ({ useErrorToast: () => vi.fn(), useWarningToasts: () => vi.fn() }))
 
 import LibraryPage from "@/features/library/LibraryPage"
 

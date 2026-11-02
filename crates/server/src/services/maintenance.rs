@@ -52,6 +52,7 @@ pub async fn maintain(
         }
         return Ok(ReviewSessionResponse {
             session_id: open.id,
+            warnings: Vec::new(),
         });
     }
 
@@ -60,7 +61,7 @@ pub async fn maintain(
     let kind = last_archivist_kind(state.db().conn(), chapter_id)
         .await?
         .unwrap_or(SessionKind::ChapterMaintenance);
-    let (session_id, _warnings) = sessions::create(
+    let (session_id, warnings) = sessions::create(
         state,
         CreateSession {
             kind,
@@ -70,14 +71,17 @@ pub async fn maintain(
         },
     )
     .await?;
-    Ok(ReviewSessionResponse { session_id })
+    Ok(ReviewSessionResponse {
+        session_id,
+        warnings,
+    })
 }
 
 /// `POST /api/chapters/:id/resync` (spec/08 §1.1, spec/06 §8): save the current text as a new
 /// `official` version (reusing an identical one, D-046), then start `chapter_resync`.
 pub async fn resync(state: &AppState, chapter_id: i32) -> Result<ReviewSessionResponse, AppError> {
     let state_owned = state.clone();
-    let (session_id, events) = crate::services::write(state.db(), move |tx| {
+    let (session_id, events, warnings) = crate::services::write(state.db(), move |tx| {
         Box::pin(async move {
             let chapter = chapters::Entity::find_by_id(chapter_id)
                 .one(tx)
@@ -126,7 +130,7 @@ pub async fn resync(state: &AppState, chapter_id: i32) -> Result<ReviewSessionRe
             }
             .update(tx)
             .await?;
-            let (session_id, events, _warnings) = sessions::create_inner(
+            let (session_id, events, warnings) = sessions::create_inner(
                 &state_owned,
                 tx,
                 CreateSession {
@@ -137,13 +141,16 @@ pub async fn resync(state: &AppState, chapter_id: i32) -> Result<ReviewSessionRe
                 },
             )
             .await?;
-            Ok((session_id, events))
+            Ok((session_id, events, warnings))
         })
     })
     .await?;
     state.events().publish_all(events);
     state.manager().spawn(state.clone(), session_id);
-    Ok(ReviewSessionResponse { session_id })
+    Ok(ReviewSessionResponse {
+        session_id,
+        warnings,
+    })
 }
 
 /// Starts `chapter_maintenance` inside an existing transaction (approval with `auto_maintenance`).

@@ -6,11 +6,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const create = vi.fn()
 const navigate = vi.fn()
+const warningToast = vi.fn()
 
 vi.mock("@/api/hooks/books", () => ({
   useCreateBook: () => ({ mutate: create, isPending: false }),
 }))
-vi.mock("@/components/common/ErrorToast", () => ({ useErrorToast: () => vi.fn() }))
+vi.mock("@/components/common/ErrorToast", () => ({
+  useErrorToast: () => vi.fn(),
+  useWarningToasts: () => warningToast,
+}))
 vi.mock("react-router", () => ({
   MemoryRouter: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useNavigate: () => navigate,
@@ -34,6 +38,7 @@ function lastInput() {
 beforeEach(() => {
   create.mockReset()
   navigate.mockReset()
+  warningToast.mockReset()
 })
 
 describe("NewBookDialog knowledge check", () => {
@@ -71,6 +76,23 @@ describe("NewBookDialog knowledge check", () => {
     await user.type(screen.getByLabelText("Title"), "A book")
     await user.click(screen.getByRole("button", { name: "Create book" }))
     expect(navigate).toHaveBeenCalledWith("/books/7/conception")
+  })
+
+  it("shows creation warnings from the book-start path", async () => {
+    create.mockImplementation(
+      (_input: unknown, options: { onSuccess: (response: unknown) => void }) => {
+        options.onSuccess({
+          book: { id: 9, status: "conceiving" },
+          session_id: 3,
+          warnings: ["model.effort_unsupported"],
+        })
+      },
+    )
+    const user = userEvent.setup()
+    renderDialog()
+    await user.type(screen.getByLabelText("Title"), "A book")
+    await user.click(screen.getByRole("button", { name: "Create book" }))
+    expect(warningToast).toHaveBeenCalledWith(["model.effort_unsupported"])
   })
 
   it("lands on the overview for a non-conceiving book", async () => {

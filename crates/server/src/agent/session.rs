@@ -463,6 +463,7 @@ pub async fn to_dto(
 ) -> Result<SessionDto, AppError> {
     let snapshot: json::ModelSnapshot = row.model_snapshot.clone().into_inner();
     let model_label = model_label(conn, row, &snapshot).await?;
+    let effort = effort_of(&snapshot);
     let chapter_number = match row.chapter_id {
         Some(chapter_id) => chapters::Entity::find_by_id(chapter_id)
             .one(conn)
@@ -494,6 +495,7 @@ pub async fn to_dto(
         research_topic,
         research_task_kind,
         model_label,
+        effort,
         status: status_of(row),
         phase: phase_of(row),
         granularity: granularity_of(row),
@@ -530,6 +532,24 @@ async fn model_label(
         return Ok(profile.display_name);
     }
     Ok(snapshot.model.clone())
+}
+
+/// The frozen thinking effort of a session (spec/04 §5.1, D-162).
+///
+/// Read from the snapshot's protocol wire field, so the header shows exactly what the adapter
+/// sends: `reasoning_effort` on OpenAI-compatible providers, `effort` on Anthropic, nothing on
+/// the Demo provider.
+fn effort_of(snapshot: &json::ModelSnapshot) -> Option<String> {
+    let key = match snapshot.protocol {
+        json::Protocol::Openai => "reasoning_effort",
+        json::Protocol::Anthropic => "effort",
+        json::Protocol::Mock => return None,
+    };
+    snapshot
+        .options
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
 }
 
 /// The child session of a superseded session (spec/03 §9), if any.
@@ -917,5 +937,25 @@ mod tests {
             canonical(&sql),
             "UPDATE agent_sessions SET granularity = ?, auto_pause = TRUE, updated_at = ? WHERE id = ? AND status = ?"
         );
+    }
+
+    /// `SessionDto.effort` reads exactly the protocol's wire field from the frozen snapshot
+    /// (spec/04 §5.1, D-162).
+    #[test]
+    fn effort_reads_the_protocol_wire_field() {
+        let mut snapshot = json::ModelSnapshot {
+            protocol: json::Protocol::Openai,
+            options: serde_json::json!({ "reasoning_effort": "max" }),
+            ..json::ModelSnapshot::default()
+        };
+        assert_eq!(effort_of(&snapshot), Some("max".to_owned()));
+        snapshot.protocol = json::Protocol::Anthropic;
+        snapshot.options = serde_json::json!({ "effort": "low" });
+        assert_eq!(effort_of(&snapshot), Some("low".to_owned()));
+        snapshot.protocol = json::Protocol::Mock;
+        assert_eq!(effort_of(&snapshot), None);
+        snapshot.protocol = json::Protocol::Openai;
+        snapshot.options = serde_json::json!({});
+        assert_eq!(effort_of(&snapshot), None);
     }
 }

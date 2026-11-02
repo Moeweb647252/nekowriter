@@ -263,7 +263,9 @@ pub async fn update_inner(
         active.settings = Set(crate::services::json_text(settings.clone()));
     }
     if let Some(overrides) = &patch.model_overrides {
-        active.model_overrides = Set(crate::services::json_text(overrides.clone()));
+        let mut overrides = overrides.clone();
+        overrides.efforts = super::validate_role_efforts(&overrides.efforts)?;
+        active.model_overrides = Set(crate::services::json_text(overrides));
     }
     if let Some(status) = patch.status {
         // Archiving only hides the book; unarchiving sets it back to active (spec/08 §1.3).

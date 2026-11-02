@@ -12,6 +12,14 @@ export type ProviderPresetDto = { key: PresetKey, name: string, protocol: Protoc
  */
 suggested_models: Array<string>, context_window: number, max_output_tokens: number, options: ModelOptionsDto, 
 /**
+ * The thinking-effort levels this model accepts, in display order (spec/04 §8, D-162).
+ */
+effort_levels: Array<string>, 
+/**
+ * The level a role that chooses none gets (spec/04 §8, D-162).
+ */
+default_effort: string | null, 
+/**
  * True when the provider needs an API key (Ollama and LM Studio do not).
  */
 requires_key: boolean, };

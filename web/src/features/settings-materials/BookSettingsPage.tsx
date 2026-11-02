@@ -18,6 +18,7 @@ import { ErrorToastInline } from "@/features/settings/ErrorToastInline"
 import {
   AGENT_ROLES,
   formatModelLabel,
+  resolveRoleEffort,
   roleLabelKey,
   roleSelection,
   type RoleSelection,
@@ -40,12 +41,16 @@ import type { BookStatus } from "@/api/gen/BookStatus"
 import type { Granularity } from "@/api/gen/Granularity"
 import type { CanonSystems } from "@/api/gen/CanonSystems"
 import type { CanonCountsDto } from "@/api/gen/CanonCountsDto"
+import type { RoleEfforts } from "@/api/gen/RoleEfforts"
+import type { RoleModels } from "@/api/gen/RoleModels"
 
 const GRANULARITIES: Granularity[] = ["sentence", "paragraph", "free", "chapter"]
 
 /** The value of the "use the global default" option. Model profile ids are numbers, so this can
  * never collide with one; `null` is the wire value it stands for (spec/03 §4 step 1). */
 const GLOBAL_DEFAULT = "global"
+/** The effort select's "use the global setting" value; invalid as a level token. */
+const GLOBAL_EFFORT = "$global"
 
 const CANON_SYSTEM_KEYS: Array<keyof CanonSystems> = [
   "entities",
@@ -136,6 +141,9 @@ type BookDraft = {
   settings: BookSettings
   /** One entry per role: `null` means "use the global default" for that role. */
   overrides: RoleSelection
+  /** The book's per-role efforts; `model_overrides` is replaced as a unit, so every save
+   * carries this map even when only a model changed (D-162). */
+  efforts: RoleEfforts
 }
 const LANGUAGES = ["zh-CN", "en", "ja", "ko", "fr", "de", "es", "ru"] as const
 
@@ -178,6 +186,7 @@ export default function BookSettingsPage() {
     language: book.data.writing_language,
     settings: book.data.settings,
     overrides: roleSelection(book.data.model_overrides),
+    efforts: book.data.model_overrides.efforts,
   }
   const current = draft !== null && draft.key === saved.key ? draft : saved
   const setTitle = (title: string) => setDraft({ ...current, title })
@@ -192,8 +201,18 @@ export default function BookSettingsPage() {
       ...current,
       overrides: { ...current.overrides, [role]: value === GLOBAL_DEFAULT ? null : Number(value) },
     })
+  const setEffort = (role: (typeof AGENT_ROLES)[number], value: string) => {
+    const efforts: RoleEfforts = { ...current.efforts }
+    if (value === GLOBAL_EFFORT) {
+      delete efforts[role]
+    } else {
+      efforts[role] = value
+    }
+    setDraft({ ...current, efforts })
+  }
   const settings = current.settings
   const overrides = current.overrides
+  const efforts = current.efforts
   const title = current.title
   const genre = current.genre
   const language = current.language
@@ -207,8 +226,9 @@ export default function BookSettingsPage() {
         writing_language: language,
         settings,
         // The whole object every time: a patch that carried only the edited role would silently
-        // clear the siblings, because the server replaces `books.model_overrides` as a unit.
-        model_overrides: overrides,
+        // clear the siblings, because the server replaces `books.model_overrides` as a unit. The
+        // per-role efforts ride along unchanged for the same reason (D-162).
+        model_overrides: { ...overrides, efforts },
       },
       { onError: showError },
     )
@@ -217,6 +237,8 @@ export default function BookSettingsPage() {
   const modelList = models.data ?? []
   const providerList = providers.data ?? []
   const globalDefaults = roleSelection(appSettings.data?.roles_defaults)
+  const globalRoleModels: RoleModels = appSettings.data?.roles_defaults ?? { efforts: {} }
+  const currentRoleModels: RoleModels = { ...overrides, efforts }
   const modelsPending = appSettings.isPending || models.isPending || providers.isPending
   const modelsFailed = appSettings.isError || models.isError || providers.isError
   const skillRows = writingSkills.data ?? []
@@ -559,11 +581,39 @@ export default function BookSettingsPage() {
               // server would still resolve it) but says so instead of rendering a blank control.
               const missing =
                 override !== null && !modelList.some((model) => model.id === override)
+              const resolved = resolveRoleEffort({
+                role,
+                book: currentRoleModels,
+                global: globalRoleModels,
+                models: modelList,
+                providers: providerList,
+              })
+              // "Global setting" means what this row resolves to when the effort is unset, so
+              // resolve with this role's book effort removed while keeping the book's model
+              // override and every other role's choices.
+              const bookContextEfforts: RoleEfforts = { ...current.efforts }
+              delete bookContextEfforts[role]
+              const bookContext = resolveRoleEffort({
+                role,
+                book: { ...currentRoleModels, efforts: bookContextEfforts },
+                global: globalRoleModels,
+                models: modelList,
+                providers: providerList,
+              })
+              const storedEffort = current.efforts[role] ?? null
+              const noLevels = resolved.model === null || resolved.levels.length === 0
+              const stale = resolved.stale
+              const globalLabel =
+                bookContext.effectiveEffort !== null
+                  ? t("book:model_global_setting", {
+                      level: bookContext.effectiveEffort,
+                    })
+                  : t("book:model_global_setting_provider_default")
               return (
                 <div
                   key={role}
                   data-testid={`model-override-row-${role}`}
-                  className="grid grid-cols-[8rem_1fr] items-center gap-x-3 gap-y-1"
+                  className="grid grid-cols-[8rem_1fr_1fr] items-center gap-x-3 gap-y-1"
                 >
                   <Label htmlFor={`book-role-${role}`}>{t(roleLabelKey(role))}</Label>
                   <Select
@@ -590,8 +640,44 @@ export default function BookSettingsPage() {
                       ) : null}
                     </SelectContent>
                   </Select>
-                  <span aria-hidden="true" />
-                  <p className="text-xs text-muted-foreground">
+                  <Select
+                    value={noLevels ? GLOBAL_EFFORT : storedEffort ?? GLOBAL_EFFORT}
+                    onValueChange={(value) => setEffort(role, value)}
+                    disabled={rolesLocked || noLevels}
+                  >
+                    <SelectTrigger
+                      id={`book-role-effort-${role}`}
+                      data-testid={`book-role-effort-${role}`}
+                      aria-label={t("settings:role_effort")}
+                      className="w-full"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {noLevels ? (
+                        <SelectItem value={GLOBAL_EFFORT}>
+                          {t("settings:role_effort_no_levels")}
+                        </SelectItem>
+                      ) : (
+                        <>
+                          <SelectItem value={GLOBAL_EFFORT}>{globalLabel}</SelectItem>
+                          {stale && storedEffort !== null ? (
+                            <SelectItem value={storedEffort}>
+                              {t("settings:role_effort_stale", { level: storedEffort })}
+                            </SelectItem>
+                          ) : null}
+                          {resolved.levels
+                            .filter((level) => !(stale && level === storedEffort))
+                            .map((level) => (
+                              <SelectItem key={level} value={level}>
+                                {level}
+                              </SelectItem>
+                            ))}
+                        </>
+                      )}
+                    </SelectContent>
+                  </Select>
+                  <p className="col-span-2 text-xs text-muted-foreground">
                     {role === "planner" ? (
                       globalDefault !== null ? (
                         t("book:model_planner_default", {
@@ -612,6 +698,15 @@ export default function BookSettingsPage() {
                       })
                     )}
                   </p>
+                  {stale ? (
+                    <p className="col-span-2 text-xs text-muted-foreground">
+                      {resolved.effectiveEffort !== null
+                        ? t("settings:role_effort_stale_hint", {
+                            level: resolved.effectiveEffort,
+                          })
+                        : t("settings:role_effort_stale_hint_none")}
+                    </p>
+                  ) : null}
                   {missing ? (
                     <>
                       <span aria-hidden="true" />

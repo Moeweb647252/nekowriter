@@ -65,6 +65,8 @@ async fn demo_models(app: &TestApp) -> Models {
                     "model": model,
                     "context_window": 200_000,
                     "max_output_tokens": 8_192,
+                    "effort_levels": [],
+                    "default_effort": null,
                     "options": {},
                 }),
             )
@@ -157,6 +159,8 @@ async fn the_patch_round_trips_every_role_through_the_book_dto() {
         "writer": models.book,
         "reviewer": null,
         "archivist": null,
+        // Old rows and requests without efforts read as the empty choice set (D-162).
+        "efforts": {},
     });
     let (status, body) = app
         .patch(

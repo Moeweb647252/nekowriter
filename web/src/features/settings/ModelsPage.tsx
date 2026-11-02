@@ -61,6 +61,8 @@ import {
   unreachableOptionKeys,
   type OptionKey,
 } from "@/features/settings/modelOptions"
+import { ThinkingEffortSection } from "@/features/settings/ThinkingEffort"
+import { unsendableEffortLevels } from "@/features/settings/effortLevels"
 import type { ModelOptionSpecDto } from "@/api/gen/ModelOptionSpecDto"
 import type { Protocol } from "@/api/gen/Protocol"
 import type { ProviderDto } from "@/api/gen/ProviderDto"
@@ -77,6 +79,9 @@ type ModelDraft = {
   context_window: string
   max_output_tokens: string
   options: ModelOptionsDto
+  /** The ordered levels and the default chosen from them (D-162). */
+  effort_levels: string[]
+  default_effort: string | null
 }
 
 const EMPTY_DRAFT: ModelDraft = {
@@ -86,6 +91,8 @@ const EMPTY_DRAFT: ModelDraft = {
   context_window: "128000",
   max_output_tokens: "16384",
   options: {},
+  effort_levels: [],
+  default_effort: null,
 }
 
 /** A draft option value as the form holds it: every field of `ModelOptionsDto` is optional and
@@ -102,6 +109,7 @@ export default function ModelsPage() {
   const showError = useErrorToast()
   const [creating, setCreating] = useState(false)
   const [clearing, setClearing] = useState<ModelProfileDto | null>(null)
+  const [clearingEffort, setClearingEffort] = useState<ModelProfileDto | null>(null)
   const [editing, setEditing] = useState<ModelProfileDto | null>(null)
   const [deleting, setDeleting] = useState<ModelProfileDto | null>(null)
 
@@ -120,6 +128,7 @@ export default function ModelsPage() {
     keys
       .map((key) => t(optionLabelKey(key), { defaultValue: key }))
       .join(", ")
+  const effortMismatchModels = list.filter((model) => model.ignored_effort_levels.length > 0)
 
   return (
     <div className="space-y-4">
@@ -138,6 +147,37 @@ export default function ModelsPage() {
         </Button>
       </div>
 
+      {effortMismatchModels.length === 0 ? null : (
+        <Alert variant="destructive" data-testid="ignored-effort-banner">
+          <TriangleAlert />
+          <AlertTitle>{t("settings:effort_mismatch_title")}</AlertTitle>
+          <AlertDescription>
+            <ul className="space-y-2">
+              {effortMismatchModels.map((model) => (
+                <li key={model.id} className="flex flex-wrap items-center gap-2">
+                  <span>
+                    {t("settings:effort_mismatch_body", {
+                      model: model.display_name,
+                      levels: model.ignored_effort_levels.join(", "),
+                      protocol: protocolLabel(
+                        t,
+                        providerProtocol(providerList, model.provider_id),
+                      ),
+                    })}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setClearingEffort(model)}
+                  >
+                    {t("settings:effort_mismatch_fix")}
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </AlertDescription>
+        </Alert>
+      )}
       {providerList.length === 0 ? (
         <EmptyState
           title={t("settings:no_providers")}
@@ -155,6 +195,7 @@ export default function ModelsPage() {
               <TableHead>{t("settings:context_window")}</TableHead>
               <TableHead>{t("settings:max_output")}</TableHead>
               <TableHead>{t("settings:protocol_options")}</TableHead>
+              <TableHead>{t("settings:effort.column")}</TableHead>
               <TableHead className="w-0" />
             </TableRow>
           </TableHeader>
@@ -195,6 +236,31 @@ export default function ModelsPage() {
                       </Badge>
                     </button>
                   )}
+                </TableCell>
+                <TableCell>
+                  <div className="space-y-1">
+                    <span data-testid={`effort-levels-${model.id}`}>
+                      {effortSummary(t, model)}
+                    </span>
+                    {model.ignored_effort_levels.length === 0 ? null : (
+                      <button
+                        type="button"
+                        data-testid={`ignored-efforts-${model.id}`}
+                        onClick={() => setClearingEffort(model)}
+                        className="text-left"
+                      >
+                        <Badge
+                          variant="destructive"
+                          className="h-auto max-w-64 items-start gap-1 py-1 text-left whitespace-normal"
+                        >
+                          <TriangleAlert className="mt-0.5 size-3 shrink-0" />
+                          {t("settings:effort_mismatch_badge", {
+                            levels: model.ignored_effort_levels.join(", "),
+                          })}
+                        </Badge>
+                      </button>
+                    )}
+                  </div>
                 </TableCell>
                 <TableCell>
                   <div className="flex justify-end gap-1">
@@ -242,7 +308,11 @@ export default function ModelsPage() {
         onOpenChange={() => setClearing(null)}
         title={t("settings:option_mismatch")}
         description={t("settings:option_mismatch_confirm", {
-          options: optionList(clearing?.ignored_options ?? []),
+          options: repairSummary(
+            t,
+            clearing?.ignored_options ?? [],
+            clearing?.ignored_effort_levels ?? [],
+          ),
           protocol: protocolLabel(t, providerProtocol(providerList, clearing?.provider_id ?? 0)),
         })}
         confirmLabel={t("settings:option_mismatch_fix")}
@@ -250,8 +320,10 @@ export default function ModelsPage() {
           if (clearing === null) {
             return
           }
-          // The author must be able to repair their own profile from the UI (D-132): the stored
-          // options their protocol cannot send are removed, and nothing else changes.
+          // The author must be able to repair their own profile from the UI (D-132): both
+          // stranded kinds are cleared in one PATCH, because each validator refuses the other
+          // list as-is. A default among the removed levels resets to None (D-162).
+          const ignoredLevels = new Set(clearing.ignored_effort_levels)
           const input: ModelProfileInput = {
             provider_id: clearing.provider_id,
             display_name: clearing.display_name,
@@ -259,6 +331,11 @@ export default function ModelsPage() {
             context_window: clearing.context_window,
             max_output_tokens: clearing.max_output_tokens,
             options: removeOptionKeys(clearing.options, clearing.ignored_options),
+            effort_levels: clearing.effort_levels.filter((level) => !ignoredLevels.has(level)),
+            default_effort:
+              clearing.default_effort != null && ignoredLevels.has(clearing.default_effort)
+                ? null
+                : (clearing.default_effort ?? null),
           }
           patchModel.mutate(
             { id: clearing.id, input },
@@ -266,6 +343,57 @@ export default function ModelsPage() {
               onSuccess: () => {
                 toast.success(t("settings:option_mismatch_fixed"))
                 setClearing(null)
+              },
+              onError: showError,
+            },
+          )
+        }}
+      />
+      <ConfirmDialog
+        open={clearingEffort !== null}
+        onOpenChange={() => setClearingEffort(null)}
+        title={t("settings:effort_mismatch_title")}
+        description={t("settings:effort_mismatch_confirm", {
+          model: clearingEffort?.display_name ?? "",
+          levels: repairSummary(
+            t,
+            clearingEffort?.ignored_options ?? [],
+            clearingEffort?.ignored_effort_levels ?? [],
+          ),
+          protocol: protocolLabel(
+            t,
+            providerProtocol(providerList, clearingEffort?.provider_id ?? 0),
+          ),
+        })}
+        confirmLabel={t("settings:effort_mismatch_fix")}
+        onConfirm={() => {
+          if (clearingEffort === null) {
+            return
+          }
+          const ignored = new Set(clearingEffort.ignored_effort_levels)
+          const input: ModelProfileInput = {
+            provider_id: clearingEffort.provider_id,
+            display_name: clearingEffort.display_name,
+            model: clearingEffort.model,
+            context_window: clearingEffort.context_window,
+            max_output_tokens: clearingEffort.max_output_tokens,
+            options: removeOptionKeys(
+              clearingEffort.options,
+              clearingEffort.ignored_options,
+            ),
+            effort_levels: clearingEffort.effort_levels.filter((level) => !ignored.has(level)),
+            default_effort:
+              clearingEffort.default_effort != null &&
+              ignored.has(clearingEffort.default_effort)
+                ? null
+                : (clearingEffort.default_effort ?? null),
+          }
+          patchModel.mutate(
+            { id: clearingEffort.id, input },
+            {
+              onSuccess: () => {
+                toast.success(t("settings:effort_mismatch_fixed"))
+                setClearingEffort(null)
               },
               onError: showError,
             },
@@ -319,12 +447,15 @@ function ModelDialog({
           context_window: String(model.context_window),
           max_output_tokens: String(model.max_output_tokens),
           options: model.options,
+          effort_levels: [...model.effort_levels],
+          default_effort: model.default_effort ?? null,
         },
   )
   const [remote, setRemote] = useState<RemoteModelDto[]>([])
   const [fetchError, setFetchError] = useState<string | null>(null)
   // What a provider switch dropped, so the author sees it instead of finding it gone later.
   const [cleared, setCleared] = useState<OptionKey[]>([])
+  const [clearedEfforts, setClearedEfforts] = useState<string[]>([])
   const editing = model !== undefined
   const protocol = providerProtocol(providers, draft.provider_id)
   const visibleSpecs = optionsForProtocol(specs, protocol)
@@ -362,6 +493,10 @@ function ModelDialog({
       context_window: Number(draft.context_window) || 0,
       max_output_tokens: Number(draft.max_output_tokens) || 0,
       options: draft.options,
+      // The dialog owns both fields; a save carries the loaded levels and default through
+      // untouched unless the author edits them (D-162).
+      effort_levels: draft.effort_levels,
+      default_effort: draft.default_effort,
     }
     if (editing) {
       patchModel.mutate({ id: model.id, input }, { onSuccess: onClose, onError: showError })
@@ -392,13 +527,30 @@ function ModelDialog({
             <Select
               value={draft.provider_id}
               onValueChange={(value) => {
-                // Switching to a provider with another protocol strands the options that protocol
-                // cannot send. Dropping them here — visibly — is what keeps the original silent
-                // no-op from being recreated on a protocol change (D-132).
+                // A protocol switch removes the levels the new protocol cannot send and names
+                // them in the existing "Options removed" notice, exactly like stranded options
+                // (spec/11 §5.1, D-162). The removal is visible and explained, not silent.
                 const nextProtocol = providerProtocol(providers, value)
+                const strandedEfforts = unsendableEffortLevels(
+                  draft.effort_levels,
+                  nextProtocol,
+                )
                 const result = clearUnreachableOptions(draft.options, specs, nextProtocol)
                 setCleared(result.removed)
-                setDraft({ ...draft, provider_id: value, options: result.options })
+                setClearedEfforts(strandedEfforts)
+                setDraft({
+                  ...draft,
+                  provider_id: value,
+                  options: result.options,
+                  effort_levels: draft.effort_levels.filter(
+                    (level) => !strandedEfforts.includes(level),
+                  ),
+                  default_effort:
+                    draft.default_effort !== null &&
+                    strandedEfforts.includes(draft.default_effort)
+                      ? null
+                      : draft.default_effort,
+                })
               }}
             >
               <SelectTrigger id="model-provider">
@@ -530,15 +682,20 @@ function ModelDialog({
               </AlertDescription>
             </Alert>
           )}
-          {cleared.length === 0 ? null : (
+          {cleared.length === 0 && clearedEfforts.length === 0 ? null : (
             <Alert data-testid="cleared-options-alert">
               <TriangleAlert />
               <AlertTitle>{t("settings:option_cleared_title")}</AlertTitle>
               <AlertDescription>
                 {t("settings:option_cleared_body", {
-                  options: cleared
-                    .map((key) => t(optionLabelKey(key), { defaultValue: key }))
-                    .join(", "),
+                  options: [
+                    ...cleared.map((key) =>
+                      t(optionLabelKey(key), { defaultValue: key }),
+                    ),
+                    ...clearedEfforts.map((level) =>
+                      t("settings:effort.removed_level", { level }),
+                    ),
+                  ].join(", "),
                   protocol: protocolLabel(t, protocol),
                 })}
               </AlertDescription>
@@ -580,6 +737,20 @@ function ModelDialog({
               </div>
             )}
           </div>
+          <ThinkingEffortSection
+            protocol={protocol}
+            levels={draft.effort_levels}
+            defaultEffort={draft.default_effort}
+            ignoredEffortLevels={
+              model !== undefined &&
+              draft.provider_id === String(model.provider_id)
+                ? model.ignored_effort_levels
+                : []
+            }
+            onChange={(effortLevels, defaultEffort) =>
+              setDraft({ ...draft, effort_levels: effortLevels, default_effort: defaultEffort })
+            }
+          />
         </div>
         <DialogFooter>
           <Button variant="ghost" size="sm" onClick={onClose}>
@@ -606,9 +777,34 @@ function providerChoices(providers: readonly ProviderDto[]): ProviderChoice[] {
   }))
 }
 
+/** Names everything a one-click repair will remove: both stranded kinds, not just one. */
+function repairSummary(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  options: readonly string[],
+  effortLevels: readonly string[],
+): string {
+  return [
+    ...options.map((key) => t(optionLabelKey(key), { defaultValue: key })),
+    ...effortLevels.map((level) => t("settings:effort.removed_level", { level })),
+  ].join(", ")
+}
+
+/** The table cell: levels joined with " · ", the default marked, "—" when empty. */
+function effortSummary(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  model: ModelProfileDto,
+): string {
+  if (model.effort_levels.length === 0) {
+    return "—"
+  }
+  return model.effort_levels
+    .map((level) => (level === model.default_effort ? `${level} (${t("settings:effort.default_marker")})` : level))
+    .join(" · ")
+}
+
 /** The localized name of a protocol, for the option notes and the mismatch text. */
 function protocolLabel(
-  t: (key: string, options?: { defaultValue?: string }) => string,
+  t: (key: string, options?: Record<string, unknown>) => string,
   protocol: Protocol | null,
 ): string {
   return protocol === null
@@ -637,9 +833,7 @@ function optionCount(
 function assignOption(options: ModelOptionsDto, key: OptionKey, value: OptionValue): void {
   switch (key) {
     case "reasoning_replay":
-    case "reasoning_effort":
     case "max_tokens_field":
-    case "effort":
     case "thinking_display":
     case "cache_ttl":
       options[key] = String(value)

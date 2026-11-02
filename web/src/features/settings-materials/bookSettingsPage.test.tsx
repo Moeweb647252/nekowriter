@@ -17,6 +17,7 @@ import zhBook from "@/i18n/locales/zh-CN/book.json"
 import enSettings from "@/i18n/locales/en/settings.json"
 import enSkills from "@/i18n/locales/en/skills.json"
 import type { BookDto } from "@/api/gen/BookDto"
+import type { RoleModels } from "@/api/gen/RoleModels"
 import type { WritingSkillDto } from "@/api/gen/WritingSkillDto"
 
 const patchBook = vi.fn()
@@ -29,7 +30,7 @@ let book: BookDto
 let skillRows: WritingSkillDto[]
 
 /** The global role defaults the page compares each row against. */
-let rolesDefaults: Record<string, number | null>
+let rolesDefaults: RoleModels
 
 vi.mock("react-router", () => ({
   Link: ({ children, to }: { children: React.ReactNode; to: string }) => (
@@ -72,16 +73,49 @@ vi.mock("@/api/hooks/providers", () => ({
     isPending: false,
     isError: false,
     data: [
-      { id: 7, provider_id: 1, display_name: "Writer model" },
-      { id: 8, provider_id: 2, display_name: "Review model" },
+      {
+        id: 7,
+        provider_id: 1,
+        display_name: "Writer model",
+        effort_levels: ["low", "high", "max"],
+        default_effort: "high",
+      },
+      {
+        id: 8,
+        provider_id: 2,
+        display_name: "Review model",
+        effort_levels: ["low", "medium"],
+        default_effort: "low",
+      },
+      {
+        id: 12,
+        provider_id: 1,
+        display_name: "Protocol mismatch model",
+        effort_levels: ["low", "ultra"],
+        default_effort: "low",
+      },
+      {
+        id: 13,
+        provider_id: 1,
+        display_name: "Default high model",
+        effort_levels: ["low", "medium", "high", "max"],
+        default_effort: "high",
+      },
+      {
+        id: 14,
+        provider_id: 1,
+        display_name: "No default model",
+        effort_levels: ["low"],
+        default_effort: null,
+      },
     ],
   }),
   useProviders: () => ({
     isPending: false,
     isError: false,
     data: [
-      { id: 1, name: "Anthropic" },
-      { id: 2, name: "DeepSeek" },
+      { id: 1, name: "Anthropic", protocol: "anthropic" },
+      { id: 2, name: "DeepSeek", protocol: "openai" },
     ],
   }),
 }))
@@ -129,7 +163,7 @@ beforeEach(() => {
     goals: { nodes: 2 },
   }
   skillRows = []
-  rolesDefaults = { conception: 8, researcher: 8, writer: 7, reviewer: 8, archivist: 8 }
+  rolesDefaults = { conception: 8, researcher: 8, writer: 7, reviewer: 8, archivist: 8 , efforts: {}}
   book = {
     id: 1,
     title: "青云劫",
@@ -149,7 +183,7 @@ beforeEach(() => {
       auto_maintenance: true,
       canon_systems: { entities: true, timeline: true, memory: true, foreshadowing: true, goals: true },
     },
-    model_overrides: { conception: null, researcher: null, writer: null, reviewer: null, archivist: null },
+    model_overrides: { conception: null, researcher: null, writer: null, reviewer: null, archivist: null, efforts: {} },
     conception: {
       session_id: null,
       characters_revision: 0,
@@ -182,7 +216,7 @@ describe("Book settings › model overrides", () => {
     // With no override the select shows "Use the global default".
     for (const role of ["conception", "researcher", "planner", "writer", "reviewer", "archivist"]) {
       const row = screen.getByTestId(`model-override-row-${role}`)
-      expect(within(row).getByRole("combobox")).toHaveTextContent("Use the global default")
+      expect(within(row).getAllByRole("combobox")[0]).toHaveTextContent("Use the global default")
     }
   })
 
@@ -193,17 +227,18 @@ describe("Book settings › model overrides", () => {
       writer: 7,
       reviewer: null,
       archivist: null,
+      efforts: {},
     }
     render(<BookSettingsPage />)
 
     const writer = screen.getByTestId("model-override-row-writer")
-    expect(within(writer).getByRole("combobox")).toHaveTextContent("Anthropic · Writer model")
+    expect(within(writer).getAllByRole("combobox")[0]).toHaveTextContent("Anthropic · Writer model")
     const reviewer = screen.getByTestId("model-override-row-reviewer")
-    expect(within(reviewer).getByRole("combobox")).toHaveTextContent("Use the global default")
+    expect(within(reviewer).getAllByRole("combobox")[0]).toHaveTextContent("Use the global default")
   })
 
   it("displays what the global default resolves to for every role", () => {
-    rolesDefaults = { conception: 8, researcher: null, writer: 7, reviewer: 8, archivist: null }
+    rolesDefaults = { conception: 8, researcher: null, writer: 7, reviewer: 8, archivist: null , efforts: {}}
     render(<BookSettingsPage />)
 
     expect(screen.getByTestId("model-override-row-conception")).toHaveTextContent(
@@ -228,15 +263,116 @@ describe("Book settings › model overrides", () => {
       writer: 99,
       reviewer: null,
       archivist: null,
+      efforts: {},
     }
     render(<BookSettingsPage />)
 
     const writer = screen.getByTestId("model-override-row-writer")
     // Not a blank select: the trigger names the missing model and the row explains it.
-    expect(within(writer).getByRole("combobox")).toHaveTextContent("Missing model")
+    expect(within(writer).getAllByRole("combobox")[0]).toHaveTextContent("Missing model")
     expect(writer).toHaveTextContent(
       "The model set here no longer exists. Pick another model or the global default.",
     )
+  })
+
+  it("shows the global setting label and saves an effort in the whole override map", async () => {
+    const user = userEvent.setup()
+    book.model_overrides = {
+      conception: null,
+      researcher: null,
+      planner: null,
+      writer: null,
+      reviewer: null,
+      archivist: null,
+      efforts: {},
+    }
+    render(<BookSettingsPage />)
+
+    const writer = screen.getByTestId("model-override-row-writer")
+    const effort = within(writer).getAllByRole("combobox")[1]
+    expect(effort).toHaveTextContent("Global setting (high)")
+
+    await user.click(effort)
+    await user.click(await screen.findByRole("option", { name: "max" }))
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    const [body] = patchBook.mock.calls[0] as [{ model_overrides: RoleModels }]
+    expect(body.model_overrides.efforts).toEqual({ writer: "max" })
+    // The model map is still part of the same unit.
+    expect(body.model_overrides.writer).toBeNull()
+    expect(body.model_overrides.reviewer).toBeNull()
+  })
+
+  it("names the effective fallback when it differs from the model default", () => {
+    book.model_overrides = {
+      conception: null,
+      researcher: null,
+      planner: null,
+      writer: 13,
+      reviewer: null,
+      archivist: null,
+      efforts: { writer: "ultra" },
+    }
+    rolesDefaults = { ...rolesDefaults, efforts: { writer: "low" } }
+    render(<BookSettingsPage />)
+
+    const row = screen.getByTestId("model-override-row-writer")
+    expect(row).toHaveTextContent("Sessions will use low instead.")
+  })
+
+  it("names the provider default when a stale effort has no fallback", () => {
+    book.model_overrides = {
+      conception: null,
+      researcher: null,
+      planner: null,
+      writer: 14,
+      reviewer: null,
+      archivist: null,
+      efforts: { writer: "ultra" },
+    }
+    rolesDefaults = { ...rolesDefaults, efforts: {} }
+    render(<BookSettingsPage />)
+
+    const row = screen.getByTestId("model-override-row-writer")
+    expect(row).toHaveTextContent("Sessions will use the provider default.")
+  })
+
+  it("labels Global setting with the book-context fallback", () => {
+    // Global writer model default is high; the book writer model override defaults to low.
+    book.model_overrides = {
+      conception: null,
+      researcher: null,
+      planner: null,
+      writer: 12,
+      reviewer: null,
+      archivist: null,
+      efforts: {},
+    }
+    render(<BookSettingsPage />)
+
+    const effort = within(screen.getByTestId("model-override-row-writer")).getAllByRole(
+      "combobox",
+    )[1]
+    expect(effort).toHaveTextContent("Global setting (low)")
+  })
+
+  it("renders one stale effort item and names the effective fallback", () => {
+    book.model_overrides = {
+      conception: null,
+      researcher: null,
+      planner: null,
+      writer: 12,
+      reviewer: null,
+      archivist: null,
+      efforts: { writer: "ultra" },
+    }
+    render(<BookSettingsPage />)
+
+    const row = screen.getByTestId("model-override-row-writer")
+    const effort = within(row).getAllByRole("combobox")[1]
+    expect(effort).toHaveTextContent("ultra (not supported)")
+    expect(effort).not.toHaveTextContent("ultra (not supported)ultra")
+    expect(row).toHaveTextContent("Sessions will use low instead.")
   })
 
   it("lets a stale override be cleared back to the global default", async () => {
@@ -250,11 +386,12 @@ describe("Book settings › model overrides", () => {
       writer: 99,
       reviewer: null,
       archivist: null,
+      efforts: {},
     }
     render(<BookSettingsPage />)
 
     await user.click(
-      within(screen.getByTestId("model-override-row-writer")).getByRole("combobox"),
+      within(screen.getByTestId("model-override-row-writer")).getAllByRole("combobox")[0],
     )
     await user.click(await screen.findByRole("option", { name: "Use the global default" }))
     await user.click(screen.getByRole("button", { name: "Save" }))
@@ -271,11 +408,12 @@ describe("Book settings › model overrides", () => {
       writer: null,
       reviewer: 8,
       archivist: null,
+      efforts: { researcher: "low" },
     }
     render(<BookSettingsPage />)
 
     await user.click(
-      within(screen.getByTestId("model-override-row-writer")).getByRole("combobox"),
+      within(screen.getByTestId("model-override-row-writer")).getAllByRole("combobox")[0],
     )
     await user.click(await screen.findByRole("option", { name: "Anthropic · Writer model" }))
     await user.click(screen.getByRole("button", { name: "Save" }))
@@ -291,6 +429,9 @@ describe("Book settings › model overrides", () => {
       writer: 7,
       reviewer: 8,
       archivist: null,
+      // The loaded per-role efforts ride along: a unit replacement that dropped them would erase
+      // the author's choices (D-162). Mutation: sending `{}` here fails this assertion.
+      efforts: { researcher: "low" },
     })
     // And nothing else is invented: the patch carries the form's other fields too, but no second
     // save path exists.
@@ -305,11 +446,12 @@ describe("Book settings › model overrides", () => {
       writer: 7,
       reviewer: 8,
       archivist: null,
+      efforts: {},
     }
     render(<BookSettingsPage />)
 
     await user.click(
-      within(screen.getByTestId("model-override-row-writer")).getByRole("combobox"),
+      within(screen.getByTestId("model-override-row-writer")).getAllByRole("combobox")[0],
     )
     await user.click(await screen.findByRole("option", { name: "Use the global default" }))
     await user.click(screen.getByRole("button", { name: "Save" }))
@@ -325,9 +467,11 @@ describe("Book settings › model overrides", () => {
     render(<BookSettingsPage />)
 
     for (const role of ["conception", "researcher", "planner", "writer", "reviewer", "archivist"]) {
-      expect(
-        within(screen.getByTestId(`model-override-row-${role}`)).getByRole("combobox"),
-      ).toBeDisabled()
+      const selects = within(screen.getByTestId(`model-override-row-${role}`)).getAllByRole(
+        "combobox",
+      )
+      expect(selects[0]).toBeDisabled()
+      expect(selects[1]).toBeDisabled()
     }
     expect(
       screen.getByText(
@@ -341,7 +485,7 @@ describe("Book settings › model overrides", () => {
     render(<BookSettingsPage />)
 
     expect(
-      within(screen.getByTestId("model-override-row-writer")).getByRole("combobox"),
+      within(screen.getByTestId("model-override-row-writer")).getAllByRole("combobox")[0],
     ).toBeDisabled()
     expect(
       screen.getByText("This book is archived. Unarchive it to change its roles."),
@@ -424,6 +568,7 @@ describe("Book settings › planner model hint (D-146)", () => {
       writer: 7,
       reviewer: null,
       archivist: null,
+      efforts: {},
     }
     book.model_overrides = {
       conception: null,
@@ -432,13 +577,14 @@ describe("Book settings › planner model hint (D-146)", () => {
       writer: null,
       reviewer: null,
       archivist: null,
+      efforts: {},
     }
     const { unmount } = render(<BookSettingsPage />)
     const row = screen.getByTestId("model-override-row-planner")
     expect(within(row).getByText("Follows the Writer: Anthropic · Writer model")).toBeInTheDocument()
     unmount()
 
-    rolesDefaults = { ...rolesDefaults, planner: 8 }
+    rolesDefaults = { ...rolesDefaults, planner: 8 , efforts: {}}
     render(<BookSettingsPage />)
     const withGlobal = screen.getByTestId("model-override-row-planner")
     expect(within(withGlobal).getByText("Default: DeepSeek · Review model")).toBeInTheDocument()
