@@ -35,7 +35,7 @@ use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseTransaction, DbErr, Stat
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::db::json::{JsonText, to_json};
+use crate::db::json::{JsonText, RoleEfforts, to_json};
 use crate::error::{AppError, ErrorCode};
 
 /// The current UTC time in the representation the schema stores.
@@ -61,6 +61,30 @@ pub(crate) fn parse_json<T: for<'de> serde::Deserialize<'de>>(
 ) -> Result<T, AppError> {
     serde_json::from_str(raw)
         .map_err(|err| AppError::internal(format!("corrupt {column} column: {err}")))
+}
+
+/// Validates the per-role `efforts` map on save (spec/03 §4, spec/04 §5.1, D-162).
+///
+/// Each set value is trimmed and must match `^[A-Za-z0-9_-]{1,32}$`; the value is deliberately not
+/// checked against a model, because the role's model can change after the choice is saved. The
+/// cleaned map is what gets stored, so a surrounding-whitespace value round-trips as its trimmed
+/// form. The field key is `efforts.<role>` as spec/10 §2.1 documents.
+pub(crate) fn validate_role_efforts(efforts: &RoleEfforts) -> Result<RoleEfforts, AppError> {
+    let mut cleaned = RoleEfforts::default();
+    for (role, value) in efforts.entries() {
+        let Some(value) = value else {
+            continue;
+        };
+        let trimmed = value.trim();
+        if !nekowriter_llm::EffortRule::is_valid_level(trimmed) {
+            return Err(field_error(
+                &format!("efforts.{}", role.as_str()),
+                "an effort level must be 1-32 characters from A-Z, a-z, 0-9, '_' and '-'",
+            ));
+        }
+        cleaned.set(role, Some(trimmed.to_owned()));
+    }
+    Ok(cleaned)
 }
 
 /// Runs a raw SELECT that returns at most one row and reads one `i64` column.

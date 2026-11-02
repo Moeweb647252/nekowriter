@@ -425,7 +425,7 @@ fn db_protocol(protocol: nekowriter_llm::Protocol) -> Protocol {
 
 /// The LLM-layer protocol of a stored protocol value (spec/04 §1). One helper, because the option
 /// table in `crates/llm` speaks the LLM enum while the row speaks the DB enum.
-fn llm_protocol(protocol: Protocol) -> nekowriter_llm::Protocol {
+pub(crate) fn llm_protocol(protocol: Protocol) -> nekowriter_llm::Protocol {
     match protocol {
         Protocol::Openai => nekowriter_llm::Protocol::Openai,
         Protocol::Anthropic => nekowriter_llm::Protocol::Anthropic,
@@ -1019,7 +1019,7 @@ fn validate_options_protocol(
                 "{} cannot be sent by a provider with protocol {}; {}",
                 key.as_str(),
                 protocol,
-                alternative_hint(key, protocol)
+                alternative_hint(protocol)
             )),
         );
     }
@@ -1029,40 +1029,29 @@ fn validate_options_protocol(
     Err(AppError::invalid_fields(fields))
 }
 
-/// What to use instead of `key` on `protocol`, for the validation message (spec/04 §5).
+/// Names the profile options `protocol` accepts, for the validation message (spec/04 §5).
 ///
-/// The cross-protocol pairs are the whole point of the bug report: `effort` (Anthropic) and
-/// `reasoning_effort` (OpenAI-compatible) are the same intent under two names, and saying so in
-/// the error is what turns a cryptic rejection into a fix.
-fn alternative_hint(key: nekowriter_llm::ModelOptionKey, protocol: Protocol) -> String {
+/// The message must be actionable without a second lookup. `reachable` is derived from `ALL`,
+/// which still carries the two role-effort wire keys; those are not profile options any more
+/// (D-162), so filter through `PROFILE`. The former cross-protocol `effort`/`reasoning_effort`
+/// hint is gone with the fields themselves.
+fn alternative_hint(protocol: Protocol) -> String {
     use nekowriter_llm::ModelOptionKey;
-    match key {
-        // The pair the bug report is about: the same intent under two names.
-        ModelOptionKey::Effort => "use reasoning_effort instead".to_owned(),
-        ModelOptionKey::ReasoningEffort => "use effort instead".to_owned(),
-        // Everything else: name the options this protocol *can* send, so the message is actionable
-        // without a second lookup.
-        _ => {
-            // The hint names the profile options the protocol accepts. `reachable` is derived
-            // from `ALL`, which still carries the two role-effort wire keys; those are not profile
-            // options any more (D-162), so filter through `PROFILE` before naming them.
-            let reachable: Vec<ModelOptionKey> = ModelOptionKey::reachable(llm_protocol(protocol))
+    let reachable: Vec<ModelOptionKey> = ModelOptionKey::reachable(llm_protocol(protocol))
+        .into_iter()
+        .filter(|key| ModelOptionKey::PROFILE.contains(key))
+        .collect();
+    if reachable.is_empty() {
+        "this protocol sends no model options at all".to_owned()
+    } else {
+        format!(
+            "this protocol accepts only {}",
+            reachable
                 .into_iter()
-                .filter(|key| ModelOptionKey::PROFILE.contains(key))
-                .collect();
-            if reachable.is_empty() {
-                "this protocol sends no model options at all".to_owned()
-            } else {
-                format!(
-                    "this protocol accepts only {}",
-                    reachable
-                        .into_iter()
-                        .map(ModelOptionKey::as_str)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            }
-        }
+                .map(ModelOptionKey::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
     }
 }
 

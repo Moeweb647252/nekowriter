@@ -59,7 +59,11 @@ pub async fn update(
     let current = get(tx).await?;
 
     let roles = match &patch.roles_defaults {
-        Some(roles) => roles.clone(),
+        Some(roles) => {
+            let mut roles = roles.clone();
+            roles.efforts = super::validate_role_efforts(&roles.efforts)?;
+            roles
+        }
         None => current.roles_defaults.clone(),
     };
     let book_defaults = match &patch.book_defaults {

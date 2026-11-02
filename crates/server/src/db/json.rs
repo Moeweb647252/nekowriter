@@ -653,6 +653,19 @@ pub struct RoleEfforts {
 }
 
 impl RoleEfforts {
+    /// The six role entries in settings-page order, so validation and tests do not repeat the
+    /// field mapping.
+    pub fn entries(&self) -> [(AgentRole, Option<&str>); 6] {
+        [
+            (AgentRole::Conception, self.conception.as_deref()),
+            (AgentRole::Researcher, self.researcher.as_deref()),
+            (AgentRole::Planner, self.planner.as_deref()),
+            (AgentRole::Writer, self.writer.as_deref()),
+            (AgentRole::Reviewer, self.reviewer.as_deref()),
+            (AgentRole::Archivist, self.archivist.as_deref()),
+        ]
+    }
+
     pub fn get(&self, role: AgentRole) -> Option<&str> {
         match role {
             AgentRole::Conception => self.conception.as_deref(),

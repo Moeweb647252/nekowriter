@@ -24,8 +24,8 @@ use crate::db::entities::{
 };
 use crate::db::json::{
     AgentRole, BookSettings, ChapterStatus, Granularity, InboxKind, JsonText, ModelSnapshot, Phase,
-    ResearchTaskStatus, RoleModels, SessionCounters, SessionKind, SessionStatus, StoredBlock,
-    ToolCallStatus, TrackKind,
+    Protocol, ResearchTaskStatus, RoleModels, SessionCounters, SessionKind, SessionStatus,
+    StoredBlock, ToolCallStatus, TrackKind,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
@@ -272,8 +272,8 @@ pub(crate) async fn create_inner(
         ),
         None => None,
     };
-    let model_profile_id = resolve_model(tx, book.as_ref(), role_enum).await?;
-    let profile = model_profiles::Entity::find_by_id(model_profile_id)
+    let resolved = resolve_model(tx, book.as_ref(), role_enum).await?;
+    let profile = model_profiles::Entity::find_by_id(resolved.profile_id)
         .one(tx)
         .await?
         .ok_or_else(|| crate::agent::context::missing_role(role_enum))?;
@@ -315,7 +315,17 @@ pub(crate) async fn create_inner(
     } else {
         nekowriter_llm::CacheTtlOption::FiveMinutes
     };
-    let snapshot = model_snapshot_with_ttl(&profile, &provider, cache_ttl)?;
+    let effort = resolve_session_effort(
+        tx,
+        book.as_ref(),
+        role_enum,
+        resolved.via_writer,
+        &profile,
+        &provider,
+        &mut warnings,
+    )
+    .await?;
+    let snapshot = model_snapshot_with_ttl(&profile, &provider, cache_ttl, effort.as_deref())?;
 
     // 2. Freeze the prompts: the role's system prompt and tool definitions through the registry.
     let prompts = state.prompts().for_book(state.db(), input.book_id).await?;
@@ -442,7 +452,7 @@ pub(crate) async fn create_inner(
         chapter_id: Set(input.chapter_id),
         track_id: Set(track_id),
         research_task_id: Set(input.research_task_id),
-        model_profile_id: Set(Some(model_profile_id)),
+        model_profile_id: Set(Some(resolved.profile_id)),
         model_snapshot: Set(JsonText(snapshot)),
         system_prompt: Set(system_prompt.text),
         tools: Set(JsonText(tools)),
@@ -623,49 +633,173 @@ pub async fn try_resolve_model(
     Ok(None)
 }
 
+/// A resolved model and whether the planner's entry came from a writer entry (spec/03 §4).
+struct ResolvedModel {
+    profile_id: i32,
+    /// True only for the planner when the model came from a writer entry rather than its own:
+    /// this is what makes the writer's effort follow along (spec/04 §5.1, D-162).
+    via_writer: bool,
+}
+
 /// `book.model_overrides[role]` → `app_settings["roles.defaults"][role]` (spec/03 §4 step 1).
 async fn resolve_model(
     tx: &impl ConnectionTrait,
     book: Option<&books::Model>,
     role: AgentRole,
-) -> Result<i32, AppError> {
+) -> Result<ResolvedModel, AppError> {
     let book_overrides = book
         .map(|book| book.model_overrides.clone().into_inner())
         .unwrap_or_default();
     if let Some(profile_id) = book_overrides.get(role) {
-        return Ok(profile_id);
+        return Ok(ResolvedModel {
+            profile_id,
+            via_writer: false,
+        });
     }
     if let Some(profile_id) = read_role_default(tx, role).await? {
-        return Ok(profile_id);
+        return Ok(ResolvedModel {
+            profile_id,
+            via_writer: false,
+        });
     }
     // An unset planner follows the writer's model, so an existing configuration keeps working
     // untouched after the upgrade (spec/03 §4, D-146).
     if role == AgentRole::Planner {
         if let Some(profile_id) = book_overrides.writer {
-            return Ok(profile_id);
+            return Ok(ResolvedModel {
+                profile_id,
+                via_writer: true,
+            });
         }
         if let Some(profile_id) = read_role_default(tx, AgentRole::Writer).await? {
-            return Ok(profile_id);
+            return Ok(ResolvedModel {
+                profile_id,
+                via_writer: true,
+            });
         }
     }
     Err(role_defaults_error(role))
 }
 
-/// Reads `app_settings["roles.defaults"]` **without** the API masking of
+/// Reads the whole `app_settings["roles.defaults"]` object **without** the API masking of
 /// [`crate::services::app_settings::get`], which would corrupt a stored secret.
-async fn read_role_default(
-    conn: &impl ConnectionTrait,
-    role: AgentRole,
-) -> Result<Option<i32>, AppError> {
+async fn read_role_defaults(conn: &impl ConnectionTrait) -> Result<RoleModels, AppError> {
     use crate::db::entities::app_settings;
     let row = app_settings::Entity::find_by_id("roles.defaults")
         .one(conn)
         .await?;
-    let Some(row) = row else {
-        return Ok(None);
-    };
-    let roles: RoleModels = crate::services::parse_json("roles.defaults", &row.value)?;
-    Ok(roles.get(role))
+    match row {
+        Some(row) => crate::services::parse_json("roles.defaults", &row.value),
+        None => Ok(RoleModels::default()),
+    }
+}
+
+/// One role's model default.
+async fn read_role_default(
+    conn: &impl ConnectionTrait,
+    role: AgentRole,
+) -> Result<Option<i32>, AppError> {
+    Ok(read_role_defaults(conn).await?.get(role))
+}
+
+/// Resolves the thinking effort frozen into a new session (spec/03 §4 step 1, spec/04 §5.1,
+/// D-162).
+///
+/// The candidates are the role's book choice, its global choice, and — only when the planner is
+/// following the writer's model (`via_writer`) — the writer's book and global choices. The first
+/// candidate that is one of the profile's levels **and** the protocol can send wins. Otherwise the
+/// profile default applies when sendable, and otherwise there is no effort. A candidate that was
+/// set but skipped is stale: it warns `model.effort_unsupported` (once per session) and the next
+/// candidate is tried — the session still starts.
+fn resolve_effort(
+    book_roles: &RoleModels,
+    global_roles: &RoleModels,
+    role: AgentRole,
+    via_writer: bool,
+    profile: &model_profiles::Model,
+    protocol: Protocol,
+    warnings: &mut Vec<String>,
+) -> Option<String> {
+    let levels: &[String] = &profile.effort_levels;
+    let rule = nekowriter_llm::EffortRule::for_protocol(crate::services::providers::llm_protocol(
+        protocol,
+    ));
+    let mut candidates: Vec<&str> = Vec::new();
+    if let Some(level) = book_roles.efforts.get(role) {
+        candidates.push(level);
+    }
+    if let Some(level) = global_roles.efforts.get(role) {
+        candidates.push(level);
+    }
+    if via_writer {
+        if let Some(level) = book_roles.efforts.get(AgentRole::Writer) {
+            candidates.push(level);
+        }
+        if let Some(level) = global_roles.efforts.get(AgentRole::Writer) {
+            candidates.push(level);
+        }
+    }
+    let mut stale = false;
+    for candidate in candidates {
+        if levels.iter().any(|level| level == candidate) && rule.accepts(candidate) {
+            // A skipped earlier choice still warns even when a later candidate wins: the author
+            // must be told the book setting did not apply (spec/03 §4, D-162).
+            if stale {
+                warn_effort_unsupported(warnings);
+            }
+            return Some(candidate.to_owned());
+        }
+        stale = true;
+    }
+    if let Some(default_effort) = profile.default_effort.as_deref()
+        && levels.iter().any(|level| level == default_effort)
+        && rule.accepts(default_effort)
+    {
+        if stale {
+            warn_effort_unsupported(warnings);
+        }
+        return Some(default_effort.to_owned());
+    }
+    if stale {
+        warn_effort_unsupported(warnings);
+    }
+    None
+}
+
+/// Adds `model.effort_unsupported` at most once per session (spec/03 §4, D-162).
+fn warn_effort_unsupported(warnings: &mut Vec<String>) {
+    if !warnings
+        .iter()
+        .any(|warning| warning == "model.effort_unsupported")
+    {
+        warnings.push("model.effort_unsupported".to_owned());
+    }
+}
+
+/// Loads both role maps and resolves one session's effort. Every creation path goes through this
+/// function, so a new path cannot invent a different candidate order (spec/03 §4).
+async fn resolve_session_effort(
+    tx: &impl ConnectionTrait,
+    book: Option<&books::Model>,
+    role: AgentRole,
+    via_writer: bool,
+    profile: &model_profiles::Model,
+    provider: &providers::Model,
+    warnings: &mut Vec<String>,
+) -> Result<Option<String>, AppError> {
+    let book_roles = book
+        .map(|book| book.model_overrides.clone().into_inner())
+        .unwrap_or_default();
+    let global_roles = read_role_defaults(tx).await?;
+    Ok(resolve_effort(
+        &book_roles,
+        &global_roles,
+        role,
+        via_writer,
+        profile,
+        provider.protocol,
+        warnings,
+    ))
 }
 
 /// The error of a role without a model (spec/10 §4).
@@ -677,19 +811,26 @@ fn role_defaults_error(role: AgentRole) -> AppError {
 fn model_snapshot(
     profile: &model_profiles::Model,
     provider: &providers::Model,
+    effort: Option<&str>,
 ) -> Result<ModelSnapshot, AppError> {
     model_snapshot_with_ttl(
         profile,
         provider,
         nekowriter_llm::CacheTtlOption::FiveMinutes,
+        effort,
     )
 }
 
 /// The frozen model snapshot with an already-resolved `cache_ttl` (spec/03 §4 step 1).
+///
+/// `effort` is the level resolved for this session; it lands in the protocol's wire field so the
+/// snapshot shape does not change (spec/04 §5.1, D-162). The level is frozen here and never
+/// re-read from settings, which is what keeps a running session and its rollover children stable.
 fn model_snapshot_with_ttl(
     profile: &model_profiles::Model,
     provider: &providers::Model,
     cache_ttl: nekowriter_llm::CacheTtlOption,
+    effort: Option<&str>,
 ) -> Result<ModelSnapshot, AppError> {
     let extra_headers: std::collections::BTreeMap<String, String> =
         provider.extra_headers.clone().into_inner();
@@ -703,6 +844,15 @@ fn model_snapshot_with_ttl(
             .unwrap_or_default();
     if options.cache_ttl == nekowriter_llm::CacheTtlOption::Auto {
         options.cache_ttl = cache_ttl;
+    }
+    if let Some(level) = effort {
+        match protocol {
+            Protocol::Openai => options.reasoning_effort = Some(level.to_owned()),
+            // The profile validation guarantees a closed-set level, so this parses; a hand-edited
+            // row that does not parse simply leaves the field unset.
+            Protocol::Anthropic => options.effort = nekowriter_llm::Effort::parse(level),
+            Protocol::Mock => {}
+        }
     }
     Ok(ModelSnapshot {
         provider_id: provider.id,
@@ -1952,8 +2102,8 @@ async fn debug_session_inner(
             .await?
             .map(|track| track.id),
     };
-    let profile_id = resolve_model(tx, Some(&book), AgentRole::Writer).await?;
-    let profile = model_profiles::Entity::find_by_id(profile_id)
+    let resolved = resolve_model(tx, Some(&book), AgentRole::Writer).await?;
+    let profile = model_profiles::Entity::find_by_id(resolved.profile_id)
         .one(tx)
         .await?
         .ok_or_else(|| role_defaults_error(AgentRole::Writer))?;
@@ -1961,7 +2111,18 @@ async fn debug_session_inner(
         .one(tx)
         .await?
         .ok_or_else(|| role_defaults_error(AgentRole::Writer))?;
-    let snapshot = model_snapshot(&profile, &provider)?;
+    let mut warnings = Vec::new();
+    let effort = resolve_session_effort(
+        tx,
+        Some(&book),
+        AgentRole::Writer,
+        resolved.via_writer,
+        &profile,
+        &provider,
+        &mut warnings,
+    )
+    .await?;
+    let snapshot = model_snapshot(&profile, &provider, effort.as_deref())?;
 
     let specs = state.tool_specs();
     let prompts = state
@@ -1988,7 +2149,7 @@ async fn debug_session_inner(
         chapter_id: Set(spec.chapter_id),
         track_id: Set(track),
         research_task_id: Set(None),
-        model_profile_id: Set(Some(profile_id)),
+        model_profile_id: Set(Some(resolved.profile_id)),
         model_snapshot: Set(JsonText(snapshot)),
         system_prompt: Set(prompts
             .render("writer.system", &json!({}))
@@ -2081,8 +2242,8 @@ async fn debug_echo_inner(
         .filter(tracks::COLUMN.kind.eq(TrackKind::Main))
         .one(tx)
         .await?;
-    let profile_id = resolve_model(tx, Some(&book), AgentRole::Writer).await?;
-    let profile = model_profiles::Entity::find_by_id(profile_id)
+    let resolved = resolve_model(tx, Some(&book), AgentRole::Writer).await?;
+    let profile = model_profiles::Entity::find_by_id(resolved.profile_id)
         .one(tx)
         .await?
         .ok_or_else(|| role_defaults_error(AgentRole::Writer))?;
@@ -2090,7 +2251,18 @@ async fn debug_echo_inner(
         .one(tx)
         .await?
         .ok_or_else(|| role_defaults_error(AgentRole::Writer))?;
-    let snapshot = model_snapshot(&profile, &provider)?;
+    let mut warnings = Vec::new();
+    let effort = resolve_session_effort(
+        tx,
+        Some(&book),
+        AgentRole::Writer,
+        resolved.via_writer,
+        &profile,
+        &provider,
+        &mut warnings,
+    )
+    .await?;
+    let snapshot = model_snapshot(&profile, &provider, effort.as_deref())?;
 
     // The debug session freezes exactly the test-only tools.
     let specs = state.tool_specs();
@@ -2115,7 +2287,7 @@ async fn debug_echo_inner(
         chapter_id: Set(None),
         track_id: Set(track.map(|track| track.id)),
         research_task_id: Set(None),
-        model_profile_id: Set(Some(profile_id)),
+        model_profile_id: Set(Some(resolved.profile_id)),
         model_snapshot: Set(JsonText(snapshot)),
         system_prompt: Set(prompts
             .render("writer.system", &json!({}))
@@ -2448,6 +2620,7 @@ mod tests {
                 &profile(),
                 &provider_with(protocol),
                 nekowriter_llm::CacheTtlOption::FiveMinutes,
+                None,
             )
             .expect("build the snapshot");
             assert_eq!(snapshot.protocol, protocol);

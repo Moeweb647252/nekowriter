@@ -3428,6 +3428,11 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   - **Dropped values.** A cross-protocol effort key, which was always inert, is dropped, and so is
     `options.extra_body.reasoning_effort`: `extra_body` is merged last, so a leftover override
     would silently shadow the role's resolved level. The pre-ship report lists each one.
+  - **Startup-log coverage (accepted gap).** `stored_option_mismatches` is tested, including the
+    effort levels it returns, but the single `tracing::warn!` line in `lib.rs` that consumes the
+    tuple is reviewed rather than asserted. Capturing one log line would need a tracing test
+    harness whose maintenance cost outweighs the risk; the formatting-only statement has no
+    branching beyond the loop.
 - **Spec**:
   - PROJECT §5, F1, §8.6, §8.12;
   - spec/02 §1, §2, §4;
