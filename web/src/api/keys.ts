@@ -102,5 +102,3 @@ export const keys = {
     detail: (id: number) => ["sessions", "detail", id] as const,
   },
 }
-
-export type QueryKeys = typeof keys

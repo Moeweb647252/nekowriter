@@ -113,9 +113,6 @@ function dispatch(event: ServerEvent) {
   }
 }
 
-/** The parsed payload of an SSE frame. */
-export type EventPayload = unknown
-
 /** Narrow a parsed payload to a record, or `null`. */
 function payloadRecord(payload: unknown): Record<string, unknown> | null {
   return typeof payload === "object" && payload !== null

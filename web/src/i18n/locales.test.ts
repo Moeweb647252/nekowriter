@@ -38,6 +38,8 @@ const ALL_ERROR_CODES: ErrorCode[] = [
   "change.not_latest",
   "proposal.invalid_state",
   "writing_skill.builtin",
+  "goal.open_children",
+  "goal.has_children",
   "prompt.template_invalid",
   "provider.unavailable",
   "provider.auth",

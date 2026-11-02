@@ -13,5 +13,3 @@ export const WRITING_LANGUAGES = [
   "es",
   "ru",
 ] as const
-
-export type WritingLanguage = (typeof WRITING_LANGUAGES)[number]

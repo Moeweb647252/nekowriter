@@ -8,7 +8,6 @@ import type { SessionDto } from "@/api/gen/SessionDto"
 import type { SessionMessageInput } from "@/api/gen/SessionMessageInput"
 import type { SessionPatch } from "@/api/gen/SessionPatch"
 import type { SessionSnapshotDto } from "@/api/gen/SessionSnapshotDto"
-import type { ToolCallDto } from "@/api/gen/ToolCallDto"
 
 export function listSessions(bookId: number, filters?: string): Promise<SessionDto[]> {
   const query = filters === undefined ? "" : `?${filters}`
@@ -69,13 +68,3 @@ export function startDebugSession(bookId: number): Promise<DebugEchoDto> {
 
 /** True when this build exposes the debug session endpoint (spec/10 §2.7). */
 export const debugSessionsEnabled = import.meta.env.DEV
-
-/** The tool call whose status makes it the session's live card. */
-export function isOpenToolCall(call: ToolCallDto): boolean {
-  return (
-    call.status === "pending" ||
-    call.status === "executing" ||
-    call.status === "held" ||
-    call.status === "awaiting_input"
-  )
-}

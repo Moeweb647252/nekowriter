@@ -1,7 +1,6 @@
 /** Book queries and mutations (spec/11 §4.1). */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
-import { ApiError } from "@/api/client"
 import * as endpoints from "@/api/endpoints/books"
 import { keys } from "@/api/keys"
 import type { BookInput } from "@/api/gen/BookInput"
@@ -60,9 +59,4 @@ export function useDeleteBook() {
       void queryClient.invalidateQueries({ queryKey: keys.books.all })
     },
   })
-}
-
-/** The API error of a failed mutation, when there is one (for localized toasts). */
-export function apiError(error: unknown): ApiError | null {
-  return error instanceof ApiError ? error : null
 }

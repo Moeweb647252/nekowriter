@@ -104,14 +104,6 @@ export function useEntityHistory(entityId: number | undefined) {
 
 // ───────────────────────────── relations ─────────────────────────────
 
-export function useRelations(bookId: number, entityId?: number) {
-  return useQuery({
-    queryKey: keys.canon.relations(bookId, entityId),
-    queryFn: () => endpoints.listRelations(bookId, entityId),
-    enabled: Number.isFinite(bookId) && bookId > 0,
-  })
-}
-
 export function useCreateRelation(bookId: number) {
   const invalidate = useCanonInvalidator(bookId)
   return useMutation({
