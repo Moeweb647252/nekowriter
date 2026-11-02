@@ -145,7 +145,8 @@ export function useSetProtagonist(bookId: number) {
 
 export function useEntityHistory(entityId: number | undefined) {
   return useQuery({
-    queryKey: ["canon", "entity-history", entityId ?? 0],
+    // Under the entity key: invalidating the entity family also refreshes its full history.
+    queryKey: [...keys.canon.entity(entityId ?? 0), "history"] as const,
     queryFn: () => endpoints.entityHistory(entityId ?? 0),
     enabled: entityId !== undefined && entityId > 0,
   })
