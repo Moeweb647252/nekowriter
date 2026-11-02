@@ -571,12 +571,22 @@ async fn delete_inner(
 
 /// `POST /api/research-tasks/:id/run` (spec/07 §8, spec/10 §2.5).
 pub async fn run(state: &AppState, task_id: i32) -> Result<i32, AppError> {
+    let task = get(state.db_conn(), task_id).await?;
+    // A failed task keeps its session and its full history (spec/07 §8 step 5: "Continue sets
+    // it back to running"). Continue it in place: a new session would lose every fetched tool
+    // result and the knowledge entries already committed by this one.
+    if task.status == ResearchTaskStatus::Failed
+        && let Some(session_id) = task.session_id
+    {
+        sessions::continue_session(state, session_id).await?;
+        return Ok(session_id);
+    }
     // The scope is resolved (or created) and attached to the linked book **before** the session
     // starts, in its own short transaction: the kickoff then reads a real scope, and no
     // transaction is open across session creation's own write (spec/07 §8 step 2).
     // The book (if any) is read before the session starts: the session carries it so the book's
     // agent panel lists the researcher and events reach that book's stream (spec/10 §3).
-    let book_id = get(state.db_conn(), task_id).await?.book_id;
+    let book_id = task.book_id;
     let scope_id = {
         let db = state.db().clone();
         super::write(&db, move |tx| {

@@ -1565,13 +1565,27 @@ async fn continue_session_inner(
             .await?;
             let running = set_status(tx, &session, SessionStatus::Running, false).await?;
             let dto = session::to_dto(tx, &running, Vec::new()).await?;
-            Ok((
-                vec![ServerEvent::SessionUpdated {
-                    session: dto.clone(),
-                    warnings: Vec::new(),
-                }],
-                dto,
-            ))
+            let mut events = vec![ServerEvent::SessionUpdated {
+                session: dto.clone(),
+                warnings: Vec::new(),
+            }];
+            // A research session owns its task's status (spec/07 §8 step 5): continuing a
+            // failed researcher must put the task back to `running` in the same transaction,
+            // or the research pane still reports `failed` while its session runs.
+            if session::kind_of(&session) == SessionKind::Research
+                && let Some(task_id) = session.research_task_id
+            {
+                events.extend(
+                    crate::services::research::on_session_status(
+                        tx,
+                        task_id,
+                        session_id,
+                        SessionStatus::Running,
+                    )
+                    .await?,
+                );
+            }
+            Ok((events, dto))
         })
     })
     .await?;

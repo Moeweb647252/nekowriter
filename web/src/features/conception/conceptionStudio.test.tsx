@@ -23,6 +23,7 @@ import zhChapter from "@/i18n/locales/zh-CN/chapter.json"
 
 const startConception = vi.fn()
 const startKnowledgeCheck = vi.fn()
+const runResearchTask = vi.fn()
 const answerSession = vi.fn()
 const showError = vi.fn()
 const warningToast = vi.fn()
@@ -106,6 +107,7 @@ vi.mock("@/api/hooks/research", () => ({
   usePatchResearchTask: () => ({ mutate: vi.fn(), isPending: false }),
   useDeleteResearchTask: () => ({ mutate: vi.fn(), isPending: false }),
   useStartKnowledgeCheck: () => ({ mutate: startKnowledgeCheck, isPending: false }),
+  useRunResearchTask: () => ({ mutate: runResearchTask, isPending: false }),
 }))
 
 vi.mock("@/api/hooks/books", () => ({
@@ -214,6 +216,7 @@ describe("ConceptionStudio", () => {
     warningToast.mockClear()
     finalize.mockClear()
     startKnowledgeCheck.mockClear()
+    runResearchTask.mockClear()
     resume.mockClear()
     answerSession.mockClear()
   })
@@ -575,6 +578,7 @@ describe("knowledge-check states before conception", () => {
       "/research/21",
     )
     await user.click(screen.getByRole("button", { name: "Start conception now" }))
+    expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument()
     expect(confirm).toHaveBeenCalledTimes(1)
     expect(startConception).toHaveBeenCalledTimes(1)
     confirm.mockRestore()
@@ -599,6 +603,16 @@ describe("knowledge-check states before conception", () => {
     renderStudio()
     expect(screen.getByText("Failed")).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Start conception" })).toBeInTheDocument()
+  })
+
+  it("continues a failed check on its existing task", async () => {
+    const user = userEvent.setup()
+    state.topics = [preparationTask({ status: "failed", session_id: 11 })]
+    renderStudio()
+    expect(screen.getByRole("button", { name: "Continue" })).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Continue" }))
+    expect(runResearchTask).toHaveBeenCalledTimes(1)
+    expect(runResearchTask.mock.calls[0][0]).toBe(21)
   })
 
   it("localizes a cancelled check in both locales", async () => {

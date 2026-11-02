@@ -3549,3 +3549,48 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   - spec/04 §2, §3, §5, §5.1, §8, §9;
   - spec/10 §1, §2.1, §2.8;
   - spec/11 §5.3, §5.5, §9.
+
+
+### D-163 A failed research task continues on its existing session
+
+- **Context**:
+  - The author's knowledge check failed with `provider.bad_request` from the gateway's
+    **120-second Proxy Read Timeout** during a long multi-source research turn. The session row
+    still had its full message history, every sealed tool result and the knowledge entries it had
+    already created; only the ability to continue was missing.
+  - `POST /api/research-tasks/:id/run` refused a `failed` task
+    (`ResearchTaskStatus::Running | Failed => false`), and the research page offered only the
+    generic session controls. The session-level `continue` control accepted a failed session
+    (spec/03 §3), but the research task status did not follow it: `continue_session` wrote the
+    session row directly and did not call `research::on_session_status`.
+- **Decision**:
+  - **Continue the same session.** `services::research::run` first checks for a `failed` task with
+    a `session_id`; it calls `sessions::continue_session` and returns that session id instead of
+    creating a second researcher session. A failed task without a session remains non-runnable.
+  - **The task follows in the same transaction.** `continue_session` now calls
+    `research::on_session_status(..., Running)` for a research session, so the task returns to
+    `running` and emits `research.updated` together with the session update. A later failure or
+    completion follows the existing `on_session_status` mapping; abandoning still cancels it.
+  - **What Continue does.** It clears the stored session error and sets the session `running`;
+    it does **not** insert a fresh kickoff. The runner rebuilds the request from
+    `agent_messages` and the sealed `agent_tool_calls`, so all already-fetched material is still in
+    context and nothing is re-fetched at the tool layer. The new turn only appends history.
+  - **Web.** The failed knowledge-check pane offers **Continue** (zh-CN 继续), separate from
+    **Start conception**; while continuing, its mutation is pending, and after the task refetch
+    the pane switches to the running stream through the normal task/session invalidation.
+  - **Timeout mitigation.** The failed model step persisted no assistant message, so the first
+    continued request is still the same large provider request; the gateway's 120-second timeout
+    can therefore recur. The smallest mitigation is to keep the intact session and make Continue a
+    safe retry that never recreates a session or re-fetches tool results. Splitting one research
+    turn into several provider calls (or changing the research runtime/prompt) is out of scope for
+    this milestone; a repeated timeout is not data loss and the author can press Continue again.
+- **Consequences**:
+  - A failed knowledge check now has a recoverable path; the task page and the conception pane
+    both expose the existing session controls, and `run` on the task is the continue action.
+  - The failed pane still shows the failed status until the continue mutation's task refetch
+    succeeds; the button's pending state covers that transition.
+  - No schema or DTO change. `on_session_status` remains the single owner of the research task
+    status mapping, so running/failed/completed/cancelled stay consistent with the session.
+  - The 120-second gateway limit remains a provider/transport limitation; this decision does not
+    shorten an individual model request.
+- **Spec**: spec/03 §3, §6; spec/07 §8 step 5; spec/10 §2.5; spec/11 §5.5.

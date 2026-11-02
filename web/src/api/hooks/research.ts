@@ -83,14 +83,20 @@ export function useDeleteResearchTask() {
   })
 }
 
-export function useRunResearchTask() {
+export function useRunResearchTask(bookId?: number) {
+  const queryClient = useQueryClient()
   const invalidate = useResearchInvalidator()
   return useMutation({
     mutationFn: (taskId: number) => endpoints.runResearchTask(taskId),
     onSuccess: (response) => {
-      // The run response is only the session id; the task's book is not in it.
-      invalidate()
-      // The run settles the task and opens a session; the session store shows the panel.
+      // The run response is only the session id; the caller may know the book. A failed
+      // research task is continued on its existing session (D-163), so the session list and
+      // that session's snapshot must refresh too, or the failed pane keeps showing `failed`.
+      invalidate(bookId)
+      if (bookId !== undefined) {
+        void queryClient.invalidateQueries({ queryKey: keys.sessions.list(bookId) })
+      }
+      void queryClient.invalidateQueries({ queryKey: keys.sessions.detail(response.session_id) })
       return response
     },
   })
