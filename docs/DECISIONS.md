@@ -3425,6 +3425,11 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     exactly-200-message session, and the boundary gap left when a live message slid the snapshot
     window past cached older pages.
   - No schema or prompt change, and the existing endpoints' tests stay the contract.
+  - **Known follow-ups (not built in M18).** A failed gap re-fetch is silent: the boundary row
+    stays missing until a later successful fetch, with no toast. And every gap request asks for
+    500 messages, so a one-message slide triggers a 500-message page whose per-message
+    `calls_of` lookups are an N+1 server read. Both need a dedicated fix (an error surface, and a
+    smaller limit or a batched tool-call load), not an inline workaround here.
 - **Spec**: PROJECT §8.8; spec/10 §2.7; spec/11 §5.3, §5.5, §9.
 
 

@@ -1,11 +1,5 @@
 /** Session queries and mutations (spec/11 §4.1, §5.3). */
-import {
-  keepPreviousData,
-  useInfiniteQuery,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query"
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 import * as endpoints from "@/api/endpoints/sessions"
 import { keys } from "@/api/keys"
@@ -107,7 +101,13 @@ export function useOlderMessages(sessionId: number | null, initialCursor: string
       anchorCursor !== undefined &&
       initialCursor !== undefined &&
       anchorCursor !== initialCursor,
-    placeholderData: keepPreviousData,
+    // Keep the previous gap during a same-session cursor slide (the old range is a prefix of the
+    // new one), but never carry another session's placeholder into this transcript. The first
+    // three segments are `keys.sessions.detail(id)`; `keepPreviousData` cannot express that scope.
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery !== undefined && previousQuery.queryKey[2] === (sessionId ?? 0)
+        ? previousData
+        : undefined,
   })
   return { ...pages, gapItems: gap.data ?? [] }
 }

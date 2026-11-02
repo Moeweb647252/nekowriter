@@ -16,6 +16,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { MessagePageDto } from "@/api/gen/MessagePageDto"
 import type { MessageWithCallsDto } from "@/api/gen/MessageWithCallsDto"
 import type { SessionDto } from "@/api/gen/SessionDto"
+import { keys } from "@/api/keys"
 
 /** The messages endpoint, shared by the real infinite query under test. */
 const getMessages = vi.hoisted(() => vi.fn())
@@ -44,6 +45,8 @@ vi.mock("@tanstack/react-virtual", () => ({
     measureElement: () => undefined,
     measure: () => undefined,
     scrollToEnd: () => undefined,
+    // The gap anchor restores a row's offset; every mocked row is one 120px estimate tall.
+    getOffsetForIndex: (index: number) => [index * 120, "start"] as const,
   }),
 }))
 
@@ -359,7 +362,8 @@ describe("ActivityStream scrollback", () => {
     getMessages
       // The page loaded before the slide: it ends at seq 100, below the old cursor 101.
       .mockResolvedValueOnce({ items: run(1, 100), next_cursor: null })
-      // The repair request from the new cursor 102 returns the slid-out boundary message 101.
+      // The repair request from the new cursor 102 returns the newest 100 messages below it
+      // (seq < 102): the slid-out boundary message 101 is last.
       .mockResolvedValueOnce({ items: run(2, 101), next_cursor: null })
     const { client, rerender } = renderStream({ messages: run(101, 300), nextCursor: "101" })
 
@@ -378,10 +382,85 @@ describe("ActivityStream scrollback", () => {
     )
 
     await waitFor(() => expect(screen.getByText("message 101")).toBeInTheDocument())
+    // The repair must start at the NEW cursor: the old anchor 101 would be filtered by
+    // `seq < cursor` to an empty page and leave the boundary missing (F8).
+    expect(getMessages).toHaveBeenCalledWith(7, "102", 500)
+    expect(getMessages).not.toHaveBeenCalledWith(7, "101", 500)
     expect(messageOrder()).toHaveLength(301)
     expect(messageOrder().map((text) => Number(text.slice("message ".length)))).toEqual(
       Array.from({ length: 301 }, (_, index) => index + 1),
     )
+  })
+
+  it("keeps the reading position when the repaired gap rows arrive", async () => {
+    getMessages
+      .mockResolvedValueOnce({ items: run(1, 100), next_cursor: null })
+      .mockResolvedValueOnce({ items: run(2, 101), next_cursor: null })
+    const { client, rerender } = renderStream({ messages: run(101, 300), nextCursor: "101" })
+    const pane = scrollPane()
+
+    await userEvent.click(screen.getByRole("button", { name: "Load older messages" }))
+    await waitFor(() => expect(screen.getByText("message 1")).toBeInTheDocument())
+    pane.scrollTop = 20000
+
+    rerender(
+      <QueryClientProvider client={client}>
+        <ActivityStream
+          session={session()}
+          messages={run(102, 301)}
+          inbox={[]}
+          nextCursor="102"
+        />
+      </QueryClientProvider>,
+    )
+
+    await waitFor(() => expect(screen.getByText("message 101")).toBeInTheDocument())
+    // One 120px row is inserted above the anchored snapshot row at offset 12120, so the viewport
+    // moves with it: 20000 + 120, not 20000.
+    expect(pane.scrollTop).toBe(20120)
+  })
+
+  it("does not leak a previous session's gap rows into another session", async () => {
+    getMessages
+      .mockResolvedValueOnce({ items: run(1, 100), next_cursor: null })
+      .mockResolvedValueOnce({ items: run(2, 101), next_cursor: null })
+    const { client, rerender } = renderStream({ messages: run(101, 300), nextCursor: "101" })
+
+    await userEvent.click(screen.getByRole("button", { name: "Load older messages" }))
+    await waitFor(() => expect(screen.getByText("message 1")).toBeInTheDocument())
+    rerender(
+      <QueryClientProvider client={client}>
+        <ActivityStream
+          session={session()}
+          messages={run(102, 301)}
+          inbox={[]}
+          nextCursor="102"
+        />
+      </QueryClientProvider>,
+    )
+    await waitFor(() => expect(screen.getByText("message 101")).toBeInTheDocument())
+
+    // Session 8 already has its own cached page chain; switching to it must not carry session
+    // 7's gap row (101) through `placeholderData`.
+    client.setQueryData([...keys.sessions.detail(8), "messages"], {
+      pages: [{ items: run(401, 500), next_cursor: null }],
+      pageParams: ["501"],
+    })
+    rerender(
+      <QueryClientProvider client={client}>
+        <ActivityStream
+          session={session({ id: 8 })}
+          messages={run(501, 600)}
+          inbox={[]}
+          nextCursor="501"
+        />
+      </QueryClientProvider>,
+    )
+
+    await waitFor(() => expect(screen.getByText("message 501")).toBeInTheDocument())
+    expect(screen.getByText("message 401")).toBeInTheDocument()
+    expect(screen.queryByText("message 101")).toBeNull()
+    expect(screen.queryByText("message 1")).toBeNull()
   })
 
   it("clears the loaded pages when the session switches", async () => {

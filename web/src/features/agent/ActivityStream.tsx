@@ -207,6 +207,7 @@ export function ActivityStream({
     () => (older.data === undefined ? [] : (older.gapItems ?? [])),
     [older.data, older.gapItems],
   )
+  const gapCount = gapItems.length
   const mergedMessages = useMemo(
     () => mergeHistoryPages(olderPages, gapItems, messages),
     [olderPages, gapItems, messages],
@@ -241,6 +242,12 @@ export function ActivityStream({
   // After the page commits, the height it added above the snapshot is added to `scrollTop`, so
   // the first previously visible row stays where it was.
   const anchor = useRef<{ scrollTop: number; totalSize: number } | null>(null)
+  // The gap repair is triggered by a snapshot update, not a click: remember where the first
+  // snapshot row sat on screen when the cursor moved, and put it back when the gap rows land.
+  const gapAnchor = useRef<{ key: string; visualOffset: number } | null>(null)
+  const previousCursor = useRef(initialCursor)
+  const previousGapCount = useRef(0)
+  const previousSessionId = useRef(session.id)
 
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -319,6 +326,62 @@ export function ActivityStream({
       element.scrollTop = pending.scrollTop + added
     }
   }, [olderPageCount, virtualizer])
+
+  // A pending scroll anchor belongs to the session it was captured in. Reset the cursor and gap
+  // tracking with it, so the switch itself is never mistaken for a window slide.
+  useEffect(() => {
+    if (previousSessionId.current === session.id) {
+      return
+    }
+    previousSessionId.current = session.id
+    previousCursor.current = initialCursor
+    previousGapCount.current = gapCount
+    anchor.current = null
+    gapAnchor.current = null
+  }, [session.id, initialCursor, gapCount])
+
+  // The snapshot window slid while a page chain was cached. Record the first snapshot row's
+  // screen position before the repair rows are inserted above it.
+  useEffect(() => {
+    const cursorChanged = previousCursor.current !== initialCursor
+    previousCursor.current = initialCursor
+    if (!cursorChanged || older.data === undefined) {
+      return
+    }
+    const element = parentRef.current
+    const first = messages[0]
+    if (element === null || first === undefined) {
+      return
+    }
+    const key = `m-${first.message.id}`
+    const index = rows.findIndex((row) => row.key === key)
+    const offset = index < 0 ? undefined : virtualizer.getOffsetForIndex(index, "start")
+    if (offset === undefined) {
+      return
+    }
+    gapAnchor.current = { key, visualOffset: element.scrollTop - offset[0] }
+  }, [initialCursor, messages, older.data, rows, virtualizer])
+
+  // When the repaired rows commit, restore that row to the same screen position so the insertion
+  // above it does not drag the reading position down.
+  useEffect(() => {
+    const grew = gapCount !== previousGapCount.current
+    previousGapCount.current = gapCount
+    if (!grew) {
+      return
+    }
+    const pending = gapAnchor.current
+    gapAnchor.current = null
+    const element = parentRef.current
+    if (pending === null || element === null) {
+      return
+    }
+    const index = rows.findIndex((row) => row.key === pending.key)
+    const offset = index < 0 ? undefined : virtualizer.getOffsetForIndex(index, "start")
+    if (offset !== undefined) {
+      element.scrollTop = offset[0] + pending.visualOffset
+    }
+  }, [gapCount, rows, virtualizer])
 
   // Follow the tail. This runs on every row append **and** on every growth of the last row's
   // content (`tail`), which is what streaming produces: the typing indicator and its growing text
