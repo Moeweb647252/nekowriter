@@ -31,8 +31,85 @@ import { cn } from "@/lib/utils"
 /** Scrolling within one estimated row of the top loads the next older page (spec/11 §5.3). */
 export const AUTO_LOAD_TOP_PX = 120
 
+/** One piece of a text block after the provider's literal `<thinking>` tags are split out. */
+export type ThinkingSegment = { kind: "text" | "thinking"; text: string }
+
+const THINKING_OPEN = "<thinking>"
+const THINKING_CLOSE = "</thinking>"
+
+/**
+ * Split a text block on the provider's literal `<thinking>` wrapper.
+ *
+ * Some providers put reasoning inside a text block instead of the `reasoning` block this stream
+ * already renders, so the raw tags would otherwise show as prose. The split is presentational: the
+ * stored blocks are never rewritten (append-only history, spec/03 §1.3), and text with no tags is
+ * returned unchanged. An unterminated open tag is the streaming case: everything after it is
+ * reasoning until the close arrives, which then streams as normal text.
+ */
+export function splitThinkingSegments(text: string): ThinkingSegment[] {
+  const segments: ThinkingSegment[] = []
+  let cursor = 0
+  while (cursor < text.length) {
+    const open = text.indexOf(THINKING_OPEN, cursor)
+    if (open < 0) {
+      segments.push({ kind: "text", text: text.slice(cursor) })
+      break
+    }
+    if (open > cursor) {
+      segments.push({ kind: "text", text: text.slice(cursor, open) })
+    }
+    const contentStart = open + THINKING_OPEN.length
+    const close = text.indexOf(THINKING_CLOSE, contentStart)
+    if (close < 0) {
+      segments.push({ kind: "thinking", text: text.slice(contentStart) })
+      break
+    }
+    segments.push({ kind: "thinking", text: text.slice(contentStart, close) })
+    cursor = close + THINKING_CLOSE.length
+  }
+  return segments
+}
+
 /** The scrollback row's state: more pages, loading, a failed page, or the start of the session. */
 export type HistoryState = "more" | "loading" | "error" | "start"
+
+/** The collapsible reasoning block, shared by real reasoning blocks and parsed literal tags. */
+function ThinkingBlock({ text }: { text: string }) {
+  const { t } = useTranslation()
+  return (
+    <details className="rounded border bg-muted/30 p-2 text-xs">
+      <summary className="flex cursor-pointer items-center gap-1 text-muted-foreground">
+        <ChevronRight aria-hidden="true" className="size-3" />
+        {t("agent:stream.thinking")}
+      </summary>
+      <pre className="mt-1 whitespace-pre-wrap text-muted-foreground">{text}</pre>
+    </details>
+  )
+}
+
+/** A text block whose literal `<thinking>` segments render through the reasoning block. */
+function TextWithThinking({ text }: { text: string }) {
+  const segments = splitThinkingSegments(text).filter((segment) => segment.text !== "")
+  if (segments.length === 0) {
+    return null
+  }
+  return (
+    <>
+      {segments.map((segment, index) =>
+        segment.kind === "thinking" ? (
+          <ThinkingBlock key={`thinking-${index}`} text={segment.text} />
+        ) : (
+          <div
+            key={`text-${index}`}
+            className="prose prose-sm max-w-none text-sm whitespace-pre-wrap dark:prose-invert"
+          >
+            {segment.text}
+          </div>
+        ),
+      )}
+    </>
+  )
+}
 
 /** One rendered row of the stream. */
 export type Row =
@@ -524,19 +601,8 @@ function RowView({
           {t("agent:stream.typing")}
           <Loader2 aria-hidden="true" className="ml-1 inline size-3 animate-spin" />
         </span>
-        {row.reasoning === "" ? null : (
-          <details className="rounded border bg-muted/30 p-2 text-xs">
-            <summary className="cursor-pointer text-muted-foreground">
-              {t("agent:stream.thinking")}
-            </summary>
-            <pre className="mt-1 whitespace-pre-wrap text-muted-foreground">{row.reasoning}</pre>
-          </details>
-        )}
-        {row.text === "" ? null : (
-          <div className="prose prose-sm max-w-none text-sm whitespace-pre-wrap dark:prose-invert">
-            {row.text}
-          </div>
-        )}
+        {row.reasoning === "" ? null : <ThinkingBlock text={row.reasoning} />}
+        {row.text === "" ? null : <TextWithThinking text={row.text} />}
         {pendingPreview === undefined || pendingPreview === "" ? null : (
           <pre className="rounded border border-dashed bg-muted/30 p-2 text-xs whitespace-pre-wrap">
             {pendingPreview}
@@ -562,22 +628,9 @@ function RowView({
       </div>
       {message.blocks.map((block, index) =>
         block.type === "reasoning" ? (
-          <details key={`r-${index}`} className="rounded border bg-muted/30 p-2">
-            <summary className="flex cursor-pointer items-center gap-1 text-xs text-muted-foreground">
-              <ChevronRight aria-hidden="true" className="size-3" />
-              {t("agent:stream.thinking")}
-            </summary>
-            <pre className="mt-1 text-xs whitespace-pre-wrap text-muted-foreground">
-              {block.text}
-            </pre>
-          </details>
+          <ThinkingBlock key={`r-${index}`} text={block.text} />
         ) : (
-          <div
-            key={`t-${index}`}
-            className="prose prose-sm max-w-none text-sm whitespace-pre-wrap dark:prose-invert"
-          >
-            {block.text}
-          </div>
+          <TextWithThinking key={`t-${index}`} text={block.text} />
         ),
       )}
       {calls.length === 0
