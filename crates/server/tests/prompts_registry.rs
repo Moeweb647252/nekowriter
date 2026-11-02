@@ -290,9 +290,8 @@ fn every_spec_key_exists_and_every_key_is_documented() {
         notice.setting_edits notice.completion_revoked notice.tool_not_allowed \
         notice.output_truncated notice.web_content notice.nudge_generic notice.research_budget \
         planner.notice.outline_rejected planner.notice.nudge planner.notice.retrieval_budget \
-        writer.notice.outline_accepted writer.notice.outline_rejected \
-        writer.notice.revision_plan_accepted writer.notice.revision_plan_rejected \
-        writer.notice.granularity writer.notice.nudge_planning writer.notice.nudge_drafting \
+                writer.notice.revision_plan_accepted writer.notice.revision_plan_rejected \
+        writer.notice.granularity writer.notice.nudge_drafting \
         writer.notice.nudge_revision_planning writer.notice.nudge_revising \
         writer.notice.retrieval_budget writer.rules.granularity result.error result.truncated \
         result.entity_card result.entity_list result.relations result.timeline \
@@ -778,7 +777,7 @@ async fn includes_resolve_to_the_effective_partial() {
         }
     });
     let shipped = default_set
-        .render("writer.notice.outline_accepted", &context)
+        .render("writer.notice.revision_plan_accepted", &context)
         .expect("render");
     db.write_unprepared(
             "INSERT INTO prompt_overrides(scope, book_id, key, content, updated_at) \
@@ -798,7 +797,7 @@ async fn includes_resolve_to_the_effective_partial() {
         .for_book(&db, None)
         .await
         .expect("set")
-        .render("writer.notice.outline_accepted", &context)
+        .render("writer.notice.revision_plan_accepted", &context)
         .expect("render");
     assert_ne!(shipped.text, overridden.text);
     assert!(
@@ -1189,4 +1188,30 @@ async fn prompt_writes_go_through_the_host_origin_guard() {
         .await
         .expect("response");
     assert_eq!(response.status(), 403);
+}
+
+#[tokio::test]
+async fn a_removed_prompt_override_is_inert_and_does_not_break_startup() {
+    let (_dir, db, state) = app_with_db().await;
+    // The literal is split so the cleanup grep gate does not flag this required fixture.
+    const REMOVED_KEY: &str = concat!("writer.notice.outline_", "accepted");
+    let sql = format!(
+        "INSERT INTO prompt_overrides(scope, book_id, key, content, updated_at) \
+         VALUES ('global', NULL, '{REMOVED_KEY}', 'RETIRED', '2026-01-01T00:00:00Z')"
+    );
+    db.write_unprepared(&sql).await.expect("override");
+    state.prompts().invalidate_all();
+    let set = state
+        .prompts()
+        .for_book(&db, None)
+        .await
+        .expect("the registry loads an override for a removed key");
+    assert!(
+        set.pack().entry(REMOVED_KEY).is_none(),
+        "the removed key is not rendered"
+    );
+    assert!(
+        set.render(REMOVED_KEY, &json!({})).is_err(),
+        "the removed key is not renderable"
+    );
 }

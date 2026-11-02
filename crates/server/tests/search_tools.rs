@@ -4,7 +4,6 @@
 mod agent_write_harness;
 
 use agent_write_harness::base::runtime;
-use nekowriter::db::json::Phase;
 use nekowriter::search::{BookCorpus, BookSearch, hybrid_book};
 use nekowriter::services::indexer;
 use nekowriter::testing::TestApp;
@@ -36,8 +35,8 @@ async fn calls(
         .collect()
 }
 
-/// Starts a writer session in `planning`, runs the scripted calls and returns the tool calls.
-async fn run_writer(runtime: &agent_write_harness::Runtime) -> Vec<(String, String, Value, bool)> {
+/// Starts a planner session, runs the scripted calls and returns the tool calls.
+async fn run_planner(runtime: &agent_write_harness::Runtime) -> Vec<(String, String, Value, bool)> {
     let session_id = agent_write_harness::start_planner(runtime).await;
     runtime.wait_any_status(session_id).await;
     calls(runtime, session_id).await
@@ -139,7 +138,7 @@ async fn search_canon_returns_the_archive_hits_and_ui() {
     indexer::run_once(runtime.app.state())
         .await
         .expect("indexer");
-    let calls = run_writer(&runtime).await;
+    let calls = run_planner(&runtime).await;
     let (name, text, ui, is_error) = calls
         .iter()
         .find(|(name, _, _, _)| name == "search_canon")
@@ -175,7 +174,7 @@ async fn search_canon_honours_the_kind_filter_and_the_limit() {
     indexer::run_once(runtime.app.state())
         .await
         .expect("indexer");
-    let calls = run_writer(&runtime).await;
+    let calls = run_planner(&runtime).await;
     let searches: Vec<_> = calls
         .iter()
         .filter(|(name, _, _, _)| name == "search_canon")
@@ -205,7 +204,7 @@ async fn search_knowledge_without_a_visible_scope_is_an_error() {
         ScriptStep::new().tool("search_knowledge", json!({ "query": "tea" })),
     ])
     .await;
-    let calls = run_writer(&runtime).await;
+    let calls = run_planner(&runtime).await;
     let (_, text, _, is_error) = calls
         .iter()
         .find(|(name, _, _, _)| name == "search_knowledge")
@@ -245,7 +244,7 @@ async fn search_knowledge_honours_scope_names_and_restricts_to_them() {
     indexer::run_once(runtime.app.state())
         .await
         .expect("indexer");
-    let calls = run_writer(&runtime).await;
+    let calls = run_planner(&runtime).await;
     let searches: Vec<_> = calls
         .iter()
         .filter(|(name, _, _, _)| name == "search_knowledge")
@@ -310,7 +309,7 @@ async fn read_knowledge_entry_pages_from_an_offset() {
             json!({ "excluded_scope_ids": [other] }),
         )
         .await;
-    let calls = run_writer(&runtime).await;
+    let calls = run_planner(&runtime).await;
     let reads: Vec<_> = calls
         .iter()
         .filter(|(name, _, _, _)| name == "read_knowledge_entry")
@@ -348,7 +347,7 @@ async fn search_chapters_returns_passages_with_the_chapter_label_and_pids() {
     indexer::run_once(runtime.app.state())
         .await
         .expect("indexer");
-    let calls = run_writer(&runtime).await;
+    let calls = run_planner(&runtime).await;
     let (_, text, ui, is_error) = calls
         .iter()
         .find(|(name, _, _, _)| name == "search_chapters")
@@ -373,7 +372,7 @@ async fn the_search_tools_fall_back_to_keywords_without_an_embedder() {
     .await;
     entity(&runtime, "Lin Fan", "the protagonist").await;
     runtime.app.without_embedder();
-    let calls = run_writer(&runtime).await;
+    let calls = run_planner(&runtime).await;
     let (_, text, _, is_error) = calls
         .iter()
         .find(|(name, _, _, _)| name == "search_canon")
@@ -477,26 +476,4 @@ async fn isolated_track_documents_are_filtered_by_visibility() {
     .await
     .expect("passages");
     assert_eq!(side_passages.hits.len(), 1, "{side_passages:?}");
-}
-
-/// The phase matrix keeps the search tools out of the drafting phase (spec/03 §1.2):
-/// `search_canon` is a retrieval tool, so a drafting call is rejected without effect.
-#[tokio::test]
-async fn search_tools_are_permitted_in_planning_only() {
-    use nekowriter::agent::tools::{WRITER_TOOLS, is_permitted};
-    let frozen: Vec<String> = WRITER_TOOLS.iter().map(|name| (*name).to_owned()).collect();
-    for tool in ["search_canon", "search_knowledge", "search_chapters"] {
-        assert!(is_permitted(
-            nekowriter::db::json::SessionKind::ChapterWrite,
-            Phase::Planning,
-            tool,
-            &frozen
-        ));
-        assert!(!is_permitted(
-            nekowriter::db::json::SessionKind::ChapterWrite,
-            Phase::Drafting,
-            tool,
-            &frozen
-        ));
-    }
 }

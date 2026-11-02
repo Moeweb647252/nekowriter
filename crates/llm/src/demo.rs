@@ -326,16 +326,9 @@ pub fn choose_action(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
         return debug_plan(hints, lang);
     }
     match hints.kind.as_str() {
-        // M12/D-146: an outline session runs the same retrieval-then-outline script; the
-        // `chapter_write`/planning arm below stays for sessions started before the split.
-        "chapter_outline" => chapter_write_planning(hints, lang),
-        "chapter_write" => {
-            if hints.phase == "planning" {
-                chapter_write_planning(hints, lang)
-            } else {
-                chapter_write_drafting(hints, lang)
-            }
-        }
+        // M12/D-146: the outline session runs the retrieval-then-outline script.
+        "chapter_outline" => chapter_outline_plan(hints, lang),
+        "chapter_write" => chapter_write_drafting(hints, lang),
         // M4 writes drafting too; M6 owns the revision step (D-077).
         "chapter_revise" => chapter_revise_plan(hints, lang),
         // M6.1: one issue on `p2` on the first attempt, a pass later (spec/04 §7.2).
@@ -392,7 +385,7 @@ fn debug_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
 ///
 /// Step 0 is the `get_entity` call, but only when the book has a protagonist to look up; step 1
 /// submits the outline. The demo never writes prose while planning.
-fn chapter_write_planning(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
+fn chapter_outline_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
     if hints.step_in_phase == 0
         && let Some(protagonist) = &hints.protagonist
         && !protagonist.is_empty()

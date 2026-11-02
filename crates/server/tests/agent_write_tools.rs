@@ -9,8 +9,7 @@ mod agent_write_harness;
 use std::time::Duration;
 
 use agent_write_harness::{
-    call_ui, chapter_column, chapter_content, chapter_row, outline_step, phase_of, runtime,
-    start_legacy_writer, start_writer,
+    call_ui, chapter_content, chapter_row, phase_of, runtime, start_planner, start_writer,
 };
 use nekowriter::db::json::{Granularity, Phase, SessionStatus, ToolCallStatus};
 use nekowriter::events::ServerEvent;
@@ -443,13 +442,13 @@ async fn read_draft_renders_paragraphs_with_pids_and_the_target() {
 /// The `ui` payload of every writer call carries data only (spec/05 §1.6, D-054).
 #[tokio::test]
 async fn writer_tool_ui_payloads_carry_data_not_labels() {
-    let runtime = runtime(with_finish(vec![
-        outline_step(),
-        insert_step("第一段。", json!({})),
-    ]))
+    let runtime = runtime(vec![ScriptStep::new().tool(
+        "submit_outline",
+        json!({ "outline": "场景一", "reference_notes": "- 要点" }),
+    )])
     .await;
-    // `submit_outline` is a legacy writer tool now; its UI payload is pinned on that branch.
-    let session_id = start_legacy_writer(&runtime, Granularity::Paragraph, false, false).await;
+    // `submit_outline` belongs to the outline session; its UI payload is pinned there.
+    let session_id = start_planner(&runtime).await;
     runtime
         .wait_status(session_id, SessionStatus::Completed)
         .await;
@@ -637,81 +636,6 @@ async fn finish_draft_on_an_empty_chapter_is_an_error() {
     assert!(!finishes[2].is_error);
     let (status, _, _) = chapter_row(&runtime, runtime.chapter_id).await;
     assert_eq!(status, "in_review");
-}
-
-// ───────────────────────────── submit_outline ─────────────────────────────
-
-/// `submit_outline` saves the outline and notes, sets a title only when there is none, and moves
-/// the session to drafting (spec/05 §4).
-#[tokio::test]
-async fn submit_outline_saves_the_outline_and_enters_drafting() {
-    let runtime = runtime(with_finish(vec![
-        ScriptStep::new().tool(
-            "submit_outline",
-            json!({ "outline": "场景一", "reference_notes": "- 要点", "title": "新标题" }),
-        ),
-        insert_step("正文。", json!({})),
-    ]))
-    .await;
-    let session_id = start_legacy_writer(&runtime, Granularity::Paragraph, false, false).await;
-    runtime
-        .wait_status(session_id, SessionStatus::Completed)
-        .await;
-    assert_eq!(
-        chapter_column(&runtime, runtime.chapter_id, "outline").await,
-        "场景一"
-    );
-    assert_eq!(
-        chapter_column(&runtime, runtime.chapter_id, "reference_notes").await,
-        "- 要点"
-    );
-    // The harness chapter already has a title, so the outline does not overwrite it.
-    assert_eq!(
-        chapter_column(&runtime, runtime.chapter_id, "title").await,
-        "Chapter One"
-    );
-    // The phase notice is an appendix of the call that changed the phase (spec/03 §5.4), so it
-    // rides with the `submit_outline` result and carries the granularity rules the model needs
-    // from its next call on.
-    let calls = runtime.calls(session_id).await;
-    let outline = calls
-        .iter()
-        .find(|call| call.name == "submit_outline")
-        .expect("outline");
-    let text = outline.result_text.clone().unwrap_or_default();
-    assert!(text.contains("章纲已确认"), "the drafting notice: {text}");
-    assert!(
-        text.contains("当前写作粒度：逐段"),
-        "the granularity rule: {text}"
-    );
-}
-
-/// The outline sets the title when the chapter has none.
-#[tokio::test]
-async fn submit_outline_sets_the_title_only_when_the_author_has_not() {
-    let runtime = runtime(with_finish(vec![
-        ScriptStep::new().tool(
-            "submit_outline",
-            json!({ "outline": "场景一", "reference_notes": "", "title": "剑冢" }),
-        ),
-        insert_step("正文。", json!({})),
-    ]))
-    .await;
-    let chapter = runtime.app.create_chapter(runtime.track_id, "").await;
-    let chapter_id = chapter["id"].as_i64().expect("id") as i32;
-    let session_id = agent_write_harness::start_legacy_writer_on(
-        &runtime,
-        chapter_id,
-        Granularity::Paragraph,
-        false,
-        false,
-        false,
-    )
-    .await;
-    runtime
-        .wait_status(session_id, SessionStatus::Completed)
-        .await;
-    assert_eq!(chapter_column(&runtime, chapter_id, "title").await, "剑冢");
 }
 
 /// The `chunk_text` helper is part of the mock provider; keep the import used so a future test can
@@ -947,7 +871,7 @@ async fn a_non_held_write_applies_in_its_own_call_with_one_event() {
 }
 
 /// The shared M4 harness starts the shipped writer path: `drafting`, the 19-tool list, and no
-/// `submit_outline`. The legacy branch is covered only by `legacy_planning_session.rs` (F2).
+/// `submit_outline`.
 #[tokio::test]
 async fn the_harness_uses_the_shipped_drafting_writer_path() {
     let runtime = runtime(vec![]).await;

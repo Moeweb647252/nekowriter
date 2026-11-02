@@ -3,15 +3,13 @@
  *
  * The tab renders the outline's derived state: missing (write it), in progress (the planner is
  * working), awaiting approval (the held proposal and its two decisions) and accepted (editable
- * fields plus Redo the outline). A held `submit_outline` in a legacy `chapter_write` session
- * keeps the pre-split path: save the fields, then resume the call.
+ * fields plus Redo the outline). Holds belong to the outline session's proposal.
  */
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import { HoldBar } from "@/features/chapter/GhostText"
 import { OutlineDialog } from "@/features/chapter/OutlineDialog"
-import { useWriterState } from "@/features/chapter/useWriterState"
 import { usePatchChapter } from "@/api/hooks/chapters"
 import { useResumeSession } from "@/api/hooks/sessions"
 import { useErrorToast } from "@/components/common/ErrorToast"
@@ -68,7 +66,6 @@ export function OutlineTab({
   const showError = useErrorToast()
   const resume = useResumeSession(bookId)
   const patchChapter = usePatchChapter(chapter.id, bookId)
-  const writer = useWriterState(chapter, undefined)
   const [outline, setOutline] = useState(chapter.outline)
   const [notes, setNotes] = useState(chapter.reference_notes)
   const [outlineOpen, setOutlineOpen] = useState(false)
@@ -113,23 +110,6 @@ export function OutlineTab({
   )
   const canStartOutline = openOwnerSession === undefined && chapter.status !== "official"
 
-  // The pre-split path: a held submit_outline in a chapter_write session (legacy branch).
-  const legacyHeld = writer.heldOutline && writer.session?.kind === "chapter_write"
-  const continueLegacy = async (feedback?: string) => {
-    if (writer.session === undefined) {
-      return
-    }
-    if (dirty) {
-      try {
-        await patchChapter.mutateAsync({ outline, reference_notes: notes })
-      } catch (error) {
-        showError(error)
-        return
-      }
-    }
-    resume.mutate({ sessionId: writer.session.id, feedback }, { onError: showError })
-  }
-
   const heldCall = calls?.find((call) => call.id === session?.held_tool_call_id)
   const proposal = (heldCall?.input ?? {}) as {
     outline?: string
@@ -146,11 +126,11 @@ export function OutlineTab({
   // Save/Redo and the missing-state Write outline follow the header's gating: an open session
   // owns the step (409), and a running owner locks the chapter (423). Editing an accepted outline
   // while a non-running writer session holds is still allowed — that is how edit reports work.
-  const editable = (state === "missing" || state === "accepted" || legacyHeld) && !runningOwnerSession
+  const editable = (state === "missing" || state === "accepted") && !runningOwnerSession
 
   return (
     <div className="mx-auto max-w-[42em] space-y-5">
-      {state === "missing" && !legacyHeld ? (
+      {state === "missing" ? (
         <div className="space-y-3">
           <EmptyState
             title={t("chapter:outline_tab.empty_title")}
@@ -165,7 +145,7 @@ export function OutlineTab({
           ) : null}
         </div>
       ) : null}
-      {state === "in_progress" && !legacyHeld ? (
+      {state === "in_progress" ? (
         <div className="rounded-md border p-3 text-sm">
           <p className="font-medium">{t("chapter:outline_tab.planner_working")}</p>
           <p className="text-muted-foreground">{t("chapter:outline_tab.planner_working_hint")}</p>
@@ -182,7 +162,7 @@ export function OutlineTab({
         </div>
       ) : null}
 
-      {state === "awaiting_approval" && !legacyHeld ? (
+      {state === "awaiting_approval" ? (
         <>
           <div className="space-y-1">
             <h3 className="text-sm font-semibold">{t("chapter:outline_tab.proposal_title")}</h3>
@@ -257,17 +237,7 @@ export function OutlineTab({
         />
       </div>
 
-      {legacyHeld ? (
-        <HoldBar
-          outline
-          pids={[]}
-          busy={resume.isPending || saving}
-          onContinue={() => void continueLegacy()}
-          onFeedback={(text) => void continueLegacy(text)}
-        />
-      ) : null}
-
-      {editable && !legacyHeld ? (
+      {editable ? (
         <div className="flex items-center gap-2">
           <Button
             size="sm"

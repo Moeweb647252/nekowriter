@@ -15,10 +15,9 @@ pub use base::*;
 
 use nekowriter::db::json::{Granularity, Phase};
 use nekowriter::services::sessions::{self, CreateSession};
-use serde_json::json;
 
 /// Gives a chapter an accepted outline, so a shipped write session can start in `drafting`
-/// (D-146). The values match the old `outline_step()` fixture, so existing expectations carry over.
+/// (D-146).
 pub async fn accept_outline(runtime: &Runtime, chapter_id: i32) {
     runtime
         .app
@@ -49,7 +48,7 @@ pub async fn start_writer(
 
 /// Starts a shipped `chapter_write` session for a chosen chapter: accepted outline first, then
 /// the production drafting-only path. The pause-after-outline switch belongs to the outline
-/// session now, so the parameter is kept only for the legacy helper below.
+/// session now, so the parameter is accepted for call-site compatibility and ignored.
 pub async fn start_writer_on(
     runtime: &Runtime,
     chapter_id: i32,
@@ -59,55 +58,7 @@ pub async fn start_writer_on(
     redraft: bool,
 ) -> i32 {
     accept_outline(runtime, chapter_id).await;
-    create_writer(
-        runtime,
-        chapter_id,
-        granularity,
-        auto_pause,
-        false,
-        redraft,
-        false,
-    )
-    .await
-}
-
-/// Starts a **legacy** pre-split `chapter_write` session (planning, old 20-tool list) — kept only
-/// for the tests that pin the backwards-compatibility branch (D-146, R10/AC5).
-pub async fn start_legacy_writer(
-    runtime: &Runtime,
-    granularity: Granularity,
-    auto_pause: bool,
-    pause_after_outline: bool,
-) -> i32 {
-    start_legacy_writer_on(
-        runtime,
-        runtime.chapter_id,
-        granularity,
-        auto_pause,
-        pause_after_outline,
-        false,
-    )
-    .await
-}
-
-pub async fn start_legacy_writer_on(
-    runtime: &Runtime,
-    chapter_id: i32,
-    granularity: Granularity,
-    auto_pause: bool,
-    pause_after_outline: bool,
-    redraft: bool,
-) -> i32 {
-    create_writer(
-        runtime,
-        chapter_id,
-        granularity,
-        auto_pause,
-        pause_after_outline,
-        redraft,
-        true,
-    )
-    .await
+    create_writer(runtime, chapter_id, granularity, auto_pause, redraft).await
 }
 
 async fn create_writer(
@@ -115,9 +66,7 @@ async fn create_writer(
     chapter_id: i32,
     granularity: Granularity,
     auto_pause: bool,
-    pause_after_outline: bool,
     redraft: bool,
-    legacy: bool,
 ) -> i32 {
     let (session_id, _warnings) = sessions::create(
         runtime.app.state(),
@@ -128,14 +77,11 @@ async fn create_writer(
             research_task_id: None,
             granularity: Some(granularity),
             auto_pause: Some(auto_pause),
-            pause_after_outline: Some(pause_after_outline),
+            pause_after_outline: Some(false),
             redraft,
             guidance: None,
             kickoff_extra: None,
             pending_comment: None,
-            legacy_planning_fixture: legacy,
-            legacy_system_prompt: None,
-            legacy_kickoff_text: None,
             chapter_guard: false,
             force_previous: false,
         },
@@ -166,14 +112,6 @@ pub async fn start_planner_on(runtime: &Runtime, chapter_id: i32) -> i32 {
     .await
     .expect("create planner session");
     session_id
-}
-
-/// A step that submits an outline, so the next step runs in `drafting`.
-pub fn outline_step() -> nekowriter_llm::mock::ScriptStep {
-    nekowriter_llm::mock::ScriptStep::new().tool(
-        "submit_outline",
-        json!({ "outline": "场景一：城门口", "reference_notes": "- 雨一直下" }),
-    )
 }
 
 /// Runs a read-only query through the harness database and reads one typed column.

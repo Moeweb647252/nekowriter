@@ -1576,51 +1576,6 @@ xx
 ===== writer.rules.granularity [5] =====
 当前写作粒度：整章。修订阶段中，需要在结尾追加内容时，可以用一次 insert_text 写完，用换行分隔段落。
 
-===== writer.notice.outline_accepted [0] =====
-【系统通知】章纲已确认，现在进入【正文阶段】。
-- 检索工具已停用，请依据章纲、参考要点和已经掌握的资料写作。
-- 可用工具：insert_text、insert_paragraphs、replace_text、rewrite_paragraph、delete_paragraphs、read_draft、finish_draft。
-- 当前写作粒度：逐句。每次调用 insert_text 只写一句话（不能包含换行）。这一句结束了这一段时，设置 paragraph_end=true；段落还没写完时设为 false，下一句会接在同一段后面。写每一句之前，都要想清楚它的作用。insert_paragraphs 与 rewrite_paragraph 每次也只能写一个段落。
-- 全章写完后，在最后一次 insert_text 中设置 chapter_end=true，或调用 finish_draft。
-
-===== writer.notice.outline_accepted [1] =====
-【系统通知】章纲已确认，现在进入【正文阶段】。
-- 检索工具已停用，请依据章纲、参考要点和已经掌握的资料写作。
-- 可用工具：insert_text、insert_paragraphs、replace_text、rewrite_paragraph、delete_paragraphs、read_draft、finish_draft。
-- 当前写作粒度：逐段。每次调用 insert_text 写恰好一个完整的段落（不能包含换行），无需设置 paragraph_end。每写一段之前，先想清楚这一段要完成什么。insert_paragraphs 与 rewrite_paragraph 每次也只能写一个段落。
-- 全章写完后，在最后一次 insert_text 中设置 chapter_end=true，或调用 finish_draft。
-
-===== writer.notice.outline_accepted [2] =====
-【系统通知】章纲已确认，现在进入【正文阶段】。
-- 检索工具已停用，请依据章纲、参考要点和已经掌握的资料写作。
-- 可用工具：insert_text、insert_paragraphs、replace_text、rewrite_paragraph、delete_paragraphs、read_draft、finish_draft。
-- 当前写作粒度：自由。每次调用 insert_text 可以写任意长度的内容，用换行分隔段落；paragraph_end 表示最后一段是否已经写完（false 表示下次接着写这一段）。建议每次写一个完整的小节或场景片段，只写你已经想清楚的部分。
-- 全章写完后，在最后一次 insert_text 中设置 chapter_end=true，或调用 finish_draft。
-
-===== writer.notice.outline_accepted [3] =====
-【系统通知】章纲已确认，现在进入【正文阶段】。
-- 检索工具已停用，请依据章纲、参考要点和已经掌握的资料写作。
-- 可用工具：insert_text、insert_paragraphs、replace_text、rewrite_paragraph、delete_paragraphs、read_draft、finish_draft。
-- 当前写作粒度：整章。用一次 insert_text 写完本章剩余的全部正文，用换行分隔段落，系统会自动把本章标记为完成。写之前请在心里完整构思全章。
-- 全章写完后，在最后一次 insert_text 中设置 chapter_end=true，或调用 finish_draft。
-
-===== writer.notice.outline_accepted [4] =====
-【系统通知】章纲已确认，现在进入【正文阶段】。
-- 检索工具已停用，请依据章纲、参考要点和已经掌握的资料写作。
-- 可用工具：insert_text、insert_paragraphs、replace_text、rewrite_paragraph、delete_paragraphs、read_draft、finish_draft。
-- 当前写作粒度：逐段。每次调用 insert_text 写恰好一个完整的段落（不能包含换行），无需设置 paragraph_end。每写一段之前，先想清楚这一段要完成什么。insert_paragraphs 与 rewrite_paragraph 每次也只能写一个段落。末段 p9 尚未写完，下一次 insert_text 的内容会接在它后面。
-- 全章写完后，在最后一次 insert_text 中设置 chapter_end=true，或调用 finish_draft。
-
-===== writer.notice.outline_accepted [5] =====
-【系统通知】章纲已确认，现在进入【正文阶段】。
-- 检索工具已停用，请依据章纲、参考要点和已经掌握的资料写作。
-- 可用工具：insert_text、insert_paragraphs、replace_text、rewrite_paragraph、delete_paragraphs、read_draft、finish_draft。
-- 当前写作粒度：整章。修订阶段中，需要在结尾追加内容时，可以用一次 insert_text 写完，用换行分隔段落。
-- 全章写完后，在最后一次 insert_text 中设置 chapter_end=true，或调用 finish_draft。
-
-===== writer.notice.outline_rejected [0] =====
-【系统通知】作者没有通过这份章纲，你仍处于【规划阶段】。请按下方作者的意见修改（必要时继续查阅资料），然后重新调用 submit_outline，提交完整的章纲与参考要点。
-
 ===== writer.notice.revision_plan_accepted [0] =====
 【系统通知】修订计划已记录，现在进入【修订阶段】。
 - 检索工具已停用。
@@ -1689,9 +1644,6 @@ xx
 ===== writer.notice.granularity [5] =====
 【系统通知】作者调整了写作粒度，从下一次调用开始生效。
 当前写作粒度：整章。修订阶段中，需要在结尾追加内容时，可以用一次 insert_text 写完，用换行分隔段落。
-
-===== writer.notice.nudge_planning [0] =====
-【系统通知】你目前处于【规划阶段】。请继续用检索工具查阅需要的信息，准备好后调用 submit_outline 提交章纲与参考要点。不要直接在回复中写正文。
 
 ===== writer.notice.nudge_drafting [0] =====
 【系统通知】正文必须通过工具写入，回复中的文字不会被保存。请继续用 insert_text 写作；如果本章已经写完，请调用 finish_draft。

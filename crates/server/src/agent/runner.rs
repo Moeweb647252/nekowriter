@@ -1805,7 +1805,6 @@ pub(crate) async fn run_completion_handler(
 /// call's kept effects (spec/03 §5.4).
 pub fn phase_notice(tool: &str) -> Option<&'static str> {
     match tool {
-        "submit_outline" => Some("writer.notice.outline_accepted"),
         "submit_revision_plan" => Some("writer.notice.revision_plan_accepted"),
         _ => None,
     }
@@ -2363,7 +2362,6 @@ pub async fn text_only_inner(
 fn nudge_key(kind: SessionKind, phase: Phase) -> &'static str {
     match (kind, phase) {
         (SessionKind::ChapterOutline, _) => "planner.notice.nudge",
-        (SessionKind::ChapterWrite, Phase::Planning) => "writer.notice.nudge_planning",
         (SessionKind::ChapterWrite | SessionKind::ChapterRevise, Phase::Drafting) => {
             "writer.notice.nudge_drafting"
         }

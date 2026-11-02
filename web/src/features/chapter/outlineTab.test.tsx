@@ -1,5 +1,5 @@
 /** The Outline tab's states and decisions (PROJECT §8.5, D-146). */
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -136,32 +136,6 @@ describe("OutlineTab", () => {
       { sessionId: 9, feedback: "再紧一点" },
       expect.anything(),
     )
-  })
-
-  it("keeps the legacy path: save the fields, then resume the held call", async () => {
-    const user = userEvent.setup()
-    writerState.current = {
-      session: { id: 7, kind: "chapter_write", status: "held" } as unknown as SessionDto,
-      heldOutline: { id: 1 },
-    }
-    render(
-      <OutlineTab
-        chapter={chapter({ outline: "旧细纲", reference_notes: "旧要点" })}
-        bookId={1}
-        unspaced={false}
-        settings={SETTINGS}
-        state="in_progress"
-      />,
-    )
-    await user.type(screen.getByLabelText("Outline"), " 改过")
-    await user.click(screen.getByRole("button", { name: "Approve outline" }))
-    await waitFor(() => {
-      expect(patchChapter.mutateAsync).toHaveBeenCalledWith({
-        outline: "旧细纲 改过",
-        reference_notes: "旧要点",
-      })
-      expect(resume.mutate).toHaveBeenCalledWith({ sessionId: 7, feedback: undefined }, expect.anything())
-    })
   })
 
   it("adopts a new server outline when the author has not typed", () => {

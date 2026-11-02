@@ -70,9 +70,7 @@ pub const PLANNER_TOOLS: [&str; 12] = [
 
 /// The writer role's fixed tool list, in order (spec/05 §2).
 ///
-/// Drafting-only since D-146: `submit_outline` belongs to the planner's list. A `chapter_write`
-/// session started before the split froze the old 20-tool list; the legacy `planning` arm of
-/// `is_permitted` still lets that frozen copy run.
+/// Drafting-only since D-146: `submit_outline` belongs to the planner's list.
 pub const WRITER_TOOLS: [&str; 19] = [
     "get_entity",
     "list_entities",
@@ -84,33 +82,6 @@ pub const WRITER_TOOLS: [&str; 19] = [
     "read_knowledge_entry",
     "search_chapters",
     "read_chapter",
-    "submit_revision_plan",
-    "read_draft",
-    "insert_text",
-    "insert_paragraphs",
-    "replace_text",
-    "rewrite_paragraph",
-    "delete_paragraphs",
-    "finish_draft",
-    "finish_revision",
-];
-
-/// The frozen tool list of a `chapter_write` session started before the outline split (D-146).
-///
-/// Only a test fixture creates such a session now; the real rows were frozen at creation and keep
-/// this list. It is the old writer list, `submit_outline` included.
-pub const LEGACY_WRITER_TOOLS: [&str; 20] = [
-    "get_entity",
-    "list_entities",
-    "get_relations",
-    "query_timeline",
-    "list_foreshadowing",
-    "search_canon",
-    "search_knowledge",
-    "read_knowledge_entry",
-    "search_chapters",
-    "read_chapter",
-    "submit_outline",
     "submit_revision_plan",
     "read_draft",
     "insert_text",
@@ -286,12 +257,6 @@ pub fn is_permitted(kind: SessionKind, phase: Phase, tool: &str, frozen: &[Strin
     }
     match kind {
         SessionKind::ChapterWrite | SessionKind::ChapterRevise => match phase {
-            // Legacy only (D-146): a `chapter_write` session started before the outline split
-            // froze the old 20-tool list and may still be in `planning`. New code never creates
-            // this phase; the arm stays until the plan's removal query returns 0.
-            Phase::Planning => {
-                RETRIEVAL_TOOLS.contains(&tool) || matches!(tool, "read_draft" | "submit_outline")
-            }
             Phase::Drafting => {
                 matches!(tool, "read_draft" | "finish_draft") || WRITE_TOOLS.contains(&tool)
             }
@@ -302,7 +267,8 @@ pub fn is_permitted(kind: SessionKind, phase: Phase, tool: &str, frozen: &[Strin
             Phase::Revising => {
                 matches!(tool, "read_draft" | "finish_revision") || WRITE_TOOLS.contains(&tool)
             }
-            Phase::None => false,
+            // `Planning` is historical: an old frozen row may still carry it, but no tool runs.
+            Phase::None | Phase::Planning => false,
         },
         SessionKind::CanonSeed => !matches!(
             tool,
@@ -480,14 +446,6 @@ mod tests {
         WRITER_TOOLS.iter().map(|name| (*name).to_owned()).collect()
     }
 
-    /// The frozen tool list of a `chapter_write` session started before the outline split: the
-    /// old 20 tools, including `submit_outline` (D-146).
-    fn legacy_writer_frozen() -> Vec<String> {
-        let mut names = writer_frozen();
-        names.insert(10, "submit_outline".to_owned());
-        names
-    }
-
     #[test]
     fn switch_filtering_keeps_the_fixed_order_and_the_archivist_list_grows_to_22() {
         let all = CanonSystems::default();
@@ -617,53 +575,6 @@ mod tests {
     /// The phase matrix of spec/05 §2, tool by tool.
     #[test]
     fn writer_phase_permission_matrix() {
-        // planning: RETRIEVAL, read_draft, submit_outline
-        for tool in RETRIEVAL_TOOLS {
-            assert!(is_permitted(
-                SessionKind::ChapterWrite,
-                Phase::Planning,
-                tool,
-                &legacy_writer_frozen()
-            ));
-            assert!(!is_permitted(
-                SessionKind::ChapterWrite,
-                Phase::Drafting,
-                tool,
-                &all_frozen()
-            ));
-        }
-        assert!(is_permitted(
-            SessionKind::ChapterWrite,
-            Phase::Planning,
-            "read_draft",
-            &legacy_writer_frozen()
-        ));
-        assert!(is_permitted(
-            SessionKind::ChapterWrite,
-            Phase::Planning,
-            "submit_outline",
-            &legacy_writer_frozen()
-        ));
-        // A new writer session never freezes `submit_outline`; even the legacy arm cannot run it.
-        assert!(!is_permitted(
-            SessionKind::ChapterWrite,
-            Phase::Planning,
-            "submit_outline",
-            &writer_frozen()
-        ));
-        assert!(!is_permitted(
-            SessionKind::ChapterWrite,
-            Phase::Planning,
-            "insert_text",
-            &all_frozen()
-        ));
-        assert!(!is_permitted(
-            SessionKind::ChapterWrite,
-            Phase::Planning,
-            "finish_draft",
-            &all_frozen()
-        ));
-
         // drafting: read_draft, DRAFT_EDIT, finish_draft
         for tool in WRITE_TOOLS {
             assert!(is_permitted(
@@ -834,13 +745,6 @@ mod tests {
 
     #[test]
     fn allowed_tools_lists_only_the_permitted_phase_tools() {
-        let planning = allowed_tools(
-            SessionKind::ChapterWrite,
-            Phase::Planning,
-            &legacy_writer_frozen(),
-        );
-        assert_eq!(planning.len(), 12, "{planning:?}");
-        assert!(planning.contains(&"submit_outline".to_owned()));
         let drafting = allowed_tools(SessionKind::ChapterWrite, Phase::Drafting, &writer_frozen());
         assert_eq!(drafting.len(), 7, "{drafting:?}");
         assert!(!drafting.contains(&"get_entity".to_owned()));

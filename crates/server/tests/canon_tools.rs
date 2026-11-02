@@ -7,11 +7,10 @@
 mod agent_write_harness;
 
 use agent_write_harness::base::runtime;
-use nekowriter::db::json::Phase;
 use nekowriter_llm::mock::ScriptStep;
 use serde_json::{Value, json};
 
-/// A runtime with one scripted step, run through a real writer session in `planning`.
+/// A runtime with one scripted step, run through a real writer session.
 async fn call_tool_with(steps: Vec<ScriptStep>) -> agent_write_harness::Runtime {
     runtime(steps).await
 }
@@ -899,10 +898,10 @@ async fn max_track_id(runtime: &agent_write_harness::Runtime, book_id: i32) -> i
 
 // ───────────────────────────── the phase matrix (spec/05 §2) ─────────────────────────────
 
-/// The retrieval tools are permitted while planning and rejected while drafting
-/// (spec/05 §2), so a drafting-phase retrieval call is `error.tool_not_allowed`.
+/// Retrieval tools are rejected in drafting (spec/05 §2), so a drafting-phase retrieval call is
+/// `error.tool_not_allowed`.
 #[tokio::test]
-async fn retrieval_tools_are_limited_to_the_planning_phases() {
+async fn retrieval_tools_are_rejected_in_drafting() {
     let runtime = runtime(vec![
         ScriptStep::new().tool("get_entity", json!({ "entity": "Lin Fan" })),
     ])
@@ -930,5 +929,4 @@ async fn retrieval_tools_are_limited_to_the_planning_phases() {
         "the tool_not_allowed wording: {}",
         get_entity.1
     );
-    let _ = Phase::Planning;
 }

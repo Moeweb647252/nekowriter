@@ -5,10 +5,7 @@
 
 mod agent_write_harness;
 
-use agent_write_harness::{
-    chapter_column, chapter_content, chapter_row, outline_step, phase_of, runtime,
-    start_legacy_writer, start_writer,
-};
+use agent_write_harness::{chapter_content, chapter_row, phase_of, runtime, start_writer};
 use axum::http::StatusCode;
 use nekowriter::db::json::{Granularity, Phase, SessionStatus, ToolCallStatus};
 use nekowriter::events::ServerEvent;
@@ -72,121 +69,6 @@ async fn held_call(
     let row = runtime.wait_status(session_id, SessionStatus::Held).await;
     let call_id = row.held_tool_call_id.expect("a held call id");
     (runtime.call_by_id(call_id).await, row)
-}
-
-// ───────────────────────────── test 1 ─────────────────────────────
-
-/// spec/03 §15 test 1: plan → `submit_outline` → (pause_after_outline) held → approve → the
-/// drafting notice contains the granularity rule → `insert_text` ×3 → `chapter_end` → the chapter
-/// is `in_review` with a draft version.
-#[tokio::test]
-async fn test_01_plan_outline_hold_approve_draft_and_complete() {
-    let runtime = runtime(vec![
-        outline_step(),
-        insert_step("第一句。"),
-        insert_step("第二句。"),
-        insert_step("第三句。"),
-        ScriptStep::new().tool(
-            "insert_text",
-            json!({ "text": "收尾。", "chapter_end": true }),
-        ),
-        finish_pair()[0].clone(),
-        finish_pair()[1].clone(),
-    ])
-    .await;
-    let session_id = start_legacy_writer(&runtime, Granularity::Paragraph, false, true).await;
-
-    // The outline held because `pause_after_outline` is on (spec/03 §5.2).
-    let (outline, row) = held_call(&runtime, session_id).await;
-    assert_eq!(outline.name, "submit_outline");
-    assert_eq!(row.phase, Phase::Planning.as_str());
-    assert_eq!(row.held_tool_call_id, Some(outline.id));
-    // Planning ran no insertion yet.
-    assert_eq!(
-        chapter_content(&runtime, runtime.chapter_id)
-            .await
-            .paragraphs
-            .len(),
-        0
-    );
-
-    let (status, body) = resume(&runtime, session_id, None).await;
-    assert_eq!(status, StatusCode::OK, "approve the outline: {body}");
-    runtime
-        .wait_status(session_id, SessionStatus::Completed)
-        .await;
-
-    // The drafting notice rode with the approved outline and carried the granularity rules.
-    let outline = runtime.call_by_id(outline.id).await;
-    let notice = outline.result_text.clone().unwrap_or_default();
-    assert!(notice.contains("章纲已确认"), "{notice}");
-    assert!(notice.contains("当前写作粒度：逐段"), "{notice}");
-
-    // Three inserts and the completing one wrote the text; the completion produced the version.
-    let content = chapter_content(&runtime, runtime.chapter_id).await;
-    assert_eq!(content.paragraphs.len(), 4, "{:?}", content.paragraphs);
-    assert!(!content.tail_open);
-    let (status, _, _) = chapter_row(&runtime, runtime.chapter_id).await;
-    assert_eq!(status, "in_review");
-    assert_eq!(runtime.version_kinds().await, vec!["draft".to_owned()]);
-    assert_eq!(phase_of(&runtime, session_id).await, Phase::Drafting);
-}
-
-// ───────────────────────────── test 2 ─────────────────────────────
-
-/// spec/03 §15 test 2: a held outline + feedback → the phase stays `planning`, the result holds
-/// the rejection notice and the feedback, and a resubmission works.
-#[tokio::test]
-async fn test_02_feedback_on_a_held_outline_keeps_planning_and_allows_resubmission() {
-    let runtime = runtime(vec![
-        outline_step(),
-        ScriptStep::new().tool(
-            "submit_outline",
-            json!({ "outline": "改过的章纲：场景一、场景二", "reference_notes": "- 改了" }),
-        ),
-        insert_step("正文。"),
-        finish_pair()[0].clone(),
-        finish_pair()[1].clone(),
-    ])
-    .await;
-    let session_id = start_legacy_writer(&runtime, Granularity::Paragraph, false, true).await;
-    let (first_outline, _row) = held_call(&runtime, session_id).await;
-
-    let (status, body) = resume(&runtime, session_id, Some("章纲再细一点，加一场雨中的戏。")).await;
-    assert_eq!(status, StatusCode::OK, "feedback: {body}");
-    // The rejection is immediate: the phase never left planning.
-    assert_eq!(phase_of(&runtime, session_id).await, Phase::Planning);
-    // The resubmitted outline holds again (`pause_after_outline`), so approve it too.
-    agent_write_harness::resume_until_done(&runtime, session_id, None).await;
-
-    let first_outline = runtime.call_by_id(first_outline.id).await;
-    let text = first_outline.result_text.clone().unwrap_or_default();
-    assert!(
-        text.contains("作者没有通过这份章纲"),
-        "the rejection notice: {text}"
-    );
-    assert!(
-        text.contains("加一场雨中的戏"),
-        "the author's feedback follows the notice: {text}"
-    );
-    // The canonical appendix order: effect notice, then author feedback (spec/03 §5.3).
-    let notice_at = text.find("作者没有通过这份章纲").expect("notice");
-    let feedback_at = text.find("加一场雨中的戏").expect("feedback");
-    assert!(
-        notice_at < feedback_at,
-        "the revoke notice comes first: {text}"
-    );
-
-    // The resubmission was accepted and the chapter now carries the new outline.
-    assert_eq!(
-        chapter_column(&runtime, runtime.chapter_id, "outline").await,
-        "改过的章纲：场景一、场景二"
-    );
-    assert_eq!(
-        runtime.version_kinds().await,
-        vec!["draft".to_owned()],
-        "the chapter was completed afterwards"
-    );
 }
 
 // ───────────────────────────── test 3 ─────────────────────────────
@@ -588,60 +470,6 @@ async fn test_10_a_switch_does_not_invalidate_an_in_flight_call() {
     assert_eq!(notices, 1, "the switch notice is delivered exactly once");
 }
 
-// ───────────────────────────── test 18 ─────────────────────────────
-
-/// spec/03 §15 test 18: the author edits the outline while `submit_outline` is held, then
-/// approves → the result carries the outline-accepted notice and an edit report with the new
-/// outline.
-#[tokio::test]
-async fn test_18_editing_the_outline_while_held_reports_it_with_the_acceptance() {
-    let runtime = runtime(vec![
-        outline_step(),
-        insert_step("正文。"),
-        finish_pair()[0].clone(),
-        finish_pair()[1].clone(),
-    ])
-    .await;
-    let session_id = start_legacy_writer(&runtime, Granularity::Paragraph, false, true).await;
-    let (outline, _) = held_call(&runtime, session_id).await;
-    assert_eq!(outline.name, "submit_outline");
-
-    // The author edits the outline and the notes while the call is held. That is allowed: the
-    // chapter is not locked by a *running* writer (spec/03 §14).
-    let (status, body) = runtime
-        .app
-        .patch(
-            &format!("/api/chapters/{}", runtime.chapter_id),
-            json!({
-                "outline": "作者补过的章纲：第一场在雨里。",
-                "reference_notes": "- 作者的要点",
-            }),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "author outline edit: {body}");
-
-    agent_write_harness::resume_until_done(&runtime, session_id, None).await;
-
-    let outline = runtime.call_by_id(outline.id).await;
-    let text = outline.result_text.clone().unwrap_or_default();
-    assert!(
-        text.contains("章纲已确认"),
-        "the outline was accepted: {text}"
-    );
-    assert!(
-        text.contains("作者补过的章纲：第一场在雨里。"),
-        "the report carries the author's new outline: {text}"
-    );
-    assert!(
-        text.contains("- 作者的要点"),
-        "the report carries the new reference notes: {text}"
-    );
-    // Canonical order: effect notice first, then the edit report (spec/03 §5.3).
-    let notice_at = text.find("章纲已确认").expect("notice");
-    let report_at = text.find("作者在暂停期间直接修改了本章").expect("report");
-    assert!(notice_at < report_at, "notice before edit report: {text}");
-}
-
 // ───────────────────────────── feedback revokes deferred effects ─────────────────────────────
 
 /// spec/03 §5.4: feedback on a held call with a `complete` effect revokes it, appends the revoke
@@ -727,48 +555,6 @@ async fn feedback_revokes_a_held_completion_and_keeps_working() {
     );
     // The completion was revoked, so the chapter kept drafting and finished later.
     assert_eq!(runtime.version_kinds().await, vec!["draft".to_owned()]);
-}
-
-/// spec/03 §5.4: feedback on a held `submit_outline` revokes `phase_to` and keeps the session in
-/// planning.
-#[tokio::test]
-async fn feedback_revokes_a_held_phase_change() {
-    let runtime = runtime(vec![
-        outline_step(),
-        ScriptStep::new().tool(
-            "submit_outline",
-            json!({ "outline": "第二版章纲", "reference_notes": "" }),
-        ),
-        insert_step("正文。"),
-        finish_pair()[0].clone(),
-        finish_pair()[1].clone(),
-    ])
-    .await;
-    let session_id = start_legacy_writer(&runtime, Granularity::Paragraph, false, true).await;
-    let (first, _) = held_call(&runtime, session_id).await;
-    assert_eq!(
-        first.effects().phase_to,
-        Some(Phase::Drafting),
-        "the held outline carries the deferred phase change"
-    );
-
-    let (status, body) = resume(&runtime, session_id, Some("先把第二场写细。")).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    // The phase never advanced: the feedback revoked it.
-    assert_eq!(phase_of(&runtime, session_id).await, Phase::Planning);
-    agent_write_harness::resume_until_done(&runtime, session_id, None).await;
-    let first = runtime.call_by_id(first.id).await;
-    let text = first.result_text.clone().unwrap_or_default();
-    assert!(text.contains("作者没有通过这份章纲"), "{text}");
-    assert!(text.contains("先把第二场写细"), "{text}");
-    // The resubmission moved the session to drafting; the first call stayed revoked.
-    let second_outline = runtime
-        .calls(session_id)
-        .await
-        .into_iter()
-        .find(|call| call.name == "submit_outline" && call.id != first.id)
-        .expect("the resubmission");
-    assert!(!second_outline.is_error);
 }
 
 /// D-009: a held session has no live task, so it survives a restart and Continue resumes it.

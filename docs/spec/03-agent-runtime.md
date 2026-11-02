@@ -276,10 +276,9 @@ WRITE_TOOLS = {insert_text, insert_paragraphs, replace_text, rewrite_paragraph, 
 The text delivered for a tool call is `raw_result_text` followed by its appendices, separated by
 a blank line, in this **canonical order**:
 
-1. **Effect notices** about the call itself: `writer.notice.outline_accepted` (rendered with
-   the current granularity rules), `writer.notice.revision_plan_accepted`,
-   `writer.notice.outline_rejected` / `planner.notice.outline_rejected` (chosen by session kind),
-   `writer.notice.revision_plan_rejected`, `notice.completion_revoked`, and the budget notices
+1. **Effect notices** about the call itself: `writer.notice.revision_plan_accepted`,
+   `planner.notice.outline_rejected`, `writer.notice.revision_plan_rejected`,
+   `notice.completion_revoked`, and the budget notices
    (`writer.notice.retrieval_budget` / `planner.notice.retrieval_budget` by role,
    `notice.research_budget`). The revoke notices carry no feedback text; the feedback follows in
    slot 3. A tool with its own rejection notice does not also get `notice.completion_revoked`.
