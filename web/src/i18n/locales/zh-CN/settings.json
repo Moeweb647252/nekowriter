@@ -158,7 +158,6 @@
   "effort.title": "思考强度",
   "effort.hint": "智能体会从中选择一个强度；没有选择时使用默认强度。",
   "effort.mock_note": "演示提供商不接受思考强度。",
-  "effort.combobox": "添加思考强度",
   "effort.placeholder": "输入强度或选择建议",
   "effort.add": "添加",
   "effort.levels": "思考强度级别",
@@ -168,8 +167,6 @@
   "effort.error.limit": "一个模型最多可以有 {{max}} 个级别。",
   "effort.default": "默认强度",
   "effort.default_none": "无 — 由提供商决定",
-  "effort.unsupported": "当前协议不会发送",
-  "effort.drag": "拖动排序：{{level}}",
   "effort.remove": "移除 {{level}}",
   "effort.ignored_title": "部分级别无法由当前协议发送",
   "effort.ignored_body": "{{protocol}} 无法发送 {{levels}}。这些级别会保留在该模型上并被忽略。",
@@ -181,8 +178,7 @@
   "effort_mismatch_badge": "已忽略：{{levels}}",
   "effort_mismatch_confirm": "要从 {{model}} 移除 {{levels}} 吗？{{protocol}} 无法发送它们，选择这些级别的角色会回退。",
   "effort_mismatch_fixed": "已移除不支持的思考强度级别。",
-  "effort.switch_title": "更改提供商协议？",
-  "effort.switch_body": "{{protocol}} 无法发送 {{levels}}。这些级别会保留在该模型上并被忽略；选择这些级别的角色会回退。",
-  "effort.switch_confirm": "仍然切换并保留级别",
-  "role_planner_unset": "同写手"
+  "role_planner_unset": "同写手",
+  "effort.level_input": "思考强度级别",
+  "effort.removed_level": "思考强度 {{level}}"
 }

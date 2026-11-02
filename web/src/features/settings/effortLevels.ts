@@ -7,8 +7,8 @@
  *    providers accept any token matching the pattern, and the Demo provider sends no request at
  *    all.
  *
- * The suggestions are the preset defaults from `GET /provider-presets` (spec/04 §8); free text is
- * still allowed on OpenAI because gateways accept different names.
+ * Anthropic uses its canonical set as checkboxes; OpenAI-compatible providers accept free text
+ * because gateways accept different names.
  */
 import type { Protocol } from "@/api/gen/Protocol"
 
@@ -21,13 +21,6 @@ export const EFFORT_LEVEL_PATTERN = /^[A-Za-z0-9_-]{1,32}$/
 /** Anthropic's closed, canonical effort set. */
 export const ANTHROPIC_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const
 
-/** The levels the dialog offers as suggestions, by protocol. */
-export const EFFORT_SUGGESTIONS: Record<Protocol, readonly string[]> = {
-  anthropic: ANTHROPIC_EFFORT_LEVELS,
-  openai: ["low", "medium", "high"],
-  mock: [],
-}
-
 export type EffortAddError = "invalid" | "duplicate" | "limit"
 
 export type EffortAddResult = {
@@ -35,7 +28,7 @@ export type EffortAddResult = {
   error: EffortAddError | null
 }
 
-/** Applies the server's add rules to one raw combobox value. */
+/** Applies the server's add rules to one raw chip-input value. */
 export function addEffortLevel(
   levels: readonly string[],
   raw: string,
@@ -54,27 +47,6 @@ export function addEffortLevel(
     return { levels: [...levels], error: "limit" }
   }
   return { levels: [...levels, value], error: null }
-}
-
-/** Moves one level, for the dnd-kit drop handler. */
-export function reorderEffortLevels(
-  levels: readonly string[],
-  oldIndex: number,
-  newIndex: number,
-): string[] {
-  if (
-    oldIndex < 0 ||
-    newIndex < 0 ||
-    oldIndex >= levels.length ||
-    newIndex >= levels.length ||
-    oldIndex === newIndex
-  ) {
-    return [...levels]
-  }
-  const next = [...levels]
-  const [moved] = next.splice(oldIndex, 1)
-  next.splice(newIndex, 0, moved)
-  return next
 }
 
 /** Whether one level is sendable by `protocol`. */
@@ -100,15 +72,4 @@ export function unsendableEffortLevels(
     return []
   }
   return levels.filter((level) => !isSendableEffortLevel(protocol, level))
-}
-
-/** The suggestions for one protocol, minus the levels already present. */
-export function effortSuggestionsFor(
-  protocol: Protocol | null,
-  levels: readonly string[],
-): string[] {
-  if (protocol === null) {
-    return []
-  }
-  return EFFORT_SUGGESTIONS[protocol].filter((level) => !levels.includes(level))
 }

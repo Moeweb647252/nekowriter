@@ -316,8 +316,10 @@ export default function ModelsPage() {
           if (clearing === null) {
             return
           }
-          // The author must be able to repair their own profile from the UI (D-132): the stored
-          // options their protocol cannot send are removed, and nothing else changes.
+          // The author must be able to repair their own profile from the UI (D-132): both
+          // stranded kinds are cleared in one PATCH, because each validator refuses the other
+          // list as-is. A default among the removed levels resets to None (D-162).
+          const ignoredLevels = new Set(clearing.ignored_effort_levels)
           const input: ModelProfileInput = {
             provider_id: clearing.provider_id,
             display_name: clearing.display_name,
@@ -325,10 +327,11 @@ export default function ModelsPage() {
             context_window: clearing.context_window,
             max_output_tokens: clearing.max_output_tokens,
             options: removeOptionKeys(clearing.options, clearing.ignored_options),
-            // The effort configuration is not part of this repair: carry it through so a fix does
-            // not wipe the levels (D-162).
-            effort_levels: clearing.effort_levels,
-            default_effort: clearing.default_effort ?? null,
+            effort_levels: clearing.effort_levels.filter((level) => !ignoredLevels.has(level)),
+            default_effort:
+              clearing.default_effort != null && ignoredLevels.has(clearing.default_effort)
+                ? null
+                : (clearing.default_effort ?? null),
           }
           patchModel.mutate(
             { id: clearing.id, input },
@@ -366,7 +369,10 @@ export default function ModelsPage() {
             model: clearingEffort.model,
             context_window: clearingEffort.context_window,
             max_output_tokens: clearingEffort.max_output_tokens,
-            options: clearingEffort.options,
+            options: removeOptionKeys(
+              clearingEffort.options,
+              clearingEffort.ignored_options,
+            ),
             effort_levels: clearingEffort.effort_levels.filter((level) => !ignored.has(level)),
             default_effort:
               clearingEffort.default_effort != null &&
@@ -441,11 +447,7 @@ function ModelDialog({
   const [fetchError, setFetchError] = useState<string | null>(null)
   // What a provider switch dropped, so the author sees it instead of finding it gone later.
   const [cleared, setCleared] = useState<OptionKey[]>([])
-  // A provider switch that strands effort levels asks first; the levels stay on the profile.
-  const [pendingProvider, setPendingProvider] = useState<{
-    id: string
-    levels: string[]
-  } | null>(null)
+  const [clearedEfforts, setClearedEfforts] = useState<string[]>([])
   const editing = model !== undefined
   const protocol = providerProtocol(providers, draft.provider_id)
   const visibleSpecs = optionsForProtocol(specs, protocol)
@@ -517,21 +519,30 @@ function ModelDialog({
             <Select
               value={draft.provider_id}
               onValueChange={(value) => {
-                // Switching to a provider with another protocol strands the effort levels that
-                // protocol cannot send. They are never deleted here: ask first, keep them, and
-                // flag them (D-162). The old option behaviour (remove visibly) still applies.
+                // A protocol switch removes the levels the new protocol cannot send and names
+                // them in the existing "Options removed" notice, exactly like stranded options
+                // (spec/11 §5.1, D-162). The removal is visible and explained, not silent.
                 const nextProtocol = providerProtocol(providers, value)
                 const strandedEfforts = unsendableEffortLevels(
                   draft.effort_levels,
                   nextProtocol,
                 )
-                if (strandedEfforts.length > 0) {
-                  setPendingProvider({ id: value, levels: strandedEfforts })
-                  return
-                }
                 const result = clearUnreachableOptions(draft.options, specs, nextProtocol)
                 setCleared(result.removed)
-                setDraft({ ...draft, provider_id: value, options: result.options })
+                setClearedEfforts(strandedEfforts)
+                setDraft({
+                  ...draft,
+                  provider_id: value,
+                  options: result.options,
+                  effort_levels: draft.effort_levels.filter(
+                    (level) => !strandedEfforts.includes(level),
+                  ),
+                  default_effort:
+                    draft.default_effort !== null &&
+                    strandedEfforts.includes(draft.default_effort)
+                      ? null
+                      : draft.default_effort,
+                })
               }}
             >
               <SelectTrigger id="model-provider">
@@ -663,15 +674,20 @@ function ModelDialog({
               </AlertDescription>
             </Alert>
           )}
-          {cleared.length === 0 ? null : (
+          {cleared.length === 0 && clearedEfforts.length === 0 ? null : (
             <Alert data-testid="cleared-options-alert">
               <TriangleAlert />
               <AlertTitle>{t("settings:option_cleared_title")}</AlertTitle>
               <AlertDescription>
                 {t("settings:option_cleared_body", {
-                  options: cleared
-                    .map((key) => t(optionLabelKey(key), { defaultValue: key }))
-                    .join(", "),
+                  options: [
+                    ...cleared.map((key) =>
+                      t(optionLabelKey(key), { defaultValue: key }),
+                    ),
+                    ...clearedEfforts.map((level) =>
+                      t("settings:effort.removed_level", { level }),
+                    ),
+                  ].join(", "),
                   protocol: protocolLabel(t, protocol),
                 })}
               </AlertDescription>
@@ -717,7 +733,12 @@ function ModelDialog({
             protocol={protocol}
             levels={draft.effort_levels}
             defaultEffort={draft.default_effort}
-            ignoredEffortLevels={model?.ignored_effort_levels ?? []}
+            ignoredEffortLevels={
+              model !== undefined &&
+              draft.provider_id === String(model.provider_id)
+                ? model.ignored_effort_levels
+                : []
+            }
             onChange={(effortLevels, defaultEffort) =>
               setDraft({ ...draft, effort_levels: effortLevels, default_effort: defaultEffort })
             }
@@ -732,26 +753,6 @@ function ModelDialog({
           </Button>
         </DialogFooter>
       </DialogContent>
-      <ConfirmDialog
-        open={pendingProvider !== null}
-        onOpenChange={() => setPendingProvider(null)}
-        title={t("settings:effort.switch_title")}
-        description={t("settings:effort.switch_body", {
-          protocol: protocolLabel(t, providerProtocol(providers, pendingProvider?.id ?? "")),
-          levels: pendingProvider?.levels.join(", ") ?? "",
-        })}
-        confirmLabel={t("settings:effort.switch_confirm")}
-        onConfirm={() => {
-          if (pendingProvider === null) {
-            return
-          }
-          const nextProtocol = providerProtocol(providers, pendingProvider.id)
-          const result = clearUnreachableOptions(draft.options, specs, nextProtocol)
-          setCleared(result.removed)
-          setDraft({ ...draft, provider_id: pendingProvider.id, options: result.options })
-          setPendingProvider(null)
-        }}
-      />
     </Dialog>
   )
 }

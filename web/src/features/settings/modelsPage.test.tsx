@@ -11,7 +11,7 @@
  * TypeScript, so these tests fix the *behaviour*: what the form shows for a protocol, what it does
  * when the protocol changes, and how it reports a profile that is already mismatched.
  */
-import { render, screen, within } from "@testing-library/react"
+import { fireEvent, render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import i18n from "i18next"
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest"
@@ -20,7 +20,7 @@ import enSettings from "@/i18n/locales/en/settings.json"
 import zhSettings from "@/i18n/locales/zh-CN/settings.json"
 
 import ModelsPage from "./ModelsPage"
-import { MAX_EFFORT_LEVELS, reorderEffortLevels } from "./effortLevels"
+import { MAX_EFFORT_LEVELS } from "./effortLevels"
 import {
   DEFAULT_OPTION_VALUE,
   OPTION_KEYS,
@@ -766,56 +766,78 @@ async function openEffortEditDialog(model: ModelProfileDto, providers: ProviderD
   return { user, dialog: await screen.findByRole("dialog") }
 }
 
-/** Types one level into the combobox and presses Enter. */
-async function addThroughCombobox(
+/** Types one OpenAI level into the chip input and presses Enter. */
+async function addOpenAiLevel(
   user: ReturnType<typeof userEvent.setup>,
   dialog: HTMLElement,
   level: string,
 ) {
-  const input = within(dialog).getByRole("combobox", {
-    name: t("settings:effort.combobox"),
-  })
+  const input = within(dialog).getByLabelText(t("settings:effort.level_input"))
   await user.clear(input)
   await user.type(input, `${level}{Enter}`)
   return input
 }
 
 describe("ModelsPage Thinking effort (D-162)", () => {
-  it("adds through the combobox and removes a level", async () => {
+  it("shows the five Anthropic checkboxes in canonical order and toggles them", async () => {
     const { user, dialog } = await openEffortAddDialog()
     expect(within(dialog).getByTestId("thinking-effort")).toBeInTheDocument()
 
-    await addThroughCombobox(user, dialog, "high")
+    const boxes = within(dialog).getAllByRole("checkbox")
+    expect(boxes.map((box) => box.getAttribute("aria-label") ?? box.textContent)).toHaveLength(5)
+    for (const level of ["low", "medium", "high", "xhigh", "max"]) {
+      expect(within(dialog).getByRole("checkbox", { name: t(`settings:value.effort.${level}`) })).toBeInTheDocument()
+    }
+
+    const high = within(dialog).getByRole("checkbox", { name: t("settings:value.effort.high") })
+    await user.click(high)
+    expect(high).toBeChecked()
+    await user.click(high)
+    expect(high).not.toBeChecked()
+  })
+
+  it("adds OpenAI levels through the chip input in entry order and removes them", async () => {
+    const { user, dialog } = await openEffortAddDialog()
+    await user.click(within(dialog).getByRole("combobox", { name: /Provider|提供商/ }))
+    await user.click(await screen.findByRole("option", { name: /Magpie/ }))
+
+    await addOpenAiLevel(user, dialog, "high")
+    await addOpenAiLevel(user, dialog, "low")
     expect(within(dialog).getByTestId("effort-level-high")).toHaveTextContent("high")
-    await addThroughCombobox(user, dialog, "max")
-    expect(within(dialog).getByTestId("effort-level-max")).toBeInTheDocument()
+    expect(within(dialog).getByTestId("effort-level-low")).toHaveTextContent("low")
+    // Entry order, not sorted order.
+    const chips = within(dialog)
+      .getAllByTestId(/^effort-level-/)
+      .map((chip) => chip.getAttribute("data-testid"))
+    expect(chips).toEqual(["effort-level-high", "effort-level-low"])
+
+    // The Add button appends the same way as Enter.
+    const input = within(dialog).getByLabelText(t("settings:effort.level_input"))
+    await user.type(input, "medium")
+    await user.click(
+      within(dialog).getByRole("button", { name: t("settings:effort.add") }),
+    )
+    expect(within(dialog).getByTestId("effort-level-medium")).toBeInTheDocument()
 
     await user.click(
       within(dialog).getByRole("button", {
-        name: tv("settings:effort.remove", { level: "max" }),
+        name: tv("settings:effort.remove", { level: "high" }),
       }),
     )
-    expect(within(dialog).queryByTestId("effort-level-max")).not.toBeInTheDocument()
-    expect(within(dialog).getByTestId("effort-level-high")).toBeInTheDocument()
+    expect(within(dialog).queryByTestId("effort-level-high")).not.toBeInTheDocument()
+    expect(within(dialog).getByTestId("effort-level-low")).toBeInTheDocument()
   })
 
-  it("keeps the drag order stable through the reorder helper", async () => {
-    // The dnd-kit list uses this helper on drop; jsdom cannot drive the pointer sensor, so the
-    // reorder rule itself is asserted here and the rendered rows above prove the wiring exists.
-    expect(reorderEffortLevels(["low", "high", "max"], 0, 2)).toEqual(["high", "max", "low"])
-    expect(reorderEffortLevels(["low", "high"], 1, 0)).toEqual(["high", "low"])
-    expect(reorderEffortLevels(["low"], 0, 0)).toEqual(["low"])
-  })
-
-  it("refuses a ninth level with the cap message", async () => {
+  it("refuses a ninth OpenAI level with the cap message", async () => {
     const { user, dialog } = await openEffortAddDialog()
-    const levels = ["a", "b", "c", "d", "e", "f", "g", "h"]
-    for (const level of levels) {
-      await addThroughCombobox(user, dialog, level)
+    await user.click(within(dialog).getByRole("combobox", { name: /Provider|提供商/ }))
+    await user.click(await screen.findByRole("option", { name: /Magpie/ }))
+    for (const level of ["a", "b", "c", "d", "e", "f", "g", "h"]) {
+      await addOpenAiLevel(user, dialog, level)
     }
     expect(within(dialog).getByTestId("effort-level-h")).toBeInTheDocument()
 
-    await addThroughCombobox(user, dialog, "i")
+    await addOpenAiLevel(user, dialog, "i")
     expect(within(dialog).queryByTestId("effort-level-i")).not.toBeInTheDocument()
     expect(within(dialog).getByTestId("effort-error")).toHaveTextContent(
       tv("settings:effort.error.limit", { max: MAX_EFFORT_LEVELS }),
@@ -824,22 +846,41 @@ describe("ModelsPage Thinking effort (D-162)", () => {
 
   it("validates the level pattern and duplicates before adding", async () => {
     const { user, dialog } = await openEffortAddDialog()
-    await addThroughCombobox(user, dialog, "bad level")
+    await user.click(within(dialog).getByRole("combobox", { name: /Provider|提供商/ }))
+    await user.click(await screen.findByRole("option", { name: /Magpie/ }))
+
+    await addOpenAiLevel(user, dialog, "bad level")
     expect(within(dialog).queryByTestId("effort-level-bad level")).not.toBeInTheDocument()
     expect(within(dialog).getByTestId("effort-error")).toHaveTextContent(
       t("settings:effort.error.invalid"),
     )
-    await addThroughCombobox(user, dialog, "high")
-    await addThroughCombobox(user, dialog, "high")
+    await addOpenAiLevel(user, dialog, "high")
+    await addOpenAiLevel(user, dialog, "high")
     expect(within(dialog).getByTestId("effort-error")).toHaveTextContent(
       t("settings:effort.error.duplicate"),
     )
   })
 
+  it("ignores Enter while an IME composition is active", async () => {
+    const { user, dialog } = await openEffortAddDialog()
+    await user.click(within(dialog).getByRole("combobox", { name: /Provider|提供商/ }))
+    await user.click(await screen.findByRole("option", { name: /Magpie/ }))
+    const input = within(dialog).getByLabelText(t("settings:effort.level_input"))
+    await user.type(input, "high")
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true })
+    expect(within(dialog).queryByTestId("effort-level-high")).not.toBeInTheDocument()
+    expect(input).toHaveValue("high")
+    // A plain Enter after the composition ends adds it.
+    await user.type(input, "{Enter}")
+    expect(within(dialog).getByTestId("effort-level-high")).toBeInTheDocument()
+  })
+
   it("selects a default and resets it when that level is removed", async () => {
     const { user, dialog } = await openEffortAddDialog()
-    await addThroughCombobox(user, dialog, "low")
-    await addThroughCombobox(user, dialog, "high")
+    await user.click(within(dialog).getByRole("combobox", { name: /Provider|提供商/ }))
+    await user.click(await screen.findByRole("option", { name: /Magpie/ }))
+    await addOpenAiLevel(user, dialog, "low")
+    await addOpenAiLevel(user, dialog, "high")
 
     await user.click(within(dialog).getByLabelText(t("settings:effort.default")))
     await user.click(await screen.findByRole("option", { name: t("settings:value.effort.high") }))
@@ -855,7 +896,7 @@ describe("ModelsPage Thinking effort (D-162)", () => {
     )
   })
 
-  it("asks before a protocol switch and keeps the levels, marking the unsendable ones", async () => {
+  it("removes the levels a protocol switch cannot send and names them in the notice", async () => {
     const switched: ModelProfileDto = {
       ...MISMATCHED,
       id: 7,
@@ -868,47 +909,42 @@ describe("ModelsPage Thinking effort (D-162)", () => {
     await user.click(within(dialog).getByRole("combobox", { name: /Provider|提供商/ }))
     await user.click(await screen.findByRole("option", { name: /Anthropic/ }))
 
-    const confirmation = await screen.findByRole("alertdialog")
-    expect(confirmation).toHaveTextContent(t("settings:effort.switch_title"))
-    expect(confirmation).toHaveTextContent("ultra")
-    await user.click(
-      within(confirmation).getByRole("button", { name: t("settings:effort.switch_confirm") }),
+    const notice = await within(dialog).findByTestId("cleared-options-alert")
+    expect(notice).toHaveTextContent(t("settings:option_cleared_title"))
+    expect(notice).toHaveTextContent("effort level ultra")
+    // `ultra` is not among the Anthropic checkboxes and the default reset to None.
+    expect(within(dialog).queryByTestId("effort-level-ultra")).not.toBeInTheDocument()
+    expect(within(dialog).getByLabelText(t("settings:effort.default"))).toHaveTextContent(
+      t("settings:effort.default_none"),
     )
-
-    // The levels stay in the draft, and the unsendable one is visibly marked.
-    expect(within(dialog).getByTestId("effort-level-low")).toHaveAttribute("data-unsupported", "false")
-    expect(within(dialog).getByTestId("effort-level-ultra")).toHaveAttribute(
-      "data-unsupported",
-      "true",
-    )
-    const alert = within(dialog).getByTestId("ignored-effort-alert")
-    expect(alert).toHaveTextContent(t("settings:effort.ignored_title"))
-    expect(alert).toHaveTextContent("ultra")
-  })
-
-  it("cancels a protocol switch without touching the levels or provider", async () => {
-    const switched: ModelProfileDto = {
-      ...MISMATCHED,
-      id: 7,
-      effort_levels: ["low", "ultra"],
-      default_effort: "low",
-      ignored_effort_levels: [],
-      ignored_options: [],
-    }
-    const { user, dialog } = await openEffortEditDialog(switched)
-    await user.click(within(dialog).getByRole("combobox", { name: /Provider|提供商/ }))
-    await user.click(await screen.findByRole("option", { name: /Anthropic/ }))
-    const confirmation = await screen.findByRole("alertdialog")
-    await user.click(within(confirmation).getByRole("button", { name: t("common:cancel") }))
-
-    expect(within(dialog).getByTestId("effort-level-ultra")).toBeInTheDocument()
+    expect(
+      within(dialog).getByRole("checkbox", { name: t("settings:value.effort.low") }),
+    ).toBeChecked()
+    // The removed level is gone from the draft too, not merely hidden by the checkbox renderer.
     expect(within(dialog).queryByTestId("ignored-effort-alert")).not.toBeInTheDocument()
-    expect(within(dialog).getByRole("combobox", { name: /Provider|提供商/ })).toHaveTextContent(
-      /Magpie/,
-    )
   })
 
-  it("shows the mock note instead of the combobox on the Demo provider", async () => {
+  it("does not keep stored ignored marks after switching to a protocol that can send them", async () => {
+    const stale: ModelProfileDto = {
+      ...MISMATCHED,
+      id: 11,
+      provider_id: 1,
+      options: {},
+      effort_levels: ["ultra"],
+      default_effort: "ultra",
+      ignored_options: [],
+      ignored_effort_levels: ["ultra"],
+    }
+    const { user, dialog } = await openEffortEditDialog(stale)
+    expect(await within(dialog).findByTestId("ignored-effort-alert")).toHaveTextContent("ultra")
+
+    await user.click(within(dialog).getByRole("combobox", { name: /Provider|提供商/ }))
+    await user.click(await screen.findByRole("option", { name: /Magpie/ }))
+    expect(within(dialog).queryByTestId("ignored-effort-alert")).not.toBeInTheDocument()
+    expect(within(dialog).getByTestId("effort-level-ultra")).toBeInTheDocument()
+  })
+
+  it("shows the mock note instead of the controls on the Demo provider", async () => {
     const demo: ProviderDto = {
       ...PROVIDERS[0],
       id: 9,
@@ -918,16 +954,14 @@ describe("ModelsPage Thinking effort (D-162)", () => {
     }
     const { dialog } = await openEffortAddDialog([demo, ...PROVIDERS])
     expect(within(dialog).getByTestId("effort-mock-note")).toBeInTheDocument()
-    expect(
-      within(dialog).queryByRole("combobox", { name: t("settings:effort.combobox") }),
-    ).not.toBeInTheDocument()
+    expect(within(dialog).queryByRole("checkbox")).not.toBeInTheDocument()
+    expect(within(dialog).queryByLabelText(t("settings:effort.level_input"))).not.toBeInTheDocument()
   })
 
   it("carries the edited levels and default in the PATCH and round-trips them", async () => {
     PATCHED.length = 0
-    // Use openai levels so `high` is a legal addition to the loaded `max`.
     const { user, dialog } = await openEffortEditDialog(MISMATCHED)
-    await addThroughCombobox(user, dialog, "high")
+    await addOpenAiLevel(user, dialog, "high")
     await user.click(within(dialog).getByLabelText(t("settings:effort.default")))
     await user.click(await screen.findByRole("option", { name: t("settings:value.effort.high") }))
     await user.click(within(dialog).getByRole("button", { name: t("common:save") }))
@@ -950,6 +984,20 @@ describe("ModelsPage Thinking effort table (D-162)", () => {
     ignored_options: [],
   }
 
+  it("shows an em dash when a profile has no levels", async () => {
+    const empty: ModelProfileDto = {
+      ...MISMATCHED,
+      id: 9,
+      effort_levels: [],
+      default_effort: null,
+      ignored_effort_levels: [],
+      ignored_options: [],
+    }
+    setData([empty], PROVIDERS)
+    render(<ModelsPage />)
+    expect(await screen.findByTestId("effort-levels-9")).toHaveTextContent("—")
+  })
+
   it("shows the levels column with the default marker and an ignored-levels banner", async () => {
     setData([EFFORT_MISMATCH], PROVIDERS)
     render(<ModelsPage />)
@@ -963,18 +1011,23 @@ describe("ModelsPage Thinking effort table (D-162)", () => {
     expect(screen.getByTestId("ignored-efforts-8")).toHaveTextContent("max")
   })
 
-  it("shows an em dash when a profile has no levels", async () => {
-    const empty: ModelProfileDto = {
-      ...MISMATCHED,
-      id: 9,
-      effort_levels: [],
-      default_effort: null,
-      ignored_effort_levels: [],
-      ignored_options: [],
-    }
-    setData([empty], PROVIDERS)
+  it("fixes stored ignored effort levels in one PATCH, clearing the ignored default", async () => {
+    PATCHED.length = 0
+    setData([EFFORT_MISMATCH], PROVIDERS)
+    const user = userEvent.setup()
     render(<ModelsPage />)
-    expect(await screen.findByTestId("effort-levels-9")).toHaveTextContent("—")
+    await user.click(
+      await screen.findByRole("button", { name: t("settings:effort_mismatch_fix") }),
+    )
+    const confirmation = await screen.findByRole("alertdialog")
+    await user.click(
+      within(confirmation).getByRole("button", { name: t("settings:effort_mismatch_fix") }),
+    )
+
+    expect(PATCHED).toHaveLength(1)
+    expect(PATCHED[0].effort_levels).toEqual([])
+    expect(PATCHED[0].default_effort).toBeNull()
+    expect(PATCHED[0].options).toEqual(EFFORT_MISMATCH.options)
   })
 
   it("shows the server's ignored effort levels in the edit dialog and removes them", async () => {
@@ -998,23 +1051,54 @@ describe("ModelsPage Thinking effort table (D-162)", () => {
     expect(PATCHED[0].default_effort).toBeNull()
   })
 
-  it("fixes stored ignored effort levels in one PATCH, clearing the ignored default", async () => {
+  it("clears both stranded lists through the option repair", async () => {
     PATCHED.length = 0
-    setData([EFFORT_MISMATCH], PROVIDERS)
+    const both: ModelProfileDto = {
+      ...MISMATCHED,
+      id: 12,
+      ignored_options: ["thinking_display"],
+      ignored_effort_levels: ["max"],
+      effort_levels: ["max"],
+      default_effort: "max",
+    }
+    setData([both], PROVIDERS)
     const user = userEvent.setup()
     render(<ModelsPage />)
+    await user.click(await screen.findByTestId("ignored-options-12"))
+    const confirmation = await screen.findByRole("alertdialog")
     await user.click(
-      await screen.findByRole("button", { name: t("settings:effort_mismatch_fix") }),
+      within(confirmation).getByRole("button", { name: t("settings:option_mismatch_fix") }),
     )
+
+    expect(PATCHED).toHaveLength(1)
+    expect(PATCHED[0].options.thinking_display).toBeUndefined()
+    expect(PATCHED[0].effort_levels).toEqual([])
+    expect(PATCHED[0].default_effort).toBeNull()
+  })
+
+  it("clears both stranded lists through the effort repair", async () => {
+    PATCHED.length = 0
+    const both: ModelProfileDto = {
+      ...MISMATCHED,
+      id: 12,
+      ignored_options: ["thinking_display"],
+      ignored_effort_levels: ["max"],
+      effort_levels: ["max"],
+      default_effort: "max",
+    }
+    setData([both], PROVIDERS)
+    const user = userEvent.setup()
+    render(<ModelsPage />)
+    await user.click(await screen.findByTestId("ignored-efforts-12"))
     const confirmation = await screen.findByRole("alertdialog")
     await user.click(
       within(confirmation).getByRole("button", { name: t("settings:effort_mismatch_fix") }),
     )
 
     expect(PATCHED).toHaveLength(1)
+    expect(PATCHED[0].options.thinking_display).toBeUndefined()
     expect(PATCHED[0].effort_levels).toEqual([])
     expect(PATCHED[0].default_effort).toBeNull()
-    expect(PATCHED[0].options).toEqual(EFFORT_MISMATCH.options)
   })
 })
 

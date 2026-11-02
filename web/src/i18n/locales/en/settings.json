@@ -158,7 +158,6 @@
   "effort.title": "Thinking effort",
   "effort.hint": "Agent roles choose one of these levels. A role that chooses none uses the default.",
   "effort.mock_note": "The Demo provider takes no effort levels.",
-  "effort.combobox": "Add an effort level",
   "effort.placeholder": "Type a level or pick a suggestion",
   "effort.add": "Add",
   "effort.levels": "Effort levels",
@@ -168,8 +167,6 @@
   "effort.error.limit": "A model can have at most {{max}} levels.",
   "effort.default": "Default level",
   "effort.default_none": "None — the provider decides",
-  "effort.unsupported": "Not sent by this protocol",
-  "effort.drag": "Reorder {{level}}",
   "effort.remove": "Remove {{level}}",
   "effort.ignored_title": "Some levels cannot be sent by this protocol",
   "effort.ignored_body": "{{protocol}} cannot send {{levels}}. They stay on this model and will be ignored.",
@@ -181,8 +178,7 @@
   "effort_mismatch_badge": "Ignored: {{levels}}",
   "effort_mismatch_confirm": "Remove {{levels}} from {{model}}? {{protocol}} cannot send them, and roles that choose them fall back.",
   "effort_mismatch_fixed": "The unsupported effort levels were removed.",
-  "effort.switch_title": "Change the provider protocol?",
-  "effort.switch_body": "{{protocol}} cannot send {{levels}}. The levels stay on this model and will be ignored; roles that choose them fall back.",
-  "effort.switch_confirm": "Switch and keep the levels",
-  "role_planner_unset": "Same as Writer"
+  "role_planner_unset": "Same as Writer",
+  "effort.level_input": "Effort level",
+  "effort.removed_level": "effort level {{level}}"
 }
