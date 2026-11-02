@@ -41,7 +41,7 @@ const relation: RelationDto = {
   description: "",
   status: "active",
   since_chapter_id: 4,
-  until_chapter_id: null,
+  until_chapter_id: 5,
   created_at: "",
   updated_at: "",
 }
@@ -90,6 +90,17 @@ const chapterIndex = new Map([
       id: 5,
       number: 2,
       title: "Two",
+      trackId: 1,
+      trackKind: "main" as const,
+      trackTitle: "",
+    },
+  ],
+  [
+    6,
+    {
+      id: 6,
+      number: 3,
+      title: "Three",
       trackId: 1,
       trackKind: "main" as const,
       trackTitle: "",
@@ -217,12 +228,25 @@ describe("relation editing", () => {
     renderEditor()
     const user = userEvent.setup()
     await user.click(screen.getByRole("button", { name: "Edit" }))
-    await user.selectOptions(screen.getByLabelText("Until chapter"), "5")
+    await user.selectOptions(screen.getByLabelText("Until chapter"), "6")
     await user.click(screen.getByRole("button", { name: "Save" }))
 
     expect(patchMutate.mock.calls[0][0]).toEqual({
       id: 9,
-      patch: { until_chapter_id: 5 },
+      patch: { until_chapter_id: 6 },
+    })
+  })
+
+  it("clears the until chapter to null", async () => {
+    renderEditor()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: "Edit" }))
+    await user.selectOptions(screen.getByLabelText("Until chapter"), "")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(patchMutate.mock.calls[0][0]).toEqual({
+      id: 9,
+      patch: { until_chapter_id: null },
     })
   })
 

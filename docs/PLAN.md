@@ -180,8 +180,8 @@ needed. Real providers are tested when the author supplies keys.
     - Create an entity "Test sword" (item, shared), then a second one "The sword". Merge "The
       sword" into "Test sword": its name becomes an alias, and the Changes page shows the merge
       notes.
-    - Edit a relation's description and end it. The row shows "ended", and the entity history
-      shows the change with your note.
+    - Edit a relation's description and end it. The row shows "ended", and the Changes page shows
+      the relation change with your note (the entity history lists entity changes only).
     - Edit a timeline event's story time and linked entities. Its position is unchanged.
     - On an entity with more than 20 changes, **Show full history** lists the older ones.
     - Open a long session and scroll to the top. Older messages load without the view jumping.
