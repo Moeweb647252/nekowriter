@@ -7,7 +7,11 @@ import type { ResearchTaskStatus } from "./ResearchTaskStatus";
 /**
  * A research task row (spec/10 §2.5).
  */
-export type ResearchTaskDto = { id: number, book_id: number | null, scope_id: number | null, scope_name: string, topic: string, kind: ResearchTaskKind, origin: ResearchTaskOrigin, requirements: string, language: string, status: ResearchTaskStatus, session_id: number | null, report: string, entries_created: number, 
+export type ResearchTaskDto = { id: number, book_id: number | null, scope_id: number | null, scope_name: string, topic: string, kind: ResearchTaskKind, origin: ResearchTaskOrigin, requirements: string, language: string, status: ResearchTaskStatus, session_id: number | null, 
+/**
+ * The knowledge check that listed this topic; always serialized, `null` for other tasks.
+ */
+check_id: number | null, report: string, entries_created: number, 
 /**
  * The entries this task created, in id order; filled by the single-task endpoints when the
  * task is `done` (spec/10 §2.5). Events and the list leave it empty to stay cheap: the UI

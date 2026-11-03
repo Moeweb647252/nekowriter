@@ -19,6 +19,7 @@ function task(overrides: Partial<ResearchTaskDto> = {}): ResearchTaskDto {
     language: "en",
     status: "done",
     session_id: null,
+    check_id: null,
     report: "Report",
     entries_created: 2,
     entries: [],

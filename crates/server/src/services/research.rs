@@ -860,6 +860,7 @@ pub fn to_dto(row: research_tasks::Model) -> ResearchTaskDto {
         language: row.language,
         status: row.status,
         session_id: row.session_id,
+        check_id: row.check_id,
         report: row.report,
         entries_created: row.entries_created,
         entries: Vec::new(),

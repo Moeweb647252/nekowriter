@@ -169,7 +169,7 @@ macro_rules! entity_columns {
 
 for_all_entities!(entity_columns);
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct PragmaColumn {
     name: String,
     not_null: bool,
@@ -209,6 +209,49 @@ async fn migrated_db() -> (tempfile::TempDir, DatabaseConnection) {
         .expect("connect");
     nekowriter_migration::up(db.conn()).await.expect("migrate");
     (dir, db.conn().clone())
+}
+
+/// A database at 0010, then upgraded to the head through `0011`: the path an existing install
+/// takes. Entity checks are only run against a fresh database elsewhere; this path must produce
+/// the same columns and foreign keys.
+async fn upgraded_db() -> (tempfile::TempDir, DatabaseConnection) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db = nekowriter::db::Db::connect(&dir.path().join("upgraded.db"))
+        .await
+        .expect("connect");
+    nekowriter_migration::up_to(db.conn(), 10)
+        .await
+        .expect("migrate to 0010");
+    nekowriter_migration::up(db.conn())
+        .await
+        .expect("upgrade to head");
+    (dir, db.conn().clone())
+}
+
+#[tokio::test]
+async fn an_upgraded_database_matches_the_fresh_entity_schema() {
+    let (_fresh_dir, fresh) = migrated_db().await;
+    let (_upgraded_dir, upgraded) = upgraded_db().await;
+    for entity in all_entity_columns() {
+        assert_eq!(
+            pragma_table_info(&fresh, entity.table).await,
+            pragma_table_info(&upgraded, entity.table).await,
+            "{} ({}) columns differ after an upgrade",
+            entity.module,
+            entity.table
+        );
+    }
+    let mut tables: BTreeSet<&str> = BTreeSet::new();
+    for (_, table, _) in all_relations() {
+        tables.insert(table);
+    }
+    for table in tables {
+        assert_eq!(
+            pragma_foreign_keys(&fresh, table).await,
+            pragma_foreign_keys(&upgraded, table).await,
+            "{table} foreign keys differ after an upgrade"
+        );
+    }
 }
 
 /// Check 1: every table has exactly one entity and every entity has its table.
@@ -377,7 +420,7 @@ macro_rules! entity_relations {
 
 for_all_entities!(entity_relations);
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct PragmaForeignKey {
     from: String,
     to_table: String,
@@ -498,8 +541,8 @@ async fn every_unambiguous_foreign_key_has_a_reverse_has_many() {
         }
     }
     assert_eq!(
-        checked, 65,
-        "the schema has 65 unambiguous foreign keys with a reverse relation"
+        checked, 66,
+        "the schema has 66 unambiguous foreign keys with a reverse relation"
     );
 }
 

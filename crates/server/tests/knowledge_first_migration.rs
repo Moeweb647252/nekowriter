@@ -138,7 +138,10 @@ async fn pre_0008_database() -> (tempfile::TempDir, Db) {
         .await
         .expect("fixture");
     db.conn()
-        .execute_unprepared("DELETE FROM seaql_migrations WHERE version = 'm0008_knowledge_first'")
+        .execute_unprepared(
+            "DELETE FROM seaql_migrations WHERE version IN \
+             ('m0008_knowledge_first', 'm0011_check_topics')",
+        )
         .await
         .expect("rewind to 0007");
     assert!(!table_exists(db.conn(), "book_scope_exclusions").await);
@@ -741,6 +744,14 @@ async fn edited_0001_matches_the_chain_for_directly_created_tables() {
         ))
         .await
         .expect("apply the 0010 agent_sessions additions");
+    // 0011 appends `research_tasks.check_id` and its index; apply the same addition for the
+    // direct-table semantics comparison.
+    raw.conn()
+        .execute_unprepared(include_str!(
+            "../../migration/src/sql/0011_check_topics.sql"
+        ))
+        .await
+        .expect("apply the 0011 research_tasks additions");
     let raw_dump = schema_dump(raw.conn()).await;
 
     let chain_dir = tempfile::tempdir().expect("chain dir");

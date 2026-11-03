@@ -18,6 +18,7 @@ function topic(overrides: Partial<ResearchTaskDto> = {}): ResearchTaskDto {
     language: "en",
     status: "draft",
     session_id: null,
+    check_id: null,
     report: "",
     entries_created: 0,
     entries: [],

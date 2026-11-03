@@ -43,6 +43,7 @@ function prep(): ResearchTaskDto {
     language: "en",
     status: "done",
     session_id: null,
+    check_id: null,
     report: "Report",
     entries_created: 0,
     entries: [],

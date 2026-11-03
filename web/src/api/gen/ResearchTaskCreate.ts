@@ -3,7 +3,11 @@
 /**
  * `POST /api/research-tasks` (spec/10 §2.5).
  */
-export type ResearchTaskCreate = { book_id?: number | null, scope_name: string, topic: string, requirements: string, 
+export type ResearchTaskCreate = { book_id?: number | null, 
+/**
+ * The knowledge check this task joins (spec/10 §2.5, D-168).
+ */
+check_id?: number | null, scope_name: string, topic: string, requirements: string, 
 /**
  * Required without a book, ignored with one (spec/10 §2.5).
  */

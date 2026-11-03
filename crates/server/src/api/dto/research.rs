@@ -33,6 +33,8 @@ pub struct ResearchTaskDto {
     pub status: ResearchTaskStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<i32>,
+    /// The knowledge check that listed this topic; always serialized, `null` for other tasks.
+    pub check_id: Option<i32>,
     pub report: String,
     pub entries_created: i32,
     /// The entries this task created, in id order; filled by the single-task endpoints when the
@@ -67,6 +69,9 @@ pub struct KnowledgeCheckResponse {
 pub struct ResearchTaskCreate {
     #[serde(default)]
     pub book_id: Option<i32>,
+    /// The knowledge check this task joins (spec/10 §2.5, D-168).
+    #[serde(default)]
+    pub check_id: Option<i32>,
     pub scope_name: String,
     pub topic: String,
     #[serde(default)]

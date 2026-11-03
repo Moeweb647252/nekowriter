@@ -54,6 +54,7 @@ function prep(overrides: Partial<ResearchTaskDto> = {}): ResearchTaskDto {
     language: "en",
     status: "running",
     session_id: 3,
+    check_id: null,
     report: "",
     entries_created: 0,
     entries: [],

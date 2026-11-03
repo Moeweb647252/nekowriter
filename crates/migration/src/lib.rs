@@ -17,6 +17,7 @@ mod m0007_builtin_basic_writing;
 mod m0008_knowledge_first;
 mod m0009_role_effort;
 mod m0010_tool_error_limit;
+mod m0011_check_topics;
 
 pub struct Migrator;
 
@@ -34,6 +35,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0008_knowledge_first::Migration),
             Box::new(m0009_role_effort::Migration),
             Box::new(m0010_tool_error_limit::Migration),
+            Box::new(m0011_check_topics::Migration),
         ]
     }
 }
