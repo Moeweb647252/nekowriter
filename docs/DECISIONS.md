@@ -3843,11 +3843,12 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
       **Start conception** available.
     - Finalize: the conception agent's two supplementary drafts became `ready`; the two
       pre-conception check topics stayed `done`.
-    - Screenshots from the real app, each 1280×1200 and including the full pane:
-      `screens/35-knowledge-check-full.png` (knowledge check, live topic list and Add topic),
-      `screens/34-running-2-of-5-clean.png` (`2 of 5 done`, running topic, queued rows, Start),
-      `screens/32-settled-5rows.png` (settled, five rows including the deferred fifth, entry
-      total, Book › Knowledge link and Start conception).
+    - Full-pane captures (1280×1200) were taken from the real app during the gate. They showed:
+      the knowledge check with its live topic list and **Add topic**; `2 of 5 done` with the
+      running topic, queued rows and **Start conception now**; and the settled state with five
+      rows including the deferred one, the entry total, the **Book › Knowledge** link and **Start
+      conception**. The captures lived in the scratch worktree's `target/tmp` during the gate and
+      are not retained; `target/tmp` is scratch by convention, so this entry does not cite them.
   - **Residual limitations found by the smoke (follow-ups, not silently fixed).**
     - Demo topic sessions reuse the same corpus titles in the same scope; a third topic in
       `Background`/`Customs` hits the unique `(scope, title)` rule and the session pauses after
