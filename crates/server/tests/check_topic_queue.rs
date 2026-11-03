@@ -9,7 +9,7 @@ mod agent_harness;
 
 use std::time::Duration;
 
-use agent_harness::{Runtime, runtime};
+use agent_harness::{Runtime, refusal_step, runtime};
 use axum::http::StatusCode;
 use nekowriter_llm::mock::ScriptStep;
 use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
@@ -121,6 +121,20 @@ async fn kickoff(runtime: &Runtime, session_id: i32) -> String {
         .join("\n")
 }
 
+async fn last_tool_ui(runtime: &Runtime, session_id: i32, name: &str) -> Value {
+    let (_, session) = runtime
+        .app
+        .get(&format!("/api/sessions/{session_id}"))
+        .await;
+    session["tool_calls"]
+        .as_array()
+        .expect("tool calls")
+        .iter()
+        .rfind(|call| call["name"] == name)
+        .unwrap_or_else(|| panic!("no {name} call"))["ui"]
+        .clone()
+}
+
 async fn scalar(runtime: &Runtime, sql: &str) -> i64 {
     let row = runtime
         .app
@@ -173,9 +187,22 @@ async fn three_topics_run_in_order_then_one_conception_session_starts() {
     assert_eq!(conception.len(), 1);
     let text = kickoff(&runtime, conception[0].0).await;
     for topic in ["Topic one", "Topic two", "Topic three"] {
-        assert!(text.contains(topic), "{topic} missing from {text}");
-        assert!(text.contains("0 条"), "{text}");
+        assert!(
+            text.contains(&format!("{topic}（History，done，0 条）")),
+            "{topic} is not rendered as done with its entry count: {text}"
+        );
     }
+    assert_eq!(
+        scalar(
+            &runtime,
+            &format!(
+                "SELECT CAST(json_extract(conception, '$.start_after_knowledge_check') AS INTEGER) AS n                  FROM books WHERE id = {book_id}"
+            ),
+        )
+        .await,
+        0,
+        "the auto-start flag is cleared in the same write"
+    );
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(
         sessions(&runtime, book_id, "conception").await.len(),
@@ -198,8 +225,279 @@ async fn a_check_with_no_topics_starts_conception() {
 }
 
 #[tokio::test]
+async fn continuing_a_failed_topic_starts_the_next_one() {
+    let runtime = runtime(vec![
+        ScriptStep::new().tool(
+            "set_research_topics",
+            json!({
+                "topics": [
+                    { "topic": "Fails then continues", "requirements": "", "scope": "History" },
+                    { "topic": "Next after continue", "requirements": "", "scope": "History" }
+                ]
+            }),
+        ),
+        ScriptStep::new().tool("finish_research", json!({ "report": "planned" })),
+        refusal_step("the model refused this topic"),
+        ScriptStep::new().tool("finish_research", json!({ "report": "continued" })),
+        ScriptStep::new().tool("finish_research", json!({ "report": "next done" })),
+    ])
+    .await;
+    let (_book_id, check_id, check_session) =
+        create_check_book(&runtime, "Continue topic", false).await;
+    runtime.wait_any_status(check_session).await;
+    wait_until(|| async {
+        topic_rows(&runtime, check_id)
+            .await
+            .iter()
+            .any(|row| row.2 == "Fails then continues" && row.1 == "failed")
+    })
+    .await;
+    let failed = topic_rows(&runtime, check_id)
+        .await
+        .into_iter()
+        .find(|row| row.2 == "Fails then continues")
+        .expect("failed topic")
+        .0;
+    let (status, body) = runtime
+        .app
+        .post(&format!("/api/research-tasks/{failed}/run"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    wait_until(|| async {
+        topic_rows(&runtime, check_id)
+            .await
+            .iter()
+            .any(|row| row.2 == "Next after continue" && row.1 == "done")
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn an_author_topic_added_while_a_topic_runs_runs_after_it() {
+    let runtime = runtime(vec![
+        ScriptStep::new().tool(
+            "set_research_topics",
+            json!({
+                "topics": [
+                    { "topic": "Running topic", "requirements": "", "scope": "History" },
+                    { "topic": "Already queued", "requirements": "", "scope": "History" }
+                ]
+            }),
+        ),
+        ScriptStep::new().tool("finish_research", json!({ "report": "planned" })),
+        ScriptStep::new()
+            .delay(Duration::from_secs(1))
+            .tool("finish_research", json!({ "report": "running done" })),
+        ScriptStep::new().tool("finish_research", json!({ "report": "queued done" })),
+        ScriptStep::new().tool("finish_research", json!({ "report": "added done" })),
+    ])
+    .await;
+    let (book_id, check_id, check_session) =
+        create_check_book(&runtime, "Add while running", false).await;
+    runtime.wait_any_status(check_session).await;
+    wait_until(|| async {
+        topic_rows(&runtime, check_id)
+            .await
+            .iter()
+            .any(|row| row.2 == "Running topic" && row.1 == "running")
+    })
+    .await;
+    let (status, body) = runtime
+        .app
+        .post(
+            "/api/research-tasks",
+            json!({
+                "book_id": book_id,
+                "check_id": check_id,
+                "scope_name": "History",
+                "topic": "Added while running",
+                "language": "en"
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    wait_until(|| async {
+        topic_rows(&runtime, check_id)
+            .await
+            .iter()
+            .any(|row| row.2 == "Added while running" && row.1 == "done")
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn an_author_topic_starts_an_idle_queue() {
+    let runtime = runtime(vec![
+        ScriptStep::new().tool("finish_research", json!({ "report": "planned" })),
+        ScriptStep::new().tool("finish_research", json!({ "report": "idle topic done" })),
+    ])
+    .await;
+    let (book_id, check_id, check_session) = create_check_book(&runtime, "Idle queue", false).await;
+    runtime.wait_any_status(check_session).await;
+    let (status, body) = runtime
+        .app
+        .post(
+            "/api/research-tasks",
+            json!({
+                "book_id": book_id,
+                "check_id": check_id,
+                "scope_name": "History",
+                "topic": "Starts idle queue",
+                "language": "en"
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    wait_until(|| async {
+        topic_rows(&runtime, check_id)
+            .await
+            .iter()
+            .any(|row| row.2 == "Starts idle queue" && row.1 == "done")
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn an_author_topic_runs_while_conception_runs() {
+    let runtime = runtime(vec![
+        ScriptStep::new().tool("finish_research", json!({ "report": "sufficient" })),
+        ScriptStep::new().text("conception"),
+        ScriptStep::new().tool("finish_research", json!({ "report": "added done" })),
+    ])
+    .await;
+    let (book_id, check_id, check_session) =
+        create_check_book(&runtime, "Add while conception", true).await;
+    runtime.wait_any_status(check_session).await;
+    wait_until(|| async { sessions(&runtime, book_id, "conception").await.len() == 1 }).await;
+    let (status, body) = runtime
+        .app
+        .post(
+            "/api/research-tasks",
+            json!({
+                "book_id": book_id,
+                "check_id": check_id,
+                "scope_name": "History",
+                "topic": "Added during conception",
+                "language": "en"
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    wait_until(|| async {
+        topic_rows(&runtime, check_id)
+            .await
+            .iter()
+            .any(|row| row.2 == "Added during conception" && row.1 == "done")
+    })
+    .await;
+    assert_eq!(
+        sessions(&runtime, book_id, "conception").await.len(),
+        1,
+        "the author's existing conception session is not duplicated"
+    );
+}
+
+#[tokio::test]
+async fn author_started_conception_does_not_stop_the_queue_or_duplicate() {
+    let runtime = runtime(vec![
+        ScriptStep::new().tool(
+            "set_research_topics",
+            json!({
+                "topics": [
+                    { "topic": "First before manual conception", "requirements": "", "scope": "History" },
+                    { "topic": "Second before manual conception", "requirements": "", "scope": "History" }
+                ]
+            }),
+        ),
+        ScriptStep::new().tool("finish_research", json!({ "report": "planned" })),
+        ScriptStep::new()
+            .delay(Duration::from_secs(2))
+            .tool("finish_research", json!({ "report": "first done" })),
+        ScriptStep::new().text("manual conception"),
+        ScriptStep::new().tool("finish_research", json!({ "report": "second done" })),
+    ])
+    .await;
+    let (book_id, check_id, check_session) =
+        create_check_book(&runtime, "Manual conception queue", true).await;
+    runtime.wait_any_status(check_session).await;
+    wait_until(|| async {
+        topic_rows(&runtime, check_id)
+            .await
+            .iter()
+            .any(|row| row.2 == "First before manual conception" && row.1 == "running")
+    })
+    .await;
+    let (status, body) = runtime
+        .app
+        .post(&format!("/api/books/{book_id}/conception/start"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    wait_until(|| async {
+        topic_rows(&runtime, check_id)
+            .await
+            .iter()
+            .filter(|row| row.1 == "done")
+            .count()
+            >= 2
+    })
+    .await;
+    assert_eq!(
+        sessions(&runtime, book_id, "conception").await.len(),
+        1,
+        "settling after an author-started conception starts no second session"
+    );
+}
+
+#[tokio::test]
+async fn auto_start_off_then_manual_conception_start_works() {
+    let runtime = runtime(vec![
+        ScriptStep::new().tool(
+            "set_research_topics",
+            json!({
+                "topics": [{ "topic": "Only topic", "requirements": "", "scope": "History" }]
+            }),
+        ),
+        ScriptStep::new().tool("finish_research", json!({ "report": "planned" })),
+        ScriptStep::new().tool("finish_research", json!({ "report": "topic done" })),
+        ScriptStep::new().text("conception"),
+    ])
+    .await;
+    let (book_id, check_id, check_session) = create_check_book(&runtime, "Auto off", false).await;
+    runtime.wait_any_status(check_session).await;
+    wait_until(|| async {
+        topic_rows(&runtime, check_id)
+            .await
+            .iter()
+            .any(|row| row.1 == "done")
+    })
+    .await;
+    assert_eq!(
+        sessions(&runtime, book_id, "conception").await.len(),
+        0,
+        "auto-start is off after the research settles"
+    );
+    let (status, body) = runtime
+        .app
+        .post(&format!("/api/books/{book_id}/conception/start"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(sessions(&runtime, book_id, "conception").await.len(), 1);
+}
+
+#[tokio::test]
 async fn a_check_topic_added_while_planning_is_kept_by_the_check() {
-    let runtime = runtime(vec![ScriptStep::new().delay(Duration::from_secs(10))]).await;
+    let runtime = runtime(vec![
+        ScriptStep::new().delay(Duration::from_secs(1)).tool(
+            "set_research_topics",
+            json!({
+                "topics": [{ "topic": "Agent planned", "requirements": "", "scope": "History" }]
+            }),
+        ),
+        ScriptStep::new().tool("finish_research", json!({ "report": "planned" })),
+        ScriptStep::new().tool("finish_research", json!({ "report": "agent done" })),
+        ScriptStep::new().tool("finish_research", json!({ "report": "author done" })),
+    ])
+    .await;
     let (book_id, check_id, check_session) =
         create_check_book(&runtime, "Planning topic", false).await;
     // The check is still running; an author topic is accepted and waits.
@@ -230,15 +528,23 @@ async fn a_check_topic_added_while_planning_is_kept_by_the_check() {
         .unwrap()
         .unwrap();
     assert_eq!(row.try_get::<String>("", "status").unwrap(), "ready");
-    // The check's own `kept[]` is not available through a second tool call here; the row itself
-    // is the waiting check topic and must still be present and ready.
-    assert_eq!(topic_rows(&runtime, check_id).await.len(), 1);
-    assert_eq!(topic_rows(&runtime, check_id).await[0].1, "ready");
-    let (status, body) = runtime
-        .app
-        .post(&format!("/api/sessions/{check_session}/abandon"), json!({}))
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    runtime.wait_any_status(check_session).await;
+    let kept = last_tool_ui(&runtime, check_session, "set_research_topics").await["kept"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        kept.iter()
+            .any(|row| row["topic"] == "Author while planning"),
+        "the check's kept[] lists the planning-time author topic: {kept:?}"
+    );
+    wait_until(|| async {
+        topic_rows(&runtime, check_id)
+            .await
+            .iter()
+            .any(|row| row.2 == "Author while planning" && row.1 == "done")
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -260,6 +566,56 @@ async fn an_invalid_check_id_is_rejected() {
         )
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    // A real topic task's id, not a preparation task.
+    let (status, topic) = runtime
+        .app
+        .post(
+            "/api/research-tasks",
+            json!({
+                "book_id": book_id,
+                "scope_name": "History",
+                "topic": "Ordinary topic",
+                "language": "en"
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{topic}");
+    let (status, body) = runtime
+        .app
+        .post(
+            "/api/research-tasks",
+            json!({
+                "book_id": book_id,
+                "check_id": topic["id"],
+                "scope_name": "History",
+                "topic": "Bad",
+                "language": "en"
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    // Another book's preparation task is not a valid check id for this book.
+    let other = runtime.app.create_book("Other check book").await;
+    let other_id = other["id"].as_i64().unwrap() as i32;
+    let (status, other_check) = runtime
+        .app
+        .post(&format!("/api/books/{other_id}/knowledge-check"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{other_check}");
+    let (status, body) = runtime
+        .app
+        .post(
+            "/api/research-tasks",
+            json!({
+                "book_id": book_id,
+                "check_id": other_check["task"]["id"],
+                "scope_name": "History",
+                "topic": "Bad",
+                "language": "en"
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     // A check id without a book id.
     let (status, body) = runtime
         .app
@@ -274,6 +630,108 @@ async fn an_invalid_check_id_is_rejected() {
         )
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+}
+
+#[tokio::test]
+async fn two_quick_topic_creates_start_exactly_one_topic_session() {
+    let runtime = runtime(vec![
+        ScriptStep::new().tool("finish_research", json!({ "report": "planned" })),
+        ScriptStep::new()
+            .delay(Duration::from_secs(2))
+            .tool("finish_research", json!({ "report": "first done" })),
+        ScriptStep::new().tool("finish_research", json!({ "report": "second done" })),
+    ])
+    .await;
+    let (book_id, check_id, check_session) =
+        create_check_book(&runtime, "Two triggers", false).await;
+    runtime.wait_any_status(check_session).await;
+    let first = runtime.app.post(
+        "/api/research-tasks",
+        json!({
+            "book_id": book_id,
+            "check_id": check_id,
+            "scope_name": "History",
+            "topic": "Trigger one",
+            "language": "en"
+        }),
+    );
+    let second = runtime.app.post(
+        "/api/research-tasks",
+        json!({
+            "book_id": book_id,
+            "check_id": check_id,
+            "scope_name": "History",
+            "topic": "Trigger two",
+            "language": "en"
+        }),
+    );
+    let ((first_status, first_body), (second_status, second_body)) = tokio::join!(first, second);
+    assert_eq!(first_status, StatusCode::CREATED, "{first_body}");
+    assert_eq!(second_status, StatusCode::CREATED, "{second_body}");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(
+        sessions(&runtime, book_id, "research").await.len(),
+        2,
+        "the check plus exactly one topic session, not two topic sessions"
+    );
+    wait_until(|| async {
+        topic_rows(&runtime, check_id)
+            .await
+            .iter()
+            .filter(|row| row.1 == "done")
+            .count()
+            >= 2
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn rerunning_a_check_waits_for_a_running_topic_then_continues() {
+    let runtime = runtime(vec![
+        ScriptStep::new().tool(
+            "set_research_topics",
+            json!({
+                "topics": [
+                    { "topic": "Running before rerun", "requirements": "", "scope": "History" },
+                    { "topic": "After rerun", "requirements": "", "scope": "History" }
+                ]
+            }),
+        ),
+        ScriptStep::new().tool("finish_research", json!({ "report": "planned" })),
+        ScriptStep::new()
+            .delay(Duration::from_secs(2))
+            .tool("finish_research", json!({ "report": "first done" })),
+        ScriptStep::new().tool("finish_research", json!({ "report": "check rerun done" })),
+        ScriptStep::new().tool("finish_research", json!({ "report": "second done" })),
+    ])
+    .await;
+    let (book_id, check_id, check_session) =
+        create_check_book(&runtime, "Rerun check", false).await;
+    runtime.wait_any_status(check_session).await;
+    wait_until(|| async {
+        topic_rows(&runtime, check_id)
+            .await
+            .iter()
+            .any(|row| row.2 == "Running before rerun" && row.1 == "running")
+    })
+    .await;
+    let (status, body) = runtime
+        .app
+        .post(&format!("/api/research-tasks/{check_id}/run"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    wait_until(|| async {
+        topic_rows(&runtime, check_id)
+            .await
+            .iter()
+            .any(|row| row.2 == "After rerun" && row.1 == "done")
+    })
+    .await;
+    assert_eq!(
+        sessions(&runtime, book_id, "conception").await.len(),
+        0,
+        "auto-start is off"
+    );
 }
 
 #[tokio::test]
@@ -330,6 +788,15 @@ async fn abandoning_a_running_topic_starts_the_next_one() {
         .post(&format!("/api/sessions/{session}/abandon"), json!({}))
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        topic_rows(&runtime, check_id)
+            .await
+            .into_iter()
+            .find(|row| row.0 == running_topic)
+            .expect("abandoned topic")
+            .1,
+        "cancelled"
+    );
     wait_until(|| async {
         topic_rows(&runtime, check_id)
             .await
@@ -408,7 +875,8 @@ async fn a_deferred_topic_is_skipped_and_resume_starts_it() {
 async fn a_missing_researcher_model_leaves_the_topic_ready_and_manual_run_continues() {
     let runtime = runtime(vec![
         ScriptStep::new().tool("finish_research", json!({ "report": "planned" })),
-        ScriptStep::new().tool("finish_research", json!({ "report": "done" })),
+        ScriptStep::new().tool("finish_research", json!({ "report": "first done" })),
+        ScriptStep::new().tool("finish_research", json!({ "report": "second done" })),
     ])
     .await;
     let (book_id, check_id, check_session) =
@@ -458,8 +926,22 @@ async fn a_missing_researcher_model_leaves_the_topic_ready_and_manual_run_contin
         .unwrap()
         .unwrap();
     assert_eq!(row.try_get::<String>("", "status").unwrap(), "ready");
+    let (status, second) = runtime
+        .app
+        .post(
+            "/api/research-tasks",
+            json!({
+                "book_id": book_id,
+                "check_id": check_id,
+                "scope_name": "History",
+                "topic": "Second waiting",
+                "language": "en"
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{second}");
 
-    // Restore the role and run the topic manually; its completion settles the queue.
+    // Restore the role and run the first topic manually; its completion starts the second.
     let (_, settings) = runtime.app.get("/api/app-settings").await;
     let mut roles = settings["roles_defaults"].clone();
     roles["researcher"] = researcher;
@@ -477,7 +959,9 @@ async fn a_missing_researcher_model_leaves_the_topic_ready_and_manual_run_contin
         topic_rows(&runtime, check_id)
             .await
             .iter()
-            .any(|row| row.1 == "done")
+            .filter(|row| row.1 == "done")
+            .count()
+            >= 2
     })
     .await;
 }
@@ -510,6 +994,23 @@ async fn a_check_on_an_active_book_runs_its_queue() {
         rows.len() == 1 && rows[0].1 == "done"
     })
     .await;
+    assert_eq!(
+        sessions(&runtime, book_id, "conception").await.len(),
+        0,
+        "an active book's check does not create a conception session"
+    );
+    let row = runtime
+        .app
+        .db()
+        .conn()
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            format!("SELECT status FROM books WHERE id = {book_id}"),
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.try_get::<String>("", "status").unwrap(), "active");
 }
 
 #[tokio::test]
@@ -581,6 +1082,86 @@ async fn a_scope_created_by_a_check_topic_uses_the_check_topics_for_its_descript
         )
         .await,
         2
+    );
+}
+
+#[tokio::test]
+async fn existing_scope_descriptions_survive_and_excluded_scopes_are_reincluded() {
+    let runtime = runtime(vec![
+        ScriptStep::new().tool(
+            "set_research_topics",
+            json!({
+                "topics": [
+                    { "topic": "Existing desc topic", "requirements": "", "scope": "Existing desc" },
+                    { "topic": "Excluded desc topic", "requirements": "", "scope": "Excluded desc" }
+                ]
+            }),
+        ),
+        ScriptStep::new()
+            .delay(Duration::from_secs(2))
+            .tool("finish_research", json!({ "report": "planned" })),
+        ScriptStep::new().tool("finish_research", json!({ "report": "existing done" })),
+        ScriptStep::new().tool("finish_research", json!({ "report": "excluded done" })),
+    ])
+    .await;
+    for (name, description) in [
+        ("Existing desc", "Keep this description"),
+        ("Excluded desc", "Excluded description"),
+    ] {
+        let (status, body) = runtime
+            .app
+            .post(
+                "/api/knowledge/scopes",
+                json!({ "name": name, "description": description }),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+    }
+    let (book_id, check_id, check_session) =
+        create_check_book(&runtime, "Existing scopes", true).await;
+    wait_until(|| async { topic_rows(&runtime, check_id).await.len() == 2 }).await;
+    let scope_id = scalar(
+        &runtime,
+        "SELECT id AS n FROM knowledge_scopes WHERE name = 'Excluded desc'",
+    )
+    .await;
+    let (status, _) = runtime
+        .app
+        .put(
+            &format!("/api/books/{book_id}/scopes"),
+            json!({ "excluded_scope_ids": [scope_id] }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    runtime.wait_any_status(check_session).await;
+    wait_until(|| async {
+        topic_rows(&runtime, check_id)
+            .await
+            .iter()
+            .filter(|row| row.1 == "done")
+            .count()
+            >= 2
+    })
+    .await;
+    assert_eq!(
+        scalar(
+            &runtime,
+            "SELECT count(*) AS n FROM knowledge_scopes WHERE name = 'Existing desc'              AND description = 'Keep this description'"
+        )
+        .await,
+        1,
+        "an existing description is never rewritten"
+    );
+    assert_eq!(
+        scalar(
+            &runtime,
+            &format!(
+                "SELECT count(*) AS n FROM book_scope_exclusions WHERE book_id = {book_id}                  AND scope_id = {scope_id}"
+            ),
+        )
+        .await,
+        0,
+        "the run re-includes the scope for the book"
     );
 }
 
