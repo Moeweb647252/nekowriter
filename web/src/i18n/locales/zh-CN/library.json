@@ -31,5 +31,5 @@
   "switch_book": "切换作品",
   "no_other_books": "没有其他作品",
   "new_book_conception_description": "会先运行知识检查，然后构思智能体询问几个问题、起草设定资料与资料主题，你在定稿后即可开始写作。",
-  "auto_start_conception": "知识检查后自动开始构思"
+  "auto_start_conception": "构思前的资料研究完成后自动开始构思"
 }

@@ -7,7 +7,7 @@
  *   (Pause/Stop while running, Continue when held) must be reachable from this route rather than
  *   only from the agent panel of the book workspace.
  */
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { beforeEach, describe, expect, it, vi } from "vitest"
@@ -24,6 +24,11 @@ import zhChapter from "@/i18n/locales/zh-CN/chapter.json"
 const startConception = vi.fn()
 const startKnowledgeCheck = vi.fn()
 const runResearchTask = vi.fn()
+const deferResearchTask = vi.fn()
+const resumeResearchTask = vi.fn()
+const patchResearchTask = vi.fn()
+const deleteResearchTask = vi.fn()
+const createResearchTask = vi.fn()
 const answerSession = vi.fn()
 const showError = vi.fn()
 const warningToast = vi.fn()
@@ -35,6 +40,7 @@ const state = vi.hoisted(() => ({
   sessions: [] as unknown[],
   snapshot: undefined as unknown,
   checkSnapshot: undefined as unknown,
+  topicSessionSnapshot: undefined as unknown,
   docs: [] as unknown[],
   characters: [] as unknown[],
   topics: [] as unknown[],
@@ -74,7 +80,12 @@ vi.mock("@/api/hooks/sessions", async () => {
         initialData: state.sessions,
       }),
     useSession: (sessionId: number | null) => ({
-      data: sessionId === 11 ? state.checkSnapshot : state.snapshot,
+      data:
+        sessionId === 11
+          ? state.checkSnapshot
+          : sessionId === 12
+            ? state.topicSessionSnapshot
+            : state.snapshot,
       isPending: false,
     }),
     useAnswerSession: () => ({ mutate: answerSession, isPending: false }),
@@ -103,9 +114,11 @@ vi.mock("@/api/hooks/settings-materials", () => ({
 
 vi.mock("@/api/hooks/research", () => ({
   useResearchTasks: () => ({ data: state.topics, isPending: false }),
-  useCreateResearchTask: () => ({ mutate: vi.fn(), isPending: false }),
-  usePatchResearchTask: () => ({ mutate: vi.fn(), isPending: false }),
-  useDeleteResearchTask: () => ({ mutate: vi.fn(), isPending: false }),
+  useCreateResearchTask: () => ({ mutate: createResearchTask, isPending: false }),
+  usePatchResearchTask: () => ({ mutate: patchResearchTask, isPending: false }),
+  useDeleteResearchTask: () => ({ mutate: deleteResearchTask, isPending: false }),
+  useDeferResearchTask: () => ({ mutate: deferResearchTask, isPending: false }),
+  useResumeResearchTask: () => ({ mutate: resumeResearchTask, isPending: false }),
   useStartKnowledgeCheck: () => ({ mutate: startKnowledgeCheck, isPending: false }),
   useRunResearchTask: () => ({ mutate: runResearchTask, isPending: false }),
 }))
@@ -218,6 +231,11 @@ describe("ConceptionStudio", () => {
     finalize.mockClear()
     startKnowledgeCheck.mockClear()
     runResearchTask.mockClear()
+    deferResearchTask.mockClear()
+    resumeResearchTask.mockClear()
+    patchResearchTask.mockClear()
+    deleteResearchTask.mockClear()
+    createResearchTask.mockClear()
     resume.mockClear()
     answerSession.mockClear()
   })
@@ -503,6 +521,49 @@ describe("ConceptionStudio", () => {
   })
 
 
+/** One topic planned by the check; `check_id` points at its preparation task. */
+function checkTopic(overrides: Partial<Record<string, unknown>> = {}) {
+  return preparationTask({
+    id: 22,
+    kind: "topic",
+    check_id: 21,
+    origin: "conception",
+    status: "ready",
+    session_id: null,
+    topic: "Court life",
+    scope_name: "History",
+    requirements: "Tea houses and their patrons.",
+    entries_created: 0,
+    ...overrides,
+  })
+}
+
+/** A topic's session snapshot, with one visible assistant message. */
+function topicSnapshot(session: SessionDto, text = "the topic stream") {
+  return {
+    session,
+    messages: [
+      {
+        message: {
+          id: 2,
+          seq: 1,
+          role: "assistant",
+          kind: "assistant",
+          blocks: [{ type: "text", text }],
+          stop_reason: null,
+          usage: null,
+          created_at: "2026-01-01T00:00:00Z",
+        },
+        tool_calls: [],
+      },
+    ],
+    inbox: [],
+    system_prompt: "",
+    tool_names: [],
+    next_cursor: null,
+  }
+}
+
 /** A preparation task shown by the studio before a conception session exists. */
 function preparationTask(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -702,13 +763,314 @@ describe("knowledge-check states before conception", () => {
     expect(screen.queryByRole("alert")).toBeNull()
   })
 
+  it("shows the planning check with its live topic list", () => {
+    state.topics = [
+      preparationTask({ status: "running" }),
+      checkTopic({ topic: "Court life", status: "ready" }),
+    ]
+    state.checkSnapshot = checkSnapshot(checkSession("running"))
+    renderStudio()
+
+    expect(screen.getByText("Court life")).toBeInTheDocument()
+    expect(screen.getByTestId("check-topic-22")).toBeInTheDocument()
+  })
+
+  it("shows the open topic's stream and progress while the queue runs", () => {
+    const topicSession = conceptionSession({
+      id: 12,
+      role: "researcher",
+      kind: "research",
+      status: "running",
+    })
+    state.topics = [
+      preparationTask({ status: "done", report: "The report" }),
+      checkTopic({ id: 22, status: "running", session_id: 12 }),
+      checkTopic({ id: 23, topic: "Second topic", status: "ready" }),
+    ]
+    state.topicSessionSnapshot = topicSnapshot(topicSession, "the topic stream")
+    renderStudio()
+
+    expect(screen.getByText("Research before conception")).toBeInTheDocument()
+    expect(screen.getByText("0 of 2 done")).toBeInTheDocument()
+    expect(screen.getByText("the topic stream")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Pause" })).toBeInTheDocument()
+  })
+
+  it("orders topics by id so Run next picks the older waiting topic", async () => {
+    const user = userEvent.setup()
+    state.topics = [
+      preparationTask({ status: "done" }),
+      // The API returns newest-first; the queue runs ascending id (spec/11 §5.4).
+      checkTopic({ id: 23, topic: "Newer topic", status: "ready" }),
+      checkTopic({ id: 22, topic: "Older topic", status: "ready" }),
+    ]
+    renderStudio()
+    const rows = screen.getAllByTestId(/^check-topic-\d+$/)
+    expect(rows.map((row) => row.getAttribute("data-testid"))).toEqual([
+      "check-topic-22",
+      "check-topic-23",
+    ])
+    await user.click(screen.getByRole("button", { name: "Run next" }))
+    expect(runResearchTask).toHaveBeenCalledWith(22, expect.anything())
+  })
+
+  it("continues a paused topic by resuming its session", async () => {
+    const user = userEvent.setup()
+    state.topics = [
+      preparationTask({ status: "done" }),
+      checkTopic({ id: 22, status: "running", session_id: 12 }),
+    ]
+    state.topicSessionSnapshot = topicSnapshot(
+      conceptionSession({ id: 12, role: "researcher", kind: "research", status: "paused" }),
+    )
+    renderStudio()
+    await user.click(screen.getByRole("button", { name: "Continue" }))
+    expect(resume).toHaveBeenCalledWith({ sessionId: 12 }, expect.anything())
+    expect(sessionControl).not.toHaveBeenCalled()
+  })
+
+  it("continues a stopped topic through the session control", async () => {
+    const user = userEvent.setup()
+    state.topics = [
+      preparationTask({ status: "done" }),
+      checkTopic({ id: 22, status: "running", session_id: 12 }),
+    ]
+    state.topicSessionSnapshot = topicSnapshot(
+      conceptionSession({ id: 12, role: "researcher", kind: "research", status: "stopped" }),
+    )
+    renderStudio()
+    await user.click(screen.getByRole("button", { name: "Continue" }))
+    expect(sessionControl).toHaveBeenCalledWith(
+      { sessionId: 12, operation: "continue" },
+      expect.anything(),
+    )
+  })
+
+  it("confirms Start conception now in the running state before starting", async () => {
+    const user = userEvent.setup()
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false)
+    state.topics = [
+      preparationTask({ status: "done" }),
+      checkTopic({ id: 22, status: "running", session_id: 12 }),
+    ]
+    state.topicSessionSnapshot = topicSnapshot(
+      conceptionSession({ id: 12, role: "researcher", kind: "research", status: "running" }),
+    )
+    renderStudio()
+    await user.click(screen.getByRole("button", { name: "Start conception now" }))
+    expect(confirm).toHaveBeenCalledWith(
+      "The knowledge check and its research topics keep running. Start conception now?",
+    )
+    expect(startConception).not.toHaveBeenCalled()
+    confirm.mockReturnValue(true)
+    await user.click(screen.getByRole("button", { name: "Start conception now" }))
+    expect(startConception).toHaveBeenCalledTimes(1)
+    confirm.mockRestore()
+  })
+
+  it("shows the auto and manual hint according to the flag", () => {
+    const conception = conceivingBook.conception as { start_after_knowledge_check?: boolean }
+    state.topics = [preparationTask({ status: "done" }), checkTopic({ id: 22 })]
+    conception.start_after_knowledge_check = true
+    const first = renderStudio()
+    expect(screen.getByText("Conception starts when the research finishes.")).toBeInTheDocument()
+    first.unmount()
+    conception.start_after_knowledge_check = false
+    renderStudio()
+    expect(screen.getByText("When the research finishes, start conception here.")).toBeInTheDocument()
+    delete conception.start_after_knowledge_check
+  })
+
+  it("renders the check report collapsed in the settled state", () => {
+    state.topics = [preparationTask({ status: "done", report: "The report" }), checkTopic({ id: 22 })]
+    renderStudio()
+    expect(screen.getByText("Check report").closest("details")).not.toHaveAttribute("open")
+  })
+
+  it("deletes a waiting topic and labels an author topic", async () => {
+    const user = userEvent.setup()
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true)
+    state.topics = [
+      preparationTask({ status: "done" }),
+      checkTopic({ id: 22, origin: "author", topic: "Author topic" }),
+    ]
+    renderStudio()
+    expect(screen.getByText("Added by you")).toBeInTheDocument()
+    await user.click(
+      within(screen.getByTestId("check-topic-22")).getByRole("button", { name: "Delete" }),
+    )
+    expect(deleteResearchTask).toHaveBeenCalledWith(22, expect.anything())
+    confirm.mockRestore()
+  })
+
+  it("shows the topic list when the check failed or was cancelled", () => {
+    state.topics = [
+      preparationTask({ status: "failed" }),
+      checkTopic({ id: 22, topic: "Failed topic list" }),
+    ]
+    const first = renderStudio()
+    expect(screen.getByTestId("check-topic-22")).toBeInTheDocument()
+    expect(screen.getByText("Failed topic list")).toBeInTheDocument()
+    first.unmount()
+
+    state.topics = [
+      preparationTask({ status: "cancelled" }),
+      checkTopic({ id: 22, topic: "Cancelled topic list" }),
+    ]
+    renderStudio()
+    expect(screen.getByTestId("check-topic-22")).toBeInTheDocument()
+    expect(screen.getByText("Cancelled topic list")).toBeInTheDocument()
+  })
+
+  it("shows a failed topic with Continue and Abandon", async () => {
+    const user = userEvent.setup()
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true)
+    state.topics = [
+      preparationTask({ status: "done" }),
+      checkTopic({ id: 22, status: "failed", session_id: 12 }),
+    ]
+    state.topicSessionSnapshot = topicSnapshot(
+      conceptionSession({ id: 12, role: "researcher", kind: "research", status: "failed" }),
+      "the failed topic",
+    )
+    renderStudio()
+
+    await user.click(screen.getByRole("button", { name: "Continue" }))
+    expect(runResearchTask).toHaveBeenCalledWith(22, expect.anything())
+    await user.click(screen.getByRole("button", { name: "Abandon" }))
+    expect(sessionControl).toHaveBeenCalledWith(
+      { sessionId: 12, operation: "abandon" },
+      expect.anything(),
+    )
+    confirm.mockRestore()
+  })
+
+  it("offers Run next when nothing is open and a topic waits", async () => {
+    const user = userEvent.setup()
+    state.topics = [preparationTask({ status: "done" }), checkTopic({ id: 22 })]
+    renderStudio()
+
+    await user.click(screen.getByRole("button", { name: "Run next" }))
+    expect(runResearchTask).toHaveBeenCalledWith(22, expect.anything())
+  })
+
+  it("shows the settled state with the total entries and a primary Start conception", () => {
+    state.topics = [
+      preparationTask({ status: "done", report: "The report" }),
+      checkTopic({ id: 22, status: "done", entries_created: 3 }),
+    ]
+    renderStudio()
+
+    expect(screen.getByText("Entries created by the research: 3")).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Open Book › Knowledge" })).toHaveAttribute(
+      "href",
+      "/books/1/knowledge",
+    )
+    const start = screen.getByRole("button", { name: "Start conception" })
+    expect(start).toHaveAttribute("data-variant", "default")
+  })
+
+  it("edits a waiting topic's topic, requirements and scope", async () => {
+    const user = userEvent.setup()
+    state.topics = [preparationTask({ status: "done" }), checkTopic({ id: 22 })]
+    renderStudio()
+    const row = screen.getByTestId("check-topic-22")
+    await user.click(within(row).getByRole("button", { name: "Edit" }))
+    await user.clear(within(row).getByLabelText("Topic"))
+    await user.type(within(row).getByLabelText("Topic"), "Edited topic")
+    await user.clear(within(row).getByLabelText("Requirements"))
+    await user.type(within(row).getByLabelText("Requirements"), "Edited requirements")
+    await user.clear(within(row).getByLabelText("Target scope"))
+    await user.type(within(row).getByLabelText("Target scope"), "Other scope")
+    await user.click(within(row).getByRole("button", { name: "Save" }))
+
+    expect(patchResearchTask).toHaveBeenCalledWith(
+      {
+        taskId: 22,
+        patch: {
+          topic: "Edited topic",
+          requirements: "Edited requirements",
+          scope_name: "Other scope",
+        },
+      },
+      expect.anything(),
+    )
+  })
+
+  it("defers a waiting topic and resumes a deferred one", async () => {
+    const user = userEvent.setup()
+    state.topics = [preparationTask({ status: "done" }), checkTopic({ id: 22 })]
+    const first = renderStudio()
+    await user.click(
+      within(screen.getByTestId("check-topic-22")).getByRole("button", {
+        name: "Skip for now",
+      }),
+    )
+    expect(deferResearchTask).toHaveBeenCalledWith(22, expect.anything())
+    first.unmount()
+
+    state.topics = [
+      preparationTask({ status: "done" }),
+      checkTopic({ id: 22, status: "deferred" }),
+    ]
+    renderStudio()
+    await user.click(screen.getByRole("button", { name: "Resume" }))
+    expect(resumeResearchTask).toHaveBeenCalledWith(22, expect.anything())
+  })
+
+  it("adds a topic with the check id", async () => {
+    const user = userEvent.setup()
+    state.topics = [preparationTask({ status: "done" }), checkTopic({ id: 22 })]
+    renderStudio()
+    await user.click(screen.getByRole("button", { name: "Add topic" }))
+    await user.type(screen.getByLabelText("Topic"), "New topic")
+    await user.type(screen.getByLabelText("Target scope"), "History")
+    await user.click(screen.getAllByRole("button", { name: "Add topic" }).at(-1) as HTMLElement)
+
+    expect(createResearchTask).toHaveBeenCalledWith(
+      {
+        book_id: 1,
+        check_id: 21,
+        scope_name: "History",
+        topic: "New topic",
+        requirements: "",
+      },
+      expect.anything(),
+    )
+  })
+
+  it("leaves a done topic read-only", () => {
+    state.topics = [
+      preparationTask({ status: "done" }),
+      checkTopic({ id: 22, status: "done", entries_created: 2 }),
+    ]
+    renderStudio()
+    const row = screen.getByTestId("check-topic-22")
+    expect(within(row).queryByRole("button", { name: "Edit" })).toBeNull()
+    expect(within(row).queryByRole("button", { name: "Skip for now" })).toBeNull()
+    expect(within(row).queryByRole("link", { name: "Open task" })).toHaveAttribute(
+      "href",
+      "/research/22",
+    )
+  })
+
   it("shows the report, entries and Start conception when the check is done", () => {
     state.topics = [
       preparationTask({ status: "done", session_id: null, report: "The report", entries_created: 3 }),
+      preparationTask({
+        id: 22,
+        kind: "topic",
+        check_id: 21,
+        status: "done",
+        session_id: 12,
+        topic: "Court life",
+        scope_name: "History",
+        entries_created: 3,
+      }),
     ]
     renderStudio()
     expect(screen.getByText("The report")).toBeInTheDocument()
-    expect(screen.getByText("Entries created: 3")).toBeInTheDocument()
+    expect(screen.getByText("Entries created by the research: 3")).toBeInTheDocument()
     expect(screen.getByRole("link", { name: "Open Book › Knowledge" })).toHaveAttribute(
       "href",
       "/books/1/knowledge",

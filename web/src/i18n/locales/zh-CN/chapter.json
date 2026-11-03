@@ -170,5 +170,6 @@
   "send_back_dialog.outline_missing_hint": "重写需要已确认的细纲。请先写细纲，再重新退回修改。",
   "send_back_dialog.write_outline": "去写细纲",
   "outline_dialog.guidance_placeholder": "可选。策划会在写细纲前读到这里。",
-  "status.cancelled": "已取消"
+  "status.cancelled": "已取消",
+  "status.done": "已完成"
 }

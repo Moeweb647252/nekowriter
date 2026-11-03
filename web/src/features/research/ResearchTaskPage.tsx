@@ -9,6 +9,7 @@ import {
   useDeleteResearchTask,
   usePatchResearchTask,
   useResearchTask,
+  useResearchTasks,
   useResumeResearchTask,
   useRunResearchTask,
 } from "@/api/hooks/research"
@@ -271,6 +272,10 @@ export default function ResearchTaskPage() {
         </Button>
       </div>
 
+      {isPreparation && task.data.book_id !== null ? (
+        <CheckTopics bookId={task.data.book_id} checkId={task.data.id} />
+      ) : null}
+
       <div className="space-y-1">
         <h3 className="text-sm font-medium">{t("knowledge:research.report")}</h3>
         {task.data.report === "" ? (
@@ -303,6 +308,41 @@ export default function ResearchTaskPage() {
           </ul>
         </div>
       ) : null}
+    </div>
+  )
+}
+
+/** The topics a knowledge check planned (spec/11 §5.5, D-168). */
+function CheckTopics({ bookId, checkId }: { bookId: number; checkId: number }) {
+  const { t } = useTranslation()
+  const tasks = useResearchTasks({ bookId })
+  if (tasks.isPending) {
+    return <Skeleton className="h-20" />
+  }
+  const topics = (tasks.data ?? []).filter((task) => task.check_id === checkId)
+  return (
+    <div className="space-y-1" data-testid="check-topics">
+      <h3 className="text-sm font-medium">{t("knowledge:research.check_topics")}</h3>
+      {topics.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{t("knowledge:research.empty")}</p>
+      ) : (
+        <ul className="space-y-1 rounded-md border p-3 text-sm">
+          {topics.map((topic) => (
+            <li key={topic.id} className="flex items-center gap-2">
+              <StatusBadge status={topic.status} variant="canon" />
+              <Link
+                to={`/research/${topic.id}`}
+                className="min-w-0 flex-1 truncate text-primary underline-offset-2 hover:underline"
+              >
+                {topic.topic}
+              </Link>
+              <span className="text-xs text-muted-foreground">
+                {t("knowledge:research.entries_count", { n: topic.entries_created })}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }

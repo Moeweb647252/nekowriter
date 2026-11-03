@@ -52,4 +52,15 @@ describe("ResearchTaskList preparation rows", () => {
     expect(screen.queryByText("ignored preparation topic")).not.toBeInTheDocument()
     expect(screen.getByText(/—/)).toBeInTheDocument()
   })
+
+  it("labels a task planned by a knowledge check", () => {
+    tasks.rows = [task({ id: 10, kind: "topic", check_id: 9, topic: "Court life" })]
+    render(
+      <MemoryRouter>
+        <ResearchTaskList />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText("Court life")).toBeInTheDocument()
+    expect(screen.getByText("From the knowledge check")).toBeInTheDocument()
+  })
 })
