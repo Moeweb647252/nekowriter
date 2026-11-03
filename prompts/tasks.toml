@@ -25,7 +25,7 @@ text = '''
 {{ conception.knowledge_report }}
 {% endif %}{% if conception.research_tasks %}
 【已有的资料主题（不要重复）】
-{% for t in conception.research_tasks %}- {{ t.topic }}{% if t.requirements %}：{{ t.requirements }}{% endif %}（{{ t.scope_name }}，{{ t.status }}）
+{% for t in conception.research_tasks %}- {{ t.topic }}{% if t.requirements %}：{{ t.requirements }}{% endif %}（{{ t.scope_name }}，{{ t.status }}，{{ t.entries_created }} 条）
 {% endfor %}{% endif %}
 开始构思前，请先查看上面的知识清单；需要事实时用 search_knowledge / read_knowledge_entry 检索，只有知识库缺少的内容才用 web_search / web_fetch 调研。
 请开始构思。建议的顺序：先判断想法中缺少哪些关键信息，用 ask_user 向作者提问；然后起草故事大纲、人物设定、世界观、主角详细设定与资料收集主题，并用 request_review 请作者审阅。
@@ -75,8 +75,7 @@ text = '''
 作者已排除的范围（不可使用）：{{ prep.excluded_names | join("、") }}
 {% endif %}
 【本书已有的资料主题】
-{% if prep.research_tasks %}{% for t in prep.research_tasks %}- {{ t.topic }}（范围：{{ t.scope_name }}，状态：{{ t.status }}）{% if t.requirements %}；要求：{{ t.requirements }}{% endif %}
-{% endfor %}{% else %}暂无已有资料主题。
+{% if prep.research_tasks %}{% for t in prep.research_tasks %}- {{ t.topic }}（范围：{{ t.scope_name }}，状态：{{ t.status }}）{% if t.requirements %}；要求：{{ t.requirements }}{% endif %}{{ "\n" }}{% endfor %}{% else %}暂无已有资料主题。
 {% endif %}
 请按以下步骤完成检查：
 1. 判断要构思这本书需要哪些知识：真实世界的事实（时代、地理、制度、职业、技术）与类型知识（套路、力量体系、读者期待、常见俗套）。

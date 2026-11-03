@@ -397,7 +397,8 @@
      "topic": "宋代茶楼",
      "requirements": "茶楼布局",
      "scope_name": "宋代社会",
-     "status": "ready"
+     "status": "ready",
+     "entries_created": 0
     }
    ],
    "max_topics": 8
@@ -1355,7 +1356,8 @@
        "topic": "宋代市井",
        "requirements": "茶馆",
        "scope_name": "宋代社会",
-       "status": "draft"
+       "status": "draft",
+       "entries_created": 0
       }
      ]
     }
@@ -3808,7 +3810,8 @@
        "topic": "宋代茶楼",
        "requirements": "茶楼布局",
        "scope_name": "宋代社会",
-       "status": "ready"
+       "status": "ready",
+       "entries_created": 0
       }
      ],
      "max_topics": 8

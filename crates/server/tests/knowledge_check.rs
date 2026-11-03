@@ -269,6 +269,41 @@ async fn kickoff_lists_visible_scopes_with_capped_titles_and_excluded_names() {
         )
         .await;
     assert_eq!(status, StatusCode::CREATED, "{existing}");
+    let (status, second) = runtime
+        .app
+        .post(
+            "/api/research-tasks",
+            json!({
+                "book_id": runtime.book_id,
+                "scope_name": "Visible scope",
+                "topic": "Existing topic two",
+                "requirements": "second detail",
+                "language": "en"
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{second}");
+    let (status, third) = runtime
+        .app
+        .post(
+            "/api/research-tasks",
+            json!({
+                "book_id": runtime.book_id,
+                "scope_name": "Visible scope",
+                "topic": "Existing topic three",
+                "language": "en"
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{third}");
+    runtime
+        .app
+        .execute(&format!(
+            "INSERT INTO research_tasks(book_id, kind, origin, scope_name, topic, requirements, language, status, created_at, updated_at) \
+             VALUES ({}, 'topic', 'conception', 'Visible scope', 'Conception draft', '', 'en', 'draft', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            runtime.book_id
+        ))
+        .await;
 
     let (_, session_id) = start_check(&runtime, runtime.book_id, "focus on daily life").await;
     wait(&runtime, session_id).await;
@@ -291,6 +326,18 @@ async fn kickoff_lists_visible_scopes_with_capped_titles_and_excluded_names() {
     );
     assert!(text.contains("focus on daily life"), "{text}");
     assert!(text.contains("Existing topic"), "{text}");
+    assert!(
+        text.contains("Conception draft"),
+        "conception drafts are shown because the check will not delete them: {text}"
+    );
+    assert!(
+        text.contains("Existing topic（范围：Visible scope，状态：ready）\n- Existing topic two"),
+        "the existing-topic list keeps one line per item: {text}"
+    );
+    assert!(
+        text.contains("要求：second detail\n- Existing topic three"),
+        "requirements stay on their own item line: {text}"
+    );
     assert!(text.contains("最多列出 8 个主题"), "{text}");
     assert!(
         !text.contains("个条目。"),

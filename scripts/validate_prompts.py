@@ -67,14 +67,17 @@ roles = {
  "reviewer": "get_entity list_entities get_relations query_timeline list_foreshadowing search_canon search_knowledge read_knowledge_entry search_chapters read_chapter submit_review",
  "archivist": "get_entity list_entities get_relations query_timeline list_foreshadowing search_canon read_chapter create_entity update_entity set_relation end_relation record_appearances add_timeline_event update_timeline_event add_memory_note retire_memory_note add_foreshadowing resolve_foreshadowing set_chapter_summary propose_goal_change propose_setting_change finish_maintenance",
  "conception": "ask_user search_knowledge read_knowledge_entry web_search web_fetch write_setting_doc edit_setting_doc upsert_character remove_character reorder_characters set_research_topics request_review",
- "researcher": "web_search web_fetch search_knowledge read_knowledge_entry set_target_scope save_knowledge_entry update_knowledge_entry finish_research",
+ "researcher": "web_search web_fetch search_knowledge read_knowledge_entry set_research_topics save_knowledge_entry update_knowledge_entry finish_research",
 }
 all_role_tools = set(itertools.chain.from_iterable(v.split() for v in roles.values()))
 for t in all_role_tools:
     if t not in tools:
         errors.append(f"tool {t} used by a role but not defined")
+# `set_target_scope` is retired from every role list but stays registered so a pre-D-168
+# knowledge-check session can still call it (spec/05 §2, D-168).
+registered_only_tools = {"set_target_scope"}
 for t in tools:
-    if t not in all_role_tools:
+    if t not in all_role_tools and t not in registered_only_tools:
         errors.append(f"tool {t} defined but not used by any role")
 
 # ---------- minimal JSON Schema validator for the subset we use ----------
@@ -212,7 +215,7 @@ S = dict(book=book, track=track_main, chapter=chapter, settings=settings, memory
                    scopes=[dict(name="宋代社会", description="宋代社会生活", entry_count=2, titles=["宋代酒楼", "宋代服饰"], more=0),
                            dict(name="杂项", description="", entry_count=0, titles=[], more=0)],
                    excluded_names=["明代史料"],
-                   research_tasks=[dict(topic="宋代茶楼", requirements="茶楼布局", scope_name="宋代社会", status="ready")],
+                   research_tasks=[dict(topic="宋代茶楼", requirements="茶楼布局", scope_name="宋代社会", status="ready", entries_created=0)],
                    max_tool_calls=40, max_topics=8),
          conception=dict(title="青云劫", idea="少年身怀剑灵", genre="", writing_language_name="简体中文",
                          scopes=[dict(name="宋代社会", description="宋代社会生活", entry_count=2),
@@ -257,7 +260,7 @@ variants = {
       dict(conception=dict(S["conception"], genre="仙侠", scopes=[], knowledge_report="", research_tasks=[])),
       dict(conception=dict(S["conception"], genre="仙侠")),
       dict(conception=dict(S["conception"], knowledge_report="已有知识足够支撑设定，新增了两条背景条目。",
-                           research_tasks=[dict(topic="宋代市井", requirements="茶馆", scope_name="宋代社会", status="draft")])),
+                           research_tasks=[dict(topic="宋代市井", requirements="茶馆", scope_name="宋代社会", status="draft", entries_created=0)])),
   ],
   "writer.rules.granularity": [dict(granularity=g) for g in gran_cases],
   "writer.notice.revision_plan_accepted": [dict(granularity=dict(g, revising=True)) for g in gran_cases],

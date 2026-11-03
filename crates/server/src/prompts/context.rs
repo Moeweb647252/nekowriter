@@ -437,6 +437,7 @@ pub struct ConceptionResearchTaskContext {
     pub requirements: String,
     pub scope_name: String,
     pub status: String,
+    pub entries_created: i32,
 }
 
 /// `diff` (`vars.diff`) for `block.chapter_diff`.

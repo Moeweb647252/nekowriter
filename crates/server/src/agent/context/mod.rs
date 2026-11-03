@@ -1619,6 +1619,7 @@ async fn conception_context(
             requirements: task.requirements,
             scope_name: task.scope_name,
             status: task.status.as_str().to_owned(),
+            entries_created: task.entries_created,
         })
         .collect();
     Ok(ConceptionContext {
@@ -1750,25 +1751,13 @@ async fn prep_context(
                 .kind
                 .eq(crate::db::json::ResearchTaskKind::Topic),
         )
-        .filter(
-            Condition::any()
-                .add(
-                    research_tasks::COLUMN
-                        .origin
-                        .eq(crate::db::json::ResearchTaskOrigin::Author),
-                )
-                .add(
-                    research_tasks::COLUMN
-                        .status
-                        .ne(crate::db::json::ResearchTaskStatus::Draft),
-                ),
-        )
         .order_by_asc(research_tasks::COLUMN.id)
         .all(conn)
         .await?
         .into_iter()
-        // The check's own waiting agent topics are exactly what `set_research_topics` replaces;
-        // the kickoff lists the tasks the check will not replace (spec/07 §8.1).
+        // Every topic task is listed, including conception drafts: `set_research_topics` in a
+        // check deletes only its own waiting agent topics, so drafts are safe to show (S1).
+        // The check's own waiting agent topics are exactly what it replaces and are hidden.
         .filter(|task| {
             !(task.check_id == Some(task_id)
                 && task.origin == crate::db::json::ResearchTaskOrigin::Conception
@@ -1780,6 +1769,7 @@ async fn prep_context(
             requirements: task.requirements,
             scope_name: task.scope_name,
             status: task.status.as_str().to_owned(),
+            entries_created: task.entries_created,
         })
         .collect();
     let mut remaining = MAX_PREP_TITLES_TOTAL;
