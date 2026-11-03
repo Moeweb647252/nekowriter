@@ -3818,6 +3818,41 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
       conception drafts;
     - the drafts now count as supplementary topics, and the author can run them from their task
       pages.
+  - **20.7 real-data gate (2026-11-04).** A SQLite `backup()` copy of the author's 6,336,512-byte
+    database was opened by the 20.7 binary on port 18082 and migrated from 0010 to 0011. The
+    original file was never opened for writing.
+
+    | Check | Before | After |
+    |---|---|---|
+    | `research_tasks` rows | 6 | 6 |
+    | `research_tasks.check_id` non-NULL | column absent | **0** |
+    | book #1 drafts #2–#6 (`draft`, `origin=conception`) | 5 | **5, unchanged** |
+    | conception session #4 | `awaiting_input` | **`awaiting_input`, unchanged** |
+    | migration ledger | through `m0010_tool_error_limit` | **+ `m0011_check_topics`** |
+
+    `crates/migration/src/sql/0001_init.sql` has no diff against the merge base. The five drafts
+    are `origin=conception, status=draft`; after the S-1 change a preparation kickoff lists them
+    (`prep.research_tasks[]`) as supplementary topics, and no migration moves or reclassifies them.
+  - **Smoke gate (Demo, real app, fresh isolated data dirs).**
+    - Auto-start on: the check planned two topics; both ran one at a time, saved two entries each,
+      conception started by itself, and its kickoff listed both as `done` with `2 条`.
+    - Auto-start off: a five-topic queue (two check topics plus three author additions) reached
+      `2 of 5 done`; **Start conception** created the conception session; nothing started by itself.
+    - Abandon/defer: abandoning the running topic started the next; deferring the last waiting
+      topic left the queue settled (`2 done`, `1 cancelled`, `1 cancelled`, `1 deferred`) with
+      **Start conception** available.
+    - Finalize: the conception agent's two supplementary drafts became `ready`; the two
+      pre-conception check topics stayed `done`.
+    - Screenshots from the real app are in `target/tmp/m20-20.7/screens/` (knowledge check,
+      research before conception `2 of 5 done`, settled).
+  - **Residual limitations found by the smoke (follow-ups, not silently fixed).**
+    - Demo topic sessions reuse the same corpus titles in the same scope; a third topic in
+      `Background`/`Customs` hits the unique `(scope, title)` rule and the session pauses after
+      repeated tool errors. The intended two-topic flow is clean; extra author topics in a shared
+      scope need distinct corpus entries or a scope-aware demo plan.
+    - Research status words reuse chapter/canon vocabulary: a running research row renders
+      "Drafting" and a ready one "Planned" in the shared status-label map. This predates M20 and
+      is a UI/i18n follow-up.
   - D-158's K1 (the check fills the gaps itself) and K6's "research topics become what is still
     missing" are superseded. Its other decisions stand.
 - **Spec**:

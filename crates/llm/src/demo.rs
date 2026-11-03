@@ -646,15 +646,10 @@ fn prep_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
         .prep_topics
         .iter()
         .map(|topic| {
-            let scope = if lang.prep_scope_name.is_empty() {
-                topic.scope.as_str()
-            } else {
-                lang.prep_scope_name.as_str()
-            };
             json!({
                 "topic": topic.topic,
                 "requirements": topic.requirements,
-                "scope": scope,
+                "scope": topic.scope,
             })
         })
         .collect();
