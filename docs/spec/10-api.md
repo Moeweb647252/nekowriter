@@ -28,7 +28,7 @@
 | Method | Path | Body / query | Response |
 |---|---|---|---|
 | GET | `/health` | | `{ ok, version, vec_version, embedding: IndexStatusDto }` |
-| GET / PATCH | `/app-settings` | `AppSettingsPatch` (roles.defaults, book_defaults, search, embedding). `roles_defaults` (`RoleModels`, including `efforts`) is replaced as a unit; an effort value not matching `^[A-Za-z0-9_-]{1,32}$` is `400 validation.failed` (`details.fields["efforts.<role>"]`), and it is not checked against a model (D-162) | `AppSettingsDto` (secrets masked) |
+| GET / PATCH | `/app-settings` | `AppSettingsPatch` (roles_defaults, tool_error_streak_limit, research_max_tool_calls, research_max_entries, book_defaults, search, embedding). `roles_defaults` (`RoleModels`, including `efforts`) is replaced as a unit; an effort value not matching `^[A-Za-z0-9_-]{1,32}$` is `400 validation.failed` (`details.fields["efforts.<role>"]`), and it is not checked against a model (D-162). The limits are frozen onto new sessions: `tool_error_streak_limit` (default 5, `>= 0`, 0 = unlimited), `research_max_tool_calls` (default 40, `>= 1`) and `research_max_entries` (default 25, `>= 1`); invalid values name their field (D-164) | `AppSettingsDto` (secrets masked) |
 | POST | `/app-settings/search/test` | `{ query }` | `{ hits: SearchHitDto[] }` |
 | GET / POST | `/providers` | `ProviderInput {name, protocol, base_url, api_key?, extra_headers}` | `ProviderDto[]` / `ProviderDto` (key masked) |
 | PATCH / DELETE | `/providers/:id` | partial `ProviderInput` (omitted `api_key` = unchanged) | `ProviderDto` / 204 |
