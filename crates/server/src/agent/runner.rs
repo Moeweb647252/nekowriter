@@ -1163,19 +1163,17 @@ async fn step_tool(
     match result {
         Ok(events) => {
             state.events().publish_all(events);
-            // A completed knowledge check auto-starts conception **after** the completion
+            // A completed research session advances its check's queue **after** the completion
             // transaction commits: its own write re-checks every condition and owns the session
-            // spawn. A failure here is logged and never rolls back the check's completion.
+            // spawn. A failure here is logged and never rolls back the completion.
             if call.name == "finish_research"
-                && let Err(error) = crate::services::conception::maybe_start_after_knowledge_check(
-                    state, session.id,
-                )
-                .await
+                && let Err(error) =
+                    crate::services::research::advance_after_session(state, session.id).await
             {
                 tracing::warn!(
                     session_id = session.id,
                     error = %error,
-                    "knowledge-check auto-start failed after completion"
+                    "research queue advance failed after completion"
                 );
             }
             Ok(())

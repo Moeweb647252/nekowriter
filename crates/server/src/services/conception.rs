@@ -417,60 +417,14 @@ async fn find_or_create_scope(
     Ok(created.id)
 }
 
-/// Runs after a preparation session completes, in its own write after the check's completion
-/// commits (spec/08 §5, §4.6). All four conditions are re-checked here; a missing conception model
-/// is not an error. The caller logs other failures at `warn` without failing the check.
-pub async fn maybe_start_after_knowledge_check(
-    state: &AppState,
-    session_id: i32,
-) -> Result<(), AppError> {
-    let db = state.db().clone();
-    let state_owned = state.clone();
-    let (started, events) = super::write(&db, move |tx| {
-        Box::pin(async move {
-            let (session, events) =
-                start_after_knowledge_check(&state_owned, tx, session_id).await?;
-            Ok((session, events))
-        })
-    })
-    .await?;
-    state.events().publish_all(events);
-    if let Some(session_id) = started {
-        state.manager().spawn(state.clone(), session_id);
-    }
-    Ok(())
-}
-
-/// The in-transaction half of the auto-start condition check. `None` means no action, not an
-/// error (including the missing-model case).
-async fn start_after_knowledge_check(
+/// Starts conception when a check's research has settled (spec/08 §5, D-168). The caller has
+/// already re-read the check and its topic queue in the same write; this function re-checks the
+/// three auto-start conditions on the freshly loaded book and clears the flag in this transaction.
+pub(crate) async fn start_after_knowledge_check(
     state: &AppState,
     tx: &sea_orm::DatabaseTransaction,
-    session_id: i32,
+    book_id: i32,
 ) -> Result<(Option<i32>, Vec<ServerEvent>), AppError> {
-    let Some(check_session) = agent_sessions::Entity::find_by_id(session_id)
-        .one(tx)
-        .await?
-    else {
-        return Ok((None, Vec::new()));
-    };
-    if check_session.kind != SessionKind::Research
-        || check_session.status != SessionStatus::Completed
-    {
-        return Ok((None, Vec::new()));
-    }
-    let Some(task_id) = check_session.research_task_id else {
-        return Ok((None, Vec::new()));
-    };
-    let Some(task) = research_tasks::Entity::find_by_id(task_id).one(tx).await? else {
-        return Ok((None, Vec::new()));
-    };
-    if task.kind != ResearchTaskKind::Preparation || task.status != ResearchTaskStatus::Done {
-        return Ok((None, Vec::new()));
-    }
-    let Some(book_id) = task.book_id else {
-        return Ok((None, Vec::new()));
-    };
     let Some(book) = books::Entity::find_by_id(book_id).one(tx).await? else {
         return Ok((None, Vec::new()));
     };
@@ -481,7 +435,7 @@ async fn start_after_knowledge_check(
     if !conception.start_after_knowledge_check {
         return Ok((None, Vec::new()));
     }
-    // Condition 4: any conception session, in any status, means the author already exercised the
+    // Condition 3: any conception session, in any status, means the author already exercised the
     // choice (or an earlier auto-start/abandoned run did); auto-start never creates a second one.
     if agent_sessions::Entity::find()
         .filter(agent_sessions::COLUMN.book_id.eq(book_id))

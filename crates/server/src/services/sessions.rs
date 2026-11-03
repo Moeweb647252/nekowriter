@@ -1647,6 +1647,13 @@ pub async fn abandon(
     })
     .await?;
     publish(state, events).await;
+    if let Err(error) = crate::services::research::advance_after_session(state, session_id).await {
+        tracing::warn!(
+            session_id,
+            error = %error,
+            "research queue advance failed after abandon"
+        );
+    }
     Ok(dto)
 }
 

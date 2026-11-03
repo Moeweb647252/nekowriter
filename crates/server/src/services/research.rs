@@ -106,11 +106,17 @@ pub async fn create(
     input: ResearchTaskCreate,
 ) -> Result<(ResearchTaskDto, Vec<String>), AppError> {
     let db = state.db().clone();
+    let check_id = input.check_id;
     let (dto, events, warnings) = super::write(&db, move |tx| {
         Box::pin(async move { create_inner(tx, input).await })
     })
     .await?;
     state.events().publish_all(events);
+    if let Some(check_id) = check_id
+        && let Err(error) = advance_check(state, check_id).await
+    {
+        tracing::warn!(check_id, error = %error, "check queue advance failed after topic create");
+    }
     Ok((dto, warnings))
 }
 
@@ -146,10 +152,35 @@ async fn create_inner(
             .one(tx)
             .await?
             .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
-        // Setting materials include the draft research topics, which the conception agent owns
-        // (`set_research_topics` replaces them): they are locked while it runs (spec/08 §1.4).
-        super::setting_docs::ensure_editable(tx, book_id).await?;
-        language = Some(book.writing_language);
+        if let Some(check_id) = input.check_id {
+            // A check topic joins that check's list and is not a setting material; the book's
+            // conception lock does not apply (spec/10 §2.5, D-168).
+            if !matches!(book.status, BookStatus::Conceiving | BookStatus::Active) {
+                return Err(AppError::new(
+                    ErrorCode::BookInvalidState,
+                    "a knowledge check topic needs a conceiving or active book",
+                )
+                .with_details(serde_json::json!({ "status": book.status.as_str() })));
+            }
+            let check = research_tasks::Entity::find_by_id(check_id)
+                .one(tx)
+                .await?
+                .ok_or_else(|| invalid_check_id("the knowledge check does not exist"))?;
+            if check.kind != ResearchTaskKind::Preparation || check.book_id != Some(book_id) {
+                return Err(invalid_check_id(
+                    "check_id must name a preparation task of the same book",
+                ));
+            }
+            language = Some(book.writing_language.clone());
+        } else {
+            // Setting materials include the draft research topics, which the conception agent
+            // owns (`set_research_topics` replaces them): they are locked while it runs
+            // (spec/08 §1.4).
+            super::setting_docs::ensure_editable(tx, book_id).await?;
+            language = Some(book.writing_language);
+        }
+    } else if input.check_id.is_some() {
+        return Err(invalid_check_id("check_id requires a book_id"));
     } else if language.is_none() {
         fields.insert(
             "language".to_owned(),
@@ -161,10 +192,13 @@ async fn create_inner(
     }
     let language = language.unwrap_or_else(|| "en".to_owned());
 
-    // A draft while the book is still being conceived, `ready` otherwise (spec/10 §2.5).
+    // A draft while the book is still being conceived, `ready` otherwise. A check topic is
+    // always `ready`, even in a conceiving book (spec/10 §2.5, D-168).
     let status = match input.book_id {
         Some(book_id) => match books::Entity::find_by_id(book_id).one(tx).await? {
-            Some(book) if book.status == BookStatus::Conceiving => ResearchTaskStatus::Draft,
+            Some(book) if input.check_id.is_none() && book.status == BookStatus::Conceiving => {
+                ResearchTaskStatus::Draft
+            }
             _ => ResearchTaskStatus::Ready,
         },
         None => ResearchTaskStatus::Ready,
@@ -179,6 +213,7 @@ async fn create_inner(
         requirements: Set(input.requirements.trim().to_owned()),
         language: Set(language),
         status: Set(status),
+        check_id: Set(input.check_id),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),
         ..Default::default()
@@ -355,7 +390,7 @@ async fn patch_inner(
     if is_open(&existing) {
         return Err(open_session_error(&existing));
     }
-    if existing.kind == ResearchTaskKind::Topic {
+    if existing.kind == ResearchTaskKind::Topic && existing.check_id.is_none() {
         ensure_topics_editable(tx, &existing).await?;
     }
     if existing.kind == ResearchTaskKind::Preparation {
@@ -464,7 +499,19 @@ pub async fn transition(
         Box::pin(async move { transition_inner(tx, task_id, transition).await })
     })
     .await?;
+    let check_id = dto.check_id;
     state.events().publish_all(events);
+    if transition == Transition::Resume
+        && let Some(check_id) = check_id
+        && let Err(error) = advance_check(state, check_id).await
+    {
+        tracing::warn!(
+            check_id,
+            task_id,
+            error = %error,
+            "check queue advance failed after topic resume"
+        );
+    }
     Ok(dto)
 }
 
@@ -561,7 +608,7 @@ async fn delete_inner(
     if is_open(&existing) {
         return Err(open_session_error(&existing));
     }
-    if existing.kind == ResearchTaskKind::Topic {
+    if existing.kind == ResearchTaskKind::Topic && existing.check_id.is_none() {
         ensure_topics_editable(tx, &existing).await?;
     }
     research_tasks::Entity::delete_by_id(task_id)
@@ -653,7 +700,11 @@ async fn prepare_scope(tx: &impl ConnectionTrait, task_id: i32) -> Result<Option
     let scope_id = match task.scope_id {
         Some(scope_id) => scope_id,
         None => {
-            let scope = resolve_scope(tx, &task.scope_name).await?;
+            let scope = if let Some(check_id) = task.check_id {
+                resolve_check_scope(tx, check_id, &task.scope_name).await?
+            } else {
+                resolve_scope(tx, &task.scope_name).await?
+            };
             research_tasks::ActiveModel {
                 id: Set(task_id),
                 scope_id: Set(Some(scope)),
@@ -670,6 +721,46 @@ async fn prepare_scope(tx: &impl ConnectionTrait, task_id: i32) -> Result<Option
         super::knowledge::include_scope(tx, book_id, scope_id).await?;
     }
     Ok(Some(scope_id))
+}
+
+/// Finds or creates the scope of a check topic. A new scope's description is the topics of this
+/// check that share the name, joined with ` / ` (R10); an existing scope is never rewritten.
+async fn resolve_check_scope(
+    tx: &impl ConnectionTrait,
+    check_id: i32,
+    name: &str,
+) -> Result<i32, AppError> {
+    let name = name.trim();
+    if let Some(row) = knowledge_scopes::Entity::find()
+        .filter(knowledge_scopes::COLUMN.name.eq(name))
+        .one(tx)
+        .await?
+    {
+        return Ok(row.id);
+    }
+    let topics = research_tasks::Entity::find()
+        .filter(research_tasks::COLUMN.check_id.eq(check_id))
+        .filter(research_tasks::COLUMN.kind.eq(ResearchTaskKind::Topic))
+        .filter(research_tasks::COLUMN.scope_name.eq(name))
+        .order_by_asc(research_tasks::COLUMN.id)
+        .all(tx)
+        .await?;
+    let description = topics
+        .iter()
+        .map(|task| task.topic.as_str())
+        .collect::<Vec<_>>()
+        .join(" / ");
+    let timestamp = now();
+    let row = knowledge_scopes::Entity::insert(knowledge_scopes::ActiveModel {
+        name: Set(name.to_owned()),
+        description: Set(description),
+        created_at: Set(timestamp),
+        updated_at: Set(timestamp),
+        ..Default::default()
+    })
+    .exec_with_returning(tx)
+    .await?;
+    Ok(row.id)
 }
 
 /// Finds a scope by name, or creates it (spec/07 §8 step 2).
@@ -706,6 +797,122 @@ pub fn is_open(task: &research_tasks::Model) -> bool {
         | ResearchTaskStatus::Deferred
         | ResearchTaskStatus::Done
         | ResearchTaskStatus::Cancelled => false,
+    }
+}
+
+/// Evaluates a knowledge check's queue after a trigger has committed (spec/07 §8.1 step 6,
+/// D-168). The session's task itself is the check when it is a `preparation`, otherwise the
+/// topic's `check_id`; no check means nothing to do.
+pub async fn advance_after_session(state: &AppState, session_id: i32) -> Result<(), AppError> {
+    let session = crate::db::entities::agent_sessions::Entity::find_by_id(session_id)
+        .one(state.db_conn())
+        .await?;
+    let Some(session) = session else {
+        return Ok(());
+    };
+    if session.kind != SessionKind::Research {
+        return Ok(());
+    }
+    let Some(task_id) = session.research_task_id else {
+        return Ok(());
+    };
+    let Some(task) = research_tasks::Entity::find_by_id(task_id)
+        .one(state.db_conn())
+        .await?
+    else {
+        return Ok(());
+    };
+    let check_id = if task.kind == ResearchTaskKind::Preparation {
+        Some(task.id)
+    } else {
+        task.check_id
+    };
+    if let Some(check_id) = check_id {
+        advance_check(state, check_id).await?;
+    }
+    Ok(())
+}
+
+/// One write-locked queue evaluation. Every row is re-read inside the transaction; the next
+/// topic's session is created in the same transaction so two triggers cannot both start one.
+pub async fn advance_check(state: &AppState, check_id: i32) -> Result<(), AppError> {
+    let db = state.db().clone();
+    let state_owned = state.clone();
+    let (spawn, events) = super::write(&db, move |tx| {
+        Box::pin(async move { advance_check_inner(&state_owned, tx, check_id).await })
+    })
+    .await?;
+    state.events().publish_all(events);
+    if let Some(session_id) = spawn {
+        state.manager().spawn(state.clone(), session_id);
+    }
+    Ok(())
+}
+
+/// The in-transaction queue guard, in the order spec/07 §8.1 step 6 fixes: check shape, book
+/// state, planning completion, no open topic, first ready topic or conception.
+async fn advance_check_inner(
+    state: &AppState,
+    tx: &sea_orm::DatabaseTransaction,
+    check_id: i32,
+) -> Result<(Option<i32>, Vec<ServerEvent>), AppError> {
+    let Some(check) = research_tasks::Entity::find_by_id(check_id).one(tx).await? else {
+        return Ok((None, Vec::new()));
+    };
+    if check.kind != ResearchTaskKind::Preparation {
+        return Ok((None, Vec::new()));
+    }
+    let Some(book_id) = check.book_id else {
+        return Ok((None, Vec::new()));
+    };
+    let Some(book) = books::Entity::find_by_id(book_id).one(tx).await? else {
+        return Ok((None, Vec::new()));
+    };
+    if !matches!(book.status, BookStatus::Conceiving | BookStatus::Active) {
+        return Ok((None, Vec::new()));
+    }
+    if check.status != ResearchTaskStatus::Done {
+        return Ok((None, Vec::new()));
+    }
+    let topics = research_tasks::Entity::find()
+        .filter(research_tasks::COLUMN.check_id.eq(check.id))
+        .filter(research_tasks::COLUMN.kind.eq(ResearchTaskKind::Topic))
+        .order_by_asc(research_tasks::COLUMN.id)
+        .all(tx)
+        .await?;
+    if topics.iter().any(is_open) {
+        return Ok((None, Vec::new()));
+    }
+    let Some(next) = topics
+        .iter()
+        .find(|task| task.status == ResearchTaskStatus::Ready)
+    else {
+        return crate::services::conception::start_after_knowledge_check(state, tx, book_id).await;
+    };
+    let scope_id = prepare_scope(tx, next.id).await?;
+    let session = sessions::create_inner(
+        state,
+        tx,
+        CreateSession {
+            kind: SessionKind::Research,
+            book_id: Some(book_id),
+            research_task_id: Some(next.id),
+            kickoff_extra: scope_id.map(|scope_id| serde_json::json!({ "scope_id": scope_id })),
+            ..CreateSession::default()
+        },
+    )
+    .await;
+    match session {
+        Ok((session_id, events, _warnings)) => Ok((Some(session_id), events)),
+        Err(error) if error.code == ErrorCode::ModelMissingRole => {
+            tracing::info!(
+                check_id,
+                topic_id = next.id,
+                "no researcher model; the check topic stays ready"
+            );
+            Ok((None, Vec::new()))
+        }
+        Err(error) => Err(error),
     }
 }
 
@@ -877,6 +1084,13 @@ fn field_error(field: &str, message: &str) -> AppError {
         field.to_owned(),
         serde_json::Value::String(message.to_owned()),
     )]))
+}
+
+/// `check_id` is a structural reference, so its failures use the documented 422
+/// `validation.invalid_fields` code rather than the generic 400 validation.
+fn invalid_check_id(message: &str) -> AppError {
+    AppError::new(ErrorCode::ValidationInvalidFields, "invalid input")
+        .with_details(serde_json::json!({ "fields": { "check_id": message } }))
 }
 
 #[cfg(test)]
