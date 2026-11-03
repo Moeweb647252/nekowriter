@@ -614,8 +614,14 @@ async fn set_research_topics_in_a_check_inserts_ready_topics_with_check_id() {
     assert_eq!(rows.len(), 2, "{rows:?}");
     for (_, _, origin, status, _, session_id) in &rows {
         assert_eq!(origin, "conception");
-        assert_eq!(status, "ready");
-        assert_eq!(*session_id, None);
+        // The check may have completed before the assertions; its queue can already have moved
+        // the first inserted row to `running`. The guarantee under test is the row created by the
+        // tool, never a draft and never a session at creation time.
+        assert!(matches!(status.as_str(), "ready" | "running"), "{status}");
+        assert!(
+            session_id.is_none() || matches!(status.as_str(), "running"),
+            "{status}"
+        );
     }
     let db = runtime.app.db().conn();
     for (id, _, _, _, _, _) in &rows {

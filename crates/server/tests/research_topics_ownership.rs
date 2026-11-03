@@ -172,7 +172,120 @@ async fn author_drafts_survive_set_research_topics_and_are_in_the_kickoff() {
     );
     assert!(kickoff.contains("Author before"), "{kickoff}");
     assert!(kickoff.contains("Author while idle"), "{kickoff}");
+    assert!(
+        kickoff.contains("Author before") && kickoff.contains("0 条"),
+        "the kickoff renders status and entries_created: {kickoff}"
+    );
     assert!(kickoff.contains("不要重复"), "{kickoff}");
+}
+
+#[tokio::test]
+async fn conception_never_deletes_a_ready_check_topic_without_a_session() {
+    let runtime = runtime(vec![
+        tools_step(&[("set_research_topics", json!({
+            "topics": [{ "topic": "Agent supplementary", "requirements": "", "scope": "Background" }]
+        }))]),
+        text_step("done"),
+    ])
+    .await;
+    let book = runtime.app.create_book("Check topic protection").await;
+    let book_id = book["id"].as_i64().unwrap() as i32;
+    runtime
+        .app
+        .execute(&format!(
+            "UPDATE books SET status = 'conceiving' WHERE id = {book_id}"
+        ))
+        .await;
+    runtime
+        .app
+        .execute(&format!(
+            "INSERT INTO research_tasks(book_id, kind, origin, scope_name, topic, requirements, language, status, created_at, updated_at)              VALUES ({book_id}, 'preparation', 'author', '', 'Knowledge check', '', 'en', 'done', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ))
+        .await;
+    let check_id = rows(&runtime.app, book_id).await.last().unwrap().0;
+    runtime
+        .app
+        .execute(&format!(
+            "INSERT INTO research_tasks(book_id, kind, origin, scope_name, topic, requirements, language, status, check_id, session_id, created_at, updated_at)              VALUES ({book_id}, 'topic', 'conception', 'Background', 'Ready check topic', '', 'en', 'ready', {check_id}, NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ))
+        .await;
+    let check_topic = rows(&runtime.app, book_id).await.last().unwrap().0;
+    // A synthetic draft-shaped check topic (the invariant says this cannot happen, but an old or
+    // corrupt row must still be protected by the check_id filter).
+    runtime
+        .app
+        .execute(&format!(
+            "INSERT INTO research_tasks(book_id, kind, origin, scope_name, topic, requirements, language, status, check_id, session_id, created_at, updated_at)              VALUES ({book_id}, 'topic', 'conception', 'Background', 'Draft-shaped check topic', '', 'en', 'draft', {check_id}, NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ))
+        .await;
+
+    let (status, started) = runtime
+        .app
+        .post(&format!("/api/books/{book_id}/conception/start"), json!({}))
+        .await;
+    assert_eq!(status, 200, "{started}");
+    let session = started["session_id"].as_i64().unwrap() as i32;
+    runtime.wait_any_status(session).await;
+    let after = rows(&runtime.app, book_id).await;
+    assert!(
+        after
+            .iter()
+            .any(|row| row.0 == check_topic && row.3 == "ready" && row.4 == "Ready check topic"),
+        "a ready check topic with no session is never a conception draft: {after:?}"
+    );
+    assert!(
+        after
+            .iter()
+            .any(|row| row.4 == "Draft-shaped check topic" && row.3 == "draft"),
+        "the check_id filter protects even a draft-shaped check row: {after:?}"
+    );
+    assert!(
+        after.iter().any(|row| row.4 == "Agent supplementary"),
+        "the conception call itself still works: {after:?}"
+    );
+}
+
+#[tokio::test]
+async fn five_conception_drafts_are_replaced_as_before() {
+    let runtime = runtime(vec![
+        tools_step(&[("set_research_topics", json!({
+            "topics": [{ "topic": "New agent topic", "requirements": "", "scope": "Background" }]
+        }))]),
+        text_step("done"),
+    ])
+    .await;
+    let book = runtime.app.create_book("Five drafts").await;
+    let book_id = book["id"].as_i64().unwrap() as i32;
+    runtime
+        .app
+        .execute(&format!(
+            "UPDATE books SET status = 'conceiving' WHERE id = {book_id}"
+        ))
+        .await;
+    for index in 0..5 {
+        runtime
+            .app
+            .execute(&format!(
+                "INSERT INTO research_tasks(book_id, kind, origin, scope_name, topic, requirements, language, status, created_at, updated_at)                  VALUES ({book_id}, 'topic', 'conception', 'Background', 'Old draft {index}', '', 'en', 'draft', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+            ))
+            .await;
+    }
+    let (status, started) = runtime
+        .app
+        .post(&format!("/api/books/{book_id}/conception/start"), json!({}))
+        .await;
+    assert_eq!(status, 200, "{started}");
+    let session = started["session_id"].as_i64().unwrap() as i32;
+    runtime.wait_any_status(session).await;
+    let after = rows(&runtime.app, book_id).await;
+    assert!(
+        !after.iter().any(|row| row.4.starts_with("Old draft")),
+        "all five conception drafts are replaced: {after:?}"
+    );
+    assert!(
+        after.iter().any(|row| row.4 == "New agent topic"),
+        "{after:?}"
+    );
 }
 
 #[tokio::test]
