@@ -360,8 +360,8 @@ and finally to the conception session without a reload.
   session.
 - Steps:
   1. `search_knowledge`;
-  2. `set_research_topics` with the corpus's new `prep_topics` (two per language, scope
-     `prep_scope_name`);
+  2. `set_research_topics` with the corpus's new `prep_topics` (two per language, each topic's
+     own corpus `scope`: `Background` and `Customs` for the shipped English corpus);
   3. `finish_research` with the new `prep_report`.
 - `prep_scope_description` is removed from `corpus.toml` and from the corpus struct.
 - Topic sessions keep `research_plan`: save twice, then finish.

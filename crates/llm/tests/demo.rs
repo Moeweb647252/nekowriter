@@ -665,7 +665,21 @@ fn the_knowledge_check_demo_searches_plans_topics_and_finishes() {
     assert_eq!(plan.tools[0].1, "set_research_topics");
     let topics = plan.tools[0].2["topics"].as_array().expect("topics");
     assert_eq!(topics.len(), 2, "two topics per language");
-    assert_eq!(topics[0]["scope"], lang.prep_scope_name);
+    assert_eq!(
+        topics[0]["scope"].as_str(),
+        Some(lang.prep_topics[0].scope.as_str()),
+        "the first topic keeps its corpus scope"
+    );
+    assert_eq!(
+        topics[1]["scope"].as_str(),
+        Some(lang.prep_topics[1].scope.as_str()),
+        "the second topic keeps its corpus scope"
+    );
+    assert_ne!(
+        topics[1]["scope"].as_str(),
+        Some(lang.prep_scope_name.as_str()),
+        "the second topic must not be collapsed onto the shared prep scope"
+    );
     hints.step_in_phase = 2;
     let plan = choose_action(&hints, lang);
     assert_eq!(plan.tools[0].1, "finish_research");
