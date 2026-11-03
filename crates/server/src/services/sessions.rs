@@ -1305,6 +1305,7 @@ async fn resume_inner(
                         kind: crate::db::json::AppendixKind::EffectNotice,
                         text: rendered.text,
                         inbox_id: None,
+                        inbox_kind: None,
                     });
                 }
                 if let Some(notice) = rejected_notice(&held.name) {
@@ -1315,6 +1316,7 @@ async fn resume_inner(
                         kind: crate::db::json::AppendixKind::EffectNotice,
                         text: rendered.text,
                         inbox_id: None,
+                        inbox_kind: None,
                     });
                 }
                 let rendered = prompts
@@ -1324,6 +1326,7 @@ async fn resume_inner(
                     kind: crate::db::json::AppendixKind::UserFeedback,
                     text: rendered.text,
                     inbox_id: None,
+                    inbox_kind: None,
                 });
             }
             // Finalize the held call: effects revoked when feedback was given, else applied.
@@ -1381,6 +1384,7 @@ async fn resume_inner(
                         kind: crate::db::json::AppendixKind::EffectNotice,
                         text: rendered.text,
                         inbox_id: None,
+                        inbox_kind: None,
                     });
                 }
                 agent_sessions::ActiveModel {
@@ -1790,6 +1794,7 @@ async fn answer_inner(
                 kind: crate::db::json::AppendixKind::EffectNotice,
                 text: rendered_notice.text,
                 inbox_id: None,
+                inbox_kind: None,
             });
         }
         if let Some(phase) = effects.phase_to {
@@ -1807,6 +1812,7 @@ async fn answer_inner(
             kind: crate::db::json::AppendixKind::EditReport,
             text: report,
             inbox_id: None,
+            inbox_kind: None,
         });
     }
     agent_tool_calls::ActiveModel {

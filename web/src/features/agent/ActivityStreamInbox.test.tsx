@@ -165,7 +165,7 @@ describe("inbox appendices", () => {
       messageWith([
         toolCall({
           appendices: [
-            { kind: "inbox", text: INBOX_TEXT, inbox_id: 1 },
+            { kind: "inbox", text: INBOX_TEXT, inbox_id: 1, inbox_kind: "user_message" },
             { kind: "effect_notice", text: "the effect notice", inbox_id: null },
           ],
         }),
@@ -253,6 +253,40 @@ describe("inbox appendices", () => {
     expect(rows.map((row) => row.kind)).toEqual(["message", "inbox", "message"])
   })
 
+  it("keeps a runtime notice inside the card", async () => {
+    renderStream([
+      messageWith([
+        toolCall({
+          appendices: [
+            {
+              kind: "inbox",
+              text: "Granularity changed to paragraph.",
+              inbox_id: 2,
+              inbox_kind: "notice",
+            },
+          ],
+        }),
+      ]),
+    ])
+
+    expect(screen.queryByTestId("inbox-appendix")).toBeNull()
+    const user = userEvent.setup()
+    await user.click(cardTrigger())
+    const notice = screen.getByText("Granularity changed to paragraph.")
+    expect(notice.closest('[data-slot="collapsible-content"]')).not.toBeNull()
+  })
+
+  it("lifts a legacy inbox appendix that has no inbox_kind field", () => {
+    renderStream([
+      messageWith([
+        toolCall({ appendices: [{ kind: "inbox", text: INBOX_TEXT, inbox_id: 3 }] }),
+      ]),
+    ])
+
+    const row = screen.getByTestId("inbox-appendix")
+    expect(row.textContent).toContain(INBOX_TEXT)
+  })
+
   it("leaves a stream without inbox appendices unchanged", () => {
     renderStream([
       messageWith([
@@ -279,8 +313,8 @@ describe("inbox appendices", () => {
     ])
 
     const trigger = cardTrigger()
-    expect(trigger).toHaveTextContent("Failed")
-    expect(trigger).not.toHaveTextContent("读取了")
+    expect(screen.getByText("Failed")).toBeInTheDocument()
+    expect(trigger.textContent).not.toContain("—")
   })
 
   it("labels a failed call with the first result line instead of an empty summary", () => {

@@ -27,6 +27,7 @@ import { useErrorToast } from "@/components/common/ErrorToast"
 import { Button } from "@/components/ui/button"
 import { useLiveStore } from "@/stores/live"
 import { ToolCallCard } from "@/features/agent/ToolCallCard"
+import { isAuthorInbox } from "@/features/agent/appendix"
 import { cn } from "@/lib/utils"
 
 /** Scrolling within one estimated row of the top loads the next older page (spec/11 §5.3). */
@@ -279,7 +280,9 @@ export function buildRows(
     })
     for (const call of item.tool_calls) {
       for (const appendix of call.appendices) {
-        if (appendix.kind !== "inbox") {
+        if (!isAuthorInbox(appendix)) {
+          // A runtime notice uses the same appendix kind but is not the author's message; it
+          // stays inside the tool card as a NoticeItem.
           continue
         }
         const inboxId = appendix.inbox_id

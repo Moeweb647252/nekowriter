@@ -3602,17 +3602,26 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     `ToolCallCard` renders appendices inside its collapsed content, so the author's own message was
     invisible unless they expanded an unrelated tool card.
   - The same appendix kind carries `InboxKind::Notice` rows (for example the granularity-change
-    notice) because `seal::inbox_appendix` does not record which inbox kind it came from.
+    notice). This is reachable today: `PATCH /api/sessions/:id` with `granularity` inserts a Notice
+    for a `chapter_write` or `chapter_revise` session in drafting/revising, and
+    `crates/server/tests/steering_header.rs` proves that it arrives as an inbox appendix. Appendix
+    delivery needs an unsealed tool batch; without one the notice becomes a notice-kind user
+    message instead, which is already labelled correctly.
 - **Decision**:
-  - **Lift only `inbox` appendices.** `ActivityStream` renders each `AppendixKind::Inbox` appendix
-    as an author row after the message that carried the call, with `agent:stream.author` and
-    `agent:appendix.inbox` labels and the appendix text verbatim. Rows are de-duplicated by
-    `inbox_id`; a queued inbox item with the same id is suppressed, so a live buffer and a snapshot
-    copy cannot render the message twice.
+  - **Carry the discriminator.** `Appendix` gains
+    `inbox_kind: Option<InboxKind>` (`#[serde(default)]`), persisted inside the sealed call.
+    `seal::inbox_appendix` receives the consumed row's `InboxKind` and stores it. An old row without
+    the field deserializes to `None`; the web treats `None` as `UserMessage`, so the author's real
+    feedback keeps the lifted-row behaviour. The row is never classified by sniffing its text.
+  - **Lift only author messages.** `ActivityStream` renders an author row only for an
+    `AppendixKind::Inbox` whose `inbox_kind` is `UserMessage` or absent (legacy). An
+    `InboxKind::Notice` stays inside the tool card as a `NoticeItem`.
   - **Everything else stays in the card.** `effect_notice`, `edit_report` and `user_feedback`
-    appendices keep their `NoticeItem` position under the tool card. When the stream lifts the
-    inbox kind, the card omits that kind (`includeInboxAppendices={false}`), so the row and the card
-    never show the same message twice.
+    appendices keep their `NoticeItem` position under the tool card. When the stream lifts an
+    author-message inbox appendix, the card omits that appendix from its **appendices list**
+    (`includeInboxAppendices={false}`), so the list does not show it twice. The `inbox_id` dedupe
+    also suppresses a queued inbox item with the same id as a lifted appendix (defence in depth,
+    not a scenario the product requires).
   - **Failed calls name the failure.** A failed call shows `agent:tool.failed_with` with the first
     non-empty `result_text` line, or `agent:status.failed` when there is no line. No stored row or
     derived `result_text` is rewritten.
@@ -3620,14 +3629,10 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   - All four `ActivityStream` surfaces (agent panel, conception conversation, knowledge-check pane,
     research task page) get the author row automatically because the logic lives in the shared
     component.
-  - **Known follow-up (F6).** An `InboxKind::Notice` row is also lifted and labelled as the author's
-    message. This is reachable today: `PATCH /api/sessions/:id` with `granularity` inserts a Notice
-    for a `chapter_write` or `chapter_revise` session in drafting/revising, and the runner seals it
-    through the same `inbox_appendix` path. The fix is to carry the `InboxKind` (or another
-    discriminator) on `Appendix`, set it at seal time, and lift only `InboxKind::UserMessage`; the
-    row must not sniff the text to guess its origin.
+  - The runtime-notice mislabel is fixed rather than left as a follow-up; the legacy fallback is
+    covered by a serde test and the web trio (user lifts, notice does not, legacy lifts).
   - **Known pre-existing detail.** Expanding a sealed card still shows the inbox text inside the
     composed `result_text`, because the seal step composes every appendix into it. Filtering the
-    appendix list does not change the composed text; this is not a regression of the author-row
+    appendices list does not change the composed text; this is not a regression of the author-row
     change and is not fixed here.
 - **Spec**: spec/03 §5.3, §8; spec/11 §5.3.

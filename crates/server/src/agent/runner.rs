@@ -786,6 +786,7 @@ async fn persist_assistant(
                         kind: AppendixKind::EffectNotice,
                         text: String::new(),
                         inbox_id: None,
+                        inbox_kind: None,
                     });
                 }
                 let raw_result_text =
@@ -1555,6 +1556,7 @@ async fn finalize_inner(
                 kind: AppendixKind::EffectNotice,
                 text: rendered.text,
                 inbox_id: None,
+                inbox_kind: None,
             });
         }
     }
@@ -1579,6 +1581,7 @@ async fn finalize_inner(
                 kind: AppendixKind::EffectNotice,
                 text: rendered.text,
                 inbox_id: None,
+                inbox_kind: None,
             });
         }
     }
@@ -1606,6 +1609,7 @@ async fn finalize_inner(
                 kind: AppendixKind::EffectNotice,
                 text: rendered.text,
                 inbox_id: None,
+                inbox_kind: None,
             });
         }
     }
@@ -2043,12 +2047,14 @@ pub async fn seal_inner(
                         kind: AppendixKind::EditReport,
                         text: report.clone(),
                         inbox_id: None,
+                        inbox_kind: None,
                     });
                 }
                 for item in &items {
                     appendices.push(seal::inbox_appendix(
                         inbox_item_text(prompts, item),
                         item.id,
+                        item.kind,
                     ));
                 }
             }

@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { useLiveStore } from "@/stores/live"
 import { NoticeItem } from "@/features/agent/NoticeItem"
+import { isAuthorInbox } from "@/features/agent/appendix"
 import { toolRenderer } from "@/features/agent/toolRenderers"
 import { cn } from "@/lib/utils"
 
@@ -86,9 +87,11 @@ export function ToolCallCard({
       ? t("agent:status.failed")
       : t("agent:tool.failed_with", { message: failureLine })
     : renderedSummary
+  // Only the author-message inbox appendices were lifted into their own rows. A runtime notice
+  // shares the appendix kind but has no author row, so it stays in this card.
   const appendices = includeInboxAppendices
     ? call.appendices
-    : call.appendices.filter((appendix: Appendix) => appendix.kind !== "inbox")
+    : call.appendices.filter((appendix: Appendix) => !isAuthorInbox(appendix))
   // A preview is discarded as soon as the persisted call arrives (spec/03 §12).
   const preview = useLiveStore(
     (state) => state.previews[`${sessionId}:${seq}:${call.call_index}`],

@@ -173,6 +173,10 @@ async fn path_a_a_steering_message_is_an_appendix_of_the_last_tool_result() {
     assert_eq!(appendices.len(), 1, "one inbox appendix: {appendices:?}");
     assert_eq!(appendices[0]["text"], rendered(text));
     assert_eq!(appendices[0]["inbox_id"], inbox_id);
+    assert_eq!(
+        appendices[0]["inbox_kind"], "user_message",
+        "the seal records the author-message inbox kind"
+    );
     assert!(
         delivered_in_requests(&runtime, &rendered(text)),
         "the next provider request carries the rendered appendix"
@@ -425,6 +429,10 @@ async fn runtime_notices_are_delivered_exactly_as_queued() {
     let appendices = inbox_appendices(slow);
     assert_eq!(appendices.len(), 1);
     assert_eq!(appendices[0]["text"], notice_text);
+    assert_eq!(
+        appendices[0]["inbox_kind"], "notice",
+        "the seal records the runtime-notice inbox kind"
+    );
 }
 
 // ───────────────────────────── overrides ─────────────────────────────

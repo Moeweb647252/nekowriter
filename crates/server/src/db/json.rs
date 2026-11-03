@@ -1040,6 +1040,10 @@ pub struct Appendix {
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inbox_id: Option<i32>,
+    /// The `agent_inbox.kind` this appendix came from, set when the appendix is sealed. Rows
+    /// sealed before this field existed omit it and are author messages by construction (D-165).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inbox_kind: Option<InboxKind>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1722,24 +1726,43 @@ mod tests {
                 kind: AppendixKind::EffectNotice,
                 text: "notice".to_owned(),
                 inbox_id: None,
+                inbox_kind: None,
             },
             Appendix {
                 kind: AppendixKind::EditReport,
                 text: "report".to_owned(),
                 inbox_id: None,
+                inbox_kind: None,
             },
             Appendix {
                 kind: AppendixKind::UserFeedback,
                 text: "feedback".to_owned(),
                 inbox_id: None,
+                inbox_kind: None,
             },
             Appendix {
                 kind: AppendixKind::Inbox,
                 text: "inbox".to_owned(),
                 inbox_id: Some(4),
+                inbox_kind: Some(InboxKind::UserMessage),
             },
         ];
         assert_eq!(round_trip(&value), value);
+    }
+
+    /// Appendices sealed before `inbox_kind` existed decode as the author's message (D-165).
+    #[test]
+    fn an_appendix_without_inbox_kind_is_a_legacy_author_message() {
+        let old = serde_json::from_str::<Appendix>(
+            r#"{"kind":"inbox","text":"old feedback","inbox_id":7}"#,
+        )
+        .expect("a legacy appendix decodes");
+        assert_eq!(old.kind, AppendixKind::Inbox);
+        assert_eq!(old.inbox_id, Some(7));
+        assert_eq!(old.inbox_kind, None);
+        // Re-encoding keeps the field out, so a legacy row round-trips without gaining data.
+        let encoded = serde_json::to_value(&old).expect("an appendix encodes");
+        assert!(encoded.get("inbox_kind").is_none());
     }
 
     /// `agent_tool_calls.effects`.

@@ -13,7 +13,7 @@
 
 use serde_json::json;
 
-use crate::db::json::{Appendix, AppendixKind};
+use crate::db::json::{Appendix, AppendixKind, InboxKind};
 use crate::prompts::PromptSet;
 
 /// The delivered text of an author message (D-160, spec/03 §5.3 slot 4).
@@ -77,11 +77,12 @@ pub fn compose(raw_result_text: Option<&str>, appendices: &[Appendix]) -> String
 
 /// The `AppendixKind` of an inbox row: author messages are `inbox` items too, but the canonical
 /// order treats every inbox item the same (spec/03 §5.3 slot 4).
-pub fn inbox_appendix(text: String, inbox_id: i32) -> Appendix {
+pub fn inbox_appendix(text: String, inbox_id: i32, inbox_kind: InboxKind) -> Appendix {
     Appendix {
         kind: AppendixKind::Inbox,
         text,
         inbox_id: Some(inbox_id),
+        inbox_kind: Some(inbox_kind),
     }
 }
 
@@ -94,7 +95,16 @@ mod tests {
             kind,
             text: text.to_owned(),
             inbox_id: None,
+            inbox_kind: None,
         }
+    }
+
+    #[test]
+    fn inbox_appendix_carries_the_inbox_kind() {
+        let author = inbox_appendix("author".to_owned(), 4, InboxKind::UserMessage);
+        assert_eq!(author.inbox_kind, Some(InboxKind::UserMessage));
+        let notice = inbox_appendix("notice".to_owned(), 5, InboxKind::Notice);
+        assert_eq!(notice.inbox_kind, Some(InboxKind::Notice));
     }
 
     #[test]
