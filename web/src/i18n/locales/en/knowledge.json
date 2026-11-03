@@ -90,7 +90,9 @@
     "created_entries": "Entries this task created",
     "language_book_hint": "The task uses the book's language.",
     "abandon_confirm": "Abandon this research run? The task is cancelled; saved entries stay in the scope.",
-    "knowledge_check": "Knowledge check"
+    "knowledge_check": "Knowledge check",
+    "from_check": "From the knowledge check",
+    "check_topics": "Research topics"
   },
   "scope_not_found": "This scope no longer exists.",
   "scope_not_found_hint": "Pick another scope on the left, or create a new one.",

@@ -90,7 +90,9 @@
     "created_entries": "本任务创建的条目",
     "language_book_hint": "任务使用该书的语言。",
     "abandon_confirm": "放弃这次资料收集？任务会标记为已取消，已保存的条目会保留在范围里。",
-    "knowledge_check": "知识检查"
+    "knowledge_check": "知识检查",
+    "from_check": "来自知识检查",
+    "check_topics": "资料研究主题"
   },
   "scope_not_found": "这个知识范围已经不存在了。",
   "scope_not_found_hint": "请在左侧另选一个范围，或新建一个。",

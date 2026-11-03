@@ -4,10 +4,11 @@ import { describe, expect, it, vi } from "vitest"
 
 import type { ResearchTaskDto } from "@/api/gen/ResearchTaskDto"
 
-const state = vi.hoisted(() => ({ task: null as ResearchTaskDto | null }))
+const state = vi.hoisted(() => ({ task: null as ResearchTaskDto | null, topics: [] as ResearchTaskDto[] }))
 
 vi.mock("@/api/hooks/research", () => ({
   useResearchTask: () => ({ data: state.task, isPending: false }),
+  useResearchTasks: () => ({ data: state.topics, isPending: false }),
   usePatchResearchTask: () => ({ mutate: vi.fn(), isPending: false }),
   useDeleteResearchTask: () => ({ mutate: vi.fn(), isPending: false }),
   useRunResearchTask: () => ({ mutate: vi.fn(), isPending: false }),
@@ -61,5 +62,24 @@ describe("ResearchTaskPage preparation", () => {
     expect(screen.getByText(/—/)).toBeInTheDocument()
     expect(screen.queryByLabelText("Topic")).not.toBeInTheDocument()
     expect(screen.queryByLabelText("Requirements")).not.toBeInTheDocument()
+  })
+
+  it("lists the check's topics with status and links", () => {
+    state.task = prep()
+    state.topics = [
+      {
+        ...prep(),
+        id: 11,
+        kind: "topic",
+        check_id: 9,
+        topic: "Court life",
+        status: "done",
+        entries_created: 2,
+      },
+    ]
+    render(<ResearchTaskPage />)
+    expect(screen.getByText("Research topics")).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Court life" })).toHaveAttribute("href", "/research/11")
+    expect(screen.getByText("2 entries")).toBeInTheDocument()
   })
 })

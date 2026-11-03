@@ -13,11 +13,9 @@
  *   item was never approved, the author confirms first (PROJECT §8.7 step 6).
  */
 import { useMemo, useState } from "react"
-import { Link, useNavigate, useParams } from "react-router"
+import { useNavigate, useParams } from "react-router"
 import { useTranslation } from "react-i18next"
-import ReactMarkdown from "react-markdown"
-import remarkGfm from "remark-gfm"
-import { ExternalLink, Loader2 } from "lucide-react"
+import { Loader2 } from "lucide-react"
 
 import {
   useAnswerSession,
@@ -51,6 +49,7 @@ import { Composer } from "@/features/agent/Composer"
 import { SessionControls } from "@/features/agent/SessionControls"
 import { SessionErrorNotice } from "@/features/agent/SessionErrorNotice"
 import { AskUserForm, readQuestions } from "@/features/conception/AskUserForm"
+import { PreConceptionResearch } from "@/features/conception/PreConceptionResearch"
 import { CharacterRankList } from "@/features/conception/CharacterRankList"
 import { ResearchTopicsEditor } from "@/features/conception/ResearchTopicsEditor"
 import {
@@ -63,10 +62,6 @@ import type { SessionAnswerInput } from "@/api/gen/SessionAnswerInput"
 import type { SessionDto } from "@/api/gen/SessionDto"
 import type { ToolCallDto } from "@/api/gen/ToolCallDto"
 import type { SettingDocKind } from "@/api/gen/SettingDocKind"
-import type { ResearchTaskDto } from "@/api/gen/ResearchTaskDto"
-import type { BookDto } from "@/api/gen/BookDto"
-import { SessionStatusBadge } from "@/features/agent/SessionStatusBadge"
-import { StatusBadge } from "@/components/common/StatusBadge"
 
 /** The session statuses that allow the author to edit the materials (spec/08 §1.4). */
 const EDITABLE_STATUSES = new Set([
@@ -292,12 +287,13 @@ export default function ConceptionStudio() {
               <Loader2 aria-hidden="true" className="size-4 animate-spin text-muted-foreground" />
             </div>
           ) : session === undefined ? (
-            <BeforeConception
+            <PreConceptionResearch
               bookId={bookId}
               book={book.data}
               check={latestCheck}
               checkSession={checkSession}
               checkSnapshot={checkSnapshot.data}
+              topics={topics.data ?? []}
               startPending={start.isPending}
               checkPending={startKnowledgeCheck.isPending}
               controlsBusy={busy}
@@ -493,204 +489,6 @@ export default function ConceptionStudio() {
         pending={finalize.isPending}
         onConfirm={doFinalize}
       />
-    </div>
-  )
-}
-
-/** The conversation pane before a conception session exists (spec/11 §5.4, D-158). */
-function BeforeConception({
-  bookId,
-  book,
-  check,
-  checkSession,
-  checkSnapshot,
-  startPending,
-  checkPending,
-  controlsBusy,
-  onPause,
-  onStop,
-  onContinue,
-  onFeedback,
-  onAbandon,
-  continuePending,
-  onStart,
-  onCheck,
-  onContinueCheck,
-}: {
-  bookId: number
-  book: BookDto
-  check: ResearchTaskDto | undefined
-  checkSession: SessionDto | undefined
-  checkSnapshot:
-    | { messages: MessageWithCallsDto[]; inbox: unknown[]; next_cursor?: string | null }
-    | undefined
-  startPending: boolean
-  checkPending: boolean
-  controlsBusy: boolean
-  onPause: (session: SessionDto) => void
-  onStop: (session: SessionDto) => void
-  onContinue: (session: SessionDto) => void
-  onFeedback: (session: SessionDto, feedback: string) => void
-  onAbandon: (session: SessionDto) => void
-  continuePending: boolean
-  onStart: () => void
-  onCheck: () => void
-  onContinueCheck: (taskId: number) => void
-}) {
-  const { t } = useTranslation()
-  const startButton = (
-    <Button
-      size="sm"
-      variant={book.conception.start_after_knowledge_check ? "outline" : "default"}
-      disabled={startPending}
-      onClick={onStart}
-    >
-      {startPending ? t("common:saving") : t("book:conception.start")}
-    </Button>
-  )
-
-  if (check === undefined) {
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-sm text-muted-foreground">
-        <p>{t("book:conception.no_session")}</p>
-        {book.status === "conceiving" ? (
-          <div className="flex flex-wrap items-center justify-center gap-2">
-            {startButton}
-            <Button size="sm" variant="outline" disabled={checkPending} onClick={onCheck}>
-              {checkPending
-                ? t("common:saving")
-                : t("book:conception.knowledge_check.check_first")}
-            </Button>
-          </div>
-        ) : null}
-      </div>
-    )
-  }
-
-  if (knowledgeCheckOpen(check)) {
-    const session = checkSession
-    return (
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4" data-testid="knowledge-check-open">
-        <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-sm font-semibold">{t("book:conception.knowledge_check.title")}</h2>
-          {session === undefined ? (
-            <StatusBadge status={check.status} variant="canon" />
-          ) : (
-            <SessionStatusBadge status={session.status} />
-          )}
-        </div>
-        <SessionErrorNotice error={session?.error ?? null} />
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <Link
-            to={`/research/${check.id}`}
-            className="inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline"
-          >
-            <ExternalLink className="size-3.5" aria-hidden="true" />
-            {t("book:conception.knowledge_check.open_task")}
-          </Link>
-        </div>
-        {session === undefined ? (
-          <div className="flex flex-1 items-center justify-center">
-            <Loader2 className="size-4 animate-spin text-muted-foreground" aria-hidden="true" />
-          </div>
-        ) : (
-          <div className="flex h-[24rem] shrink-0 flex-col overflow-hidden rounded-md border">
-            <SessionControls
-              session={session}
-              busy={controlsBusy}
-              onPause={() => onPause(session)}
-              onStop={() => onStop(session)}
-              onContinue={() => onContinue(session)}
-              onFeedback={(feedback) => onFeedback(session, feedback)}
-              onAbandon={() => onAbandon(session)}
-            />
-            <ActivityStream
-              session={session}
-              messages={checkSnapshot?.messages ?? []}
-              inbox={[]}
-              nextCursor={checkSnapshot?.next_cursor}
-              paneName="knowledge-check"
-            />
-          </div>
-        )}
-        <div className="flex justify-end">
-          <Button
-            size="sm"
-            disabled={startPending}
-            onClick={() => {
-              if (!window.confirm(t("book:conception.knowledge_check.still_running_confirm"))) {
-                return
-              }
-              onStart()
-            }}
-          >
-            {startPending
-              ? t("common:saving")
-              : t("book:conception.knowledge_check.start_now")}
-          </Button>
-        </div>
-      </div>
-    )
-  }
-
-  const terminal = check.status === "done"
-  return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4" data-testid={`knowledge-check-${check.status}`}>
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-sm font-semibold">{t("book:conception.knowledge_check.title")}</h2>
-        {terminal ? null : <StatusBadge status={check.status} variant="canon" />}
-        <Link
-          to={`/research/${check.id}`}
-          className="inline-flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline"
-        >
-          <ExternalLink className="size-3.5" aria-hidden="true" />
-          {t("book:conception.knowledge_check.open_task")}
-        </Link>
-      </div>
-      <SessionErrorNotice error={checkSession?.error ?? null} />
-      {terminal ? (
-        <>
-          {check.report === "" ? (
-            <p className="text-sm text-muted-foreground">
-              {t("book:conception.knowledge_check.no_report")}
-            </p>
-          ) : (
-            <div className="prose-cjk rounded-md border p-3 text-sm">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{check.report}</ReactMarkdown>
-            </div>
-          )}
-          <p className="text-xs text-muted-foreground">
-            {t("book:conception.knowledge_check.entries_created", {
-              count: check.entries_created,
-            })}
-          </p>
-          <Link
-            to={`/books/${bookId}/knowledge`}
-            className="text-xs text-primary underline-offset-2 hover:underline"
-          >
-            {t("book:conception.knowledge_check.open_knowledge")}
-          </Link>
-        </>
-      ) : (
-        <p className="text-sm text-muted-foreground">
-          {t(`agent:status.${check.status}`, { defaultValue: check.status })}
-        </p>
-      )}
-      <div className="mt-auto flex flex-wrap items-center gap-2">
-        {check.status === "failed" && check.session_id != null ? (
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={continuePending}
-            onClick={() => onContinueCheck(check.id)}
-          >
-            {continuePending
-              ? t("common:saving")
-              : t("book:conception.knowledge_check.continue")}
-          </Button>
-        ) : null}
-        {startButton}
-      </div>
     </div>
   )
 }

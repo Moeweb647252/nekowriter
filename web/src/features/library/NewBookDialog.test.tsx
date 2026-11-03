@@ -45,11 +45,11 @@ describe("NewBookDialog knowledge check", () => {
   it("hides the auto-start checkbox when conception is off and sends both fields when on", async () => {
     const user = userEvent.setup()
     const view = renderDialog()
-    const auto = screen.getByLabelText("Start conception automatically after the knowledge check")
+    const auto = screen.getByLabelText("Start conception automatically when the research before it finishes")
     expect(auto).toBeInTheDocument()
     await user.click(screen.getByLabelText("Start with the conception agent"))
     expect(
-      screen.queryByLabelText("Start conception automatically after the knowledge check"),
+      screen.queryByLabelText("Start conception automatically when the research before it finishes"),
     ).not.toBeInTheDocument()
     await user.click(screen.getByLabelText("Start with the conception agent"))
     await user.type(screen.getByLabelText("Title"), "A book")
@@ -62,7 +62,7 @@ describe("NewBookDialog knowledge check", () => {
     const user = userEvent.setup()
     renderDialog()
     await user.type(screen.getByLabelText("Title"), "A book")
-    await user.click(screen.getByLabelText("Start conception automatically after the knowledge check"))
+    await user.click(screen.getByLabelText("Start conception automatically when the research before it finishes"))
     await user.click(screen.getByRole("button", { name: "Create book" }))
     expect(lastInput()).toMatchObject({ knowledge_check: true, auto_start_conception: false })
   })

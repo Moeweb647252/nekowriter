@@ -232,6 +232,25 @@
       "no_report": "知识检查还没有报告。",
       "entries_created": "已创建条目：{{count}}",
       "open_knowledge": "打开作品知识库"
+    },
+    "research_before": {
+      "title": "构思前的资料研究",
+      "progress": "已完成 {{done}} / {{total}}",
+      "report": "知识检查报告",
+      "hint_auto": "资料研究完成后会自动开始构思。",
+      "hint_manual": "资料研究完成后，在这里开始构思。",
+      "run_next": "运行下一个",
+      "stall_hint": "当前没有运行中的主题。运行下一个等待中的主题。",
+      "continue": "继续",
+      "abandon": "放弃",
+      "run_on_task_page": "等待中的主题需在资料任务页面点「运行」执行。",
+      "entries_total": "资料研究共创建 {{count}} 个条目",
+      "topics": "资料研究主题",
+      "skip": "暂时跳过",
+      "resume": "恢复",
+      "open_task": "打开任务",
+      "delete_confirm": "删除这个主题？已保存的知识条目会保留在范围内。",
+      "no_topics": "还没有资料研究主题。"
     }
   },
   "next_action_title": "下一步",

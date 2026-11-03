@@ -102,6 +102,11 @@ export function ResearchTaskList({
                       {task.scope_name === "" ? "—" : task.scope_name} ·{" "}
                       {t("knowledge:research.entries_count", { n: task.entries_created })}
                     </span>
+                    {task.check_id === null ? null : (
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {t("knowledge:research.from_check")}
+                      </span>
+                    )}
                   </span>
                 </Link>
                 <StatusBadge status={task.status} variant="canon" />
