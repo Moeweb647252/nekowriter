@@ -3694,3 +3694,31 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     appendices list does not change the composed text; this is not a regression of the author-row
     change and is not fixed here.
 - **Spec**: spec/02 §4; spec/03 §5.3, §8; spec/11 §5.3.
+
+### D-166 Per-book role overrides are editable while a book is conceiving
+
+- **Context**:
+  - Book settings' role rows were disabled for every status other than `active`. A `conceiving`
+    book therefore could not choose a per-book model for any role.
+  - The knowledge check runs **during conception** and uses the `researcher` role. With the lock,
+    the author could never pick a per-book researcher model for the session that matters most.
+  - The restriction was UI-only: the server's `PATCH /api/books/:id` validates and stores
+    `model_overrides` with no status guard (`services/books.rs`); only a status change has its
+    active/archived transition rules.
+- **Decision**:
+  - The role model and effort selects are enabled for **`conceiving`** as well as `active`.
+    `archived` stays locked with `book:model_overrides_archived`.
+  - A conceiving book shows an explicit hint that the change applies from the **next session**,
+    because a created/running session keeps its frozen model snapshot.
+  - The now-unused `book:model_overrides_needs_active` key is removed from both locales rather than
+    left behind.
+- **Consequences**:
+  - The author can pick the researcher model for the knowledge check's **next** run; the check
+    already running keeps the model it started with.
+  - The global default remains the fallback for every role, and clearing an override still sets it
+    back to that default.
+  - The conception flow no longer owns this choice; it only creates the sessions that resolve the
+    book's mapping.
+  - No server change and no schema change. `PATCH` continues to accept `model_overrides` for a
+    conceiving book.
+- **Spec**: spec/03 §4 step 1; spec/08 §5; spec/11 §5.5 (Book settings).

@@ -110,7 +110,7 @@
   "model_global_default": "Global default: {{model}}",
   "model_global_default_none": "No global default is set for this role.",
   "model_override_missing": "The model set here no longer exists. Pick another model or the global default.",
-  "model_overrides_needs_active": "Finalize the conception first: the conception flow chooses the roles until the book is active.",
+  "model_overrides_conceiving": "Changes apply from the next session. A running knowledge check keeps the model it started with.",
   "model_overrides_archived": "This book is archived. Unarchive it to change its roles.",
   "proposals": "Proposals",
   "proposal.description": "Changes the archivist suggests for the setting materials. Accept applies them; reject dismisses them.",

@@ -462,7 +462,7 @@ describe("Book settings › model overrides", () => {
     expect(body.model_overrides.reviewer).toBe(8)
   })
 
-  it("disables the section with a reason while the book is conceiving", () => {
+  it("lets a conceiving book edit its roles and says the change starts with the next session", () => {
     book.status = "conceiving"
     render(<BookSettingsPage />)
 
@@ -470,14 +470,41 @@ describe("Book settings › model overrides", () => {
       const selects = within(screen.getByTestId(`model-override-row-${role}`)).getAllByRole(
         "combobox",
       )
-      expect(selects[0]).toBeDisabled()
-      expect(selects[1]).toBeDisabled()
+      expect(selects[0], role).toBeEnabled()
+      expect(selects[1], role).toBeEnabled()
     }
     expect(
       screen.getByText(
-        "Finalize the conception first: the conception flow chooses the roles until the book is active.",
+        "Changes apply from the next session. A running knowledge check keeps the model it started with.",
       ),
     ).toBeInTheDocument()
+    expect(
+      screen.queryByText(/Finalize the conception first/),
+    ).toBeNull()
+  })
+
+  it("saves the whole model_overrides for a conceiving book", async () => {
+    book.status = "conceiving"
+    const user = userEvent.setup()
+    render(<BookSettingsPage />)
+
+    await user.click(
+      within(screen.getByTestId("model-override-row-researcher")).getAllByRole("combobox")[0],
+    )
+    await user.click(await screen.findByRole("option", { name: "Anthropic · Writer model" }))
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(patchBook).toHaveBeenCalledTimes(1)
+    const [body] = patchBook.mock.calls[0] as [{ model_overrides: unknown }]
+    expect(body.model_overrides).toEqual({
+      conception: null,
+      researcher: 7,
+      planner: null,
+      writer: null,
+      reviewer: null,
+      archivist: null,
+      efforts: {},
+    })
   })
 
   it("disables the section with a reason while the book is archived", () => {

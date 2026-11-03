@@ -260,15 +260,12 @@ export default function BookSettingsPage() {
       { onError: showError },
     )
   }
-  // A conceiving or archived book's roles are not the author's to pick here: the conception flow
-  // chooses them until Finalize, and an archived book is not being worked on (spec/08 §5).
-  const rolesLocked = status !== "active"
-  const lockedHint =
-    status === "conceiving"
-      ? t("book:model_overrides_needs_active")
-      : status === "archived"
-        ? t("book:model_overrides_archived")
-        : null
+  // A conceiving book may still pick its roles here: the knowledge check runs during conception
+  // and uses the researcher role, so locking the rows would make the one choice that matters
+  // unpickable. The running session keeps its frozen model; the hint says the change starts with
+  // the next session. An archived book is not being worked on (spec/08 §5, D-166).
+  const rolesLocked = status === "archived"
+  const lockedHint = status === "archived" ? t("book:model_overrides_archived") : null
 
   return (
     <div className="mx-auto max-w-2xl space-y-6 p-6">
@@ -554,6 +551,12 @@ export default function BookSettingsPage() {
           </h2>
           <p className="text-sm text-muted-foreground">{t("book:model_overrides_hint")}</p>
         </div>
+
+        {status === "conceiving" ? (
+          <p className="text-sm text-muted-foreground">
+            {t("book:model_overrides_conceiving")}
+          </p>
+        ) : null}
 
         {lockedHint === null ? null : (
           <p className="flex items-center gap-1.5 text-sm text-muted-foreground">

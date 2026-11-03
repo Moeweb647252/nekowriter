@@ -495,8 +495,10 @@ select.
 - **Patch**: `roles_defaults` is PATCHed whole.
 
 **Book settings › Model overrides per role** gives each row an effort select whose unset entry is
-"Global setting ({effective level})". It locks with the model select and saves with the form, as
-part of the whole `model_overrides` object.
+"Global setting ({effective level})". The model and effort selects are enabled while the book is
+`active` or `conceiving`; a conceiving book states that changes start with the **next session**
+(a running session keeps its frozen model), while an `archived` book stays locked with its reason.
+Both selects save with the form as part of the whole `model_overrides` object (D-166).
 
 Both pages derive the labels from `resolveRoleEffort` in `features/settings/roleModels.ts`, which
 mirrors spec/03 §4 step 1. The `model.effort_unsupported` creation warning shows as a toast.
