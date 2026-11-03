@@ -163,7 +163,7 @@ listing the candidates with ids.
 | reviewer | `get_entity`, `list_entities`, `get_relations`, `query_timeline`, `list_foreshadowing`, `search_canon`, `search_knowledge`, `read_knowledge_entry`, `search_chapters`, `read_chapter`, `submit_review` |
 | archivist | `get_entity`, `list_entities`, `get_relations`, `query_timeline`, `list_foreshadowing`, `search_canon`, `read_chapter`, `create_entity`, `update_entity`, `set_relation`, `end_relation`, `record_appearances`, `add_timeline_event`, `update_timeline_event`, `add_memory_note`, `retire_memory_note`, `add_foreshadowing`, `resolve_foreshadowing`, `set_chapter_summary`, `propose_goal_change`, `propose_setting_change`, `finish_maintenance` |
 | conception | `ask_user`, `search_knowledge`, `read_knowledge_entry`, `web_search`, `web_fetch`, `write_setting_doc`, `edit_setting_doc`, `upsert_character`, `remove_character`, `reorder_characters`, `set_research_topics`, `request_review` |
-| researcher | `web_search`, `web_fetch`, `search_knowledge`, `read_knowledge_entry`, `set_target_scope`, `save_knowledge_entry`, `update_knowledge_entry`, `finish_research` |
+| researcher | `web_search`, `web_fetch`, `search_knowledge`, `read_knowledge_entry`, `set_research_topics`, `save_knowledge_entry`, `update_knowledge_entry`, `finish_research` |
 
 **RETRIEVAL** = the first ten writer tools (`get_entity` … `read_chapter`).
 **DRAFT_EDIT** = `insert_text`, `insert_paragraphs`, `replace_text`, `rewrite_paragraph`,
@@ -184,9 +184,16 @@ that list, in that order, minus:
 - `search_canon`, only when Entities, Timeline, Memory and Foreshadowing are all off;
 - `propose_goal_change`, unless the session is `chapter_maintenance`, Goals is on, and the
   chapter has relevant goal nodes (the `block.goals` set, spec/06 §11.5);
-- `set_target_scope`, unless the session is a research session whose task is a knowledge check
-  (`kind = 'preparation'`, spec/07 §8.1, D-158). A topic research session therefore freezes the
-  pre-D-158 seven tools in the same order.
+- for a research session, by task kind (spec/07 §8.1, D-168):
+
+  | Task kind | Frozen tools |
+  |---|---|
+  | `topic` | Every tool except `set_research_topics`: the pre-D-158 seven tools, in the same order |
+  | `preparation` (a knowledge check) | Only `search_knowledge`, `read_knowledge_entry`, `set_research_topics` and `finish_research`. A check plans and collects nothing |
+
+- `set_target_scope` (D-158) is retired. No session created after D-168 freezes it. The handler,
+  its `tools.toml` entry, `result.target_scope` and the errors `target_scope_unset` and
+  `scope_excluded` stay registered, so a check session frozen before D-168 still runs it.
 
 A book with all five systems on and no relevant goal nodes therefore freezes exactly the pre-D-150
 lists (the archivist's 21 tools). The map lives once in `agent/tools/registry.rs`;
@@ -291,13 +298,15 @@ goal_proposals: n}`.
 | `upsert_character` | `name`*, `new_name`, `role_label`, `summary`, `profile`, `rank` | Creates or updates a character design. A new design goes last unless `rank` is given; `rank` moves it (others shift) | `{character_id, name, rank}` |
 | `remove_character` | `name`* | Deletes the character design | `{name}` |
 | `reorder_characters` | `names`* (the complete order) | Must be a permutation of all names | `{order}` |
-| `set_research_topics` | `topics`* (array of `{topic, requirements, scope}`) | Replaces **the agent's own** draft topics: deletes the book's `draft` tasks with `kind = 'topic'` and `origin = 'conception'`, then inserts these as `conception` drafts. It never deletes or edits an `author` task (one the author created, or a conception draft the author edited) in any status, nor a task that has run (D-158). The result lists the author's drafts it kept (`kept[]`, their topics), so the model does not repeat them | `{count, kept}` |
+| `set_research_topics` | `topics`* (array of `{topic, requirements, scope}`) | Replaces **the agent's own** topics that have not run. In a conception session these are the **supplementary** drafts: it deletes the book's `draft` tasks with `kind = 'topic'`, `origin = 'conception'` and `check_id IS NULL`, then inserts these as `conception` drafts. In a knowledge check it works on the check's topic list instead (§8). It never deletes or edits an `author` task (one the author created, or one the author edited) in any status, nor a task that has run (D-158). The result lists the topics it kept (`kept[]`), so the model does not repeat them | `{count, kept}` |
 | `request_review` | `message`* | `await_input: request_review`. The answer payload is `{docs: {outline?, world?, protagonist?, characters?, research_topics?: {approved: bool, feedback?: string}}, general?: string}`. Approved items record their revision (`setting_docs.approved_revision`, `ConceptionState`). Rendered with `result.request_review` | `{message}` |
 
-**Knowledge** (D-158): `search_knowledge` and `read_knowledge_entry` behave as in §3, over the
-book's visible scopes. The kickoff lists those scopes, carries the latest knowledge check's report
-(spec/07 §8.1), and lists the research topics `set_research_topics` would keep, so conception
-builds on what is known and only proposes research for what is missing.
+**Knowledge** (D-158, D-168): `search_knowledge` and `read_knowledge_entry` behave as in §3, over
+the book's visible scopes. The kickoff lists those scopes and carries the latest knowledge check's
+report (spec/07 §8.1). It also lists the research topics `set_research_topics` would keep, with
+their status and `entries_created`, including the check's topics that ran before conception. So
+conception builds on what was researched, and proposes supplementary topics only for knowledge
+that came up during conception and is still missing.
 
 **Ownership of research topics.** `origin` records who owns a task. Every task the author creates
 through the API is `author`. An author PATCH of a `conception` task sets it to `author` in the same
@@ -317,20 +326,22 @@ the same way.
 | `web_search`, `web_fetch` | as in §7 | | |
 | `search_knowledge` | as in §3 | A topic task: restricted to its target scope (to avoid duplicates). A knowledge check: the book's visible scopes | |
 | `read_knowledge_entry` | as in §3 | A topic task: target scope only. A knowledge check: the book's visible scopes | |
-| `set_target_scope` | `name`*, `description` | Knowledge checks only (§2). Sets the scope that `save_knowledge_entry` and `update_knowledge_entry` write to; may be called again to switch, and saved entries stay where they are. An existing scope the author excluded for the book → `error.scope_excluded`. An existing visible scope is used as is (`description` ignored: an agent never rewrites a shared description). A new name needs `description` (else `error.validation`); the scope is created (visible to every book, `knowledge.changed`) | `{scope, created, entry_count}` |
+| `set_research_topics` | as in §7 | Knowledge checks only (§2, D-168). Validates like the conception path, plus: more than **8** topics → `error.validation` naming the limit; a `scope` naming a scope the author excluded for the book → `error.scope_excluded` (`name`). Either error writes nothing. Deletes the check's **waiting agent topics** (`check_id` = this check, `kind = 'topic'`, `origin = 'conception'`, `status = 'ready'`, no session), then inserts each topic as `ready`, `origin = 'conception'`, `check_id` = this check, in the book's writing language, with `scope_id` unresolved. No `topics_revision`, `change_log` or `settings.locked`. `kept[]` lists the check's topics it left in place (added or adopted by the author, deferred, running or run). Rendered with `result.conception_write` | `{count, kept}` |
+| `set_target_scope` | `name`*, `description` | **Retired** (D-168): frozen only by check sessions created before D-168. Knowledge checks only (§2). Sets the scope that `save_knowledge_entry` and `update_knowledge_entry` write to; may be called again to switch, and saved entries stay where they are. An existing scope the author excluded for the book → `error.scope_excluded`. An existing visible scope is used as is (`description` ignored: an agent never rewrites a shared description). A new name needs `description` (else `error.validation`); the scope is created (visible to every book, `knowledge.changed`) | `{scope, created, entry_count}` |
 | `save_knowledge_entry` | `title`*, `content`*, `source_urls`* (≥1 URL; `[]` allowed only when `content` states the source is general knowledge), `tags` | Creates an entry in the target scope (`source: research`, `research_task_id`). A title already used in the scope → `error.entry_exists` (suggest `update_knowledge_entry`). Chunks the entry in the same transaction (keyword search works at once); embedding follows asynchronously | `{entry_id, title}` |
 | `update_knowledge_entry` | `entry_id`*, `title`, `content` (replace), `edits` (`{find, replace}`), `source_urls_add`, `tags` | Target scope only; `content` and `edits` are mutually exclusive (`error.mutually_exclusive`); each `find` must match the content exactly once, and all edits apply or none (`error.find_failed`, whose `doc_label` is the `target_type` label of `knowledge_entry`); re-chunks like `save_knowledge_entry` | `{entry_id, title}` |
-| `finish_research` | `report`* | Stores the report on the task (`done`; `entries_created` counts the entries this task has created over all its runs). A knowledge check may finish without a target scope. The result reports how many entries this session saved or updated. Effects: `complete: research` | `{entries: n}` (this session) |
+| `finish_research` | `report`* | Stores the report on the task (`done`; `entries_created` counts the entries this task has created over all its runs). A knowledge check finishes without a target scope (a check created before D-168 may have one). The commit triggers the topic queue (spec/07 §8.1 step 6). The result reports how many entries this session saved or updated. Effects: `complete: research` | `{entries: n}` (this session) |
 
-In a knowledge check, `save_knowledge_entry` and `update_knowledge_entry` before any
-`set_target_scope` return `error.target_scope_unset` (call `set_target_scope` first) instead of
-`error.no_knowledge_scope`.
+In a knowledge check frozen before D-168, `save_knowledge_entry` and `update_knowledge_entry`
+before any `set_target_scope` return `error.target_scope_unset` (call `set_target_scope` first)
+instead of `error.no_knowledge_scope`. A check created after D-168 freezes neither tool.
 
 Research budget (shown in the kickoff, enforced softly): the session's frozen
-`research_max_tool_calls` (default 40) and `research_max_entries` (default 25), the same for a
-knowledge check. Both are app settings and must be at least 1; unlike the tool-error limit, `0` is
-not unlimited. Past either budget, the **first** result gets `notice.research_budget` once; later
-results do not repeat the identical notice (D-164).
+`research_max_tool_calls` (default 40) and `research_max_entries` (default 25). Each topic of a
+check's queue is its own session with its own budget. A knowledge check's kickoff shows only the
+tool-call budget and the topic cap, because a check saves no entries. Both are app settings and must
+be at least 1; unlike the tool-error limit, `0` is not unlimited. Past either budget, the **first**
+result gets `notice.research_budget` once; later results do not repeat the identical notice (D-164).
 
 ## 9. Required tests
 - Each tool: a happy path, each documented error, and the `ui` payload shape.
@@ -349,8 +360,18 @@ results do not repeat the identical notice (D-164).
   `sentence` and `paragraph`; the short-completion confirmation.
 - `prepare` runs outside the transaction (a scripted slow web provider plus a concurrent write
   from another session both succeed).
-- Knowledge (D-158): a topic research session freezes exactly the old seven researcher tools and a
-  knowledge check freezes eight; `set_target_scope` happy paths (existing, new, switch), a new
-  name without a description, an excluded name; `error.target_scope_unset`; conception's
-  `search_knowledge` never returns an excluded scope; `set_research_topics` keeps every `author`
-  task and reports the kept drafts.
+- Knowledge (D-158, D-168):
+  - A topic research session freezes exactly the old seven researcher tools. A knowledge check
+    freezes exactly `search_knowledge`, `read_knowledge_entry`, `set_research_topics` and
+    `finish_research`. No new session freezes `set_target_scope`, but a pre-D-168 frozen check
+    still runs it.
+  - Conception's `search_knowledge` never returns an excluded scope.
+  - `set_research_topics` in conception keeps every `author` task and every check topic, and
+    reports the kept drafts.
+  - `set_research_topics` in a check:
+    - inserts `ready` topics with `check_id`;
+    - replaces only its waiting agent topics, and keeps author, adopted, deferred, running and run
+      ones in `kept[]`;
+    - 9 topics → `validation`;
+    - an excluded scope → `scope_excluded`;
+    - in either error case, nothing is written.

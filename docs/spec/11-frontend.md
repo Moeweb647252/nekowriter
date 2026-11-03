@@ -170,10 +170,11 @@ message and a retry.
   creation on finalize — so the conceiving block is added, not substituted. Clicking its title or
   its "Open" menu item goes to the same studio; every other status keeps opening the overview.
 - `NewBookDialog` (D-158): under "Start with the conception agent", an indented checkbox "Start
-  conception automatically after the knowledge check" (default on, rendered only while conception
-  is on). With conception on, the request sends `start_conception: true`, `knowledge_check: true`
-  and `auto_start_conception`. Landing: a `conceiving` book opens `/books/:id/conception`, any
-  other book `/books/:id`. The landing no longer depends on `session_id`.
+  conception automatically when the research before it finishes" (D-168 wording: the check and its
+  topics; default on, rendered only while conception is on). With conception on, the request sends
+  `start_conception: true`, `knowledge_check: true` and `auto_start_conception`. Landing: a
+  `conceiving` book opens `/books/:id/conception`, any other book `/books/:id`. The landing no
+  longer depends on `session_id`.
 
 ### 5.1 Workspace
 - `BookLayout`: `ResizablePanelGroup` (shadcn wrapper over react-resizable-panels v4
@@ -330,21 +331,42 @@ Two panes: conversation (the same `ActivityStream` and `Composer` components) an
 not running. `CharacterRankList` uses dnd-kit sortable (reorder → `POST characters/reorder`).
 "Finalize book" lives in the documents pane footer.
 
-**Before conception** (D-158). While the book has no conception session, the conversation pane
-shows the latest knowledge check, chosen from the research tasks the studio already loads
-(`kind === "preparation"`):
+**Before conception** (D-158, D-168). While the book has no conception session, the conversation
+pane shows the research before conception (`PreConceptionResearch`). It is built from the
+research tasks the studio already loads:
+- **C** is the latest knowledge check (`kind === "preparation"`);
+- **T** is C's topics (`check_id === C.id`), in id order.
 
 | State | Pane |
 |---|---|
-| Check open (any status except done, failed or cancelled) | A "Knowledge check" header with the session status; the check's `ActivityStream` in a bounded flex pane; a link to the research task page (steering, pause and stop live there); **Start conception now**, which asks first ("the check is still running and keeps running") |
-| Check done | The report (`Markdown`), the number of entries created, a link to Book › Knowledge, and **Start conception** (primary when auto-start was off) |
-| Check failed and the task still has a session | The status, a link to the task, **Continue** (zh-CN 继续) — continues that task on its existing research session, keeping the material it already fetched — and **Start conception** (different from continuing the check) |
-| Check cancelled, or failed without a session | The status, a link to the task, and **Start conception** |
+| C open (any status except done, failed or cancelled): planning | A "Knowledge check" header with the session status, C's `ActivityStream` in a bounded flex pane, and a link to the research task page (steering, pause and stop live there). Below it, the topic list, filling in live as the check writes it. **Start conception now** asks first ("the check and its research topics keep running") |
+| C done; some topic in T is open or `ready` | A "Research before conception" header with progress ("2 of 5 done"). C's report (`Markdown`), collapsed. The topic list. The open topic's `ActivityStream` with its session controls; a failed topic shows its error with **Continue** (D-163) and **Abandon** (skips it). When no topic is open but one waits (a stall), **Run next** runs the first waiting topic. **Start conception now** asks first. A hint: "Conception starts when the research finishes" when `start_after_knowledge_check` is set, otherwise "When the research finishes, start conception here" |
+| C done; T settled (none `ready` or open) | The report, the topic list, the entries created by T in total, a link to Book › Knowledge, and **Start conception** (primary when auto-start was off) |
+| C failed and the task still has a session | The status, a link to the task, **Continue** (zh-CN 继续), which continues that task on its existing research session and keeps the material it already fetched, and **Start conception** (different from continuing the check). Then the topic list |
+| C cancelled, or failed without a session | The status, a link to the task, **Start conception**, and the topic list. Its waiting topics run only by **Run** on their task page |
 | No check | Today's "no session" text with **Start conception**, plus **Check knowledge first** (`POST /books/:id/knowledge-check`) |
 
-The pane follows `session.updated` and `research.updated` without a reload, so auto-start swaps it
-to the conception session. With a conception session the studio is unchanged. The Research topics
-tab shows `kind === "topic"` drafts and labels `origin === "author"` rows "Added by you".
+**The topic list** has one row per topic in T: a status badge, the topic and the scope, with the
+requirements expandable.
+- Rows by status:
+
+  | Status | Row |
+  |---|---|
+  | `ready` (waiting) | Edit in place (topic, requirements, scope; PATCH), **Skip for now** (defer) and delete |
+  | `deferred` | **Resume** |
+  | `done` | Read-only, with its entry count and a link to the task |
+  | Open (running, or `failed` with a session) | A link to the task; its controls are in the stream |
+
+- Rows with `origin === "author"` are labelled "Added by you".
+- **Add topic** at the end (topic, requirements, scope) posts with `book_id` and `check_id` and is
+  shown in every state except "No check".
+
+The pane follows `session.updated` and `research.updated` without a reload. So the stream moves
+from the check to each topic in turn, and auto-start swaps the pane to the conception session.
+
+With a conception session the studio is unchanged. The Research topics tab shows the supplementary
+topics: `kind === "topic"` drafts (check topics are never drafts). It labels `origin === "author"`
+rows "Added by you".
 
 ### 5.5 Canon, settings materials, knowledge, prompts, settings
 Per PROJECT §8.8–§8.12. Shared pieces: `Markdown` (react-markdown + remark-gfm, no raw HTML),
@@ -383,8 +405,10 @@ dialog has a one-line hint that a new scope is visible to every book unless a bo
 
 **Knowledge checks in research lists**: `ResearchTaskList`, the task page and `/research` show a
 `preparation` task as "Knowledge check" with its target scope or "—", and without topic or scope
-editing. `SessionHeader` titles a research session whose `research_task_kind` is `preparation`
-with `agent:session_title.knowledge_check`.
+editing. A task with a `check_id` carries the label "From the knowledge check". A check's task page
+lists its topics (status, link to each task) under "Research topics" (D-168). `SessionHeader` titles
+a research session whose `research_task_kind` is `preparation` with
+`agent:session_title.knowledge_check`.
 
 **Bulk defer of research tasks** (D-140) lives in one shared place,
 `features/research/useBulkDefer.ts` (`useDeferReadyResearchTasks`), used by `ResearchTaskList`
@@ -593,6 +617,21 @@ test imports the file by relative path).
   - the "Added by you" label on author topics;
   - the "Knowledge check" title in the research list and in `SessionHeader`;
   - every new string has keys in both locales.
+- Research before conception (D-168):
+  - `PreConceptionResearch` states:
+    - planning, with the topic list filling in live;
+    - the queue running, with the open topic's stream;
+    - a failed topic with **Continue** and **Abandon**;
+    - a stall with **Run next**;
+    - settled, with **Start conception** primary when auto-start was off;
+    - the swap to the conception session;
+  - topic rows:
+    - editing a waiting row sends a PATCH;
+    - **Skip for now** sends defer, and **Resume** sends resume;
+    - **Add topic** sends `check_id`;
+    - a done row is read-only;
+  - the "From the knowledge check" label, the check page's topic list, and the new checkbox
+    wording; both locales.
 - Feature gaps (D-161):
   - `ActivityStream` scrollback: the top row appears with a cursor, pages prepend in order without
     duplicates, and the start, error and session-switch states;

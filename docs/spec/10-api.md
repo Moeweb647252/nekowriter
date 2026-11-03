@@ -49,7 +49,7 @@
 | GET / PATCH / DELETE | `/books/:id` | PATCH: title, genre, writing_language, settings, model_overrides (`RoleModels` including `efforts`, replaced as a unit and validated like `roles_defaults`), status (archive) | `BookDto` |
 | GET | `/books/:id/overview` | | `BookOverviewDto` (spec/08 §7) |
 | POST | `/books/:id/conception/start` | | `{ session_id }` (the open session or a new one; allowed while a knowledge check is open; spec/08 §5) |
-| POST | `/books/:id/knowledge-check` | `{ requirements? }` | `201 { task: ResearchTaskDto, session_id }` (spec/07 §8.1). `409 book.invalid_state` unless the book is `conceiving` or `active`; `409 research.invalid_state` with `details.session_id` while a check is open; no researcher model → the same error as `run`, and no row is written |
+| POST | `/books/:id/knowledge-check` | `{ requirements? }` | `201 { task: ResearchTaskDto, session_id }` (spec/07 §8.1). The session plans: it lists research topics (`check_id` = this task) that then run one at a time (D-168). `409 book.invalid_state` unless the book is `conceiving` or `active`; `409 research.invalid_state` with `details.session_id` while a check is open; no researcher model → the same error as `run`, and no row is written |
 | POST | `/books/:id/conception/finalize` | | `{ book, seed_session_id?, warnings }` |
 | POST | `/books/:id/canon/seed` | | `{ session_id }` (the open session or a new one; spec/08 §5) |
 | GET / POST | `/books/:id/tracks` | `TrackInput` | `TrackDto[]` / `TrackDto` |
@@ -122,17 +122,28 @@
 | GET / PATCH / DELETE | `/knowledge/entries/:id` | | `EntryDto` |
 | GET | `/knowledge/search` | `?q&scope_ids=1,2&limit` | `KnowledgeHitDto[]` |
 | GET / PUT | `/books/:id/scopes` | PUT: `{ excluded_scope_ids }` replaces the book's exclusion set (unknown id → 404, nothing changes) | `ScopeDto[]`: the scopes **visible** to the book, by name (every scope minus its exclusions, spec/07 §1, D-158) |
-| GET / POST | `/research-tasks` | `?book_id&status` / `{ book_id?, scope_name, topic, requirements, language? }` (created as `draft` while the book is conceiving, otherwise `ready`, always with `origin: author` and `kind: topic`; `language` is required without a book and ignored with one) | `ResearchTaskDto[]` / `ResearchTaskDto` |
-| GET / PATCH / DELETE | `/research-tasks/:id` | PATCH: topic, requirements, scope_name, `status: ready` (confirms a draft); not while its session is open. A PATCH of a `conception` task sets `origin: author`. A knowledge check accepts `requirements` only (`topic` or `scope_name` → `422 validation.invalid_fields`) | `ResearchTaskDto` (with `kind`, `origin`, and the report and the created entries when done) |
+| GET / POST | `/research-tasks` | `?book_id&status` / `{ book_id?, check_id?, scope_name, topic, requirements, language? }` (created as `draft` while the book is conceiving, otherwise `ready`, always with `origin: author` and `kind: topic`; `language` is required without a book and ignored with one). With `check_id` the task joins that knowledge check's topic list (D-168): it is `ready` even in a conceiving book and is not subject to `settings.locked`. The `check_id` must name a `preparation` task of the same `book_id`, otherwise `422 validation.invalid_fields` (`check_id`). The book must be `conceiving` or `active`, otherwise `409 book.invalid_state`. After the commit the check's queue is evaluated, so a topic added to an idle queue starts (spec/07 §8.1 step 6) | `ResearchTaskDto[]` / `ResearchTaskDto` |
+| GET / PATCH / DELETE | `/research-tasks/:id` | PATCH: topic, requirements, scope_name, `status: ready` (confirms a draft); not while its session is open. A PATCH of a `conception` task sets `origin: author`. A knowledge check accepts `requirements` only (`topic` or `scope_name` → `422 validation.invalid_fields`). The `settings.locked` rule applies only to tasks without a `check_id`; `check_id` cannot be changed | `ResearchTaskDto` (with `kind`, `origin`, `check_id`, and the report and the created entries when done) |
 | POST | `/research-tasks/:id/run` | | `{ session_id }` |
 | POST | `/research-tasks/:id/defer` | `ready` → `deferred`; idempotent, a repeat call returns the current row (spec/07 §8, D-138) | `ResearchTaskDto` |
-| POST | `/research-tasks/:id/resume` | `deferred` → `ready`; idempotent in the same way | `ResearchTaskDto` |
+| POST | `/research-tasks/:id/resume` | `deferred` → `ready`; idempotent in the same way. Resuming a knowledge check's topic evaluates its queue after the commit (D-168) | `ResearchTaskDto` |
 
 `defer` and `resume` are dedicated transitions rather than a generic PATCH because the author is
 moving a task between named states with rules of its own, and because a PATCH of `status` already
 means "confirm a draft". The refused edges are `409 research.invalid_state`, whose `details`
 carries `{ status, operation }`; a task with an open session reports
 `{ session_id }` instead, like every other write to it (spec/07 §8).
+
+**A knowledge check's topics** (D-168) are ordinary topic tasks with `check_id` set
+(`ResearchTaskDto.check_id: number | null`, `null` for every other task).
+- The web reads them from the book's list (`GET /research-tasks?book_id`) and filters by
+  `check_id` on the client. There is no extra query parameter.
+- Nothing in the API starts the queue directly. These events evaluate it after their commit:
+  - the check completes;
+  - one of its topic sessions completes or is abandoned;
+  - the author creates a topic with `check_id`;
+  - the author resumes a check topic.
+- `run` on a waiting topic is the manual way to restart a stalled queue.
 
 ### 2.6 Prompts
 | Method | Path | Body / query | Response |

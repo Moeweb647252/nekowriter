@@ -166,13 +166,13 @@ needed. Real providers are tested when the author supplies keys.
 12. Knowledge first (M15, plan §8):
     - On the global Knowledge page, create a scope with one entry. Create a book with conception
       and auto-start on. The studio shows the knowledge check, whose kickoff lists the scope. The
-      check sets a target scope and saves an entry, and when it finishes, conception starts by
-      itself. The conception kickoff shows the scopes and the report, and its tool list has
-      `search_knowledge`.
+      check lists research topics, they run (smoke item 15), and when the last one finishes,
+      conception starts by itself (D-168). The conception kickoff shows the scopes and the report,
+      and its tool list has `search_knowledge`.
     - In Book › Knowledge every scope is checked. Uncheck one and save. The next session's
       `block.settings` no longer lists it.
-    - Create a second book with auto-start off. After the check, the studio shows the report and
-      **Start conception**, and nothing starts by itself.
+    - Create a second book with auto-start off. After the check and its topics, the studio shows
+      the report and **Start conception**, and conception does not start by itself.
     - In that book, add a research topic in the Research topics tab, then start conception and let
       the agent set its topics. Your topic is still there, marked "Added by you".
     - Create another scope. Both books see it without any action.
@@ -194,6 +194,18 @@ needed. Real providers are tested when the author supplies keys.
     - Override the writer to `high` in Book settings. The next write session shows "high".
     - Remove `high` from the model. The next write session shows the unsupported toast and uses
       `max`, the global choice.
+15. Research before conception (M20, plan §6):
+    - Demo, auto-start on: create a book with conception. The studio shows the knowledge check; it
+      lists two research topics and finishes. The topics run one after another (one research
+      session at a time), each saving entries. When the second finishes, conception starts by
+      itself, and its kickoff lists both topics as done.
+    - A second book, auto-start off: while the first topic runs, edit the second topic's
+      requirements and add a third topic. Both run in order. After the last one nothing starts,
+      and **Start conception** starts conception.
+    - A third book: abandon the running topic; the next one starts. Skip the last waiting topic;
+      when the running one finishes, the research is settled.
+    - In conception the agent sets supplementary topics (Research topics tab). Finalize: they become
+      `ready`, and the topics researched before conception stay `done`.
 
 ## M12 — Outline and write sessions
 
@@ -312,3 +324,18 @@ before or after M15–M18.
 | 19.6 | **Web: Settings › Models**: the Thinking effort section, the table column, the protocol-switch and mismatch handling; drop the two old option fields and their i18n keys. | 11 §5.5 | plan §4.5 |
 | 19.7 | **Web: Agent roles, Book settings, SessionHeader**: the effort selects, `resolveRoleEffort`, the header label, the warning toast; both locales. | 11 §5.3, §5.5; PROJECT §8.6, §8.12 | plan §4.5; `i18n:check` |
 | 19.8 | **Smoke and pre-ship**: run `0009` on a **copy** of the author's database; report per profile the options before and after, the new levels and default, and every dropped cross-protocol key; run smoke item 14. | PLAN §M11.5 | the checklist passes; the report is in the final message and in D-162's consequences |
+
+## M20 — Research before conception
+
+Plan: `docs/research/research-before-conception-plan.md` (D-168). It builds on M15 and depends on
+nothing after it. Execute in order, one commit per task.
+
+| # | Task | Spec | Tests / acceptance |
+|---|---|---|---|
+| 20.1 | **Docs**: done with the plan (D-168). Re-read the amended sections; fix any a code fact contradicts and note it in D-168. | plan §7 | `check.sh` green (docs only) |
+| 20.2 | **Schema and types**: `0011_check_topics.sql` and its module (Rust-managed transaction, row-count guard; 0001 not edited); `research_tasks.check_id` with its self relation; `ResearchTaskDto.check_id`, `ResearchTaskCreate.check_id`; bindings. | 02 §1, §2, §5; 10 §2.5 | plan §5.1 `check_topics_migration.rs`; `entity_schema.rs` on fresh and upgraded databases |
+| 20.3 | **The check plans**: `RESEARCHER_TOOLS` and `tools_for_session` (a check freezes four tools; `set_target_scope` retired but registered); the check branch of `set_research_topics` (cap 8, `scope_excluded`, own waiting topics only, `kept[]`); `researcher.kickoff.prep` with `prep.research_tasks[]` and `prep.max_topics`, without `prep.max_entries` (variables, samples, validator); the Demo arm and corpus (`prep_topics`, `prep_report`). | 05 §2, §7, §8; 07 §8.1; 09 §2; 04 §7.2 | plan §5.2 `knowledge_check.rs`; `prompts_registry` snapshots |
+| 20.4 | **Check topics and the queue**: create with `check_id` (validation, `ready`, no setting-material lock), PATCH and DELETE without the lock; `research::advance_check` and `advance_after_session`; the four triggers (runner after `finish_research`, `sessions::abandon`, create, resume); the scope-description rule; conception auto-start moved to settle (refactor `start_after_knowledge_check` to take the book). | 07 §8.1; 08 §5; 10 §2.5 | plan §5.3 `check_topic_queue.rs` (cases 1–13) |
+| 20.5 | **Supplementary conception topics**: `conception.system` deliverable 5 and process bullet, `conception.kickoff`, `conception.research_tasks[].entries_created`, the `check_id IS NULL` filter in conception's `set_research_topics`. | 05 §7; 08 §5; 09 §2 | plan §5.4; `kickoff_baseline` changes only for the prep kickoff and tools and the conception kickoff and system prompt |
+| 20.6 | **Web**: `PreConceptionResearch` (states, topic list, Run next, Start conception now), the "From the knowledge check" label, the check page's topic list, the New book checkbox wording; both locales. | 11 §5.0, §5.4, §5.5; PROJECT §8.7, §8.10 | plan §5.5 Vitest; `i18n:check` |
+| 20.7 | **Smoke and pre-ship**: smoke items 12 and 15 with the Demo provider. Run `0011` on a **copy** of the author's database; report the `research_tasks` count before and after, that every `check_id` is `NULL`, and that book #1's five drafts and conception session #4 are unchanged. | PLAN §M11.5 | the checklist passes; the report is in the final message and in D-168's consequences |

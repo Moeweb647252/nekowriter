@@ -120,8 +120,14 @@
   `agent_sessions` columns with defaults `5`/`40`/`25` (`tool_error_streak_limit`,
   `research_max_tool_calls`, `research_max_entries`), so every existing session keeps the old
   hardcoded behaviour. `0001` is not edited for the same reason as 0009.
+  `0011_check_topics.sql` (D-168) runs in one Rust-managed transaction. It adds
+  `research_tasks.check_id` (nullable, `REFERENCES research_tasks(id) ON DELETE SET NULL`), the
+  knowledge check that listed a topic, and the index `research_tasks_check`. Every existing row
+  gets `NULL`, because no earlier check listed topics. A row-count guard in the 0008 style runs in
+  the same transaction. `0001` is not edited, so 0011 is the only source of the column, as in 0009
+  and 0010. (0002's rebuild would make an edit harmless, but one source is simpler.)
 
-## 2. Schema (0001_init.sql, upgraded by 0002_research_deferred.sql, 0003, 0004, 0005, 0006, 0007, 0008, 0009 and 0010)
+## 2. Schema (0001_init.sql, upgraded by 0002_research_deferred.sql, 0003, 0004, 0005, 0006, 0007, 0008, 0009, 0010 and 0011)
 
 ```sql
 -- ───────────────────────────── App configuration ─────────────────────────────
@@ -489,10 +495,10 @@ CREATE TABLE research_tasks (
   id               INTEGER PRIMARY KEY,
   book_id          INTEGER REFERENCES books(id) ON DELETE CASCADE,
   scope_id         INTEGER REFERENCES knowledge_scopes(id) ON DELETE SET NULL,
-  scope_name       TEXT NOT NULL,                       -- target scope name (resolved/created on run; '' for a preparation task until set_target_scope)
+  scope_name       TEXT NOT NULL,                       -- target scope name (resolved/created on run; '' for a preparation task, which has no target since D-168)
   topic            TEXT NOT NULL,                       -- '' for a preparation task
   kind             TEXT NOT NULL DEFAULT 'topic' CHECK (kind IN ('topic','preparation')),     -- preparation = knowledge check (spec/07 §8.1)
-  origin           TEXT NOT NULL DEFAULT 'author' CHECK (origin IN ('author','conception')),  -- who owns the task (spec/05 §7)
+  origin           TEXT NOT NULL DEFAULT 'author' CHECK (origin IN ('author','conception')),  -- who owns the task (spec/05 §7); 'conception' = agent-owned: a conception draft, or a topic a knowledge check listed (D-168)
   requirements     TEXT NOT NULL DEFAULT '',
   language         TEXT NOT NULL,                       -- BCP-47 language of the entries (spec/07 §8)
   status           TEXT NOT NULL CHECK (status IN ('draft','ready','deferred','running','done','failed','cancelled')),
@@ -500,8 +506,11 @@ CREATE TABLE research_tasks (
   report           TEXT NOT NULL DEFAULT '',
   entries_created  INTEGER NOT NULL DEFAULT 0,
   created_at       TEXT NOT NULL,
-  updated_at       TEXT NOT NULL
+  updated_at       TEXT NOT NULL,
+  -- added by 0011 (not in 0001, see §1): the knowledge check that listed this topic (spec/07 §8.1)
+  check_id         INTEGER REFERENCES research_tasks(id) ON DELETE SET NULL
 );
+CREATE INDEX research_tasks_check ON research_tasks(check_id);  -- 0011
 
 CREATE TABLE knowledge_entries (
   id                INTEGER PRIMARY KEY,
@@ -778,7 +787,7 @@ The migration seeds `('basic-writing', '基础写作 / Basic Writing', '写作 /
 | CanonSystem | `entities`, `timeline`, `memory`, `foreshadowing`, `goals` (not a column; the keys of `CanonSystems`, spec/06 §10) |
 | ResearchTaskStatus | `draft`, `ready`, `deferred`, `running`, `done`, `failed`, `cancelled` |
 | ResearchTaskKind | `topic`, `preparation` (the knowledge check, spec/07 §8.1) |
-| ResearchTaskOrigin | `author`, `conception` |
+| ResearchTaskOrigin | `author`, `conception` (agent-owned: a conception draft, or a topic a knowledge check listed, D-168) |
 | EntrySource | `manual`, `research` |
 | SearchDocKind / EmbedState | `entity`,`note`,`foreshadowing`,`event`,`summary`,`passage` / `pending`,`done`,`failed` |
 | MessageRole / MessageKind | `user`,`assistant` / `kickoff`,`user`,`notice`,`nudge`,`assistant` |
@@ -836,7 +845,8 @@ type ConceptionState = {
   topics_revision: number;     topics_approved_revision?: number;
   finalized_at?: string;
   // Set at creation when a knowledge check started and the author left "start conception
-  // automatically" on; cleared when the check's completion starts conception (spec/08 §5).
+  // automatically" on; cleared when the check's research settles and starts conception
+  // (spec/08 §5, D-168: the check is done and none of its topics is ready or open).
   // Absent (old rows) reads false.
   start_after_knowledge_check: boolean;
 };
@@ -1012,8 +1022,17 @@ type SnapshotGoalNode = { level, parent_id, title, purpose, status, conditions, 
     parent's), and never changed.
 18. A research task with `kind = 'preparation'` has a `book_id`, is never `draft`, and at most one
     per book is open (`running` or `failed` with a session). Its `topic` is empty.
-19. An agent deletes only `draft` research tasks with `kind = 'topic'` and `origin = 'conception'`
-    (`set_research_topics`). An `author` task is never deleted or edited by an agent, and an
-    author PATCH of a `conception` task sets `origin = 'author'`.
+19. An agent deletes only the research tasks it owns and has not run, all through
+    `set_research_topics` (D-168):
+    - in conception: `draft` tasks with `kind = 'topic'`, `origin = 'conception'` and
+      `check_id IS NULL`;
+    - in a knowledge check: that check's `ready` tasks with `origin = 'conception'` and no
+      session.
+
+    An `author` task is never deleted or edited by an agent, and an author PATCH of a
+    `conception` task sets `origin = 'author'`.
 20. A book's visible scopes are every `knowledge_scopes` row without a `book_scope_exclusions`
     row for that book (spec/07 §1).
+21. A research task with a `check_id` has `kind = 'topic'` and the same `book_id` as its check,
+    whose `kind` is `preparation`, and is never `draft` (D-168). `check_id` is set at creation and
+    never changed; deleting the check sets it to `NULL`.

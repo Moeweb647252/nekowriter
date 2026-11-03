@@ -3743,3 +3743,83 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   choice survives a refetch; automatic pins (started sessions, auto-followed ones) keep following
   live work. The flag persists with the rest of the UI store.
 - **Spec**: spec/11 §4.3, §5.3.
+
+### D-168 Research topics run before conception; conception's topics are supplements
+
+- **Context**:
+  - The author asked (2026-11-03) why research topics were still submitted during conception,
+    when they had asked for research to come first. Their explanation for M15 had been: check
+    whether the knowledge base can support conceiving the book, fill the gaps, "instead of running
+    research after conception".
+  - D-158 put a knowledge check before conception, but the check filled gaps itself in **one**
+    session (40 tool calls, 25 entries). It also kept research topics as conception's fifth
+    deliverable. Those topics become `ready` at finalize, and the overview's rule 3 then suggests
+    running them. So most of the research still ran after conception. The code matched the M15
+    plan; the plan misread the request.
+  - The author chose (2026-11-03) these answers:
+    - the knowledge check lists what is missing as research topics, which the studio shows and
+      the author can add, edit and delete;
+    - each topic runs as its own research session, in order, with its own budget;
+    - conception starts when they have all finished, still governed by the auto-start checkbox;
+    - the conception agent may still propose topics, as supplements ("可以提作为补充的资料主题").
+- **Decision** (plan `docs/research/research-before-conception-plan.md`):
+  - **The check plans.** A preparation session freezes `search_knowledge`, `read_knowledge_entry`,
+    `set_research_topics` and `finish_research`. It has no web tools and saves no entries. Its
+    kickoff lists the book's existing topic tasks and a cap of 8 topics, and it finishes with a
+    report of what is sufficient, what it listed and why.
+  - **Check topics.** A new column `research_tasks.check_id` (0011) links a topic to the check
+    that listed it. A check topic is `ready` at once, even in a conceiving book, and is never
+    `draft`. The check writes its topics as `origin = 'conception'`, which now means
+    "agent-owned". A third origin value would need a table rebuild for no behavioral gain, because
+    `check_id` already tells the two owners apart. The author adds topics with `check_id`. Check
+    topics are not setting materials.
+  - **The queue.** After the check is `done`, its `ready` topics run one at a time in id order.
+    `research::advance_check` evaluates the queue in one write after each trigger:
+    - a check or topic session completing or being abandoned;
+    - an author topic added;
+    - a topic resumed.
+
+    A failed, stopped or interrupted topic holds the queue, abandoning skips a topic, and deferring
+    takes one out. No queue state is stored.
+  - **Auto-start moves to settle.** Conception auto-starts when the check is `done` and none of
+    its topics is `ready` or open. The D-158 conditions (conceiving, flag, no conception session)
+    are unchanged. A check with no topics settles when it completes, as before.
+  - **One tool, two owners.** `set_research_topics` keeps its name, schema and description. In a
+    check it replaces only that check's waiting agent topics, refuses an excluded scope, and caps
+    the list at 8. In conception it replaces only its drafts without a `check_id`.
+  - **Supplementary topics.** Conception's deliverable 5 becomes optional supplementary topics:
+    only knowledge that came up during conception and is still missing. Drafts, review, finalize
+    and overview rule 3 are unchanged for them.
+  - **`set_target_scope` is retired** but stays registered for check sessions frozen before
+    0011 (D-159's rule for historical shapes).
+  - **Exclusions.** The automatic run of a check topic counts as **Run**, so it may re-include its
+    scope. The check itself cannot propose an excluded scope.
+  - **A new scope's description.** A scope created by running a check topic gets finalize's rule:
+    the check's topics with that scope name, joined with ` / `.
+- **Consequences**:
+  - A book created with conception now runs the check, then up to 8 research sessions, and then
+    conception, without a click. The author controls the cost through the list (edit, skip,
+    delete) and the session controls (abandon skips).
+  - The check is cheaper and shorter than under D-158: it makes no web calls, so the 120-second
+    gateway timeout of D-163 is less likely. A topic's failure holds the queue instead of losing
+    work, and **Continue** resumes it.
+  - The conception kickoff, the prep kickoff, the prep tool list and `conception.system` change,
+    and their `kickoff_baseline` snapshots with them. Topic research sessions are byte-identical.
+  - For the author's database (read-only check, 2026-11-03), 0011 changes no row:
+    - book #1 keeps its old-style check (19 entries), conception session #4 and its five
+      conception drafts;
+    - the drafts now count as supplementary topics, and the author can run them from their task
+      pages.
+  - D-158's K1 (the check fills the gaps itself) and K6's "research topics become what is still
+    missing" are superseded. Its other decisions stand.
+- **Spec**:
+  - PROJECT §5, §6.2, §6.11, F2, F3, §8.7, §8.10, §10 (#15, #29, #31, #33);
+  - spec/02 §1, §2, §4, §5;
+  - spec/03 §10, §15;
+  - spec/04 §7.2;
+  - spec/05 §2, §7, §8, §9;
+  - spec/07 §1, §8, §8.1;
+  - spec/08 §5;
+  - spec/09 §2;
+  - spec/10 §2.2, §2.5;
+  - spec/11 §5.0, §5.4, §5.5, §9.

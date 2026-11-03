@@ -132,9 +132,9 @@ Proposals never block writing.
 | Step | What happens |
 |---|---|
 | Create | `POST /api/books {title, idea, genre, writing_language, start_conception: true, knowledge_check, auto_start_conception}` → book `conceiving`, main track (empty title; the UI shows its localized name, "Main story" / "正文"), three empty setting docs, then the first session per the table below |
-| Knowledge check | With `knowledge_check: true` (the web client always sends it) a knowledge check runs first (spec/07 §8.1). The conception agent reads its report and the knowledge base |
-| Kickoff | `conception.kickoff`: title, idea, genre, writing language, the visible knowledge scopes, the latest knowledge check's report, the research topics it must keep (spec/05 §7), the deliverables, and the process |
-| Rounds | The agent asks (`ask_user`), researches (`web_search`/`web_fetch`), writes documents and characters, proposes research topics, and calls `request_review`. The author answers, reviews, messages, or edits documents directly (edits reported via `notice.setting_edits`) |
+| Knowledge check | With `knowledge_check: true` (the web client always sends it) a knowledge check runs first. It lists the missing knowledge as research topics, and they run one by one before conception (spec/07 §8.1, D-168). The conception agent reads the check's report and the knowledge base |
+| Kickoff | `conception.kickoff`: title, idea, genre, writing language, the visible knowledge scopes, the latest knowledge check's report, the research topics it must keep, with their status and entry counts (spec/05 §7), the deliverables, and the process |
+| Rounds | The agent asks (`ask_user`), researches (`web_search`/`web_fetch`), writes documents and characters, may propose **supplementary** research topics (knowledge that came up during conception and is still missing; often none), and calls `request_review`. The author answers, reviews, messages, or edits documents directly (edits reported via `notice.setting_edits`) |
 | Text-only turn | The session becomes `idle`; the author's next message continues it |
 | Finalize | `POST /api/books/:id/conception/finalize` |
 
@@ -146,7 +146,9 @@ Proposals never block writing.
 2. The open conception session → `completed` (a running one is stopped first and its runner
    awaited; a pending `ask_user` or `request_review` form is simply left unanswered).
 3. Book → `active`; `ConceptionState.finalized_at`.
-4. Research tasks with `kind = 'topic'` in `draft` (either origin) → `ready`. For each distinct
+4. Research tasks with `kind = 'topic'` in `draft` (either origin) → `ready`. These are the
+   supplementary topics and the author's own drafts. A knowledge check's topics are never `draft`,
+   so finalize leaves them alone (D-168). For each distinct
    `scope_name`, find or create the scope and make it visible to the book (remove its exclusion,
    spec/07 §1). A new scope's description is the topics of its tasks joined with
    ` / ` (model-written text and a language-neutral separator, so no wording is generated in
@@ -166,8 +168,10 @@ Proposals never block writing.
 | false | true | The conception session starts (with no conception model configured, the book is still created, `warnings` carries `model.missing_role`, and `conception/start` starts the session later) |
 | false | false | No session starts; the studio offers **Start conception** |
 
-**Auto-start after the check.** When a knowledge check's session reaches `completed`, conception
-starts if all of these hold, re-checked in the write that starts it:
+**Auto-start after the research** (D-168). Auto-start happens when a knowledge check's research
+**settles**, which `research::advance_check` detects (spec/07 §8.1 step 6). Settled means the check
+is `done`, and none of its topics is `ready` or open. A check that lists no topics settles when it
+completes. Conception then starts if all of these hold, re-checked in the same write:
 1. the book is `conceiving`;
 2. `start_after_knowledge_check` is true;
 3. the book has **no** conception session in any status. Auto-start is one-time and never
@@ -175,9 +179,9 @@ starts if all of these hold, re-checked in the write that starts it:
 
 The same write sets `start_after_knowledge_check = false`. With no conception model configured,
 nothing starts and nothing fails; the studio offers **Start conception**. Any other error is
-logged and leaves the check `done`. A check that ends `failed` or `cancelled` starts nothing. The
-session is created like `maintenance::start_after_approval` creates one, and no transaction is
-held across its spawn.
+logged at `warn`, and the research stays as it is. A check that ends `failed` or `cancelled` never
+settles, so it starts nothing. The session is created like `maintenance::start_after_approval`
+creates one, and no transaction is held across its spawn.
 
 Books created with `start_conception: false` start `active`, with empty setting materials that the
 author writes by hand; `knowledge_check` and `auto_start_conception` are ignored. Book › Knowledge
@@ -187,8 +191,9 @@ can still start a knowledge check (spec/07 §8.1).
 conception session: it was created while no conception model was configured, or its session was
 abandoned, or auto-start was off): the book is `conceiving` (otherwise `409 book.invalid_state`);
 it returns the open conception session if there is one, otherwise it starts one. An open knowledge
-check does not block it (the studio asks first); the check keeps running, and auto-start's
-condition 3 then prevents a second conception session.
+check or a running topic queue does not block it (the studio asks first). The check and its
+remaining topics keep running, and auto-start's condition 3 then prevents a second conception
+session.
 
 **Seed canon** (`POST /books/:id/canon/seed`, the overview's `seed_canon` action): the book is
 `active` (otherwise `409 book.invalid_state`); it returns the open `canon_seed` session if there

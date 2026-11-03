@@ -3,6 +3,11 @@
 > Milestone **M15** in `docs/PLAN.md`. Read `AGENTS.md` and `NOTES.md` first. The spec sections
 > listed in §7 were amended together with this plan, and the decision is recorded as **D-158**.
 > The spec is authoritative; this plan explains the reasons, the order and the tests.
+>
+> **Superseded in part by D-168 (M20, `research-before-conception-plan.md`).** The knowledge check
+> no longer fills gaps itself: it lists research topics that run one by one before conception, and
+> conception's own topics are supplements. K1 and K6's "research topics" sentence are replaced; the
+> rest of this plan stands.
 
 ## 0. What the author asked for, and the answers
 

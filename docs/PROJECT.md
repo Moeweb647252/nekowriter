@@ -75,7 +75,7 @@ small embedding model locally.
 | **Canon system** | One of Entities, Timeline, Memory (notes and chapter summaries), Foreshadowing and Goals. Each can be switched off per book (§6.17) |
 | **Knowledge base** | External reference knowledge in **scopes** (global spaces such as "Tang dynasty officialdom" or "Xianxia cultivation tropes"). A book's agents read every scope except those the author unchecked for the book |
 | **Research task** | A topic plus requirements for the research agent, which collects information from the web into a target scope. Tasks the author creates or edits are the author's, and no agent deletes them |
-| **Knowledge check** | A research task of its own kind: the research agent checks whether the knowledge visible to a book can support conceiving it, and fills the gaps. It runs before conception, and its report goes to the conception agent |
+| **Knowledge check** | A research task of its own kind: the research agent checks whether the knowledge visible to a book can support conceiving it, and lists what is missing as research topics. The topics then run one by one. All of this happens before conception, and the check's report goes to the conception agent |
 | **Agent role** | Planner, Conception, Researcher, Writer, Reviewer, Archivist (see §5) |
 | **Session** | One persisted agent conversation working on one task (e.g. "write chapter 12"). It has a status, a phase, and a full transcript |
 | **Phase** | A stage inside a session that decides which tools are allowed. Planner sessions are phase-free; a write session drafts; a revise session runs `revision_planning` → `revising`. `planning` appears only in historical write sessions that ended before the outline split |
@@ -98,8 +98,8 @@ effort (one of the levels its model lists), configured globally and overridable 
 
 | Role | Chinese name | Responsibility | Typical tools | Runs when |
 |---|---|---|---|---|
-| **Conception** | 构思 | Turns a title and a rough idea into the setting materials and research topics through questions, the knowledge base, web research, and review rounds | `ask_user`, `search_knowledge`, `web_search`, `web_fetch`, setting-doc and character tools, `set_research_topics`, `request_review` | Creating a book, after the knowledge check |
-| **Researcher** | 资料员 | Collects knowledge for a topic per the requirements and saves well-sourced entries to a scope. In a knowledge check, it first judges what the book lacks and fills only that | `web_search`, `web_fetch`, `search_knowledge`, `set_target_scope` (knowledge check), `save_knowledge_entry`, `finish_research` | Research tasks; the knowledge check before conception |
+| **Conception** | 构思 | Turns a title and a rough idea into the setting materials, and optional supplementary research topics, through questions, the knowledge base, web research, and review rounds | `ask_user`, `search_knowledge`, `web_search`, `web_fetch`, setting-doc and character tools, `set_research_topics`, `request_review` | Creating a book, after the research before conception |
+| **Researcher** | 资料员 | Collects knowledge for a topic per the requirements and saves well-sourced entries to a scope. In a knowledge check, it judges what the book lacks and lists it as research topics | `web_search`, `web_fetch`, `search_knowledge`, `set_research_topics` (knowledge check), `save_knowledge_entry`, `finish_research` | Research tasks; the knowledge check and its topics before conception |
 | **Planner** | 策划 | Plans a chapter: retrieves what it needs, then submits a detailed outline with reference notes for the author to accept | Retrieval tools, `read_draft`, `submit_outline` | Writing a chapter outline |
 | **Writer** | 写手 | Drafts a chapter from its accepted outline with granular writing tools, and revises or redrafts it after feedback | Retrieval tools (revision planning only), `insert_text` and edit tools (drafting/revising), `finish_draft`, `finish_revision` | Writing and revising chapters |
 | **Reviewer** | 审稿 | Reviews a finished chapter against the setting materials, memory, entity graph, and timeline; reports issues and feedback | Retrieval tools, `submit_review` | The author delegates a review |
@@ -124,14 +124,15 @@ effort (one of the levels its model lists), configured globally and overridable 
 - The researcher plans sub-questions, searches the web, reads pages, cross-checks, and saves
   concise sourced entries without duplicates. The author watches live and can steer, pause, or
   stop.
-- **Knowledge comes first.** Before conception, a **knowledge check** looks at what the knowledge
-  base already holds for this book's idea, decides whether it is enough to conceive the book, and
-  fills the gaps from the web. The conception agent then reads the knowledge base and the check's
-  report, so it conceives from real material instead of researching afterwards. The author can run
-  a check again from Book › Knowledge at any time.
-- Conception still produces research tasks, now only for what is still missing. The author
-  reviews them and runs them. Research tasks the author creates or edits are never deleted by
-  the conception agent.
+- **Research comes first.** Before conception, a **knowledge check** looks at what the knowledge
+  base already holds for this book's idea and decides whether it is enough to conceive the book.
+  It lists what is missing as **research topics**. The author can edit, skip, delete or add topics.
+  The topics then run one by one, each as its own research task. Conception starts when they have
+  finished, so it conceives from real material instead of research running afterwards. The author
+  can run a check again from Book › Knowledge at any time; its topics run the same way.
+- The conception agent may still propose research topics, but only as **supplements**: knowledge
+  that came up during conception and is still missing. The author reviews them and runs them.
+  Research tasks the author creates or edits are never deleted by an agent.
 
 ### 6.3 Writing mode
 - The writer edits a chapter through **add, delete, modify, and query** tools: `insert_text`,
@@ -216,13 +217,15 @@ effort (one of the levels its model lists), configured globally and overridable 
 
 ### 6.11 Book conception
 - The author gives a title, a rough idea, an optional genre, and the writing language, and
-  chooses whether conception starts automatically after the knowledge check (on by default).
-- The knowledge check runs first (§6.2). Then the conception agent asks structured questions (multiple choice plus free text), researches the
-  web, drafts the four setting materials and research topics, and requests reviews. The author
+  chooses whether conception starts automatically when the research before it finishes (on by
+  default).
+- The knowledge check and its research topics run first (§6.2). Then the conception agent asks
+  structured questions (multiple choice plus free text), researches the web, drafts the four
+  setting materials and any supplementary research topics, and requests reviews. The author
   approves each document or gives feedback, and the agent revises.
 - On **Finalize** the book becomes active. The archivist seeds canon from the settings
-  (characters → entities, factions, places, world rules, backstory relations), and research
-  tasks become ready to run.
+  (characters → entities, factions, places, world rules, backstory relations), and the
+  supplementary research topics become ready to run.
 
 ### 6.12 Writing chapters
 - The author clicks **Write the outline** for a planned chapter, with optional guidance.
@@ -312,17 +315,26 @@ Each flow lists what the author does, what the system does, and where it happens
 1. **Library › New book**. Dialog: title*, rough idea* (multi-line), genre (free text with
    suggestions), writing language* (default from the UI language), and "Start with the conception
    agent" (on by default; off creates an empty active book). Under it, "Start conception
-   automatically after the knowledge check" (on by default).
-2. The **Conception studio** opens on the **knowledge check**. The research agent lists what the
-   knowledge base already has for this idea, searches it, and fills what is missing (searches,
-   fetched pages and saved entries are visible as they happen). It ends with a report: what was
-   enough, what it added, what is still missing.
-   - With auto-start on, conception starts by itself when the check finishes.
-   - With it off, the studio shows the report and **Start conception**. The author can first read,
-     edit or add knowledge.
-   - **Start conception now** is available while the check runs, after a confirmation.
+   automatically when the research before it finishes" (on by default).
+2. The **Conception studio** opens on the **research before conception**.
+   - **Knowledge check.** The research agent looks at what the knowledge base already has for
+     this idea and searches it. Then it lists what is missing as **research topics**: what to
+     collect, what it is for, and the scope. Its searches and the topic list are visible as they
+     happen. It ends with a report: what is enough, which topics it listed and why, and what needs
+     the author's decision.
+   - **Research topics.** The topics run one by one, each as its own research session. The studio
+     shows the list with each topic's status, and the live stream of the running one. The author
+     can edit or skip a waiting topic, delete it, or add a topic of their own; an added topic runs
+     in turn. A topic that fails waits for **Continue** or **Abandon**, and abandoning skips it.
+   - With auto-start on, conception starts by itself when the last topic finishes, or right after
+     the check when it lists none.
+   - With it off, the studio shows the report, the finished list and **Start conception**. The
+     author can first read, edit or add knowledge.
+   - **Start conception now** is available at any time, after a confirmation. Research that is
+     still running keeps running.
 
-   The conception agent starts from the knowledge base and the check's report. Its first turn
+   The conception agent starts from the knowledge base, the check's report and the list of
+   researched topics. Its first turn
    usually asks 2–4 structured questions (radio or checkbox options plus "Other"). The author
    answers in the inline form.
 3. The agent may search the knowledge base and read web pages (visible as tool cards with titles
@@ -340,15 +352,17 @@ Each flow lists what the author does, what the system does, and where it happens
    non-empty, and warns if some are not approved. Then:
    - The book becomes active. The main track exists.
    - The archivist **seeds canon** from the settings (live in the agent panel).
-   - Research topics become research tasks (status *ready*). Missing target scopes are created;
-     a target scope the author had unchecked for this book becomes visible again.
-   - The UI lands on the **Book overview**, which suggests "Run research tasks" and "Write
-     chapter 1".
+   - The supplementary research topics become research tasks (status *ready*). Missing target
+     scopes are created; a target scope the author had unchecked for this book becomes visible
+     again. The topics researched before conception are already done.
+   - The UI lands on the **Book overview**, which suggests "Run research tasks" when supplementary
+     topics are waiting, and "Write chapter 1".
 
 ### F3 — Research
 1. **Book › Knowledge** (or the global **Knowledge** page) lists research tasks. Each has a topic,
    requirements, a target scope, a status, and the number of entries created. A knowledge check
-   is listed as "Knowledge check", with the scope it chose.
+   is listed as "Knowledge check", and the topics it listed are labelled "From the knowledge
+   check".
 2. **Run** starts a researcher session. The agent panel shows searches, fetched pages, and saved
    entries. Each entry links to the knowledge entry view.
 3. The author can steer ("focus on clothing of the Song dynasty, not Tang"), pause, or stop.
@@ -736,12 +750,18 @@ version first.
 ```
 - **Characters tab**: ranked cards (rank, name, role label, summary, expandable profile). Drag and
   drop reorders the ranking, and the agent is told.
-- **Research topics tab**: rows of topic, requirements, and target scope (editable; add or remove).
-  Rows the author added or edited are labelled "Added by you"; the agent keeps them.
-- **Before conception starts**, the conversation pane shows the knowledge check instead: its live
-  stream and a link to its task page while it runs, its report and entry count when done, and
-  **Start conception** (with a confirmation while the check still runs). With no check, it offers
-  **Start conception** and **Check knowledge first**.
+- **Research topics tab**: the supplementary topics, as rows of topic, requirements, and target
+  scope (editable; add or remove). Rows the author added or edited are labelled "Added by you";
+  the agent keeps them.
+- **Before conception starts**, the conversation pane shows the research before conception
+  instead:
+  - while the check runs: its live stream, a link to its task page, and the topic list as it
+    fills in;
+  - then: progress ("2 of 5 done"), the check's report, the topic list (edit, skip, delete or add
+    waiting topics), and the running topic's live stream with its controls;
+  - **Start conception**, which asks for confirmation while research still runs.
+
+  With no check, it offers **Start conception** and **Check knowledge first**.
 
 ### 8.8 Canon pages
 - **Entities**: a filter bar (kind chips, status, track, search, **+ Entity**) above a dense
@@ -796,7 +816,8 @@ version first.
   highlighted.
 - Research task view: header (topic, scope, status, Run, Stop), requirements, the live agent
   stream (the same component as the agent panel), and the report and created entries when done.
-  A knowledge check shows "Knowledge check" instead of a topic, and the scope it chose.
+  A knowledge check shows "Knowledge check" instead of a topic, and lists the topics it wrote,
+  with their statuses.
 - Creating a scope says that every book sees it unless a book unchecks it.
 - **New research task** dialog: topic, requirements, target scope (pick one or type a new name),
   book (optional; preset inside a book workspace), and the entry language when no book is set
@@ -946,8 +967,8 @@ The author can revise them later.
 13. **Side stories are tracks** with a canon mode (`canon` or `isolated`) and an anchor.
 14. **Prompt customization covers every model-facing text**, tool descriptions included. Tool
     parameter structures are fixed in code.
-15. **Conception output** is the four setting materials plus research topics. Finalizing is the
-    author's action, and it seeds canon.
+15. **Conception output** is the four setting materials plus optional supplementary research
+    topics (D-168). Finalizing is the author's action, and it seeds canon.
 16. **One tool call per round for the writer.** Parallel tool calls are disabled for writer
     sessions, so "each round triggers one request" holds literally. (If a provider ignores the
     flag, the extra calls simply run in order.)
@@ -983,18 +1004,25 @@ The author can revise them later.
 28. **Upgrading changes nothing for an existing book.** With all systems on and no goal nodes,
     every prompt and tool list is byte-identical to before.
 29. **"Knowledge accumulation comes before every stage"** means an agent first checks whether the
-    existing knowledge base can support conceiving the book, then fills the gaps, and only then
-    does conception start, from that knowledge. It does not mean waiting for conception's research
-    topics. The check is a research task of its own kind, not a new role (D-158).
+    existing knowledge base can support conceiving the book. It lists the gaps as research topics,
+    the topics run one by one, and only then does conception start, from that knowledge. The
+    research is not left until after conception. The check is a research task of its own kind,
+    not a new role (D-158). It plans and its topics collect (D-168).
 30. **"Agents see every scope by default"** is opt-out: a new scope is visible to every book at
     once. For existing data, every book sees every scope after the upgrade (the author's choice).
     Agents never re-enable a scope the author unchecked. Running a research task for the book, or
     finalizing, does, because the author asked for that scope.
-31. **The auto-start checkbox decides what happens after the knowledge check**: conception starts
-    by itself (default), or the book waits for **Start conception**. It fires at most once per
-    book.
+31. **The auto-start checkbox decides what happens when the research before conception
+    finishes**: conception starts by itself (default), or the book waits for **Start conception**.
+    It fires at most once per book. It does not hold back the check's topics, which run either way
+    (D-168).
 32. **The author's research tasks are the author's.** The conception agent replaces only the
     topics it set itself. A topic the author added or edited stays.
+33. **Conception's research topics are supplements** (D-168). The research before conception covers
+    what the knowledge check found missing. The conception agent may still propose topics for
+    knowledge that came up while conceiving and is still missing. They follow the old path: drafts,
+    review, ready at finalize. A topic the check listed runs without a click, as "research first"
+    requires. The author can edit, skip or delete it first.
 
 ## 11. Requirement traceability
 

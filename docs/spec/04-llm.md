@@ -348,7 +348,7 @@ history:
 | maintenance / resync | `record_appearances` (protagonist), `update_entity` of the protagonist's state with a change note (an isolated track refuses it for a shared protagonist, and the demo moves on), `add_timeline_event`, `set_chapter_summary`, in maintenance (not resync) one `propose_setting_change` (an `append` to the world setting; isolated tracks refuse it, and the demo moves on), `finish_maintenance` (again if it asks for confirmation). A book with no protagonist entity yet (no canon seed) gets one `create_entity` first, so the required steps exist without an API key (D-090) |
 | seed | `create_entity` per character design (the rank-1 one with `is_protagonist`), then `finish_maintenance` |
 | conception | `ask_user` (2 questions) → after the answers: `write_setting_doc` ×3, `upsert_character` ×2, `set_research_topics` → `request_review` → revises any document that was not approved → a closing text message |
-| research | `save_knowledge_entry` ×2 (no network) → `finish_research` |
+| research | A topic task: `save_knowledge_entry` ×2 (no network) → `finish_research`. A knowledge check (recognised by `set_research_topics` in `demo_hints.tools`, D-168): `search_knowledge` → `set_research_topics` with the corpus's two `prep_topics` → `finish_research` with `prep_report` |
 
 It streams text in 20–40 character chunks with 30 ms delays, so streaming and ghost text are
 visible. `list_models` returns `demo-model` (context 200k, output 16k). Everything the demo

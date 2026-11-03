@@ -20,10 +20,14 @@
   and `read_knowledge_entry` all use it, so a model never learns a scope it cannot search. A topic
   research session sees only its target scope (§8); a knowledge check sees the book's visible
   scopes (§8.1).
-- **Exclusions belong to the author.** An agent never clears one: `set_target_scope` refuses an
-  excluded scope. Two author actions clear the exclusion of their own target scope, because they
-  ask for knowledge in that scope for this book: **Run** on a book-linked research task (§8 step 2)
-  and **Finalize** (spec/08 §5).
+- **Exclusions belong to the author.** An agent never clears one: a knowledge check's
+  `set_research_topics` refuses an excluded scope, as `set_target_scope` did before D-168. Two
+  author actions clear the exclusion of their own target scope, because they ask for knowledge in
+  that scope for this book:
+  - **Run** on a book-linked research task (§8 step 2). The automatic run of a knowledge check's
+    topic list counts as Run, because the author saw the list and kept the topic (§8.1 step 6,
+    D-168);
+  - **Finalize** (spec/08 §5).
 - Deleting a scope deletes its entries (with a typed confirmation in the UI) and its exclusion
   rows. Unchecking a scope for a book only removes visibility. An entry's scope is fixed once created (moving entries
   between scopes is not part of the MVP), so `knowledge_chunks.scope_id` and the vector
@@ -243,11 +247,15 @@ Markdown. The key is `deepseek_api_key`, the same secret the DeepSeek search pro
 
 ## 8. Research workflow (researcher agent)
 
-1. The author creates a task (topic, requirements, target scope name, optional book) or reviews
-   one created by conception (`draft` → `ready` when the author confirms it in the UI). A task the
-   author creates or edits has `origin = 'author'`, and the conception agent never deletes it
-   (spec/05 §7, D-158). This section describes `kind = 'topic'` tasks. The knowledge check is
-   §8.1.
+1. A topic task has one of three sources:
+   - the author creates it (topic, requirements, target scope name, optional book);
+   - the conception agent proposes it as a supplementary `draft`, which becomes `ready` when the
+     author confirms it in the UI or at finalize;
+   - a knowledge check lists it (§8.1), and it is `ready` at once.
+
+   A task the author creates or edits has `origin = 'author'`, and no agent deletes it
+   (spec/05 §7, D-158). This section describes `kind = 'topic'` tasks. The knowledge check and its
+   topic queue are §8.1.
 2. **Run** (`POST /research-tasks/:id/run`): allowed when the task has no open session (status
    `draft`, which Run confirms, `ready`, `deferred`, `done`, or `cancelled`). A **failed** task
    that still has its session is continued **on that same session**: the endpoint sets it back to
@@ -305,45 +313,93 @@ Markdown. The key is `deepseek_api_key`, the same secret the DeepSeek search pro
    mid-way failure attributable to one task. A partial batch is reported (how many moved, which
    tasks did not), never swallowed; the card's "Go" link stays its primary action.
 
-### 8.1 Knowledge check (D-158)
+### 8.1 Knowledge check and its topics (D-158, D-168)
 
 Knowledge comes before conception. A **knowledge check** (`research_tasks.kind = 'preparation'`)
-asks the researcher whether the knowledge visible to a book can support conceiving it, and has
-it fill the gaps. A book created with the conception agent runs one first (spec/08 §5), and its
-report is handed to the conception agent. The author can also start one from Book › Knowledge at
-any time while the book is `conceiving` or `active`.
+asks the researcher whether the knowledge visible to a book can support conceiving it, and has it
+list what is missing as **research topics**. The topics then run one by one (the topic queue,
+step 6). A book created with the conception agent runs a check first, and conception starts when
+the check's research has settled (spec/08 §5). The check's report is handed to the conception
+agent. The author can also start a check from Book › Knowledge at any time while the book is
+`conceiving` or `active`. Since D-168 the check plans and the topics collect; under D-158 the check
+collected entries itself.
 
 1. **The task.** It always has a `book_id`, `topic = ''` (the UI shows the localized name
    "Knowledge check"), the author's optional focus in `requirements`, the book's writing language,
-   `origin = 'author'`, and `scope_name = ''` / `scope_id = NULL` until the agent picks a target.
-   It is never `draft`: `POST /books/:id/knowledge-check` creates the row and starts its session in
-   one transaction, so a failure (no researcher model) leaves no row. At most one check per book
-   is open (`running`, or `failed` with its session); a second one is refused with
+   `origin = 'author'`, and `scope_name = ''` / `scope_id = NULL` (a check written before D-168
+   may have a target its agent picked with `set_target_scope`). It is never `draft`:
+   `POST /books/:id/knowledge-check` creates the row and starts its session in one transaction,
+   so a failure (no researcher model) leaves no row. At most one check per book is open
+   (`running`, or `failed` with its session); a second one is refused with
    `409 research.invalid_state` and `details.session_id`. A check is not a setting material: the
    `settings.locked` rule, `topics_revision` and the conception view snapshot ignore it, and
-   `set_research_topics` and finalize never touch it. PATCH accepts `requirements` only
-   (`topic` or `scope_name` → `422 validation.invalid_fields`). DELETE, run (re-run), defer and
-   resume follow §8 unchanged. A re-run keeps the last target until the agent switches it.
-2. **The session.** It is an ordinary `research` session with the researcher role and its budget
-   (40 tool calls, 25 entries). The kickoff is `block.book_brief` plus
-   `researcher.kickoff.prep`, which contains:
+   finalize and conception's `set_research_topics` never touch it. PATCH accepts `requirements`
+   only (`topic` or `scope_name` → `422 validation.invalid_fields`). DELETE, run (re-run), defer and
+   resume follow §8 unchanged. A re-run plans again with the current list (step 3). A new check's
+   `entries_created` stays 0.
+2. **The session.** It is an ordinary `research` session with the researcher role and its frozen
+   tool-call budget (`research_max_tool_calls`). It freezes four tools: `search_knowledge`,
+   `read_knowledge_entry`, `set_research_topics` and `finish_research` (spec/05 §2). It has no
+   web tool and saves no entry. The kickoff is `block.book_brief` plus `researcher.kickoff.prep`,
+   which contains:
    - the author's focus;
    - the inventory of every scope visible to the book (name, description, entry count, and up to
      50 entry titles per scope and 300 in total, with the number left out);
    - the names of the scopes the author excluded;
-   - the budget.
+   - the book's existing topic tasks that this check will not replace (`topic`, `requirements`,
+     `scope_name`, `status`);
+   - the topic cap (8) and the tool-call budget.
 3. **The work.**
    - Judge what conceiving this title, idea and genre needs: real-world facts and genre
      knowledge.
    - Verify coverage with `search_knowledge` / `read_knowledge_entry`, which span the book's
-     visible scopes, not just the target.
-   - Fill only the gaps. `set_target_scope` picks an existing broad scope on the subject, or
-     creates one with a description following the one-to-two scope budget (§1). Then search, fetch
-     and save, or update a thin entry of the target scope.
-   - Never duplicate an entry. A sufficient base may get no new entry at all.
-4. **The report.** `finish_research(report)` covers what was already sufficient, what was added,
-   and what is still missing or needs the author's decision. A check may finish without a target
-   scope. The task becomes `done` with `entries_created` as in §8 step 4. The conception kickoff
-   carries the report of the book's latest `done` check (spec/05 §7).
-5. **What happens next** is decided by `ConceptionState.start_after_knowledge_check`
-   (spec/08 §5). The check itself never starts or changes anything else.
+     visible scopes.
+   - List only the gaps, with `set_research_topics` (spec/05 §7: at most 8 topics; a scope the
+     author excluded is refused). Each topic says what to collect and what it is for, and names a
+     scope. An existing scope's name is preferred, and the one-to-two scope budget of §1 applies.
+     Calling the tool again replaces only the check's own waiting topics.
+   - Never repeat an existing entry or topic task. A sufficient base gets no topic at all.
+4. **The report.** `finish_research(report)` covers:
+   - what is already sufficient;
+   - which topics were listed, and why;
+   - what needs the author's decision.
+
+   The task becomes `done`. The conception kickoff carries the report of the book's latest `done`
+   check (spec/05 §7).
+5. **Check topics** (D-168) are `kind = 'topic'` tasks whose `check_id` is the check.
+   - They are `ready` as soon as they exist, in a `conceiving` book too, and are never `draft`.
+   - The check writes them with `origin = 'conception'` (agent-owned).
+   - The author adds topics to the list with `POST /research-tasks` and a `check_id`. These are
+     `author` tasks.
+   - Check topics are not setting materials: `settings.locked`, `topics_revision` and finalize
+     ignore them.
+   - PATCH, DELETE, defer, resume and run follow §8.
+   - Deleting the check sets its topics' `check_id` to `NULL`, and they become ordinary tasks.
+6. **The topic queue.** Once the check is `done`, its `ready` topics run **one at a time**, in id
+   order. Each topic is a normal research session (§8 steps 2–5) with its own budget. When a run
+   creates the topic's scope, the description is the topics of this check's tasks with that scope
+   name, joined with ` / `, the rule finalize uses (spec/08 §5).
+
+   The queue has no stored state. `research::advance_check` evaluates it in one write, after the
+   commit of each trigger:
+   - a research session completed (`finish_research`) or abandoned, whose task is the check or one
+     of its topics;
+   - the author created a check topic;
+   - the author resumed a check topic.
+
+   The evaluation goes like this:
+   - Nothing happens unless the book is `conceiving` or `active` and the check is `done`.
+   - Nothing happens while a topic of the check is open (`running`, or `failed` with its session).
+     So a failed, stopped or interrupted topic holds the queue until the author continues it
+     (D-163) or abandons it. Abandoning a topic skips it, and a deferred topic is not in the queue.
+   - Otherwise the first `ready` topic starts, in the same write.
+   - With no `ready` topic, the check's research has **settled**, and conception may auto-start
+     (spec/08 §5).
+   - With no researcher model, nothing starts and nothing fails, and the topic stays `ready`. A
+     manual **Run** of a waiting topic restarts the chain when it completes.
+
+   The single write lock serializes the evaluations, and the session they create sets its topic
+   `running` in the same transaction. Two triggers therefore never start two topics. A topic of an
+   abandoned or failed check never runs automatically.
+7. **What happens next** is decided by `ConceptionState.start_after_knowledge_check` when the
+   research settles (spec/08 §5). The check and its queue never change anything else.
