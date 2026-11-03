@@ -20,7 +20,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::db::entities::{
-    books, character_designs, research_tasks, setting_docs::ActiveModel as SettingDocActive,
+    book_scope_exclusions, books, character_designs, knowledge_scopes, research_tasks,
+    setting_docs::ActiveModel as SettingDocActive,
 };
 use crate::db::json::{
     AwaitInputKind, ConceptionState, ResearchTaskKind, ResearchTaskOrigin, ResearchTaskStatus,
@@ -934,6 +935,126 @@ impl ToolHandler for SetResearchTopicsTool {
                 ]));
             }
         }
+        // A check plans: it replaces only its own waiting topics and never touches the book's
+        // conception drafts (spec/07 §8.1, D-168, R2).
+        let check_task = match ctx.session.research_task_id {
+            Some(task_id) => research_tasks::Entity::find_by_id(task_id)
+                .one(ctx.tx)
+                .await
+                .map_err(|_| internal())?,
+            None => None,
+        }
+        .filter(|task| task.kind == ResearchTaskKind::Preparation);
+        if let Some(check) = check_task {
+            if input.topics.len() > crate::services::research::MAX_CHECK_TOPICS {
+                return Err(validation(vec![format!(
+                    "at most {} research topics",
+                    crate::services::research::MAX_CHECK_TOPICS
+                )]));
+            }
+            let book_id = check.book_id.ok_or_else(internal)?;
+            for topic in &input.topics {
+                let name = topic.scope.trim();
+                if let Some(scope) = knowledge_scopes::Entity::find()
+                    .filter(knowledge_scopes::COLUMN.name.eq(name))
+                    .one(ctx.tx)
+                    .await
+                    .map_err(|_| internal())?
+                {
+                    let excluded = book_scope_exclusions::Entity::find()
+                        .filter(book_scope_exclusions::COLUMN.book_id.eq(book_id))
+                        .filter(book_scope_exclusions::COLUMN.scope_id.eq(scope.id))
+                        .one(ctx.tx)
+                        .await
+                        .map_err(|_| internal())?
+                        .is_some();
+                    if excluded {
+                        return Err(ToolError::new(ToolErrorKind::ScopeExcluded)
+                            .with("name", name.to_owned()));
+                    }
+                }
+            }
+            let waiting = research_tasks::Entity::find()
+                .filter(research_tasks::COLUMN.check_id.eq(check.id))
+                .filter(research_tasks::COLUMN.kind.eq(ResearchTaskKind::Topic))
+                .filter(
+                    research_tasks::COLUMN
+                        .origin
+                        .eq(ResearchTaskOrigin::Conception),
+                )
+                .filter(research_tasks::COLUMN.status.eq(ResearchTaskStatus::Ready))
+                .filter(research_tasks::COLUMN.session_id.is_null())
+                .order_by_asc(research_tasks::COLUMN.id)
+                .all(ctx.tx)
+                .await
+                .map_err(|_| internal())?;
+            for task in &waiting {
+                research_tasks::Entity::delete_by_id(task.id)
+                    .exec(ctx.tx)
+                    .await
+                    .map_err(|_| internal())?;
+            }
+            let kept: Vec<Value> = research_tasks::Entity::find()
+                .filter(research_tasks::COLUMN.check_id.eq(check.id))
+                .order_by_asc(research_tasks::COLUMN.id)
+                .all(ctx.tx)
+                .await
+                .map_err(|_| internal())?
+                .into_iter()
+                .map(|task| {
+                    json!({
+                        "topic": task.topic,
+                        "requirements": task.requirements,
+                        "scope_name": task.scope_name,
+                        "status": task.status.as_str(),
+                    })
+                })
+                .collect();
+            let now = chrono::Utc::now();
+            let language = ctx.writing_language();
+            for topic in &input.topics {
+                let inserted = research_tasks::Entity::insert(research_tasks::ActiveModel {
+                    book_id: Set(Some(book_id)),
+                    kind: Set(ResearchTaskKind::Topic),
+                    origin: Set(ResearchTaskOrigin::Conception),
+                    scope_name: Set(topic.scope.trim().to_owned()),
+                    topic: Set(topic.topic.trim().to_owned()),
+                    requirements: Set(topic.requirements.trim().to_owned()),
+                    language: Set(language.clone()),
+                    status: Set(ResearchTaskStatus::Ready),
+                    check_id: Set(Some(check.id)),
+                    created_at: Set(now),
+                    updated_at: Set(now),
+                    ..Default::default()
+                })
+                .exec_with_returning(ctx.tx)
+                .await
+                .map_err(|_| internal())?;
+                ctx.emit(ServerEvent::ResearchUpdated {
+                    task: crate::services::research::to_dto(inserted),
+                });
+            }
+            for task in &waiting {
+                ctx.emit(ServerEvent::ResearchUpdated {
+                    task: crate::services::research::to_dto(task.clone()),
+                });
+            }
+            return conception_outcome(
+                ctx,
+                json!({
+                    "action": "set_research_topics",
+                    "doc_label": "",
+                    "revision": 0,
+                    "chars": 0,
+                    "name": "",
+                    "rank": 0,
+                    "order": [],
+                    "count": input.topics.len(),
+                    "created": false,
+                    "kept": kept,
+                }),
+            );
+        }
         let book_id = book_id(ctx)?;
         let all_topics = research_tasks::Entity::find()
             .filter(research_tasks::COLUMN.book_id.eq(book_id))
@@ -945,6 +1066,9 @@ impl ToolHandler for SetResearchTopicsTool {
         let mut drafts = Vec::new();
         let mut kept = Vec::new();
         for task in all_topics {
+            if task.check_id.is_some() {
+                continue;
+            }
             if task.origin == ResearchTaskOrigin::Conception
                 && task.status == ResearchTaskStatus::Draft
             {

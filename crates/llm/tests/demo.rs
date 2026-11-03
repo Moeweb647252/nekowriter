@@ -642,17 +642,17 @@ fn the_seed_plan_creates_one_entity_per_design() {
     assert_eq!(finish.tools[0].1, "finish_maintenance");
 }
 
-/// The knowledge-check demo (spec/07 §8.1): search first, create a target scope, save one entry,
-/// then finish. The presence of `set_target_scope` in the frozen tools distinguishes it from the
+/// The knowledge-check demo (spec/07 §8.1, D-168): search, list the corpus's planned topics, then
+/// report. The presence of `set_research_topics` in the frozen tools distinguishes it from the
 /// ordinary research arm.
 #[test]
-fn the_knowledge_check_demo_searches_targets_saves_and_finishes() {
+fn the_knowledge_check_demo_searches_plans_topics_and_finishes() {
     let provider = DemoProvider::new();
     let mut hints = hints("research", "none", "zh-CN");
     hints.tools = vec![
         "search_knowledge".to_owned(),
-        "set_target_scope".to_owned(),
-        "save_knowledge_entry".to_owned(),
+        "read_knowledge_entry".to_owned(),
+        "set_research_topics".to_owned(),
         "finish_research".to_owned(),
     ];
     let lang = provider.lang(Some(&hints));
@@ -662,17 +662,12 @@ fn the_knowledge_check_demo_searches_targets_saves_and_finishes() {
     assert_eq!(plan.tools[0].1, "search_knowledge");
     hints.step_in_phase = 1;
     let plan = choose_action(&hints, lang);
-    assert_eq!(plan.tools[0].1, "set_target_scope");
-    assert!(
-        plan.tools[0].2["description"]
-            .as_str()
-            .is_some_and(|value| !value.is_empty())
-    );
+    assert_eq!(plan.tools[0].1, "set_research_topics");
+    let topics = plan.tools[0].2["topics"].as_array().expect("topics");
+    assert_eq!(topics.len(), 2, "two topics per language");
+    assert_eq!(topics[0]["scope"], lang.prep_scope_name);
     hints.step_in_phase = 2;
     let plan = choose_action(&hints, lang);
-    assert_eq!(plan.tools[0].1, "save_knowledge_entry");
-    hints.step_in_phase = 3;
-    let plan = choose_action(&hints, lang);
     assert_eq!(plan.tools[0].1, "finish_research");
-    assert!(!lang.research_report.is_empty());
+    assert!(!lang.prep_report.is_empty());
 }

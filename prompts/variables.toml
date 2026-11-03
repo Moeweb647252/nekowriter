@@ -194,5 +194,6 @@ fields.requirements = { en = "The author's focus for this check (may be empty)",
 fields.language_name = { en = "Language to write entries in", zh = "条目撰写语言" }
 fields."scopes[]" = { en = "Visible scope: name, description, entry_count, titles (capped), more (titles left out)", zh = "可见范围：name、description、entry_count、titles（有上限）、more（未列出的标题数）" }
 fields."excluded_names[]" = { en = "Names of scopes the author excluded for this book", zh = "作者为本书排除的范围名称" }
+fields."research_tasks[]" = { en = "Existing topic tasks: topic, requirements, scope_name, status", zh = "已有的资料主题任务：topic、requirements、scope_name、status" }
 fields.max_tool_calls = { en = "Tool call budget", zh = "工具调用预算" }
-fields.max_entries = { en = "Entry budget", zh = "条目数量预算" }
+fields.max_topics = { en = "Maximum number of topics this check may list", zh = "本次检查最多可列出的主题数" }

@@ -585,8 +585,9 @@ pub struct PrepContext {
     pub language_name: String,
     pub scopes: Vec<PrepScopeContext>,
     pub excluded_names: Vec<String>,
+    pub research_tasks: Vec<ConceptionResearchTaskContext>,
     pub max_tool_calls: i32,
-    pub max_entries: i32,
+    pub max_topics: i32,
 }
 
 /// One visible scope in the knowledge-check inventory.

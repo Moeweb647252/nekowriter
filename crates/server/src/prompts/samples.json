@@ -392,7 +392,15 @@
     "明代史料"
    ],
    "max_tool_calls": 40,
-   "max_entries": 25
+   "research_tasks": [
+    {
+     "topic": "宋代茶楼",
+     "requirements": "茶楼布局",
+     "scope_name": "宋代社会",
+     "status": "ready"
+    }
+   ],
+   "max_topics": 8
   }
  },
  "variants": {
@@ -3795,7 +3803,15 @@
      "scopes": [],
      "excluded_names": [],
      "max_tool_calls": 40,
-     "max_entries": 25
+     "research_tasks": [
+      {
+       "topic": "宋代茶楼",
+       "requirements": "茶楼布局",
+       "scope_name": "宋代社会",
+       "status": "ready"
+      }
+     ],
+     "max_topics": 8
     }
    }
   ],

@@ -28,6 +28,9 @@ use super::sessions::{self, CreateSession};
 /// The number of existing titles a researcher kickoff carries (spec/07 §8 step 2: ≤ 200).
 pub const MAX_EXISTING_TITLES: usize = 200;
 
+/// The most topics a knowledge check may list (spec/07 §8.1, D-168).
+pub const MAX_CHECK_TOPICS: usize = 8;
+
 /// The knowledge-check inventory caps (spec/07 §8.1): at most 50 titles per scope and 300 total.
 pub const MAX_PREP_TITLES_PER_SCOPE: usize = 50;
 pub const MAX_PREP_TITLES_TOTAL: usize = 300;

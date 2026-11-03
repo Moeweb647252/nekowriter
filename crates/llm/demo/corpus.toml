@@ -70,7 +70,7 @@ timeline_description = "沈砚在雨中进入望川城，与守门人交涉后�
 maintenance_report = "记录了本章出场人物，更新了主角状态，新增 1 个时间线事件，保存了本章摘要，并对世界观提出 1 条修改建议。"
 research_report = "已保存两条背景条目（城门规制、剑器养护），内容来自示例语料，未访问网络；建议后续补充：边城集市与宵禁的细节。"
 prep_scope_name = "背景设定"
-prep_scope_description = "这本书的时代、地理与社会生活背景。"
+prep_report = "现有的宋代社会生活条目已覆盖酒楼与服饰；已列出边城军政与民间节庆两个缺口，其余由作者决定。"
 proposal_rationale = "本章明确了望川城的夜禁规则，属于应写入世界观的内容。"
 goal_rationale = "本章完成了该任务的目的，建议标记为达成。"
 summary_template = "沈砚带着旧信进入望川城，在城楼上遇见柳照，得知师父之死另有隐情，决定留下查清真相。"
@@ -85,6 +85,15 @@ review_request = "大纲、世界观、主角设定与人物都已经写完，�
 doc_revision = """## 修订说明
 
 根据你的意见，收紧了叙述，补上具体的场景细节，并让主角的动机更直接。"""
+
+[[zh.prep_topics]]
+topic = "宋代边城的军政与货币"
+requirements = "城防、驻军、赋税与货币流通的可感细节，用于边城日常与冲突。"
+scope = "背景设定"
+[[zh.prep_topics]]
+topic = "宋代民间信仰与节庆"
+requirements = "祠庙、节令、庙会与禁忌，用于市井氛围和人物动机。"
+scope = "风俗"
 
 [zh.setting_docs]
 outline = """# 全书大纲
@@ -252,7 +261,7 @@ timeline_description = "Shen Yan enters Wangchuan in the rain, bargains at the g
 maintenance_report = "Recorded the chapter's appearances, updated the protagonist's state, added one timeline event, saved the chapter summary, and proposed one world-setting change."
 research_report = "Saved two background entries (gate rules, sword care) from the sample corpus; no network was used. Suggested follow-up: market and curfew details."
 prep_scope_name = "Background"
-prep_scope_description = "The era, geography and social background of the book."
+prep_report = "Existing background entries cover gates and sword care; two gaps are listed: border-town military finance and local festivals. The author decides what else is needed."
 proposal_rationale = "The chapter establishes the curfew rule of Wangchuan, which belongs in the world setting."
 goal_rationale = "The chapter achieves the purpose of this task, so mark it complete."
 summary_template = "Shen Yan enters Wangchuan with the old letter, meets Liu Zhao on the tower, learns the master's death was not what it seemed, and decides to stay."
@@ -267,6 +276,15 @@ review_request = "The outline, world, protagonist and cast are drafted, and the 
 doc_revision = """## Revision note
 
 Tightened the prose, added concrete scene detail, and made the protagonist's motive more direct, as you asked."""
+[[en.prep_topics]]
+topic = "Military administration and money in a Song border town"
+requirements = "Concrete details of defenses, garrisons, taxes and coin circulation, for daily life and conflict."
+scope = "Background"
+[[en.prep_topics]]
+topic = "Local religion and festivals in the Song"
+requirements = "Shrines, seasonal rites, temple fairs and taboos, for market atmosphere and character motives."
+scope = "Customs"
+
 [en.setting_docs]
 outline = """# Book outline
 

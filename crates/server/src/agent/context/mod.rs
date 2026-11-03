@@ -583,7 +583,6 @@ async fn block_context(
                 prompts,
                 session.research_task_id,
                 session.research_max_tool_calls,
-                session.research_max_entries,
             )
             .await?,
         })),
@@ -1693,17 +1692,19 @@ async fn prep_context(
     prompts: &PromptSet,
     research_task_id: Option<i32>,
     max_tool_calls: i32,
-    max_entries: i32,
 ) -> Result<PrepContext, AppError> {
-    use crate::services::research::{MAX_PREP_TITLES_PER_SCOPE, MAX_PREP_TITLES_TOTAL};
+    use crate::services::research::{
+        MAX_CHECK_TOPICS, MAX_PREP_TITLES_PER_SCOPE, MAX_PREP_TITLES_TOTAL,
+    };
     let Some(task_id) = research_task_id else {
         return Ok(PrepContext {
             requirements: String::new(),
             language_name: prompts.label("language", "en"),
             scopes: Vec::new(),
             excluded_names: Vec::new(),
+            research_tasks: Vec::new(),
             max_tool_calls,
-            max_entries,
+            max_topics: MAX_CHECK_TOPICS as i32,
         });
     };
     let task = research_tasks::Entity::find_by_id(task_id)
@@ -1716,8 +1717,9 @@ async fn prep_context(
             language_name: prompts.label("language", &task.language),
             scopes: Vec::new(),
             excluded_names: Vec::new(),
+            research_tasks: Vec::new(),
             max_tool_calls,
-            max_entries,
+            max_topics: MAX_CHECK_TOPICS as i32,
         });
     };
     let visible_ids = crate::services::knowledge::visible_scope_ids(conn, book_id).await?;
@@ -1740,6 +1742,45 @@ async fn prep_context(
         .await?
         .into_iter()
         .map(|scope| scope.name)
+        .collect();
+    let research_tasks = research_tasks::Entity::find()
+        .filter(research_tasks::COLUMN.book_id.eq(book_id))
+        .filter(
+            research_tasks::COLUMN
+                .kind
+                .eq(crate::db::json::ResearchTaskKind::Topic),
+        )
+        .filter(
+            Condition::any()
+                .add(
+                    research_tasks::COLUMN
+                        .origin
+                        .eq(crate::db::json::ResearchTaskOrigin::Author),
+                )
+                .add(
+                    research_tasks::COLUMN
+                        .status
+                        .ne(crate::db::json::ResearchTaskStatus::Draft),
+                ),
+        )
+        .order_by_asc(research_tasks::COLUMN.id)
+        .all(conn)
+        .await?
+        .into_iter()
+        // The check's own waiting agent topics are exactly what `set_research_topics` replaces;
+        // the kickoff lists the tasks the check will not replace (spec/07 §8.1).
+        .filter(|task| {
+            !(task.check_id == Some(task_id)
+                && task.origin == crate::db::json::ResearchTaskOrigin::Conception
+                && task.status == crate::db::json::ResearchTaskStatus::Ready
+                && task.session_id.is_none())
+        })
+        .map(|task| ConceptionResearchTaskContext {
+            topic: task.topic,
+            requirements: task.requirements,
+            scope_name: task.scope_name,
+            status: task.status.as_str().to_owned(),
+        })
         .collect();
     let mut remaining = MAX_PREP_TITLES_TOTAL;
     let mut scopes = Vec::with_capacity(visible.len());
@@ -1776,8 +1817,9 @@ async fn prep_context(
         language_name: prompts.label("language", &task.language),
         scopes,
         excluded_names,
+        research_tasks,
         max_tool_calls,
-        max_entries,
+        max_topics: MAX_CHECK_TOPICS as i32,
     })
 }
 

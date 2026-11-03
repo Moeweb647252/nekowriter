@@ -151,14 +151,37 @@ pub const CONCEPTION_TOOLS: [&str; 12] = [
 ];
 
 /// The researcher role's fixed tool list (spec/05 §2).
+///
+/// A topic session freezes [`RESEARCH_TOPIC_TOOLS`]; a knowledge check freezes
+/// [`RESEARCH_CHECK_TOOLS`]. `set_target_scope` is deliberately absent from the role list but stays
+/// registered, because a session frozen before M20 may still call it (D-168, R8).
 pub const RESEARCHER_TOOLS: [&str; 8] = [
     "web_search",
     "web_fetch",
     "search_knowledge",
     "read_knowledge_entry",
-    "set_target_scope",
+    "set_research_topics",
     "save_knowledge_entry",
     "update_knowledge_entry",
+    "finish_research",
+];
+
+/// The seven tools a topic research session freezes (the pre-M20 baseline).
+pub const RESEARCH_TOPIC_TOOLS: [&str; 7] = [
+    "web_search",
+    "web_fetch",
+    "search_knowledge",
+    "read_knowledge_entry",
+    "save_knowledge_entry",
+    "update_knowledge_entry",
+    "finish_research",
+];
+
+/// The four tools a knowledge check freezes: it plans, it does not collect (D-168, R1).
+pub const RESEARCH_CHECK_TOOLS: [&str; 4] = [
+    "search_knowledge",
+    "read_knowledge_entry",
+    "set_research_topics",
     "finish_research",
 ];
 
@@ -220,7 +243,16 @@ pub fn tools_for_session(
     preparation: bool,
     registry: &ToolRegistry,
 ) -> Vec<&'static str> {
-    tools_for_role(role)
+    let role_tools: &[&str] = if role == "researcher" {
+        if preparation {
+            &RESEARCH_CHECK_TOOLS
+        } else {
+            &RESEARCH_TOPIC_TOOLS
+        }
+    } else {
+        tools_for_role(role)
+    };
+    role_tools
         .iter()
         .copied()
         .filter(|tool| registry.has(tool))
@@ -230,9 +262,6 @@ pub fn tools_for_session(
             "propose_goal_change" => {
                 kind == SessionKind::ChapterMaintenance && systems.goals && has_relevant_goals
             }
-            // The check is the only research session that may pick a target scope (spec/05 §2,
-            // D-158); a topic session must keep the pre-D-158 seven-tool baseline.
-            "set_target_scope" if kind != SessionKind::Research || !preparation => false,
             other => tool_enabled(other, systems),
         })
         .collect()

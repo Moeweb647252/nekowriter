@@ -44,7 +44,7 @@ fn every_tool_example_matches_its_schema_and_the_registry() {
     let pack_tools: BTreeSet<&str> = pack.tools().map(|tool| tool.name.as_str()).collect();
     for name in &pack_tools {
         assert!(
-            role_tools.contains(name),
+            role_tools.contains(name) || *name == "set_target_scope",
             "tool {name} is defined in tools.toml but no role can call it"
         );
     }
@@ -185,8 +185,9 @@ fn the_role_lists_are_the_spec_tables_in_order() {
     assert_eq!(CONCEPTION_TOOLS[1], "search_knowledge");
     assert_eq!(CONCEPTION_TOOLS[2], "read_knowledge_entry");
     assert_eq!(RESEARCHER_TOOLS.len(), 8);
-    assert_eq!(RESEARCHER_TOOLS[4], "set_target_scope");
+    assert_eq!(RESEARCHER_TOOLS[4], "set_research_topics");
     assert_eq!(RESEARCHER_TOOLS[7], "finish_research");
+    assert!(!RESEARCHER_TOOLS.contains(&"set_target_scope"));
     // DRAFT_EDIT is exactly the five text-editing tools.
     assert_eq!(
         WRITE_TOOLS,
