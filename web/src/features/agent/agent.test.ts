@@ -328,9 +328,48 @@ describe("stick to bottom", () => {
 })
 
 describe("session selection", () => {
-  it("prefers the pinned session", () => {
+  it("keeps an open pinned session", () => {
+    const pinned = session({ id: 9, status: "running" })
+    const chosen = pickSession(
+      [session({ id: 1, status: "running" }), session({ id: 2, status: "held" })],
+      pinned,
+      9,
+    )
+    expect(chosen?.id).toBe(9)
+  })
+
+  it("lets a terminal automatic pin yield to the newest open session in either array order", () => {
+    // The array order is deliberately not the id order: both the newest-first book list and the
+    // oldest-first chapter list must pick the same session, so the helper compares ids.
+    const pinned = session({ id: 1, status: "abandoned" })
+    const ascending = pickSession(
+      [session({ id: 2, status: "running" }), session({ id: 3, status: "held" })],
+      pinned,
+      1,
+    )
+    const descending = pickSession(
+      [session({ id: 3, status: "held" }), session({ id: 2, status: "running" })],
+      pinned,
+      1,
+    )
+    expect(ascending?.id).toBe(3)
+    expect(descending?.id).toBe(3)
+  })
+
+  it("keeps a manual terminal pin over an open session", () => {
+    const pinned = session({ id: 1, status: "abandoned" })
+    const chosen = pickSession(
+      [session({ id: 2, status: "running" })],
+      pinned,
+      1,
+      true,
+    )
+    expect(chosen?.id).toBe(1)
+  })
+
+  it("keeps a terminal pin when nothing is open", () => {
     const pinned = session({ id: 9, status: "completed" })
-    const chosen = pickSession([session({ id: 1 })], pinned, 9)
+    const chosen = pickSession([session({ id: 1, status: "abandoned" })], pinned, 9)
     expect(chosen?.id).toBe(9)
   })
 

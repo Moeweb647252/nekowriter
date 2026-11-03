@@ -13,13 +13,19 @@ type UiState = {
   navigatorCollapsed: boolean
   agentPanelCollapsed: boolean
   pinnedSession: Record<number, number | null>
+  /**
+   * Whether the pin of a book came from the session switcher. A manual pick always wins, even when
+   * it is terminal; an automatic pin (a started session, an auto-followed one) yields to a newer
+   * open session.
+   */
+  pinnedSessionManual: Record<number, boolean>
   /** The UI language; persisted here and the source `i18n` restores at boot (spec/11 §4.3, §6). */
   language: Language
   setEditorFont: (font: EditorFont) => void
   setEditorSize: (size: EditorSize) => void
   setNavigatorCollapsed: (collapsed: boolean) => void
   setAgentPanelCollapsed: (collapsed: boolean) => void
-  setPinnedSession: (bookId: number, sessionId: number | null) => void
+  setPinnedSession: (bookId: number, sessionId: number | null, manual?: boolean) => void
   setLanguage: (language: Language) => void
 }
 
@@ -31,13 +37,22 @@ export const useUiStore = create<UiState>()(
       navigatorCollapsed: false,
       agentPanelCollapsed: false,
       pinnedSession: {},
+      pinnedSessionManual: {},
       language: initialLanguage(),
       setEditorFont: (editorFont) => set({ editorFont }),
       setEditorSize: (editorSize) => set({ editorSize }),
       setNavigatorCollapsed: (navigatorCollapsed) => set({ navigatorCollapsed }),
       setAgentPanelCollapsed: (agentPanelCollapsed) => set({ agentPanelCollapsed }),
-      setPinnedSession: (bookId, sessionId) =>
-        set((state) => ({ pinnedSession: { ...state.pinnedSession, [bookId]: sessionId } })),
+      // `manual` is explicit only for the session switcher; every other pin is automatic and may
+      // later yield to a newer open session. Clearing the pin clears the flag with it.
+      setPinnedSession: (bookId, sessionId, manual = false) =>
+        set((state) => ({
+          pinnedSession: { ...state.pinnedSession, [bookId]: sessionId },
+          pinnedSessionManual: {
+            ...state.pinnedSessionManual,
+            [bookId]: sessionId !== null && manual,
+          },
+        })),
       setLanguage: (language) => set({ language }),
     }),
     { name: "nw.ui" },

@@ -3722,3 +3722,24 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   - No server change and no schema change. `PATCH` continues to accept `model_overrides` for a
     conceiving book.
 - **Spec**: spec/03 §4 step 1; spec/08 §5; spec/11 §5.5 (Book settings).
+
+### D-167 A manual session pin always wins; an automatic one follows a new session
+
+- **Context**: The session-panel follow fix (task-296) made a terminal pin yield to the newest open
+  session and re-pinned the panel to it. That rule also caught the session switcher, which lists
+  every book session including terminal ones: clicking a finished session while another ran was
+  immediately overridden by the auto-follow, and the render-phase re-pin wrote the open id back
+  (`[2, 1, 2]`), so reading a finished session was a no-op that also destroyed the stored choice.
+- **Decision**:
+  - The UI store keeps `pinnedSessionManual: Record<bookId, boolean>` beside `pinnedSession`.
+    `setPinnedSession(bookId, sessionId, manual?)` defaults to automatic; only the `SessionHeader`
+    session switcher passes `manual: true`, so a pick made there always wins, terminal or not.
+  - `pickSession` precedence: manual pin → open pin → newest open session by **id** → terminal pin
+    (readable when nothing else is open) → the newest session. Id ordering is deliberate:
+    `GET /books/:id/sessions` orders id desc while `ChapterDto.open_sessions` orders id asc.
+  - An automatic terminal pin still follows the newest open session and re-pins itself with
+    `manual: false`; clearing the pin clears the flag.
+- **Consequences**: The author can read a finished session while a check runs, and the manual
+  choice survives a refetch; automatic pins (started sessions, auto-followed ones) keep following
+  live work. The flag persists with the rest of the UI store.
+- **Spec**: spec/11 §4.3, §5.3.
