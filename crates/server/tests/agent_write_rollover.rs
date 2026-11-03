@@ -10,6 +10,7 @@ use agent_write_harness::{chapter_content, runtime, start_writer, start_writer_o
 use nekowriter::db::json::{Granularity, Phase, SessionKind, SessionStatus};
 use nekowriter::services::sessions::{self, CreateSession};
 use nekowriter_llm::mock::ScriptStep;
+use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 use serde_json::json;
 
 fn insert_step(text: &str) -> ScriptStep {
@@ -32,6 +33,24 @@ async fn push_usage_near_the_limit(runtime: &agent_write_harness::Runtime, sessi
         .await;
 }
 
+/// The frozen tool-error limit of one session.
+async fn session_limit(runtime: &agent_write_harness::Runtime, session_id: i32) -> i64 {
+    let row = runtime
+        .app
+        .db()
+        .conn()
+        .query_one_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT tool_error_streak_limit FROM agent_sessions WHERE id = ?",
+            vec![session_id.into()],
+        ))
+        .await
+        .expect("query session limit")
+        .expect("session row");
+    row.try_get("", "tool_error_streak_limit")
+        .expect("tool error limit")
+}
+
 /// spec/03 §15 test 13: a rollover creates a child with the draft in its kickoff, moves the
 /// unconsumed inbox, supersedes the parent, and carries the feedback given on the parent's last
 /// held call in `author_notes`.
@@ -45,6 +64,12 @@ async fn test_13_rollover_carries_the_draft_author_notes_and_the_inbox() {
         ScriptStep::new().tool("finish_draft", json!({})),
     ])
     .await;
+    // A non-default frozen limit must survive into the rollover child like canon systems do.
+    let (status, body) = runtime
+        .app
+        .patch("/api/app-settings", json!({ "tool_error_streak_limit": 2 }))
+        .await;
+    assert_eq!(status, 200, "{body}");
     let session_id = start_writer(&runtime, Granularity::Paragraph, true, false).await;
 
     // Approve the first insert so the second one is written; the second holds in turn.
@@ -101,6 +126,16 @@ async fn test_13_rollover_carries_the_draft_author_notes_and_the_inbox() {
         .as_i64()
         .expect("the parent exposes its child") as i32;
     assert_ne!(child_id, session_id);
+    assert_eq!(
+        session_limit(&runtime, session_id).await,
+        2,
+        "the parent froze the app setting"
+    );
+    assert_eq!(
+        session_limit(&runtime, child_id).await,
+        session_limit(&runtime, session_id).await,
+        "the rollover child inherits the parent's frozen limit"
+    );
 
     // The child is a writer session of the same kind and phase, linked to the parent.
     let child = agent_write_harness::session_dto(&runtime, child_id).await;

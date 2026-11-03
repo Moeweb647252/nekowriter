@@ -733,6 +733,14 @@ async fn edited_0001_matches_the_chain_for_directly_created_tables() {
         .execute_unprepared(include_str!("../../migration/src/sql/0001_init.sql"))
         .await
         .expect("apply edited 0001");
+    // 0010 appends three columns to `agent_sessions`; 0001 is append-only and intentionally not
+    // edited, so the direct-table comparison applies the same addition before comparing.
+    raw.conn()
+        .execute_unprepared(include_str!(
+            "../../migration/src/sql/0010_tool_error_limit.sql"
+        ))
+        .await
+        .expect("apply the 0010 agent_sessions additions");
     let raw_dump = schema_dump(raw.conn()).await;
 
     let chain_dir = tempfile::tempdir().expect("chain dir");

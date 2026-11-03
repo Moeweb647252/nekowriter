@@ -16,6 +16,7 @@ mod m0006_goals_and_switches;
 mod m0007_builtin_basic_writing;
 mod m0008_knowledge_first;
 mod m0009_role_effort;
+mod m0010_tool_error_limit;
 
 pub struct Migrator;
 
@@ -32,6 +33,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0007_builtin_basic_writing::Migration),
             Box::new(m0008_knowledge_first::Migration),
             Box::new(m0009_role_effort::Migration),
+            Box::new(m0010_tool_error_limit::Migration),
         ]
     }
 }
@@ -50,4 +52,12 @@ pub(crate) async fn execute_sql_file(manager: &SchemaManager<'_>, sql: &str) -> 
 pub async fn up(conn: &sea_orm::DatabaseConnection) -> Result<(), DbErr> {
     use sea_orm_migration::MigratorTrait;
     Migrator::up(conn, None).await
+}
+
+/// Applies the first `count` migrations. Tests use this to build a pre-0010 fixture without
+/// dropping columns from the finished schema (which SQLite does not guarantee under a pooled
+/// connection).
+pub async fn up_to(conn: &sea_orm::DatabaseConnection, count: u32) -> Result<(), DbErr> {
+    use sea_orm_migration::MigratorTrait;
+    Migrator::up(conn, Some(count)).await
 }

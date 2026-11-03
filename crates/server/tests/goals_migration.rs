@@ -197,7 +197,8 @@ async fn pre_goals_database() -> (tempfile::TempDir, std::path::PathBuf) {
     // edit to 0001 alone would not.
     db.conn()
         .execute_unprepared(
-            "DELETE FROM seaql_migrations WHERE version = 'm0006_goals_and_switches'",
+            "DELETE FROM seaql_migrations WHERE version IN \
+               ('m0006_goals_and_switches', 'm0010_tool_error_limit')",
         )
         .await
         .expect("rewind to 0005");

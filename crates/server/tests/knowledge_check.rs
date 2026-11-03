@@ -839,3 +839,130 @@ async fn a_topic_session_can_finish_after_its_target_is_excluded() {
         .await;
     assert_eq!(task["status"], "done", "{task}");
 }
+
+/// D-164: the research budget is frozen onto the session, renders in the kickoff and in the soft
+/// notice, and the notice fires once — on the first call past the budget, not every call.
+#[tokio::test]
+async fn the_research_budget_is_frozen_and_the_notice_fires_once() {
+    let runtime = runtime(vec![
+        ScriptStep::new().tool(
+            "set_target_scope",
+            json!({ "name": "Budget scope", "description": "budget test scope" }),
+        ),
+        ScriptStep::new().tool("search_knowledge", json!({ "query": "one" })),
+        ScriptStep::new().tool("search_knowledge", json!({ "query": "two" })),
+        ScriptStep::new().tool("search_knowledge", json!({ "query": "three" })),
+        ScriptStep::new().tool("search_knowledge", json!({ "query": "four" })),
+        ScriptStep::new().tool("search_knowledge", json!({ "query": "five" })),
+        ScriptStep::new().tool("finish_research", json!({ "report": "done" })),
+    ])
+    .await;
+    let (status, body) = runtime
+        .app
+        .patch(
+            "/api/app-settings",
+            json!({ "research_max_tool_calls": 2, "research_max_entries": 25 }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (_task_id, session_id) = start_check(&runtime, runtime.book_id, "").await;
+    // Editing the setting after creation must not change the frozen budget.
+    let (status, body) = runtime
+        .app
+        .patch(
+            "/api/app-settings",
+            json!({ "research_max_tool_calls": 40 }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let kickoff = kickoff_text(&runtime, session_id).await;
+    assert!(
+        kickoff.contains("最多约 2 次工具调用"),
+        "the kickoff renders the frozen budget: {kickoff}"
+    );
+    wait(&runtime, session_id).await;
+
+    let calls = runtime.calls(session_id).await;
+    assert_eq!(
+        calls.len(),
+        7,
+        "set-target, five searches and the finish call: {:?}",
+        calls.iter().map(|call| &call.name).collect::<Vec<_>>()
+    );
+    assert_eq!(calls[0].appendices.trim(), "[]");
+    assert_eq!(calls[1].appendices.trim(), "[]");
+    assert!(
+        calls[2].appendices.contains("3/2"),
+        "the notice fires on the first call past the budget: {}",
+        calls[2].appendices
+    );
+    assert_eq!(
+        calls[3].appendices.trim(),
+        "[]",
+        "the notice must not repeat on the next call: {}",
+        calls[3].appendices
+    );
+    assert_eq!(
+        calls[6].appendices.trim(),
+        "[]",
+        "the notice must not repeat on the finish call: {}",
+        calls[6].appendices
+    );
+    let (_, task) = runtime
+        .app
+        .get(&format!("/api/research-tasks/{_task_id}"))
+        .await;
+    assert_eq!(task["status"], "done", "{task}");
+}
+
+/// D-164: the entry budget is its own soft trigger, also one notice only, and it reads the frozen
+/// session value rather than the setting as it is when the notice fires.
+#[tokio::test]
+async fn the_research_entry_budget_is_soft_and_fires_once() {
+    let runtime = runtime(vec![
+        ScriptStep::new().tool(
+            "set_target_scope",
+            json!({ "name": "Entry budget scope", "description": "entry budget" }),
+        ),
+        ScriptStep::new().tool(
+            "save_knowledge_entry",
+            json!({ "title": "One", "content": "one", "source_urls": [] }),
+        ),
+        ScriptStep::new().tool(
+            "save_knowledge_entry",
+            json!({ "title": "Two", "content": "two", "source_urls": [] }),
+        ),
+        ScriptStep::new().tool("finish_research", json!({ "report": "done" })),
+    ])
+    .await;
+    let (status, body) = runtime
+        .app
+        .patch(
+            "/api/app-settings",
+            json!({ "research_max_entries": 1, "research_max_tool_calls": 40 }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (_task_id, session_id) = start_check(&runtime, runtime.book_id, "").await;
+    wait(&runtime, session_id).await;
+
+    let calls = runtime.calls(session_id).await;
+    assert_eq!(calls.len(), 4, "target, two saves and the finish call");
+    assert_eq!(
+        calls[1].appendices.trim(),
+        "[]",
+        "one saved entry is not over budget"
+    );
+    assert!(
+        calls[2].appendices.contains("2/1"),
+        "the notice fires on the second saved entry: {}",
+        calls[2].appendices
+    );
+    assert_eq!(
+        calls[3].appendices.trim(),
+        "[]",
+        "the notice does not repeat on the finish call: {}",
+        calls[3].appendices
+    );
+}

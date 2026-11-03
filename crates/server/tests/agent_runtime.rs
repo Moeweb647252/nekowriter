@@ -377,6 +377,88 @@ async fn test_12_five_consecutive_tool_errors_pause_the_session() {
     );
 }
 
+/// D-164: a session frozen with limit 0 keeps running after 12 consecutive tool errors, and the
+/// limit does not change when the app setting is edited afterwards.
+#[tokio::test]
+async fn test_12_zero_tool_error_limit_is_unlimited_and_frozen() {
+    let mut steps = Vec::new();
+    for _ in 0..12 {
+        steps.push(
+            tool_step("submit_review", json!({ "verdict": "pass" }))
+                .delay(Duration::from_millis(20)),
+        );
+    }
+    let runtime = runtime(steps).await;
+    let (status, body) = runtime
+        .app
+        .patch("/api/app-settings", json!({ "tool_error_streak_limit": 0 }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let session_id = runtime.start_debug().await;
+    // Editing the setting after creation must not change the frozen 0.
+    let (status, body) = runtime
+        .app
+        .patch("/api/app-settings", json!({ "tool_error_streak_limit": 5 }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let row = loop {
+        let row = runtime.session_row(session_id).await;
+        if row.counters().consecutive_tool_errors >= 12 {
+            break row;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the session did not reach 12 errors; it is {}",
+            row.status
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert_eq!(row.status, "running", "0 must not pause the session");
+    assert!(row.error().is_none(), "no breaker error with limit 0");
+
+    let (status, body) = runtime
+        .app
+        .post(&format!("/api/sessions/{session_id}/stop"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    runtime
+        .wait_status_within(session_id, SessionStatus::Stopped, Duration::from_secs(10))
+        .await;
+}
+
+/// D-164: a frozen limit 2 pauses at exactly the second consecutive error, even when the setting
+/// is changed to 0 after the session starts.
+#[tokio::test]
+async fn test_12_limit_two_pauses_at_exactly_two_and_is_frozen() {
+    let mut steps = Vec::new();
+    for _ in 0..5 {
+        steps.push(
+            tool_step("submit_review", json!({ "verdict": "pass" }))
+                .delay(Duration::from_millis(30)),
+        );
+    }
+    let runtime = runtime(steps).await;
+    let (status, body) = runtime
+        .app
+        .patch("/api/app-settings", json!({ "tool_error_streak_limit": 2 }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let session_id = runtime.start_debug().await;
+    let (status, body) = runtime
+        .app
+        .patch("/api/app-settings", json!({ "tool_error_streak_limit": 0 }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let row = runtime.wait_status(session_id, SessionStatus::Paused).await;
+    let error = row.error().expect("the breaker records its error");
+    assert_eq!(error.code, "agent.tool_error_streak");
+    assert_eq!(row.counters().consecutive_tool_errors, 2);
+    assert_eq!(runtime.calls(session_id).await.len(), 2);
+}
+
 /// spec/03 §15 test 14: after any scenario, re-building the request for the previous step yields
 /// a byte-identical prefix of the current request.
 #[tokio::test]

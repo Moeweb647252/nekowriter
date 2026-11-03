@@ -9,6 +9,18 @@ import type { SearchSettingsDto } from "./SearchSettingsDto";
  */
 export type AppSettingsDto = { roles_defaults: RoleModels, 
 /**
+ * Consecutive tool errors that pause a session; `0` means unlimited (spec/03 §5.7, D-164).
+ */
+tool_error_streak_limit: number, 
+/**
+ * The researcher's soft tool-call budget (spec/05 §8, D-164); at least 1.
+ */
+research_max_tool_calls: number, 
+/**
+ * The researcher's soft entry budget (spec/05 §8, D-164); at least 1.
+ */
+research_max_entries: number, 
+/**
  * The settings new books start with (spec/02 §4.1).
  */
 book_defaults: BookSettings, 

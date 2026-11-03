@@ -1,5 +1,6 @@
 /** Agent roles section (PROJECT §8.12): one model profile per agent role (spec/10 §2.1
- * `roles.defaults`). */
+ * `roles.defaults`), plus the session-wide agent limits (spec/03 §5.7, spec/05 §8, D-164). */
+import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { UsersRound } from "lucide-react"
 
@@ -9,6 +10,7 @@ import { useErrorToast } from "@/components/common/ErrorToast"
 import { EmptyState } from "@/components/common/EmptyState"
 import { ErrorToastInline } from "@/features/settings/ErrorToastInline"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
   Select,
@@ -49,6 +51,11 @@ export default function RolesPage() {
   const models = useModelProfiles()
   const providers = useProviders()
   const patch = usePatchAppSettings()
+  // Local drafts for the three frozen limits; Save writes them as one PATCH, so a half-edited
+  // section is not persisted.
+  const [streakLimit, setStreakLimit] = useState<number | null>(null)
+  const [researchToolCalls, setResearchToolCalls] = useState<number | null>(null)
+  const [researchEntries, setResearchEntries] = useState<number | null>(null)
 
   if (settings.isPending || models.isPending || providers.isPending) {
     return <Skeleton className="h-64" />
@@ -64,6 +71,38 @@ export default function RolesPage() {
   // The effort select edits this map; `roles_defaults` is replaced as a unit, so every PATCH
   // carries both the models and the loaded efforts (D-162).
   const currentEfforts = settings.data.roles_defaults.efforts
+  const currentStreakLimit = streakLimit ?? settings.data.tool_error_streak_limit
+  const currentResearchToolCalls =
+    researchToolCalls ?? settings.data.research_max_tool_calls
+  const currentResearchEntries = researchEntries ?? settings.data.research_max_entries
+  const limitsDirty =
+    currentStreakLimit !== settings.data.tool_error_streak_limit ||
+    currentResearchToolCalls !== settings.data.research_max_tool_calls ||
+    currentResearchEntries !== settings.data.research_max_entries
+  const numberDraft = (
+    raw: string,
+    minimum: number,
+    set: (value: number) => void,
+  ) => {
+    const parsed = Number.parseInt(raw, 10)
+    set(Number.isNaN(parsed) ? minimum : Math.max(minimum, parsed))
+  }
+  const saveLimits = () =>
+    patch.mutate(
+      {
+        tool_error_streak_limit: currentStreakLimit,
+        research_max_tool_calls: currentResearchToolCalls,
+        research_max_entries: currentResearchEntries,
+      },
+      {
+        onSuccess: () => {
+          setStreakLimit(null)
+          setResearchToolCalls(null)
+          setResearchEntries(null)
+        },
+        onError: showError,
+      },
+    )
 
   const setRole = (role: AgentRole, value: string) => {
     const next: RoleModels = {
@@ -90,6 +129,80 @@ export default function RolesPage() {
         <h2 className="text-base font-semibold">{t("settings:roles")}</h2>
         <p className="text-sm text-muted-foreground">{t("settings:roles_hint")}</p>
       </div>
+      <section className="space-y-3 rounded-md border p-3">
+        <div>
+          <h3 className="text-sm font-semibold">{t("settings:agent_limits")}</h3>
+          <p className="text-xs text-muted-foreground">{t("settings:agent_limits_hint")}</p>
+        </div>
+        <div className="flex items-start gap-3">
+          <Label htmlFor="tool-error-limit" className="mt-1.5 w-44 shrink-0">
+            {t("settings:tool_error_streak_limit")}
+          </Label>
+          <div className="flex-1 space-y-1">
+            <Input
+              id="tool-error-limit"
+              type="number"
+              min={0}
+              className="w-24"
+              value={currentStreakLimit}
+              onChange={(event) =>
+                numberDraft(event.target.value, 0, setStreakLimit)
+              }
+            />
+            <p className="text-xs text-muted-foreground">
+              {t("settings:tool_error_streak_limit_hint")}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-start gap-3">
+          <Label htmlFor="research-tool-calls" className="mt-1.5 w-44 shrink-0">
+            {t("settings:research_max_tool_calls")}
+          </Label>
+          <div className="flex-1 space-y-1">
+            <Input
+              id="research-tool-calls"
+              type="number"
+              min={1}
+              className="w-24"
+              value={currentResearchToolCalls}
+              onChange={(event) =>
+                numberDraft(event.target.value, 1, setResearchToolCalls)
+              }
+            />
+            <p className="text-xs text-muted-foreground">
+              {t("settings:research_max_tool_calls_hint")}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-start gap-3">
+          <Label htmlFor="research-entries" className="mt-1.5 w-44 shrink-0">
+            {t("settings:research_max_entries")}
+          </Label>
+          <div className="flex-1 space-y-1">
+            <Input
+              id="research-entries"
+              type="number"
+              min={1}
+              className="w-24"
+              value={currentResearchEntries}
+              onChange={(event) =>
+                numberDraft(event.target.value, 1, setResearchEntries)
+              }
+            />
+            <p className="text-xs text-muted-foreground">
+              {t("settings:research_max_entries_hint")}
+            </p>
+          </div>
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!limitsDirty || patch.isPending}
+          onClick={saveLimits}
+        >
+          {t("settings:agent_limits_save")}
+        </Button>
+      </section>
       {modelList.length === 0 ? (
         <EmptyState title={t("settings:no_models")} description={t("settings:no_models_hint")} />
       ) : (

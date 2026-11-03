@@ -7,4 +7,16 @@ import type { SearchSettingsPatch } from "./SearchSettingsPatch";
 /**
  * `PATCH /app-settings` body. Omitted sections are unchanged (spec/10 §2.1).
  */
-export type AppSettingsPatch = { roles_defaults?: RoleModels | null, book_defaults?: BookSettings | null, search?: SearchSettingsPatch | null, embedding?: EmbeddingSettingsDto | null, };
+export type AppSettingsPatch = { roles_defaults?: RoleModels | null, 
+/**
+ * Frozen onto each new session; `0` means unlimited (D-164).
+ */
+tool_error_streak_limit?: number | null, 
+/**
+ * Frozen onto each new session; at least 1 (D-164).
+ */
+research_max_tool_calls?: number | null, 
+/**
+ * Frozen onto each new session; at least 1 (D-164).
+ */
+research_max_entries?: number | null, book_defaults?: BookSettings | null, search?: SearchSettingsPatch | null, embedding?: EmbeddingSettingsDto | null, };

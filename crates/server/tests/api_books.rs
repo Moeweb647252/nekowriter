@@ -560,6 +560,9 @@ async fn app_settings_defaults_and_patch() {
     assert_eq!(settings["search"]["max_results"], 6);
     assert_eq!(settings["embedding"]["model"], "multilingual-e5-small");
     assert!(settings["roles_defaults"]["writer"].is_null());
+    assert_eq!(settings["tool_error_streak_limit"], 5);
+    assert_eq!(settings["research_max_tool_calls"], 40);
+    assert_eq!(settings["research_max_entries"], 25);
 
     // New books inherit the updated defaults.
     let (status, updated) = app
@@ -623,6 +626,43 @@ async fn app_settings_defaults_and_patch() {
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_error(&body, "validation.failed");
+
+    // The three session limits round-trip through the singleton settings row.
+    let (status, updated) = app
+        .patch(
+            "/api/app-settings",
+            json!({
+                "tool_error_streak_limit": 0,
+                "research_max_tool_calls": 7,
+                "research_max_entries": 8,
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{updated}");
+    assert_eq!(updated["tool_error_streak_limit"], 0);
+    assert_eq!(updated["research_max_tool_calls"], 7);
+    assert_eq!(updated["research_max_entries"], 8);
+    let (_, reread) = app.get("/api/app-settings").await;
+    assert_eq!(reread["tool_error_streak_limit"], 0);
+    assert_eq!(reread["research_max_tool_calls"], 7);
+    assert_eq!(reread["research_max_entries"], 8);
+
+    // Negative streak and non-positive research budgets name their field and are 400.
+    for (field, value) in [
+        ("tool_error_streak_limit", -1),
+        ("research_max_tool_calls", 0),
+        ("research_max_entries", 0),
+    ] {
+        let (status, body) = app
+            .patch("/api/app-settings", json!({ field: value }))
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{field}: {body}");
+        assert_error(&body, "validation.failed");
+        assert!(
+            body["error"]["details"]["fields"][field].is_string(),
+            "the error names {field}: {body}"
+        );
+    }
 
     // The key is masked in responses, and a round-tripped mask does not erase it.
     let (status, body) = app

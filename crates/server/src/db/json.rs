@@ -967,6 +967,8 @@ pub struct SessionCounters {
     pub consecutive_nudges: i32,
     /// A completion was withheld once for confirmation (spec/05 §4, §6).
     pub finish_warned: bool,
+    /// The research-budget notice fired once for this session (spec/05 §8, D-164).
+    pub research_budget_noticed: bool,
 }
 
 /// Cumulative token usage of a session or a single request (spec/02 §4).
@@ -1670,6 +1672,7 @@ mod tests {
             consecutive_tool_errors: 2,
             consecutive_nudges: 1,
             finish_warned: true,
+            research_budget_noticed: true,
         };
         assert_eq!(round_trip(&value), value);
     }

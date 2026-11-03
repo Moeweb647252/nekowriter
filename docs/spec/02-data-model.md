@@ -116,8 +116,12 @@
   holding either key (top-level or in `extra_body`), and every non-null `default_effort` among its
   `effort_levels`. Roles get no
   effort and resolve to the profile's default, so every request stays byte-identical.
+  `0010_tool_error_limit.sql` (D-164) also runs in one Rust-managed transaction. It adds three
+  `agent_sessions` columns with defaults `5`/`40`/`25` (`tool_error_streak_limit`,
+  `research_max_tool_calls`, `research_max_entries`), so every existing session keeps the old
+  hardcoded behaviour. `0001` is not edited for the same reason as 0009.
 
-## 2. Schema (0001_init.sql, upgraded by 0002_research_deferred.sql, 0003, 0004, 0005, 0006, 0007, 0008 and 0009)
+## 2. Schema (0001_init.sql, upgraded by 0002_research_deferred.sql, 0003, 0004, 0005, 0006, 0007, 0008, 0009 and 0010)
 
 ```sql
 -- ───────────────────────────── App configuration ─────────────────────────────
@@ -601,6 +605,10 @@ CREATE TABLE agent_sessions (
   granularity          TEXT CHECK (granularity IS NULL OR granularity IN ('sentence','paragraph','free','chapter')),
   auto_pause           INTEGER NOT NULL DEFAULT 0,
   pause_after_outline  INTEGER NOT NULL DEFAULT 0,
+  -- added by 0010 (D-164): frozen agent limits; streak 0 = unlimited
+  tool_error_streak_limit INTEGER NOT NULL DEFAULT 5 CHECK (tool_error_streak_limit >= 0),
+  research_max_tool_calls INTEGER NOT NULL DEFAULT 40 CHECK (research_max_tool_calls >= 1),
+  research_max_entries     INTEGER NOT NULL DEFAULT 25 CHECK (research_max_entries >= 1),
   pause_requested      INTEGER NOT NULL DEFAULT 0,
   held_tool_call_id    INTEGER REFERENCES agent_tool_calls(id) ON DELETE SET NULL,
   base_content_version INTEGER,                        -- chapters.content_version when the session started
@@ -873,6 +881,7 @@ type SessionCounters = {
   steps: number; tool_calls: number; retrieval_calls: number;
   consecutive_tool_errors: number; consecutive_nudges: number;
   finish_warned: boolean;              // a completion was withheld once for confirmation (spec/05 §4, §6)
+  research_budget_noticed: boolean;    // the soft research-budget notice fired once (spec/05 §8, D-164)
 };
 type Usage = {
   requests: number; input_tokens: number; cached_input_tokens: number;
@@ -953,6 +962,9 @@ type SnapshotGoalNode = { level, parent_id, title, purpose, status, conditions, 
 | Key | Value |
 |---|---|
 | `roles.defaults` | `RoleModels` |
+| `tool_error_streak_limit` | `number` default `5`, `>= 0`; `0` = unlimited (D-164) |
+| `research_max_tool_calls` | `number` default `40`, `>= 1` (D-164) |
+| `research_max_entries` | `number` default `25`, `>= 1` (D-164) |
 | `book_defaults` | `BookSettings` used for new books |
 | `search` | `{ provider: "none" \| "tavily" \| "deepseek" \| "searxng"; tavily_api_key?: string /* literal or env:NAME, like provider keys */; deepseek_api_key?: string /* separate secret, same literal-or-env:NAME rule */; searxng_base_url?: string; fetch_via?: "direct" \| "deepseek" /* default "direct"; "deepseek" needs deepseek_api_key */; max_results: number /* default 6 */ }` |
 | `embedding` | `{ model: "multilingual-e5-small" \| "bge-small-zh-v1.5" \| "embeddinggemma-300m-q" }` (default `multilingual-e5-small`) |

@@ -30,9 +30,6 @@ use sea_orm::{
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
-use crate::agent::tools::research::{
-    MAX_ENTRIES as MAX_RESEARCH_ENTRIES, MAX_TOOL_CALLS as MAX_RESEARCH_TOOL_CALLS,
-};
 use crate::db::entities::{
     agent_inbox, agent_messages, agent_sessions, agent_tool_calls, books, chapters, tracks,
 };
@@ -60,9 +57,6 @@ use super::tools::{
 fn frozen_tool_names(session: &agent_sessions::Model) -> Vec<String> {
     super::context::frozen_tool_names(session)
 }
-
-/// How many consecutive tool errors trip the circuit breaker (spec/03 §5.2, §5.7).
-pub const TOOL_ERROR_STREAK_LIMIT: i32 = 5;
 
 /// How many unanswered nudges fail the session (spec/03 §5.6).
 pub const NUDGE_LIMIT: i32 = 2;
@@ -1585,26 +1579,32 @@ async fn finalize_inner(
             });
         }
     }
-    // The researcher's budget notice (spec/05 §8): past 40 tool calls or 25 entries the model is
-    // told to wrap up — a soft limit, never a refusal. Entries are counted from the task's rows,
-    // which accumulate across runs, so a resumed session does not start a second budget from
-    // zero (spec/07 §8).
+    // The researcher's budget notice (spec/05 §8): past the session's frozen tool-call or entry
+    // budget the model is told to wrap up — a soft limit, never a refusal. Entries are counted
+    // from the task's rows, which accumulate across runs, so a resumed session does not start a
+    // second budget from zero (spec/07 §8). The notice fires **once** per session: the transcript
+    // showed the identical notice on every call past the limit, which adds no information and
+    // buries the useful turns (D-164).
     if super::session::kind_of(session) == SessionKind::Research
         && !outcome.is_error
         && let Some(task_id) = session.research_task_id
     {
         let entries = crate::services::research::entry_count(tx, task_id).await?;
-        if (counters.tool_calls > MAX_RESEARCH_TOOL_CALLS || entries > MAX_RESEARCH_ENTRIES)
+        let over_budget = counters.tool_calls > session.research_max_tool_calls
+            || entries > session.research_max_entries;
+        if over_budget
+            && !counters.research_budget_noticed
             && let Ok(rendered) = prompts.render(
                 "notice.research_budget",
                 &json!({
                     "used_calls": counters.tool_calls,
-                    "max_calls": MAX_RESEARCH_TOOL_CALLS,
+                    "max_calls": session.research_max_tool_calls,
                     "entries": entries,
-                    "max_entries": MAX_RESEARCH_ENTRIES,
+                    "max_entries": session.research_max_entries,
                 }),
             )
         {
+            counters.research_budget_noticed = true;
             appendices.push(Appendix {
                 kind: AppendixKind::EffectNotice,
                 text: rendered.text,
@@ -1702,11 +1702,17 @@ async fn finalize_inner(
                 let mut completion_events =
                     run_completion_handler(tx, session, call, completion, prompts).await?;
                 events.append(&mut completion_events);
-            } else if counters.consecutive_tool_errors >= TOOL_ERROR_STREAK_LIMIT {
-                // Circuit breaker: five consecutive tool errors pause for the author (spec/03 §5.7).
+            } else if session.tool_error_streak_limit > 0
+                && counters.consecutive_tool_errors >= session.tool_error_streak_limit
+            {
+                // Circuit breaker: the session's frozen limit (0 = unlimited) is reached
+                // (spec/03 §5.7, D-164).
                 let error = SessionError {
                     code: "agent.tool_error_streak".to_owned(),
-                    message: format!("{TOOL_ERROR_STREAK_LIMIT} consecutive tool errors"),
+                    message: format!(
+                        "{} consecutive tool errors",
+                        session.tool_error_streak_limit
+                    ),
                     retryable: true,
                     at: now,
                 };

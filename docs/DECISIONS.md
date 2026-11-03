@@ -3595,6 +3595,53 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     shorten an individual model request.
 - **Spec**: spec/03 §3, §6; spec/07 §8 step 5; spec/10 §2.5; spec/11 §5.4.
 
+
+### D-164 The tool-error breaker and the research budget are configurable per session
+
+- **Context**:
+  - The author's research session paused after five consecutive `web_fetch` 404s. The
+    `TOOL_ERROR_STREAK_LIMIT = 5` hardcode was the whole policy, with no way to keep a Model
+    exploring longer or to turn the breaker off.
+  - The same session then ran to 45/40 tool calls with 0/25 entries saved, and the transcript
+    showed the **same** `notice.research_budget` on every call from #41 through #45. The values were
+    the hardcoded `MAX_TOOL_CALLS = 40` and `MAX_ENTRIES = 25`; the repetition buried the useful
+    turns.
+- **Decision**:
+  - **Settings and validation.** `AppSettingsDto` and `AppSettingsPatch` gain
+    `tool_error_streak_limit` (default **5**, `>= 0`; `0` = unlimited),
+    `research_max_tool_calls` (default **40**, `>= 1`) and `research_max_entries` (default **25**,
+    `>= 1`). A negative streak or a non-positive research budget is `400 validation.failed` with
+    `details.fields` naming the field. The research budgets deliberately have **no** zero case: a
+    researcher with no budget never finishes, so `0` is not invented as symmetry.
+  - **Frozen at creation.** Migration `0010_tool_error_limit` adds three `agent_sessions` columns
+    with defaults 5/40/25. Every creation path (normal, debug and the debug echo) reads the
+    singleton settings in its transaction and copies the values onto the row; a rollover child
+    inherits its parent's values. Existing sessions keep the old defaults. A setting edit never
+    changes a running session.
+  - **The runner.** The breaker pauses only when `tool_error_streak_limit > 0 &&
+    counters.consecutive_tool_errors >= tool_error_streak_limit`; the counter still increments
+    with `0`. The research notice reads the session's two budget columns, and the kickoff renders
+    the same values.
+  - **The notice fires once.** A `SessionCounters.research_budget_noticed` flag marks the first
+    crossing, so the model gets one clear wrap-up instruction instead of the identical notice on
+    every later call. The counters JSON is append-compatible: older rows default the flag to
+    `false`.
+  - **The retrieval budget remains hardcoded.** The 30-retrieval planner/writer appendix is not
+    part of this change: making it configurable would add a fourth setting, another session column
+    and another UI control for a notice the author can already read. It stays at 30 and is
+    recorded here as the remaining hardcoded limit.
+- **Consequences**:
+  - With the defaults nothing changes: a fresh install pauses at 5 and a researcher gets the
+    40/25 soft budgets. Setting the streak to `0` removes the pause for that session; runaway
+    tool loops then run until the author stops the session or the provider fails.
+  - The three settings round-trip through `GET/PATCH /api/app-settings`; the settings UI states the
+    `0 = unlimited` rule in the streak help text and the `>= 1` rule in both research-budget hints.
+  - Migration 0010 is append-only and transactional; a failed copy rolls back and retries. Fresh
+    and upgraded schemas are identical, and existing sessions read 5/40/25.
+  - The research notice is now one per session, not one per call; a resumed session keeps the
+    flag, so it does not repeat the notice either.
+- **Spec**: spec/03 §5.7; spec/05 §8; spec/10 §2.1.
+
 ### D-165 The author's steering feedback gets its own transcript row
 
 - **Context**:

@@ -230,7 +230,8 @@ step_tool(s, tc):
     elif hold_condition(s, tc, outcome): tc.status ← held;         s.held_tool_call_id ← tc; transition(s, held)
     else:
         finalize(s, tc)                                            # §5.4, same transaction
-        if s is still running and counters.consecutive_tool_errors ≥ 5:
+        if s is still running and s.tool_error_streak_limit > 0
+           and counters.consecutive_tool_errors ≥ s.tool_error_streak_limit:
             s.error ← {code: "agent.tool_error_streak"}; transition(s, paused, "needs_attention")
   COMMIT
   emit domain events from outcome (chapter.content, canon.changed, …), session.tool_call, session.updated
@@ -425,9 +426,9 @@ Nudge keys by session kind and phase: `chapter_outline` → `planner.notice.nudg
 | Other 400/404 | `failed` (`provider.bad_request` with the provider's message) |
 | The provider row of the model snapshot was deleted, so its key cannot be read | `failed` (`model.missing_provider`); the author abandons the session and starts a new one |
 | `refusal` stop reason | `failed` (`provider.refusal`); the author may edit settings or feedback and Continue |
-| 5 consecutive tool errors | `paused` with `agent.tool_error_streak` (the author reads the errors, gives feedback, resumes) |
+| The session's frozen tool-error limit is reached (default 5; `0` = unlimited) | `paused` with `agent.tool_error_streak` (the author reads the errors, gives feedback, resumes); `0` never pauses on a streak, and the counter still increments (D-164) |
 | 2 consecutive nudges without a tool call | `failed` (`agent.no_tool_call`) |
-| Retrieval budget exceeded (30 retrieval calls in a planner or writer session) | from then on, each retrieval result gets the appendix `planner.notice.retrieval_budget` for a planner session, `writer.notice.retrieval_budget` otherwise; calls still work |
+| Retrieval budget exceeded (30 retrieval calls in a planner or writer session) | from then on, each retrieval result gets the appendix `planner.notice.retrieval_budget` for a planner session, `writer.notice.retrieval_budget` otherwise; calls still work. This budget remains hardcoded (D-164) |
 
 `failed`, `stopped` and `interrupted` sessions show **Continue**, which re-enters the loop. Because
 history is intact, continuing re-sends exactly the request that failed, plus a user message
@@ -729,7 +730,10 @@ With `ScriptedProvider` (spec/04 §7) and a temp database:
 10. Granularity switch while the model generates → the call validates against the old mode; the
     next result carries the switch notice.
 11. Text-only replies → two nudges → `failed`.
-12. Five consecutive invalid calls → `paused` with `agent.tool_error_streak`.
+12. Tool-error limit: with the default frozen limit 5, five consecutive invalid calls → `paused`
+    with `agent.tool_error_streak`; with the frozen limit 2, exactly two; with the frozen limit 0,
+    at least twelve invalid calls keep the session `running` and no `agent.tool_error_streak` is
+    recorded.
 13. Rollover when `last_prompt_tokens` is near the limit → child session with the draft in its
     kickoff; parent superseded; inbox moved; feedback given on the parent's last held call
     appears in the child's `author_notes`.

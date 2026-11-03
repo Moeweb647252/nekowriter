@@ -22,11 +22,6 @@ use super::{
     PrepareCtx, Prepared, ToolCtx, ToolError, ToolErrorKind, ToolHandler, ToolKind, ToolOutcome,
 };
 
-/// The budget a researcher session is told about (spec/05 §8): 40 tool calls and 25 entries,
-/// both soft limits that a notice reports past rather than a hard refusal.
-pub const MAX_TOOL_CALLS: i32 = 40;
-pub const MAX_ENTRIES: i32 = 25;
-
 fn decode<T: for<'de> Deserialize<'de>>(input: Value) -> Result<T, ToolError> {
     serde_json::from_value(input).map_err(|err| validation(vec![err.to_string()]))
 }

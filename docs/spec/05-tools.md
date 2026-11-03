@@ -326,9 +326,11 @@ In a knowledge check, `save_knowledge_entry` and `update_knowledge_entry` before
 `set_target_scope` return `error.target_scope_unset` (call `set_target_scope` first) instead of
 `error.no_knowledge_scope`.
 
-Research budget (shown in the kickoff, enforced softly): 40 tool calls and 25 entries per task,
-the same for a knowledge check.
-Past the budget, every result gets `notice.research_budget`.
+Research budget (shown in the kickoff, enforced softly): the session's frozen
+`research_max_tool_calls` (default 40) and `research_max_entries` (default 25), the same for a
+knowledge check. Both are app settings and must be at least 1; unlike the tool-error limit, `0` is
+not unlimited. Past either budget, the **first** result gets `notice.research_budget` once; later
+results do not repeat the identical notice (D-164).
 
 ## 9. Required tests
 - Each tool: a happy path, each documented error, and the `ui` payload shape.
