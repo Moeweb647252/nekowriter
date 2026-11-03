@@ -408,6 +408,9 @@ async fn an_author_topic_runs_while_conception_runs() {
         create_check_book(&runtime, "Add while conception", true).await;
     runtime.wait_any_status(check_session).await;
     wait_until(|| async { sessions(&runtime, book_id, "conception").await.len() == 1 }).await;
+    // The scripted provider is shared with the conception runner. Wait until it has taken its
+    // own step so the topic's runner cannot consume the conception text step first.
+    wait_until(|| async { runtime.scripted.requests().len() >= 2 }).await;
     let (status, body) = runtime
         .app
         .post(
@@ -471,6 +474,9 @@ async fn author_started_conception_does_not_stop_the_queue_or_duplicate() {
         .post(&format!("/api/books/{book_id}/conception/start"), json!({}))
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
+    // Consume the conception runner's own scripted step before the queue's next topic asks for
+    // the shared provider step.
+    wait_until(|| async { runtime.scripted.requests().len() >= 4 }).await;
     wait_until(|| async {
         topic_rows(&runtime, check_id)
             .await

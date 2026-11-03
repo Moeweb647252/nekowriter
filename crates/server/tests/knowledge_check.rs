@@ -578,7 +578,9 @@ async fn set_research_topics_in_a_check_inserts_ready_topics_with_check_id() {
                 ]
             }),
         ),
-        ScriptStep::new().tool("finish_research", json!({ "report": "planned" })),
+        ScriptStep::new()
+            .delay(Duration::from_secs(30))
+            .tool("finish_research", json!({ "report": "planned" })),
     ])
     .await;
     let _existing = scope(&runtime, "Existing scope", "An existing scope").await;
@@ -602,7 +604,20 @@ async fn set_research_topics_in_a_check_inserts_ready_topics_with_check_id() {
         .to_owned();
 
     let (task_id, session_id) = start_check(&runtime, runtime.book_id, "").await;
-    wait(&runtime, session_id).await;
+    // The check's finish step is delayed, so the queue has not started yet. Poll for the tool's
+    // rows, then read each row's status and scope_id from the same fresh query.
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let ids: Vec<i32> = loop {
+        let rows = check_topic_rows(&runtime, task_id).await;
+        if rows.len() == 2 {
+            break rows.into_iter().map(|row| row.0).collect();
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the check never wrote its two topics: {rows:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
     let calls = call(&runtime, session_id).await;
     let set = calls
         .iter()
@@ -610,27 +625,13 @@ async fn set_research_topics_in_a_check_inserts_ready_topics_with_check_id() {
         .expect("set call");
     assert!(!set.2, "{set:?}");
 
-    let rows = check_topic_rows(&runtime, task_id).await;
-    assert_eq!(rows.len(), 2, "{rows:?}");
-    for (_, _, origin, status, _, session_id) in &rows {
-        assert_eq!(origin, "conception");
-        // The check may have completed before the assertions; its queue can already have moved
-        // the first inserted row to `running`. The guarantee under test is the row created by the
-        // tool, never a draft and never a session at creation time.
-        assert!(matches!(status.as_str(), "ready" | "running"), "{status}");
-        assert!(
-            session_id.is_none() || matches!(status.as_str(), "running"),
-            "{status}"
-        );
-    }
     let db = runtime.app.db().conn();
-    let queue_started = rows.iter().any(|row| row.3 == "running");
-    for (id, _, _, status, _, _) in &rows {
+    for id in ids {
         let row = db
             .query_one_raw(Statement::from_string(
                 DatabaseBackend::Sqlite,
                 format!(
-                    "SELECT check_id, kind, language, scope_id, book_id FROM research_tasks WHERE id = {id}"
+                    "SELECT check_id, kind, language, scope_id, book_id, status, origin, session_id                      FROM research_tasks WHERE id = {id}"
                 ),
             ))
             .await
@@ -642,21 +643,22 @@ async fn set_research_topics_in_a_check_inserts_ready_topics_with_check_id() {
             row.try_get::<String>("", "language").unwrap(),
             writing_language
         );
-        // A ready row is the tool's output before the queue touches it. Once the queue starts a
-        // topic, `prepare_scope` may legitimately store its scope before the test observes the
-        // running row (and the queue may also have created the scope).
-        if status == "ready" {
-            assert_eq!(row.try_get::<Option<i32>>("", "scope_id").unwrap(), None);
-        }
+        assert_eq!(row.try_get::<String>("", "origin").unwrap(), "conception");
+        assert_eq!(row.try_get::<String>("", "status").unwrap(), "ready");
+        assert_eq!(row.try_get::<Option<i32>>("", "scope_id").unwrap(), None);
+        assert_eq!(row.try_get::<Option<i32>>("", "session_id").unwrap(), None);
         assert_eq!(row.try_get::<i32>("", "book_id").unwrap(), runtime.book_id);
     }
-    if !queue_started {
-        assert_eq!(
-            scalar(&runtime, "SELECT count(*) AS n FROM knowledge_scopes").await,
-            scopes_before,
-            "check topics do not create scopes before the queue starts"
-        );
-    }
+    assert_eq!(
+        scalar(&runtime, "SELECT count(*) AS n FROM knowledge_scopes").await,
+        scopes_before,
+        "the check's set_research_topics never creates a scope"
+    );
+    let (status, body) = runtime
+        .app
+        .post(&format!("/api/sessions/{session_id}/abandon"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         scalar(
             &runtime,

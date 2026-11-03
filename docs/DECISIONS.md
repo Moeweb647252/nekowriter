@@ -3808,6 +3808,9 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     raised to the suite's 30 seconds. The r11 check also waits for the `finish_revision` call to be
     sealed before asserting its error, so it cannot observe a still-running call. Test-only changes, no
     production behaviour.
+  - The follow-up commit also carries the S-1 prompt wording (the conditional pre-conception
+    premise in `conception.system` and the supplementary-topic tool label), the gate hardening
+    above, and the committed queue coverage additions.
   - The conception kickoff, the prep kickoff, the prep tool list and `conception.system` change,
     and their `kickoff_baseline` snapshots with them. Topic research sessions are byte-identical.
   - For the author's database (read-only check, 2026-11-03), 0011 changes no row:
