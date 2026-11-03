@@ -52,17 +52,43 @@ const OPEN_STATUSES = new Set([
   "interrupted",
 ])
 
-/** The session the panel shows: the pinned one, else the newest open one, else the newest. */
+/** The newest open session, by id. */
+function newestOpenSession(sessions: SessionDto[]): SessionDto | undefined {
+  let newest: SessionDto | undefined
+  for (const session of sessions) {
+    if (!OPEN_STATUSES.has(session.status)) {
+      continue
+    }
+    if (newest === undefined || session.id > newest.id) {
+      newest = session
+    }
+  }
+  return newest
+}
+
+/**
+ * The session the panel shows: the pinned one while it is open, else the newest open session,
+ * else the pinned terminal one (so a finished session stays readable), else the newest.
+ *
+ * A terminal pin must yield to an open session: `completed`/`abandoned` are not open, and keeping
+ * the pin unconditionally left the panel on a dead session while a new one was running (task-296).
+ * `newestOpenSession` compares ids because the book list is newest-first (`id` desc) while a
+ * chapter's `open_sessions` is oldest-first (`id` asc), so the array order cannot be trusted.
+ */
 export function pickSession(
   sessions: SessionDto[],
   pinned: SessionDto | undefined,
   pinnedId: number | null,
 ): SessionDto | undefined {
-  if (pinnedId !== null && pinned !== undefined) {
+  const hasPin = pinnedId !== null && pinned !== undefined
+  if (hasPin && OPEN_STATUSES.has(pinned.status)) {
     return pinned
   }
-  const open = sessions.find((session) => OPEN_STATUSES.has(session.status))
-  return open ?? sessions[0]
+  const open = newestOpenSession(sessions)
+  if (open !== undefined) {
+    return open
+  }
+  return hasPin ? pinned : sessions[0]
 }
 
 /**
@@ -116,6 +142,19 @@ export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: 
     pinned !== undefined && candidates.some((session) => session.id === pinned.id)
   const chosen = pickSession(candidates, pinnedIsCandidate ? pinned : undefined, pinnedIsCandidate ? pinnedId : null)
   const chosenId = chosen?.id ?? null
+  // A terminal pin yielded to the open session the panel now follows; persist that follow so the
+  // panel never falls back to the dead pin later. The id comparison makes this a one-pass
+  // render-phase adjustment instead of a loop, and keeps it out of an effect (setState in
+  // effects is forbidden by the React Compiler rules the repo follows). `pinned` may come from
+  // the book-wide fallback rather than the chapter's candidates, so it is not required to be one.
+  if (
+    pinned !== undefined &&
+    !OPEN_STATUSES.has(pinned.status) &&
+    chosenId !== null &&
+    chosenId !== pinnedId
+  ) {
+    setPinnedId(chosenId)
+  }
   const snapshot = useSession(chosenId)
   const session = snapshot.data?.session ?? chosen
   const messages = snapshot.data?.messages ?? []
