@@ -9,7 +9,7 @@ export type Appendix = { kind: AppendixKind,
 /**
  * Already rendered from its prompt template.
  */
-text: string, inbox_id?: number | null,
+text: string, inbox_id?: number | null, 
 /**
  * The `agent_inbox.kind` this appendix came from, set when the appendix is sealed. Rows
  * sealed before this field existed omit it and are author messages by construction (D-165).

@@ -3607,12 +3607,17 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     `crates/server/tests/steering_header.rs` proves that it arrives as an inbox appendix. Appendix
     delivery needs an unsealed tool batch; without one the notice becomes a notice-kind user
     message instead, which is already labelled correctly.
+  - Rows sealed before `inbox_kind` existed stored **both** kinds with no discriminator. Their
+    absence therefore does not prove authorship; treating absent as the author's message is a
+    backward-compatibility choice, not a fact about those rows.
 - **Decision**:
   - **Carry the discriminator.** `Appendix` gains
     `inbox_kind: Option<InboxKind>` (`#[serde(default)]`), persisted inside the sealed call.
     `seal::inbox_appendix` receives the consumed row's `InboxKind` and stores it. An old row without
-    the field deserializes to `None`; the web treats `None` as `UserMessage`, so the author's real
-    feedback keeps the lifted-row behaviour. The row is never classified by sniffing its text.
+    the field deserializes to `None`; the web treats `None` as `UserMessage` so the author's real
+    feedback keeps the lifted-row behaviour. The residual limitation is explicit: an **old**
+    runtime notice also has no discriminator and is still lifted and labelled as the author's
+    message. The row is never classified by sniffing its text.
   - **Lift only author messages.** `ActivityStream` renders an author row only for an
     `AppendixKind::Inbox` whose `inbox_kind` is `UserMessage` or absent (legacy). An
     `InboxKind::Notice` stays inside the tool card as a `NoticeItem`.
@@ -3629,10 +3634,16 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   - All four `ActivityStream` surfaces (agent panel, conception conversation, knowledge-check pane,
     research task page) get the author row automatically because the logic lives in the shared
     component.
-  - The runtime-notice mislabel is fixed rather than left as a follow-up; the legacy fallback is
-    covered by a serde test and the web trio (user lifts, notice does not, legacy lifts).
+  - The runtime-notice mislabel is fixed for rows sealed **after** this commit; rows sealed before
+    it have no discriminator and remain indistinguishable, so the fallback still lifts them. The
+    legacy fallback is covered by a serde test and the web trio (user lifts, notice does not,
+    legacy lifts).
+  - **Known follow-up (pre-existing, out of this commit).** `NoticeItem` still labels any card
+    appendix of kind `inbox` as "Your message", including a runtime notice that now stays in the
+    card; a notice-kind **message** still renders the author label in the stream. Both need the
+    same discriminator/labeling work and are recorded rather than changed here.
   - **Known pre-existing detail.** Expanding a sealed card still shows the inbox text inside the
     composed `result_text`, because the seal step composes every appendix into it. Filtering the
     appendices list does not change the composed text; this is not a regression of the author-row
     change and is not fixed here.
-- **Spec**: spec/03 §5.3, §8; spec/11 §5.3.
+- **Spec**: spec/02 §4; spec/03 §5.3, §8; spec/11 §5.3.

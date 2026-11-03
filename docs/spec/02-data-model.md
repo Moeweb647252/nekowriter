@@ -890,6 +890,7 @@ type Appendix = {
   kind: "effect_notice" | "edit_report" | "user_feedback" | "inbox";
   text: string;                        // already rendered from its prompt template
   inbox_id?: number;
+  inbox_kind?: "user_message" | "notice"; // set at seal time; absent on rows sealed before D-165
 };
 
 // agent_tool_calls.effects — applied when the call is finalized (not when executed)
