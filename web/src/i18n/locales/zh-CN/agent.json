@@ -115,6 +115,7 @@
     "result": "结果",
     "preview": "正在生成…",
     "appendices": "附在这次结果之后",
+    "failed_with": "失败 — {{message}}",
     "held": "等待你的审阅",
     "awaiting_input": "等待你的回答"
   },

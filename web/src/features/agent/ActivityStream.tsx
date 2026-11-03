@@ -16,6 +16,7 @@ import { useTranslation } from "react-i18next"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { ChevronRight, Loader2 } from "lucide-react"
 
+import type { Appendix } from "@/api/gen/Appendix"
 import type { InboxItemDto } from "@/api/gen/InboxItemDto"
 import type { MessageDto } from "@/api/gen/MessageDto"
 import type { MessageWithCallsDto } from "@/api/gen/MessageWithCallsDto"
@@ -158,6 +159,7 @@ function TextWithThinking({
 export type Row =
   | { kind: "history"; key: string; state: HistoryState }
   | { kind: "message"; key: string; message: MessageDto; calls: ToolCallDto[] }
+  | { kind: "inbox"; key: string; appendix: Appendix }
   | { kind: "live"; key: string; text: string; reasoning: string }
   | { kind: "queued"; key: string; item: InboxItemDto }
   | { kind: "divider"; key: string; label: string }
@@ -200,6 +202,8 @@ export function tailSignature(rows: Row[]): string {
       return `message:${last.key}:${last.message.blocks
         .map((block) => block.text.length)
         .join(",")}:${last.calls.map((call) => `${call.id}:${call.status}`).join(",")}`
+    case "inbox":
+      return `inbox:${last.key}:${last.appendix.text.length}`
     case "queued":
       return `queued:${last.key}:${last.item.content.length}`
     case "history":
@@ -261,6 +265,11 @@ export function buildRows(
   if (history !== undefined) {
     rows.push({ kind: "history", key: "history", state: history })
   }
+  // Steering feedback rides on the next tool result as an `inbox` appendix (spec/03 §5.3), but a
+  // collapsed tool card must not hide the author's own words. Lift those appendices into author
+  // rows after their message, de-duplicated by `inbox_id`: the live buffer and a snapshot refresh
+  // can both carry the same call, and the row must never appear twice.
+  const seenInbox = new Set<number>()
   for (const item of messages) {
     rows.push({
       kind: "message",
@@ -268,6 +277,25 @@ export function buildRows(
       message: item.message,
       calls: item.tool_calls,
     })
+    for (const call of item.tool_calls) {
+      for (const appendix of call.appendices) {
+        if (appendix.kind !== "inbox") {
+          continue
+        }
+        const inboxId = appendix.inbox_id
+        if (inboxId !== null && inboxId !== undefined) {
+          if (seenInbox.has(inboxId)) {
+            continue
+          }
+          seenInbox.add(inboxId)
+        }
+        rows.push({
+          kind: "inbox",
+          key: `inbox-${inboxId ?? `${item.message.id}-${rows.length}`}`,
+          appendix,
+        })
+      }
+    }
   }
   if (live !== undefined) {
     const text = Object.values(live.text).join("")
@@ -279,6 +307,11 @@ export function buildRows(
   // The author's steering message is queued in the inbox; the model has not seen it yet, so it
   // belongs below the persisted history and the current live step.
   for (const item of inbox) {
+    // A queued copy of a feedback that a snapshot already delivered as an appendix is the same
+    // author message; keep the delivered row only.
+    if (seenInbox.has(item.id)) {
+      continue
+    }
     rows.push({ kind: "queued", key: `q-${item.id}`, item })
   }
   if (rows.length === 0) {
@@ -619,6 +652,26 @@ function RowView({
     )
   }
 
+  if (row.kind === "inbox") {
+    // The author's steering feedback, lifted out of the collapsed tool card it was delivered on
+    // (spec/03 §5.3). It reads as a message in their own transcript, with the appendix text shown
+    // verbatim because it is already prompt-rendered, model-facing text.
+    return (
+      <div
+        className="space-y-1 border-l-2 border-primary/40 pl-2"
+        data-testid="inbox-appendix"
+      >
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span className="font-medium">{t("agent:stream.author")}</span>
+          <span>{t("agent:appendix.inbox")}</span>
+        </div>
+        <div className="prose prose-sm max-w-none text-sm whitespace-pre-wrap dark:prose-invert">
+          {row.appendix.text}
+        </div>
+      </div>
+    )
+  }
+
   if (row.kind === "queued") {
     return (
       <div
@@ -691,6 +744,9 @@ function RowView({
               sessionId={sessionId}
               seq={message.seq}
               defaultOpen={call.status === "held" || call.status === "awaiting_input"}
+              // The inbox appendix is rendered above as its own author row; do not repeat it
+              // inside the collapsed card.
+              includeInboxAppendices={false}
             />
           ))}
     </div>

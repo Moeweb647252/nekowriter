@@ -115,6 +115,7 @@
     "result": "Result",
     "preview": "Streaming…",
     "appendices": "Attached to this result",
+    "failed_with": "Failed — {{message}}",
     "held": "Held for you",
     "awaiting_input": "Waiting for your answer"
   },

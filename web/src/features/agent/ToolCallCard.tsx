@@ -53,17 +53,42 @@ export function ToolCallCard({
   sessionId,
   seq,
   defaultOpen = false,
+  includeInboxAppendices = true,
 }: {
   call: ToolCallDto
   sessionId: number
   /** The assistant message sequence, to find the streaming preview of this call. */
   seq: number
   defaultOpen?: boolean
+  /**
+   * `false` when the caller lifts `inbox` appendices into their own author rows: the card then
+   * omits that kind so the author's message is not duplicated inside the collapsed content.
+   */
+  includeInboxAppendices?: boolean
 }) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(defaultOpen)
   const renderer = toolRenderer(call.name)
-  const summary = renderer.summary(call.ui, t)
+  const renderedSummary = renderer.summary(call.ui, t).trim()
+  const failureLine =
+    (call.result_text ?? "")
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line !== "") ?? ""
+  // A failed call with no summary used to show only the tool name (and "读取了" with a blank URL
+  // for web_fetch). Name the failure and its first result line instead; the stored row is
+  // unchanged.
+  const failed = call.is_error || call.status === "error"
+  const summary = failed
+    ? failureLine === ""
+      ? renderedSummary === ""
+        ? t("agent:status.failed")
+        : renderedSummary
+      : t("agent:tool.failed_with", { message: failureLine })
+    : renderedSummary
+  const appendices = includeInboxAppendices
+    ? call.appendices
+    : call.appendices.filter((appendix: Appendix) => appendix.kind !== "inbox")
   // A preview is discarded as soon as the persisted call arrives (spec/03 §12).
   const preview = useLiveStore(
     (state) => state.previews[`${sessionId}:${seq}:${call.call_index}`],
@@ -137,12 +162,12 @@ export function ToolCallCard({
             </div>
           )}
 
-          {call.appendices.length === 0 ? null : (
+          {appendices.length === 0 ? null : (
             <div className="space-y-1">
               <div className="text-xs font-medium text-muted-foreground">
                 {t("agent:tool.appendices")}
               </div>
-              {call.appendices.map((appendix: Appendix, index: number) => (
+              {appendices.map((appendix: Appendix, index: number) => (
                 <NoticeItem key={`${appendix.kind}-${index}`} appendix={appendix} />
               ))}
             </div>
