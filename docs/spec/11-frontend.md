@@ -146,7 +146,8 @@ message and a retry.
 ### 4.3 Zustand stores
 - `ui.ts` (persisted): `editorFont: "serif" | "sans"`, `editorSize: "s" | "m" | "l"`,
   `navigatorCollapsed`, `agentPanelCollapsed`, `pinnedSession: Record<bookId, sessionId | null>`,
-  `language`. Theme is owned by the scaffold's `ThemeProvider`.
+  `pinnedSessionManual: Record<bookId, boolean>` (D-167), `language`. Theme is owned by the
+  scaffold's `ThemeProvider`.
 - `live.ts`: `streams: Record<sessionId, { seq, text: Record<index, string>, reasoning: Record<index,
   string> }>`, `previews: Record<"sessionId:seq:callIndex", { name, field, text }>`. Actions
   `applyDelta`, `applyPreview`, `clearSeq(sessionId, seq)` (called when `session.message` for that
@@ -258,12 +259,15 @@ message and a retry.
   sibling `openOutlineSession(chapter)` serves the Outline tab.
 
 ### 5.3 Agent panel (`features/agent`)
-- `AgentPanel`: chooses the session (pinned, or the chapter's open session, or the book's most
-  recently updated), fetches `SessionSnapshotDto`, and renders:
+- `AgentPanel`: chooses the session by this precedence: a **manual** pin from the session switcher
+  always wins (even a terminal one); otherwise an open pin wins; otherwise the newest open session
+  **by id** (the book list is id-desc, a chapter's `open_sessions` is id-asc, so array order is not
+  trusted); otherwise a terminal pin stays readable; otherwise the newest session. It fetches
+  `SessionSnapshotDto` and renders:
   - `SessionHeader` (role icon: Sparkles / Search / ListTree (planner) / PenLine / ClipboardCheck
     / Archive; title; status; model, followed by " · {effort}" when `SessionDto.effort` is set —
     `settings:value.effort.<v>` with the raw value as the fallback (D-162); a session switcher
-    dropdown);
+    dropdown whose pick is a manual pin, D-167);
   - `SessionControls` (by status, PROJECT §8.6), `GranularityControl`, `AutoPauseSwitch`
     (writer only, PATCH session);
   - `HeldCallReview` (a `held` session only): resolves `SessionDto.held_tool_call_id` against the

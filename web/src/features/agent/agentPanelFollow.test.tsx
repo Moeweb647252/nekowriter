@@ -1,6 +1,7 @@
 /** The panel must follow a new open session off a terminal pin (author report, task-296). */
 import "@/i18n"
 import { act, render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { SessionDto } from "@/api/gen/SessionDto"
@@ -90,11 +91,11 @@ beforeEach(() => {
     researchSession({ id: 1, status: "abandoned" }),
     researchSession({ id: 2, status: "running" }),
   ]
-  useUiStore.setState({ pinnedSession: { 3: 1 } })
+  useUiStore.setState({ pinnedSession: { 3: 1 }, pinnedSessionManual: {} })
 })
 
 describe("AgentPanel follows a new session off a terminal pin", () => {
-  it("shows the running session, re-pins it, and stays there across a refetch", () => {
+  it("shows the running session, re-pins it automatically, and stays there across a refetch", () => {
     const { rerender } = render(
       <TooltipProvider>
         <AgentPanel bookId={3} />
@@ -103,6 +104,7 @@ describe("AgentPanel follows a new session off a terminal pin", () => {
     expect(screen.getByText("Running")).toBeInTheDocument()
     expect(screen.queryByText("Abandoned")).not.toBeInTheDocument()
     expect(useUiStore.getState().pinnedSession[3]).toBe(2)
+    expect(useUiStore.getState().pinnedSessionManual[3]).toBe(false)
 
     // A refetch after the followed session ends must keep the panel on session 2 instead of
     // falling back to the abandoned pin it left behind.
@@ -119,5 +121,53 @@ describe("AgentPanel follows a new session off a terminal pin", () => {
     })
     expect(screen.getByText("Completed")).toBeInTheDocument()
     expect(screen.queryByText("Abandoned")).not.toBeInTheDocument()
+  })
+
+  it("keeps a manual terminal pin over an open session and across a refetch", () => {
+    useUiStore.setState({ pinnedSession: { 3: 1 }, pinnedSessionManual: { 3: true } })
+    const { rerender } = render(
+      <TooltipProvider>
+        <AgentPanel bookId={3} />
+      </TooltipProvider>,
+    )
+    expect(screen.getByText("Abandoned")).toBeInTheDocument()
+    expect(screen.queryByText("Running")).not.toBeInTheDocument()
+    expect(useUiStore.getState().pinnedSession[3]).toBe(1)
+    expect(useUiStore.getState().pinnedSessionManual[3]).toBe(true)
+
+    // A refetch must not let the auto-follow steal a pin the author set by hand.
+    act(() => {
+      server.sessions = [
+        researchSession({ id: 1, status: "abandoned" }),
+        researchSession({ id: 2, status: "completed" }),
+      ]
+      rerender(
+        <TooltipProvider>
+          <AgentPanel bookId={3} />
+        </TooltipProvider>,
+      )
+    })
+    expect(screen.getByText("Abandoned")).toBeInTheDocument()
+    expect(screen.queryByText("Completed")).not.toBeInTheDocument()
+    expect(useUiStore.getState().pinnedSession[3]).toBe(1)
+  })
+
+  it("marks a session picked in the switcher as manual", async () => {
+    const user = userEvent.setup()
+    render(
+      <TooltipProvider>
+        <AgentPanel bookId={3} />
+      </TooltipProvider>,
+    )
+    // The automatic follow starts on the running session.
+    expect(screen.getByText("Running")).toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: "Switch session" }))
+    // The header shows Running, so this status text is the abandoned item of the dropdown.
+    await user.click(await screen.findByText("Abandoned"))
+
+    expect(useUiStore.getState().pinnedSession[3]).toBe(1)
+    expect(useUiStore.getState().pinnedSessionManual[3]).toBe(true)
+    expect(screen.getByText("Abandoned")).toBeInTheDocument()
   })
 })

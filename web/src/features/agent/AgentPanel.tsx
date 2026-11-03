@@ -67,21 +67,25 @@ function newestOpenSession(sessions: SessionDto[]): SessionDto | undefined {
 }
 
 /**
- * The session the panel shows: the pinned one while it is open, else the newest open session,
- * else the pinned terminal one (so a finished session stays readable), else the newest.
+ * The session the panel shows: the pinned one while it is open — or always, when the author picked
+ * it in the session switcher — else the newest open session, else the pinned terminal one (so a
+ * finished session stays readable), else the newest.
  *
- * A terminal pin must yield to an open session: `completed`/`abandoned` are not open, and keeping
- * the pin unconditionally left the panel on a dead session while a new one was running (task-296).
- * `newestOpenSession` compares ids because the book list is newest-first (`id` desc) while a
- * chapter's `open_sessions` is oldest-first (`id` asc), so the array order cannot be trusted.
+ * A terminal *automatic* pin must yield to an open session: `completed`/`abandoned` are not open,
+ * and keeping the pin unconditionally left the panel on a dead session while a new one was
+ * running (task-296). A manual pin is the author's explicit choice and always wins, so a finished
+ * session stays readable while another one runs. `newestOpenSession` compares ids because the book
+ * list is newest-first (`id` desc) while a chapter's `open_sessions` is oldest-first (`id` asc), so
+ * the array order cannot be trusted.
  */
 export function pickSession(
   sessions: SessionDto[],
   pinned: SessionDto | undefined,
   pinnedId: number | null,
+  manualPin = false,
 ): SessionDto | undefined {
   const hasPin = pinnedId !== null && pinned !== undefined
-  if (hasPin && OPEN_STATUSES.has(pinned.status)) {
+  if (hasPin && (manualPin || OPEN_STATUSES.has(pinned.status))) {
     return pinned
   }
   const open = newestOpenSession(sessions)
@@ -121,8 +125,10 @@ export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: 
   const chapterQuery = useChapter(chapterId ?? 0)
   // The panel keeps the chosen session per book in the persisted UI store (spec/11 §4.3, §5.3).
   const pinnedId = useUiStore((state) => state.pinnedSession[bookId] ?? null)
+  const pinnedManual = useUiStore((state) => state.pinnedSessionManual[bookId] ?? false)
   const setPinnedId = useCallback(
-    (sessionId: number | null) => useUiStore.getState().setPinnedSession(bookId, sessionId),
+    (sessionId: number | null, manual = false) =>
+      useUiStore.getState().setPinnedSession(bookId, sessionId, manual),
     [bookId],
   )
 
@@ -140,14 +146,24 @@ export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: 
   )
   const pinnedIsCandidate =
     pinned !== undefined && candidates.some((session) => session.id === pinned.id)
-  const chosen = pickSession(candidates, pinnedIsCandidate ? pinned : undefined, pinnedIsCandidate ? pinnedId : null)
+  // A manual pin names the session the author chose, even when it is not among the chapter's own
+  // open sessions; every automatic pin must be a candidate to count.
+  const pinnedForPick =
+    pinned !== undefined && (pinnedManual || pinnedIsCandidate) ? pinned : undefined
+  const chosen = pickSession(
+    candidates,
+    pinnedForPick,
+    pinnedForPick === undefined ? null : pinnedId,
+    pinnedManual,
+  )
   const chosenId = chosen?.id ?? null
-  // A terminal pin yielded to the open session the panel now follows; persist that follow so the
-  // panel never falls back to the dead pin later. The id comparison makes this a one-pass
-  // render-phase adjustment instead of a loop, and keeps it out of an effect (setState in
-  // effects is forbidden by the React Compiler rules the repo follows). `pinned` may come from
-  // the book-wide fallback rather than the chapter's candidates, so it is not required to be one.
+  // A terminal automatic pin yielded to the open session the panel now follows; persist that
+  // follow so the panel never falls back to the dead pin later. The id comparison makes this a
+  // one-pass render-phase adjustment instead of a loop, and keeps it out of an effect (setState in
+  // effects is forbidden by the React Compiler rules the repo follows). `pinned` may come from the
+  // book-wide fallback rather than the chapter's candidates, so it is not required to be one.
   if (
+    !pinnedManual &&
     pinned !== undefined &&
     !OPEN_STATUSES.has(pinned.status) &&
     chosenId !== null &&
@@ -208,10 +224,11 @@ export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: 
       {
         onSuccess: (updated) => {
           // A control response may arrive after the author picked another session; only keep the
-          // pin when this is still the selected session.
+          // pin when this is still the selected session. A manual pick stays manual.
           const currentPinned = useUiStore.getState().pinnedSession[bookId] ?? null
+          const currentManual = useUiStore.getState().pinnedSessionManual[bookId] ?? false
           if (currentPinned === null || currentPinned === session.id) {
-            setPinnedId(updated.id)
+            setPinnedId(updated.id, currentManual && currentPinned === session.id)
           }
         },
         onError: (error) => {
@@ -259,10 +276,11 @@ export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: 
       {
         onSuccess: (updated) => {
           // A control response may arrive after the author picked another session; only keep the
-          // pin when this is still the selected session.
+          // pin when this is still the selected session. A manual pick stays manual.
           const currentPinned = useUiStore.getState().pinnedSession[bookId] ?? null
+          const currentManual = useUiStore.getState().pinnedSessionManual[bookId] ?? false
           if (currentPinned === null || currentPinned === session.id) {
-            setPinnedId(updated.id)
+            setPinnedId(updated.id, currentManual && currentPinned === session.id)
           }
         },
         onError: (error) => {
@@ -306,7 +324,7 @@ export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: 
       <SessionHeader
         session={session}
         sessions={sessions}
-        onSelect={setPinnedId}
+        onSelect={(sessionId) => setPinnedId(sessionId, true)}
         pausing={pausing || session.pause_requested}
         stopping={stopping}
         systemPrompt={snapshot.data?.system_prompt ?? ""}
