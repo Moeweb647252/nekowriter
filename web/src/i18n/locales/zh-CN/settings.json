@@ -186,5 +186,14 @@
   "role_effort_no_levels": "没有思考强度级别",
   "role_effort_stale": "{{level}}（不支持）",
   "role_effort_stale_hint": "会话将改用 {{level}}。",
-  "role_effort_stale_hint_none": "会话将使用提供商默认值。"
+  "role_effort_stale_hint_none": "会话将使用提供商默认值。",
+  "agent_limits": "代理限制",
+  "agent_limits_hint": "在创建会话时冻结，修改后不会影响正在运行的会话。",
+  "agent_limits_save": "保存限制",
+  "tool_error_streak_limit": "工具错误暂停阈值",
+  "tool_error_streak_limit_hint": "连续出现这么多次工具错误后暂停。0 表示不限制（会话继续运行）。",
+  "research_max_tool_calls": "资料收集工具调用预算",
+  "research_max_tool_calls_hint": "研究代理收到收尾提醒前的软性预算；至少为 1。",
+  "research_max_entries": "资料收集条目预算",
+  "research_max_entries_hint": "保存条目达到该软性预算后，研究代理会收到收尾提醒；至少为 1。"
 }

@@ -9,7 +9,7 @@
  * not a selectable value of its own. `BookSettingsPage` had already solved the same problem with a
  * sentinel (`GLOBAL_DEFAULT`); this page now uses the same rule (D-133).
  */
-import { render, screen, within } from "@testing-library/react"
+import { fireEvent, render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import i18n from "i18next"
 import { beforeAll, describe, expect, it, vi } from "vitest"
@@ -30,7 +30,12 @@ vi.mock("@/api/hooks/app-settings", () => ({
   useAppSettings: () => ({
     isPending: false,
     isError: false,
-    data: { roles_defaults: rolesDefaults },
+    data: {
+      roles_defaults: rolesDefaults,
+      tool_error_streak_limit: 5,
+      research_max_tool_calls: 40,
+      research_max_entries: 25,
+    },
   }),
   usePatchAppSettings: () => ({ mutate: patchMutate, isPending: false }),
 }))
@@ -143,6 +148,34 @@ describe("RolesPage model pickers (PROJECT §8.12)", () => {
     render(<RolesPage />)
     const trigger = screen.getByLabelText(t("settings:role.planner"))
     expect(trigger).toHaveTextContent(t("settings:role_planner_unset"))
+  })
+
+  it("saves the agent limits and states that 0 means unlimited", async () => {
+    patchMutate.mockClear()
+    rolesDefaults = { efforts: {} }
+    const user = userEvent.setup()
+    render(<RolesPage />)
+
+    expect(screen.getByText(t("settings:tool_error_streak_limit_hint"))).toHaveTextContent(
+      "0 means unlimited",
+    )
+    fireEvent.change(screen.getByLabelText(t("settings:tool_error_streak_limit")), {
+      target: { value: "0" },
+    })
+    fireEvent.change(screen.getByLabelText(t("settings:research_max_tool_calls")), {
+      target: { value: "3" },
+    })
+    fireEvent.change(screen.getByLabelText(t("settings:research_max_entries")), {
+      target: { value: "4" },
+    })
+    await user.click(screen.getByRole("button", { name: t("settings:agent_limits_save") }))
+
+    expect(patchMutate).toHaveBeenCalledTimes(1)
+    expect(patchMutate.mock.calls[0][0]).toMatchObject({
+      tool_error_streak_limit: 0,
+      research_max_tool_calls: 3,
+      research_max_entries: 4,
+    })
   })
 
   it("writes null when a role is returned to 'Not set'", async () => {

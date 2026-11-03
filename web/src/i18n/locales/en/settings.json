@@ -186,5 +186,14 @@
   "role_effort_no_levels": "No effort levels",
   "role_effort_stale": "{{level}} (not supported)",
   "role_effort_stale_hint": "Sessions will use {{level}} instead.",
-  "role_effort_stale_hint_none": "Sessions will use the provider default."
+  "role_effort_stale_hint_none": "Sessions will use the provider default.",
+  "agent_limits": "Agent limits",
+  "agent_limits_hint": "Frozen onto each new session, so changing them never alters a running session.",
+  "agent_limits_save": "Save limits",
+  "tool_error_streak_limit": "Tool-error pause limit",
+  "tool_error_streak_limit_hint": "Pause after this many consecutive tool errors. 0 means unlimited (the session keeps running).",
+  "research_max_tool_calls": "Research tool-call budget",
+  "research_max_tool_calls_hint": "Soft budget before the researcher is told to wrap up; at least 1.",
+  "research_max_entries": "Research entry budget",
+  "research_max_entries_hint": "Soft budget for saved entries before the researcher is told to wrap up; at least 1."
 }
