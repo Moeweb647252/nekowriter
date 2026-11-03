@@ -7,4 +7,8 @@ export type SessionCounters = { steps: number, tool_calls: number, retrieval_cal
 /**
  * A completion was withheld once for confirmation (spec/05 §4, §6).
  */
-finish_warned: boolean, };
+finish_warned: boolean, 
+/**
+ * The research-budget notice fired once for this session (spec/05 §8, D-164).
+ */
+research_budget_noticed: boolean, };

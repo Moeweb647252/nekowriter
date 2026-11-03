@@ -15,9 +15,6 @@ use sea_orm::{
 };
 use serde_json::{Value, json};
 
-use crate::agent::tools::research::{
-    MAX_ENTRIES as MAX_RESEARCH_ENTRIES, MAX_TOOL_CALLS as MAX_RESEARCH_TOOL_CALLS,
-};
 use crate::db::entities::{
     agent_messages, agent_sessions, agent_tool_calls, book_scope_exclusions, books,
     chapter_versions, chapters, character_designs, entities, knowledge_entries, knowledge_scopes,
@@ -571,10 +568,24 @@ async fn block_context(
             "conception": conception_context(conn, prompts, session.book_id).await?,
         })),
         "researcher.kickoff" => Ok(json!({
-            "research": research_context(conn, prompts, session.research_task_id).await?,
+            "research": research_context(
+                conn,
+                prompts,
+                session.research_task_id,
+                session.research_max_tool_calls,
+                session.research_max_entries,
+            )
+            .await?,
         })),
         "researcher.kickoff.prep" => Ok(json!({
-            "prep": prep_context(conn, prompts, session.research_task_id).await?,
+            "prep": prep_context(
+                conn,
+                prompts,
+                session.research_task_id,
+                session.research_max_tool_calls,
+                session.research_max_entries,
+            )
+            .await?,
         })),
         "planner.kickoff" => Ok(json!({
             "book": book_context(conn, prompts, session.book_id).await?,
@@ -1627,6 +1638,8 @@ async fn research_context(
     conn: &impl ConnectionTrait,
     prompts: &PromptSet,
     research_task_id: Option<i32>,
+    max_tool_calls: i32,
+    max_entries: i32,
 ) -> Result<Value, AppError> {
     let Some(task_id) = research_task_id else {
         return Ok(json!({
@@ -1636,8 +1649,8 @@ async fn research_context(
             "scope_description": "",
             "language_name": prompts.label("language", "en"),
             "existing_titles": [],
-            "max_tool_calls": MAX_RESEARCH_TOOL_CALLS,
-            "max_entries": MAX_RESEARCH_ENTRIES,
+            "max_tool_calls": max_tool_calls,
+            "max_entries": max_entries,
         }));
     };
     let task = research_tasks::Entity::find_by_id(task_id)
@@ -1668,8 +1681,8 @@ async fn research_context(
         "scope_description": scope_description,
         "language_name": prompts.label("language", &task.language),
         "existing_titles": existing_titles,
-        "max_tool_calls": MAX_RESEARCH_TOOL_CALLS,
-        "max_entries": MAX_RESEARCH_ENTRIES,
+        "max_tool_calls": max_tool_calls,
+        "max_entries": max_entries,
     }))
 }
 
@@ -1679,6 +1692,8 @@ async fn prep_context(
     conn: &impl ConnectionTrait,
     prompts: &PromptSet,
     research_task_id: Option<i32>,
+    max_tool_calls: i32,
+    max_entries: i32,
 ) -> Result<PrepContext, AppError> {
     use crate::services::research::{MAX_PREP_TITLES_PER_SCOPE, MAX_PREP_TITLES_TOTAL};
     let Some(task_id) = research_task_id else {
@@ -1687,8 +1702,8 @@ async fn prep_context(
             language_name: prompts.label("language", "en"),
             scopes: Vec::new(),
             excluded_names: Vec::new(),
-            max_tool_calls: MAX_RESEARCH_TOOL_CALLS,
-            max_entries: MAX_RESEARCH_ENTRIES,
+            max_tool_calls,
+            max_entries,
         });
     };
     let task = research_tasks::Entity::find_by_id(task_id)
@@ -1701,8 +1716,8 @@ async fn prep_context(
             language_name: prompts.label("language", &task.language),
             scopes: Vec::new(),
             excluded_names: Vec::new(),
-            max_tool_calls: MAX_RESEARCH_TOOL_CALLS,
-            max_entries: MAX_RESEARCH_ENTRIES,
+            max_tool_calls,
+            max_entries,
         });
     };
     let visible_ids = crate::services::knowledge::visible_scope_ids(conn, book_id).await?;
@@ -1761,8 +1776,8 @@ async fn prep_context(
         language_name: prompts.label("language", &task.language),
         scopes,
         excluded_names,
-        max_tool_calls: MAX_RESEARCH_TOOL_CALLS,
-        max_entries: MAX_RESEARCH_ENTRIES,
+        max_tool_calls,
+        max_entries,
     })
 }
 
@@ -2168,6 +2183,9 @@ pub async fn rollover(
                 granularity: sea_orm::Set(parent.granularity),
                 auto_pause: sea_orm::Set(parent.auto_pause),
                 pause_after_outline: sea_orm::Set(parent.pause_after_outline),
+                tool_error_streak_limit: sea_orm::Set(parent.tool_error_streak_limit),
+                research_max_tool_calls: sea_orm::Set(parent.research_max_tool_calls),
+                research_max_entries: sea_orm::Set(parent.research_max_entries),
                 pause_requested: sea_orm::Set(false),
                 held_tool_call_id: sea_orm::Set(None),
                 base_content_version: sea_orm::Set(parent.base_content_version),

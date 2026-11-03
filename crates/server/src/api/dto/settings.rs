@@ -5,11 +5,24 @@ use ts_rs::TS;
 
 use crate::db::json::{BookSettings, RoleModels};
 
+/// The documented default of the tool-error circuit breaker (spec/03 §5.7, D-164).
+pub const DEFAULT_TOOL_ERROR_STREAK_LIMIT: i32 = 5;
+/// The documented default of the researcher's soft tool-call budget (spec/05 §8, D-164).
+pub const DEFAULT_RESEARCH_MAX_TOOL_CALLS: i32 = 40;
+/// The documented default of the researcher's soft entry budget (spec/05 §8, D-164).
+pub const DEFAULT_RESEARCH_MAX_ENTRIES: i32 = 25;
+
 /// `GET /app-settings` (spec/10 §2.1). Secrets are masked.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct AppSettingsDto {
     pub roles_defaults: RoleModels,
+    /// Consecutive tool errors that pause a session; `0` means unlimited (spec/03 §5.7, D-164).
+    pub tool_error_streak_limit: i32,
+    /// The researcher's soft tool-call budget (spec/05 §8, D-164); at least 1.
+    pub research_max_tool_calls: i32,
+    /// The researcher's soft entry budget (spec/05 §8, D-164); at least 1.
+    pub research_max_entries: i32,
     /// The settings new books start with (spec/02 §4.1).
     pub book_defaults: BookSettings,
     /// The web search configuration; `api_key` is masked like a provider key.
@@ -100,6 +113,15 @@ impl Default for EmbeddingSettingsDto {
 pub struct AppSettingsPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roles_defaults: Option<RoleModels>,
+    /// Frozen onto each new session; `0` means unlimited (D-164).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_error_streak_limit: Option<i32>,
+    /// Frozen onto each new session; at least 1 (D-164).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub research_max_tool_calls: Option<i32>,
+    /// Frozen onto each new session; at least 1 (D-164).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub research_max_entries: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub book_defaults: Option<BookSettings>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

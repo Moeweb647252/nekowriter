@@ -1,13 +1,16 @@
 //! Application settings (`app_settings`, spec/02 §4.1, spec/10 §2.1).
 //!
-//! Keys: `roles.defaults` (`RoleModels`), `book_defaults` (`BookSettings`), `search`,
-//! `embedding`. Reads fall back to the documented defaults when a key is absent, so a fresh
-//! database behaves like the spec describes without a seeding step.
+//! Keys: `roles.defaults` (`RoleModels`), `tool_error_streak_limit`, `research_max_tool_calls`,
+//! `research_max_entries`, `book_defaults` (`BookSettings`), `search`, `embedding`. Reads fall
+//! back to the documented defaults when a key is absent, so a fresh database behaves like the
+//! spec describes without a seeding step.
 
 use sea_orm::{ConnectionTrait, EntityTrait, Set};
 
 use crate::api::dto::settings::{
-    AppSettingsDto, AppSettingsPatch, EmbeddingSettingsDto, SearchSettingsDto,
+    AppSettingsDto, AppSettingsPatch, DEFAULT_RESEARCH_MAX_ENTRIES,
+    DEFAULT_RESEARCH_MAX_TOOL_CALLS, DEFAULT_TOOL_ERROR_STREAK_LIMIT, EmbeddingSettingsDto,
+    SearchSettingsDto,
 };
 use crate::db::entities::app_settings;
 use crate::db::json::{BookSettings, RoleModels};
@@ -20,6 +23,9 @@ const KEY_ROLES: &str = "roles.defaults";
 const KEY_BOOK_DEFAULTS: &str = "book_defaults";
 const KEY_SEARCH: &str = "search";
 const KEY_EMBEDDING: &str = "embedding";
+const KEY_TOOL_ERROR_STREAK_LIMIT: &str = "tool_error_streak_limit";
+const KEY_RESEARCH_MAX_TOOL_CALLS: &str = "research_max_tool_calls";
+const KEY_RESEARCH_MAX_ENTRIES: &str = "research_max_entries";
 
 /// Letters kept unmasked at the end of a stored secret (spec/01 §10.3).
 const MASK_TAIL: usize = 4;
@@ -29,6 +35,9 @@ pub async fn get(conn: &impl ConnectionTrait) -> Result<AppSettingsDto, AppError
     let rows = app_settings::Entity::find().all(conn).await?;
     let mut dto = AppSettingsDto {
         roles_defaults: RoleModels::default(),
+        tool_error_streak_limit: DEFAULT_TOOL_ERROR_STREAK_LIMIT,
+        research_max_tool_calls: DEFAULT_RESEARCH_MAX_TOOL_CALLS,
+        research_max_entries: DEFAULT_RESEARCH_MAX_ENTRIES,
         book_defaults: BookSettings::default(),
         search: SearchSettingsDto::default(),
         embedding: EmbeddingSettingsDto::default(),
@@ -36,6 +45,15 @@ pub async fn get(conn: &impl ConnectionTrait) -> Result<AppSettingsDto, AppError
     for row in rows {
         match row.key.as_str() {
             KEY_ROLES => dto.roles_defaults = parse_json(KEY_ROLES, &row.value)?,
+            KEY_TOOL_ERROR_STREAK_LIMIT => {
+                dto.tool_error_streak_limit = parse_json(KEY_TOOL_ERROR_STREAK_LIMIT, &row.value)?
+            }
+            KEY_RESEARCH_MAX_TOOL_CALLS => {
+                dto.research_max_tool_calls = parse_json(KEY_RESEARCH_MAX_TOOL_CALLS, &row.value)?
+            }
+            KEY_RESEARCH_MAX_ENTRIES => {
+                dto.research_max_entries = parse_json(KEY_RESEARCH_MAX_ENTRIES, &row.value)?
+            }
             KEY_BOOK_DEFAULTS => dto.book_defaults = parse_json(KEY_BOOK_DEFAULTS, &row.value)?,
             KEY_SEARCH => dto.search = parse_json(KEY_SEARCH, &row.value)?,
             KEY_EMBEDDING => dto.embedding = parse_json(KEY_EMBEDDING, &row.value)?,
@@ -49,6 +67,11 @@ pub async fn get(conn: &impl ConnectionTrait) -> Result<AppSettingsDto, AppError
 /// The settings new books start with (spec/02 §4.1 `book_defaults`).
 pub async fn book_defaults(conn: &impl ConnectionTrait) -> Result<BookSettings, AppError> {
     Ok(get(conn).await?.book_defaults)
+}
+
+/// The limits new sessions freeze (spec/03 §5.7, spec/05 §8, D-164).
+pub async fn session_limits(conn: &impl ConnectionTrait) -> Result<AppSettingsDto, AppError> {
+    get(conn).await
 }
 
 /// Applies a patch inside the caller's transaction and returns the new settings.
@@ -65,6 +88,36 @@ pub async fn update(
             roles
         }
         None => current.roles_defaults.clone(),
+    };
+    let tool_error_streak_limit = match patch.tool_error_streak_limit {
+        Some(limit) if limit < 0 => {
+            return Err(AppError::invalid_fields(serde_json::Map::from_iter([(
+                "tool_error_streak_limit".to_owned(),
+                serde_json::Value::String("must be at least 0 (0 means unlimited)".to_owned()),
+            )])));
+        }
+        Some(limit) => limit,
+        None => current.tool_error_streak_limit,
+    };
+    let research_max_tool_calls = match patch.research_max_tool_calls {
+        Some(limit) if limit < 1 => {
+            return Err(AppError::invalid_fields(serde_json::Map::from_iter([(
+                "research_max_tool_calls".to_owned(),
+                serde_json::Value::String("must be at least 1".to_owned()),
+            )])));
+        }
+        Some(limit) => limit,
+        None => current.research_max_tool_calls,
+    };
+    let research_max_entries = match patch.research_max_entries {
+        Some(limit) if limit < 1 => {
+            return Err(AppError::invalid_fields(serde_json::Map::from_iter([(
+                "research_max_entries".to_owned(),
+                serde_json::Value::String("must be at least 1".to_owned()),
+            )])));
+        }
+        Some(limit) => limit,
+        None => current.research_max_entries,
     };
     let book_defaults = match &patch.book_defaults {
         Some(settings) => {
@@ -115,12 +168,28 @@ pub async fn update(
     };
 
     upsert(tx, KEY_ROLES, &json(&roles)?).await?;
+    upsert(
+        tx,
+        KEY_TOOL_ERROR_STREAK_LIMIT,
+        &json(&tool_error_streak_limit)?,
+    )
+    .await?;
+    upsert(
+        tx,
+        KEY_RESEARCH_MAX_TOOL_CALLS,
+        &json(&research_max_tool_calls)?,
+    )
+    .await?;
+    upsert(tx, KEY_RESEARCH_MAX_ENTRIES, &json(&research_max_entries)?).await?;
     upsert(tx, KEY_BOOK_DEFAULTS, &json(&book_defaults)?).await?;
     upsert(tx, KEY_SEARCH, &json(&search)?).await?;
     upsert(tx, KEY_EMBEDDING, &json(&embedding)?).await?;
 
     let mut response = AppSettingsDto {
         roles_defaults: roles,
+        tool_error_streak_limit,
+        research_max_tool_calls,
+        research_max_entries,
         book_defaults,
         search,
         embedding,

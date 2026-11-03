@@ -28,6 +28,12 @@ pub struct Model {
     pub granularity: Option<Granularity>,
     pub auto_pause: bool,
     pub pause_after_outline: bool,
+    /// The tool-error circuit-breaker limit frozen at creation; `0` means unlimited.
+    pub tool_error_streak_limit: i32,
+    /// The researcher's soft tool-call budget frozen at creation (spec/05 §8, D-164).
+    pub research_max_tool_calls: i32,
+    /// The researcher's soft entry budget frozen at creation (spec/05 §8, D-164).
+    pub research_max_entries: i32,
     pub pause_requested: bool,
     pub held_tool_call_id: Option<i32>,
     pub base_content_version: Option<i32>,

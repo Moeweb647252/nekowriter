@@ -192,6 +192,7 @@ function conceptionSession(overrides: Partial<SessionDto>): SessionDto {
       consecutive_tool_errors: 0,
       consecutive_nudges: 0,
       finish_warned: false,
+      research_budget_noticed: false,
     },
     parent_session_id: null,
     child_session_id: null,

@@ -292,6 +292,9 @@ pub(crate) async fn create_inner(
         .pause_after_outline
         .unwrap_or(book_settings.pause_after_outline);
     let auto_pause_setting = input.auto_pause.unwrap_or(book_settings.auto_pause);
+    // The breaker limit is a session-level setting frozen now, like auto_pause (spec/03 §4
+    // step 2, D-164): changing it later must not alter a running session.
+    let limits = super::app_settings::session_limits(tx).await?;
     let cache_ttl = if input.kind == SessionKind::Conception
         || (input.kind == SessionKind::ChapterOutline && pause_after_outline_setting)
         || (matches!(
@@ -432,6 +435,9 @@ pub(crate) async fn create_inner(
         granularity: Set(granularity),
         auto_pause: Set(auto_pause),
         pause_after_outline: Set(pause_after_outline),
+        tool_error_streak_limit: Set(limits.tool_error_streak_limit),
+        research_max_tool_calls: Set(limits.research_max_tool_calls),
+        research_max_entries: Set(limits.research_max_entries),
         pause_requested: Set(false),
         held_tool_call_id: Set(None),
         base_content_version: Set(base_content_version),
@@ -2120,6 +2126,7 @@ async fn debug_session_inner(
             input_schema: schema,
         });
     }
+    let limits = super::app_settings::session_limits(tx).await?;
     let now = chrono::Utc::now();
     let session = agent_sessions::ActiveModel {
         book_id: Set(Some(spec.book_id)),
@@ -2140,6 +2147,9 @@ async fn debug_session_inner(
         granularity: Set(spec.granularity),
         auto_pause: Set(spec.auto_pause),
         pause_after_outline: Set(spec.pause_after_outline),
+        tool_error_streak_limit: Set(limits.tool_error_streak_limit),
+        research_max_tool_calls: Set(limits.research_max_tool_calls),
+        research_max_entries: Set(limits.research_max_entries),
         pause_requested: Set(false),
         held_tool_call_id: Set(None),
         base_content_version: Set(match spec.chapter_id {
@@ -2258,6 +2268,7 @@ async fn debug_echo_inner(
             input_schema: schema,
         });
     }
+    let limits = super::app_settings::session_limits(tx).await?;
     let now = chrono::Utc::now();
     let session = agent_sessions::ActiveModel {
         book_id: Set(Some(book_id)),
@@ -2278,6 +2289,9 @@ async fn debug_echo_inner(
         granularity: Set(Some(Granularity::Paragraph)),
         auto_pause: Set(false),
         pause_after_outline: Set(false),
+        tool_error_streak_limit: Set(limits.tool_error_streak_limit),
+        research_max_tool_calls: Set(limits.research_max_tool_calls),
+        research_max_entries: Set(limits.research_max_entries),
         pause_requested: Set(false),
         held_tool_call_id: Set(None),
         base_content_version: Set(None),
