@@ -286,10 +286,12 @@ message and a retry.
     the same `resume`. A write hold that staged nothing (a call from before D-139) stays in the
     panel, since the dock would have no text to show;
   - `ActivityStream` (virtualized with `@tanstack/react-virtual`; sticks to the bottom unless the
-    author scrolled up): messages, live text and reasoning buffers, tool cards, appendices shown
-    under their tool card as `NoticeItem`s. Text is shown **as delivered** to the model, so an
-    author message carries its 【用户留言】 header once consumed (D-160), while its queued row
-    shows the raw text.
+    author scrolled up): messages, live text and reasoning buffers, tool cards, and appendices. An
+    `inbox` appendix (the author's consumed steering message) is lifted into its own author row in
+    sequence position, de-duplicated by `inbox_id`; every other appendix kind is shown under its
+    tool card as a `NoticeItem` (D-165). Text is shown **as delivered** to the model, so an author
+    message carries its 【用户留言】 header once consumed (D-160), while its queued row shows the
+    raw text.
     **Scrollback** (D-161) lives here, so the agent panel, the conception studio and the research
     task page all get it:
     - the snapshot's `next_cursor` feeds an infinite query over `GET /sessions/:id/messages`;

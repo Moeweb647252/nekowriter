@@ -75,15 +75,15 @@ export function ToolCallCard({
       .split("\n")
       .map((line) => line.trim())
       .find((line) => line !== "") ?? ""
-  // A failed call with no summary used to show only the tool name (and "读取了" with a blank URL
-  // for web_fetch). Name the failure and its first result line instead; the stored row is
-  // unchanged.
+  // A failed call names the failure and, when present, its first result line; the stored row is
+  // unchanged. With no result line the label is only the failed status: falling back to the
+  // renderer's summary would show a static label built from a missing payload (the dangling
+  // "读取了"), and every summary template has static text, so a "summary is empty" branch would be
+  // unreachable.
   const failed = call.is_error || call.status === "error"
   const summary = failed
     ? failureLine === ""
-      ? renderedSummary === ""
-        ? t("agent:status.failed")
-        : renderedSummary
+      ? t("agent:status.failed")
       : t("agent:tool.failed_with", { message: failureLine })
     : renderedSummary
   const appendices = includeInboxAppendices

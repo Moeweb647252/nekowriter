@@ -5,10 +5,11 @@
  * the author's words used to be invisible. `ActivityStream` now lifts exactly that appendix kind
  * into an author row, de-duplicated by `inbox_id`, while every other kind stays inside the card.
  */
-import { render, screen, within } from "@testing-library/react"
+import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
+import type { InboxItemDto } from "@/api/gen/InboxItemDto"
 import type { MessageWithCallsDto } from "@/api/gen/MessageWithCallsDto"
 import type { SessionDto } from "@/api/gen/SessionDto"
 import type { ToolCallDto } from "@/api/gen/ToolCallDto"
@@ -42,7 +43,7 @@ vi.mock("@/api/hooks/sessions", () => ({
 }))
 vi.mock("@/components/common/ErrorToast", () => ({ useErrorToast: () => vi.fn() }))
 
-import { ActivityStream } from "@/features/agent/ActivityStream"
+import { ActivityStream, buildRows } from "@/features/agent/ActivityStream"
 import { useLiveStore } from "@/stores/live"
 
 function session(): SessionDto {
@@ -133,12 +134,12 @@ function messageWith(toolCalls: ToolCallDto[], id = 1): MessageWithCallsDto {
   }
 }
 
-function renderStream(messages: MessageWithCallsDto[]) {
+function renderStream(messages: MessageWithCallsDto[], inbox: InboxItemDto[] = []) {
   return render(
     <ActivityStream
       session={session()}
       messages={messages}
-      inbox={[]}
+      inbox={inbox}
       paneName="conversation"
     />,
   )
@@ -181,8 +182,11 @@ describe("inbox appendices", () => {
     await user.click(cardTrigger())
     const effect = screen.getByText("the effect notice")
     expect(effect.closest('[data-slot="collapsible-content"]')).not.toBeNull()
-    // The inbox appendix is not repeated inside the card.
-    expect(within(effect.parentElement as HTMLElement).queryByText(INBOX_TEXT)).toBeNull()
+    // The inbox appendix is not repeated anywhere in the card's appendices container.
+    const appendices = (screen.getByText("Attached to this result").parentElement ??
+      null) as HTMLElement | null
+    expect(appendices).not.toBeNull()
+    expect((appendices as HTMLElement).textContent).not.toContain(INBOX_TEXT)
     expect(screen.getAllByTestId("inbox-appendix")).toHaveLength(1)
   })
 
@@ -207,6 +211,48 @@ describe("inbox appendices", () => {
     expect(screen.getAllByText("Your message")).toHaveLength(1)
   })
 
+  it("suppresses a queued copy of an inbox id already lifted", () => {
+    renderStream(
+      [
+        messageWith([
+          toolCall({ appendices: [{ kind: "inbox", text: INBOX_TEXT, inbox_id: 1 }] }),
+        ]),
+      ],
+      [{ id: 1, kind: "user_message", content: "queued duplicate" }],
+    )
+
+    expect(screen.getAllByTestId("inbox-appendix")).toHaveLength(1)
+    expect(screen.queryByText("queued duplicate")).toBeNull()
+  })
+
+  it("renders a queued message with a different id", () => {
+    renderStream(
+      [
+        messageWith([
+          toolCall({ appendices: [{ kind: "inbox", text: INBOX_TEXT, inbox_id: 1 }] }),
+        ]),
+      ],
+      [{ id: 2, kind: "user_message", content: "queued after the appendix" }],
+    )
+
+    expect(screen.getAllByTestId("inbox-appendix")).toHaveLength(1)
+    expect(screen.getByText("queued after the appendix")).toBeInTheDocument()
+  })
+
+  it("places the lifted row between the message and the next one", () => {
+    const call = toolCall({
+      appendices: [{ kind: "inbox", text: INBOX_TEXT, inbox_id: 1 }],
+    })
+    const rows = buildRows(
+      [messageWith([call], 1), messageWith([], 2)],
+      undefined,
+      (key) => key,
+      [],
+    )
+
+    expect(rows.map((row) => row.kind)).toEqual(["message", "inbox", "message"])
+  })
+
   it("leaves a stream without inbox appendices unchanged", () => {
     renderStream([
       messageWith([
@@ -218,6 +264,23 @@ describe("inbox appendices", () => {
 
     expect(screen.queryByTestId("inbox-appendix")).toBeNull()
     expect(screen.queryByText("Your message")).toBeNull()
+  })
+
+  it("labels a failed call with no result line as failed, not with a dangling summary", () => {
+    renderStream([
+      messageWith([
+        toolCall({
+          status: "error",
+          is_error: true,
+          ui: null,
+          result_text: null,
+        }),
+      ]),
+    ])
+
+    const trigger = cardTrigger()
+    expect(trigger).toHaveTextContent("Failed")
+    expect(trigger).not.toHaveTextContent("读取了")
   })
 
   it("labels a failed call with the first result line instead of an empty summary", () => {
