@@ -3803,6 +3803,11 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   - The check is cheaper and shorter than under D-158: it makes no web calls, so the 120-second
     gateway timeout of D-163 is less likely. A topic's failure holds the queue instead of losing
     work, and **Continue** resumes it.
+  - Pre-ship hardening: the 5-second polling deadlines in `r11_word_gates.rs`,
+    `research_tools.rs` and `role_effort.rs` were tight enough to fail under parallel builds;
+    raised to the suite's 30 seconds. The r11 check also waits for the `finish_revision` call to be
+    sealed before asserting its error, so it cannot observe a still-running call. Test-only changes, no
+    production behaviour.
   - The conception kickoff, the prep kickoff, the prep tool list and `conception.system` change,
     and their `kickoff_baseline` snapshots with them. Topic research sessions are byte-identical.
   - For the author's database (read-only check, 2026-11-03), 0011 changes no row:

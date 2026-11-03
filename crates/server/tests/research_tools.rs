@@ -487,7 +487,7 @@ async fn saved_and_updated_entries_publish_knowledge_changed() {
     }
 
     // Both operations emitted their event: one `create`, then one `update`.
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(30);
     let mut ops: Vec<String> = Vec::new();
     while ops.len() < 2 && Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(Instant::now());

@@ -929,7 +929,7 @@ async fn first_session_request(
     )
     .await;
     let (session_id, _warnings) = create_write(app, book_id, chapter_id).await;
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     loop {
         let requests = server.received_requests().await.expect("requests");
         if let Some(request) = requests.first() {

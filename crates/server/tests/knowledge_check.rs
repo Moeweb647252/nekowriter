@@ -624,7 +624,8 @@ async fn set_research_topics_in_a_check_inserts_ready_topics_with_check_id() {
         );
     }
     let db = runtime.app.db().conn();
-    for (id, _, _, _, _, _) in &rows {
+    let queue_started = rows.iter().any(|row| row.3 == "running");
+    for (id, _, _, status, _, _) in &rows {
         let row = db
             .query_one_raw(Statement::from_string(
                 DatabaseBackend::Sqlite,
@@ -641,14 +642,21 @@ async fn set_research_topics_in_a_check_inserts_ready_topics_with_check_id() {
             row.try_get::<String>("", "language").unwrap(),
             writing_language
         );
-        assert_eq!(row.try_get::<Option<i32>>("", "scope_id").unwrap(), None);
+        // A ready row is the tool's output before the queue touches it. Once the queue starts a
+        // topic, `prepare_scope` may legitimately store its scope before the test observes the
+        // running row (and the queue may also have created the scope).
+        if status == "ready" {
+            assert_eq!(row.try_get::<Option<i32>>("", "scope_id").unwrap(), None);
+        }
         assert_eq!(row.try_get::<i32>("", "book_id").unwrap(), runtime.book_id);
     }
-    assert_eq!(
-        scalar(&runtime, "SELECT count(*) AS n FROM knowledge_scopes").await,
-        scopes_before,
-        "check topics do not create scopes"
-    );
+    if !queue_started {
+        assert_eq!(
+            scalar(&runtime, "SELECT count(*) AS n FROM knowledge_scopes").await,
+            scopes_before,
+            "check topics do not create scopes before the queue starts"
+        );
+    }
     assert_eq!(
         scalar(
             &runtime,

@@ -134,10 +134,13 @@ async fn r11_finish_revision_on_an_empty_paragraph_is_an_error() {
     )
     .await
     .expect("create revision session");
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
     loop {
         let calls = runtime.calls(session_id).await;
-        if let Some(call) = calls.iter().find(|call| call.name == "finish_revision") {
+        if let Some(call) = calls
+            .iter()
+            .find(|call| call.name == "finish_revision" && call.sealed)
+        {
             assert!(call.is_error, "finish_revision must refuse an empty draft");
             assert!(
                 call.raw_result_text

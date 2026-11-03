@@ -585,7 +585,7 @@ required = ["names"]
 properties.names = { type = "array", minItems = 1, items = { type = "string" }, description = "按重要性从高到低排列的全部人物名" }
 
 [tools.set_research_topics]
-description = '''设置资料收集主题。只替换你自己之前设置、尚未执行的资料主题；作者创建或修改过的主题会保留，不要重复设置它们。每个主题说明要收集什么、用于什么，并指定归入的知识范围名称；一本书通常只使用一到两个知识范围，同类主题共用一个范围名。'''
+description = '''设置补充资料主题。只替换你自己之前设置、尚未执行的资料主题；作者创建或修改过的主题会保留，不要重复设置它们。每个主题说明要收集什么、用于什么，并指定归入的知识范围名称；一本书通常只使用一到两个知识范围，同类主题共用一个范围名。'''
 examples = [
   { topics = [ { topic = "宋代市井生活", requirements = "茶馆、酒楼、夜市的布局与经营方式，用于汴京场景描写", scope = "宋代社会" } ] },
   { topics = [

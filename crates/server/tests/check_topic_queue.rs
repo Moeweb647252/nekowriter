@@ -86,6 +86,28 @@ async fn topic_rows(runtime: &Runtime, check_id: i32) -> Vec<(i32, String, Strin
         .collect()
 }
 
+async fn topic_session_order(runtime: &Runtime, check_id: i32) -> Vec<(i32, i32)> {
+    runtime
+        .app
+        .db()
+        .conn()
+        .query_all_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT t.id AS topic_id, s.id AS session_id FROM research_tasks t              JOIN agent_sessions s ON s.research_task_id = t.id              WHERE t.check_id = ? AND t.kind = 'topic' ORDER BY t.id",
+            vec![check_id.into()],
+        ))
+        .await
+        .expect("topic sessions")
+        .into_iter()
+        .map(|row| {
+            (
+                row.try_get("", "topic_id").expect("topic id"),
+                row.try_get("", "session_id").expect("session id"),
+            )
+        })
+        .collect()
+}
+
 async fn wait_until<F, Fut>(mut check: F)
 where
     F: FnMut() -> Fut,
@@ -180,6 +202,12 @@ async fn three_topics_run_in_order_then_one_conception_session_starts() {
     assert_eq!(
         topics.iter().map(|row| row.2.as_str()).collect::<Vec<_>>(),
         ["Topic one", "Topic two", "Topic three"]
+    );
+    let order = topic_session_order(&runtime, check_id).await;
+    assert_eq!(order.len(), 3, "{order:?}");
+    assert!(
+        order.windows(2).all(|pair| pair[0].1 < pair[1].1),
+        "sessions start in topic-id order: {order:?}"
     );
 
     wait_until(|| async { sessions(&runtime, book_id, "conception").await.len() == 1 }).await;
@@ -316,6 +344,17 @@ async fn an_author_topic_added_while_a_topic_runs_runs_after_it() {
         )
         .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
+    let rows = topic_rows(&runtime, check_id).await;
+    assert_eq!(
+        rows.iter().filter(|row| row.1 == "running").count(),
+        1,
+        "the earlier topic keeps the only running slot: {rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.2 == "Added while running" && row.1 == "ready"),
+        "the added topic waits for the earlier ones: {rows:?}"
+    );
     wait_until(|| async {
         topic_rows(&runtime, check_id)
             .await
@@ -686,14 +725,14 @@ async fn two_quick_topic_creates_start_exactly_one_topic_session() {
 }
 
 #[tokio::test]
-async fn rerunning_a_check_waits_for_a_running_topic_then_continues() {
+async fn rerunning_a_check_waits_for_a_running_topic_then_uses_its_new_list() {
     let runtime = runtime(vec![
         ScriptStep::new().tool(
             "set_research_topics",
             json!({
                 "topics": [
                     { "topic": "Running before rerun", "requirements": "", "scope": "History" },
-                    { "topic": "After rerun", "requirements": "", "scope": "History" }
+                    { "topic": "Replaced by rerun", "requirements": "", "scope": "History" }
                 ]
             }),
         ),
@@ -701,8 +740,14 @@ async fn rerunning_a_check_waits_for_a_running_topic_then_continues() {
         ScriptStep::new()
             .delay(Duration::from_secs(2))
             .tool("finish_research", json!({ "report": "first done" })),
+        ScriptStep::new().delay(Duration::from_secs(4)).tool(
+            "set_research_topics",
+            json!({
+                "topics": [{ "topic": "Rerun replacement", "requirements": "", "scope": "History" }]
+            }),
+        ),
         ScriptStep::new().tool("finish_research", json!({ "report": "check rerun done" })),
-        ScriptStep::new().tool("finish_research", json!({ "report": "second done" })),
+        ScriptStep::new().tool("finish_research", json!({ "report": "replacement done" })),
     ])
     .await;
     let (book_id, check_id, check_session) =
@@ -724,9 +769,50 @@ async fn rerunning_a_check_waits_for_a_running_topic_then_continues() {
         topic_rows(&runtime, check_id)
             .await
             .iter()
-            .any(|row| row.2 == "After rerun" && row.1 == "done")
+            .any(|row| row.2 == "Running before rerun" && row.1 == "done")
     })
     .await;
+    // The re-run is deliberately slower than the topic. Its `set_research_topics` has not run
+    // yet, so the old waiting topic must still be ready and no new topic may have started.
+    let waiting = topic_rows(&runtime, check_id).await;
+    assert_eq!(
+        waiting.iter().filter(|row| row.1 == "running").count(),
+        0,
+        "the queue waits while the re-run check is not done: {waiting:?}"
+    );
+    assert!(
+        waiting
+            .iter()
+            .any(|row| row.2 == "Replaced by rerun" && row.1 == "ready"),
+        "the old list is untouched until the re-run replaces it: {waiting:?}"
+    );
+    let check_status = runtime
+        .app
+        .db()
+        .conn()
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            format!("SELECT status FROM research_tasks WHERE id = {check_id}"),
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get::<String>("", "status")
+        .unwrap();
+    assert_eq!(check_status, "running", "the re-run is still planning");
+
+    wait_until(|| async {
+        topic_rows(&runtime, check_id)
+            .await
+            .iter()
+            .any(|row| row.2 == "Rerun replacement" && row.1 == "done")
+    })
+    .await;
+    let after = topic_rows(&runtime, check_id).await;
+    assert!(
+        !after.iter().any(|row| row.2 == "Replaced by rerun"),
+        "the re-run's set_research_topics replaces the old waiting list: {after:?}"
+    );
     assert_eq!(
         sessions(&runtime, book_id, "conception").await.len(),
         0,
@@ -1018,22 +1104,38 @@ async fn an_abandoned_check_does_not_run_its_topics() {
     let runtime = runtime(vec![ScriptStep::new().delay(Duration::from_secs(20))]).await;
     let (book_id, check_id, check_session) =
         create_check_book(&runtime, "Abandoned check", true).await;
-    runtime
+    let (status, body) = runtime
+        .app
+        .post(
+            "/api/research-tasks",
+            json!({
+                "book_id": book_id,
+                "check_id": check_id,
+                "scope_name": "History",
+                "topic": "Survives abandon",
+                "language": "en"
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let (status, _) = runtime
         .app
         .post(&format!("/api/sessions/{check_session}/abandon"), json!({}))
         .await;
+    assert_eq!(status, StatusCode::OK);
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(sessions(&runtime, book_id, "conception").await.len(), 0);
-    // No topic session was started for the check.
     assert!(
         sessions(&runtime, book_id, "research")
             .await
             .iter()
             .all(|(id, _)| *id == check_session),
-        "{:?}",
+        "no topic session starts after the check is abandoned: {:?}",
         sessions(&runtime, book_id, "research").await
     );
-    assert!(topic_rows(&runtime, check_id).await.is_empty());
+    let rows = topic_rows(&runtime, check_id).await;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].1, "ready", "{rows:?}");
 }
 
 #[tokio::test]
