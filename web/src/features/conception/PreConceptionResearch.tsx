@@ -65,7 +65,10 @@ export type PreConceptionResearchProps = {
 
 /** The check's topics: the book's tasks that carry its `check_id`, in id order. */
 export function checkTopics(topics: ResearchTaskDto[], checkId: number): ResearchTaskDto[] {
-  return topics.filter((topic) => topic.check_id === checkId)
+  // `GET /research-tasks` is newest-first; the queue and spec/11 §5.4 use id order.
+  return topics
+    .filter((topic) => topic.check_id === checkId)
+    .sort((left, right) => left.id - right.id)
 }
 
 /** True while a topic still waits for the queue (`ready`). */
@@ -272,25 +275,33 @@ export function PreConceptionResearch({
                         { onError: showError },
                       )
                     }
-                    onContinue={() =>
-                      topicControl.mutate(
-                        { sessionId: runningTopic.session_id ?? 0, operation: "continue" },
-                        { onError: showError },
-                      )
-                    }
+                    onContinue={() => {
+                      const current = topicSnapshot.data?.session
+                      if (current === undefined) return
+                      if (current.status === "held" || current.status === "paused") {
+                        topicResume.mutate(
+                          { sessionId: current.id },
+                          { onError: showError },
+                        )
+                      } else {
+                        topicControl.mutate(
+                          { sessionId: current.id, operation: "continue" },
+                          { onError: showError },
+                        )
+                      }
+                    }}
                     onFeedback={(feedback) =>
                       topicResume.mutate(
                         { sessionId: runningTopic.session_id ?? 0, feedback },
                         { onError: showError },
                       )
                     }
-                    onAbandon={() => {
-                      if (!window.confirm(t("knowledge:research.abandon_confirm"))) return
+                    onAbandon={() =>
                       topicControl.mutate(
                         { sessionId: runningTopic.session_id ?? 0, operation: "abandon" },
                         { onError: showError },
                       )
-                    }}
+                    }
                   />
                 )}
                 <ActivityStream
@@ -376,7 +387,6 @@ export function PreConceptionResearch({
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4" data-testid="research-conception-settled">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-sm font-semibold">{t("book:conception.research_before.title")}</h2>
-        <StatusBadge status="done" variant="canon" />
       </div>
       <CheckReport report={check.report} />
       {topicList}

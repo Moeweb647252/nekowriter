@@ -796,6 +796,132 @@ describe("knowledge-check states before conception", () => {
     expect(screen.getByRole("button", { name: "Pause" })).toBeInTheDocument()
   })
 
+  it("orders topics by id so Run next picks the older waiting topic", async () => {
+    const user = userEvent.setup()
+    state.topics = [
+      preparationTask({ status: "done" }),
+      // The API returns newest-first; the queue runs ascending id (spec/11 §5.4).
+      checkTopic({ id: 23, topic: "Newer topic", status: "ready" }),
+      checkTopic({ id: 22, topic: "Older topic", status: "ready" }),
+    ]
+    renderStudio()
+    const rows = screen.getAllByTestId(/^check-topic-\d+$/)
+    expect(rows.map((row) => row.getAttribute("data-testid"))).toEqual([
+      "check-topic-22",
+      "check-topic-23",
+    ])
+    await user.click(screen.getByRole("button", { name: "Run next" }))
+    expect(runResearchTask).toHaveBeenCalledWith(22, expect.anything())
+  })
+
+  it("continues a paused topic by resuming its session", async () => {
+    const user = userEvent.setup()
+    state.topics = [
+      preparationTask({ status: "done" }),
+      checkTopic({ id: 22, status: "running", session_id: 12 }),
+    ]
+    state.topicSessionSnapshot = topicSnapshot(
+      conceptionSession({ id: 12, role: "researcher", kind: "research", status: "paused" }),
+    )
+    renderStudio()
+    await user.click(screen.getByRole("button", { name: "Continue" }))
+    expect(resume).toHaveBeenCalledWith({ sessionId: 12 }, expect.anything())
+    expect(sessionControl).not.toHaveBeenCalled()
+  })
+
+  it("continues a stopped topic through the session control", async () => {
+    const user = userEvent.setup()
+    state.topics = [
+      preparationTask({ status: "done" }),
+      checkTopic({ id: 22, status: "running", session_id: 12 }),
+    ]
+    state.topicSessionSnapshot = topicSnapshot(
+      conceptionSession({ id: 12, role: "researcher", kind: "research", status: "stopped" }),
+    )
+    renderStudio()
+    await user.click(screen.getByRole("button", { name: "Continue" }))
+    expect(sessionControl).toHaveBeenCalledWith(
+      { sessionId: 12, operation: "continue" },
+      expect.anything(),
+    )
+  })
+
+  it("confirms Start conception now in the running state before starting", async () => {
+    const user = userEvent.setup()
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false)
+    state.topics = [
+      preparationTask({ status: "done" }),
+      checkTopic({ id: 22, status: "running", session_id: 12 }),
+    ]
+    state.topicSessionSnapshot = topicSnapshot(
+      conceptionSession({ id: 12, role: "researcher", kind: "research", status: "running" }),
+    )
+    renderStudio()
+    await user.click(screen.getByRole("button", { name: "Start conception now" }))
+    expect(confirm).toHaveBeenCalledWith(
+      "The knowledge check and its research topics keep running. Start conception now?",
+    )
+    expect(startConception).not.toHaveBeenCalled()
+    confirm.mockReturnValue(true)
+    await user.click(screen.getByRole("button", { name: "Start conception now" }))
+    expect(startConception).toHaveBeenCalledTimes(1)
+    confirm.mockRestore()
+  })
+
+  it("shows the auto and manual hint according to the flag", () => {
+    const conception = conceivingBook.conception as { start_after_knowledge_check?: boolean }
+    state.topics = [preparationTask({ status: "done" }), checkTopic({ id: 22 })]
+    conception.start_after_knowledge_check = true
+    const first = renderStudio()
+    expect(screen.getByText("Conception starts when the research finishes.")).toBeInTheDocument()
+    first.unmount()
+    conception.start_after_knowledge_check = false
+    renderStudio()
+    expect(screen.getByText("When the research finishes, start conception here.")).toBeInTheDocument()
+    delete conception.start_after_knowledge_check
+  })
+
+  it("renders the check report collapsed in the settled state", () => {
+    state.topics = [preparationTask({ status: "done", report: "The report" }), checkTopic({ id: 22 })]
+    renderStudio()
+    expect(screen.getByText("Check report").closest("details")).not.toHaveAttribute("open")
+  })
+
+  it("deletes a waiting topic and labels an author topic", async () => {
+    const user = userEvent.setup()
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true)
+    state.topics = [
+      preparationTask({ status: "done" }),
+      checkTopic({ id: 22, origin: "author", topic: "Author topic" }),
+    ]
+    renderStudio()
+    expect(screen.getByText("Added by you")).toBeInTheDocument()
+    await user.click(
+      within(screen.getByTestId("check-topic-22")).getByRole("button", { name: "Delete" }),
+    )
+    expect(deleteResearchTask).toHaveBeenCalledWith(22, expect.anything())
+    confirm.mockRestore()
+  })
+
+  it("shows the topic list when the check failed or was cancelled", () => {
+    state.topics = [
+      preparationTask({ status: "failed" }),
+      checkTopic({ id: 22, topic: "Failed topic list" }),
+    ]
+    const first = renderStudio()
+    expect(screen.getByTestId("check-topic-22")).toBeInTheDocument()
+    expect(screen.getByText("Failed topic list")).toBeInTheDocument()
+    first.unmount()
+
+    state.topics = [
+      preparationTask({ status: "cancelled" }),
+      checkTopic({ id: 22, topic: "Cancelled topic list" }),
+    ]
+    renderStudio()
+    expect(screen.getByTestId("check-topic-22")).toBeInTheDocument()
+    expect(screen.getByText("Cancelled topic list")).toBeInTheDocument()
+  })
+
   it("shows a failed topic with Continue and Abandon", async () => {
     const user = userEvent.setup()
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true)

@@ -227,7 +227,7 @@
       "open_task": "Open the check",
       "start_now": "Start conception now",
       "continue": "Continue",
-      "still_running_confirm": "The knowledge check is still running and keeps running. Start conception now?",
+      "still_running_confirm": "The knowledge check and its research topics keep running. Start conception now?",
       "check_first": "Check knowledge first",
       "no_report": "The check has not written a report yet.",
       "entries_created": "Entries created: {{count}}",

@@ -227,7 +227,7 @@
       "open_task": "打开知识检查",
       "start_now": "立即开始构思",
       "continue": "继续",
-      "still_running_confirm": "知识检查仍在运行，并且会继续运行。现在就开始构思吗？",
+      "still_running_confirm": "知识检查及其资料研究主题仍在运行，并且会继续运行。现在就开始构思吗？",
       "check_first": "先做知识检查",
       "no_report": "知识检查还没有报告。",
       "entries_created": "已创建条目：{{count}}",

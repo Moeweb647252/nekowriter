@@ -170,5 +170,6 @@
   "send_back_dialog.outline_missing_hint": "A redraft drafts from an accepted outline. Write the outline first, then send back again.",
   "send_back_dialog.write_outline": "Write the outline",
   "outline_dialog.guidance_placeholder": "Optional. The planner reads this before drafting the outline.",
-  "status.cancelled": "Cancelled"
+  "status.cancelled": "Cancelled",
+  "status.done": "Done"
 }
