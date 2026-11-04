@@ -14,7 +14,7 @@ use crate::api::dto::research::{ResearchTaskCreate, ResearchTaskPatch};
 use crate::db::entities::{agent_sessions, chapters, model_profiles, providers, research_tasks};
 use crate::db::json::{
     AgentRole, CanonStatus, ChapterContent, ChapterStatus, GoalCondition, GoalStatus,
-    ResearchTaskStatus, SessionKind, SessionStatus,
+    ResearchTaskKind, ResearchTaskStatus, SessionKind, SessionStatus,
 };
 use crate::services::canon::{CanonWrite, Visibility as CanonVisibility};
 use crate::services::maintenance::{last_archivist_kind, open_archivist_session};
@@ -843,6 +843,16 @@ impl ToolHandler for UpdateResearchTaskTool {
             .is_some_and(|value| value.trim().is_empty())
         {
             return Err(validation("a research task needs a scope name"));
+        }
+        let current = research::get(ctx.tx, input.task)
+            .await
+            .map_err(|_| internal())?;
+        if current.kind == ResearchTaskKind::Preparation
+            && (input.topic.is_some() || input.scope.is_some())
+        {
+            return Err(validation(
+                "a preparation task has no topic or scope; edit requirements only",
+            ));
         }
         let fields = ResearchTaskPatch {
             topic: input.topic,
