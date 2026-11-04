@@ -497,13 +497,11 @@ async fn approval_reruns_prepare_and_refuses_a_chapter_locked_since_the_hold() {
         .find(|call| call["name"] == "edit_chapter_text")
         .expect("edit call");
     assert_eq!(call["status"], "error");
-    assert!(
-        call["result_text"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("章节正被"),
-        "{call}"
-    );
+    let result_text = call["result_text"].as_str().unwrap_or_default();
+    assert!(result_text.contains("章节正被"), "{call}");
+    // The real running writer's id proves approval re-ran `prepare`; a skipped prepare returns
+    // `Prepared::None` and the execute guard reports #0 instead.
+    assert!(result_text.contains("#900"), "{call}");
     let content = app
         .state()
         .db()
