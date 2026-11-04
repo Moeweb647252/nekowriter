@@ -38,5 +38,7 @@
   "chapter.outline_missing": "本章还没有细纲，请先写细纲。",
   "goal.open_children": "此目标仍有未关闭的后代节点。",
   "goal.has_children": "此目标有子节点；请先移动或删除它们。",
-  "model.effort_unsupported": "所选思考强度在这个模型上不可用；会话会使用下一个选择或模型默认值。"
+  "model.effort_unsupported": "所选思考强度在这个模型上不可用；会话会使用下一个选择或模型默认值。",
+  "timeline.has_children": "这个时间线事件还有下级事件；请先移动或删除它们。",
+  "timeline.status_conflict": "这次状态变更与它的下级事件冲突。"
 }

@@ -1,9 +1,12 @@
 /** Foreshadowing anchors: planned marker and the legacy text-only direction (D-170). */
 import { render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import i18n from "i18next"
-import { beforeAll, describe, expect, it, vi } from "vitest"
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 
 import enCanon from "@/i18n/locales/en/canon.json"
+
+const patchMutate = vi.hoisted(() => vi.fn())
 
 vi.mock("react-router", async () => {
   const React = await import("react")
@@ -36,8 +39,16 @@ vi.mock("@/api/hooks/useCanon", () => ({
     ],
   }),
   useCreateForeshadowing: () => ({ mutate: vi.fn() }),
-  usePatchForeshadowing: () => ({ mutate: vi.fn() }),
+  usePatchForeshadowing: () => ({ mutate: patchMutate, isPending: false }),
   useDeleteForeshadowing: () => ({ mutate: vi.fn() }),
+  useTimeline: () => ({
+    data: [
+      { id: 1, book_id: 1, track_id: null, position: 0, story_time: "", title: "", description: "", chapter_id: null, parent_id: null, kind: "root", status: "occurred", child_count: 1, importance: 2, entity_ids: [], created_at: "", updated_at: "" },
+      { id: 11, book_id: 1, track_id: null, position: 1024, story_time: "", title: "Dropped gate", description: "", chapter_id: null, parent_id: null, kind: "entry", status: "abandoned", child_count: 0, importance: 2, entity_ids: [], created_at: "", updated_at: "" },
+      { id: 12, book_id: 1, track_id: null, position: 2048, story_time: "", title: "The gate", description: "", chapter_id: null, parent_id: null, kind: "entry", status: "planned", child_count: 0, importance: 2, entity_ids: [], created_at: "", updated_at: "" },
+      { id: 13, book_id: 1, track_id: null, position: 3072, story_time: "", title: "The battle", description: "", chapter_id: null, parent_id: null, kind: "entry", status: "occurred", child_count: 0, importance: 2, entity_ids: [], created_at: "", updated_at: "" },
+    ],
+  }),
 }))
 vi.mock("@/api/hooks/tracks", () => ({
   useTracks: () => ({ data: [{ id: 1, kind: "main", title: "" }] }),
@@ -63,14 +74,48 @@ beforeAll(() => {
   i18n.addResourceBundle("en", "canon", enCanon, true, true)
 })
 
+beforeEach(() => {
+  patchMutate.mockReset()
+})
+
 describe("ForeshadowingPage anchors", () => {
   it("shows the anchor, the planned marker and the direction", () => {
     render(<ForeshadowingPage />)
-    expect(
-      screen.getByText(/Planned payoff: after «The gate»/),
-    ).toBeInTheDocument()
-    expect(screen.getByText(/Planned payoff: after «The gate» \(planned\)/)).toBeInTheDocument()
+    expect(screen.getByText("Pays off after «The gate»")).toBeInTheDocument()
+    expect(screen.getByText("Planned")).toBeInTheDocument()
     expect(screen.getByText(/The sword returns\./)).toBeInTheDocument()
+  })
+
+  it("edits the anchor with the timeline picker", async () => {
+    const user = userEvent.setup()
+    render(<ForeshadowingPage />)
+    await user.click(screen.getAllByRole("button", { name: "Edit foreshadowing" })[0])
+    expect(
+      screen.getByRole("heading", { name: "Edit foreshadowing" }),
+    ).toBeInTheDocument()
+    const eventSelect = screen.getByLabelText("Timeline event")
+    expect(
+      Array.from(eventSelect.querySelectorAll("option")).map((option) => option.textContent),
+    ).toEqual(["None", "The gate (Planned)", "The battle"])
+    await user.selectOptions(eventSelect, "13")
+    await user.selectOptions(screen.getByLabelText("Position"), "before")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    expect(patchMutate.mock.calls[0][0]).toEqual({
+      id: 9,
+      patch: { payoff_event_id: 13, payoff_position: "before" },
+    })
+  })
+
+  it("clears the anchor as a pair", async () => {
+    const user = userEvent.setup()
+    render(<ForeshadowingPage />)
+    await user.click(screen.getAllByRole("button", { name: "Edit foreshadowing" })[0])
+    await user.click(screen.getByRole("button", { name: "Clear anchor" }))
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    expect(patchMutate.mock.calls[0][0]).toEqual({
+      id: 9,
+      patch: { payoff_event_id: null },
+    })
   })
 
   it("keeps the legacy text-only direction", () => {

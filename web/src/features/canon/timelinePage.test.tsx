@@ -116,7 +116,8 @@ describe("TimelinePage", () => {
   it("opens the edit dialog from a row's Edit action", async () => {
     render(<TimelinePage />)
     const user = userEvent.setup()
-    await user.click(screen.getByRole("button", { name: "Edit" }))
+    await user.click(screen.getByRole("button", { name: "Timeline actions for The gate" }))
+    await user.click(screen.getByRole("menuitem", { name: "Edit" }))
     expect(
       screen.getByRole("heading", { name: "Edit timeline event" }),
     ).toBeInTheDocument()

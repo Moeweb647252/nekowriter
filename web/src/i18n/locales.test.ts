@@ -22,6 +22,8 @@ const ALL_ERROR_CODES: ErrorCode[] = [
   "host.forbidden",
   "conflict.version",
   "conflict.exists",
+  "timeline.has_children",
+  "timeline.status_conflict",
   "book.invalid_state",
   "research.invalid_state",
   "settings.locked",

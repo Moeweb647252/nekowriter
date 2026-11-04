@@ -126,6 +126,9 @@ export function GoalNodeDialog({
     node?.foreshadowing.find((link) => link.id === id)?.title ??
     hookChoices.data?.find((hook) => hook.id === id)?.title ??
     `#${id}`
+  const eventStatus = (id: number) =>
+    node?.events.find((link) => link.id === id)?.status ??
+    eventChoices.data?.find((event) => event.id === id)?.status
 
   const parentCandidates = nodes.filter(
     (candidate) =>
@@ -336,6 +339,7 @@ export function GoalNodeDialog({
                       <option value="chapter_at_least">{t("canon:goal_condition_kind.chapter_at_least")}</option>
                       <option value="foreshadowing_resolved">{t("canon:goal_condition_kind.foreshadowing_resolved")}</option>
                       <option value="entity_status_is">{t("canon:goal_condition_kind.entity_status_is")}</option>
+                      <option value="event_occurred">{t("canon:goal_condition_kind.event_occurred")}</option>
                     </select>
                     {condition.kind === "chapter_at_least" ? (
                       <Input
@@ -361,6 +365,20 @@ export function GoalNodeDialog({
                           updateCondition(index, {
                             kind: "foreshadowing_resolved",
                             foreshadowing_id: value ?? 0,
+                          })
+                        }
+                      />
+                    ) : null}
+                    {condition.kind === "event_occurred" ? (
+                      <EventPicker
+                        bookId={bookId}
+                        trackId={scopeTrack ?? undefined}
+                        label={t("canon:goal_dialog.condition_event")}
+                        value={condition.event_id === 0 ? undefined : condition.event_id}
+                        onChange={(value) =>
+                          updateCondition(index, {
+                            kind: "event_occurred",
+                            event_id: value ?? 0,
                           })
                         }
                       />
@@ -455,6 +473,11 @@ export function GoalNodeDialog({
               {eventIds.map((id) => (
                 <span key={id} className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs">
                   {eventName(id)}
+                  {eventStatus(id) === "planned" ? (
+                    <span className="rounded border border-dashed px-1 text-[0.6rem]">
+                      {t("canon:planned_badge")}
+                    </span>
+                  ) : null}
                   <button type="button" aria-label={t("canon:goal_dialog.remove_link")} onClick={() => setEventIds((current) => current.filter((item) => item !== id))}>
                     ×
                   </button>

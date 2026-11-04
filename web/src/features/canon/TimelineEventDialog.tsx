@@ -1,11 +1,18 @@
-/** Edit one timeline event without touching its position (PROJECT §8.8, spec/11 §5.5, D-161). */
+/** Create or edit one timeline event; position changes only by dragging (PROJECT §8.8,
+ * spec/11 §5.5, D-161, D-170). */
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Plus, Star, X } from "lucide-react"
 
 import type { TimelineEventDto } from "@/api/gen/TimelineEventDto"
+import type { TimelineEventInput } from "@/api/gen/TimelineEventInput"
 import type { TimelineEventPatch } from "@/api/gen/TimelineEventPatch"
-import { useEntities, usePatchTimelineEvent } from "@/api/hooks/useCanon"
+import type { TimelineStatus } from "@/api/gen/TimelineStatus"
+import {
+  useCreateTimelineEvent,
+  useEntities,
+  usePatchTimelineEvent,
+} from "@/api/hooks/useCanon"
 import { useErrorToast } from "@/components/common/ErrorToast"
 import { Button } from "@/components/ui/button"
 import {
@@ -22,11 +29,17 @@ import { Textarea } from "@/components/ui/textarea"
 import { chapterRefLabel, type ChapterIndex } from "@/features/canon/chapterIndex"
 import { EntityPicker } from "@/features/canon/EntityPicker"
 import { GoalsReferencedBy } from "@/features/canon/GoalsReferencedBy"
+import { timelineErrorText } from "@/features/canon/timelineErrors"
 
 export type TimelineEventDialogProps = {
   bookId: number
-  event: TimelineEventDto
+  /** `null`/absent creates a new entry; otherwise the entry to edit. */
+  event?: TimelineEventDto | null
   events?: TimelineEventDto[]
+  /** The initial parent when creating; `null` is top level. */
+  parentId?: number | null
+  /** Preselect a status move (the row menu's Mark as happened). */
+  initialStatus?: TimelineStatus
   chapterIndex: ChapterIndex
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -43,52 +56,76 @@ function sameIds(left: number[], right: number[]): boolean {
 
 export function TimelineEventDialog({
   bookId,
-  event,
+  event = null,
   events = [],
+  parentId = null,
+  initialStatus,
   chapterIndex,
   open,
   onOpenChange,
 }: TimelineEventDialogProps) {
   const { t } = useTranslation()
   const showError = useErrorToast()
+  const createEvent = useCreateTimelineEvent(bookId)
   const patchEvent = usePatchTimelineEvent(bookId)
   const entities = useEntities(bookId)
   const entityName = (id: number) =>
     entities.data?.find((entity) => entity.id === id)?.name ?? `#${id}`
 
-  const [title, setTitle] = useState(event.title)
-  const [description, setDescription] = useState(event.description)
-  const [storyTime, setStoryTime] = useState(event.story_time)
+  const isCreate = event === null
+  const [title, setTitle] = useState(event?.title ?? "")
+  const [description, setDescription] = useState(event?.description ?? "")
+  const [storyTime, setStoryTime] = useState(event?.story_time ?? "")
   const [chapter, setChapter] = useState(
-    event.chapter_id === null ? "" : String(event.chapter_id),
+    event?.chapter_id == null ? "" : String(event.chapter_id),
   )
-  const [importance, setImportance] = useState(event.importance)
-  const [entityIds, setEntityIds] = useState<number[]>(event.entity_ids)
+  const [importance, setImportance] = useState(event?.importance ?? 2)
+  const [entityIds, setEntityIds] = useState<number[]>(event?.entity_ids ?? [])
   const [entityPick, setEntityPick] = useState<number | undefined>(undefined)
   const [note, setNote] = useState("")
-  const [parentId, setParentId] = useState(
-    event.parent_id === null ? "" : String(event.parent_id),
+  const [parentChoice, setParentChoice] = useState<string>(
+    isCreate
+      ? parentId === null
+        ? ""
+        : String(parentId)
+      : event.parent_id === null
+        ? ""
+        : String(event.parent_id),
   )
-  const [status, setStatus] = useState(event.status)
+  const [status, setStatus] = useState<TimelineStatus>(
+    initialStatus ?? event?.status ?? "occurred",
+  )
+  const [errorText, setErrorText] = useState<string | null>(null)
 
+  // A child may not move under itself or one of its descendants (D-170 T6).
   const descendantIds = new Set<number>()
-  let growing = true
-  while (growing) {
-    growing = false
-    for (const row of events) {
-      if (
-        row.parent_id !== null &&
-        (row.parent_id === event.id || descendantIds.has(row.parent_id)) &&
-        !descendantIds.has(row.id)
-      ) {
-        descendantIds.add(row.id)
-        growing = true
+  if (event !== null) {
+    let growing = true
+    while (growing) {
+      growing = false
+      for (const row of events) {
+        if (
+          row.parent_id !== null &&
+          (row.parent_id === event.id || descendantIds.has(row.parent_id)) &&
+          !descendantIds.has(row.id)
+        ) {
+          descendantIds.add(row.id)
+          growing = true
+        }
       }
     }
   }
+  const scopeTrack = isCreate
+    ? (events.find((row) => row.id === Number(parentChoice))?.track_id ?? null)
+    : event.track_id
   const parentOptions = events
-    .filter((row) => row.id !== event.id && !descendantIds.has(row.id))
-    .sort((left, right) => left.position - right.position)
+    .filter((row) => row.kind !== "root" && row.id !== event?.id && !descendantIds.has(row.id))
+    .filter(
+      (row) =>
+        row.status !== "abandoned" &&
+        (row.track_id === scopeTrack || (scopeTrack !== null && row.track_id === null)),
+    )
+    .sort((left, right) => left.position - right.position || left.id - right.id)
 
   const chapterOptions = Array.from(chapterIndex.values()).sort((left, right) => {
     if (left.trackKind !== right.trackKind) {
@@ -100,7 +137,17 @@ export function TimelineEventDialog({
     return left.number - right.number
   })
 
-  const canSave = title.trim() !== "" && !patchEvent.isPending
+  const statusOptions: TimelineStatus[] = isCreate
+    ? ["occurred", "planned"]
+    : event.status === "planned"
+      ? ["planned", "occurred", "abandoned"]
+      : [event.status]
+  const statusChanged = !isCreate && status !== event.status
+  const canSave =
+    title.trim() !== "" &&
+    (!statusChanged || note.trim() !== "") &&
+    !createEvent.isPending &&
+    !patchEvent.isPending
 
   const addEntity = () => {
     if (entityPick === undefined || entityIds.includes(entityPick)) {
@@ -110,8 +157,38 @@ export function TimelineEventDialog({
     setEntityPick(undefined)
   }
 
+  const onFailure = (error: unknown) => {
+    const message = timelineErrorText(t, error)
+    if (message !== null) {
+      setErrorText(message)
+      return
+    }
+    showError(error)
+  }
+
   const submit = () => {
     if (!canSave) {
+      return
+    }
+    setErrorText(null)
+    if (isCreate) {
+      const input: TimelineEventInput = {
+        title: title.trim(),
+        description,
+        story_time: storyTime,
+        entity_ids: entityIds,
+        importance,
+        status,
+        ...(status === "occurred" && chapter !== ""
+          ? { chapter_id: Number(chapter) }
+          : {}),
+        ...(parentChoice === "" ? {} : { parent_id: Number(parentChoice) }),
+        ...(note.trim() === "" ? {} : { note: note.trim() }),
+      }
+      createEvent.mutate(input, {
+        onSuccess: () => onOpenChange(false),
+        onError: onFailure,
+      })
       return
     }
     const next: TimelineEventPatch = {}
@@ -133,8 +210,8 @@ export function TimelineEventDialog({
     if (importance !== event.importance) {
       next.importance = importance
     }
-    if (parentId !== (event.parent_id === null ? "" : String(event.parent_id))) {
-      next.parent_id = parentId === "" ? null : Number(parentId)
+    if (parentChoice !== (event.parent_id === null ? "" : String(event.parent_id))) {
+      next.parent_id = parentChoice === "" ? null : Number(parentChoice)
     }
     if (status !== event.status) {
       next.status = status
@@ -151,7 +228,7 @@ export function TimelineEventDialog({
       { id: event.id, patch: next },
       {
         onSuccess: () => onOpenChange(false),
-        onError: showError,
+        onError: onFailure,
       },
     )
   }
@@ -160,7 +237,11 @@ export function TimelineEventDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>{t("canon:timeline_event_dialog.edit_title")}</DialogTitle>
+          <DialogTitle>
+            {isCreate
+              ? t("canon:timeline_event_dialog.create_title")
+              : t("canon:timeline_event_dialog.edit_title")}
+          </DialogTitle>
           <DialogDescription>
             {t("canon:timeline_event_dialog.description")}
           </DialogDescription>
@@ -202,32 +283,13 @@ export function TimelineEventDialog({
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="timeline-event-chapter">
-              {t("canon:timeline_event_dialog.chapter")}
-            </Label>
-            <select
-              id="timeline-event-chapter"
-              value={chapter}
-              onChange={(event) => setChapter(event.target.value)}
-              className="h-8 w-full rounded-md border bg-background px-2 text-sm"
-            >
-              <option value="">{t("canon:timeline_event_dialog.no_chapter")}</option>
-              {chapterOptions.map((entry) => (
-                <option key={entry.id} value={entry.id}>
-                  {chapterRefLabel(t, chapterIndex, entry.id)}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="space-y-1.5">
             <Label htmlFor="timeline-event-parent">
               {t("canon:timeline_event_dialog.parent")}
             </Label>
             <select
               id="timeline-event-parent"
-              value={parentId}
-              onChange={(event) => setParentId(event.target.value)}
+              value={parentChoice}
+              onChange={(event) => setParentChoice(event.target.value)}
               className="h-8 w-full rounded-md border bg-background px-2 text-sm"
             >
               <option value="">{t("canon:timeline_event_dialog.parent_none")}</option>
@@ -246,19 +308,39 @@ export function TimelineEventDialog({
             <select
               id="timeline-event-status"
               value={status}
-              onChange={(event) => setStatus(event.target.value as TimelineEventDto["status"])}
+              onChange={(event) =>
+                setStatus(event.target.value as TimelineStatus)
+              }
               className="h-8 w-full rounded-md border bg-background px-2 text-sm"
             >
-              {(event.status === "planned"
-                ? (["planned", "occurred", "abandoned"] as const)
-                : ([event.status] as const)
-              ).map((value) => (
+              {statusOptions.map((value) => (
                 <option key={value} value={value}>
                   {t(`canon:timeline_event_dialog.status_${value}`)}
                 </option>
               ))}
             </select>
           </div>
+
+          {status === "planned" ? null : (
+            <div className="space-y-1.5">
+              <Label htmlFor="timeline-event-chapter">
+                {t("canon:timeline_event_dialog.chapter")}
+              </Label>
+              <select
+                id="timeline-event-chapter"
+                value={chapter}
+                onChange={(event) => setChapter(event.target.value)}
+                className="h-8 w-full rounded-md border bg-background px-2 text-sm"
+              >
+                <option value="">{t("canon:timeline_event_dialog.no_chapter")}</option>
+                {chapterOptions.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {chapterRefLabel(t, chapterIndex, entry.id)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <Label>{t("canon:timeline_event_dialog.importance")}</Label>
@@ -345,9 +427,22 @@ export function TimelineEventDialog({
               value={note}
               onChange={(event) => setNote(event.target.value)}
             />
+            {statusChanged && note.trim() === "" ? (
+              <p className="text-xs text-muted-foreground">
+                {t("canon:timeline_event_dialog.note_required")}
+              </p>
+            ) : null}
           </div>
 
-          <GoalsReferencedBy bookId={bookId} eventId={event.id} />
+          {errorText === null ? null : (
+            <p role="alert" className="text-sm text-destructive">
+              {errorText}
+            </p>
+          )}
+
+          {isCreate ? null : (
+            <GoalsReferencedBy bookId={bookId} eventId={event.id} />
+          )}
         </div>
 
         <DialogFooter>
