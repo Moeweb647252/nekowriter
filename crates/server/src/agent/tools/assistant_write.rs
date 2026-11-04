@@ -514,9 +514,15 @@ impl ToolHandler for DeleteCanonRecordTool {
             _ => return Err(validation("unknown target_type")),
         };
         if !on {
-            return Err(
-                ToolError::new(ToolErrorKind::SystemOff).with("system_label", input.target_type)
-            );
+            let system = match input.target_type.as_str() {
+                "entity" | "relation" => "entities",
+                "timeline_event" => "timeline",
+                "memory_note" => "memory",
+                "foreshadowing" => "foreshadowing",
+                _ => unreachable!(),
+            };
+            return Err(ToolError::new(ToolErrorKind::SystemOff)
+                .with("system_label", ctx.prompts.label("canon_system", system)));
         }
         let mut write = write_context(ctx);
         write.note = Some(input.note.clone());
