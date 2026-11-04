@@ -11,10 +11,10 @@ use crate::api::dto::chapters::{ChapterContentTextPut, ChapterInput, ChapterPatc
 use crate::api::dto::goals::{GoalNodeInput, GoalNodePatch};
 use crate::api::dto::knowledge::EntryInput;
 use crate::api::dto::research::{ResearchTaskCreate, ResearchTaskPatch};
-use crate::db::entities::{agent_sessions, chapters, research_tasks};
+use crate::db::entities::{agent_sessions, chapters, model_profiles, providers, research_tasks};
 use crate::db::json::{
-    CanonStatus, ChapterContent, ChapterStatus, GoalCondition, GoalStatus, ResearchTaskStatus,
-    SessionKind, SessionStatus,
+    AgentRole, CanonStatus, ChapterContent, ChapterStatus, GoalCondition, GoalStatus,
+    ResearchTaskStatus, SessionKind, SessionStatus,
 };
 use crate::services::canon::{CanonWrite, Visibility as CanonVisibility};
 use crate::services::maintenance::{last_archivist_kind, open_archivist_session};
@@ -315,15 +315,18 @@ impl ToolHandler for EditChapterTextTool {
         chapter_service::ensure_editable(ctx.db, chapter.id)
             .await
             .map_err(map_chapter_error)?;
-        Ok(Prepared::None)
+        Ok(Prepared::EditChapterText)
     }
     async fn execute(
         &self,
         ctx: &mut ToolCtx<'_>,
         input: Value,
-        _prepared: Prepared,
+        prepared: Prepared,
     ) -> Result<ToolOutcome, ToolError> {
         let input: EditChapterTextInput = decode(input)?;
+        if !matches!(prepared, Prepared::EditChapterText) {
+            return Err(ToolError::new(ToolErrorKind::ChapterLocked).with("session_id", 0));
+        }
         let chapter = resolve_chapter(ctx, book_id(ctx)?, &input.chapter).await?;
         let (new_text, before) = apply_text_edits(&chapter, &input.edits, ctx)?;
         let (result, events) = chapter_service::put_content_text_inner(
@@ -641,9 +644,13 @@ impl ToolHandler for CreateGoalTool {
     }
     async fn preview(&self, _ctx: &mut ToolCtx<'_>, input: Value) -> Result<Value, ToolError> {
         let input: GoalInput = decode(input)?;
-        Ok(
-            json!({"kind":"fields","label":"create_goal","rows":[{"field":"title","after":input.title},{"field":"purpose","after":input.purpose},{"field":"level","after":input.level}]}),
-        )
+        Ok(json!({"kind":"fields","label":"create_goal","rows":[
+            {"field":"title","after":input.title}, {"field":"purpose","after":input.purpose}, {"field":"level","after":input.level},
+            {"field":"parent_id","after":input.parent_id}, {"field":"status","after":input.status},
+            {"field":"chapter_from","after":input.chapter_from}, {"field":"chapter_to","after":input.chapter_to},
+            {"field":"conditions","after":input.conditions}, {"field":"entity_ids","after":input.entity_ids},
+            {"field":"event_ids","after":input.event_ids}, {"field":"foreshadowing_ids","after":input.foreshadowing_ids}
+        ]}))
     }
 }
 
@@ -779,7 +786,7 @@ impl ToolHandler for CreateResearchTaskTool {
     async fn preview(&self, _ctx: &mut ToolCtx<'_>, input: Value) -> Result<Value, ToolError> {
         let input: CreateResearchInput = decode(input)?;
         Ok(
-            json!({"kind":"fields","label":"create_research_task","rows":[{"field":"topic","after":input.topic},{"field":"scope","after":input.scope}]}),
+            json!({"kind":"fields","label":"create_research_task","rows":[{"field":"topic","after":input.topic},{"field":"requirements","after":input.requirements},{"field":"scope","after":input.scope}]}),
         )
     }
 }
@@ -821,6 +828,20 @@ impl ToolHandler for UpdateResearchTaskTool {
                 _ => Err(validation("status must be ready or deferred")),
             })
             .transpose()?;
+        if input
+            .topic
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(validation("a research task needs a topic"));
+        }
+        if input
+            .scope
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(validation("a research task needs a scope name"));
+        }
         let fields = ResearchTaskPatch {
             topic: input.topic,
             requirements: input.requirements,
@@ -1001,7 +1022,10 @@ impl ToolHandler for AddKnowledgeEntryTool {
     async fn preview(&self, _ctx: &mut ToolCtx<'_>, input: Value) -> Result<Value, ToolError> {
         let input: AddKnowledgeInput = decode(input)?;
         Ok(
-            json!({"kind":"fields","label":"add_knowledge_entry","shared":true,"rows":[{"field":"scope","after":input.scope},{"field":"title","after":input.title},{"field":"content","after":input.content}]}),
+            json!({"kind":"fields","label":"add_knowledge_entry","shared":true,"rows":[
+                {"field":"scope","after":input.scope}, {"field":"title","after":input.title}, {"field":"content","after":input.content},
+                {"field":"source_urls","after":input.source_urls}, {"field":"tags","after":input.tags}
+            ]}),
         )
     }
 }
@@ -1041,6 +1065,11 @@ impl ToolHandler for StartSessionTool {
             .as_deref()
             .map(str::trim)
             .filter(|v| !v.is_empty());
+        if input.chapter.is_some()
+            && matches!(input.action.as_str(), "research" | "knowledge_check")
+        {
+            return Err(validation("chapter is not valid for this action"));
+        }
         if input.task.is_some() && input.action != "research" {
             return Err(validation("task is only valid for research"));
         }
@@ -1107,6 +1136,42 @@ impl ToolHandler for StartSessionTool {
             json!({"kind":"action","label":"start_session","text":format!("启动 {} {}", input.action, target)}),
         )
     }
+}
+
+async fn ensure_model_available(ctx: &ToolCtx<'_>, role: AgentRole) -> Result<(), ToolError> {
+    let Some(profile_id) = crate::services::sessions::try_resolve_model(ctx.tx, ctx.book, role)
+        .await
+        .map_err(|_| internal())?
+    else {
+        return Err(map_start_error(
+            crate::error::AppError::new(
+                crate::error::ErrorCode::ModelMissingRole,
+                "no model configured for this role",
+            )
+            .with_details(json!({"role": role.as_str()})),
+        ));
+    };
+    let profile = model_profiles::Entity::find_by_id(profile_id)
+        .one(ctx.tx)
+        .await
+        .map_err(|_| internal())?;
+    if profile.is_none()
+        || (profile.is_some()
+            && providers::Entity::find_by_id(profile.unwrap().provider_id)
+                .one(ctx.tx)
+                .await
+                .map_err(|_| internal())?
+                .is_none())
+    {
+        return Err(map_start_error(
+            crate::error::AppError::new(
+                crate::error::ErrorCode::ModelMissingRole,
+                "the model profile or provider is missing",
+            )
+            .with_details(json!({"role": role.as_str()})),
+        ));
+    }
+    Ok(())
 }
 
 fn map_start_error(error: crate::error::AppError) -> ToolError {
@@ -1342,6 +1407,7 @@ async fn start_resync(
 }
 
 async fn start_research(ctx: &mut ToolCtx<'_>, task_id: i32) -> Result<ToolOutcome, ToolError> {
+    ensure_model_available(ctx, AgentRole::Researcher).await?;
     let task = research::get(ctx.tx, task_id)
         .await
         .map_err(|_| internal())?;

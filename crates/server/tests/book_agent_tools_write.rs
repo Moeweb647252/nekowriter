@@ -73,7 +73,7 @@ async fn edit_chapter_text_uses_the_text_service_and_saves_one_backup_per_sessio
             .execute(
                 &mut ctx,
                 json!({"chapter":"1","edits":[{"find":old,"replace":replacement}]}),
-                Prepared::None,
+                Prepared::EditChapterText,
             )
             .await
             .unwrap();

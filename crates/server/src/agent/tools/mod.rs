@@ -193,6 +193,8 @@ impl ToolError {
 pub enum Prepared {
     #[default]
     None,
+    /// A validated chapter-text edit; its presence proves `prepare` ran for an approved hold.
+    EditChapterText,
     QueryVector(Vec<f32>),
     WebSearch(Vec<WebHit>),
     WebPage(Box<FetchedPage>),
