@@ -726,6 +726,8 @@ impl ToolHandler for AddTimelineEventTool {
                 importance: input.importance,
                 after_id: input.after_event,
                 before_id: input.before_event,
+                parent_id: None,
+                status: None,
                 note: None,
             },
         )
@@ -1018,6 +1020,8 @@ impl ToolHandler for AddForeshadowingTool {
                 description: input.description,
                 planned_payoff: input.planned_payoff,
                 planted_chapter_id: None,
+                payoff_event_id: None,
+                payoff_position: None,
                 importance: input.importance,
                 entity_ids,
                 note: None,

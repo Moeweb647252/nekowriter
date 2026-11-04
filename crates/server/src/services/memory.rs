@@ -25,7 +25,7 @@ use crate::db::entities::{
 use crate::db::json::{
     AnchorKind, BookSettings, CanonStatus, CanonSystems, ChangeTargetType, ChapterContent,
     ChapterStatus, EntityKind, EntityStatus, ForeshadowingStatus, JsonText, NoteKind, NoteStatus,
-    TrackKind,
+    TimelineKind, TrackKind,
 };
 use crate::error::AppError;
 use crate::prompts::PromptSet;
@@ -1189,6 +1189,11 @@ async fn counts(
     if systems.timeline {
         counts.event = timeline_events::Entity::find()
             .filter(timeline_events::COLUMN.book_id.eq(visibility.book_id))
+            .filter(
+                timeline_events::COLUMN
+                    .kind
+                    .eq(TimelineKind::Entry.as_str()),
+            )
             .filter(visibility.visible_condition(timeline_events::Column::TrackId))
             .count(conn)
             .await? as i32;

@@ -196,11 +196,11 @@ INSERT INTO appearances(chapter_id, entity_id, role, note) VALUES
 
 INSERT INTO timeline_events(id, book_id, track_id, position, story_time, title, description,
                             chapter_id, importance, created_at, updated_at) VALUES
-  (1, {book}, NULL, 1.0, '天元历三千年春', '沈砚入城', '沈砚抵达青云城。', {first}, 4,
+  (1001, {book}, NULL, 1.0, '天元历三千年春', '沈砚入城', '沈砚抵达青云城。', {first}, 4,
    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
-  (2, {book}, NULL, 2.0, '天元历三千年夏', '剑冢异动', '剑冢深处传来低语。', {second}, 3,
+  (1002, {book}, NULL, 2.0, '天元历三千年夏', '剑冢异动', '剑冢深处传来低语。', {second}, 3,
    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
-INSERT INTO timeline_event_entities(event_id, entity_id) VALUES (1, 1), (2, 1);
+INSERT INTO timeline_event_entities(event_id, entity_id) VALUES (1001, 1), (1002, 1);
 
 INSERT INTO memory_notes(id, book_id, track_id, kind, content, chapter_id, importance, status,
                          created_at, updated_at) VALUES

@@ -26,7 +26,7 @@ use crate::db::entities::{
 };
 use crate::db::json::{
     AnchorKind, CanonMode, ChangeTargetType, ChapterStatus, EntityKind, EntityStatus,
-    ForeshadowingStatus, RelationStatus, TrackKind,
+    ForeshadowingStatus, RelationStatus, TimelineKind, TrackKind,
 };
 use crate::prompts::context::{
     AppearanceSummaryContext, ChangeLineContext, DesignLinkContext, RelationLineContext,
@@ -849,6 +849,11 @@ impl ToolHandler for QueryTimelineTool {
             .map(str::to_lowercase);
         let mut rows = timeline_events::Entity::find()
             .filter(timeline_events::COLUMN.book_id.eq(book_id))
+            .filter(
+                timeline_events::COLUMN
+                    .kind
+                    .eq(TimelineKind::Entry.as_str()),
+            )
             .filter(visibility.visible_condition(timeline_events::Column::TrackId))
             .order_by_asc(timeline_events::COLUMN.position)
             .order_by_asc(timeline_events::COLUMN.id)

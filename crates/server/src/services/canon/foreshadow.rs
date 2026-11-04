@@ -101,6 +101,8 @@ pub async fn create_inner(
         planted_chapter_id: Set(input.planted_chapter_id.or(write.chapter_id)),
         resolved_chapter_id: Set(None),
         resolution: Set(String::new()),
+        payoff_event_id: Set(input.payoff_event_id),
+        payoff_position: Set(input.payoff_position),
         importance: Set(input.importance),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),
@@ -205,6 +207,15 @@ pub async fn update_inner(
     }
     if let Some(resolution) = &patch.resolution {
         active.resolution = Set(resolution.trim().to_owned());
+    }
+    if let Some(payoff_event_id) = patch.payoff_event_id {
+        active.payoff_event_id = Set(payoff_event_id);
+        if payoff_event_id.is_none() {
+            active.payoff_position = Set(None);
+        }
+    }
+    if let Some(payoff_position) = patch.payoff_position {
+        active.payoff_position = Set(Some(payoff_position));
     }
     if let Some(importance) = patch.importance {
         active.importance = Set(importance);
@@ -353,6 +364,22 @@ pub async fn to_dto(
         planted_chapter_id: row.planted_chapter_id,
         resolved_chapter_id: row.resolved_chapter_id,
         resolution: row.resolution.clone(),
+        payoff_event_id: row.payoff_event_id,
+        payoff_position: row.payoff_position,
+        payoff_event_title: match row.payoff_event_id {
+            Some(event_id) => crate::db::entities::timeline_events::Entity::find_by_id(event_id)
+                .one(conn)
+                .await?
+                .map(|event| event.title),
+            None => None,
+        },
+        payoff_event_status: match row.payoff_event_id {
+            Some(event_id) => crate::db::entities::timeline_events::Entity::find_by_id(event_id)
+                .one(conn)
+                .await?
+                .map(|event| event.status),
+            None => None,
+        },
         importance: row.importance,
         entity_ids: super::linked_entity_ids(conn, super::LinkTable::Foreshadowing, row.id).await?,
         created_at: row.created_at,
@@ -407,6 +434,8 @@ pub async fn restore_inner(
         planted_chapter_id,
         resolved_chapter_id,
         resolution,
+        payoff_event_id,
+        payoff_position,
         importance,
         entity_ids,
         ..
@@ -430,6 +459,8 @@ pub async fn restore_inner(
         planted_chapter_id: Set(*planted_chapter_id),
         resolved_chapter_id: Set(*resolved_chapter_id),
         resolution: Set(resolution.clone()),
+        payoff_event_id: Set(*payoff_event_id),
+        payoff_position: Set(*payoff_position),
         importance: Set(*importance),
         updated_at: Set(stamp()),
         ..Default::default()
@@ -456,6 +487,8 @@ pub async fn recreate_inner(
         planted_chapter_id,
         resolved_chapter_id,
         resolution,
+        payoff_event_id,
+        payoff_position,
         importance,
         entity_ids,
         track_id,
@@ -484,6 +517,8 @@ pub async fn recreate_inner(
         planted_chapter_id: Set(*planted_chapter_id),
         resolved_chapter_id: Set(*resolved_chapter_id),
         resolution: Set(resolution.clone()),
+        payoff_event_id: Set(*payoff_event_id),
+        payoff_position: Set(*payoff_position),
         importance: Set(*importance),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),

@@ -29,10 +29,10 @@ use nekowriter::db::json::{
     AgentRole, AnchorKind, AppearanceRole, BookStatus, CanonMode, CanonStatus, ChangeActor,
     ChangeOp, ChangeTargetType, ChapterStatus, EmbedState, EntityKind, EntityStatus, EntrySource,
     FeedbackMode, ForeshadowingStatus, GoalLevel, GoalStatus, Granularity, InboxKind, MessageKind,
-    MessageRole, NoteKind, NoteStatus, Phase, PromptScope, ProposalStatus, ProposalTargetType,
-    Protocol, RelationStatus, ResearchTaskKind, ResearchTaskOrigin, ResearchTaskStatus,
-    ReviewVerdict, SearchDocKind, SessionKind, SessionStatus, SettingDocKind, ToolCallStatus,
-    TrackKind, VersionKind,
+    MessageRole, NoteKind, NoteStatus, PayoffPosition, Phase, PromptScope, ProposalStatus,
+    ProposalTargetType, Protocol, RelationStatus, ResearchTaskKind, ResearchTaskOrigin,
+    ResearchTaskStatus, ReviewVerdict, SearchDocKind, SessionKind, SessionStatus, SettingDocKind,
+    TimelineKind, TimelineStatus, ToolCallStatus, TrackKind, VersionKind,
 };
 use sea_orm::entity::Iterable;
 use sea_orm::entity::prelude::*;
@@ -541,8 +541,8 @@ async fn every_unambiguous_foreign_key_has_a_reverse_has_many() {
         }
     }
     assert_eq!(
-        checked, 66,
-        "the schema has 66 unambiguous foreign keys with a reverse relation"
+        checked, 68,
+        "the schema has 68 unambiguous foreign keys with a reverse relation"
     );
 }
 
@@ -1024,6 +1024,11 @@ macro_rules! enum_columns {
                 nekowriter::db::entities::setting_proposals::COLUMN.target_kind.as_str(),
                 <SettingDocKind as ActiveEnum>::values(),
             ));
+            rows.push((
+                nekowriter::db::entities::foreshadowing::Entity::default().table_name(),
+                nekowriter::db::entities::foreshadowing::COLUMN.payoff_position.as_str(),
+                <PayoffPosition as ActiveEnum>::values(),
+            ));
             rows
         }
 
@@ -1077,6 +1082,8 @@ enum_columns! {
     (setting_docs, kind, SettingDocKind, Kind),
     (setting_proposals, target_type, ProposalTargetType, TargetType),
     (setting_proposals, status, ProposalStatus, Status),
+    (timeline_events, kind, TimelineKind, Kind),
+    (timeline_events, status, TimelineStatus, Status),
     (tracks, kind, TrackKind, Kind),
     (tracks, canon_mode, CanonMode, CanonMode),
     (tracks, anchor_kind, AnchorKind, AnchorKind),
@@ -1108,6 +1115,8 @@ fn nullable_enum_fields_are_typed() {
         |model| &model.granularity;
     let _: fn(&nekowriter::db::entities::setting_proposals::Model) -> &Option<SettingDocKind> =
         |model| &model.target_kind;
+    let _: fn(&nekowriter::db::entities::foreshadowing::Model) -> &Option<PayoffPosition> =
+        |model| &model.payoff_position;
 }
 
 /// Parse the `CHECK (col IN ('a', 'b', ...))` lists from a table's `sqlite_master` SQL.
@@ -1168,8 +1177,8 @@ async fn every_enum_column_matches_its_check_constraint() {
         .collect();
     assert_eq!(
         expected.len(),
-        44,
-        "the schema has 44 CHECK (col IN (...)) enum columns"
+        47,
+        "the schema has 47 CHECK (col IN (...)) enum columns"
     );
 
     let mut seen = BTreeSet::new();

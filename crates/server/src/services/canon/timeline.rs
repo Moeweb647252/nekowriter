@@ -11,13 +11,15 @@
 //!
 //! Story order is what the API returns (and what the UI reorders by drag and drop).
 
-use sea_orm::{ActiveModelTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, Set};
+use sea_orm::{
+    ActiveModelTrait, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
+};
 
 use crate::api::dto::canon::{
     TimelineEventDto, TimelineEventInput, TimelineEventPatch, TimelineMoveInput, TimelineQuery,
 };
 use crate::db::entities::timeline_events;
-use crate::db::json::{ChangeOp, ChangeTargetType};
+use crate::db::json::{ChangeOp, ChangeTargetType, TimelineKind, TimelineStatus};
 use crate::events::ServerEvent;
 
 use super::{
@@ -70,6 +72,11 @@ pub async fn ordered(
     };
     Ok(timeline_events::Entity::find()
         .filter(timeline_events::COLUMN.book_id.eq(book_id))
+        .filter(
+            timeline_events::COLUMN
+                .kind
+                .eq(TimelineKind::Entry.as_str()),
+        )
         .filter(visibility.visible_condition(timeline_events::Column::TrackId))
         .order_by_asc(timeline_events::COLUMN.position)
         .order_by_asc(timeline_events::COLUMN.id)
@@ -122,6 +129,13 @@ pub async fn create_inner(
     let track_id = write.new_row_track();
     let position = position_for(tx, book_id, input.after_id, input.before_id, None).await?;
     let timestamp = stamp();
+    let status = input.status.unwrap_or(TimelineStatus::Occurred);
+    // A planned entry has no chapter (T3): the service never fills in the session chapter for it.
+    let chapter_id = if status == TimelineStatus::Planned {
+        None
+    } else {
+        input.chapter_id.or(write.chapter_id)
+    };
     // A recreated row takes a NEW id, never the deleted one's reused rowid (spec/02 §5.10).
     let new_id = super::fresh_id(tx, "timeline_events", ChangeTargetType::TimelineEvent).await?;
     let model = timeline_events::ActiveModel {
@@ -132,7 +146,10 @@ pub async fn create_inner(
         story_time: Set(input.story_time.trim().to_owned()),
         title: Set(title.to_owned()),
         description: Set(input.description.trim().to_owned()),
-        chapter_id: Set(input.chapter_id.or(write.chapter_id)),
+        chapter_id: Set(chapter_id),
+        parent_id: Set(input.parent_id),
+        kind: Set(TimelineKind::Entry),
+        status: Set(status),
         importance: Set(input.importance),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),
@@ -233,6 +250,15 @@ pub async fn update_inner(
     }
     if let Some(chapter_id) = patch.chapter_id {
         active.chapter_id = Set(chapter_id);
+    }
+    if let Some(parent_id) = patch.parent_id {
+        active.parent_id = Set(parent_id);
+    }
+    if let Some(status) = patch.status {
+        active.status = Set(status);
+        if status == TimelineStatus::Planned {
+            active.chapter_id = Set(None);
+        }
     }
     if let Some(importance) = patch.importance {
         active.importance = Set(importance);
@@ -507,6 +533,11 @@ fn midpoint(low: f64, high: f64) -> f64 {
 pub async fn renormalize(tx: &impl ConnectionTrait, book_id: i32) -> CanonResult<()> {
     let rows = timeline_events::Entity::find()
         .filter(timeline_events::COLUMN.book_id.eq(book_id))
+        .filter(
+            timeline_events::COLUMN
+                .kind
+                .eq(TimelineKind::Entry.as_str()),
+        )
         .order_by_asc(timeline_events::COLUMN.position)
         .order_by_asc(timeline_events::COLUMN.id)
         .all(tx)
@@ -535,6 +566,11 @@ async fn last_position(
 ) -> CanonResult<Option<f64>> {
     let mut statement = timeline_events::Entity::find()
         .filter(timeline_events::COLUMN.book_id.eq(book_id))
+        .filter(
+            timeline_events::COLUMN
+                .kind
+                .eq(TimelineKind::Entry.as_str()),
+        )
         .order_by_desc(timeline_events::COLUMN.position)
         .order_by_desc(timeline_events::COLUMN.id);
     if let Some(moving) = moving {
@@ -552,6 +588,11 @@ async fn next_after(
 ) -> CanonResult<Option<f64>> {
     let mut statement = timeline_events::Entity::find()
         .filter(timeline_events::COLUMN.book_id.eq(book_id))
+        .filter(
+            timeline_events::COLUMN
+                .kind
+                .eq(TimelineKind::Entry.as_str()),
+        )
         .filter(timeline_events::COLUMN.position.gt(position))
         .order_by_asc(timeline_events::COLUMN.position)
         .order_by_asc(timeline_events::COLUMN.id);
@@ -570,6 +611,11 @@ async fn first_before(
 ) -> CanonResult<Option<f64>> {
     let mut statement = timeline_events::Entity::find()
         .filter(timeline_events::COLUMN.book_id.eq(book_id))
+        .filter(
+            timeline_events::COLUMN
+                .kind
+                .eq(TimelineKind::Entry.as_str()),
+        )
         .filter(timeline_events::COLUMN.position.lt(position))
         .order_by_desc(timeline_events::COLUMN.position)
         .order_by_desc(timeline_events::COLUMN.id);
@@ -675,6 +721,13 @@ pub async fn to_dto(
         title: row.title.clone(),
         description: row.description.clone(),
         chapter_id: row.chapter_id,
+        parent_id: row.parent_id,
+        kind: row.kind,
+        status: row.status,
+        child_count: timeline_events::Entity::find()
+            .filter(timeline_events::COLUMN.parent_id.eq(row.id))
+            .count(conn)
+            .await? as i32,
         importance: row.importance,
         entity_ids: super::linked_entity_ids(conn, super::LinkTable::TimelineEvent, row.id).await?,
         created_at: row.created_at,
@@ -697,6 +750,8 @@ pub async fn restore_inner(
         title,
         description,
         chapter_id,
+        parent_id,
+        status,
         importance,
         entity_ids,
         ..
@@ -718,6 +773,8 @@ pub async fn restore_inner(
         title: Set(title.clone()),
         description: Set(description.clone()),
         chapter_id: Set(*chapter_id),
+        parent_id: Set(*parent_id),
+        status: Set(*status),
         importance: Set(*importance),
         updated_at: Set(stamp()),
         ..Default::default()
@@ -747,6 +804,8 @@ pub async fn recreate_inner(
         title,
         description,
         chapter_id,
+        parent_id,
+        status,
         importance,
         entity_ids,
         track_id,
@@ -773,6 +832,9 @@ pub async fn recreate_inner(
         title: Set(title.clone()),
         description: Set(description.clone()),
         chapter_id: Set(*chapter_id),
+        parent_id: Set(*parent_id),
+        kind: Set(TimelineKind::Entry),
+        status: Set(*status),
         importance: Set(*importance),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),

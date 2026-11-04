@@ -470,6 +470,8 @@ pub fn timeline_snapshot(
         importance: row.importance,
         entity_ids,
         track_id: row.track_id,
+        parent_id: row.parent_id,
+        status: row.status,
     }
 }
 
@@ -503,6 +505,8 @@ pub fn foreshadowing_snapshot(
         importance: row.importance,
         entity_ids,
         track_id: row.track_id,
+        payoff_event_id: row.payoff_event_id,
+        payoff_position: row.payoff_position,
     })
 }
 
