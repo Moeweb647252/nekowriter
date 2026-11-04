@@ -19,7 +19,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
-import { GripVertical, Plus, Trash2 } from "lucide-react"
+import { ChevronDown, ChevronRight, GripVertical, Plus, Trash2 } from "lucide-react"
 
 import type { TimelineEventDto } from "@/api/gen/TimelineEventDto"
 import {
@@ -66,6 +66,9 @@ export default function TimelinePage() {
   const create = useCreateTimelineEvent(bookId)
   const showError = useErrorToast()
   const [insertAt, setInsertAt] = useState<number | null>(null)
+  const [childOf, setChildOf] = useState<number | null>(null)
+  const [showAbandoned, setShowAbandoned] = useState(true)
+  const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -75,25 +78,56 @@ export default function TimelinePage() {
   if (timeline.isPending) {
     return <Skeleton className="m-6 h-64" />
   }
-  const rows = timeline.data ?? []
+  const rows = (timeline.data ?? []).filter((row) => row.kind !== "root")
+  const byId = new Map(rows.map((row) => [row.id, row]))
+  const childrenOf = (parentId: number | null) =>
+    rows
+      .filter((row) => row.parent_id === parentId)
+      .sort((left, right) => left.position - right.position || left.id - right.id)
+  const visibleRows: Array<{ event: TimelineEventDto; depth: number }> = []
+  const walk = (parentId: number | null, depth: number) => {
+    for (const row of childrenOf(parentId)) {
+      if (!showAbandoned && row.status === "abandoned") {
+        continue
+      }
+      visibleRows.push({ event: row, depth })
+      if (!collapsed.has(row.id)) {
+        walk(row.id, depth + 1)
+      }
+    }
+  }
+  walk(null, 0)
+  const toggle = (id: number) =>
+    setCollapsed((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
 
   const onDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
     if (over === null || active.id === over.id) {
       return
     }
-    const from = rows.findIndex((row) => row.id === active.id)
-    const to = rows.findIndex((row) => row.id === over.id)
+    const activeRow = byId.get(Number(active.id))
+    const overRow = byId.get(Number(over.id))
+    if (activeRow === undefined || overRow === undefined || activeRow.parent_id !== overRow.parent_id) {
+      return
+    }
+    const siblings = childrenOf(activeRow.parent_id)
+    const from = siblings.findIndex((row) => row.id === activeRow.id)
+    const to = siblings.findIndex((row) => row.id === overRow.id)
     if (from < 0 || to < 0) {
       return
     }
     // Story order is what the list shows: place the moved event after the row it lands on when it
     // moves down, and before it when it moves up (spec/10 §2.4 `move`).
-    const target = rows[to]
+    const target = siblings[to]
     const before = from < to ? undefined : target.id
     const after = from < to ? target.id : undefined
     move.mutate(
-      { id: rows[from].id, afterId: after, beforeId: before },
+      { id: activeRow.id, afterId: after, beforeId: before },
       { onError: showError },
     )
   }
@@ -125,6 +159,14 @@ export default function TimelinePage() {
               ))}
             </select>
           )}
+          <label className="flex items-center gap-1 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={showAbandoned}
+              onChange={(event) => setShowAbandoned(event.target.checked)}
+            />
+            {t("canon:show_abandoned")}
+          </label>
           <Button size="sm" onClick={() => setInsertAt(rows.length)}>
             <Plus className="size-3.5" aria-hidden="true" />
             {t("canon:add_event")}
@@ -137,42 +179,78 @@ export default function TimelinePage() {
       ) : (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
           <SortableContext
-            items={rows.map((row) => row.id)}
+            items={visibleRows.map(({ event }) => event.id)}
             strategy={verticalListSortingStrategy}
           >
             <ol className="relative space-y-1 border-l pl-4">
-              {rows.map((row, index) => (
-                <li key={row.id} className="relative">
-                  <InsertRow
-                    active={insertAt === index}
-                    onOpen={() => setInsertAt(index)}
-                    onCancel={() => setInsertAt(null)}
-                    onSubmit={(title) =>
-                      create.mutate(
-                        {
-                          title,
-                          description: "",
-                          story_time: "",
-                          importance: 2,
-                          entity_ids: [],
-                          after_id: index === 0 ? undefined : rows[index - 1].id,
-                          before_id: index === 0 ? rows[0]?.id : undefined,
-                        },
-                        {
-                          onSuccess: () => setInsertAt(null),
-                          onError: showError,
-                        },
-                      )
-                    }
-                  />
-                  <TimelineRow
-                    bookId={bookId}
-                    event={row}
-                    chapterIndex={chapterIndex}
-                    entityNames={entityNames}
-                  />
-                </li>
-              ))}
+              {visibleRows.map(({ event: row, depth }, index) => {
+                const hasChildren = rows.some((child) => child.parent_id === row.id)
+                const isCollapsed = collapsed.has(row.id)
+                return (
+                  <li key={row.id} className="relative">
+                    <InsertRow
+                      active={insertAt === index}
+                      onOpen={() => setInsertAt(index)}
+                      onCancel={() => setInsertAt(null)}
+                      onSubmit={(title) =>
+                        create.mutate(
+                          {
+                            title,
+                            description: "",
+                            story_time: "",
+                            importance: 2,
+                            entity_ids: [],
+                            parent_id: row.parent_id,
+                            after_id: index === 0 ? undefined : visibleRows[index - 1]?.event.id,
+                          },
+                          {
+                            onSuccess: () => setInsertAt(null),
+                            onError: showError,
+                          },
+                        )
+                      }
+                    />
+                    <div style={{ marginLeft: depth * 16 }}>
+                      <TimelineRow
+                        bookId={bookId}
+                        event={row}
+                        events={rows}
+                        chapterIndex={chapterIndex}
+                        entityNames={entityNames}
+                        expanded={!isCollapsed}
+                        hasChildren={hasChildren}
+                        onToggle={() => toggle(row.id)}
+                        onAddChild={() => setChildOf(row.id)}
+                      />
+                    </div>
+                    {childOf === row.id ? (
+                      <div style={{ marginLeft: (depth + 1) * 16 }}>
+                        <InsertRow
+                          active
+                          onOpen={() => setChildOf(row.id)}
+                          onCancel={() => setChildOf(null)}
+                          onSubmit={(title) =>
+                            create.mutate(
+                              {
+                                title,
+                                description: "",
+                                story_time: "",
+                                importance: 2,
+                                entity_ids: [],
+                                parent_id: row.id,
+                              },
+                              {
+                                onSuccess: () => setChildOf(null),
+                                onError: showError,
+                              },
+                            )
+                          }
+                        />
+                      </div>
+                    ) : null}
+                  </li>
+                )
+              })}
               {insertAt === rows.length ? (
                 <li>
                   <InsertRow
@@ -187,7 +265,6 @@ export default function TimelinePage() {
                           story_time: "",
                           importance: 2,
                           entity_ids: [],
-                          after_id: rows[rows.length - 1]?.id,
                         },
                         {
                           onSuccess: () => setInsertAt(null),
@@ -210,13 +287,23 @@ export default function TimelinePage() {
 function TimelineRow({
   bookId,
   event,
+  events,
   chapterIndex,
   entityNames,
+  expanded,
+  hasChildren,
+  onToggle,
+  onAddChild,
 }: {
   bookId: number
   event: TimelineEventDto
+  events: TimelineEventDto[]
   chapterIndex: ChapterIndex
   entityNames: Map<number, string>
+  expanded: boolean
+  hasChildren: boolean
+  onToggle: () => void
+  onAddChild: () => void
 }) {
   const { t } = useTranslation()
   const showError = useErrorToast()
@@ -233,8 +320,22 @@ function TimelineRow({
         className={cn(
           "group flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-accent/40",
           isDragging && "opacity-60",
+          event.status === "planned" && "border border-dashed",
+          event.status === "abandoned" && "opacity-60 line-through",
         )}
       >
+      <button
+        type="button"
+        className="mt-0.5 text-muted-foreground"
+        aria-label={expanded ? t("canon:collapse") : t("canon:expand")}
+        onClick={onToggle}
+      >
+        {hasChildren ? (
+          expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />
+        ) : (
+          <span className="inline-block size-3.5" />
+        )}
+      </button>
       <button
         type="button"
         className="mt-0.5 cursor-grab text-muted-foreground opacity-0 group-hover:opacity-100"
@@ -247,6 +348,16 @@ function TimelineRow({
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
           <span className="truncate text-sm font-medium">{event.title}</span>
+          {event.status === "planned" ? (
+            <span className="shrink-0 rounded border border-dashed px-1 text-[0.65rem]">
+              {t("canon:planned_badge")}
+            </span>
+          ) : null}
+          {event.status === "abandoned" ? (
+            <span className="shrink-0 rounded bg-muted px-1 text-[0.65rem]">
+              {t("canon:abandoned_badge")}
+            </span>
+          ) : null}
           {event.track_id === null ? null : (
             <span className="shrink-0 rounded bg-muted px-1 text-[0.65rem] text-muted-foreground">
               {t("canon:private_badge")}
@@ -285,6 +396,15 @@ function TimelineRow({
         size="sm"
         variant="ghost"
         className="opacity-0 group-hover:opacity-100"
+        aria-label={t("canon:add_sub_entry")}
+        onClick={onAddChild}
+      >
+        <Plus className="size-3" aria-hidden="true" />
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="opacity-0 group-hover:opacity-100"
         aria-label={t("canon:timeline_event_dialog.edit")}
         onClick={() => setEditing(true)}
       >
@@ -304,6 +424,7 @@ function TimelineRow({
         <TimelineEventDialog
           bookId={bookId}
           event={event}
+          events={events}
           chapterIndex={chapterIndex}
           open
           onOpenChange={setEditing}

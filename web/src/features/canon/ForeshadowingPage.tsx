@@ -176,6 +176,16 @@ function ForeshadowingRow({
         {item.description === "" ? null : (
           <p className="text-xs text-muted-foreground">{item.description}</p>
         )}
+        {item.payoff_event_id === null ? null : (
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {t(`canon:payoff_anchor.${item.payoff_position ?? "at"}`, {
+              event: item.payoff_event_title ?? "",
+            })}
+            {item.payoff_event_status === "planned"
+              ? ` ${t("canon:payoff_anchor_planned")}`
+              : null}
+          </p>
+        )}
         <p className="mt-0.5 text-xs text-muted-foreground">
           {item.planted_chapter_id === null ? (
             t("canon:not_planted")

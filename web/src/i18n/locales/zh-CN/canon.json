@@ -322,5 +322,21 @@
   "goal_range.to": "到第 {{to}} 章",
   "no_ready_goals": "没有可行动目标",
   "no_ready_goals_hint": "目前没有已满足条件或可关闭的目标。",
-  "goal_dialog.remove_link": "移除关联"
+  "goal_dialog.remove_link": "移除关联",
+  "planned_badge": "计划中",
+  "abandoned_badge": "已放弃",
+  "show_abandoned": "显示已放弃",
+  "add_sub_entry": "添加子条目",
+  "expand": "展开",
+  "collapse": "收起",
+  "timeline_event_dialog.parent": "上级",
+  "timeline_event_dialog.parent_none": "顶层",
+  "timeline_event_dialog.status": "状态",
+  "timeline_event_dialog.status_occurred": "已发生",
+  "timeline_event_dialog.status_planned": "计划中",
+  "timeline_event_dialog.status_abandoned": "已放弃",
+  "payoff_anchor.before": "计划回收：在「{{event}}」之前",
+  "payoff_anchor.after": "计划回收：在「{{event}}」之后",
+  "payoff_anchor.at": "计划回收：在「{{event}}」时",
+  "payoff_anchor_planned": "（计划中）"
 }

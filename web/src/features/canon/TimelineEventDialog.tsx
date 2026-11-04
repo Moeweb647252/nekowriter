@@ -26,6 +26,7 @@ import { GoalsReferencedBy } from "@/features/canon/GoalsReferencedBy"
 export type TimelineEventDialogProps = {
   bookId: number
   event: TimelineEventDto
+  events?: TimelineEventDto[]
   chapterIndex: ChapterIndex
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -43,6 +44,7 @@ function sameIds(left: number[], right: number[]): boolean {
 export function TimelineEventDialog({
   bookId,
   event,
+  events = [],
   chapterIndex,
   open,
   onOpenChange,
@@ -64,6 +66,29 @@ export function TimelineEventDialog({
   const [entityIds, setEntityIds] = useState<number[]>(event.entity_ids)
   const [entityPick, setEntityPick] = useState<number | undefined>(undefined)
   const [note, setNote] = useState("")
+  const [parentId, setParentId] = useState(
+    event.parent_id === null ? "" : String(event.parent_id),
+  )
+  const [status, setStatus] = useState(event.status)
+
+  const descendantIds = new Set<number>()
+  let growing = true
+  while (growing) {
+    growing = false
+    for (const row of events) {
+      if (
+        row.parent_id !== null &&
+        (row.parent_id === event.id || descendantIds.has(row.parent_id)) &&
+        !descendantIds.has(row.id)
+      ) {
+        descendantIds.add(row.id)
+        growing = true
+      }
+    }
+  }
+  const parentOptions = events
+    .filter((row) => row.id !== event.id && !descendantIds.has(row.id))
+    .sort((left, right) => left.position - right.position)
 
   const chapterOptions = Array.from(chapterIndex.values()).sort((left, right) => {
     if (left.trackKind !== right.trackKind) {
@@ -107,6 +132,12 @@ export function TimelineEventDialog({
     }
     if (importance !== event.importance) {
       next.importance = importance
+    }
+    if (parentId !== (event.parent_id === null ? "" : String(event.parent_id))) {
+      next.parent_id = parentId === "" ? null : Number(parentId)
+    }
+    if (status !== event.status) {
+      next.status = status
     }
     if (note.trim() !== "") {
       next.note = note.trim()
@@ -184,6 +215,46 @@ export function TimelineEventDialog({
               {chapterOptions.map((entry) => (
                 <option key={entry.id} value={entry.id}>
                   {chapterRefLabel(t, chapterIndex, entry.id)}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="timeline-event-parent">
+              {t("canon:timeline_event_dialog.parent")}
+            </Label>
+            <select
+              id="timeline-event-parent"
+              value={parentId}
+              onChange={(event) => setParentId(event.target.value)}
+              className="h-8 w-full rounded-md border bg-background px-2 text-sm"
+            >
+              <option value="">{t("canon:timeline_event_dialog.parent_none")}</option>
+              {parentOptions.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.title}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="timeline-event-status">
+              {t("canon:timeline_event_dialog.status")}
+            </Label>
+            <select
+              id="timeline-event-status"
+              value={status}
+              onChange={(event) => setStatus(event.target.value as TimelineEventDto["status"])}
+              className="h-8 w-full rounded-md border bg-background px-2 text-sm"
+            >
+              {(event.status === "planned"
+                ? (["planned", "occurred", "abandoned"] as const)
+                : ([event.status] as const)
+              ).map((value) => (
+                <option key={value} value={value}>
+                  {t(`canon:timeline_event_dialog.status_${value}`)}
                 </option>
               ))}
             </select>

@@ -322,5 +322,21 @@
   "goal_range.to": "Through chapter {{to}}",
   "no_ready_goals": "No ready goals",
   "no_ready_goals_hint": "No goal is ready or closable right now.",
-  "goal_dialog.remove_link": "Remove link"
+  "goal_dialog.remove_link": "Remove link",
+  "planned_badge": "Planned",
+  "abandoned_badge": "Abandoned",
+  "show_abandoned": "Show abandoned",
+  "add_sub_entry": "Add sub-entry",
+  "expand": "Expand",
+  "collapse": "Collapse",
+  "timeline_event_dialog.parent": "Parent",
+  "timeline_event_dialog.parent_none": "Top level",
+  "timeline_event_dialog.status": "Status",
+  "timeline_event_dialog.status_occurred": "Occurred",
+  "timeline_event_dialog.status_planned": "Planned",
+  "timeline_event_dialog.status_abandoned": "Abandoned",
+  "payoff_anchor.before": "Planned payoff: before «{{event}}»",
+  "payoff_anchor.after": "Planned payoff: after «{{event}}»",
+  "payoff_anchor.at": "Planned payoff: at «{{event}}»",
+  "payoff_anchor_planned": "(planned)"
 }

@@ -104,6 +104,10 @@ function renderDialog(overrides: Partial<TimelineEventDto> = {}) {
     <TimelineEventDialog
       bookId={1}
       event={eventWith(overrides)}
+      events={[
+        eventWith({ id: 10, title: "Parent candidate", parent_id: null, position: 10 }),
+        eventWith({ id: 11, title: "Child candidate", parent_id: 10, position: 11 }),
+      ]}
       chapterIndex={chapterIndex}
       open
       onOpenChange={vi.fn()}
@@ -167,6 +171,28 @@ describe("TimelineEventDialog", () => {
     expect(patchMutate.mock.calls[0][0]).toEqual({
       id: 9,
       patch: { chapter_id: 5 },
+    })
+  })
+
+  it("saves a changed parent and status", async () => {
+    renderDialog()
+    const user = userEvent.setup()
+    await user.selectOptions(screen.getByLabelText("Parent"), "10")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    expect(patchMutate.mock.calls[0][0]).toEqual({
+      id: 9,
+      patch: { parent_id: 10 },
+    })
+  })
+
+  it("limits a planned entry's status to the allowed moves", async () => {
+    renderDialog({ status: "planned" })
+    const user = userEvent.setup()
+    await user.selectOptions(screen.getByLabelText("Status"), "abandoned")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    expect(patchMutate.mock.calls[0][0]).toEqual({
+      id: 9,
+      patch: { status: "abandoned" },
     })
   })
 
