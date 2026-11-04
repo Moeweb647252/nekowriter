@@ -26,6 +26,18 @@ text = '''
 '''
 
 [[prompt]]
+key = "notice.anchor_planned"
+kind = "notice"
+agent = "shared"
+vars = []
+title_en = "Notice — the payoff anchor is still planned"
+title_zh = "通知 · 回收锚点仍是计划"
+text = '''
+【伏笔锚点】
+这条伏笔锚定的时间线节点仍是计划中（尚未发生）。回收已经记录；等该节点发生时，请再确认这次回收是否仍然成立。
+'''
+
+[[prompt]]
 key = "notice.user_edits"
 kind = "notice"
 agent = "writer"

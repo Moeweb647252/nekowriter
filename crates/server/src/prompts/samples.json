@@ -2678,6 +2678,8 @@
       "story_time": "春",
       "title": "入门",
       "description": "",
+      "planned": false,
+      "parent": null,
       "chapter_label": "第1章",
       "entities": [
        "林凡",

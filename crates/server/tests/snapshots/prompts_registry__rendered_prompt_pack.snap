@@ -1,5 +1,6 @@
 ---
 source: crates/server/tests/prompts_registry.rs
+assertion_line: 277
 expression: rendered
 ---
 ===== writer.system [0] =====
@@ -1477,6 +1478,10 @@ xx
 【用户留言】
 请把打斗写得更短。
 
+===== notice.anchor_planned [0] =====
+【伏笔锚点】
+这条伏笔锚定的时间线节点仍是计划中（尚未发生）。回收已经记录；等该节点发生时，请再确认这次回收是否仍然成立。
+
 ===== notice.user_edits [0] =====
 【用户修改了正文】
 作者在暂停期间直接修改了本章。以下是变化，请以作者的版本为准，并让后续内容与之衔接：
@@ -2135,7 +2140,7 @@ move_after、move_before 不能同时提供，请只用其中一个。
 记录正文确立的事实（fact）或世界规则（world_rule），供后续章节保持一致。例如“林凡的玉佩是母亲的遗物”“筑基之前无法御剑飞行”。
 
 ===== tool.add_timeline_event [0] =====
-向时间线添加一个事件，按故事时间先后插入：用 after_event 或 before_event 指定相邻事件，都不填则放在最后。
+向时间线添加一个事件或计划节点，按故事时间先后插入：用 parent 指定上级（不填为顶层），用 after_event 或 before_event 在同级中定位；都不填则放在上级末尾。status = planned 表示尚未发生的计划；计划节点不能有 chapter_id。
 
 ===== tool.ask_user [0] =====
 向作者提出 1 到 4 个问题，等待作者回答。尽量给出具体选项，同时允许作者自由回答。用于确认构思中的关键空白。
@@ -2264,7 +2269,7 @@ move_after、move_before 不能同时提供，请只用其中一个。
 补充或修改目标知识范围中已有的条目。
 
 ===== tool.update_timeline_event [0] =====
-修改时间线事件的内容，或调整它在时间线上的位置。
+修改时间线事件的内容、上级或状态，或调整它在时间线上的位置。计划节点可以标记为已发生（需要 chapter_id 或 story_time）或已放弃；已经发生的事件不能改为计划或放弃。
 
 ===== tool.upsert_character [0] =====
 新增或更新一个人物设定（按名称匹配）。可以同时调整排名（rank，1 为最重要）。

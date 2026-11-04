@@ -25,7 +25,8 @@ use crate::api::dto::canon::{
 use crate::db::entities::{agent_tool_calls, appearances, change_log, chapters, entities};
 use crate::db::json::{
     AppearanceRole, ChangeActor, ChangeOp, ChangeTargetType, CompletionKind, EntityKind,
-    EntityStatus, ForeshadowingStatus, NoteKind, Snapshot, ToolCallStatus, ToolEffects,
+    EntityStatus, ForeshadowingStatus, NoteKind, PayoffPosition, Snapshot, TimelineStatus,
+    ToolCallStatus, ToolEffects,
 };
 use crate::events::ServerEvent;
 use crate::services::canon::{
@@ -675,6 +676,10 @@ struct AddTimelineEventInput {
     #[serde(default)]
     story_time: String,
     #[serde(default)]
+    parent: Option<i32>,
+    #[serde(default)]
+    status: Option<TimelineStatus>,
+    #[serde(default)]
     after_event: Option<i32>,
     #[serde(default)]
     before_event: Option<i32>,
@@ -726,8 +731,8 @@ impl ToolHandler for AddTimelineEventTool {
                 importance: input.importance,
                 after_id: input.after_event,
                 before_id: input.before_event,
-                parent_id: None,
-                status: None,
+                parent_id: input.parent,
+                status: input.status,
                 note: None,
             },
         )
@@ -765,6 +770,16 @@ struct UpdateTimelineEventInput {
     move_after: Option<i32>,
     #[serde(default)]
     move_before: Option<i32>,
+    #[serde(default)]
+    parent: Option<i32>,
+    #[serde(default)]
+    top_level: Option<bool>,
+    #[serde(default)]
+    status: Option<TimelineStatus>,
+    #[serde(default)]
+    chapter_id: Option<i32>,
+    #[serde(default)]
+    note: Option<String>,
 }
 
 /// `update_timeline_event` (spec/05 §6).
@@ -800,6 +815,15 @@ impl ToolHandler for UpdateTimelineEventTool {
             entity_ids = Some(ids);
         }
         let moved = input.move_after.is_some() || input.move_before.is_some();
+        if input.parent.is_some() && input.top_level == Some(true) {
+            return Err(ToolError::new(ToolErrorKind::MutuallyExclusive)
+                .with("fields", vec!["parent", "top_level"]));
+        }
+        let parent_id = if input.top_level == Some(true) {
+            Some(None)
+        } else {
+            input.parent.map(Some)
+        };
         let book_id = book_id(ctx)?;
         let (dto, events) = timeline::update_inner(
             ctx.tx,
@@ -809,11 +833,14 @@ impl ToolHandler for UpdateTimelineEventTool {
                 title: input.title,
                 description: input.description,
                 story_time: input.story_time,
+                chapter_id: input.chapter_id.map(Some),
                 entity_ids,
                 importance: input.importance,
                 after_id: input.move_after,
                 before_id: input.move_before,
-                ..TimelineEventPatch::default()
+                parent_id,
+                status: input.status,
+                note: input.note,
             },
         )
         .await
@@ -981,6 +1008,10 @@ struct AddForeshadowingInput {
     #[serde(default)]
     planned_payoff: String,
     #[serde(default)]
+    payoff_event: Option<i32>,
+    #[serde(default)]
+    payoff_position: Option<PayoffPosition>,
+    #[serde(default)]
     entities: Vec<String>,
     #[serde(default = "default_importance")]
     importance: i32,
@@ -1020,8 +1051,8 @@ impl ToolHandler for AddForeshadowingTool {
                 description: input.description,
                 planned_payoff: input.planned_payoff,
                 planted_chapter_id: None,
-                payoff_event_id: None,
-                payoff_position: None,
+                payoff_event_id: input.payoff_event,
+                payoff_position: input.payoff_position,
                 importance: input.importance,
                 entity_ids,
                 note: None,
@@ -1091,7 +1122,7 @@ impl ToolHandler for ResolveForeshadowingTool {
             let label = ctx.prompts.label("target_type", "foreshadowing");
             map_canon(error, Some((label.as_str(), input.foreshadowing_id)), None)
         })?;
-        canon_outcome(
+        let mut outcome = canon_outcome(
             ctx,
             "resolve_foreshadowing",
             dto.title.clone(),
@@ -1099,7 +1130,17 @@ impl ToolHandler for ResolveForeshadowingTool {
             "foreshadowing",
             dto.id,
             &dto.title,
-        )
+        )?;
+        if dto.payoff_event_status == Some(TimelineStatus::Planned) {
+            let notice = ctx
+                .prompts
+                .render("notice.anchor_planned", &json!({}))
+                .map_err(|_| internal())?
+                .text;
+            outcome.text.push_str("\n\n");
+            outcome.text.push_str(&notice);
+        }
+        Ok(outcome)
     }
 }
 

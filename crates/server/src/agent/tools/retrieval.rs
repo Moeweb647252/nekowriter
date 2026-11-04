@@ -26,7 +26,7 @@ use crate::db::entities::{
 };
 use crate::db::json::{
     AnchorKind, CanonMode, ChangeTargetType, ChapterStatus, EntityKind, EntityStatus,
-    ForeshadowingStatus, RelationStatus, TimelineKind, TrackKind,
+    ForeshadowingStatus, RelationStatus, TimelineKind, TimelineStatus, TrackKind,
 };
 use crate::prompts::context::{
     AppearanceSummaryContext, ChangeLineContext, DesignLinkContext, RelationLineContext,
@@ -97,6 +97,8 @@ struct QueryTimelineInput {
     query: Option<String>,
     #[serde(default)]
     around_event: Option<i32>,
+    #[serde(default)]
+    under: Option<i32>,
     #[serde(default)]
     from_chapter: Option<i32>,
     #[serde(default)]
@@ -861,6 +863,59 @@ impl ToolHandler for QueryTimelineTool {
             .await
             .map_err(|error| canon_error(ctx, canon::CanonError::from(error)))?;
         let mut links = timeline_links(ctx, &rows).await?;
+        // The tree prunes abandoned subtrees; `under` keeps one visible entry's descendants, and
+        // a visible entry under a hidden parent is shown at the top level (spec/06 §1.4, T8).
+        let tree = crate::services::canon::timeline_tree::tree_rows(ctx.tx, book_id)
+            .await
+            .map_err(|error| canon_error(ctx, error))?;
+        let by_id: BTreeMap<i32, timeline_events::Model> =
+            tree.into_iter().map(|row| (row.id, row)).collect();
+        let mut visible_ids: std::collections::BTreeSet<i32> = std::collections::BTreeSet::new();
+        for row in by_id.values() {
+            if row.status == TimelineStatus::Abandoned {
+                continue;
+            }
+            let chain = crate::services::canon::timeline_tree::ancestor_chain(&by_id, row.id);
+            if chain
+                .iter()
+                .any(|ancestor| ancestor.status == TimelineStatus::Abandoned)
+            {
+                continue;
+            }
+            visible_ids.insert(row.id);
+        }
+        if let Some(under_id) = input.under {
+            let Some(under) = by_id.get(&under_id) else {
+                return Err(ToolError::new(ToolErrorKind::NotFound)
+                    .with(
+                        "what_label",
+                        ctx.prompts.label("target_type", "timeline_event"),
+                    )
+                    .with("id", under_id));
+            };
+            if under.status == TimelineStatus::Abandoned || !visible_ids.contains(&under_id) {
+                return Err(ToolError::new(ToolErrorKind::NotFound)
+                    .with(
+                        "what_label",
+                        ctx.prompts.label("target_type", "timeline_event"),
+                    )
+                    .with("id", under_id));
+            }
+        }
+        rows.retain(|row| {
+            if !visible_ids.contains(&row.id) {
+                return false;
+            }
+            match input.under {
+                None => true,
+                Some(under_id) => {
+                    row.id == under_id
+                        || crate::services::canon::timeline_tree::ancestor_chain(&by_id, row.id)
+                            .iter()
+                            .any(|ancestor| ancestor.id == under_id)
+                }
+            }
+        });
         if let Some(entity) = &entity {
             rows.retain(|row| {
                 links
@@ -941,11 +996,18 @@ impl ToolHandler for QueryTimelineTool {
         let mut items = Vec::new();
         for row in &ordered {
             let chapter = row.chapter_id.and_then(|id| chapters.get(&id));
+            let parent_label = row
+                .parent_id
+                .and_then(|parent_id| by_id.get(&parent_id))
+                .filter(|parent| visible_ids.contains(&parent.id))
+                .map(|parent| format!("#{} {}", parent.id, parent.title));
             items.push(json!({
                 "id": row.id,
                 "story_time": row.story_time,
                 "title": row.title,
                 "description": row.description,
+                "planned": row.status == TimelineStatus::Planned,
+                "parent": parent_label,
                 "chapter_label": label_of_chapter(ctx, row.chapter_id, &mut labels).await?,
                 "entities": links
                     .get(&row.id)

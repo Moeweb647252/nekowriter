@@ -22,6 +22,7 @@ pub mod note;
 pub mod relation;
 pub mod revert;
 pub mod timeline;
+pub mod timeline_tree;
 
 use std::collections::{HashMap, HashSet};
 

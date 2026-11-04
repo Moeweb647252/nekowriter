@@ -126,10 +126,29 @@ pub async fn create_inner(
         ensure_chapter_in_book(tx, book_id, chapter_id).await?;
     }
     ensure_entities_visible(tx, write, book_id, &input.entity_ids).await?;
-    let track_id = write.new_row_track();
-    let position = position_for(tx, book_id, input.after_id, input.before_id, None).await?;
     let timestamp = stamp();
     let status = input.status.unwrap_or(TimelineStatus::Occurred);
+    if status == TimelineStatus::Planned && input.chapter_id.is_some() {
+        return Err(CanonError::field(
+            "chapter_id",
+            "a planned entry has no chapter",
+        ));
+    }
+    let track_id = write.new_row_track();
+    let root = super::timeline_tree::root_of(tx, book_id).await?;
+    let parent_id =
+        super::timeline_tree::parent_for(tx, write, book_id, track_id, input.parent_id, None)
+            .await?;
+    if status == TimelineStatus::Planned {
+        super::timeline_tree::check_planned_ancestors(tx, parent_id, track_id).await?;
+    }
+    let position = if input.after_id.is_some() || input.before_id.is_some() {
+        position_for(tx, book_id, input.after_id, input.before_id, None).await?
+    } else if parent_id != root.id {
+        super::timeline_tree::append_position(tx, book_id, parent_id).await?
+    } else {
+        position_for(tx, book_id, None, None, None).await?
+    };
     // A planned entry has no chapter (T3): the service never fills in the session chapter for it.
     let chapter_id = if status == TimelineStatus::Planned {
         None
@@ -147,7 +166,7 @@ pub async fn create_inner(
         title: Set(title.to_owned()),
         description: Set(input.description.trim().to_owned()),
         chapter_id: Set(chapter_id),
-        parent_id: Set(input.parent_id),
+        parent_id: Set(Some(parent_id)),
         kind: Set(TimelineKind::Entry),
         status: Set(status),
         importance: Set(input.importance),
@@ -211,6 +230,12 @@ pub async fn update_inner(
     patch: TimelineEventPatch,
 ) -> CanonResult<(TimelineEventDto, Vec<ServerEvent>)> {
     let existing = load(tx, event_id).await?;
+    if existing.kind == TimelineKind::Root {
+        return Err(CanonError::field(
+            "event_id",
+            "the timeline root cannot be created, renamed, edited or deleted",
+        ));
+    }
     write.ensure_writable(
         existing.track_id,
         &format!("timeline event #{}", existing.id),
@@ -226,6 +251,73 @@ pub async fn update_inner(
     }
     if let Some(entity_ids) = &patch.entity_ids {
         ensure_entities_visible(tx, write, existing.book_id, entity_ids).await?;
+    }
+    // Status moves only forward: planned -> occurred, planned -> abandoned (T4).
+    let next_status = patch.status.unwrap_or(existing.status);
+    match (existing.status, next_status) {
+        (TimelineStatus::Occurred, TimelineStatus::Abandoned)
+        | (TimelineStatus::Abandoned, TimelineStatus::Planned)
+        | (TimelineStatus::Abandoned, TimelineStatus::Occurred)
+        | (TimelineStatus::Occurred, TimelineStatus::Planned) => {
+            return Err(CanonError::field(
+                "status",
+                format!(
+                    "status cannot move from {} to {}",
+                    existing.status.as_str(),
+                    next_status.as_str()
+                ),
+            ));
+        }
+        _ => {}
+    }
+    if next_status == TimelineStatus::Planned && patch.chapter_id.is_some() {
+        return Err(CanonError::field(
+            "chapter_id",
+            "a planned entry has no chapter",
+        ));
+    }
+    if existing.status == TimelineStatus::Planned && next_status == TimelineStatus::Occurred {
+        let descendants = super::timeline_tree::planned_descendants(tx, event_id).await?;
+        if let Some(conflict) = descendants.first() {
+            return Err(CanonError::field(
+                "status",
+                format!("entry #{} {} is still planned", conflict.id, conflict.title),
+            ));
+        }
+        if patch.chapter_id.is_none() && patch.story_time.is_none() {
+            return Err(CanonError::field(
+                "chapter_id",
+                "promoting an entry needs a chapter or a story time",
+            ));
+        }
+    }
+    if existing.status == TimelineStatus::Planned && next_status == TimelineStatus::Abandoned {
+        let occurred = super::timeline_tree::occurred_descendants(tx, event_id).await?;
+        if let Some(conflict) = occurred.first() {
+            return Err(CanonError::field(
+                "status",
+                format!(
+                    "entry #{} {} has already happened",
+                    conflict.id, conflict.title
+                ),
+            ));
+        }
+    }
+    let mut new_parent: Option<i32> = None;
+    if let Some(parent) = patch.parent_id {
+        let parent_id = super::timeline_tree::parent_for(
+            tx,
+            write,
+            existing.book_id,
+            existing.track_id,
+            parent,
+            Some(event_id),
+        )
+        .await?;
+        if next_status == TimelineStatus::Planned {
+            super::timeline_tree::check_planned_ancestors(tx, parent_id, existing.track_id).await?;
+        }
+        new_parent = Some(parent_id);
     }
     let current_ids =
         super::linked_entity_ids(tx, super::LinkTable::TimelineEvent, event_id).await?;
@@ -251,12 +343,12 @@ pub async fn update_inner(
     if let Some(chapter_id) = patch.chapter_id {
         active.chapter_id = Set(chapter_id);
     }
-    if let Some(parent_id) = patch.parent_id {
-        active.parent_id = Set(parent_id);
+    if let Some(parent_id) = new_parent.take() {
+        active.parent_id = Set(Some(parent_id));
     }
-    if let Some(status) = patch.status {
-        active.status = Set(status);
-        if status == TimelineStatus::Planned {
+    if patch.status.is_some() {
+        active.status = Set(next_status);
+        if next_status == TimelineStatus::Planned {
             active.chapter_id = Set(None);
         }
     }
@@ -377,12 +469,47 @@ pub async fn delete_inner(
     event_id: i32,
 ) -> CanonResult<Vec<ServerEvent>> {
     let existing = load(tx, event_id).await?;
+    if existing.kind == TimelineKind::Root {
+        return Err(CanonError::field(
+            "event_id",
+            "the timeline root cannot be created, renamed, edited or deleted",
+        ));
+    }
     write.ensure_writable(
         existing.track_id,
         &format!("timeline event #{}", existing.id),
     )?;
+    let children = timeline_events::Entity::find()
+        .filter(timeline_events::COLUMN.parent_id.eq(event_id))
+        .count(tx)
+        .await?;
+    if children > 0 {
+        return Err(CanonError::field(
+            "event_id",
+            "an entry with sub-entries cannot be deleted; delete or move them first",
+        ));
+    }
     let ids = super::linked_entity_ids(tx, super::LinkTable::TimelineEvent, event_id).await?;
     let before = timeline_snapshot(&existing, ids);
+    // Deleting a leaf clears the anchors on it first (each is a logged update, D-170).
+    let mut events = Vec::new();
+    let anchors = crate::db::entities::foreshadowing::Entity::find()
+        .filter(
+            crate::db::entities::foreshadowing::COLUMN
+                .payoff_event_id
+                .eq(event_id),
+        )
+        .all(tx)
+        .await?;
+    for anchor in anchors {
+        let patch = crate::api::dto::canon::ForeshadowingPatch {
+            payoff_event_id: Some(None),
+            note: Some("the timeline anchor was deleted".to_owned()),
+            ..Default::default()
+        };
+        let (_, published) = super::foreshadow::update_inner(tx, write, anchor.id, patch).await?;
+        events.extend(published);
+    }
     timeline_events::Entity::delete_by_id(event_id)
         .exec(tx)
         .await?;
@@ -403,13 +530,14 @@ pub async fn delete_inner(
         },
     )
     .await?;
-    Ok(vec![changed_event(
+    events.push(changed_event(
         existing.book_id,
         ChangeTargetType::TimelineEvent,
         event_id,
         ChangeOp::Delete,
         change_id,
-    )])
+    ));
+    Ok(events)
 }
 
 // ───────────────────────────── positions (spec/02 §1) ─────────────────────────────
@@ -721,7 +849,14 @@ pub async fn to_dto(
         title: row.title.clone(),
         description: row.description.clone(),
         chapter_id: row.chapter_id,
-        parent_id: row.parent_id,
+        parent_id: {
+            let root = super::timeline_tree::root_of(conn, row.book_id).await?;
+            if row.parent_id == Some(root.id) {
+                None
+            } else {
+                row.parent_id
+            }
+        },
         kind: row.kind,
         status: row.status,
         child_count: timeline_events::Entity::find()

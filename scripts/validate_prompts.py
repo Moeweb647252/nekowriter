@@ -43,7 +43,7 @@ writer.kickoff.rollover reviewer.kickoff reviewer.rereview archivist.kickoff.mai
 archivist.kickoff.resync block.settings block.canon_systems block.writing_skills block.memory block.recent_chapters
 block.goals block.chapter_draft block.cast_index block.chapter_diff
 block.anchor block.book_brief notice.user_feedback notice.user_message notice.user_edits notice.setting_edits
-notice.completion_revoked notice.tool_not_allowed notice.output_truncated notice.web_content notice.nudge_generic
+notice.anchor_planned notice.completion_revoked notice.tool_not_allowed notice.output_truncated notice.web_content notice.nudge_generic
 notice.research_budget planner.notice.outline_rejected planner.notice.nudge planner.notice.retrieval_budget
 writer.notice.revision_plan_accepted writer.notice.revision_plan_rejected writer.notice.granularity
 writer.notice.nudge_drafting writer.notice.nudge_revision_planning
@@ -309,7 +309,7 @@ variants = {
                          dict(items=[], total=0, shown=0)],
   "result.relations": [dict(entity="林凡(#12)", items=[dict(subject="林凡(#12)", object="张三(#15)", kind="师兄", ended=False, until_label="", description="", since_label="")]),
                        dict(entity="林凡(#12)", items=[])],
-  "result.timeline": [dict(items=[dict(id=1, story_time="春", title="入门", description="", chapter_label="第1章", entities=["林凡", "苏婉"], after_anchor=False)], total=5, shown=1, mode="chronological"),
+  "result.timeline": [dict(items=[dict(id=1, story_time="春", title="入门", description="", planned=False, parent=None, chapter_label="第1章", entities=["林凡", "苏婉"], after_anchor=False)], total=5, shown=1, mode="chronological"),
                       dict(items=[], total=0, shown=0, mode="recent_first")],
   "result.foreshadowing_list": [dict(items=[dict(id=9, title="剑穗", status_label="未回收", description="……", planted_label="第5章", planned_payoff="", resolution="", resolved_label="")]),
                                 dict(items=[])],

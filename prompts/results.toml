@@ -164,7 +164,7 @@ title_zh = "工具结果 · 时间线"
 text = '''
 {% if mode == "recent_first" %}时间线（由近及远）：{% else %}时间线（按故事时间先后）：{% endif %}
 
-{% for t in items %}[#{{ t.id }}]{% if t.story_time %} ({{ t.story_time }}){% endif %} {{ t.title }}{% if t.description %} — {{ t.description }}{% endif %}{% if t.chapter_label %} · {{ t.chapter_label }}{% endif %}{% if t.entities %} · 涉及：{{ t.entities | join("、") }}{% endif %}{% if t.after_anchor %}（锚点之后）{% endif %}
+{% for t in items %}[#{{ t.id }}]{% if t.planned %}（计划中）{% endif %}{% if t.story_time %} ({{ t.story_time }}){% endif %} {{ t.title }}{% if t.parent %} · 上级 {{ t.parent }}{% endif %}{% if t.description %} — {{ t.description }}{% endif %}{% if t.chapter_label %} · {{ t.chapter_label }}{% endif %}{% if t.entities %} · 涉及：{{ t.entities | join("、") }}{% endif %}{% if t.after_anchor %}（锚点之后）{% endif %}
 
 {% else %}（没有符合条件的事件）
 {% endfor %}{% if total > shown %}（共 {{ total }} 条，只显示 {{ shown }} 条。）{% endif %}
