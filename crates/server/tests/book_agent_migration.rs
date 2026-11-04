@@ -220,13 +220,39 @@ async fn pre_0012_rows_survive_with_write_mode_null() {
     // S-1: the rebuilt order is spec/02's final order, not "old order plus write_mode at the
     // end"; pin it so a future rebuild cannot shuffle columns by accident.
     let expected_columns = [
-        "id", "book_id", "role", "kind", "chapter_id", "track_id", "research_task_id",
-        "model_profile_id", "model_snapshot", "system_prompt", "tools", "status", "phase",
-        "granularity", "auto_pause", "pause_after_outline", "write_mode",
-        "tool_error_streak_limit", "research_max_tool_calls", "research_max_entries",
-        "pause_requested", "held_tool_call_id", "base_content_version", "pending_comment",
-        "view_snapshot", "counters", "usage", "error", "parent_session_id", "created_at",
-        "updated_at", "finished_at", "canon_systems",
+        "id",
+        "book_id",
+        "role",
+        "kind",
+        "chapter_id",
+        "track_id",
+        "research_task_id",
+        "model_profile_id",
+        "model_snapshot",
+        "system_prompt",
+        "tools",
+        "status",
+        "phase",
+        "granularity",
+        "auto_pause",
+        "pause_after_outline",
+        "write_mode",
+        "tool_error_streak_limit",
+        "research_max_tool_calls",
+        "research_max_entries",
+        "pause_requested",
+        "held_tool_call_id",
+        "base_content_version",
+        "pending_comment",
+        "view_snapshot",
+        "counters",
+        "usage",
+        "error",
+        "parent_session_id",
+        "created_at",
+        "updated_at",
+        "finished_at",
+        "canon_systems",
     ];
     assert_eq!(
         columns(db.conn(), "agent_sessions").await,
@@ -410,7 +436,7 @@ async fn old_role_models_load_without_assistant() {
 async fn a_lost_referencing_row_fails_the_per_table_count_guard() {
     let sql = include_str!("../../migration/src/sql/0012_book_agent.sql");
     let cases = [
-        ("agent_messages", "DELETE FROM agent_messages WHERE id = 1;"),
+        ("agent_messages", "DELETE FROM agent_messages WHERE id = 3;"),
         (
             "agent_tool_calls",
             "DELETE FROM agent_tool_calls WHERE id = 1;",
@@ -447,7 +473,9 @@ async fn a_lost_referencing_row_fails_the_per_table_count_guard() {
             "-- Every reference must survive the rebuild.",
             &format!("{deletion}\n-- Every reference must survive the rebuild."),
         );
-        let result = sea_orm::sqlx::raw_sql(sea_orm::sqlx::AssertSqlSafe(broken)).execute(&mut *conn).await;
+        let result = sea_orm::sqlx::raw_sql(sea_orm::sqlx::AssertSqlSafe(broken))
+            .execute(&mut *conn)
+            .await;
         assert!(result.is_err(), "{table} count guard must fail");
         assert!(
             !columns(db.conn(), "agent_sessions")
