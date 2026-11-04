@@ -782,6 +782,9 @@ pub enum GoalCondition {
         entity_id: i32,
         status: EntityStatus,
     },
+    EventOccurred {
+        event_id: i32,
+    },
 }
 
 /// A task the archivist proposes (spec/06 §5); created `active` on accept.

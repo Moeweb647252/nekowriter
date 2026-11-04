@@ -338,5 +338,6 @@
   "payoff_anchor.before": "Planned payoff: before «{{event}}»",
   "payoff_anchor.after": "Planned payoff: after «{{event}}»",
   "payoff_anchor.at": "Planned payoff: at «{{event}}»",
-  "payoff_anchor_planned": "(planned)"
+  "payoff_anchor_planned": "(planned)",
+  "goal_condition.event_occurred": "Waiting for «{{target}}» to happen"
 }

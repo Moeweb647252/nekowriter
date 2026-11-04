@@ -270,7 +270,7 @@ text = '''
 {% if not systems.entities %}
 - 实体：人物、组织、地点、物品、关系与出场记录均不可用。
 {% endif %}{% if not systems.timeline %}
-- 时间线：事件记录与时间顺序查询不可用。
+- 时间线：事件记录与时间顺序查询不可用；伏笔不能指定回收锚点。
 {% endif %}{% if not systems.memory %}
 - 记忆：章节摘要、笔记与前后文记忆不可用。
 {% endif %}{% if not systems.foreshadowing %}

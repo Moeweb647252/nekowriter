@@ -52,6 +52,8 @@ function defaultCondition(kind: GoalCondition["kind"]): GoalCondition {
       return { kind, foreshadowing_id: 0 }
     case "entity_status_is":
       return { kind, entity_id: 0, status: "active" }
+    case "event_occurred":
+      return { kind, event_id: 0 }
   }
 }
 

@@ -338,5 +338,6 @@
   "payoff_anchor.before": "计划回收：在「{{event}}」之前",
   "payoff_anchor.after": "计划回收：在「{{event}}」之后",
   "payoff_anchor.at": "计划回收：在「{{event}}」时",
-  "payoff_anchor_planned": "（计划中）"
+  "payoff_anchor_planned": "（计划中）",
+  "goal_condition.event_occurred": "等待「{{target}}」发生"
 }

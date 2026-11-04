@@ -133,7 +133,7 @@ describe("goal dialog scope and links", () => {
     const linked = {
       ...node,
       entities: [{ id: 7, name: "Jade Pendant" }],
-      events: [{ id: 8, title: "The gate" }],
+      events: [{ id: 8, title: "The gate", status: "occurred" as const }],
       foreshadowing: [{ id: 9, title: "Broken hilt", status: "open" as const }],
     }
     render(<GoalNodeDialog bookId={1} nodes={[linked]} open onOpenChange={vi.fn()} node={linked} />)

@@ -35,6 +35,8 @@ export function conditionSentence(t: TFunction, state: GoalConditionStateDto): s
       return t("canon:goal_condition.chapter_at_least", { chapter: condition.chapter })
     case "foreshadowing_resolved":
       return t("canon:goal_condition.foreshadowing_resolved", { target: label })
+    case "event_occurred":
+      return t("canon:goal_condition.event_occurred", { target: label })
     case "entity_status_is":
       return t("canon:goal_condition.entity_status_is", {
         target: label,

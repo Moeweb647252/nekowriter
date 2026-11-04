@@ -201,7 +201,7 @@ fn the_conception_outline_is_relational_and_has_no_per_chapter_writing_phrase() 
         "the outline must state ordering and parallel relations:\n{system}"
     );
     assert!(
-        system.contains("不要写章节号") && system.contains("逐章细纲"),
+        system.contains("默认不写章节号") && system.contains("逐章细纲"),
         "the outline must defer chapter detail to the per-chapter outline sessions:\n{system}"
     );
     assert!(
@@ -252,6 +252,91 @@ fn the_memory_block_shows_the_planned_event_count() {
         text.contains("时间线事件 7（其中计划中 3）"),
         "the memory block must show the planned count:\n{text}"
     );
+}
+
+/// The 22.5 prompt rules: no chapter numbers in timeline entry names, abandon an impossible
+/// plan, re-anchor a moved payoff, re-sync never restores planned, and promoted goals complete.
+#[test]
+fn the_timeline_prompts_ban_chapter_numbers_and_cover_abandon_reanchor_and_resync() {
+    let registry = PromptRegistry::embedded().expect("pack");
+    let set = registry.defaults_only();
+    let system = set
+        .render("archivist.system", &json!({}))
+        .expect("archivist.system")
+        .text;
+    assert!(
+        system.contains("条目按故事内容命名，不写章节号"),
+        "{system}"
+    );
+    let seed = set
+        .render(
+            "archivist.kickoff.seed",
+            &registry.sample_contexts("archivist.kickoff.seed")[0],
+        )
+        .expect("seed")
+        .text;
+    assert!(seed.contains("条目按故事内容命名，不写章节号"), "{seed}");
+    let mut maintenance_context =
+        registry.sample_contexts("archivist.kickoff.maintenance")[0].clone();
+    maintenance_context["systems"]["timeline"] = json!(true);
+    maintenance_context["systems"]["foreshadowing"] = json!(true);
+    maintenance_context["systems"]["goals"] = json!(true);
+    maintenance_context["goals"]["nodes"] = json!([{
+        "id": 1, "level": "task", "parent_id": null, "title": "Goal",
+        "purpose": "p", "chapters": "", "overdue": false,
+        "entities": [], "events": [], "foreshadowing": []
+    }]);
+    let maintenance = set
+        .render("archivist.kickoff.maintenance", &maintenance_context)
+        .expect("maintenance")
+        .text;
+    assert!(
+        maintenance.contains(
+            "本章使某个计划无法成立时，用 update_timeline_event 标记 abandoned 并说明原因"
+        ),
+        "{maintenance}"
+    );
+    assert!(
+        maintenance.contains("回收计划发生变化时用 update_foreshadowing 改锚"),
+        "{maintenance}"
+    );
+    assert!(
+        maintenance.contains("正文已经写到该节点所关联的 planned 时间线节点"),
+        "{maintenance}"
+    );
+    let resync = set
+        .render(
+            "archivist.kickoff.resync",
+            &registry.sample_contexts("archivist.kickoff.resync")[0],
+        )
+        .expect("resync")
+        .text;
+    assert!(resync.contains("绝不能改回 planned"), "{resync}");
+    let mut systems_context = registry.sample_contexts("block.canon_systems")[0].clone();
+    systems_context["systems"]["timeline"] = json!(false);
+    let systems = set
+        .render("block.canon_systems", &systems_context)
+        .expect("block.canon_systems")
+        .text;
+    assert!(
+        systems.contains("伏笔不能指定回收锚点"),
+        "the Timeline-off line must mention foreshadowing anchors: {systems}"
+    );
+    let goals = set
+        .render(
+            "block.goals",
+            &json!({
+                "systems": {"timeline": true},
+                "goals": {"nodes": [{
+                    "id": 1, "level": "task", "parent_id": null, "title": "Goal",
+                    "purpose": "p", "chapters": "", "overdue": false,
+                    "entities": [], "events": ["#7 事件（计划中）"], "foreshadowing": []
+                }], "omitted": 0}
+            }),
+        )
+        .expect("block.goals")
+        .text;
+    assert!(goals.contains("#7 事件（计划中）"), "{goals}");
 }
 
 /// The knowledge-scope budget of D-145 is carried by the conception system prompt (where the

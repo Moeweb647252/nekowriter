@@ -441,7 +441,7 @@ properties.summary = { type = "string", description = "本章摘要" }
 
 [tools.propose_goal_change]
 description = '''对本书的写作目标提出修改建议（由作者决定是否采纳）。complete 表示某个目标在本章已经达成；drop 表示某个目标已无法达成；create 表示在本章打开了新的任务机会。只在写作目标块存在相关节点时使用。'''
-examples = [ { action = "complete", node = 12, rationale = "林凡在本章终于夺回剑冢，目标已达成。" }, { action = "drop", node = 14, rationale = "苏婉已经离开宗门，这条计划无法继续。" }, { action = "create", parent = 8, title = "查清黑市的剑胚来源", purpose = "顺着本章的线索追查幕后势力。", chapter_from = 13, rationale = "本章出现了黑市剑胚的线索。", entities = ["苏婉"], events = [3], foreshadowing = [9] } ]
+examples = [ { action = "complete", node = 12, rationale = "林凡在本章终于夺回剑冢，目标已达成。" }, { action = "drop", node = 14, rationale = "苏婉已经离开宗门，这条计划无法继续。" }, { action = "create", parent = 8, title = "查清黑市的剑胚来源", purpose = "顺着本章的线索追查幕后势力。", rationale = "本章出现了黑市剑胚的线索。", entities = ["苏婉"], events = [3], foreshadowing = [9] } ]
 [tools.propose_goal_change.input_schema]
 type = "object"
 additionalProperties = false

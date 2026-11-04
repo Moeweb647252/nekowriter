@@ -5,4 +5,4 @@ import type { EntityStatus } from "./EntityStatus";
  * `goal_nodes.conditions` (spec/02 §4, spec/06 §11.3). Chapter numbers count in the node's
  * storyline; the closed set follows plan §4.4.
  */
-export type GoalCondition = { "kind": "chapter_at_least", chapter: number, } | { "kind": "foreshadowing_resolved", foreshadowing_id: number, } | { "kind": "entity_status_is", entity_id: number, status: EntityStatus, };
+export type GoalCondition = { "kind": "chapter_at_least", chapter: number, } | { "kind": "foreshadowing_resolved", foreshadowing_id: number, } | { "kind": "entity_status_is", entity_id: number, status: EntityStatus, } | { "kind": "event_occurred", event_id: number, };

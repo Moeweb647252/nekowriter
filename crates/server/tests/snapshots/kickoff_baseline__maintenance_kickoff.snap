@@ -109,9 +109,9 @@ expression: "kickoff_text(&fixture, session_id).await"
    - 只有永久改变其定位的信息（例如真实身份揭晓、根本性的转变）才用 description_append，且追加后整体仍应控制在约 120 字内。原文已经接近或超过这个长度时，改用 description 重写成更紧凑的版本，而不是继续追加；本次本来就要更新这个实体时，顺手把过长的描述压缩到 120 字以内。
 3. 主角状态：主角（即记忆中“主角当前状态”所示的人物）在本章出场时，用 update_entity 更新其 state，反映本章结尾时的情况。
 4. 关系：用 set_relation 或 end_relation 记录关系的建立与变化，写明 note。
-5. 时间线：用 add_timeline_event 把本章发生的事记录为对应条目下的子条目（按故事时间放到正确的位置）；正文写到某个计划中的节点时，用 update_timeline_event 把它改为 occurred，并记录本章的章节；本章没有写到的计划不要提前改。
+5. 时间线：用 add_timeline_event 把本章发生的事记录为对应条目下的子条目（按故事时间放到正确的位置）；正文写到某个计划中的节点时，用 update_timeline_event 把它改为 occurred，并记录本章的章节；本章使某个计划无法成立时，用 update_timeline_event 标记 abandoned 并说明原因；本章没有写到的计划不要提前改。
 6. 记忆笔记：用 add_memory_note 记录新确立的事实与世界规则；被推翻的用 retire_memory_note 撤销。
-7. 伏笔：只记录本章正文真正埋下的伏笔，不要补写本章没有写的内容；能对应到本章或已有时间线节点时，用 payoff_event 与 payoff_position 锚定到最具体的节点；有明确的回收方向时写清楚，不写章节号。已回收的伏笔用 resolve_foreshadowing 更新。
+7. 伏笔：只记录本章正文真正埋下的伏笔，不要补写本章没有写的内容；能对应到本章或已有时间线节点时，用 payoff_event 与 payoff_position 锚定到最具体的节点；有明确的回收方向时写清楚，不写章节号。回收计划发生变化时用 update_foreshadowing 改锚；已回收的伏笔用 resolve_foreshadowing 更新。
 8. set_chapter_summary：撰写本章摘要（150 到 400 字：发生了什么、涉及谁、结尾停在哪里）。（必做）
 9. 如果正文与设定资料矛盾，或确立了应写入设定的重要内容，用 propose_setting_change 提出建议。
 10. 调用 finish_maintenance，简要报告做了哪些更新。

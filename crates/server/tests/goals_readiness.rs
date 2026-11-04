@@ -271,3 +271,55 @@ async fn private_scopes_see_shared_rows_but_not_other_tracks() {
         "shared link: {status} {body}"
     );
 }
+
+#[tokio::test]
+async fn event_occurred_becomes_ready_when_the_planned_entry_happens() {
+    let app = TestApp::new().await;
+    let (book_id, track_id) = book_with_main(&app).await;
+    let chapter = app.create_chapter(track_id, "One").await;
+    let chapter_id = chapter["id"].as_i64().expect("chapter") as i32;
+    let (status, event) = app
+        .post(
+            &format!("/api/books/{book_id}/timeline"),
+            json!({ "title": "The gate", "status": "planned" }),
+        )
+        .await;
+    assert_eq!(status, 201, "{event}");
+    let event_id = event["id"].as_i64().expect("event") as i32;
+    let goal = create(
+        &app,
+        book_id,
+        json!({
+            "level": "goal", "title": "Wait for the gate", "purpose": "p",
+            "status": "waiting",
+            "conditions": [{ "kind": "event_occurred", "event_id": event_id }]
+        }),
+    )
+    .await;
+    let list = get(&app, book_id).await;
+    let row = list
+        .iter()
+        .find(|row| row["id"] == goal["id"])
+        .expect("goal");
+    assert_eq!(row["conditions"][0]["satisfied"], false);
+    assert_eq!(row["ready"], false);
+
+    let (status, updated) = app
+        .patch(
+            &format!("/api/timeline-events/{event_id}"),
+            json!({ "status": "occurred", "chapter_id": chapter_id, "note": "happened" }),
+        )
+        .await;
+    assert_eq!(status, 200, "{updated}");
+    let list = get(&app, book_id).await;
+    let row = list
+        .iter()
+        .find(|row| row["id"] == goal["id"])
+        .expect("goal");
+    assert_eq!(row["conditions"][0]["satisfied"], true);
+    assert_eq!(row["ready"], true);
+    assert_eq!(
+        row["conditions"][0]["target_label"],
+        format!("#{event_id} The gate")
+    );
+}
