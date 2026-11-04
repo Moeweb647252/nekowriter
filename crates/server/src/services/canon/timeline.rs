@@ -373,7 +373,7 @@ pub async fn update_inner(
         if next_status == TimelineStatus::Planned {
             active.chapter_id = Set(None);
         }
-        if next_status == TimelineStatus::Occurred {
+        if existing.status == TimelineStatus::Planned && next_status == TimelineStatus::Occurred {
             active.chapter_id = Set(patch.chapter_id.unwrap_or(write.chapter_id));
         }
     }

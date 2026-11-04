@@ -684,7 +684,7 @@ async fn timeline_off_refuses_anchor_parameters_and_foreshadowing_off_hides_the_
 /// A session frozen before M22 still runs `add_timeline_event` with only its old arguments: every
 /// new parameter is optional (plan §3.3).
 #[tokio::test]
-async fn a_pre_m22_frozen_session_accepts_the_old_arguments() {
+async fn an_old_argument_shape_is_still_accepted() {
     let mut runtime = runtime(Vec::new()).await;
     runtime
         .app

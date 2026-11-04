@@ -968,12 +968,12 @@ impl ToolHandler for QueryTimelineTool {
             ordered.reverse();
         }
         let total = ordered.len();
+        ordered.truncate(limit);
+        let shown = ordered.len();
         let planned_count = ordered
             .iter()
             .filter(|row| row.status == TimelineStatus::Planned)
             .count();
-        ordered.truncate(limit);
-        let shown = ordered.len();
 
         let chapter_ids: Vec<i32> = ordered.iter().filter_map(|row| row.chapter_id).collect();
         let chapters = chapters_by_id(ctx, &chapter_ids).await?;

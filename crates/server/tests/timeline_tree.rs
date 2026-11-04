@@ -405,6 +405,45 @@ async fn promotion_refuses_a_planned_descendant_and_names_it() {
 }
 
 #[tokio::test]
+async fn repeating_occurred_is_a_noop_and_keeps_the_chapter() {
+    let app = TestApp::new().await;
+    let (book_id, _track) = book(&app).await;
+    let chapter = app.create_chapter(1, "One").await;
+    let chapter_id = chapter["id"].as_i64().expect("id") as i32;
+    let event = create_event(
+        &app,
+        book_id,
+        json!({ "title": "Happened", "status": "planned" }),
+    )
+    .await;
+    let event_id = event["id"].as_i64().expect("id") as i32;
+    let (status, response) = patch_event(
+        &app,
+        event_id,
+        json!({ "status": "occurred", "chapter_id": chapter_id, "note": "first" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    let (status, response) = patch_event(
+        &app,
+        event_id,
+        json!({ "status": "occurred", "note": "same again" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    assert_eq!(response["chapter_id"], chapter_id);
+    let rows = timeline(&app, book_id).await;
+    let row = rows
+        .iter()
+        .find(|row| row["id"] == event_id)
+        .expect("event");
+    assert_eq!(
+        row["chapter_id"], chapter_id,
+        "the historical chapter survives"
+    );
+}
+
+#[tokio::test]
 async fn abandoning_a_planned_parent_abandons_its_planned_subtree() {
     let app = TestApp::new().await;
     let (book_id, _track) = book(&app).await;
