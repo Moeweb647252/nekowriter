@@ -144,10 +144,20 @@ impl ToolHandler for OpenChapterTool {
             .unwrap_or(value.len());
         let body = &value[..cut];
         let next_pid = if part == "text" && cut < value.len() {
-            paragraphs
-                .iter()
-                .find(|p| !body.contains(&format!("[{}]", p.pid)))
-                .map(|p| p.pid.clone())
+            // The cut may land inside a paragraph. Name that partially displayed paragraph so the
+            // continuation can re-read it in full; only a cut exactly on a paragraph boundary
+            // advances to the next pid.
+            let mut offset = 0;
+            let mut partial = None;
+            for paragraph in &paragraphs {
+                let line = format!("[{}] {}\n", paragraph.pid, paragraph.text);
+                if cut < offset + line.len() {
+                    partial = Some(paragraph.pid.clone());
+                    break;
+                }
+                offset += line.len();
+            }
+            partial
         } else {
             None
         };

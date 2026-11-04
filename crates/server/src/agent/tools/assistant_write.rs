@@ -42,6 +42,20 @@ fn validation(message: &str) -> ToolError {
 fn book_id(ctx: &ToolCtx<'_>) -> Result<i32, ToolError> {
     ctx.book.map(|book| book.id).ok_or_else(internal)
 }
+
+fn map_chapter_error(error: crate::error::AppError) -> ToolError {
+    if error.code == crate::error::ErrorCode::ChapterLocked {
+        let session_id = error
+            .details
+            .as_ref()
+            .and_then(|details| details.get("session_id"))
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        ToolError::new(ToolErrorKind::ChapterLocked).with("session_id", session_id)
+    } else {
+        internal()
+    }
+}
 fn write_context(ctx: &ToolCtx<'_>) -> CanonWrite {
     let book_id = ctx.book.map(|book| book.id).unwrap_or_default();
     CanonWrite::agent(
@@ -225,7 +239,7 @@ impl ToolHandler for EditChapterTool {
             },
         )
         .await
-        .map_err(|_| internal())?;
+        .map_err(map_chapter_error)?;
         ctx.events.extend(events);
         text_outcome(
             ctx,
@@ -237,6 +251,16 @@ impl ToolHandler for EditChapterTool {
     async fn preview(&self, ctx: &mut ToolCtx<'_>, input: Value) -> Result<Value, ToolError> {
         let input: EditChapterInput = decode(input)?;
         let chapter = resolve_chapter(ctx, book_id(ctx)?, &input.chapter).await?;
+        if input.outline.is_some() && input.outline_edits.is_some() {
+            return Err(validation(
+                "outline and outline_edits are mutually exclusive",
+            ));
+        }
+        if input.reference_notes.is_some() && input.notes_edits.is_some() {
+            return Err(validation(
+                "reference_notes and notes_edits are mutually exclusive",
+            ));
+        }
         let mut rows = Vec::new();
         if let Some(v) = input.title {
             rows.push(json!({"field":"title","before":chapter.title,"after":v}));
@@ -244,28 +268,18 @@ impl ToolHandler for EditChapterTool {
         if let Some(v) = input.guidance {
             rows.push(json!({"field":"guidance","before":chapter.guidance,"after":v}));
         }
-        if input.outline.is_some() || input.outline_edits.is_some() {
-            let after = input
-                .outline
-                .or_else(|| {
-                    input
-                        .outline_edits
-                        .as_ref()
-                        .map(|e| apply_edits(&chapter.outline, e, ctx).unwrap_or_default())
-                })
-                .unwrap_or_default();
+        if let Some(v) = input.outline {
+            rows.push(json!({"field":"outline","before":chapter.outline,"after":v}));
+        } else if let Some(edits) = input.outline_edits {
+            let after = apply_edits(&chapter.outline, &edits, ctx)?;
             rows.push(json!({"field":"outline","before":chapter.outline,"after":after}));
         }
-        if input.reference_notes.is_some() || input.notes_edits.is_some() {
-            let after = input
-                .reference_notes
-                .or_else(|| {
-                    input
-                        .notes_edits
-                        .as_ref()
-                        .map(|e| apply_edits(&chapter.reference_notes, e, ctx).unwrap_or_default())
-                })
-                .unwrap_or_default();
+        if let Some(v) = input.reference_notes {
+            rows.push(
+                json!({"field":"reference_notes","before":chapter.reference_notes,"after":v}),
+            );
+        } else if let Some(edits) = input.notes_edits {
+            let after = apply_edits(&chapter.reference_notes, &edits, ctx)?;
             rows.push(
                 json!({"field":"reference_notes","before":chapter.reference_notes,"after":after}),
             );
@@ -300,7 +314,7 @@ impl ToolHandler for EditChapterTextTool {
         .await?;
         chapter_service::ensure_editable(ctx.db, chapter.id)
             .await
-            .map_err(|_| ToolError::new(ToolErrorKind::ChapterLocked).with("session_id", 0))?;
+            .map_err(map_chapter_error)?;
         Ok(Prepared::None)
     }
     async fn execute(
@@ -312,6 +326,18 @@ impl ToolHandler for EditChapterTextTool {
         let input: EditChapterTextInput = decode(input)?;
         let chapter = resolve_chapter(ctx, book_id(ctx)?, &input.chapter).await?;
         let (new_text, before) = apply_text_edits(&chapter, &input.edits, ctx)?;
+        let (result, events) = chapter_service::put_content_text_inner(
+            ctx.tx,
+            chapter.id,
+            ChapterContentTextPut {
+                base_version: chapter.content_version,
+                text: new_text,
+            },
+        )
+        .await
+        .map_err(map_chapter_error)?;
+        // The backup is written only after the text service accepted the edit. If the write is
+        // rejected (lock or stale version), the transaction has no backup row either.
         let has_backup = crate::db::entities::chapter_versions::Entity::find()
             .filter(
                 crate::db::entities::chapter_versions::COLUMN
@@ -348,16 +374,6 @@ impl ToolHandler for EditChapterTextTool {
             .await
             .map_err(|_| internal())?;
         }
-        let (result, events) = chapter_service::put_content_text_inner(
-            ctx.tx,
-            chapter.id,
-            ChapterContentTextPut {
-                base_version: chapter.content_version,
-                text: new_text,
-            },
-        )
-        .await
-        .map_err(|_| internal())?;
         ctx.events.extend(events);
         text_outcome(
             ctx,
@@ -805,40 +821,53 @@ impl ToolHandler for UpdateResearchTaskTool {
                 _ => Err(validation("status must be ready or deferred")),
             })
             .transpose()?;
-        let (dto, events) = if input.status.as_deref() == Some("deferred") {
-            research::transition_inner(ctx.tx, input.task, Transition::Defer).await
-        } else if input.status.as_deref() == Some("ready") {
-            // `ready` confirms a draft through PATCH; a deferred task resumes through the
-            // dedicated transition.
-            match research::patch_inner(
-                ctx.tx,
-                input.task,
-                ResearchTaskPatch {
-                    topic: input.topic,
-                    requirements: input.requirements,
-                    scope_name: input.scope,
-                    status: Some(ResearchTaskStatus::Ready),
-                },
-            )
-            .await
-            {
-                Ok(result) => Ok(result),
-                Err(_) => research::transition_inner(ctx.tx, input.task, Transition::Resume).await,
+        let fields = ResearchTaskPatch {
+            topic: input.topic,
+            requirements: input.requirements,
+            scope_name: input.scope,
+            status: None,
+        };
+        let (dto, events) = if status == Some(ResearchTaskStatus::Deferred) {
+            let (_, mut transition_events) =
+                research::transition_inner(ctx.tx, input.task, Transition::Defer)
+                    .await
+                    .map_err(|_| internal())?;
+            let (dto, mut patch_events) = research::patch_inner(ctx.tx, input.task, fields)
+                .await
+                .map_err(|_| internal())?;
+            transition_events.append(&mut patch_events);
+            Ok((dto, transition_events))
+        } else if status == Some(ResearchTaskStatus::Ready) {
+            let current = research::get(ctx.tx, input.task)
+                .await
+                .map_err(|_| internal())?;
+            if current.status == ResearchTaskStatus::Deferred {
+                let (_, mut transition_events) =
+                    research::transition_inner(ctx.tx, input.task, Transition::Resume)
+                        .await
+                        .map_err(|_| internal())?;
+                let (dto, mut patch_events) = research::patch_inner(ctx.tx, input.task, fields)
+                    .await
+                    .map_err(|_| internal())?;
+                transition_events.append(&mut patch_events);
+                Ok((dto, transition_events))
+            } else {
+                research::patch_inner(
+                    ctx.tx,
+                    input.task,
+                    ResearchTaskPatch {
+                        status: Some(ResearchTaskStatus::Ready),
+                        ..fields
+                    },
+                )
+                .await
+                .map_err(|_| internal())
             }
         } else {
-            research::patch_inner(
-                ctx.tx,
-                input.task,
-                ResearchTaskPatch {
-                    topic: input.topic,
-                    requirements: input.requirements,
-                    scope_name: input.scope,
-                    status,
-                },
-            )
-            .await
-        }
-        .map_err(|_| internal())?;
+            research::patch_inner(ctx.tx, input.task, fields)
+                .await
+                .map_err(|_| internal())
+        }?;
         ctx.events.extend(events);
         text_outcome(
             ctx,

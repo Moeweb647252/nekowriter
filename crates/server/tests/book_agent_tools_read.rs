@@ -213,7 +213,7 @@ async fn read_tools_return_the_book_index_chapter_and_setting_doc() {
         .await
         .unwrap();
     assert!(open.text.contains("p1"), "{}", open.text);
-    assert!(open.text.contains("from_pid=\"p2\""), "{}", open.text);
+    assert!(open.text.contains("from_pid=\"p1\""), "{}", open.text);
     assert_eq!(open.ui["content_version"], 3);
     let doc = registry
         .get("read_setting_doc")
