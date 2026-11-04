@@ -6,7 +6,7 @@
  * proposals page/badge did not react to a proposal created or decided in an agent session.
  */
 import { QueryClient } from "@tanstack/react-query"
-import { describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { applyServerEvent, flushLiveDeltas } from "@/api/events"
 import { keys } from "@/api/keys"
@@ -191,16 +191,33 @@ describe("delta coalescing", () => {
     expect(isInvalidated(client, keys.sessions.list(1))).toBe(true)
   })
 
+  afterEach(() => { vi.useRealTimers() })
+
   it("invalidates only the current Context query for a session event", () => {
     const client = seededClient()
-    client.setQueryData(keys.sessions.context(11, null), {})
-    client.setQueryData(keys.sessions.context(11, 3), {})
+    client.setQueryData(keys.sessions.context(12, null), {})
+    client.setQueryData(keys.sessions.context(12, 3), {})
     applyServerEvent(client, "session.message", {
-      session_id: 11,
+      session_id: 12,
       message: { id: 9, seq: 3 },
     })
-    expect(isInvalidated(client, keys.sessions.context(11, null))).toBe(true)
-    expect(isInvalidated(client, keys.sessions.context(11, 3))).toBe(false)
+    expect(isInvalidated(client, keys.sessions.context(12, null))).toBe(true)
+    expect(isInvalidated(client, keys.sessions.context(12, 3))).toBe(false)
+  })
+
+  it("coalesces Context invalidations to one per second", () => {
+    vi.useFakeTimers()
+    const client = seededClient()
+    const spy = vi.spyOn(client, "invalidateQueries")
+    const contextCalls = () => spy.mock.calls.filter((args) => JSON.stringify(args).includes('"context"')).length
+    applyServerEvent(client, "session.message", { session_id: 13, message: { id: 1, seq: 1 } })
+    expect(contextCalls()).toBe(1)
+    spy.mockClear()
+    applyServerEvent(client, "session.tool_call", { session_id: 13, tool_call: { id: 2 } })
+    expect(contextCalls()).toBe(0)
+    vi.advanceTimersByTime(1000)
+    expect(contextCalls()).toBe(1)
+    vi.useRealTimers()
   })
 
   it("does not invalidate a chapter for a session.updated without a chapter", () => {

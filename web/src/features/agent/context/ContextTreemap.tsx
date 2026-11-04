@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type KeyboardEvent } from "react"
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { useTranslation } from "react-i18next"
 
 import type { ContextBreakdownDto } from "@/api/gen/ContextBreakdownDto"
@@ -75,9 +75,21 @@ export function ContextTreemap({
   onReset: () => void
 }) {
   const { t, i18n } = useTranslation()
-  const width = 1000
+  const [width, setWidth] = useState(1000)
   const [selected, setSelected] = useState(0)
   const container = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const node = container.current
+    if (node === null || typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver((entries) => {
+      const next = entries[0]?.contentRect.width
+      if (next !== undefined && next > 0) setWidth(Math.round(next))
+    })
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [])
+
   const rects = useMemo(() => {
     const leaves = leavesFor(view, zoom, t)
     return { leaves, layout: layoutTreemap(leaves.map((leaf) => ({ key: leaf.id, weight: leaf.weight })), { x: 0, y: 0, width, height: 420 }) }
@@ -135,11 +147,19 @@ export function ContextTreemap({
       className="relative h-[420px] w-full overflow-hidden rounded-md border bg-muted/20 outline-none focus-visible:ring-2 focus-visible:ring-ring"
       onKeyDown={onKeyDown}
     >
-      <svg width="100%" height="420" viewBox={`0 0 ${width} 420`} role="img" aria-label={t("agent:context.title")}>
+      <svg
+        width="100%"
+        height="420"
+        viewBox={`0 0 ${width} 420`}
+        preserveAspectRatio="none"
+        role="img"
+        aria-label={t("agent:context.title")}
+      >
         {rects.layout.map((rect, index) => {
           const leaf = rects.leaves.find((candidate) => candidate.id === rect.key)
           if (leaf === undefined) return null
           const isSelected = index === Math.min(selected, rects.leaves.length - 1)
+          const gap = zoom.group === null ? 4 : 2
           return (
             <g
               key={rect.key}
@@ -155,10 +175,10 @@ export function ContextTreemap({
             >
               <title>{`${leaf.label} · ≈ ${formatNumber(Math.round(leaf.weight * view.scale), language)} tokens${leaf.excerpt === "" ? "" : `\n${leaf.excerpt}`}`}</title>
               <rect
-                x={rect.x + 1}
-                y={rect.y + 1}
-                width={Math.max(1, rect.width - 2)}
-                height={Math.max(1, rect.height - 2)}
+                x={rect.x + gap / 2}
+                y={rect.y + gap / 2}
+                width={Math.max(1, rect.width - gap)}
+                height={Math.max(1, rect.height - gap)}
                 rx={2}
                 fill={leaf.color}
                 stroke={isSelected ? "var(--foreground)" : "transparent"}

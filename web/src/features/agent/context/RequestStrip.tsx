@@ -41,6 +41,7 @@ export function RequestStrip({
 
   return (
     <div className="space-y-1">
+      <div className="relative">
       <div
         role="slider"
         tabIndex={0}
@@ -49,7 +50,7 @@ export function RequestStrip({
         aria-valuemax={entries.length}
         aria-valuenow={selectedIndex + 1}
         aria-valuetext={`Step ${selected?.seq ?? "current"} of ${entries.length}, ${formatNumber(selected?.tokens ?? 0, language)} tokens`}
-        className="flex h-20 items-end gap-px overflow-x-auto pb-1 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="relative flex h-20 items-end gap-px overflow-x-auto pb-1 outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onKeyDown={(event) => {
           if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
             event.preventDefault()
@@ -87,10 +88,23 @@ export function RequestStrip({
             </button>
           )
         })}
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-0 border-l border-foreground/40"
+          style={{ left: `${(view.context_window / max) * 100}%` }}
+        />
+        {view.rollover_at !== null ? (
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 border-l border-dashed border-foreground"
+            style={{ left: `${(view.rollover_at / max) * 100}%` }}
+          />
+        ) : null}
       </div>
       <div className="flex justify-between text-[10px] text-muted-foreground">
         <span>{t("agent:context.strip.current")}</span>
-        <span>{t("agent:context.strip.renews")}</span>
+        {view.rollover_at !== null ? <span>{t("agent:context.strip.renews")}</span> : null}
+      </div>
       </div>
     </div>
   )

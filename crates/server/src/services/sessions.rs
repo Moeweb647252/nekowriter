@@ -1043,6 +1043,8 @@ pub async fn context(
         messages.iter().map(|message| message.id).collect();
     let calls: Vec<agent_tool_calls::Model> = agent_tool_calls::Entity::find()
         .filter(agent_tool_calls::COLUMN.session_id.eq(session_id))
+        .order_by_asc(agent_tool_calls::COLUMN.message_id)
+        .order_by_asc(agent_tool_calls::COLUMN.call_index)
         .all(conn)
         .await?
         .into_iter()

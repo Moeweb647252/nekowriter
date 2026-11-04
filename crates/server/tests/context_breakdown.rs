@@ -192,18 +192,57 @@ async fn past_seq_reports_measured_scale_and_ignores_later_messages() {
 #[tokio::test]
 async fn loader_ignores_a_call_whose_message_was_not_loaded() {
     let fixture = fixture(None).await;
-    let messages = messages(&fixture).await;
-    let mut calls = nekowriter::db::entities::agent_tool_calls::Entity::find()
-        .all(fixture.app.db().conn())
+    let book_id = fixture.session.book_id.unwrap();
+    let snapshot = r#"{"provider_id":0,"protocol":"mock","base_url":"","extra_headers":{},"model":"demo","context_window":100000,"max_output_tokens":8192,"options":null}"#;
+    fixture
+        .app
+        .execute(&format!(
+            "INSERT INTO agent_sessions(book_id, role, kind, status, phase, model_snapshot, system_prompt, tools, created_at, updated_at) VALUES              ({book_id}, 'writer', 'chapter_write', 'idle', 'drafting', '{snapshot}', '', '[]', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ))
+        .await;
+    let other_session = fixture
+        .app
+        .db()
+        .conn()
+        .query_one_raw(sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Sqlite,
+            "SELECT max(id) AS id FROM agent_sessions",
+        ))
         .await
+        .unwrap()
+        .unwrap()
+        .try_get::<i32>("", "id")
         .unwrap();
-    // A call whose assistant message was not part of the loaded rows is dropped by the loader;
-    // the pure function applies the same guard, so an orphan row cannot add a result leaf.
-    calls.push(nekowriter::db::entities::agent_tool_calls::Model {
-        message_id: 999999,
-        ..calls[0].clone()
-    });
-    let view = breakdown(&fixture.session, &messages, &calls, None);
+    fixture
+        .app
+        .execute(&format!(
+            "INSERT INTO agent_messages(session_id, seq, role, kind, content, created_at) VALUES              ({other_session}, 0, 'user', 'kickoff', '[]', '2026-01-01T00:00:00Z')"
+        ))
+        .await;
+    let other_message = fixture
+        .app
+        .db()
+        .conn()
+        .query_one_raw(sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Sqlite,
+            "SELECT max(id) AS id FROM agent_messages",
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get::<i32>("", "id")
+        .unwrap();
+    fixture
+        .app
+        .execute(&format!(
+            "INSERT INTO agent_tool_calls(session_id, message_id, call_index, provider_call_id, name, input, status, raw_result_text, appendices, result_text, is_error, sealed, created_at) VALUES              ({}, {other_message}, 0, 'orphan', 'read_chapter', '{{}}', 'done', 'orphan result', '[]', 'orphan result', 0, 1, '2026-01-01T00:00:02Z')",
+            fixture.session_id
+        ))
+        .await;
+    let view =
+        nekowriter::services::sessions::context(fixture.app.db().conn(), fixture.session_id, None)
+            .await
+            .unwrap();
     assert!(view.leaves.iter().all(|leaf| leaf.text != "orphan result"));
 }
 
@@ -308,13 +347,35 @@ async fn rebuild_leaves_match_the_scripted_provider_requests() {
             .flatten()
             .collect();
         assert_eq!(result_texts, request_result_texts);
-        if index > 0 {
-            assert!(
-                view.leaves
-                    .iter()
-                    .any(|leaf| leaf.group == ContextGroupKey::Model)
-            );
-        }
+        let expected_model: Vec<String> = messages
+            .iter()
+            .filter(|message| message.seq < assistant.seq)
+            .filter(|message| message.kind == nekowriter::db::json::MessageKind::Assistant)
+            .flat_map(|message| {
+                message
+                    .content
+                    .clone()
+                    .into_inner()
+                    .into_iter()
+                    .filter_map(|block| match block {
+                        nekowriter::db::json::StoredBlock::Text { text, .. } => Some(text),
+                        nekowriter::db::json::StoredBlock::ToolCall {
+                            name, input_text, ..
+                        } => Some(format!("{name}\n{input_text}")),
+                        _ => None,
+                    })
+            })
+            .collect();
+        let actual_model: Vec<String> = view
+            .leaves
+            .iter()
+            .filter(|leaf| leaf.group == ContextGroupKey::Model)
+            .map(|leaf| leaf.text.clone())
+            .collect();
+        assert_eq!(
+            actual_model, expected_model,
+            "assistant parts for request {index}"
+        );
     }
 }
 
@@ -478,4 +539,44 @@ async fn session_dto_carries_context_window() {
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["session"]["context_window"], 100000);
+}
+
+#[tokio::test]
+async fn loader_orders_calls_by_message_and_call_index() {
+    let fixture = fixture(None).await;
+    let assistant = agent_messages::Entity::find()
+        .filter(agent_messages::COLUMN.session_id.eq(fixture.session_id))
+        .filter(agent_messages::COLUMN.seq.eq(1))
+        .one(fixture.app.db().conn())
+        .await
+        .unwrap()
+        .unwrap();
+    fixture
+        .app
+        .execute(&format!(
+            "DELETE FROM agent_tool_calls WHERE session_id = {}",
+            fixture.session_id
+        ))
+        .await;
+    for (index, text) in [(1, "second"), (0, "first")] {
+        fixture
+            .app
+            .execute(&format!(
+                "INSERT INTO agent_tool_calls(session_id, message_id, call_index, provider_call_id, name, input, status, raw_result_text, appendices, result_text, is_error, sealed, created_at) VALUES \
+                 ({}, {}, {index}, 'call-{index}', 'read_chapter', '{{}}', 'done', '{text}', '[]', '{text}', 0, 1, '2026-01-01T00:00:02Z')",
+                fixture.session_id, assistant.id
+            ))
+            .await;
+    }
+    let view =
+        nekowriter::services::sessions::context(fixture.app.db().conn(), fixture.session_id, None)
+            .await
+            .unwrap();
+    let result_texts: Vec<&str> = view
+        .leaves
+        .iter()
+        .filter(|leaf| leaf.group == ContextGroupKey::Results)
+        .map(|leaf| leaf.text.as_str())
+        .collect();
+    assert_eq!(result_texts, vec!["first", "second"]);
 }
