@@ -699,3 +699,154 @@ async fn an_old_argument_shape_is_still_accepted() {
     assert!(!add.3, "{}", add.1);
     assert!(add.1.contains("已加入时间线"), "{}", add.1);
 }
+
+/// `payoff_event: null` on `update_foreshadowing` clears both anchor fields, not only the event
+/// (spec/05 §6, spec/10 §2.4, D-170 T10).
+#[tokio::test]
+async fn update_foreshadowing_clears_both_anchor_fields_with_a_null_payoff_event() {
+    let mut runtime = runtime(vec![]).await;
+    let anchor = create_event(
+        &runtime.app,
+        runtime.book_id,
+        json!({ "title": "Planned payoff", "status": "planned" }),
+    )
+    .await;
+    let anchor_id = anchor["id"].as_i64().expect("id") as i32;
+    let hook = runtime
+        .app
+        .post(
+            &format!("/api/books/{}/foreshadowing", runtime.book_id),
+            json!({ "title": "Hook", "description": "x", "payoff_event_id": anchor_id, "payoff_position": "after" }),
+        )
+        .await
+        .1;
+    let hook_id = hook["id"].as_i64().expect("id") as i32;
+    runtime
+        .app
+        .set_provider(ScriptedProvider::new(vec![ScriptStep::new().tool(
+        "update_foreshadowing",
+        json!({ "foreshadowing_id": hook_id, "note": "clear the anchor", "payoff_event": null }),
+    )]));
+    let session_id = start_archivist(&runtime).await;
+    runtime.wait_any_status(session_id).await;
+    let calls = calls(&runtime, session_id).await;
+    let update = call(&calls, "update_foreshadowing").await;
+    assert!(!update.3, "{}", update.1);
+    let (_, cleared) = runtime
+        .app
+        .get(&format!("/api/foreshadowing/{hook_id}"))
+        .await;
+    assert_eq!(cleared["payoff_event_id"], Value::Null);
+    assert_eq!(cleared["payoff_position"], Value::Null);
+}
+
+/// `clear_anchor` and `payoff_event` are mutually exclusive (spec/05 §6, D-170 T11).
+#[tokio::test]
+async fn update_foreshadowing_refuses_clear_anchor_with_payoff_event() {
+    let mut runtime = runtime(vec![]).await;
+    let anchor = create_event(
+        &runtime.app,
+        runtime.book_id,
+        json!({ "title": "Anchor", "status": "planned" }),
+    )
+    .await;
+    let anchor_id = anchor["id"].as_i64().expect("id") as i32;
+    let hook = runtime
+        .app
+        .post(
+            &format!("/api/books/{}/foreshadowing", runtime.book_id),
+            json!({ "title": "Hook", "description": "x", "payoff_event_id": anchor_id, "payoff_position": "at" }),
+        )
+        .await
+        .1;
+    let hook_id = hook["id"].as_i64().expect("id") as i32;
+    runtime
+        .app
+        .set_provider(ScriptedProvider::new(vec![ScriptStep::new().tool(
+            "update_foreshadowing",
+            json!({ "foreshadowing_id": hook_id, "note": "both at once", "clear_anchor": true, "payoff_event": anchor_id }),
+        )]));
+    let session_id = start_archivist(&runtime).await;
+    runtime.wait_any_status(session_id).await;
+    let calls = calls(&runtime, session_id).await;
+    let update = call(&calls, "update_foreshadowing").await;
+    assert!(update.3, "{}", update.1);
+    assert!(
+        update.1.contains("不能同时提供") && update.1.contains("clear_anchor"),
+        "{}",
+        update.1
+    );
+    let (_, unchanged) = runtime
+        .app
+        .get(&format!("/api/foreshadowing/{hook_id}"))
+        .await;
+    assert_eq!(unchanged["payoff_event_id"], anchor_id);
+    assert_eq!(unchanged["payoff_position"], "at");
+}
+
+/// A status change through `update_foreshadowing` needs a non-empty note (spec/06 §3).
+#[tokio::test]
+async fn update_foreshadowing_requires_a_note_for_a_status_change() {
+    let mut runtime = runtime(vec![]).await;
+    let hook = runtime
+        .app
+        .post(
+            &format!("/api/books/{}/foreshadowing", runtime.book_id),
+            json!({ "title": "Hook", "description": "x" }),
+        )
+        .await
+        .1;
+    let hook_id = hook["id"].as_i64().expect("id") as i32;
+    runtime
+        .app
+        .set_provider(ScriptedProvider::new(vec![ScriptStep::new().tool(
+            "update_foreshadowing",
+            json!({ "foreshadowing_id": hook_id, "note": "", "status": "abandoned" }),
+        )]));
+    let session_id = start_archivist(&runtime).await;
+    runtime.wait_any_status(session_id).await;
+    let calls = calls(&runtime, session_id).await;
+    let update = call(&calls, "update_foreshadowing").await;
+    assert!(update.3, "{}", update.1);
+    assert!(update.1.contains("note"), "{}", update.1);
+    let (_, unchanged) = runtime
+        .app
+        .get(&format!("/api/foreshadowing/{hook_id}"))
+        .await;
+    assert_eq!(unchanged["status"], "open");
+}
+
+/// A status change through `update_timeline_event` needs a non-empty note; the service, not the
+/// schema, enforces it so a note-less status change is refused before any write (spec/06 §3).
+#[tokio::test]
+async fn update_timeline_event_requires_a_note_for_a_status_change() {
+    let mut runtime = runtime(vec![]).await;
+    let event = create_event(
+        &runtime.app,
+        runtime.book_id,
+        json!({ "title": "Plan", "status": "planned" }),
+    )
+    .await;
+    let event_id = event["id"].as_i64().expect("id") as i32;
+    runtime
+        .app
+        .set_provider(ScriptedProvider::new(vec![ScriptStep::new().tool(
+            "update_timeline_event",
+            json!({ "event_id": event_id, "status": "occurred" }),
+        )]));
+    let session_id = start_archivist(&runtime).await;
+    runtime.wait_any_status(session_id).await;
+    let calls = calls(&runtime, session_id).await;
+    let update = call(&calls, "update_timeline_event").await;
+    assert!(update.3, "{}", update.1);
+    assert!(
+        update.1.contains("note") && update.1.contains("status change"),
+        "{}",
+        update.1
+    );
+    let (_, unchanged) = runtime
+        .app
+        .get(&format!("/api/timeline-events/{event_id}"))
+        .await;
+    assert_eq!(unchanged["status"], "planned");
+}

@@ -1791,3 +1791,26 @@ pub fn all() -> Vec<std::sync::Arc<dyn ToolHandler>> {
         std::sync::Arc::new(FinishMaintenanceTool),
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `timeline_has_children` is mapped from the service's 409 to the tool error the model
+    /// sees, with the child count (spec/05 §6, D-170 T9).
+    ///
+    /// No M22 tool deletes a timeline entry: the book agent's `delete_canon_record` arrives with
+    /// M21 21.5. Exercise `map_canon` directly until then; when that tool lands, add the
+    /// end-to-end tool test and remove this note.
+    #[test]
+    fn timeline_has_children_maps_to_the_tool_error() {
+        let error = CanonError::conflict(
+            crate::error::ErrorCode::TimelineHasChildren,
+            "an entry with sub-entries cannot be deleted",
+            json!({ "children_count": 3 }),
+        );
+        let mapped = map_canon(error, None, None);
+        assert_eq!(mapped.kind, ToolErrorKind::TimelineHasChildren);
+        assert_eq!(mapped.fields.get("count"), Some(&json!(3)));
+    }
+}
