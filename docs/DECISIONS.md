@@ -4163,6 +4163,9 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     author**. Context also opened from the conception studio and the research task page. The
     smoke did not reach a calibrated view (Demo usage is estimated), so the provider-count and
     scaled-estimate header variants remain covered by the server/UI tests rather than this run.
+    The chapter 2 outline was written directly rather than through a planner session, so the
+    outline-session approval path was not part of this smoke; the writer and context paths it
+    produced were.
 - **Spec**:
   - PROJECT §6.19, §8.6, §8.7, §9.2, §10 (#36), §11;
   - spec/01 §3.1;
