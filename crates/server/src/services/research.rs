@@ -120,7 +120,7 @@ pub async fn create(
     Ok((dto, warnings))
 }
 
-async fn create_inner(
+pub(crate) async fn create_inner(
     tx: &impl ConnectionTrait,
     input: ResearchTaskCreate,
 ) -> Result<(ResearchTaskDto, Vec<ServerEvent>, Vec<String>), AppError> {
@@ -355,6 +355,7 @@ pub async fn start_knowledge_check(
             guidance: None,
             kickoff_extra: None,
             pending_comment: None,
+            write_mode: None,
             chapter_guard: false,
             force_previous: false,
         },
@@ -379,7 +380,7 @@ pub async fn patch(
     Ok(dto)
 }
 
-async fn patch_inner(
+pub(crate) async fn patch_inner(
     tx: &impl ConnectionTrait,
     task_id: i32,
     input: ResearchTaskPatch,
@@ -555,7 +556,7 @@ impl Transition {
     }
 }
 
-async fn transition_inner(
+pub(crate) async fn transition_inner(
     tx: &impl ConnectionTrait,
     task_id: i32,
     transition: Transition,
@@ -600,7 +601,7 @@ async fn transition_inner(
     ))
 }
 
-async fn delete_inner(
+pub(crate) async fn delete_inner(
     tx: &impl ConnectionTrait,
     task_id: i32,
 ) -> Result<Vec<ServerEvent>, AppError> {
@@ -658,6 +659,7 @@ pub async fn run(state: &AppState, task_id: i32) -> Result<i32, AppError> {
             guidance: None,
             kickoff_extra: scope_id.map(|scope_id| serde_json::json!({ "scope_id": scope_id })),
             pending_comment: None,
+            write_mode: None,
             chapter_guard: false,
             force_previous: false,
         },
@@ -668,7 +670,10 @@ pub async fn run(state: &AppState, task_id: i32) -> Result<i32, AppError> {
 
 /// The scope of a run: the existing one by name, or a new one attached to the linked book
 /// (spec/07 §8 step 2).
-async fn prepare_scope(tx: &impl ConnectionTrait, task_id: i32) -> Result<Option<i32>, AppError> {
+pub(crate) async fn prepare_scope(
+    tx: &impl ConnectionTrait,
+    task_id: i32,
+) -> Result<Option<i32>, AppError> {
     let task = load(tx, task_id).await?;
     // Running is refused while a session is open (spec/07 §8 step 1).
     if is_open(&task) {

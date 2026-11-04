@@ -86,6 +86,14 @@ pub async fn create_inner(
         ));
     }
     super::validate_importance(input.importance)?;
+    validate_anchor(
+        tx,
+        write,
+        book_id,
+        input.payoff_event_id,
+        input.payoff_position,
+    )
+    .await?;
     ensure_entities_visible(tx, write, book_id, &input.entity_ids).await?;
     let timestamp = stamp();
     // A recreated row takes a NEW id, never the deleted one's reused rowid (spec/02 §5.10).
@@ -101,6 +109,8 @@ pub async fn create_inner(
         planted_chapter_id: Set(input.planted_chapter_id.or(write.chapter_id)),
         resolved_chapter_id: Set(None),
         resolution: Set(String::new()),
+        payoff_event_id: Set(input.payoff_event_id),
+        payoff_position: Set(input.payoff_position),
         importance: Set(input.importance),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),
@@ -167,6 +177,12 @@ pub async fn update_inner(
     if let Some(importance) = patch.importance {
         super::validate_importance(importance)?;
     }
+    let clearing_anchor = patch.payoff_event_id == Some(None) && patch.payoff_position.is_none();
+    if !clearing_anchor && (patch.payoff_event_id.is_some() || patch.payoff_position.is_some()) {
+        let event_id = patch.payoff_event_id.unwrap_or(existing.payoff_event_id);
+        let position = patch.payoff_position.or(existing.payoff_position);
+        validate_anchor(tx, write, existing.book_id, event_id, position).await?;
+    }
     if let Some(entity_ids) = &patch.entity_ids {
         ensure_entities_visible(tx, write, existing.book_id, entity_ids).await?;
     }
@@ -205,6 +221,15 @@ pub async fn update_inner(
     }
     if let Some(resolution) = &patch.resolution {
         active.resolution = Set(resolution.trim().to_owned());
+    }
+    if let Some(payoff_event_id) = patch.payoff_event_id {
+        active.payoff_event_id = Set(payoff_event_id);
+        if payoff_event_id.is_none() {
+            active.payoff_position = Set(None);
+        }
+    }
+    if let Some(payoff_position) = patch.payoff_position {
+        active.payoff_position = Set(Some(payoff_position));
     }
     if let Some(importance) = patch.importance {
         active.importance = Set(importance);
@@ -353,6 +378,22 @@ pub async fn to_dto(
         planted_chapter_id: row.planted_chapter_id,
         resolved_chapter_id: row.resolved_chapter_id,
         resolution: row.resolution.clone(),
+        payoff_event_id: row.payoff_event_id,
+        payoff_position: row.payoff_position,
+        payoff_event_title: match row.payoff_event_id {
+            Some(event_id) => crate::db::entities::timeline_events::Entity::find_by_id(event_id)
+                .one(conn)
+                .await?
+                .map(|event| event.title),
+            None => None,
+        },
+        payoff_event_status: match row.payoff_event_id {
+            Some(event_id) => crate::db::entities::timeline_events::Entity::find_by_id(event_id)
+                .one(conn)
+                .await?
+                .map(|event| event.status),
+            None => None,
+        },
         importance: row.importance,
         entity_ids: super::linked_entity_ids(conn, super::LinkTable::Foreshadowing, row.id).await?,
         created_at: row.created_at,
@@ -369,6 +410,66 @@ fn unique_ids(ids: &[i32]) -> Vec<i32> {
         }
     }
     result
+}
+
+/// Validates a payoff anchor: both fields or neither, and the entry is a visible, non-abandoned
+/// entry of the same book (T10).
+async fn validate_anchor(
+    tx: &impl ConnectionTrait,
+    write: &CanonWrite,
+    book_id: i32,
+    payoff_event_id: Option<i32>,
+    payoff_position: Option<crate::db::json::PayoffPosition>,
+) -> CanonResult<()> {
+    if payoff_event_id.is_some() != payoff_position.is_some() {
+        return Err(CanonError::field(
+            "payoff_position",
+            "payoff_event_id and payoff_position must be set together",
+        ));
+    }
+    let Some(event_id) = payoff_event_id else {
+        return Ok(());
+    };
+    let row = crate::db::entities::timeline_events::Entity::find_by_id(event_id)
+        .one(tx)
+        .await?
+        .filter(|row| row.book_id == book_id)
+        .ok_or_else(|| {
+            CanonError::field(
+                "payoff_event_id",
+                format!("timeline event #{event_id} was not found"),
+            )
+        })?;
+    if row.kind != crate::db::json::TimelineKind::Entry {
+        return Err(CanonError::field(
+            "payoff_event_id",
+            "the root cannot be an anchor",
+        ));
+    }
+    if row.status == crate::db::json::TimelineStatus::Abandoned {
+        return Err(CanonError::field(
+            "payoff_event_id",
+            "an abandoned entry cannot be an anchor",
+        ));
+    }
+    let visibility = write
+        .visibility
+        .unwrap_or_else(|| Visibility::shared(book_id));
+    if visibility.private_track.is_none() && row.track_id.is_some() {
+        return Err(CanonError::field(
+            "payoff_event_id",
+            "shared canon cannot anchor a private timeline entry",
+        ));
+    }
+    if let Some(private_track) = visibility.private_track
+        && row.track_id.is_some_and(|track| track != private_track)
+    {
+        return Err(CanonError::field(
+            "payoff_event_id",
+            "the anchor is outside this canon",
+        ));
+    }
+    Ok(())
 }
 
 async fn ensure_entities_visible(
@@ -407,6 +508,8 @@ pub async fn restore_inner(
         planted_chapter_id,
         resolved_chapter_id,
         resolution,
+        payoff_event_id,
+        payoff_position,
         importance,
         entity_ids,
         ..
@@ -430,6 +533,8 @@ pub async fn restore_inner(
         planted_chapter_id: Set(*planted_chapter_id),
         resolved_chapter_id: Set(*resolved_chapter_id),
         resolution: Set(resolution.clone()),
+        payoff_event_id: Set(*payoff_event_id),
+        payoff_position: Set(*payoff_position),
         importance: Set(*importance),
         updated_at: Set(stamp()),
         ..Default::default()
@@ -456,6 +561,8 @@ pub async fn recreate_inner(
         planted_chapter_id,
         resolved_chapter_id,
         resolution,
+        payoff_event_id,
+        payoff_position,
         importance,
         entity_ids,
         track_id,
@@ -484,6 +591,8 @@ pub async fn recreate_inner(
         planted_chapter_id: Set(*planted_chapter_id),
         resolved_chapter_id: Set(*resolved_chapter_id),
         resolution: Set(resolution.clone()),
+        payoff_event_id: Set(*payoff_event_id),
+        payoff_position: Set(*payoff_position),
         importance: Set(*importance),
         created_at: Set(timestamp),
         updated_at: Set(timestamp),

@@ -8,9 +8,9 @@
 use std::collections::BTreeSet;
 
 use nekowriter::agent::tools::registry::{
-    ARCHIVIST_TOOLS, CONCEPTION_TOOLS, PLANNER_TOOLS, RESEARCHER_TOOLS, RETRIEVAL_TOOLS,
-    REVIEWER_TOOLS, WRITE_TOOLS, WRITER_TOOLS, allowed_tools, initial_phase, is_permitted,
-    role_of_kind, tools_for_role,
+    ARCHIVIST_TOOLS, ASSISTANT_TOOLS, CONCEPTION_TOOLS, PLANNER_TOOLS, RESEARCHER_TOOLS,
+    RETRIEVAL_TOOLS, REVIEWER_TOOLS, WRITE_TOOLS, WRITER_TOOLS, allowed_tools, initial_phase,
+    is_permitted, role_of_kind, tools_for_role,
 };
 use nekowriter::agent::tools::spec::{ToolSpecs, validate_input};
 use nekowriter::agent::tools::{ToolErrorKind, ToolRegistry, resolve::EntityResolver};
@@ -36,6 +36,7 @@ fn every_tool_example_matches_its_schema_and_the_registry() {
         "archivist",
         "conception",
         "researcher",
+        "assistant",
     ] {
         for name in tools_for_role(role) {
             role_tools.insert(name);
@@ -60,6 +61,7 @@ fn every_tool_example_matches_its_schema_and_the_registry() {
     //     with their milestones; M3 ships the framework and the test-only tools).
     let registry = ToolRegistry::new();
     assert!(!registry.is_empty(), "the test-only tools are registered");
+    let _ = ASSISTANT_TOOLS;
 
     // (3) Every example validates against the compiled JSON Schema.
     for tool in pack.tools() {
@@ -176,10 +178,10 @@ fn the_role_lists_are_the_spec_tables_in_order() {
     assert_eq!(&PLANNER_TOOLS[10..], &["read_draft", "submit_outline"]);
     assert_eq!(REVIEWER_TOOLS.len(), 11);
     assert_eq!(REVIEWER_TOOLS[10], "submit_review");
-    assert_eq!(ARCHIVIST_TOOLS.len(), 22);
+    assert_eq!(ARCHIVIST_TOOLS.len(), 23);
     assert_eq!(ARCHIVIST_TOOLS[7], "create_entity");
-    assert_eq!(ARCHIVIST_TOOLS[19], "propose_goal_change");
-    assert_eq!(ARCHIVIST_TOOLS[21], "finish_maintenance");
+    assert_eq!(ARCHIVIST_TOOLS[20], "propose_goal_change");
+    assert_eq!(ARCHIVIST_TOOLS[22], "finish_maintenance");
     assert_eq!(CONCEPTION_TOOLS.len(), 12);
     assert_eq!(CONCEPTION_TOOLS[0], "ask_user");
     assert_eq!(CONCEPTION_TOOLS[1], "search_knowledge");

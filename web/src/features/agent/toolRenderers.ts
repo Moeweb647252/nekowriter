@@ -10,6 +10,7 @@ import type { LucideIcon } from "lucide-react"
 import {
   Archive,
   BookOpen,
+  Bot,
   ClipboardCheck,
   Compass,
   Download,
@@ -453,6 +454,38 @@ const REGISTRY: Record<string, ToolRenderer> = {
     icon: ClipboardCheck,
     summary: (ui, t) => t("agent:tools.finish_research.summary", { entries: num(payload(ui), "entries") ?? 0 }),
   },
+
+  // Book agent (D-169)
+  book_overview: { icon: BookOpen, summary: (ui, t) => t("agent:tools.book_overview.summary", { count: num(payload(ui), "count") ?? 0 }) },
+  open_chapter: { icon: BookOpen, summary: (ui, t) => {
+    const chapter = num(payload(ui), "chapter_number")
+    return chapter === undefined ? t("agent:tools.open_chapter.summary") : t("agent:tools.open_chapter.summary_chapter", { chapter })
+  } },
+  read_setting_doc: { icon: FileText, summary: (ui, t) => {
+    const doc = str(payload(ui), "doc")
+    return doc === undefined ? t("agent:tools.read_setting_doc.summary") : t("agent:tools.read_setting_doc.summary_doc", { doc: t(`agent:docs.${doc}`) })
+  } },
+  read_characters: { icon: Users, summary: (ui, t) => {
+    const name = str(payload(ui), "name")
+    return name === undefined ? t("agent:tools.read_characters.summary", { count: num(payload(ui), "count") ?? 0 }) : t("agent:tools.read_characters.summary_name", { name })
+  } },
+  list_goals: { icon: Target, summary: (ui, t) => t("agent:tools.list_goals.summary", { count: num(payload(ui), "count") ?? 0 }) },
+  list_research: { icon: Search, summary: (ui, t) => t("agent:tools.list_research.summary", { count: num(payload(ui), "count") ?? 0 }) },
+  list_sessions: { icon: List, summary: (ui, t) => t("agent:tools.list_sessions.summary", { count: num(payload(ui), "count") ?? 0 }) },
+  create_chapter: { icon: FileText, summary: (_ui, t) => t("agent:tools.create_chapter.summary") },
+  edit_chapter: { icon: FileText, summary: (_ui, t) => t("agent:tools.edit_chapter.summary") },
+  edit_chapter_text: { icon: PenLine, summary: (_ui, t) => t("agent:tools.edit_chapter_text.summary") },
+  delete_canon_record: { icon: Archive, summary: (ui, t) => t("agent:tools.delete_canon_record.summary", { type: str(payload(ui), "target_type") ?? "" }) },
+  create_goal: { icon: Target, summary: (_ui, t) => t("agent:tools.create_goal.summary") },
+  update_goal: { icon: Target, summary: (_ui, t) => t("agent:tools.update_goal.summary") },
+  create_research_task: { icon: Search, summary: (_ui, t) => t("agent:tools.create_research_task.summary") },
+  update_research_task: { icon: Search, summary: (_ui, t) => t("agent:tools.update_research_task.summary") },
+  delete_research_task: { icon: Search, summary: (_ui, t) => t("agent:tools.delete_research_task.summary") },
+  add_knowledge_entry: { icon: BookOpen, summary: (_ui, t) => t("agent:tools.add_knowledge_entry.summary") },
+  start_session: { icon: Bot, summary: (ui, t) => {
+    const sessionId = num(payload(ui), "session_id")
+    return sessionId === undefined ? t("agent:tools.start_session.summary") : t("agent:tools.start_session.summary_started", { id: sessionId })
+  } },
 
   // Test-only tools of the debug session (spec/10 §2.7).
   echo: {

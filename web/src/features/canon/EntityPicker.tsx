@@ -5,6 +5,7 @@ import type { EntityKind } from "@/api/gen/EntityKind"
 import type { EntityListItemDto } from "@/api/gen/EntityListItemDto"
 import type { ForeshadowingDto } from "@/api/gen/ForeshadowingDto"
 import type { TimelineEventDto } from "@/api/gen/TimelineEventDto"
+import type { TimelineStatus } from "@/api/gen/TimelineStatus"
 import { useEntities, useForeshadowing, useTimeline } from "@/api/hooks/useCanon"
 import { cn } from "@/lib/utils"
 
@@ -113,9 +114,35 @@ export function EventPicker({
   label,
   disabled = false,
   trackId,
-}: Omit<PickerProps, "kind">) {
+  includeId,
+}: Omit<PickerProps, "kind"> & {
+  /** Keep a currently stored choice selectable even when it is abandoned. */
+  includeId?: number | null
+}) {
   const { t } = useTranslation()
   const events = useTimeline(bookId, trackId)
+  const all = (events.data ?? []) as TimelineEventDto[]
+  // Planned entries first: the goal condition and the foreshadowing anchor mostly name the plan,
+  // and an abandoned entry is never a legal new target (D-170 T10/T13b).
+  const order: TimelineStatus[] = ["planned", "occurred", "abandoned"]
+  const choices = all
+    .filter((event) => event.kind !== "root")
+    .filter((event) => event.status !== "abandoned" || event.id === includeId)
+    .sort(
+      (left, right) =>
+        order.indexOf(left.status) - order.indexOf(right.status) ||
+        left.position - right.position ||
+        left.id - right.id,
+    )
+  const optionLabel = (event: TimelineEventDto): string => {
+    if (event.status === "planned") {
+      return t("canon:event_option_planned", { title: event.title })
+    }
+    if (event.status === "abandoned") {
+      return t("canon:event_option_abandoned", { title: event.title })
+    }
+    return event.title
+  }
   return (
     <select
       value={value ?? ""}
@@ -127,9 +154,9 @@ export function EventPicker({
       disabled={disabled}
     >
       <option value="">{t("canon:picker_none")}</option>
-      {(events.data ?? []).map((event: TimelineEventDto) => (
-        <option key={event.id} value={event.id}>
-          {event.title}
+      {choices.map((event) => (
+        <option key={event.id} value={event.id} disabled={event.status === "abandoned"}>
+          {optionLabel(event)}
         </option>
       ))}
     </select>

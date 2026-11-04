@@ -3893,7 +3893,10 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     - It is a conversation: a text reply goes `idle`, there is no nudge and no rollover, and
       **End conversation** (`POST /sessions/:id/end`) completes it.
     - `RoleModels.assistant` falls back to the writer like the planner.
-    - 0012 rebuilds `agent_sessions` with the guards of 0004.
+    - 0012 rebuilds `agent_sessions` with the guards of 0004. Its final column order is
+      spec/02 §2's order: `write_mode` sits before 0010's three limits, and `canon_systems` is
+      last; it is deliberately not "old order plus `write_mode`". The migration test pins that
+      order.
   - **Write mode** is a per-session column, `review` (default) or `full`, PATCHable at any time,
     with no model notice. "Review mode" is read as an approval stop before each change, not as
     proposals: the author's wording asks for a mode in the conversation, and proposals would leave
@@ -3939,6 +3942,33 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     until rollover is designed for conversations.
   - Every existing prompt, tool definition and `kickoff_baseline` snapshot is unchanged. Only new
     keys are added.
+  - **21.8 migration smoke (copy of the author's DB at 0011).**
+    | Check | Before | After |
+    |---|---|---|
+    | `agent_sessions` | 5 | 5, every `write_mode` NULL |
+    | `agent_messages` | 84 | 84 |
+    | `agent_tool_calls` | 277 | 277 |
+    | `agent_inbox` | 1 | 1 |
+    | `chapter_versions` | 0 | 0 |
+    | `setting_proposals` | 0 | 0 |
+    | `change_log` | 132 | 132 |
+    | `research_tasks` | 1 | 1 |
+    | `review_reports` | 0 | 0 |
+    | `chapter_feedback` | 0 | 0 |
+
+    `pragma foreign_key_check` was empty; the ledger gained `m0012_book_agent`; `0001_init.sql`
+    stayed byte-identical (SHA-256 `44bc8088…`); book #1, its three setting documents, nine
+    character designs and completed conception session #4 were unchanged.
+  - **21.8 smoke (Demo provider).** Review mode held a `create_research_task` with a readable
+    `fields` preview; Approve applied it, Request changes left it unapplied and put the feedback
+    in the transcript; Full access applied the same action without a hold; `start_session` created
+    a child session; End conversation completed the session and New conversation returned to the
+    start form. The Demo arm covers the conversation/task/start-session path, not canon, chapter
+    text or outline starts; those need a real model or a scripted provider and are recorded as a
+    smoke limitation rather than silently claimed.
+  - History note: the B-1 `setStartingNewConversation` code landed in `30a72b2` with the 21.8
+    report because the smoke fix was folded into that commit; its regression test landed in
+    `cfa8588`. The tree is correct; this note keeps the history readable.
 - **Spec**:
   - PROJECT §4, §5, §6.18, F13, §8.4, §8.6, §8.12, §10 (#11, #34), §11;
   - spec/02 §1, §2, §3, §4, §5;
@@ -4017,6 +4047,16 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     - Re-sync edits or deletes unsupported history and never reverts it to planned.
   - **Migration** 0013 is append-only: it adds the columns, creates the roots and reparents every
     row as happened. Existing books are not converted.
+  - **Historical chapter links stay.** The "no chapter numbers" rule bans planning chapter
+    numbers before the text exists (for example "卷三第 50–53 章" in an outline), not recording
+    which chapter a past event happened in: happened, planted and resolved rows keep their
+    chapter links (PROJECT §8.8). Do not remove them.
+  - **Task split correction (while 22.3 was under review).** The plan document originally folded
+    the tool work into the tree-rules task and had six tasks. The adopted split is seven tasks:
+    22.1 docs, 22.2 schema and types, 22.3 tree rules, 22.4 tools (including the genuinely missing
+    `update_foreshadowing`, its registry/freeze map/role lists/validator map, the new error
+    branches and search docs), 22.5 goals, context and prompts, 22.6 web, 22.7 migration and smoke.
+    PLAN.md and §4 of `docs/research/timeline-tree-plan.md` carry the same table.
 - **Consequences**:
   - A payoff can be planned without a chapter number, and the plan stays editable as the story
     moves.
@@ -4029,6 +4069,18 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     edited, by hand or by asking the book agent (M21) to build planned entries from the outline,
     re-anchor the foreshadowing and rewrite the outline.
   - Timeline entries are not volumes: they hold no chapters (PROJECT §9.2).
+  - **Merged smoke (integration/m21-m22, 2026-11-05).** 0012 then 0013 ran on a SQLite backup
+    of the author's 0011 database; the ledger order was `m0012_book_agent`, `m0013_timeline_tree`.
+    `agent_sessions` stayed 5 → 5 with every `write_mode` NULL; the ten referencing tables and
+    book #1's conception materials and session #4 stayed unchanged. The 3 old timeline rows became
+    `entry`/`occurred` under one contentless root, and all 12 foreshadowing rows kept their
+    `planned_payoff` text with `payoff_event_id`/`payoff_position` NULL. `foreign_key_check` was
+    empty and `0001_init.sql` remained byte-identical. The UI smoke saw the merged tree and row
+    menu, created sub-entries through three levels, created and promoted a planned node, saw a
+    second planned node greyed as abandoned, and saved an anchor that rendered as
+    "Pays off after «计划中的事件»" with no chapter number. The Demo provider itself did not seed
+    planned nodes from an outline in this run; that seeding path remains covered by the server
+    tests, while the root/reparent smoke above exercised the migrated data.
 - **Spec**:
   - PROJECT §4, §6.7, §6.16, F7, §8.8, §9.2, §10 (#35), §11;
   - spec/02 §1, §2, §3, §4, §5;

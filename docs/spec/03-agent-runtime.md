@@ -645,7 +645,9 @@ Task templates pull in two more blocks through template includes, so the table s
   canon before this chapter. For maintenance and review that is the current canon, because this
   chapter has not been maintained yet. It leaves out the chapter outline when the kickoff
   already shows it (spec/06 §4.2) — and never renders it for a `chapter_outline` session, whose
-  own task shows the outline to replace.
+  own task shows the outline to replace. Its event count excludes the root and abandoned entries,
+  and `memory.counts.event_planned` names how many of the visible entries are still planned
+  (D-170).
 - `block.chapter_draft` renders the chapter outline, reference notes, and the full text with
   pids (`[p12] …`), marking an open tail paragraph.
 - `block.canon_systems` (spec/06 §10.3) renders blank when Entities, Timeline, Memory and

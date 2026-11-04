@@ -57,6 +57,7 @@ pub fn build_app(state: AppState) -> Router {
             get(books::get).patch(books::patch).delete(books::delete),
         )
         .route("/books/{book_id}/overview", get(books::overview))
+        .route("/books/{book_id}/agent", post(books::start_agent))
         .route(
             "/books/{book_id}/conception/start",
             post(books::conception_start),
@@ -326,6 +327,7 @@ pub fn build_app(state: AppState) -> Router {
             "/sessions/{session_id}/continue",
             post(sessions::continue_session),
         )
+        .route("/sessions/{session_id}/end", post(sessions::end))
         .route("/sessions/{session_id}/abandon", post(sessions::abandon))
         .route(
             "/sessions/{session_id}/message",

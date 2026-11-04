@@ -105,5 +105,6 @@ expression: "kickoff_text(&fixture, session_id).await"
 - 上方只列出了变化的段落。需要全文时（重新记录出场、改写摘要），先用 read_chapter（chapter="#3"）阅读本章当前的全文；
 - 出场人物有变化时，重新调用 record_appearances，提供本章完整的出场列表（它会替换原有记录），而不只是变化的部分；
 - 有必要时更新本章摘要（set_chapter_summary，摘要概括全章）；
+- 被修改的正文不再支持的 occurred 时间线条目，要编辑或删除，绝不能改回 planned；
 - 完成后调用 finish_maintenance。
 不要改动与本次变更无关的记录。

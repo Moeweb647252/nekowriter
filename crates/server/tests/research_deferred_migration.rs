@@ -101,6 +101,13 @@ async fn pre_deferred_database() -> (tempfile::TempDir, std::path::PathBuf) {
     db.conn()
         .execute_unprepared(
             "DROP TABLE IF EXISTS book_writing_skills; DROP TABLE IF EXISTS writing_skills; \
+             DROP INDEX IF EXISTS timeline_events_root; \
+             DROP INDEX IF EXISTS timeline_events_parent; \
+             ALTER TABLE timeline_events DROP COLUMN parent_id; \
+             ALTER TABLE timeline_events DROP COLUMN kind; \
+             ALTER TABLE timeline_events DROP COLUMN status; \
+             ALTER TABLE foreshadowing DROP COLUMN payoff_event_id; \
+             ALTER TABLE foreshadowing DROP COLUMN payoff_position; \
              ALTER TABLE model_profiles DROP COLUMN effort_levels; \
              ALTER TABLE model_profiles DROP COLUMN default_effort; \
              DELETE FROM seaql_migrations WHERE version <> 'm0001_init'",

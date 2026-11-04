@@ -25,7 +25,7 @@ use crate::db::entities::{
 use crate::db::json::{
     AnchorKind, BookSettings, CanonStatus, CanonSystems, ChangeTargetType, ChapterContent,
     ChapterStatus, EntityKind, EntityStatus, ForeshadowingStatus, JsonText, NoteKind, NoteStatus,
-    TrackKind,
+    TimelineKind, TrackKind,
 };
 use crate::error::AppError;
 use crate::prompts::PromptSet;
@@ -205,6 +205,7 @@ pub struct CanonCounts {
     pub item: i32,
     pub other: i32,
     pub event: i32,
+    pub event_planned: i32,
     pub fact: i32,
     pub world_rule: i32,
     pub note_other: i32,
@@ -1189,6 +1190,31 @@ async fn counts(
     if systems.timeline {
         counts.event = timeline_events::Entity::find()
             .filter(timeline_events::COLUMN.book_id.eq(visibility.book_id))
+            .filter(
+                timeline_events::COLUMN
+                    .kind
+                    .eq(TimelineKind::Entry.as_str()),
+            )
+            .filter(
+                timeline_events::COLUMN
+                    .status
+                    .ne(crate::db::json::TimelineStatus::Abandoned.as_str()),
+            )
+            .filter(visibility.visible_condition(timeline_events::Column::TrackId))
+            .count(conn)
+            .await? as i32;
+        counts.event_planned = timeline_events::Entity::find()
+            .filter(timeline_events::COLUMN.book_id.eq(visibility.book_id))
+            .filter(
+                timeline_events::COLUMN
+                    .kind
+                    .eq(TimelineKind::Entry.as_str()),
+            )
+            .filter(
+                timeline_events::COLUMN
+                    .status
+                    .eq(crate::db::json::TimelineStatus::Planned.as_str()),
+            )
             .filter(visibility.visible_condition(timeline_events::Column::TrackId))
             .count(conn)
             .await? as i32;
@@ -1565,6 +1591,7 @@ pub fn memory_context(snapshot: &MemorySnapshot) -> crate::prompts::context::Mem
             item: snapshot.counts.item,
             other: snapshot.counts.other,
             event: snapshot.counts.event,
+            event_planned: snapshot.counts.event_planned,
             fact: snapshot.counts.fact,
             world_rule: snapshot.counts.world_rule,
             foreshadowing_open: snapshot.counts.foreshadowing_open,

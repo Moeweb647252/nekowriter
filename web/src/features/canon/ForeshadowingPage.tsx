@@ -3,7 +3,7 @@
 import { useState } from "react"
 import { Link, useParams } from "react-router"
 import { useTranslation } from "react-i18next"
-import { Plus, Trash2 } from "lucide-react"
+import { Pencil, Plus, Trash2 } from "lucide-react"
 
 import type { ForeshadowingDto } from "@/api/gen/ForeshadowingDto"
 import type { ForeshadowingStatus } from "@/api/gen/ForeshadowingStatus"
@@ -21,10 +21,12 @@ import {
 } from "@/features/canon/chapterIndex"
 import { useErrorToast } from "@/components/common/ErrorToast"
 import { EmptyState } from "@/components/common/EmptyState"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { ForeshadowingDialog } from "@/features/canon/ForeshadowingDialog"
 import { GoalsReferencedBy } from "@/features/canon/GoalsReferencedBy"
 
 const STATUSES: ForeshadowingStatus[] = ["open", "resolved", "abandoned"]
@@ -164,6 +166,7 @@ function ForeshadowingRow({
   // Resolving stores the author's own words (spec/06 §1.5): the resolution is written text, so
   // the UI asks for it instead of inserting a localized phrase into canon.
   const [resolving, setResolving] = useState(false)
+  const [editing, setEditing] = useState(false)
   const [resolution, setResolution] = useState("")
   const [resolvedChapterId, setResolvedChapterId] = useState<number | undefined>(undefined)
   const chapters = [...chapterIndex.values()].sort(
@@ -175,6 +178,25 @@ function ForeshadowingRow({
         <p className="text-sm font-medium">{item.title}</p>
         {item.description === "" ? null : (
           <p className="text-xs text-muted-foreground">{item.description}</p>
+        )}
+        {item.payoff_event_id === null ? null : (
+          <p className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+            <span>
+              {t(`canon:payoff_anchor.${item.payoff_position ?? "at"}`, {
+                event: item.payoff_event_title ?? "",
+              })}
+            </span>
+            {item.payoff_event_status === "planned" ? (
+              <Badge variant="outline" className="border-dashed px-1 text-[0.65rem]">
+                {t("canon:payoff_anchor_planned")}
+              </Badge>
+            ) : null}
+            {item.payoff_event_status === "abandoned" ? (
+              <Badge variant="secondary" className="px-1 text-[0.65rem]">
+                {t("canon:payoff_anchor_abandoned")}
+              </Badge>
+            ) : null}
+          </p>
         )}
         <p className="mt-0.5 text-xs text-muted-foreground">
           {item.planted_chapter_id === null ? (
@@ -276,9 +298,25 @@ function ForeshadowingRow({
           </Button>
         </div>
       )}
+      <Button
+        size="sm"
+        variant="ghost"
+        aria-label={t("canon:foreshadowing_dialog.edit")}
+        onClick={() => setEditing(true)}
+      >
+        <Pencil className="size-3" aria-hidden="true" />
+      </Button>
       <Button size="sm" variant="ghost" aria-label={t("common:delete")} onClick={onDelete}>
         <Trash2 className="size-3" aria-hidden="true" />
       </Button>
+      {editing ? (
+        <ForeshadowingDialog
+          bookId={bookId}
+          item={item}
+          open
+          onOpenChange={setEditing}
+        />
+      ) : null}
     </li>
   )
 }

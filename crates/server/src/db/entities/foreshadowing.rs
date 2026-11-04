@@ -2,7 +2,7 @@
 
 use sea_orm::entity::prelude::*;
 
-use crate::db::json::ForeshadowingStatus;
+use crate::db::json::{ForeshadowingStatus, PayoffPosition};
 
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
@@ -19,6 +19,8 @@ pub struct Model {
     pub planted_chapter_id: Option<i32>,
     pub resolved_chapter_id: Option<i32>,
     pub resolution: String,
+    pub payoff_event_id: Option<i32>,
+    pub payoff_position: Option<PayoffPosition>,
     pub importance: i32,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
@@ -40,6 +42,13 @@ pub struct Model {
         to = "id"
     )]
     pub resolved_chapter: BelongsTo<Option<super::chapters::Entity>>,
+    #[sea_orm(
+        belongs_to,
+        relation_enum = "PayoffEvent",
+        from = "payoff_event_id",
+        to = "id"
+    )]
+    pub payoff_event: BelongsTo<Option<super::timeline_events::Entity>>,
     #[sea_orm(has_many, via = "foreshadowing_entities")]
     pub entities: HasMany<super::entities::Entity>,
     #[sea_orm(has_many, via = "goal_node_foreshadowing")]

@@ -402,8 +402,13 @@ function GoalRow({
               </span>
             ))}
             {node.events.map((link) => (
-              <span key={`event-${link.id}`} className="rounded-full bg-muted px-1.5 py-0.5 text-[0.65rem]">
+              <span key={`event-${link.id}`} className="inline-flex items-center gap-1 rounded-full bg-muted px-1.5 py-0.5 text-[0.65rem]">
                 {link.title}
+                {link.status === "planned" ? (
+                  <span className="rounded border border-dashed px-1 text-[0.6rem]">
+                    {t("canon:planned_badge")}
+                  </span>
+                ) : null}
               </span>
             ))}
             {node.foreshadowing.map((link) => (

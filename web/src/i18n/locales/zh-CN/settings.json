@@ -22,6 +22,7 @@
   "role.writer": "写手",
   "role.reviewer": "审稿",
   "role.archivist": "档案",
+  "role.assistant": "书籍助手",
   "appearance_hint": "这些偏好只作用于当前浏览器，保存在本地。",
   "add_provider": "添加服务商",
   "edit_provider": "编辑服务商",

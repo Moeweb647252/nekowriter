@@ -61,7 +61,7 @@ fields."absent_important[]" = { en = "id, name, last_label", zh = "久未出场�
 fields."key_notes[]" = { en = "id, kind_label, content", zh = "核心事实与世界规则" }
 fields."open_foreshadowing[]" = { en = "id, title, planted_label", zh = "未回收的伏笔" }
 fields."cast[]" = { en = "id, name, kind_label, summary", zh = "主要实体" }
-fields.counts = { en = "character, organization, location, item, other, event, fact, world_rule, foreshadowing_open", zh = "档案规模统计" }
+fields.counts = { en = "character, organization, location, item, other, event, event_planned, fact, world_rule, foreshadowing_open", zh = "档案规模统计" }
 
 [vars.systems]
 en = "The canon systems frozen into this session"
@@ -197,3 +197,12 @@ fields."excluded_names[]" = { en = "Names of scopes the author excluded for this
 fields."research_tasks[]" = { en = "Existing topic tasks: topic, requirements, scope_name, status, entries_created", zh = "已有的资料主题任务：topic、requirements、scope_name、status、entries_created" }
 fields.max_tool_calls = { en = "Tool call budget", zh = "工具调用预算" }
 fields.max_topics = { en = "Maximum number of topics this check may list", zh = "本次检查最多可列出的主题数" }
+
+
+[vars.index]
+en = "The book agent's capped map of the book: tracks and chapters, setting documents, characters, canon/goal counts, research counts, open sessions and pending proposals"
+zh = "书籍助手的全书索引：轨道与章节、设定文档、人物、档案与目标统计、资料任务、打开中的会话与待处理提案"
+
+[vars.request]
+en = "The author's first message to the book agent"
+zh = "作者给书籍助手的第一条消息"

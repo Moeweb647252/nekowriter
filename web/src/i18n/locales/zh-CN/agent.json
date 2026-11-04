@@ -14,7 +14,8 @@
     "canon_seed": "建立档案",
     "chapter_resync": "档案同步",
     "chapter_outline": "细纲",
-    "knowledge_check": "知识检查"
+    "knowledge_check": "知识检查",
+    "book_agent": "书籍助手"
   },
   "chapter_number": "第{{number}}章",
   "session_info": "会话信息",
@@ -71,7 +72,11 @@
     "feedback_label": "需要改什么？",
     "write_title": "智能体写的正文正在草稿里等你",
     "write_body": "这些段落在章节正文区显示。请在正文区下方的 dock 栏里应用或否决。",
-    "write_open_draft": "打开正文"
+    "write_open_draft": "打开正文",
+    "before": "Before",
+    "after": "After",
+    "field": "Field",
+    "shared_scope": "Shared with every book that sees this scope."
   },
   "writer": {
     "granularity": "写作粒度",
@@ -354,6 +359,85 @@
       "summary_drop": "建议放弃一个写作目标",
       "summary_drop_node": "建议放弃写作目标 #{{id}}",
       "summary_create": "建议新建一个目标情节点"
+    },
+    "book_overview": {
+      "summary": "Book overview ({{count}} sections)"
+    },
+    "open_chapter": {
+      "summary": "Opened a chapter",
+      "summary_chapter": "Opened chapter {{chapter}}"
+    },
+    "read_setting_doc": {
+      "summary": "Read a setting document",
+      "summary_doc": "Read the {{doc}} document"
+    },
+    "read_characters": {
+      "summary": "Read the cast ({{count}})",
+      "summary_name": "Read {{name}}"
+    },
+    "list_goals": {
+      "summary": "Listed goals ({{count}})"
+    },
+    "list_research": {
+      "summary": "Listed research tasks ({{count}})"
+    },
+    "list_sessions": {
+      "summary": "Listed sessions ({{count}})"
+    },
+    "create_chapter": {
+      "summary": "Created a chapter"
+    },
+    "edit_chapter": {
+      "summary": "Edited a chapter"
+    },
+    "edit_chapter_text": {
+      "summary": "Edited chapter text"
+    },
+    "delete_canon_record": {
+      "summary": "Deleted a canon record ({{type}})"
+    },
+    "create_goal": {
+      "summary": "Created a goal"
+    },
+    "update_goal": {
+      "summary": "Updated a goal"
+    },
+    "create_research_task": {
+      "summary": "Created a research task"
+    },
+    "update_research_task": {
+      "summary": "Updated a research task"
+    },
+    "delete_research_task": {
+      "summary": "Deleted a research task"
+    },
+    "add_knowledge_entry": {
+      "summary": "Added a knowledge entry"
+    },
+    "start_session": {
+      "summary": "Started a session",
+      "summary_started": "Started session #{{id}}"
     }
+  },
+  "book_agent": {
+    "mode": "Write mode",
+    "mode_review": "Review changes",
+    "mode_full": "Full access",
+    "mode_review_hint": "Each change waits for your approval.",
+    "mode_full_hint": "Changes apply at once. Canon, settings and goals can be reverted; chapter text from History; research tasks and knowledge entries cannot be reverted.",
+    "start": "Start conversation",
+    "start_title": "Book agent",
+    "start_hint": "Ask about the whole book. Read before changing.",
+    "message_label": "First message",
+    "message_placeholder": "Ask the book agent…",
+    "start_failed": "Could not start the conversation.",
+    "begin": "Start conversation",
+    "end": "End conversation",
+    "new_conversation": "New conversation",
+    "end_title": "End this conversation?",
+    "end_body": "The conversation closes. Its messages stay in the history.",
+    "end_held_body": "The held change will not be applied. The conversation closes and its messages stay in the history.",
+    "end_confirm": "End conversation",
+    "conceiving_disabled": "设定完成后即可开始书籍助手对话。"
   }
 }

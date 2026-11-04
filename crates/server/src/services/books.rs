@@ -15,12 +15,12 @@ use crate::api::dto::books::{
 };
 use crate::db::entities::{
     agent_sessions, books, chapters, character_designs, entities as canon_entities, goal_nodes,
-    research_tasks, setting_docs, setting_proposals, tracks,
+    research_tasks, setting_docs, setting_proposals, timeline_events, tracks,
 };
 use crate::db::json::{
     AgentRole, AnchorKind, BookSettings, BookStatus, CanonMode, CanonStatus, ChapterStatus,
     ConceptionState, ProposalStatus, ResearchTaskStatus, RoleModels, SessionKind, SessionStatus,
-    SettingDocKind, TrackKind, Usage,
+    SettingDocKind, TimelineKind, TimelineStatus, TrackKind, Usage,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::{BookOp, ServerEvent};
@@ -150,6 +150,33 @@ pub async fn create_inner(
         ..Default::default()
     };
     tracks::Entity::insert(main_track).exec(tx).await?;
+
+    // Invariant 23: every book has exactly one timeline root (spec/02 §5, D-170). It is a real,
+    // contentless row that only anchors the tree; no API or tool ever returns it.
+    let root_id = super::canon::fresh_id(
+        tx,
+        "timeline_events",
+        crate::db::json::ChangeTargetType::TimelineEvent,
+    )
+    .await?;
+    timeline_events::Entity::insert(timeline_events::ActiveModel {
+        id: Set(root_id),
+        book_id: Set(book.id),
+        track_id: Set(None),
+        position: Set(0.0),
+        story_time: Set(String::new()),
+        title: Set(String::new()),
+        description: Set(String::new()),
+        chapter_id: Set(None),
+        parent_id: Set(None),
+        kind: Set(TimelineKind::Root),
+        status: Set(TimelineStatus::Occurred),
+        importance: Set(2),
+        created_at: Set(timestamp),
+        updated_at: Set(timestamp),
+    })
+    .exec(tx)
+    .await?;
 
     // Invariant 2: exactly three setting documents, empty (spec/02 §5).
     for kind in SETTING_DOC_KINDS {
@@ -424,7 +451,10 @@ async fn ordered_chapters(
 /// The count shown by the ready-goals attention row and next-action hint: every goal node of
 /// the book, any scope, whose derived state is `ready` or `closable` (spec/08 §7, plan §4.10).
 /// The derived flags come from the one goals evaluator, never a local query.
-async fn ready_goal_count(conn: &impl ConnectionTrait, book_id: i32) -> Result<i32, AppError> {
+pub(crate) async fn ready_goal_count(
+    conn: &impl ConnectionTrait,
+    book_id: i32,
+) -> Result<i32, AppError> {
     let nodes = goal_nodes::Entity::find()
         .filter(goal_nodes::COLUMN.book_id.eq(book_id))
         .all(conn)

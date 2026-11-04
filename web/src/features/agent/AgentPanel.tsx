@@ -7,7 +7,7 @@
  * Live deltas and previews arrive over the session SSE events (spec/10 §3) and land in the `live`
  * store; a persisted message supersedes its buffers, so the stream never shows text twice.
  */
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Loader2 } from "lucide-react"
 
@@ -28,8 +28,11 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { ActivityStream } from "@/features/agent/ActivityStream"
+import { BookAgentEndControl } from "@/features/agent/BookAgentEndControl"
+import { BookAgentStart, WriteModeControl } from "@/features/agent/BookAgentStart"
 import { Composer } from "@/features/agent/Composer"
 import { findHeldCall, heldDecisionSurface } from "@/features/agent/heldCall"
+import { onBookAgentRequest } from "@/features/agent/bookAgentIntent"
 import { SessionControls } from "@/features/agent/SessionControls"
 import { SessionErrorNotice } from "@/features/agent/SessionErrorNotice"
 import { SessionHeader } from "@/features/agent/SessionHeader"
@@ -118,7 +121,7 @@ export function pickPinnedSession(
   )
 }
 
-export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: number }) {
+export function AgentPanel({ bookId, chapterId, bookStatus }: { bookId: number; chapterId?: number; bookStatus?: string }) {
   const { t } = useTranslation()
   const reportError = useErrorToast()
   const sessionsQuery = useBookSessions(bookId)
@@ -171,10 +174,21 @@ export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: 
   ) {
     setPinnedId(chosenId)
   }
+  const [startingNewConversation, setStartingNewConversation] = useState(false)
   const snapshot = useSession(chosenId)
   const session = snapshot.data?.session ?? chosen
   const messages = snapshot.data?.messages ?? []
   const inbox = snapshot.data?.inbox ?? []
+  // The navigator/header request opens the book-agent conversation as a manual pin. If none is
+  // open, the panel shows `BookAgentStart`; this request itself never auto-follows another kind.
+  useEffect(() => onBookAgentRequest((requestedBook) => {
+    if (requestedBook !== bookId) return
+    const openAgent = sessions
+      .filter((entry) => entry.kind === "book_agent" && OPEN_STATUSES.has(entry.status))
+      .sort((left, right) => right.id - left.id)[0]
+    setStartingNewConversation(openAgent === undefined)
+    setPinnedId(openAgent?.id ?? null, true)
+  }), [bookId, sessions, setPinnedId])
 
   useSessionToasts(session)
 
@@ -202,7 +216,7 @@ export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: 
   // Alt+P pauses the running session and continues a waiting one (PROJECT §8.13). The hook
   // ignores IME composition, so a Chinese input method never triggers it.
   useHotkey({ key: "p", alt: true }, () => {
-    if (session === undefined) {
+    if (session === undefined || startingNewConversation) {
       return
     }
     const operation: "pause" | "resume" | "continue" | null =
@@ -244,11 +258,21 @@ export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: 
     return <Skeleton className="m-3 h-40" />
   }
 
-  if (session === undefined) {
+  if (session === undefined || startingNewConversation) {
     return (
       <div className="flex h-full flex-col">
+        {bookStatus === "conceiving" ? (
+          <p className="p-4 text-xs text-muted-foreground">{t("agent:book_agent.conceiving_disabled")}</p>
+        ) : (
+          <BookAgentStart
+            bookId={bookId}
+            onStarted={(sessionId) => {
+              setStartingNewConversation(false)
+              setPinnedId(sessionId, true)
+            }}
+          />
+        )}
         <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-          <p className="text-sm text-muted-foreground">{t("agent:empty")}</p>
           {debugSessionsEnabled ? (
             <Button
               size="sm"
@@ -324,12 +348,28 @@ export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: 
       <SessionHeader
         session={session}
         sessions={sessions}
-        onSelect={(sessionId) => setPinnedId(sessionId, true)}
+        onSelect={(sessionId) => {
+          setStartingNewConversation(false)
+          setPinnedId(sessionId, true)
+        }}
         pausing={pausing || session.pause_requested}
         stopping={stopping}
         systemPrompt={snapshot.data?.system_prompt ?? ""}
         toolNames={snapshot.data?.tool_names ?? []}
       />
+      {session.kind === "book_agent" ? (
+        <WriteModeControl
+          mode={session.write_mode}
+          busy={busy}
+          disabled={!canConfigure}
+          onChange={(writeMode) =>
+            patch.mutate(
+              { sessionId: session.id, patch: { write_mode: writeMode } },
+              { onError: reportError },
+            )
+          }
+        />
+      ) : null}
       <SessionControls
         session={session}
         busy={busy}
@@ -345,6 +385,15 @@ export function AgentPanel({ bookId, chapterId }: { bookId: number; chapterId?: 
         onRequestChanges={submitFeedback}
         chapterHref={draftHref}
       />
+      {session.kind === "book_agent" ? (
+        <BookAgentEndControl
+          session={session}
+          onEnded={() => {
+            setPinnedId(null, true)
+            setStartingNewConversation(true)
+          }}
+        />
+      ) : null}
       <SessionErrorNotice error={session.error ?? null} />
       {isWriter ? (
         <>

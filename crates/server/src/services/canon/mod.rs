@@ -22,6 +22,7 @@ pub mod note;
 pub mod relation;
 pub mod revert;
 pub mod timeline;
+pub mod timeline_tree;
 
 use std::collections::{HashMap, HashSet};
 
@@ -75,6 +76,14 @@ impl CanonError {
 
     pub fn internal(message: impl Into<String>) -> Self {
         CanonError::App(AppError::internal(message))
+    }
+
+    pub fn conflict(
+        code: crate::error::ErrorCode,
+        message: impl Into<String>,
+        details: serde_json::Value,
+    ) -> Self {
+        CanonError::App(AppError::conflict(code, message).with_details(details))
     }
 
     pub fn isolated(target: impl Into<String>) -> Self {
@@ -235,6 +244,9 @@ pub struct CanonWrite {
     pub session_id: Option<i32>,
     /// The chapter the change belongs to (the agent's session chapter).
     pub chapter_id: Option<i32>,
+    /// A note supplied by the caller (the book agent's `delete_canon_record`), used when the
+    /// operation does not carry its own note.
+    pub note: Option<String>,
     /// Set while a revert performs the inverse operation: the change row the operation writes is
     /// the revert itself (spec/06 §3, D-079), so `record_change` stamps it with `reverts_id` and
     /// the `system` actor instead of writing a second row.
@@ -256,6 +268,7 @@ impl CanonWrite {
             actor: ChangeActor::User,
             session_id: None,
             chapter_id: None,
+            note: None,
             revert: None,
         }
     }
@@ -267,6 +280,7 @@ impl CanonWrite {
             actor: ChangeActor::Agent,
             session_id: Some(session_id),
             chapter_id,
+            note: None,
             revert: None,
         }
     }
@@ -470,6 +484,8 @@ pub fn timeline_snapshot(
         importance: row.importance,
         entity_ids,
         track_id: row.track_id,
+        parent_id: row.parent_id,
+        status: row.status,
     }
 }
 
@@ -503,6 +519,8 @@ pub fn foreshadowing_snapshot(
         importance: row.importance,
         entity_ids,
         track_id: row.track_id,
+        payoff_event_id: row.payoff_event_id,
+        payoff_position: row.payoff_position,
     })
 }
 
@@ -705,6 +723,7 @@ pub async fn record_change(
             after: change.after,
             note: match revert {
                 Some(_) => "",
+                None if change.note.is_empty() => write.note.as_deref().unwrap_or(""),
                 None => change.note,
             },
             reverts_id: change.reverts_id.or(revert.map(|revert| revert.of_change)),

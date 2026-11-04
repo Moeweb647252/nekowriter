@@ -28,7 +28,14 @@ vi.mock("@/api/hooks/useCanon", () => ({
           : [{ id: 10, title: "Shared hook", status: "open" }],
     }
   },
-  useTimeline: () => ({ data: [] }),
+  useTimeline: () => ({
+    data: [
+      { id: 1, book_id: 1, track_id: null, position: 0, story_time: "", title: "", description: "", chapter_id: null, parent_id: null, kind: "root", status: "occurred", child_count: 1, importance: 2, entity_ids: [], created_at: "", updated_at: "" },
+      { id: 11, book_id: 1, track_id: null, position: 1024, story_time: "", title: "Dropped", description: "", chapter_id: null, parent_id: null, kind: "entry", status: "abandoned", child_count: 0, importance: 2, entity_ids: [], created_at: "", updated_at: "" },
+      { id: 12, book_id: 1, track_id: null, position: 2048, story_time: "", title: "The gate", description: "", chapter_id: null, parent_id: null, kind: "entry", status: "planned", child_count: 0, importance: 2, entity_ids: [], created_at: "", updated_at: "" },
+      { id: 13, book_id: 1, track_id: null, position: 3072, story_time: "", title: "The battle", description: "", chapter_id: null, parent_id: null, kind: "entry", status: "occurred", child_count: 0, importance: 2, entity_ids: [], created_at: "", updated_at: "" },
+    ],
+  }),
 }))
 vi.mock("@/components/common/ErrorToast", () => ({ useErrorToast: () => vi.fn() }))
 
@@ -133,7 +140,7 @@ describe("goal dialog scope and links", () => {
     const linked = {
       ...node,
       entities: [{ id: 7, name: "Jade Pendant" }],
-      events: [{ id: 8, title: "The gate" }],
+      events: [{ id: 8, title: "The gate", status: "occurred" as const }],
       foreshadowing: [{ id: 9, title: "Broken hilt", status: "open" as const }],
     }
     render(<GoalNodeDialog bookId={1} nodes={[linked]} open onOpenChange={vi.fn()} node={linked} />)
@@ -162,4 +169,26 @@ describe("foreshadowing condition scope", () => {
     expect(within(conditionPicker).queryByRole("option", { name: "Shared hook" })).toBeNull()
     expect(screen.getAllByRole("option", { name: "Private hook" })).toHaveLength(2)
   })
+  it("adds an Event happened condition with a planned timeline event", async () => {
+    createMutate.mockClear()
+    const user = userEvent.setup()
+    render(<GoalNodeDialog bookId={1} nodes={[]} open onOpenChange={vi.fn()} />)
+    await user.type(screen.getByLabelText("Title"), "Wait for the gate")
+    await user.type(screen.getByLabelText("Purpose"), "The plan needs the gate.")
+    await user.click(screen.getByRole("button", { name: "Add condition" }))
+    await user.selectOptions(screen.getByLabelText("Condition kind"), "event_occurred")
+    const eventSelect = screen.getByLabelText("Event")
+    expect(
+      Array.from(eventSelect.querySelectorAll("option")).map((option) => option.textContent),
+    ).toEqual(["None", "The gate (Planned)", "The battle"])
+    await user.selectOptions(eventSelect, "12")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    expect(createMutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conditions: [{ kind: "event_occurred", event_id: 12 }],
+      }),
+      expect.anything(),
+    )
+  })
+
 })

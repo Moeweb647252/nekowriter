@@ -108,6 +108,19 @@ pub struct LangCorpus {
     /// The note appended to a document the author asked to revise (spec/04 §7.2).
     #[serde(default)]
     pub doc_revision: String,
+    /// The book agent's demo research topic.
+    #[serde(default)]
+    pub assistant_topic: String,
+    #[serde(default)]
+    pub assistant_requirements: String,
+    #[serde(default)]
+    pub assistant_scope: String,
+    /// The book agent's closing text.
+    #[serde(default)]
+    pub assistant_reply: String,
+    /// The knowledge-check guidance the book agent starts.
+    #[serde(default)]
+    pub assistant_start_guidance: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -354,7 +367,44 @@ pub fn choose_action(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
         // M9: ask (2 questions) → the documents, the cast and the topics → request_review →
         // revise what was not approved → a closing message (spec/04 §7.2).
         "conception" => conception_plan(hints, lang),
+        // M21: overview → a held research task → a held knowledge-check start → a reply. The
+        // review-mode flow therefore exercises a decline/approve and `start_session`.
+        "book_agent" => book_agent_plan(hints, lang),
         _ => text_plan(lang),
+    }
+}
+
+/// The book agent's demo conversation (plan §3.8): read the overview, create a research task,
+/// start a knowledge check, then reply. In review mode the two action calls provide the held
+/// change, approve and request-changes paths; `start_session` proves the post-commit spawn.
+fn book_agent_plan(hints: &DemoHints, lang: &LangCorpus) -> DemoPlan {
+    match hints.step_in_phase {
+        0 => DemoPlan {
+            tools: vec![tool("book_overview", json!({}))],
+            ..DemoPlan::default()
+        },
+        1 => DemoPlan {
+            tools: vec![tool(
+                "create_research_task",
+                json!({
+                    "topic": lang.assistant_topic,
+                    "requirements": lang.assistant_requirements,
+                    "scope": lang.assistant_scope,
+                }),
+            )],
+            ..DemoPlan::default()
+        },
+        2 => DemoPlan {
+            tools: vec![tool(
+                "start_session",
+                json!({ "action": "knowledge_check", "guidance": lang.assistant_start_guidance }),
+            )],
+            ..DemoPlan::default()
+        },
+        _ => DemoPlan {
+            text: Some(lang.assistant_reply.clone()),
+            ..DemoPlan::default()
+        },
     }
 }
 

@@ -14,6 +14,7 @@ use crate::db::entities::{
     appearances, chapters, entities, foreshadowing, goal_nodes, memory_notes, relations,
     timeline_events,
 };
+use crate::db::json::TimelineKind;
 use crate::error::AppError;
 
 /// Counts the rows of every canon system for one book.
@@ -45,6 +46,11 @@ pub async fn counts(conn: &impl ConnectionTrait, book_id: i32) -> Result<CanonCo
         timeline: CanonTimelineCountsDto {
             events: timeline_events::Entity::find()
                 .filter(timeline_events::COLUMN.book_id.eq(book_id))
+                .filter(
+                    timeline_events::COLUMN
+                        .kind
+                        .eq(TimelineKind::Entry.as_str()),
+                )
                 .count(conn)
                 .await? as i32,
         },

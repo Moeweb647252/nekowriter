@@ -1,3834 +1,4104 @@
 {
- "_comment": "Sample contexts for every prompt key (mirrors scripts/validate_prompts.py). Non-English strings are prompt-sample data (DECISIONS D-041); this file is embedded at compile time by src/prompts/samples.rs.",
- "base": {
-  "book": {
-   "title": "青云劫",
-   "genre": "仙侠",
-   "idea": "少年身怀残破剑灵。",
-   "writing_language": "zh-CN",
-   "writing_language_name": "简体中文",
-   "unspaced": true
-  },
-  "track": {
-   "is_main": true,
-   "kind": "main",
-   "title": "",
-   "synopsis": "",
-   "canon_mode": "canon",
-   "anchor_kind": "none",
-   "anchor_label": ""
-  },
-  "chapter": {
-   "id": 45,
-   "number": 13,
-   "label": "第13章",
-   "title": "夜雨",
-   "guidance": "让苏婉第一次展露实力。",
-   "outline": "## 场景一\n- 目标",
-   "reference_notes": "- 林凡左臂有伤",
-   "target_min": 3000,
-   "target_max": 4000,
-   "word_count": 2350,
-   "has_draft": true
-  },
-  "settings": {
-   "outline": "# 大纲\n正文……",
-   "world": "# 世界观",
-   "protagonist": "# 主角",
-   "characters": [
-    {
-     "rank": 1,
-     "name": "林凡",
-     "role_label": "主角",
-     "summary": "外门弟子",
-     "profile": "## 身份\n……"
-    },
-    {
-     "rank": 2,
-     "name": "苏婉",
-     "role_label": "",
-     "summary": "",
-     "profile": ""
-    }
-   ],
-   "scopes": [
-    {
-     "name": "仙侠设定",
-     "description": "修炼体系参考"
-    },
-    {
-     "name": "杂项",
-     "description": ""
-    }
-   ]
-  },
-  "memory": {
-   "is_first": false,
-   "window_mid": 10,
-   "recent_summaries": [
-    {
-     "label": "第11章",
-     "title": "剑鸣",
-     "summary": "……"
-    },
-    {
-     "label": "第12章",
-     "title": "",
-     "summary": ""
-    }
-   ],
-   "previous_tail": {
-    "label": "第12章",
-    "text": "雨落下来。"
-   },
-   "protagonist": {
-    "id": 12,
-    "name": "林凡",
-    "status": "dead",
-    "status_label": "已死亡",
-    "state": "身处剑冢",
-    "after_anchor": false,
-    "attributes": [
-     {
-      "key": "修为",
-      "value": "筑基中期"
-     }
-    ]
-   },
-   "recent_changes": [
-    {
-     "chapter_label": "第11章",
-     "target": "林凡(#12)",
-     "note": "修为：筑基初期→筑基中期"
-    }
-   ],
-   "appearances": [
-    {
-     "id": 12,
-     "name": "林凡",
-     "count": 2,
-     "chapters": [
-      {
-       "label": "第11章",
-       "role_label": "视角"
-      },
-      {
-       "label": "第12章",
-       "role_label": "主要"
-      }
-     ]
-    }
-   ],
-   "absent_important": [
-    {
-     "id": 18,
-     "name": "张三",
-     "last_label": "第2章"
-    }
-   ],
-   "key_notes": [
-    {
-     "id": 3,
-     "kind_label": "世界规则",
-     "content": "筑基之前无法御剑。"
-    }
-   ],
-   "open_foreshadowing": [
-    {
-     "id": 9,
-     "title": "黑衣人的剑穗",
-     "planted_label": "第5章"
-    }
-   ],
-   "cast": [
-    {
-     "id": 12,
-     "name": "林凡",
-     "kind_label": "人物",
-     "summary": "外门弟子"
-    },
-    {
-     "id": 20,
-     "name": "青云宗",
-     "kind_label": "组织",
-     "summary": ""
-    }
-   ],
-   "counts": {
-    "character": 10,
-    "organization": 3,
-    "location": 5,
-    "item": 4,
-    "other": 1,
-    "event": 30,
-    "fact": 12,
-    "world_rule": 6,
-    "foreshadowing_open": 4
-   }
-  },
-  "draft": {
-   "paragraphs": [
-    {
-     "pid": "p1",
-     "text": "林凡抬起头。"
-    },
-    {
-     "pid": "p2",
-     "text": "雨更大了"
-    }
-   ],
-   "tail_open": true,
-   "word_count": 12,
-   "paragraph_count": 2
-  },
-  "feedback": {
-   "text": "结尾太仓促。",
-   "issues": [
-    {
-     "severity_label": "严重",
-     "category_label": "连续性",
-     "pids": [
-      "p30",
-      "p31"
-     ],
-     "quote": "他拔出青冥剑",
-     "problem": "剑已毁",
-     "suggestion": "改用断剑"
-    }
-   ]
-  },
-  "granularity": {
-   "key": "paragraph",
-   "label": "paragraph",
-   "revising": false,
-   "tail_open": false,
-   "last_pid": "p9"
-  },
-  "phase": "drafting",
-  "revision_plan": "1. p12：删去重复描写",
-  "author_notes": [
-   "打斗写得更短。",
-   "苏婉不要哭。"
-  ],
-  "prior": null,
-  "review": {
-   "comment": "第二条判断有误。",
-   "attempt": 1
-  },
-  "research": {
-   "topic": "宋代市井",
-   "requirements": "茶馆布局",
-   "scope_name": "宋代社会",
-   "scope_description": "宋代社会生活",
-   "language_name": "简体中文",
-   "existing_titles": [
-    "宋代酒楼"
-   ],
-   "max_tool_calls": 40,
-   "max_entries": 25
-  },
-  "conception": {
-   "title": "青云劫",
-   "idea": "少年身怀剑灵",
-   "genre": "",
-   "writing_language_name": "简体中文",
-   "scopes": [
-    {
-     "name": "宋代社会",
-     "description": "宋代社会生活",
-     "entry_count": 2
-    },
-    {
-     "name": "杂项",
-     "description": "",
-     "entry_count": 0
-    }
-   ],
-   "knowledge_report": "",
-   "research_tasks": []
-  },
-  "cast_index": [
-   {
-    "id": 12,
-    "name": "林凡",
-    "kind_label": "人物",
-    "status": "active",
-    "status_label": "活跃",
-    "aliases": [
-     "凡哥",
-     "林师弟"
-    ],
-    "summary": "外门弟子"
-   },
-   {
-    "id": 13,
-    "name": "老剑",
-    "kind_label": "物品",
-    "status": "destroyed",
-    "status_label": "已损毁",
-    "aliases": [],
-    "summary": ""
-   }
-  ],
-  "diff": {
-   "changes": [
-    {
-     "op": "insert",
-     "pid": "p9",
-     "after": null,
-     "old": "",
-     "new": "新段"
-    },
-    {
-     "op": "delete",
-     "pid": "p3",
-     "after": null,
-     "old": "旧段",
-     "new": ""
-    },
-    {
-     "op": "modify",
-     "pid": "p4",
-     "after": null,
-     "old": "原",
-     "new": "新"
-    }
-   ]
-  },
-  "text": "请把打斗写得更短。",
-  "enum": "entity_kind",
-  "value": "character",
-  "track_kind": "main",
-  "track_title": "正文",
-  "number": 12,
-  "title": "剑冢",
-  "with_title": true,
-  "skills": [
-   {
-    "name": "基础写作",
-    "category": "写作",
-    "body": "用动作、对话与细节呈现场景，少用概括与总结。"
-   }
-  ],
-  "chapters": [
-   {
-    "number": 12,
-    "label": "第12章",
-    "title": "剑鸣",
-    "text": "雨落下来。\n\n他握紧了旧剑。",
-    "partial": true
-   }
-  ],
-  "systems": {
-   "entities": true,
-   "timeline": true,
-   "memory": true,
-   "foreshadowing": true,
-   "goals": true,
-   "enabled": [
-    "entities",
-    "timeline",
-    "memory",
-    "foreshadowing"
-   ]
-  },
-  "goals": {
-   "nodes": [
-    {
-     "id": 8,
-     "level": "plan",
-     "title": "守住剑冢",
-     "purpose": "让林凡在宗门倾覆前守住最后的传承。",
-     "chapters": "第10–15章",
-     "overdue": false,
-     "entities": [
-      "苏婉(#21)"
-     ],
-     "events": [
-      "#3 宗门夜变"
-     ],
-     "foreshadowing": []
-    },
-    {
-     "id": 12,
-     "level": "task",
-     "title": "找回断剑",
-     "purpose": "用断剑证明林凡的继承者身份。",
-     "chapters": "第13章",
-     "overdue": true,
-     "entities": [],
-     "events": [],
-     "foreshadowing": [
-      "#9 黑衣人的剑穗"
-     ]
-    }
-   ],
-   "omitted": 2
-  },
-  "goal_proposals": 0,
-  "prep": {
-   "requirements": "想先确认宋代生活的基础",
-   "language_name": "简体中文",
-   "scopes": [
-    {
-     "name": "宋代社会",
-     "description": "宋代社会生活",
-     "entry_count": 2,
-     "titles": [
-      "宋代酒楼",
-      "宋代服饰"
-     ],
-     "more": 0
-    },
-    {
-     "name": "杂项",
-     "description": "",
-     "entry_count": 0,
-     "titles": [],
-     "more": 0
-    }
-   ],
-   "excluded_names": [
-    "明代史料"
-   ],
-   "max_tool_calls": 40,
-   "research_tasks": [
-    {
-     "topic": "宋代茶楼",
-     "requirements": "茶楼布局",
-     "scope_name": "宋代社会",
-     "status": "ready",
-     "entries_created": 0
-    }
-   ],
-   "max_topics": 8
-  }
- },
- "variants": {
-  "archivist.kickoff.maintenance": [
-   {
-    "systems": {
-     "entities": true,
-     "timeline": true,
-     "memory": true,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "timeline",
-      "memory",
-      "foreshadowing"
-     ]
-    },
-    "goals": {
-     "nodes": [],
-     "omitted": 0
-    }
-   },
-   {
-    "systems": {
-     "entities": true,
-     "timeline": true,
-     "memory": true,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "timeline",
-      "memory",
-      "foreshadowing"
-     ]
-    },
-    "goals": {
-     "nodes": [
-      {
-       "id": 8,
-       "level": "plan",
-       "title": "守住剑冢",
-       "purpose": "让林凡在宗门倾覆前守住最后的传承。",
-       "chapters": "第10–15章",
-       "overdue": false,
-       "entities": [
-        "苏婉(#21)"
-       ],
-       "events": [
-        "#3 宗门夜变"
-       ],
-       "foreshadowing": [],
-       "parent_id": null
-      },
-      {
-       "id": 12,
-       "level": "task",
-       "title": "找回断剑",
-       "purpose": "用断剑证明林凡的继承者身份。",
-       "chapters": "第13章",
-       "overdue": true,
-       "entities": [],
-       "events": [],
-       "foreshadowing": [
-        "#9 黑衣人的剑穗"
-       ],
-       "parent_id": null
-      }
-     ],
-     "omitted": 2
-    }
-   },
-   {
-    "systems": {
-     "entities": false,
-     "timeline": true,
-     "memory": true,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "timeline",
-      "memory",
-      "foreshadowing"
-     ]
-    },
-    "goals": {
-     "nodes": [],
-     "omitted": 0
-    }
-   },
-   {
-    "systems": {
-     "entities": false,
-     "timeline": true,
-     "memory": true,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "timeline",
-      "memory",
-      "foreshadowing"
-     ]
-    },
-    "goals": {
-     "nodes": [
-      {
-       "id": 8,
-       "level": "plan",
-       "title": "守住剑冢",
-       "purpose": "让林凡在宗门倾覆前守住最后的传承。",
-       "chapters": "第10–15章",
-       "overdue": false,
-       "entities": [
-        "苏婉(#21)"
-       ],
-       "events": [
-        "#3 宗门夜变"
-       ],
-       "foreshadowing": [],
-       "parent_id": null
-      },
-      {
-       "id": 12,
-       "level": "task",
-       "title": "找回断剑",
-       "purpose": "用断剑证明林凡的继承者身份。",
-       "chapters": "第13章",
-       "overdue": true,
-       "entities": [],
-       "events": [],
-       "foreshadowing": [
-        "#9 黑衣人的剑穗"
-       ],
-       "parent_id": null
-      }
-     ],
-     "omitted": 2
-    }
-   },
-   {
-    "systems": {
-     "entities": true,
-     "timeline": false,
-     "memory": true,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "memory",
-      "foreshadowing"
-     ]
-    },
-    "goals": {
-     "nodes": [],
-     "omitted": 0
-    }
-   },
-   {
-    "systems": {
-     "entities": true,
-     "timeline": false,
-     "memory": true,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "memory",
-      "foreshadowing"
-     ]
-    },
-    "goals": {
-     "nodes": [
-      {
-       "id": 8,
-       "level": "plan",
-       "title": "守住剑冢",
-       "purpose": "让林凡在宗门倾覆前守住最后的传承。",
-       "chapters": "第10–15章",
-       "overdue": false,
-       "entities": [
-        "苏婉(#21)"
-       ],
-       "events": [
-        "#3 宗门夜变"
-       ],
-       "foreshadowing": [],
-       "parent_id": null
-      },
-      {
-       "id": 12,
-       "level": "task",
-       "title": "找回断剑",
-       "purpose": "用断剑证明林凡的继承者身份。",
-       "chapters": "第13章",
-       "overdue": true,
-       "entities": [],
-       "events": [],
-       "foreshadowing": [
-        "#9 黑衣人的剑穗"
-       ],
-       "parent_id": null
-      }
-     ],
-     "omitted": 2
-    }
-   },
-   {
-    "systems": {
-     "entities": true,
-     "timeline": true,
-     "memory": false,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "timeline",
-      "foreshadowing"
-     ]
-    },
-    "goals": {
-     "nodes": [],
-     "omitted": 0
-    }
-   },
-   {
-    "systems": {
-     "entities": true,
-     "timeline": true,
-     "memory": false,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "timeline",
-      "foreshadowing"
-     ]
-    },
-    "goals": {
-     "nodes": [
-      {
-       "id": 8,
-       "level": "plan",
-       "title": "守住剑冢",
-       "purpose": "让林凡在宗门倾覆前守住最后的传承。",
-       "chapters": "第10–15章",
-       "overdue": false,
-       "entities": [
-        "苏婉(#21)"
-       ],
-       "events": [
-        "#3 宗门夜变"
-       ],
-       "foreshadowing": [],
-       "parent_id": null
-      },
-      {
-       "id": 12,
-       "level": "task",
-       "title": "找回断剑",
-       "purpose": "用断剑证明林凡的继承者身份。",
-       "chapters": "第13章",
-       "overdue": true,
-       "entities": [],
-       "events": [],
-       "foreshadowing": [
-        "#9 黑衣人的剑穗"
-       ],
-       "parent_id": null
-      }
-     ],
-     "omitted": 2
-    }
-   },
-   {
-    "systems": {
-     "entities": true,
-     "timeline": true,
-     "memory": true,
-     "foreshadowing": false,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "timeline",
-      "memory"
-     ]
-    },
-    "goals": {
-     "nodes": [],
-     "omitted": 0
-    }
-   },
-   {
-    "systems": {
-     "entities": true,
-     "timeline": true,
-     "memory": true,
-     "foreshadowing": false,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "timeline",
-      "memory"
-     ]
-    },
-    "goals": {
-     "nodes": [
-      {
-       "id": 8,
-       "level": "plan",
-       "title": "守住剑冢",
-       "purpose": "让林凡在宗门倾覆前守住最后的传承。",
-       "chapters": "第10–15章",
-       "overdue": false,
-       "entities": [
-        "苏婉(#21)"
-       ],
-       "events": [
-        "#3 宗门夜变"
-       ],
-       "foreshadowing": [],
-       "parent_id": null
-      },
-      {
-       "id": 12,
-       "level": "task",
-       "title": "找回断剑",
-       "purpose": "用断剑证明林凡的继承者身份。",
-       "chapters": "第13章",
-       "overdue": true,
-       "entities": [],
-       "events": [],
-       "foreshadowing": [
-        "#9 黑衣人的剑穗"
-       ],
-       "parent_id": null
-      }
-     ],
-     "omitted": 2
-    }
-   },
-   {
-    "systems": {
-     "entities": false,
-     "timeline": false,
-     "memory": false,
-     "foreshadowing": false,
-     "goals": true,
-     "enabled": []
-    },
-    "goals": {
-     "nodes": [],
-     "omitted": 0
-    }
-   },
-   {
-    "systems": {
-     "entities": false,
-     "timeline": false,
-     "memory": false,
-     "foreshadowing": false,
-     "goals": true,
-     "enabled": []
-    },
-    "goals": {
-     "nodes": [
-      {
-       "id": 8,
-       "level": "plan",
-       "title": "守住剑冢",
-       "purpose": "让林凡在宗门倾覆前守住最后的传承。",
-       "chapters": "第10–15章",
-       "overdue": false,
-       "entities": [
-        "苏婉(#21)"
-       ],
-       "events": [
-        "#3 宗门夜变"
-       ],
-       "foreshadowing": [],
-       "parent_id": null
-      },
-      {
-       "id": 12,
-       "level": "task",
-       "title": "找回断剑",
-       "purpose": "用断剑证明林凡的继承者身份。",
-       "chapters": "第13章",
-       "overdue": true,
-       "entities": [],
-       "events": [],
-       "foreshadowing": [
-        "#9 黑衣人的剑穗"
-       ],
-       "parent_id": null
-      }
-     ],
-     "omitted": 2
-    }
-   },
-   {
-    "systems": {
-     "entities": true,
-     "timeline": true,
-     "memory": true,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "timeline",
-      "memory",
-      "foreshadowing"
-     ]
-    },
-    "goals": {
-     "nodes": [],
-     "omitted": 0
+  "_comment": "Sample contexts for every prompt key (mirrors scripts/validate_prompts.py). Non-English strings are prompt-sample data (DECISIONS D-041); this file is embedded at compile time by src/prompts/samples.rs.",
+  "base": {
+    "book": {
+      "title": "青云劫",
+      "genre": "仙侠",
+      "idea": "少年身怀残破剑灵。",
+      "writing_language": "zh-CN",
+      "writing_language_name": "简体中文",
+      "unspaced": true
     },
     "track": {
-     "is_main": true,
-     "kind": "main",
-     "title": "",
-     "synopsis": "",
-     "canon_mode": "canon",
-     "anchor_kind": "none",
-     "anchor_label": ""
-    }
-   }
-  ],
-  "archivist.kickoff.resync": [
-   {
-    "systems": {
-     "entities": true,
-     "timeline": true,
-     "memory": true,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "timeline",
-      "memory",
-      "foreshadowing"
-     ]
-    }
-   },
-   {
-    "systems": {
-     "entities": false,
-     "timeline": true,
-     "memory": true,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "timeline",
-      "memory",
-      "foreshadowing"
-     ]
-    }
-   },
-   {
-    "systems": {
-     "entities": true,
-     "timeline": false,
-     "memory": true,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "memory",
-      "foreshadowing"
-     ]
-    }
-   },
-   {
-    "systems": {
-     "entities": true,
-     "timeline": true,
-     "memory": false,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "timeline",
-      "foreshadowing"
-     ]
-    }
-   },
-   {
-    "systems": {
-     "entities": true,
-     "timeline": true,
-     "memory": true,
-     "foreshadowing": false,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "timeline",
-      "memory"
-     ]
-    }
-   },
-   {
-    "systems": {
-     "entities": false,
-     "timeline": false,
-     "memory": false,
-     "foreshadowing": false,
-     "goals": true,
-     "enabled": []
-    }
-   },
-   {
-    "systems": {
-     "entities": true,
-     "timeline": true,
-     "memory": true,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "timeline",
-      "memory",
-      "foreshadowing"
-     ]
-    },
-    "track": {
-     "is_main": true,
-     "kind": "main",
-     "title": "",
-     "synopsis": "",
-     "canon_mode": "canon",
-     "anchor_kind": "none",
-     "anchor_label": ""
-    }
-   }
-  ],
-  "block.anchor": [
-   {
-    "track": {
-     "is_main": false,
-     "kind": "side",
-     "title": "剑冢旧事",
-     "synopsis": "师父年轻时的故事。",
-     "canon_mode": "isolated",
-     "anchor_kind": "after_chapter",
-     "anchor_label": "第12章《剑冢》"
-    }
-   },
-   {
-    "track": {
-     "is_main": false,
-     "kind": "side",
-     "title": "剑冢旧事",
-     "synopsis": "师父年轻时的故事。",
-     "canon_mode": "canon",
-     "anchor_kind": "before_start",
-     "anchor_label": ""
-    }
-   },
-   {
-    "track": {
-     "is_main": false,
-     "kind": "side",
-     "title": "剑冢旧事",
-     "synopsis": "师父年轻时的故事。",
-     "canon_mode": "canon",
-     "anchor_kind": "after_end",
-     "anchor_label": "第12章《剑冢》"
-    }
-   }
-  ],
-  "block.cast_index": [
-   {},
-   {
-    "cast_index": []
-   }
-  ],
-  "block.chapter_diff": [
-   {},
-   {
-    "diff": {
-     "changes": []
-    }
-   }
-  ],
-  "block.chapter_draft": [
-   {},
-   {
-    "draft": {
-     "paragraphs": [],
-     "tail_open": false,
-     "word_count": 0,
-     "paragraph_count": 0
+      "is_main": true,
+      "kind": "main",
+      "title": "",
+      "synopsis": "",
+      "canon_mode": "canon",
+      "anchor_kind": "none",
+      "anchor_label": ""
     },
     "chapter": {
-     "id": 45,
-     "number": 13,
-     "label": "第13章",
-     "title": "",
-     "guidance": "",
-     "outline": "",
-     "reference_notes": "",
-     "target_min": 3000,
-     "target_max": 4000,
-     "word_count": 0,
-     "has_draft": false
-    }
-   }
-  ],
-  "block.memory": [
-   {
-    "systems": {
-     "entities": true,
-     "timeline": true,
-     "memory": true,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "timeline",
-      "memory",
-      "foreshadowing"
-     ]
-    }
-   },
-   {
-    "systems": {
-     "entities": false,
-     "timeline": true,
-     "memory": true,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "timeline",
-      "memory",
-      "foreshadowing"
-     ]
-    }
-   },
-   {
-    "systems": {
-     "entities": true,
-     "timeline": false,
-     "memory": true,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "memory",
-      "foreshadowing"
-     ]
-    }
-   },
-   {
-    "systems": {
-     "entities": true,
-     "timeline": true,
-     "memory": false,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "timeline",
-      "foreshadowing"
-     ]
-    }
-   },
-   {
-    "systems": {
-     "entities": true,
-     "timeline": true,
-     "memory": true,
-     "foreshadowing": false,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "timeline",
-      "memory"
-     ]
-    }
-   },
-   {
-    "systems": {
-     "entities": false,
-     "timeline": false,
-     "memory": false,
-     "foreshadowing": false,
-     "goals": true,
-     "enabled": []
-    }
-   },
-   {
-    "memory": {
-     "is_first": true,
-     "window_mid": 10,
-     "recent_summaries": [],
-     "previous_tail": null,
-     "protagonist": null,
-     "recent_changes": [],
-     "appearances": [],
-     "absent_important": [],
-     "key_notes": [],
-     "open_foreshadowing": [],
-     "cast": [],
-     "counts": {
-      "character": 0,
-      "organization": 0,
-      "location": 0,
-      "item": 0,
-      "other": 0,
-      "event": 0,
-      "fact": 0,
-      "world_rule": 0,
-      "foreshadowing_open": 0
-     }
+      "id": 45,
+      "number": 13,
+      "label": "第13章",
+      "title": "夜雨",
+      "guidance": "让苏婉第一次展露实力。",
+      "outline": "## 场景一\n- 目标",
+      "reference_notes": "- 林凡左臂有伤",
+      "target_min": 3000,
+      "target_max": 4000,
+      "word_count": 2350,
+      "has_draft": true
     },
-    "chapter": {
-     "id": 45,
-     "number": 13,
-     "label": "第13章",
-     "title": "",
-     "guidance": "",
-     "outline": "",
-     "reference_notes": "",
-     "target_min": 3000,
-     "target_max": 4000,
-     "word_count": 0,
-     "has_draft": false
-    }
-   },
-   {
-    "memory": {
-     "is_first": true,
-     "window_mid": 10,
-     "recent_summaries": [],
-     "previous_tail": null,
-     "protagonist": null,
-     "recent_changes": [],
-     "appearances": [],
-     "absent_important": [],
-     "key_notes": [],
-     "open_foreshadowing": [],
-     "cast": [],
-     "counts": {
-      "character": 0,
-      "organization": 0,
-      "location": 0,
-      "item": 0,
-      "other": 0,
-      "event": 0,
-      "fact": 0,
-      "world_rule": 0,
-      "foreshadowing_open": 0
-     }
-    },
-    "chapter": {
-     "id": 45,
-     "number": 1,
-     "label": "第1章",
-     "title": "",
-     "guidance": "",
-     "outline": "",
-     "reference_notes": "",
-     "target_min": 3000,
-     "target_max": 4000,
-     "word_count": 0,
-     "has_draft": false
-    }
-   },
-   {
-    "memory": {
-     "is_first": false,
-     "window_mid": 10,
-     "recent_summaries": [
-      {
-       "label": "第11章",
-       "title": "剑鸣",
-       "summary": "……"
-      },
-      {
-       "label": "第12章",
-       "title": "",
-       "summary": ""
-      }
-     ],
-     "previous_tail": {
-      "label": "第12章",
-      "text": "雨落下来。"
-     },
-     "protagonist": {
-      "id": 12,
-      "name": "林凡",
-      "status": "active",
-      "status_label": "已死亡",
-      "state": "身处剑冢",
-      "after_anchor": true,
-      "attributes": [
-       {
-        "key": "修为",
-        "value": "筑基中期"
-       }
-      ]
-     },
-     "recent_changes": [
-      {
-       "chapter_label": "第11章",
-       "target": "林凡(#12)",
-       "note": "修为：筑基初期→筑基中期"
-      }
-     ],
-     "appearances": [
-      {
-       "id": 12,
-       "name": "林凡",
-       "count": 2,
-       "chapters": [
+    "settings": {
+      "outline": "# 大纲\n正文……",
+      "world": "# 世界观",
+      "protagonist": "# 主角",
+      "characters": [
         {
-         "label": "第11章",
-         "role_label": "视角"
+          "rank": 1,
+          "name": "林凡",
+          "role_label": "主角",
+          "summary": "外门弟子",
+          "profile": "## 身份\n……"
         },
         {
-         "label": "第12章",
-         "role_label": "主要"
+          "rank": 2,
+          "name": "苏婉",
+          "role_label": "",
+          "summary": "",
+          "profile": ""
         }
-       ]
-      }
-     ],
-     "absent_important": [
-      {
-       "id": 18,
-       "name": "张三",
-       "last_label": "第2章"
-      }
-     ],
-     "key_notes": [
-      {
-       "id": 3,
-       "kind_label": "世界规则",
-       "content": "筑基之前无法御剑。"
-      }
-     ],
-     "open_foreshadowing": [
-      {
-       "id": 9,
-       "title": "黑衣人的剑穗",
-       "planted_label": "第5章"
-      }
-     ],
-     "cast": [
-      {
-       "id": 12,
-       "name": "林凡",
-       "kind_label": "人物",
-       "summary": "外门弟子"
-      },
-      {
-       "id": 20,
-       "name": "青云宗",
-       "kind_label": "组织",
-       "summary": ""
-      }
-     ],
-     "counts": {
-      "character": 10,
-      "organization": 3,
-      "location": 5,
-      "item": 4,
-      "other": 1,
-      "event": 30,
-      "fact": 12,
-      "world_rule": 6,
-      "foreshadowing_open": 4
-     }
-    }
-   }
-  ],
-  "block.settings": [
-   {},
-   {
-    "settings": {
-     "outline": "",
-     "world": "",
-     "protagonist": "",
-     "characters": [],
-     "scopes": []
-    },
-    "book": {
-     "title": "青云劫",
-     "genre": "",
-     "idea": "少年身怀残破剑灵。",
-     "writing_language": "zh-CN",
-     "writing_language_name": "简体中文",
-     "unspaced": true
-    }
-   }
-  ],
-  "conception.kickoff": [
-   {
-    "conception": {
-     "title": "青云劫",
-     "idea": "少年身怀剑灵",
-     "genre": "仙侠",
-     "writing_language_name": "简体中文",
-     "scopes": [],
-     "knowledge_report": "",
-     "research_tasks": []
-    }
-   },
-   {
-    "conception": {
-     "title": "青云劫",
-     "idea": "少年身怀剑灵",
-     "genre": "仙侠",
-     "writing_language_name": "简体中文",
-     "scopes": [
-      {
-       "name": "宋代社会",
-       "description": "宋代社会生活",
-       "entry_count": 2
-      },
-      {
-       "name": "杂项",
-       "description": "",
-       "entry_count": 0
-      }
-     ],
-     "knowledge_report": "",
-     "research_tasks": []
-    }
-   },
-   {
-    "conception": {
-     "title": "青云劫",
-     "idea": "少年身怀剑灵",
-     "genre": "",
-     "writing_language_name": "简体中文",
-     "scopes": [
-      {
-       "name": "宋代社会",
-       "description": "宋代社会生活",
-       "entry_count": 2
-      },
-      {
-       "name": "杂项",
-       "description": "",
-       "entry_count": 0
-      }
-     ],
-     "knowledge_report": "已有知识足够支撑设定，新增了两条背景条目。",
-     "research_tasks": [
-      {
-       "topic": "宋代市井",
-       "requirements": "茶馆",
-       "scope_name": "宋代社会",
-       "status": "draft",
-       "entries_created": 0
-      }
-     ]
-    }
-   }
-  ],
-  "notice.research_budget": [
-   {
-    "used_calls": 40,
-    "max_calls": 40,
-    "entries": 10,
-    "max_entries": 25
-   }
-  ],
-  "notice.setting_edits": [
-   {
-    "items": [
-     {
-      "doc_label": "世界观",
-      "kind": "doc",
-      "full_text": "# 世界观\n新",
-      "lines": [],
-      "characters": [],
-      "topics": []
-     },
-     {
-      "doc_label": "故事大纲",
-      "kind": "doc",
-      "full_text": "",
-      "lines": [
-       {
-        "op": "+",
-        "text": "新增行"
-       },
-       {
-        "op": "-",
-        "text": "删除行"
-       }
       ],
-      "characters": [],
-      "topics": []
-     },
-     {
-      "doc_label": "人物设定",
-      "kind": "characters",
-      "full_text": "",
-      "lines": [],
-      "topics": [],
+      "scopes": [
+        {
+          "name": "仙侠设定",
+          "description": "修炼体系参考"
+        },
+        {
+          "name": "杂项",
+          "description": ""
+        }
+      ]
+    },
+    "memory": {
+      "is_first": false,
+      "window_mid": 10,
+      "recent_summaries": [
+        {
+          "label": "第11章",
+          "title": "剑鸣",
+          "summary": "……"
+        },
+        {
+          "label": "第12章",
+          "title": "",
+          "summary": ""
+        }
+      ],
+      "previous_tail": {
+        "label": "第12章",
+        "text": "雨落下来。"
+      },
+      "protagonist": {
+        "id": 12,
+        "name": "林凡",
+        "status": "dead",
+        "status_label": "已死亡",
+        "state": "身处剑冢",
+        "after_anchor": false,
+        "attributes": [
+          {
+            "key": "修为",
+            "value": "筑基中期"
+          }
+        ]
+      },
+      "recent_changes": [
+        {
+          "chapter_label": "第11章",
+          "target": "林凡(#12)",
+          "note": "修为：筑基初期→筑基中期"
+        }
+      ],
+      "appearances": [
+        {
+          "id": 12,
+          "name": "林凡",
+          "count": 2,
+          "chapters": [
+            {
+              "label": "第11章",
+              "role_label": "视角"
+            },
+            {
+              "label": "第12章",
+              "role_label": "主要"
+            }
+          ]
+        }
+      ],
+      "absent_important": [
+        {
+          "id": 18,
+          "name": "张三",
+          "last_label": "第2章"
+        }
+      ],
+      "key_notes": [
+        {
+          "id": 3,
+          "kind_label": "世界规则",
+          "content": "筑基之前无法御剑。"
+        }
+      ],
+      "open_foreshadowing": [
+        {
+          "id": 9,
+          "title": "黑衣人的剑穗",
+          "planted_label": "第5章"
+        }
+      ],
+      "cast": [
+        {
+          "id": 12,
+          "name": "林凡",
+          "kind_label": "人物",
+          "summary": "外门弟子"
+        },
+        {
+          "id": 20,
+          "name": "青云宗",
+          "kind_label": "组织",
+          "summary": ""
+        }
+      ],
+      "counts": {
+        "character": 10,
+        "organization": 3,
+        "location": 5,
+        "item": 4,
+        "other": 1,
+        "event": 30,
+        "fact": 12,
+        "world_rule": 6,
+        "foreshadowing_open": 4,
+        "event_planned": 5
+      }
+    },
+    "draft": {
+      "paragraphs": [
+        {
+          "pid": "p1",
+          "text": "林凡抬起头。"
+        },
+        {
+          "pid": "p2",
+          "text": "雨更大了"
+        }
+      ],
+      "tail_open": true,
+      "word_count": 12,
+      "paragraph_count": 2
+    },
+    "feedback": {
+      "text": "结尾太仓促。",
+      "issues": [
+        {
+          "severity_label": "严重",
+          "category_label": "连续性",
+          "pids": [
+            "p30",
+            "p31"
+          ],
+          "quote": "他拔出青冥剑",
+          "problem": "剑已毁",
+          "suggestion": "改用断剑"
+        }
+      ]
+    },
+    "granularity": {
+      "key": "paragraph",
+      "label": "paragraph",
+      "revising": false,
+      "tail_open": false,
+      "last_pid": "p9"
+    },
+    "phase": "drafting",
+    "revision_plan": "1. p12：删去重复描写",
+    "author_notes": [
+      "打斗写得更短。",
+      "苏婉不要哭。"
+    ],
+    "prior": null,
+    "review": {
+      "comment": "第二条判断有误。",
+      "attempt": 1
+    },
+    "research": {
+      "topic": "宋代市井",
+      "requirements": "茶馆布局",
+      "scope_name": "宋代社会",
+      "scope_description": "宋代社会生活",
+      "language_name": "简体中文",
+      "existing_titles": [
+        "宋代酒楼"
+      ],
+      "max_tool_calls": 40,
+      "max_entries": 25
+    },
+    "conception": {
+      "title": "青云劫",
+      "idea": "少年身怀剑灵",
+      "genre": "",
+      "writing_language_name": "简体中文",
+      "scopes": [
+        {
+          "name": "宋代社会",
+          "description": "宋代社会生活",
+          "entry_count": 2
+        },
+        {
+          "name": "杂项",
+          "description": "",
+          "entry_count": 0
+        }
+      ],
+      "knowledge_report": "",
+      "research_tasks": []
+    },
+    "cast_index": [
+      {
+        "id": 12,
+        "name": "林凡",
+        "kind_label": "人物",
+        "status": "active",
+        "status_label": "活跃",
+        "aliases": [
+          "凡哥",
+          "林师弟"
+        ],
+        "summary": "外门弟子"
+      },
+      {
+        "id": 13,
+        "name": "老剑",
+        "kind_label": "物品",
+        "status": "destroyed",
+        "status_label": "已损毁",
+        "aliases": [],
+        "summary": ""
+      }
+    ],
+    "diff": {
+      "changes": [
+        {
+          "op": "insert",
+          "pid": "p9",
+          "after": null,
+          "old": "",
+          "new": "新段"
+        },
+        {
+          "op": "delete",
+          "pid": "p3",
+          "after": null,
+          "old": "旧段",
+          "new": ""
+        },
+        {
+          "op": "modify",
+          "pid": "p4",
+          "after": null,
+          "old": "原",
+          "new": "新"
+        }
+      ]
+    },
+    "text": "请把打斗写得更短。",
+    "enum": "entity_kind",
+    "value": "character",
+    "track_kind": "main",
+    "track_title": "正文",
+    "number": 12,
+    "title": "剑冢",
+    "with_title": true,
+    "skills": [
+      {
+        "name": "基础写作",
+        "category": "写作",
+        "body": "用动作、对话与细节呈现场景，少用概括与总结。"
+      }
+    ],
+    "chapters": [
+      {
+        "number": 12,
+        "label": "第12章",
+        "title": "剑鸣",
+        "text": "雨落下来。\n\n他握紧了旧剑。",
+        "partial": true
+      }
+    ],
+    "systems": {
+      "entities": true,
+      "timeline": true,
+      "memory": true,
+      "foreshadowing": true,
+      "goals": true,
+      "enabled": [
+        "entities",
+        "timeline",
+        "memory",
+        "foreshadowing"
+      ]
+    },
+    "goals": {
+      "nodes": [
+        {
+          "id": 8,
+          "level": "plan",
+          "title": "守住剑冢",
+          "purpose": "让林凡在宗门倾覆前守住最后的传承。",
+          "chapters": "第10–15章",
+          "overdue": false,
+          "entities": [
+            "苏婉(#21)"
+          ],
+          "events": [
+            "#3 宗门夜变"
+          ],
+          "foreshadowing": []
+        },
+        {
+          "id": 12,
+          "level": "task",
+          "title": "找回断剑",
+          "purpose": "用断剑证明林凡的继承者身份。",
+          "chapters": "第13章",
+          "overdue": true,
+          "entities": [],
+          "events": [],
+          "foreshadowing": [
+            "#9 黑衣人的剑穗"
+          ]
+        }
+      ],
+      "omitted": 2
+    },
+    "goal_proposals": 0,
+    "prep": {
+      "requirements": "想先确认宋代生活的基础",
+      "language_name": "简体中文",
+      "scopes": [
+        {
+          "name": "宋代社会",
+          "description": "宋代社会生活",
+          "entry_count": 2,
+          "titles": [
+            "宋代酒楼",
+            "宋代服饰"
+          ],
+          "more": 0
+        },
+        {
+          "name": "杂项",
+          "description": "",
+          "entry_count": 0,
+          "titles": [],
+          "more": 0
+        }
+      ],
+      "excluded_names": [
+        "明代史料"
+      ],
+      "max_tool_calls": 40,
+      "research_tasks": [
+        {
+          "topic": "宋代茶楼",
+          "requirements": "茶楼布局",
+          "scope_name": "宋代社会",
+          "status": "ready",
+          "entries_created": 0
+        }
+      ],
+      "max_topics": 8
+    },
+    "request": "请把世界设定里关于城门的部分写得更具体，并在需要时查看相关资料。",
+    "index": {
+      "tracks": [
+        {
+          "label": "",
+          "kind": "main",
+          "chapters": [
+            {
+              "number": 1,
+              "title": "夜雨",
+              "status": "official",
+              "words": 3200,
+              "canon_status": "synced"
+            }
+          ]
+        }
+      ],
+      "chapters_total": 1,
+      "chapters_omitted": 0,
+      "setting_docs": [
+        {
+          "label": "outline",
+          "characters": 12,
+          "revision": 1
+        },
+        {
+          "label": "world",
+          "characters": 30,
+          "revision": 2
+        },
+        {
+          "label": "protagonist",
+          "characters": 18,
+          "revision": 1
+        }
+      ],
       "characters": [
-       {
+        {
+          "rank": 1,
+          "name": "林凡",
+          "role_label": "主角"
+        }
+      ],
+      "canon": {
+        "entities": 3,
+        "timeline": 2,
+        "memory": 1,
+        "foreshadowing": 1,
+        "goals": 2
+      },
+      "goals": {
+        "open": 1,
+        "ready": 0
+      },
+      "research": [
+        {
+          "status": "done",
+          "count": 1
+        }
+      ],
+      "sessions": [
+        {
+          "id": 4,
+          "kind": "chapter_write",
+          "status": "paused"
+        }
+      ],
+      "proposals": [
+        {
+          "id": 2,
+          "target_type": "setting_doc",
+          "target_kind": "world"
+        }
+      ],
+      "off_systems": [
+        "foreshadowing"
+      ],
+      "characters_omitted": 0,
+      "sessions_omitted": 0,
+      "proposals_omitted": 0
+    },
+    "body": "第一章正文",
+    "next_pid": null,
+    "status": "drafting",
+    "content_version": 1,
+    "canon_status": "synced",
+    "words": 320,
+    "open_sessions": [],
+    "label": "第1章",
+    "part": "text",
+    "content": "# 设定文档",
+    "offset": 0,
+    "end": 5,
+    "total": 5,
+    "next_offset": null,
+    "revision": 1,
+    "designs": [
+      {
         "rank": 1,
         "name": "林凡",
         "role_label": "主角",
-        "summary": "外门弟子",
-        "profile": "## 身份\n……",
-        "changed_profile": "## 身份\n（作者改）"
-       },
-       {
-        "rank": 2,
-        "name": "苏婉",
-        "role_label": "",
         "summary": "",
-        "profile": "",
-        "changed_profile": ""
-       }
-      ]
-     },
-     {
-      "doc_label": "资料收集主题",
-      "kind": "topics",
-      "full_text": "",
-      "lines": [],
-      "characters": [],
-      "topics": [
-       {
-        "topic": "宋代",
+        "entity_id": null,
+        "profile": "## 身份\n弟子"
+      }
+    ],
+    "nodes": [
+      {
+        "id": 1,
+        "level": "goal",
+        "title": "目标",
+        "purpose": "目的",
+        "status": "active",
+        "chapter_from": null,
+        "chapter_to": null,
+        "ready": false,
+        "closable": false
+      }
+    ],
+    "tasks": [
+      {
+        "id": 1,
+        "kind": "topic",
+        "topic": "主题",
+        "scope": "范围",
+        "status": "ready",
+        "entries": 0
+      }
+    ],
+    "sessions": [
+      {
+        "id": 1,
+        "kind": "book_agent",
+        "chapter_id": null,
+        "status": "idle",
+        "created_at": "2026-01-01T00:00:00Z",
+        "chapter_label": null
+      }
+    ],
+    "characters_omitted": 0,
+    "sessions_omitted": 0,
+    "proposals_omitted": 0,
+    "action": "edit_chapter_text",
+    "summary": "修改章节",
+    "details": "第1章",
+    "session_id": 12,
+    "kind": "chapter_outline",
+    "existing": false
+  },
+  "variants": {
+    "archivist.kickoff.maintenance": [
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "memory",
+            "foreshadowing"
+          ]
+        },
+        "goals": {
+          "nodes": [],
+          "omitted": 0
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "memory",
+            "foreshadowing"
+          ]
+        },
+        "goals": {
+          "nodes": [
+            {
+              "id": 8,
+              "level": "plan",
+              "title": "守住剑冢",
+              "purpose": "让林凡在宗门倾覆前守住最后的传承。",
+              "chapters": "第10–15章",
+              "overdue": false,
+              "entities": [
+                "苏婉(#21)"
+              ],
+              "events": [
+                "#3 宗门夜变"
+              ],
+              "foreshadowing": [],
+              "parent_id": null
+            },
+            {
+              "id": 12,
+              "level": "task",
+              "title": "找回断剑",
+              "purpose": "用断剑证明林凡的继承者身份。",
+              "chapters": "第13章",
+              "overdue": true,
+              "entities": [],
+              "events": [],
+              "foreshadowing": [
+                "#9 黑衣人的剑穗"
+              ],
+              "parent_id": null
+            }
+          ],
+          "omitted": 2
+        }
+      },
+      {
+        "systems": {
+          "entities": false,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "timeline",
+            "memory",
+            "foreshadowing"
+          ]
+        },
+        "goals": {
+          "nodes": [],
+          "omitted": 0
+        }
+      },
+      {
+        "systems": {
+          "entities": false,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "timeline",
+            "memory",
+            "foreshadowing"
+          ]
+        },
+        "goals": {
+          "nodes": [
+            {
+              "id": 8,
+              "level": "plan",
+              "title": "守住剑冢",
+              "purpose": "让林凡在宗门倾覆前守住最后的传承。",
+              "chapters": "第10–15章",
+              "overdue": false,
+              "entities": [
+                "苏婉(#21)"
+              ],
+              "events": [
+                "#3 宗门夜变"
+              ],
+              "foreshadowing": [],
+              "parent_id": null
+            },
+            {
+              "id": 12,
+              "level": "task",
+              "title": "找回断剑",
+              "purpose": "用断剑证明林凡的继承者身份。",
+              "chapters": "第13章",
+              "overdue": true,
+              "entities": [],
+              "events": [],
+              "foreshadowing": [
+                "#9 黑衣人的剑穗"
+              ],
+              "parent_id": null
+            }
+          ],
+          "omitted": 2
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": false,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "memory",
+            "foreshadowing"
+          ]
+        },
+        "goals": {
+          "nodes": [],
+          "omitted": 0
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": false,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "memory",
+            "foreshadowing"
+          ]
+        },
+        "goals": {
+          "nodes": [
+            {
+              "id": 8,
+              "level": "plan",
+              "title": "守住剑冢",
+              "purpose": "让林凡在宗门倾覆前守住最后的传承。",
+              "chapters": "第10–15章",
+              "overdue": false,
+              "entities": [
+                "苏婉(#21)"
+              ],
+              "events": [
+                "#3 宗门夜变"
+              ],
+              "foreshadowing": [],
+              "parent_id": null
+            },
+            {
+              "id": 12,
+              "level": "task",
+              "title": "找回断剑",
+              "purpose": "用断剑证明林凡的继承者身份。",
+              "chapters": "第13章",
+              "overdue": true,
+              "entities": [],
+              "events": [],
+              "foreshadowing": [
+                "#9 黑衣人的剑穗"
+              ],
+              "parent_id": null
+            }
+          ],
+          "omitted": 2
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": false,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "foreshadowing"
+          ]
+        },
+        "goals": {
+          "nodes": [],
+          "omitted": 0
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": false,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "foreshadowing"
+          ]
+        },
+        "goals": {
+          "nodes": [
+            {
+              "id": 8,
+              "level": "plan",
+              "title": "守住剑冢",
+              "purpose": "让林凡在宗门倾覆前守住最后的传承。",
+              "chapters": "第10–15章",
+              "overdue": false,
+              "entities": [
+                "苏婉(#21)"
+              ],
+              "events": [
+                "#3 宗门夜变"
+              ],
+              "foreshadowing": [],
+              "parent_id": null
+            },
+            {
+              "id": 12,
+              "level": "task",
+              "title": "找回断剑",
+              "purpose": "用断剑证明林凡的继承者身份。",
+              "chapters": "第13章",
+              "overdue": true,
+              "entities": [],
+              "events": [],
+              "foreshadowing": [
+                "#9 黑衣人的剑穗"
+              ],
+              "parent_id": null
+            }
+          ],
+          "omitted": 2
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": false,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "memory"
+          ]
+        },
+        "goals": {
+          "nodes": [],
+          "omitted": 0
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": false,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "memory"
+          ]
+        },
+        "goals": {
+          "nodes": [
+            {
+              "id": 8,
+              "level": "plan",
+              "title": "守住剑冢",
+              "purpose": "让林凡在宗门倾覆前守住最后的传承。",
+              "chapters": "第10–15章",
+              "overdue": false,
+              "entities": [
+                "苏婉(#21)"
+              ],
+              "events": [
+                "#3 宗门夜变"
+              ],
+              "foreshadowing": [],
+              "parent_id": null
+            },
+            {
+              "id": 12,
+              "level": "task",
+              "title": "找回断剑",
+              "purpose": "用断剑证明林凡的继承者身份。",
+              "chapters": "第13章",
+              "overdue": true,
+              "entities": [],
+              "events": [],
+              "foreshadowing": [
+                "#9 黑衣人的剑穗"
+              ],
+              "parent_id": null
+            }
+          ],
+          "omitted": 2
+        }
+      },
+      {
+        "systems": {
+          "entities": false,
+          "timeline": false,
+          "memory": false,
+          "foreshadowing": false,
+          "goals": true,
+          "enabled": []
+        },
+        "goals": {
+          "nodes": [],
+          "omitted": 0
+        }
+      },
+      {
+        "systems": {
+          "entities": false,
+          "timeline": false,
+          "memory": false,
+          "foreshadowing": false,
+          "goals": true,
+          "enabled": []
+        },
+        "goals": {
+          "nodes": [
+            {
+              "id": 8,
+              "level": "plan",
+              "title": "守住剑冢",
+              "purpose": "让林凡在宗门倾覆前守住最后的传承。",
+              "chapters": "第10–15章",
+              "overdue": false,
+              "entities": [
+                "苏婉(#21)"
+              ],
+              "events": [
+                "#3 宗门夜变"
+              ],
+              "foreshadowing": [],
+              "parent_id": null
+            },
+            {
+              "id": 12,
+              "level": "task",
+              "title": "找回断剑",
+              "purpose": "用断剑证明林凡的继承者身份。",
+              "chapters": "第13章",
+              "overdue": true,
+              "entities": [],
+              "events": [],
+              "foreshadowing": [
+                "#9 黑衣人的剑穗"
+              ],
+              "parent_id": null
+            }
+          ],
+          "omitted": 2
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "memory",
+            "foreshadowing"
+          ]
+        },
+        "goals": {
+          "nodes": [],
+          "omitted": 0
+        },
+        "track": {
+          "is_main": true,
+          "kind": "main",
+          "title": "",
+          "synopsis": "",
+          "canon_mode": "canon",
+          "anchor_kind": "none",
+          "anchor_label": ""
+        }
+      }
+    ],
+    "archivist.kickoff.resync": [
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "memory",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": false,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "timeline",
+            "memory",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": false,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "memory",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": false,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": false,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "memory"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": false,
+          "timeline": false,
+          "memory": false,
+          "foreshadowing": false,
+          "goals": true,
+          "enabled": []
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "memory",
+            "foreshadowing"
+          ]
+        },
+        "track": {
+          "is_main": true,
+          "kind": "main",
+          "title": "",
+          "synopsis": "",
+          "canon_mode": "canon",
+          "anchor_kind": "none",
+          "anchor_label": ""
+        }
+      }
+    ],
+    "block.anchor": [
+      {
+        "track": {
+          "is_main": false,
+          "kind": "side",
+          "title": "剑冢旧事",
+          "synopsis": "师父年轻时的故事。",
+          "canon_mode": "isolated",
+          "anchor_kind": "after_chapter",
+          "anchor_label": "第12章《剑冢》"
+        }
+      },
+      {
+        "track": {
+          "is_main": false,
+          "kind": "side",
+          "title": "剑冢旧事",
+          "synopsis": "师父年轻时的故事。",
+          "canon_mode": "canon",
+          "anchor_kind": "before_start",
+          "anchor_label": ""
+        }
+      },
+      {
+        "track": {
+          "is_main": false,
+          "kind": "side",
+          "title": "剑冢旧事",
+          "synopsis": "师父年轻时的故事。",
+          "canon_mode": "canon",
+          "anchor_kind": "after_end",
+          "anchor_label": "第12章《剑冢》"
+        }
+      }
+    ],
+    "block.cast_index": [
+      {},
+      {
+        "cast_index": []
+      }
+    ],
+    "block.chapter_diff": [
+      {},
+      {
+        "diff": {
+          "changes": []
+        }
+      }
+    ],
+    "block.chapter_draft": [
+      {},
+      {
+        "draft": {
+          "paragraphs": [],
+          "tail_open": false,
+          "word_count": 0,
+          "paragraph_count": 0
+        },
+        "chapter": {
+          "id": 45,
+          "number": 13,
+          "label": "第13章",
+          "title": "",
+          "guidance": "",
+          "outline": "",
+          "reference_notes": "",
+          "target_min": 3000,
+          "target_max": 4000,
+          "word_count": 0,
+          "has_draft": false
+        }
+      }
+    ],
+    "block.memory": [
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "memory",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": false,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "timeline",
+            "memory",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": false,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "memory",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": false,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": false,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "memory"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": false,
+          "timeline": false,
+          "memory": false,
+          "foreshadowing": false,
+          "goals": true,
+          "enabled": []
+        }
+      },
+      {
+        "memory": {
+          "is_first": true,
+          "window_mid": 10,
+          "recent_summaries": [],
+          "previous_tail": null,
+          "protagonist": null,
+          "recent_changes": [],
+          "appearances": [],
+          "absent_important": [],
+          "key_notes": [],
+          "open_foreshadowing": [],
+          "cast": [],
+          "counts": {
+            "character": 0,
+            "organization": 0,
+            "location": 0,
+            "item": 0,
+            "other": 0,
+            "event": 0,
+            "fact": 0,
+            "world_rule": 0,
+            "foreshadowing_open": 0,
+            "event_planned": 0
+          }
+        },
+        "chapter": {
+          "id": 45,
+          "number": 13,
+          "label": "第13章",
+          "title": "",
+          "guidance": "",
+          "outline": "",
+          "reference_notes": "",
+          "target_min": 3000,
+          "target_max": 4000,
+          "word_count": 0,
+          "has_draft": false
+        }
+      },
+      {
+        "memory": {
+          "is_first": true,
+          "window_mid": 10,
+          "recent_summaries": [],
+          "previous_tail": null,
+          "protagonist": null,
+          "recent_changes": [],
+          "appearances": [],
+          "absent_important": [],
+          "key_notes": [],
+          "open_foreshadowing": [],
+          "cast": [],
+          "counts": {
+            "character": 0,
+            "organization": 0,
+            "location": 0,
+            "item": 0,
+            "other": 0,
+            "event": 0,
+            "fact": 0,
+            "world_rule": 0,
+            "foreshadowing_open": 0,
+            "event_planned": 0
+          }
+        },
+        "chapter": {
+          "id": 45,
+          "number": 1,
+          "label": "第1章",
+          "title": "",
+          "guidance": "",
+          "outline": "",
+          "reference_notes": "",
+          "target_min": 3000,
+          "target_max": 4000,
+          "word_count": 0,
+          "has_draft": false
+        }
+      },
+      {
+        "memory": {
+          "is_first": false,
+          "window_mid": 10,
+          "recent_summaries": [
+            {
+              "label": "第11章",
+              "title": "剑鸣",
+              "summary": "……"
+            },
+            {
+              "label": "第12章",
+              "title": "",
+              "summary": ""
+            }
+          ],
+          "previous_tail": {
+            "label": "第12章",
+            "text": "雨落下来。"
+          },
+          "protagonist": {
+            "id": 12,
+            "name": "林凡",
+            "status": "active",
+            "status_label": "已死亡",
+            "state": "身处剑冢",
+            "after_anchor": true,
+            "attributes": [
+              {
+                "key": "修为",
+                "value": "筑基中期"
+              }
+            ]
+          },
+          "recent_changes": [
+            {
+              "chapter_label": "第11章",
+              "target": "林凡(#12)",
+              "note": "修为：筑基初期→筑基中期"
+            }
+          ],
+          "appearances": [
+            {
+              "id": 12,
+              "name": "林凡",
+              "count": 2,
+              "chapters": [
+                {
+                  "label": "第11章",
+                  "role_label": "视角"
+                },
+                {
+                  "label": "第12章",
+                  "role_label": "主要"
+                }
+              ]
+            }
+          ],
+          "absent_important": [
+            {
+              "id": 18,
+              "name": "张三",
+              "last_label": "第2章"
+            }
+          ],
+          "key_notes": [
+            {
+              "id": 3,
+              "kind_label": "世界规则",
+              "content": "筑基之前无法御剑。"
+            }
+          ],
+          "open_foreshadowing": [
+            {
+              "id": 9,
+              "title": "黑衣人的剑穗",
+              "planted_label": "第5章"
+            }
+          ],
+          "cast": [
+            {
+              "id": 12,
+              "name": "林凡",
+              "kind_label": "人物",
+              "summary": "外门弟子"
+            },
+            {
+              "id": 20,
+              "name": "青云宗",
+              "kind_label": "组织",
+              "summary": ""
+            }
+          ],
+          "counts": {
+            "character": 10,
+            "organization": 3,
+            "location": 5,
+            "item": 4,
+            "other": 1,
+            "event": 30,
+            "fact": 12,
+            "world_rule": 6,
+            "foreshadowing_open": 4,
+            "event_planned": 5
+          }
+        }
+      }
+    ],
+    "block.settings": [
+      {},
+      {
+        "settings": {
+          "outline": "",
+          "world": "",
+          "protagonist": "",
+          "characters": [],
+          "scopes": []
+        },
+        "book": {
+          "title": "青云劫",
+          "genre": "",
+          "idea": "少年身怀残破剑灵。",
+          "writing_language": "zh-CN",
+          "writing_language_name": "简体中文",
+          "unspaced": true
+        }
+      }
+    ],
+    "conception.kickoff": [
+      {
+        "conception": {
+          "title": "青云劫",
+          "idea": "少年身怀剑灵",
+          "genre": "仙侠",
+          "writing_language_name": "简体中文",
+          "scopes": [],
+          "knowledge_report": "",
+          "research_tasks": []
+        }
+      },
+      {
+        "conception": {
+          "title": "青云劫",
+          "idea": "少年身怀剑灵",
+          "genre": "仙侠",
+          "writing_language_name": "简体中文",
+          "scopes": [
+            {
+              "name": "宋代社会",
+              "description": "宋代社会生活",
+              "entry_count": 2
+            },
+            {
+              "name": "杂项",
+              "description": "",
+              "entry_count": 0
+            }
+          ],
+          "knowledge_report": "",
+          "research_tasks": []
+        }
+      },
+      {
+        "conception": {
+          "title": "青云劫",
+          "idea": "少年身怀剑灵",
+          "genre": "",
+          "writing_language_name": "简体中文",
+          "scopes": [
+            {
+              "name": "宋代社会",
+              "description": "宋代社会生活",
+              "entry_count": 2
+            },
+            {
+              "name": "杂项",
+              "description": "",
+              "entry_count": 0
+            }
+          ],
+          "knowledge_report": "已有知识足够支撑设定，新增了两条背景条目。",
+          "research_tasks": [
+            {
+              "topic": "宋代市井",
+              "requirements": "茶馆",
+              "scope_name": "宋代社会",
+              "status": "draft",
+              "entries_created": 0
+            }
+          ]
+        }
+      }
+    ],
+    "notice.research_budget": [
+      {
+        "used_calls": 40,
+        "max_calls": 40,
+        "entries": 10,
+        "max_entries": 25
+      }
+    ],
+    "notice.setting_edits": [
+      {
+        "items": [
+          {
+            "doc_label": "世界观",
+            "kind": "doc",
+            "full_text": "# 世界观\n新",
+            "lines": [],
+            "characters": [],
+            "topics": []
+          },
+          {
+            "doc_label": "故事大纲",
+            "kind": "doc",
+            "full_text": "",
+            "lines": [
+              {
+                "op": "+",
+                "text": "新增行"
+              },
+              {
+                "op": "-",
+                "text": "删除行"
+              }
+            ],
+            "characters": [],
+            "topics": []
+          },
+          {
+            "doc_label": "人物设定",
+            "kind": "characters",
+            "full_text": "",
+            "lines": [],
+            "topics": [],
+            "characters": [
+              {
+                "rank": 1,
+                "name": "林凡",
+                "role_label": "主角",
+                "summary": "外门弟子",
+                "profile": "## 身份\n……",
+                "changed_profile": "## 身份\n（作者改）"
+              },
+              {
+                "rank": 2,
+                "name": "苏婉",
+                "role_label": "",
+                "summary": "",
+                "profile": "",
+                "changed_profile": ""
+              }
+            ]
+          },
+          {
+            "doc_label": "资料收集主题",
+            "kind": "topics",
+            "full_text": "",
+            "lines": [],
+            "characters": [],
+            "topics": [
+              {
+                "topic": "宋代",
+                "scope": "宋代社会",
+                "requirements": ""
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "notice.tool_not_allowed": [
+      {
+        "tool": "get_entity",
+        "phase_label": "正文阶段",
+        "allowed": [
+          "insert_text",
+          "read_draft"
+        ]
+      },
+      {
+        "tool": "record_appearances",
+        "phase_label": "本任务",
+        "allowed": [
+          "create_entity",
+          "finish_maintenance"
+        ]
+      }
+    ],
+    "notice.user_edits": [
+      {
+        "compact": false,
+        "counts": {
+          "modified": 1,
+          "deleted": 1,
+          "inserted": 1
+        },
+        "modified": [
+          {
+            "pid": "p2",
+            "old": "雨",
+            "new": "雨更大了"
+          }
+        ],
+        "deleted": [
+          {
+            "pid": "p3",
+            "old": "风"
+          }
+        ],
+        "inserted": [
+          {
+            "pid": "p9",
+            "after": null,
+            "text": "新"
+          },
+          {
+            "pid": "p10",
+            "after": "p9",
+            "text": "又新"
+          }
+        ],
+        "tail_changed": true,
+        "tail_open": false,
+        "outline_changed": false,
+        "outline": "",
+        "notes_changed": false,
+        "reference_notes": ""
+      },
+      {
+        "compact": true,
+        "counts": {
+          "modified": 5,
+          "deleted": 2,
+          "inserted": 9
+        },
+        "modified": [],
+        "deleted": [],
+        "inserted": [],
+        "tail_changed": false,
+        "tail_open": false,
+        "outline_changed": true,
+        "outline": "## 场景一（作者改）",
+        "notes_changed": true,
+        "reference_notes": "- 苏婉不哭"
+      },
+      {
+        "compact": false,
+        "counts": {
+          "modified": 0,
+          "deleted": 0,
+          "inserted": 0
+        },
+        "modified": [],
+        "deleted": [],
+        "inserted": [],
+        "tail_changed": false,
+        "tail_open": false,
+        "outline_changed": true,
+        "outline": "## 场景一（作者改）",
+        "notes_changed": false,
+        "reference_notes": ""
+      }
+    ],
+    "notice.web_content": [
+      {
+        "body": "外部内容"
+      }
+    ],
+    "planner.kickoff": [
+      {},
+      {
+        "chapter": {
+          "id": 45,
+          "number": 13,
+          "label": "第13章",
+          "title": "夜雨",
+          "guidance": "让苏婉第一次展露实力。",
+          "outline": "## 场景一\n- 目标",
+          "reference_notes": "- 林凡左臂有伤",
+          "target_min": 3000,
+          "target_max": 4000,
+          "word_count": 2350,
+          "has_draft": false
+        }
+      },
+      {
+        "chapter": {
+          "id": 45,
+          "number": 13,
+          "label": "第13章",
+          "title": "夜雨",
+          "guidance": "让苏婉第一次展露实力。",
+          "outline": "",
+          "reference_notes": "",
+          "target_min": 3000,
+          "target_max": 4000,
+          "word_count": 2350,
+          "has_draft": false
+        },
+        "track": {
+          "is_main": false,
+          "kind": "side",
+          "title": "剑冢旧事",
+          "synopsis": "师父年轻时的故事。",
+          "canon_mode": "isolated",
+          "anchor_kind": "after_chapter",
+          "anchor_label": "第12章《剑冢》"
+        }
+      }
+    ],
+    "planner.notice.retrieval_budget": [
+      {
+        "used": 30
+      }
+    ],
+    "researcher.kickoff": [
+      {},
+      {
+        "research": {
+          "topic": "宋代市井",
+          "requirements": "",
+          "scope_name": "宋代社会",
+          "scope_description": "",
+          "language_name": "简体中文",
+          "existing_titles": [],
+          "max_tool_calls": 40,
+          "max_entries": 25
+        }
+      }
+    ],
+    "result.ask_user": [
+      {
+        "answers": [
+          {
+            "question": "基调？",
+            "selected": [
+              "热血"
+            ],
+            "other": "再轻松点"
+          },
+          {
+            "question": "结局？",
+            "selected": [],
+            "other": ""
+          },
+          {
+            "question": "篇幅？",
+            "selected": [],
+            "other": "百万字"
+          }
+        ]
+      }
+    ],
+    "result.canon_write": [
+      {
+        "action": "create_entity",
+        "target": "苏婉(#21)",
+        "count": 3,
+        "prev_event": null,
+        "next_event": null,
+        "moved": false,
+        "anchor_planned": null,
+        "abandoned_count": null
+      },
+      {
+        "action": "record_appearances",
+        "target": "",
+        "count": 3,
+        "prev_event": null,
+        "next_event": null,
+        "moved": false,
+        "anchor_planned": null,
+        "abandoned_count": null
+      },
+      {
+        "action": "add_timeline_event",
+        "target": "入门(#5)",
+        "count": 3,
+        "prev_event": 4,
+        "next_event": 6,
+        "moved": false,
+        "anchor_planned": null,
+        "abandoned_count": null
+      },
+      {
+        "action": "add_timeline_event",
+        "target": "入门(#5)",
+        "count": 3,
+        "prev_event": null,
+        "next_event": null,
+        "moved": false,
+        "anchor_planned": null,
+        "abandoned_count": null
+      },
+      {
+        "action": "update_timeline_event",
+        "target": "入门(#5)",
+        "count": 3,
+        "prev_event": 2,
+        "next_event": null,
+        "moved": true,
+        "anchor_planned": null,
+        "abandoned_count": 2
+      },
+      {
+        "action": "update_foreshadowing",
+        "target": "剑穗(#9)",
+        "count": 3,
+        "prev_event": null,
+        "next_event": null,
+        "moved": false,
+        "anchor_planned": null,
+        "abandoned_count": null
+      },
+      {
+        "action": "resolve_foreshadowing",
+        "target": "剑穗(#9)",
+        "count": 3,
+        "prev_event": null,
+        "next_event": null,
+        "moved": false,
+        "anchor_planned": "#12 入门",
+        "abandoned_count": null
+      },
+      {
+        "action": "set_chapter_summary",
+        "target": "",
+        "count": 3,
+        "prev_event": null,
+        "next_event": null,
+        "moved": false,
+        "anchor_planned": null,
+        "abandoned_count": null
+      },
+      {
+        "action": "propose_setting_change",
+        "target": "世界观",
+        "count": 3,
+        "prev_event": null,
+        "next_event": null,
+        "moved": false,
+        "anchor_planned": null,
+        "abandoned_count": null
+      },
+      {
+        "action": "propose_goal_change",
+        "target": "目标",
+        "count": 3,
+        "prev_event": null,
+        "next_event": null,
+        "moved": false,
+        "anchor_planned": null,
+        "abandoned_count": null
+      }
+    ],
+    "result.chapter_text": [
+      {
+        "label": "第3章《初见》",
+        "paragraphs": [
+          {
+            "pid": "p1",
+            "text": "林凡抬起头。"
+          },
+          {
+            "pid": "p2",
+            "text": "雨更大了"
+          }
+        ],
+        "next_pid": "p40",
+        "total_paragraphs": 80
+      },
+      {
+        "label": "第3章",
+        "paragraphs": [
+          {
+            "pid": "p1",
+            "text": "林凡抬起头。"
+          },
+          {
+            "pid": "p2",
+            "text": "雨更大了"
+          }
+        ],
+        "next_pid": null,
+        "total_paragraphs": 2
+      }
+    ],
+    "result.conception_write": [
+      {
+        "action": "write_setting_doc",
+        "doc_label": "世界观",
+        "revision": 3,
+        "chars": 2000,
+        "name": "林凡",
+        "rank": 1,
+        "order": [
+          "林凡",
+          "苏婉"
+        ],
+        "count": 4,
+        "created": false,
+        "kept": []
+      },
+      {
+        "action": "edit_setting_doc",
+        "doc_label": "世界观",
+        "revision": 3,
+        "chars": 2000,
+        "name": "林凡",
+        "rank": 1,
+        "order": [
+          "林凡",
+          "苏婉"
+        ],
+        "count": 4,
+        "created": false,
+        "kept": []
+      },
+      {
+        "action": "upsert_character",
+        "doc_label": "世界观",
+        "revision": 3,
+        "chars": 2000,
+        "name": "林凡",
+        "rank": 1,
+        "order": [
+          "林凡",
+          "苏婉"
+        ],
+        "count": 4,
+        "created": true,
+        "kept": []
+      },
+      {
+        "action": "upsert_character",
+        "doc_label": "世界观",
+        "revision": 3,
+        "chars": 2000,
+        "name": "林凡",
+        "rank": 1,
+        "order": [
+          "林凡",
+          "苏婉"
+        ],
+        "count": 4,
+        "created": false,
+        "kept": []
+      },
+      {
+        "action": "remove_character",
+        "doc_label": "世界观",
+        "revision": 3,
+        "chars": 2000,
+        "name": "林凡",
+        "rank": 1,
+        "order": [
+          "林凡",
+          "苏婉"
+        ],
+        "count": 4,
+        "created": false,
+        "kept": []
+      },
+      {
+        "action": "reorder_characters",
+        "doc_label": "世界观",
+        "revision": 3,
+        "chars": 2000,
+        "name": "林凡",
+        "rank": 1,
+        "order": [
+          "林凡",
+          "苏婉"
+        ],
+        "count": 4,
+        "created": false,
+        "kept": []
+      },
+      {
+        "action": "set_research_topics",
+        "doc_label": "世界观",
+        "revision": 3,
+        "chars": 2000,
+        "name": "林凡",
+        "rank": 1,
+        "order": [
+          "林凡",
+          "苏婉"
+        ],
+        "count": 4,
+        "created": false,
+        "kept": []
+      }
+    ],
+    "result.draft_edit": [
+      {
+        "action": "insert_text",
+        "inserted": [
+          "p9"
+        ],
+        "appended_to": null,
+        "pid": "p3",
+        "deleted": [],
+        "after": null,
+        "tail_open": false,
+        "last_pid": "p9",
+        "word_count": 100,
+        "target_min": 3000,
+        "target_max": 4000,
+        "chapter_end": false,
+        "short_of_target": false,
+        "ignored_chapter_end": false
+      },
+      {
+        "action": "insert_text",
+        "inserted": [],
+        "appended_to": "p8",
+        "pid": "p3",
+        "deleted": [],
+        "after": null,
+        "tail_open": true,
+        "last_pid": "p9",
+        "word_count": 100,
+        "target_min": 3000,
+        "target_max": 4000,
+        "chapter_end": false,
+        "short_of_target": false,
+        "ignored_chapter_end": false
+      },
+      {
+        "action": "insert_text",
+        "inserted": [
+          "p9",
+          "p10"
+        ],
+        "appended_to": "p8",
+        "pid": "p3",
+        "deleted": [],
+        "after": null,
+        "tail_open": false,
+        "last_pid": "p9",
+        "word_count": 100,
+        "target_min": 3000,
+        "target_max": 4000,
+        "chapter_end": true,
+        "short_of_target": false,
+        "ignored_chapter_end": false
+      },
+      {
+        "action": "insert_text",
+        "inserted": [
+          "p9"
+        ],
+        "appended_to": null,
+        "pid": "p3",
+        "deleted": [],
+        "after": null,
+        "tail_open": false,
+        "last_pid": "p9",
+        "word_count": 100,
+        "target_min": 3000,
+        "target_max": 4000,
+        "chapter_end": false,
+        "short_of_target": true,
+        "ignored_chapter_end": false
+      },
+      {
+        "action": "insert_paragraphs",
+        "inserted": [
+          "p11"
+        ],
+        "appended_to": null,
+        "pid": "p3",
+        "deleted": [],
+        "after": "p10",
+        "tail_open": false,
+        "last_pid": "p9",
+        "word_count": 100,
+        "target_min": 3000,
+        "target_max": 4000,
+        "chapter_end": false,
+        "short_of_target": false,
+        "ignored_chapter_end": false
+      },
+      {
+        "action": "insert_paragraphs",
+        "inserted": [
+          "p1"
+        ],
+        "appended_to": null,
+        "pid": "p3",
+        "deleted": [],
+        "after": null,
+        "tail_open": false,
+        "last_pid": "p9",
+        "word_count": 100,
+        "target_min": 3000,
+        "target_max": 4000,
+        "chapter_end": false,
+        "short_of_target": false,
+        "ignored_chapter_end": false
+      },
+      {
+        "action": "replace_text",
+        "inserted": [],
+        "appended_to": null,
+        "pid": "p3",
+        "deleted": [
+          "p3"
+        ],
+        "after": null,
+        "tail_open": false,
+        "last_pid": "p9",
+        "word_count": 100,
+        "target_min": 3000,
+        "target_max": 4000,
+        "chapter_end": false,
+        "short_of_target": false,
+        "ignored_chapter_end": false
+      },
+      {
+        "action": "rewrite_paragraph",
+        "inserted": [
+          "p12"
+        ],
+        "appended_to": null,
+        "pid": "p3",
+        "deleted": [],
+        "after": null,
+        "tail_open": false,
+        "last_pid": "p9",
+        "word_count": 100,
+        "target_min": 3000,
+        "target_max": 4000,
+        "chapter_end": false,
+        "short_of_target": false,
+        "ignored_chapter_end": true
+      },
+      {
+        "action": "delete_paragraphs",
+        "inserted": [],
+        "appended_to": null,
+        "pid": "p3",
+        "deleted": [
+          "p4",
+          "p5"
+        ],
+        "after": null,
+        "tail_open": false,
+        "last_pid": "p9",
+        "word_count": 100,
+        "target_min": 3000,
+        "target_max": 4000,
+        "chapter_end": false,
+        "short_of_target": false,
+        "ignored_chapter_end": false
+      }
+    ],
+    "result.draft_text": [
+      {
+        "paragraphs": [
+          {
+            "pid": "p1",
+            "text": "林凡抬起头。"
+          },
+          {
+            "pid": "p2",
+            "text": "雨更大了"
+          }
+        ],
+        "tail_open": true,
+        "word_count": 12,
+        "target_min": 3000,
+        "target_max": 4000,
+        "next_pid": null,
+        "total_paragraphs": 2
+      },
+      {
+        "paragraphs": [],
+        "tail_open": false,
+        "word_count": 0,
+        "target_min": 3000,
+        "target_max": 4000,
+        "next_pid": null,
+        "total_paragraphs": 0
+      }
+    ],
+    "result.entity_card": [
+      {
+        "e": {
+          "id": 12,
+          "name": "林凡",
+          "kind_label": "人物",
+          "is_protagonist": true,
+          "importance": 5,
+          "status_label": "活跃",
+          "aliases": [
+            "凡哥",
+            "林师弟"
+          ],
+          "summary": "外门弟子",
+          "state": "身处剑冢",
+          "state_after_anchor": true,
+          "attributes": [
+            {
+              "key": "修为",
+              "value": "筑基中期"
+            }
+          ],
+          "description": "……"
+        },
+        "relations": [
+          {
+            "subject": "林凡(#12)",
+            "object": "张三(#15)",
+            "kind": "师兄",
+            "ended": false,
+            "until_label": "",
+            "description": "同门",
+            "since_label": "第3章"
+          },
+          {
+            "subject": "林凡(#12)",
+            "object": "王五(#16)",
+            "kind": "仇敌",
+            "ended": true,
+            "until_label": "第9章",
+            "description": "",
+            "since_label": ""
+          }
+        ],
+        "changes": [
+          {
+            "chapter_label": "第11章",
+            "note": "突破",
+            "after_anchor": true
+          }
+        ],
+        "appearances": {
+          "first_label": "第1章",
+          "last_label": "第12章",
+          "window_size": 10,
+          "window_count": 8
+        },
+        "design": {
+          "role_label": "主角",
+          "summary": "……"
+        }
+      },
+      {
+        "e": {
+          "id": 30,
+          "name": "石碑",
+          "kind_label": "物品",
+          "is_protagonist": false,
+          "importance": 2,
+          "status_label": "活跃",
+          "aliases": [],
+          "summary": "",
+          "state": "",
+          "state_after_anchor": false,
+          "attributes": [],
+          "description": ""
+        },
+        "relations": [],
+        "changes": [],
+        "appearances": {
+          "first_label": "",
+          "last_label": "",
+          "window_size": 10,
+          "window_count": 0
+        },
+        "design": null
+      }
+    ],
+    "result.entity_list": [
+      {
+        "items": [
+          {
+            "id": 12,
+            "name": "林凡",
+            "kind_label": "人物",
+            "aliases": [
+              "凡哥"
+            ],
+            "summary": "外门弟子",
+            "status": "active",
+            "status_label": "活跃"
+          },
+          {
+            "id": 13,
+            "name": "老剑",
+            "kind_label": "物品",
+            "aliases": [],
+            "summary": "",
+            "status": "destroyed",
+            "status_label": "已损毁"
+          }
+        ],
+        "total": 40,
+        "shown": 30
+      },
+      {
+        "items": [],
+        "total": 0,
+        "shown": 0
+      }
+    ],
+    "result.error": [
+      {
+        "code": "invalid_json",
+        "raw": "{\"text\": \"…"
+      },
+      {
+        "code": "validation",
+        "errors": [
+          "$.text: missing",
+          "$.x: unexpected"
+        ]
+      },
+      {
+        "code": "entity_not_found",
+        "query": "林帆",
+        "suggestions": [
+          {
+            "id": 12,
+            "name": "林凡"
+          }
+        ]
+      },
+      {
+        "code": "entity_not_found",
+        "query": "某人",
+        "suggestions": []
+      },
+      {
+        "code": "entity_ambiguous",
+        "query": "小李",
+        "candidates": [
+          {
+            "id": 1,
+            "name": "小李",
+            "kind_label": "人物"
+          },
+          {
+            "id": 2,
+            "name": "小李子",
+            "kind_label": "人物"
+          }
+        ]
+      },
+      {
+        "code": "entity_exists",
+        "name": "苏婉",
+        "id": 21
+      },
+      {
+        "code": "pid_not_found",
+        "tool": "delete_paragraphs",
+        "pids": [
+          "p99",
+          "p100"
+        ]
+      },
+      {
+        "code": "pid_not_found",
+        "tool": "read_chapter",
+        "pids": [
+          "p99"
+        ]
+      },
+      {
+        "code": "text_not_found",
+        "pid": "p3",
+        "text": "原文"
+      },
+      {
+        "code": "text_ambiguous",
+        "pid": "p3",
+        "count": 2
+      },
+      {
+        "code": "granularity",
+        "tool": "insert_text",
+        "mode": "sentence",
+        "mode_label": "逐句",
+        "reason": "newline",
+        "length": 0,
+        "limit": 400
+      },
+      {
+        "code": "granularity",
+        "tool": "insert_paragraphs",
+        "mode": "sentence",
+        "mode_label": "逐句",
+        "reason": "newline",
+        "length": 0,
+        "limit": 3000
+      },
+      {
+        "code": "granularity",
+        "tool": "insert_text",
+        "mode": "paragraph",
+        "mode_label": "逐段",
+        "reason": "too_long",
+        "length": 3500,
+        "limit": 3000
+      },
+      {
+        "code": "granularity",
+        "tool": "insert_text",
+        "mode": "free",
+        "mode_label": "自由",
+        "reason": "empty",
+        "length": 0,
+        "limit": 0
+      },
+      {
+        "code": "draft_empty"
+      },
+      {
+        "code": "isolated_readonly",
+        "target": "林凡(#12)"
+      },
+      {
+        "code": "chapter_not_found",
+        "query": "99"
+      },
+      {
+        "code": "chapter_not_official",
+        "label": "第14章"
+      },
+      {
+        "code": "no_knowledge_scope"
+      },
+      {
+        "code": "scope_not_found",
+        "name": "明代史料",
+        "available": [
+          "仙侠设定",
+          "杂项"
+        ]
+      },
+      {
+        "code": "not_found",
+        "what_label": "时间线事件",
+        "id": 3
+      },
+      {
+        "code": "entry_exists",
+        "title": "宋代茶馆",
+        "id": 7
+      },
+      {
+        "code": "find_failed",
+        "doc_label": "世界观",
+        "count": 0,
+        "find": "三大宗门"
+      },
+      {
+        "code": "find_failed",
+        "doc_label": "世界观",
+        "count": 2,
+        "find": "宗门"
+      },
+      {
+        "code": "find_failed",
+        "doc_label": "知识条目",
+        "count": 0,
+        "find": "约三百家"
+      },
+      {
+        "code": "maintenance_incomplete",
+        "missing": [
+          "summary",
+          "appearances"
+        ]
+      },
+      {
+        "code": "search_not_configured"
+      },
+      {
+        "code": "search_failed",
+        "reason": "timeout",
+        "status": 0
+      },
+      {
+        "code": "search_failed",
+        "reason": "status",
+        "status": 503
+      },
+      {
+        "code": "search_failed",
+        "reason": "auth",
+        "status": 0
+      },
+      {
+        "code": "fetch_failed",
+        "url": "https://a",
+        "reason": "timeout",
+        "status": 0
+      },
+      {
+        "code": "fetch_failed",
+        "url": "https://a",
+        "reason": "status",
+        "status": 404
+      },
+      {
+        "code": "fetch_failed",
+        "url": "http://10.0.0.1",
+        "reason": "blocked",
+        "status": 0
+      },
+      {
+        "code": "unsupported_content_type",
+        "url": "https://a.pdf",
+        "content_type": "application/pdf"
+      },
+      {
+        "code": "character_not_found",
+        "name": "王二"
+      },
+      {
+        "code": "character_exists",
+        "name": "苏婉"
+      },
+      {
+        "code": "reorder_mismatch",
+        "expected": [
+          "林凡",
+          "苏婉"
+        ]
+      },
+      {
+        "code": "relation_not_found",
+        "source": "林凡",
+        "target": "张三",
+        "kind": "师兄"
+      },
+      {
+        "code": "seed_only",
+        "tool": "create_entity",
+        "field": "is_protagonist"
+      },
+      {
+        "code": "exactly_one",
+        "fields": [
+          "edits",
+          "append",
+          "character"
+        ]
+      },
+      {
+        "code": "mutually_exclusive",
+        "fields": [
+          "content",
+          "edits"
+        ]
+      },
+      {
+        "code": "mutually_exclusive",
+        "fields": [
+          "move_after",
+          "move_before"
+        ]
+      },
+      {
+        "code": "tool_not_allowed",
+        "tool": "get_entity",
+        "phase_label": "正文阶段",
+        "allowed": [
+          "insert_text"
+        ]
+      },
+      {
+        "code": "output_truncated"
+      },
+      {
+        "code": "after_completion"
+      },
+      {
+        "code": "internal"
+      },
+      {
+        "code": "not_found",
+        "details_available": false
+      },
+      {
+        "code": "scope_excluded",
+        "name": "宋代社会"
+      },
+      {
+        "code": "target_scope_unset"
+      },
+      {
+        "code": "refusal"
+      },
+      {
+        "code": "timeline_conflict",
+        "reason": "occurred_ancestor",
+        "conflict": "#12 旧日之战"
+      },
+      {
+        "code": "timeline_conflict",
+        "reason": "planned_descendant",
+        "conflict": "#13 计划场景"
+      },
+      {
+        "code": "timeline_conflict",
+        "reason": "occurred_descendant",
+        "conflict": "#14 已发生场景"
+      },
+      {
+        "code": "timeline_conflict",
+        "reason": "backward",
+        "conflict": ""
+      },
+      {
+        "code": "timeline_has_children",
+        "count": 2
+      },
+      {
+        "code": "system_off",
+        "system_label": "时间线"
+      }
+    ],
+    "result.finish_maintenance": [
+      {
+        "confirm_needed": true,
+        "changes": 0,
+        "proposals": 0,
+        "goal_proposals": 0
+      },
+      {
+        "confirm_needed": false,
+        "changes": 12,
+        "proposals": 1,
+        "goal_proposals": 2
+      },
+      {
+        "confirm_needed": false,
+        "changes": 3,
+        "proposals": 0,
+        "goal_proposals": 0
+      }
+    ],
+    "result.finish_research": [
+      {
+        "entries": 5
+      }
+    ],
+    "result.foreshadowing_list": [
+      {
+        "items": [
+          {
+            "id": 9,
+            "title": "剑穗",
+            "status_label": "未回收",
+            "description": "……",
+            "planted_label": "第5章",
+            "planned_payoff": "揭示身世",
+            "resolution": "",
+            "resolved_label": "",
+            "anchor": {
+              "id": 12,
+              "title": "入门",
+              "position_label": "之后",
+              "planned": true
+            },
+            "anchor_abandoned": false
+          },
+          {
+            "id": 10,
+            "title": "旧信",
+            "status_label": "未回收",
+            "description": "",
+            "planted_label": "",
+            "anchor": null,
+            "anchor_abandoned": true,
+            "planned_payoff": "",
+            "resolution": "",
+            "resolved_label": ""
+          },
+          {
+            "id": 11,
+            "title": "无锚点",
+            "status_label": "未回收",
+            "description": "",
+            "planted_label": "",
+            "anchor": null,
+            "anchor_abandoned": false,
+            "planned_payoff": "只写方向",
+            "resolution": "",
+            "resolved_label": ""
+          }
+        ]
+      },
+      {
+        "items": []
+      }
+    ],
+    "result.knowledge_entry": [
+      {
+        "id": 7,
+        "title": "宋代茶馆",
         "scope": "宋代社会",
-        "requirements": ""
-       }
-      ]
-     }
-    ]
-   }
-  ],
-  "notice.tool_not_allowed": [
-   {
-    "tool": "get_entity",
-    "phase_label": "正文阶段",
-    "allowed": [
-     "insert_text",
-     "read_draft"
-    ]
-   },
-   {
-    "tool": "record_appearances",
-    "phase_label": "本任务",
-    "allowed": [
-     "create_entity",
-     "finish_maintenance"
-    ]
-   }
-  ],
-  "notice.user_edits": [
-   {
-    "compact": false,
-    "counts": {
-     "modified": 1,
-     "deleted": 1,
-     "inserted": 1
-    },
-    "modified": [
-     {
-      "pid": "p2",
-      "old": "雨",
-      "new": "雨更大了"
-     }
-    ],
-    "deleted": [
-     {
-      "pid": "p3",
-      "old": "风"
-     }
-    ],
-    "inserted": [
-     {
-      "pid": "p9",
-      "after": null,
-      "text": "新"
-     },
-     {
-      "pid": "p10",
-      "after": "p9",
-      "text": "又新"
-     }
-    ],
-    "tail_changed": true,
-    "tail_open": false,
-    "outline_changed": false,
-    "outline": "",
-    "notes_changed": false,
-    "reference_notes": ""
-   },
-   {
-    "compact": true,
-    "counts": {
-     "modified": 5,
-     "deleted": 2,
-     "inserted": 9
-    },
-    "modified": [],
-    "deleted": [],
-    "inserted": [],
-    "tail_changed": false,
-    "tail_open": false,
-    "outline_changed": true,
-    "outline": "## 场景一（作者改）",
-    "notes_changed": true,
-    "reference_notes": "- 苏婉不哭"
-   },
-   {
-    "compact": false,
-    "counts": {
-     "modified": 0,
-     "deleted": 0,
-     "inserted": 0
-    },
-    "modified": [],
-    "deleted": [],
-    "inserted": [],
-    "tail_changed": false,
-    "tail_open": false,
-    "outline_changed": true,
-    "outline": "## 场景一（作者改）",
-    "notes_changed": false,
-    "reference_notes": ""
-   }
-  ],
-  "notice.web_content": [
-   {
-    "body": "外部内容"
-   }
-  ],
-  "planner.kickoff": [
-   {},
-   {
-    "chapter": {
-     "id": 45,
-     "number": 13,
-     "label": "第13章",
-     "title": "夜雨",
-     "guidance": "让苏婉第一次展露实力。",
-     "outline": "## 场景一\n- 目标",
-     "reference_notes": "- 林凡左臂有伤",
-     "target_min": 3000,
-     "target_max": 4000,
-     "word_count": 2350,
-     "has_draft": false
-    }
-   },
-   {
-    "chapter": {
-     "id": 45,
-     "number": 13,
-     "label": "第13章",
-     "title": "夜雨",
-     "guidance": "让苏婉第一次展露实力。",
-     "outline": "",
-     "reference_notes": "",
-     "target_min": 3000,
-     "target_max": 4000,
-     "word_count": 2350,
-     "has_draft": false
-    },
-    "track": {
-     "is_main": false,
-     "kind": "side",
-     "title": "剑冢旧事",
-     "synopsis": "师父年轻时的故事。",
-     "canon_mode": "isolated",
-     "anchor_kind": "after_chapter",
-     "anchor_label": "第12章《剑冢》"
-    }
-   }
-  ],
-  "planner.notice.retrieval_budget": [
-   {
-    "used": 30
-   }
-  ],
-  "researcher.kickoff": [
-   {},
-   {
-    "research": {
-     "topic": "宋代市井",
-     "requirements": "",
-     "scope_name": "宋代社会",
-     "scope_description": "",
-     "language_name": "简体中文",
-     "existing_titles": [],
-     "max_tool_calls": 40,
-     "max_entries": 25
-    }
-   }
-  ],
-  "result.ask_user": [
-   {
-    "answers": [
-     {
-      "question": "基调？",
-      "selected": [
-       "热血"
-      ],
-      "other": "再轻松点"
-     },
-     {
-      "question": "结局？",
-      "selected": [],
-      "other": ""
-     },
-     {
-      "question": "篇幅？",
-      "selected": [],
-      "other": "百万字"
-     }
-    ]
-   }
-  ],
-  "result.canon_write": [
-   {
-    "action": "create_entity",
-    "target": "苏婉(#21)",
-    "count": 3,
-    "prev_event": null,
-    "next_event": null,
-    "moved": false
-   },
-   {
-    "action": "record_appearances",
-    "target": "",
-    "count": 3,
-    "prev_event": null,
-    "next_event": null,
-    "moved": false
-   },
-   {
-    "action": "add_timeline_event",
-    "target": "入门(#5)",
-    "count": 3,
-    "prev_event": 4,
-    "next_event": 6,
-    "moved": false
-   },
-   {
-    "action": "add_timeline_event",
-    "target": "入门(#5)",
-    "count": 3,
-    "prev_event": null,
-    "next_event": null,
-    "moved": false
-   },
-   {
-    "action": "update_timeline_event",
-    "target": "入门(#5)",
-    "count": 3,
-    "prev_event": 2,
-    "next_event": null,
-    "moved": true
-   },
-   {
-    "action": "set_chapter_summary",
-    "target": "",
-    "count": 3,
-    "prev_event": null,
-    "next_event": null,
-    "moved": false
-   },
-   {
-    "action": "propose_setting_change",
-    "target": "世界观",
-    "count": 3,
-    "prev_event": null,
-    "next_event": null,
-    "moved": false
-   },
-   {
-    "action": "propose_goal_change",
-    "target": "目标",
-    "count": 3,
-    "prev_event": null,
-    "next_event": null,
-    "moved": false
-   }
-  ],
-  "result.chapter_text": [
-   {
-    "label": "第3章《初见》",
-    "paragraphs": [
-     {
-      "pid": "p1",
-      "text": "林凡抬起头。"
-     },
-     {
-      "pid": "p2",
-      "text": "雨更大了"
-     }
-    ],
-    "next_pid": "p40",
-    "total_paragraphs": 80
-   },
-   {
-    "label": "第3章",
-    "paragraphs": [
-     {
-      "pid": "p1",
-      "text": "林凡抬起头。"
-     },
-     {
-      "pid": "p2",
-      "text": "雨更大了"
-     }
-    ],
-    "next_pid": null,
-    "total_paragraphs": 2
-   }
-  ],
-  "result.conception_write": [
-   {
-    "action": "write_setting_doc",
-    "doc_label": "世界观",
-    "revision": 3,
-    "chars": 2000,
-    "name": "林凡",
-    "rank": 1,
-    "order": [
-     "林凡",
-     "苏婉"
-    ],
-    "count": 4,
-    "created": false,
-    "kept": []
-   },
-   {
-    "action": "edit_setting_doc",
-    "doc_label": "世界观",
-    "revision": 3,
-    "chars": 2000,
-    "name": "林凡",
-    "rank": 1,
-    "order": [
-     "林凡",
-     "苏婉"
-    ],
-    "count": 4,
-    "created": false,
-    "kept": []
-   },
-   {
-    "action": "upsert_character",
-    "doc_label": "世界观",
-    "revision": 3,
-    "chars": 2000,
-    "name": "林凡",
-    "rank": 1,
-    "order": [
-     "林凡",
-     "苏婉"
-    ],
-    "count": 4,
-    "created": true,
-    "kept": []
-   },
-   {
-    "action": "upsert_character",
-    "doc_label": "世界观",
-    "revision": 3,
-    "chars": 2000,
-    "name": "林凡",
-    "rank": 1,
-    "order": [
-     "林凡",
-     "苏婉"
-    ],
-    "count": 4,
-    "created": false,
-    "kept": []
-   },
-   {
-    "action": "remove_character",
-    "doc_label": "世界观",
-    "revision": 3,
-    "chars": 2000,
-    "name": "林凡",
-    "rank": 1,
-    "order": [
-     "林凡",
-     "苏婉"
-    ],
-    "count": 4,
-    "created": false,
-    "kept": []
-   },
-   {
-    "action": "reorder_characters",
-    "doc_label": "世界观",
-    "revision": 3,
-    "chars": 2000,
-    "name": "林凡",
-    "rank": 1,
-    "order": [
-     "林凡",
-     "苏婉"
-    ],
-    "count": 4,
-    "created": false,
-    "kept": []
-   },
-   {
-    "action": "set_research_topics",
-    "doc_label": "世界观",
-    "revision": 3,
-    "chars": 2000,
-    "name": "林凡",
-    "rank": 1,
-    "order": [
-     "林凡",
-     "苏婉"
-    ],
-    "count": 4,
-    "created": false,
-    "kept": []
-   }
-  ],
-  "result.draft_edit": [
-   {
-    "action": "insert_text",
-    "inserted": [
-     "p9"
-    ],
-    "appended_to": null,
-    "pid": "p3",
-    "deleted": [],
-    "after": null,
-    "tail_open": false,
-    "last_pid": "p9",
-    "word_count": 100,
-    "target_min": 3000,
-    "target_max": 4000,
-    "chapter_end": false,
-    "short_of_target": false,
-    "ignored_chapter_end": false
-   },
-   {
-    "action": "insert_text",
-    "inserted": [],
-    "appended_to": "p8",
-    "pid": "p3",
-    "deleted": [],
-    "after": null,
-    "tail_open": true,
-    "last_pid": "p9",
-    "word_count": 100,
-    "target_min": 3000,
-    "target_max": 4000,
-    "chapter_end": false,
-    "short_of_target": false,
-    "ignored_chapter_end": false
-   },
-   {
-    "action": "insert_text",
-    "inserted": [
-     "p9",
-     "p10"
-    ],
-    "appended_to": "p8",
-    "pid": "p3",
-    "deleted": [],
-    "after": null,
-    "tail_open": false,
-    "last_pid": "p9",
-    "word_count": 100,
-    "target_min": 3000,
-    "target_max": 4000,
-    "chapter_end": true,
-    "short_of_target": false,
-    "ignored_chapter_end": false
-   },
-   {
-    "action": "insert_text",
-    "inserted": [
-     "p9"
-    ],
-    "appended_to": null,
-    "pid": "p3",
-    "deleted": [],
-    "after": null,
-    "tail_open": false,
-    "last_pid": "p9",
-    "word_count": 100,
-    "target_min": 3000,
-    "target_max": 4000,
-    "chapter_end": false,
-    "short_of_target": true,
-    "ignored_chapter_end": false
-   },
-   {
-    "action": "insert_paragraphs",
-    "inserted": [
-     "p11"
-    ],
-    "appended_to": null,
-    "pid": "p3",
-    "deleted": [],
-    "after": "p10",
-    "tail_open": false,
-    "last_pid": "p9",
-    "word_count": 100,
-    "target_min": 3000,
-    "target_max": 4000,
-    "chapter_end": false,
-    "short_of_target": false,
-    "ignored_chapter_end": false
-   },
-   {
-    "action": "insert_paragraphs",
-    "inserted": [
-     "p1"
-    ],
-    "appended_to": null,
-    "pid": "p3",
-    "deleted": [],
-    "after": null,
-    "tail_open": false,
-    "last_pid": "p9",
-    "word_count": 100,
-    "target_min": 3000,
-    "target_max": 4000,
-    "chapter_end": false,
-    "short_of_target": false,
-    "ignored_chapter_end": false
-   },
-   {
-    "action": "replace_text",
-    "inserted": [],
-    "appended_to": null,
-    "pid": "p3",
-    "deleted": [
-     "p3"
-    ],
-    "after": null,
-    "tail_open": false,
-    "last_pid": "p9",
-    "word_count": 100,
-    "target_min": 3000,
-    "target_max": 4000,
-    "chapter_end": false,
-    "short_of_target": false,
-    "ignored_chapter_end": false
-   },
-   {
-    "action": "rewrite_paragraph",
-    "inserted": [
-     "p12"
-    ],
-    "appended_to": null,
-    "pid": "p3",
-    "deleted": [],
-    "after": null,
-    "tail_open": false,
-    "last_pid": "p9",
-    "word_count": 100,
-    "target_min": 3000,
-    "target_max": 4000,
-    "chapter_end": false,
-    "short_of_target": false,
-    "ignored_chapter_end": true
-   },
-   {
-    "action": "delete_paragraphs",
-    "inserted": [],
-    "appended_to": null,
-    "pid": "p3",
-    "deleted": [
-     "p4",
-     "p5"
-    ],
-    "after": null,
-    "tail_open": false,
-    "last_pid": "p9",
-    "word_count": 100,
-    "target_min": 3000,
-    "target_max": 4000,
-    "chapter_end": false,
-    "short_of_target": false,
-    "ignored_chapter_end": false
-   }
-  ],
-  "result.draft_text": [
-   {
-    "paragraphs": [
-     {
-      "pid": "p1",
-      "text": "林凡抬起头。"
-     },
-     {
-      "pid": "p2",
-      "text": "雨更大了"
-     }
-    ],
-    "tail_open": true,
-    "word_count": 12,
-    "target_min": 3000,
-    "target_max": 4000,
-    "next_pid": null,
-    "total_paragraphs": 2
-   },
-   {
-    "paragraphs": [],
-    "tail_open": false,
-    "word_count": 0,
-    "target_min": 3000,
-    "target_max": 4000,
-    "next_pid": null,
-    "total_paragraphs": 0
-   }
-  ],
-  "result.entity_card": [
-   {
-    "e": {
-     "id": 12,
-     "name": "林凡",
-     "kind_label": "人物",
-     "is_protagonist": true,
-     "importance": 5,
-     "status_label": "活跃",
-     "aliases": [
-      "凡哥",
-      "林师弟"
-     ],
-     "summary": "外门弟子",
-     "state": "身处剑冢",
-     "state_after_anchor": true,
-     "attributes": [
-      {
-       "key": "修为",
-       "value": "筑基中期"
-      }
-     ],
-     "description": "……"
-    },
-    "relations": [
-     {
-      "subject": "林凡(#12)",
-      "object": "张三(#15)",
-      "kind": "师兄",
-      "ended": false,
-      "until_label": "",
-      "description": "同门",
-      "since_label": "第3章"
-     },
-     {
-      "subject": "林凡(#12)",
-      "object": "王五(#16)",
-      "kind": "仇敌",
-      "ended": true,
-      "until_label": "第9章",
-      "description": "",
-      "since_label": ""
-     }
-    ],
-    "changes": [
-     {
-      "chapter_label": "第11章",
-      "note": "突破",
-      "after_anchor": true
-     }
-    ],
-    "appearances": {
-     "first_label": "第1章",
-     "last_label": "第12章",
-     "window_size": 10,
-     "window_count": 8
-    },
-    "design": {
-     "role_label": "主角",
-     "summary": "……"
-    }
-   },
-   {
-    "e": {
-     "id": 30,
-     "name": "石碑",
-     "kind_label": "物品",
-     "is_protagonist": false,
-     "importance": 2,
-     "status_label": "活跃",
-     "aliases": [],
-     "summary": "",
-     "state": "",
-     "state_after_anchor": false,
-     "attributes": [],
-     "description": ""
-    },
-    "relations": [],
-    "changes": [],
-    "appearances": {
-     "first_label": "",
-     "last_label": "",
-     "window_size": 10,
-     "window_count": 0
-    },
-    "design": null
-   }
-  ],
-  "result.entity_list": [
-   {
-    "items": [
-     {
-      "id": 12,
-      "name": "林凡",
-      "kind_label": "人物",
-      "aliases": [
-       "凡哥"
-      ],
-      "summary": "外门弟子",
-      "status": "active",
-      "status_label": "活跃"
-     },
-     {
-      "id": 13,
-      "name": "老剑",
-      "kind_label": "物品",
-      "aliases": [],
-      "summary": "",
-      "status": "destroyed",
-      "status_label": "已损毁"
-     }
-    ],
-    "total": 40,
-    "shown": 30
-   },
-   {
-    "items": [],
-    "total": 0,
-    "shown": 0
-   }
-  ],
-  "result.error": [
-   {
-    "code": "invalid_json",
-    "raw": "{\"text\": \"…"
-   },
-   {
-    "code": "validation",
-    "errors": [
-     "$.text: missing",
-     "$.x: unexpected"
-    ]
-   },
-   {
-    "code": "entity_not_found",
-    "query": "林帆",
-    "suggestions": [
-     {
-      "id": 12,
-      "name": "林凡"
-     }
-    ]
-   },
-   {
-    "code": "entity_not_found",
-    "query": "某人",
-    "suggestions": []
-   },
-   {
-    "code": "entity_ambiguous",
-    "query": "小李",
-    "candidates": [
-     {
-      "id": 1,
-      "name": "小李",
-      "kind_label": "人物"
-     },
-     {
-      "id": 2,
-      "name": "小李子",
-      "kind_label": "人物"
-     }
-    ]
-   },
-   {
-    "code": "entity_exists",
-    "name": "苏婉",
-    "id": 21
-   },
-   {
-    "code": "pid_not_found",
-    "tool": "delete_paragraphs",
-    "pids": [
-     "p99",
-     "p100"
-    ]
-   },
-   {
-    "code": "pid_not_found",
-    "tool": "read_chapter",
-    "pids": [
-     "p99"
-    ]
-   },
-   {
-    "code": "text_not_found",
-    "pid": "p3",
-    "text": "原文"
-   },
-   {
-    "code": "text_ambiguous",
-    "pid": "p3",
-    "count": 2
-   },
-   {
-    "code": "granularity",
-    "tool": "insert_text",
-    "mode": "sentence",
-    "mode_label": "逐句",
-    "reason": "newline",
-    "length": 0,
-    "limit": 400
-   },
-   {
-    "code": "granularity",
-    "tool": "insert_paragraphs",
-    "mode": "sentence",
-    "mode_label": "逐句",
-    "reason": "newline",
-    "length": 0,
-    "limit": 3000
-   },
-   {
-    "code": "granularity",
-    "tool": "insert_text",
-    "mode": "paragraph",
-    "mode_label": "逐段",
-    "reason": "too_long",
-    "length": 3500,
-    "limit": 3000
-   },
-   {
-    "code": "granularity",
-    "tool": "insert_text",
-    "mode": "free",
-    "mode_label": "自由",
-    "reason": "empty",
-    "length": 0,
-    "limit": 0
-   },
-   {
-    "code": "draft_empty"
-   },
-   {
-    "code": "isolated_readonly",
-    "target": "林凡(#12)"
-   },
-   {
-    "code": "chapter_not_found",
-    "query": "99"
-   },
-   {
-    "code": "chapter_not_official",
-    "label": "第14章"
-   },
-   {
-    "code": "no_knowledge_scope"
-   },
-   {
-    "code": "scope_not_found",
-    "name": "明代史料",
-    "available": [
-     "仙侠设定",
-     "杂项"
-    ]
-   },
-   {
-    "code": "not_found",
-    "what_label": "时间线事件",
-    "id": 3
-   },
-   {
-    "code": "entry_exists",
-    "title": "宋代茶馆",
-    "id": 7
-   },
-   {
-    "code": "find_failed",
-    "doc_label": "世界观",
-    "count": 0,
-    "find": "三大宗门"
-   },
-   {
-    "code": "find_failed",
-    "doc_label": "世界观",
-    "count": 2,
-    "find": "宗门"
-   },
-   {
-    "code": "find_failed",
-    "doc_label": "知识条目",
-    "count": 0,
-    "find": "约三百家"
-   },
-   {
-    "code": "maintenance_incomplete",
-    "missing": [
-     "summary",
-     "appearances"
-    ]
-   },
-   {
-    "code": "search_not_configured"
-   },
-   {
-    "code": "search_failed",
-    "reason": "timeout",
-    "status": 0
-   },
-   {
-    "code": "search_failed",
-    "reason": "status",
-    "status": 503
-   },
-   {
-    "code": "search_failed",
-    "reason": "auth",
-    "status": 0
-   },
-   {
-    "code": "fetch_failed",
-    "url": "https://a",
-    "reason": "timeout",
-    "status": 0
-   },
-   {
-    "code": "fetch_failed",
-    "url": "https://a",
-    "reason": "status",
-    "status": 404
-   },
-   {
-    "code": "fetch_failed",
-    "url": "http://10.0.0.1",
-    "reason": "blocked",
-    "status": 0
-   },
-   {
-    "code": "unsupported_content_type",
-    "url": "https://a.pdf",
-    "content_type": "application/pdf"
-   },
-   {
-    "code": "character_not_found",
-    "name": "王二"
-   },
-   {
-    "code": "character_exists",
-    "name": "苏婉"
-   },
-   {
-    "code": "reorder_mismatch",
-    "expected": [
-     "林凡",
-     "苏婉"
-    ]
-   },
-   {
-    "code": "relation_not_found",
-    "source": "林凡",
-    "target": "张三",
-    "kind": "师兄"
-   },
-   {
-    "code": "seed_only",
-    "tool": "create_entity",
-    "field": "is_protagonist"
-   },
-   {
-    "code": "exactly_one",
-    "fields": [
-     "edits",
-     "append",
-     "character"
-    ]
-   },
-   {
-    "code": "mutually_exclusive",
-    "fields": [
-     "content",
-     "edits"
-    ]
-   },
-   {
-    "code": "mutually_exclusive",
-    "fields": [
-     "move_after",
-     "move_before"
-    ]
-   },
-   {
-    "code": "tool_not_allowed",
-    "tool": "get_entity",
-    "phase_label": "正文阶段",
-    "allowed": [
-     "insert_text"
-    ]
-   },
-   {
-    "code": "output_truncated"
-   },
-   {
-    "code": "after_completion"
-   },
-   {
-    "code": "internal"
-   },
-   {
-    "code": "not_found",
-    "details_available": false
-   },
-   {
-    "code": "scope_excluded",
-    "name": "宋代社会"
-   },
-   {
-    "code": "target_scope_unset"
-   },
-   {
-    "code": "refusal"
-   }
-  ],
-  "result.finish_maintenance": [
-   {
-    "confirm_needed": true,
-    "changes": 0,
-    "proposals": 0,
-    "goal_proposals": 0
-   },
-   {
-    "confirm_needed": false,
-    "changes": 12,
-    "proposals": 1,
-    "goal_proposals": 2
-   },
-   {
-    "confirm_needed": false,
-    "changes": 3,
-    "proposals": 0,
-    "goal_proposals": 0
-   }
-  ],
-  "result.finish_research": [
-   {
-    "entries": 5
-   }
-  ],
-  "result.foreshadowing_list": [
-   {
-    "items": [
-     {
-      "id": 9,
-      "title": "剑穗",
-      "status_label": "未回收",
-      "description": "……",
-      "planted_label": "第5章",
-      "planned_payoff": "",
-      "resolution": "",
-      "resolved_label": ""
-     }
-    ]
-   },
-   {
-    "items": []
-   }
-  ],
-  "result.knowledge_entry": [
-   {
-    "id": 7,
-    "title": "宋代茶馆",
-    "scope": "宋代社会",
-    "sources": [
-     "https://a"
-    ],
-    "content": "……",
-    "offset": 0,
-    "end": 6000,
-    "total": 9000,
-    "next_offset": 6000
-   },
-   {
-    "id": 7,
-    "title": "宋代茶馆",
-    "scope": "宋代社会",
-    "sources": [],
-    "content": "……",
-    "offset": 0,
-    "end": 100,
-    "total": 100,
-    "next_offset": null
-   }
-  ],
-  "result.knowledge_write": [
-   {
-    "action": "created",
-    "id": 7,
-    "title": "宋代茶馆",
-    "scope": "宋代社会"
-   },
-   {
-    "action": "updated",
-    "id": 7,
-    "title": "宋代茶馆",
-    "scope": "宋代社会"
-   }
-  ],
-  "result.relations": [
-   {
-    "entity": "林凡(#12)",
-    "items": [
-     {
-      "subject": "林凡(#12)",
-      "object": "张三(#15)",
-      "kind": "师兄",
-      "ended": false,
-      "until_label": "",
-      "description": "",
-      "since_label": ""
-     }
-    ]
-   },
-   {
-    "entity": "林凡(#12)",
-    "items": []
-   }
-  ],
-  "result.request_review": [
-   {
-    "items": [
-     {
-      "doc_label": "故事大纲",
-      "approved": true,
-      "feedback": ""
-     },
-     {
-      "doc_label": "世界观",
-      "approved": false,
-      "feedback": "势力太多"
-     }
-    ],
-    "general": "整体不错",
-    "all_approved": false
-   },
-   {
-    "items": [
-     {
-      "doc_label": "故事大纲",
-      "approved": true,
-      "feedback": ""
-     }
-    ],
-    "general": "",
-    "all_approved": true
-   }
-  ],
-  "result.search_hits": [
-   {
-    "corpus": "canon",
-    "query": "剑冢",
-    "hits": [
-     {
-      "kind_label": "实体",
-      "title": "剑冢",
-      "ref": 3,
-      "snippet": "……",
-      "location": "范围",
-      "pids": [],
-      "after_anchor": false
-     },
-     {
-      "kind_label": "实体",
-      "title": "剑冢",
-      "ref": 4,
-      "snippet": "……",
-      "location": "范围",
-      "pids": [],
-      "after_anchor": true
-     }
-    ],
-    "vector_available": true
-   },
-   {
-    "corpus": "knowledge",
-    "query": "剑冢",
-    "hits": [
-     {
-      "kind_label": "实体",
-      "title": "剑冢",
-      "ref": 3,
-      "snippet": "……",
-      "location": "范围",
-      "pids": [],
-      "after_anchor": false
-     },
-     {
-      "kind_label": "实体",
-      "title": "剑冢",
-      "ref": 4,
-      "snippet": "……",
-      "location": "范围",
-      "pids": [],
-      "after_anchor": true
-     }
-    ],
-    "vector_available": false
-   },
-   {
-    "corpus": "chapters",
-    "query": "剑冢",
-    "hits": [
-     {
-      "kind_label": "实体",
-      "title": "剑冢",
-      "ref": 3,
-      "snippet": "……",
-      "location": "范围",
-      "pids": [
-       "p3",
-       "p4",
-       "p5"
-      ],
-      "after_anchor": false
-     },
-     {
-      "kind_label": "实体",
-      "title": "剑冢",
-      "ref": 4,
-      "snippet": "……",
-      "location": "范围",
-      "pids": [
-       "p9"
-      ],
-      "after_anchor": true
-     }
-    ],
-    "vector_available": true
-   },
-   {
-    "corpus": "canon",
-    "query": "x",
-    "hits": [],
-    "vector_available": true
-   }
-  ],
-  "result.submit_review": [
-   {
-    "attempt": 1,
-    "issues": 3,
-    "dropped_pids": [
-     "p99"
-    ]
-   },
-   {
-    "attempt": 2,
-    "issues": 0,
-    "dropped_pids": []
-   }
-  ],
-  "result.timeline": [
-   {
-    "items": [
-     {
-      "id": 1,
-      "story_time": "春",
-      "title": "入门",
-      "description": "",
-      "chapter_label": "第1章",
-      "entities": [
-       "林凡",
-       "苏婉"
-      ],
-      "after_anchor": false
-     }
-    ],
-    "total": 5,
-    "shown": 1,
-    "mode": "chronological"
-   },
-   {
-    "items": [],
-    "total": 0,
-    "shown": 0,
-    "mode": "recent_first"
-   }
-  ],
-  "result.truncated": [
-   {
-    "next_offset": 6000
-   },
-   {
-    "next_offset": null
-   }
-  ],
-  "result.web_fetch": [
-   {
-    "url": "https://a",
-    "title": "标题",
-    "offset": 0,
-    "end": 8000,
-    "total": 20000,
-    "next_offset": 8000,
-    "body": "正文"
-   },
-   {
-    "url": "https://a",
-    "title": "",
-    "offset": 0,
-    "end": 100,
-    "total": 100,
-    "next_offset": null,
-    "body": "正文"
-   }
-  ],
-  "result.web_search": [
-   {
-    "query": "宋代",
-    "hits": [
-     {
-      "title": "宋代茶馆",
-      "url": "https://a",
-      "published": "2020-01-01",
-      "snippet": "……"
-     },
-     {
-      "title": "b",
-      "url": "https://b",
-      "published": "",
-      "snippet": "……"
-     }
-    ]
-   },
-   {
-    "query": "x",
-    "hits": []
-   }
-  ],
-  "result.writer_control": [
-   {
-    "action": "submit_outline",
-    "word_count": 3100,
-    "target_min": 3000,
-    "confirm_needed": false,
-    "title_set": true,
-    "title": "剑冢",
-    "staged": false
-   },
-   {
-    "action": "submit_outline",
-    "word_count": 3100,
-    "target_min": 3000,
-    "confirm_needed": false,
-    "title_set": false,
-    "title": "剑冢",
-    "staged": false
-   },
-   {
-    "action": "submit_outline",
-    "word_count": 3100,
-    "target_min": 3000,
-    "confirm_needed": false,
-    "title_set": true,
-    "title": "剑冢",
-    "staged": true
-   },
-   {
-    "action": "submit_revision_plan",
-    "word_count": 3100,
-    "target_min": 3000,
-    "confirm_needed": false,
-    "title_set": false,
-    "title": "剑冢",
-    "staged": false
-   },
-   {
-    "action": "finish_draft",
-    "word_count": 1200,
-    "target_min": 3000,
-    "confirm_needed": true,
-    "title_set": false,
-    "title": "剑冢",
-    "staged": false
-   },
-   {
-    "action": "finish_draft",
-    "word_count": 3100,
-    "target_min": 3000,
-    "confirm_needed": false,
-    "title_set": false,
-    "title": "剑冢",
-    "staged": false
-   },
-   {
-    "action": "finish_revision",
-    "word_count": 3100,
-    "target_min": 3000,
-    "confirm_needed": false,
-    "title_set": false,
-    "title": "剑冢",
-    "staged": false
-   }
-  ],
-  "reviewer.kickoff": [
-   {},
-   {
-    "track": {
-     "is_main": false,
-     "kind": "side",
-     "title": "剑冢旧事",
-     "synopsis": "师父年轻时的故事。",
-     "canon_mode": "isolated",
-     "anchor_kind": "after_chapter",
-     "anchor_label": "第12章《剑冢》"
-    },
-    "chapter": {
-     "id": 45,
-     "number": 13,
-     "label": "第13章",
-     "title": "",
-     "guidance": "",
-     "outline": "",
-     "reference_notes": "",
-     "target_min": 3000,
-     "target_max": 4000,
-     "word_count": 0,
-     "has_draft": false
-    }
-   },
-   {
-    "prior": {
-     "attempt": 1,
-     "verdict_label": "建议修改",
-     "summary": "结尾与时间线矛盾。",
-     "feedback": "请修正 p30。",
-     "comment": "第二条判断有误：令牌在第30章已归还。"
-    }
-   }
-  ],
-  "shared.chapter_label": [
-   {},
-   {
-    "track_kind": "side",
-    "track_title": "剑冢旧事",
-    "number": 2,
-    "title": "",
-    "with_title": true
-   },
-   {
-    "with_title": false
-   }
-  ],
-  "shared.label": [
-   {
-    "enum": "entity_kind",
-    "value": "character"
-   },
-   {
-    "enum": "entity_status",
-    "value": "dead"
-   },
-   {
-    "enum": "appearance_role",
-    "value": "pov"
-   },
-   {
-    "enum": "note_kind",
-    "value": "world_rule"
-   },
-   {
-    "enum": "foreshadowing_status",
-    "value": "open"
-   },
-   {
-    "enum": "relation_status",
-    "value": "ended"
-   },
-   {
-    "enum": "setting_doc",
-    "value": "characters"
-   },
-   {
-    "enum": "granularity",
-    "value": "free"
-   },
-   {
-    "enum": "phase",
-    "value": "drafting"
-   },
-   {
-    "enum": "phase",
-    "value": "none"
-   },
-   {
-    "enum": "severity",
-    "value": "major"
-   },
-   {
-    "enum": "category",
-    "value": "prose"
-   },
-   {
-    "enum": "verdict",
-    "value": "revise"
-   },
-   {
-    "enum": "target_type",
-    "value": "timeline_event"
-   },
-   {
-    "enum": "search_kind",
-    "value": "summary"
-   },
-   {
-    "enum": "language",
-    "value": "zh-CN"
-   },
-   {
-    "enum": "language",
-    "value": "xx"
-   },
-   {
-    "enum": "target_type",
-    "value": "goal"
-   },
-   {
-    "enum": "goal_level",
-    "value": "plan"
-   }
-  ],
-  "writer.kickoff.chapter": [
-   {
-    "feedback": null
-   },
-   {
-    "feedback": null,
-    "chapter": {
-     "id": 45,
-     "number": 13,
-     "label": "第13章",
-     "title": "夜雨",
-     "guidance": "让苏婉第一次展露实力。",
-     "outline": "## 场景一\n- 目标",
-     "reference_notes": "- 林凡左臂有伤",
-     "target_min": 3000,
-     "target_max": 4000,
-     "word_count": 2350,
-     "has_draft": false
-    }
-   },
-   {},
-   {
-    "track": {
-     "is_main": false,
-     "kind": "side",
-     "title": "剑冢旧事",
-     "synopsis": "师父年轻时的故事。",
-     "canon_mode": "isolated",
-     "anchor_kind": "after_chapter",
-     "anchor_label": "第12章《剑冢》"
-    },
-    "chapter": {
-     "id": 45,
-     "number": 13,
-     "label": "第13章",
-     "title": "夜雨",
-     "guidance": "让苏婉第一次展露实力。",
-     "outline": "## 场景一\n- 目标",
-     "reference_notes": "- 林凡左臂有伤",
-     "target_min": 3000,
-     "target_max": 4000,
-     "word_count": 2350,
-     "has_draft": false
-    },
-    "feedback": null
-   }
-  ],
-  "writer.kickoff.revise": [
-   {},
-   {
-    "track": {
-     "is_main": false,
-     "kind": "side",
-     "title": "剑冢旧事",
-     "synopsis": "师父年轻时的故事。",
-     "canon_mode": "isolated",
-     "anchor_kind": "after_chapter",
-     "anchor_label": "第12章《剑冢》"
-    },
-    "chapter": {
-     "id": 45,
-     "number": 13,
-     "label": "第13章",
-     "title": "",
-     "guidance": "",
-     "outline": "",
-     "reference_notes": "",
-     "target_min": 3000,
-     "target_max": 4000,
-     "word_count": 0,
-     "has_draft": false
-    }
-   }
-  ],
-  "writer.kickoff.rollover": [
-   {},
-   {
-    "feedback": null,
-    "chapter": {
-     "id": 45,
-     "number": 13,
-     "label": "第13章",
-     "title": "",
-     "guidance": "",
-     "outline": "",
-     "reference_notes": "",
-     "target_min": 3000,
-     "target_max": 4000,
-     "word_count": 0,
-     "has_draft": false
-    }
-   },
-   {
-    "phase": "revising",
-    "granularity": {
-     "key": "sentence",
-     "label": "sentence",
-     "revising": true,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "phase": "revising",
-    "granularity": {
-     "key": "chapter",
-     "label": "chapter",
-     "revising": true,
-     "tail_open": false,
-     "last_pid": "p9"
-    },
-    "revision_plan": "",
-    "author_notes": [],
-    "chapter": {
-     "id": 45,
-     "number": 13,
-     "label": "第13章",
-     "title": "",
-     "guidance": "",
-     "outline": "",
-     "reference_notes": "",
-     "target_min": 3000,
-     "target_max": 4000,
-     "word_count": 0,
-     "has_draft": false
-    },
-    "feedback": {
-     "text": "改短一些",
-     "issues": []
-    }
-   }
-  ],
-  "writer.notice.granularity": [
-   {
-    "granularity": {
-     "key": "sentence",
-     "label": "sentence",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "paragraph",
-     "label": "paragraph",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "free",
-     "label": "free",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "chapter",
-     "label": "chapter",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "paragraph",
-     "label": "paragraph",
-     "revising": false,
-     "tail_open": true,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "chapter",
-     "label": "chapter",
-     "revising": true,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   }
-  ],
-  "writer.notice.nudge_drafting": [
-   {
-    "granularity": {
-     "key": "sentence",
-     "label": "sentence",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "paragraph",
-     "label": "paragraph",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "free",
-     "label": "free",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "chapter",
-     "label": "chapter",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "paragraph",
-     "label": "paragraph",
-     "revising": false,
-     "tail_open": true,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "chapter",
-     "label": "chapter",
-     "revising": true,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   }
-  ],
-  "writer.notice.retrieval_budget": [
-   {
-    "used": 30
-   }
-  ],
-  "writer.notice.revision_plan_accepted": [
-   {
-    "granularity": {
-     "key": "sentence",
-     "label": "sentence",
-     "revising": true,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "paragraph",
-     "label": "paragraph",
-     "revising": true,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "free",
-     "label": "free",
-     "revising": true,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "chapter",
-     "label": "chapter",
-     "revising": true,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "paragraph",
-     "label": "paragraph",
-     "revising": true,
-     "tail_open": true,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "chapter",
-     "label": "chapter",
-     "revising": true,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   }
-  ],
-  "writer.rules.granularity": [
-   {
-    "granularity": {
-     "key": "sentence",
-     "label": "sentence",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "paragraph",
-     "label": "paragraph",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "free",
-     "label": "free",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "chapter",
-     "label": "chapter",
-     "revising": false,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "paragraph",
-     "label": "paragraph",
-     "revising": false,
-     "tail_open": true,
-     "last_pid": "p9"
-    }
-   },
-   {
-    "granularity": {
-     "key": "chapter",
-     "label": "chapter",
-     "revising": true,
-     "tail_open": false,
-     "last_pid": "p9"
-    }
-   }
-  ],
-  "block.writing_skills": [
-   {}
-  ],
-  "block.recent_chapters": [
-   {},
-   {
-    "chapters": [
-     {
-      "number": 12,
-      "label": "第12章",
-      "title": "",
-      "text": "雨落下来。",
-      "partial": false
-     }
-    ]
-   }
-  ],
-  "block.canon_systems": [
-   {
-    "systems": {
-     "entities": true,
-     "timeline": true,
-     "memory": true,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "timeline",
-      "memory",
-      "foreshadowing"
-     ]
-    }
-   },
-   {
-    "systems": {
-     "entities": false,
-     "timeline": true,
-     "memory": true,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "timeline",
-      "memory",
-      "foreshadowing"
-     ]
-    }
-   },
-   {
-    "systems": {
-     "entities": true,
-     "timeline": false,
-     "memory": true,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "memory",
-      "foreshadowing"
-     ]
-    }
-   },
-   {
-    "systems": {
-     "entities": true,
-     "timeline": true,
-     "memory": false,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "timeline",
-      "foreshadowing"
-     ]
-    }
-   },
-   {
-    "systems": {
-     "entities": true,
-     "timeline": true,
-     "memory": true,
-     "foreshadowing": false,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "timeline",
-      "memory"
-     ]
-    }
-   },
-   {
-    "systems": {
-     "entities": false,
-     "timeline": false,
-     "memory": false,
-     "foreshadowing": false,
-     "goals": true,
-     "enabled": []
-    }
-   }
-  ],
-  "block.goals": [
-   {
-    "goals": {
-     "nodes": [
-      {
-       "id": 8,
-       "level": "plan",
-       "title": "守住剑冢",
-       "purpose": "让林凡在宗门倾覆前守住最后的传承。",
-       "chapters": "第10–15章",
-       "overdue": false,
-       "entities": [
-        "苏婉(#21)"
-       ],
-       "events": [
-        "#3 宗门夜变"
-       ],
-       "foreshadowing": [],
-       "parent_id": null
+        "sources": [
+          "https://a"
+        ],
+        "content": "……",
+        "offset": 0,
+        "end": 6000,
+        "total": 9000,
+        "next_offset": 6000
       },
       {
-       "id": 12,
-       "level": "task",
-       "title": "找回断剑",
-       "purpose": "用断剑证明林凡的继承者身份。",
-       "chapters": "第13章",
-       "overdue": true,
-       "entities": [],
-       "events": [],
-       "foreshadowing": [
-        "#9 黑衣人的剑穗"
-       ],
-       "parent_id": null
+        "id": 7,
+        "title": "宋代茶馆",
+        "scope": "宋代社会",
+        "sources": [],
+        "content": "……",
+        "offset": 0,
+        "end": 100,
+        "total": 100,
+        "next_offset": null
       }
-     ],
-     "omitted": 2
-    },
-    "systems": {
-     "entities": true,
-     "timeline": true,
-     "memory": true,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "timeline",
-      "memory",
-      "foreshadowing"
-     ]
-    }
-   },
-   {
-    "goals": {
-     "nodes": [
+    ],
+    "result.knowledge_write": [
       {
-       "id": 8,
-       "level": "plan",
-       "title": "守住剑冢",
-       "purpose": "让林凡在宗门倾覆前守住最后的传承。",
-       "chapters": "第10–15章",
-       "overdue": false,
-       "entities": [
-        "苏婉(#21)"
-       ],
-       "events": [
-        "#3 宗门夜变"
-       ],
-       "foreshadowing": [],
-       "parent_id": null
+        "action": "created",
+        "id": 7,
+        "title": "宋代茶馆",
+        "scope": "宋代社会"
       },
       {
-       "id": 12,
-       "level": "task",
-       "title": "找回断剑",
-       "purpose": "用断剑证明林凡的继承者身份。",
-       "chapters": "第13章",
-       "overdue": true,
-       "entities": [],
-       "events": [],
-       "foreshadowing": [
-        "#9 黑衣人的剑穗"
-       ],
-       "parent_id": null
+        "action": "updated",
+        "id": 7,
+        "title": "宋代茶馆",
+        "scope": "宋代社会"
       }
-     ],
-     "omitted": 2
-    },
-    "systems": {
-     "entities": false,
-     "timeline": true,
-     "memory": true,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "timeline",
-      "memory",
-      "foreshadowing"
-     ]
-    }
-   },
-   {
-    "goals": {
-     "nodes": [
+    ],
+    "result.relations": [
       {
-       "id": 8,
-       "level": "plan",
-       "title": "守住剑冢",
-       "purpose": "让林凡在宗门倾覆前守住最后的传承。",
-       "chapters": "第10–15章",
-       "overdue": false,
-       "entities": [
-        "苏婉(#21)"
-       ],
-       "events": [
-        "#3 宗门夜变"
-       ],
-       "foreshadowing": [],
-       "parent_id": null
+        "entity": "林凡(#12)",
+        "items": [
+          {
+            "subject": "林凡(#12)",
+            "object": "张三(#15)",
+            "kind": "师兄",
+            "ended": false,
+            "until_label": "",
+            "description": "",
+            "since_label": ""
+          }
+        ]
       },
       {
-       "id": 12,
-       "level": "task",
-       "title": "找回断剑",
-       "purpose": "用断剑证明林凡的继承者身份。",
-       "chapters": "第13章",
-       "overdue": true,
-       "entities": [],
-       "events": [],
-       "foreshadowing": [
-        "#9 黑衣人的剑穗"
-       ],
-       "parent_id": null
+        "entity": "林凡(#12)",
+        "items": []
       }
-     ],
-     "omitted": 2
-    },
-    "systems": {
-     "entities": true,
-     "timeline": false,
-     "memory": true,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "memory",
-      "foreshadowing"
-     ]
-    }
-   },
-   {
-    "goals": {
-     "nodes": [
+    ],
+    "result.request_review": [
       {
-       "id": 8,
-       "level": "plan",
-       "title": "守住剑冢",
-       "purpose": "让林凡在宗门倾覆前守住最后的传承。",
-       "chapters": "第10–15章",
-       "overdue": false,
-       "entities": [
-        "苏婉(#21)"
-       ],
-       "events": [
-        "#3 宗门夜变"
-       ],
-       "foreshadowing": [],
-       "parent_id": null
+        "items": [
+          {
+            "doc_label": "故事大纲",
+            "approved": true,
+            "feedback": ""
+          },
+          {
+            "doc_label": "世界观",
+            "approved": false,
+            "feedback": "势力太多"
+          }
+        ],
+        "general": "整体不错",
+        "all_approved": false
       },
       {
-       "id": 12,
-       "level": "task",
-       "title": "找回断剑",
-       "purpose": "用断剑证明林凡的继承者身份。",
-       "chapters": "第13章",
-       "overdue": true,
-       "entities": [],
-       "events": [],
-       "foreshadowing": [
-        "#9 黑衣人的剑穗"
-       ],
-       "parent_id": null
+        "items": [
+          {
+            "doc_label": "故事大纲",
+            "approved": true,
+            "feedback": ""
+          }
+        ],
+        "general": "",
+        "all_approved": true
       }
-     ],
-     "omitted": 2
-    },
-    "systems": {
-     "entities": true,
-     "timeline": true,
-     "memory": false,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "timeline",
-      "foreshadowing"
-     ]
-    }
-   },
-   {
-    "goals": {
-     "nodes": [
+    ],
+    "result.search_hits": [
       {
-       "id": 8,
-       "level": "plan",
-       "title": "守住剑冢",
-       "purpose": "让林凡在宗门倾覆前守住最后的传承。",
-       "chapters": "第10–15章",
-       "overdue": false,
-       "entities": [
-        "苏婉(#21)"
-       ],
-       "events": [
-        "#3 宗门夜变"
-       ],
-       "foreshadowing": [],
-       "parent_id": null
+        "corpus": "canon",
+        "query": "剑冢",
+        "hits": [
+          {
+            "kind_label": "实体",
+            "title": "剑冢",
+            "ref": 3,
+            "snippet": "……",
+            "location": "范围",
+            "pids": [],
+            "after_anchor": false,
+            "planned": true
+          },
+          {
+            "kind_label": "实体",
+            "title": "剑冢",
+            "ref": 4,
+            "snippet": "……",
+            "location": "范围",
+            "pids": [],
+            "after_anchor": true,
+            "planned": true
+          }
+        ],
+        "vector_available": true
       },
       {
-       "id": 12,
-       "level": "task",
-       "title": "找回断剑",
-       "purpose": "用断剑证明林凡的继承者身份。",
-       "chapters": "第13章",
-       "overdue": true,
-       "entities": [],
-       "events": [],
-       "foreshadowing": [
-        "#9 黑衣人的剑穗"
-       ],
-       "parent_id": null
-      }
-     ],
-     "omitted": 2
-    },
-    "systems": {
-     "entities": true,
-     "timeline": true,
-     "memory": true,
-     "foreshadowing": false,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "timeline",
-      "memory"
-     ]
-    }
-   },
-   {
-    "goals": {
-     "nodes": [
-      {
-       "id": 8,
-       "level": "plan",
-       "title": "守住剑冢",
-       "purpose": "让林凡在宗门倾覆前守住最后的传承。",
-       "chapters": "第10–15章",
-       "overdue": false,
-       "entities": [
-        "苏婉(#21)"
-       ],
-       "events": [
-        "#3 宗门夜变"
-       ],
-       "foreshadowing": [],
-       "parent_id": null
+        "corpus": "knowledge",
+        "query": "剑冢",
+        "hits": [
+          {
+            "kind_label": "实体",
+            "title": "剑冢",
+            "ref": 3,
+            "snippet": "……",
+            "location": "范围",
+            "pids": [],
+            "after_anchor": false,
+            "planned": false
+          },
+          {
+            "kind_label": "实体",
+            "title": "剑冢",
+            "ref": 4,
+            "snippet": "……",
+            "location": "范围",
+            "pids": [],
+            "after_anchor": true,
+            "planned": false
+          }
+        ],
+        "vector_available": false
       },
       {
-       "id": 12,
-       "level": "task",
-       "title": "找回断剑",
-       "purpose": "用断剑证明林凡的继承者身份。",
-       "chapters": "第13章",
-       "overdue": true,
-       "entities": [],
-       "events": [],
-       "foreshadowing": [
-        "#9 黑衣人的剑穗"
-       ],
-       "parent_id": null
-      }
-     ],
-     "omitted": 2
-    },
-    "systems": {
-     "entities": false,
-     "timeline": false,
-     "memory": false,
-     "foreshadowing": false,
-     "goals": true,
-     "enabled": []
-    }
-   },
-   {
-    "goals": {
-     "nodes": [],
-     "omitted": 0
-    },
-    "systems": {
-     "entities": true,
-     "timeline": true,
-     "memory": true,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "timeline",
-      "memory",
-      "foreshadowing"
-     ]
-    }
-   }
-  ],
-  "archivist.kickoff.seed": [
-   {
-    "systems": {
-     "entities": true,
-     "timeline": true,
-     "memory": true,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "timeline",
-      "memory",
-      "foreshadowing"
-     ]
-    }
-   },
-   {
-    "systems": {
-     "entities": false,
-     "timeline": true,
-     "memory": true,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "timeline",
-      "memory",
-      "foreshadowing"
-     ]
-    }
-   },
-   {
-    "systems": {
-     "entities": true,
-     "timeline": false,
-     "memory": true,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "memory",
-      "foreshadowing"
-     ]
-    }
-   },
-   {
-    "systems": {
-     "entities": true,
-     "timeline": true,
-     "memory": false,
-     "foreshadowing": true,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "timeline",
-      "foreshadowing"
-     ]
-    }
-   },
-   {
-    "systems": {
-     "entities": true,
-     "timeline": true,
-     "memory": true,
-     "foreshadowing": false,
-     "goals": true,
-     "enabled": [
-      "entities",
-      "timeline",
-      "memory"
-     ]
-    }
-   },
-   {
-    "systems": {
-     "entities": false,
-     "timeline": false,
-     "memory": false,
-     "foreshadowing": false,
-     "goals": true,
-     "enabled": []
-    }
-   }
-  ],
-  "researcher.kickoff.prep": [
-   {},
-   {
-    "prep": {
-     "requirements": "想先确认宋代生活的基础",
-     "language_name": "简体中文",
-     "scopes": [],
-     "excluded_names": [],
-     "max_tool_calls": 40,
-     "research_tasks": [
+        "corpus": "chapters",
+        "query": "剑冢",
+        "hits": [
+          {
+            "kind_label": "实体",
+            "title": "剑冢",
+            "ref": 3,
+            "snippet": "……",
+            "location": "范围",
+            "pids": [
+              "p3",
+              "p4",
+              "p5"
+            ],
+            "after_anchor": false,
+            "planned": false
+          },
+          {
+            "kind_label": "实体",
+            "title": "剑冢",
+            "ref": 4,
+            "snippet": "……",
+            "location": "范围",
+            "pids": [
+              "p9"
+            ],
+            "after_anchor": true,
+            "planned": false
+          }
+        ],
+        "vector_available": true
+      },
       {
-       "topic": "宋代茶楼",
-       "requirements": "茶楼布局",
-       "scope_name": "宋代社会",
-       "status": "ready",
-       "entries_created": 0
+        "corpus": "canon",
+        "query": "x",
+        "hits": [],
+        "vector_available": true
       }
-     ],
-     "max_topics": 8
-    }
-   }
-  ],
-  "result.target_scope": [
-   {
-    "scope": "宋代社会",
-    "created": false,
-    "entry_count": 2
-   },
-   {
-    "scope": "宋代生活",
-    "created": true,
-    "entry_count": 0
-   }
-  ]
- }
+    ],
+    "result.submit_review": [
+      {
+        "attempt": 1,
+        "issues": 3,
+        "dropped_pids": [
+          "p99"
+        ]
+      },
+      {
+        "attempt": 2,
+        "issues": 0,
+        "dropped_pids": []
+      }
+    ],
+    "result.timeline": [
+      {
+        "items": [
+          {
+            "id": 1,
+            "story_time": "春",
+            "title": "入门",
+            "description": "",
+            "chapter_label": "第1章",
+            "entities": [
+              "林凡",
+              "苏婉"
+            ],
+            "after_anchor": false,
+            "planned": false,
+            "parent": null,
+            "parent_id": null
+          },
+          {
+            "id": 2,
+            "story_time": "",
+            "title": "计划节点",
+            "description": "",
+            "planned": true,
+            "parent_id": 1,
+            "parent": "#1 入门",
+            "chapter_label": "",
+            "entities": [],
+            "after_anchor": false
+          }
+        ],
+        "total": 5,
+        "shown": 2,
+        "mode": "chronological",
+        "planned_count": 1
+      },
+      {
+        "items": [],
+        "total": 0,
+        "shown": 0,
+        "mode": "recent_first",
+        "planned_count": 0
+      }
+    ],
+    "result.truncated": [
+      {
+        "next_offset": 6000
+      },
+      {
+        "next_offset": null
+      }
+    ],
+    "result.web_fetch": [
+      {
+        "url": "https://a",
+        "title": "标题",
+        "offset": 0,
+        "end": 8000,
+        "total": 20000,
+        "next_offset": 8000,
+        "body": "正文"
+      },
+      {
+        "url": "https://a",
+        "title": "",
+        "offset": 0,
+        "end": 100,
+        "total": 100,
+        "next_offset": null,
+        "body": "正文"
+      }
+    ],
+    "result.web_search": [
+      {
+        "query": "宋代",
+        "hits": [
+          {
+            "title": "宋代茶馆",
+            "url": "https://a",
+            "published": "2020-01-01",
+            "snippet": "……"
+          },
+          {
+            "title": "b",
+            "url": "https://b",
+            "published": "",
+            "snippet": "……"
+          }
+        ]
+      },
+      {
+        "query": "x",
+        "hits": []
+      }
+    ],
+    "result.writer_control": [
+      {
+        "action": "submit_outline",
+        "word_count": 3100,
+        "target_min": 3000,
+        "confirm_needed": false,
+        "title_set": true,
+        "title": "剑冢",
+        "staged": false
+      },
+      {
+        "action": "submit_outline",
+        "word_count": 3100,
+        "target_min": 3000,
+        "confirm_needed": false,
+        "title_set": false,
+        "title": "剑冢",
+        "staged": false
+      },
+      {
+        "action": "submit_outline",
+        "word_count": 3100,
+        "target_min": 3000,
+        "confirm_needed": false,
+        "title_set": true,
+        "title": "剑冢",
+        "staged": true
+      },
+      {
+        "action": "submit_revision_plan",
+        "word_count": 3100,
+        "target_min": 3000,
+        "confirm_needed": false,
+        "title_set": false,
+        "title": "剑冢",
+        "staged": false
+      },
+      {
+        "action": "finish_draft",
+        "word_count": 1200,
+        "target_min": 3000,
+        "confirm_needed": true,
+        "title_set": false,
+        "title": "剑冢",
+        "staged": false
+      },
+      {
+        "action": "finish_draft",
+        "word_count": 3100,
+        "target_min": 3000,
+        "confirm_needed": false,
+        "title_set": false,
+        "title": "剑冢",
+        "staged": false
+      },
+      {
+        "action": "finish_revision",
+        "word_count": 3100,
+        "target_min": 3000,
+        "confirm_needed": false,
+        "title_set": false,
+        "title": "剑冢",
+        "staged": false
+      }
+    ],
+    "reviewer.kickoff": [
+      {},
+      {
+        "track": {
+          "is_main": false,
+          "kind": "side",
+          "title": "剑冢旧事",
+          "synopsis": "师父年轻时的故事。",
+          "canon_mode": "isolated",
+          "anchor_kind": "after_chapter",
+          "anchor_label": "第12章《剑冢》"
+        },
+        "chapter": {
+          "id": 45,
+          "number": 13,
+          "label": "第13章",
+          "title": "",
+          "guidance": "",
+          "outline": "",
+          "reference_notes": "",
+          "target_min": 3000,
+          "target_max": 4000,
+          "word_count": 0,
+          "has_draft": false
+        }
+      },
+      {
+        "prior": {
+          "attempt": 1,
+          "verdict_label": "建议修改",
+          "summary": "结尾与时间线矛盾。",
+          "feedback": "请修正 p30。",
+          "comment": "第二条判断有误：令牌在第30章已归还。"
+        }
+      }
+    ],
+    "shared.chapter_label": [
+      {},
+      {
+        "track_kind": "side",
+        "track_title": "剑冢旧事",
+        "number": 2,
+        "title": "",
+        "with_title": true
+      },
+      {
+        "with_title": false
+      }
+    ],
+    "shared.label": [
+      {
+        "enum": "entity_kind",
+        "value": "character"
+      },
+      {
+        "enum": "entity_status",
+        "value": "dead"
+      },
+      {
+        "enum": "appearance_role",
+        "value": "pov"
+      },
+      {
+        "enum": "note_kind",
+        "value": "world_rule"
+      },
+      {
+        "enum": "foreshadowing_status",
+        "value": "open"
+      },
+      {
+        "enum": "relation_status",
+        "value": "ended"
+      },
+      {
+        "enum": "setting_doc",
+        "value": "characters"
+      },
+      {
+        "enum": "granularity",
+        "value": "free"
+      },
+      {
+        "enum": "phase",
+        "value": "drafting"
+      },
+      {
+        "enum": "phase",
+        "value": "none"
+      },
+      {
+        "enum": "severity",
+        "value": "major"
+      },
+      {
+        "enum": "category",
+        "value": "prose"
+      },
+      {
+        "enum": "verdict",
+        "value": "revise"
+      },
+      {
+        "enum": "target_type",
+        "value": "timeline_event"
+      },
+      {
+        "enum": "search_kind",
+        "value": "summary"
+      },
+      {
+        "enum": "language",
+        "value": "zh-CN"
+      },
+      {
+        "enum": "language",
+        "value": "xx"
+      },
+      {
+        "enum": "target_type",
+        "value": "goal"
+      },
+      {
+        "enum": "goal_level",
+        "value": "plan"
+      }
+    ],
+    "writer.kickoff.chapter": [
+      {
+        "feedback": null
+      },
+      {
+        "feedback": null,
+        "chapter": {
+          "id": 45,
+          "number": 13,
+          "label": "第13章",
+          "title": "夜雨",
+          "guidance": "让苏婉第一次展露实力。",
+          "outline": "## 场景一\n- 目标",
+          "reference_notes": "- 林凡左臂有伤",
+          "target_min": 3000,
+          "target_max": 4000,
+          "word_count": 2350,
+          "has_draft": false
+        }
+      },
+      {},
+      {
+        "track": {
+          "is_main": false,
+          "kind": "side",
+          "title": "剑冢旧事",
+          "synopsis": "师父年轻时的故事。",
+          "canon_mode": "isolated",
+          "anchor_kind": "after_chapter",
+          "anchor_label": "第12章《剑冢》"
+        },
+        "chapter": {
+          "id": 45,
+          "number": 13,
+          "label": "第13章",
+          "title": "夜雨",
+          "guidance": "让苏婉第一次展露实力。",
+          "outline": "## 场景一\n- 目标",
+          "reference_notes": "- 林凡左臂有伤",
+          "target_min": 3000,
+          "target_max": 4000,
+          "word_count": 2350,
+          "has_draft": false
+        },
+        "feedback": null
+      }
+    ],
+    "writer.kickoff.revise": [
+      {},
+      {
+        "track": {
+          "is_main": false,
+          "kind": "side",
+          "title": "剑冢旧事",
+          "synopsis": "师父年轻时的故事。",
+          "canon_mode": "isolated",
+          "anchor_kind": "after_chapter",
+          "anchor_label": "第12章《剑冢》"
+        },
+        "chapter": {
+          "id": 45,
+          "number": 13,
+          "label": "第13章",
+          "title": "",
+          "guidance": "",
+          "outline": "",
+          "reference_notes": "",
+          "target_min": 3000,
+          "target_max": 4000,
+          "word_count": 0,
+          "has_draft": false
+        }
+      }
+    ],
+    "writer.kickoff.rollover": [
+      {},
+      {
+        "feedback": null,
+        "chapter": {
+          "id": 45,
+          "number": 13,
+          "label": "第13章",
+          "title": "",
+          "guidance": "",
+          "outline": "",
+          "reference_notes": "",
+          "target_min": 3000,
+          "target_max": 4000,
+          "word_count": 0,
+          "has_draft": false
+        }
+      },
+      {
+        "phase": "revising",
+        "granularity": {
+          "key": "sentence",
+          "label": "sentence",
+          "revising": true,
+          "tail_open": false,
+          "last_pid": "p9"
+        }
+      },
+      {
+        "phase": "revising",
+        "granularity": {
+          "key": "chapter",
+          "label": "chapter",
+          "revising": true,
+          "tail_open": false,
+          "last_pid": "p9"
+        },
+        "revision_plan": "",
+        "author_notes": [],
+        "chapter": {
+          "id": 45,
+          "number": 13,
+          "label": "第13章",
+          "title": "",
+          "guidance": "",
+          "outline": "",
+          "reference_notes": "",
+          "target_min": 3000,
+          "target_max": 4000,
+          "word_count": 0,
+          "has_draft": false
+        },
+        "feedback": {
+          "text": "改短一些",
+          "issues": []
+        }
+      }
+    ],
+    "writer.notice.granularity": [
+      {
+        "granularity": {
+          "key": "sentence",
+          "label": "sentence",
+          "revising": false,
+          "tail_open": false,
+          "last_pid": "p9"
+        }
+      },
+      {
+        "granularity": {
+          "key": "paragraph",
+          "label": "paragraph",
+          "revising": false,
+          "tail_open": false,
+          "last_pid": "p9"
+        }
+      },
+      {
+        "granularity": {
+          "key": "free",
+          "label": "free",
+          "revising": false,
+          "tail_open": false,
+          "last_pid": "p9"
+        }
+      },
+      {
+        "granularity": {
+          "key": "chapter",
+          "label": "chapter",
+          "revising": false,
+          "tail_open": false,
+          "last_pid": "p9"
+        }
+      },
+      {
+        "granularity": {
+          "key": "paragraph",
+          "label": "paragraph",
+          "revising": false,
+          "tail_open": true,
+          "last_pid": "p9"
+        }
+      },
+      {
+        "granularity": {
+          "key": "chapter",
+          "label": "chapter",
+          "revising": true,
+          "tail_open": false,
+          "last_pid": "p9"
+        }
+      }
+    ],
+    "writer.notice.nudge_drafting": [
+      {
+        "granularity": {
+          "key": "sentence",
+          "label": "sentence",
+          "revising": false,
+          "tail_open": false,
+          "last_pid": "p9"
+        }
+      },
+      {
+        "granularity": {
+          "key": "paragraph",
+          "label": "paragraph",
+          "revising": false,
+          "tail_open": false,
+          "last_pid": "p9"
+        }
+      },
+      {
+        "granularity": {
+          "key": "free",
+          "label": "free",
+          "revising": false,
+          "tail_open": false,
+          "last_pid": "p9"
+        }
+      },
+      {
+        "granularity": {
+          "key": "chapter",
+          "label": "chapter",
+          "revising": false,
+          "tail_open": false,
+          "last_pid": "p9"
+        }
+      },
+      {
+        "granularity": {
+          "key": "paragraph",
+          "label": "paragraph",
+          "revising": false,
+          "tail_open": true,
+          "last_pid": "p9"
+        }
+      },
+      {
+        "granularity": {
+          "key": "chapter",
+          "label": "chapter",
+          "revising": true,
+          "tail_open": false,
+          "last_pid": "p9"
+        }
+      }
+    ],
+    "writer.notice.retrieval_budget": [
+      {
+        "used": 30
+      }
+    ],
+    "writer.notice.revision_plan_accepted": [
+      {
+        "granularity": {
+          "key": "sentence",
+          "label": "sentence",
+          "revising": true,
+          "tail_open": false,
+          "last_pid": "p9"
+        }
+      },
+      {
+        "granularity": {
+          "key": "paragraph",
+          "label": "paragraph",
+          "revising": true,
+          "tail_open": false,
+          "last_pid": "p9"
+        }
+      },
+      {
+        "granularity": {
+          "key": "free",
+          "label": "free",
+          "revising": true,
+          "tail_open": false,
+          "last_pid": "p9"
+        }
+      },
+      {
+        "granularity": {
+          "key": "chapter",
+          "label": "chapter",
+          "revising": true,
+          "tail_open": false,
+          "last_pid": "p9"
+        }
+      },
+      {
+        "granularity": {
+          "key": "paragraph",
+          "label": "paragraph",
+          "revising": true,
+          "tail_open": true,
+          "last_pid": "p9"
+        }
+      },
+      {
+        "granularity": {
+          "key": "chapter",
+          "label": "chapter",
+          "revising": true,
+          "tail_open": false,
+          "last_pid": "p9"
+        }
+      }
+    ],
+    "writer.rules.granularity": [
+      {
+        "granularity": {
+          "key": "sentence",
+          "label": "sentence",
+          "revising": false,
+          "tail_open": false,
+          "last_pid": "p9"
+        }
+      },
+      {
+        "granularity": {
+          "key": "paragraph",
+          "label": "paragraph",
+          "revising": false,
+          "tail_open": false,
+          "last_pid": "p9"
+        }
+      },
+      {
+        "granularity": {
+          "key": "free",
+          "label": "free",
+          "revising": false,
+          "tail_open": false,
+          "last_pid": "p9"
+        }
+      },
+      {
+        "granularity": {
+          "key": "chapter",
+          "label": "chapter",
+          "revising": false,
+          "tail_open": false,
+          "last_pid": "p9"
+        }
+      },
+      {
+        "granularity": {
+          "key": "paragraph",
+          "label": "paragraph",
+          "revising": false,
+          "tail_open": true,
+          "last_pid": "p9"
+        }
+      },
+      {
+        "granularity": {
+          "key": "chapter",
+          "label": "chapter",
+          "revising": true,
+          "tail_open": false,
+          "last_pid": "p9"
+        }
+      }
+    ],
+    "block.writing_skills": [
+      {}
+    ],
+    "block.recent_chapters": [
+      {},
+      {
+        "chapters": [
+          {
+            "number": 12,
+            "label": "第12章",
+            "title": "",
+            "text": "雨落下来。",
+            "partial": false
+          }
+        ]
+      }
+    ],
+    "block.canon_systems": [
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "memory",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": false,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "timeline",
+            "memory",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": false,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "memory",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": false,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": false,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "memory"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": false,
+          "timeline": false,
+          "memory": false,
+          "foreshadowing": false,
+          "goals": true,
+          "enabled": []
+        }
+      }
+    ],
+    "block.goals": [
+      {
+        "goals": {
+          "nodes": [
+            {
+              "id": 8,
+              "level": "plan",
+              "title": "守住剑冢",
+              "purpose": "让林凡在宗门倾覆前守住最后的传承。",
+              "chapters": "第10–15章",
+              "overdue": false,
+              "entities": [
+                "苏婉(#21)"
+              ],
+              "events": [
+                "#3 宗门夜变"
+              ],
+              "foreshadowing": [],
+              "parent_id": null
+            },
+            {
+              "id": 12,
+              "level": "task",
+              "title": "找回断剑",
+              "purpose": "用断剑证明林凡的继承者身份。",
+              "chapters": "第13章",
+              "overdue": true,
+              "entities": [],
+              "events": [],
+              "foreshadowing": [
+                "#9 黑衣人的剑穗"
+              ],
+              "parent_id": null
+            }
+          ],
+          "omitted": 2
+        },
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "memory",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "goals": {
+          "nodes": [
+            {
+              "id": 8,
+              "level": "plan",
+              "title": "守住剑冢",
+              "purpose": "让林凡在宗门倾覆前守住最后的传承。",
+              "chapters": "第10–15章",
+              "overdue": false,
+              "entities": [
+                "苏婉(#21)"
+              ],
+              "events": [
+                "#3 宗门夜变"
+              ],
+              "foreshadowing": [],
+              "parent_id": null
+            },
+            {
+              "id": 12,
+              "level": "task",
+              "title": "找回断剑",
+              "purpose": "用断剑证明林凡的继承者身份。",
+              "chapters": "第13章",
+              "overdue": true,
+              "entities": [],
+              "events": [],
+              "foreshadowing": [
+                "#9 黑衣人的剑穗"
+              ],
+              "parent_id": null
+            }
+          ],
+          "omitted": 2
+        },
+        "systems": {
+          "entities": false,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "timeline",
+            "memory",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "goals": {
+          "nodes": [
+            {
+              "id": 8,
+              "level": "plan",
+              "title": "守住剑冢",
+              "purpose": "让林凡在宗门倾覆前守住最后的传承。",
+              "chapters": "第10–15章",
+              "overdue": false,
+              "entities": [
+                "苏婉(#21)"
+              ],
+              "events": [
+                "#3 宗门夜变"
+              ],
+              "foreshadowing": [],
+              "parent_id": null
+            },
+            {
+              "id": 12,
+              "level": "task",
+              "title": "找回断剑",
+              "purpose": "用断剑证明林凡的继承者身份。",
+              "chapters": "第13章",
+              "overdue": true,
+              "entities": [],
+              "events": [],
+              "foreshadowing": [
+                "#9 黑衣人的剑穗"
+              ],
+              "parent_id": null
+            }
+          ],
+          "omitted": 2
+        },
+        "systems": {
+          "entities": true,
+          "timeline": false,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "memory",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "goals": {
+          "nodes": [
+            {
+              "id": 8,
+              "level": "plan",
+              "title": "守住剑冢",
+              "purpose": "让林凡在宗门倾覆前守住最后的传承。",
+              "chapters": "第10–15章",
+              "overdue": false,
+              "entities": [
+                "苏婉(#21)"
+              ],
+              "events": [
+                "#3 宗门夜变"
+              ],
+              "foreshadowing": [],
+              "parent_id": null
+            },
+            {
+              "id": 12,
+              "level": "task",
+              "title": "找回断剑",
+              "purpose": "用断剑证明林凡的继承者身份。",
+              "chapters": "第13章",
+              "overdue": true,
+              "entities": [],
+              "events": [],
+              "foreshadowing": [
+                "#9 黑衣人的剑穗"
+              ],
+              "parent_id": null
+            }
+          ],
+          "omitted": 2
+        },
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": false,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "goals": {
+          "nodes": [
+            {
+              "id": 8,
+              "level": "plan",
+              "title": "守住剑冢",
+              "purpose": "让林凡在宗门倾覆前守住最后的传承。",
+              "chapters": "第10–15章",
+              "overdue": false,
+              "entities": [
+                "苏婉(#21)"
+              ],
+              "events": [
+                "#3 宗门夜变"
+              ],
+              "foreshadowing": [],
+              "parent_id": null
+            },
+            {
+              "id": 12,
+              "level": "task",
+              "title": "找回断剑",
+              "purpose": "用断剑证明林凡的继承者身份。",
+              "chapters": "第13章",
+              "overdue": true,
+              "entities": [],
+              "events": [],
+              "foreshadowing": [
+                "#9 黑衣人的剑穗"
+              ],
+              "parent_id": null
+            }
+          ],
+          "omitted": 2
+        },
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": false,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "memory"
+          ]
+        }
+      },
+      {
+        "goals": {
+          "nodes": [
+            {
+              "id": 8,
+              "level": "plan",
+              "title": "守住剑冢",
+              "purpose": "让林凡在宗门倾覆前守住最后的传承。",
+              "chapters": "第10–15章",
+              "overdue": false,
+              "entities": [
+                "苏婉(#21)"
+              ],
+              "events": [
+                "#3 宗门夜变"
+              ],
+              "foreshadowing": [],
+              "parent_id": null
+            },
+            {
+              "id": 12,
+              "level": "task",
+              "title": "找回断剑",
+              "purpose": "用断剑证明林凡的继承者身份。",
+              "chapters": "第13章",
+              "overdue": true,
+              "entities": [],
+              "events": [],
+              "foreshadowing": [
+                "#9 黑衣人的剑穗"
+              ],
+              "parent_id": null
+            }
+          ],
+          "omitted": 2
+        },
+        "systems": {
+          "entities": false,
+          "timeline": false,
+          "memory": false,
+          "foreshadowing": false,
+          "goals": true,
+          "enabled": []
+        }
+      },
+      {
+        "goals": {
+          "nodes": [],
+          "omitted": 0
+        },
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "memory",
+            "foreshadowing"
+          ]
+        }
+      }
+    ],
+    "archivist.kickoff.seed": [
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "memory",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": false,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "timeline",
+            "memory",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": false,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "memory",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": false,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": false,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "memory"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": false,
+          "timeline": false,
+          "memory": false,
+          "foreshadowing": false,
+          "goals": true,
+          "enabled": []
+        }
+      }
+    ],
+    "researcher.kickoff.prep": [
+      {},
+      {
+        "prep": {
+          "requirements": "想先确认宋代生活的基础",
+          "language_name": "简体中文",
+          "scopes": [],
+          "excluded_names": [],
+          "max_tool_calls": 40,
+          "research_tasks": [
+            {
+              "topic": "宋代茶楼",
+              "requirements": "茶楼布局",
+              "scope_name": "宋代社会",
+              "status": "ready",
+              "entries_created": 0
+            }
+          ],
+          "max_topics": 8
+        }
+      }
+    ],
+    "result.target_scope": [
+      {
+        "scope": "宋代社会",
+        "created": false,
+        "entry_count": 2
+      },
+      {
+        "scope": "宋代生活",
+        "created": true,
+        "entry_count": 0
+      }
+    ]
+  }
 }

@@ -67,6 +67,7 @@ pub struct GoalEntityLinkDto {
 pub struct GoalEventLinkDto {
     pub id: i32,
     pub title: String,
+    pub status: crate::db::json::TimelineStatus,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

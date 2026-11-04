@@ -61,6 +61,78 @@ function ReviewIcon({ icon: Icon }: { icon: LucideIcon }) {
   return <Icon aria-hidden="true" className="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
 }
 
+type PreviewShape =
+  | { kind: "diff"; label?: string; before?: string; after?: string }
+  | { kind: "fields"; label?: string; rows?: Array<{ field: string; before?: unknown; after?: unknown }>; shared?: boolean }
+  | { kind: "action"; label?: string; text?: string }
+
+/** The approval preview stored in `ui.preview` by the runner (spec/03 §5.2). */
+function previewOf(call: ToolCallDto): PreviewShape | undefined {
+  const ui = call.ui
+  if (ui === null || typeof ui !== "object" || Array.isArray(ui)) return undefined
+  const preview = (ui as Record<string, unknown>)["preview"]
+  if (preview === null || typeof preview !== "object" || Array.isArray(preview)) return undefined
+  const value = preview as Record<string, unknown>
+  if (value["kind"] === "diff" || value["kind"] === "fields" || value["kind"] === "action") {
+    return value as PreviewShape
+  }
+  return undefined
+}
+
+function PreviewValue({ value }: { value: unknown }) {
+  if (value === undefined || value === null) return <span className="text-muted-foreground">—</span>
+  if (typeof value === "string") return <span className="whitespace-pre-wrap">{value}</span>
+  return <code className="text-[0.7rem]">{JSON.stringify(value)}</code>
+}
+
+function HeldPreview({ preview }: { preview: PreviewShape }) {
+  const { t } = useTranslation()
+  if (preview.kind === "action") {
+    return <p className="rounded border bg-card p-2 text-xs whitespace-pre-wrap">{preview.text}</p>
+  }
+  if (preview.kind === "fields") {
+    return (
+      <div className="max-h-64 overflow-auto rounded border bg-card">
+        {preview.shared ? (
+          <p className="border-b bg-muted/40 px-2 py-1 text-xs text-muted-foreground">
+            {t("agent:held.shared_scope")}
+          </p>
+        ) : null}
+        <table className="w-full text-left text-xs">
+          <thead>
+            <tr className="border-b text-muted-foreground">
+              <th className="p-1.5 font-medium">{t("agent:held.field")}</th>
+              <th className="p-1.5 font-medium">{t("agent:held.before")}</th>
+              <th className="p-1.5 font-medium">{t("agent:held.after")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(preview.rows ?? []).map((row, index) => (
+              <tr key={`${row.field}-${index}`} className="border-b last:border-0">
+                <td className="p-1.5 align-top font-mono">{row.field}</td>
+                <td className="p-1.5 align-top"><PreviewValue value={row.before} /></td>
+                <td className="p-1.5 align-top"><PreviewValue value={row.after} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+  return (
+    <div className="grid max-h-72 gap-2 overflow-auto rounded border bg-card p-2 text-xs md:grid-cols-2">
+      <div>
+        <div className="mb-1 font-medium text-muted-foreground">{t("agent:held.before")}</div>
+        <pre className="max-h-60 overflow-auto whitespace-pre-wrap">{preview.before ?? ""}</pre>
+      </div>
+      <div>
+        <div className="mb-1 font-medium text-muted-foreground">{t("agent:held.after")}</div>
+        <pre className="max-h-60 overflow-auto whitespace-pre-wrap">{preview.after ?? ""}</pre>
+      </div>
+    </div>
+  )
+}
+
 export function HeldCallReview({
   call,
   busy,
@@ -101,6 +173,7 @@ export function HeldCallReview({
         : t("agent:held.request_changes_hint")
   const body = heldBodyText(call)
   const notes = heldReferenceNotes(call)
+  const preview = previewOf(call)
 
   // `HeldFeedback` only calls this with trimmed, non-empty text — the server reads blank feedback
   // as "no feedback" and would *approve* the call instead (`services/sessions.rs` `resume_inner`).
@@ -159,7 +232,9 @@ export function HeldCallReview({
         />
       ) : null}
 
-      {body === "" ? null : (
+      {preview === undefined ? null : <HeldPreview preview={preview} />}
+
+      {preview !== undefined || body === "" ? null : (
         <div className="prose prose-sm max-h-32 max-w-none overflow-auto rounded border bg-card p-2 text-xs whitespace-pre-wrap dark:prose-invert">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{body}</ReactMarkdown>
         </div>

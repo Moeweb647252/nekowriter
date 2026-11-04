@@ -134,6 +134,8 @@ async fn private_foreshadowing(app: &TestApp, book_id: i32, track_id: i32, title
         description: String::new(),
         planned_payoff: String::new(),
         planted_chapter_id: None,
+        payoff_event_id: None,
+        payoff_position: None,
         importance: 2,
         entity_ids: Vec::new(),
         note: None,

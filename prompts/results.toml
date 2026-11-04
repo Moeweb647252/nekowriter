@@ -36,6 +36,16 @@ text = '''
 找不到章节「{{ query }}」。写法："12"（当前轨道第12章）、"main 12"（正文第12章）或 "#编号"。
 {%- elif code == "chapter_not_official" -%}
 {{ label }}尚未定稿，不能读取。
+{%- elif code == "chapter_locked" -%}
+章节正被写作或细纲会话 #{{ session_id }} 使用，暂时不能修改。请等待它结束，或在会话结束后重试。
+{%- elif code == "system_off" -%}
+档案系统「{{ system_label }}」已关闭，不能执行该操作。
+{%- elif code == "goal_open_children" -%}
+目标 #{{ node }} 仍有未完成的子节点；如确认要完成它，请带上 confirm_open_children=true 重试。
+{%- elif code == "session_conflict" -%}
+会话 #{{ session_id }} 仍在运行，不能启动会打断它的新会话。请等待它结束，或用 list_sessions 查看。
+{%- elif code == "start_refused" -%}
+这个会话不能启动（原因：{{ reason }}）。请调整后重试。
 {%- elif code == "no_knowledge_scope" -%}
 本书没有可检索的知识库范围。
 {%- elif code == "scope_excluded" -%}
@@ -78,6 +88,10 @@ text = '''
 {% include "notice.tool_not_allowed" %}
 {%- elif code == "output_truncated" -%}
 {% include "notice.output_truncated" %}
+{%- elif code == "timeline_conflict" -%}
+{% if reason == "occurred_ancestor" %}计划中的事件不能放在已发生的事件「{{ conflict }}」之下。{% elif reason == "planned_descendant" %}这个事件仍有计划中的下级事件「{{ conflict }}」，不能标记为已发生。{% elif reason == "occurred_descendant" %}这个事件的下级事件「{{ conflict }}」已经发生，不能放弃这个计划。{% else %}时间线状态只能从计划中改为已发生或已放弃，不能反向修改。{% endif %}
+{%- elif code == "timeline_has_children" -%}
+这个时间线事件还有 {{ count }} 个下级事件，不能删除。请先处理下级事件。
 {%- elif code == "after_completion" -%}
 同一轮中排在它前面的调用已经完成了本次任务，这次调用没有执行。
 {%- elif code == "refusal" -%}
@@ -158,16 +172,16 @@ text = '''
 key = "result.timeline"
 kind = "result"
 agent = "shared"
-vars = ["items", "total", "shown", "mode"]
+vars = ["items", "total", "shown", "mode", "planned_count"]
 title_en = "Result — timeline events"
 title_zh = "工具结果 · 时间线"
 text = '''
 {% if mode == "recent_first" %}时间线（由近及远）：{% else %}时间线（按故事时间先后）：{% endif %}
 
-{% for t in items %}[#{{ t.id }}]{% if t.story_time %} ({{ t.story_time }}){% endif %} {{ t.title }}{% if t.description %} — {{ t.description }}{% endif %}{% if t.chapter_label %} · {{ t.chapter_label }}{% endif %}{% if t.entities %} · 涉及：{{ t.entities | join("、") }}{% endif %}{% if t.after_anchor %}（锚点之后）{% endif %}
+{% for t in items %}[#{{ t.id }}]{% if t.planned %}（计划中）{% endif %}{% if t.story_time %} ({{ t.story_time }}){% endif %} {{ t.title }}{% if t.parent %} · ↳ {{ t.parent }}{% endif %}{% if t.description %} — {{ t.description }}{% endif %}{% if t.chapter_label %} · {{ t.chapter_label }}{% endif %}{% if t.entities %} · 涉及：{{ t.entities | join("、") }}{% endif %}{% if t.after_anchor %}（锚点之后）{% endif %}
 
 {% else %}（没有符合条件的事件）
-{% endfor %}{% if total > shown %}（共 {{ total }} 条，只显示 {{ shown }} 条。）{% endif %}
+{% endfor %}{% if planned_count %}（标有（计划中）的事件在正文中尚未发生。）{% endif %}{% if total > shown %}（共 {{ total }} 条，只显示 {{ shown }} 条。）{% endif %}
 '''
 
 [[prompt]]
@@ -178,7 +192,7 @@ vars = ["items"]
 title_en = "Result — foreshadowing list"
 title_zh = "工具结果 · 伏笔列表"
 text = '''
-{% for f in items %}[#{{ f.id }}] {{ f.title }}【{{ f.status_label }}】{% if f.description %} — {{ f.description }}{% endif %}{% if f.planted_label %} · 埋设于{{ f.planted_label }}{% endif %}{% if f.planned_payoff %} · 计划回收：{{ f.planned_payoff }}{% endif %}{% if f.resolution %} · 回收：{{ f.resolution }}{% if f.resolved_label %}（{{ f.resolved_label }}）{% endif %}{% endif %}
+{% for f in items %}[#{{ f.id }}] {{ f.title }}【{{ f.status_label }}】{% if f.description %} — {{ f.description }}{% endif %}{% if f.planted_label %} · 埋设于{{ f.planted_label }}{% endif %}{% if f.anchor %} · 回收锚点：#{{ f.anchor.id }} {{ f.anchor.title }} {{ f.anchor.position_label }}{% if f.anchor.planned %}（计划中）{% endif %}{% elif f.anchor_abandoned %} · （回收锚点已放弃）{% endif %}{% if f.planned_payoff %} · 回收方向：{{ f.planned_payoff }}{% endif %}{% if f.resolution %} · 回收：{{ f.resolution }}{% if f.resolved_label %}（{{ f.resolved_label }}）{% endif %}{% endif %}
 
 {% else %}（没有符合条件的伏笔）
 {% endfor %}
@@ -193,7 +207,7 @@ title_en = "Result — search hits"
 title_zh = "工具结果 · 检索结果"
 text = '''
 「{{ query }}」的检索结果：
-{% for h in hits %}{{ loop.index }}. {% if corpus == "knowledge" %}[条目#{{ h.ref }}]《{{ h.title }}》（{{ h.location }}）{% elif corpus == "chapters" %}{{ h.title }} {{ h.pids | first }}{% if h.pids | length > 1 %}–{{ h.pids | last }}{% endif %}{% else %}【{{ h.kind_label }}】{{ h.title }}(#{{ h.ref }}){% endif %}{% if h.after_anchor %}（锚点之后）{% endif %}
+{% for h in hits %}{{ loop.index }}. {% if corpus == "knowledge" %}[条目#{{ h.ref }}]《{{ h.title }}》（{{ h.location }}）{% elif corpus == "chapters" %}{{ h.title }} {{ h.pids | first }}{% if h.pids | length > 1 %}–{{ h.pids | last }}{% endif %}{% else %}【{{ h.kind_label }}】{{ h.title }}(#{{ h.ref }}){% if h.planned %}（计划中）{% endif %}{% endif %}{% if h.after_anchor %}（锚点之后）{% endif %}
 
    {{ h.snippet }}
 {% else %}没有找到相关内容。可以换个关键词，或改用其他检索工具。
@@ -307,7 +321,7 @@ text = '''
 key = "result.canon_write"
 kind = "result"
 agent = "archivist"
-vars = ["action", "target", "count", "prev_event", "next_event", "moved"]
+vars = ["action", "target", "count", "prev_event", "next_event", "moved", "anchor_planned", "abandoned_count"]
 title_en = "Result — canon record written"
 title_zh = "工具结果 · 档案已更新"
 text = '''
@@ -315,11 +329,11 @@ text = '''
   "create_entity": "已创建实体", "update_entity": "已更新实体", "set_relation": "已记录关系",
   "end_relation": "已结束关系", "record_appearances": "已记录出场", "add_timeline_event": "已加入时间线",
   "update_timeline_event": "已更新时间线事件", "add_memory_note": "已记录笔记", "retire_memory_note": "已撤销笔记",
-  "add_foreshadowing": "已记录伏笔", "resolve_foreshadowing": "已更新伏笔", "set_chapter_summary": "已保存本章摘要",
+  "add_foreshadowing": "已记录伏笔", "update_foreshadowing": "已更新伏笔", "resolve_foreshadowing": "已更新伏笔", "set_chapter_summary": "已保存本章摘要",
   "propose_goal_change": "已提交写作目标建议，等待作者决定",
   "propose_setting_change": "已提交设定修改建议，等待作者决定"
 } -%}
-{{ verbs[action] }}{% if target %}：{{ target }}{% endif %}{% if action == "record_appearances" %}（共 {{ count }} 个）{% endif %}{% if action == "add_timeline_event" or moved %}（位置：{% if prev_event %}#{{ prev_event }} 之后{% else %}最前{% endif %}{% if next_event %}，#{{ next_event }} 之前{% endif %}）{% endif %}。
+{{ verbs[action] }}{% if target %}：{{ target }}{% endif %}{% if action == "record_appearances" %}（共 {{ count }} 个）{% endif %}{% if action == "add_timeline_event" or moved %}（位置：{% if prev_event %}#{{ prev_event }} 之后{% else %}最前{% endif %}{% if next_event %}，#{{ next_event }} 之前{% endif %}）{% endif %}{% if anchor_planned %}（回收锚点仍是计划中：{{ anchor_planned }}，等它发生时请再确认。）{% endif %}{% if abandoned_count %}（同时放弃计划中的下级事件 {{ abandoned_count }} 个）{% endif %}。
 '''
 
 [[prompt]]
@@ -458,4 +472,120 @@ title_en = "Result — research finished"
 title_zh = "工具结果 · 资料收集完成"
 text = '''
 资料收集完成，本次共保存或更新 {{ entries }} 个条目。
+'''
+
+[[prompt]]
+key = "result.change_declined"
+kind = "result"
+agent = "assistant"
+vars = []
+title_en = "Result — change declined"
+title_zh = "结果 · 修改被拒绝"
+text = '''
+修改未应用：作者没有批准这次修改，并留下了意见。请阅读作者的意见后再决定下一步；不要原样重复被拒绝的修改。
+'''
+
+[[prompt]]
+key = "result.chapter_view"
+kind = "result"
+agent = "assistant"
+vars = ["label", "part", "body", "next_pid", "status", "content_version", "canon_status", "words", "open_sessions"]
+title_en = "Result — chapter view"
+title_zh = "结果 · 章节视图"
+text = '''
+{{ label }}（{{ part }}）
+状态：{{ status }} · 版本：{{ content_version }} · 档案：{{ canon_status }} · {{ words }} 字
+{{ body }}
+{% if next_pid %}（没有显示完，继续阅读请使用 from_pid="{{ next_pid }}"。）{% endif %}
+{% if open_sessions %}打开中的会话：{% for session in open_sessions %}#{{ session.id }} {{ session.kind }}（{{ session.status }}）{% endfor %}{% endif %}
+'''
+
+[[prompt]]
+key = "result.setting_doc_view"
+kind = "result"
+agent = "assistant"
+vars = ["label", "content", "offset", "end", "total", "next_offset", "revision"]
+title_en = "Result — setting document view"
+title_zh = "结果 · 设定文档"
+text = '''
+{{ label }}（revision {{ revision }}）
+{{ content }}
+{% if next_offset is not none %}（第 {{ offset }}–{{ end }} 字，共 {{ total }} 字。继续阅读请使用 offset={{ next_offset }}。）{% endif %}
+'''
+
+[[prompt]]
+key = "result.characters_view"
+kind = "result"
+agent = "assistant"
+vars = ["designs"]
+title_en = "Result — characters view"
+title_zh = "结果 · 人物设计"
+text = '''
+{% for design in designs %}#{{ design.rank }} {{ design.name }}（{{ design.role_label }}）{% if design.entity_id %} · 实体 #{{ design.entity_id }}{% endif %}{% if design.summary %}：{{ design.summary }}{% endif %}{% if design.profile %}
+{{ design.profile }}{% endif %}
+{% else %}（没有人物设计）
+{% endfor %}
+'''
+
+[[prompt]]
+key = "result.goal_list"
+kind = "result"
+agent = "assistant"
+vars = ["nodes"]
+title_en = "Result — goals"
+title_zh = "结果 · 目标列表"
+text = '''
+{% for node in nodes %}#{{ node.id }} [{{ node.level }}] {{ node.title }} — {{ node.purpose }}（{{ node.status }}{% if node.ready %}，可推进{% endif %}{% if node.closable %}，可完成{% endif %}{% if node.chapter_from is not none %}，第{{ node.chapter_from }}章{% endif %}{% if node.chapter_to is not none %}–第{{ node.chapter_to }}章{% endif %}）
+{% else %}（没有目标节点）
+{% endfor %}
+'''
+
+[[prompt]]
+key = "result.research_list"
+kind = "result"
+agent = "assistant"
+vars = ["tasks"]
+title_en = "Result — research tasks"
+title_zh = "结果 · 资料任务"
+text = '''
+{% for task in tasks %}#{{ task.id }} [{{ task.kind }}] {{ task.topic }} · {{ task.scope }} · {{ task.status }} · {{ task.entries }} 条
+{% else %}（没有资料任务）
+{% endfor %}
+'''
+
+[[prompt]]
+key = "result.session_list"
+kind = "result"
+agent = "assistant"
+vars = ["sessions"]
+title_en = "Result — sessions"
+title_zh = "结果 · 会话列表"
+text = '''
+{% for session in sessions %}#{{ session.id }} {{ session.kind }}{% if session.chapter_label %} · {{ session.chapter_label }}{% endif %} · {{ session.status }} · {{ session.created_at }}
+{% else %}（没有会话）
+{% endfor %}
+'''
+
+
+[[prompt]]
+key = "result.book_agent_write"
+kind = "result"
+agent = "shared"
+vars = ["action", "summary", "details"]
+title_en = "Result — book-agent write"
+title_zh = "工具结果 · 书代理写入"
+text = '''
+{{ summary }}{% if details %}（{{ details }}）{% endif %}
+'''
+
+
+[[prompt]]
+key = "result.session_start"
+kind = "result"
+agent = "assistant"
+vars = ["session_id", "kind", "existing"]
+title_en = "Result — session start"
+title_zh = "结果 · 启动会话"
+text = '''
+{% if existing %}已继续会话 #{{ session_id }}（{{ kind }}）。{% else %}已启动会话 #{{ session_id }}（{{ kind }}）。{% endif %}
 '''

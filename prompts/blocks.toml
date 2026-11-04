@@ -136,7 +136,7 @@ text = '''
 {% for e in memory.cast %}- #{{ e.id }} {{ e.name }}【{{ e.kind_label }}】{% if e.summary %}— {{ e.summary }}{% endif %}
 
 {% endfor %}{% endif %}
-{% if systems.entities or systems.timeline or systems.memory or systems.foreshadowing %}档案规模：{% if systems.entities %}人物 {{ memory.counts.character }}，组织 {{ memory.counts.organization }}，地点 {{ memory.counts.location }}，物品 {{ memory.counts.item }}，其他 {{ memory.counts.other }}{% endif %}{% if systems.timeline %}{% if systems.entities %}；{% endif %}时间线事件 {{ memory.counts.event }}{% endif %}{% if systems.memory %}{% if systems.entities or systems.timeline %}；{% endif %}事实 {{ memory.counts.fact }}，世界规则 {{ memory.counts.world_rule }}{% endif %}{% if systems.foreshadowing %}{% if systems.entities or systems.timeline or systems.memory %}；{% endif %}未回收伏笔 {{ memory.counts.foreshadowing_open }}{% endif %}。{% endif %}{% endif %}
+{% if systems.entities or systems.timeline or systems.memory or systems.foreshadowing %}档案规模：{% if systems.entities %}人物 {{ memory.counts.character }}，组织 {{ memory.counts.organization }}，地点 {{ memory.counts.location }}，物品 {{ memory.counts.item }}，其他 {{ memory.counts.other }}{% endif %}{% if systems.timeline %}{% if systems.entities %}；{% endif %}时间线事件 {{ memory.counts.event }}{% if memory.counts.event_planned %}（其中计划中 {{ memory.counts.event_planned }}）{% endif %}{% endif %}{% if systems.memory %}{% if systems.entities or systems.timeline %}；{% endif %}事实 {{ memory.counts.fact }}，世界规则 {{ memory.counts.world_rule }}{% endif %}{% if systems.foreshadowing %}{% if systems.entities or systems.timeline or systems.memory %}；{% endif %}未回收伏笔 {{ memory.counts.foreshadowing_open }}{% endif %}。{% endif %}{% endif %}
 '''
 
 [[prompt]]
@@ -270,7 +270,7 @@ text = '''
 {% if not systems.entities %}
 - 实体：人物、组织、地点、物品、关系与出场记录均不可用。
 {% endif %}{% if not systems.timeline %}
-- 时间线：事件记录与时间顺序查询不可用。
+- 时间线：事件记录与时间顺序查询不可用；伏笔不能指定回收锚点。
 {% endif %}{% if not systems.memory %}
 - 记忆：章节摘要、笔记与前后文记忆不可用。
 {% endif %}{% if not systems.foreshadowing %}
@@ -298,4 +298,43 @@ text = '''
 {% endif %}</{{ node.level }}>
 {% endfor %}{% if goals.omitted %}还有 {{ goals.omitted }} 个相关目标未显示。
 {% endif %}{% endif %}
+'''
+
+[[prompt]]
+key = "block.book_index"
+kind = "block"
+agent = "assistant"
+vars = ["index"]
+title_en = "Block — the book index"
+title_zh = "上下文 · 全书索引"
+text = '''
+【全书索引】
+{% for track in index.tracks %}
+- 轨道：{% if track.label %}{{ track.label }}{% else %}主线{% endif %}（{{ track.kind }}）
+{% for chapter in track.chapters %}  第{{ chapter.number }}章{% if chapter.title %}《{{ chapter.title }}》{% endif %}：{{ chapter.status }}，{{ chapter.words }} 字，档案 {{ chapter.canon_status }}
+{% endfor %}{% endfor %}
+{% if index.chapters_omitted %}更早的章节还有 {{ index.chapters_omitted }} 章未列出。
+{% endif %}
+设定文档：
+{% for doc in index.setting_docs %}- {{ doc.label }}：{{ doc.characters }} 字，revision {{ doc.revision }}
+{% endfor %}
+人物设计（最多列出 30 位）：
+{% for character in index.characters %}- #{{ character.rank }} {{ character.name }}（{{ character.role_label }}）
+{% endfor %}{% if index.characters_omitted %}（另有 {{ index.characters_omitted }} 位未列出。）
+{% endif %}
+档案统计：实体 {{ index.canon.entities }}，时间线 {{ index.canon.timeline }}，记忆 {{ index.canon.memory }}，伏笔 {{ index.canon.foreshadowing }}，目标 {{ index.canon.goals }}。
+目标：未完成 {{ index.goals.open }}，可推进 {{ index.goals.ready }}。
+资料任务：
+{% for item in index.research %}- {{ item.status }}：{{ item.count }}
+{% endfor %}
+打开中的会话：
+{% for session in index.sessions %}- #{{ session.id }} {{ session.kind }}（{{ session.status }}）
+{% endfor %}{% if index.sessions_omitted %}（另有 {{ index.sessions_omitted }} 个未列出。）
+{% endif %}
+待处理提案：
+{% for proposal in index.proposals %}- #{{ proposal.id }} {{ proposal.target_type }}{% if proposal.target_kind %} / {{ proposal.target_kind }}{% endif %}
+{% endfor %}{% if index.proposals_omitted %}（另有 {{ index.proposals_omitted }} 个未列出。）
+{% endif %}
+{% if index.off_systems %}已关闭的档案系统：{{ index.off_systems | join("、") }}。
+{% endif %}
 '''

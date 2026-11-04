@@ -287,6 +287,7 @@ describe("RolesPage model pickers (PROJECT §8.12)", () => {
       writer: 7,
       reviewer: null,
       archivist: null,
+      assistant: null,
       efforts: { writer: "max" },
     })
   })
@@ -307,6 +308,7 @@ describe("RolesPage model pickers (PROJECT §8.12)", () => {
       writer: null,
       reviewer: null,
       archivist: null,
+      assistant: null,
       efforts: {},
     })
   })
@@ -322,6 +324,7 @@ describe("RolesPage model pickers (PROJECT §8.12)", () => {
       "writer",
       "reviewer",
       "archivist",
+      "assistant",
     ]) {
       const trigger = screen.getByLabelText(t(`settings:role.${role}`))
       expect((trigger.textContent ?? "").trim(), role).not.toBe("")

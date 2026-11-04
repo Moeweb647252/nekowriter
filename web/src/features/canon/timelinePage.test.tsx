@@ -39,6 +39,10 @@ vi.mock("@/api/hooks/useCanon", () => ({
         title: "The gate",
         description: "It opens.",
         chapter_id: 3,
+        parent_id: null,
+        kind: "entry",
+        status: "occurred",
+        child_count: 0,
         importance: 3,
         entity_ids: [7],
         created_at: "",
@@ -112,7 +116,8 @@ describe("TimelinePage", () => {
   it("opens the edit dialog from a row's Edit action", async () => {
     render(<TimelinePage />)
     const user = userEvent.setup()
-    await user.click(screen.getByRole("button", { name: "Edit" }))
+    await user.click(screen.getByRole("button", { name: "Timeline actions for The gate" }))
+    await user.click(screen.getByRole("menuitem", { name: "Edit" }))
     expect(
       screen.getByRole("heading", { name: "Edit timeline event" }),
     ).toBeInTheDocument()
