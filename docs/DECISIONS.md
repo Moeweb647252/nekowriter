@@ -4075,10 +4075,12 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     book #1's conception materials and session #4 stayed unchanged. The 3 old timeline rows became
     `entry`/`occurred` under one contentless root, and all 12 foreshadowing rows kept their
     `planned_payoff` text with `payoff_event_id`/`payoff_position` NULL. `foreign_key_check` was
-    empty and `0001_init.sql` remained byte-identical. The UI smoke saw the merged tree, row menu,
-    sub-entry creation through three levels, the anchor picker, and the book-agent panel; the
-    Demo arm did not exercise planned-outline seeding, promotion, abandonment or a saved anchor,
-    so those remain covered by the server tests rather than this UI run.
+    empty and `0001_init.sql` remained byte-identical. The UI smoke saw the merged tree and row
+    menu, created sub-entries through three levels, created and promoted a planned node, saw a
+    second planned node greyed as abandoned, and saved an anchor that rendered as
+    "Pays off after «计划中的事件»" with no chapter number. The Demo provider itself did not seed
+    planned nodes from an outline in this run; that seeding path remains covered by the server
+    tests, while the root/reparent smoke above exercised the migrated data.
 - **Spec**:
   - PROJECT §4, §6.7, §6.16, F7, §8.8, §9.2, §10 (#35), §11;
   - spec/02 §1, §2, §3, §4, §5;
