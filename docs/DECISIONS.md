@@ -4017,6 +4017,10 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     - Re-sync edits or deletes unsupported history and never reverts it to planned.
   - **Migration** 0013 is append-only: it adds the columns, creates the roots and reparents every
     row as happened. Existing books are not converted.
+  - **Historical chapter links stay.** The "no chapter numbers" rule bans planning chapter
+    numbers before the text exists (for example "卷三第 50–53 章" in an outline), not recording
+    which chapter a past event happened in: happened, planted and resolved rows keep their
+    chapter links (PROJECT §8.8). Do not remove them.
   - **Task split correction (while 22.3 was under review).** The plan document originally folded
     the tool work into the tree-rules task and had six tasks. The adopted split is seven tasks:
     22.1 docs, 22.2 schema and types, 22.3 tree rules, 22.4 tools (including the genuinely missing

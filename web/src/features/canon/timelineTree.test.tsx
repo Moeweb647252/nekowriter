@@ -33,7 +33,7 @@ vi.mock("@/api/hooks/useCanon", () => ({
     data: [
       {
         id: 1, book_id: 1, track_id: null, position: 0, story_time: "",
-        title: "", description: "", chapter_id: null, parent_id: null,
+        title: "ROOT SHOULD NOT RENDER", description: "", chapter_id: null, parent_id: null,
         kind: "root", status: "occurred", child_count: 3, importance: 2,
         entity_ids: [], created_at: "", updated_at: "",
       },
@@ -113,7 +113,7 @@ function event(overrides: Partial<TimelineEventDto>): TimelineEventDto {
 describe("TimelinePage tree", () => {
   it("renders the tree, planned badge, abandoned strike-through and never the root", () => {
     render(<TimelinePage />)
-    expect(screen.queryByText("root")).not.toBeInTheDocument()
+    expect(screen.queryByText("ROOT SHOULD NOT RENDER")).not.toBeInTheDocument()
     expect(screen.getByText("Phase")).toBeInTheDocument()
     const scene = screen.getByText("Scene").closest("div[style]")!
     expect(scene).toHaveStyle({ marginLeft: "16px" })
@@ -238,4 +238,15 @@ describe("TimelinePage tree", () => {
     expect(screen.queryByText("Dropped")).toBeNull()
   })
 
+  it("inserts at the top edge before the first row", async () => {
+    render(<TimelinePage />)
+    const user = userEvent.setup()
+    await user.click(screen.getAllByRole("button", { name: "Insert here" })[0])
+    await user.type(screen.getByPlaceholderText("Event title"), "Prologue")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    expect(createMutate.mock.calls[0][0]).toMatchObject({
+      title: "Prologue",
+      before_id: 2,
+    })
+  })
 })

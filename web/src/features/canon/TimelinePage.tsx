@@ -227,6 +227,7 @@ export default function TimelinePage() {
                             entity_ids: [],
                             parent_id: row.parent_id,
                             after_id: index === 0 ? undefined : visibleRows[index - 1]?.event.id,
+                            before_id: index === 0 ? visibleRows[0]?.event.id : undefined,
                           },
                           {
                             onSuccess: () => setInsertAt(null),
