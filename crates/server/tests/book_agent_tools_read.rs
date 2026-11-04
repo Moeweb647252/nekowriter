@@ -24,7 +24,7 @@ fn with_system(systems: &CanonSystems, off: &str) -> CanonSystems {
 }
 
 #[test]
-fn the_book_agent_freezes_exactly_the_43_tool_list() {
+fn the_book_agent_freezes_exactly_the_44_tool_list() {
     let registry = ToolRegistry::new();
     let tools = tools_for_session(
         "assistant",
@@ -35,8 +35,8 @@ fn the_book_agent_freezes_exactly_the_43_tool_list() {
         &registry,
     );
     assert_eq!(tools, ASSISTANT_TOOLS);
-    assert_eq!(tools.len(), 43);
-    assert_eq!(ASSISTANT_ACTION_TOOLS.len(), 27);
+    assert_eq!(tools.len(), 44);
+    assert_eq!(ASSISTANT_ACTION_TOOLS.len(), 28);
 }
 
 #[test]
@@ -80,6 +80,7 @@ fn the_canon_switches_remove_exactly_the_documented_rows() {
             &[
                 "list_foreshadowing",
                 "add_foreshadowing",
+                "update_foreshadowing",
                 "resolve_foreshadowing",
             ],
         ),
