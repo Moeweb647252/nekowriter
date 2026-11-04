@@ -485,12 +485,15 @@ async fn maintenance_and_book_agent_kickoffs_carry_their_sources() {
         .await;
     let maintenance = create(&fixture, SessionKind::ChapterMaintenance).await;
     let sources = kickoff_sources(&fixture, maintenance).await;
-    assert!(sources.iter().all(Option::is_some), "{sources:?}");
-    assert!(
-        sources
-            .iter()
-            .any(|source| source.as_deref() == Some("archivist.kickoff.maintenance")),
-        "{sources:?}"
+    assert_eq!(
+        sources,
+        vec![
+            Some("block.settings".to_owned()),
+            Some("block.memory".to_owned()),
+            Some("block.cast_index".to_owned()),
+            Some("block.chapter_draft".to_owned()),
+            Some("archivist.kickoff.maintenance".to_owned()),
+        ]
     );
 
     let (agent_id, _) = sessions::create(
@@ -504,13 +507,13 @@ async fn maintenance_and_book_agent_kickoffs_carry_their_sources() {
     .await
     .expect("create book agent");
     let agent_sources = kickoff_sources(&fixture, agent_id).await;
-    assert!(
-        agent_sources.iter().all(Option::is_some),
-        "{agent_sources:?}"
-    );
     assert_eq!(
-        agent_sources.last().and_then(|source| source.as_deref()),
-        Some("assistant.kickoff")
+        agent_sources,
+        vec![
+            Some("block.book_brief".to_owned()),
+            Some("block.book_index".to_owned()),
+            Some("assistant.kickoff".to_owned()),
+        ]
     );
 }
 
