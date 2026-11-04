@@ -4153,6 +4153,16 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   - Demo sessions report estimated usage, so their view is never calibrated. The Demo's count
     skips assistant messages, so the strip draws the breakdown's own estimate for estimated
     requests.
+  - **Smoke (2026-11-05, Demo provider).** On a fresh book with an approved chapter 1, the
+    chapter 2 writer ran ten requests; Context opened from the footer at 1280×1100 and showed
+    **Estimate**, with setup dominating (Tools 47%, System prompt 21%, Kickoff 19% in that run).
+    The strip had every request plus an outlined **Current**; selecting Step 1 showed a smaller
+    early request. Zooming **Tool results** then **insert_text** and pressing Escape returned to
+    the group, and List showed the same numbers. A steering message sent while the chapter 3
+    writer was running was delivered as the author's message and appeared under **From the
+    author**. Context also opened from the conception studio and the research task page. The
+    smoke did not reach a calibrated view (Demo usage is estimated), so the provider-count and
+    scaled-estimate header variants remain covered by the server/UI tests rather than this run.
 - **Spec**:
   - PROJECT §6.19, §8.6, §8.7, §9.2, §10 (#36), §11;
   - spec/01 §3.1;
