@@ -186,7 +186,7 @@ export function AgentPanel({ bookId, chapterId, bookStatus }: { bookId: number; 
     const openAgent = sessions
       .filter((entry) => entry.kind === "book_agent" && OPEN_STATUSES.has(entry.status))
       .sort((left, right) => right.id - left.id)[0]
-    setStartingNewConversation(false)
+    setStartingNewConversation(openAgent === undefined)
     setPinnedId(openAgent?.id ?? null, true)
   }), [bookId, sessions, setPinnedId])
 
