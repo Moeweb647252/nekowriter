@@ -2385,7 +2385,10 @@ fn chapter_session_role(kind: SessionKind) -> Option<&'static str> {
         }
         SessionKind::ChapterReview => Some("reviewer"),
         SessionKind::ChapterMaintenance | SessionKind::ChapterResync => Some("archivist"),
-        SessionKind::Conception | SessionKind::Research | SessionKind::CanonSeed => None,
+        SessionKind::Conception
+        | SessionKind::Research
+        | SessionKind::CanonSeed
+        | SessionKind::BookAgent => None,
     }
 }
 

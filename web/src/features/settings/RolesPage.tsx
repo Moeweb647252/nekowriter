@@ -325,6 +325,7 @@ export default function RolesPage() {
                     writer: null,
                     reviewer: null,
                     archivist: null,
+                    assistant: null,
                     // "Clear all roles" clears the efforts too (spec/04 §5.1, D-162).
                     efforts: {},
                   },

@@ -7,4 +7,4 @@
  * model when saved: the role's model can change later, and session creation skips a level the
  * resolved model does not list, with the `model.effort_unsupported` warning.
  */
-export type RoleEfforts = { conception?: string | null, researcher?: string | null, planner?: string | null, writer?: string | null, reviewer?: string | null, archivist?: string | null, };
+export type RoleEfforts = { conception?: string | null, researcher?: string | null, planner?: string | null, writer?: string | null, reviewer?: string | null, archivist?: string | null, assistant?: string | null, };

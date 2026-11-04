@@ -111,6 +111,7 @@ pub fn kickoff_blocks(kind: SessionKind, _redraft: bool, preparation: bool) -> V
             "block.chapter_diff",
             "archivist.kickoff.resync",
         ],
+        SessionKind::BookAgent => vec!["assistant.kickoff"],
     }
 }
 

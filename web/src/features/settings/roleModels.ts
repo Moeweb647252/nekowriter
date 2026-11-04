@@ -18,7 +18,7 @@ import type { RoleModels } from "@/api/gen/RoleModels"
 
 import { isSendableEffortLevel } from "@/features/settings/effortLevels"
 
-/** The six roles in the order the settings pages list them (spec/02 §3, D-146). */
+/** The seven roles in the order the settings pages list them (spec/02 §3, D-146, D-169). */
 export const AGENT_ROLES: readonly AgentRole[] = [
   "conception",
   "researcher",
@@ -26,6 +26,7 @@ export const AGENT_ROLES: readonly AgentRole[] = [
   "writer",
   "reviewer",
   "archivist",
+  "assistant",
 ]
 
 /** The role → i18n key of its label (spec/11 §6). Both settings screens reuse these keys. */
@@ -36,6 +37,7 @@ const ROLE_LABEL_KEYS: Record<AgentRole, string> = {
   writer: "settings:role.writer",
   reviewer: "settings:role.reviewer",
   archivist: "settings:role.archivist",
+  assistant: "settings:role.assistant",
 }
 
 /** The localized label key of one agent role. */
@@ -59,6 +61,7 @@ export function roleSelection(models: RoleModels | null | undefined): RoleSelect
     writer: models?.writer ?? null,
     reviewer: models?.reviewer ?? null,
     archivist: models?.archivist ?? null,
+    assistant: models?.assistant ?? null,
   }
 }
 

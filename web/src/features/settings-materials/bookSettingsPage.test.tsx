@@ -211,6 +211,7 @@ describe("Book settings › model overrides", () => {
       "model-override-row-writer",
       "model-override-row-reviewer",
       "model-override-row-archivist",
+      "model-override-row-assistant",
     ])
 
     // With no override the select shows "Use the global default".
@@ -429,6 +430,7 @@ describe("Book settings › model overrides", () => {
       writer: 7,
       reviewer: 8,
       archivist: null,
+      assistant: null,
       // The loaded per-role efforts ride along: a unit replacement that dropped them would erase
       // the author's choices (D-162). Mutation: sending `{}` here fails this assertion.
       efforts: { researcher: "low" },
@@ -503,6 +505,7 @@ describe("Book settings › model overrides", () => {
       writer: null,
       reviewer: null,
       archivist: null,
+      assistant: null,
       efforts: {},
     })
   })

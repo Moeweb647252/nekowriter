@@ -310,7 +310,8 @@ pub fn is_permitted(kind: SessionKind, phase: Phase, tool: &str, frozen: &[Strin
         | SessionKind::ChapterResync
         | SessionKind::ChapterReview
         | SessionKind::Conception
-        | SessionKind::Research => true,
+        | SessionKind::Research
+        | SessionKind::BookAgent => true,
     }
 }
 
@@ -335,6 +336,7 @@ pub fn role_enum_of_kind(kind: SessionKind) -> AgentRole {
         SessionKind::ChapterMaintenance | SessionKind::CanonSeed | SessionKind::ChapterResync => {
             AgentRole::Archivist
         }
+        SessionKind::BookAgent => AgentRole::Assistant,
     }
 }
 

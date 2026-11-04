@@ -20,13 +20,14 @@ use nekowriter::testing::TestApp;
 use serde_json::{Value, json};
 
 /// The roles the editor lists, in the order the settings pages use (spec/02 §3).
-const ROLES: [&str; 6] = [
+const ROLES: [&str; 7] = [
     "conception",
     "researcher",
     "planner",
     "writer",
     "reviewer",
     "archivist",
+    "assistant",
 ];
 
 /// Two model profiles on the Demo provider: a "global" one and a per-book one.
@@ -159,6 +160,7 @@ async fn the_patch_round_trips_every_role_through_the_book_dto() {
         "writer": models.book,
         "reviewer": null,
         "archivist": null,
+        "assistant": null,
         // Old rows and requests without efforts read as the empty choice set (D-162).
         "efforts": {},
     });
