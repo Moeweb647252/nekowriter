@@ -110,12 +110,40 @@ async fn read_tools_return_the_book_index_chapter_and_setting_doc() {
     let app = TestApp::new().await;
     let book = app.create_book("Book").await;
     let book_id = book["id"].as_i64().unwrap() as i32;
+    let (goal_status, goal_body) = app
+        .post(
+            &format!("/api/books/{book_id}/goals"),
+            json!({"level":"goal","title":"Shared goal","purpose":"shared","status":"active"}),
+        )
+        .await;
+    assert_eq!(goal_status, axum::http::StatusCode::CREATED, "{goal_body}");
+    let (track_status, side_track) = app
+        .post(
+            &format!("/api/books/{book_id}/tracks"),
+            json!({"kind":"side","title":"Private side","canon_mode":"isolated"}),
+        )
+        .await;
+    assert_eq!(
+        track_status,
+        axum::http::StatusCode::CREATED,
+        "{side_track}"
+    );
+    let side_track_id = side_track["id"].as_i64().unwrap();
+    let (private_status, private_goal) = app.post(
+        &format!("/api/books/{book_id}/goals"),
+        json!({"level":"goal","title":"Private goal","purpose":"private","track_id":side_track_id}),
+    ).await;
+    assert_eq!(
+        private_status,
+        axum::http::StatusCode::CREATED,
+        "{private_goal}"
+    );
     let tracks = app.get(&format!("/api/books/{book_id}/tracks")).await.1;
     let track_id = tracks[0]["id"].as_i64().unwrap() as i32;
     let chapter = app.create_chapter(track_id, "A chapter").await;
     let chapter_id = chapter["id"].as_i64().unwrap() as i32;
     app.execute(&format!(
-        "UPDATE chapters SET content = '{{\"paragraphs\":[{{\"pid\":\"p1\",\"text\":\"Hello\"}}],\"next_pid\":2,\"tail_open\":false}}', content_version = 3, word_count = 1, canon_status = 'none' WHERE id = {chapter_id}"
+        "UPDATE chapters SET content = '{{\"paragraphs\":[{{\"pid\":\"p1\",\"text\":\"Hello\"}},{{\"pid\":\"p2\",\"text\":\"World\"}}],\"next_pid\":3,\"tail_open\":false}}', content_version = 3, word_count = 2, canon_status = 'none' WHERE id = {chapter_id}"
     )).await;
     app.execute(&format!(
         "UPDATE setting_docs SET content = 'abcdefghij' WHERE book_id = {book_id} AND kind = 'world'"
@@ -179,12 +207,13 @@ async fn read_tools_return_the_book_index_chapter_and_setting_doc() {
         .unwrap()
         .execute(
             &mut ctx,
-            json!({"chapter":"1","part":"text"}),
+            json!({"chapter":"1","part":"text","max_chars":8}),
             Prepared::None,
         )
         .await
         .unwrap();
     assert!(open.text.contains("p1"), "{}", open.text);
+    assert!(open.text.contains("from_pid=\"p2\""), "{}", open.text);
     assert_eq!(open.ui["content_version"], 3);
     let doc = registry
         .get("read_setting_doc")
@@ -193,5 +222,52 @@ async fn read_tools_return_the_book_index_chapter_and_setting_doc() {
         .await
         .unwrap();
     assert!(doc.text.contains("cdefghij"), "{}", doc.text);
+    let chars = registry
+        .get("read_characters")
+        .unwrap()
+        .execute(&mut ctx, json!({}), Prepared::None)
+        .await
+        .unwrap();
+    assert!(chars.text.contains("Character 1"), "{}", chars.text);
+    let missing = registry
+        .get("read_characters")
+        .unwrap()
+        .execute(&mut ctx, json!({"name":"Nobody"}), Prepared::None)
+        .await;
+    assert_eq!(
+        missing.unwrap_err().kind,
+        nekowriter::agent::tools::ToolErrorKind::CharacterNotFound
+    );
+    let goals = registry
+        .get("list_goals")
+        .unwrap()
+        .execute(&mut ctx, json!({}), Prepared::None)
+        .await
+        .unwrap();
+    assert!(goals.text.contains("Shared goal"), "{}", goals.text);
+    assert!(!goals.text.contains("Private goal"), "{}", goals.text);
+    let research = registry
+        .get("list_research")
+        .unwrap()
+        .execute(&mut ctx, json!({}), Prepared::None)
+        .await
+        .unwrap();
+    assert!(research.text.contains("没有资料"), "{}", research.text);
+    let sessions = registry
+        .get("list_sessions")
+        .unwrap()
+        .execute(&mut ctx, json!({}), Prepared::None)
+        .await
+        .unwrap();
+    assert!(sessions.text.contains("book_agent"), "{}", sessions.text);
+    for part in ["outline", "reference_notes", "guidance", "summary"] {
+        let view = registry
+            .get("open_chapter")
+            .unwrap()
+            .execute(&mut ctx, json!({"chapter":"1","part":part}), Prepared::None)
+            .await
+            .unwrap();
+        assert!(view.text.contains("状态"), "{}", view.text);
+    }
     tx.rollback().await.unwrap();
 }

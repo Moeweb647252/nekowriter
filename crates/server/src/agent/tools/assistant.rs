@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::db::entities::{
-    agent_sessions, chapters, character_designs, goal_nodes, research_tasks, setting_docs, tracks,
+    agent_sessions, chapters, character_designs, research_tasks, setting_docs, tracks,
 };
 use crate::db::json::{GoalLevel, GoalStatus, ResearchTaskStatus, SettingDocKind};
 use crate::services::canon;
@@ -146,7 +146,7 @@ impl ToolHandler for OpenChapterTool {
         let next_pid = if part == "text" && cut < value.len() {
             paragraphs
                 .iter()
-                .find(|p| body.contains(&p.pid))
+                .find(|p| !body.contains(&format!("[{}]", p.pid)))
                 .map(|p| p.pid.clone())
         } else {
             None
@@ -187,7 +187,7 @@ impl ToolHandler for OpenChapterTool {
         Ok(ToolOutcome::text(rendered.text).with_ui(json!({
             "chapter_id": chapter.id, "part": part, "status": chapter.status,
             "content_version": chapter.content_version, "canon_status": chapter.canon_status,
-            "words": chapter.word_count, "open_sessions": open_sessions,
+            "words": chapter.word_count, "open_sessions": open_sessions, "next_pid": next_pid,
         })))
     }
 }
@@ -326,6 +326,17 @@ impl ToolHandler for ReadCharactersTool {
             query = query.filter(character_designs::COLUMN.name.eq(name));
         }
         let designs = query.all(ctx.tx).await.map_err(|_| internal())?;
+        if let Some(name) = input
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            && designs.is_empty()
+        {
+            return Err(
+                ToolError::new(ToolErrorKind::CharacterNotFound).with("name", name.to_owned())
+            );
+        }
         let rendered = ctx.prompts.render_value("result.characters_view", crate::prompts::template_value(&json!({
             "designs": designs.iter().map(|design| json!({"rank": design.rank, "name": design.name, "role_label": design.role_label, "summary": design.summary, "profile": design.profile, "entity_id": design.entity_id})).collect::<Vec<_>>(),
         }))).map_err(|_| internal())?;
@@ -362,29 +373,34 @@ impl ToolHandler for ListGoalsTool {
         let input: ListGoalsInput =
             serde_json::from_value(input).map_err(|error| validation(&error.to_string()))?;
         let book_id = book_id(ctx)?;
-        let mut nodes = goal_nodes::Entity::find()
-            .filter(goal_nodes::COLUMN.book_id.eq(book_id))
-            .order_by_asc(goal_nodes::COLUMN.id)
-            .all(ctx.tx)
-            .await
-            .map_err(|_| internal())?;
+        // Shared scope only (plan row 11); `open` is the default and means active + waiting.
+        let mut nodes = crate::services::goals::list(
+            ctx.tx,
+            book_id,
+            &crate::api::dto::goals::GoalQuery {
+                track_id: None,
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|_| internal())?;
+        let status = input.status.as_deref().unwrap_or("open");
+        match status {
+            "all" => {}
+            "open" => {
+                nodes.retain(|node| matches!(node.status, GoalStatus::Active | GoalStatus::Waiting))
+            }
+            other => {
+                let wanted = GoalStatus::from_str_opt(other)
+                    .ok_or_else(|| validation("unknown goal status"))?;
+                nodes.retain(|node| node.status == wanted);
+            }
+        }
         if let Some(level) = input.level {
             nodes.retain(|node| node.level == level);
         }
-        if let Some(status) = input.status.as_deref() {
-            let statuses: Vec<GoalStatus> = match status {
-                "open" => vec![GoalStatus::Active, GoalStatus::Waiting],
-                "all" => vec![],
-                other => GoalStatus::from_str_opt(other)
-                    .map(|s| vec![s])
-                    .ok_or_else(|| validation("unknown goal status"))?,
-            };
-            if !statuses.is_empty() {
-                nodes.retain(|node| statuses.contains(&node.status));
-            }
-        }
         let rendered = ctx.prompts.render_value("result.goal_list", crate::prompts::template_value(&json!({
-            "nodes": nodes.iter().map(|node| json!({"id": node.id, "level": node.level, "title": node.title, "purpose": node.purpose, "status": node.status, "chapter_from": node.chapter_from, "chapter_to": node.chapter_to})).collect::<Vec<_>>(),
+            "nodes": nodes.iter().map(|node| json!({"id": node.id, "level": node.level, "title": node.title, "purpose": node.purpose, "status": node.status, "chapter_from": node.chapter_from, "chapter_to": node.chapter_to, "ready": node.ready, "closable": node.closable})).collect::<Vec<_>>(),
         }))).map_err(|_| internal())?;
         Ok(ToolOutcome::text(rendered.text).with_ui(json!({"count": nodes.len()})))
     }
@@ -477,10 +493,28 @@ impl ToolHandler for ListSessionsTool {
             query = query.filter(agent_sessions::COLUMN.kind.eq(kind.as_str()));
         }
         let rows = query.all(ctx.tx).await.map_err(|_| internal())?;
-        let rendered = ctx.prompts.render_value("result.session_list", crate::prompts::template_value(&json!({
-            "sessions": rows.iter().map(|row| json!({"id": row.id, "kind": row.kind, "chapter_id": row.chapter_id, "status": row.status, "created_at": row.created_at})).collect::<Vec<_>>(),
-        }))).map_err(|_| internal())?;
-        Ok(ToolOutcome::text(rendered.text).with_ui(json!({"count": rows.len()})))
+        let mut sessions = Vec::with_capacity(rows.len());
+        for row in rows {
+            let chapter_label = match row.chapter_id {
+                Some(id) => Some(
+                    canon::chapter_label(ctx.tx, ctx.prompts, Some(id))
+                        .await
+                        .map_err(|_| internal())?,
+                ),
+                None => None,
+            };
+            sessions.push(json!({"id": row.id, "kind": row.kind, "chapter_id": row.chapter_id, "chapter_label": chapter_label, "status": row.status, "created_at": row.created_at}));
+        }
+        let rendered = ctx
+            .prompts
+            .render_value(
+                "result.session_list",
+                crate::prompts::template_value(&json!({
+                    "sessions": sessions,
+                })),
+            )
+            .map_err(|_| internal())?;
+        Ok(ToolOutcome::text(rendered.text).with_ui(json!({"count": sessions.len()})))
     }
 }
 

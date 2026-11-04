@@ -741,14 +741,15 @@ pub(crate) async fn book_index_context(
         .collect::<Vec<_>>();
     let systems = session::canon_systems_of(session);
     let canon = json!({
-        "entities": if systems.entities { entities::Entity::find().filter(entities::COLUMN.book_id.eq(book_id)).count(conn).await? } else { 0 },
-        "timeline": if systems.timeline { crate::db::entities::timeline_events::Entity::find().filter(crate::db::entities::timeline_events::COLUMN.book_id.eq(book_id)).count(conn).await? } else { 0 },
-        "memory": if systems.memory { crate::db::entities::memory_notes::Entity::find().filter(crate::db::entities::memory_notes::COLUMN.book_id.eq(book_id)).count(conn).await? } else { 0 },
-        "foreshadowing": if systems.foreshadowing { crate::db::entities::foreshadowing::Entity::find().filter(crate::db::entities::foreshadowing::COLUMN.book_id.eq(book_id)).filter(crate::db::entities::foreshadowing::COLUMN.status.eq(crate::db::json::ForeshadowingStatus::Open)).count(conn).await? } else { 0 },
-        "goals": if systems.goals { crate::db::entities::goal_nodes::Entity::find().filter(crate::db::entities::goal_nodes::COLUMN.book_id.eq(book_id)).count(conn).await? } else { 0 },
+        "entities": if systems.entities { entities::Entity::find().filter(entities::COLUMN.book_id.eq(book_id)).filter(entities::COLUMN.track_id.is_null()).count(conn).await? } else { 0 },
+        "timeline": if systems.timeline { crate::db::entities::timeline_events::Entity::find().filter(crate::db::entities::timeline_events::COLUMN.book_id.eq(book_id)).filter(crate::db::entities::timeline_events::COLUMN.track_id.is_null()).count(conn).await? } else { 0 },
+        "memory": if systems.memory { crate::db::entities::memory_notes::Entity::find().filter(crate::db::entities::memory_notes::COLUMN.book_id.eq(book_id)).filter(crate::db::entities::memory_notes::COLUMN.track_id.is_null()).count(conn).await? } else { 0 },
+        "foreshadowing": if systems.foreshadowing { crate::db::entities::foreshadowing::Entity::find().filter(crate::db::entities::foreshadowing::COLUMN.book_id.eq(book_id)).filter(crate::db::entities::foreshadowing::COLUMN.track_id.is_null()).filter(crate::db::entities::foreshadowing::COLUMN.status.eq(crate::db::json::ForeshadowingStatus::Open)).count(conn).await? } else { 0 },
+        "goals": if systems.goals { crate::db::entities::goal_nodes::Entity::find().filter(crate::db::entities::goal_nodes::COLUMN.book_id.eq(book_id)).filter(crate::db::entities::goal_nodes::COLUMN.track_id.is_null()).count(conn).await? } else { 0 },
     });
     let goals = crate::db::entities::goal_nodes::Entity::find()
         .filter(crate::db::entities::goal_nodes::COLUMN.book_id.eq(book_id))
+        .filter(crate::db::entities::goal_nodes::COLUMN.track_id.is_null())
         .all(conn)
         .await?;
     let open_goals = goals
@@ -760,9 +761,19 @@ pub(crate) async fn book_index_context(
             )
         })
         .count();
-    let ready_goals = crate::services::books::ready_goal_count(conn, book_id)
-        .await
-        .map_err(|_| AppError::internal("ready goal count"))?;
+    let shared_goal_dtos = crate::services::goals::list(
+        conn,
+        book_id,
+        &crate::api::dto::goals::GoalQuery {
+            track_id: None,
+            ..Default::default()
+        },
+    )
+    .await?;
+    let ready_goals = shared_goal_dtos
+        .iter()
+        .filter(|node| node.ready || node.closable)
+        .count() as i32;
     let research = research_tasks::Entity::find()
         .filter(research_tasks::COLUMN.book_id.eq(book_id))
         .all(conn)
