@@ -263,9 +263,9 @@ text = '''
 {% set n.v = n.v + 1 %}{{ n.v }}. 主角状态：主角（即记忆中“主角当前状态”所示的人物）在本章出场时，用 update_entity 更新其 state，反映本章结尾时的情况。
 {% if systems.memory and track.canon_mode == "isolated" %}   如果该人物属于正史（不是本番外专属的实体），则不能修改；请用 add_memory_note 把其在番外中的状态变化记为番外内的笔记。
 {% endif %}{% set n.v = n.v + 1 %}{{ n.v }}. 关系：用 set_relation 或 end_relation 记录关系的建立与变化，写明 note。
-{% endif %}{% if systems.timeline %}{% set n.v = n.v + 1 %}{{ n.v }}. 时间线：用 add_timeline_event 记录本章的重要事件，按故事时间先后插入正确的位置。
+{% endif %}{% if systems.timeline %}{% set n.v = n.v + 1 %}{{ n.v }}. 时间线：用 add_timeline_event 把本章发生的事记录为对应条目下的子条目（按故事时间放到正确的位置）；正文写到某个计划中的节点时，用 update_timeline_event 把它改为 occurred，并记录本章的章节；本章没有写到的计划不要提前改。
 {% endif %}{% if systems.memory %}{% set n.v = n.v + 1 %}{{ n.v }}. 记忆笔记：用 add_memory_note 记录新确立的事实与世界规则；被推翻的用 retire_memory_note 撤销。
-{% endif %}{% if systems.foreshadowing %}{% set n.v = n.v + 1 %}{{ n.v }}. 伏笔：用 add_foreshadowing 记录新埋下的伏笔；用 resolve_foreshadowing 更新已回收的伏笔。
+{% endif %}{% if systems.foreshadowing %}{% set n.v = n.v + 1 %}{{ n.v }}. 伏笔：只记录本章正文真正埋下的伏笔，不要补写本章没有写的内容；能对应到本章或已有时间线节点时，用 payoff_event 与 payoff_position 锚定到最具体的节点；有明确的回收方向时写清楚，不写章节号。已回收的伏笔用 resolve_foreshadowing 更新。
 {% endif %}{% if systems.memory %}{% set n.v = n.v + 1 %}{{ n.v }}. set_chapter_summary：撰写本章摘要（150 到 400 字：发生了什么、涉及谁、结尾停在哪里）。（必做）
 {% endif %}{% if systems.goals and goals.nodes %}{% set n.v = n.v + 1 %}{{ n.v }}. 目标：对照上方的写作目标，若本章完成了某个节点的目的，用 propose_goal_change 提出 complete；若本章使某个节点无法达成，用 drop 并说明原因；若本章在某个计划下打开了新机会，用 create 提出新任务。本章没有推动目标时跳过此步。
 {% endif %}{% set n.v = n.v + 1 %}{% if track.canon_mode == "isolated" %}{{ n.v }}. 本章属于独立番外，不对设定资料提出修改建议；番外中的变化只记录为番外内的新记录。
@@ -291,8 +291,8 @@ text = '''
 {% set n.v = n.v + 1 %}{{ n.v }}. 组织、地点、物品：世界观与大纲中明确提到、后续会反复出现的势力、地点、重要物品，各自创建实体；它们的 description 同样是稳定档案，保持在约 120 字以内。
 {% set n.v = n.v + 1 %}{{ n.v }}. 关系：根据设定建立人物之间、人物与组织之间的关系（师徒、亲属、所属、敌对等）。
 {% endif %}{% if systems.memory %}{% set n.v = n.v + 1 %}{{ n.v }}. 世界规则与事实：用 add_memory_note 记录世界观中的核心规则（kind=world_rule）与重要的背景事实（kind=fact），重要的设为高重要度。
-{% endif %}{% if systems.timeline %}{% set n.v = n.v + 1 %}{{ n.v }}. 时间线：设定中明确的背景事件（故事开始之前发生的事）按时间先后加入时间线。
-{% endif %}{% if systems.foreshadowing %}{% set n.v = n.v + 1 %}{{ n.v }}. 伏笔：大纲中明确规划的悬念，可以用 add_foreshadowing 记录（planned_payoff 写回收方向）。
+{% endif %}{% if systems.timeline %}{% set n.v = n.v + 1 %}{{ n.v }}. 时间线：把大纲中写明的阶段、情节点及其先后关系建成时间线：计划中的阶段与事件记为 planned，有上级时放进对应条目下，形成条目与子条目；大纲写到多少就建多少，不设上限。设定中明确的背景事件（故事开始之前发生的事）记为 occurred，按时间先后加入。
+{% endif %}{% if systems.foreshadowing %}{% set n.v = n.v + 1 %}{{ n.v }}. 伏笔：只记录大纲中明确写出的伏笔，不自行发明；能对应到时间线节点时，用 payoff_event 与 payoff_position 锚定到最具体的那个节点；planned_payoff 只写回收方向，不写章节号。
 {% endif %}只记录设定资料中明确写出的内容，不要补充设定里没有的信息。完成后调用 finish_maintenance。
 '''
 

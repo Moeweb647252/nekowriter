@@ -136,7 +136,7 @@ text = '''
 {% for e in memory.cast %}- #{{ e.id }} {{ e.name }}【{{ e.kind_label }}】{% if e.summary %}— {{ e.summary }}{% endif %}
 
 {% endfor %}{% endif %}
-{% if systems.entities or systems.timeline or systems.memory or systems.foreshadowing %}档案规模：{% if systems.entities %}人物 {{ memory.counts.character }}，组织 {{ memory.counts.organization }}，地点 {{ memory.counts.location }}，物品 {{ memory.counts.item }}，其他 {{ memory.counts.other }}{% endif %}{% if systems.timeline %}{% if systems.entities %}；{% endif %}时间线事件 {{ memory.counts.event }}{% endif %}{% if systems.memory %}{% if systems.entities or systems.timeline %}；{% endif %}事实 {{ memory.counts.fact }}，世界规则 {{ memory.counts.world_rule }}{% endif %}{% if systems.foreshadowing %}{% if systems.entities or systems.timeline or systems.memory %}；{% endif %}未回收伏笔 {{ memory.counts.foreshadowing_open }}{% endif %}。{% endif %}{% endif %}
+{% if systems.entities or systems.timeline or systems.memory or systems.foreshadowing %}档案规模：{% if systems.entities %}人物 {{ memory.counts.character }}，组织 {{ memory.counts.organization }}，地点 {{ memory.counts.location }}，物品 {{ memory.counts.item }}，其他 {{ memory.counts.other }}{% endif %}{% if systems.timeline %}{% if systems.entities %}；{% endif %}时间线事件 {{ memory.counts.event }}{% if memory.counts.event_planned %}（其中计划中 {{ memory.counts.event_planned }}）{% endif %}{% endif %}{% if systems.memory %}{% if systems.entities or systems.timeline %}；{% endif %}事实 {{ memory.counts.fact }}，世界规则 {{ memory.counts.world_rule }}{% endif %}{% if systems.foreshadowing %}{% if systems.entities or systems.timeline or systems.memory %}；{% endif %}未回收伏笔 {{ memory.counts.foreshadowing_open }}{% endif %}。{% endif %}{% endif %}
 '''
 
 [[prompt]]

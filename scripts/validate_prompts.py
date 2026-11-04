@@ -174,7 +174,7 @@ memory = dict(is_first=False, window_mid=10,
               key_notes=[dict(id=3, kind_label="世界规则", content="筑基之前无法御剑。")],
               open_foreshadowing=[dict(id=9, title="黑衣人的剑穗", planted_label="第5章")],
               cast=[dict(id=12, name="林凡", kind_label="人物", summary="外门弟子"), dict(id=20, name="青云宗", kind_label="组织", summary="")],
-              counts=dict(character=10, organization=3, location=5, item=4, other=1, event=30, fact=12, world_rule=6, foreshadowing_open=4))
+              counts=dict(character=10, organization=3, location=5, item=4, other=1, event=30, event_planned=5, fact=12, world_rule=6, foreshadowing_open=4))
 memory_first = dict(memory, is_first=True, recent_summaries=[], previous_tail=None, protagonist=None, recent_changes=[],
                     appearances=[], absent_important=[], key_notes=[], open_foreshadowing=[], cast=[],
                     counts={k: 0 for k in memory["counts"]})

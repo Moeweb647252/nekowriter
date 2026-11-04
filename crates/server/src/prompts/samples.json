@@ -161,6 +161,8 @@
     "item": 4,
     "other": 1,
     "event": 30,
+
+    "event_planned": 5,
     "fact": 12,
     "world_rule": 6,
     "foreshadowing_open": 4
@@ -1113,6 +1115,8 @@
       "item": 0,
       "other": 0,
       "event": 0,
+
+      "event_planned": 0,
       "fact": 0,
       "world_rule": 0,
       "foreshadowing_open": 0
@@ -1152,6 +1156,8 @@
       "item": 0,
       "other": 0,
       "event": 0,
+
+      "event_planned": 0,
       "fact": 0,
       "world_rule": 0,
       "foreshadowing_open": 0
@@ -1271,6 +1277,8 @@
       "item": 4,
       "other": 1,
       "event": 30,
+
+      "event_planned": 5,
       "fact": 12,
       "world_rule": 6,
       "foreshadowing_open": 4

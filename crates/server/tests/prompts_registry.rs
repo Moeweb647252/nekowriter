@@ -179,6 +179,78 @@ fn the_entity_description_ceiling_is_stated_where_entities_are_written() {
     );
 }
 
+/// The relational-planning rule (T14, D-170) is carried only by the conception prompt: the
+/// outline is phases/volumes with ordering relations, never chapter numbers or per-chapter events.
+#[test]
+fn the_conception_outline_is_relational_and_has_no_per_chapter_writing_phrase() {
+    let registry = PromptRegistry::embedded().expect("pack");
+    let system = registry
+        .defaults_only()
+        .render("conception.system", &json!({}))
+        .expect("conception.system")
+        .text;
+    assert!(
+        !system.contains("逐章写作"),
+        "conception.system must not restore the per-chapter writing phrase:\n{system}"
+    );
+    assert!(
+        system.contains("先后关系") && system.contains("并行关系"),
+        "the outline must state ordering and parallel relations:\n{system}"
+    );
+    assert!(
+        system.contains("不要写章节号") && system.contains("逐章细纲"),
+        "the outline must defer chapter detail to the per-chapter outline sessions:\n{system}"
+    );
+    assert!(
+        system.contains("按卷或大致进度"),
+        "the protagonist growth stages must be by volume or rough progress:\n{system}"
+    );
+}
+
+/// The seed kickoff asks for every planned node the outline states, with no cap, and forbids
+/// inventing foreshadowing (T15, D-170).
+#[test]
+fn the_seed_kickoff_asks_for_uncapped_planned_nodes_and_no_invented_foreshadowing() {
+    let registry = PromptRegistry::embedded().expect("pack");
+    let samples = registry.sample_contexts("archivist.kickoff.seed");
+    let sample = samples.first().expect("seed sample");
+    let seed = registry
+        .defaults_only()
+        .render("archivist.kickoff.seed", sample)
+        .expect("archivist.kickoff.seed")
+        .text;
+    assert!(
+        seed.contains("大纲写到多少就建多少，不设上限"),
+        "seed must not cap planned nodes:\n{seed}"
+    );
+    assert!(
+        seed.contains("只记录大纲中明确写出的伏笔，不自行发明"),
+        "seed must not invent foreshadowing:\n{seed}"
+    );
+}
+
+/// The memory block renders the planned count in the archive-size line (spec/06 §4.4).
+#[test]
+fn the_memory_block_shows_the_planned_event_count() {
+    let registry = PromptRegistry::embedded().expect("pack");
+    let mut context = registry
+        .sample_contexts("block.memory")
+        .into_iter()
+        .next()
+        .expect("memory sample");
+    context["memory"]["counts"]["event"] = json!(7);
+    context["memory"]["counts"]["event_planned"] = json!(3);
+    let text = registry
+        .defaults_only()
+        .render("block.memory", &context)
+        .expect("block.memory")
+        .text;
+    assert!(
+        text.contains("时间线事件 7（其中计划中 3）"),
+        "the memory block must show the planned count:\n{text}"
+    );
+}
+
 /// The knowledge-scope budget of D-145 is carried by the conception system prompt (where the
 /// research topics are planned) and by the `set_research_topics` scope field (the contract the
 /// model sees at call time). Prompt text is data, so an edit could drop the rule without failing

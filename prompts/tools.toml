@@ -434,8 +434,8 @@ properties.node = { type = "integer", minimum = 1, description = "complete 或 d
 properties.parent = { type = "integer", minimum = 1, description = "create 时可选的父计划编号" }
 properties.title = { type = "string", description = "create 的新任务标题" }
 properties.purpose = { type = "string", description = "create 的新任务目的" }
-properties.chapter_from = { type = "integer", minimum = 1, description = "create 的起始章" }
-properties.chapter_to = { type = "integer", minimum = 1, description = "create 的结束章" }
+properties.chapter_from = { type = "integer", minimum = 1, description = "可选：create 的起始章，只填作者明确指定的章" }
+properties.chapter_to = { type = "integer", minimum = 1, description = "可选：create 的结束章，只填作者明确指定的章" }
 properties.entities = { type = "array", items = { type = "string", description = "实体名" }, description = "create 时关联的实体名" }
 properties.events = { type = "array", items = { type = "integer", minimum = 1, description = "事件编号" }, description = "create 时关联的事件编号" }
 properties.foreshadowing = { type = "array", items = { type = "integer", minimum = 1, description = "伏笔编号" }, description = "create 时关联的伏笔编号" }

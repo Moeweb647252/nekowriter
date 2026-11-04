@@ -1010,6 +1010,7 @@ fn empty_memory_context() -> MemoryContext {
             item: 0,
             other: 0,
             event: 0,
+            event_planned: 0,
             fact: 0,
             world_rule: 0,
             foreshadowing_open: 0,

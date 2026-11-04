@@ -681,6 +681,29 @@ async fn counts_report_the_archive_size() {
     fixture
         .app
         .post(
+            &format!("/api/books/{}/timeline", fixture.book_id),
+            json!({ "title": "A planned event", "status": "planned" }),
+        )
+        .await;
+    let (_, abandoned) = fixture
+        .app
+        .post(
+            &format!("/api/books/{}/timeline", fixture.book_id),
+            json!({ "title": "An abandoned event", "status": "planned" }),
+        )
+        .await;
+    let abandoned_id = abandoned["id"].as_i64().expect("id") as i32;
+    let (status, response) = fixture
+        .app
+        .patch(
+            &format!("/api/timeline-events/{abandoned_id}"),
+            json!({ "status": "abandoned" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "abandon planned event: {response}");
+    fixture
+        .app
+        .post(
             &format!("/api/books/{}/memory-notes", fixture.book_id),
             json!({ "kind": "fact", "content": "a fact", "importance": 2 }),
         )
@@ -713,7 +736,11 @@ async fn counts_report_the_archive_size() {
     assert_eq!(snapshot.counts.location, 1);
     assert_eq!(snapshot.counts.item, 1);
     assert_eq!(snapshot.counts.other, 1);
-    assert_eq!(snapshot.counts.event, 1);
+    assert_eq!(
+        snapshot.counts.event, 2,
+        "occurred + planned, not abandoned"
+    );
+    assert_eq!(snapshot.counts.event_planned, 1);
     assert_eq!(snapshot.counts.fact, 1);
     assert_eq!(snapshot.counts.world_rule, 1);
     assert_eq!(snapshot.counts.note_other, 1);
