@@ -541,12 +541,14 @@ impl ToolHandler for DeleteCanonRecordTool {
             _ => unreachable!(),
         };
         ctx.events.extend(events);
-        text_outcome(
+        let mut outcome = text_outcome(
             ctx,
             "delete_canon_record",
             format!("删除{} #{}", input.target_type, input.id),
             json!({"note": input.note}),
-        )
+        )?;
+        outcome.ui["target_type"] = json!(input.target_type);
+        Ok(outcome)
     }
     async fn preview(&self, ctx: &mut ToolCtx<'_>, input: Value) -> Result<Value, ToolError> {
         let input: DeleteCanonInput = decode(input)?;
