@@ -104,6 +104,7 @@ async fn create_writer(
             guidance: None,
             kickoff_extra: None,
             pending_comment: None,
+            write_mode: None,
             chapter_guard: false,
             force_previous: false,
         },

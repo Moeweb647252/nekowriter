@@ -102,6 +102,13 @@ pub struct BookAgentStart {
     pub write_mode: Option<WriteMode>,
 }
 
+/// `POST /books/:id/agent` response (spec/10 §2.2, D-169).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct BookAgentStarted {
+    pub session_id: i32,
+}
+
 /// `PATCH /books/:id` body. Omitted fields are unchanged.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[ts(export)]

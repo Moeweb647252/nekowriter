@@ -6,7 +6,8 @@ use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 
 use crate::api::dto::books::{
-    BookDto, BookInput, BookOverviewDto, BookPatch, BookSummaryDto, CreateBookResponse,
+    BookAgentStart, BookAgentStarted, BookDto, BookInput, BookOverviewDto, BookPatch,
+    BookSummaryDto, CreateBookResponse,
 };
 use crate::api::dto::research::{KnowledgeCheckInput, KnowledgeCheckResponse};
 use crate::db::json::BookStatus;
@@ -92,6 +93,22 @@ pub async fn knowledge_check(
         StatusCode::CREATED,
         Json(KnowledgeCheckResponse { task, session_id }),
     ))
+}
+
+/// `POST /api/books/:id/agent` (spec/10 §2.2, D-169).
+pub async fn start_agent(
+    State(state): State<AppState>,
+    Path(book_id): Path<i32>,
+    Json(input): Json<BookAgentStart>,
+) -> AppResult<(StatusCode, Json<BookAgentStarted>)> {
+    let session_id = crate::services::sessions::start_book_agent(
+        &state,
+        book_id,
+        input.message,
+        input.write_mode,
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(BookAgentStarted { session_id })))
 }
 
 /// `POST /api/books/:id/conception/start` (spec/08 §5, spec/10 §2.2): the open session or a new

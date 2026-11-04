@@ -459,3 +459,14 @@ title_zh = "工具结果 · 资料收集完成"
 text = '''
 资料收集完成，本次共保存或更新 {{ entries }} 个条目。
 '''
+
+[[prompt]]
+key = "result.change_declined"
+kind = "result"
+agent = "assistant"
+vars = []
+title_en = "Result — change declined"
+title_zh = "结果 · 修改被拒绝"
+text = '''
+修改未应用：作者没有批准这次修改，并留下了意见。请阅读作者的意见后再决定下一步；不要原样重复被拒绝的修改。
+'''

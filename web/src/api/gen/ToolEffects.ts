@@ -8,7 +8,11 @@ import type { Phase } from "./Phase";
 /**
  * `agent_tool_calls.effects` — applied when the call is finalized, not when executed.
  */
-export type ToolEffects = { phase_to: Phase | null, complete: CompletionKind | null, await_input: AwaitInputKind | null, 
+export type ToolEffects = { 
+/**
+ * A book-agent action is waiting for the author's approval (D-169).
+ */
+approval: boolean, phase_to: Phase | null, complete: CompletionKind | null, await_input: AwaitInputKind | null, 
 /**
  * A text-changing writer call's staged chapter write, applied by the transaction that
  * finalizes the call (spec/03 §5.2, §5.4). `None` for every other tool.

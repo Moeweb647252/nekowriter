@@ -111,7 +111,7 @@ pub fn kickoff_blocks(kind: SessionKind, _redraft: bool, preparation: bool) -> V
             "block.chapter_diff",
             "archivist.kickoff.resync",
         ],
-        SessionKind::BookAgent => vec!["assistant.kickoff"],
+        SessionKind::BookAgent => vec!["block.book_brief", "block.book_index", "assistant.kickoff"],
     }
 }
 
@@ -565,6 +565,20 @@ async fn block_context(
         "block.book_brief" => Ok(json!({
             "book": book_context(conn, prompts, session.book_id).await?,
         })),
+        "block.book_index" => Ok(json!({
+            "index": book_index_context(conn, session).await?,
+        })),
+        "assistant.kickoff" => {
+            let request = extra
+                .and_then(|value| value.get("request"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            Ok(json!({
+                "book": book_context(conn, prompts, session.book_id).await?,
+                "index": book_index_context(conn, session).await?,
+                "request": request,
+            }))
+        }
         "conception.kickoff" => Ok(json!({
             "conception": conception_context(conn, prompts, session.book_id).await?,
         })),
@@ -643,6 +657,189 @@ async fn block_context(
             "no kickoff context builder for {other}"
         ))),
     }
+}
+
+/// The book-agent's capped map of the book (plan §3.2, D-169).
+async fn book_index_context(
+    conn: &impl ConnectionTrait,
+    session: &agent_sessions::Model,
+) -> Result<Value, AppError> {
+    let Some(book_id) = session.book_id else {
+        return Ok(json!({
+            "tracks": [], "setting_docs": [], "characters": [],
+            "canon": {"entities": 0, "timeline": 0, "memory": 0, "foreshadowing": 0, "goals": 0},
+            "goals": {"open": 0, "ready": 0}, "research": [], "sessions": [],
+            "proposals": [], "off_systems": []
+        }));
+    };
+    let tracks = tracks::Entity::find()
+        .filter(tracks::COLUMN.book_id.eq(book_id))
+        .order_by_asc(tracks::COLUMN.id)
+        .all(conn)
+        .await?;
+    let all_chapters = chapters::Entity::find()
+        .filter(chapters::COLUMN.book_id.eq(book_id))
+        .order_by_desc(chapters::COLUMN.id)
+        .all(conn)
+        .await?;
+    let total_chapters = all_chapters.len();
+    let chapter_rows: Vec<&chapters::Model> = all_chapters.iter().take(60).collect();
+    let mut track_index = Vec::new();
+    for track in &tracks {
+        let mut rows = Vec::new();
+        for chapter in chapter_rows
+            .iter()
+            .filter(|chapter| chapter.track_id == track.id)
+            .rev()
+        {
+            rows.push(json!({
+                "number": chapter.ord,
+                "title": chapter.title,
+                "status": chapter.status,
+                "words": chapter.word_count,
+                "canon_status": chapter.canon_status,
+            }));
+        }
+        track_index.push(json!({
+            "label": if track.kind == TrackKind::Main { "" } else { track.title.as_str() },
+            "kind": track.kind,
+            "chapters": rows,
+        }));
+    }
+    let docs = setting_docs::Entity::find()
+        .filter(setting_docs::COLUMN.book_id.eq(book_id))
+        .order_by_asc(setting_docs::COLUMN.kind)
+        .all(conn)
+        .await?
+        .into_iter()
+        .map(|doc| {
+            json!({
+                "label": doc.kind,
+                "characters": doc.content.chars().count(),
+                "revision": doc.revision,
+            })
+        })
+        .collect::<Vec<_>>();
+    let characters = character_designs::Entity::find()
+        .filter(character_designs::COLUMN.book_id.eq(book_id))
+        .order_by_asc(character_designs::COLUMN.rank)
+        .limit(30)
+        .all(conn)
+        .await?
+        .into_iter()
+        .map(|design| {
+            json!({
+                "rank": design.rank,
+                "name": design.name,
+                "role_label": design.role_label,
+            })
+        })
+        .collect::<Vec<_>>();
+    let canon = json!({
+        "entities": entities::Entity::find().filter(entities::COLUMN.book_id.eq(book_id)).count(conn).await?,
+        "timeline": crate::db::entities::timeline_events::Entity::find().filter(crate::db::entities::timeline_events::COLUMN.book_id.eq(book_id)).count(conn).await?,
+        "memory": crate::db::entities::memory_notes::Entity::find().filter(crate::db::entities::memory_notes::COLUMN.book_id.eq(book_id)).count(conn).await?,
+        "foreshadowing": crate::db::entities::foreshadowing::Entity::find().filter(crate::db::entities::foreshadowing::COLUMN.book_id.eq(book_id)).count(conn).await?,
+        "goals": crate::db::entities::goal_nodes::Entity::find().filter(crate::db::entities::goal_nodes::COLUMN.book_id.eq(book_id)).count(conn).await?,
+    });
+    let goals = crate::db::entities::goal_nodes::Entity::find()
+        .filter(crate::db::entities::goal_nodes::COLUMN.book_id.eq(book_id))
+        .all(conn)
+        .await?;
+    let open_goals = goals
+        .iter()
+        .filter(|goal| {
+            matches!(
+                goal.status,
+                crate::db::json::GoalStatus::Active | crate::db::json::GoalStatus::Waiting
+            )
+        })
+        .count();
+    let research = research_tasks::Entity::find()
+        .filter(research_tasks::COLUMN.book_id.eq(book_id))
+        .all(conn)
+        .await?;
+    let mut research_counts = std::collections::BTreeMap::new();
+    for task in research {
+        *research_counts
+            .entry(task.status.as_str().to_owned())
+            .or_insert(0_i64) += 1;
+    }
+    let sessions = agent_sessions::Entity::find()
+        .filter(agent_sessions::COLUMN.book_id.eq(book_id))
+        .filter(
+            agent_sessions::COLUMN
+                .status
+                .is_in(crate::services::sessions::open_statuses()),
+        )
+        .order_by_desc(agent_sessions::COLUMN.id)
+        .limit(30)
+        .all(conn)
+        .await?
+        .into_iter()
+        .map(|row| {
+            json!({
+                "id": row.id,
+                "kind": row.kind,
+                "chapter_id": row.chapter_id,
+                "status": row.status,
+            })
+        })
+        .collect::<Vec<_>>();
+    let proposals = crate::db::entities::setting_proposals::Entity::find()
+        .filter(
+            crate::db::entities::setting_proposals::COLUMN
+                .book_id
+                .eq(book_id),
+        )
+        .filter(
+            crate::db::entities::setting_proposals::COLUMN
+                .status
+                .eq(crate::db::json::ProposalStatus::Pending),
+        )
+        .order_by_desc(crate::db::entities::setting_proposals::COLUMN.id)
+        .limit(20)
+        .all(conn)
+        .await?
+        .into_iter()
+        .map(|proposal| {
+            json!({
+                "id": proposal.id,
+                "target_type": proposal.target_type,
+                "target_kind": proposal.target_kind,
+            })
+        })
+        .collect::<Vec<_>>();
+    let systems = session::canon_systems_of(session);
+    let mut off_systems = Vec::new();
+    if !systems.entities {
+        off_systems.push("entities");
+    }
+    if !systems.timeline {
+        off_systems.push("timeline");
+    }
+    if !systems.memory {
+        off_systems.push("memory");
+    }
+    if !systems.foreshadowing {
+        off_systems.push("foreshadowing");
+    }
+    if !systems.goals {
+        off_systems.push("goals");
+    }
+    Ok(json!({
+        "tracks": track_index,
+        "chapters_total": total_chapters,
+        "chapters_omitted": total_chapters.saturating_sub(chapter_rows.len()),
+        "setting_docs": docs,
+        "characters": characters,
+        "canon": canon,
+        "goals": {"open": open_goals, "ready": 0},
+        "research": research_counts.into_iter().map(|(status, count)| json!({"status": status, "count": count})).collect::<Vec<_>>(),
+        "sessions": sessions,
+        "proposals": proposals,
+        "off_systems": off_systems,
+    }))
 }
 
 /// `block.book_brief` and every task: the book (spec/09 §2 `vars.book`).

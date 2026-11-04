@@ -32,9 +32,10 @@ use crate::events::ServerEvent;
 use crate::prompts::PromptSet;
 
 pub use registry::{
-    ARCHIVIST_TOOLS, CONCEPTION_TOOLS, DEBUG_TOOLS, RESEARCHER_TOOLS, RETRIEVAL_TOOLS,
-    REVIEWER_TOOLS, ToolRegistry, WRITE_TOOLS, WRITER_TOOLS, allowed_tools, initial_phase,
-    is_permitted, is_write_tool, phase_label, role_of_kind, tools_for_role,
+    ARCHIVIST_TOOLS, ASSISTANT_ACTION_TOOLS, ASSISTANT_TOOLS, CONCEPTION_TOOLS, DEBUG_TOOLS,
+    RESEARCHER_TOOLS, RETRIEVAL_TOOLS, REVIEWER_TOOLS, ToolRegistry, WRITE_TOOLS, WRITER_TOOLS,
+    allowed_tools, initial_phase, is_permitted, is_write_tool, phase_label, role_of_kind,
+    tools_for_role,
 };
 pub use resolve::EntityResolver;
 pub use spec::{ToolSpec, ToolSpecs, validate_input};
@@ -293,6 +294,8 @@ pub struct ToolOutcome {
     pub effects: ToolEffects,
     /// `Some` when the call needs the author's input before it can finish.
     pub await_input: Option<AwaitInputKind>,
+    /// Sessions this tool starts, spawned after the transaction commits (D-169).
+    pub spawn: Vec<i32>,
     /// Deferred counter flag applied by `finalize` in the same transaction (spec/03 §8: a short
     /// completion is withheld exactly once, remembered in `counters.finish_warned`). It travels on
     /// the outcome because `finalize` writes the counters from the row it loaded before `execute`
@@ -309,6 +312,7 @@ impl ToolOutcome {
             ui: Value::Null,
             effects: ToolEffects::default(),
             await_input: None,
+            spawn: Vec::new(),
             finish_warned: false,
         }
     }
@@ -391,6 +395,7 @@ impl ToolOutcome {
             ui: Value::Null,
             effects: ToolEffects::default(),
             await_input: None,
+            spawn: Vec::new(),
             finish_warned: false,
         }
     }
@@ -479,6 +484,13 @@ pub trait ToolHandler: Send + Sync {
     /// Slow, read-only work outside any transaction; cancellable by Stop (spec/05 §1.2).
     async fn prepare(&self, _ctx: &PrepareCtx<'_>, _input: &Value) -> Result<Prepared, ToolError> {
         Ok(Prepared::None)
+    }
+
+    /// A read-only preview of an action tool's effect, used before a review-mode book-agent
+    /// approval hold (spec/03 §5.2, D-169). The default means "no preview implemented"; the
+    /// action tools added in M21 21.4/21.5 override it.
+    async fn preview(&self, _ctx: &mut ToolCtx<'_>, _input: Value) -> Result<Value, ToolError> {
+        Err(ToolError::new(ToolErrorKind::Internal))
     }
 
     /// Atomic work inside the call's transaction: database reads and writes only, no I/O waits.

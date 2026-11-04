@@ -1095,6 +1095,9 @@ impl AppendixKind {
 #[serde(default, rename_all = "snake_case")]
 #[ts(export)]
 pub struct ToolEffects {
+    /// A book-agent action is waiting for the author's approval (D-169).
+    #[serde(default)]
+    pub approval: bool,
     pub phase_to: Option<Phase>,
     pub complete: Option<CompletionKind>,
     pub await_input: Option<AwaitInputKind>,
@@ -1794,6 +1797,7 @@ mod tests {
     #[test]
     fn tool_effects_round_trip() {
         let value = ToolEffects {
+            approval: false,
             phase_to: Some(Phase::Drafting),
             complete: Some(CompletionKind::Draft),
             await_input: Some(AwaitInputKind::RequestReview),

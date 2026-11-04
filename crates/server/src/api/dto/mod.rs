@@ -32,8 +32,9 @@ pub mod skills;
 pub mod tracks;
 
 pub use books::{
-    BookAgentStart, BookDto, BookInput, BookOverviewDto, BookPatch, BookProgressDto,
-    BookSummaryDto, ChapterPointerDto, CreateBookResponse, StatusCountDto, TrackProgressDto,
+    BookAgentStart, BookAgentStarted, BookDto, BookInput, BookOverviewDto, BookPatch,
+    BookProgressDto, BookSummaryDto, ChapterPointerDto, CreateBookResponse, StatusCountDto,
+    TrackProgressDto,
 };
 pub use chapters::{
     ApproveChapterResponse, ChapterContentPatch, ChapterContentResult, ChapterContentTextPut,
