@@ -134,7 +134,12 @@ async fn validation_matrix_writes_nothing() {
     )
     .await;
     let planned_id = planned["id"].as_i64().expect("id") as i32;
-    let (status, response) = patch_event(&app, planned_id, json!({ "status": "planned", "note": "test" })).await;
+    let (status, response) = patch_event(
+        &app,
+        planned_id,
+        json!({ "status": "planned", "note": "test" }),
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{response}");
     assert_error(&response, "validation.failed");
     let (status, response) = patch_event(
@@ -182,7 +187,9 @@ async fn promotion_refuses_a_planned_descendant_and_names_it() {
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "{response}");
     assert_error(&response, "timeline.status_conflict");
-    let message = response["error"]["details"]["reason"].as_str().unwrap_or_default();
+    let message = response["error"]["details"]["reason"]
+        .as_str()
+        .unwrap_or_default();
     assert!(message.contains("Scene"), "names the conflict: {message}");
 
     // The descendant may happen first; then the phase can be promoted.

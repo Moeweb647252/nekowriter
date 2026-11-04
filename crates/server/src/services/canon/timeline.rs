@@ -309,7 +309,6 @@ pub async fn update_inner(
                 }),
             ));
         }
-
     }
     if existing.status == TimelineStatus::Planned && next_status == TimelineStatus::Abandoned {
         let occurred = super::timeline_tree::occurred_descendants(tx, event_id).await?;
@@ -394,15 +393,11 @@ pub async fn update_inner(
     let mut extra_events = Vec::new();
     if existing.status == TimelineStatus::Planned && next_status == TimelineStatus::Abandoned {
         for descendant in super::timeline_tree::planned_descendants(tx, event_id).await? {
-            let ids = super::linked_entity_ids(
-                tx,
-                super::LinkTable::TimelineEvent,
-                descendant.id,
-            )
-            .await?;
+            let ids = super::linked_entity_ids(tx, super::LinkTable::TimelineEvent, descendant.id)
+                .await?;
             let before = timeline_snapshot(&descendant, ids);
             let timestamp = stamp();
-            let mut child = timeline_events::ActiveModel {
+            let child = timeline_events::ActiveModel {
                 id: Set(descendant.id),
                 status: Set(TimelineStatus::Abandoned),
                 updated_at: Set(timestamp),
@@ -410,12 +405,8 @@ pub async fn update_inner(
             };
             child.update(tx).await?;
             let row = load(tx, descendant.id).await?;
-            let ids = super::linked_entity_ids(
-                tx,
-                super::LinkTable::TimelineEvent,
-                descendant.id,
-            )
-            .await?;
+            let ids = super::linked_entity_ids(tx, super::LinkTable::TimelineEvent, descendant.id)
+                .await?;
             let after = timeline_snapshot(&row, ids);
             let change_id = super::record_change(
                 tx,
@@ -983,22 +974,30 @@ pub async fn restore_inner(
         existing.track_id,
         &format!("timeline event #{}", existing.id),
     )?;
-    if *status == TimelineStatus::Planned {
-        if let Some(parent) = *parent_id {
-            super::timeline_tree::check_planned_ancestors(tx, parent, existing.track_id).await
-                .map_err(|_| CanonError::conflict(
+    if *status == TimelineStatus::Planned
+        && let Some(parent) = *parent_id
+    {
+        super::timeline_tree::check_planned_ancestors(tx, parent, existing.track_id)
+            .await
+            .map_err(|_| {
+                CanonError::conflict(
                     crate::error::ErrorCode::TimelineStatusConflict,
                     "the restored entry would break the timeline consistency rule",
                     serde_json::json!({ "event_id": event_id, "reason": "planned_descendant" }),
-                ))?;
-        }
+                )
+            })?;
     }
     let parent_id = match *parent_id {
         Some(parent) => {
             let row = timeline_events::Entity::find_by_id(parent).one(tx).await?;
             match row {
-                Some(row) if row.book_id == existing.book_id && row.kind == TimelineKind::Entry
-                    && row.status != TimelineStatus::Abandoned => Some(parent),
+                Some(row)
+                    if row.book_id == existing.book_id
+                        && row.kind == TimelineKind::Entry
+                        && row.status != TimelineStatus::Abandoned =>
+                {
+                    Some(parent)
+                }
                 _ => None,
             }
         }
