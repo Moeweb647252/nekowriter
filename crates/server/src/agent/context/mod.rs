@@ -207,7 +207,7 @@ async fn goal_event_links(
         .all(conn)
         .await?;
     let event_ids: Vec<i32> = links.iter().map(|link| link.event_id).collect();
-    let titles: std::collections::BTreeMap<i32, String> =
+    let rows: std::collections::BTreeMap<i32, (String, crate::db::json::TimelineStatus)> =
         crate::db::entities::timeline_events::Entity::find()
             .filter(
                 crate::db::entities::timeline_events::COLUMN
@@ -217,14 +217,19 @@ async fn goal_event_links(
             .all(conn)
             .await?
             .into_iter()
-            .map(|event| (event.id, event.title))
+            .map(|event| (event.id, (event.title, event.status)))
             .collect();
     let mut out: std::collections::BTreeMap<i32, Vec<String>> = std::collections::BTreeMap::new();
     for link in links {
-        if let Some(title) = titles.get(&link.event_id) {
+        if let Some((title, status)) = rows.get(&link.event_id) {
+            let marker = if *status == crate::db::json::TimelineStatus::Planned {
+                "（计划中）"
+            } else {
+                ""
+            };
             out.entry(link.node_id)
                 .or_default()
-                .push(format!("#{} {title}", link.event_id));
+                .push(format!("#{} {title}{marker}", link.event_id));
         }
     }
     Ok(out)
@@ -1251,6 +1256,7 @@ fn empty_memory_context() -> MemoryContext {
             item: 0,
             other: 0,
             event: 0,
+            event_planned: 0,
             fact: 0,
             world_rule: 0,
             foreshadowing_open: 0,

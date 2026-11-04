@@ -238,6 +238,7 @@ impl ToolHandler for SearchCanonTool {
                     "title": hit.title,
                     "kind_label": ctx.prompts.label("search_kind", &hit.kind),
                     "snippet": hit.snippet,
+                    "planned": hit.kind == "event" && meta_planned(&hit.meta),
                     "after_anchor": false,
                 })
             })
@@ -577,6 +578,15 @@ fn truncate_chars(text: &str, max: usize) -> String {
         return text.to_owned();
     }
     text.chars().take(max).collect()
+}
+
+/// True when a search document's `meta.planned` flag is set (planned timeline entries,
+/// spec/07 §2, D-170).
+fn meta_planned(meta: &str) -> bool {
+    serde_json::from_str::<Value>(meta)
+        .ok()
+        .and_then(|value| value.get("planned").and_then(Value::as_bool))
+        .unwrap_or(false)
 }
 
 /// The `meta.pids` of a passage document (spec/07 §2).

@@ -74,7 +74,7 @@ INSERT INTO entities(id, book_id, track_id, kind, name, aliases, summary, descri
 INSERT INTO appearances(chapter_id, entity_id, role, note) VALUES ({first}, 1, 'pov', '独有出场');
 INSERT INTO timeline_events(id, book_id, track_id, position, story_time, title, description,
                             chapter_id, importance, created_at, updated_at) VALUES
-  (1, {book}, NULL, 1.0, '', '独有时间线事件', '独有时间线描述。', {first}, 4,
+  (1001, {book}, NULL, 1.0, '', '独有时间线事件', '独有时间线描述。', {first}, 4,
    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
 INSERT INTO memory_notes(id, book_id, track_id, kind, content, chapter_id, importance, status,
                          created_at, updated_at) VALUES
@@ -643,7 +643,7 @@ async fn block_goals_renders_links_and_caps_at_thirty() {
         .app
         .execute(
             "INSERT INTO goal_node_entities(node_id, entity_id) VALUES (1, 1); \
-             INSERT INTO goal_node_events(node_id, event_id) VALUES (1, 1); \
+             INSERT INTO goal_node_events(node_id, event_id) VALUES (1, 1001); \
              INSERT INTO goal_node_foreshadowing(node_id, foreshadowing_id) VALUES (1, 1);",
         )
         .await;
@@ -679,7 +679,7 @@ async fn block_goals_renders_links_and_caps_at_thirty() {
         kickoff.contains("<entities>萧无咎(#1)</entities>"),
         "{kickoff}"
     );
-    assert!(kickoff.contains("#1 独有时间线事件"), "{kickoff}");
+    assert!(kickoff.contains("#1001 独有时间线事件"), "{kickoff}");
     assert!(kickoff.contains("#1 独有伏笔标题"), "{kickoff}");
     assert!(
         kickoff.contains("还有 7 个相关目标未显示"),

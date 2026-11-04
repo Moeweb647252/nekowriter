@@ -19,6 +19,7 @@ mod m0009_role_effort;
 mod m0010_tool_error_limit;
 mod m0011_check_topics;
 mod m0012_book_agent;
+mod m0013_timeline_tree;
 
 pub struct Migrator;
 
@@ -38,6 +39,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0010_tool_error_limit::Migration),
             Box::new(m0011_check_topics::Migration),
             Box::new(m0012_book_agent::Migration),
+            Box::new(m0013_timeline_tree::Migration),
         ]
     }
 }

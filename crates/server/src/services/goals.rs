@@ -120,6 +120,7 @@ pub async fn list(
                     query.foreshadowing_id == Some(*foreshadowing_id)
                 }
                 GoalCondition::ChapterAtLeast { .. } => false,
+                GoalCondition::EventOccurred { event_id } => query.event_id == Some(*event_id),
             });
             entity_links.contains(&node.id)
                 || event_links.contains(&node.id)
@@ -153,6 +154,13 @@ pub async fn evaluate(
         .collect();
     let hook_rows: HashMap<i32, foreshadowing::Model> = foreshadowing::Entity::find()
         .filter(foreshadowing::COLUMN.book_id.eq(book_id))
+        .all(conn)
+        .await?
+        .into_iter()
+        .map(|row| (row.id, row))
+        .collect();
+    let event_rows: HashMap<i32, timeline_events::Model> = timeline_events::Entity::find()
+        .filter(timeline_events::COLUMN.book_id.eq(book_id))
         .all(conn)
         .await?
         .into_iter()
@@ -205,6 +213,7 @@ pub async fn evaluate(
                     &official_by_track,
                     &entity_rows,
                     &hook_rows,
+                    &event_rows,
                 )
             })
             .collect::<Vec<_>>();
@@ -241,8 +250,24 @@ fn evaluate_condition(
     official_by_track: &HashMap<i32, BTreeSet<i32>>,
     entities: &HashMap<i32, entities::Model>,
     hooks: &HashMap<i32, foreshadowing::Model>,
+    events: &HashMap<i32, timeline_events::Model>,
 ) -> ConditionEvaluation {
     match condition {
+        GoalCondition::EventOccurred { event_id } => {
+            let row = events.get(event_id);
+            let visible_row = row.is_some_and(|row| visible(node_track, row.track_id));
+            let satisfied = row.is_some_and(|row| {
+                row.status == crate::db::json::TimelineStatus::Occurred && visible_row
+            });
+            let broken = row.is_none()
+                || !visible_row
+                || row.is_some_and(|row| row.status == crate::db::json::TimelineStatus::Abandoned);
+            ConditionEvaluation {
+                satisfied,
+                broken,
+                target_label: row.map(|row| format!("#{} {}", row.id, row.title)),
+            }
+        }
         GoalCondition::ChapterAtLeast { chapter } => {
             let satisfied = target_track
                 .and_then(|track| official_by_track.get(&track))
@@ -388,19 +413,21 @@ async fn goal_event_links(
         .all(conn)
         .await?;
     let event_ids: Vec<i32> = links.iter().map(|link| link.event_id).collect();
-    let titles: HashMap<i32, String> = timeline_events::Entity::find()
-        .filter(timeline_events::COLUMN.id.is_in(event_ids))
-        .all(conn)
-        .await?
-        .into_iter()
-        .map(|row| (row.id, row.title))
-        .collect();
+    let titles: HashMap<i32, (String, crate::db::json::TimelineStatus)> =
+        timeline_events::Entity::find()
+            .filter(timeline_events::COLUMN.id.is_in(event_ids))
+            .all(conn)
+            .await?
+            .into_iter()
+            .map(|row| (row.id, (row.title, row.status)))
+            .collect();
     let mut out: BTreeMap<i32, Vec<GoalEventLinkDto>> = BTreeMap::new();
     for link in links {
-        if let Some(title) = titles.get(&link.event_id) {
+        if let Some((title, status)) = titles.get(&link.event_id) {
             out.entry(link.node_id).or_default().push(GoalEventLinkDto {
                 id: link.event_id,
                 title: title.clone(),
+                status: *status,
             });
         }
     }
@@ -1133,6 +1160,18 @@ async fn validate_condition_targets(
     for condition in conditions {
         match condition {
             GoalCondition::ChapterAtLeast { .. } => {}
+            GoalCondition::EventOccurred { event_id } => {
+                let row = timeline_events::Entity::find_by_id(*event_id)
+                    .one(tx)
+                    .await?
+                    .ok_or_else(|| CanonError::not_found(format!("timeline event #{event_id}")))?;
+                if row.book_id != book_id
+                    || row.kind != crate::db::json::TimelineKind::Entry
+                    || !visible(track_id, row.track_id)
+                {
+                    return Err(CanonError::not_found(format!("timeline event #{event_id}")));
+                }
+            }
             GoalCondition::ForeshadowingResolved { foreshadowing_id } => {
                 let row = foreshadowing::Entity::find_by_id(*foreshadowing_id)
                     .one(tx)

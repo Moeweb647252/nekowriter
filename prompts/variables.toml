@@ -61,7 +61,7 @@ fields."absent_important[]" = { en = "id, name, last_label", zh = "久未出场�
 fields."key_notes[]" = { en = "id, kind_label, content", zh = "核心事实与世界规则" }
 fields."open_foreshadowing[]" = { en = "id, title, planted_label", zh = "未回收的伏笔" }
 fields."cast[]" = { en = "id, name, kind_label, summary", zh = "主要实体" }
-fields.counts = { en = "character, organization, location, item, other, event, fact, world_rule, foreshadowing_open", zh = "档案规模统计" }
+fields.counts = { en = "character, organization, location, item, other, event, event_planned, fact, world_rule, foreshadowing_open", zh = "档案规模统计" }
 
 [vars.systems]
 en = "The canon systems frozen into this session"

@@ -109,7 +109,7 @@ pub const REVIEWER_TOOLS: [&str; 11] = [
 ];
 
 /// The archivist role's fixed tool list (spec/05 §2).
-pub const ARCHIVIST_TOOLS: [&str; 22] = [
+pub const ARCHIVIST_TOOLS: [&str; 23] = [
     "get_entity",
     "list_entities",
     "get_relations",
@@ -127,6 +127,7 @@ pub const ARCHIVIST_TOOLS: [&str; 22] = [
     "add_memory_note",
     "retire_memory_note",
     "add_foreshadowing",
+    "update_foreshadowing",
     "resolve_foreshadowing",
     "set_chapter_summary",
     "propose_goal_change",
@@ -225,6 +226,7 @@ pub const ASSISTANT_TOOLS: &[&str] = &[
     "add_memory_note",
     "retire_memory_note",
     "add_foreshadowing",
+    "update_foreshadowing",
     "resolve_foreshadowing",
     "delete_canon_record",
     "create_goal",
@@ -256,6 +258,7 @@ pub const ASSISTANT_ACTION_TOOLS: &[&str] = &[
     "add_memory_note",
     "retire_memory_note",
     "add_foreshadowing",
+    "update_foreshadowing",
     "resolve_foreshadowing",
     "delete_canon_record",
     "create_goal",
@@ -293,9 +296,10 @@ pub fn system_of_tool(tool: &str) -> Option<CanonSystem> {
         "add_memory_note" | "retire_memory_note" | "set_chapter_summary" => {
             Some(CanonSystem::Memory)
         }
-        "list_foreshadowing" | "add_foreshadowing" | "resolve_foreshadowing" => {
-            Some(CanonSystem::Foreshadowing)
-        }
+        "list_foreshadowing"
+        | "add_foreshadowing"
+        | "update_foreshadowing"
+        | "resolve_foreshadowing" => Some(CanonSystem::Foreshadowing),
         "list_goals" | "create_goal" | "update_goal" | "propose_goal_change" => {
             Some(CanonSystem::Goals)
         }
@@ -585,7 +589,7 @@ mod tests {
     }
 
     #[test]
-    fn switch_filtering_keeps_the_fixed_order_and_the_archivist_list_grows_to_22() {
+    fn switch_filtering_keeps_the_fixed_order_and_the_archivist_list_grows_to_23() {
         let all = CanonSystems::default();
         let full = tools_for_session(
             "archivist",
@@ -596,10 +600,11 @@ mod tests {
             &ToolRegistry::new(),
         );
         assert!(ToolRegistry::new().has("propose_goal_change"));
-        assert_eq!(full.len(), 22);
-        assert_eq!(full[19], "propose_goal_change");
-        assert_eq!(full[20], "propose_setting_change");
-        assert_eq!(full[21], "finish_maintenance");
+        assert_eq!(full.len(), 23);
+        assert_eq!(full[17], "update_foreshadowing");
+        assert_eq!(full[20], "propose_goal_change");
+        assert_eq!(full[21], "propose_setting_change");
+        assert_eq!(full[22], "finish_maintenance");
 
         let without_relevant_goals = tools_for_session(
             "archivist",
@@ -609,7 +614,7 @@ mod tests {
             false,
             &ToolRegistry::new(),
         );
-        assert_eq!(without_relevant_goals.len(), 21);
+        assert_eq!(without_relevant_goals.len(), 22);
         assert!(!without_relevant_goals.contains(&"propose_goal_change"));
 
         let no_entities = CanonSystems {

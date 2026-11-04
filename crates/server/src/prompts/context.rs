@@ -325,6 +325,7 @@ pub struct MemoryCountsContext {
     pub item: i32,
     pub other: i32,
     pub event: i32,
+    pub event_planned: i32,
     pub fact: i32,
     pub world_rule: i32,
     pub foreshadowing_open: i32,

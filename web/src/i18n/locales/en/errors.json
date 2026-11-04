@@ -38,5 +38,7 @@
   "chapter.outline_missing": "This chapter has no outline yet. Write the outline first.",
   "goal.open_children": "This goal still has open descendants.",
   "goal.has_children": "This goal has children; move or delete them first.",
-  "model.effort_unsupported": "The chosen thinking effort is not available on this model; the session will use the next choice or the model default."
+  "model.effort_unsupported": "The chosen thinking effort is not available on this model; the session will use the next choice or the model default.",
+  "timeline.has_children": "This timeline event still has sub-entries; move or delete them first.",
+  "timeline.status_conflict": "That status change conflicts with an entry in its subtree."
 }

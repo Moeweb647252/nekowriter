@@ -56,9 +56,15 @@ const nodes: GoalNodeDto[] = [
         broken: false,
         target_label: null,
       },
+      {
+        condition: { kind: "event_occurred", event_id: 12 },
+        satisfied: false,
+        broken: false,
+        target_label: "The gate",
+      },
     ],
     entities: [],
-    events: [],
+    events: [{ id: 12, title: "The gate", status: "planned" }],
     foreshadowing: [],
     ready: true,
     closable: false,
@@ -143,6 +149,9 @@ describe("GoalsPage", () => {
     expect(screen.getByText("Make the reader believe she can choose.")).toBeInTheDocument()
     expect(screen.getByText("The choice must cost her the old life.")).toBeInTheDocument()
     expect(screen.getByText("Waiting for chapter 5")).toBeInTheDocument()
+    expect(screen.getByText("Waiting for «The gate» to happen")).toBeInTheDocument()
+    expect(screen.getByText("The gate")).toBeInTheDocument()
+    expect(screen.getByText("Planned")).toBeInTheDocument()
     expect(screen.getByText("Chapters 1–3")).toBeInTheDocument()
     expect(screen.getByText("Lin Fan")).toBeInTheDocument()
     expect(screen.getAllByText("Waiting").length).toBeGreaterThan(0)

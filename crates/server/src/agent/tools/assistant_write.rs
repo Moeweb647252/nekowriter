@@ -514,7 +514,7 @@ impl ToolHandler for DeleteCanonRecordTool {
             _ => return Err(validation("unknown target_type")),
         };
         if !on {
-            return Err(ToolError::new(ToolErrorKind::SystemOff).with("system", input.target_type));
+            return Err(ToolError::new(ToolErrorKind::SystemOff).with("system_label", input.target_type));
         }
         let mut write = write_context(ctx);
         write.note = Some(input.note.clone());

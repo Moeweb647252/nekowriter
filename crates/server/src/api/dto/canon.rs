@@ -12,7 +12,7 @@ use ts_rs::TS;
 
 use crate::db::json::{
     AnchorKind, AppearanceRole, EntityKind, EntityStatus, ForeshadowingStatus, NoteKind,
-    NoteStatus, RelationStatus,
+    NoteStatus, PayoffPosition, RelationStatus, TimelineKind, TimelineStatus,
 };
 
 use super::deserialize_some;
@@ -310,6 +310,11 @@ pub struct TimelineEventDto {
     pub title: String,
     pub description: String,
     pub chapter_id: Option<i32>,
+    /// `None` = top level (the root is never returned).
+    pub parent_id: Option<i32>,
+    pub kind: TimelineKind,
+    pub status: TimelineStatus,
+    pub child_count: i32,
     pub importance: i32,
     pub entity_ids: Vec<i32>,
     pub created_at: DateTime<Utc>,
@@ -336,6 +341,12 @@ pub struct TimelineEventInput {
     pub after_id: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub before_id: Option<i32>,
+    /// The parent entry; omitted or `None` = top level (D-170).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<i32>,
+    /// `occurred` (default) or `planned`; a planned entry has no chapter (D-170).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<TimelineStatus>,
     /// The author's change note (spec/06 §3); optional, empty when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
@@ -366,6 +377,16 @@ pub struct TimelineEventPatch {
     pub after_id: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub before_id: Option<i32>,
+    /// The new parent: `Some(None)` = top level, `Some(Some(id))` = that entry (D-170).
+    #[serde(
+        default,
+        deserialize_with = "deserialize_some",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub parent_id: Option<Option<i32>>,
+    /// Only `occurred` and `abandoned` are moves (D-170).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<TimelineStatus>,
     /// The author's change note (spec/06 §3); optional, empty when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
@@ -480,6 +501,11 @@ pub struct ForeshadowingDto {
     pub planted_chapter_id: Option<i32>,
     pub resolved_chapter_id: Option<i32>,
     pub resolution: String,
+    /// The anchor entry and its position; both are null or both set (D-170).
+    pub payoff_event_id: Option<i32>,
+    pub payoff_position: Option<PayoffPosition>,
+    pub payoff_event_title: Option<String>,
+    pub payoff_event_status: Option<TimelineStatus>,
     pub importance: i32,
     pub entity_ids: Vec<i32>,
     pub created_at: DateTime<Utc>,
@@ -498,6 +524,11 @@ pub struct ForeshadowingInput {
     pub planned_payoff: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub planted_chapter_id: Option<i32>,
+    /// Both anchor fields or neither (D-170).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payoff_event_id: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payoff_position: Option<PayoffPosition>,
     #[serde(default = "default_importance")]
     pub importance: i32,
     #[serde(default)]
@@ -526,6 +557,15 @@ pub struct ForeshadowingPatch {
     pub resolved_chapter_id: Option<Option<i32>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolution: Option<String>,
+    /// `Some(None)` clears the anchor together with its position (D-170).
+    #[serde(
+        default,
+        deserialize_with = "deserialize_some",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub payoff_event_id: Option<Option<i32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payoff_position: Option<PayoffPosition>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub importance: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

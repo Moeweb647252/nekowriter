@@ -16,7 +16,7 @@ use crate::db::entities::{
 };
 use crate::db::json::{
     CanonMode, ChangeTargetType, ChapterContent, ChapterStatus, EmbedState, JsonText, NoteStatus,
-    SearchDocKind,
+    SearchDocKind, TimelineKind, TimelineStatus,
 };
 use crate::error::AppError;
 use crate::events::ServerEvent;
@@ -286,6 +286,10 @@ pub async fn sync_timeline_event(
     else {
         return delete_ref_docs(conn, "event", event_id).await;
     };
+    // The root has no document, and an abandoned entry leaves the index (D-170 T8).
+    if row.kind == TimelineKind::Root || row.status == TimelineStatus::Abandoned {
+        return delete_ref_docs(conn, "event", event_id).await;
+    }
     let mut parts = Vec::new();
     for value in [&row.story_time, &row.description] {
         let value = value.trim();
@@ -293,6 +297,13 @@ pub async fn sync_timeline_event(
             parts.push(value.to_owned());
         }
     }
+    // A planned entry is indexed and flagged so a hit can say it has not happened yet
+    // (spec/07 §2, D-170).
+    let meta = if row.status == TimelineStatus::Planned {
+        r#"{"planned":true}"#.to_owned()
+    } else {
+        "{}".to_owned()
+    };
     upsert_doc(
         conn,
         NewDoc {
@@ -303,7 +314,7 @@ pub async fn sync_timeline_event(
             ref_part: 0,
             title: &row.title,
             body: &parts.join(" · "),
-            meta: "{}",
+            meta: &meta,
         },
     )
     .await

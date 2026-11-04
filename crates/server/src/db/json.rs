@@ -198,6 +198,39 @@ string_enum! {
 }
 
 string_enum! {
+    /// What a timeline row is (spec/02 §3, D-170): the book's empty root or a real entry.
+    TimelineKind {
+        Root => "root",
+        Entry => "entry",
+    }
+}
+
+string_enum! {
+    /// A timeline entry's place in the story (spec/02 §3, D-170).
+    TimelineStatus {
+        Occurred => "occurred",
+        Planned => "planned",
+        Abandoned => "abandoned",
+    }
+}
+
+impl Default for TimelineStatus {
+    /// Pre-0013 snapshots and rows predate statuses: they are history (spec/02 §4).
+    fn default() -> Self {
+        Self::Occurred
+    }
+}
+
+string_enum! {
+    /// Where a foreshadowing pays off relative to its anchor entry (spec/02 §3, D-170).
+    PayoffPosition {
+        Before => "before",
+        After => "after",
+        At => "at",
+    }
+}
+
+string_enum! {
     /// One canon system — the keys of [`CanonSystems`] (spec/02 §3, spec/06 §10).
     CanonSystem {
         Entities => "entities",
@@ -769,6 +802,9 @@ pub enum GoalCondition {
         entity_id: i32,
         status: EntityStatus,
     },
+    EventOccurred {
+        event_id: i32,
+    },
 }
 
 /// A task the archivist proposes (spec/06 §5); created `active` on accept.
@@ -1268,6 +1304,11 @@ pub enum Snapshot {
         importance: i32,
         entity_ids: Vec<i32>,
         track_id: Option<i32>,
+        /// The stored parent (the root id included); pre-0013 snapshots load as top level.
+        #[serde(default)]
+        parent_id: Option<i32>,
+        #[serde(default)]
+        status: TimelineStatus,
     },
     Note {
         kind: NoteKind,
@@ -1289,6 +1330,11 @@ pub enum Snapshot {
         importance: i32,
         entity_ids: Vec<i32>,
         track_id: Option<i32>,
+        /// Anchor since 0013; pre-0013 snapshots load unanchored (spec/02 §4).
+        #[serde(default)]
+        payoff_event_id: Option<i32>,
+        #[serde(default)]
+        payoff_position: Option<PayoffPosition>,
     },
     AppearanceSet {
         appearances: Vec<AppearanceSnapshot>,
@@ -1927,6 +1973,8 @@ mod tests {
                 importance: 2,
                 entity_ids: vec![1, 2],
                 track_id: None,
+                parent_id: None,
+                status: TimelineStatus::Occurred,
             },
             Snapshot::Note {
                 kind: NoteKind::Fact,
@@ -1948,6 +1996,8 @@ mod tests {
                 importance: 4,
                 entity_ids: vec![1],
                 track_id: None,
+                payoff_event_id: None,
+                payoff_position: None,
             },
             Snapshot::AppearanceSet {
                 appearances: vec![AppearanceSnapshot {

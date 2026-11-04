@@ -22,6 +22,7 @@ pub mod note;
 pub mod relation;
 pub mod revert;
 pub mod timeline;
+pub mod timeline_tree;
 
 use std::collections::{HashMap, HashSet};
 
@@ -75,6 +76,14 @@ impl CanonError {
 
     pub fn internal(message: impl Into<String>) -> Self {
         CanonError::App(AppError::internal(message))
+    }
+
+    pub fn conflict(
+        code: crate::error::ErrorCode,
+        message: impl Into<String>,
+        details: serde_json::Value,
+    ) -> Self {
+        CanonError::App(AppError::conflict(code, message).with_details(details))
     }
 
     pub fn isolated(target: impl Into<String>) -> Self {
@@ -475,6 +484,8 @@ pub fn timeline_snapshot(
         importance: row.importance,
         entity_ids,
         track_id: row.track_id,
+        parent_id: row.parent_id,
+        status: row.status,
     }
 }
 
@@ -508,6 +519,8 @@ pub fn foreshadowing_snapshot(
         importance: row.importance,
         entity_ids,
         track_id: row.track_id,
+        payoff_event_id: row.payoff_event_id,
+        payoff_position: row.payoff_position,
     })
 }
 

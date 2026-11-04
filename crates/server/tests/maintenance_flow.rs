@@ -199,7 +199,7 @@ async fn maintenance_writes_every_canon_row_and_completes_synced() {
         count(
             &runtime,
             "timeline_events",
-            &format!("book_id = {}", runtime.book_id)
+            &format!("book_id = {} AND kind = 'entry'", runtime.book_id)
         )
         .await,
         1
