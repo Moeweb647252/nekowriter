@@ -2528,15 +2528,18 @@ fn nudge_key(kind: SessionKind, phase: Phase) -> &'static str {
 
 // ───────────────────────────── rollover check ─────────────────────────────
 
-/// True when the next request would overflow the context window (spec/03 §9).
-pub fn rollover_needed(session: &agent_sessions::Model) -> bool {
-    // Eligibility first: only a writer that is drafting or revising rolls over (spec/03 §9).
-    let eligible = matches!(
+/// True when the session's current kind and phase may roll over (spec/03 §9).
+pub fn rollover_eligible(session: &agent_sessions::Model) -> bool {
+    matches!(
         (session::kind_of(session), session::phase_of(session)),
         (SessionKind::ChapterWrite, Phase::Drafting)
             | (SessionKind::ChapterRevise, Phase::Revising)
-    );
-    if !eligible {
+    )
+}
+
+/// True when the next request would overflow the context window (spec/03 §9).
+pub fn rollover_needed(session: &agent_sessions::Model) -> bool {
+    if !rollover_eligible(session) {
         return false;
     }
     // The previous request failed with a context overflow: the next step rolls over even when the
@@ -2800,7 +2803,7 @@ mod source_tests {
     fn text_blocks_keep_their_sources_and_drop_empty_sections() {
         let blocks = text_blocks(&[
             ("edit_report".to_owned(), "report".to_owned()),
-            ("inbox.notice".to_owned(), "  ".to_owned()),
+            ("inbox.notice".to_owned(), "notice text".to_owned()),
             ("inbox.user_message".to_owned(), "hello".to_owned()),
         ]);
         let pairs: Vec<(Option<String>, String)> = blocks
@@ -2814,6 +2817,7 @@ mod source_tests {
             pairs,
             vec![
                 (Some("edit_report".to_owned()), "report".to_owned()),
+                (Some("inbox.notice".to_owned()), "notice text".to_owned()),
                 (Some("inbox.user_message".to_owned()), "hello".to_owned()),
             ]
         );

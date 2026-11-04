@@ -314,6 +314,11 @@ async fn test_07_stop_mid_stream_persists_nothing_and_continue_resends_the_same_
         bodies[requests_before - 1],
         "Continue re-sends a byte-identical request when nothing was edited"
     );
+    let body = runtime.last_body();
+    assert!(
+        !body["messages"].to_string().contains("\"source\""),
+        "stored block sources never reach the provider request: {body}"
+    );
 }
 
 /// spec/03 §15 test 11: text-only replies → two nudges → `failed`.

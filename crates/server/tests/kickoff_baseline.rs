@@ -457,6 +457,82 @@ async fn rollover_kickoff_is_pinned() {
     insta::assert_snapshot!("rollover_kickoff", kickoff_text(&fixture, child_id).await);
 }
 
+/// The stored sources of a session's kickoff blocks, in kickoff order.
+async fn kickoff_sources(fixture: &Baseline, session_id: i32) -> Vec<Option<String>> {
+    let messages = fixture.runtime.messages(session_id).await;
+    messages[0]
+        .blocks()
+        .into_iter()
+        .map(|block| match block {
+            nekowriter::db::json::StoredBlock::Text { source, .. } => source,
+            _ => panic!("a kickoff carries only text blocks"),
+        })
+        .collect()
+}
+
+/// The generic kickoff loop carries the prompt key for every session kind, not only a writer.
+#[tokio::test]
+async fn maintenance_and_book_agent_kickoffs_carry_their_sources() {
+    let fixture = baseline().await;
+    draft_target(&fixture).await;
+    fixture
+        .runtime
+        .app
+        .execute(&format!(
+            "UPDATE chapters SET status = 'official', canon_status = 'pending' WHERE id = {}",
+            fixture.target_id
+        ))
+        .await;
+    let maintenance = create(&fixture, SessionKind::ChapterMaintenance).await;
+    let sources = kickoff_sources(&fixture, maintenance).await;
+    assert!(sources.iter().all(Option::is_some), "{sources:?}");
+    assert!(
+        sources
+            .iter()
+            .any(|source| source.as_deref() == Some("archivist.kickoff.maintenance")),
+        "{sources:?}"
+    );
+
+    let (agent_id, _) = sessions::create(
+        fixture.runtime.app.state(),
+        CreateSession {
+            kind: SessionKind::BookAgent,
+            book_id: Some(fixture.runtime.book_id),
+            ..CreateSession::default()
+        },
+    )
+    .await
+    .expect("create book agent");
+    let agent_sources = kickoff_sources(&fixture, agent_id).await;
+    assert!(
+        agent_sources.iter().all(Option::is_some),
+        "{agent_sources:?}"
+    );
+    assert_eq!(
+        agent_sources.last().and_then(|source| source.as_deref()),
+        Some("assistant.kickoff")
+    );
+}
+
+#[tokio::test]
+async fn conception_kickoff_carries_its_source() {
+    let fixture = baseline().await;
+    let (session_id, _) = sessions::create(
+        fixture.runtime.app.state(),
+        CreateSession {
+            kind: SessionKind::Conception,
+            book_id: Some(fixture.runtime.book_id),
+            ..CreateSession::default()
+        },
+    )
+    .await
+    .expect("create conception");
+    assert_eq!(
+        kickoff_sources(&fixture, session_id).await,
+        vec![Some("conception.kickoff".to_owned())]
+    );
+}
+
 // ───────────────────────────── frozen tool lists ─────────────────────────────
 
 /// The frozen tool list of one session, read from the `agent_sessions.tools` column.
