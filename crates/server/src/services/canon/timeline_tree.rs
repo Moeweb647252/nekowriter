@@ -158,52 +158,54 @@ pub async fn check_planned_ancestors(
     Ok(())
 }
 
-/// The planned descendants of `entry_id` (any depth), in id order.
-pub async fn planned_descendants(
+/// The descendants of `entry_id` in its **own scope** (any depth), in id order.
+///
+/// A shared entry (no track) owns only shared descendants; a private entry owns only its track's
+/// descendants. A private child under a shared entry lives in another scope, so T5 and T7 never
+/// look at it from the shared entry (D-170 T5/T7, M22-06).
+async fn scoped_descendants(
     conn: &impl ConnectionTrait,
     entry_id: i32,
+    status: TimelineStatus,
 ) -> CanonResult<Vec<timeline_events::Model>> {
+    let Some(entry) = timeline_events::Entity::find_by_id(entry_id)
+        .one(conn)
+        .await?
+    else {
+        return Ok(Vec::new());
+    };
     let ids = subtree_ids(conn, entry_id).await?;
-    let mut rows: Vec<timeline_events::Model> = timeline_events::Entity::find()
+    let mut query = timeline_events::Entity::find()
         .filter(
             timeline_events::COLUMN
                 .id
                 .is_in(ids.into_iter().collect::<Vec<_>>()),
         )
-        .filter(
-            timeline_events::COLUMN
-                .status
-                .eq(TimelineStatus::Planned.as_str()),
-        )
-        .all(conn)
-        .await?;
+        .filter(timeline_events::COLUMN.status.eq(status.as_str()));
+    query = match entry.track_id {
+        Some(track_id) => query.filter(timeline_events::COLUMN.track_id.eq(track_id)),
+        None => query.filter(timeline_events::COLUMN.track_id.is_null()),
+    };
+    let mut rows: Vec<timeline_events::Model> = query.all(conn).await?;
     rows.retain(|row| row.id != entry_id);
     rows.sort_by_key(|row| row.id);
     Ok(rows)
 }
 
-/// The occurred descendants of `entry_id` (any depth), in id order.
+/// The planned descendants of `entry_id` in its own scope (any depth), in id order.
+pub async fn planned_descendants(
+    conn: &impl ConnectionTrait,
+    entry_id: i32,
+) -> CanonResult<Vec<timeline_events::Model>> {
+    scoped_descendants(conn, entry_id, TimelineStatus::Planned).await
+}
+
+/// The occurred descendants of `entry_id` in its own scope (any depth), in id order.
 pub async fn occurred_descendants(
     conn: &impl ConnectionTrait,
     entry_id: i32,
 ) -> CanonResult<Vec<timeline_events::Model>> {
-    let ids = subtree_ids(conn, entry_id).await?;
-    let mut rows: Vec<timeline_events::Model> = timeline_events::Entity::find()
-        .filter(
-            timeline_events::COLUMN
-                .id
-                .is_in(ids.into_iter().collect::<Vec<_>>()),
-        )
-        .filter(
-            timeline_events::COLUMN
-                .status
-                .eq(TimelineStatus::Occurred.as_str()),
-        )
-        .all(conn)
-        .await?;
-    rows.retain(|row| row.id != entry_id);
-    rows.sort_by_key(|row| row.id);
-    Ok(rows)
+    scoped_descendants(conn, entry_id, TimelineStatus::Occurred).await
 }
 
 /// A breadth-first list of the entries in `book_id` with their parents, used by `query_timeline`

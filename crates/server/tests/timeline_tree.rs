@@ -43,6 +43,196 @@ async fn timeline(app: &TestApp, book_id: i32) -> Vec<Value> {
     rows.as_array().expect("array").clone()
 }
 
+/// Creates an isolated side track through the API and returns its id.
+async fn isolated_track(app: &TestApp, book_id: i32) -> i32 {
+    let (status, track) = app
+        .post(
+            &format!("/api/books/{book_id}/tracks"),
+            json!({ "title": "Side", "canon_mode": "isolated" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{track}");
+    track["id"].as_i64().expect("track id") as i32
+}
+
+/// Inserts one private timeline row directly (the API writes shared canon only; a private row is
+/// normally created by an isolated-track session).
+async fn insert_private_event(
+    app: &TestApp,
+    book_id: i32,
+    track_id: i32,
+    title: &str,
+    parent_id: i32,
+    status: &str,
+) -> i32 {
+    let sql = format!(
+        "INSERT INTO timeline_events(book_id, track_id, position, story_time, title, description, \
+         chapter_id, parent_id, kind, status, importance, created_at, updated_at) VALUES \
+         ({book_id}, {track_id}, 9000.0, '', '{title}', '', NULL, {parent_id}, 'entry', \
+         '{status}', 2, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+    );
+    app.execute(&sql).await;
+    scalar(app, "SELECT max(id) AS value FROM timeline_events").await as i32
+}
+
+/// A create with children cannot be reverted: the inverse delete is refused with
+/// `409 timeline.has_children`, exactly like deleting the parent (D-170 T9, spec/10 §4).
+#[tokio::test]
+async fn reverting_a_create_with_children_is_refused() {
+    let app = TestApp::new().await;
+    let (book_id, _track) = book(&app).await;
+    let parent = create_event(&app, book_id, json!({ "title": "Parent" })).await;
+    let parent_id = parent["id"].as_i64().expect("id") as i32;
+    let _child = create_event(
+        &app,
+        book_id,
+        json!({ "title": "Child", "parent_id": parent_id }),
+    )
+    .await;
+    let create_change = scalar(
+        &app,
+        &format!(
+            "SELECT id AS value FROM change_log WHERE target_type = 'timeline_event' \
+             AND target_id = {parent_id} AND op = 'create' ORDER BY id LIMIT 1"
+        ),
+    )
+    .await as i32;
+    let (status, response) = app
+        .post(&format!("/api/changes/{create_change}/revert"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{response}");
+    assert_error(&response, "timeline.has_children");
+    assert_eq!(response["error"]["details"]["children_count"], json!(1));
+    assert_eq!(
+        scalar(&app, "SELECT count(*) AS value FROM timeline_events").await,
+        3,
+        "the refused revert writes nothing (root + two entries)"
+    );
+}
+
+/// T5/T7 count descendants only in the entry's own track scope (M22-06): a private planned child
+/// under a shared occurred entry is legal, and a shared parent's descendant checks ignore private
+/// rows of an isolated track.
+#[tokio::test]
+async fn descendant_checks_only_see_the_entrys_own_scope() {
+    use nekowriter::services::canon::timeline_tree::{
+        check_planned_ancestors, occurred_descendants, planned_descendants,
+    };
+
+    let app = TestApp::new().await;
+    let (book_id, _track) = book(&app).await;
+    let side = isolated_track(&app, book_id).await;
+
+    // A shared occurred entry accepts a planned child from an isolated track's own scope.
+    let shared_occurred = create_event(&app, book_id, json!({ "title": "Shared happened" })).await;
+    let shared_occurred_id = shared_occurred["id"].as_i64().expect("id") as i32;
+    check_planned_ancestors(app.db().conn(), shared_occurred_id, Some(side))
+        .await
+        .expect("a private planned child under a shared occurred entry is allowed");
+    check_planned_ancestors(app.db().conn(), shared_occurred_id, None)
+        .await
+        .expect_err("a shared planned child would break T5");
+
+    // A shared planned parent has one shared planned child and one private one; abandoning the
+    // parent touches only its own scope.
+    let parent = create_event(
+        &app,
+        book_id,
+        json!({ "title": "Shared plan", "status": "planned" }),
+    )
+    .await;
+    let parent_id = parent["id"].as_i64().expect("id") as i32;
+    let shared_child = create_event(
+        &app,
+        book_id,
+        json!({ "title": "Shared scene", "status": "planned", "parent_id": parent_id }),
+    )
+    .await;
+    let shared_child_id = shared_child["id"].as_i64().expect("id") as i32;
+    let private_child =
+        insert_private_event(&app, book_id, side, "Private scene", parent_id, "planned").await;
+    let planned = planned_descendants(app.db().conn(), parent_id)
+        .await
+        .expect("planned descendants");
+    assert_eq!(
+        planned.iter().map(|row| row.id).collect::<Vec<_>>(),
+        vec![shared_child_id],
+        "only the shared planned child is in the shared entry's scope"
+    );
+    assert!(planned.iter().all(|row| row.id != private_child));
+
+    // The same scoping applies to T7's occurred check.
+    let parent2 = create_event(
+        &app,
+        book_id,
+        json!({ "title": "Shared plan 2", "status": "planned" }),
+    )
+    .await;
+    let parent2_id = parent2["id"].as_i64().expect("id") as i32;
+    let shared_occurred_child = create_event(
+        &app,
+        book_id,
+        json!({ "title": "Shared happened child", "parent_id": parent2_id }),
+    )
+    .await;
+    let shared_occurred_child_id = shared_occurred_child["id"].as_i64().expect("id") as i32;
+    let private_occurred = insert_private_event(
+        &app,
+        book_id,
+        side,
+        "Private happened",
+        parent2_id,
+        "occurred",
+    )
+    .await;
+    let occurred = occurred_descendants(app.db().conn(), parent2_id)
+        .await
+        .expect("occurred descendants");
+    assert_eq!(
+        occurred.iter().map(|row| row.id).collect::<Vec<_>>(),
+        vec![shared_occurred_child_id]
+    );
+    assert!(occurred.iter().all(|row| row.id != private_occurred));
+}
+
+/// A shared foreshadowing cannot anchor a private timeline entry (M22-05): the private row is
+/// outside shared canon, so the author's shared write is a validation error and stores nothing.
+#[tokio::test]
+async fn a_shared_foreshadowing_cannot_anchor_a_private_entry() {
+    let app = TestApp::new().await;
+    let (book_id, _track) = book(&app).await;
+    let side = isolated_track(&app, book_id).await;
+    let root_id = scalar(
+        &app,
+        &format!(
+            "SELECT id AS value FROM timeline_events WHERE book_id = {book_id} AND kind = 'root'"
+        ),
+    )
+    .await as i32;
+    let private =
+        insert_private_event(&app, book_id, side, "Private payoff", root_id, "occurred").await;
+
+    let before = scalar(&app, "SELECT count(*) AS value FROM foreshadowing").await;
+    let (status, response) = app
+        .post(
+            &format!("/api/books/{book_id}/foreshadowing"),
+            json!({
+                "title": "Shared hook",
+                "description": "A shared hook.",
+                "payoff_event_id": private,
+                "payoff_position": "after",
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{response}");
+    assert_error(&response, "validation.failed");
+    assert_eq!(
+        scalar(&app, "SELECT count(*) AS value FROM foreshadowing").await,
+        before,
+        "the refused anchor stores nothing"
+    );
+}
+
 #[tokio::test]
 async fn three_levels_keep_position_order_and_parent_ids() {
     let app = TestApp::new().await;
