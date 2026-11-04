@@ -79,6 +79,29 @@ replaces the set per chapter. They drive mid-term memory and `first/last_chapter
 - Insertion between neighbors uses the midpoint of their positions. Renormalize when a gap is
   below 1e-6 (spec/02 §1).
 - `chapter_id` is where the event was narrated (or established).
+- **A tree of history and plan** (D-170):
+  - Each book has one empty `root` row that anchors the tree. It is never shown, indexed,
+    logged, changed or deleted. Every **entry** has a parent: the root (shown as top level) or
+    another entry, to any depth. A parent is shared or in the entry's own track, and a shared
+    entry is never placed under a private one.
+  - The tree **groups**; it does not reorder. `position` stays the book-wide chronology, siblings
+    are listed by it, and placing an entry after or before another never changes its parent. A
+    new child with no neighbour goes right after the last node of its parent's subtree.
+  - **Status**: `occurred` (it happened in the story), `planned` (expected, not yet narrated;
+    never has a chapter) or `abandoned` (a plan given up). Moves: `planned → occurred` (recording
+    the chapter where it is narrated) and `planned → abandoned` only. An occurred entry is never
+    abandoned; wrong history is edited or deleted (the author's ruling, 2026-11-04).
+  - **Consistency**: no occurred entry has a planned descendant in its own scope. A phase stays
+    planned while its scenes happen one by one, and can be promoted once none of its
+    sub-entries is still planned.
+  - **Abandoning** a planned entry abandons its planned sub-entries of the same scope too. It is
+    refused while an occurred sub-entry exists there.
+  - **Agents never see** abandoned entries: no tool result, search hit, count or goal link
+    includes them, and a visible entry whose parent is hidden shows at the top level. The author
+    sees them greyed.
+  - An entry with sub-entries cannot be deleted. Delete or move them first.
+  - Entries group **story events**; they hold no chapters and no chapter range, so they are not
+    volumes or arcs of the book (PROJECT §9.2).
 
 ### 1.5 Memory notes and foreshadowing
 - `fact`: something established in text that must stay true ("林凡的玉佩是母亲遗物",
@@ -88,6 +111,12 @@ replaces the set per chapter. They drive mid-term memory and `first/last_chapter
 - `other`: anything else worth remembering (recurring jokes, promises, debts).
 - Notes are **retired**, not deleted, when the text overturns them. The change note says why.
 - Foreshadowing: `open` → `resolved` (with resolution and chapter) or `abandoned`.
+- **Payoff anchor** (D-170): a foreshadowing may name the timeline entry its payoff relates to,
+  and a position (`before`, `after`, `at` that entry). `planned_payoff` is the **direction**
+  only ("揭示黑衣人与林家的渊源"), never a chapter number. Unanchored rows are legal. Deleting the
+  anchor entry clears the anchor (a logged update). An anchor that is later abandoned is kept,
+  and agents see only that it was abandoned. Resolving a foreshadowing whose anchor is still
+  planned succeeds with a reminder in the result.
 
 ### 1.6 Chapter summaries
 150–400 characters per official chapter, written by maintenance. They cover what happened, who
@@ -151,6 +180,13 @@ pub struct Visibility { pub book_id: i32, pub private_track: Option<i32> }   // 
     explicit undo.
 
   Goal changes never reach model-facing memory.
+- **Timeline entries** (D-170) follow the goal-node additions:
+  - reverting a `create` of an entry that now has children is `409 timeline.has_children`;
+  - a recreated entry gets its parent back only when that parent still exists, is in scope and
+    is not abandoned (otherwise it becomes top-level), and anchors pointing at it are not
+    restored;
+  - reverting an update restores `parent_id` and `status` too (an undo, not a status move), unless
+    that would break the consistency rule of §1.4 now (`409 timeline.status_conflict`).
 
 ## 4. Tiered memory
 
@@ -232,7 +268,8 @@ pub struct MemorySnapshot {
 - `open_foreshadowing`: open items sorted by importance desc, then planted chapter asc; at most 20.
 - `cast`: visible entities sorted by importance desc, then last appearance desc; at most 40
   (`#id 名字【类型】— 简介`).
-- `counts`: entities per kind, timeline events, active notes per kind, open foreshadowing.
+- `counts`: entities per kind, timeline events (entries that are not abandoned; the root never
+  counts) with the planned ones among them (D-170), active notes per kind, open foreshadowing.
 - Everything else (full entity cards, relations, the timeline, all notes, past chapters,
   knowledge) is reached through retrieval tools.
 
@@ -348,15 +385,21 @@ pre-D-150 text.
    track-local note (`add_memory_note`), and `finish_maintenance` does not ask about the state.
 4. **Relations**: `set_relation` / `end_relation` with notes for relationship changes.
 5. **Timeline**: `add_timeline_event` for plot-relevant events, positioned chronologically
-   relative to existing events (use `query_timeline` to find neighbors).
+   relative to existing events (use `query_timeline` to find neighbors). Since D-170:
+   - promote a planned entry the chapter reached (`status: occurred`);
+   - add the chapter's events as sub-entries of the entry they belong to;
+   - abandon a planned entry the chapter made impossible, with the reason.
 6. **Notes**: `add_memory_note` for new facts and world rules; `retire_memory_note` for overturned
    ones.
-7. **Foreshadowing**: `add_foreshadowing` for planted hooks; `resolve_foreshadowing` for payoffs.
+7. **Foreshadowing**: `add_foreshadowing` for planted hooks, anchored to a timeline entry when the
+   payoff has one (D-170); `update_foreshadowing` when the plan of a payoff moved;
+   `resolve_foreshadowing` for payoffs.
 8. **Summary** (required): `set_chapter_summary`.
 9. **Goals** (optional, D-150): `propose_goal_change` against the goals block. Propose `complete`
    for a node whose purpose the chapter achieved, `drop` with the reason for one it made
    unreachable, and `create` for a new task where the chapter opened an opportunity under a listed
-   plan. Skipped when the chapter moved no goal.
+   plan. A node linking an entry that step 5 promoted is a candidate for `complete` when its
+   purpose was achieved (D-170). Skipped when the chapter moved no goal.
 10. **Settings**: `propose_setting_change` only when the chapter contradicts the setting materials
     or establishes something substantial that belongs in them (never in isolated side stories).
 11. `finish_maintenance(report)`.
@@ -383,35 +426,39 @@ made before the failure remain (they are individually revertible).
 ## 7. Canon seeding (`canon_seed`, at conception finalize)
 
 Kickoff: settings and `archivist.kickoff.seed`. The archivist creates the core entities from the
-setting materials: characters from the character designs (the protagonist, i.e. the rank-1
-design that the protagonist document describes, with `is_protagonist: true`; importance from
-rank), key organizations, locations, and items from the world setting, plus relations from the
-designs (family, sect, rivalries) and world rules as notes (importance from emphasis). It
-records backstory events from the outline as timeline events. It does not invent facts the
-materials do not state. `create_entity` links each character entity to the design with the same
-name (spec/05 §6); at completion the service links any remaining designs by exact name or alias.
+setting materials: characters from the character designs (the protagonist, i.e. the rank-1 design
+that the protagonist document describes, with `is_protagonist: true`; importance from rank), key
+organizations, locations, and items from the world setting, plus relations from the designs (family,
+sect, rivalries) and world rules as notes (importance from emphasis). It records backstory events
+from the outline as timeline events (`occurred`). Since D-170 it also seeds **planned** entries from
+what the outline states, with no cap: one entry per stated phase of the story, with that phase's
+stated events as sub-entries, named by story content and never by chapter numbers. Foreshadowing is
+recorded only where the outline states it, anchored to the most specific entry, with a
+direction-only `planned_payoff`. It does not invent facts the materials do not state.
+`create_entity` links each character entity to the design with the same name (spec/05 §6); at
+completion the service links any remaining designs by exact name or alias.
 
 The seed task (`systems` variable) lists only the steps of enabled systems: characters,
 organizations, places, items and relations (Entities); world rules and facts (Memory); backstory
-events (Timeline); planned hooks (Foreshadowing). Finalize starts `canon_seed` only when at least
-one of those four systems is on. Goals are never seeded.
+events and planned entries (Timeline, D-170); planned hooks (Foreshadowing). Finalize starts
+`canon_seed` only when at least one of those four systems is on. Goals are never seeded.
 
 ## 8. Re-sync after editing official text (`chapter_resync`)
 
-When the author edits an official chapter whose canon is `synced`, `canon_status` becomes
-`stale`. **Re-sync canon** first saves the current text as a new `official` version V
+When the author edits an official chapter whose canon is `synced`, `canon_status` becomes `stale`.
+**Re-sync canon** first saves the current text as a new `official` version V
 (`official_version_id = V`; an existing official version with identical content is reused), then
-starts an archivist session whose kickoff contains `block.chapter_diff`: the paragraph-level
-diff between `synced_version_id` and V (inserted, deleted, and modified paragraphs with pids,
-both texts for modifications). The task (`archivist.kickoff.resync`) asks it to update canon so
-it matches the new text: adjust entities, relations, events, and notes, retire contradicted
-notes, and update the summary if needed. The kickoff shows only the diff, so the task tells it to
+starts an archivist session whose kickoff contains `block.chapter_diff`: the paragraph-level diff
+between `synced_version_id` and V (inserted, deleted, and modified paragraphs with pids, both texts
+for modifications). The task (`archivist.kickoff.resync`) asks it to update canon so it matches the
+new text: adjust entities, relations, events, and notes, retire contradicted notes, and update the
+summary if needed. An occurred timeline entry that the new text no longer supports is edited or
+deleted, never set back to planned (D-170). The kickoff shows only the diff, so the task tells it to
 read the whole chapter with `read_chapter` before it re-records appearances (always the complete
-set) or rewrites the summary. On completion `synced_version_id = V`, and the status
-follows the maintenance rule (`synced`, or `stale` if the text changed again meanwhile). The
-re-sync task (`systems` variable) names only the record kinds of enabled systems. Its
-re-record-appearances bullet needs Entities and its summary bullet needs Memory. It has no goals
-step.
+set) or rewrites the summary. On completion `synced_version_id = V`, and the status follows the
+maintenance rule (`synced`, or `stale` if the text changed again meanwhile). The re-sync task
+(`systems` variable) names only the record kinds of enabled systems. Its re-record-appearances
+bullet needs Entities and its summary bullet needs Memory. It has no goals step.
 
 ## 9. Manual canon editing (UI)
 
@@ -428,7 +475,12 @@ The UI uses the same services with `actor: user`. Additional author-only operati
   shared one, and its moved private rows keep their `track_id`. Merges are not revertible as a
   whole; the UI warns.
 - **Set protagonist**: moves the `is_protagonist` flag.
-- **Reorder timeline** by drag and drop: one `update` change per moved event (position).
+- **Reorder timeline** by drag and drop: one `update` change per moved event (position). Drag
+  and drop reorders story order among siblings and never changes the parent (D-170).
+- **Timeline tree** (D-170): add a sub-entry, change an entry's parent (the subtree moves with
+  it), mark a planned entry as happened (optional chapter), abandon a planned entry (the
+  confirmation names the planned sub-entries that go with it). Delete is refused while sub-entries
+  exist (`409 timeline.has_children`).
 
 ## 10. Canon system switches (D-150)
 
@@ -437,7 +489,7 @@ The UI uses the same services with `actor: user`. Additional author-only operati
 | | Entities | Timeline | Memory | Foreshadowing | Goals |
 |---|---|---|---|---|---|
 | Rows | entities, relations, appearances | timeline events and their entity links | memory notes and their links, `chapters.summary` | foreshadowing and its links | goal nodes and their links (§11) |
-| Tools (spec/05 §2) | `get_entity`, `list_entities`, `get_relations`, `create_entity`, `update_entity`, `set_relation`, `end_relation`, `record_appearances` | `query_timeline`, `add_timeline_event`, `update_timeline_event` | `add_memory_note`, `retire_memory_note`, `set_chapter_summary` | `list_foreshadowing`, `add_foreshadowing`, `resolve_foreshadowing` | `propose_goal_change` |
+| Tools (spec/05 §2) | `get_entity`, `list_entities`, `get_relations`, `create_entity`, `update_entity`, `set_relation`, `end_relation`, `record_appearances` | `query_timeline`, `add_timeline_event`, `update_timeline_event` | `add_memory_note`, `retire_memory_note`, `set_chapter_summary` | `list_foreshadowing`, `add_foreshadowing`, `update_foreshadowing` (D-170), `resolve_foreshadowing` | `propose_goal_change` |
 | `search_canon` kinds | `entity` | `event` | `note`, `summary` | `foreshadowing` | — |
 | Context | its `block.memory` fragments (§4.6), `block.cast_index` | its counts fragment | its `block.memory` fragments | its `block.memory` fragments | `block.goals` |
 | Maintenance (§6) | steps 1–4, required appearances, protagonist confirmation | step 5 | steps 6 and 8, required summary | step 7 | step 9 |
@@ -468,7 +520,9 @@ Changes and Proposals pages.
    - their records are absent from the context;
    - their tools are not in the tool list;
    - `search_canon` will not return their kinds;
-   - with Entities off, the `entities` parameters of other tools stay empty.
+   - with Entities off, the `entities` parameters of other tools stay empty;
+   - with Timeline off, foreshadowing takes no payoff anchor (D-170: the anchor parameters are
+     refused with `error.system_off`, and `list_foreshadowing` renders no anchor).
 
    It renders blank when all four are on. Goals has no static mention and is never listed.
 2. **Not maintained.** Its steps are not rendered, its tools are not frozen, and its required
@@ -535,11 +589,16 @@ writer's revision plan. In the English UI: Goals; Goal, Plan, Task; Purpose.
 | `chapter_at_least {chapter}` | the storyline has an official chapter numbered ≥ `chapter` (a later chapter approved first after a forced write counts) | never |
 | `foreshadowing_resolved {foreshadowing_id}` | the row exists, is visible from the node's scope, and is `resolved` | it is missing, invisible, or `abandoned` |
 | `entity_status_is {entity_id, status}` | the entity exists, is visible, and has that `status` | it is missing or invisible |
+| `event_occurred {event_id}` (D-170) | the timeline entry exists, is visible, and is `occurred` | it is missing, invisible, or `abandoned` |
 
 - A broken condition cannot become true without an edit. The Goals page says why.
 - At most 10 conditions per node; duplicates are dropped. Targets are checked when written.
-- There is no timeline condition. An event can only be picked once it exists, so "the event
-  exists" would be true at once. Timeline events are still linkable.
+- **Planned entries and goals complement each other** (D-170). A planned entry says what the
+  story is expected to go through; a goal node says why. Before D-170 there was no timeline
+  condition, because an event could only be picked once it existed. A planned entry can now be
+  waited on: `event_occurred` makes a waiting plan or task ready when its entry happens. Links may
+  name planned entries (`block.goals` marks them `（计划中）`) but not abandoned ones, and
+  neither links nor conditions can name the root.
 - **Derived states** (never stored):
   - `ready` = `waiting` and every condition satisfied;
   - `closable` = `active` with ≥ 1 child, no `active` or `waiting` child, and ≥ 1 `done` child.
@@ -606,6 +665,8 @@ Re-sync does not.
 
 - **Deleting a linked row** removes the link (cascade). A deleted condition target shows as
   broken.
+- **Abandoning a linked timeline entry** keeps the link, but agents no longer see it, and an
+  `event_occurred` condition on it becomes broken (D-170).
 - **Merging entities** moves goal links and rewrites `entity_status_is` conditions (§9).
 - **Deleting an isolated track** deletes its private nodes and their history.
 - **Search:** goal nodes are not indexed, `search_canon` does not return them, and no retrieval

@@ -184,8 +184,10 @@ message and a retry.
   "book-workspace", storage: localStorage })`, passing both to the group (v4 typings: numbers are
   pixels, unitless strings are percentages, `"240px"` is explicit). Collapse and expand through
   `usePanelRef()`.
-- `Navigator`: sections (Overview, tracks with chapters, Settings materials, Canon, Knowledge,
-  Proposals with badge, Prompts, Book settings). The chapter rows of each track are a dnd-kit
+- `Navigator`: sections (Overview, **Book agent**, tracks with chapters, Settings materials, Canon,
+  Knowledge, Proposals with badge, Prompts, Book settings). **Book agent** (Lucide `Bot`, D-169)
+  opens the book agent in the agent panel (§5.3); it is disabled in a `conceiving` book with
+  `agent:book_agent.conceiving_hint`. The chapter rows of each track are a dnd-kit
   `SortableContext` (official rows are fixed: `disabled`). "+ Next chapter" per track. Side
   stories collapse under one group.
   - The Canon group lists Entities, Timeline, Memory, Foreshadowing and Goals, then Changes.
@@ -265,10 +267,10 @@ message and a retry.
   **by id** (the book list is id-desc, a chapter's `open_sessions` is id-asc, so array order is not
   trusted); otherwise a terminal pin stays readable; otherwise the newest session. It fetches
   `SessionSnapshotDto` and renders:
-  - `SessionHeader` (role icon: Sparkles / Search / ListTree (planner) / PenLine / ClipboardCheck
-    / Archive; title; status; model, followed by " · {effort}" when `SessionDto.effort` is set —
-    `settings:value.effort.<v>` with the raw value as the fallback (D-162); a session switcher
-    dropdown whose pick is a manual pin, D-167);
+  - `SessionHeader` (role icon: Sparkles / Search / ListTree (planner) / PenLine / ClipboardCheck /
+    Archive / Bot (book agent); title; status; model, followed by " · {effort}" when
+    `SessionDto.effort` is set — `settings:value.effort.<v>` with the raw value as the fallback
+    (D-162); a session switcher dropdown whose pick is a manual pin, D-167);
   - `SessionControls` (by status, PROJECT §8.6), `GranularityControl`, `AutoPauseSwitch`
     (writer only, PATCH session);
   - `HeldCallReview` (a `held` session only): resolves `SessionDto.held_tool_call_id` against the
@@ -311,6 +313,34 @@ message and a retry.
     held call never has two differently-worded reject paths; for a write hold it is disabled with
     `agent:composer.disabled_dock`, which names the draft pane instead of "the review above");
   - `UsageFooter`.
+- **Book agent** (D-169, spec/08 §8). The navigator item and a `Bot` button in the panel header
+  open it:
+  - with an open `book_agent` session, they pin it **manually** (D-167), so auto-follow never
+    leaves it, even after it starts other sessions;
+  - with none, they show `BookAgentStart`: a short intro, the write-mode control and a composer
+    ("Ask the book agent…"). The first message posts `POST /books/:id/agent {message,
+    write_mode}` and pins the new session. The initial mode is the last one chosen in this
+    browser (UI store, `review` at first).
+
+  Both entries are disabled in a `conceiving` book. For a `book_agent` session:
+  - `SessionHeader` uses `Bot` and the title `agent:session_title.book_agent`.
+  - `SessionControls` adds `WriteModeControl`, a segmented **Review changes** / **Full access**
+    control (PATCH `write_mode`, allowed while running), with a hint per mode. The full-access
+    hint names what cannot be reverted: research tasks and knowledge entries.
+  - The overflow menu adds **End conversation** (`POST /sessions/:id/end`) and **New
+    conversation** (end, then `BookAgentStart`).
+  - A `provider.context_overflow` failure shows **New conversation** as its primary action.
+  - **`HeldCallReview`** renders a call whose `effects.approval` is set from `ui.preview`:
+    - `diff` through `DiffView`;
+    - `fields` as a two-column table, with field names from
+      `agent:book_agent.field.<name>`, and `shared` shown as a warning line;
+    - `action` as text.
+
+    Its decisions are **Apply this change** (`resume` without feedback) and **Request changes**
+    (`resume` with the feedback). The composer is disabled with `agent:composer.disabled_review`,
+    as for other reviewed holds.
+  - Tool cards: every new tool (spec/05 §10) has a renderer and a summary key. The
+    `start_session` card links to the started session, and the link is a manual pin.
 - `ToolCallCard` uses a renderer registry `toolRenderers: Record<string, { icon: LucideIcon;
   summary: (ui, t) => string; Detail?: Component }>`. Each tool has a summary i18n key
   `agent:tools.<name>.summary`. Unknown tools fall back to the name with raw JSON details.
@@ -392,7 +422,27 @@ dialog's scope.
   history** loads `GET /entities/:id/history` (latest 100) into the same `ChangeList`.
 - `TimelineEventDialog` opens from a row's **Edit**. It holds the insert form's fields (no
   position: drag and drop and Move reorder), sends only changed fields, and contains the
-  **Referenced by** section.
+  **Referenced by** section. Since D-170 it also has a **parent** select (the entry's scope only,
+  excluding the entry and its subtree; "Top level" for `null`) and a **status** control that
+  offers only the allowed moves (create: Happened or Planned; a planned entry: Happened, with an
+  optional chapter, or Abandoned; otherwise read-only).
+- **Timeline tree** (D-170, spec/06 §1.4). `TimelineList` renders the flat story-order list as a
+  tree by `parent_id`: indentation, expand/collapse per entry, siblings in story order.
+  - Planned rows are dashed with a **Planned** badge. Abandoned rows are greyed and struck
+    through, behind a **Show abandoned** toggle (on by default). The root never exists in the
+    client.
+  - The row menu has **Edit**, **Add sub-entry**, **Mark as happened** (planned only),
+    **Abandon** (planned only) and **Delete**. Abandon's confirmation names the planned
+    sub-entries that are abandoned with it. Delete is disabled, with the reason, while
+    `child_count > 0`.
+  - Drag and drop moves an entry among its siblings: the move endpoint with sibling neighbours.
+    It never changes the parent; the dialog does.
+  - `409 timeline.status_conflict` and `409 timeline.has_children` render their reason in the
+    dialog or a toast.
+- **Foreshadowing anchors** (D-170). A row shows "Pays off after «event»" (`before` / `at` /
+  `after`), with a Planned or Abandoned badge from `payoff_event_status`, then the direction
+  (`planned_payoff`). An unanchored row shows only the direction. The edit dialog has an anchor
+  picker: an event combobox over non-abandoned entries and a position select, clearable as a pair.
 
 **Book › Knowledge** (`BookKnowledgePage`, D-158) lists every scope (`useScopes`) with a checkbox
 that is checked when the scope is in the book's visible list (`useBookScopes`). Save sends the
@@ -445,7 +495,8 @@ pages.
 - **`GoalNodeDialog`** has: level (fixed when adding a child), a parent select limited to the
   node's scope, title, purpose (required; hint "Why this exists and what it is for"), status,
   chapter range, a conditions editor (kind plus a target picker: a chapter number, a foreshadowing
-  combobox, `EntityPicker` with a status select), link pickers over the existing canon
+  combobox, `EntityPicker` with a status select, or for **Event happened** (`event_occurred`,
+  D-170) an event combobox with planned entries first), link pickers over the existing canon
   (`EntityPicker`, an event combobox, a foreshadowing combobox; never typed ids) and the change
   note. `409 goal.open_children` becomes a confirmation dialog that names the open descendants
   and says they stop reaching agents; its confirm resends with `confirm_open_children`.
@@ -514,7 +565,8 @@ after the protocol options.
 **Settings › Agent roles** has one row per role (`AGENT_ROLES`): a model select and an effort
 select.
 - **Entries**: the effort select lists the role's resolved model's levels.
-- **Unset label**: "Same as Writer" when the planner follows the writer's model; otherwise "Model
+- **Unset label**: "Same as Writer" when the planner or the book agent (`assistant`, D-169)
+  follows the writer's model; otherwise "Model
   default ({level})" when the model has a default; otherwise "Provider default".
 - **Disabled**: it reads "No effort levels" when the model has none or no model resolves.
 - **Stale value**: a stored effort that is not a level of the resolved model stays selected as
@@ -632,6 +684,22 @@ test imports the file by relative path).
     - a done row is read-only;
   - the "From the knowledge check" label, the check page's topic list, and the new checkbox
     wording; both locales.
+- Book agent (D-169):
+  - **Entry points.**
+    - The navigator item and the header button pin the open session.
+    - `BookAgentStart` posts with the chosen mode and remembers it.
+    - Both are disabled in a conceiving book.
+  - **Controls.**
+    - `WriteModeControl` sends PATCH while running, and shows both hints.
+    - **End conversation** and **New conversation** work.
+    - A context overflow offers **New conversation**.
+  - **`HeldCallReview`.**
+    - The `diff`, `fields` (with `shared`) and `action` previews.
+    - **Apply this change** sends `resume` without feedback, and **Request changes** sends the
+      feedback.
+  - **Tool cards.** Summaries for the new tools; the `start_session` link pins.
+  - **Roles.** The seventh row on Agent roles and Book settings, with "Same as Writer".
+  - **Both locales.**
 - Feature gaps (D-161):
   - `ActivityStream` scrollback: the top row appears with a cursor, pages prepend in order without
     duplicates, and the start, error and session-switch states;
@@ -641,6 +709,16 @@ test imports the file by relative path).
   - full-history toggle at 20 rows and its reset;
   - `TimelineEventDialog`: pre-fill, changed fields only, no position fields, Referenced-by gated
     by Goals.
+- Timeline tree (D-170):
+  - nesting, expand/collapse, the Planned badge, the abandoned strike-through and its toggle;
+  - Add sub-entry; Delete disabled with sub-entries; Abandon's confirmation names the planned
+    sub-entries; Mark as happened only on planned rows;
+  - drag and drop never changes the parent;
+  - the dialog's parent select excludes the subtree, the status control offers only allowed
+    moves, and a `409` shows its reason;
+  - foreshadowing: anchored rows with badges, unanchored rows with the direction only, the anchor
+    picker;
+  - the goal dialog's **Event happened** condition.
 - Thinking effort (D-162):
   - the Models dialog:
     - the Anthropic checkboxes, the OpenAI chips (a duplicate and a pattern violation are

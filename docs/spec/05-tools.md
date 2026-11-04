@@ -161,9 +161,10 @@ listing the candidates with ids.
 | planner | `get_entity`, `list_entities`, `get_relations`, `query_timeline`, `list_foreshadowing`, `search_canon`, `search_knowledge`, `read_knowledge_entry`, `search_chapters`, `read_chapter`, `read_draft`, `submit_outline` |
 | writer | `get_entity`, `list_entities`, `get_relations`, `query_timeline`, `list_foreshadowing`, `search_canon`, `search_knowledge`, `read_knowledge_entry`, `search_chapters`, `read_chapter`, `submit_revision_plan`, `read_draft`, `insert_text`, `insert_paragraphs`, `replace_text`, `rewrite_paragraph`, `delete_paragraphs`, `finish_draft`, `finish_revision` |
 | reviewer | `get_entity`, `list_entities`, `get_relations`, `query_timeline`, `list_foreshadowing`, `search_canon`, `search_knowledge`, `read_knowledge_entry`, `search_chapters`, `read_chapter`, `submit_review` |
-| archivist | `get_entity`, `list_entities`, `get_relations`, `query_timeline`, `list_foreshadowing`, `search_canon`, `read_chapter`, `create_entity`, `update_entity`, `set_relation`, `end_relation`, `record_appearances`, `add_timeline_event`, `update_timeline_event`, `add_memory_note`, `retire_memory_note`, `add_foreshadowing`, `resolve_foreshadowing`, `set_chapter_summary`, `propose_goal_change`, `propose_setting_change`, `finish_maintenance` |
+| archivist | `get_entity`, `list_entities`, `get_relations`, `query_timeline`, `list_foreshadowing`, `search_canon`, `read_chapter`, `create_entity`, `update_entity`, `set_relation`, `end_relation`, `record_appearances`, `add_timeline_event`, `update_timeline_event`, `add_memory_note`, `retire_memory_note`, `add_foreshadowing`, `update_foreshadowing`, `resolve_foreshadowing`, `set_chapter_summary`, `propose_goal_change`, `propose_setting_change`, `finish_maintenance` |
 | conception | `ask_user`, `search_knowledge`, `read_knowledge_entry`, `web_search`, `web_fetch`, `write_setting_doc`, `edit_setting_doc`, `upsert_character`, `remove_character`, `reorder_characters`, `set_research_topics`, `request_review` |
 | researcher | `web_search`, `web_fetch`, `search_knowledge`, `read_knowledge_entry`, `set_research_topics`, `save_knowledge_entry`, `update_knowledge_entry`, `finish_research` |
+| assistant | `book_overview`, `open_chapter`, `read_setting_doc`, `read_characters`, `get_entity`, `list_entities`, `get_relations`, `query_timeline`, `list_foreshadowing`, `search_canon`, `list_goals`, `search_chapters`, `search_knowledge`, `read_knowledge_entry`, `list_research`, `list_sessions`, `write_setting_doc`, `edit_setting_doc`, `upsert_character`, `remove_character`, `reorder_characters`, `create_chapter`, `edit_chapter`, `edit_chapter_text`, `create_entity`, `update_entity`, `set_relation`, `end_relation`, `add_timeline_event`, `update_timeline_event`, `add_memory_note`, `retire_memory_note`, `add_foreshadowing`, `update_foreshadowing`, `resolve_foreshadowing`, `delete_canon_record`, `create_goal`, `update_goal`, `create_research_task`, `update_research_task`, `delete_research_task`, `add_knowledge_entry`, `update_knowledge_entry`, `start_session` (the book agent, §10, D-169; `update_foreshadowing` since D-170) |
 
 **RETRIEVAL** = the first ten writer tools (`get_entity` … `read_chapter`).
 **DRAFT_EDIT** = `insert_text`, `insert_paragraphs`, `replace_text`, `rewrite_paragraph`,
@@ -178,7 +179,7 @@ that list, in that order, minus:
   | Entities | `get_entity`, `list_entities`, `get_relations`, `create_entity`, `update_entity`, `set_relation`, `end_relation`, `record_appearances` |
   | Timeline | `query_timeline`, `add_timeline_event`, `update_timeline_event` |
   | Memory | `add_memory_note`, `retire_memory_note`, `set_chapter_summary` |
-  | Foreshadowing | `list_foreshadowing`, `add_foreshadowing`, `resolve_foreshadowing` |
+  | Foreshadowing | `list_foreshadowing`, `add_foreshadowing`, `update_foreshadowing`, `resolve_foreshadowing` |
   | Goals | `propose_goal_change` |
 
 - `search_canon`, only when Entities, Timeline, Memory and Foreshadowing are all off;
@@ -191,13 +192,16 @@ that list, in that order, minus:
   | `topic` | Every tool except `set_research_topics`: the pre-D-158 seven tools, in the same order |
   | `preparation` (a knowledge check) | Only `search_knowledge`, `read_knowledge_entry`, `set_research_topics` and `finish_research`. A check plans and collects nothing |
 
+- for the assistant (§10, D-169), the goal tools `list_goals`, `create_goal` and `update_goal`
+  belong to Goals, so they leave with it. `delete_canon_record`, like `search_canon`, stays
+  unless Entities, Timeline, Memory and Foreshadowing are all off;
 - `set_target_scope` (D-158) is retired. No session created after D-168 freezes it. The handler,
   its `tools.toml` entry, `result.target_scope` and the errors `target_scope_unset` and
   `scope_excluded` stay registered, so a check session frozen before D-168 still runs it.
 
 A book with all five systems on and no relevant goal nodes therefore freezes exactly the pre-D-150
-lists (the archivist's 21 tools). The map lives once in `agent/tools/registry.rs`;
-`scripts/validate_prompts.py` keeps the same map as data.
+lists, except that the archivist's has `update_foreshadowing` since D-170 (22 tools). The map lives
+once in `agent/tools/registry.rs`; `scripts/validate_prompts.py` keeps the same map as data.
 
 | Writer phase | Permitted |
 |---|---|
@@ -221,9 +225,9 @@ researcher sessions allow all of their tools.
 | `get_entity` | `entity`* | Entity card (`result.entity_card`): kind, name, aliases, importance, status, summary, description, **state**, attributes, relations in both directions phrased from this entity ("林凡(#12) 是 张三(#15) 的 师兄"), the latest 10 change notes with chapter labels, appearances (first, last, count in the mid-term window), and the linked character design's role and summary. In side tracks with an anchor, notes from chapters after the anchor are marked `（锚点之后）`, and so is the state when its newest change came from such a chapter (spec/06 §4.2) | `{entity_id, name, kind}` |
 | `list_entities` | `kind`, `query`, `status`, `limit` (30, max 100) | One line per entity: `#id 【类型】名字（别名…）— 简介 [状态]`, sorted by importance desc then last appearance desc | `{count}` |
 | `get_relations` | `entity`*, `other`, `include_ended` (false) | Relation lines with descriptions and since/until chapter labels | `{entity_id, count}` |
-| `query_timeline` | `entity`, `query`, `around_event` (id), `from_chapter`, `to_chapter` (numbers in the main track), `limit` (20, max 50), `order` (`chronological` \| `recent_first`) | Ordered events: `[#id] (story_time) 标题 — 描述 · 第N章 · 涉及：A、B`. With `around_event`: the 5 events before and after it. Anchor marking as above | `{count}` |
-| `list_foreshadowing` | `status` (`open`), `entity`, `limit` (20, max 50) | `[#id] 标题 — 描述 · 埋设于第N章 · 计划回收：…` | `{count}` |
-| `search_canon` | `query`*, `kinds` (subset of `entity`,`note`,`foreshadowing`,`event`,`summary`), `limit` (8, max 20) | Hybrid search (spec/07 §5) over visible search docs except passages: `【类型】标题(#ref) — snippet`. The kinds searched are the requested ones (or all) **intersected with the enabled kinds of the session's frozen `canon_systems`**: `entity` needs Entities, `event` Timeline, `note` and `summary` Memory, `foreshadowing` Foreshadowing. An empty intersection gives the ordinary empty result; `block.canon_systems` has told the model which systems are off | `{query, count}` |
+| `query_timeline` | `entity`, `query`, `around_event` (id), `under` (entry id: only its descendants, D-170), `from_chapter`, `to_chapter` (numbers in the main track), `limit` (20, max 50), `order` (`chronological` \| `recent_first`) | Ordered events: `[#id] (story_time) 标题 — 描述 · 第N章 · 涉及：A、B`, in story order. Since D-170 an item also shows its parent entry (`↳ #12`; omitted at the top level or when the parent is hidden) and `（计划中）` for a planned entry, with one line explaining the marker when any is shown. The root and abandoned entries never appear; planned entries have no chapter, so `from_chapter`/`to_chapter` leave them out. With `around_event`: the 5 events before and after it. Anchor marking as above | `{count}` |
+| `list_foreshadowing` | `status` (`open`), `entity`, `limit` (20, max 50) | `[#id] 标题 — 描述 · 埋设于第N章 · 回收锚点：#12 标题 之后（计划中） · 回收方向：…`. The anchor (D-170) renders only while Timeline is on; an abandoned anchor renders `（回收锚点已放弃）` without its title, and an unanchored row shows only the direction | `{count}` |
+| `search_canon` | `query`*, `kinds` (subset of `entity`,`note`,`foreshadowing`,`event`,`summary`), `limit` (8, max 20) | Hybrid search (spec/07 §5) over visible search docs except passages: `【类型】标题(#ref) — snippet`. The kinds searched are the requested ones (or all) **intersected with the enabled kinds of the session's frozen `canon_systems`**: `entity` needs Entities, `event` Timeline, `note` and `summary` Memory, `foreshadowing` Foreshadowing. An empty intersection gives the ordinary empty result; `block.canon_systems` has told the model which systems are off. The timeline root and abandoned entries have no search doc, and a planned entry's hit is marked `（计划中）` (D-170) | `{query, count}` |
 | `search_knowledge` | `query`*, `scope` (name), `limit` (6, max 15) | Hybrid search over the book's visible scopes (spec/07 §1: every scope the author did not uncheck; a topic research session: its target scope only; a knowledge check: the book's visible scopes), or over the one named by `scope`, which must be one of them (`error.scope_not_found`, listing the visible names). `[条目#id]《标题》（范围）— snippet ≤400 chars`. No visible scope → `error.no_knowledge_scope` | `{query, count}` |
 | `read_knowledge_entry` | `entry_id`*, `offset` (0) | Title, scope, sources, content from `offset`, ≤ 6,000 characters, plus a continuation hint. The scope must be visible | `{entry_id, title}` |
 | `search_chapters` | `query`*, `limit` (6, max 15) | Hybrid search over official-chapter passages in visible tracks: `第N章《标题》 p12–p15：snippet`. Main-story passages after a side story's anchor are marked | `{query, count}` |
@@ -268,15 +272,16 @@ materials are shared too, so `propose_setting_change` returns `error.isolated_re
 | `set_relation` | `source`*, `target`*, `kind`*, `inverse_kind`, `description`, `note` | Upsert of the visible active relation of the ordered `(source, target)` pair: the pair identifies it and `kind` is data (spec/06 §1.2), so a different `kind` **rewrites** the row the pair already has instead of creating a second active one. `inverse_kind`/`description` are replaced only when given, so a re-word keeps the existing detail. In an isolated track, an existing shared one is read-only (`error.isolated_readonly`) and a new one becomes a private row. `since_chapter_id` = session chapter on create |
 | `end_relation` | `source`*, `target`*, `kind`*, `note`* | status → ended, `until_chapter_id` = session chapter. The `kind` must still match the pair's active relation, so the wording is checked: a stale one (re-worded by an earlier `set_relation`) is `error.relation_not_found` rather than ending an unrelated bond |
 | `record_appearances` | `appearances`* (array of `{entity, role, note}`) | Replaces this chapter's appearance set (appearances belong to the chapter, so isolated tracks may record shared entities). Recomputes `first_chapter_id`/`last_chapter_id` of every affected entity, ordered by (track `ord`, chapter `ord`): a shared entity counts only shared-canon chapters (main track and canon-mode side tracks), so isolated chapters never change it; a private entity counts its own track's chapters |
-| `add_timeline_event` | `title`*, `description`, `story_time`, `after_event` (id), `before_event` (id), `entities`, `importance` | Inserts at the chronological position: between the given neighbor and the next one; with neither, at the end. Both given → `error.mutually_exclusive`. `chapter_id` = session chapter |
-| `update_timeline_event` | `event_id`*, `title`, `description`, `story_time`, `entities` (replace), `importance`, `move_after`, `move_before` | Partial update and/or move; `move_after` / `move_before` place the event like `after_event` / `before_event`, and both given → `error.mutually_exclusive` |
+| `add_timeline_event` | `title`*, `description`, `story_time`, `after_event` (id), `before_event` (id), `entities`, `importance`, `parent` (entry id; omitted = top level), `status` (`occurred` default \| `planned`) | Inserts at the chronological position: between the given neighbor and the next one. With neither, a child goes right after the last node of its parent's subtree (the parent itself if it has none) and a top-level entry at the end (D-170). Neighbors never change the parent. Both given → `error.mutually_exclusive`. `chapter_id` = session chapter for an `occurred` entry; a `planned` one has none. A planned entry under an occurred ancestor of its scope → `error.timeline_conflict` (`occurred_ancestor`) |
+| `update_timeline_event` | `event_id`*, `title`, `description`, `story_time`, `entities` (replace), `importance`, `move_after`, `move_before`, `parent` (entry id) or `top_level` (true), `status` (`occurred` \| `abandoned`), `chapter` (with `status: occurred`; a main-track number, default the session chapter), `note` (required with `status`) | Partial update and/or move; `move_after` / `move_before` place the event like `after_event` / `before_event`, and both given → `error.mutually_exclusive` (so are `parent` and `top_level`). `parent`/`top_level` move the entry with its subtree (D-170). `status` follows spec/06 §1.4: `planned → occurred` records the chapter; `planned → abandoned` also abandons the planned descendants of its scope and reports how many; anything else → `error.timeline_conflict` (`backward`). A planned descendant blocks promotion (`planned_descendant`) and an occurred one blocks abandoning (`occurred_descendant`) |
 | `add_memory_note` | `kind`* (`fact` \| `world_rule` \| `other`), `content`*, `entities`, `importance` | `chapter_id` = session chapter |
 | `retire_memory_note` | `note_id`*, `reason`* | status → retired (reason recorded as the change note) |
-| `add_foreshadowing` | `title`*, `description`*, `planned_payoff`, `entities`, `importance` | `planted_chapter_id` = session chapter |
-| `resolve_foreshadowing` | `foreshadowing_id`*, `status`* (`resolved` \| `abandoned`), `resolution`* | `resolved_chapter_id` = session chapter |
+| `add_foreshadowing` | `title`*, `description`*, `planned_payoff` (the direction only, never a chapter number), `entities`, `importance`, `payoff_event` (entry id) and `payoff_position` (`before` \| `after` \| `at`), both or neither (D-170) | `planted_chapter_id` = session chapter. Half an anchor → `error.validation` |
+| `update_foreshadowing` | `foreshadowing_id`*, `note`*, `planned_payoff`, `payoff_event` + `payoff_position`, `clear_anchor` (true) (D-170) | Changes the direction and re-anchors or clears the anchor; `payoff_event` with `clear_anchor` → `error.mutually_exclusive`. Any status. Shared rows are read-only in isolated tracks (`error.isolated_readonly`) |
+| `resolve_foreshadowing` | `foreshadowing_id`*, `status`* (`resolved` \| `abandoned`), `resolution`* | `resolved_chapter_id` = session chapter. Resolving while the anchor is still planned succeeds, and the result says so (`anchor_planned`, D-170) |
 | `set_chapter_summary` | `summary`* | Writes `chapters.summary` (150–400 characters recommended; hard limit 2,000) |
 | `propose_setting_change` | `target`* (`outline` \| `world` \| `protagonist` \| `character:<name>` \| `new_character`), `rationale`*, `edits` (array of `{find, replace}`), `append`, `character` (`{name, role_label, summary, profile}` for `new_character`) | Exactly one of `edits` / `append` / `character` (`error.exactly_one`). For `character:<name>`, `edits` and `append` apply to that design's `profile` (unknown name → `error.character_not_found`). Each `find` must currently match exactly once (`error.find_failed`). A `new_character` name that a design already has → `error.character_exists`. Creates a `pending` proposal and emits `proposal.changed` |
-| `propose_goal_change` | `action`* (`create` \| `complete` \| `drop`), `rationale`*, `node` (id; `complete`/`drop`), `parent` (id of a plan; `create`, optional), `title`, `purpose` (`create`, required), `chapter_from`, `chapter_to` (`create`), `entities` (names), `events`, `foreshadowing` (ids) (`create`) | Proposes a change to the author's writing goals (spec/06 §11.6). `complete` / `drop`: the node exists, is visible and is `active` or `waiting`. `create`: a new **task**; `parent`, when given, is an open plan in the session's scope; title, purpose and range follow spec/06 §11.1. Missing fields for the action → `error.validation`; an unknown or invisible `node`/`parent` → `error.not_found` (`what_label` = the level's `target_type` label). In an isolated track only that track's private nodes may be targeted; a shared node → `error.isolated_readonly`. Creates a `pending` proposal (`goal_node` or `new_goal_task`, spec/06 §5) and emits `proposal.changed`. A pending proposal of the same node and status already exists → no new row, and the result names it. Result `result.canon_write` (`action = propose_goal_change`) |
+| `propose_goal_change` | `action`* (`create` \| `complete` \| `drop`), `rationale`*, `node` (id; `complete`/`drop`), `parent` (id of a plan; `create`, optional), `title`, `purpose` (`create`, required), `chapter_from`, `chapter_to` (`create`), `entities` (names), `events`, `foreshadowing` (ids) (`create`) | Proposes a change to the author's writing goals (spec/06 §11.6). `complete` / `drop`: the node exists, is visible and is `active` or `waiting`. `create`: a new **task**; `parent`, when given, is an open plan in the session's scope; title, purpose and range follow spec/06 §11.1; `events` may name planned timeline entries, but not abandoned ones (D-170). Missing fields for the action → `error.validation`; an unknown or invisible `node`/`parent` → `error.not_found` (`what_label` = the level's `target_type` label). In an isolated track only that track's private nodes may be targeted; a shared node → `error.isolated_readonly`. Creates a `pending` proposal (`goal_node` or `new_goal_task`, spec/06 §5) and emits `proposal.changed`. A pending proposal of the same node and status already exists → no new row, and the result names it. Result `result.canon_write` (`action = propose_goal_change`) |
 | `finish_maintenance` | `report`* | `chapter_maintenance` requires recorded appearances when the session's `canon_systems` include **Entities**, and a summary when they include **Memory**; otherwise `error.maintenance_incomplete` lists what is missing. Goals are never required. In `chapter_maintenance` only, and only with Entities in the session's systems: if the protagonist (for a side track, its focus character when set; spec/06 §4.2) appeared, this session may update them (a shared entity is read-only in an isolated track), and no `update_entity` in this session touched their `state`, the **first** call does not complete: it returns `result.finish_maintenance` with `confirm_needed = true` (not an error; sets `counters.finish_warned`), and the next call completes. Effects: `complete: maintenance` |
 
 `ui` for canon writes: `{change_ids: [id], target_type, target_id, name}`, where `name` is the
@@ -285,6 +290,14 @@ first 40 characters, a relation's kind) and is empty for appearance sets and cha
 whose `target_id` is the chapter; for proposals `{proposal_id, target}`; for goal proposals
 `{proposal_id, action, node_id?}`; for `finish_maintenance` `{changes: n, proposals: n,
 goal_proposals: n}`.
+
+**Timeline tree** (D-170, spec/06 §1.4). An entry named by `parent`, `payoff_event`,
+`around_event` or `under` must be an entry of the book that the session can see and that is not
+abandoned. A parent must also be in the new entry's scope and outside the moved entry's own
+subtree. Anything else is `error.not_found` (`what_label` = timeline event). The root is never
+nameable. While the session's Timeline is off, `payoff_event` / `payoff_position` →
+`error.system_off`. `error.timeline_conflict` carries `reason` and the conflicting entry
+(`#id 标题`), which the session can always see.
 
 ## 7. Conception tools
 
@@ -354,6 +367,11 @@ result gets `notice.research_budget` once; later results do not repeat the ident
 - `propose_goal_change`: each action's happy path, missing fields, an unknown node or parent, a
   closed node, a parent that is not a plan, the isolated rule, the duplicate rule.
 - Entity resolution order and ambiguity.
+- Timeline tree (D-170): nesting and default placement, each `timeline_conflict` reason, the
+  scope and cycle refusals, abandoning a subtree, `under`, the root and abandoned entries absent
+  from `query_timeline` and `search_canon`, anchors (set, re-anchor, clear, half an anchor,
+  abandoned or foreign anchor, Timeline off), the `anchor_planned` notice, and a pre-D-170 frozen
+  session calling the old shapes.
 - Isolated-track write rules.
 - Granularity matrix for `insert_text` (mode × tail state × flags), including CJK and English
   joining; single-paragraph limits of `insert_paragraphs` / `rewrite_paragraph` under
@@ -375,3 +393,85 @@ result gets `notice.research_budget` once; later results do not repeat the ident
     - 9 topics → `validation`;
     - an excluded scope → `scope_excluded`;
     - in either error case, nothing is written.
+- Book agent (D-169):
+  - **Frozen list.** It equals the assistant list with every system on, and each system off
+    removes exactly its tools. No tool approves, sends back, submits or finalizes a chapter,
+    accepts a proposal, reverts, merges or deletes chapters, which is asserted by name.
+  - **Review mode.** Every action tool holds with its preview kind.
+  - **Reused tools.**
+    - Canon writes record `actor: agent` with a `NULL` chapter.
+    - Conception's setting tools write after finalize.
+    - `update_knowledge_entry` reaches any visible entry.
+  - **New tools.** Each has a happy path and its documented errors (`chapter_locked`,
+    `session_conflict`, `start_refused` per reason, `system_off`, `goal_open_children`).
+  - **Chapter edits.** `edit_chapter_text` keeps pids and makes one backup per chapter and
+    session.
+  - **`start_session`.** It never nests a write and spawns after the commit.
+
+## 10. Book agent tools (D-169)
+
+The `assistant` role works for the author on a whole book, in a `book_agent` session (spec/03
+§1.1, spec/08 §8).
+
+**Visibility.** It has no track:
+- **canon** is seen as the main story sees it (shared rows only; the private rows of isolated
+  side stories are out of reach);
+- **chapters** of every track can be read and edited;
+- **knowledge** is the book's visible scopes.
+
+**Two kinds of tools.**
+- **Read tools** never hold.
+- **Action tools** (`ASSISTANT_ACTION_TOOLS`: every tool from `write_setting_doc` to
+  `start_session` in the §2 list) hold for approval when the session's `write_mode` is `review`.
+  Holding happens before `execute`, with a preview (spec/03 §5.2). In `full` mode they execute at
+  once.
+- Every action tool has a trivial `prepare` and a read-only `preview(ctx, input) →
+  ToolPreview`, stored in `ui.preview`:
+
+  | `kind` | Payload | Used by |
+  |---|---|---|
+  | `diff` | `{label, before, after}` | text edits (the touched paragraphs with one paragraph of context) |
+  | `fields` | `{label, rows: [{field, before?, after?}], shared?}` | record writes. `shared` marks a knowledge entry seen by other books |
+  | `action` | `{label, text}` | starts, deletes and reorders |
+
+**Reused tools.** These keep their names, schemas and behavior: the retrieval tools (§3),
+conception's setting tools (§7), the archivist's canon tools (§6) and `update_knowledge_entry`
+(§8). In a book agent session:
+- the "session chapter" is `NULL`, so `chapter_id`, `since_chapter_id`, `until_chapter_id`,
+  `planted_chapter_id`, `resolved_chapter_id`, `first_chapter_id` and `last_chapter_id` are left
+  `NULL`, as for an author's manual record without a chapter;
+- `is_protagonist` → `error.seed_only`;
+- setting tools are never `settings.locked`, because the book is not conceiving;
+- `update_knowledge_entry` accepts any entry of a visible scope;
+- every write records `change_log` rows with `actor: agent` and this session where the target
+  has a change log.
+
+**New tools:**
+
+| Tool | Parameters | Behavior | `ui` |
+|---|---|---|---|
+| `book_overview` | — | Renders `block.book_index` (spec/03 §10) with current data | `{chapters, sessions}` |
+| `open_chapter` | `chapter`* (`"12"` = main track, `"#345"` = id), `part` (`text` \| `outline` \| `reference_notes` \| `guidance` \| `summary`; default `text`), `from_pid`, `max_chars` (8,000, max 20,000) | Any status, any track. The header shows the label, title, status, `content_version`, canon status, word count and open sessions. `text` has pids and a continuation hint. Unknown → `error.not_found` | `{chapter_id, part}` |
+| `read_setting_doc` | `doc`* (`outline` \| `world` \| `protagonist`), `offset` (0) | Up to 12,000 characters from `offset`, with the revision and a continuation hint | `{doc, revision}` |
+| `read_characters` | `name` | Without `name`: the ranked designs (rank, name, role label, summary, linked entity). With it: the full design. Unknown → `error.character_not_found` | `{count}` |
+| `list_goals` | `status` (`open` = active + waiting, default; or a single status), `level` | Shared-scope nodes: `[#id] 【层级】标题 — 目的 · 状态 · 第a–b章`, with ready and closable marks (spec/06 §11.3) | `{count}` |
+| `list_research` | `status` | The book's research tasks: id, kind, topic, scope, status, entries | `{count}` |
+| `list_sessions` | `status` (`open`, default; or one status), `kind` | The book's sessions: id, kind, chapter label, status, created time | `{count}` |
+| `create_chapter` | `track` (main by default; `"#id"`), `title`, `guidance` | A `planned` chapter at the end of the track. The rules of `POST /tracks/:id/chapters` apply | `{chapter_id, number}` |
+| `edit_chapter` | `chapter`*, `title`, `guidance`, `outline` \| `outline_edits` (`{find, replace}`), `reference_notes` \| `notes_edits` | The pairs are mutually exclusive (`error.mutually_exclusive`), and each `find` matches exactly once (`error.find_failed`). While a planner or writer session of the chapter is `running` → `error.chapter_locked` (with `session_id`); otherwise the change is reported to that chapter's open session (spec/03 §7). `summary` is not editable here | `{chapter_id, fields}` |
+| `edit_chapter_text` | `chapter`*, `edits`* (≥1 `{find, replace}`) | Matched in order against the current text (paragraphs joined by a blank line), exactly once each, otherwise `error.find_failed` and nothing is written. The new text goes through the `PUT …/content/text` service: pid alignment, `content_version` + 1, word count, `chapter.content`, and an official synced chapter → `stale`. Locks and reports as for `edit_chapter`. The first text edit of a chapter in the session first saves a `backup` version (`session_id` set) | `{chapter_id, version, changed_pids}` |
+| `delete_canon_record` | `target_type`* (`entity` \| `relation` \| `timeline_event` \| `memory_note` \| `foreshadowing`), `id`*, `note`* | Deletes through the author's DELETE service, with a change log entry, so revert recreates the record (spec/06 §3). A type whose system is off in the session → `error.system_off`. A private row of an isolated track → `error.not_found`, and so is an abandoned timeline entry. A timeline entry with children → `error.timeline_has_children` (D-170) | `{change_ids, target_type, target_id, name}` |
+| `create_goal` | `level`*, `parent`, `title`*, `purpose`*, `status`, `chapter_from`, `chapter_to`, `conditions`, `entities`, `events`, `foreshadowing`, `note` | The `POST /books/:id/goals` rules (spec/06 §11.1–§11.4), shared scope | `{goal_id, level}` |
+| `update_goal` | `node`*, `note`*, `title`, `purpose`, `status`, `parent`, `chapter_from`, `chapter_to`, `conditions`, `entities`, `events`, `foreshadowing`, `confirm_open_children` | The `PATCH /goals/:id` rules. `level` cannot change. Closing a node with open descendants without `confirm_open_children` → `error.goal_open_children` | `{goal_id}` |
+| `create_research_task` | `topic`*, `requirements`*, `scope`* | A `ready` `topic` task of the book, `origin: author` (the book agent acts for the author, so no agent replaces it) | `{task_id}` |
+| `update_research_task` | `task`*, `topic`, `requirements`, `scope`, `status` (`ready` \| `deferred`) | PATCH rules, plus `status` through defer and resume (spec/07 §8). An open task → `error.session_conflict`. A knowledge check accepts `requirements` only (`error.validation`) | `{task_id, status}` |
+| `delete_research_task` | `task`* | DELETE rules. An open task → `error.session_conflict` | `{task_id}` |
+| `add_knowledge_entry` | `scope`* (a visible scope's name), `title`*, `content`*, `source_urls`, `tags` | The `save_knowledge_entry` rules, in the named scope, with `source: manual`. Unknown or not visible → `error.scope_not_found` | `{entry_id, title}` |
+| `start_session` | `action`* (`outline` \| `maintain` \| `resync` \| `research` \| `knowledge_check`), `chapter` (chapter actions), `task` (`research`), `guidance` (`outline`; the focus of `knowledge_check`) | Creates the session through the **in-transaction** form of the matching endpoint's service (spec/08 §1.1, spec/07 §8, §8.1), with the endpoint's preconditions and **no `force`**. The book settings supply `pause_after_outline`. Chapter **write**, **revise** and **review** sessions are not actions for now; the author starts them (D-169). An action that would have to stop or abandon another session → `error.session_conflict` (with `session_id`). Another refusal → `error.start_refused` (`reason` = the API error code). No model → `error.model_missing_role`. The session is spawned after the commit (`ToolOutcome.spawn`). The agent does not wait for it | `{session_id, kind, chapter_id?, task_id?, existing}` |
+
+**No author-only operations.** These have no tool (D-169): starting a chapter write, revise or
+review session (for now); accepting a held outline or revision plan; submitting, approving or
+sending back a chapter; finalizing; accepting or rejecting proposals; reverting changes; merging
+entities; deleting chapters, tracks or the book; book and app settings; controlling another
+session.
+

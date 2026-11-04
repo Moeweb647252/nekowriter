@@ -51,6 +51,7 @@
 | POST | `/books/:id/conception/start` | | `{ session_id }` (the open session or a new one; allowed while a knowledge check is open; spec/08 §5) |
 | POST | `/books/:id/knowledge-check` | `{ requirements? }` | `201 { task: ResearchTaskDto, session_id }` (spec/07 §8.1). The session plans: it lists research topics (`check_id` = this task) that then run one at a time (D-168). `409 book.invalid_state` unless the book is `conceiving` or `active`; `409 research.invalid_state` with `details.session_id` while a check is open; no researcher model → the same error as `run`, and no row is written |
 | POST | `/books/:id/conception/finalize` | | `{ book, seed_session_id?, warnings }` |
+| POST | `/books/:id/agent` | `BookAgentStart { message, write_mode? }` — `message` 1–20,000 characters; `write_mode` `review` (default) or `full` | `201 { session_id }`: a new `book_agent` conversation, running (spec/08 §8, D-169). `409 book.invalid_state` unless the book is `active` or `archived`; `409 session.exists` with `details.session_id` while one is open; no assistant or writer model → `409 model.missing_role` and no row |
 | POST | `/books/:id/canon/seed` | | `{ session_id }` (the open session or a new one; spec/08 §5) |
 | GET / POST | `/books/:id/tracks` | `TrackInput` | `TrackDto[]` / `TrackDto` |
 | PATCH / DELETE | `/tracks/:id` | | |
@@ -98,16 +99,16 @@
 | POST | `/entities/:id/protagonist` | | `EntityDto` |
 | GET / POST | `/books/:id/relations` | `?entity_id` / `RelationInput` | `RelationDto[]` / `RelationDto` |
 | PATCH / DELETE | `/relations/:id` | | |
-| GET / POST | `/books/:id/timeline` | `?track_id&entity_id` / `TimelineEventInput {…, after_id?, before_id?}` | `TimelineEventDto[]` (story order) / `TimelineEventDto` |
-| PATCH / DELETE | `/timeline-events/:id` | | |
-| POST | `/timeline-events/:id/move` | `{ after_id? , before_id? }` | `TimelineEventDto` |
+| GET / POST | `/books/:id/timeline` | `?track_id&entity_id` / `TimelineEventInput {…, after_id?, before_id?, parent_id?, status?}` (`status` `occurred` default or `planned`; `parent_id` omitted or `null` = top level, D-170) | `TimelineEventDto[]` (story order; every entry including abandoned ones, never the root) / `TimelineEventDto`. Since D-170 the DTO has `parent_id` (`null` = top level), `status` and `child_count`. A planned entry under an occurred ancestor of its scope → `409 timeline.status_conflict` |
+| PATCH / DELETE | `/timeline-events/:id` | PATCH: partial input plus `parent_id?` (`null` = top level; the subtree moves with it) and `status?` (`occurred`, with the existing `chapter_id`, or `abandoned`, which also abandons the planned sub-entries of its scope) (D-170) | `TimelineEventDto` / 204. A move or status change that breaks spec/06 §1.4 → `409 timeline.status_conflict`; DELETE of an entry with sub-entries → `409 timeline.has_children`. An unknown, abandoned or out-of-scope parent, or the entry's own subtree → `400 validation.failed` |
+| POST | `/timeline-events/:id/move` | `{ after_id? , before_id? }` | `TimelineEventDto`. Story order only; the parent never changes (D-170) |
 | GET / POST | `/books/:id/memory-notes` | `?kind&status` | `MemoryNoteDto[]` |
 | PATCH / DELETE | `/memory-notes/:id` | | |
-| GET / POST | `/books/:id/foreshadowing` | `?status` | `ForeshadowingDto[]` |
-| PATCH / DELETE | `/foreshadowing/:id` | | |
+| GET / POST | `/books/:id/foreshadowing` | `?status` | `ForeshadowingDto[]`. Since D-170 the DTO has `payoff_event_id`, `payoff_position`, `payoff_event_title` and `payoff_event_status`; the input takes `payoff_event_id` and `payoff_position`, both or neither (`400 validation.failed` otherwise, or for an abandoned or out-of-scope entry) |
+| PATCH / DELETE | `/foreshadowing/:id` | PATCH: as the input; `payoff_event_id: null` clears both anchor fields (D-170) | |
 | GET | `/books/:id/memory` | `?track_id&chapter_id` (default: the next chapter of the main track) | `MemorySnapshotDto` plus `rendered` (the exact `block.memory` text), `recent_chapters` (the chapters `block.recent_chapters` injects in full: id, number, label, title, characters, partial) and `systems` (the book's `CanonSystems` the text was rendered with) |
 | GET | `/books/:id/changes` | `?chapter_id&session_id&target_type&actor&cursor` | page of `ChangeDto` |
-| POST | `/changes/:id/revert` | | `ChangeDto` (the revert change); reverting the `create` of a goal node that has children is `409 goal.has_children` |
+| POST | `/changes/:id/revert` | | `ChangeDto` (the revert change); reverting the `create` of a goal node that has children is `409 goal.has_children`, and of a timeline entry with sub-entries `409 timeline.has_children`; restoring a timeline snapshot that would break spec/06 §1.4 now is `409 timeline.status_conflict` (D-170) |
 | GET | `/books/:id/goals` | `?track_id&status&entity_id&event_id&foreshadowing_id` (the last three return the nodes linking to or conditioned on that row: "Referenced by") | `GoalNodeDto[]` with the derived `ready`, `closable` and per-condition state (spec/06 §11.3) |
 | POST | `/books/:id/goals` | `GoalNodeInput` | `GoalNodeDto` |
 | PATCH / DELETE | `/goals/:id` | PATCH: partial `GoalNodeInput` (`level` and `track_id` cannot change), `note?`, `confirm_open_children?` | `GoalNodeDto` / 204 (`409 goal.open_children`, `409 goal.has_children`, spec/06 §11.4) |
@@ -161,7 +162,8 @@ carries `{ status, operation }`; a task with an open session reports
 | POST | `/sessions/:id/pause` · `/resume` `{feedback?}` · `/stop` · `/continue` · `/abandon` | | `SessionDto` (validated against spec/03 §3; e.g. `stop` only while `running`) |
 | POST | `/sessions/:id/message` | `{ text }` | `SessionDto` |
 | POST | `/sessions/:id/answer` | `{ tool_call_id, payload }` | `SessionDto` |
-| PATCH | `/sessions/:id` | `{ granularity?, auto_pause?, pause_after_outline? }` — per kind: an outline session accepts `pause_after_outline` only; a write or revise session accepts the three fields; other combinations are `409 session.invalid_state` | `SessionDto` |
+| PATCH | `/sessions/:id` | `{ granularity?, auto_pause?, pause_after_outline?, write_mode? }` — per kind: an outline session accepts `pause_after_outline` only; a write or revise session accepts the first three fields; an open `book_agent` session accepts `write_mode` only, in any open status including `running` (D-169); other combinations are `409 session.invalid_state` | `SessionDto` |
+| POST | `/sessions/:id/end` | | `SessionDto`. `book_agent` only: idle, held, paused, stopped, failed or interrupted → `completed`, leaving a held change unexecuted; anything else is `409 session.invalid_state` (spec/03 §6, D-169) |
 | POST | `/debug/sessions/echo` | `{ book_id }` (debug builds only; a test session with test-only tools, used by PLAN M3.5) | `{ session_id }` |
 
 ### 2.8 Key DTOs (abridged; the Rust definitions are authoritative)
@@ -177,6 +179,7 @@ type SessionDto = {
   status: SessionStatus; phase: Phase; granularity: Granularity | null;
   auto_pause: boolean; pause_after_outline: boolean; pause_requested: boolean;
   held_tool_call_id: number | null; base_content_version: number | null;
+  write_mode: WriteMode | null;     // book_agent only: "review" | "full" (D-169)
   error: SessionError | null; usage: Usage;
   parent_session_id: number | null; child_session_id: number | null;
   retrying: { attempt: number; wait_seconds: number; reason: string } | null;
@@ -337,6 +340,7 @@ type ContentOpInput =                                                    // auth
 | `settings.locked` | 423 | setting materials while the conception session runs; `details.session_id` |
 | `chapter.invalid_state` | 409 | operation not allowed in this status; `details.status` |
 | `chapter.session_exists` | 409 | `details.session_id` |
+| `session.exists` | 409 | `details.session_id`: the book already has an open book agent conversation (D-169) |
 | `chapter.previous_not_ready` | 409 | `details.chapter_id`, `details.reason` |
 | `chapter.is_anchor` | 409 | the chapter anchors side tracks; `details.track_ids` |
 | `chapter.outline_missing` | 409 | a write session needs a non-empty `chapters.outline` (write and redraft); no details |
@@ -351,6 +355,8 @@ type ContentOpInput =                                                    // auth
 | `writing_skill.builtin` | 409 | PATCH/DELETE on a built-in writing skill; `details.id` |
 | `goal.open_children` | 409 | setting `done`/`dropped` on a goal node (or accepting such a proposal) while it has `active` or `waiting` descendants, without `confirm_open_children`; `details.children: [{id, level, title, status}]` |
 | `goal.has_children` | 409 | deleting a goal node with children, or reverting its `create`; `details.children_count` |
+| `timeline.has_children` | 409 | deleting a timeline entry with sub-entries, or reverting its `create`; `details.children_count` (D-170) |
+| `timeline.status_conflict` | 409 | a timeline write or revert would break spec/06 §1.4; `details.event_id`, `details.reason` (`occurred_ancestor`, `planned_descendant`, `occurred_descendant`, `backward`) (D-170) |
 | `provider.unavailable` · `provider.auth` · `provider.bad_request` | 502 | provider tests and remote models (the connection test reports the same codes inside its 200 `error` field, spec/04 §8); the web search test maps a rejected key to `provider.auth` and other failures to `provider.unavailable` |
 | `search.not_configured` | 409 | search test without a provider |
 | `internal` | 500 | |

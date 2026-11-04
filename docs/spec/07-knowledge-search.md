@@ -59,7 +59,7 @@ source change (FTS row too). An upsert that changes `content_hash` sets `embed_s
 | `entity` | entities | name | summary · aliases · state · attributes (`k: v`) · description (first 1,500 chars) | entity's |
 | `note` | memory_notes (active) | first 40 characters of the content | content | note's |
 | `foreshadowing` | foreshadowing | title | description · planned payoff · resolution | row's |
-| `event` | timeline_events | title | story_time · description | row's |
+| `event` | timeline_events (`entry` rows that are not abandoned, D-170; the root has no doc, and abandoning removes the doc) | title | story_time · description (`meta.planned = true` for a planned entry, so a hit can be marked) | row's |
 | `summary` | chapters (official) | chapter title | summary | NULL for main/canon tracks, T for isolated |
 | `passage` | official chapter text | chapter title | ~700-character chunks of consecutive paragraphs; `meta.pids` = covered pids | as `summary` |
 

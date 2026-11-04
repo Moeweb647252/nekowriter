@@ -3870,3 +3870,172 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   - spec/09 §2;
   - spec/10 §2.2, §2.5;
   - spec/11 §5.0, §5.4, §5.5, §9.
+
+### D-169 A book agent reads and changes the whole book, in review or full-access mode
+
+- **Context**:
+  - The author asked (2026-11-04) for an agent on the book pages that can read and change all of
+    the book's content.
+  - They answered that it should offer both a full-access mode and a review mode, with the author
+    choosing; that it covers the setting materials, chapters, canon and goals, and research
+    (research tasks and the knowledge entries the book sees); and that it may start the other
+    agents.
+  - Constraints from the code:
+    - `agent_sessions.role` and `.kind` are CHECK-constrained, so a new role and kind need the
+      0004-style table rebuild;
+    - `step_tool` decides holds **after** `execute`, so writer holds need staged writes (D-139);
+    - PROJECT §10 #11 makes post-finalize agent setting edits proposals;
+    - research tasks and knowledge entries have no change log.
+- **Decision** (plan `docs/research/book-agent-plan.md`):
+  - **Role and kind.**
+    - A new role `assistant` and a new session kind `book_agent`, created by
+      `POST /books/:id/agent` for `active` and `archived` books, one open per book.
+    - It is a conversation: a text reply goes `idle`, there is no nudge and no rollover, and
+      **End conversation** (`POST /sessions/:id/end`) completes it.
+    - `RoleModels.assistant` falls back to the writer like the planner.
+    - 0012 rebuilds `agent_sessions` with the guards of 0004.
+  - **Write mode** is a per-session column, `review` (default) or `full`, PATCHable at any time,
+    with no model notice. "Review mode" is read as an approval stop before each change, not as
+    proposals: the author's wording asks for a mode in the conversation, and proposals would leave
+    a chat waiting on another page.
+  - **The approval hold comes before `execute`.**
+    - Validation, a trivial `prepare` and a read-only preview run, and then the call holds.
+    - Approve executes against current data; feedback executes nothing and is not an error.
+    - Holding first means none of the 27 action tools needs a staging variant. A stale edit fails
+      as an ordinary error instead of overwriting.
+  - **Tools.** 43 tools, in a fixed order, narrowed by the canon system switches. The existing
+    retrieval, setting, canon and `update_knowledge_entry` tools are reused unchanged (schemas,
+    descriptions). The new tools are:
+    - `book_overview`, `open_chapter`, `read_setting_doc`, `read_characters`;
+    - `list_goals`, `list_research`, `list_sessions`;
+    - `create_chapter`, `edit_chapter`, `edit_chapter_text`;
+    - `delete_canon_record`, `create_goal`, `update_goal`;
+    - `create_research_task`, `update_research_task`, `delete_research_task`;
+    - `add_knowledge_entry`, `start_session`.
+
+    Reused canon tools record a `NULL` chapter, because the book agent has no session chapter.
+  - **The author's path.** Chapter edits follow the author-edit rules: a running planner or
+    writer locks the chapter, otherwise an edit report goes to it, and official synced text
+    becomes `stale`. A `backup` version is saved before the first text edit of a chapter per
+    conversation. Setting edits after finalize apply directly (an explicit exception to #11) and
+    are logged as the agent's.
+  - **Starting agents.** One `start_session` tool covers outline, maintain, resync, research and
+    the knowledge check. Chapter write, revise and review sessions are left out for now: on
+    reviewing the plan the author said not to delegate writing and review yet ("先不能启动写作和审阅").
+    Adding them later is two enum values, their service rows and tests.
+    - It runs the endpoints' in-transaction services with their preconditions and no `force`,
+      and spawns after the commit.
+    - It refuses anything that would stop or abandon another session.
+    - Approvals stay with the author, and multi-chapter autopilot remains out of scope.
+  - **Visibility.** Canon is seen as the main story sees it (no isolated private rows), chapters
+    of every track are visible, and knowledge is the book's visible scopes. It has no web tools.
+- **Consequences**:
+  - The author can delegate cross-cutting edits (renames, consistency fixes, canon cleanup) and
+    kick off work from one conversation, and choose how much to watch.
+  - The approval hold is a second hold flavour in the runtime, next to the post-execute holds.
+    `HeldCallReview` renders its previews.
+  - In full access, research-task and knowledge-entry changes cannot be undone. The UI says so.
+  - Long conversations end with `provider.context_overflow`. **New conversation** is the remedy
+    until rollover is designed for conversations.
+  - Every existing prompt, tool definition and `kickoff_baseline` snapshot is unchanged. Only new
+    keys are added.
+- **Spec**:
+  - PROJECT §4, §5, §6.18, F13, §8.4, §8.6, §8.12, §10 (#11, #34), §11;
+  - spec/02 §1, §2, §3, §4, §5;
+  - spec/03 §1.1, §3, §4, §5.2, §5.6, §6, §9, §10, §14, §15;
+  - spec/04 §7.2;
+  - spec/05 §2, §9, §10;
+  - spec/08 §1.4, §8;
+  - spec/09 §2;
+  - spec/10 §2.2, §2.7, §2.8, §4;
+  - spec/11 §5.1, §5.3, §5.5, §9.
+
+
+### D-170 The timeline is a tree of history and plan; payoffs anchor to entries, not chapters
+
+- **Context**:
+  - Before chapter 1 existed, the author's book already listed foreshadowing payoffs as
+    "卷三第 50—53 章". The author: "写作应该是渐进式的，这样精准的全局规划根本不可能", and the
+    constraint should be a mechanism tied to the timeline, not only prompt wording.
+  - Their answers (2026-11-04):
+    - the timeline holds history and plan;
+    - a node is anchored by relation, not by chapter;
+    - an entry may hold sub-entries, to unlimited depth;
+    - the root is a real, empty row;
+    - planned entries are seeded from the outline with no cap;
+    - agents never see abandoned entries;
+    - resolving against a planned anchor is a reminder.
+
+    On the review of the plan they added that planned entries and writing goals complement each
+    other ("相辅相成"), and that a happened entry may not be abandoned ("不允许").
+  - Code facts:
+    - `position` is book-wide story chronology, and every position helper, `query_timeline`,
+      `around_event` and the API depend on it;
+    - `create_inner` fills in the session chapter;
+    - revert recreates deleted rows with new ids;
+    - `search_docs` follows `canon.changed`, without a foreign key;
+    - no agent tool edits a foreshadowing;
+    - goal nodes already refuse deleting parents (`goal.has_children`).
+  - The outline prompt asked for enough detail "to guide chapter-by-chapter writing", which is
+    where the chapter numbers came from.
+- **Decision** (plan `docs/research/timeline-tree-plan.md`):
+  - **The tree.**
+    - `timeline_events` gains `parent_id` (no cascade), `kind` (`root` | `entry`) and `status`
+      (`occurred` | `planned` | `abandoned`).
+    - One empty root per book, created by 0013 and by book creation, is never shown, indexed,
+      logged, changed or deleted, and no API returns it.
+    - A parent is shared or in the entry's own track.
+  - **Order is unchanged.** `position` stays the book-wide chronology. The tree groups entries,
+    and siblings list in story order. Neighbors never change a parent. A new child without a
+    neighbor goes after its parent's subtree.
+  - **Status.**
+    - Moves are only `planned → occurred` (recording the chapter) and `planned → abandoned`, which
+      also abandons the planned sub-entries of its scope. A happened entry is never abandoned.
+    - A planned entry has no chapter, so the service does not fill in the session chapter for it.
+    - No happened entry has a planned descendant in its own scope.
+    - A revert is an undo that may restore any snapshot these rules still allow.
+  - **Deleting** an entry with sub-entries is refused (`409 timeline.has_children`), as for goal
+    nodes, because a cascade would bypass the change log and leave search docs behind. Deleting a
+    leaf clears the anchors on it first.
+  - **Anchors.**
+    - Foreshadowing gains `payoff_event_id` and `payoff_position` (`before` | `after` | `at`).
+      `planned_payoff` is the direction only.
+    - A new tool, `update_foreshadowing` (archivist and book agent), changes the anchor and the
+      direction.
+    - With Timeline off the anchor parameters are refused (`system_off`).
+  - **Agents** never see the root or abandoned entries: not in tool results, search, counts or
+    goal links. Planned entries are marked `（计划中）`. `query_timeline` gains `under`.
+  - **Goals complement planned entries.** Links may name planned entries, and a new condition,
+    `event_occurred`, makes a waiting node ready when its entry happens. Maintenance step 9
+    considers `complete` for nodes linked to a promoted entry, as a proposal. Goals are still never
+    seeded.
+  - **Prompts.**
+    - Conception plans the outline by phases and ordering relations, without chapter numbers unless
+      the author asks.
+    - The seed adds planned entries (no cap) and anchors only the foreshadowing the outline states.
+    - Maintenance promotes, nests, abandons and re-anchors.
+    - Re-sync edits or deletes unsupported history and never reverts it to planned.
+  - **Migration** 0013 is append-only: it adds the columns, creates the roots and reparents every
+    row as happened. Existing books are not converted.
+- **Consequences**:
+  - A payoff can be planned without a chapter number, and the plan stays editable as the story
+    moves.
+  - The archivist's list grows to 23 tools (22 without relevant goal nodes) and the book agent's
+    to 44. New sessions freeze the new lists; old sessions keep theirs, and every new parameter
+    is optional.
+  - Prompt and `kickoff_baseline` snapshots change for conception, the archivist's three tasks
+    and system prompt, the tool definitions and the results named in spec/09 §2.
+  - The author's current book keeps its numbered outline and its 12 numbered payoffs until they are
+    edited, by hand or by asking the book agent (M21) to build planned entries from the outline,
+    re-anchor the foreshadowing and rewrite the outline.
+  - Timeline entries are not volumes: they hold no chapters (PROJECT §9.2).
+- **Spec**:
+  - PROJECT §4, §6.7, §6.16, F7, §8.8, §9.2, §10 (#35), §11;
+  - spec/02 §1, §2, §3, §4, §5;
+  - spec/05 §2, §3, §6, §9, §10;
+  - spec/06 §1.4, §1.5, §3, §4.4, §6, §7, §8, §9, §10.3, §11.3, §11.7;
+  - spec/07 §2;
+  - spec/08 §5;
+  - spec/09 §2;
+  - spec/10 §2.4, §4;
+  - spec/11 §5.5, §9.

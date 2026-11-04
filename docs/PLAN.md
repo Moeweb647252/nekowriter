@@ -206,6 +206,28 @@ needed. Real providers are tested when the author supplies keys.
       when the running one finishes, the research is settled.
     - In conception the agent sets supplementary topics (Research topics tab). Finalize: they become
       `ready`, and the topics researched before conception stay `done`.
+16. Book agent (M21, plan §6):
+    - Demo, an active book: click **Book agent** and send a message in **Review changes**. The
+      agent reads the overview; its new research task waits with a preview. **Request changes**:
+      no task appears, and the agent replies.
+    - Send another message and **Apply this change**: the task appears in Book › Knowledge.
+    - Switch to **Full access** and send a message: the next task appears without a stop.
+    - While the book agent is open, start a write session from a chapter: the panel stays on the
+      book agent.
+    - **End conversation**; **Book agent** shows the start view again.
+    - A conceiving book: the Book agent entry is disabled with the studio hint.
+17. Timeline as history and plan (M22, plan §6):
+    - Demo, a fresh book with conception: the canon seed creates planned entries from the outline,
+      nested under phase entries, and anchors a foreshadowing to one of them. No chapter number
+      appears on the Timeline or Foreshadowing page.
+    - Write and approve chapter 1. Maintenance promotes one planned entry to happened with
+      chapter 1 and adds a sub-entry.
+    - A goal task waiting on **Event happened** for that entry is badged ready afterwards.
+    - Abandon a planned entry: its planned sub-entries go with it, it stays greyed on the page, and
+      a session's `query_timeline` no longer returns it. **Abandon** is not offered on a happened
+      entry.
+    - **Delete** is disabled on an entry with sub-entries. Deleting a leaf and reverting it brings
+      it back under its parent.
 
 ## M12 — Outline and write sessions
 
@@ -339,3 +361,34 @@ nothing after it. Execute in order, one commit per task.
 | 20.5 | **Supplementary conception topics**: `conception.system` deliverable 5 and process bullet, `conception.kickoff`, `conception.research_tasks[].entries_created`, the `check_id IS NULL` filter in conception's `set_research_topics`. | 05 §7; 08 §5; 09 §2 | plan §5.4; `kickoff_baseline` changes only for the prep kickoff and tools and the conception kickoff and system prompt |
 | 20.6 | **Web**: `PreConceptionResearch` (states, topic list, Run next, Start conception now), the "From the knowledge check" label, the check page's topic list, the New book checkbox wording; both locales. | 11 §5.0, §5.4, §5.5; PROJECT §8.7, §8.10 | plan §5.5 Vitest; `i18n:check` |
 | 20.7 | **Smoke and pre-ship**: smoke items 12 and 15 with the Demo provider. Run `0011` on a **copy** of the author's database; report the `research_tasks` count before and after, that every `check_id` is `NULL`, and that book #1's five drafts and conception session #4 are unchanged. | PLAN §M11.5 | the checklist passes; the report is in the final message and in D-168's consequences |
+
+## M21 — Book agent
+
+Plan: `docs/research/book-agent-plan.md` (D-169). It depends on nothing after M20. Execute in order,
+one commit per task.
+
+| # | Task | Spec | Tests / acceptance |
+|---|---|---|---|
+| 21.1 | **Docs**: done with the plan (D-169). Re-read the amended sections; fix any a code fact contradicts and note it in D-169. | plan §7 | `check.sh` green (docs only) |
+| 21.2 | **Schema and types**: `0012_book_agent.sql` (the 0004 rebuild procedure: `role` + `assistant`, `kind` + `book_agent`, `write_mode`; reference counts and `foreign_key_check` guards; 0001 not edited); entity, `AgentRole::Assistant`, `SessionKind::BookAgent`, `WriteMode`, `RoleModels.assistant`, `SessionDto.write_mode`, `BookAgentStart`, the PATCH field; bindings. | 02 §1–§5; 10 §2.8 | plan §5.1 `book_agent_migration.rs`; `entity_schema.rs` fresh and upgraded |
+| 21.3 | **Runtime**: `POST /books/:id/agent`, the assistant → writer model fallback, idle on text, `end`, `write_mode` PATCH while running, the approval hold before `execute`, `ToolOutcome.spawn`, the kickoff (`block.book_index`, `assistant.kickoff`, `assistant.system`, variables, samples, validator). | 03 §3–§6, §10, §14; 08 §8; 09 §2; 10 §2.2, §2.7 | plan §5.2 `book_agent_session.rs` |
+| 21.4 | **Read tools and reused tools**: `ASSISTANT_TOOLS` and the freeze rules; the new read tools; main-story canon visibility; reused setting, canon and knowledge tools with `NULL` chapters; their previews. | 05 §2, §10 | plan §5.3 `book_agent_tools_read.rs` |
+| 21.5 | **New action tools**: chapter, canon delete, goal, research and knowledge tools; in-transaction services; author-path locks and edit reports; backups; previews; error kinds and results. | 05 §10; 08 §1.4 | plan §5.4 `book_agent_tools_write.rs` |
+| 21.6 | **`start_session`**: in-transaction service variants for the five actions (outline, maintain, resync, research, knowledge check; no write or review), `session_conflict`, `start_refused`, post-commit spawn in both commit paths. | 05 §10; 08 §1.1, §8 | plan §5.5 `book_agent_start_session.rs` |
+| 21.7 | **Web and Demo**: the navigator item and panel button (manual pin), `BookAgentStart`, `WriteModeControl`, End/New conversation, `HeldCallReview` previews, tool renderers, the seventh role row; the Demo `book_agent` arm and corpus; both locales. | 11 §5.1, §5.3, §5.5; 04 §7.2; PROJECT §6.18, §8.6, §8.12 | plan §5.6 Vitest; `i18n:check` |
+| 21.8 | **Smoke and pre-ship**: smoke item 16 with the Demo provider. Run `0012` on a **copy** of the author's database; report the guard counts and `foreign_key_check`, and that every session row decodes with `write_mode` `NULL`. | PLAN §M11.5 | the checklist passes; the report is in the final message and in D-169's consequences |
+
+## M22 — Timeline as history and plan
+
+Plan: `docs/research/timeline-tree-plan.md` (D-170). It depends on M21: it changes tools the book
+agent reuses and adds `update_foreshadowing` to its list. Execute in order, one commit per task.
+
+| # | Task | Spec | Tests / acceptance |
+|---|---|---|---|
+| 22.1 | **Docs**: done with the plan (D-170). Re-read the amended sections; fix any a code fact contradicts and note it in D-170. | plan §7 | `check.sh` green (docs only) |
+| 22.2 | **Schema and types**: `0013_timeline_tree.sql` and its module (Rust-managed transaction; guards: entry count unchanged, one root per book, no entry without a parent; 0001 not edited); the root insert at book creation; entity, `TimelineKind`, `TimelineStatus`, `PayoffPosition`, snapshots with serde defaults; the DTO, input and patch fields; bindings. | 02 §1–§5; 10 §2.4 | plan §5.1 `timeline_tree_migration.rs`; `entity_schema.rs` fresh and upgraded |
+| 22.3 | **Tree rules**: `services/canon/timeline_tree.rs` (parent, scope, consistency, abandon, subtree moves); `kind = 'entry'` in every position query and reader; delete refused with children and clearing anchors; revert rules; foreshadowing anchors; the API errors. | 06 §1.4, §1.5, §3, §9; 02 §5 | plan §5.2 `timeline_tree.rs` |
+| 22.4 | **Tools**: the `add_timeline_event`, `update_timeline_event`, `query_timeline`, `list_foreshadowing`, `add_foreshadowing` and `resolve_foreshadowing` changes; `update_foreshadowing` (registry, freeze map, archivist and assistant lists, validator map); `timeline_conflict`, `timeline_has_children`, `system_off` for anchors; agent visibility; search docs (no root, abandoned removed, planned flag). | 05 §2, §3, §6, §10; 07 §2 | plan §5.3 `timeline_tree_tools.rs` |
+| 22.5 | **Goals, context and prompts**: `event_occurred` in the evaluator and validation; `memory.counts.event_planned`; the planned and anchor markers in results and `block.goals`; `block.canon_systems`; `conception.system`, `archivist.system`, the seed, maintenance and re-sync tasks, `tools.toml`; variables, samples, validator. | 06 §4.4, §6–§8, §10.3, §11.3; 08 §5; 09 §2 | plan §5.4; `prompts_registry` snapshots; each `kickoff_baseline` change justified |
+| 22.6 | **Web**: the timeline tree, row menu and dialog fields; foreshadowing anchors and picker; the **Event happened** condition; both locales. | 11 §5.5, §9; PROJECT §8.8 | plan §5.5 Vitest; `i18n:check` |
+| 22.7 | **Smoke and pre-ship**: smoke item 17 with the Demo provider. Run `0013` on a **copy** of the author's database; report the guard counts, the root id, that the 3 rows are top level and `occurred`, and that the 12 foreshadowing rows are unanchored with their text unchanged. | PLAN §M11.5 | the checklist passes; the report is in the final message and in D-170's consequences |

@@ -68,15 +68,16 @@ small embedding model locally.
 | **Tiered memory** | Short-term (current chapter outline, recent chapter summaries, the protagonist's immediate state, the previous chapter's ending), mid-term (recent state and relationship changes, character appearance records), long-term (character states, story facts, world rules, timeline, open foreshadowing) |
 | **Entity** | A thing that exists in the story world: character, organization (sect, nation…), location, item, or other. It has a title (name), a description, a current state, and attributes |
 | **Relation** | A directed, described link between two entities with a free-text kind ("senior brother", "classmate", "sworn enemy") |
-| **Timeline event** | A story event kept in chronological story order ("Lin Fan obtains the Nine-Turn Sword"), linked to entities and its source chapter |
-| **Foreshadowing** | A planted hook with a status (open, resolved, abandoned) |
+| **Timeline event** | A story event kept in chronological story order ("Lin Fan obtains the Nine-Turn Sword"), linked to entities and its source chapter. Events form a tree of entries and sub-entries, and each is *happened*, *planned* or *abandoned* (§6.7) |
+| **Foreshadowing** | A planted hook with a status (open, resolved, abandoned), a payoff direction, and optionally a payoff anchor: before, at or after a timeline entry, never a chapter number |
 | **Writing goals** | The author's narrative intent in three levels: a **goal** (an arc or the whole book: what the reader should feel, understand or believe), its **plans** (the next tens of chapters: what has to change), and their **tasks** (the next few chapters: the scene or event where it changes). Every node carries a mandatory **purpose**, why it exists, which is what agents receive (§6.16) |
 | **Ready** (goals) | A `waiting` node whose conditions (a chapter reached, a hook resolved, an entity's status) are all met in current canon; or an active node whose children are all closed. Derived, never stored |
 | **Canon system** | One of Entities, Timeline, Memory (notes and chapter summaries), Foreshadowing and Goals. Each can be switched off per book (§6.17) |
 | **Knowledge base** | External reference knowledge in **scopes** (global spaces such as "Tang dynasty officialdom" or "Xianxia cultivation tropes"). A book's agents read every scope except those the author unchecked for the book |
 | **Research task** | A topic plus requirements for the research agent, which collects information from the web into a target scope. Tasks the author creates or edits are the author's, and no agent deletes them |
 | **Knowledge check** | A research task of its own kind: the research agent checks whether the knowledge visible to a book can support conceiving it, and lists what is missing as research topics. The topics then run one by one. All of this happens before conception, and the check's report goes to the conception agent |
-| **Agent role** | Planner, Conception, Researcher, Writer, Reviewer, Archivist (see §5) |
+| **Agent role** | Planner, Conception, Researcher, Writer, Reviewer, Archivist, Book agent (see §5) |
+| **Book agent** | A conversation with an agent that reads and changes everything in one book and can start the other agents. It works in **review** mode (each change waits for the author's approval) or **full access** (changes apply at once), chosen by the author (§6.18) |
 | **Session** | One persisted agent conversation working on one task (e.g. "write chapter 12"). It has a status, a phase, and a full transcript |
 | **Phase** | A stage inside a session that decides which tools are allowed. Planner sessions are phase-free; a write session drafts; a revise session runs `revision_planning` → `revising`. `planning` appears only in historical write sessions that ended before the outline split |
 | **Granularity** | How much text one `insert_text` call may add: `sentence`, `paragraph`, `free` (any size, with `paragraph_end`/`chapter_end` flags), or `chapter`. At sentence and paragraph level it also limits `insert_paragraphs` and `rewrite_paragraph` to one paragraph |
@@ -104,6 +105,7 @@ effort (one of the levels its model lists), configured globally and overridable 
 | **Writer** | 写手 | Drafts a chapter from its accepted outline with granular writing tools, and revises or redrafts it after feedback | Retrieval tools (revision planning only), `insert_text` and edit tools (drafting/revising), `finish_draft`, `finish_revision` | Writing and revising chapters |
 | **Reviewer** | 审稿 | Reviews a finished chapter against the setting materials, memory, entity graph, and timeline; reports issues and feedback | Retrieval tools, `submit_review` | The author delegates a review |
 | **Archivist** | 档案员 | Maintains canon after a chapter becomes official: appearances, entities, relations, timeline, notes, foreshadowing, summary, protagonist state, and setting proposals. Proposes goal changes (a new task, a node done, a node dropped) for the author to decide. Also seeds canon from the settings. Maintains only the canon systems the book has on | Canon read/write tools, `set_chapter_summary`, `propose_goal_change`, `propose_setting_change`, `finish_maintenance` | After approval; after conception |
+| **Book agent** | 书籍助手 | Talks with the author about the whole book. It reads and changes the setting materials, chapters (text, outline, notes), canon, goals, research tasks and knowledge entries, and starts detailed-outline, maintenance, re-sync and research sessions (not writing or review, for now). The author's decisions (approving outlines and chapters, proposals, reverts) stay with the author | Read tools for every content type, setting and chapter edit tools, canon and goal tools, research and knowledge tools, `start_session` | When the author opens it, in an active or archived book |
 
 ## 6. Feature set (MVP)
 
@@ -186,6 +188,15 @@ effort (one of the levels its model lists), configured globally and overridable 
   (flashbacks). New events are inserted at an explicit position (after or before another event).
 - Each event has a story-time label, a title, a description, its source chapter, and involved
   entities. The author can reorder events by drag and drop.
+- **History and plan in one tree** (D-170). An entry may hold sub-entries, to any depth: a phase
+  of the story holds its scenes. Each entry is *happened*, *planned* (expected, not yet written;
+  it has no chapter) or *abandoned* (a plan given up). A plan becomes history when the text
+  reaches it; a happened entry is never abandoned, only corrected or deleted. Agents never see
+  abandoned entries.
+- **Plans are relations, not chapter numbers.** Writing is incremental, so nobody can say in
+  advance that a payoff lands in "chapter 50–53". Conception plans by phases and ordering
+  relations; the archivist seeds planned entries from the outline; a foreshadowing's payoff is
+  anchored before, at or after an entry, with a direction in words.
 
 ### 6.8 Workflow discipline
 - **Before writing**: a separate **planner** session retrieves from memory, graph, timeline,
@@ -271,6 +282,9 @@ effort (one of the levels its model lists), configured globally and overridable 
   not as a generic scene.
 - The author creates and edits nodes. The archivist proposes new tasks, completions and drops
   after maintenance, and the author decides. Every change is in the change log and revertible.
+- **Goals and planned timeline entries complement each other** (D-170). A planned entry says what
+  the story is expected to go through; a goal says why. A node can link planned entries, and can
+  wait for one to happen ("Waiting for «搬进 602» to happen").
 - Not a project-management tool (no assignees, estimates or dependencies), not a replacement for
   chapter outlines, and not volumes or arcs as data objects (§9.2).
 
@@ -281,6 +295,33 @@ effort (one of the levels its model lists), configured globally and overridable 
 - **Nothing is deleted:** switching it back on restores everything with the data intact. Sessions
   already running keep what they started with.
 - Book settings shows what each switch does and how much data a disabled system keeps.
+
+### 6.18 Book agent
+- On every page of an active or archived book, the author can open the **book agent**: a
+  conversation about the whole book in the agent panel.
+- **What it can do.** It reads and changes:
+  - the setting materials;
+  - chapters: text, outline, reference notes and title, and creating chapters;
+  - canon: entities, relations, timeline, memory, foreshadowing;
+  - writing goals;
+  - the book's research tasks;
+  - knowledge entries in the scopes the book sees (shared with other books).
+
+  It can also start detailed-outline, maintenance, re-sync, research and knowledge-check sessions
+  for the author. Writing and reviewing chapters are not delegated for now: the author starts
+  those sessions as today.
+- **Write mode, chosen by the author** and switchable at any time:
+  - **Review changes** (default): each change stops with a preview (a diff, or the fields that
+    change). The author applies it or asks for something else.
+  - **Full access**: changes apply at once.
+
+  Either way, canon, setting and goal changes are on the Changes page and can be reverted.
+  Chapter text gets a backup version before the agent first edits it.
+- **What it cannot do.** It does not take the author's decisions: accepting outlines and revision
+  plans, approving or sending back chapters, finalizing, proposals, reverts, merges, deleting
+  chapters or books, and settings.
+- One conversation per book is open at a time. **End conversation** closes it, and **New
+  conversation** starts fresh.
 
 ---
 
@@ -462,11 +503,13 @@ Each flow lists what the author does, what the system does, and where it happens
   relations), delete. Edit forms have an optional *change note*; with a note, the change appears
   in the entity's history that agents read (`get_entity`). Mid-term memory lists chapter-bound
   changes only, so it shows what maintenance recorded.
-- **Timeline**: vertical chronological list, drag and drop reorder, add or edit events, filter by
-  entity or track.
+- **Timeline**: a tree in chronological order, drag and drop reorder among siblings, add or edit
+  events and sub-entries, mark a planned entry as happened or abandon it, filter by entity or
+  track.
 - **Memory**: three-tier view for a chosen chapter context, and the facts and world rules list
   (add, edit, retire).
-- **Foreshadowing**: open, resolved, and abandoned lists, with an edit form.
+- **Foreshadowing**: open, resolved, and abandoned lists, with an edit form that also sets the
+  payoff anchor.
 - **Goals**: a tree of goals, plans and tasks with their purposes visible. The author:
   - adds a node (title, purpose, chapter range, linked canon picked from lists);
   - sets a node to wait for conditions, activates it when it becomes ready, and marks nodes done or
@@ -519,6 +562,19 @@ Each flow lists what the author does, what the system does, and where it happens
   say so in a second line. It also shows attention items (held or awaiting sessions, chapters in
   review, pending proposals, failed sessions, stale canon, ready goals), progress (chapters,
   words), and recent changes.
+
+---
+
+### F13 — Ask the book agent
+1. In a book, click **Book agent** (navigator or agent panel). Choose **Review changes** or **Full
+   access**, and type a request ("from chapter 12 on, Lin Fan's sword is called Qingshuang: fix
+   the settings and the written chapters").
+2. The agent reads what it needs: the book overview, chapters, settings and canon. In review mode
+   each change stops in the panel with its diff. **Apply this change** or **Request changes**
+   (with a reason). In full access the changes appear at once, as tool cards.
+3. It can start work for you ("write the outline of chapter 45"). The started session appears in
+   the session list, and its own decisions (accepting the outline) are still yours.
+4. Reply to continue, switch the mode at any time, or **End conversation**.
 
 ---
 
@@ -617,7 +673,9 @@ App shell (top bar: logo · Library · Knowledge · Prompts · Settings · theme
   Goals carries a badge counting nodes that are ready to activate or to close.
 - The agent panel follows the context: on a chapter it shows that chapter's latest session; on
   other pages, the most recently active session of the book. A dropdown lists all sessions
-  (filter by kind or status) to pin any of them.
+  (filter by kind or status) to pin any of them. Opening the **book agent** (navigator, or the
+  panel's `Bot` button) pins its conversation, so the panel stays on it while it starts other
+  sessions.
 
 ### 8.5 Chapter view
 
@@ -697,10 +755,10 @@ word-level diff: insertions underlined green, deletions struck red). **Restore**
 version first.
 
 ### 8.6 Agent panel
-- **Header**: role icon (Conception ✦ Sparkles, Researcher 🔎 Search, Planner 🌳 ListTree,
-  Writer ✒ PenLine, Reviewer ✓ ClipboardCheck, Archivist 🗃 Archive), session title, status badge,
-  model name with the session's frozen thinking effort ("Opus 5.5 · High"), and an info popover
-  (Lucide `Info`) showing the session's frozen system prompt and tool list.
+- **Header**: role icon (Conception ✦ Sparkles, Researcher 🔎 Search, Planner 🌳 ListTree, Writer ✒
+  PenLine, Reviewer ✓ ClipboardCheck, Archivist 🗃 Archive, Book agent 🤖 Bot), session title, status
+  badge, model name with the session's frozen thinking effort ("Opus 5.5 · High"), and an info
+  popover (Lucide `Info`) showing the session's frozen system prompt and tool list.
 - **Controls** (by status):
   - running: **Pause** (shows "Pausing…" until held), **Stop** (shows "Stopping…" for the moment
     the runner needs to stop).
@@ -780,12 +838,17 @@ version first.
 - **Timeline**: a vertical list with a rail. Each row has story time (left), title and
   description, entity chips, chapter link, a track badge, and **Edit** (a dialog with the same
   fields; position changes only by dragging). Drag handles reorder rows. The "+ Add" between rows
-  inserts at that position.
+  inserts at that position. Since D-170 the list is a tree: sub-entries are indented under their
+  entry and collapse with it. Planned rows are dashed with a **Planned** badge. Abandoned rows are
+  greyed and struck through (a toggle hides them). The row menu adds **Add sub-entry**, **Mark
+  as happened** and **Abandon** for planned rows. **Delete** waits until an entry has no
+  sub-entries.
 - **Memory**: a context selector ("Next chapter of: Main story" or a specific chapter) and three
   columns: Short-term, Mid-term, Long-term index, rendered exactly as the writer receives them.
   Below: the facts and world rules table.
 - **Foreshadowing**: three tabs (Open, Resolved, Abandoned) with planted and resolved chapter
-  links and the planned payoff.
+  links and the planned payoff: "Pays off after «event»" with a Planned badge when the anchor
+  has not happened yet, then the direction.
 - **Goals**: a toolbar (track filter, **Ready** filter, **+ Goal**) above a tree of goals, plans
   and tasks.
   - Each row shows the level icon, the title, the **purpose** (two lines, readable without
@@ -851,11 +914,12 @@ Source badges: **D** default, **G** global override, **B** book override.
   max output tokens, protocol options, **thinking effort**: the levels the model accepts, as five
   checkboxes for Anthropic or typed chips for OpenAI-compatible providers, and an optional default
   level; the Demo takes none).
-- **Agent roles**: six rows (Conception, Researcher, Planner, Writer, Reviewer, Archivist), each
-  with a model select and an effort select listing that model's levels. The planner's unset model
-  reads "Same as Writer" and follows the writer's model, and then its unset effort follows the
-  writer's too. Any other unset effort reads "Model default ({level})" or "Provider default". A
-  stored effort the model does not list is marked "(not supported)" with what sessions use instead.
+- **Agent roles**: seven rows (Conception, Researcher, Planner, Writer, Reviewer, Archivist, Book
+  agent), each with a model select and an effort select listing that model's levels. The planner's
+  and the book agent's unset model reads "Same as Writer" and follows the writer's model, and then
+  the unset effort follows the writer's too. Any other unset effort reads "Model default ({level})"
+  or "Provider default". A stored effort the model does not list is marked "(not supported)" with
+  what sessions use instead.
 - **Web search**: provider radio and its fields, and a **Test query** button.
 - **Embeddings**: model select (three supported), status (not downloaded, downloading, ready,
   failed + message), the model cache path, index stats (documents, embedded, pending),
@@ -868,7 +932,7 @@ Source badges: **D** default, **G** global override, **B** book override.
   turned off says how much data the book keeps and offers **View data**; a footnote says nothing is
   deleted and running sessions are unaffected; a warning when Memory is off and recent chapters
   are 0), memory windows (recent summaries N, mid-term window M; disabled while their system is
-  off), auto-maintenance, model overrides per role (six rows, each a model and an effort select
+  off), auto-maintenance, model overrides per role (seven rows, each a model and an effort select
   whose unset entry follows the global setting; the planner's hint names its effective model —
   "Default: {model}", otherwise "Follows the Writer: {model}", or "none"), and
   visible knowledge scopes (shortcut).
@@ -913,6 +977,8 @@ the design target; ≥1024 px must remain usable).
 - Cost in currency or price tables (token counts only).
 - Volumes or arcs as data objects, chapter branching, alternative versions as branches. Writing
   goals (§6.16) are intent records with an optional chapter range, not containers of chapters.
+  Timeline entries (§6.7) group story events in story time; they hold no chapters and no chapter
+  range.
 - Project-management features for goals (assignees, estimates, task dependencies, burndown),
   prose generated from a goal, and seeding goals from the setting materials.
 - Per-chapter or per-session canon system switches, partial switches, and back-filling a
@@ -961,7 +1027,9 @@ The author can revise them later.
     research sessions get a short book brief.
 11. **Agents propose setting changes; authors apply them.** After finalize, agent edits to setting
     materials are proposals (the conception agent writes drafts directly, reviewed by the
-    author). Author edits apply immediately. Both are recorded in the change log.
+    author). Author edits apply immediately. Both are recorded in the change log. The **book
+    agent** is the exception (D-169): the author asks it directly and chooses whether each change
+    is reviewed first or applies at once. Its changes are logged as the agent's.
 12. **Tiered memory mapping**: short-term and mid-term are injected; long-term is retrieved by
     tools, with a compact index (cast list, open foreshadowing, counts) injected.
 13. **Side stories are tracks** with a canon mode (`canon` or `isolated`) and an anchor.
@@ -1023,6 +1091,26 @@ The author can revise them later.
     knowledge that came up while conceiving and is still missing. They follow the old path: drafts,
     review, ready at finalize. A topic the check listed runs without a click, as "research first"
     requires. The author can edit, skip or delete it first.
+34. **"A book agent that can access and change everything"** (D-169) means every content type
+    of the book, plus starting outline, maintenance and research agents. Starting chapter writing
+    and review was left out on the author's review of the plan ("not for now"). It never takes a
+    decision the workflow reserves for the author: approving outlines and chapters, finalizing,
+    proposals, reverts, merges, deleting chapters or books, and settings. "Full access and a review
+    mode, the author chooses" is a per-conversation write mode. Review stops each change before it
+    applies; it does not turn changes into proposals.
+35. **"Writing is incremental; precise global planning is impossible"** (D-170). The author found
+    foreshadowing payoffs planned at chapter numbers before chapter 1 existed, and asked for a
+    structural constraint tied to the timeline. Read as:
+    - the timeline holds history and plan in one tree, with unlimited depth and one empty root
+      per book;
+    - plans are anchored by relation (before, at or after an entry), not by chapter;
+    - planned entries are seeded from the outline with no cap;
+    - agents never see abandoned entries;
+    - resolving against a planned anchor is a reminder, not a refusal.
+
+    On the review of the plan the author added two rulings. Planned entries and goals
+    "complement each other" (a goal can wait for a planned entry to happen), and a happened entry
+    may not be abandoned. Existing books are not converted automatically.
 
 ## 11. Requirement traceability
 
@@ -1035,7 +1123,7 @@ The author can revise them later.
 | User participation | §6.4, F4 | `spec/03` §5.2–§5.4 (holds), §6 (control operations), §7 (edit reports) |
 | Tiered memory | §6.5 | `spec/06-canon-memory.md` §Memory |
 | Entity graph | §6.6, F7 | `spec/06` §Entities, §Relations |
-| Timeline | §6.7, F7 | `spec/06` §Timeline |
+| Timeline | §6.7, F7 | `spec/06` §Timeline (§1.4 tree and plan, D-170), `spec/05` §3, §6, `spec/10` §2.4 |
 | Workflow mandate | §6.8 | `spec/08-workflows.md` |
 | Review mode | §6.9, F5 | `spec/08` §Review, `spec/05` (reviewer tools) |
 | Prompt management | §6.10, F8 | `spec/09-prompts.md` |
@@ -1046,4 +1134,5 @@ The author can revise them later.
 | Side stories | §6.14, F9 | `spec/06` §Visibility, `spec/08` §Side stories |
 | Writing goals | §6.16, F6, F7, F12 | `spec/06` §11, `spec/05` (`propose_goal_change`), `spec/03` §10, `spec/10` §2.4 |
 | Canon system switches | §6.17, F7 | `spec/06` §10, `spec/05` §2, `spec/03` §1.2, §4, §10 |
+| Book agent | §6.18, F13 | `spec/08` §8, `spec/05` §10, `spec/03` §5.2 (approval hold), §6, `spec/10` §2.2, §2.7, `spec/11` §5.3, D-169 |
 | Software stack and i18n | §6.15 | `spec/01-architecture.md`, `spec/11-frontend.md` |

@@ -20,6 +20,7 @@ while it waits.
 | `chapter_maintenance` | archivist | `none` | `finish_maintenance` |
 | `canon_seed` | archivist | `none` | `finish_maintenance` |
 | `chapter_resync` | archivist | `none` | `finish_maintenance` |
+| `book_agent` | assistant | `none` | the author's **End conversation** (agent turns end with text → `idle`, D-169) |
 
 A **redraft** is a `chapter_write` session whose kickoff carries the author's feedback. A
 **rollover** continuation (§9) is a new session of the same kind and phase.
@@ -85,7 +86,7 @@ Each tool call row moves `pending → executing → (held | awaiting_input)? →
                 │  └──────────── approve / feedback / continue ───────────────┴──────────┘
                 │
                 ├── terminal tool finalized ─────────────────────────────► completed
-                ├── text-only reply (conception) ────────────────────────► idle ──message──► running
+                ├── text-only reply (conception, book_agent) ────────────► idle ──message──► running
                 ├── Stop ────────────────────────────────────────────────► stopped ──continue──► running
                 ├── unrecoverable error / refusal / no-tool-call breaker ─► failed ──continue──► running
                 ├── server restart while running ────────────────────────► interrupted ──continue──► running
@@ -114,6 +115,7 @@ or to abandon it.
 | stopped / failed / interrupted | continue | running | |
 | stopped / failed / interrupted | message | same | queued; delivered when the session continues (§5.3: with the unsealed batch, or as a new user message) |
 | completed (review) | rereview(comment) | running | appends a user message |
+| idle / held / paused / stopped / failed / interrupted (`book_agent` only) | end | completed | a held change is left unexecuted (§5.2, D-169) |
 
 Every transition goes through one function `transition(session, to, reason)` that, in the same
 transaction:
@@ -129,13 +131,15 @@ transaction:
    The planner has one extra fallback: when neither planner entry is set, it resolves
    `book.model_overrides.writer` → `roles.defaults.writer`. None → `409 model.missing_role`
    (`details.role` names the role that was being created, so `planner` for an outline session).
+   The book agent (`assistant`, D-169) follows the writer the same way.
    Copy the profile and provider into `model_snapshot` (without the API key; the key is resolved
    from `providers` at every call so key rotation works). Resolve `cache_ttl: "auto"` here
    (spec/04 §3), so the TTL never changes within a session.
    **Resolve the thinking effort** (spec/04 §5.1, D-162). The candidates are
    `book.model_overrides.efforts[role]` → `roles.defaults.efforts[role]`, and when the planner's
    model came from a writer entry, also `book.model_overrides.efforts.writer` →
-   `roles.defaults.efforts.writer`. The first candidate that is one of the profile's
+   `roles.defaults.efforts.writer` (the same for an assistant whose model came from a writer
+   entry). The first candidate that is one of the profile's
    `effort_levels` and that the protocol can send wins. Otherwise the profile's `default_effort`
    applies when it is sendable, and otherwise there is none. A set candidate that is skipped adds
    the warning `model.effort_unsupported`, and the session still starts. A planner on its own model
@@ -157,8 +161,9 @@ transaction:
    sessions copy `granularity` and `auto_pause` from book settings, or from the start request when
    given; their `pause_after_outline` is stored as 0. An outline session copies
    `pause_after_outline` (from the request or the book settings) and stores no granularity,
-   `auto_pause = 0`. Chapter sessions store `base_content_version` = the chapter's
-   `content_version` (after the creation side effects below).
+   `auto_pause = 0`. A `book_agent` session stores `write_mode` from the start request (default
+   `review`); every other kind stores `NULL`. Chapter sessions store `base_content_version` = the
+   chapter's `content_version` (after the creation side effects below).
 4. **Kickoff**: build the kickoff user message (§10) and persist it as `seq 0`, `kind kickoff`.
 5. Set the status to `running` and spawn the runner. Emit `session.updated` and `session.message`.
 
@@ -168,7 +173,7 @@ Domain side effects on creation (same transaction): `chapter_write` sets the cha
 `chapter_outline` session has **no** chapter side effect: the status stays as it is and the
 stored outline is untouched until `submit_outline` is accepted. Maintenance sets `canon_status`
 to `syncing`. Re-sync also saves the current text as a new `official` version (spec/06 §8).
-Research sets the task to `running`.
+Research sets the task to `running`. A `book_agent` session has no domain side effect.
 
 ## 5. The runner
 
@@ -223,6 +228,12 @@ step_tool(s, tc):
          on cancel: reset tc to pending; transition(s, stopped); return
          on ToolError: outcome ← error(…)
   BEGIN
+    if no outcome yet and approval_hold(s, tc):                       # book agent, review mode (D-169)
+        preview ← tool.preview(ctx(tx, s), input)                    # read-only
+           on ToolError: outcome ← error(…)                          # an invalid change is never held
+        if no outcome yet:
+            tc.ui ← {preview}; tc.effects ← {approval: true}; tc.status ← held
+            s.held_tool_call_id ← tc; transition(s, held); COMMIT; emit …; return   # nothing executed
     if no outcome yet: outcome ← tool.execute(ctx(tx, s), input, prepared)   # reads + writes, no I/O waits
     tc.raw_result_text, tc.ui, tc.effects, tc.is_error ← outcome
     update counters (tool_calls, retrieval_calls, consecutive_tool_errors: +1 on error, 0 on success)
@@ -283,6 +294,24 @@ outline.
   otherwise                                                                → false
 WRITE_TOOLS = {insert_text, insert_paragraphs, replace_text, rewrite_paragraph, delete_paragraphs}
 ```
+
+**Approval hold** (`book_agent`, D-169). `approval_hold(s, tc)` is true when `s.kind =
+book_agent`, `s.write_mode = review` and `tc.name ∈ ASSISTANT_ACTION_TOOLS` (spec/05 §10). Unlike
+the holds above, it comes **before** `execute`.
+- Validation, `prepare` and a read-only `preview` run first. Every action tool's `prepare` is
+  trivial, so nothing from it needs persisting. A preview error is an ordinary error result, so
+  an invalid change is never held.
+- The held call carries `effects.approval` and `ui.preview`, and nothing is written.
+- `resume` without feedback **executes** the tool in its own transaction, against current data,
+  then finalizes. A stale `find`, a lock or a vanished target is then the call's ordinary error
+  result.
+- `resume` with feedback executes nothing. The raw result is `result.change_declined`, the
+  feedback is appended as `notice.user_feedback`, and the call is finalized as a non-error, so it
+  does not count toward the tool-error streak.
+- `end` or `abandon` leaves the call unexecuted.
+- Changing `write_mode` while a call is held does not decide it.
+- Sessions a tool started (`ToolOutcome.spawn`) are spawned after the commit of whichever
+  transaction executed it.
 
 ### 5.3 Appendices and sealing
 
@@ -404,7 +433,7 @@ handle_text_only(s):
               rendered sections (author messages through notice.user_message, §5.3 render(item));
               consume inbox; clear view_snapshot; return   (loop continues → NeedsModel)
   match s.kind:
-    conception → transition(s, idle)                      # the author replies when ready
+    conception, book_agent → transition(s, idle)          # the author replies when ready
     otherwise  → if counters.consecutive_nudges < 2:
                     insert user message kind nudge = render(nudge key for kind/phase); counters.consecutive_nudges += 1
                  else: s.error ← {code: "agent.no_tool_call"}; transition(s, failed)
@@ -447,8 +476,9 @@ table in §3. Invalid ones return `409 session.invalid_state`.
 | `continue` | stopped, failed, or interrupted → running (clear `error`); spawn |
 | `message {text}` | append an inbox `user_message`. If the status is `idle`, transition to running and spawn. Rejected while `awaiting_input` (the form must be answered) and in terminal statuses |
 | `answer {tool_call_id, payload}` | awaiting_input only. Validates the payload against the call (spec/05 §7); `raw_result_text ← render(answer)`; finalize; status → running; spawn |
+| `end` | `book_agent` only (D-169): idle, held, paused, stopped, failed or interrupted → completed; `running` → `409 session.invalid_state` (stop it first). A held change is left unexecuted. The UI's **New conversation** ends the open session before starting another |
 | `abandon` | any open status → abandoned (a running session is stopped first: cancel, wait for the runner to exit). Releases chapter locks; writer sessions leave the chapter content as it is; an archivist session on a chapter sets its `canon_status` to `failed` (spec/06 §6) |
-| `PATCH {granularity?, auto_pause?, pause_after_outline?}` | per kind: an open outline session accepts `pause_after_outline` only; an open write or revise session accepts the three fields as before. Any other combination is `409 session.invalid_state`. A granularity change during `drafting`/`revising` queues inbox notice `writer.notice.granularity` (rendered for the new mode). The other fields need no notice |
+| `PATCH {granularity?, auto_pause?, pause_after_outline?, write_mode?}` | per kind: an open outline session accepts `pause_after_outline` only; an open write or revise session accepts the first three fields as before; an open `book_agent` session accepts `write_mode` only (any open status, `running` included; it applies from the next action call and no notice is queued, D-169). Any other combination is `409 session.invalid_state`. A granularity change during `drafting`/`revising` queues inbox notice `writer.notice.granularity` (rendered for the new mode). The other fields need no notice |
 
 Re-review: `POST /api/review-reports/:id/rereview {comment}` appends a user message rendered from
 `reviewer.rereview` to the report's session, stores the comment in `pending_comment` (copied
@@ -524,7 +554,9 @@ the same `pending_comment`.
 
 ## 9. Rollover (context management without editing history)
 
-- **Eligibility**: writer sessions in `drafting` or `revising`.
+- **Eligibility**: writer sessions in `drafting` or `revising`. A `book_agent` conversation is not
+  eligible; it fails with `provider.context_overflow`, and the UI offers **New conversation**
+  (D-169).
 - **Trigger** (checked before every model step): `usage.last_prompt_tokens + max_output_tokens
   > 0.85 × context_window`, or the previous request failed with context overflow.
 - **Procedure** (one transaction):
@@ -565,6 +597,7 @@ end of the settings block (shared by every session of the book); see spec/04 §3
 |---|---|
 | conception | `conception.kickoff` (its `conception` variable carries the visible knowledge scopes, the latest knowledge check's report, and the research topics the agent must keep with their status and `entries_created`, D-158, D-168) |
 | research | `block.book_brief` (only if linked to a book) · `researcher.kickoff`; a knowledge check (`kind = 'preparation'`, spec/07 §8.1): `block.book_brief` · `researcher.kickoff.prep` (its `prep` variable carries the book's existing topic tasks and the topic cap, D-168) |
+| book_agent | `block.book_brief` · `block.book_index` (a capped map of the book: tracks and chapters, setting documents, character designs, canon and goal counts, research counts, open sessions, pending proposals, systems that are off) · `assistant.kickoff` (the author's first message) (D-169) |
 | chapter_outline | `block.settings`⁎ · `block.canon_systems` · `block.memory` · `block.recent_chapters` · `block.goals` · `planner.kickoff` |
 | chapter_write | `block.settings`⁎ · `block.canon_systems` · `block.writing_skills` · `block.memory` · `block.recent_chapters` · `block.goals` · `block.chapter_draft` · `writer.kickoff.chapter` (a redraft's feedback comes through the task's `feedback` variable) |
 | chapter_revise | `block.settings`⁎ · `block.canon_systems` · `block.writing_skills` · `block.memory` · `block.goals` · `block.chapter_draft` · `writer.kickoff.revise` |
@@ -682,11 +715,11 @@ its sessions (computed on demand for the overview).
 - **Session row writes are column-wise and guarded**, never a write-back of a stale model:
   `UPDATE agent_sessions SET <changed columns> WHERE id = ? AND status = <expected>`. While a
   session is `running`, the API writes only `pause_requested`, `granularity`, `auto_pause`,
-  `pause_after_outline`, and inbox rows; the runner writes everything else and re-reads the row at
-  every loop step, so a concurrent pause or granularity change is never lost. The other
-  operations of §6 (resume, answer, continue, abandon, message to an idle session) act on a
-  session that is not running, inside one transaction guarded by its expected status, before a
-  runner is spawned, so a double click gets `409 session.invalid_state` instead of a second
+  `pause_after_outline`, `write_mode`, and inbox rows; the runner writes everything else and
+  re-reads the row at every loop step, so a concurrent pause or granularity change is never lost.
+  The other operations of §6 (resume, answer, continue, abandon, message to an idle session) act
+  on a session that is not running, inside one transaction guarded by its expected status, before
+  a runner is spawned, so a double click gets `409 session.invalid_state` instead of a second
   runner.
 - **Chapter locks**: at most one open session across the planner and writer roles per chapter
   (`409 chapter.session_exists`, returning the session id); the two roles form one lock group, so
@@ -700,6 +733,11 @@ its sessions (computed on demand for the overview).
   so edits made during a review make it "for an earlier version" (spec/08 §1.2).
 - Conception: one open session per book. Its documents may be edited by the author while the
   session is not running; edits are reported with `notice.setting_edits` (§7).
+- Book agent (D-169): one open session per book. Its chapter writes take the author's path: they
+  are refused while a planner or writer session of that chapter is `running`, and are otherwise
+  reported to that session through §7. It locks nothing itself, so the author may edit anything
+  while it runs. Its tools match `find` against current content, so a concurrent change makes the
+  agent's edit fail instead of overwriting it.
 
 ## 15. Required runtime tests (`crates/server/tests/agent_*.rs`)
 
@@ -806,3 +844,9 @@ With `ScriptedProvider` (spec/04 §7) and a temp database:
     resumes the queue. Abandoning skips it, and deferring takes it out of the queue. An author topic
     added to an idle queue starts at once. Two concurrent triggers start one topic, never two.
     Without a researcher model nothing starts and nothing fails.
+35. The book agent (`book_agent_session.rs`, D-169): a text reply → `idle` with no nudge; `end`
+    completes it; one open per book. In `review` mode an action call holds **before** executing
+    with a preview, approve executes it against current data (a stale `find` is an error result),
+    feedback executes nothing and is not an error, and `end` while held leaves it unexecuted. In
+    `full` mode it executes at once. Read tools never hold. A `write_mode` PATCH while running
+    applies to the next action call.

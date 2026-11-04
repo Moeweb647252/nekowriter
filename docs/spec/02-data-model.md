@@ -127,7 +127,32 @@
   the same transaction. `0001` is not edited, so 0011 is the only source of the column, as in 0009
   and 0010. (0002's rebuild would make an edit harmless, but one source is simpler.)
 
-## 2. Schema (0001_init.sql, upgraded by 0002_research_deferred.sql, 0003, 0004, 0005, 0006, 0007, 0008, 0009, 0010 and 0011)
+  `0012_book_agent.sql` (D-169) **rebuilds `agent_sessions`** with 0004's procedure: the
+  migration runs outside the migrator's transaction, switches `foreign_keys` off before `BEGIN`,
+  and copies every column through an explicit list (0006's `canon_systems` and 0010's limits
+  included). The rebuild:
+  - adds `'assistant'` to the `role` CHECK and `'book_agent'` to the `kind` CHECK;
+  - adds `write_mode` (`NULL` for every existing row);
+  - recreates the indexes.
+
+  Guards require the counts of `agent_sessions` and of every table that references it (0004's
+  ten, plus those added since) to be unchanged, and `PRAGMA foreign_key_check` to report nothing.
+  `0001` is not edited: 0012 is the final shape of the table.
+
+  `0013_timeline_tree.sql` (D-170) runs in one Rust-managed transaction and only appends:
+  - `timeline_events` gains `parent_id` (self reference, **no** `ON DELETE` action), `kind`
+    (`entry` default) and `status` (`occurred` default);
+  - one `root` row per book, with ids above every id the table or the change log has used
+    (§5.10);
+  - every existing row is reparented to its book's root, as an `occurred` entry;
+  - the indexes `timeline_events_root` (unique per book where `kind = 'root'`) and
+    `timeline_events_parent`;
+  - `foreshadowing` gains `payoff_event_id` (`ON DELETE SET NULL`) and `payoff_position`.
+
+  Guards: the `entry` count is unchanged, the root count equals the book count, and no entry has
+  a NULL parent. Existing foreshadowing keeps its text and gets no anchor. `0001` is not edited.
+
+## 2. Schema (0001_init.sql, upgraded by 0002_research_deferred.sql, 0003, 0004, 0005, 0006, 0007, 0008, 0009, 0010, 0011, 0012 and 0013)
 
 ```sql
 -- ───────────────────────────── App configuration ─────────────────────────────
@@ -359,9 +384,16 @@ CREATE TABLE timeline_events (
   chapter_id   INTEGER REFERENCES chapters(id) ON DELETE SET NULL,   -- source chapter
   importance   INTEGER NOT NULL DEFAULT 2 CHECK (importance BETWEEN 1 AND 5),
   created_at   TEXT NOT NULL,
-  updated_at   TEXT NOT NULL
+  updated_at   TEXT NOT NULL,
+  -- since 0013 (D-170): one tree per book. The root is an empty row per book that only anchors
+  -- the tree; it is never listed, indexed, logged, changed or deleted, and no API returns it.
+  parent_id    INTEGER REFERENCES timeline_events(id),   -- NULL only for the root; no cascade
+  kind         TEXT NOT NULL DEFAULT 'entry' CHECK (kind IN ('root','entry')),
+  status       TEXT NOT NULL DEFAULT 'occurred' CHECK (status IN ('occurred','planned','abandoned'))
 );
 CREATE INDEX timeline_book_position ON timeline_events(book_id, position);
+CREATE UNIQUE INDEX timeline_events_root ON timeline_events(book_id) WHERE kind = 'root';   -- 0013
+CREATE INDEX timeline_events_parent ON timeline_events(parent_id);                          -- 0013
 CREATE TABLE timeline_event_entities (
   event_id   INTEGER NOT NULL REFERENCES timeline_events(id) ON DELETE CASCADE,
   entity_id  INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
@@ -401,7 +433,12 @@ CREATE TABLE foreshadowing (
   resolution           TEXT NOT NULL DEFAULT '',
   importance           INTEGER NOT NULL DEFAULT 2 CHECK (importance BETWEEN 1 AND 5),
   created_at           TEXT NOT NULL,
-  updated_at           TEXT NOT NULL
+  updated_at           TEXT NOT NULL,
+  -- since 0013 (D-170): the payoff anchor, a timeline entry and a position; both NULL or both set
+  -- (enforced by the service; readers treat a position without an event as unanchored).
+  -- planned_payoff is the direction only, never a chapter number.
+  payoff_event_id      INTEGER REFERENCES timeline_events(id) ON DELETE SET NULL,
+  payoff_position      TEXT CHECK (payoff_position IN ('before','after','at'))
 );
 CREATE INDEX foreshadowing_book ON foreshadowing(book_id, status);
 CREATE TABLE foreshadowing_entities (
@@ -597,9 +634,11 @@ CREATE TABLE index_meta (
 CREATE TABLE agent_sessions (
   id                   INTEGER PRIMARY KEY,
   book_id              INTEGER REFERENCES books(id) ON DELETE CASCADE,
-  role                 TEXT NOT NULL CHECK (role IN ('conception','researcher','planner','writer','reviewer','archivist')),
+  role                 TEXT NOT NULL CHECK (role IN ('conception','researcher','planner','writer','reviewer','archivist',
+                         'assistant')),                 -- 'assistant' since 0012 (D-169)
   kind                 TEXT NOT NULL CHECK (kind IN ('conception','research','chapter_outline','chapter_write',
-                         'chapter_revise','chapter_review','chapter_maintenance','canon_seed','chapter_resync')),
+                         'chapter_revise','chapter_review','chapter_maintenance','canon_seed','chapter_resync',
+                         'book_agent')),                -- 'book_agent' since 0012 (D-169)
   chapter_id           INTEGER REFERENCES chapters(id) ON DELETE CASCADE,
   track_id             INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
   research_task_id     INTEGER REFERENCES research_tasks(id) ON DELETE CASCADE,
@@ -614,6 +653,8 @@ CREATE TABLE agent_sessions (
   granularity          TEXT CHECK (granularity IS NULL OR granularity IN ('sentence','paragraph','free','chapter')),
   auto_pause           INTEGER NOT NULL DEFAULT 0,
   pause_after_outline  INTEGER NOT NULL DEFAULT 0,
+  -- since 0012 (D-169): the book agent's write mode; NULL for every other kind
+  write_mode           TEXT CHECK (write_mode IS NULL OR write_mode IN ('review','full')),
   -- added by 0010 (D-164): frozen agent limits; streak 0 = unlimited
   tool_error_streak_limit INTEGER NOT NULL DEFAULT 5 CHECK (tool_error_streak_limit >= 0),
   research_max_tool_calls INTEGER NOT NULL DEFAULT 40 CHECK (research_max_tool_calls >= 1),
@@ -770,9 +811,12 @@ The migration seeds `('basic-writing', '基础写作 / Basic Writing', '写作 /
 | AppearanceRole | `pov`, `major`, `minor`, `mentioned` |
 | NoteKind / NoteStatus | `fact`,`world_rule`,`other` / `active`,`retired` |
 | ForeshadowingStatus | `open`, `resolved`, `abandoned` |
+| TimelineKind / TimelineStatus | `root`,`entry` / `occurred`,`planned`,`abandoned` (D-170; status moves only `planned → occurred` and `planned → abandoned`, spec/06 §1.4) |
+| PayoffPosition | `before`, `after`, `at` (a foreshadowing's anchor, D-170) |
 | ChangeActor / ChangeOp | `user`,`agent`,`system` / `create`,`update`,`delete` |
-| AgentRole | `conception`, `researcher`, `planner`, `writer`, `reviewer`, `archivist` |
-| SessionKind | `conception`, `research`, `chapter_outline`, `chapter_write`, `chapter_revise`, `chapter_review`, `chapter_maintenance`, `canon_seed`, `chapter_resync` |
+| AgentRole | `conception`, `researcher`, `planner`, `writer`, `reviewer`, `archivist`, `assistant` (the book agent, D-169) |
+| SessionKind | `conception`, `research`, `chapter_outline`, `chapter_write`, `chapter_revise`, `chapter_review`, `chapter_maintenance`, `canon_seed`, `chapter_resync`, `book_agent` (D-169) |
+| WriteMode | `review`, `full` (the book agent, D-169) |
 | SessionStatus | `idle`, `running`, `held`, `awaiting_input`, `paused`, `completed`, `stopped`, `failed`, `interrupted`, `superseded`, `abandoned` |
 | Phase | `none`, `planning` (historical rows only: `chapter_write` sessions that ended before the outline split; no runtime path, D-159), `drafting`, `revision_planning`, `revising` |
 | Granularity | `sentence`, `paragraph`, `free`, `chapter` |
@@ -783,7 +827,7 @@ The migration seeds `('basic-writing', '基础写作 / Basic Writing', '写作 /
 | ChangeTargetType | `entity`, `relation`, `appearance_set`, `timeline_event`, `memory_note`, `foreshadowing`, `chapter_summary`, `setting_doc`, `character_design`, `goal`, `plan`, `task` |
 | ProposalStatus / ProposalTargetType | `pending`,`accepted`,`rejected`,`conflict` / `setting_doc`,`character_design`,`new_character`,`goal_node`,`new_goal_task` |
 | GoalLevel / GoalStatus | `goal`,`plan`,`task` / `active`,`waiting`,`done`,`dropped` (`ready` and `closable` are derived, never stored; spec/06 §11.3) |
-| GoalConditionKind | `chapter_at_least`, `foreshadowing_resolved`, `entity_status_is` |
+| GoalConditionKind | `chapter_at_least`, `foreshadowing_resolved`, `entity_status_is`, `event_occurred` (D-170) |
 | CanonSystem | `entities`, `timeline`, `memory`, `foreshadowing`, `goals` (not a column; the keys of `CanonSystems`, spec/06 §10) |
 | ResearchTaskStatus | `draft`, `ready`, `deferred`, `running`, `done`, `failed`, `cancelled` |
 | ResearchTaskKind | `topic`, `preparation` (the knowledge check, spec/07 §8.1) |
@@ -828,10 +872,12 @@ type CanonSystems = {
 type GoalCondition =
   | { kind: "chapter_at_least"; chapter: number }
   | { kind: "foreshadowing_resolved"; foreshadowing_id: number }
-  | { kind: "entity_status_is"; entity_id: number; status: EntityStatus };
+  | { kind: "entity_status_is"; entity_id: number; status: EntityStatus }
+  | { kind: "event_occurred"; event_id: number };   // D-170: a timeline entry that is `occurred`
 
 // books.model_overrides and app_settings["roles.defaults"]
-// planner is optional; an unset planner resolves through the writer's entries (spec/03 §4).
+// planner and assistant are optional; unset, they resolve through the writer's entries
+// (spec/03 §4, D-169).
 // efforts: the thinking effort chosen per role, one of the resolved model's effort_levels
 // (spec/04 §5.1, D-162); absent in rows written before 0009, which load as {}.
 type RoleModels = Partial<Record<AgentRole, number /* model_profile_id */>> & {
@@ -955,9 +1001,9 @@ type NewGoalTask = {
 // change_log.before / after — snapshot of the target (only domain fields, no timestamps)
 type SnapshotEntity = { kind, name, aliases, summary, description, state, attributes, importance, status, is_protagonist, track_id };
 type SnapshotRelation = { source_id, target_id, kind, inverse_kind, description, status, since_chapter_id, until_chapter_id, track_id };
-type SnapshotTimelineEvent = { position, story_time, title, description, chapter_id, importance, entity_ids, track_id };
+type SnapshotTimelineEvent = { position, story_time, title, description, chapter_id, importance, entity_ids, track_id, parent_id, status };   // parent_id/status since 0013 (default: top level, occurred)
 type SnapshotNote = { kind, content, chapter_id, importance, status, entity_ids, track_id };
-type SnapshotForeshadowing = { title, description, planned_payoff, status, planted_chapter_id, resolved_chapter_id, resolution, importance, entity_ids, track_id };
+type SnapshotForeshadowing = { title, description, planned_payoff, status, planted_chapter_id, resolved_chapter_id, resolution, importance, entity_ids, track_id, payoff_event_id, payoff_position };   // anchor since 0013 (default: none)
 type SnapshotAppearanceSet = { appearances: { entity_id: number; role: AppearanceRole; note: string }[] };
 type SnapshotChapterSummary = { summary: string };
 type SnapshotSettingDoc = { content: string };
@@ -1036,3 +1082,16 @@ type SnapshotGoalNode = { level, parent_id, title, purpose, status, conditions, 
 21. A research task with a `check_id` has `kind = 'topic'` and the same `book_id` as its check,
     whose `kind` is `preparation`, and is never `draft` (D-168). `check_id` is set at creation and
     never changed; deleting the check sets it to `NULL`.
+22. `agent_sessions.write_mode` is set exactly when `kind = 'book_agent'` (role `assistant`). At
+    most one `book_agent` session per book is open (D-169).
+23. Every book has exactly one timeline `root` (created with the book; never changed or deleted).
+    Every `entry` has a `parent_id` naming the root or an entry of the same book. That parent is
+    shared or in the entry's own track, and the tree has no cycle (D-170).
+24. A `planned` entry has `chapter_id IS NULL`. No `occurred` entry has a `planned` descendant
+    with the same `track_id` (the root is exempt). Status moves only `planned → occurred` and
+    `planned → abandoned`; a revert may restore any snapshot that keeps this invariant and 23.
+25. A timeline entry with children is never deleted, by the API, a tool or a revert of its
+    `create` (`409 timeline.has_children`).
+26. A foreshadowing's `payoff_event_id` and `payoff_position` are both NULL or both set. When set,
+    the anchor is an `entry` visible from the foreshadowing's scope, and it was not abandoned when
+    written. Deleting the entry clears both first.

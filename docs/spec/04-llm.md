@@ -347,6 +347,7 @@ history:
 | chapter_review | `submit_review` (verdict `revise` on attempt 1, `pass` on later attempts) with one issue on `p2` |
 | maintenance / resync | `record_appearances` (protagonist), `update_entity` of the protagonist's state with a change note (an isolated track refuses it for a shared protagonist, and the demo moves on), `add_timeline_event`, `set_chapter_summary`, in maintenance (not resync) one `propose_setting_change` (an `append` to the world setting; isolated tracks refuse it, and the demo moves on), `finish_maintenance` (again if it asks for confirmation). A book with no protagonist entity yet (no canon seed) gets one `create_entity` first, so the required steps exist without an API key (D-090) |
 | seed | `create_entity` per character design (the rank-1 one with `is_protagonist`), then `finish_maintenance` |
+| book_agent | `book_overview` → `create_research_task` with the corpus's `assistant_topic` → a text reply (`assistant_reply`) → `idle`; each later message repeats the last two steps, so both write modes show (D-169) |
 | conception | `ask_user` (2 questions) → after the answers: `write_setting_doc` ×3, `upsert_character` ×2, `set_research_topics` → `request_review` → revises any document that was not approved → a closing text message |
 | research | A topic task: `save_knowledge_entry` ×2 (no network) → `finish_research`. A knowledge check (recognised by `set_research_topics` in `demo_hints.tools`, D-168): `search_knowledge` → `set_research_topics` with the corpus's two `prep_topics` → `finish_research` with `prep_report` |
 

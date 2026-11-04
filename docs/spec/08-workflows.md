@@ -67,6 +67,9 @@ drafting`, exactly as a manual text edit does.
   disables editing then, so the agent never overwrites a concurrent author edit. Edits made
   while it is not running are reported at the next sealing. After finalize they are never
   locked.
+- The book agent's edits (§8) take the author's path through these rules: a chapter edit is
+  refused while a planner or writer session of that chapter is `running`, and setting materials
+  are never locked after finalize.
 
 ## 2. Outlining and writing a chapter (agent)
 
@@ -131,9 +134,9 @@ Proposals never block writing.
 
 | Step | What happens |
 |---|---|
-| Create | `POST /api/books {title, idea, genre, writing_language, start_conception: true, knowledge_check, auto_start_conception}` → book `conceiving`, main track (empty title; the UI shows its localized name, "Main story" / "正文"), three empty setting docs, then the first session per the table below |
+| Create | `POST /api/books {title, idea, genre, writing_language, start_conception: true, knowledge_check, auto_start_conception}` → book `conceiving`, main track (empty title; the UI shows its localized name, "Main story" / "正文"), three empty setting docs, the timeline root (D-170), then the first session per the table below |
 | Knowledge check | With `knowledge_check: true` (the web client always sends it) a knowledge check runs first. It lists the missing knowledge as research topics, and they run one by one before conception (spec/07 §8.1, D-168). The conception agent reads the check's report and the knowledge base |
-| Kickoff | `conception.kickoff`: title, idea, genre, writing language, the visible knowledge scopes, the latest knowledge check's report, the research topics it must keep, with their status and entry counts (spec/05 §7), the deliverables, and the process |
+| Kickoff | `conception.kickoff`: title, idea, genre, writing language, the visible knowledge scopes, the latest knowledge check's report, the research topics it must keep, with their status and entry counts (spec/05 §7), the deliverables, and the process. The outline deliverable plans by phases and ordering relations (what comes before what), without chapter numbers unless the author asks for chapter-level planning; chapter detail belongs to the outline sessions (D-170) |
 | Rounds | The agent asks (`ask_user`), researches (`web_search`/`web_fetch`), writes documents and characters, may propose **supplementary** research topics (knowledge that came up during conception and is still missing; often none), and calls `request_review`. The author answers, reviews, messages, or edits documents directly (edits reported via `notice.setting_edits`) |
 | Text-only turn | The session becomes `idle`; the author's next message continues it |
 | Finalize | `POST /api/books/:id/conception/finalize` |
@@ -272,3 +275,35 @@ is one, otherwise it starts one.
 - `progress`: chapter counts per status and track, official word count, total word count.
 - `recent_changes`: the latest 10 change log entries.
 - `usage`: the token totals of the book's sessions.
+
+## 8. Book agent (D-169)
+
+The **book agent** (`book_agent` session, `assistant` role) is a conversation about the whole book.
+It reads everything the book holds and changes it on the author's request (tools: spec/05 §10).
+
+| Step | What happens |
+|---|---|
+| Open | The workspace's **Book agent** entry (navigator, agent panel header) shows the open conversation, pinned manually (spec/11 §5.3), or the start view. Only for `active` and `archived` books. A `conceiving` book has the conception studio, so the entry is disabled |
+| Start | `POST /books/:id/agent {message, write_mode?}`. One open book agent session per book (`409 session.exists` with `details.session_id`). The model is resolved for `assistant`, following the writer when unset (spec/03 §4). The kickoff is the book brief, the book index and the message (spec/03 §10) |
+| Turns | The agent reads and acts. A reply without a tool call → `idle`. The author's next message continues the conversation, and a message while it runs steers it |
+| Write mode | `review` (default) or `full`, per session, changed at any time with `PATCH /sessions/:id {write_mode}`. In `review` every action call stops before it runs and shows a preview. **Apply this change** executes it against current data; **Request changes** sends feedback and executes nothing (spec/03 §5.2). In `full` actions run at once |
+| Starting agents | `start_session` creates detailed-outline, maintenance, re-sync, research and knowledge-check sessions with the endpoints' preconditions and no `force`. It does not start chapter write, revise or review sessions for now: the author starts those. The started sessions run on their own, and the book agent does not wait for them. Their author decisions (an outline to accept) stay in the author's hands |
+| End | **End conversation** (`POST /sessions/:id/end`) → `completed`. A held change is left unexecuted. **New conversation** ends the open one and shows the start view. A conversation that outgrows the context fails with `provider.context_overflow`, and the panel offers **New conversation** |
+
+**What the author keeps.** In either mode, these stay with the author:
+- outline, revision-plan and chapter decisions (accept, approve, send back, submit);
+- finalize;
+- proposals;
+- reverts;
+- entity merges;
+- deleting chapters, tracks and books;
+- every setting;
+- controlling other sessions.
+
+**Undo.**
+- Setting materials, canon and goals: the book agent's changes are on the Changes page
+  (`actor: agent`, filterable by session) and revert as usual.
+- Chapter text: a `backup` version is saved before the agent's first text edit of a chapter in
+  each conversation.
+- Research tasks and knowledge entries have no change history. The full-access hint says so.
+
