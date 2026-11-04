@@ -265,19 +265,28 @@ pub async fn update_inner(
             "an update can only promote to occurred or abandon a planned entry",
         ));
     }
+    if patch.status.is_some()
+        && patch
+            .note
+            .as_deref()
+            .is_none_or(|note| note.trim().is_empty())
+    {
+        return Err(CanonError::field("note", "a status change needs a note"));
+    }
     let next_status = patch.status.unwrap_or(existing.status);
     match (existing.status, next_status) {
         (TimelineStatus::Occurred, TimelineStatus::Abandoned)
         | (TimelineStatus::Abandoned, TimelineStatus::Planned)
         | (TimelineStatus::Abandoned, TimelineStatus::Occurred)
         | (TimelineStatus::Occurred, TimelineStatus::Planned) => {
-            return Err(CanonError::field(
-                "status",
+            return Err(CanonError::conflict(
+                crate::error::ErrorCode::TimelineStatusConflict,
                 format!(
                     "status cannot move from {} to {}",
                     existing.status.as_str(),
                     next_status.as_str()
                 ),
+                serde_json::json!({ "event_id": event_id, "reason": "backward" }),
             ));
         }
         _ => {}
@@ -291,17 +300,16 @@ pub async fn update_inner(
     if existing.status == TimelineStatus::Planned && next_status == TimelineStatus::Occurred {
         let descendants = super::timeline_tree::planned_descendants(tx, event_id).await?;
         if let Some(conflict) = descendants.first() {
-            return Err(CanonError::field(
-                "status",
-                format!("entry #{} {} is still planned", conflict.id, conflict.title),
+            return Err(CanonError::conflict(
+                crate::error::ErrorCode::TimelineStatusConflict,
+                "a promotion would leave a planned descendant",
+                serde_json::json!({
+                    "event_id": event_id,
+                    "reason": format!("entry #{} {} is still planned", conflict.id, conflict.title)
+                }),
             ));
         }
-        if patch.chapter_id.is_none() && patch.story_time.is_none() {
-            return Err(CanonError::field(
-                "chapter_id",
-                "promoting an entry needs a chapter or a story time",
-            ));
-        }
+
     }
     if existing.status == TimelineStatus::Planned && next_status == TimelineStatus::Abandoned {
         let occurred = super::timeline_tree::occurred_descendants(tx, event_id).await?;
@@ -363,6 +371,9 @@ pub async fn update_inner(
         if next_status == TimelineStatus::Planned {
             active.chapter_id = Set(None);
         }
+        if next_status == TimelineStatus::Occurred {
+            active.chapter_id = Set(patch.chapter_id.unwrap_or(write.chapter_id));
+        }
     }
     if let Some(importance) = patch.importance {
         active.importance = Set(importance);
@@ -380,6 +391,58 @@ pub async fn update_inner(
         active.position = Set(position);
     }
     active.update(tx).await?;
+    let mut extra_events = Vec::new();
+    if existing.status == TimelineStatus::Planned && next_status == TimelineStatus::Abandoned {
+        for descendant in super::timeline_tree::planned_descendants(tx, event_id).await? {
+            let ids = super::linked_entity_ids(
+                tx,
+                super::LinkTable::TimelineEvent,
+                descendant.id,
+            )
+            .await?;
+            let before = timeline_snapshot(&descendant, ids);
+            let timestamp = stamp();
+            let mut child = timeline_events::ActiveModel {
+                id: Set(descendant.id),
+                status: Set(TimelineStatus::Abandoned),
+                updated_at: Set(timestamp),
+                ..Default::default()
+            };
+            child.update(tx).await?;
+            let row = load(tx, descendant.id).await?;
+            let ids = super::linked_entity_ids(
+                tx,
+                super::LinkTable::TimelineEvent,
+                descendant.id,
+            )
+            .await?;
+            let after = timeline_snapshot(&row, ids);
+            let change_id = super::record_change(
+                tx,
+                write,
+                ChangeWrite {
+                    book_id: row.book_id,
+                    target_type: ChangeTargetType::TimelineEvent,
+                    target_id: row.id,
+                    op: ChangeOp::Update,
+                    before: Some(&before),
+                    after: Some(&after),
+                    note: patch.note.as_deref().unwrap_or_default().trim(),
+                    reverts_id: None,
+                    track_id: row.track_id,
+                    chapter_id: None,
+                },
+            )
+            .await?;
+            extra_events.push(changed_event(
+                row.book_id,
+                ChangeTargetType::TimelineEvent,
+                row.id,
+                ChangeOp::Update,
+                change_id,
+            ));
+        }
+    }
     if let Some(entity_ids) = &patch.entity_ids {
         super::set_linked_entities(
             tx,
@@ -413,13 +476,14 @@ pub async fn update_inner(
         },
     )
     .await?;
-    let events = vec![changed_event(
+    let mut events = vec![changed_event(
         row.book_id,
         ChangeTargetType::TimelineEvent,
         row.id,
         ChangeOp::Update,
         change_id,
     )];
+    events.extend(extra_events);
     Ok((to_dto(tx, &row).await?, events))
 }
 
@@ -496,9 +560,10 @@ pub async fn delete_inner(
         .count(tx)
         .await?;
     if children > 0 {
-        return Err(CanonError::field(
-            "event_id",
-            "an entry with sub-entries cannot be deleted; delete or move them first",
+        return Err(CanonError::conflict(
+            crate::error::ErrorCode::TimelineHasChildren,
+            "an entry with sub-entries cannot be deleted",
+            serde_json::json!({ "children_count": children }),
         ));
     }
     let ids = super::linked_entity_ids(tx, super::LinkTable::TimelineEvent, event_id).await?;
@@ -918,6 +983,27 @@ pub async fn restore_inner(
         existing.track_id,
         &format!("timeline event #{}", existing.id),
     )?;
+    if *status == TimelineStatus::Planned {
+        if let Some(parent) = *parent_id {
+            super::timeline_tree::check_planned_ancestors(tx, parent, existing.track_id).await
+                .map_err(|_| CanonError::conflict(
+                    crate::error::ErrorCode::TimelineStatusConflict,
+                    "the restored entry would break the timeline consistency rule",
+                    serde_json::json!({ "event_id": event_id, "reason": "planned_descendant" }),
+                ))?;
+        }
+    }
+    let parent_id = match *parent_id {
+        Some(parent) => {
+            let row = timeline_events::Entity::find_by_id(parent).one(tx).await?;
+            match row {
+                Some(row) if row.book_id == existing.book_id && row.kind == TimelineKind::Entry
+                    && row.status != TimelineStatus::Abandoned => Some(parent),
+                _ => None,
+            }
+        }
+        None => None,
+    };
     timeline_events::ActiveModel {
         id: Set(event_id),
         position: Set(*position),
@@ -925,7 +1011,7 @@ pub async fn restore_inner(
         title: Set(title.clone()),
         description: Set(description.clone()),
         chapter_id: Set(*chapter_id),
-        parent_id: Set(*parent_id),
+        parent_id: Set(parent_id),
         status: Set(*status),
         importance: Set(*importance),
         updated_at: Set(stamp()),
@@ -975,6 +1061,23 @@ pub async fn recreate_inner(
     let timestamp = stamp();
     // A recreated row takes a NEW id, never the deleted one's reused rowid (spec/02 §5.10).
     let new_id = super::fresh_id(tx, "timeline_events", ChangeTargetType::TimelineEvent).await?;
+    let parent_id = match *parent_id {
+        Some(parent) => {
+            let row = timeline_events::Entity::find_by_id(parent).one(tx).await?;
+            match row {
+                Some(row)
+                    if row.book_id == book_id
+                        && row.kind == TimelineKind::Entry
+                        && row.status != TimelineStatus::Abandoned
+                        && row.track_id.is_none_or(|track| Some(track) == *track_id) =>
+                {
+                    Some(parent)
+                }
+                _ => None,
+            }
+        }
+        None => None,
+    };
     let model = timeline_events::ActiveModel {
         id: Set(new_id),
         book_id: Set(book_id),
@@ -984,7 +1087,7 @@ pub async fn recreate_inner(
         title: Set(title.clone()),
         description: Set(description.clone()),
         chapter_id: Set(*chapter_id),
-        parent_id: Set(*parent_id),
+        parent_id: Set(parent_id),
         kind: Set(TimelineKind::Entry),
         status: Set(*status),
         importance: Set(*importance),

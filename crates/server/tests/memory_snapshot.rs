@@ -697,7 +697,7 @@ async fn counts_report_the_archive_size() {
         .app
         .patch(
             &format!("/api/timeline-events/{abandoned_id}"),
-            json!({ "status": "abandoned" }),
+            json!({ "status": "abandoned", "note": "test" }),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "abandon planned event: {response}");

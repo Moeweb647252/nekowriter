@@ -875,13 +875,6 @@ impl ToolHandler for QueryTimelineTool {
             if row.status == TimelineStatus::Abandoned {
                 continue;
             }
-            let chain = crate::services::canon::timeline_tree::ancestor_chain(&by_id, row.id);
-            if chain
-                .iter()
-                .any(|ancestor| ancestor.status == TimelineStatus::Abandoned)
-            {
-                continue;
-            }
             visible_ids.insert(row.id);
         }
         if let Some(under_id) = input.under {
@@ -909,10 +902,9 @@ impl ToolHandler for QueryTimelineTool {
             match input.under {
                 None => true,
                 Some(under_id) => {
-                    row.id == under_id
-                        || crate::services::canon::timeline_tree::ancestor_chain(&by_id, row.id)
-                            .iter()
-                            .any(|ancestor| ancestor.id == under_id)
+                    crate::services::canon::timeline_tree::ancestor_chain(&by_id, row.id)
+                        .iter()
+                        .any(|ancestor| ancestor.id == under_id)
                 }
             }
         });

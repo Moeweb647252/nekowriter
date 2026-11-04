@@ -78,6 +78,14 @@ impl CanonError {
         CanonError::App(AppError::internal(message))
     }
 
+    pub fn conflict(
+        code: crate::error::ErrorCode,
+        message: impl Into<String>,
+        details: serde_json::Value,
+    ) -> Self {
+        CanonError::App(AppError::conflict(code, message).with_details(details))
+    }
+
     pub fn isolated(target: impl Into<String>) -> Self {
         CanonError::IsolatedReadonly {
             target: target.into(),

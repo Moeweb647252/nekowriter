@@ -134,20 +134,22 @@ async fn validation_matrix_writes_nothing() {
     )
     .await;
     let planned_id = planned["id"].as_i64().expect("id") as i32;
-    let (status, response) = patch_event(&app, planned_id, json!({ "status": "planned" })).await;
+    let (status, response) = patch_event(&app, planned_id, json!({ "status": "planned", "note": "test" })).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{response}");
     assert_error(&response, "validation.failed");
-    for body in [
-        json!({ "status": "planned" }),
-        json!({ "status": "abandoned" }),
-    ] {
+    let (status, response) = patch_event(
+        &app,
+        planned_id,
+        json!({ "status": "planned", "note": "test" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{response}");
+    assert_error(&response, "validation.failed");
+    for body in [json!({ "status": "abandoned", "note": "test" })] {
         let (status, response) = patch_event(&app, occurred_id, body.clone()).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}: {response}");
-        assert_error(&response, "validation.failed");
-        assert!(
-            response["error"]["details"]["fields"]["status"].is_string(),
-            "{response}"
-        );
+        assert_eq!(status, StatusCode::CONFLICT, "{body}: {response}");
+        assert_error(&response, "timeline.status_conflict");
+        assert_eq!(response["error"]["details"]["event_id"], occurred_id);
     }
 }
 
@@ -175,32 +177,66 @@ async fn promotion_refuses_a_planned_descendant_and_names_it() {
     let (status, response) = patch_event(
         &app,
         plan_id,
-        json!({ "status": "occurred", "chapter_id": chapter_id }),
+        json!({ "status": "occurred", "chapter_id": chapter_id, "note": "promote" }),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{response}");
-    assert_error(&response, "validation.failed");
-    let message = response["error"]["details"]["fields"]["status"]
-        .as_str()
-        .unwrap_or_default();
+    assert_eq!(status, StatusCode::CONFLICT, "{response}");
+    assert_error(&response, "timeline.status_conflict");
+    let message = response["error"]["details"]["reason"].as_str().unwrap_or_default();
     assert!(message.contains("Scene"), "names the conflict: {message}");
 
     // The descendant may happen first; then the phase can be promoted.
     let (status, response) = patch_event(
         &app,
         scene_id,
-        json!({ "status": "occurred", "chapter_id": chapter_id }),
+        json!({ "status": "occurred", "chapter_id": chapter_id, "note": "promote" }),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{response}");
     let (status, response) = patch_event(
         &app,
         plan_id,
-        json!({ "status": "occurred", "chapter_id": chapter_id }),
+        json!({ "status": "occurred", "chapter_id": chapter_id, "note": "promote" }),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{response}");
     assert_eq!(response["status"], "occurred");
+}
+
+#[tokio::test]
+async fn abandoning_a_planned_parent_abandons_its_planned_subtree() {
+    let app = TestApp::new().await;
+    let (book_id, _track) = book(&app).await;
+    let parent = create_event(
+        &app,
+        book_id,
+        json!({ "title": "Phase", "status": "planned" }),
+    )
+    .await;
+    let parent_id = parent["id"].as_i64().expect("id") as i32;
+    let child = create_event(
+        &app,
+        book_id,
+        json!({ "title": "Scene", "status": "planned", "parent_id": parent_id }),
+    )
+    .await;
+    let child_id = child["id"].as_i64().expect("id") as i32;
+    let (status, response) = patch_event(
+        &app,
+        parent_id,
+        json!({ "status": "abandoned", "note": "give up the phase" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    let rows = timeline(&app, book_id).await;
+    let status_of = |id: i32| {
+        rows.iter()
+            .find(|row| row["id"] == id)
+            .and_then(|row| row["status"].as_str())
+            .unwrap_or_default()
+    };
+    assert_eq!(status_of(parent_id), "abandoned");
+    assert_eq!(status_of(child_id), "abandoned");
 }
 
 #[tokio::test]
@@ -236,8 +272,8 @@ async fn root_and_parent_delete_protection() {
     let (status, response) = app
         .delete(&format!("/api/timeline-events/{parent_id}"))
         .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "parent delete: {response}");
-    assert_error(&response, "validation.failed");
+    assert_eq!(status, StatusCode::CONFLICT, "parent delete: {response}");
+    assert_error(&response, "timeline.has_children");
     let (status, _) = app
         .delete(&format!("/api/timeline-events/{child_id}"))
         .await;
@@ -296,9 +332,52 @@ async fn foreshadowing_anchor_validation_and_planned_status() {
     assert_eq!(hook["payoff_position"], "after");
     assert_eq!(hook["payoff_event_status"], "planned");
 
-    let (status, resolved) = app
+    // Clearing the event alone clears both anchor fields.
+    let (status, cleared) = app
         .patch(
             &format!("/api/foreshadowing/{hook_id}"),
+            json!({ "payoff_event_id": null }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{cleared}");
+    assert_eq!(cleared["payoff_event_id"], serde_json::Value::Null);
+    assert_eq!(cleared["payoff_position"], serde_json::Value::Null);
+
+    // Deleting an anchored leaf clears its anchors and succeeds.
+    let leaf = create_event(&app, book_id, json!({ "title": "Anchored leaf" })).await;
+    let leaf_id = leaf["id"].as_i64().expect("id") as i32;
+    let (status, anchored) = app
+        .post(
+            &format!("/api/books/{book_id}/foreshadowing"),
+            json!({
+                "title": "Anchor to delete",
+                "payoff_event_id": leaf_id,
+                "payoff_position": "at",
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{anchored}");
+    let anchored_id = anchored["id"].as_i64().expect("id") as i32;
+    let (status, response) = app.delete(&format!("/api/timeline-events/{leaf_id}")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{response}");
+    let (_, after) = app.get(&format!("/api/foreshadowing/{anchored_id}")).await;
+    assert_eq!(after["payoff_event_id"], serde_json::Value::Null);
+    assert_eq!(after["payoff_position"], serde_json::Value::Null);
+
+    let (_, hook2) = app
+        .post(
+            &format!("/api/books/{book_id}/foreshadowing"),
+            json!({
+                "title": "Still planned",
+                "payoff_event_id": planned_id,
+                "payoff_position": "after",
+            }),
+        )
+        .await;
+    let hook2_id = hook2["id"].as_i64().expect("id") as i32;
+    let (status, resolved) = app
+        .patch(
+            &format!("/api/foreshadowing/{hook2_id}"),
             json!({ "status": "resolved", "resolution": "The plan paid off." }),
         )
         .await;

@@ -31,6 +31,12 @@ pub enum ErrorCode {
     #[serde(rename = "conflict.exists")]
     #[ts(rename = "conflict.exists")]
     ConflictExists,
+    #[serde(rename = "timeline.has_children")]
+    #[ts(rename = "timeline.has_children")]
+    TimelineHasChildren,
+    #[serde(rename = "timeline.status_conflict")]
+    #[ts(rename = "timeline.status_conflict")]
+    TimelineStatusConflict,
     #[serde(rename = "book.invalid_state")]
     #[ts(rename = "book.invalid_state")]
     BookInvalidState,
@@ -116,6 +122,8 @@ impl ErrorCode {
             ErrorCode::HostForbidden => "host.forbidden",
             ErrorCode::ConflictVersion => "conflict.version",
             ErrorCode::ConflictExists => "conflict.exists",
+            ErrorCode::TimelineHasChildren => "timeline.has_children",
+            ErrorCode::TimelineStatusConflict => "timeline.status_conflict",
             ErrorCode::BookInvalidState => "book.invalid_state",
             ErrorCode::ResearchInvalidState => "research.invalid_state",
             ErrorCode::SettingsLocked => "settings.locked",
@@ -170,7 +178,9 @@ impl ErrorCode {
             | ErrorCode::WritingSkillBuiltin
             | ErrorCode::GoalOpenChildren
             | ErrorCode::GoalHasChildren
-            | ErrorCode::SearchNotConfigured => StatusCode::CONFLICT,
+            | ErrorCode::SearchNotConfigured
+            | ErrorCode::TimelineHasChildren
+            | ErrorCode::TimelineStatusConflict => StatusCode::CONFLICT,
             ErrorCode::SettingsLocked | ErrorCode::ChapterLocked => StatusCode::LOCKED,
             ErrorCode::ProviderUnavailable
             | ErrorCode::ProviderAuth

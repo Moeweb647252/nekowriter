@@ -4017,6 +4017,12 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     - Re-sync edits or deletes unsupported history and never reverts it to planned.
   - **Migration** 0013 is append-only: it adds the columns, creates the roots and reparents every
     row as happened. Existing books are not converted.
+  - **Task split correction (while 22.3 was under review).** The plan document originally folded
+    the tool work into the tree-rules task and had six tasks. The adopted split is seven tasks:
+    22.1 docs, 22.2 schema and types, 22.3 tree rules, 22.4 tools (including the genuinely missing
+    `update_foreshadowing`, its registry/freeze map/role lists/validator map, the new error
+    branches and search docs), 22.5 goals, context and prompts, 22.6 web, 22.7 migration and smoke.
+    PLAN.md and §4 of `docs/research/timeline-tree-plan.md` carry the same table.
 - **Consequences**:
   - A payoff can be planned without a chapter number, and the plan stays editable as the story
     moves.

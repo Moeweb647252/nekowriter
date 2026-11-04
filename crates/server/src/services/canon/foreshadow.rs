@@ -177,7 +177,8 @@ pub async fn update_inner(
     if let Some(importance) = patch.importance {
         super::validate_importance(importance)?;
     }
-    if patch.payoff_event_id.is_some() || patch.payoff_position.is_some() {
+    let clearing_anchor = patch.payoff_event_id == Some(None) && patch.payoff_position.is_none();
+    if !clearing_anchor && (patch.payoff_event_id.is_some() || patch.payoff_position.is_some()) {
         let event_id = patch.payoff_event_id.unwrap_or(existing.payoff_event_id);
         let position = patch.payoff_position.or(existing.payoff_position);
         validate_anchor(tx, write, existing.book_id, event_id, position).await?;
@@ -454,6 +455,12 @@ async fn validate_anchor(
     let visibility = write
         .visibility
         .unwrap_or_else(|| Visibility::shared(book_id));
+    if visibility.private_track.is_none() && row.track_id.is_some() {
+        return Err(CanonError::field(
+            "payoff_event_id",
+            "shared canon cannot anchor a private timeline entry",
+        ));
+    }
     if let Some(private_track) = visibility.private_track
         && row.track_id.is_some_and(|track| track != private_track)
     {
