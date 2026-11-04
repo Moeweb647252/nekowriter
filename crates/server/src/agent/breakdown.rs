@@ -430,8 +430,7 @@ impl Evidence {
     fn reasoning_replayed(&self) -> bool {
         match self.protocol {
             Protocol::Anthropic => true,
-            Protocol::Openai => self.reasoning_replay.as_deref() == Some("always"),
-            Protocol::Mock => false,
+            Protocol::Openai | Protocol::Mock => self.reasoning_replay.as_deref() == Some("always"),
         }
     }
 }
@@ -714,3 +713,30 @@ impl ContextGroupKey {
 
 #[allow(dead_code)]
 fn _keep_role(_: MessageRole) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn evidence(protocol: Protocol, replay: Option<&str>) -> Evidence {
+        Evidence {
+            protocol,
+            reasoning_replay: replay.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn reasoning_replay_follows_protocol_and_option() {
+        for replay in [None, Some("always"), Some("never")] {
+            assert!(evidence(Protocol::Anthropic, replay).reasoning_replayed());
+            assert_eq!(
+                evidence(Protocol::Openai, replay).reasoning_replayed(),
+                replay == Some("always")
+            );
+            assert_eq!(
+                evidence(Protocol::Mock, replay).reasoning_replayed(),
+                replay == Some("always")
+            );
+        }
+    }
+}
