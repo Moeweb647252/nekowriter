@@ -4069,6 +4069,16 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     edited, by hand or by asking the book agent (M21) to build planned entries from the outline,
     re-anchor the foreshadowing and rewrite the outline.
   - Timeline entries are not volumes: they hold no chapters (PROJECT §9.2).
+  - **Merged smoke (integration/m21-m22, 2026-11-05).** 0012 then 0013 ran on a SQLite backup
+    of the author's 0011 database; the ledger order was `m0012_book_agent`, `m0013_timeline_tree`.
+    `agent_sessions` stayed 5 → 5 with every `write_mode` NULL; the ten referencing tables and
+    book #1's conception materials and session #4 stayed unchanged. The 3 old timeline rows became
+    `entry`/`occurred` under one contentless root, and all 12 foreshadowing rows kept their
+    `planned_payoff` text with `payoff_event_id`/`payoff_position` NULL. `foreign_key_check` was
+    empty and `0001_init.sql` remained byte-identical. The UI smoke saw the merged tree, row menu,
+    sub-entry creation through three levels, the anchor picker, and the book-agent panel; the
+    Demo arm did not exercise planned-outline seeding, promotion, abandonment or a saved anchor,
+    so those remain covered by the server tests rather than this UI run.
 - **Spec**:
   - PROJECT §4, §6.7, §6.16, F7, §8.8, §9.2, §10 (#35), §11;
   - spec/02 §1, §2, §3, §4, §5;
