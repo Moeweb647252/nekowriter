@@ -3966,6 +3966,9 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     start form. The Demo arm covers the conversation/task/start-session path, not canon, chapter
     text or outline starts; those need a real model or a scripted provider and are recorded as a
     smoke limitation rather than silently claimed.
+  - History note: the B-1 `setStartingNewConversation` code landed in `30a72b2` with the 21.8
+    report because the smoke fix was folded into that commit; its regression test landed in
+    `cfa8588`. The tree is correct; this note keeps the history readable.
 - **Spec**:
   - PROJECT §4, §5, §6.18, F13, §8.4, §8.6, §8.12, §10 (#11, #34), §11;
   - spec/02 §1, §2, §3, §4, §5;

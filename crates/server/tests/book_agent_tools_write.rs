@@ -4,8 +4,8 @@ use axum::http::StatusCode;
 use sea_orm::{ConnectionTrait, EntityTrait, TransactionTrait};
 use serde_json::{Value, json};
 
-use nekowriter::agent::tools::{Prepared, ToolCtx, Visibility};
-use nekowriter::db::entities::{agent_sessions, books, chapters, tracks};
+use nekowriter::agent::tools::{Prepared, ToolCtx, ToolErrorKind, Visibility};
+use nekowriter::db::entities::{agent_sessions, books, chapters, research_tasks, tracks};
 use nekowriter::db::json::{Phase, RequestMeta};
 use nekowriter::testing::TestApp;
 
@@ -133,7 +133,8 @@ async fn delete_canon_record_writes_a_change_log_and_revert_recreates_the_entity
         state: app.state(),
         events: Vec::new(),
     };
-    app.state()
+    let outcome = app
+        .state()
         .tool_registry()
         .get("delete_canon_record")
         .unwrap()
@@ -144,6 +145,7 @@ async fn delete_canon_record_writes_a_change_log_and_revert_recreates_the_entity
         )
         .await
         .unwrap();
+    assert_eq!(outcome.ui["target_type"], "entity");
     let change_id = tx.query_one_raw(sea_orm::Statement::from_string(
         sea_orm::DbBackend::Sqlite,
         format!("SELECT id FROM change_log WHERE target_type = 'entity' AND target_id = {entity_id} AND op = 'delete' ORDER BY id DESC LIMIT 1"),
@@ -162,6 +164,66 @@ async fn delete_canon_record_writes_a_change_log_and_revert_recreates_the_entity
             .any(|row| row["name"] == "Delete me"),
         "{body}"
     );
+}
+
+#[tokio::test]
+async fn update_research_task_rejects_preparation_topic_before_defer() {
+    let app = TestApp::new().await;
+    let book = app.create_book("Book").await;
+    let book_id = book["id"].as_i64().unwrap() as i32;
+    app.execute(&format!(
+        "INSERT INTO research_tasks(book_id,scope_name,topic,kind,origin,requirements,language,status,entries_created,created_at,updated_at)          VALUES ({book_id},'Scope','','preparation','author','requirements','zh-CN','ready',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')"
+    )).await;
+    let task = research_tasks::Entity::find()
+        .one(app.state().db().conn())
+        .await
+        .unwrap()
+        .unwrap();
+    let session = book_session(&app, book_id).await;
+    let db = app.state().db();
+    let tx = db.conn().begin().await.unwrap();
+    let book_row = books::Entity::find_by_id(book_id).one(&tx).await.unwrap();
+    let prompts = app
+        .state()
+        .prompts()
+        .for_book(db, Some(book_id))
+        .await
+        .unwrap();
+    let mut ctx = ToolCtx {
+        tx: &tx,
+        session: &session,
+        book: book_row.as_ref(),
+        chapter: None,
+        track: None,
+        visibility: Visibility::Shared,
+        request_meta: RequestMeta {
+            phase: Phase::None,
+            granularity: None,
+        },
+        prompts: &prompts,
+        state: app.state(),
+        events: Vec::new(),
+    };
+    let error = app
+        .state()
+        .tool_registry()
+        .get("update_research_task")
+        .unwrap()
+        .execute(
+            &mut ctx,
+            json!({"task":task.id,"topic":"forbidden","scope":"forbidden","status":"deferred"}),
+            Prepared::None,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind, ToolErrorKind::Validation);
+    let after = research_tasks::Entity::find_by_id(task.id)
+        .one(&tx)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(after.status.as_str(), "ready");
+    tx.rollback().await.unwrap();
 }
 
 #[tokio::test]
