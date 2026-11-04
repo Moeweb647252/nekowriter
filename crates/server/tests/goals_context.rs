@@ -314,7 +314,7 @@ async fn the_goal_tool_gate_tracks_relevant_nodes_in_both_directions() {
     .await
     .expect("no-goal session");
     let no_goal_tools = frozen_tools(&fixture, no_goal_session).await;
-    assert_eq!(no_goal_tools.len(), 21);
+    assert_eq!(no_goal_tools.len(), 22);
     assert!(
         !no_goal_tools
             .iter()
@@ -343,7 +343,7 @@ async fn the_goal_tool_gate_tracks_relevant_nodes_in_both_directions() {
     .await
     .expect("goal session");
     let goal_tools = frozen_tools(&fixture, goal_session).await;
-    assert_eq!(goal_tools.len(), 22);
+    assert_eq!(goal_tools.len(), 23);
     assert!(goal_tools.iter().any(|tool| tool == "propose_goal_change"));
 }
 

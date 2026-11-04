@@ -377,10 +377,14 @@ async fn promotion_refuses_a_planned_descendant_and_names_it() {
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "{response}");
     assert_error(&response, "timeline.status_conflict");
-    let message = response["error"]["details"]["reason"]
+    assert_eq!(
+        response["error"]["details"]["reason"],
+        json!("planned_descendant")
+    );
+    let conflict = response["error"]["details"]["conflict"]
         .as_str()
         .unwrap_or_default();
-    assert!(message.contains("Scene"), "names the conflict: {message}");
+    assert!(conflict.contains("Scene"), "names the conflict: {conflict}");
 
     // The descendant may happen first; then the phase can be promoted.
     let (status, response) = patch_event(

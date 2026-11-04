@@ -305,7 +305,8 @@ pub async fn update_inner(
                 "a promotion would leave a planned descendant",
                 serde_json::json!({
                     "event_id": event_id,
-                    "reason": format!("entry #{} {} is still planned", conflict.id, conflict.title)
+                    "reason": "planned_descendant",
+                    "conflict": format!("#{} {}", conflict.id, conflict.title),
                 }),
             ));
         }
@@ -313,12 +314,14 @@ pub async fn update_inner(
     if existing.status == TimelineStatus::Planned && next_status == TimelineStatus::Abandoned {
         let occurred = super::timeline_tree::occurred_descendants(tx, event_id).await?;
         if let Some(conflict) = occurred.first() {
-            return Err(CanonError::field(
-                "status",
-                format!(
-                    "entry #{} {} has already happened",
-                    conflict.id, conflict.title
-                ),
+            return Err(CanonError::conflict(
+                crate::error::ErrorCode::TimelineStatusConflict,
+                "an abandonment would leave an occurred descendant",
+                serde_json::json!({
+                    "event_id": event_id,
+                    "reason": "occurred_descendant",
+                    "conflict": format!("#{} {}", conflict.id, conflict.title),
+                }),
             ));
         }
     }
@@ -974,19 +977,6 @@ pub async fn restore_inner(
         existing.track_id,
         &format!("timeline event #{}", existing.id),
     )?;
-    if *status == TimelineStatus::Planned
-        && let Some(parent) = *parent_id
-    {
-        super::timeline_tree::check_planned_ancestors(tx, parent, existing.track_id)
-            .await
-            .map_err(|_| {
-                CanonError::conflict(
-                    crate::error::ErrorCode::TimelineStatusConflict,
-                    "the restored entry would break the timeline consistency rule",
-                    serde_json::json!({ "event_id": event_id, "reason": "planned_descendant" }),
-                )
-            })?;
-    }
     let parent_id = match *parent_id {
         Some(parent) => {
             let row = timeline_events::Entity::find_by_id(parent).one(tx).await?;
@@ -1003,6 +993,28 @@ pub async fn restore_inner(
         }
         None => None,
     };
+    // A revert is an undo, not an escape from T5 (D-170). Check the restored shape against the
+    // current tree: a planned entry may not land under an occurred ancestor, and an occurred one
+    // may not keep a planned descendant.
+    if *status == TimelineStatus::Planned
+        && let Some(parent) = parent_id
+    {
+        super::timeline_tree::check_planned_ancestors(tx, parent, existing.track_id).await?;
+    }
+    if *status == TimelineStatus::Occurred {
+        let descendants = super::timeline_tree::planned_descendants(tx, event_id).await?;
+        if let Some(conflict) = descendants.first() {
+            return Err(CanonError::conflict(
+                crate::error::ErrorCode::TimelineStatusConflict,
+                "the restored entry would leave a planned descendant",
+                serde_json::json!({
+                    "event_id": event_id,
+                    "reason": "planned_descendant",
+                    "conflict": format!("#{} {}", conflict.id, conflict.title),
+                }),
+            ));
+        }
+    }
     timeline_events::ActiveModel {
         id: Set(event_id),
         position: Set(*position),
@@ -1060,6 +1072,7 @@ pub async fn recreate_inner(
     let timestamp = stamp();
     // A recreated row takes a NEW id, never the deleted one's reused rowid (spec/02 §5.10).
     let new_id = super::fresh_id(tx, "timeline_events", ChangeTargetType::TimelineEvent).await?;
+    let recreated_track = track_id.or_else(|| write.new_row_track());
     let parent_id = match *parent_id {
         Some(parent) => {
             let row = timeline_events::Entity::find_by_id(parent).one(tx).await?;
@@ -1068,7 +1081,9 @@ pub async fn recreate_inner(
                     if row.book_id == book_id
                         && row.kind == TimelineKind::Entry
                         && row.status != TimelineStatus::Abandoned
-                        && row.track_id.is_none_or(|track| Some(track) == *track_id) =>
+                        && row
+                            .track_id
+                            .is_none_or(|track| Some(track) == recreated_track) =>
                 {
                     Some(parent)
                 }
@@ -1077,10 +1092,16 @@ pub async fn recreate_inner(
         }
         None => None,
     };
+    // A delete revert is an undo, so it may not restore a plan under occurred history (D-170).
+    if *status == TimelineStatus::Planned
+        && let Some(parent) = parent_id
+    {
+        super::timeline_tree::check_planned_ancestors(tx, parent, recreated_track).await?;
+    }
     let model = timeline_events::ActiveModel {
         id: Set(new_id),
         book_id: Set(book_id),
-        track_id: Set(track_id.or_else(|| write.new_row_track())),
+        track_id: Set(recreated_track),
         position: Set(*position),
         story_time: Set(story_time.clone()),
         title: Set(title.clone()),

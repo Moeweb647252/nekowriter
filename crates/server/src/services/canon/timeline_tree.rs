@@ -145,12 +145,15 @@ pub async fn check_planned_ancestors(
             break;
         }
         if row.status == TimelineStatus::Occurred && row.track_id == child_track {
-            return Err(CanonError::field(
-                "status",
-                format!(
-                    "a planned entry cannot descend from occurred entry #{} {}",
-                    row.id, row.title
-                ),
+            let conflict = format!("#{} {}", row.id, row.title);
+            return Err(CanonError::conflict(
+                crate::error::ErrorCode::TimelineStatusConflict,
+                format!("a planned entry cannot descend from occurred entry {conflict}"),
+                serde_json::json!({
+                    "event_id": row.id,
+                    "reason": "occurred_ancestor",
+                    "conflict": conflict,
+                }),
             ));
         }
         cursor = row.parent_id;

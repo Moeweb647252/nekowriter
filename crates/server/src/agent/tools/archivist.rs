@@ -19,14 +19,17 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::api::dto::canon::{
-    AppearanceInput, EntityInput, EntityPatch, ForeshadowingInput, MemoryNoteInput,
-    TimelineEventInput, TimelineEventPatch,
+    AppearanceInput, EntityInput, EntityPatch, ForeshadowingInput, ForeshadowingPatch,
+    MemoryNoteInput, TimelineEventInput, TimelineEventPatch,
 };
-use crate::db::entities::{agent_tool_calls, appearances, change_log, chapters, entities};
+use crate::api::dto::deserialize_some;
+use crate::db::entities::{
+    agent_tool_calls, appearances, change_log, chapters, entities, timeline_events, tracks,
+};
 use crate::db::json::{
     AppearanceRole, ChangeActor, ChangeOp, ChangeTargetType, CompletionKind, EntityKind,
-    EntityStatus, ForeshadowingStatus, NoteKind, PayoffPosition, Snapshot, TimelineStatus,
-    ToolCallStatus, ToolEffects,
+    EntityStatus, ForeshadowingStatus, NoteKind, PayoffPosition, Snapshot, TimelineKind,
+    TimelineStatus, ToolCallStatus, ToolEffects, TrackKind,
 };
 use crate::events::ServerEvent;
 use crate::services::canon::{
@@ -135,9 +138,156 @@ fn map_canon(
                     .with("name", name.to_owned())
                     .with("id", id);
             }
-            ToolError::new(ToolErrorKind::Validation).with("errors", vec![error.message])
+            let details = error.details.clone();
+            match error.code {
+                crate::error::ErrorCode::TimelineStatusConflict => {
+                    let details = details.unwrap_or_default();
+                    ToolError::new(ToolErrorKind::TimelineConflict)
+                        .with(
+                            "reason",
+                            details
+                                .get("reason")
+                                .and_then(Value::as_str)
+                                .unwrap_or("backward"),
+                        )
+                        .with(
+                            "conflict",
+                            details
+                                .get("conflict")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default(),
+                        )
+                }
+                crate::error::ErrorCode::TimelineHasChildren => {
+                    let details = details.unwrap_or_default();
+                    ToolError::new(ToolErrorKind::TimelineHasChildren).with(
+                        "count",
+                        details
+                            .get("children_count")
+                            .and_then(Value::as_i64)
+                            .unwrap_or_default(),
+                    )
+                }
+                _ => {
+                    let mut errors = Vec::new();
+                    if let Some(fields) = details
+                        .as_ref()
+                        .and_then(|details| details.get("fields"))
+                        .and_then(Value::as_object)
+                    {
+                        for (field, message) in fields {
+                            errors
+                                .push(format!("{field}: {}", message.as_str().unwrap_or_default()));
+                        }
+                    }
+                    if errors.is_empty() {
+                        errors.push(error.message);
+                    }
+                    ToolError::new(ToolErrorKind::Validation).with("errors", errors)
+                }
+            }
         }
     }
+}
+
+/// The `error.not_found` rendering for a timeline entry (spec/05 §6).
+fn timeline_not_found(ctx: &ToolCtx<'_>, event_id: i32) -> ToolError {
+    ToolError::new(ToolErrorKind::NotFound)
+        .with(
+            "what_label",
+            ctx.prompts.label("target_type", "timeline_event"),
+        )
+        .with("id", event_id)
+}
+
+/// Loads a timeline entry the session can see: an `entry` row of this book, not abandoned, in
+/// the session's canon scope. The root is never nameable (D-170 T1/T8).
+async fn visible_entry(
+    ctx: &ToolCtx<'_>,
+    event_id: i32,
+) -> Result<timeline_events::Model, ToolError> {
+    let book_id = book_id(ctx)?;
+    let visibility = canon::Visibility::of_session(book_id, ctx.visibility);
+    let row = timeline_events::Entity::find_by_id(event_id)
+        .one(ctx.tx)
+        .await
+        .map_err(|_| internal())?;
+    match row {
+        Some(row)
+            if row.book_id == book_id
+                && row.kind == TimelineKind::Entry
+                && row.status != TimelineStatus::Abandoned
+                && visibility.sees(row.track_id) =>
+        {
+            Ok(row)
+        }
+        _ => Err(timeline_not_found(ctx, event_id)),
+    }
+}
+
+/// Validates a `parent` argument before the service sees it (spec/05 §6): the parent must be a
+/// visible entry in the child's scope and outside the moved entry's subtree. Anything else is
+/// `error.not_found`, not a validation error.
+async fn resolve_parent_argument(
+    ctx: &ToolCtx<'_>,
+    parent: Option<i32>,
+    child_track: Option<i32>,
+    moving: Option<i32>,
+) -> Result<Option<i32>, ToolError> {
+    let Some(parent_id) = parent else {
+        return Ok(None);
+    };
+    let row = visible_entry(ctx, parent_id).await?;
+    if let Some(moving) = moving
+        && crate::services::canon::timeline_tree::in_subtree(ctx.tx, moving, parent_id)
+            .await
+            .map_err(|_| internal())?
+    {
+        return Err(timeline_not_found(ctx, parent_id));
+    }
+    if row.track_id.is_some() && row.track_id != child_track {
+        return Err(timeline_not_found(ctx, parent_id));
+    }
+    Ok(Some(parent_id))
+}
+
+/// True when the session's Timeline system is on (spec/06 §10.1, D-170 T17).
+fn timeline_enabled(ctx: &ToolCtx<'_>) -> bool {
+    crate::agent::session::canon_systems_of(ctx.session).timeline
+}
+
+/// `error.system_off` for an anchor parameter while Timeline is off (D-170 T17).
+fn ensure_timeline_on(ctx: &ToolCtx<'_>) -> Result<(), ToolError> {
+    if timeline_enabled(ctx) {
+        Ok(())
+    } else {
+        Err(ToolError::new(ToolErrorKind::SystemOff).with(
+            "system_label",
+            ctx.prompts.label("canon_system", "timeline"),
+        ))
+    }
+}
+
+/// Resolves a chapter number in the book's main track to its row (the tool's `chapter` parameter,
+/// like `from_chapter`; spec/05 §6).
+async fn main_track_chapter(ctx: &ToolCtx<'_>, number: i32) -> Result<chapters::Model, ToolError> {
+    let book_id = book_id(ctx)?;
+    let main = tracks::Entity::find()
+        .filter(tracks::COLUMN.book_id.eq(book_id))
+        .filter(tracks::COLUMN.kind.eq(TrackKind::Main.as_str()))
+        .one(ctx.tx)
+        .await
+        .map_err(|_| internal())?
+        .ok_or_else(internal)?;
+    chapters::Entity::find()
+        .filter(chapters::COLUMN.track_id.eq(main.id))
+        .filter(chapters::COLUMN.ord.eq(number))
+        .one(ctx.tx)
+        .await
+        .map_err(|_| internal())?
+        .ok_or_else(|| {
+            ToolError::new(ToolErrorKind::ChapterNotFound).with("query", number.to_string())
+        })
 }
 
 /// The change ids of the events a canon write returned.
@@ -204,6 +354,8 @@ fn canon_outcome_with(
         "prev_event": Value::Null,
         "next_event": Value::Null,
         "moved": false,
+        "anchor_planned": Value::Null,
+        "abandoned_count": Value::Null,
     });
     if let Some(object) = extra.as_object() {
         for (key, value) in object {
@@ -714,13 +866,16 @@ impl ToolHandler for AddTimelineEventTool {
                 .with("fields", vec!["after_event", "before_event"]));
         }
         let book_id = book_id(ctx)?;
+        let write = write_of(ctx)?;
         let mut entity_ids = Vec::with_capacity(input.entities.len());
         for reference in &input.entities {
             entity_ids.push(resolve_entity(ctx, reference).await?.id);
         }
+        let parent =
+            resolve_parent_argument(ctx, input.parent, write.new_row_track(), None).await?;
         let (dto, events) = timeline::create_inner(
             ctx.tx,
-            &write_of(ctx)?,
+            &write,
             book_id,
             TimelineEventInput {
                 title: input.title,
@@ -731,7 +886,7 @@ impl ToolHandler for AddTimelineEventTool {
                 importance: input.importance,
                 after_id: input.after_event,
                 before_id: input.before_event,
-                parent_id: input.parent,
+                parent_id: parent,
                 status: input.status,
                 note: None,
             },
@@ -777,7 +932,7 @@ struct UpdateTimelineEventInput {
     #[serde(default)]
     status: Option<TimelineStatus>,
     #[serde(default)]
-    chapter_id: Option<i32>,
+    chapter: Option<i32>,
     #[serde(default)]
     note: Option<String>,
 }
@@ -819,21 +974,35 @@ impl ToolHandler for UpdateTimelineEventTool {
             return Err(ToolError::new(ToolErrorKind::MutuallyExclusive)
                 .with("fields", vec!["parent", "top_level"]));
         }
+        if input.chapter.is_some() && input.status != Some(TimelineStatus::Occurred) {
+            return Err(ToolError::new(ToolErrorKind::Validation).with(
+                "errors",
+                vec!["chapter requires status occurred".to_owned()],
+            ));
+        }
+        let existing = visible_entry(ctx, input.event_id).await?;
+        let write = write_of(ctx)?;
         let parent_id = if input.top_level == Some(true) {
             Some(None)
         } else {
-            input.parent.map(Some)
+            resolve_parent_argument(ctx, input.parent, existing.track_id, Some(input.event_id))
+                .await?
+                .map(Some)
+        };
+        let chapter_id = match input.chapter {
+            Some(number) => Some(main_track_chapter(ctx, number).await?.id),
+            None => None,
         };
         let book_id = book_id(ctx)?;
         let (dto, events) = timeline::update_inner(
             ctx.tx,
-            &write_of(ctx)?,
+            &write,
             input.event_id,
             TimelineEventPatch {
                 title: input.title,
                 description: input.description,
                 story_time: input.story_time,
-                chapter_id: input.chapter_id.map(Some),
+                chapter_id: chapter_id.map(Some),
                 entity_ids,
                 importance: input.importance,
                 after_id: input.move_after,
@@ -848,6 +1017,11 @@ impl ToolHandler for UpdateTimelineEventTool {
             let label = ctx.prompts.label("target_type", "timeline_event");
             map_canon(error, Some((label.as_str(), input.event_id)), None)
         })?;
+        let abandoned_count = if input.status == Some(TimelineStatus::Abandoned) {
+            events.len().saturating_sub(1)
+        } else {
+            0
+        };
         let (prev, next) = timeline_neighbors(ctx.tx, book_id, dto.id).await?;
         canon_outcome_with(
             ctx,
@@ -857,7 +1031,12 @@ impl ToolHandler for UpdateTimelineEventTool {
             "timeline_event",
             dto.id,
             &dto.title,
-            json!({ "prev_event": prev, "next_event": next, "moved": moved }),
+            json!({
+                "prev_event": prev,
+                "next_event": next,
+                "moved": moved,
+                "abandoned_count": abandoned_count,
+            }),
         )
     }
 }
@@ -1038,6 +1217,12 @@ impl ToolHandler for AddForeshadowingTool {
     ) -> Result<ToolOutcome, ToolError> {
         let input: AddForeshadowingInput = decode(input)?;
         let book_id = book_id(ctx)?;
+        if input.payoff_event.is_some() || input.payoff_position.is_some() {
+            ensure_timeline_on(ctx)?;
+        }
+        if let Some(event_id) = input.payoff_event {
+            visible_entry(ctx, event_id).await?;
+        }
         let mut entity_ids = Vec::with_capacity(input.entities.len());
         for reference in &input.entities {
             entity_ids.push(resolve_entity(ctx, reference).await?.id);
@@ -1063,6 +1248,120 @@ impl ToolHandler for AddForeshadowingTool {
         canon_outcome(
             ctx,
             "add_foreshadowing",
+            dto.title.clone(),
+            &events,
+            "foreshadowing",
+            dto.id,
+            &dto.title,
+        )
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateForeshadowingInput {
+    foreshadowing_id: i32,
+    note: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    planned_payoff: Option<String>,
+    #[serde(default)]
+    importance: Option<i32>,
+    #[serde(default)]
+    status: Option<ForeshadowingStatus>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    payoff_event: Option<Option<i32>>,
+    #[serde(default)]
+    payoff_position: Option<PayoffPosition>,
+    #[serde(default)]
+    clear_anchor: Option<bool>,
+}
+
+/// `update_foreshadowing` (spec/05 §6, D-170): changes the direction and re-anchors or clears the
+/// payoff anchor. `payoff_event: null` clears both anchor fields.
+pub struct UpdateForeshadowingTool;
+
+#[async_trait::async_trait]
+impl ToolHandler for UpdateForeshadowingTool {
+    fn name(&self) -> &'static str {
+        "update_foreshadowing"
+    }
+
+    fn kind(&self) -> ToolKind {
+        ToolKind::Canon
+    }
+
+    async fn execute(
+        &self,
+        ctx: &mut ToolCtx<'_>,
+        input: Value,
+        _prepared: Prepared,
+    ) -> Result<ToolOutcome, ToolError> {
+        let input: UpdateForeshadowingInput = decode(input)?;
+        let note = require_note(&input.note)?;
+        let clear_anchor = input.clear_anchor == Some(true);
+        if clear_anchor && input.payoff_event.is_some() {
+            return Err(ToolError::new(ToolErrorKind::MutuallyExclusive)
+                .with("fields", vec!["clear_anchor", "payoff_event"]));
+        }
+        let payoff_event_id = match input.payoff_event {
+            Some(Some(event_id)) => {
+                if input.payoff_position.is_none() {
+                    return Err(ToolError::new(ToolErrorKind::Validation).with(
+                        "errors",
+                        vec!["payoff_position is required with payoff_event".to_owned()],
+                    ));
+                }
+                ensure_timeline_on(ctx)?;
+                visible_entry(ctx, event_id).await?;
+                Some(Some(event_id))
+            }
+            Some(None) => {
+                if input.payoff_position.is_some() {
+                    return Err(ToolError::new(ToolErrorKind::Validation).with(
+                        "errors",
+                        vec!["payoff_position cannot accompany a cleared payoff_event".to_owned()],
+                    ));
+                }
+                Some(None)
+            }
+            None => {
+                if input.payoff_position.is_some() {
+                    return Err(ToolError::new(ToolErrorKind::Validation).with(
+                        "errors",
+                        vec!["payoff_event is required with payoff_position".to_owned()],
+                    ));
+                }
+                if clear_anchor { Some(None) } else { None }
+            }
+        };
+        let (dto, events) = foreshadow::update_inner(
+            ctx.tx,
+            &write_of(ctx)?,
+            input.foreshadowing_id,
+            ForeshadowingPatch {
+                title: input.title,
+                description: input.description,
+                planned_payoff: input.planned_payoff,
+                status: input.status,
+                payoff_event_id,
+                payoff_position: input.payoff_position,
+                importance: input.importance,
+                note: Some(note),
+                ..ForeshadowingPatch::default()
+            },
+        )
+        .await
+        .map_err(|error| {
+            let label = ctx.prompts.label("target_type", "foreshadowing");
+            map_canon(error, Some((label.as_str(), input.foreshadowing_id)), None)
+        })?;
+        canon_outcome(
+            ctx,
+            "update_foreshadowing",
             dto.title.clone(),
             &events,
             "foreshadowing",
@@ -1122,7 +1421,18 @@ impl ToolHandler for ResolveForeshadowingTool {
             let label = ctx.prompts.label("target_type", "foreshadowing");
             map_canon(error, Some((label.as_str(), input.foreshadowing_id)), None)
         })?;
-        let mut outcome = canon_outcome(
+        let anchor_planned =
+            if timeline_enabled(ctx) && dto.payoff_event_status == Some(TimelineStatus::Planned) {
+                dto.payoff_event_id.map(|event_id| {
+                    format!(
+                        "#{event_id} {}",
+                        dto.payoff_event_title.as_deref().unwrap_or_default()
+                    )
+                })
+            } else {
+                None
+            };
+        let mut outcome = canon_outcome_with(
             ctx,
             "resolve_foreshadowing",
             dto.title.clone(),
@@ -1130,8 +1440,9 @@ impl ToolHandler for ResolveForeshadowingTool {
             "foreshadowing",
             dto.id,
             &dto.title,
+            json!({ "anchor_planned": anchor_planned }),
         )?;
-        if dto.payoff_event_status == Some(TimelineStatus::Planned) {
+        if anchor_planned.is_some() {
             let notice = ctx
                 .prompts
                 .render("notice.anchor_planned", &json!({}))
@@ -1474,6 +1785,7 @@ pub fn all() -> Vec<std::sync::Arc<dyn ToolHandler>> {
         std::sync::Arc::new(AddMemoryNoteTool),
         std::sync::Arc::new(RetireMemoryNoteTool),
         std::sync::Arc::new(AddForeshadowingTool),
+        std::sync::Arc::new(UpdateForeshadowingTool),
         std::sync::Arc::new(ResolveForeshadowingTool),
         std::sync::Arc::new(SetChapterSummaryTool),
         std::sync::Arc::new(FinishMaintenanceTool),

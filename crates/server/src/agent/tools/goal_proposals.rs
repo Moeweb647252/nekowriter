@@ -243,6 +243,8 @@ fn result(
                 "prev_event": Value::Null,
                 "next_event": Value::Null,
                 "moved": false,
+                "anchor_planned": Value::Null,
+                "abandoned_count": Value::Null,
             })),
         )
         .map(|rendered| rendered.text)

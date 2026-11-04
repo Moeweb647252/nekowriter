@@ -968,6 +968,10 @@ impl ToolHandler for QueryTimelineTool {
             ordered.reverse();
         }
         let total = ordered.len();
+        let planned_count = ordered
+            .iter()
+            .filter(|row| row.status == TimelineStatus::Planned)
+            .count();
         ordered.truncate(limit);
         let shown = ordered.len();
 
@@ -988,17 +992,18 @@ impl ToolHandler for QueryTimelineTool {
         let mut items = Vec::new();
         for row in &ordered {
             let chapter = row.chapter_id.and_then(|id| chapters.get(&id));
-            let parent_label = row
+            let parent = row
                 .parent_id
                 .and_then(|parent_id| by_id.get(&parent_id))
-                .filter(|parent| visible_ids.contains(&parent.id))
-                .map(|parent| format!("#{} {}", parent.id, parent.title));
+                .filter(|parent| visible_ids.contains(&parent.id));
+            let parent_label = parent.map(|parent| format!("#{} {}", parent.id, parent.title));
             items.push(json!({
                 "id": row.id,
                 "story_time": row.story_time,
                 "title": row.title,
                 "description": row.description,
                 "planned": row.status == TimelineStatus::Planned,
+                "parent_id": parent.map(|parent| parent.id),
                 "parent": parent_label,
                 "chapter_label": label_of_chapter(ctx, row.chapter_id, &mut labels).await?,
                 "entities": links
@@ -1022,6 +1027,7 @@ impl ToolHandler for QueryTimelineTool {
                     "total": total,
                     "shown": shown,
                     "mode": mode,
+                    "planned_count": planned_count,
                 })),
             )
             .map_err(|_| ToolError::new(ToolErrorKind::Internal))?
@@ -1153,15 +1159,46 @@ impl ToolHandler for ListForeshadowingTool {
             })
         });
         rows.truncate(limit);
+        let anchor_ids: Vec<i32> = rows.iter().filter_map(|row| row.payoff_event_id).collect();
+        let anchors: BTreeMap<i32, timeline_events::Model> = if anchor_ids.is_empty() {
+            BTreeMap::new()
+        } else {
+            timeline_events::Entity::find()
+                .filter(timeline_events::COLUMN.id.is_in(anchor_ids))
+                .all(ctx.tx)
+                .await
+                .map_err(|error| canon_error(ctx, canon::CanonError::from(error)))?
+                .into_iter()
+                .map(|row| (row.id, row))
+                .collect()
+        };
+        let timeline_on = crate::agent::session::canon_systems_of(ctx.session).timeline;
         let mut labels = BTreeMap::new();
         let mut items = Vec::new();
         for row in &rows {
+            let anchor_row = if timeline_on {
+                row.payoff_event_id.and_then(|id| anchors.get(&id))
+            } else {
+                None
+            };
+            let anchor_abandoned =
+                anchor_row.is_some_and(|anchor| anchor.status == TimelineStatus::Abandoned);
+            let anchor = anchor_row.filter(|anchor| anchor.status != TimelineStatus::Abandoned);
             items.push(json!({
                 "id": row.id,
                 "title": row.title,
                 "status_label": ctx.prompts.label("foreshadowing_status", row.status.as_str()),
                 "description": row.description,
                 "planted_label": label_of_chapter(ctx, row.planted_chapter_id, &mut labels).await?,
+                "anchor": anchor.map(|anchor| json!({
+                    "id": anchor.id,
+                    "title": anchor.title,
+                    "position_label": row.payoff_position
+                        .map(|position| ctx.prompts.label("payoff_position", position.as_str()))
+                        .unwrap_or_default(),
+                    "planned": anchor.status == TimelineStatus::Planned,
+                })),
+                "anchor_abandoned": anchor_abandoned,
                 "planned_payoff": row.planned_payoff,
                 "resolution": row.resolution,
                 "resolved_label": label_of_chapter(ctx, row.resolved_chapter_id, &mut labels).await?,

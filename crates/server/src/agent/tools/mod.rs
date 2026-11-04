@@ -100,6 +100,9 @@ pub enum ToolErrorKind {
     MutuallyExclusive,
     ToolNotAllowed,
     OutputTruncated,
+    TimelineConflict,
+    TimelineHasChildren,
+    SystemOff,
     AfterCompletion,
     /// The provider refused the turn; its calls are finished unexecuted (spec/03 §5.5).
     Refusal,
@@ -145,6 +148,9 @@ impl ToolErrorKind {
             ToolErrorKind::MutuallyExclusive => "mutually_exclusive",
             ToolErrorKind::ToolNotAllowed => "tool_not_allowed",
             ToolErrorKind::OutputTruncated => "output_truncated",
+            ToolErrorKind::TimelineConflict => "timeline_conflict",
+            ToolErrorKind::TimelineHasChildren => "timeline_has_children",
+            ToolErrorKind::SystemOff => "system_off",
             ToolErrorKind::AfterCompletion => "after_completion",
             ToolErrorKind::Refusal => "refusal",
             ToolErrorKind::Internal => "internal",
@@ -532,6 +538,9 @@ mod tests {
             ToolErrorKind::MutuallyExclusive,
             ToolErrorKind::ToolNotAllowed,
             ToolErrorKind::OutputTruncated,
+            ToolErrorKind::TimelineConflict,
+            ToolErrorKind::TimelineHasChildren,
+            ToolErrorKind::SystemOff,
             ToolErrorKind::AfterCompletion,
             ToolErrorKind::Refusal,
             ToolErrorKind::Internal,
@@ -539,7 +548,7 @@ mod tests {
         .iter()
         .map(|kind| kind.code())
         .collect();
-        assert_eq!(codes.len(), 37);
+        assert_eq!(codes.len(), 40);
         let unique: std::collections::BTreeSet<&str> = codes.iter().copied().collect();
         assert_eq!(unique.len(), codes.len(), "codes must be unique");
         assert!(codes.contains(&"after_completion"));
@@ -660,6 +669,11 @@ mod tests {
                 vec!["read_chapter".to_owned()],
             ),
             ToolError::new(ToolErrorKind::OutputTruncated),
+            ToolError::new(ToolErrorKind::TimelineConflict)
+                .with("reason", "occurred_ancestor")
+                .with("conflict", "#12 大战"),
+            ToolError::new(ToolErrorKind::TimelineHasChildren).with("count", 2),
+            ToolError::new(ToolErrorKind::SystemOff).with("system_label", "时间线"),
             ToolError::new(ToolErrorKind::AfterCompletion),
             ToolError::new(ToolErrorKind::Refusal),
             ToolError::new(ToolErrorKind::Internal),

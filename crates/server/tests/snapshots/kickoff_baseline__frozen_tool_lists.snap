@@ -21,6 +21,7 @@ expression: "serde_json::to_string_pretty(&roles).expect(\"tools JSON\")"
     "add_memory_note",
     "retire_memory_note",
     "add_foreshadowing",
+    "update_foreshadowing",
     "resolve_foreshadowing",
     "set_chapter_summary",
     "propose_setting_change",

@@ -327,7 +327,7 @@ properties.role = { type = "string", enum = ["pov", "major", "minor", "mentioned
 properties.note = { type = "string", description = "补充说明（可选）" }
 
 [tools.add_timeline_event]
-description = '''向时间线添加一个事件或计划节点，按故事时间先后插入：用 parent 指定上级（不填为顶层），用 after_event 或 before_event 在同级中定位；都不填则放在上级末尾。status = planned 表示尚未发生的计划；计划节点不能有 chapter_id。'''
+description = '''向时间线添加一个事件或计划节点，按故事时间先后插入：用 parent 指定上级（不填为顶层），用 after_event 或 before_event 在同级中定位；都不填则放在上级末尾。status = planned 表示尚未发生的计划；计划节点没有章节。'''
 examples = [ { title = "林凡在剑冢获得青冥剑", description = "……", story_time = "宗门大比第三日夜", after_event = 41, entities = ["林凡", "青冥剑"], importance = 4 }, { title = "第二幕：剑冢", status = "planned", importance = 3 } ]
 [tools.add_timeline_event.input_schema]
 type = "object"
@@ -344,8 +344,8 @@ properties.entities = { type = "array", items = { type = "string" }, description
 properties.importance = { type = "integer", minimum = 1, maximum = 5, description = "重要度 1–5，默认 2" }
 
 [tools.update_timeline_event]
-description = '''修改时间线事件的内容、上级或状态，或调整它在时间线上的位置。计划节点可以标记为已发生（需要 chapter_id 或 story_time）或已放弃；已经发生的事件不能改为计划或放弃。'''
-examples = [ { event_id = 42, story_time = "第三日黄昏", move_before = 40 }, { event_id = 7, status = "occurred", chapter_id = 3 } ]
+description = '''修改时间线事件的内容、上级或状态，或调整它在时间线上的位置。计划节点可以标记为已发生（需要本章章节号或 story_time）或已放弃；已经发生的事件不能改为计划或放弃。'''
+examples = [ { event_id = 42, story_time = "第三日黄昏", move_before = 40 }, { event_id = 7, status = "occurred", chapter = 3, note = "正文已写到" } ]
 [tools.update_timeline_event.input_schema]
 type = "object"
 additionalProperties = false
@@ -361,8 +361,8 @@ properties.move_before = { type = "integer", description = "移动到这个事�
 properties.parent = { type = "integer", description = "新的上级事件（编号）" }
 properties.top_level = { type = "boolean", description = "设为 true 时移到顶层（与 parent 互斥）" }
 properties.status = { type = "string", enum = ["occurred", "abandoned"], description = "planned → occurred（需要章节或故事时间）或 planned → abandoned" }
-properties.chapter_id = { type = "integer", description = "标记为 occurred 时记录的章节编号" }
-properties.note = { type = "string", description = "本次修改的说明" }
+properties.chapter = { type = "integer", minimum = 1, description = "标记为 occurred 时记录的正文章节号；不填时用本次会话的章节" }
+properties.note = { type = "string", description = "本次修改的说明；改变状态时必须填写" }
 
 [tools.add_memory_note]
 description = '''记录正文确立的事实（fact）或世界规则（world_rule），供后续章节保持一致。例如“林凡的玉佩是母亲的遗物”“筑基之前无法御剑飞行”。'''
@@ -400,6 +400,24 @@ properties.payoff_event = { type = "integer", description = "预期的回收锚�
 properties.payoff_position = { type = "string", enum = ["before", "after", "at"], description = "回收发生在锚点事件之前、之后或当时；必须与 payoff_event 同时提供" }
 properties.entities = { type = "array", items = { type = "string" }, description = "相关实体" }
 properties.importance = { type = "integer", minimum = 1, maximum = 5, description = "重要度 1–5，默认 2" }
+
+[tools.update_foreshadowing]
+description = '''修改一条伏笔：更新方向、标题、描述、重要度或状态，并可以为它更换或清除回收锚点。回收锚点必须是时间线中的一个事件；只写回收方向时不要写章节号。'''
+examples = [ { foreshadowing_id = 9, note = "把回收提前到入门之前", payoff_event = 3, payoff_position = "before" }, { foreshadowing_id = 9, note = "先取消锚点", clear_anchor = true }, { foreshadowing_id = 9, note = "补充回收方向", planned_payoff = "揭示黑衣人与林家的渊源" } ]
+[tools.update_foreshadowing.input_schema]
+type = "object"
+additionalProperties = false
+required = ["foreshadowing_id", "note"]
+properties.foreshadowing_id = { type = "integer", description = "伏笔编号" }
+properties.note = { type = "string", description = "本次修改的说明" }
+properties.title = { type = "string", description = "新的伏笔名称" }
+properties.description = { type = "string", description = "新的伏笔内容" }
+properties.planned_payoff = { type = "string", description = "回收方向（例如“揭示黑衣人与林家的渊源”），不要写章节号" }
+properties.importance = { type = "integer", minimum = 1, maximum = 5, description = "新的重要度" }
+properties.status = { type = "string", enum = ["open", "resolved", "abandoned"], description = "新的伏笔状态" }
+properties.payoff_event = { type = ["integer", "null"], description = "回收锚点：时间线事件编号；传 null 会同时清除回收位置" }
+properties.payoff_position = { type = "string", enum = ["before", "after", "at"], description = "回收发生在锚点事件之前、之后或当时；设置锚点时必须提供" }
+properties.clear_anchor = { type = "boolean", description = "设为 true 时清除回收锚点（与 payoff_event 互斥）" }
 
 [tools.resolve_foreshadowing]
 description = '''把伏笔标记为已回收或已放弃。'''

@@ -587,7 +587,7 @@ async fn list_foreshadowing_lists_open_items() {
         "only the open item by default"
     );
     assert!(list[0].1.contains("The broken hilt"));
-    assert!(list[0].1.contains("计划回收：The blade returns."));
+    assert!(list[0].1.contains("回收方向：The blade returns."));
     assert!(
         list[0].1.contains("埋设于第"),
         "the planted chapter: {}",

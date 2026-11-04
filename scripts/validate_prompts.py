@@ -65,7 +65,7 @@ roles = {
  "planner": "get_entity list_entities get_relations query_timeline list_foreshadowing search_canon search_knowledge read_knowledge_entry search_chapters read_chapter read_draft submit_outline",
  "writer": "get_entity list_entities get_relations query_timeline list_foreshadowing search_canon search_knowledge read_knowledge_entry search_chapters read_chapter submit_revision_plan read_draft insert_text insert_paragraphs replace_text rewrite_paragraph delete_paragraphs finish_draft finish_revision",
  "reviewer": "get_entity list_entities get_relations query_timeline list_foreshadowing search_canon search_knowledge read_knowledge_entry search_chapters read_chapter submit_review",
- "archivist": "get_entity list_entities get_relations query_timeline list_foreshadowing search_canon read_chapter create_entity update_entity set_relation end_relation record_appearances add_timeline_event update_timeline_event add_memory_note retire_memory_note add_foreshadowing resolve_foreshadowing set_chapter_summary propose_goal_change propose_setting_change finish_maintenance",
+ "archivist": "get_entity list_entities get_relations query_timeline list_foreshadowing search_canon read_chapter create_entity update_entity set_relation end_relation record_appearances add_timeline_event update_timeline_event add_memory_note retire_memory_note add_foreshadowing update_foreshadowing resolve_foreshadowing set_chapter_summary propose_goal_change propose_setting_change finish_maintenance",
  "conception": "ask_user search_knowledge read_knowledge_entry web_search web_fetch write_setting_doc edit_setting_doc upsert_character remove_character reorder_characters set_research_topics request_review",
  "researcher": "web_search web_fetch search_knowledge read_knowledge_entry set_research_topics save_knowledge_entry update_knowledge_entry finish_research",
 }
@@ -83,13 +83,26 @@ for t in tools:
 # ---------- minimal JSON Schema validator for the subset we use ----------
 def validate(schema, value, path="$"):
     errs = []
-    ty = schema.get("type")
+    types = schema.get("type")
+    if isinstance(types, str):
+        types = [types]
     tymap = {"object": dict, "array": list, "string": str, "integer": int, "boolean": bool}
-    if ty:
-        py = tymap[ty]
-        ok = isinstance(value, py) and not (ty == "integer" and isinstance(value, bool))
-        if not ok:
-            return [f"{path}: expected {ty}, got {type(value).__name__}"]
+    if types:
+        def matches(ty):
+            if ty not in tymap:
+                return False
+            return isinstance(value, tymap[ty]) and not (ty == "integer" and isinstance(value, bool))
+        if not any(matches(ty) for ty in types):
+            return [f"{path}: expected {' or '.join(types)}, got {type(value).__name__}"]
+    # The concrete shape of this value drives the nested checks (a union such as
+    # ["integer", "null"] carries no `minimum` for the null branch).
+    ty = None
+    if isinstance(value, dict):
+        ty = "object"
+    elif isinstance(value, list):
+        ty = "array"
+    elif isinstance(value, int) and not isinstance(value, bool):
+        ty = "integer"
     if "enum" in schema and value not in schema["enum"]:
         errs.append(f"{path}: {value!r} not in enum")
     if ty == "object":
@@ -121,7 +134,10 @@ def validate(schema, value, path="$"):
 
 def check_schema_shape(schema, path):
     errs = []
-    if schema.get("type") == "object":
+    types = schema.get("type")
+    if isinstance(types, str):
+        types = [types]
+    if types and "object" in types:
         if schema.get("additionalProperties") is not False and not isinstance(schema.get("additionalProperties"), dict):
             errs.append(f"{path}: object without additionalProperties=false")
         for r in schema.get("required", []):
@@ -131,7 +147,7 @@ def check_schema_shape(schema, path):
             if "description" not in v:
                 errs.append(f"{path}.{k}: missing description")
             errs += check_schema_shape(v, f"{path}.{k}")
-    if schema.get("type") == "array" and "items" in schema:
+    if types and "array" in types and "items" in schema:
         errs += check_schema_shape(schema["items"], f"{path}[]")
     return errs
 
@@ -309,12 +325,16 @@ variants = {
                          dict(items=[], total=0, shown=0)],
   "result.relations": [dict(entity="林凡(#12)", items=[dict(subject="林凡(#12)", object="张三(#15)", kind="师兄", ended=False, until_label="", description="", since_label="")]),
                        dict(entity="林凡(#12)", items=[])],
-  "result.timeline": [dict(items=[dict(id=1, story_time="春", title="入门", description="", planned=False, parent=None, chapter_label="第1章", entities=["林凡", "苏婉"], after_anchor=False)], total=5, shown=1, mode="chronological"),
-                      dict(items=[], total=0, shown=0, mode="recent_first")],
-  "result.foreshadowing_list": [dict(items=[dict(id=9, title="剑穗", status_label="未回收", description="……", planted_label="第5章", planned_payoff="", resolution="", resolved_label="")]),
+  "result.timeline": [dict(items=[dict(id=1, story_time="春", title="入门", description="", planned=False, parent_id=None, parent=None, chapter_label="第1章", entities=["林凡", "苏婉"], after_anchor=False),
+                                 dict(id=2, story_time="", title="计划节点", description="", planned=True, parent_id=1, parent="#1 入门", chapter_label="", entities=[], after_anchor=False)],
+                            total=5, shown=2, mode="chronological", planned_count=1),
+                      dict(items=[], total=0, shown=0, mode="recent_first", planned_count=0)],
+  "result.foreshadowing_list": [dict(items=[dict(id=9, title="剑穗", status_label="未回收", description="……", planted_label="第5章", anchor=dict(id=12, title="入门", position_label="之后", planned=True), anchor_abandoned=False, planned_payoff="揭示身世", resolution="", resolved_label=""),
+                                         dict(id=10, title="旧信", status_label="未回收", description="", planted_label="", anchor=None, anchor_abandoned=True, planned_payoff="", resolution="", resolved_label=""),
+                                         dict(id=11, title="无锚点", status_label="未回收", description="", planted_label="", anchor=None, anchor_abandoned=False, planned_payoff="只写方向", resolution="", resolved_label="")]),
                                 dict(items=[])],
-  "result.search_hits": [dict(corpus=c, query="剑冢", hits=[dict(kind_label="实体", title="剑冢", ref=3, snippet="……", location="范围", pids=["p3", "p4", "p5"] if c == "chapters" else [], after_anchor=False),
-                                                             dict(kind_label="实体", title="剑冢", ref=4, snippet="……", location="范围", pids=["p9"] if c == "chapters" else [], after_anchor=True)], vector_available=v)
+  "result.search_hits": [dict(corpus=c, query="剑冢", hits=[dict(kind_label="实体", title="剑冢", ref=3, snippet="……", location="范围", pids=["p3", "p4", "p5"] if c == "chapters" else [], planned=False, after_anchor=False),
+                                                             dict(kind_label="实体", title="剑冢", ref=4, snippet="……", location="范围", pids=["p9"] if c == "chapters" else [], planned=(c == "canon"), after_anchor=True)], vector_available=v)
                          for c, v in [("canon", True), ("knowledge", False), ("chapters", True)]] + [dict(corpus="canon", query="x", hits=[], vector_available=True)],
   "result.knowledge_entry": [dict(id=7, title="宋代茶馆", scope="宋代社会", sources=["https://a"], content="……", offset=0, end=6000, total=9000, next_offset=6000),
                              dict(id=7, title="宋代茶馆", scope="宋代社会", sources=[], content="……", offset=0, end=100, total=100, next_offset=None)],
@@ -340,12 +360,15 @@ variants = {
                                             ("submit_revision_plan", False, False, False),
                                             ("finish_draft", True, False, False), ("finish_draft", False, False, False), ("finish_revision", False, False, False)]],
   "result.submit_review": [dict(attempt=1, issues=3, dropped_pids=["p99"]), dict(attempt=2, issues=0, dropped_pids=[])],
-  "result.canon_write": [dict(action=a, target=t, count=3, prev_event=p, next_event=n, moved=m) for a, t, p, n, m in [
-                            ("create_entity", "苏婉(#21)", None, None, False), ("record_appearances", "", None, None, False),
-                            ("add_timeline_event", "入门(#5)", 4, 6, False), ("add_timeline_event", "入门(#5)", None, None, False),
-                            ("update_timeline_event", "入门(#5)", 2, None, True), ("set_chapter_summary", "", None, None, False),
-                            ("propose_setting_change", "世界观", None, None, False),
-                            ("propose_goal_change", "目标", None, None, False)]],
+  "result.canon_write": [dict(action=a, target=t, count=3, prev_event=p, next_event=n, moved=m, anchor_planned=ap, abandoned_count=ac) for a, t, p, n, m, ap, ac in [
+                            ("create_entity", "苏婉(#21)", None, None, False, None, None), ("record_appearances", "", None, None, False, None, None),
+                            ("add_timeline_event", "入门(#5)", 4, 6, False, None, None), ("add_timeline_event", "入门(#5)", None, None, False, None, None),
+                            ("update_timeline_event", "入门(#5)", 2, None, True, None, 2), ("update_timeline_event", "入门(#5)", None, None, False, None, None),
+                            ("update_foreshadowing", "剑穗(#9)", None, None, False, None, None),
+                            ("resolve_foreshadowing", "剑穗(#9)", None, None, False, "#12 入门", None),
+                            ("set_chapter_summary", "", None, None, False, None, None),
+                            ("propose_setting_change", "世界观", None, None, False, None, None),
+                            ("propose_goal_change", "目标", None, None, False, None, None)]],
   "result.finish_maintenance": [dict(confirm_needed=True, changes=0, proposals=0, goal_proposals=0), dict(confirm_needed=False, changes=12, proposals=1, goal_proposals=2), dict(confirm_needed=False, changes=3, proposals=0, goal_proposals=0)],
   "result.ask_user": [dict(answers=[dict(question="基调？", selected=["热血"], other="再轻松点"), dict(question="结局？", selected=[], other=""),
                                     dict(question="篇幅？", selected=[], other="百万字")])],
@@ -387,7 +410,11 @@ error_cases = [
   dict(code="seed_only", tool="create_entity", field="is_protagonist"), dict(code="exactly_one", fields=["edits", "append", "character"]),
   dict(code="mutually_exclusive", fields=["content", "edits"]), dict(code="mutually_exclusive", fields=["move_after", "move_before"]),
   dict(code="tool_not_allowed", tool="get_entity", phase_label="正文阶段", allowed=["insert_text"]), dict(code="output_truncated"),
-  dict(code="after_completion"), dict(code="scope_excluded", name="宋代社会"), dict(code="target_scope_unset"), dict(code="refusal"), dict(code="internal"),
+  dict(code="after_completion"), dict(code="timeline_conflict", reason="occurred_ancestor", conflict="#12 旧日之战"),
+  dict(code="timeline_conflict", reason="planned_descendant", conflict="#13 计划场景"),
+  dict(code="timeline_conflict", reason="occurred_descendant", conflict="#14 已发生场景"),
+  dict(code="timeline_conflict", reason="backward", conflict=""), dict(code="timeline_has_children", count=2),
+  dict(code="system_off", system_label="时间线"), dict(code="scope_excluded", name="宋代社会"), dict(code="target_scope_unset"), dict(code="refusal"), dict(code="internal"),
   dict(code="not_found", details_available=False),
 ]
 variants["result.error"] = error_cases

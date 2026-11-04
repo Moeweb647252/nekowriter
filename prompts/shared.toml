@@ -15,6 +15,8 @@ text = '''
   "appearance_role": {"pov": "视角", "major": "主要", "minor": "次要", "mentioned": "提及"},
   "note_kind": {"fact": "事实", "world_rule": "世界规则", "other": "其他"},
   "foreshadowing_status": {"open": "未回收", "resolved": "已回收", "abandoned": "已放弃"},
+  "payoff_position": {"before": "之前", "after": "之后", "at": "同时"},
+  "canon_system": {"timeline": "时间线", "foreshadowing": "伏笔"},
   "relation_status": {"active": "有效", "ended": "已结束"},
   "setting_doc": {"outline": "故事大纲", "world": "世界观", "protagonist": "主角详细设定", "characters": "人物设定", "research_topics": "资料收集主题"},
   "granularity": {"sentence": "逐句", "paragraph": "逐段", "free": "自由", "chapter": "整章"},
