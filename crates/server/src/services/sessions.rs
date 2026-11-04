@@ -11,6 +11,7 @@ use sea_orm::{
 };
 use serde_json::json;
 
+use crate::agent::breakdown::{self, ContextBreakdownDto};
 use crate::agent::runner;
 use crate::agent::session::{self, TransitionCause};
 use crate::agent::tools::registry::{initial_phase, role_enum_of_kind, role_of_kind};
@@ -23,9 +24,9 @@ use crate::db::entities::{
     providers, research_tasks, tracks,
 };
 use crate::db::json::{
-    AgentRole, BookSettings, ChapterStatus, Granularity, InboxKind, JsonText, ModelSnapshot, Phase,
-    Protocol, ResearchTaskStatus, RoleModels, SessionCounters, SessionKind, SessionStatus,
-    StoredBlock, ToolCallStatus, TrackKind, WriteMode,
+    AgentRole, BookSettings, ChapterStatus, Granularity, InboxKind, JsonText, MessageKind,
+    ModelSnapshot, Phase, Protocol, ResearchTaskStatus, RoleModels, SessionCounters, SessionKind,
+    SessionStatus, StoredBlock, ToolCallStatus, TrackKind, WriteMode,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
@@ -1019,6 +1020,48 @@ async fn apply_creation_side_effects(
 }
 
 // ───────────────────────────── reads ─────────────────────────────
+
+/// The pure Context view of one session (M23 23.3; spec/03 §13.1, spec/10 §2.8).
+///
+/// The three reads go through the pool, never a transaction (plan §3.2 C8). A `seq` must name an
+/// assistant message of this session; the pure function then selects the messages before it.
+pub async fn context(
+    conn: &impl ConnectionTrait,
+    session_id: i32,
+    seq: Option<i32>,
+) -> Result<ContextBreakdownDto, AppError> {
+    let session = agent_sessions::Entity::find_by_id(session_id)
+        .one(conn)
+        .await?
+        .ok_or_else(|| AppError::not_found(format!("session {session_id}")))?;
+    let messages = agent_messages::Entity::find()
+        .filter(agent_messages::COLUMN.session_id.eq(session_id))
+        .order_by_asc(agent_messages::COLUMN.seq)
+        .all(conn)
+        .await?;
+    let loaded: std::collections::HashSet<i32> =
+        messages.iter().map(|message| message.id).collect();
+    let calls: Vec<agent_tool_calls::Model> = agent_tool_calls::Entity::find()
+        .filter(agent_tool_calls::COLUMN.session_id.eq(session_id))
+        .all(conn)
+        .await?
+        .into_iter()
+        .filter(|call| loaded.contains(&call.message_id))
+        .collect();
+    if let Some(seq) = seq
+        && !messages
+            .iter()
+            .any(|message| message.seq == seq && message.kind == MessageKind::Assistant)
+    {
+        let mut fields = serde_json::Map::new();
+        fields.insert(
+            "seq".to_owned(),
+            serde_json::json!("must be an assistant message of this session"),
+        );
+        return Err(AppError::invalid_fields(fields));
+    }
+    Ok(breakdown::breakdown(&session, &messages, &calls, seq))
+}
 
 /// `GET /api/sessions/:id` (spec/10 §2.7).
 pub async fn snapshot(

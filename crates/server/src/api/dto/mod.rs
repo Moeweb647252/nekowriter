@@ -31,6 +31,10 @@ pub mod settings_materials;
 pub mod skills;
 pub mod tracks;
 
+pub use crate::agent::breakdown::{
+    ContextBreakdownDto, ContextGroupDto, ContextGroupKey, ContextItemDto, ContextPartDto,
+    ContextPartKey, ContextRequestDto, ContextRestDto,
+};
 pub use books::{
     BookAgentStart, BookAgentStarted, BookDto, BookInput, BookOverviewDto, BookPatch,
     BookProgressDto, BookSummaryDto, ChapterPointerDto, CreateBookResponse, StatusCountDto,

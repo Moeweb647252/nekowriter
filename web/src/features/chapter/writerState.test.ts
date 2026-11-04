@@ -17,6 +17,7 @@ const session = (overrides: Partial<SessionDto> = {}): SessionDto => ({
   chapter_number: 1,
   research_topic: null,
   model_label: "Demo",
+  context_window: 100000,
   status: "running",
   phase: "drafting",
   granularity: "paragraph",

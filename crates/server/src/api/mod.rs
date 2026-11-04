@@ -320,6 +320,7 @@ pub fn build_app(state: AppState) -> Router {
             get(sessions::get).patch(sessions::patch),
         )
         .route("/sessions/{session_id}/messages", get(sessions::messages))
+        .route("/sessions/{session_id}/context", get(sessions::context))
         .route("/sessions/{session_id}/pause", post(sessions::pause))
         .route("/sessions/{session_id}/resume", post(sessions::resume))
         .route("/sessions/{session_id}/stop", post(sessions::stop))

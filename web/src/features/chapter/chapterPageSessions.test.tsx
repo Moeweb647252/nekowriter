@@ -42,6 +42,7 @@ function planner(status: SessionDto["status"] = "running"): SessionDto {
     chapter_number: 1,
     research_topic: null,
     model_label: "Demo",
+    context_window: 100000,
     status,
     phase: "none",
     granularity: null,

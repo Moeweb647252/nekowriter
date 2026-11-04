@@ -58,6 +58,7 @@ function session(): SessionDto {
     chapter_number: null,
     research_topic: null,
     model_label: "Demo model",
+    context_window: 100000,
     status: "running",
     phase: "planning",
     granularity: null,

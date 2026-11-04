@@ -32,6 +32,7 @@ function session(overrides: Partial<SessionDto> = {}): SessionDto {
     chapter_number: 1,
     research_topic: null,
     model_label: "Demo model",
+    context_window: 100000,
     effort: null,
     status: "running",
     phase: "drafting",

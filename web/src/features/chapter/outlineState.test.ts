@@ -41,6 +41,7 @@ function outlineSession(status: string) {
     research_topic: null,
     model_profile_id: null,
     model_label: "Demo",
+    context_window: 100000,
     status,
     phase: "none",
     granularity: null,

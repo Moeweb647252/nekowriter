@@ -64,6 +64,7 @@ function writerSession(status: SessionDto["status"]): SessionDto {
     chapter_number: 2,
     research_topic: null,
     model_label: "Demo model",
+    context_window: 100000,
     status,
     phase: "drafting",
     granularity: "paragraph",
