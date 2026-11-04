@@ -120,7 +120,7 @@ pub async fn create(
     Ok((dto, warnings))
 }
 
-async fn create_inner(
+pub(crate) async fn create_inner(
     tx: &impl ConnectionTrait,
     input: ResearchTaskCreate,
 ) -> Result<(ResearchTaskDto, Vec<ServerEvent>, Vec<String>), AppError> {
@@ -380,7 +380,7 @@ pub async fn patch(
     Ok(dto)
 }
 
-async fn patch_inner(
+pub(crate) async fn patch_inner(
     tx: &impl ConnectionTrait,
     task_id: i32,
     input: ResearchTaskPatch,
@@ -556,7 +556,7 @@ impl Transition {
     }
 }
 
-async fn transition_inner(
+pub(crate) async fn transition_inner(
     tx: &impl ConnectionTrait,
     task_id: i32,
     transition: Transition,
@@ -601,7 +601,7 @@ async fn transition_inner(
     ))
 }
 
-async fn delete_inner(
+pub(crate) async fn delete_inner(
     tx: &impl ConnectionTrait,
     task_id: i32,
 ) -> Result<Vec<ServerEvent>, AppError> {

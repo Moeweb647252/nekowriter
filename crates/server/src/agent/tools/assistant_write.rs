@@ -1,0 +1,989 @@
+//! The book-agent's new action tools (plan §3.3 tools 22–42, §5.4, D-169).
+//!
+//! Previews compute the same before/after as `execute` without writing. The approval path runs
+//! `prepare` again before `execute`, so chapter locks are checked against current data.
+
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use serde::Deserialize;
+use serde_json::{Value, json};
+
+use crate::api::dto::chapters::{ChapterContentTextPut, ChapterInput, ChapterPatch};
+use crate::api::dto::goals::{GoalNodeInput, GoalNodePatch};
+use crate::api::dto::knowledge::EntryInput;
+use crate::api::dto::research::{ResearchTaskCreate, ResearchTaskPatch};
+use crate::db::entities::chapters;
+use crate::db::json::{ChapterContent, GoalCondition, GoalStatus, ResearchTaskStatus};
+use crate::services::canon::{CanonWrite, Visibility as CanonVisibility};
+use crate::services::research::Transition;
+use crate::services::{
+    chapters as chapter_service, goals as goal_service, knowledge, research, versions,
+};
+
+use super::{
+    PrepareCtx, Prepared, ToolCtx, ToolError, ToolErrorKind, ToolHandler, ToolKind, ToolOutcome,
+};
+
+fn decode<T: for<'de> Deserialize<'de>>(input: Value) -> Result<T, ToolError> {
+    serde_json::from_value(input).map_err(|error| {
+        ToolError::new(ToolErrorKind::Validation).with("errors", vec![error.to_string()])
+    })
+}
+
+fn internal() -> ToolError {
+    ToolError::new(ToolErrorKind::Internal)
+}
+fn validation(message: &str) -> ToolError {
+    ToolError::new(ToolErrorKind::Validation).with("errors", vec![message.to_owned()])
+}
+fn book_id(ctx: &ToolCtx<'_>) -> Result<i32, ToolError> {
+    ctx.book.map(|book| book.id).ok_or_else(internal)
+}
+fn write_context(ctx: &ToolCtx<'_>) -> CanonWrite {
+    let book_id = ctx.book.map(|book| book.id).unwrap_or_default();
+    CanonWrite::agent(
+        CanonVisibility::of_session(book_id, ctx.visibility),
+        ctx.session.id,
+        ctx.session.chapter_id,
+    )
+}
+fn text_outcome(
+    ctx: &mut ToolCtx<'_>,
+    action: &str,
+    summary: String,
+    details: Value,
+) -> Result<ToolOutcome, ToolError> {
+    let rendered = ctx
+        .prompts
+        .render_value(
+            "result.book_agent_write",
+            crate::prompts::template_value(&json!({
+                "action": action, "summary": summary, "details": details,
+            })),
+        )
+        .map_err(|_| internal())?;
+    Ok(ToolOutcome::text(rendered.text).with_ui(json!({"action": action})))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateChapterInput {
+    #[serde(default)]
+    track: Option<String>,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    guidance: String,
+}
+
+pub struct CreateChapterTool;
+#[async_trait::async_trait]
+impl ToolHandler for CreateChapterTool {
+    fn name(&self) -> &'static str {
+        "create_chapter"
+    }
+    fn kind(&self) -> ToolKind {
+        ToolKind::Canon
+    }
+    async fn execute(
+        &self,
+        ctx: &mut ToolCtx<'_>,
+        input: Value,
+        _prepared: Prepared,
+    ) -> Result<ToolOutcome, ToolError> {
+        let input: CreateChapterInput = decode(input)?;
+        let book_id = book_id(ctx)?;
+        let track_id =
+            resolve_track(ctx, book_id, input.track.as_deref().unwrap_or("main")).await?;
+        let (dto, events) = chapter_service::create_inner(
+            ctx.tx,
+            track_id,
+            ChapterInput {
+                title: input.title,
+                guidance: input.guidance,
+            },
+        )
+        .await
+        .map_err(|_| internal())?;
+        ctx.events.extend(events);
+        text_outcome(
+            ctx,
+            "create_chapter",
+            format!("创建章节《{}》", dto.list_item.title),
+            json!({"chapter_id": dto.list_item.id, "ord": dto.list_item.number}),
+        )
+    }
+    async fn preview(&self, _ctx: &mut ToolCtx<'_>, input: Value) -> Result<Value, ToolError> {
+        let input: CreateChapterInput = decode(input)?;
+        Ok(
+            json!({"kind":"fields","label":"create_chapter","rows":[{"field":"track","after":input.track.unwrap_or_else(|| "main".to_owned())},{"field":"title","after":input.title},{"field":"guidance","after":input.guidance}]}),
+        )
+    }
+}
+
+async fn resolve_track(ctx: &ToolCtx<'_>, book_id: i32, raw: &str) -> Result<i32, ToolError> {
+    if let Some(id) = raw.strip_prefix('#').and_then(|v| v.parse::<i32>().ok()) {
+        let track = crate::db::entities::tracks::Entity::find_by_id(id)
+            .one(ctx.tx)
+            .await
+            .map_err(|_| internal())?
+            .filter(|t| t.book_id == book_id);
+        return track.map(|t| t.id).ok_or_else(|| {
+            ToolError::new(ToolErrorKind::NotFound)
+                .with("what_label", "track".to_owned())
+                .with("id", id)
+        });
+    }
+    if raw != "main" {
+        return Err(validation("track must be main or #id"));
+    }
+    crate::db::entities::tracks::Entity::find()
+        .filter(crate::db::entities::tracks::COLUMN.book_id.eq(book_id))
+        .filter(
+            crate::db::entities::tracks::COLUMN
+                .kind
+                .eq(crate::db::json::TrackKind::Main),
+        )
+        .one(ctx.tx)
+        .await
+        .map_err(|_| internal())?
+        .map(|t| t.id)
+        .ok_or_else(internal)
+}
+
+#[derive(Debug, Deserialize)]
+struct EditChapterInput {
+    chapter: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    guidance: Option<String>,
+    #[serde(default)]
+    outline: Option<String>,
+    #[serde(default)]
+    outline_edits: Option<Vec<FindReplace>>,
+    #[serde(default)]
+    reference_notes: Option<String>,
+    #[serde(default)]
+    notes_edits: Option<Vec<FindReplace>>,
+}
+#[derive(Debug, Deserialize)]
+struct FindReplace {
+    find: String,
+    replace: String,
+}
+
+pub struct EditChapterTool;
+#[async_trait::async_trait]
+impl ToolHandler for EditChapterTool {
+    fn name(&self) -> &'static str {
+        "edit_chapter"
+    }
+    fn kind(&self) -> ToolKind {
+        ToolKind::Canon
+    }
+    async fn execute(
+        &self,
+        ctx: &mut ToolCtx<'_>,
+        input: Value,
+        _prepared: Prepared,
+    ) -> Result<ToolOutcome, ToolError> {
+        let input: EditChapterInput = decode(input)?;
+        let chapter = resolve_chapter(ctx, book_id(ctx)?, &input.chapter).await?;
+        if input.outline.is_some() && input.outline_edits.is_some() {
+            return Err(validation(
+                "outline and outline_edits are mutually exclusive",
+            ));
+        }
+        if input.reference_notes.is_some() && input.notes_edits.is_some() {
+            return Err(validation(
+                "reference_notes and notes_edits are mutually exclusive",
+            ));
+        }
+        let outline = match (input.outline, input.outline_edits) {
+            (Some(value), _) => Some(value),
+            (None, Some(edits)) => Some(apply_edits(&chapter.outline, &edits, ctx)?),
+            _ => None,
+        };
+        let notes = match (input.reference_notes, input.notes_edits) {
+            (Some(value), _) => Some(value),
+            (None, Some(edits)) => Some(apply_edits(&chapter.reference_notes, &edits, ctx)?),
+            _ => None,
+        };
+        let (dto, events) = chapter_service::update_inner(
+            ctx.tx,
+            chapter.id,
+            ChapterPatch {
+                title: input.title,
+                guidance: input.guidance,
+                outline,
+                reference_notes: notes,
+                summary: None,
+            },
+        )
+        .await
+        .map_err(|_| internal())?;
+        ctx.events.extend(events);
+        text_outcome(
+            ctx,
+            "edit_chapter",
+            format!("修改章节《{}》", dto.list_item.title),
+            json!({"chapter_id": dto.list_item.id}),
+        )
+    }
+    async fn preview(&self, ctx: &mut ToolCtx<'_>, input: Value) -> Result<Value, ToolError> {
+        let input: EditChapterInput = decode(input)?;
+        let chapter = resolve_chapter(ctx, book_id(ctx)?, &input.chapter).await?;
+        let mut rows = Vec::new();
+        if let Some(v) = input.title {
+            rows.push(json!({"field":"title","before":chapter.title,"after":v}));
+        }
+        if let Some(v) = input.guidance {
+            rows.push(json!({"field":"guidance","before":chapter.guidance,"after":v}));
+        }
+        if input.outline.is_some() || input.outline_edits.is_some() {
+            let after = input
+                .outline
+                .or_else(|| {
+                    input
+                        .outline_edits
+                        .as_ref()
+                        .map(|e| apply_edits(&chapter.outline, e, ctx).unwrap_or_default())
+                })
+                .unwrap_or_default();
+            rows.push(json!({"field":"outline","before":chapter.outline,"after":after}));
+        }
+        if input.reference_notes.is_some() || input.notes_edits.is_some() {
+            let after = input
+                .reference_notes
+                .or_else(|| {
+                    input
+                        .notes_edits
+                        .as_ref()
+                        .map(|e| apply_edits(&chapter.reference_notes, e, ctx).unwrap_or_default())
+                })
+                .unwrap_or_default();
+            rows.push(
+                json!({"field":"reference_notes","before":chapter.reference_notes,"after":after}),
+            );
+        }
+        Ok(json!({"kind":"fields","label":chapter.title,"rows":rows}))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct EditChapterTextInput {
+    chapter: String,
+    edits: Vec<FindReplace>,
+}
+
+pub struct EditChapterTextTool;
+#[async_trait::async_trait]
+impl ToolHandler for EditChapterTextTool {
+    fn name(&self) -> &'static str {
+        "edit_chapter_text"
+    }
+    fn kind(&self) -> ToolKind {
+        ToolKind::Canon
+    }
+    async fn prepare(&self, ctx: &PrepareCtx<'_>, input: &Value) -> Result<Prepared, ToolError> {
+        let input: EditChapterTextInput =
+            serde_json::from_value(input.clone()).map_err(|e| validation(&e.to_string()))?;
+        let chapter = resolve_chapter_conn(
+            ctx.db,
+            ctx.session.book_id.ok_or_else(internal)?,
+            &input.chapter,
+        )
+        .await?;
+        chapter_service::ensure_editable(ctx.db, chapter.id)
+            .await
+            .map_err(|_| ToolError::new(ToolErrorKind::ChapterLocked).with("session_id", 0))?;
+        Ok(Prepared::None)
+    }
+    async fn execute(
+        &self,
+        ctx: &mut ToolCtx<'_>,
+        input: Value,
+        _prepared: Prepared,
+    ) -> Result<ToolOutcome, ToolError> {
+        let input: EditChapterTextInput = decode(input)?;
+        let chapter = resolve_chapter(ctx, book_id(ctx)?, &input.chapter).await?;
+        let (new_text, before) = apply_text_edits(&chapter, &input.edits, ctx)?;
+        let has_backup = crate::db::entities::chapter_versions::Entity::find()
+            .filter(
+                crate::db::entities::chapter_versions::COLUMN
+                    .chapter_id
+                    .eq(chapter.id),
+            )
+            .filter(
+                crate::db::entities::chapter_versions::COLUMN
+                    .kind
+                    .eq(crate::db::json::VersionKind::Backup),
+            )
+            .filter(
+                crate::db::entities::chapter_versions::COLUMN
+                    .session_id
+                    .eq(ctx.session.id),
+            )
+            .one(ctx.tx)
+            .await
+            .map_err(|_| internal())?
+            .is_some();
+        if !has_backup {
+            versions::create_version(
+                ctx.tx,
+                versions::NewVersion {
+                    chapter_id: chapter.id,
+                    kind: crate::db::json::VersionKind::Backup,
+                    title: &chapter.title,
+                    content: &before,
+                    word_count: chapter.word_count,
+                    note: "book agent edit",
+                    session_id: Some(ctx.session.id),
+                },
+            )
+            .await
+            .map_err(|_| internal())?;
+        }
+        let (result, events) = chapter_service::put_content_text_inner(
+            ctx.tx,
+            chapter.id,
+            ChapterContentTextPut {
+                base_version: chapter.content_version,
+                text: new_text,
+            },
+        )
+        .await
+        .map_err(|_| internal())?;
+        ctx.events.extend(events);
+        text_outcome(
+            ctx,
+            "edit_chapter_text",
+            format!("修改章节《{}》正文", chapter.title),
+            json!({"chapter_id": chapter.id, "version": result.version, "word_count": result.word_count}),
+        )
+    }
+    async fn preview(&self, ctx: &mut ToolCtx<'_>, input: Value) -> Result<Value, ToolError> {
+        let input: EditChapterTextInput = decode(input)?;
+        let chapter = resolve_chapter(ctx, book_id(ctx)?, &input.chapter).await?;
+        let (_, before) = apply_text_edits(&chapter, &input.edits, ctx)?;
+        let (after, _) = apply_text_edits(&chapter, &input.edits, ctx)?;
+        Ok(json!({"kind":"diff","label":chapter.title,"before":render_text(&before),"after":after}))
+    }
+}
+
+fn apply_edits(text: &str, edits: &[FindReplace], _ctx: &ToolCtx<'_>) -> Result<String, ToolError> {
+    let mut value = text.to_owned();
+    for edit in edits {
+        let count = value.matches(&edit.find).count();
+        if edit.find.is_empty() || count != 1 {
+            return Err(ToolError::new(ToolErrorKind::FindFailed)
+                .with("doc_label", "text".to_owned())
+                .with("find", edit.find.clone())
+                .with("count", count as i64));
+        }
+        value = value.replacen(&edit.find, &edit.replace, 1);
+    }
+    Ok(value)
+}
+fn render_text(content: &ChapterContent) -> String {
+    content
+        .paragraphs
+        .iter()
+        .map(|p| p.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+fn apply_text_edits(
+    chapter: &chapters::Model,
+    edits: &[FindReplace],
+    _ctx: &ToolCtx<'_>,
+) -> Result<(String, ChapterContent), ToolError> {
+    let before = chapter.content.clone().into_inner();
+    let mut text = render_text(&before);
+    for edit in edits {
+        let count = text.matches(&edit.find).count();
+        if edit.find.is_empty() || count != 1 {
+            return Err(ToolError::new(ToolErrorKind::FindFailed)
+                .with("doc_label", "text".to_owned())
+                .with("find", edit.find.clone())
+                .with("count", count as i64));
+        }
+        text = text.replacen(&edit.find, &edit.replace, 1);
+    }
+    Ok((text, before))
+}
+async fn resolve_chapter(
+    ctx: &ToolCtx<'_>,
+    book_id: i32,
+    raw: &str,
+) -> Result<chapters::Model, ToolError> {
+    resolve_chapter_conn(ctx.tx, book_id, raw).await
+}
+async fn resolve_chapter_conn(
+    conn: &impl sea_orm::ConnectionTrait,
+    book_id: i32,
+    raw: &str,
+) -> Result<chapters::Model, ToolError> {
+    let chapter = if let Some(id) = raw.strip_prefix('#').and_then(|v| v.parse::<i32>().ok()) {
+        chapters::Entity::find_by_id(id)
+            .one(conn)
+            .await
+            .map_err(|_| internal())?
+    } else {
+        let number = raw
+            .parse::<i32>()
+            .map_err(|_| validation("chapter must be a number or #id"))?;
+        let track = crate::db::entities::tracks::Entity::find()
+            .filter(crate::db::entities::tracks::COLUMN.book_id.eq(book_id))
+            .filter(
+                crate::db::entities::tracks::COLUMN
+                    .kind
+                    .eq(crate::db::json::TrackKind::Main),
+            )
+            .one(conn)
+            .await
+            .map_err(|_| internal())?;
+        match track {
+            Some(track) => chapters::Entity::find()
+                .filter(chapters::COLUMN.book_id.eq(book_id))
+                .filter(chapters::COLUMN.track_id.eq(track.id))
+                .filter(chapters::COLUMN.ord.eq(number))
+                .one(conn)
+                .await
+                .map_err(|_| internal())?,
+            None => None,
+        }
+    };
+    chapter.filter(|c| c.book_id == book_id).ok_or_else(|| {
+        ToolError::new(ToolErrorKind::ChapterNotFound).with("chapter", raw.to_owned())
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct DeleteCanonInput {
+    target_type: String,
+    id: i32,
+    note: String,
+}
+
+pub struct DeleteCanonRecordTool;
+#[async_trait::async_trait]
+impl ToolHandler for DeleteCanonRecordTool {
+    fn name(&self) -> &'static str {
+        "delete_canon_record"
+    }
+    fn kind(&self) -> ToolKind {
+        ToolKind::Canon
+    }
+    async fn execute(
+        &self,
+        ctx: &mut ToolCtx<'_>,
+        input: Value,
+        _prepared: Prepared,
+    ) -> Result<ToolOutcome, ToolError> {
+        let input: DeleteCanonInput = decode(input)?;
+        let systems = crate::agent::session::canon_systems_of(ctx.session);
+        let on = match input.target_type.as_str() {
+            "entity" | "relation" => systems.entities,
+            "timeline_event" => systems.timeline,
+            "memory_note" => systems.memory,
+            "foreshadowing" => systems.foreshadowing,
+            _ => return Err(validation("unknown target_type")),
+        };
+        if !on {
+            return Err(ToolError::new(ToolErrorKind::SystemOff).with("system", input.target_type));
+        }
+        let mut write = write_context(ctx);
+        write.note = Some(input.note.clone());
+        let events = match input.target_type.as_str() {
+            "entity" => crate::services::canon::entity::delete_inner(ctx.tx, &write, input.id)
+                .await
+                .map_err(|_| internal())?,
+            "relation" => crate::services::canon::relation::delete_inner(ctx.tx, &write, input.id)
+                .await
+                .map_err(|_| internal())?,
+            "timeline_event" => {
+                crate::services::canon::timeline::delete_inner(ctx.tx, &write, input.id)
+                    .await
+                    .map_err(|_| internal())?
+            }
+            "memory_note" => crate::services::canon::note::delete_inner(ctx.tx, &write, input.id)
+                .await
+                .map_err(|_| internal())?,
+            "foreshadowing" => {
+                crate::services::canon::foreshadow::delete_inner(ctx.tx, &write, input.id)
+                    .await
+                    .map_err(|_| internal())?
+            }
+            _ => unreachable!(),
+        };
+        ctx.events.extend(events);
+        text_outcome(
+            ctx,
+            "delete_canon_record",
+            format!("删除{} #{}", input.target_type, input.id),
+            json!({"note": input.note}),
+        )
+    }
+    async fn preview(&self, ctx: &mut ToolCtx<'_>, input: Value) -> Result<Value, ToolError> {
+        let input: DeleteCanonInput = decode(input)?;
+        let target = if input.target_type == "entity" {
+            crate::services::canon::load_entity(ctx.tx, input.id)
+                .await
+                .map(|entity| entity.name)
+                .unwrap_or_else(|_| format!("#{}", input.id))
+        } else {
+            format!("#{}", input.id)
+        };
+        Ok(
+            json!({"kind":"action","label":"delete_canon_record","text":format!("删除{} {}：{}", input.target_type, target, input.note)}),
+        )
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct GoalInput {
+    level: crate::db::json::GoalLevel,
+    title: String,
+    purpose: String,
+    #[serde(default)]
+    parent_id: Option<i32>,
+    #[serde(default)]
+    status: Option<GoalStatus>,
+    #[serde(default)]
+    chapter_from: Option<i32>,
+    #[serde(default)]
+    chapter_to: Option<i32>,
+    #[serde(default)]
+    conditions: Option<Vec<Value>>,
+    #[serde(default)]
+    entity_ids: Option<Vec<i32>>,
+    #[serde(default)]
+    event_ids: Option<Vec<i32>>,
+    #[serde(default)]
+    foreshadowing_ids: Option<Vec<i32>>,
+    #[serde(default)]
+    note: String,
+}
+pub struct CreateGoalTool;
+#[async_trait::async_trait]
+impl ToolHandler for CreateGoalTool {
+    fn name(&self) -> &'static str {
+        "create_goal"
+    }
+    fn kind(&self) -> ToolKind {
+        ToolKind::Canon
+    }
+    async fn execute(
+        &self,
+        ctx: &mut ToolCtx<'_>,
+        input: Value,
+        _prepared: Prepared,
+    ) -> Result<ToolOutcome, ToolError> {
+        let input: GoalInput = decode(input)?;
+        let book_id = book_id(ctx)?;
+        let conditions: Option<Vec<GoalCondition>> = input
+            .conditions
+            .map(|v| {
+                serde_json::from_value(Value::Array(v))
+                    .map_err(|_| validation("invalid conditions"))
+            })
+            .transpose()?;
+        let (dto, events) = goal_service::create_inner_with_note(
+            ctx.tx,
+            &write_context(ctx),
+            book_id,
+            GoalNodeInput {
+                track_id: None,
+                level: input.level,
+                parent_id: input.parent_id,
+                title: input.title,
+                purpose: input.purpose,
+                status: input.status,
+                chapter_from: input.chapter_from,
+                chapter_to: input.chapter_to,
+                conditions,
+                entity_ids: input.entity_ids,
+                event_ids: input.event_ids,
+                foreshadowing_ids: input.foreshadowing_ids,
+            },
+            &input.note,
+        )
+        .await
+        .map_err(|_| internal())?;
+        ctx.events.extend(events);
+        text_outcome(
+            ctx,
+            "create_goal",
+            format!("创建目标 #{}", dto.id),
+            json!({"node": dto.id}),
+        )
+    }
+    async fn preview(&self, _ctx: &mut ToolCtx<'_>, input: Value) -> Result<Value, ToolError> {
+        let input: GoalInput = decode(input)?;
+        Ok(
+            json!({"kind":"fields","label":"create_goal","rows":[{"field":"title","after":input.title},{"field":"purpose","after":input.purpose},{"field":"level","after":input.level}]}),
+        )
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateGoalInput {
+    node: i32,
+    note: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    purpose: Option<String>,
+    #[serde(default)]
+    status: Option<GoalStatus>,
+    #[serde(default)]
+    confirm_open_children: Option<bool>,
+}
+pub struct UpdateGoalTool;
+#[async_trait::async_trait]
+impl ToolHandler for UpdateGoalTool {
+    fn name(&self) -> &'static str {
+        "update_goal"
+    }
+    fn kind(&self) -> ToolKind {
+        ToolKind::Canon
+    }
+    async fn execute(
+        &self,
+        ctx: &mut ToolCtx<'_>,
+        input: Value,
+        _prepared: Prepared,
+    ) -> Result<ToolOutcome, ToolError> {
+        let input: UpdateGoalInput = decode(input)?;
+        let patch = GoalNodePatch {
+            title: input.title,
+            purpose: input.purpose,
+            status: input.status,
+            confirm_open_children: input.confirm_open_children,
+            ..Default::default()
+        };
+        let (dto, events) =
+            goal_service::update_inner(ctx.tx, &write_context(ctx), input.node, patch)
+                .await
+                .map_err(|error| match error {
+                    crate::services::canon::CanonError::App(app)
+                        if app.code == crate::error::ErrorCode::GoalOpenChildren =>
+                    {
+                        ToolError::new(ToolErrorKind::GoalOpenChildren).with("node", input.node)
+                    }
+                    _ => internal(),
+                })?;
+        ctx.events.extend(events);
+        text_outcome(
+            ctx,
+            "update_goal",
+            format!("更新目标 #{}", dto.id),
+            json!({"node": dto.id, "note": input.note}),
+        )
+    }
+    async fn preview(&self, ctx: &mut ToolCtx<'_>, input: Value) -> Result<Value, ToolError> {
+        let input: UpdateGoalInput = decode(input)?;
+        let book_id = book_id(ctx)?;
+        let nodes = goal_service::list(
+            ctx.tx,
+            book_id,
+            &crate::api::dto::goals::GoalQuery {
+                track_id: None,
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|_| internal())?;
+        let current = nodes
+            .into_iter()
+            .find(|node| node.id == input.node)
+            .ok_or_else(internal)?;
+        let mut rows = Vec::new();
+        if let Some(value) = input.title {
+            rows.push(json!({"field":"title","before":current.title,"after":value}));
+        }
+        if let Some(value) = input.purpose {
+            rows.push(json!({"field":"purpose","before":current.purpose,"after":value}));
+        }
+        if let Some(value) = input.status {
+            rows.push(json!({"field":"status","before":current.status,"after":value}));
+        }
+        Ok(json!({"kind":"fields","label":current.title,"rows":rows}))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateResearchInput {
+    topic: String,
+    requirements: String,
+    scope: String,
+}
+pub struct CreateResearchTaskTool;
+#[async_trait::async_trait]
+impl ToolHandler for CreateResearchTaskTool {
+    fn name(&self) -> &'static str {
+        "create_research_task"
+    }
+    fn kind(&self) -> ToolKind {
+        ToolKind::Canon
+    }
+    async fn execute(
+        &self,
+        ctx: &mut ToolCtx<'_>,
+        input: Value,
+        _prepared: Prepared,
+    ) -> Result<ToolOutcome, ToolError> {
+        let input: CreateResearchInput = decode(input)?;
+        let (dto, events, _) = research::create_inner(
+            ctx.tx,
+            ResearchTaskCreate {
+                book_id: Some(book_id(ctx)?),
+                check_id: None,
+                scope_name: input.scope,
+                topic: input.topic,
+                requirements: input.requirements,
+                language: None,
+            },
+        )
+        .await
+        .map_err(|_| internal())?;
+        ctx.events.extend(events);
+        text_outcome(
+            ctx,
+            "create_research_task",
+            format!("创建资料任务 #{}", dto.id),
+            json!({"task": dto.id}),
+        )
+    }
+    async fn preview(&self, _ctx: &mut ToolCtx<'_>, input: Value) -> Result<Value, ToolError> {
+        let input: CreateResearchInput = decode(input)?;
+        Ok(
+            json!({"kind":"fields","label":"create_research_task","rows":[{"field":"topic","after":input.topic},{"field":"scope","after":input.scope}]}),
+        )
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateResearchInput {
+    task: i32,
+    #[serde(default)]
+    topic: Option<String>,
+    #[serde(default)]
+    requirements: Option<String>,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+}
+pub struct UpdateResearchTaskTool;
+#[async_trait::async_trait]
+impl ToolHandler for UpdateResearchTaskTool {
+    fn name(&self) -> &'static str {
+        "update_research_task"
+    }
+    fn kind(&self) -> ToolKind {
+        ToolKind::Canon
+    }
+    async fn execute(
+        &self,
+        ctx: &mut ToolCtx<'_>,
+        input: Value,
+        _prepared: Prepared,
+    ) -> Result<ToolOutcome, ToolError> {
+        let input: UpdateResearchInput = decode(input)?;
+        let status = input
+            .status
+            .as_deref()
+            .map(|s| match s {
+                "ready" => Ok(ResearchTaskStatus::Ready),
+                "deferred" => Ok(ResearchTaskStatus::Deferred),
+                _ => Err(validation("status must be ready or deferred")),
+            })
+            .transpose()?;
+        let (dto, events) = if input.status.as_deref() == Some("deferred") {
+            research::transition_inner(ctx.tx, input.task, Transition::Defer).await
+        } else if input.status.as_deref() == Some("ready") {
+            // `ready` confirms a draft through PATCH; a deferred task resumes through the
+            // dedicated transition.
+            match research::patch_inner(
+                ctx.tx,
+                input.task,
+                ResearchTaskPatch {
+                    topic: input.topic,
+                    requirements: input.requirements,
+                    scope_name: input.scope,
+                    status: Some(ResearchTaskStatus::Ready),
+                },
+            )
+            .await
+            {
+                Ok(result) => Ok(result),
+                Err(_) => research::transition_inner(ctx.tx, input.task, Transition::Resume).await,
+            }
+        } else {
+            research::patch_inner(
+                ctx.tx,
+                input.task,
+                ResearchTaskPatch {
+                    topic: input.topic,
+                    requirements: input.requirements,
+                    scope_name: input.scope,
+                    status,
+                },
+            )
+            .await
+        }
+        .map_err(|_| internal())?;
+        ctx.events.extend(events);
+        text_outcome(
+            ctx,
+            "update_research_task",
+            format!("更新资料任务 #{}", dto.id),
+            json!({"task": dto.id}),
+        )
+    }
+    async fn preview(&self, ctx: &mut ToolCtx<'_>, input: Value) -> Result<Value, ToolError> {
+        let input: UpdateResearchInput = decode(input)?;
+        let current = research::get(ctx.tx, input.task)
+            .await
+            .map_err(|_| internal())?;
+        let mut rows = Vec::new();
+        if let Some(value) = input.topic {
+            rows.push(json!({"field":"topic","before":current.topic,"after":value}));
+        }
+        if let Some(value) = input.requirements {
+            rows.push(json!({"field":"requirements","before":current.requirements,"after":value}));
+        }
+        if let Some(value) = input.scope {
+            rows.push(json!({"field":"scope","before":current.scope_name,"after":value}));
+        }
+        if let Some(value) = input.status {
+            rows.push(json!({"field":"status","before":current.status,"after":value}));
+        }
+        Ok(json!({"kind":"fields","label":current.topic,"rows":rows}))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct DeleteResearchInput {
+    task: i32,
+}
+pub struct DeleteResearchTaskTool;
+#[async_trait::async_trait]
+impl ToolHandler for DeleteResearchTaskTool {
+    fn name(&self) -> &'static str {
+        "delete_research_task"
+    }
+    fn kind(&self) -> ToolKind {
+        ToolKind::Canon
+    }
+    async fn execute(
+        &self,
+        ctx: &mut ToolCtx<'_>,
+        input: Value,
+        _prepared: Prepared,
+    ) -> Result<ToolOutcome, ToolError> {
+        let input: DeleteResearchInput = decode(input)?;
+        let events = research::delete_inner(ctx.tx, input.task)
+            .await
+            .map_err(|_| internal())?;
+        ctx.events.extend(events);
+        text_outcome(
+            ctx,
+            "delete_research_task",
+            format!("删除资料任务 #{}", input.task),
+            json!({}),
+        )
+    }
+    async fn preview(&self, ctx: &mut ToolCtx<'_>, input: Value) -> Result<Value, ToolError> {
+        let input: DeleteResearchInput = decode(input)?;
+        let current = research::get(ctx.tx, input.task)
+            .await
+            .map_err(|_| internal())?;
+        Ok(
+            json!({"kind":"action","label":"delete_research_task","text":format!("删除资料任务 #{}《{}》（{}）", input.task, current.topic, current.status)}),
+        )
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct AddKnowledgeInput {
+    scope: String,
+    title: String,
+    content: String,
+    #[serde(default)]
+    source_urls: Vec<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+pub struct AddKnowledgeEntryTool;
+#[async_trait::async_trait]
+impl ToolHandler for AddKnowledgeEntryTool {
+    fn name(&self) -> &'static str {
+        "add_knowledge_entry"
+    }
+    fn kind(&self) -> ToolKind {
+        ToolKind::Knowledge
+    }
+    async fn execute(
+        &self,
+        ctx: &mut ToolCtx<'_>,
+        input: Value,
+        _prepared: Prepared,
+    ) -> Result<ToolOutcome, ToolError> {
+        let input: AddKnowledgeInput = decode(input)?;
+        let book_id = book_id(ctx)?;
+        let scopes = knowledge::book_scopes(ctx.tx, book_id)
+            .await
+            .map_err(|_| internal())?;
+        let scope = scopes
+            .into_iter()
+            .find(|scope| scope.name == input.scope)
+            .ok_or_else(|| {
+                ToolError::new(ToolErrorKind::ScopeNotFound)
+                    .with("name", input.scope.clone())
+                    .with("available", Vec::<String>::new())
+            })?;
+        let (dto, events) = knowledge::create_entry_inner(
+            ctx.tx,
+            scope.id,
+            EntryInput {
+                title: input.title,
+                content: input.content,
+                source_urls: input.source_urls,
+                tags: input.tags,
+            },
+        )
+        .await
+        .map_err(|_| internal())?;
+        ctx.events.extend(events);
+        text_outcome(
+            ctx,
+            "add_knowledge_entry",
+            format!("添加知识条目《{}》", dto.title),
+            json!({"entry": dto.id, "scope": scope.name, "shared": true}),
+        )
+    }
+    async fn preview(&self, _ctx: &mut ToolCtx<'_>, input: Value) -> Result<Value, ToolError> {
+        let input: AddKnowledgeInput = decode(input)?;
+        Ok(
+            json!({"kind":"fields","label":"add_knowledge_entry","shared":true,"rows":[{"field":"scope","after":input.scope},{"field":"title","after":input.title},{"field":"content","after":input.content}]}),
+        )
+    }
+}
+
+pub fn all() -> Vec<std::sync::Arc<dyn ToolHandler>> {
+    vec![
+        std::sync::Arc::new(CreateChapterTool),
+        std::sync::Arc::new(EditChapterTool),
+        std::sync::Arc::new(EditChapterTextTool),
+        std::sync::Arc::new(DeleteCanonRecordTool),
+        std::sync::Arc::new(CreateGoalTool),
+        std::sync::Arc::new(UpdateGoalTool),
+        std::sync::Arc::new(CreateResearchTaskTool),
+        std::sync::Arc::new(UpdateResearchTaskTool),
+        std::sync::Arc::new(DeleteResearchTaskTool),
+        std::sync::Arc::new(AddKnowledgeEntryTool),
+    ]
+}

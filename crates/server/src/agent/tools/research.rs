@@ -462,6 +462,32 @@ impl ToolHandler for UpdateKnowledgeEntryTool {
         Ok(Prepared::None)
     }
 
+    async fn preview(&self, ctx: &mut ToolCtx<'_>, input: Value) -> Result<Value, ToolError> {
+        let input: UpdateEntryInput = decode(input)?;
+        let existing = knowledge_entries::Entity::find_by_id(input.entry_id)
+            .one(ctx.tx)
+            .await
+            .map_err(|_| internal())?
+            .ok_or_else(|| not_found(ctx.prompts, "knowledge_entry", input.entry_id))?;
+        let before = existing.content.clone();
+        let after = if let Some(content) = input.content {
+            content
+        } else if let Some(edits) = input.edits {
+            let mut working = before.clone();
+            for edit in edits {
+                let count = working.matches(&edit.find).count();
+                if count != 1 {
+                    return Err(find_failed(ctx.prompts, &edit.find, count));
+                }
+                working = working.replacen(&edit.find, &edit.replace, 1);
+            }
+            working
+        } else {
+            before.clone()
+        };
+        Ok(json!({"kind": "diff", "label": existing.title, "before": before, "after": after}))
+    }
+
     async fn execute(
         &self,
         ctx: &mut ToolCtx<'_>,

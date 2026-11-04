@@ -52,7 +52,7 @@ result.error result.truncated result.entity_card result.entity_list result.relat
 result.foreshadowing_list result.search_hits result.knowledge_entry result.chapter_text result.draft_text
 result.draft_edit result.writer_control result.submit_review result.canon_write result.finish_maintenance
 result.ask_user result.request_review result.conception_write result.web_search result.web_fetch
-result.knowledge_write result.target_scope result.finish_research result.change_declined result.chapter_view result.setting_doc_view result.characters_view result.goal_list result.research_list result.session_list shared.label shared.chapter_label""".split()
+result.knowledge_write result.target_scope result.finish_research result.change_declined result.chapter_view result.setting_doc_view result.characters_view result.goal_list result.research_list result.session_list result.book_agent_write shared.label shared.chapter_label""".split()
 for k in expected:
     if k not in templates:
         errors.append(f"missing expected key {k}")
@@ -232,11 +232,12 @@ S = dict(book=book, track=track_main, chapter=chapter, settings=settings, memory
          words=320, open_sessions=[], label="第1章", part="text", content="# 设定文档", offset=0,
          end=5, total=5, next_offset=None, revision=1,
          designs=[dict(rank=1, name="林凡", role_label="主角", summary="", profile="## 身份\n弟子", entity_id=None)],
-         nodes=[dict(id=1, level="goal", title="目标", purpose="目的", status="active", chapter_from=None, chapter_to=None)],
+         nodes=[dict(id=1, level="goal", title="目标", purpose="目的", status="active", chapter_from=None, chapter_to=None, ready=False, closable=False)],
          tasks=[dict(id=1, kind="topic", topic="主题", scope="范围", status="ready", entries=0)],
-         sessions=[dict(id=1, kind="book_agent", chapter_id=None, status="idle", created_at="2026-01-01T00:00:00Z")],
+         sessions=[dict(id=1, kind="book_agent", chapter_id=None, chapter_label=None, status="idle", created_at="2026-01-01T00:00:00Z")],
          characters_omitted=0, sessions_omitted=0, proposals_omitted=0,
-         index={"tracks": [{"label": "", "kind": "main", "chapters": [{"number": 1, "title": "夜雨", "status": "official", "words": 3200, "canon_status": "synced"}]}], "chapters_total": 1, "chapters_omitted": 0, "characters_omitted": 0, "sessions_omitted": 0, "proposals_omitted": 0, "setting_docs": [{"label": "outline", "characters": 12, "revision": 1}, {"label": "world", "characters": 30, "revision": 2}, {"label": "protagonist", "characters": 18, "revision": 1}], "characters": [{"rank": 1, "name": "林凡", "role_label": "主角"}], "canon": {"entities": 3, "timeline": 2, "memory": 1, "foreshadowing": 1, "goals": 2}, "goals": {"open": 1, "ready": 0}, "research": [{"status": "done", "count": 1}], "sessions": [{"id": 4, "kind": "chapter_write", "status": "paused"}], "proposals": [{"id": 2, "target_type": "setting_doc", "target_kind": "world"}], "off_systems": ["foreshadowing"]}, request="请把世界设定里关于城门的部分写得更具体，并在需要时查看相关资料。")
+         index={"tracks": [{"label": "", "kind": "main", "chapters": [{"number": 1, "title": "夜雨", "status": "official", "words": 3200, "canon_status": "synced"}]}], "chapters_total": 1, "chapters_omitted": 0, "characters_omitted": 0, "sessions_omitted": 0, "proposals_omitted": 0, "setting_docs": [{"label": "outline", "characters": 12, "revision": 1}, {"label": "world", "characters": 30, "revision": 2}, {"label": "protagonist", "characters": 18, "revision": 1}], "characters": [{"rank": 1, "name": "林凡", "role_label": "主角"}], "canon": {"entities": 3, "timeline": 2, "memory": 1, "foreshadowing": 1, "goals": 2}, "goals": {"open": 1, "ready": 0}, "research": [{"status": "done", "count": 1}], "sessions": [{"id": 4, "kind": "chapter_write", "status": "paused"}], "proposals": [{"id": 2, "target_type": "setting_doc", "target_kind": "world"}], "off_systems": ["foreshadowing"]}, request="请把世界设定里关于城门的部分写得更具体，并在需要时查看相关资料。",
+         action="edit_chapter_text", summary="修改章节", details="第1章")
 
 variants = {
   "block.settings": [dict(), dict(settings=settings_empty, book=dict(book, genre=""))],

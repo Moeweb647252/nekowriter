@@ -2196,6 +2196,9 @@ move_after、move_before 不能同时提供，请只用其中一个。
 ===== result.session_list [0] =====
 #1 book_agent · idle · 2026-01-01T00:00:00Z
 
+===== result.book_agent_write [0] =====
+修改章节（第1章）
+
 ===== tool.add_foreshadowing [0] =====
 记录正文中新埋下的伏笔。
 

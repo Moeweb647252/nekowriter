@@ -336,6 +336,8 @@ async fn a_reused_canon_action_holds_in_review_mode_and_writes_after_approval() 
         .find(|call| call["name"] == "create_entity")
         .expect("held canon call");
     assert_eq!(call["status"], "held");
+    assert_eq!(call["ui"]["preview"]["kind"], "fields");
+    assert_ne!(call["ui"]["preview"]["rows"][0]["field"], "input");
     let count = app
         .state()
         .db()
@@ -451,4 +453,69 @@ async fn message_boundary_and_missing_model_are_checked() {
     let (status, body) = start_agent(&no_model, book_id, json!({"message": "hi"})).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert_eq!(body["error"]["code"], "model.missing_role", "{body}");
+}
+
+#[tokio::test]
+async fn approval_reruns_prepare_and_refuses_a_chapter_locked_since_the_hold() {
+    let mut app = TestApp::new().await;
+    let _model = setup_models(&app, true).await;
+    let book = app.create_book("Book").await;
+    let book_id = book["id"].as_i64().unwrap() as i32;
+    let track = app.get(&format!("/api/books/{book_id}/tracks")).await.1;
+    let track_id = track[0]["id"].as_i64().unwrap() as i32;
+    let chapter = app.create_chapter(track_id, "Locked chapter").await;
+    let chapter_id = chapter["id"].as_i64().unwrap() as i32;
+    app.execute(&format!(
+        "UPDATE chapters SET content = '{{\"paragraphs\":[{{\"pid\":\"p1\",\"text\":\"old text\"}}],\"next_pid\":2,\"tail_open\":false}}', content_version = 1 WHERE id = {chapter_id}"
+    )).await;
+    let _provider = app.set_provider(ScriptedProvider::new(vec![
+        ScriptStep::new().tool(
+            "edit_chapter_text",
+            json!({"chapter":"1","edits":[{"find":"old","replace":"new"}]}),
+        ),
+        ScriptStep::new().text("Done."),
+    ]));
+    let (status, body) = start_agent(&app, book_id, json!({"message": "Edit the chapter."})).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let session_id = body["session_id"].as_i64().unwrap();
+    let _held = wait_status(&app, session_id, "held").await;
+    let snapshot = r#"{"provider_id":0,"protocol":"mock","base_url":"","extra_headers":{},"model":"","context_window":0,"max_output_tokens":0,"options":null}"#;
+    app.execute(&format!(
+        "INSERT INTO agent_sessions(id, book_id, chapter_id, role, kind, model_snapshot, system_prompt, tools, status, created_at, updated_at) \
+         VALUES (900, {book_id}, {chapter_id}, 'writer', 'chapter_write', '{snapshot}', '', '[]', 'running', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+    )).await;
+    let (status, body) = app
+        .post(&format!("/api/sessions/{session_id}/resume"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let _ = wait_status(&app, session_id, "idle").await;
+    let snapshot = app.get(&format!("/api/sessions/{session_id}")).await.1;
+    let call = snapshot["tool_calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|call| call["name"] == "edit_chapter_text")
+        .expect("edit call");
+    assert_eq!(call["status"], "error");
+    assert!(
+        call["result_text"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("章节正被"),
+        "{call}"
+    );
+    let content = app
+        .state()
+        .db()
+        .conn()
+        .query_one_raw(sea_orm::Statement::from_string(
+            sea_orm::DbBackend::Sqlite,
+            format!("SELECT content FROM chapters WHERE id = {chapter_id}"),
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get::<String>("", "content")
+        .unwrap();
+    assert!(content.contains("old text"), "{content}");
 }

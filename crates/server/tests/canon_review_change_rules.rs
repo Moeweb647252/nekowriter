@@ -141,6 +141,7 @@ async fn the_change_actor_names_who_wrote() {
         actor: ChangeActor::Agent,
         session_id: None,
         chapter_id: Some(chapter_id),
+        note: None,
         revert: None,
     };
     let (dto, events) = canon::write(app.db(), move |tx| {

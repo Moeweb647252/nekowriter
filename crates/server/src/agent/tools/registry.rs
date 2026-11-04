@@ -511,8 +511,11 @@ impl ToolRegistry {
         for handler in super::research::all() {
             handlers.insert(handler.name().to_owned(), handler);
         }
-        // The book agent's read tools (M21 21.4).
+        // The book agent's read tools (M21 21.4) and write tools (M21 21.5).
         for handler in super::assistant::all() {
+            handlers.insert(handler.name().to_owned(), handler);
+        }
+        for handler in super::assistant_write::all() {
             handlers.insert(handler.name().to_owned(), handler);
         }
         // The conception tools of M9 (spec/05 §7).

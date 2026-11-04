@@ -36,6 +36,12 @@ text = '''
 找不到章节「{{ query }}」。写法："12"（当前轨道第12章）、"main 12"（正文第12章）或 "#编号"。
 {%- elif code == "chapter_not_official" -%}
 {{ label }}尚未定稿，不能读取。
+{%- elif code == "chapter_locked" -%}
+章节正被写作或细纲会话 #{{ session_id }} 使用，暂时不能修改。请等待它结束，或在会话结束后重试。
+{%- elif code == "system_off" -%}
+档案系统「{{ system }}」已关闭，不能执行该操作。
+{%- elif code == "goal_open_children" -%}
+目标 #{{ node }} 仍有未完成的子节点；如确认要完成它，请带上 confirm_open_children=true 重试。
 {%- elif code == "no_knowledge_scope" -%}
 本书没有可检索的知识库范围。
 {%- elif code == "scope_excluded" -%}
@@ -521,7 +527,7 @@ vars = ["nodes"]
 title_en = "Result — goals"
 title_zh = "结果 · 目标列表"
 text = '''
-{% for node in nodes %}#{{ node.id }} [{{ node.level }}] {{ node.title }} — {{ node.purpose }}（{{ node.status }}{% if node.chapter_from is not none %}，第{{ node.chapter_from }}章{% endif %}{% if node.chapter_to is not none %}–第{{ node.chapter_to }}章{% endif %}）
+{% for node in nodes %}#{{ node.id }} [{{ node.level }}] {{ node.title }} — {{ node.purpose }}（{{ node.status }}{% if node.ready %}，可推进{% endif %}{% if node.closable %}，可完成{% endif %}{% if node.chapter_from is not none %}，第{{ node.chapter_from }}章{% endif %}{% if node.chapter_to is not none %}–第{{ node.chapter_to }}章{% endif %}）
 {% else %}（没有目标节点）
 {% endfor %}
 '''
@@ -547,7 +553,19 @@ vars = ["sessions"]
 title_en = "Result — sessions"
 title_zh = "结果 · 会话列表"
 text = '''
-{% for session in sessions %}#{{ session.id }} {{ session.kind }}{% if session.chapter_id %} · 章节 #{{ session.chapter_id }}{% endif %} · {{ session.status }} · {{ session.created_at }}
+{% for session in sessions %}#{{ session.id }} {{ session.kind }}{% if session.chapter_label %} · {{ session.chapter_label }}{% endif %} · {{ session.status }} · {{ session.created_at }}
 {% else %}（没有会话）
 {% endfor %}
+'''
+
+
+[[prompt]]
+key = "result.book_agent_write"
+kind = "result"
+agent = "shared"
+vars = ["action", "summary", "details"]
+title_en = "Result — book-agent write"
+title_zh = "工具结果 · 书代理写入"
+text = '''
+{{ summary }}{% if details %}（{{ details }}）{% endif %}
 '''

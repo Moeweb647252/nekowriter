@@ -1573,9 +1573,19 @@ pub(crate) async fn approve_held_call(
         state,
         events: Vec::new(),
     };
-    let mut outcome = match handler.execute(&mut tool_ctx, input, Prepared::None).await {
-        Ok(outcome) => outcome,
+    // Approval re-runs `prepare` against current data before `execute`; locking checks (for
+    // example `edit_chapter_text`) therefore cannot be skipped by the held window (D-169).
+    let prepare_ctx = PrepareCtx {
+        db: state.db().conn(),
+        session,
+        state,
+    };
+    let mut outcome = match handler.prepare(&prepare_ctx, &input).await {
         Err(error) => ToolOutcome::error(prompts, &error),
+        Ok(prepared) => match handler.execute(&mut tool_ctx, input, prepared).await {
+            Ok(outcome) => outcome,
+            Err(error) => ToolOutcome::error(prompts, &error),
+        },
     };
     outcome.effects.approval = false;
     let running = mark_approval_running(tx, session).await?;
