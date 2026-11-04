@@ -3893,7 +3893,10 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     - It is a conversation: a text reply goes `idle`, there is no nudge and no rollover, and
       **End conversation** (`POST /sessions/:id/end`) completes it.
     - `RoleModels.assistant` falls back to the writer like the planner.
-    - 0012 rebuilds `agent_sessions` with the guards of 0004.
+    - 0012 rebuilds `agent_sessions` with the guards of 0004. Its final column order is
+      spec/02 §2's order: `write_mode` sits before 0010's three limits, and `canon_systems` is
+      last; it is deliberately not "old order plus `write_mode`". The migration test pins that
+      order.
   - **Write mode** is a per-session column, `review` (default) or `full`, PATCHable at any time,
     with no model notice. "Review mode" is read as an approval stop before each change, not as
     proposals: the author's wording asks for a mode in the conversation, and proposals would leave
