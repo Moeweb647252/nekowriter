@@ -952,6 +952,11 @@ pub enum StoredBlock {
         /// Place a cache breakpoint after this block.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cache: Option<bool>,
+        /// Where the runtime took this block from (D-171): a kickoff block's prompt key, or
+        /// `edit_report` / `inbox.user_message` / `inbox.notice` for an idle delivery's sections.
+        /// Display only; never sent to a provider.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
     },
     /// Display only; replay uses `provider_payload`.
     Reasoning { text: String },
@@ -1677,10 +1682,24 @@ mod tests {
     /// `agent_messages.content`.
     #[test]
     fn stored_block_round_trip() {
+        let old: StoredBlock = serde_json::from_value(json!({
+            "type": "text",
+            "text": "an old row without a source"
+        }))
+        .expect("an old text block deserializes");
+        assert_eq!(
+            old,
+            StoredBlock::Text {
+                text: "an old row without a source".to_owned(),
+                cache: None,
+                source: None,
+            }
+        );
         let blocks = vec![
             StoredBlock::Text {
                 text: "hello".to_owned(),
                 cache: Some(true),
+                source: None,
             },
             StoredBlock::Reasoning {
                 text: "thinking".to_owned(),

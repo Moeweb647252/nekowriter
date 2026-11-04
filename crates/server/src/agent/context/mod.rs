@@ -476,6 +476,7 @@ pub async fn assemble_kickoff(
             } else {
                 None
             },
+            source: Some(key.to_owned()),
         });
     }
     Ok(blocks)
@@ -2084,7 +2085,7 @@ pub async fn build_request(
             let blocks = blocks
                 .into_iter()
                 .filter_map(|block| match block {
-                    StoredBlock::Text { text, cache } => Some(nekowriter_llm::TextBlock {
+                    StoredBlock::Text { text, cache, .. } => Some(nekowriter_llm::TextBlock {
                         text,
                         cache: cache.unwrap_or(false),
                     }),
@@ -2442,6 +2443,7 @@ pub async fn rollover(
                         } else {
                             None
                         },
+                        source: Some(key.to_owned()),
                     });
                 }
             }

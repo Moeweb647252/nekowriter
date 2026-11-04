@@ -737,7 +737,7 @@ async fn full_writer_kickoff_with_two_prior_chapters_reports_blocks_tags_and_bud
     println!("=== writer kickoff block order ===");
     let mut recent_chars = 0usize;
     for (index, block) in blocks.iter().enumerate() {
-        let StoredBlock::Text { text, cache } = block else {
+        let StoredBlock::Text { text, cache, .. } = block else {
             panic!("unexpected non-text block");
         };
         let first_line = text.lines().next().unwrap_or_default();

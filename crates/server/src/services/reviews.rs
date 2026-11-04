@@ -243,6 +243,7 @@ pub async fn rereview(
                 vec![StoredBlock::Text {
                     text: rendered.text,
                     cache: None,
+                    source: None,
                 }],
             )
             .await?;

@@ -563,30 +563,23 @@ fn events_for_new_session(
 ) {
 }
 
-/// Rough token estimate of the kickoff: CJK characters × 1.0 + other characters ÷ 4 (spec/03 §10).
+/// Rough token estimate of the kickoff, using the provider-neutral estimator (spec/03 §10).
 fn kickoff_too_large(session: &agent_sessions::Model, kickoff: &agent_messages::Model) -> bool {
     let snapshot = session.model_snapshot.clone().into_inner();
     let blocks: Vec<StoredBlock> = kickoff.content.clone().into_inner();
-    let mut estimate = 0i64;
-    for block in blocks {
-        if let StoredBlock::Text { text, .. } = block {
-            let mut cjk = 0i64;
-            let mut other = 0i64;
-            for ch in text.chars() {
-                if is_cjk(ch) {
-                    cjk += 1;
-                } else {
-                    other += 1;
-                }
-            }
-            estimate += cjk + (other + 3) / 4;
-        }
-    }
+    let estimate = kickoff_estimate(&blocks);
     i64::from(snapshot.context_window) > 0 && estimate * 2 > i64::from(snapshot.context_window)
 }
 
-fn is_cjk(ch: char) -> bool {
-    matches!(ch as u32, 0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF)
+/// The provider-neutral token estimate of a kickoff's text blocks.
+fn kickoff_estimate(blocks: &[StoredBlock]) -> i64 {
+    blocks
+        .iter()
+        .filter_map(|block| match block {
+            StoredBlock::Text { text, .. } => Some(nekowriter_llm::estimate_tokens(text)),
+            _ => None,
+        })
+        .sum()
 }
 
 /// `book.model_overrides[role]` → `app_settings["roles.defaults"][role]` (spec/03 §4 step 1),
@@ -2338,6 +2331,7 @@ async fn debug_session_inner(
         vec![StoredBlock::Text {
             text: "Debug session: use the test-only tools.".to_owned(),
             cache: None,
+            source: None,
         }],
     )
     .await?;
@@ -2572,6 +2566,7 @@ async fn debug_echo_inner(
         vec![StoredBlock::Text {
             text: "Debug session: use the test-only tools.".to_owned(),
             cache: None,
+            source: None,
         }],
     )
     .await?;
@@ -2863,6 +2858,20 @@ mod tests {
             created_at: now,
             updated_at: now,
         }
+    }
+
+    #[test]
+    fn kickoff_estimate_counts_hangul_like_the_provider() {
+        let text = "안녕하세요. 한국어 문장입니다.";
+        let blocks = vec![StoredBlock::Text {
+            text: text.to_owned(),
+            cache: None,
+            source: None,
+        }];
+        assert_eq!(
+            kickoff_estimate(&blocks),
+            nekowriter_llm::estimate_tokens(text)
+        );
     }
 
     /// A session's frozen snapshot carries the provider's typed protocol, not a stringly fallback.
