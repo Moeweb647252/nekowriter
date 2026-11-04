@@ -32,7 +32,7 @@ use nekowriter::db::json::{
     MessageRole, NoteKind, NoteStatus, Phase, PromptScope, ProposalStatus, ProposalTargetType,
     Protocol, RelationStatus, ResearchTaskKind, ResearchTaskOrigin, ResearchTaskStatus,
     ReviewVerdict, SearchDocKind, SessionKind, SessionStatus, SettingDocKind, ToolCallStatus,
-    TrackKind, VersionKind,
+    TrackKind, VersionKind, WriteMode,
 };
 use sea_orm::entity::Iterable;
 use sea_orm::entity::prelude::*;
@@ -1024,6 +1024,11 @@ macro_rules! enum_columns {
                 nekowriter::db::entities::setting_proposals::COLUMN.target_kind.as_str(),
                 <SettingDocKind as ActiveEnum>::values(),
             ));
+            rows.push((
+                nekowriter::db::entities::agent_sessions::Entity::default().table_name(),
+                nekowriter::db::entities::agent_sessions::COLUMN.write_mode.as_str(),
+                <WriteMode as ActiveEnum>::values(),
+            ));
             rows
         }
 
@@ -1106,6 +1111,8 @@ fn boolean_fields_are_typed() {
 fn nullable_enum_fields_are_typed() {
     let _: fn(&nekowriter::db::entities::agent_sessions::Model) -> &Option<Granularity> =
         |model| &model.granularity;
+    let _: fn(&nekowriter::db::entities::agent_sessions::Model) -> &Option<WriteMode> =
+        |model| &model.write_mode;
     let _: fn(&nekowriter::db::entities::setting_proposals::Model) -> &Option<SettingDocKind> =
         |model| &model.target_kind;
 }
@@ -1168,8 +1175,8 @@ async fn every_enum_column_matches_its_check_constraint() {
         .collect();
     assert_eq!(
         expected.len(),
-        44,
-        "the schema has 44 CHECK (col IN (...)) enum columns"
+        45,
+        "the schema has 45 CHECK (col IN (...)) enum columns"
     );
 
     let mut seen = BTreeSet::new();

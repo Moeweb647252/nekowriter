@@ -362,3 +362,20 @@ text = '''
 {% endif %}
 请开始规划本章。需要时用检索工具核实人物、地点、物品、设定、时间顺序与伏笔；不确定已有正文时用 read_draft 查看。准备好后调用 submit_outline 提交细纲、参考要点，以及本章还没有标题时的标题。作者接受后细纲才会生效。
 '''
+
+[[prompt]]
+key = "assistant.kickoff"
+kind = "task"
+agent = "assistant"
+vars = ["book", "index", "request"]
+title_en = "Book agent — kickoff"
+title_zh = "书籍助手 · 开始对话"
+text = '''
+【书籍助手】
+《{{ book.title }}》{% if book.genre %}（{{ book.genre }}）{% endif %}，写作语言：{{ book.writing_language_name }}。
+
+作者的第一条消息：
+{{ request }}
+
+请先阅读上面的全书索引和相关材料，再决定是否需要修改；不要在没有阅读的情况下直接改内容。
+'''

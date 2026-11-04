@@ -1,5 +1,7 @@
 /** Session endpoints (spec/10 §2.7). */
 import { api } from "@/api/client"
+import type { BookAgentStart } from "@/api/gen/BookAgentStart"
+import type { BookAgentStarted } from "@/api/gen/BookAgentStarted"
 import type { DebugEchoDto } from "@/api/gen/DebugEchoDto"
 import type { MessagePageDto } from "@/api/gen/MessagePageDto"
 import type { ResumeInput } from "@/api/gen/ResumeInput"
@@ -59,6 +61,16 @@ export function answerSession(
 
 export function patchSession(sessionId: number, patch: SessionPatch): Promise<SessionDto> {
   return api.patch<SessionDto>(`/sessions/${sessionId}`, patch)
+}
+
+/** `POST /books/:id/agent` — starts a book-agent conversation (spec/10 §2.8). */
+export function startBookAgent(bookId: number, input: BookAgentStart): Promise<BookAgentStarted> {
+  return api.post<BookAgentStarted>(`/books/${bookId}/agent`, input)
+}
+
+/** `POST /sessions/:id/end` — ends a book-agent conversation. */
+export function endSession(sessionId: number): Promise<SessionDto> {
+  return api.post<SessionDto>(`/sessions/${sessionId}/end`, {})
 }
 
 /** Starts the debug session of spec/10 §2.7 (debug builds only). */

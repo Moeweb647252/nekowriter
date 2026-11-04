@@ -250,6 +250,7 @@ string_enum! {
         Writer => "writer",
         Reviewer => "reviewer",
         Archivist => "archivist",
+        Assistant => "assistant",
     }
 }
 
@@ -264,6 +265,7 @@ string_enum! {
         ChapterMaintenance => "chapter_maintenance",
         CanonSeed => "canon_seed",
         ChapterResync => "chapter_resync",
+        BookAgent => "book_agent",
     }
 }
 
@@ -299,6 +301,15 @@ string_enum! {
         Paragraph => "paragraph",
         Free => "free",
         Chapter => "chapter",
+    }
+}
+
+string_enum! {
+    /// The book agent's write mode (spec/02 §3, D-169): review holds each change for approval;
+    /// full applies it at once.
+    WriteMode {
+        Review => "review",
+        Full => "full",
     }
 }
 
@@ -592,6 +603,8 @@ pub struct RoleModels {
     pub writer: Option<i32>,
     pub reviewer: Option<i32>,
     pub archivist: Option<i32>,
+    /// The book agent's own model; unset means "follow the writer" (spec/03 §4, D-169).
+    pub assistant: Option<i32>,
     /// The thinking effort chosen per role (spec/04 §5.1, D-162). Rows written before 0009 lack
     /// it and load as `{}`; every API response serializes it (required by spec/02 §4), and a
     /// request that replaces the object must carry the loaded map so a save cannot erase it.
@@ -608,6 +621,7 @@ impl RoleModels {
             AgentRole::Writer => self.writer,
             AgentRole::Reviewer => self.reviewer,
             AgentRole::Archivist => self.archivist,
+            AgentRole::Assistant => self.assistant,
         }
     }
 
@@ -619,6 +633,7 @@ impl RoleModels {
             AgentRole::Writer => self.writer = value,
             AgentRole::Reviewer => self.reviewer = value,
             AgentRole::Archivist => self.archivist = value,
+            AgentRole::Assistant => self.assistant = value,
         }
     }
 }
@@ -645,12 +660,14 @@ pub struct RoleEfforts {
     pub reviewer: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub archivist: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assistant: Option<String>,
 }
 
 impl RoleEfforts {
-    /// The six role entries in settings-page order, so validation and tests do not repeat the
+    /// The seven role entries in settings-page order, so validation and tests do not repeat the
     /// field mapping.
-    pub fn entries(&self) -> [(AgentRole, Option<&str>); 6] {
+    pub fn entries(&self) -> [(AgentRole, Option<&str>); 7] {
         [
             (AgentRole::Conception, self.conception.as_deref()),
             (AgentRole::Researcher, self.researcher.as_deref()),
@@ -658,6 +675,7 @@ impl RoleEfforts {
             (AgentRole::Writer, self.writer.as_deref()),
             (AgentRole::Reviewer, self.reviewer.as_deref()),
             (AgentRole::Archivist, self.archivist.as_deref()),
+            (AgentRole::Assistant, self.assistant.as_deref()),
         ]
     }
 
@@ -669,6 +687,7 @@ impl RoleEfforts {
             AgentRole::Writer => self.writer.as_deref(),
             AgentRole::Reviewer => self.reviewer.as_deref(),
             AgentRole::Archivist => self.archivist.as_deref(),
+            AgentRole::Assistant => self.assistant.as_deref(),
         }
     }
 
@@ -680,6 +699,7 @@ impl RoleEfforts {
             AgentRole::Writer => self.writer = value,
             AgentRole::Reviewer => self.reviewer = value,
             AgentRole::Archivist => self.archivist = value,
+            AgentRole::Assistant => self.assistant = value,
         }
     }
 }
@@ -1075,6 +1095,9 @@ impl AppendixKind {
 #[serde(default, rename_all = "snake_case")]
 #[ts(export)]
 pub struct ToolEffects {
+    /// A book-agent action is waiting for the author's approval (D-169).
+    #[serde(default)]
+    pub approval: bool,
     pub phase_to: Option<Phase>,
     pub complete: Option<CompletionKind>,
     pub await_input: Option<AwaitInputKind>,
@@ -1487,6 +1510,7 @@ mod tests {
             writer: Some(3),
             reviewer: Some(4),
             archivist: None,
+            assistant: None,
             efforts: RoleEfforts {
                 conception: None,
                 researcher: Some("low".to_owned()),
@@ -1494,6 +1518,7 @@ mod tests {
                 writer: Some("max".to_owned()),
                 reviewer: None,
                 archivist: None,
+                assistant: None,
             },
         };
         assert_eq!(round_trip(&value), value);
@@ -1772,6 +1797,7 @@ mod tests {
     #[test]
     fn tool_effects_round_trip() {
         let value = ToolEffects {
+            approval: false,
             phase_to: Some(Phase::Drafting),
             complete: Some(CompletionKind::Draft),
             await_input: Some(AwaitInputKind::RequestReview),

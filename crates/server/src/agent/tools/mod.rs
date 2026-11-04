@@ -7,6 +7,8 @@
 //! rendered from `prompts/results.toml` — code never writes model-facing text.
 
 pub mod archivist;
+pub mod assistant;
+pub mod assistant_write;
 pub mod conception;
 pub mod goal_proposals;
 pub mod proposals;
@@ -24,7 +26,7 @@ pub mod writer;
 use std::collections::BTreeMap;
 
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::db::entities::{agent_sessions, books, chapters, tracks};
 use crate::db::json::{AwaitInputKind, CanonMode, PendingContent, RequestMeta, ToolEffects};
@@ -32,9 +34,10 @@ use crate::events::ServerEvent;
 use crate::prompts::PromptSet;
 
 pub use registry::{
-    ARCHIVIST_TOOLS, CONCEPTION_TOOLS, DEBUG_TOOLS, RESEARCHER_TOOLS, RETRIEVAL_TOOLS,
-    REVIEWER_TOOLS, ToolRegistry, WRITE_TOOLS, WRITER_TOOLS, allowed_tools, initial_phase,
-    is_permitted, is_write_tool, phase_label, role_of_kind, tools_for_role,
+    ARCHIVIST_TOOLS, ASSISTANT_ACTION_TOOLS, ASSISTANT_TOOLS, CONCEPTION_TOOLS, DEBUG_TOOLS,
+    RESEARCHER_TOOLS, RETRIEVAL_TOOLS, REVIEWER_TOOLS, ToolRegistry, WRITE_TOOLS, WRITER_TOOLS,
+    allowed_tools, initial_phase, is_permitted, is_write_tool, phase_label, role_of_kind,
+    tools_for_role, tools_for_session,
 };
 pub use resolve::EntityResolver;
 pub use spec::{ToolSpec, ToolSpecs, validate_input};
@@ -79,6 +82,11 @@ pub enum ToolErrorKind {
     IsolatedReadonly,
     ChapterNotFound,
     ChapterNotOfficial,
+    ChapterLocked,
+    SystemOff,
+    GoalOpenChildren,
+    SessionConflict,
+    StartRefused,
     NoKnowledgeScope,
     ScopeExcluded,
     TargetScopeUnset,
@@ -124,6 +132,11 @@ impl ToolErrorKind {
             ToolErrorKind::IsolatedReadonly => "isolated_readonly",
             ToolErrorKind::ChapterNotFound => "chapter_not_found",
             ToolErrorKind::ChapterNotOfficial => "chapter_not_official",
+            ToolErrorKind::ChapterLocked => "chapter_locked",
+            ToolErrorKind::SystemOff => "system_off",
+            ToolErrorKind::GoalOpenChildren => "goal_open_children",
+            ToolErrorKind::SessionConflict => "session_conflict",
+            ToolErrorKind::StartRefused => "start_refused",
             ToolErrorKind::NoKnowledgeScope => "no_knowledge_scope",
             ToolErrorKind::ScopeExcluded => "scope_excluded",
             ToolErrorKind::TargetScopeUnset => "target_scope_unset",
@@ -180,6 +193,8 @@ impl ToolError {
 pub enum Prepared {
     #[default]
     None,
+    /// A validated chapter-text edit; its presence proves `prepare` ran for an approved hold.
+    EditChapterText,
     QueryVector(Vec<f32>),
     WebSearch(Vec<WebHit>),
     WebPage(Box<FetchedPage>),
@@ -293,6 +308,8 @@ pub struct ToolOutcome {
     pub effects: ToolEffects,
     /// `Some` when the call needs the author's input before it can finish.
     pub await_input: Option<AwaitInputKind>,
+    /// Sessions this tool starts, spawned after the transaction commits (D-169).
+    pub spawn: Vec<i32>,
     /// Deferred counter flag applied by `finalize` in the same transaction (spec/03 §8: a short
     /// completion is withheld exactly once, remembered in `counters.finish_warned`). It travels on
     /// the outcome because `finalize` writes the counters from the row it loaded before `execute`
@@ -309,6 +326,7 @@ impl ToolOutcome {
             ui: Value::Null,
             effects: ToolEffects::default(),
             await_input: None,
+            spawn: Vec::new(),
             finish_warned: false,
         }
     }
@@ -391,6 +409,7 @@ impl ToolOutcome {
             ui: Value::Null,
             effects: ToolEffects::default(),
             await_input: None,
+            spawn: Vec::new(),
             finish_warned: false,
         }
     }
@@ -481,6 +500,74 @@ pub trait ToolHandler: Send + Sync {
         Ok(Prepared::None)
     }
 
+    /// A read-only preview of an action tool's effect, used before a review-mode book-agent
+    /// approval hold (spec/03 §5.2, D-169). The default means "no preview implemented"; the
+    /// action tools added in M21 21.4/21.5 override it.
+    async fn preview(&self, _ctx: &mut ToolCtx<'_>, input: Value) -> Result<Value, ToolError> {
+        // A read-only fallback for action tools whose handler does not override `preview`.
+        // It never writes; it classifies the tool so the approval panel gets the plan's shape:
+        // create tools show labelled fields, deletes show an action, structural changes show
+        // their current/requested list, and updates show their changed fields.
+        let name = self.name();
+        let fields: Vec<Value> = input
+            .as_object()
+            .map(|object| {
+                object
+                    .iter()
+                    .map(|(field, after)| {
+                        if matches!(
+                            name,
+                            "update_entity"
+                                | "update_goal"
+                                | "update_research_task"
+                                | "update_knowledge_entry"
+                        ) {
+                            json!({"field": field, "before": "(current)", "after": after})
+                        } else {
+                            json!({"field": field, "after": after})
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if matches!(
+            name,
+            "delete_canon_record"
+                | "delete_research_task"
+                | "remove_character"
+                | "end_relation"
+                | "retire_memory_note"
+        ) {
+            let target = input
+                .get("id")
+                .or_else(|| input.get("task"))
+                .or_else(|| input.get("name"))
+                .or_else(|| input.get("entity"))
+                .or_else(|| input.get("node"))
+                .cloned()
+                .unwrap_or(Value::Null);
+            let text = input
+                .get("note")
+                .and_then(Value::as_str)
+                .map(|note| format!("{name} {target}：{note}"))
+                .unwrap_or_else(|| format!("{name} {target}"));
+            return Ok(json!({"kind": "action", "label": name, "text": text}));
+        }
+        if name == "start_session" {
+            let text = input
+                .get("action")
+                .and_then(Value::as_str)
+                .unwrap_or("start")
+                .to_owned();
+            return Ok(json!({"kind": "action", "label": name, "text": text}));
+        }
+        let mut payload = json!({"kind": "fields", "label": name, "rows": fields});
+        if name == "add_knowledge_entry" {
+            payload["shared"] = json!(true);
+        }
+        Ok(payload)
+    }
+
     /// Atomic work inside the call's transaction: database reads and writes only, no I/O waits.
     async fn execute(
         &self,
@@ -528,6 +615,11 @@ mod tests {
             ToolErrorKind::ReorderMismatch,
             ToolErrorKind::RelationNotFound,
             ToolErrorKind::SeedOnly,
+            ToolErrorKind::ChapterLocked,
+            ToolErrorKind::SystemOff,
+            ToolErrorKind::GoalOpenChildren,
+            ToolErrorKind::SessionConflict,
+            ToolErrorKind::StartRefused,
             ToolErrorKind::ExactlyOne,
             ToolErrorKind::MutuallyExclusive,
             ToolErrorKind::ToolNotAllowed,
@@ -539,7 +631,7 @@ mod tests {
         .iter()
         .map(|kind| kind.code())
         .collect();
-        assert_eq!(codes.len(), 37);
+        assert_eq!(codes.len(), 42);
         let unique: std::collections::BTreeSet<&str> = codes.iter().copied().collect();
         assert_eq!(unique.len(), codes.len(), "codes must be unique");
         assert!(codes.contains(&"after_completion"));

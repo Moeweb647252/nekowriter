@@ -11,7 +11,7 @@ use ts_rs::TS;
 use crate::db::json::{
     AgentRole, Appendix, Granularity, MessageKind, PendingContent, PendingOutline, Phase,
     ResearchTaskKind, SessionCounters, SessionError, SessionKind, SessionStatus, ToolCallStatus,
-    Usage,
+    Usage, WriteMode,
 };
 
 /// One session row (spec/10 §2.8).
@@ -40,6 +40,8 @@ pub struct SessionDto {
     pub granularity: Option<Granularity>,
     pub auto_pause: bool,
     pub pause_after_outline: bool,
+    /// The book agent's write mode; `None` for every other session kind (D-169).
+    pub write_mode: Option<WriteMode>,
     pub pause_requested: bool,
     pub held_tool_call_id: Option<i32>,
     pub base_content_version: Option<i32>,
@@ -206,6 +208,8 @@ pub struct SessionPatch {
     pub auto_pause: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pause_after_outline: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_mode: Option<WriteMode>,
 }
 
 /// `POST /api/debug/sessions/echo` body (spec/10 §2.7, debug builds only).

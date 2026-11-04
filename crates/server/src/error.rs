@@ -61,6 +61,9 @@ pub enum ErrorCode {
     #[serde(rename = "session.invalid_state")]
     #[ts(rename = "session.invalid_state")]
     SessionInvalidState,
+    #[serde(rename = "session.exists")]
+    #[ts(rename = "session.exists")]
+    SessionExists,
     #[serde(rename = "model.missing_role")]
     #[ts(rename = "model.missing_role")]
     ModelMissingRole,
@@ -126,6 +129,7 @@ impl ErrorCode {
             ErrorCode::ChapterOutlineMissing => "chapter.outline_missing",
             ErrorCode::ChapterLocked => "chapter.locked",
             ErrorCode::SessionInvalidState => "session.invalid_state",
+            ErrorCode::SessionExists => "session.exists",
             ErrorCode::ModelMissingRole => "model.missing_role",
             ErrorCode::ConceptionIncomplete => "conception.incomplete",
             ErrorCode::TrackModeLocked => "track.mode_locked",
@@ -162,6 +166,7 @@ impl ErrorCode {
             | ErrorCode::ChapterIsAnchor
             | ErrorCode::ChapterOutlineMissing
             | ErrorCode::SessionInvalidState
+            | ErrorCode::SessionExists
             | ErrorCode::ModelMissingRole
             | ErrorCode::ConceptionIncomplete
             | ErrorCode::TrackModeLocked

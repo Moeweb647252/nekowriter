@@ -188,6 +188,86 @@ pub const RESEARCH_CHECK_TOOLS: [&str; 4] = [
 /// The test-only tools of the debug session (spec/10 §2.7, PLAN M3.5).
 pub const DEBUG_TOOLS: [&str; 5] = ["echo", "test_write", "test_finish", "test_slow", "test_ask"];
 
+/// The book agent's fixed tool list, in the plan's §3.3 order (D-169). Handlers are added by
+/// M21 21.4/21.5; `tools_for_session` freezes only registered handlers, so a newly listed tool
+/// becomes callable when its handler lands.
+pub const ASSISTANT_TOOLS: &[&str] = &[
+    "book_overview",
+    "open_chapter",
+    "read_setting_doc",
+    "read_characters",
+    "get_entity",
+    "list_entities",
+    "get_relations",
+    "query_timeline",
+    "list_foreshadowing",
+    "search_canon",
+    "list_goals",
+    "search_chapters",
+    "search_knowledge",
+    "read_knowledge_entry",
+    "list_research",
+    "list_sessions",
+    "write_setting_doc",
+    "edit_setting_doc",
+    "upsert_character",
+    "remove_character",
+    "reorder_characters",
+    "create_chapter",
+    "edit_chapter",
+    "edit_chapter_text",
+    "create_entity",
+    "update_entity",
+    "set_relation",
+    "end_relation",
+    "add_timeline_event",
+    "update_timeline_event",
+    "add_memory_note",
+    "retire_memory_note",
+    "add_foreshadowing",
+    "resolve_foreshadowing",
+    "delete_canon_record",
+    "create_goal",
+    "update_goal",
+    "create_research_task",
+    "update_research_task",
+    "delete_research_task",
+    "add_knowledge_entry",
+    "update_knowledge_entry",
+    "start_session",
+];
+
+/// The book agent's action tools: held in review mode (plan §3.3, D-169).
+pub const ASSISTANT_ACTION_TOOLS: &[&str] = &[
+    "write_setting_doc",
+    "edit_setting_doc",
+    "upsert_character",
+    "remove_character",
+    "reorder_characters",
+    "create_chapter",
+    "edit_chapter",
+    "edit_chapter_text",
+    "create_entity",
+    "update_entity",
+    "set_relation",
+    "end_relation",
+    "add_timeline_event",
+    "update_timeline_event",
+    "add_memory_note",
+    "retire_memory_note",
+    "add_foreshadowing",
+    "resolve_foreshadowing",
+    "delete_canon_record",
+    "create_goal",
+    "update_goal",
+    "create_research_task",
+    "update_research_task",
+    "delete_research_task",
+    "add_knowledge_entry",
+    "update_knowledge_entry",
+    "start_session",
+];
+
 /// The frozen tool list of a role, in its fixed order (spec/05 §2).
 pub fn tools_for_role(role: &str) -> &'static [&'static str] {
     match role {
@@ -197,6 +277,7 @@ pub fn tools_for_role(role: &str) -> &'static [&'static str] {
         "archivist" => &ARCHIVIST_TOOLS,
         "conception" => &CONCEPTION_TOOLS,
         "researcher" => &RESEARCHER_TOOLS,
+        "assistant" => ASSISTANT_TOOLS,
         _ => &[],
     }
 }
@@ -215,7 +296,9 @@ pub fn system_of_tool(tool: &str) -> Option<CanonSystem> {
         "list_foreshadowing" | "add_foreshadowing" | "resolve_foreshadowing" => {
             Some(CanonSystem::Foreshadowing)
         }
-        "propose_goal_change" => Some(CanonSystem::Goals),
+        "list_goals" | "create_goal" | "update_goal" | "propose_goal_change" => {
+            Some(CanonSystem::Goals)
+        }
         _ => None,
     }
 }
@@ -243,6 +326,23 @@ pub fn tools_for_session(
     preparation: bool,
     registry: &ToolRegistry,
 ) -> Vec<&'static str> {
+    // The book agent freezes the full fixed list even while 21.5's action handlers are still
+    // landing; the registry filter below would silently shrink the model's contract. Its switch
+    // rules are the plan §3.3 table, including the two tools that survive until all four canon
+    // systems are off.
+    if role == "assistant" {
+        let all_canon_off =
+            !systems.entities && !systems.timeline && !systems.memory && !systems.foreshadowing;
+        return ASSISTANT_TOOLS
+            .iter()
+            .copied()
+            .filter(|tool| match *tool {
+                "search_canon" | "delete_canon_record" => !all_canon_off,
+                _ => system_of_tool(tool)
+                    .is_none_or(|system| tool_enabled(tool, systems).then_some(system).is_some()),
+            })
+            .collect();
+    }
     let role_tools: &[&str] = if role == "researcher" {
         if preparation {
             &RESEARCH_CHECK_TOOLS
@@ -310,7 +410,8 @@ pub fn is_permitted(kind: SessionKind, phase: Phase, tool: &str, frozen: &[Strin
         | SessionKind::ChapterResync
         | SessionKind::ChapterReview
         | SessionKind::Conception
-        | SessionKind::Research => true,
+        | SessionKind::Research
+        | SessionKind::BookAgent => true,
     }
 }
 
@@ -335,6 +436,7 @@ pub fn role_enum_of_kind(kind: SessionKind) -> AgentRole {
         SessionKind::ChapterMaintenance | SessionKind::CanonSeed | SessionKind::ChapterResync => {
             AgentRole::Archivist
         }
+        SessionKind::BookAgent => AgentRole::Assistant,
     }
 }
 
@@ -407,6 +509,13 @@ impl ToolRegistry {
         }
         // The researcher's write tools (spec/05 §8): target-scope only.
         for handler in super::research::all() {
+            handlers.insert(handler.name().to_owned(), handler);
+        }
+        // The book agent's read tools (M21 21.4) and write tools (M21 21.5).
+        for handler in super::assistant::all() {
+            handlers.insert(handler.name().to_owned(), handler);
+        }
+        for handler in super::assistant_write::all() {
             handlers.insert(handler.name().to_owned(), handler);
         }
         // The conception tools of M9 (spec/05 §7).

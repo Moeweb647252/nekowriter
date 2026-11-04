@@ -9,6 +9,7 @@ import type { SessionError } from "./SessionError";
 import type { SessionKind } from "./SessionKind";
 import type { SessionStatus } from "./SessionStatus";
 import type { Usage } from "./Usage";
+import type { WriteMode } from "./WriteMode";
 
 /**
  * One session row (spec/10 §2.8).
@@ -26,7 +27,11 @@ research_task_kind?: ResearchTaskKind | null, model_label: string,
  * The frozen thinking effort from `model_snapshot` (spec/04 §5.1, D-162): the value in the
  * protocol's wire field, or `None` when the model takes no effort parameter.
  */
-effort?: string | null, status: SessionStatus, phase: Phase, granularity?: Granularity | null, auto_pause: boolean, pause_after_outline: boolean, pause_requested: boolean, held_tool_call_id?: number | null, base_content_version?: number | null, error?: SessionError | null, usage: Usage, counters: SessionCounters, parent_session_id?: number | null, 
+effort?: string | null, status: SessionStatus, phase: Phase, granularity?: Granularity | null, auto_pause: boolean, pause_after_outline: boolean, 
+/**
+ * The book agent's write mode; `None` for every other session kind (D-169).
+ */
+write_mode?: WriteMode | null, pause_requested: boolean, held_tool_call_id?: number | null, base_content_version?: number | null, error?: SessionError | null, usage: Usage, counters: SessionCounters, parent_session_id?: number | null, 
 /**
  * `parent_session_id` of the child session, when this one was superseded by a rollover.
  */

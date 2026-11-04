@@ -37,10 +37,10 @@ for name, t in tools.items():
     templates[f"tool.{name}"] = t["description"]
 
 # ---------- expected keys from spec/09 §2 ----------
-expected = """conception.system researcher.system planner.system writer.system reviewer.system archivist.system
+expected = """conception.system researcher.system planner.system writer.system reviewer.system archivist.system assistant.system
 conception.kickoff researcher.kickoff researcher.kickoff.prep planner.kickoff writer.kickoff.chapter writer.kickoff.revise
 writer.kickoff.rollover reviewer.kickoff reviewer.rereview archivist.kickoff.maintenance archivist.kickoff.seed
-archivist.kickoff.resync block.settings block.canon_systems block.writing_skills block.memory block.recent_chapters
+archivist.kickoff.resync assistant.kickoff block.book_index block.settings block.canon_systems block.writing_skills block.memory block.recent_chapters
 block.goals block.chapter_draft block.cast_index block.chapter_diff
 block.anchor block.book_brief notice.user_feedback notice.user_message notice.user_edits notice.setting_edits
 notice.completion_revoked notice.tool_not_allowed notice.output_truncated notice.web_content notice.nudge_generic
@@ -52,7 +52,7 @@ result.error result.truncated result.entity_card result.entity_list result.relat
 result.foreshadowing_list result.search_hits result.knowledge_entry result.chapter_text result.draft_text
 result.draft_edit result.writer_control result.submit_review result.canon_write result.finish_maintenance
 result.ask_user result.request_review result.conception_write result.web_search result.web_fetch
-result.knowledge_write result.target_scope result.finish_research shared.label shared.chapter_label""".split()
+result.knowledge_write result.target_scope result.finish_research result.change_declined result.chapter_view result.setting_doc_view result.characters_view result.goal_list result.research_list result.session_list result.book_agent_write result.session_start shared.label shared.chapter_label""".split()
 for k in expected:
     if k not in templates:
         errors.append(f"missing expected key {k}")
@@ -68,6 +68,7 @@ roles = {
  "archivist": "get_entity list_entities get_relations query_timeline list_foreshadowing search_canon read_chapter create_entity update_entity set_relation end_relation record_appearances add_timeline_event update_timeline_event add_memory_note retire_memory_note add_foreshadowing resolve_foreshadowing set_chapter_summary propose_goal_change propose_setting_change finish_maintenance",
  "conception": "ask_user search_knowledge read_knowledge_entry web_search web_fetch write_setting_doc edit_setting_doc upsert_character remove_character reorder_characters set_research_topics request_review",
  "researcher": "web_search web_fetch search_knowledge read_knowledge_entry set_research_topics save_knowledge_entry update_knowledge_entry finish_research",
+ "assistant": "book_overview open_chapter read_setting_doc read_characters get_entity list_entities get_relations query_timeline list_foreshadowing search_canon list_goals search_chapters search_knowledge read_knowledge_entry list_research list_sessions write_setting_doc edit_setting_doc upsert_character remove_character reorder_characters create_chapter edit_chapter edit_chapter_text create_entity update_entity set_relation end_relation add_timeline_event update_timeline_event add_memory_note retire_memory_note add_foreshadowing resolve_foreshadowing delete_canon_record create_goal update_goal create_research_task update_research_task delete_research_task add_knowledge_entry update_knowledge_entry start_session",
 }
 all_role_tools = set(itertools.chain.from_iterable(v.split() for v in roles.values()))
 for t in all_role_tools:
@@ -226,7 +227,18 @@ S = dict(book=book, track=track_main, chapter=chapter, settings=settings, memory
          diff=dict(changes=[dict(op="insert", pid="p9", after=None, old="", new="新段"), dict(op="delete", pid="p3", after=None, old="旧段", new=""),
                           dict(op="modify", pid="p4", after=None, old="原", new="新")]),
          text="请把打斗写得更短。", enum="entity_kind", value="character",
-         track_kind="main", track_title="正文", number=12, title="剑冢", with_title=True)
+         track_kind="main", track_title="正文", number=12, title="剑冢", with_title=True,
+         body="第一章正文", next_pid=None, status="drafting", content_version=1, canon_status="synced",
+         words=320, open_sessions=[], label="第1章", part="text", content="# 设定文档", offset=0,
+         end=5, total=5, next_offset=None, revision=1,
+         designs=[dict(rank=1, name="林凡", role_label="主角", summary="", profile="## 身份\n弟子", entity_id=None)],
+         nodes=[dict(id=1, level="goal", title="目标", purpose="目的", status="active", chapter_from=None, chapter_to=None, ready=False, closable=False)],
+         tasks=[dict(id=1, kind="topic", topic="主题", scope="范围", status="ready", entries=0)],
+         sessions=[dict(id=1, kind="book_agent", chapter_id=None, chapter_label=None, status="idle", created_at="2026-01-01T00:00:00Z")],
+         characters_omitted=0, sessions_omitted=0, proposals_omitted=0,
+         index={"tracks": [{"label": "", "kind": "main", "chapters": [{"number": 1, "title": "夜雨", "status": "official", "words": 3200, "canon_status": "synced"}]}], "chapters_total": 1, "chapters_omitted": 0, "characters_omitted": 0, "sessions_omitted": 0, "proposals_omitted": 0, "setting_docs": [{"label": "outline", "characters": 12, "revision": 1}, {"label": "world", "characters": 30, "revision": 2}, {"label": "protagonist", "characters": 18, "revision": 1}], "characters": [{"rank": 1, "name": "林凡", "role_label": "主角"}], "canon": {"entities": 3, "timeline": 2, "memory": 1, "foreshadowing": 1, "goals": 2}, "goals": {"open": 1, "ready": 0}, "research": [{"status": "done", "count": 1}], "sessions": [{"id": 4, "kind": "chapter_write", "status": "paused"}], "proposals": [{"id": 2, "target_type": "setting_doc", "target_kind": "world"}], "off_systems": ["foreshadowing"]}, request="请把世界设定里关于城门的部分写得更具体，并在需要时查看相关资料。",
+         action="edit_chapter_text", summary="修改章节", details="第1章",
+         session_id=12, kind="chapter_outline", existing=False)
 
 variants = {
   "block.settings": [dict(), dict(settings=settings_empty, book=dict(book, genre=""))],

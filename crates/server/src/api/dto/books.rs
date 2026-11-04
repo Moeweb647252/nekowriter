@@ -6,6 +6,7 @@ use ts_rs::TS;
 
 use crate::db::json::{
     BookSettings, BookStatus, CanonStatus, ChapterStatus, ConceptionState, RoleModels, Usage,
+    WriteMode,
 };
 
 /// `GET /books/:id`, and the `book` field of the create response.
@@ -87,6 +88,25 @@ pub struct BookInput {
 
 fn default_auto_start_conception() -> bool {
     true
+}
+
+/// `POST /books/:id/agent` body (spec/10 §2.8, D-169).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[ts(optional_fields = nullable)]
+pub struct BookAgentStart {
+    /// 1–20,000 characters.
+    pub message: String,
+    /// `review` (default) or `full` (spec/08 §8, D-169).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_mode: Option<WriteMode>,
+}
+
+/// `POST /books/:id/agent` response (spec/10 §2.2, D-169).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct BookAgentStarted {
+    pub session_id: i32,
 }
 
 /// `PATCH /books/:id` body. Omitted fields are unchanged.

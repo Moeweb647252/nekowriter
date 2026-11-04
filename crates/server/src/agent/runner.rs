@@ -553,9 +553,12 @@ async fn step_model(ctx: &RunnerCtx, session: &agent_sessions::Model) -> Result<
             }
             let mut events = Vec::new();
             if fresh.status == SessionStatus::Running {
-                events =
-                    fail_in_write(state, session.id, (*error).clone(), TransitionCause::Failed)
-                        .await?;
+                let mut shown = (*error).clone();
+                if fresh.kind == SessionKind::BookAgent && shown.code == CONTEXT_OVERFLOW_CODE {
+                    shown.message =
+                        "This conversation is too long. Start a new conversation.".to_owned();
+                }
+                events = fail_in_write(state, session.id, shown, TransitionCause::Failed).await?;
             }
             state.events().publish_all(events);
             Ok(())
@@ -1117,14 +1120,36 @@ async fn step_tool(
                     // current materials when the call is sealed. Capture the materials before and
                     // after the handler so the agent's own write can advance the snapshot and is
                     // not reported as an author edit (spec/03 §7).
+                    let review_hold = session::kind_of(&session) == SessionKind::BookAgent
+                        && session.write_mode == Some(crate::db::json::WriteMode::Review)
+                        && crate::agent::tools::registry::ASSISTANT_ACTION_TOOLS
+                            .contains(&call.name.as_str());
                     let view_before = if session::kind_of(&session) == SessionKind::Conception {
                         session::capture_view_snapshot(tx, &session).await?
                     } else {
                         None
                     };
-                    let handled = handler
-                        .execute(&mut tool_ctx, input.unwrap_or(Value::Null), prepared)
-                        .await;
+                    let handled = if review_hold {
+                        // The approval hold runs the read-only preview after validation/prepare
+                        // and before execute (spec/03 §5.2, D-169). A preview error follows the
+                        // normal error path; an invalid change is never held.
+                        match handler
+                            .preview(&mut tool_ctx, input.clone().unwrap_or(Value::Null))
+                            .await
+                        {
+                            Ok(preview) => {
+                                let mut outcome = ToolOutcome::text("");
+                                outcome.ui = json!({ "preview": preview });
+                                outcome.effects.approval = true;
+                                Ok(outcome)
+                            }
+                            Err(error) => Err(error),
+                        }
+                    } else {
+                        handler
+                            .execute(&mut tool_ctx, input.unwrap_or(Value::Null), prepared)
+                            .await
+                    };
                     domain_events = std::mem::take(&mut tool_ctx.events);
                     if let Some(before) = view_before
                         && let Some(after) = session::capture_view_snapshot(tx, &session).await?
@@ -1151,18 +1176,24 @@ async fn step_tool(
             };
             let finalization = finalize_inner(tx, &session, &call, &mut outcome, &prompts).await?;
             domain_events.extend(finalization.events);
+            let spawns = finalization.spawn;
             // Canon writes by tools keep `search_docs`/`fts_book` in step inside this same
             // transaction (spec/07 §2); the agent path does not go through `canon::write`.
             crate::search::maintenance::sync_events(tx, &domain_events).await?;
             crate::search::index::wake();
-            Ok(domain_events)
+            Ok((domain_events, spawns))
         })
     })
     .await;
 
     match result {
-        Ok(events) => {
+        Ok((events, spawns)) => {
             state.events().publish_all(events);
+            // Sessions started by a tool are spawned only after the transaction that created
+            // them has committed (D-169); this includes the normal full-access path.
+            for session_id in spawns {
+                state.manager().spawn(state.clone(), session_id);
+            }
             // A completed research session advances its check's queue **after** the completion
             // transaction commits: its own write re-checks every condition and owns the session
             // spawn. A failure here is logged and never rolls back the completion.
@@ -1229,6 +1260,7 @@ async fn lookup_track(
 /// The result of finalizing a call.
 struct Finalization {
     events: Vec<ServerEvent>,
+    spawn: Vec<i32>,
 }
 
 /// Applies a staged chapter write in the transaction that finalizes its call (spec/03 §5.2, §5.4).
@@ -1505,6 +1537,85 @@ fn advance_conception_snapshot(
     changed
 }
 
+/// Executes an approved book-agent action in the approving transaction (spec/03 §5.2, D-169).
+///
+/// The approval path re-runs `execute` against current data; a stale find, a lock or a vanished
+/// target becomes the normal tool error result. The call remains `held` until `finalize_inner`
+/// writes its final status in this same transaction.
+pub(crate) async fn approve_held_call(
+    tx: &sea_orm::DatabaseTransaction,
+    state: &AppState,
+    session: &agent_sessions::Model,
+    held: &agent_tool_calls::Model,
+    prompts: &PromptSet,
+) -> Result<(Vec<ServerEvent>, Vec<i32>), AppError> {
+    let handler = state
+        .tool_registry()
+        .get(&held.name)
+        .cloned()
+        .ok_or_else(|| AppError::internal("tool handler vanished during approval"))?;
+    let input = match validate_input(state.tool_specs(), &held.name, &held.input) {
+        Ok(input) => input,
+        Err(error) => {
+            let mut outcome = ToolOutcome::error(prompts, &error);
+            outcome.effects.approval = false;
+            let running = mark_approval_running(tx, session).await?;
+            let finalization = finalize_inner(tx, &running, held, &mut outcome, prompts).await?;
+            return Ok((finalization.events, finalization.spawn));
+        }
+    };
+    let book = lookup_book(tx, session).await?;
+    let chapter = lookup_chapter(tx, session).await?;
+    let track = lookup_track(tx, session).await?;
+    let meta = request_meta_of(tx, held).await?;
+    let mut tool_ctx = ToolCtx {
+        tx,
+        session,
+        book: book.as_ref(),
+        chapter: chapter.as_ref(),
+        track: track.as_ref(),
+        visibility: Visibility::of(session, track.as_ref()),
+        request_meta: meta,
+        prompts,
+        state,
+        events: Vec::new(),
+    };
+    // Approval re-runs `prepare` against current data before `execute`; locking checks (for
+    // example `edit_chapter_text`) therefore cannot be skipped by the held window (D-169).
+    let prepare_ctx = PrepareCtx {
+        db: state.db().conn(),
+        session,
+        state,
+    };
+    let mut outcome = match handler.prepare(&prepare_ctx, &input).await {
+        Err(error) => ToolOutcome::error(prompts, &error),
+        Ok(prepared) => match handler.execute(&mut tool_ctx, input, prepared).await {
+            Ok(outcome) => outcome,
+            Err(error) => ToolOutcome::error(prompts, &error),
+        },
+    };
+    outcome.effects.approval = false;
+    let running = mark_approval_running(tx, session).await?;
+    let finalization = finalize_inner(tx, &running, held, &mut outcome, prompts).await?;
+    Ok((finalization.events, finalization.spawn))
+}
+
+async fn mark_approval_running(
+    tx: &sea_orm::DatabaseTransaction,
+    session: &agent_sessions::Model,
+) -> Result<agent_sessions::Model, AppError> {
+    agent_sessions::ActiveModel {
+        id: Set(session.id),
+        status: Set(SessionStatus::Running),
+        held_tool_call_id: Set(None),
+        updated_at: Set(Utc::now()),
+        ..Default::default()
+    }
+    .update(tx)
+    .await?;
+    session::load(tx, session.id).await
+}
+
 /// Applies the call's deferred effects and writes its final status (spec/03 §5.4).
 async fn finalize_inner(
     tx: &sea_orm::DatabaseTransaction,
@@ -1739,7 +1850,10 @@ async fn finalize_inner(
         session: session::to_dto(tx, &reloaded, Vec::new()).await?,
         warnings: Vec::new(),
     });
-    Ok(Finalization { events })
+    Ok(Finalization {
+        events,
+        spawn: outcome.spawn.clone(),
+    })
 }
 
 /// The completion handler of a finalizing call (spec/03 §5.4, spec/08).
@@ -1891,6 +2005,9 @@ fn hold_condition(
     call: &agent_tool_calls::Model,
     outcome: &ToolOutcome,
 ) -> bool {
+    if outcome.effects.approval {
+        return true;
+    }
     if session.pause_requested {
         return true;
     }
@@ -2300,8 +2417,8 @@ pub async fn text_only_inner(
     }
 
     match session::kind_of(session) {
-        SessionKind::Conception => {
-            // The one kind where a text-only reply is not a failure (spec/03 §5.6).
+        SessionKind::Conception | SessionKind::BookAgent => {
+            // Conception and the book agent end a turn with text, not a tool (spec/03 §5.6, §5.2).
             let mut transition =
                 session::transition(tx, session, SessionStatus::Idle, TransitionCause::Idle)
                     .await?;

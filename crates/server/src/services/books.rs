@@ -424,7 +424,10 @@ async fn ordered_chapters(
 /// The count shown by the ready-goals attention row and next-action hint: every goal node of
 /// the book, any scope, whose derived state is `ready` or `closable` (spec/08 §7, plan §4.10).
 /// The derived flags come from the one goals evaluator, never a local query.
-async fn ready_goal_count(conn: &impl ConnectionTrait, book_id: i32) -> Result<i32, AppError> {
+pub(crate) async fn ready_goal_count(
+    conn: &impl ConnectionTrait,
+    book_id: i32,
+) -> Result<i32, AppError> {
     let nodes = goal_nodes::Entity::find()
         .filter(goal_nodes::COLUMN.book_id.eq(book_id))
         .all(conn)

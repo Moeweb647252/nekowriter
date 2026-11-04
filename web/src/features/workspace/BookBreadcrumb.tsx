@@ -1,7 +1,7 @@
 /** The in-book breadcrumb with a book switcher (PROJECT §8.2). */
 import { Link, useNavigate } from "react-router"
 import { useTranslation } from "react-i18next"
-import { ChevronDown } from "lucide-react"
+import { Bot, ChevronDown } from "lucide-react"
 
 import { useBooks } from "@/api/hooks/books"
 import type { BookDto } from "@/api/gen/BookDto"
@@ -12,6 +12,7 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
+import { requestBookAgent } from "@/features/agent/bookAgentIntent"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -68,6 +69,15 @@ export function BookBreadcrumb({ book }: BookBreadcrumbProps) {
           </BreadcrumbItem>
         </BreadcrumbList>
       </Breadcrumb>
+      <Button
+        variant="outline"
+        size="sm"
+        className="ml-auto h-7 gap-1 text-xs"
+        onClick={() => requestBookAgent(book.id)}
+      >
+        <Bot className="size-3.5" aria-hidden="true" />
+        {t("book:book_agent")}
+      </Button>
     </div>
   )
 }

@@ -378,6 +378,34 @@ impl ToolHandler for UpdateEntityTool {
         Some("state")
     }
 
+    async fn preview(&self, ctx: &mut ToolCtx<'_>, input: Value) -> Result<Value, ToolError> {
+        let input: UpdateEntityInput = decode(input)?;
+        let entity = resolve_entity(ctx, &input.entity).await?;
+        let mut rows = Vec::new();
+        if let Some(value) = input.name {
+            rows.push(json!({"field":"name","before":entity.name,"after":value}));
+        }
+        if let Some(value) = input.summary {
+            rows.push(json!({"field":"summary","before":entity.summary,"after":value}));
+        }
+        if let Some(value) = input.description {
+            rows.push(json!({"field":"description","before":entity.description,"after":value}));
+        }
+        if let Some(value) = input.state {
+            rows.push(json!({"field":"state","before":entity.state,"after":value}));
+        }
+        if let Some(value) = input.importance {
+            rows.push(json!({"field":"importance","before":entity.importance,"after":value}));
+        }
+        if let Some(value) = input.status {
+            rows.push(json!({"field":"status","before":entity.status,"after":value}));
+        }
+        if let Some(value) = input.attributes_set {
+            rows.push(json!({"field":"attributes","before":entity.attributes.clone().into_inner(),"after":value}));
+        }
+        Ok(json!({"kind":"fields","label":entity.name,"rows":rows}))
+    }
+
     async fn execute(
         &self,
         ctx: &mut ToolCtx<'_>,
@@ -778,6 +806,27 @@ impl ToolHandler for UpdateTimelineEventTool {
         ToolKind::Canon
     }
 
+    async fn preview(&self, ctx: &mut ToolCtx<'_>, input: Value) -> Result<Value, ToolError> {
+        let input: UpdateTimelineEventInput = decode(input)?;
+        let current = crate::services::canon::timeline::load(ctx.tx, input.event_id)
+            .await
+            .map_err(|error| map_canon(error, None, None))?;
+        let mut rows = Vec::new();
+        if let Some(v) = input.title {
+            rows.push(json!({"field":"title","before":current.title,"after":v}));
+        }
+        if let Some(v) = input.description {
+            rows.push(json!({"field":"description","before":current.description,"after":v}));
+        }
+        if let Some(v) = input.story_time {
+            rows.push(json!({"field":"story_time","before":current.story_time,"after":v}));
+        }
+        if let Some(v) = input.importance {
+            rows.push(json!({"field":"importance","before":current.importance,"after":v}));
+        }
+        Ok(json!({"kind":"fields","label":current.title,"rows":rows}))
+    }
+
     async fn execute(
         &self,
         ctx: &mut ToolCtx<'_>,
@@ -1056,6 +1105,16 @@ impl ToolHandler for ResolveForeshadowingTool {
 
     fn kind(&self) -> ToolKind {
         ToolKind::Canon
+    }
+
+    async fn preview(&self, ctx: &mut ToolCtx<'_>, input: Value) -> Result<Value, ToolError> {
+        let input: ResolveForeshadowingInput = decode(input)?;
+        let current = crate::services::canon::foreshadow::load(ctx.tx, input.foreshadowing_id)
+            .await
+            .map_err(|error| map_canon(error, None, None))?;
+        Ok(
+            json!({"kind":"action","label":"resolve_foreshadowing","text":format!("{}：{} → {}", current.title, current.status.as_str(), input.status.as_str())}),
+        )
     }
 
     async fn execute(

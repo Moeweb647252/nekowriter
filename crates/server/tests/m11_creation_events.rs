@@ -77,6 +77,7 @@ fn chapter_session(
         guidance: None,
         kickoff_extra: None,
         pending_comment: None,
+        write_mode: None,
         chapter_guard: false,
         force_previous: false,
     }
@@ -272,6 +273,7 @@ async fn no_duplicate_chapter_event_for_a_session_without_a_chapter() {
             guidance: None,
             kickoff_extra: None,
             pending_comment: None,
+            write_mode: None,
             chapter_guard: false,
             force_previous: false,
         },

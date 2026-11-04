@@ -78,6 +78,7 @@ async fn a_second_researcher_session_is_refused_by_creation() {
     let result = sessions::create(
         runtime.app.state(),
         CreateSession {
+            write_mode: None,
             kind: SessionKind::Research,
             book_id: Some(runtime.book_id),
             chapter_id: None,

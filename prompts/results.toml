@@ -36,6 +36,16 @@ text = '''
 找不到章节「{{ query }}」。写法："12"（当前轨道第12章）、"main 12"（正文第12章）或 "#编号"。
 {%- elif code == "chapter_not_official" -%}
 {{ label }}尚未定稿，不能读取。
+{%- elif code == "chapter_locked" -%}
+章节正被写作或细纲会话 #{{ session_id }} 使用，暂时不能修改。请等待它结束，或在会话结束后重试。
+{%- elif code == "system_off" -%}
+档案系统「{{ system }}」已关闭，不能执行该操作。
+{%- elif code == "goal_open_children" -%}
+目标 #{{ node }} 仍有未完成的子节点；如确认要完成它，请带上 confirm_open_children=true 重试。
+{%- elif code == "session_conflict" -%}
+会话 #{{ session_id }} 仍在运行，不能启动会打断它的新会话。请等待它结束，或用 list_sessions 查看。
+{%- elif code == "start_refused" -%}
+这个会话不能启动（原因：{{ reason }}）。请调整后重试。
 {%- elif code == "no_knowledge_scope" -%}
 本书没有可检索的知识库范围。
 {%- elif code == "scope_excluded" -%}
@@ -458,4 +468,120 @@ title_en = "Result — research finished"
 title_zh = "工具结果 · 资料收集完成"
 text = '''
 资料收集完成，本次共保存或更新 {{ entries }} 个条目。
+'''
+
+[[prompt]]
+key = "result.change_declined"
+kind = "result"
+agent = "assistant"
+vars = []
+title_en = "Result — change declined"
+title_zh = "结果 · 修改被拒绝"
+text = '''
+修改未应用：作者没有批准这次修改，并留下了意见。请阅读作者的意见后再决定下一步；不要原样重复被拒绝的修改。
+'''
+
+[[prompt]]
+key = "result.chapter_view"
+kind = "result"
+agent = "assistant"
+vars = ["label", "part", "body", "next_pid", "status", "content_version", "canon_status", "words", "open_sessions"]
+title_en = "Result — chapter view"
+title_zh = "结果 · 章节视图"
+text = '''
+{{ label }}（{{ part }}）
+状态：{{ status }} · 版本：{{ content_version }} · 档案：{{ canon_status }} · {{ words }} 字
+{{ body }}
+{% if next_pid %}（没有显示完，继续阅读请使用 from_pid="{{ next_pid }}"。）{% endif %}
+{% if open_sessions %}打开中的会话：{% for session in open_sessions %}#{{ session.id }} {{ session.kind }}（{{ session.status }}）{% endfor %}{% endif %}
+'''
+
+[[prompt]]
+key = "result.setting_doc_view"
+kind = "result"
+agent = "assistant"
+vars = ["label", "content", "offset", "end", "total", "next_offset", "revision"]
+title_en = "Result — setting document view"
+title_zh = "结果 · 设定文档"
+text = '''
+{{ label }}（revision {{ revision }}）
+{{ content }}
+{% if next_offset is not none %}（第 {{ offset }}–{{ end }} 字，共 {{ total }} 字。继续阅读请使用 offset={{ next_offset }}。）{% endif %}
+'''
+
+[[prompt]]
+key = "result.characters_view"
+kind = "result"
+agent = "assistant"
+vars = ["designs"]
+title_en = "Result — characters view"
+title_zh = "结果 · 人物设计"
+text = '''
+{% for design in designs %}#{{ design.rank }} {{ design.name }}（{{ design.role_label }}）{% if design.entity_id %} · 实体 #{{ design.entity_id }}{% endif %}{% if design.summary %}：{{ design.summary }}{% endif %}{% if design.profile %}
+{{ design.profile }}{% endif %}
+{% else %}（没有人物设计）
+{% endfor %}
+'''
+
+[[prompt]]
+key = "result.goal_list"
+kind = "result"
+agent = "assistant"
+vars = ["nodes"]
+title_en = "Result — goals"
+title_zh = "结果 · 目标列表"
+text = '''
+{% for node in nodes %}#{{ node.id }} [{{ node.level }}] {{ node.title }} — {{ node.purpose }}（{{ node.status }}{% if node.ready %}，可推进{% endif %}{% if node.closable %}，可完成{% endif %}{% if node.chapter_from is not none %}，第{{ node.chapter_from }}章{% endif %}{% if node.chapter_to is not none %}–第{{ node.chapter_to }}章{% endif %}）
+{% else %}（没有目标节点）
+{% endfor %}
+'''
+
+[[prompt]]
+key = "result.research_list"
+kind = "result"
+agent = "assistant"
+vars = ["tasks"]
+title_en = "Result — research tasks"
+title_zh = "结果 · 资料任务"
+text = '''
+{% for task in tasks %}#{{ task.id }} [{{ task.kind }}] {{ task.topic }} · {{ task.scope }} · {{ task.status }} · {{ task.entries }} 条
+{% else %}（没有资料任务）
+{% endfor %}
+'''
+
+[[prompt]]
+key = "result.session_list"
+kind = "result"
+agent = "assistant"
+vars = ["sessions"]
+title_en = "Result — sessions"
+title_zh = "结果 · 会话列表"
+text = '''
+{% for session in sessions %}#{{ session.id }} {{ session.kind }}{% if session.chapter_label %} · {{ session.chapter_label }}{% endif %} · {{ session.status }} · {{ session.created_at }}
+{% else %}（没有会话）
+{% endfor %}
+'''
+
+
+[[prompt]]
+key = "result.book_agent_write"
+kind = "result"
+agent = "shared"
+vars = ["action", "summary", "details"]
+title_en = "Result — book-agent write"
+title_zh = "工具结果 · 书代理写入"
+text = '''
+{{ summary }}{% if details %}（{{ details }}）{% endif %}
+'''
+
+
+[[prompt]]
+key = "result.session_start"
+kind = "result"
+agent = "assistant"
+vars = ["session_id", "kind", "existing"]
+title_en = "Result — session start"
+title_zh = "结果 · 启动会话"
+text = '''
+{% if existing %}已继续会话 #{{ session_id }}（{{ kind }}）。{% else %}已启动会话 #{{ session_id }}（{{ kind }}）。{% endif %}
 '''

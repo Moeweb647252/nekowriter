@@ -13,6 +13,10 @@ export type RoleModels = { conception?: number | null, researcher?: number | nul
  */
 planner?: number | null, writer?: number | null, reviewer?: number | null, archivist?: number | null, 
 /**
+ * The book agent's own model; unset means "follow the writer" (spec/03 §4, D-169).
+ */
+assistant?: number | null, 
+/**
  * The thinking effort chosen per role (spec/04 §5.1, D-162). Rows written before 0009 lack
  * it and load as `{}`; every API response serializes it (required by spec/02 §4), and a
  * request that replaces the object must carry the loaded map so a save cannot erase it.

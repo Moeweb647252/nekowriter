@@ -22,6 +22,7 @@ import {
 import { CSS } from "@dnd-kit/utilities"
 import {
   BookOpen,
+  Bot,
   Brain,
   ChevronRight,
   ClipboardCheck,
@@ -68,6 +69,7 @@ import { isComposing } from "@/lib/hotkeys"
 import { NewSideStoryDialog } from "@/features/workspace/NewSideStoryDialog"
 import { isCanonPageVisible } from "@/features/workspace/canonVisibility"
 import { cn } from "@/lib/utils"
+import { requestBookAgent } from "@/features/agent/bookAgentIntent"
 
 export type NavigatorProps = {
   book: BookDto
@@ -139,6 +141,14 @@ export function Navigator({ book }: NavigatorProps) {
   return (
     <nav className="flex h-full flex-col overflow-y-auto border-r bg-sidebar/40 p-2">
       <NavLink to={`/books/${book.id}`} icon={Home} label={t("book:overview")} end />
+      <button
+        type="button"
+        className="flex items-center gap-2 rounded-md px-2 py-1 text-left text-[13px] text-muted-foreground hover:bg-accent hover:text-foreground"
+        onClick={() => requestBookAgent(book.id)}
+      >
+        <Bot className="size-3.5 shrink-0" aria-hidden="true" />
+        <span className="truncate">{t("book:book_agent")}</span>
+      </button>
       {mainTrack === undefined ? null : (
         <TrackGroup book={book} track={mainTrack} />
       )}

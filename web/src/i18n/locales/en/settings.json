@@ -22,6 +22,7 @@
   "role.writer": "Writer",
   "role.reviewer": "Reviewer",
   "role.archivist": "Archivist",
+  "role.assistant": "Book agent",
   "appearance_hint": "These preferences apply to this browser and are stored locally.",
   "add_provider": "Add provider",
   "edit_provider": "Edit provider",

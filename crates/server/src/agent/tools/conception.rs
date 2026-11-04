@@ -310,6 +310,25 @@ impl ToolHandler for WriteSettingDocTool {
         Some("content")
     }
 
+    async fn preview(&self, ctx: &mut ToolCtx<'_>, input: Value) -> Result<Value, ToolError> {
+        let input: WriteSettingDocInput = decode(input)?;
+        let after = input.content.trim_end().to_owned();
+        if after.trim().is_empty() {
+            return Err(validation(vec!["content must not be empty".to_owned()]));
+        }
+        let book_id = book_id(ctx)?;
+        let before = setting_docs_service::load(ctx.tx, book_id, input.doc)
+            .await
+            .map_err(|_| internal())?
+            .content;
+        Ok(json!({
+            "kind": "diff",
+            "label": ctx.prompts.label("setting_doc", input.doc.as_str()),
+            "before": before,
+            "after": after,
+        }))
+    }
+
     async fn execute(
         &self,
         ctx: &mut ToolCtx<'_>,
@@ -381,6 +400,35 @@ impl ToolHandler for EditSettingDocTool {
 
     fn kind(&self) -> ToolKind {
         ToolKind::Control
+    }
+
+    async fn preview(&self, ctx: &mut ToolCtx<'_>, input: Value) -> Result<Value, ToolError> {
+        let input: EditSettingDocInput = decode(input)?;
+        if input.edits.is_empty() {
+            return Err(validation(vec!["edits must not be empty".to_owned()]));
+        }
+        let book_id = book_id(ctx)?;
+        let doc = setting_docs_service::load(ctx.tx, book_id, input.doc)
+            .await
+            .map_err(|_| internal())?;
+        let mut after = doc.content.clone();
+        for edit in &input.edits {
+            let occurrences = after.matches(&edit.find).count();
+            if edit.find.is_empty() || occurrences != 1 {
+                return Err(find_failed(
+                    ctx.prompts.label("setting_doc", input.doc.as_str()),
+                    &edit.find,
+                    occurrences,
+                ));
+            }
+            after = after.replacen(&edit.find, &edit.replace, 1);
+        }
+        Ok(json!({
+            "kind": "diff",
+            "label": ctx.prompts.label("setting_doc", input.doc.as_str()),
+            "before": doc.content,
+            "after": after,
+        }))
     }
 
     async fn execute(

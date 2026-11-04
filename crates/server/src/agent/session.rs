@@ -501,6 +501,7 @@ pub async fn to_dto(
         granularity: granularity_of(row),
         auto_pause: row.auto_pause,
         pause_after_outline: row.pause_after_outline,
+        write_mode: row.write_mode,
         pause_requested: row.pause_requested,
         held_tool_call_id: row.held_tool_call_id,
         base_content_version: row.base_content_version,
@@ -928,6 +929,7 @@ mod tests {
                 granularity: Some(Granularity::Paragraph),
                 auto_pause: Some(true),
                 pause_after_outline: None,
+                write_mode: None,
             },
             chrono::Utc::now(),
         )

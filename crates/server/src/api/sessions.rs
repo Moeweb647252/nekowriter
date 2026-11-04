@@ -107,6 +107,16 @@ pub async fn abandon(
     Ok(Json(sessions::abandon(&state, session_id).await?))
 }
 
+/// `POST /api/sessions/:id/end` (spec/10 §2.7, D-169).
+pub async fn end(
+    State(state): State<AppState>,
+    Path(session_id): Path<i32>,
+) -> AppResult<Json<SessionDto>> {
+    Ok(Json(
+        crate::services::sessions::end_book_agent(&state, session_id).await?,
+    ))
+}
+
 /// `POST /api/sessions/:id/message`.
 pub async fn send_message(
     State(state): State<AppState>,

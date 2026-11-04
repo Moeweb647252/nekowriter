@@ -8,9 +8,9 @@
 use std::collections::BTreeSet;
 
 use nekowriter::agent::tools::registry::{
-    ARCHIVIST_TOOLS, CONCEPTION_TOOLS, PLANNER_TOOLS, RESEARCHER_TOOLS, RETRIEVAL_TOOLS,
-    REVIEWER_TOOLS, WRITE_TOOLS, WRITER_TOOLS, allowed_tools, initial_phase, is_permitted,
-    role_of_kind, tools_for_role,
+    ARCHIVIST_TOOLS, ASSISTANT_TOOLS, CONCEPTION_TOOLS, PLANNER_TOOLS, RESEARCHER_TOOLS,
+    RETRIEVAL_TOOLS, REVIEWER_TOOLS, WRITE_TOOLS, WRITER_TOOLS, allowed_tools, initial_phase,
+    is_permitted, role_of_kind, tools_for_role,
 };
 use nekowriter::agent::tools::spec::{ToolSpecs, validate_input};
 use nekowriter::agent::tools::{ToolErrorKind, ToolRegistry, resolve::EntityResolver};
@@ -36,6 +36,7 @@ fn every_tool_example_matches_its_schema_and_the_registry() {
         "archivist",
         "conception",
         "researcher",
+        "assistant",
     ] {
         for name in tools_for_role(role) {
             role_tools.insert(name);
@@ -60,6 +61,7 @@ fn every_tool_example_matches_its_schema_and_the_registry() {
     //     with their milestones; M3 ships the framework and the test-only tools).
     let registry = ToolRegistry::new();
     assert!(!registry.is_empty(), "the test-only tools are registered");
+    let _ = ASSISTANT_TOOLS;
 
     // (3) Every example validates against the compiled JSON Schema.
     for tool in pack.tools() {

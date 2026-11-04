@@ -680,6 +680,7 @@ pub async fn write(
             guidance: input.guidance,
             kickoff_extra: None,
             pending_comment: None,
+            write_mode: None,
             chapter_guard: true,
             force_previous: input.force,
         },
@@ -747,6 +748,7 @@ pub async fn outline(
             guidance: input.guidance,
             kickoff_extra: None,
             pending_comment: None,
+            write_mode: None,
             chapter_guard: true,
             force_previous: input.force,
         },
@@ -1316,7 +1318,10 @@ async fn anchor_tracks(conn: &impl ConnectionTrait, chapter_id: i32) -> Result<V
 }
 
 /// Rejects content writes while the chapter's writer session is running (spec/08 §1.4).
-async fn ensure_editable(tx: &impl ConnectionTrait, chapter_id: i32) -> Result<(), AppError> {
+pub(crate) async fn ensure_editable(
+    tx: &impl ConnectionTrait,
+    chapter_id: i32,
+) -> Result<(), AppError> {
     if let Some(session_id) = super::running_writer_session(tx, chapter_id).await? {
         return Err(super::conflict(
             ErrorCode::ChapterLocked,

@@ -19,6 +19,8 @@ type UiState = {
    * open session.
    */
   pinnedSessionManual: Record<number, boolean>
+  /** A monotonically increasing request to open the book-agent panel for one book. */
+  bookAgentRequest: Record<number, number>
   /** The UI language; persisted here and the source `i18n` restores at boot (spec/11 §4.3, §6). */
   language: Language
   setEditorFont: (font: EditorFont) => void
@@ -26,6 +28,7 @@ type UiState = {
   setNavigatorCollapsed: (collapsed: boolean) => void
   setAgentPanelCollapsed: (collapsed: boolean) => void
   setPinnedSession: (bookId: number, sessionId: number | null, manual?: boolean) => void
+  requestBookAgent: (bookId: number) => void
   setLanguage: (language: Language) => void
 }
 
@@ -38,6 +41,7 @@ export const useUiStore = create<UiState>()(
       agentPanelCollapsed: false,
       pinnedSession: {},
       pinnedSessionManual: {},
+      bookAgentRequest: {},
       language: initialLanguage(),
       setEditorFont: (editorFont) => set({ editorFont }),
       setEditorSize: (editorSize) => set({ editorSize }),
@@ -51,6 +55,13 @@ export const useUiStore = create<UiState>()(
           pinnedSessionManual: {
             ...state.pinnedSessionManual,
             [bookId]: sessionId !== null && manual,
+          },
+        })),
+      requestBookAgent: (bookId) =>
+        set((state) => ({
+          bookAgentRequest: {
+            ...state.bookAgentRequest,
+            [bookId]: (state.bookAgentRequest[bookId] ?? 0) + 1,
           },
         })),
       setLanguage: (language) => set({ language }),

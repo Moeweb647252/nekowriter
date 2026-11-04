@@ -4,7 +4,7 @@ use sea_orm::entity::prelude::*;
 
 use crate::db::json::{
     AgentRole, CanonSystems, Granularity, JsonText, ModelSnapshot, Phase, SessionCounters,
-    SessionError, SessionKind, SessionStatus, Usage, ViewSnapshot,
+    SessionError, SessionKind, SessionStatus, Usage, ViewSnapshot, WriteMode,
 };
 
 #[sea_orm::model]
@@ -28,6 +28,8 @@ pub struct Model {
     pub granularity: Option<Granularity>,
     pub auto_pause: bool,
     pub pause_after_outline: bool,
+    /// The book agent's write mode; `None` for every other session kind (D-169).
+    pub write_mode: Option<WriteMode>,
     /// The tool-error circuit-breaker limit frozen at creation; `0` means unlimited.
     pub tool_error_streak_limit: i32,
     /// The researcher's soft tool-call budget frozen at creation (spec/05 §8, D-164).

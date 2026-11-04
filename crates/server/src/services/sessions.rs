@@ -25,7 +25,7 @@ use crate::db::entities::{
 use crate::db::json::{
     AgentRole, BookSettings, ChapterStatus, Granularity, InboxKind, JsonText, ModelSnapshot, Phase,
     Protocol, ResearchTaskStatus, RoleModels, SessionCounters, SessionKind, SessionStatus,
-    StoredBlock, ToolCallStatus, TrackKind,
+    StoredBlock, ToolCallStatus, TrackKind, WriteMode,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
@@ -61,6 +61,7 @@ impl Default for CreateSession {
             guidance: None,
             kickoff_extra: None,
             pending_comment: None,
+            write_mode: None,
             chapter_guard: false,
             force_previous: false,
         }
@@ -88,6 +89,8 @@ pub struct CreateSession {
     /// The author's re-review comment: `submit_review` copies it into the report's
     /// `user_comment` and clears it (spec/03 §6, spec/05 §5).
     pub pending_comment: Option<String>,
+    /// The book agent's write mode; every other kind stores NULL (D-169).
+    pub write_mode: Option<WriteMode>,
     /// Set by the chapter start endpoints (`chapters::outline` / `write`) so the chapter's status
     /// and outline preconditions are rechecked inside this transaction (R3-03). Direct service
     /// callers (tests) leave it off.
@@ -127,12 +130,18 @@ pub(crate) async fn create_inner(
     // One open session per book for the kinds that model a book-wide task (spec/02 §5 invariant
     // 5). `conception/start` and `canon/seed` return the open session instead of creating one
     // (D-047); this is the guard for the concurrent path, where both requests could miss it.
-    if matches!(input.kind, SessionKind::Conception | SessionKind::CanonSeed)
-        && let Some(book_id) = input.book_id
+    if matches!(
+        input.kind,
+        SessionKind::Conception | SessionKind::CanonSeed | SessionKind::BookAgent
+    ) && let Some(book_id) = input.book_id
         && let Some(open) = open_book_session(tx, book_id, input.kind).await?
     {
         return Err(AppError::new(
-            ErrorCode::SessionInvalidState,
+            if input.kind == SessionKind::BookAgent {
+                ErrorCode::SessionExists
+            } else {
+                ErrorCode::SessionInvalidState
+            },
             format!(
                 "book {book_id} already has an open {} session",
                 input.kind.as_str()
@@ -435,6 +444,11 @@ pub(crate) async fn create_inner(
         granularity: Set(granularity),
         auto_pause: Set(auto_pause),
         pause_after_outline: Set(pause_after_outline),
+        write_mode: Set(if input.kind == SessionKind::BookAgent {
+            Some(input.write_mode.unwrap_or(WriteMode::Review))
+        } else {
+            None
+        }),
         tool_error_streak_limit: Set(limits.tool_error_streak_limit),
         research_max_tool_calls: Set(limits.research_max_tool_calls),
         research_max_entries: Set(limits.research_max_entries),
@@ -593,7 +607,7 @@ pub async fn try_resolve_model(
     if let Some(profile_id) = read_role_default(conn, role).await? {
         return Ok(Some(profile_id));
     }
-    if role == AgentRole::Planner {
+    if matches!(role, AgentRole::Planner | AgentRole::Assistant) {
         if let Some(profile_id) = book_overrides.writer {
             return Ok(Some(profile_id));
         }
@@ -633,7 +647,7 @@ async fn resolve_model(
     }
     // An unset planner follows the writer's model, so an existing configuration keeps working
     // untouched after the upgrade (spec/03 §4, D-146).
-    if role == AgentRole::Planner {
+    if matches!(role, AgentRole::Planner | AgentRole::Assistant) {
         if let Some(profile_id) = book_overrides.writer {
             return Ok(ResolvedModel {
                 profile_id,
@@ -1261,12 +1275,17 @@ pub async fn resume(
     let db = state.db().clone();
     let state_owned = state.clone();
     let feedback = input.feedback.clone();
-    let (events, dto) = services::write(&db, move |tx| {
+    let (events, spawns, dto) = services::write(&db, move |tx| {
         let feedback = feedback.clone();
         Box::pin(async move { resume_inner(&state_owned, tx, session_id, feedback).await })
     })
     .await?;
     resume_after(state, events, session_id).await;
+    // An approved `start_session` creates its child in the approving transaction; spawning here
+    // is after that transaction committed (D-169).
+    for child in spawns {
+        state.manager().spawn(state.clone(), child);
+    }
     Ok(dto)
 }
 
@@ -1276,7 +1295,7 @@ async fn resume_inner(
     tx: &sea_orm::DatabaseTransaction,
     session_id: i32,
     feedback: Option<String>,
-) -> Result<(Vec<ServerEvent>, crate::api::dto::SessionDto), AppError> {
+) -> Result<(Vec<ServerEvent>, Vec<i32>, crate::api::dto::SessionDto), AppError> {
     let session = session::load(tx, session_id).await?;
     let status = session::status_of(&session);
     let mut events = Vec::new();
@@ -1290,6 +1309,91 @@ async fn resume_inner(
                 return Err(invalid_state(&session, "resume"));
             }
             let prompts = state_prompts(state, &session).await?;
+            let held_effects: crate::db::json::ToolEffects = held
+                .effects
+                .clone()
+                .map(|value| value.into_inner())
+                .unwrap_or_default();
+            if held_effects.approval {
+                let has_feedback = feedback
+                    .as_deref()
+                    .map(str::trim)
+                    .is_some_and(|text| !text.is_empty());
+                if !has_feedback {
+                    let (mut events, spawns) =
+                        runner::approve_held_call(tx, state, &session, &held, &prompts).await?;
+                    events.push(ServerEvent::SessionUpdated {
+                        session: session::to_dto(
+                            tx,
+                            &session::load(tx, session_id).await?,
+                            Vec::new(),
+                        )
+                        .await?,
+                        warnings: Vec::new(),
+                    });
+                    return Ok((
+                        events,
+                        spawns,
+                        session::to_dto(tx, &session::load(tx, session_id).await?, Vec::new())
+                            .await?,
+                    ));
+                }
+                // Request changes: execute nothing. The result says so and the feedback rides
+                // along as an appendix (spec/03 §5.2, D-169).
+                let declined = prompts
+                    .render("result.change_declined", &json!({}))
+                    .map_err(|err| err.into_app_error())?;
+                let feedback_text = feedback.as_deref().unwrap_or_default().trim();
+                let rendered = prompts
+                    .render("notice.user_feedback", &json!({ "text": feedback_text }))
+                    .map_err(|err| err.into_app_error())?;
+                let mut appendices = held.appendices.clone().into_inner();
+                appendices.push(crate::db::json::Appendix {
+                    kind: crate::db::json::AppendixKind::UserFeedback,
+                    text: rendered.text,
+                    inbox_id: None,
+                    inbox_kind: None,
+                });
+                let now = chrono::Utc::now();
+                agent_tool_calls::ActiveModel {
+                    id: Set(held.id),
+                    status: Set(ToolCallStatus::Done),
+                    raw_result_text: Set(Some(declined.text)),
+                    appendices: Set(JsonText(appendices)),
+                    effects: Set(Some(JsonText(crate::db::json::ToolEffects::default()))),
+                    is_error: Set(false),
+                    finished_at: Set(Some(now)),
+                    ..Default::default()
+                }
+                .update(tx)
+                .await?;
+                agent_sessions::ActiveModel {
+                    id: Set(session_id),
+                    status: Set(SessionStatus::Running),
+                    held_tool_call_id: Set(None),
+                    updated_at: Set(now),
+                    ..Default::default()
+                }
+                .update(tx)
+                .await?;
+                let held = runner::load_call(tx, held.id).await?;
+                let dto =
+                    session::to_dto(tx, &session::load(tx, session_id).await?, Vec::new()).await?;
+                return Ok((
+                    vec![
+                        ServerEvent::SessionToolCall {
+                            session_id,
+                            tool_call: session::tool_call_dto(&held)?,
+                        },
+                        ServerEvent::SessionUpdated {
+                            session: dto.clone(),
+                            warnings: Vec::new(),
+                        },
+                    ],
+                    Vec::new(),
+                    dto,
+                ));
+            }
             let mut appendices: Vec<crate::db::json::Appendix> =
                 held.appendices.clone().into_inner();
             // Feedback appended, and deferred effects revoked first (spec/03 §5.4).
@@ -1468,6 +1572,7 @@ async fn resume_inner(
     }
     Ok((
         events,
+        Vec::new(),
         session::to_dto(tx, &session::load(tx, session_id).await?, Vec::new()).await?,
     ))
 }
@@ -1976,6 +2081,38 @@ pub async fn patch(
                 return Err(invalid_state(&session, "patch"));
             }
             let kind = session::kind_of(&session);
+            if kind == SessionKind::BookAgent {
+                // The book agent's only PATCH field is write_mode, and it may change while the
+                // conversation is running (spec/03 §6, §14, D-169).
+                if patch.granularity.is_some()
+                    || patch.auto_pause.is_some()
+                    || patch.pause_after_outline.is_some()
+                    || patch.write_mode.is_none()
+                {
+                    return Err(invalid_state(&session, "patch"));
+                }
+                let mode = patch.write_mode.expect("checked above");
+                agent_sessions::ActiveModel {
+                    id: Set(session_id),
+                    write_mode: Set(Some(mode)),
+                    updated_at: Set(chrono::Utc::now()),
+                    ..Default::default()
+                }
+                .update(tx)
+                .await?;
+                let dto =
+                    session::to_dto(tx, &session::load(tx, session_id).await?, Vec::new()).await?;
+                return Ok((
+                    vec![ServerEvent::SessionUpdated {
+                        session: dto.clone(),
+                        warnings: Vec::new(),
+                    }],
+                    dto,
+                ));
+            }
+            if patch.write_mode.is_some() {
+                return Err(invalid_state(&session, "patch"));
+            }
             let is_writer = matches!(kind, SessionKind::ChapterWrite | SessionKind::ChapterRevise);
             let is_outline = kind == SessionKind::ChapterOutline;
             if !is_writer && !is_outline {
@@ -2215,6 +2352,114 @@ async fn debug_session_inner(
     Ok((session.id, events))
 }
 
+/// `POST /api/books/:id/agent` (spec/10 §2.2, D-169): creates and spawns the book agent's
+/// conversation. The book must be active or archived and have no other open book-agent session.
+pub async fn start_book_agent(
+    state: &AppState,
+    book_id: i32,
+    message: String,
+    write_mode: Option<WriteMode>,
+) -> Result<i32, AppError> {
+    if message.trim().is_empty() {
+        return Err(
+            AppError::new(ErrorCode::ValidationInvalidFields, "invalid input")
+                .with_details(json!({"fields":{"message":"the message is empty"}})),
+        );
+    }
+    if message.chars().count() > 20_000 {
+        return Err(
+            AppError::new(ErrorCode::ValidationInvalidFields, "invalid input").with_details(
+                json!({"fields":{"message":"the message is longer than 20,000 characters"}}),
+            ),
+        );
+    }
+    let db = state.db().clone();
+    let state_owned = state.clone();
+    let (session_id, events, _warnings) = services::write(&db, move |tx| {
+        let state = state_owned.clone();
+        Box::pin(async move {
+            let book = books::Entity::find_by_id(book_id)
+                .one(tx)
+                .await?
+                .ok_or_else(|| AppError::not_found(format!("book {book_id}")))?;
+            if !matches!(
+                book.status,
+                crate::db::json::BookStatus::Active | crate::db::json::BookStatus::Archived
+            ) {
+                return Err(super::conflict(
+                    ErrorCode::BookInvalidState,
+                    "a book agent needs an active or archived book",
+                    json!({ "status": book.status }),
+                ));
+            }
+            if let Some(open) = open_book_session(tx, book_id, SessionKind::BookAgent).await? {
+                return Err(AppError::new(
+                    ErrorCode::SessionExists,
+                    "the book already has an open book agent session",
+                )
+                .with_details(json!({ "session_id": open })));
+            }
+            create_inner(
+                &state,
+                tx,
+                CreateSession {
+                    kind: SessionKind::BookAgent,
+                    book_id: Some(book_id),
+                    write_mode,
+                    kickoff_extra: Some(json!({ "request": message })),
+                    ..CreateSession::default()
+                },
+            )
+            .await
+        })
+    })
+    .await?;
+    state.events().publish_all(events);
+    state.manager().spawn(state.clone(), session_id);
+    Ok(session_id)
+}
+
+/// `POST /api/sessions/:id/end` (spec/10 §2.7, D-169): a book-agent conversation may be ended by
+/// the author from any non-running open status; a held change is left unexecuted.
+pub async fn end_book_agent(
+    state: &AppState,
+    session_id: i32,
+) -> Result<crate::api::dto::SessionDto, AppError> {
+    let db = state.db().clone();
+    let (events, dto) = services::write(&db, move |tx| {
+        Box::pin(async move {
+            let session = session::load(tx, session_id).await?;
+            if session::kind_of(&session) != SessionKind::BookAgent {
+                return Err(invalid_state(&session, "end"));
+            }
+            if !matches!(
+                session::status_of(&session),
+                SessionStatus::Idle
+                    | SessionStatus::Held
+                    | SessionStatus::Paused
+                    | SessionStatus::Stopped
+                    | SessionStatus::Failed
+                    | SessionStatus::Interrupted
+            ) {
+                return Err(invalid_state(&session, "end"));
+            }
+            let events = session::transition(
+                tx,
+                &session,
+                SessionStatus::Completed,
+                TransitionCause::Completed,
+            )
+            .await?;
+            let dto =
+                session::to_dto(tx, &session::load(tx, session_id).await?, Vec::new()).await?;
+            Ok((events, dto))
+        })
+    })
+    .await?;
+    publish(state, events).await;
+    Ok(dto)
+}
+
 /// `POST /api/debug/sessions/echo` (spec/10 §2.7, debug builds only): a test-only session whose
 /// tools exercise the runtime without any real tool.
 pub async fn debug_echo(state: &AppState, book_id: i32) -> Result<DebugEchoDto, AppError> {
@@ -2385,7 +2630,10 @@ fn chapter_session_role(kind: SessionKind) -> Option<&'static str> {
         }
         SessionKind::ChapterReview => Some("reviewer"),
         SessionKind::ChapterMaintenance | SessionKind::ChapterResync => Some("archivist"),
-        SessionKind::Conception | SessionKind::Research | SessionKind::CanonSeed => None,
+        SessionKind::Conception
+        | SessionKind::Research
+        | SessionKind::CanonSeed
+        | SessionKind::BookAgent => None,
     }
 }
 
