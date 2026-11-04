@@ -25,6 +25,8 @@ async fn book_session(app: &TestApp, book_id: i32) -> agent_sessions::Model {
 #[tokio::test]
 async fn start_session_rejects_bad_actions_and_maps_outline_refusals() {
     let app = TestApp::new().await;
+    let (status, _) = app.patch("/api/app-settings", json!({"roles_defaults":{}})).await;
+    assert_eq!(status, StatusCode::OK);
     let book = app.create_book("Book").await;
     let book_id = book["id"].as_i64().unwrap() as i32;
     let tracks = app.get(&format!("/api/books/{book_id}/tracks")).await.1;
@@ -80,7 +82,7 @@ async fn start_session_rejects_bad_actions_and_maps_outline_refusals() {
         .unwrap()
         .execute(
             &mut ctx,
-            json!({"action":"outline","chapter":"2"}),
+            json!({"action":"outline","chapter":"3"}),
             Prepared::None,
         )
         .await
@@ -256,4 +258,104 @@ async fn approval_spawns_a_started_session_only_after_the_commit() {
         .await
         .unwrap();
     assert_eq!(after, 1);
+}
+
+#[tokio::test]
+async fn every_action_refusal_with_no_model_creates_nothing() {
+    let app = TestApp::new().await;
+    let book = app.create_book("Book").await;
+    let book_id = book["id"].as_i64().unwrap() as i32;
+    let tracks = app.get(&format!("/api/books/{book_id}/tracks")).await.1;
+    let track_id = tracks[0]["id"].as_i64().unwrap() as i32;
+    let a = app.create_chapter(track_id, "A").await;
+    let a_id = a["id"].as_i64().unwrap() as i32;
+    let b = app.create_chapter(track_id, "B").await;
+    let b_id = b["id"].as_i64().unwrap() as i32;
+    let c = app.create_chapter(track_id, "C").await;
+    let c_id = c["id"].as_i64().unwrap() as i32;
+    app.execute(&format!(
+        "UPDATE chapters SET status='official', canon_status='pending' WHERE id={a_id}"
+    ))
+    .await;
+    app.execute(&format!(
+        "UPDATE chapters SET status='official', canon_status='synced' WHERE id={b_id}"
+    ))
+    .await;
+    app.execute(&format!(
+        "UPDATE chapters SET status='official', canon_status='stale' WHERE id={c_id}"
+    ))
+    .await;
+    app.execute(&format!("INSERT INTO research_tasks(book_id,scope_name,topic,kind,origin,requirements,language,status,entries_created,created_at,updated_at) VALUES ({book_id},'Scope','Topic','topic','author','req','zh-CN','ready',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")).await;
+    let session = book_session(&app, book_id).await;
+    let db = app.state().db();
+    let tx = db.conn().begin().await.unwrap();
+    let book_row = books::Entity::find_by_id(book_id).one(&tx).await.unwrap();
+    let track = tracks::Entity::find_by_id(track_id).one(&tx).await.unwrap();
+    let prompts = app
+        .state()
+        .prompts()
+        .for_book(db, Some(book_id))
+        .await
+        .unwrap();
+    let mut ctx = ToolCtx {
+        tx: &tx,
+        session: &session,
+        book: book_row.as_ref(),
+        chapter: None,
+        track: track.as_ref(),
+        visibility: Visibility::Shared,
+        request_meta: RequestMeta {
+            phase: Phase::None,
+            granularity: None,
+        },
+        prompts: &prompts,
+        state: app.state(),
+        events: Vec::new(),
+    };
+    let registry = app.state().tool_registry();
+    let cases = [
+        json!({"action":"outline","chapter":"3"}),
+        json!({"action":"maintain","chapter":"1"}),
+        json!({"action":"resync","chapter":"3"}),
+        json!({"action":"research","task":1}),
+        json!({"action":"knowledge_check","guidance":"check it"}),
+    ];
+    let sessions_before = agent_sessions::Entity::find().count(&tx).await.unwrap();
+    let versions_before = nekowriter::db::entities::chapter_versions::Entity::find()
+        .count(&tx)
+        .await
+        .unwrap();
+    let tasks_before = nekowriter::db::entities::research_tasks::Entity::find()
+        .count(&tx)
+        .await
+        .unwrap();
+    for input in cases {
+        let error = registry
+            .get("start_session")
+            .unwrap()
+            .execute(&mut ctx, input, Prepared::None)
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind, ToolErrorKind::StartRefused, "{error:?}");
+        assert_eq!(error.fields.get("reason").unwrap(), "model.missing_role");
+    }
+    assert_eq!(
+        agent_sessions::Entity::find().count(&tx).await.unwrap(),
+        sessions_before
+    );
+    assert_eq!(
+        nekowriter::db::entities::chapter_versions::Entity::find()
+            .count(&tx)
+            .await
+            .unwrap(),
+        versions_before
+    );
+    assert_eq!(
+        nekowriter::db::entities::research_tasks::Entity::find()
+            .count(&tx)
+            .await
+            .unwrap(),
+        tasks_before
+    );
+    tx.rollback().await.unwrap();
 }

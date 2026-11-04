@@ -1103,6 +1103,7 @@ impl ToolHandler for StartSessionTool {
                 if focus.is_empty() {
                     return Err(validation("guidance is required for knowledge_check"));
                 }
+                ensure_model_available(ctx, AgentRole::Researcher).await?;
                 let (task, session_id, warnings, events) =
                     research::start_knowledge_check(ctx.state, ctx.tx, book_id, focus)
                         .await
@@ -1224,6 +1225,7 @@ async fn start_outline(
     chapter: &chapters::Model,
     guidance: Option<String>,
 ) -> Result<ToolOutcome, ToolError> {
+    ensure_model_available(ctx, AgentRole::Planner).await?;
     if chapter.status == ChapterStatus::Official {
         return Err(map_start_error(crate::error::AppError::new(
             crate::error::ErrorCode::ChapterInvalidState,
@@ -1280,6 +1282,7 @@ async fn start_maintain(
     ctx: &mut ToolCtx<'_>,
     chapter: &chapters::Model,
 ) -> Result<ToolOutcome, ToolError> {
+    ensure_model_available(ctx, AgentRole::Archivist).await?;
     if chapter.status != ChapterStatus::Official {
         return Err(map_start_error(crate::error::AppError::new(
             crate::error::ErrorCode::ChapterInvalidState,
@@ -1325,6 +1328,7 @@ async fn start_resync(
     ctx: &mut ToolCtx<'_>,
     chapter: &chapters::Model,
 ) -> Result<ToolOutcome, ToolError> {
+    ensure_model_available(ctx, AgentRole::Archivist).await?;
     if chapter.status != ChapterStatus::Official || chapter.canon_status != CanonStatus::Stale {
         return Err(map_start_error(crate::error::AppError::new(
             crate::error::ErrorCode::ChapterInvalidState,
