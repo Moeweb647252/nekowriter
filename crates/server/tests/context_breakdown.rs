@@ -239,6 +239,22 @@ async fn loader_ignores_a_call_whose_message_was_not_loaded() {
             fixture.session_id
         ))
         .await;
+    let messages = messages(&fixture).await;
+    let loaded: std::collections::HashSet<i32> =
+        messages.iter().map(|message| message.id).collect();
+    let loaded_calls = nekowriter::services::sessions::context_calls(
+        fixture.app.db().conn(),
+        fixture.session_id,
+        &loaded,
+    )
+    .await
+    .unwrap();
+    assert!(
+        loaded_calls
+            .iter()
+            .all(|call| call.provider_call_id != "orphan"),
+        "the loader itself dropped the call"
+    );
     let view =
         nekowriter::services::sessions::context(fixture.app.db().conn(), fixture.session_id, None)
             .await

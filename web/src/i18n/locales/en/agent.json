@@ -455,7 +455,9 @@
     "strip": {
       "current": "Current",
       "step": "Step {{seq}} · {{tokens}} tokens",
-      "renews": "Renews here"
+      "renews": "Renews here",
+      "aria_step": "Step {{seq}} of {{count}}, {{tokens}} tokens",
+      "aria_current": "Current of {{count}}, {{tokens}} tokens"
     },
     "toggle": {
       "treemap": "Treemap",

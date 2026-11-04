@@ -1021,6 +1021,23 @@ async fn apply_creation_side_effects(
 
 // ───────────────────────────── reads ─────────────────────────────
 
+/// Load the tool calls of a Context view, keeping only calls whose message is in `loaded`.
+pub async fn context_calls(
+    conn: &impl ConnectionTrait,
+    session_id: i32,
+    loaded: &std::collections::HashSet<i32>,
+) -> Result<Vec<agent_tool_calls::Model>, AppError> {
+    Ok(agent_tool_calls::Entity::find()
+        .filter(agent_tool_calls::COLUMN.session_id.eq(session_id))
+        .order_by_asc(agent_tool_calls::COLUMN.message_id)
+        .order_by_asc(agent_tool_calls::COLUMN.call_index)
+        .all(conn)
+        .await?
+        .into_iter()
+        .filter(|call| loaded.contains(&call.message_id))
+        .collect())
+}
+
 /// The pure Context view of one session (M23 23.3; spec/03 §13.1, spec/10 §2.8).
 ///
 /// The three reads go through the pool, never a transaction (plan §3.2 C8). A `seq` must name an
@@ -1041,15 +1058,7 @@ pub async fn context(
         .await?;
     let loaded: std::collections::HashSet<i32> =
         messages.iter().map(|message| message.id).collect();
-    let calls: Vec<agent_tool_calls::Model> = agent_tool_calls::Entity::find()
-        .filter(agent_tool_calls::COLUMN.session_id.eq(session_id))
-        .order_by_asc(agent_tool_calls::COLUMN.message_id)
-        .order_by_asc(agent_tool_calls::COLUMN.call_index)
-        .all(conn)
-        .await?
-        .into_iter()
-        .filter(|call| loaded.contains(&call.message_id))
-        .collect();
+    let calls = context_calls(conn, session_id, &loaded).await?;
     if let Some(seq) = seq
         && !messages
             .iter()

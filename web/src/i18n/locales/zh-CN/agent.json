@@ -455,7 +455,9 @@
     "strip": {
       "current": "当前",
       "step": "第 {{seq}} 步 · {{tokens}} tokens",
-      "renews": "在此续接"
+      "renews": "在此续接",
+      "aria_step": "第 {{seq}} 步，共 {{count}} 步，{{tokens}} tokens",
+      "aria_current": "当前，共 {{count}} 步，{{tokens}} tokens"
     },
     "toggle": {
       "treemap": "矩形树图",

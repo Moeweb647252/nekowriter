@@ -26,6 +26,8 @@ describe("layoutTreemap", () => {
       const item = items.find((candidate) => candidate.key === rect.key)!
       expect((rect.width * rect.height) / (bounds.width * bounds.height)).toBeCloseTo(item.weight / total, 5)
     }
+    const totalArea = rects.reduce((sum, rect) => sum + rect.width * rect.height, 0)
+    expect(totalArea).toBeCloseTo(bounds.width * bounds.height, 5)
     for (let left = 0; left < rects.length; left += 1) {
       for (let right = left + 1; right < rects.length; right += 1) {
         const a = rects[left]!

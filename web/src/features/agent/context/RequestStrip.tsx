@@ -18,7 +18,7 @@ export function RequestStrip({
     ...view.requests.map((request) => ({
       seq: request.seq,
       tokens: request.estimated ? request.estimate : request.prompt_tokens,
-      label: `Step ${request.seq}`,
+      label: t("agent:context.strip.step", { seq: request.seq, tokens: formatNumber(request.estimated ? request.estimate : request.prompt_tokens, language) }),
       cached: request.cached_tokens,
       createdAt: request.created_at,
     })),
