@@ -25,10 +25,6 @@ async fn book_session(app: &TestApp, book_id: i32) -> agent_sessions::Model {
 #[tokio::test]
 async fn start_session_rejects_bad_actions_and_maps_outline_refusals() {
     let app = TestApp::new().await;
-    let (status, _) = app
-        .patch("/api/app-settings", json!({"roles_defaults":{}}))
-        .await;
-    assert_eq!(status, StatusCode::OK);
     let book = app.create_book("Book").await;
     let book_id = book["id"].as_i64().unwrap() as i32;
     let tracks = app.get(&format!("/api/books/{book_id}/tracks")).await.1;
@@ -84,7 +80,7 @@ async fn start_session_rejects_bad_actions_and_maps_outline_refusals() {
         .unwrap()
         .execute(
             &mut ctx,
-            json!({"action":"outline","chapter":"3"}),
+            json!({"action":"outline","chapter":"2"}),
             Prepared::None,
         )
         .await
@@ -275,6 +271,10 @@ async fn every_action_refusal_with_no_model_creates_nothing() {
     let b_id = b["id"].as_i64().unwrap() as i32;
     let c = app.create_chapter(track_id, "C").await;
     let c_id = c["id"].as_i64().unwrap() as i32;
+    let d = app.create_chapter(track_id, "D").await;
+    let _d_id = d["id"].as_i64().unwrap() as i32;
+    let e = app.create_chapter(track_id, "E").await;
+    let e_id = e["id"].as_i64().unwrap() as i32;
     app.execute(&format!(
         "UPDATE chapters SET status='official', canon_status='pending' WHERE id={a_id}"
     ))
@@ -284,7 +284,11 @@ async fn every_action_refusal_with_no_model_creates_nothing() {
     ))
     .await;
     app.execute(&format!(
-        "UPDATE chapters SET status='official', canon_status='stale' WHERE id={c_id}"
+        "UPDATE chapters SET status='official', canon_status='synced' WHERE id={c_id}"
+    ))
+    .await;
+    app.execute(&format!(
+        "UPDATE chapters SET status='official', canon_status='stale' WHERE id={e_id}"
     ))
     .await;
     app.execute(&format!("INSERT INTO research_tasks(book_id,scope_name,topic,kind,origin,requirements,language,status,entries_created,created_at,updated_at) VALUES ({book_id},'Scope','Topic','topic','author','req','zh-CN','ready',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")).await;
@@ -316,9 +320,9 @@ async fn every_action_refusal_with_no_model_creates_nothing() {
     };
     let registry = app.state().tool_registry();
     let cases = [
-        json!({"action":"outline","chapter":"3"}),
+        json!({"action":"outline","chapter":"4"}),
         json!({"action":"maintain","chapter":"1"}),
-        json!({"action":"resync","chapter":"3"}),
+        json!({"action":"resync","chapter":"5"}),
         json!({"action":"research","task":1}),
         json!({"action":"knowledge_check","guidance":"check it"}),
     ];

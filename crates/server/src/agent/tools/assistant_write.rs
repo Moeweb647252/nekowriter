@@ -1225,7 +1225,6 @@ async fn start_outline(
     chapter: &chapters::Model,
     guidance: Option<String>,
 ) -> Result<ToolOutcome, ToolError> {
-    ensure_model_available(ctx, AgentRole::Planner).await?;
     if chapter.status == ChapterStatus::Official {
         return Err(map_start_error(crate::error::AppError::new(
             crate::error::ErrorCode::ChapterInvalidState,
@@ -1252,6 +1251,7 @@ async fn start_outline(
             .with("reason", "chapter.previous_not_ready")
             .with("details", details));
     }
+    ensure_model_available(ctx, AgentRole::Planner).await?;
     let (session_id, events, warnings) = crate::services::sessions::create_inner(
         ctx.state,
         ctx.tx,
