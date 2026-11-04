@@ -8,6 +8,7 @@ import type { ResumeInput } from "@/api/gen/ResumeInput"
 import type { SessionAnswerInput } from "@/api/gen/SessionAnswerInput"
 import type { SessionMessageInput } from "@/api/gen/SessionMessageInput"
 import type { SessionPatch } from "@/api/gen/SessionPatch"
+import type { ContextBreakdownDto } from "@/api/gen/ContextBreakdownDto"
 
 /** Invalidates the session snapshot, the book list and the chapter that embeds `open_sessions`. */
 function invalidateSession(
@@ -28,6 +29,16 @@ export function useSession(sessionId: number | null) {
     queryKey: keys.sessions.detail(sessionId ?? 0),
     queryFn: () => endpoints.getSession(sessionId ?? 0),
     enabled: sessionId !== null && sessionId > 0,
+  })
+}
+
+/** The Context view of one request (M23). A past view is immutable and never refetched. */
+export function useSessionContext(sessionId: number, seq: number | null, enabled = true) {
+  return useQuery<ContextBreakdownDto>({
+    queryKey: keys.sessions.context(sessionId, seq),
+    queryFn: () => endpoints.getSessionContext(sessionId, seq ?? undefined),
+    enabled: enabled && sessionId > 0,
+    staleTime: seq === null ? 0 : Number.POSITIVE_INFINITY,
   })
 }
 

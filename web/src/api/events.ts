@@ -485,6 +485,9 @@ export function applyServerEvent(
       void queryClient.invalidateQueries({
         queryKey: keys.sessions.detail(sessionId),
       })
+      void queryClient.invalidateQueries({
+        queryKey: keys.sessions.context(sessionId, null),
+      })
       return
     }
     case "session.updated":
@@ -497,6 +500,9 @@ export function applyServerEvent(
       if (typeof sessionId === "number") {
         void queryClient.invalidateQueries({
           queryKey: keys.sessions.detail(sessionId),
+        })
+        void queryClient.invalidateQueries({
+          queryKey: keys.sessions.context(sessionId, null),
         })
       }
       // The book session list feeds the studio's session choice (and the conception studio's

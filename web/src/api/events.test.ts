@@ -191,6 +191,18 @@ describe("delta coalescing", () => {
     expect(isInvalidated(client, keys.sessions.list(1))).toBe(true)
   })
 
+  it("invalidates only the current Context query for a session event", () => {
+    const client = seededClient()
+    client.setQueryData(keys.sessions.context(11, null), {})
+    client.setQueryData(keys.sessions.context(11, 3), {})
+    applyServerEvent(client, "session.message", {
+      session_id: 11,
+      message: { id: 9, seq: 3 },
+    })
+    expect(isInvalidated(client, keys.sessions.context(11, null))).toBe(true)
+    expect(isInvalidated(client, keys.sessions.context(11, 3))).toBe(false)
+  })
+
   it("does not invalidate a chapter for a session.updated without a chapter", () => {
     // Conception, research and canon-seed sessions are not per-chapter (spec/10 §2.8). Their events
     // must not invalidate a chapter, or every research step would refetch the open chapter.

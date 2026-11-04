@@ -10,6 +10,7 @@ import type { SessionDto } from "@/api/gen/SessionDto"
 import type { SessionMessageInput } from "@/api/gen/SessionMessageInput"
 import type { SessionPatch } from "@/api/gen/SessionPatch"
 import type { SessionSnapshotDto } from "@/api/gen/SessionSnapshotDto"
+import type { ContextBreakdownDto } from "@/api/gen/ContextBreakdownDto"
 
 export function listSessions(bookId: number, filters?: string): Promise<SessionDto[]> {
   const query = filters === undefined ? "" : `?${filters}`
@@ -18,6 +19,14 @@ export function listSessions(bookId: number, filters?: string): Promise<SessionD
 
 export function getSession(sessionId: number): Promise<SessionSnapshotDto> {
   return api.get<SessionSnapshotDto>(`/sessions/${sessionId}`)
+}
+
+export function getSessionContext(
+  sessionId: number,
+  seq?: number,
+): Promise<ContextBreakdownDto> {
+  const query = seq === undefined ? "" : `?seq=${seq}`
+  return api.get<ContextBreakdownDto>(`/sessions/${sessionId}/context${query}`)
 }
 
 export function getMessages(sessionId: number, cursor?: string, limit?: number): Promise<MessagePageDto> {

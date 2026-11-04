@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next"
 
 import type { SessionDto } from "@/api/gen/SessionDto"
 import { formatNumber } from "@/lib/format"
+import { ContextButton } from "@/features/agent/context/ContextDialog"
 
 export function UsageFooter({ session }: { session: SessionDto }) {
   const { t, i18n } = useTranslation()
@@ -18,6 +19,9 @@ export function UsageFooter({ session }: { session: SessionDto }) {
       <span>{t("agent:usage.output", { tokens: format(usage.output_tokens) })}</span>
       <span>{t("agent:usage.requests", { count: usage.requests })}</span>
       {usage.estimated ? <span>{t("agent:usage.estimated")}</span> : null}
+      <span className="ml-auto">
+        <ContextButton session={session} showShare={usage.requests > 0} />
+      </span>
     </div>
   )
 }
